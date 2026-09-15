@@ -36,11 +36,16 @@ and shared footer.
 
 ## Assets and copy
 
-`data/enterprise/TrustedRouter-Enterprise-Brief.pdf` is the original supplied
-document, unchanged. Its content is not rewritten by the download endpoint.
-The page independently distinguishes attested gateway protection, contractual
-provider ZDR and verified downstream confidential inference. It links SOC 2
-readiness without claiming completed certification.
+`data/enterprise/TrustedRouter-Enterprise-Brief.pdf` is the owner-supplied
+September 14, 2026 revision, published byte-for-byte. SHA-256:
+`2af678f4675278dedea94b75f210bfb670c242fe5294f5c5ac6269d02dae00af`.
+Its content is not rewritten by the download endpoint.
+The page uses the same Secure / Intelligent / Cheaper positioning and
+distinguishes attested gateway protection, contractual provider ZDR and verified
+downstream confidential inference. Following the owner's confirmation, the
+page and linked SOC 2 HTML/JSON packet state that the Type II observation
+window is in progress. Neither claims a completed audit or an issued report;
+no auditor name or observation-period dates have been inferred.
 
 `static/enterprise/token-exchange-hero.webp` is an optimized generated
 illustration, 1536 x 1024. Built-in image generation prompt: architectural model

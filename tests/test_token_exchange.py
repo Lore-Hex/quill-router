@@ -58,6 +58,36 @@ def test_page_internal_links_resolve(client: TestClient) -> None:
         assert client.get(link).status_code == 200, link
 
 
+def test_enterprise_positioning_matches_the_brief(client: TestClient) -> None:
+    soup = BeautifulSoup(client.get("/token-exchange").text, "html.parser")
+    assert [item.get_text(strip=True) for item in soup.select(".tm-benefits .tm-index")] == [
+        "01 / SECURE", "02 / INTELLIGENT", "03 / CHEAPER",
+    ]
+    assert "Secure. Intelligent. Cheaper." in soup.select_one("#choice-title").get_text(" ", strip=True)
+    status = soup.select_one('.tm-procurement a[href="/legal/soc2-readiness"]')
+    assert "Type II observation window" in status.get_text()
+    assert "SOC 2 readiness" not in soup.select_one(".tm-procurement").get_text()
+
+
+def test_soc2_observation_status_does_not_claim_an_issued_report(client: TestClient) -> None:
+    response = client.get("/legal/soc2-readiness")
+    assert response.status_code == 200
+    assert "Type II observation window is in progress" in response.text
+    assert "No SOC 2 report yet" in response.text
+    packet = client.get("/legal/soc2-readiness.json").json()
+    assert packet["status"] == "type_2_observation_window_in_progress"
+    assert packet["observation_window_status"] == "in_progress"
+    assert packet["soc2_type_1_report"] == "not_obtained"
+    assert packet["soc2_type_2_report"] == "not_obtained"
+    assert packet["target_report"]["current_target"] == "SOC 2 Type II"
+
+
+def test_enterprise_brief_is_the_approved_september_revision() -> None:
+    assert hashlib.sha256(public_routes._ENTERPRISE_BRIEF.read_bytes()).hexdigest() == (
+        "2af678f4675278dedea94b75f210bfb670c242fe5294f5c5ac6269d02dae00af"
+    )
+
+
 def test_original_brief_delivered_after_lead_acceptance(
     client: TestClient,
     sent_messages: list[EmailMessage],

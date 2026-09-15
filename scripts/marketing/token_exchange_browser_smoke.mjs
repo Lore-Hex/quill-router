@@ -24,8 +24,12 @@ try {
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${name}: horizontal overflow`);
     const textOverflow = await page.locator("main h1, main h2, main h3, main p, main button, main dt, main dd").evaluateAll(elements => elements.filter(el => el.scrollWidth > el.clientWidth + 1).map(el => el.textContent));
     assert.deepEqual(textOverflow, [], `${name}: text overflow`);
+    assert.deepEqual(await page.locator(".tm-benefits .tm-index").allTextContents(), ["01 / SECURE", "02 / INTELLIGENT", "03 / CHEAPER"]);
+    assert.match(await page.locator('.tm-procurement a[href="/legal/soc2-readiness"]').innerText(), /Type II observation window in progress/);
     await page.screenshot({ path: path.join(out, `${name}.png`), fullPage: true });
     await page.screenshot({ path: path.join(out, `${name}-hero.png`) });
+    await page.locator('.tm-section[aria-labelledby="choice-title"]').screenshot({ path: path.join(out, `${name}-benefits.png`) });
+    await page.locator('.tm-section[aria-labelledby="privacy-title"]').screenshot({ path: path.join(out, `${name}-privacy.png`) });
     await page.getByRole("link", { name: "Get the enterprise brief" }).click();
     await page.locator("#brief-email").fill("not-an-email");
     await page.getByRole("button", { name: "Download the brief" }).click();

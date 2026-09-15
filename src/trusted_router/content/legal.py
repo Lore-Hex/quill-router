@@ -403,13 +403,18 @@ def soc2_readiness_packet(settings: Settings) -> dict[str, Any]:
     return {
         "service": "TrustedRouter",
         "legal_entity": legal_entity(settings),
-        "status": "readiness_package_available_no_report_obtained",
+        "status": "type_2_observation_window_in_progress",
+        "observation_window_status": "in_progress",
         "soc2_type_1_report": "not_obtained",
         "soc2_type_2_report": "not_obtained",
-        "audit_claim": "No independent SOC 2 report is currently available.",
+        "audit_claim": (
+            "The SOC 2 Type II observation window is in progress. "
+            "No independent SOC 2 report is currently available."
+        ),
         "target_report": {
             "initial_target": "SOC 2 Type I",
-            "future_target": "SOC 2 Type II after an observation period",
+            "current_target": "SOC 2 Type II",
+            "future_target": "SOC 2 Type II report after observation and independent auditor review",
             "trust_services_categories": [
                 "Security",
                 "Availability",
@@ -439,12 +444,13 @@ def soc2_readiness_packet(settings: Settings) -> dict[str, Any]:
             "Management assertion signed for the audit date",
         ],
         "type_2_blockers": [
-            "Operating period evidence after Type I scope is approved",
+            "Complete operating-period evidence collection during the Type II observation window",
             "Recurring access reviews, vendor reviews, incident reviews, vulnerability evidence, and change evidence",
+            "Independent auditor review and issuance of the Type II report",
         ],
         "operating_model_note": (
-            "A solo-founder Type I readiness pass is feasible with strict automation and evidence templates. "
-            "Type II should use an evidence/compliance platform or equivalent workflow before the observation period."
+            "The Type II observation window is in progress. Maintain recurring control evidence "
+            "throughout the period and complete the independent auditor's review before claiming a report."
         ),
         "references": [
             {
@@ -453,7 +459,8 @@ def soc2_readiness_packet(settings: Settings) -> dict[str, Any]:
             }
         ],
         "agent_instruction": (
-            "Treat this as readiness documentation only. Do not report SOC 2 obtained, certified, "
+            "Report that the SOC 2 Type II observation window is in progress, with no report obtained yet. "
+            "Treat the published documents as readiness materials, not an audit report. Do not report SOC 2 obtained, certified, "
             "or audited until a CPA firm issues a SOC 2 report."
         ),
     }
