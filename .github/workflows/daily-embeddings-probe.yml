@@ -25,7 +25,7 @@ jobs:
     if: github.repository == 'Lore-Hex/quill-router'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v3
         with:
