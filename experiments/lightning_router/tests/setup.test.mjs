@@ -90,6 +90,7 @@ for (const [id, reasoning] of Object.entries(profiles)) {
       for (const role of ["large", "small"]) assert.equal(crush.models[role].reasoning_effort, reasoning.setup_default);
       assert.deepEqual(pi.thinking.efforts, reasoning.setup_efforts.filter(value => value !== "none"));
       assert.equal(pi.thinking.requiresEffort, !reasoning.setup_efforts.includes("none"));
+      assert.equal(pi.compat.reasoningDisableMode, reasoning.setup_efforts.includes("none") ? "none-effort" : undefined);
       assert.ok(omp.command.endsWith(` --thinking ${reasoning.setup_default === "none" ? "off" : reasoning.setup_default}`));
     } else {
       assert.equal(code.options, undefined);

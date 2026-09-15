@@ -38,6 +38,9 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "20"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
       - run: uv sync --frozen
       - run: uv run ruff check .
       - run: uv run mypy
@@ -46,6 +49,7 @@ jobs:
       - run: npm run build
       - run: git diff --exit-code -- web/app.js web/pages.js
       - run: npm test
+      - run: npm run test:omp
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
       - name: Verify standalone source export builds identically

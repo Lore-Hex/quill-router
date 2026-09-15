@@ -43,4 +43,4 @@ def test_catalog_includes_exact_reviewed_model_controls():
     profiles = {row["id"]: row["reasoning"] for row in catalog.current()}
     assert profiles[rows[0]["id"]]["setup_efforts"] == ["low", "high", "max"]
     assert profiles[rows[1]["id"]]["field"] == "output_config.effort"
-    assert profiles[rows[1]["id"]]["setup_efforts"] == []
+    assert profiles[rows[1]["id"]]["setup_efforts"] == ["low", "medium", "high", "xhigh", "max"]

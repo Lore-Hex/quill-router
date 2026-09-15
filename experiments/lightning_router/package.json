@@ -5,6 +5,7 @@
   "scripts": {
     "build": "esbuild frontend.js --bundle --minify --format=esm --outfile=web/app.js && esbuild pages.js --bundle --minify --format=esm --outfile=web/pages.js",
     "test": "node --test tests/*.test.mjs",
+    "test:omp": "bun test tests/setup-wire.test.ts",
     "test:browser": "playwright test"
   },
   "dependencies": {
@@ -12,6 +13,8 @@
   },
   "devDependencies": {
     "@ai-sdk/openai-compatible": "2.0.75",
+    "@oh-my-pi/pi-ai": "18.2.0",
+    "@oh-my-pi/pi-catalog": "18.2.0",
     "@playwright/test": "^1.62.1",
     "esbuild": "^0.25.0",
     "yaml": "2.9.1"

@@ -89,7 +89,8 @@ export function setupFor(agent, model, apiBase, providerOrder = []) {
       (context ? `\n        contextWindow: ${context}` : "") + (output ? `\n        maxTokens: ${output}` : "") +
       (explicit ? `\n        reasoning: true\n        thinking:\n          mode: effort\n          efforts: [${efforts.filter(value => value !== "none").join(", ")}]\n          requiresEffort: ${!efforts.includes("none")}` +
         (effort !== "none" ? `\n          defaultLevel: ${effort}` : "") +
-        "\n        compat:\n          supportsReasoningEffort: true\n          thinkingFormat: openai"
+        "\n        compat:\n          supportsReasoningEffort: true\n          thinkingFormat: openai" +
+        (efforts.includes("none") ? "\n          reasoningDisableMode: none-effort" : "")
         : `\n        reasoning: ${canReason}\n        compat:\n          supportsReasoningParams: false`) +
       (order.length ? `\n          extraBody: ${JSON.stringify(routing)}` : ""),
     command: `omp --model '${ref}'` + (explicit ? ` --thinking ${effort === "none" ? "off" : effort}` : ""),
