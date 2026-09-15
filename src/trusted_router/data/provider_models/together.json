@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Together AI routes that are live ahead of the shared OpenRouter snapshot. Verified against https://api.together.xyz/v1/models on 2026-06-22.",
   "provider": "together",
   "source": "https://api.together.xyz/v1/endpoints?type=serverless",
-  "generated_at": "2026-09-14T23:02:10Z",
+  "generated_at": "2026-09-15T07:21:58Z",
   "model_count": 23,
   "models": [
     {
@@ -107,7 +107,9 @@
       "output_token_price_per_m": 970000,
       "retirement_at": "2026-09-14T00:00:00Z",
       "replacement_model_id": "z-ai/glm-5.3-flash",
-      "missing_since": "2026-09-14"
+      "missing_since": "2026-09-14",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Meta Llama 3.3 70B Instruct Turbo",
@@ -311,7 +313,9 @@
       "output_token_price_per_m": 200000,
       "retirement_at": "2026-09-14T00:00:00Z",
       "replacement_model_id": "qwen/qwen3.5-9b",
-      "missing_since": "2026-09-14"
+      "missing_since": "2026-09-14",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Pearl-ai Gemma-4-31B-it-pearl",

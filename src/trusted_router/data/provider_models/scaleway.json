@@ -257,7 +257,7 @@
   ],
   "source": "https://api.scaleway.ai/v1/models",
   "pricing_source": "https://www.scaleway.com/en/pricing/model-as-a-service/",
-  "generated_at": "2026-09-14T22:20:16Z",
+  "generated_at": "2026-09-15T07:21:58Z",
   "price_scale": "microdollars_per_million",
   "model_count": 12
 }
