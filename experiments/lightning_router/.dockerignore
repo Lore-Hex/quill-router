@@ -5,7 +5,9 @@
 !package.json
 !package-lock.json
 !frontend.js
+!pages.js
 !setup.mjs
+!session.mjs
 !lightning_router/
 !lightning_router/**
 !web/

@@ -1,7 +1,20 @@
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 from lightning_router.app import create_app
 from lightning_router.catalog import limits, pricing, public_price
+
+
+def test_release_includes_both_frontend_entrypoints_and_shared_dependencies():
+    root = Path(__file__).resolve().parents[1]
+    allowlist = (root / ".dockerignore").read_text().splitlines()
+    for name in ("frontend.js", "pages.js", "setup.mjs", "session.mjs"):
+        assert "!" + name in allowlist
+        assert (root / name).is_file()
+    dockerfile = (root / "Dockerfile").read_text()
+    assert "/build/web/app.js ./web/app.js" in dockerfile
+    assert "/build/web/pages.js ./web/pages.js" in dockerfile
 
 
 @pytest.mark.parametrize("path,title", [("/usage", "Usage"), ("/pricing", "Pricing"), ("/terms", "Terms of Service"), ("/privacy", "Privacy Policy")])
