@@ -8,6 +8,9 @@
   </div>
   <div class="panel-body">
     <p><a href="/providers">All providers</a></p>
+    {% if provider.profile and provider.profile.description %}
+    <p>{{ provider.profile.description }}</p>
+    {% endif %}
     {% if provider.id == 'trustedrouter' %}
     <p><strong>Gateway only.</strong> TrustedRouter's attestation covers the router. Compare <a href="/providers">upstream providers</a> for model inference privacy, or <a href="/trust">verify the gateway</a>.</p>
     {% else %}
@@ -16,6 +19,11 @@
     <table>
       <tbody>
         <tr><th>Provider</th><td>{{ provider.name }}</td></tr>
+        {% if provider.profile %}
+        {% for label, value in provider.profile.company_details %}
+        <tr><th>{{ label }}</th><td>{{ value }}</td></tr>
+        {% endfor %}
+        {% endif %}
         <tr><th>Routing status</th><td><span class="pill {% if provider.routing_status == 'active' %}good{% endif %}">{{ provider.routing_status_label }}</span></td></tr>
         {% if provider.homepage_url %}<tr><th>Provider website</th><td><a href="{{ provider.homepage_url }}" rel="nofollow noopener">{{ provider.homepage_url }}</a></td></tr>{% endif %}
         <tr><th>Models</th><td>{{ provider.served_model_count }} public model{{ '' if provider.served_model_count == 1 else 's' }}</td></tr>
@@ -27,6 +35,16 @@
         <tr><th>Policy note</th><td>{{ provider.policy }}{% if provider.policy_url %}<br><a href="{{ provider.policy_url }}">Policy source</a>{% endif %}</td></tr>
       </tbody>
     </table>
+    {% if provider.profile and provider.profile.resources %}
+    <details>
+      <summary>Documentation and policy sources</summary>
+      <ul>
+        {% for label, url in provider.profile.resources %}
+        <li><a href="{{ url }}" rel="nofollow noopener">{{ label }}</a></li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% endif %}
   </div>
 </section>
 

@@ -27,15 +27,22 @@ from trusted_router.routes.public import INDEXNOW_KEY
 
 
 @pytest.fixture
-def isolated_model_comparison_cache() -> Iterator[None]:
-    from trusted_router.dashboard import _model_comparison_pairs
+def isolated_comparison_catalog() -> Iterator[None]:
+    from trusted_router.dashboard import (
+        _model_comparison_index,
+        _model_comparison_neighbor_index,
+        _model_comparison_pairs,
+    )
 
-    # Temporary catalog entries must not survive through cached comparison rows.
-    _model_comparison_pairs.cache_clear()
+    # Alias tests temporarily alter MODELS; derived indexes must not outlive it.
+    caches = (_model_comparison_pairs, _model_comparison_index, _model_comparison_neighbor_index)
+    for cache in caches:
+        cache.cache_clear()
     try:
         yield
     finally:
-        _model_comparison_pairs.cache_clear()
+        for cache in caches:
+            cache.cache_clear()
 
 
 def test_robots_and_sitemap_are_public(client: TestClient) -> None:
@@ -1699,7 +1706,7 @@ def test_retired_model_pages_redirect_to_current_catalog_entries(client: TestCli
         assert response.headers["location"] == target
 
 
-@pytest.mark.usefixtures("isolated_model_comparison_cache")
+@pytest.mark.usefixtures("isolated_comparison_catalog")
 @pytest.mark.parametrize("method", ["GET", "HEAD"])
 @pytest.mark.parametrize(
     ("requested", "canonical"),
@@ -1735,9 +1742,9 @@ def test_model_aliases_redirect_once_to_existing_pages(
     assert target.status_code == 200
 
 
-@pytest.mark.usefixtures("isolated_model_comparison_cache")
 @pytest.mark.parametrize("method", ["GET", "HEAD"])
 @pytest.mark.parametrize("suffix", ["", "/pricing"])
+@pytest.mark.usefixtures("isolated_comparison_catalog")
 def test_model_alias_does_not_redirect_to_a_missing_target(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, method: str, suffix: str,
 ) -> None:
