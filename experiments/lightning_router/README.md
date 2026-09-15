@@ -1,5 +1,17 @@
 # LightningRouter funding experiment
 
+[Source and community support](https://github.com/Lore-Hex/lightning-router) |
+[Issues](https://github.com/Lore-Hex/lightning-router/issues) |
+[Discord](https://discord.gg/FREVts9KAG) |
+[@lightningrouter](https://x.com/lightningrouter) |
+[@trustedrouter](https://x.com/trustedrouter)
+
+Source-available under [Business Source License 1.1](LICENSE), not an
+OSI-approved open-source license. Lore Hex Corp accepts support questions and
+bug reports, not code contributions. Never post keys, invoices or payment
+details publicly. Payment support: support@trustedrouter.com.
+Security reports: security@trustedrouter.com.
+
 `https://lightningrouter.ai` is the public funding website. Production wiring uses
 a synced Bitcoin/LND node, invoice-only credentials, private verified TLS,
 dedicated PostgreSQL storage, and the TrustedRouter USD credit bridge. Check

@@ -1,0 +1,50 @@
+name: Sync tested LightningRouter source
+
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-source
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'Lore-Hex/lightning-router'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: public
+      - uses: actions/checkout@v4
+        with:
+          repository: Lore-Hex/quill-router
+          ref: main
+          path: upstream
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select tested source without rolling back
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sha=$(gh api 'repos/Lore-Hex/quill-router/actions/workflows/lightning-experiment.yml/runs?branch=main&event=push&status=success&per_page=1' --jq '.workflow_runs[0].head_sha')
+          [[ "$sha" =~ ^[a-f0-9]{40}$ ]]
+          git -C upstream merge-base --is-ancestor "$sha" origin/main
+          previous=$(jq -r .source_commit public/SOURCE.json)
+          if [ "$previous" = "$sha" ]; then exit 0; fi
+          if git -C upstream merge-base --is-ancestor "$sha" "$previous"; then exit 0; fi
+          git -C upstream merge-base --is-ancestor "$previous" "$sha"
+          git -C upstream checkout --detach "$sha"
+          python upstream/scripts/lightning/export_repository.py --ref "$sha" --output "$RUNNER_TEMP/lightning-public"
+          rsync -a --delete --exclude='.git/' "$RUNNER_TEMP/lightning-public/" public/
+          git -C public config user.name 'github-actions[bot]'
+          git -C public config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C public add --all
+          git -C public commit -m "Publish tested LightningRouter source $sha"
+          git -C public push origin HEAD:main

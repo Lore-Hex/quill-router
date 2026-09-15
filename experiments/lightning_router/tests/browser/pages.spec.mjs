@@ -89,6 +89,15 @@ for (const width of [320, 375, 768, 1440]) {
       if (path === "/") await expect(page.locator("#qr")).toBeVisible();
       if (path === "/pricing") await expect(page.locator("#price-rows tr")).toHaveCount(3);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      const community = page.getByRole("navigation", {name: "Community", exact: true});
+      await expect(community.getByRole("link")).toHaveCount(5);
+      for (const link of await community.getByRole("link").all()) {
+        const bounds = await link.boundingBox();
+        expect(bounds.height).toBeGreaterThanOrEqual(40);
+        expect(bounds.x).toBeGreaterThanOrEqual(0);
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+        await expect(link).toHaveAttribute("rel", "noopener noreferrer");
+      }
       await page.screenshot({path: `test-results/pages-${path.slice(1) || "home"}-${width}.png`, fullPage: true});
     }
   });

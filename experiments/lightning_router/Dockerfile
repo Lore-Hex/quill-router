@@ -12,6 +12,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 COPY lightning_router ./lightning_router
+COPY LICENSE THIRD_PARTY_NOTICES ./
 COPY web ./web
 COPY --from=frontend /build/web/app.js ./web/app.js
 COPY --from=frontend /build/web/pages.js ./web/pages.js
