@@ -13,6 +13,9 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class ProviderBrand:
     homepage_url: str
+    description: str = ""
+    company_details: tuple[tuple[str, str], ...] = ()
+    resources: tuple[tuple[str, str], ...] = ()
 
 
 PROVIDER_BRANDS: dict[str, ProviderBrand] = {
@@ -99,7 +102,38 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "siliconflow": ProviderBrand("https://www.siliconflow.com/"),
     "streamlake": ProviderBrand("https://www.streamlake.ai/"),
     "stepfun": ProviderBrand("https://www.stepfun.com/"),
-    "telnyx": ProviderBrand("https://telnyx.com/products/inference"),
+    "telnyx": ProviderBrand(
+        "https://telnyx.com/products/inference",
+        description=(
+            "Telnyx Inference serves OpenAI-compatible chat completions on "
+            "Telnyx-owned GPUs. Marketplace routes include Telnyx-hosted models "
+            "only, not its third-party BYOK passthrough catalog."
+        ),
+        # Company information supplied in Telnyx's marketplace application.
+        # Operational contacts and personal phone numbers are not public metadata.
+        company_details=(
+            ("Legal entity", "Telnyx LLC; Illinois, USA limited liability company"),
+            ("Headquarters", "Austin, Texas, USA"),
+            ("Registered and operating address", "600 Congress Ave, Floor 14, Austin, TX 78701, USA"),
+            ("DUNS", "966115342"),
+            ("EIN", "27-0273220"),
+            ("CEO", "David Casem"),
+            ("Serving regions", "USA, EU, Australia and UAE; availability varies by model. Region availability alone is not a residency guarantee."),
+            ("API", "OpenAI-compatible chat completions, streaming, tools, structured output and reasoning content on supported models."),
+            ("Catalog", "Authenticated native OpenAI catalog; not yet a Provider Reliability Contract v2 declaration."),
+        ),
+        resources=(
+            ("API catalog", "https://api.telnyx.com/v2/ai/openai/models"),
+            ("Inference pricing", "https://telnyx.com/pricing/inference-api"),
+            ("Machine-readable pricing", "https://api.telnyx.com/v2/pricing/products/inference"),
+            ("Data locality", "https://developers.telnyx.com/docs/account-setup/data-locality"),
+            ("Privacy policy", "https://telnyx.com/privacy-policy"),
+            ("Terms of service", "https://telnyx.com/terms-and-conditions-of-service"),
+            ("Data processing addendum", "https://telnyx.com/legal/data-processing-addendum"),
+            ("Subprocessors", "https://telnyx.com/legal/subprocessors"),
+            ("Trust center and compliance reports", "https://trust.telnyx.com/"),
+        ),
+    ),
     "tencent": ProviderBrand("https://www.tencentcloud.com/products/tokenhub"),
     "thinkingmachines": ProviderBrand("https://thinkingmachines.ai/"),
     "tinfoil": ProviderBrand("https://tinfoil.sh/"),
