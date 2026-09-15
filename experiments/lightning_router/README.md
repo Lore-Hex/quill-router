@@ -90,6 +90,27 @@ References: [OpenCode](https://opencode.ai/docs/models/#configure-models),
 [Crush](https://github.com/charmbracelet/crush/blob/main/internal/agent/coordinator.go),
 [OMP](https://github.com/can1357/oh-my-pi/blob/main/docs/models.md).
 
+### Provider order
+
+The CLI setup tabs accept an optional JSON array of provider slugs, for example
+`["deepinfra", "novita"]`. Each selected model keeps its own preference within
+the page; changing it does not mutate the funding session or create an invoice.
+Blank input or `[]` leaves routing unchanged. Malformed arrays, duplicates, and
+oversized values block configuration copying rather than retaining a stale setup.
+
+Generated requests contain `"provider": {"order": ["deepinfra", "novita"]}`.
+This is a preference, not an allowlist: other eligible providers remain available
+as fallbacks, and the requested model does not change. It makes no US residency
+or jurisdiction guarantee. No backend change is needed.
+
+- OpenCode: model `options.provider.order`, passed through the OpenAI-compatible SDK.
+- Crush: provider `extra_body.provider.order` ([source](https://github.com/charmbracelet/crush/blob/main/internal/config/config.go)).
+- OMP: model `compat.extraBody.provider.order`, not the host-gated `openRouterRouting` setting ([reference](https://github.com/can1357/oh-my-pi/blob/main/docs/models.md)).
+
+Use current clients with those documented extension fields. Tests verify config
+parsing for all three clients and actual SDK request serialization for OpenCode,
+including coexistence with reasoning settings. They do not call live providers.
+
 **BTC is a funding method, not a billing currency.** The invoice freezes a
 BTC/USD quote for up to 15 minutes. On verified settlement, the actual received
 amount, including overpayment, converts once to integer USD microdollars. Round
