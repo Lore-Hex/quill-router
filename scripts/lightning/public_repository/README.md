@@ -39,6 +39,8 @@ release pipeline. This repository automatically mirrors the latest successful
 LightningRouter CI run on main. It is not a second deployment pipeline.
 SOURCE.json records the upstream commit and a SHA-256 hash for every published
 file. A passing CI commit is not by itself proof of production deployment.
+Changes to mirrored GitHub workflow definitions require a maintainer publication
+with workflow permission; the hourly sync cannot grant itself that permission.
 Only committed, allowlisted source is exported. Credentials, databases,
 wallets, node data and backups are never part of the export.
 

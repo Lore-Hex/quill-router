@@ -3,11 +3,19 @@
 import hashlib
 import json
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
 
 from scripts.lightning.export_repository import APP, TEMPLATES, export
+
+
+def test_public_lint_rules_match_release_source() -> None:
+    root = Path(__file__).resolve().parents[1]
+    source = tomllib.loads((root / "pyproject.toml").read_text())["tool"]["ruff"]
+    mirror = tomllib.loads((root / TEMPLATES / "ruff.toml").read_text())
+    assert source == mirror
 
 
 def run(root: Path, *args: str) -> None:

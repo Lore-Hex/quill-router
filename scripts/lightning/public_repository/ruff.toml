@@ -1,0 +1,7 @@
+# Keep the public mirror aligned with quill-router's lint configuration.
+line-length = 100
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "I", "UP", "B", "S"]
+ignore = ["S101", "B008", "E501"]
