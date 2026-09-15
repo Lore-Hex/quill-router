@@ -53,6 +53,11 @@ class FakeCredits:
         with self.lock:
             return self.balances[account_id]
 
+    def usage(self, raw_key):
+        self.resolve(raw_key, new=False)
+        return {"usage_usd": "1.234567", "byok_usage_usd": "0.000000", "reserved_usd": "0.000000",
+                "limit_usd": None, "limit_remaining_usd": None}
+
     def credit(self, account_id, payment_hash, amount_microdollars):
         with self.lock:
             if self.fail_before_commit:

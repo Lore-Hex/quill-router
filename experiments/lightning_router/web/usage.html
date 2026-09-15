@@ -1,0 +1,15 @@
+<div class="section-heading"><h1>Usage</h1><button id="refresh-usage" class="icon-button" aria-label="Refresh usage" title="Refresh usage"><i data-lucide="refresh-cw"></i></button></div>
+<form id="usage-key-form"><label for="usage-key">API key</label><div class="input-row"><input id="usage-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-tr-v1-..." maxlength="60"><button class="icon-button" aria-label="View usage" title="View usage"><i data-lucide="arrow-right"></i></button></div></form>
+<p id="usage-status" role="status" class="muted">Enter a funded key to view your balance and spending.</p>
+<p class="error" id="page-error" role="alert"></p>
+<section id="usage-data" hidden aria-label="Key usage">
+  <dl class="metrics"><div><dt>Available USD credits</dt><dd id="usage-balance"></dd></div><div><dt>Lifetime API spend</dt><dd id="usage-total"></dd></div></dl>
+  <table class="data-table"><caption>Spending and limits for this API key</caption><tbody>
+    <tr><th scope="row">Reserved for in-flight requests</th><td id="usage-reserved"></td></tr>
+    <tr><th scope="row">Lifetime BYOK spend</th><td id="usage-byok"></td></tr>
+    <tr><th scope="row">Key spending limit</th><td id="usage-limit"></td></tr>
+    <tr><th scope="row">Remaining key allowance</th><td id="usage-remaining"></td></tr>
+  </tbody></table>
+  <p class="muted small">Spending belongs to this key. Available credits are shared with other keys in the same workspace. In-flight requests can reserve credits before final settlement.</p>
+  <a class="button primary" href="/">Add credits</a>
+</section>

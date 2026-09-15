@@ -17,7 +17,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from .catalog import limits, pricing
 from .errors import FundingReviewRequired
+from .pages import public_page
 from .rates import Rates
 from .service import Funding
 
@@ -61,8 +63,7 @@ class Catalog:
                     continue
                 models.append({
                     "id": model_id, "name": str(item.get("name") or model_id)[:180],
-                    "context": item.get("context_length") or 32768,
-                    "output": (item.get("top_provider") or {}).get("max_completion_tokens") or 4096,
+                    **limits(item), "pricing": pricing(item),
                     "reasoning_effort": "reasoning_effort" in item.get("supported_parameters", []),
                 })
             self.models = sorted(models, key=lambda row: row["name"].lower())
@@ -177,6 +178,22 @@ def create_app(service: Funding | None = None, *, rates: Rates | None = None,
         return JSONResponse({"status": "degraded" if degraded else "up", "payments_ready": ready,
                              "inference_configured": service is not None, "delivery": delivery}, status_code=503 if degraded else 200)
 
+    @app.get("/usage")
+    def usage_page() -> Any:
+        return public_page("usage")
+
+    @app.get("/pricing")
+    def pricing_page() -> Any:
+        return public_page("pricing")
+
+    @app.get("/terms")
+    def terms_page() -> Any:
+        return public_page("terms")
+
+    @app.get("/privacy")
+    def privacy_page() -> Any:
+        return public_page("privacy")
+
     @app.get("/api/config")
     def config() -> dict[str, Any]:
         return {"payments_ready": payments_ready(), "network": network,
@@ -209,6 +226,19 @@ def create_app(service: Funding | None = None, *, rates: Rates | None = None,
         except (ValueError, KeyError):
             return JSONResponse({"error": "invalid_api_key"}, status_code=401)
         return balance
+
+    @app.get("/api/usage")
+    def usage(request: Request) -> Any:
+        if service is None:
+            return unavailable()
+        try:
+            raw, _ = key(request)
+        except ValueError:
+            return JSONResponse({"error": "invalid_api_key"}, status_code=401)
+        try:
+            return service.credits.usage(raw)
+        except KeyError:
+            return JSONResponse({"error": "invalid_api_key"}, status_code=401)
 
     @app.post("/api/invoices")
     def create(request: Request, body: CreateInvoice) -> Any:

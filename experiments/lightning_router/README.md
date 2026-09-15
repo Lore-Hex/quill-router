@@ -11,6 +11,36 @@ backend; a real paid-invoice test must be recorded separately.
 
 ## Product behavior
 
+The homepage introduces key-only funding and links to `/usage`, `/pricing`,
+`/terms`, and `/privacy`. A saved funded key's balance is read before refreshing
+its invoice, and a balance refresh control is available independently.
+The usage page reads lifetime prepaid/BYOK spending, reservations and key limits
+through the existing key-scoped `/v1/key` introspection endpoint. It does not
+grant management access or list other workspace keys' requests. Reading usage
+never creates a Lightning invoice or provisions an account. Unknown totals are
+shown as unavailable rather than zero. No synthetic daily charts are generated
+from lifetime counters.
+
+Pricing uses Decimal conversion of the public catalog's per-token prices,
+including cache, request and minimum-charge fields where published. The table
+labels rates as "from" because a selected endpoint or tier can cost more. Prices
+already include TR's token markup; the separate 10% Lightning FX buffer remains
+disclosed at checkout and on the pricing page. Search renders 100 rows at a time.
+
+Model output capacity is distinct from the client's default output budget.
+The public catalog currently publishes null maximum output values. Reviewed
+DeepSeek metadata fills V4.1 Flash and the current V4 Pro IDs with a 393,216-token
+maximum and a 65,536-token thinking-mode default, as documented on
+https://api-docs.deepseek.com/api/create-chat-completion/ (reviewed 2026-09-15).
+Crush receives `default_max_tokens=65536`; OpenCode and OMP receive the documented
+model capacity. Other unknown limits are omitted from snippets, not mislabeled
+as 4,096. Explicit catalog limits take precedence and are clamped to context.
+Provider endpoints may impose narrower limits than the model's native service.
+
+The local legal pages adapt existing Lore Hex Corp service terms and disclose
+Lightning-specific key recovery, FX conversion, payment metadata and provider
+privacy boundaries. They are not an external legal compliance certification.
+
 White page, invoice QR first, USD amount with approximate BTC beneath, optional
 existing key, USD balance, model selector, then OpenCode / Crush / OMP setup tabs.
 Changing the amount hides the old QR until cancellation and replacement finish.

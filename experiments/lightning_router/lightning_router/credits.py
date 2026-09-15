@@ -17,6 +17,10 @@ class Credits(Protocol):
         """Read available integer microdollars from the authoritative USD ledger."""
         ...
 
+    def usage(self, raw_key: str) -> dict[str, str | None]:
+        """Read only this credential's spend and limits, never workspace activity."""
+        ...
+
     def credit(self, account_id: str, payment_hash: str, amount_microdollars: int) -> None:
         """Commit a USD deposit exactly once under lightning:<payment_hash>.
 

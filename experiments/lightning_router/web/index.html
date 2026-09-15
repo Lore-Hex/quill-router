@@ -10,10 +10,10 @@
   <script type="module" src="/assets/app.js"></script>
 </head>
 <body>
-  <header><a href="/" class="brand">LightningRouter</a><span id="connection">Connecting</span></header>
+  <header><a href="/" class="brand">LightningRouter</a><nav aria-label="Main"><a href="/usage">Usage</a><a href="/pricing">Pricing</a></nav><span id="connection">Connecting</span></header>
   <main>
     <section class="funding" aria-label="Fund your API key">
-      <h1>Fund your API key</h1>
+      <div class="intro"><h1>No account needed.</h1><p>Private inference.<br>Load BTC and you're good to go!</p></div>
       <div class="qr-frame" aria-live="polite">
         <img id="qr" width="280" height="280" alt="Lightning payment invoice" hidden>
         <div id="qr-empty">Loading payment status</div>
@@ -29,6 +29,7 @@
         <p id="btc-amount" class="muted">BTC estimate unavailable</p>
         <p id="fx-terms" class="muted small" aria-live="polite"></p>
         <p class="muted small">Payment converts once to USD credits at the invoice rate. Your balance stays in USD.</p>
+        <p class="muted small">By paying, you agree to the <a href="/terms">Terms of Service</a> and <a href="/privacy">Privacy Policy</a>.</p>
       </form>
       <form id="key-form">
         <label for="existing-key">Existing API key <span class="muted">(optional)</span></label>
@@ -36,13 +37,14 @@
       </form>
       <p class="error" id="error" role="alert"></p>
       <section id="account" aria-label="Your account" hidden>
-        <div class="balance-line"><div><span class="muted">Available USD credits</span><strong id="balance-usd"></strong></div><button id="sign-out" class="icon-button" aria-label="Sign out" title="Sign out"><i data-lucide="log-out"></i></button></div>
+        <div class="balance-line"><div><span class="muted">Available USD credits</span><strong id="balance-usd" aria-live="polite"></strong><a href="/usage">View usage</a></div><div class="input-row"><button id="refresh-balance" class="icon-button" aria-label="Refresh balance" title="Refresh balance"><i data-lucide="refresh-cw"></i></button><button id="sign-out" class="icon-button" aria-label="Sign out" title="Sign out"><i data-lucide="log-out"></i></button></div></div>
         <div id="key-reveal" hidden><label for="your-key">Your API key</label><div class="input-row"><input id="your-key" readonly type="password" autocomplete="off"><button id="show-key" class="icon-button" title="Show key" aria-label="Show key"><i data-lucide="eye"></i></button><button id="copy-key" class="icon-button" title="Copy API key" aria-label="Copy API key"><i data-lucide="copy"></i></button></div><p class="muted small">Keep your key. It is the only way to access your balance. This tab remembers it until you sign out.</p></div>
       </section>
     </section>
     <section class="setup" aria-labelledby="setup-title">
       <div class="section-heading"><h2 id="setup-title">Use your key</h2><span id="model-count" class="muted"></span></div>
       <label for="model">Model</label><select id="model" disabled><option>Loading models</option></select>
+      <p id="model-limits" class="muted small"></p>
       <div class="reasoning-field"><label for="reasoning-effort">Reasoning effort</label><select id="reasoning-effort" disabled><option value="default">Default</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
       <div class="tabs" role="tablist" aria-label="Coding agent"><button role="tab" id="tab-opencode" aria-controls="setup-panel" aria-selected="true" data-agent="opencode">OpenCode</button><button role="tab" id="tab-crush" aria-controls="setup-panel" aria-selected="false" tabindex="-1" data-agent="crush">Crush</button><button role="tab" id="tab-omp" aria-controls="setup-panel" aria-selected="false" tabindex="-1" data-agent="omp">OMP</button></div>
       <div id="setup-panel" role="tabpanel" aria-labelledby="tab-opencode">
@@ -56,7 +58,7 @@
       <p id="api-readiness" class="muted small">API activation is pending. These are setup previews, not a live inference endpoint.</p>
     </section>
   </main>
-  <footer>LightningRouter <span>Bitcoin over Lightning</span></footer>
+  <footer><span>LightningRouter by Lore Hex Corp</span><nav aria-label="Footer"><a href="/terms">Terms of Service</a><a href="/privacy">Privacy Policy</a><a href="https://trust.trustedrouter.com">Verify trust</a></nav></footer>
   <div id="toast" role="status" hidden>Copied</div>
 </body>
 </html>

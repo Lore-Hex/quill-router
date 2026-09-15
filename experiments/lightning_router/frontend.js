@@ -1,9 +1,8 @@
 import { createIcons, ArrowRight, Copy, Eye, LogOut, RefreshCw } from "lucide";
 import { centsFromText, setupFor } from "./setup.mjs";
+import { KEY, SESSION, savedSession } from "./session.mjs";
 
 const $ = (id) => document.getElementById(id);
-const KEY = /^sk-tr-v1-[A-Za-z0-9_-]{43}$/;
-const SESSION = "lightningrouter-usd-session-v1";
 const icons = () => createIcons({ icons: { ArrowRight, Copy, Eye, LogOut, RefreshCw } });
 let state = null;
 let config = null;
@@ -55,7 +54,9 @@ async function exclusive(action) {
   try { await action(); } catch (error) { message(error.message || "Request failed. Please retry."); }
   finally {
     busy = false;
-    for (const id of ["use-key", "update-invoice", "sign-out"]) $(id).disabled = !config?.payments_ready;
+    $("use-key").disabled = false;
+    $("sign-out").disabled = false;
+    $("update-invoice").disabled = !config?.payments_ready;
     $("amount").disabled = false;
     $("existing-key").disabled = false;
     schedulePoll();
@@ -74,6 +75,9 @@ function renderSetup() {
   $("command-code").textContent = setup.command;
   $("agent-docs").href = setup.docs;
   $("setup-panel").setAttribute("aria-labelledby", "tab-" + agent);
+  $("model-limits").textContent = [model.context ? `${model.context.toLocaleString()} context` : "Context not published",
+    model.output ? `${model.output.toLocaleString()} max output` : "Output limit not published",
+    model.default_output ? `${model.default_output.toLocaleString()} default output budget` : ""].filter(Boolean).join(" · ");
 }
 function renderAccount(balance) {
   $("account").hidden = false;
@@ -257,6 +261,7 @@ $("sign-out").addEventListener("click", () => exclusive(async () => {
 $("copy-env").addEventListener("click", () => copy($("env-code").textContent));
 $("copy-config").addEventListener("click", () => { if (setup) copy(setup.config); });
 $("copy-command").addEventListener("click", () => { if (setup) copy(setup.command); });
+$("refresh-balance").addEventListener("click", () => exclusive(showBalance));
 $("model").addEventListener("change", renderSetup);
 $("reasoning-effort").addEventListener("change", renderSetup);
 for (const tab of document.querySelectorAll("[role=tab]")) {
@@ -282,15 +287,14 @@ async function start() {
   try {
     config = await api("/api/config", { key: null });
     $("connection").textContent = config.network === "regtest" ? "Test network" : config.payments_ready ? "Lightning" : "Payments not live yet";
-    for (const id of ["use-key", "update-invoice"]) $(id).disabled = !config.payments_ready;
+    $("use-key").disabled = false;
+    $("update-invoice").disabled = !config.payments_ready;
     $("api-readiness").hidden = config.inference_configured;
-    const saved = sessionStorage.getItem(SESSION);
+    const saved = savedSession();
     if (saved) {
-      const parsed = JSON.parse(saved);
-      if (KEY.test(parsed.key) && /^[a-f0-9]{32}$/.test(parsed.requestId)) {
-        state = parsed;
-        $("amount").value = `${Math.floor(state.cents / 100)}.${String(state.cents % 100).padStart(2, "0")}`;
-      }
+      state = saved;
+      $("amount").value = `${Math.floor(state.cents / 100)}.${String(state.cents % 100).padStart(2, "0")}`;
+      if (!state.isNew || state.reveal) await showBalance();
     }
     if (config.payments_ready) await exclusive(async () => {
       if (state?.invoice) await showInvoice(await api(`/api/invoices/${state.invoice.id}/refresh`, { body: {} }));
@@ -306,7 +310,8 @@ async function start() {
     const result = await api("/api/models", { key: null });
     models = result.data;
     $("model").replaceChildren(...models.map((model) => new Option(model.name, model.id)));
-    const preferred = models.find((model) => model.id.includes("deepseek") && model.id.includes("flash"));
+    const requested = new URLSearchParams(location.search).get("model");
+    const preferred = models.find(model => model.id === requested) || models.find((model) => model.id.includes("deepseek") && model.id.includes("flash"));
     if (preferred) $("model").value = preferred.id;
     $("model").disabled = !models.length;
     $("model-count").textContent = `${models.length} models`;
