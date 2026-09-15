@@ -199,6 +199,7 @@ def test_internal_surface_route_inventory_matches_capability_audit() -> None:
         ("POST", "/internal/lightning/resolve"),
         ("POST", "/internal/lightning/balance"),
         ("POST", "/internal/lightning/credit"),
+        ("POST", "/internal/lightning/health"),
         ("GET", "/internal/synthetic/health"),
         ("POST", "/internal/synthetic/samples"),
         ("POST", "/internal/synthetic/benchmark"),

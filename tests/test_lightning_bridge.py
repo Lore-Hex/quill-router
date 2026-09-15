@@ -54,6 +54,24 @@ def test_funding_token_cannot_reuse_gateway_token() -> None:
         Settings(environment="test", lightning_funding_token=TOKEN, internal_gateway_token=TOKEN)
 
 
+def test_readiness_requires_dedicated_token_and_does_not_create_account(monkeypatch) -> None:
+    from trusted_router.storage import InMemoryStore
+
+    reads: list[str] = []
+
+    def get_workspace(_self, workspace_id: str):
+        reads.append(workspace_id)
+        return None
+
+    monkeypatch.setattr(InMemoryStore, "get_workspace", get_workspace)
+    client = client_for()
+    assert client.post("/internal/lightning/health", headers={"Authorization": "Bearer gateway-token"}).status_code == 401
+    assert reads == []
+    assert client.post("/internal/lightning/health", headers={"Authorization": "Bearer " + TOKEN}).json() == {"ready": True}
+    assert reads == ["ws_lightning_readiness"]
+    assert client_for("").post("/internal/lightning/health").status_code == 403
+
+
 def test_postgres_rejects_noncanonical_lightning_event_before_sql() -> None:
     from datetime import UTC, datetime
     from unittest.mock import Mock

@@ -41,6 +41,12 @@ Authority = Annotated[None, Depends(funding_authority)]
 
 
 def register(router: APIRouter) -> None:
+    @router.post("/internal/lightning/health")
+    def health(_authority: Authority) -> dict[str, bool]:
+        # Complete indexed key read only; never create an account or credit.
+        STORE.get_workspace("ws_lightning_readiness")
+        return {"ready": True}
+
     @router.post("/internal/lightning/resolve")
     def resolve(body: Resolve, _authority: Authority) -> dict[str, str]:
         try:

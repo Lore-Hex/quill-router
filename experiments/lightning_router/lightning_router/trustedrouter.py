@@ -39,6 +39,10 @@ class TrustedRouterCredits:
             raise ValueError("Invalid funding account")
         return value
 
+    def health(self) -> None:
+        if self._request("health", {}).get("ready") is not True:
+            raise ValueError("Funding authority is not ready")
+
     def balance(self, account_id: str) -> int:
         value = self._request("balance", {"account_id": account_id}).get("available_microdollars")
         if type(value) is not int or value < 0:
