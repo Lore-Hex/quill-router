@@ -191,6 +191,10 @@ def create_app(service: Funding | None = None, *, rates: Rates | None = None,
     def terms_page() -> Any:
         return public_page("terms")
 
+    @app.get("/docs")
+    def docs_page() -> Any:
+        return public_page("docs")
+
     @app.get("/privacy")
     def privacy_page() -> Any:
         return public_page("privacy")

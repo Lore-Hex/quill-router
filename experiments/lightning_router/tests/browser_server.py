@@ -11,7 +11,8 @@ from lightning_router.credentials import Credentials
 from lightning_router.rates import Rate
 from lightning_router.reasoning import reasoning_profile
 from lightning_router.service import Funding
-from lightning_router.store import Store
+from lightning_router.store import Store, limits
+from sqlalchemy import delete
 
 from tests.conftest import FakeCredits, FakeLnd, FakeRates
 
@@ -35,6 +36,15 @@ class Catalog:
 
 
 app = create_app(funding, rates=funding.rates, catalog=Catalog(), network="regtest", start_worker=False)
+
+
+@app.post("/_test/reset-rate-limits")
+def reset_rate_limits():
+    # Each browser test is a separate user; the loopback peer must not share
+    # a rate-limit budget across the entire suite. Production never imports us.
+    with store.engine.begin() as connection:
+        connection.execute(delete(limits))
+    return {"ok": True}
 
 
 @app.post("/_test/pay")

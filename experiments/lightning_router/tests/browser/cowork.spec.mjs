@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.mjs";
 
 const coworkURL = "https://trustedrouter.com/confidential-cowork";
 
@@ -82,7 +82,7 @@ test("newly funded keys are copyable in Cowork without losing checkout recovery"
   await expect(page.locator("#copy-cowork-key")).toBeDisabled();
   await request.post("/_test/pay", {data: {}});
   await expect(page.locator("#copy-cowork-key")).toBeEnabled({timeout: 12000});
-  const key = await page.locator("#your-key").inputValue();
+  const key = await page.locator("#existing-key").inputValue();
   await page.locator("#copy-cowork-key").click();
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(key);
   const saved = await page.evaluate(() => JSON.parse(sessionStorage.getItem("lightningrouter-usd-session-v1")));

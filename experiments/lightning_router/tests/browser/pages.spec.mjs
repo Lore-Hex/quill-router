@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.mjs";
 
 test("marketing and documented DeepSeek budgets", async ({ page }) => {
   await page.goto("/");
@@ -81,10 +81,10 @@ test("pricing is exact, searchable, and public pages never create invoices", asy
   expect(mutations).toEqual([]);
 });
 
-for (const width of [375, 768, 1440]) {
+for (const width of [320, 375, 768, 1440]) {
   test(`public pages fit ${width}px`, async ({page}) => {
     await page.setViewportSize({width, height: 950});
-    for (const path of ["/", "/usage", "/pricing", "/terms", "/privacy"]) {
+    for (const path of ["/", "/usage", "/pricing", "/docs", "/terms", "/privacy"]) {
       await page.goto(path);
       if (path === "/") await expect(page.locator("#qr")).toBeVisible();
       if (path === "/pricing") await expect(page.locator("#price-rows tr")).toHaveCount(3);

@@ -51,7 +51,7 @@ async function exclusive(action) {
   busy = true;
   clearTimeout(pollTimer);
   message();
-  for (const id of ["use-key", "update-invoice", "sign-out", "amount", "existing-key"]) $(id).disabled = true;
+  for (const id of ["use-key", "update-invoice", "new-invoice", "sign-out", "amount", "existing-key"]) $(id).disabled = true;
   try { await action(); } catch (error) { message(error.message || "Request failed. Please retry."); }
   finally {
     busy = false;
@@ -60,6 +60,7 @@ async function exclusive(action) {
     $("update-invoice").disabled = !config?.payments_ready;
     $("amount").disabled = false;
     $("existing-key").disabled = false;
+    renderInvoiceRecovery();
     schedulePoll();
   }
 }
@@ -109,11 +110,19 @@ function renderSetup() {
     model.output ? `${model.output.toLocaleString()} max output` : "Output limit not published",
     model.default_output ? `${model.default_output.toLocaleString()} default output budget` : ""].filter(Boolean).join(" · ");
 }
+function renderKey() {
+  const connected = Boolean(state?.reveal);
+  $("existing-key").readOnly = connected;
+  if (connected) $("existing-key").value = state.key;
+  $("key-label").textContent = connected ? "Your API key" : "Existing API key (optional)";
+  $("use-key").hidden = connected;
+  for (const id of ["show-key", "copy-key", "key-reveal"]) $(id).hidden = !connected;
+  $("account").hidden = !connected;
+}
 function renderAccount(balance) {
   $("account").hidden = false;
   $("balance-usd").textContent = `$${balance.balance_usd} USD`;
-  $("key-reveal").hidden = !state.reveal;
-  $("your-key").value = state.reveal ? state.key : "";
+  renderKey();
   renderSetup();
 }
 async function showBalance() {
@@ -147,18 +156,28 @@ async function showInvoice(invoice) {
   }
   const labels = { OPEN: invoice.expired ? "Invoice expired. Update to create a new one." : "Waiting for payment", ACCEPTED: "Payment in flight. Waiting for settlement.", SETTLED: invoice.credited ? `Added $${invoice.credit_usd} in USD credits` : "Payment received. USD credit is pending.", CANCELED: "Invoice canceled" };
   $("invoice-state").textContent = labels[invoice.state];
-  $("qr-empty").textContent = invoice.state === "SETTLED" ? "Payment received" : labels[invoice.state];
+  $("qr-message").textContent = invoice.state === "SETTLED" ? "Payment received" : labels[invoice.state];
   if (invoice.attention_required) {
     $("invoice-state").textContent = "Checkout needs review. Keep this tab open and contact support@trustedrouter.com.";
-    $("qr-empty").textContent = "Review required";
+    $("qr-message").textContent = "Review required";
   }
-  if (amountDirty && invoice.state === "OPEN") $("qr-empty").textContent = "Update the invoice to use the new amount";
+  if (amountDirty && invoice.state === "OPEN") $("qr-message").textContent = "Update the invoice to use the new amount";
   if (invoice.credited) {
     state.reveal = true;
     remember();
   }
+  renderKey();
+  renderInvoiceRecovery();
+  renderSetup();
   if (!state.isNew || state.reveal) await showBalance();
   else $("account").hidden = true;
+}
+function renderInvoiceRecovery() {
+  const invoice = state?.invoice;
+  const replaceable = invoice && !invoice.attention_required &&
+    (invoice.state === "CANCELED" || (invoice.state === "OPEN" && invoice.expired));
+  $("new-invoice").hidden = !replaceable;
+  $("new-invoice").disabled = busy || !config?.payments_ready;
 }
 async function createInvoice() {
   const cents = centsFromText($("amount").value);
@@ -241,6 +260,7 @@ async function copy(text) {
 $("key-form").addEventListener("submit", (event) => {
   event.preventDefault();
   exclusive(async () => {
+    if (state?.reveal) return;
     const key = $("existing-key").value.trim();
     if (!KEY.test(key)) throw new Error("Enter an existing TrustedRouter API key beginning sk-tr-v1-.");
     const balance = await api("/api/account", { key });
@@ -248,7 +268,7 @@ $("key-form").addEventListener("submit", (event) => {
     if (!await finishOrCancel()) return;
     state = { key, isNew: false, reveal: true, saved: true, invoice: null, requestId: requestId(), cents: centsFromText($("amount").value) };
     remember();
-    $("existing-key").value = "";
+    $("existing-key").type = "password";
     renderAccount(balance);
     if (balance.active_invoice) {
       const invoice = await api(`/api/invoices/${balance.active_invoice}/refresh`, { body: {} });
@@ -273,7 +293,7 @@ $("amount").addEventListener("input", () => {
   $("qr").hidden = true;
   $("invoice-actions").hidden = true;
   $("qr-empty").hidden = false;
-  $("qr-empty").textContent = config?.payments_ready ? "Update the invoice to use the new amount" : "Lightning payments are not live yet";
+  $("qr-message").textContent = config?.payments_ready ? "Update the invoice to use the new amount" : "Lightning payments are not live yet";
   clearTimeout(quoteTimer); quoteTimer = setTimeout(quote, 250);
 });
 $("copy-invoice").addEventListener("click", () => { if (state?.invoice) copy(state.invoice.bolt11); });
@@ -283,13 +303,25 @@ async function copyFundedKey() {
 }
 $("copy-key").addEventListener("click", copyFundedKey);
 $("copy-cowork-key").addEventListener("click", copyFundedKey);
-$("show-key").addEventListener("click", () => { const field = $("your-key"); field.type = field.type === "password" ? "text" : "password"; $("show-key").setAttribute("aria-label", field.type === "password" ? "Show key" : "Hide key"); });
+$("show-key").addEventListener("click", () => {
+  if (!state?.reveal) return;
+  const field = $("existing-key");
+  field.type = field.type === "password" ? "text" : "password";
+  const label = field.type === "password" ? "Show key" : "Hide key";
+  $("show-key").setAttribute("aria-label", label);
+  $("show-key").title = label;
+});
 $("sign-out").addEventListener("click", () => exclusive(async () => {
   if (!await finishOrCancel()) return;
   state = null;
   sessionStorage.removeItem(SESSION);
-  $("your-key").value = "";
+  $("existing-key").value = "";
+  $("existing-key").type = "password";
+  $("show-key").setAttribute("aria-label", "Show key");
+  $("show-key").title = "Show key";
   $("account").hidden = true;
+  $("balance-usd").textContent = "Unavailable";
+  renderKey();
   renderSetup();
   await createInvoice();
 }));
@@ -328,13 +360,15 @@ async function start() {
   icons();
   try {
     config = await api("/api/config", { key: null });
-    $("connection").textContent = config.network === "regtest" ? "Test network" : config.payments_ready ? "Lightning" : "Payments not live yet";
+    $("connection").hidden = config.network !== "regtest" && config.payments_ready;
+    $("connection").textContent = config.network === "regtest" ? "Test network" : "Payments not live yet";
     $("use-key").disabled = false;
     $("update-invoice").disabled = !config.payments_ready;
     $("api-readiness").hidden = config.inference_configured;
     const saved = savedSession();
     if (saved) {
       state = saved;
+      renderKey();
       $("amount").value = `${Math.floor(state.cents / 100)}.${String(state.cents % 100).padStart(2, "0")}`;
       if (!state.isNew || state.reveal) await showBalance();
     }
@@ -343,11 +377,11 @@ async function start() {
       else await createInvoice();
     });
     else {
-      $("qr-empty").textContent = "Lightning payments are not live yet";
+      $("qr-message").textContent = "Lightning payments are not live yet";
       $("invoice-state").textContent = "No payments can be accepted yet.";
       await quote();
     }
-  } catch (error) { message(error.message); $("qr-empty").textContent = "Payments temporarily unavailable"; }
+  } catch (error) { message(error.message); $("qr-message").textContent = "Payments temporarily unavailable"; }
   try {
     const result = await api("/api/models", { key: null });
     models = result.data;
