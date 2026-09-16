@@ -43,6 +43,8 @@ def test_lnd_permissions_cannot_spend_or_manage_channels() -> None:
     assert "--root_key_id=31" in deploy.NODE_SCRIPT
     assert "funding.macaroon" not in deploy.NODE_SCRIPT
     assert "printmacaroon" in deploy.NODE_SCRIPT
+    assert 'set(decoded["permissions"])' in deploy.NODE_SCRIPT
+    assert '{"uri:" + p for p in allowed}' in deploy.NODE_SCRIPT
     assert "permissions !=" in deploy.NODE_SCRIPT
     assert "create_default_context(cafile=" in deploy.NODE_SCRIPT
 

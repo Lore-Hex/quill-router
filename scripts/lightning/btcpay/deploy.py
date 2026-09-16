@@ -42,8 +42,8 @@ if not macaroon.exists():
     subprocess.run(cli + ["bakemacaroon", "--root_key_id=31", "--save_to=" + str(macaroon)] + ["uri:" + p for p in allowed], check=True, stdout=subprocess.DEVNULL)
 os.chmod(macaroon, 0o600)
 decoded = json.loads(subprocess.check_output(cli + ["printmacaroon", "--macaroon_file=" + str(macaroon)]))
-permissions = {(p["entity"], p["action"]) for p in decoded["permissions"]}
-if permissions != {("uri", p) for p in allowed}:
+permissions = set(decoded["permissions"])
+if permissions != {"uri:" + p for p in allowed}:
     raise SystemExit("Macaroon permissions differ from exact URI allowlist")
 cert = Path("/srv/lnd/tls.cert")
 context = ssl.create_default_context(cafile=str(cert))
