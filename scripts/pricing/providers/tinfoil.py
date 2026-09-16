@@ -43,6 +43,7 @@ MANIFEST_PATH = (
 
 EXPECTED_MODELS = [
     "deepseek/deepseek-v4-flash",
+    "deepseek/deepseek-v4.1-flash",
     "moonshotai/kimi-k3",
     "z-ai/glm-5.2",
     "z-ai/glm-5.3",
@@ -66,6 +67,7 @@ _NATIVE_TO_OR_ID = {
     "glm-5-3": "z-ai/glm-5.3",
     "glm-5-3-flash": "z-ai/glm-5.3-flash",
     "deepseek-v4-flash": "deepseek/deepseek-v4-flash",
+    "deepseek-v4-1-flash": "deepseek/deepseek-v4.1-flash",
     "deepseek-v4-pro": "deepseek/deepseek-v4-pro",
     "gemma4-31b": "google/gemma-4-31b-it",
     "qwen3-vl-30b": "qwen/qwen3-vl-30b-a3b-instruct",

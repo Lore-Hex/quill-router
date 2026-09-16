@@ -16,6 +16,31 @@ _GLM52 = "z-ai/glm-5.2"
 _GLM52_UPSTREAM = "glm-5-2"
 
 
+def test_retired_deepseek_route_cannot_be_restored(monkeypatch: pytest.MonkeyPatch) -> None:
+    cutoff = provider_lifecycle.TINFOIL_DEEPSEEK_V4_FLASH_RETIREMENT_AT
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: cutoff)
+    old, new = "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4.1-flash"
+    monkeypatch.setattr(tinfoil, "fetch_json", lambda _url: {"data": [
+        {"id": native, "type": "chat", "context_window": 1_048_576,
+         "pricing": {"inputTokenPricePer1M": 0.3, "outputTokenPricePer1M": 1.2}}
+        for native in ("deepseek-v4-flash", "deepseek-v4-1-flash")
+    ]})
+    result = tinfoil.fetch()
+    assert old not in result.prices
+    assert old not in tinfoil._DISCOVERED_MANIFEST_ROWS
+    assert new in result.prices
+    assert tinfoil._DISCOVERED_MANIFEST_ROWS[new]["upstream_id"] == "deepseek-v4-1-flash"
+    assert not provider_lifecycle.provider_model_retired("tinfoil", old, at=cutoff - timedelta(microseconds=1))
+    assert provider_lifecycle.provider_model_retired("tinfoil", old, at=cutoff)
+    assert not provider_lifecycle.provider_model_retired("siliconflow", old, at=cutoff)
+
+
+def test_deepseek_tinfoil_retirement_removes_both_usage_routes() -> None:
+    if not catalog_predates(provider_lifecycle.TINFOIL_DEEPSEEK_V4_FLASH_RETIREMENT_AT):
+        assert "deepseek/deepseek-v4-flash@tinfoil/prepaid" not in MODEL_ENDPOINTS
+        assert "deepseek/deepseek-v4-flash@tinfoil/byok" not in MODEL_ENDPOINTS
+
+
 def _write_manifest(path: Path) -> None:
     path.write_text(
         json.dumps(

@@ -30,6 +30,7 @@ BASETEN_JULY_2026_RETIREMENT_AT = datetime(2026, 7, 25, 0, 0, tzinfo=UTC)
 BASETEN_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 26, 0, 0, tzinfo=UTC)
 TINFOIL_KIMI_K26_RETIREMENT_AT = datetime(2026, 8, 3, 0, 0, tzinfo=UTC)
 TINFOIL_GLM52_RETIREMENT_AT = datetime(2026, 9, 10, 0, 0, tzinfo=UTC)
+TINFOIL_DEEPSEEK_V4_FLASH_RETIREMENT_AT = datetime(2026, 9, 15, 0, 0, tzinfo=UTC)
 NEAR_AI_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 11, 13, 0, tzinfo=UTC)
 NEAR_AI_DEEPSEEK_V4_FLASH_RETIREMENT_AT = datetime(2026, 9, 17, 13, 0, tzinfo=UTC)
 VENICE_DEEPSEEK_V4_FLASH_RETIREMENT_AT = datetime(2026, 9, 15, 0, 0, tzinfo=UTC)
@@ -598,6 +599,15 @@ _RETIREMENTS = (
         model_ids=frozenset({"z-ai/glm-5.2"}),
         upstream_ids=frozenset({"glm-5-2"}),
         effective_at=TINFOIL_GLM52_RETIREMENT_AT,
+    ),
+    # The September 15 rejection notice confirms V4 Flash is already retired.
+    # V4.1 Flash is a distinct checkpoint: publish it separately, never silently
+    # redirect the old model ID or let a stale discovery feed restore this route.
+    _Retirement(
+        provider="tinfoil",
+        model_ids=frozenset({"deepseek/deepseek-v4-flash"}),
+        upstream_ids=frozenset({"deepseek-v4-flash"}),
+        effective_at=TINFOIL_DEEPSEEK_V4_FLASH_RETIREMENT_AT,
     ),
     # Parasail announced that these three serverless routes retire on
     # 2026-08-04. The notice did not specify a time zone, so use 00:00 UTC as
