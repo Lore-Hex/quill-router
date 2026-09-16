@@ -3,6 +3,7 @@
 
   const root = document.querySelector("[data-provider-explorer]");
   const input = root?.querySelector("[data-provider-search]");
+  const privacy = root?.querySelector("[data-provider-privacy]");
   const rows = Array.from(document.querySelectorAll("[data-provider-row]"));
   const resultCount = root?.querySelector("[data-provider-result-count]");
   const empty = document.querySelector("[data-provider-empty]");
@@ -16,6 +17,8 @@
     const url = new URL(window.location.href);
     if (query) url.searchParams.set("q", query);
     else url.searchParams.delete("q");
+    if (privacy && privacy.value !== "all") url.searchParams.set("privacy", privacy.value);
+    else url.searchParams.delete("privacy");
     window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
   };
 
@@ -25,7 +28,8 @@
     let visible = 0;
 
     rows.forEach((row) => {
-      const matches = terms.every((term) => haystacks.get(row).includes(term));
+      const matchesPrivacy = !privacy || privacy.value === "all" || row.dataset[privacy.value] === "true";
+      const matches = matchesPrivacy && terms.every((term) => haystacks.get(row).includes(term));
       row.hidden = !matches;
       if (matches) visible += 1;
     });
@@ -37,6 +41,11 @@
 
   const initialQuery = new URL(window.location.href).searchParams.get("q") || "";
   input.value = initialQuery;
+  if (privacy) {
+    const initialPrivacy = new URL(window.location.href).searchParams.get("privacy");
+    privacy.value = ["confidential", "zdr"].includes(initialPrivacy) ? initialPrivacy : "all";
+    privacy.addEventListener("change", applySearch);
+  }
   input.addEventListener("input", applySearch);
   applySearch();
 })();

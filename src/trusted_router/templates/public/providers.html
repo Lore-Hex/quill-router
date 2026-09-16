@@ -1,5 +1,6 @@
 {% extends "public/_base.html" %}
 {% from "public/_provider_identity.html" import provider_identity %}
+{% from "public/_catalog_privacy.html" import provider_privacy %}
 {% block body %}
 <section class="model-catalog">
   <div class="model-catalog-head">
@@ -24,17 +25,25 @@
         data-provider-search
       >
     </label>
+    <label class="model-sort-field">
+      <span class="model-control-label">Privacy</span>
+      <select data-provider-privacy aria-label="Filter providers by privacy">
+        <option value="all">All providers</option>
+        <option value="confidential">Confidential</option>
+        <option value="zdr">ZDR</option>
+      </select>
+    </label>
     <p class="provider-explorer-count" aria-live="polite"><strong data-provider-result-count>{{ providers|length }} entries</strong></p>
   </div>
   <div class="provider-catalog-grid">
     {% for provider in providers %}
-    <article class="provider-catalog-card" data-provider-row data-provider-id="{{ provider.id }}">
+    <article class="provider-catalog-card" data-provider-row data-provider-id="{{ provider.id }}" data-confidential="{{ 'true' if provider.confidential_inference_verified else 'false' }}" data-zdr="{{ 'true' if provider.zero_data_retention or provider.prepaid_zero_data_retention else 'false' }}">
       <header class="provider-card-head">
         {{ provider_identity(provider.id, provider.name, provider.detail_href, subtitle=provider.id) }}
         <span class="pill {% if provider.routing_status == 'active' %}good{% endif %}">{{ provider.routing_status_label }}</span>
       </header>
       <div class="provider-card-trust" aria-label="{{ provider.name }} trust and access">
-        <span class="pill {% if provider.privacy_tier in ['Confidential', 'TR gateway', 'ZDR'] %}good{% endif %}">{{ provider.privacy_tier }}</span>
+        {{ provider_privacy(provider) }}
         {% if provider.supports_prepaid %}<span class="pill good">Credits</span>{% endif %}
         {% if provider.supports_byok %}<span class="pill">BYOK</span>{% endif %}
       </div>

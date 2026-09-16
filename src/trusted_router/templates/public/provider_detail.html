@@ -1,10 +1,11 @@
 {% extends "public/_base.html" %}
 {% from "public/_provider_identity.html" import provider_identity %}
+{% from "public/_catalog_privacy.html" import provider_privacy %}
 {% block body %}
 <section class="panel">
   <div class="panel-head">
     <h2 class="provider-detail-title">{{ provider_identity(provider.id, provider.name, size="large", subtitle=provider.id) }}</h2>
-    <span class="pill {% if provider.privacy_tier in ['Confidential', 'TR gateway', 'ZDR'] %}good{% endif %}">{{ provider.privacy_tier }}</span>
+    <div class="catalog-privacy-summary">{% if provider.id == 'trustedrouter' %}<span class="pill">TR gateway</span>{% else %}{{ provider_privacy(provider) }}{% endif %}</div>
   </div>
   <div class="panel-body">
     <p><a href="/providers">All providers</a></p>

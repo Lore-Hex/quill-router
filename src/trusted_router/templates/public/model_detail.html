@@ -1,6 +1,7 @@
 {% extends "public/_base.html" %}
 {% from "public/_provider_privacy_badges.html" import provider_privacy_badges %}
 {% from "public/_provider_identity.html" import provider_identity %}
+{% from "public/_catalog_privacy.html" import serving_provider_chip %}
 {% block body %}
 <section class="panel">
   <div class="panel-head">
@@ -56,7 +57,7 @@
           {% else %}
           <div class="provider-chip-list">
             {% for provider in model.providers %}
-            <a class="pill provider-chip" href="/providers/{{ provider.slug }}" title="{{ provider.slug }}"><img class="provider-logo" src="{{ provider.logo_url }}" alt="{{ provider.name }} logo" aria-hidden="true" width="22" height="22" loading="lazy" decoding="async"><span>{{ provider.name }}</span></a>
+            {{ serving_provider_chip(provider) }}
             {% else %}
             <span class="muted-copy">No Credits provider route is currently published.</span>
             {% endfor %}
