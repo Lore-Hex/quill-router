@@ -14,7 +14,7 @@ from decimal import Decimal
 from functools import lru_cache
 from itertools import combinations
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 from xml.sax.saxutils import escape as xml_escape
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -3525,11 +3525,11 @@ def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
             active_filter=normalized_filter,
             model_filters=[
                 {"id": "all", "label": "All", "href": "/models"},
+                {"id": "e2e", "label": "Confidential", "href": "/models?filter=e2e"},
+                {"id": "zdr", "label": "ZDR", "href": "/models?filter=zdr"},
                 {"id": "open", "label": "Open weights", "href": "/models?filter=open"},
                 {"id": "us", "label": "US providers", "href": "/models?filter=us"},
                 {"id": "eu", "label": "EU-focused", "href": "/models?filter=eu"},
-                {"id": "zdr", "label": "ZDR available", "href": "/models?filter=zdr"},
-                {"id": "e2e", "label": "E2EE available", "href": "/models?filter=e2e"},
             ],
             json_ld_blob=_json_ld_graph(
                 settings,
@@ -5033,30 +5033,51 @@ def _compact_token_count(value: int) -> str:
     return str(value)
 
 
+class _EndpointProviderView(TypedDict):
+    name: str
+    slug: str
+    logo_url: str
+    confidential_available: bool
+    zdr_available: bool
+
+
 def _endpoint_provider_views(
     endpoints: Sequence[ModelEndpoint], *, fallback_provider: str
-) -> list[dict[str, str]]:
-    """Return distinct serving providers in endpoint order.
+) -> list[_EndpointProviderView]:
+    """Return distinct serving providers, with verified privacy routes first.
 
     Public callers pass Credits endpoints, so every provider appears once
     without exposing the catalog's parallel BYOK billing record.
     """
     seen: set[str] = set()
-    provider_views: list[dict[str, str]] = []
+    provider_views: list[_EndpointProviderView] = []
     provider_slugs = [endpoint.provider for endpoint in endpoints] or [fallback_provider]
     for slug in provider_slugs:
         if slug in seen:
             continue
         seen.add(slug)
         provider = PROVIDERS.get(slug)
+        provider_endpoints = [endpoint for endpoint in endpoints if endpoint.provider == slug]
         provider_views.append(
             {
                 "name": provider.name if provider else slug,
                 "slug": slug,
                 "logo_url": provider_logo_url(slug),
+                "confidential_available": any(
+                    endpoint_confidential_compute(endpoint) is True
+                    and endpoint_e2ee(endpoint) is True
+                    for endpoint in provider_endpoints
+                ),
+                "zdr_available": any(
+                    endpoint_zero_data_retention(endpoint) is True
+                    for endpoint in provider_endpoints
+                ),
             }
         )
-    return provider_views
+    return sorted(
+        provider_views,
+        key=lambda view: (not view["confidential_available"], not view["zdr_available"]),
+    )
 
 
 def _provider_view(provider: Provider) -> dict[str, object]:

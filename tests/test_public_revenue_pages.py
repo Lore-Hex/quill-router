@@ -4,6 +4,7 @@ import json
 import re
 from pathlib import Path
 
+from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 
 from tests.lifecycle_clock import catalog_predates
@@ -530,7 +531,8 @@ def test_public_models_page_does_not_require_api_key(client: TestClient) -> None
     assert "trustedrouter/eu" in response.text
     assert "API JSON remains" in response.text
     for slug, name in (("kimi", "Kimi"), ("parasail", "Parasail"), ("tinfoil", "Tinfoil")):
-        assert f'href="/providers/{slug}" title="{slug}"' in response.text
+        links = BeautifulSoup(response.text, "html.parser").select(f'a.provider-chip[href="/providers/{slug}"]')
+        assert any(name in link.get_text() for link in links)
         assert f'src="/static/provider-logos/{slug}.png"' in response.text
         assert f"<span>{name}</span>" in response.text
     assert 'href="https://aiiq.org/models/kimi-k2.6/"' in response.text
@@ -596,7 +598,7 @@ def test_public_model_detail_lists_distinct_serving_providers(client: TestClient
     }
     assert "kimi" in expected_providers
     for provider in expected_providers:
-        assert f'title="{provider}"' in response.text
+        assert BeautifulSoup(response.text, "html.parser").select_one(f'a.provider-chip[href="/providers/{provider}"]') is not None
 
 
 def test_byok_only_model_page_reports_no_credits_route(client: TestClient) -> None:
@@ -643,7 +645,8 @@ def test_public_kimi_k3_page_separates_router_attestation_from_provider_e2ee(
 
     assert catalog.status_code == 200
     assert detail.status_code == 200
-    assert "TR router attested" in catalog.text
+    assert "TR router attested" not in catalog.text
+    assert "verified provider compute + E2EE" in catalog.text
     assert "TR router attestation verifies the\n      TrustedRouter gateway only" in detail.text
     assert "<th>TR router attested</th>" in detail.text
     assert "<th>Attested</th>" not in detail.text

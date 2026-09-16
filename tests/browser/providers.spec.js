@@ -52,3 +52,23 @@ test("provider catalog fits a mobile viewport without horizontal scrolling", asy
   expect(dimensions.scrollWidth).toBe(dimensions.clientWidth);
   await expect(page.locator(".provider-catalog-grid")).toHaveCSS("grid-template-columns", "320px");
 });
+
+test("privacy filters match verified flags, preserve search, and survive reload", async ({ page }) => {
+  await page.goto("/providers?privacy=confidential");
+  const privacy = page.getByRole("combobox", { name: "Filter providers by privacy" });
+  await expect(privacy).toHaveValue("confidential");
+  const tinfoil = page.locator('[data-provider-id="tinfoil"]');
+  await expect(tinfoil).toBeVisible();
+  await expect(tinfoil.locator('.provider-card-trust [data-privacy="confidential"]')).toBeVisible();
+  await expect(tinfoil.locator('.provider-card-trust [data-privacy="zdr"]')).toBeVisible();
+  await expect(page.locator('[data-confidential="false"]:visible')).toHaveCount(0);
+  await page.getByRole("searchbox", { name: "Search providers" }).fill("phala");
+  await expect(page.locator("[data-provider-empty]")).toBeVisible();
+  await privacy.selectOption("zdr");
+  await expect(page.locator('[data-provider-id="phala"]')).toBeVisible();
+  await expect(page.locator('[data-zdr="false"]:visible')).toHaveCount(0);
+  await page.reload();
+  await expect(privacy).toHaveValue("zdr");
+  await expect(page.getByRole("searchbox", { name: "Search providers" })).toHaveValue("phala");
+  await expect(page.locator("[data-provider-result-count]")).toHaveText("1 entry");
+});

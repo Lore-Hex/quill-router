@@ -1,0 +1,13 @@
+{% macro privacy_badges(confidential, zdr, zdr_label='ZDR') -%}
+{% if confidential %}<span class="privacy-badge privacy-confidential" data-privacy="confidential" title="Verified provider confidential compute and end-to-end encryption (E2EE).">Confidential</span>{% endif %}
+{% if zdr %}<span class="privacy-badge privacy-zdr" data-privacy="zdr" title="Zero data retention is a provider retention commitment, separate from confidential compute.">{{ zdr_label }}</span>{% endif %}
+{%- endmacro %}
+
+{% macro provider_privacy(provider) -%}
+{{ privacy_badges(provider.confidential_inference_verified, provider.zero_data_retention or provider.prepaid_zero_data_retention, 'ZDR · TR-funded' if provider.prepaid_zero_data_retention and not provider.zero_data_retention else 'ZDR') }}
+{% if not provider.confidential_inference_verified and not provider.zero_data_retention and not provider.prepaid_zero_data_retention %}<span class="pill">{{ provider.privacy_tier }}</span>{% endif %}
+{%- endmacro %}
+
+{% macro serving_provider_chip(provider, overflow=false) -%}
+<a class="pill provider-chip catalog-provider-chip{% if overflow %} provider-chip-overflow{% endif %}" href="/providers/{{ provider.slug }}" title="{{ provider.name }}: privacy labels describe available routes for this model."><img class="provider-logo" src="{{ provider.logo_url }}" alt="" width="22" height="22" loading="lazy" decoding="async"><span>{{ provider.name }}</span>{{ privacy_badges(provider.confidential_available, provider.zdr_available) }}</a>
+{%- endmacro %}

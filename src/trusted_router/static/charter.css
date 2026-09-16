@@ -2621,7 +2621,7 @@ body.auth.auth-shell {
 }
 
 .provider-explorer-toolbar {
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, 200px) auto;
   border-bottom: 1px solid var(--border-hairline);
 }
 
@@ -2975,7 +2975,7 @@ body.auth.auth-shell {
 
 .model-card-meta {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, auto);
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   align-items: center;
   padding: 0 20px 14px;
@@ -2991,11 +2991,83 @@ body.auth.auth-shell {
 
 .model-card-providers {
   max-width: none;
-  justify-content: flex-end;
+  justify-content: flex-start;
 }
 
 .model-card-providers .pill {
   max-width: 132px;
+}
+
+.catalog-privacy-summary {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.model-card-title .catalog-privacy-summary {
+  margin-top: 10px;
+}
+
+.catalog-privacy-scope {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.privacy-badge {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  padding: 4px 8px;
+  border: 1px solid;
+  border-radius: var(--r-control);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.privacy-confidential {
+  border-color: var(--sage-dim);
+  background: var(--sage-tint);
+  color: var(--sage-bright);
+}
+
+.privacy-zdr {
+  border-color: var(--gold-dim);
+  background: var(--gold-tint);
+  color: var(--gold);
+}
+
+.catalog-privacy-legend {
+  margin: 12px 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.catalog-privacy-legend strong {
+  color: var(--text-body);
+}
+
+.provider-chip.catalog-provider-chip {
+  max-width: 100%;
+  flex-wrap: wrap;
+  padding: 5px 7px;
+  white-space: normal;
+}
+
+.catalog-provider-chip .privacy-badge {
+  padding: 2px 5px;
+  font-size: 12px;
+  white-space: normal;
+}
+
+.catalog-provider-chip > span {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .model-provider-more {

@@ -135,12 +135,23 @@
     return `${formatDollarValue(values[0])} – ${formatDollarValue(values[values.length - 1])}`;
   }
 
-  function privacyLabel(routes) {
+  function privacyCell(routes) {
     const postures = routes.map((route) => route.trustedrouter || {});
-    if (postures.some((posture) => posture.provider_confidential_compute === true && posture.provider_e2ee === true)) return "E2EE";
-    if (postures.some((posture) => posture.provider_zero_data_retention === true)) return "ZDR";
-    if (postures.some((posture) => posture.stores_content === false)) return "No store";
-    return "Standard";
+    const cell = routeCell("Available privacy", undefined, "catalog-privacy-summary");
+    if (postures.some((posture) => posture.provider_confidential_compute === true && posture.provider_e2ee === true)) {
+      const badge = element("span", "privacy-badge privacy-confidential", "Confidential");
+      badge.dataset.privacy = "confidential";
+      badge.title = "Available route with verified provider confidential compute and end-to-end encryption (E2EE).";
+      cell.append(badge);
+    }
+    if (postures.some((posture) => posture.provider_zero_data_retention === true)) {
+      const badge = element("span", "privacy-badge privacy-zdr", "ZDR");
+      badge.dataset.privacy = "zdr";
+      badge.title = "Zero data retention on an available Credits route; BYOK account terms may differ.";
+      cell.append(badge);
+    }
+    if (!cell.children.length) cell.textContent = "Not verified";
+    return cell;
   }
 
   function routeCell(label, text, className = "") {
@@ -165,7 +176,7 @@
     });
 
     const header = element("div", "model-route-head");
-    ["Provider", "Input", "Cached input", "Output", "Privacy"].forEach((label) => header.append(element("span", "", label)));
+    ["Provider", "Input", "Cached input", "Output", "Available privacy"].forEach((label) => header.append(element("span", "", label)));
     container.append(header);
 
     [...grouped.entries()]
@@ -188,7 +199,7 @@
         row.append(routeCell("Input", priceRange(providerRoutes, "prompt"), "model-route-price"));
         row.append(routeCell("Cached input", priceRange(providerRoutes, "input_cache_read"), "model-route-price"));
         row.append(routeCell("Output", priceRange(providerRoutes, "completion"), "model-route-price"));
-        row.append(routeCell("Privacy", privacyLabel(providerRoutes)));
+        row.append(privacyCell(providerRoutes));
         container.append(row);
       });
   }
