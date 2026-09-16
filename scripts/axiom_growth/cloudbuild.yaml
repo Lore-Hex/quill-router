@@ -1,0 +1,7 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ['build', '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/trusted-router/growth-sync:${_GROWTH_TAG}', '.']
+images:
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/trusted-router/growth-sync:${_GROWTH_TAG}'
+options:
+  logging: CLOUD_LOGGING_ONLY
