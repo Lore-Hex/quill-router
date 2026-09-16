@@ -1,32 +1,28 @@
-"""ByteDance Seed 2.1 Turbo pricing through OpenRouter's provider endpoint.
+"""Price explicitly approved OpenRouter-only routes from their endpoint feeds.
 
-ByteDance does not sell a provider-direct Seed credential this deployment can
-obtain, so OpenRouter is the actual downstream API and billing source for this
-route and its endpoint feed is authoritative. Same shape as ``meta.py``:
-OpenRouter is a transport for ONE explicitly allowlisted route, not a general
-aggregator, and the price source is pinned to that route's endpoint document.
-
-The route is chosen deliberately: the upstream ``Seed`` endpoint is ByteDance's
-own, so this adds a vendor the catalogue cannot otherwise reach. Routes whose
-only upstream is a provider we ALREADY hold directly (Meituan LongCat, served
-by AtlasCloud) are not worth a second hop and are excluded.
+This is not general aggregator discovery: models and downstream operators must
+both be allowlisted. Availability follows the live catalog, using the shared
+manifest writer's delisting safeguards. Missing prices never mean free.
 """
 
 from __future__ import annotations
 
-import json
-from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
 from scripts.pricing.base import ModelPrice, ProviderPricingResult, fetch_json, validate
+from scripts.pricing.manifest import write_discovered_chat_manifest
 
 SLUG = "openrouter"
-MODEL_ID = "bytedance-seed/seed-2-1-turbo"
-URL = f"https://openrouter.ai/api/v1/models/{MODEL_ID}/endpoints"
-EXPECTED_MODELS = [MODEL_ID]
-PROVIDER_NAME = "Seed"
+URL = "https://openrouter.ai/api/v1/models"
+MODEL_PROVIDERS = {
+    "bytedance-seed/seed-2-1-turbo": "Seed",
+    "stealth/union-alpha": "Stealth",
+}
+EXPECTED_MODELS = list(MODEL_PROVIDERS)
+_FREE_MODELS = frozenset({"stealth/union-alpha"})
+_DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
     / "src"
@@ -39,39 +35,78 @@ MANIFEST_PATH = (
 
 def _microdollars_per_million(raw: Any) -> int:
     try:
-        return int((Decimal(str(raw)) * Decimal(1_000_000_000_000)).to_integral_value())
+        value = Decimal(str(raw))
+        if not value.is_finite() or value < 0:
+            raise ValueError("price must be finite and non-negative")
+        return int((value * Decimal(1_000_000_000_000)).to_integral_value())
     except (InvalidOperation, TypeError, ValueError) as exc:
         raise RuntimeError(f"openrouter: invalid per-token price {raw!r}") from exc
 
 
-def _seed_endpoint(payload: Any) -> dict[str, Any]:
+def _endpoint(payload: Any, model_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
     data = payload.get("data") if isinstance(payload, dict) else None
     endpoints = data.get("endpoints") if isinstance(data, dict) else None
-    if not isinstance(endpoints, list):
+    if not isinstance(endpoints, list) or data.get("id") != model_id:
         raise RuntimeError("openrouter: endpoint API returned an unexpected shape")
-    for row in endpoints:
-        if isinstance(row, dict) and row.get("provider_name") == PROVIDER_NAME:
-            return row
-    raise RuntimeError(f"openrouter: endpoint API did not contain the {PROVIDER_NAME} route")
+    matches = [row for row in endpoints if isinstance(row, dict)
+               and row.get("provider_name") == MODEL_PROVIDERS[model_id]
+               and row.get("model_id") == model_id and row.get("status") == 0]
+    if len(matches) != 1:
+        raise RuntimeError(f"openrouter: expected one active approved endpoint for {model_id}")
+    return data, matches[0]
 
 
 def fetch() -> ProviderPricingResult:
-    row = _seed_endpoint(fetch_json(URL))
-    pricing = row.get("pricing")
-    if not isinstance(pricing, dict):
-        raise RuntimeError("openrouter: Seed endpoint has no pricing object")
-    cached = pricing.get("input_cache_read")
-    price = ModelPrice(
-        prompt_micro_per_m=_microdollars_per_million(pricing.get("prompt")),
-        completion_micro_per_m=_microdollars_per_million(pricing.get("completion")),
-        prompt_cached_micro_per_m=(
-            _microdollars_per_million(cached) if cached not in (None, "") else None
-        ),
-    )
-    prices = {MODEL_ID: price}
-    errors = validate(prices, EXPECTED_MODELS)
+    payload = fetch_json(URL)
+    models = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(models, list) or not models:
+        raise RuntimeError("openrouter: catalog API returned an empty or invalid model list")
+    available = {row["id"] for row in models if isinstance(row, dict)
+                 and isinstance(row.get("id"), str)}
+    prices: dict[str, ModelPrice] = {}
+    discovered: dict[str, dict[str, Any]] = {}
+    for model_id in MODEL_PROVIDERS:
+        if model_id not in available:
+            continue
+        source = f"{URL}/{model_id}/endpoints"
+        data, row = _endpoint(fetch_json(source), model_id)
+        pricing = row.get("pricing")
+        if not isinstance(pricing, dict):
+            raise RuntimeError(f"openrouter: {model_id} endpoint has no pricing object")
+        cached = pricing.get("input_cache_read")
+        price = ModelPrice(
+            prompt_micro_per_m=_microdollars_per_million(pricing.get("prompt")),
+            completion_micro_per_m=_microdollars_per_million(pricing.get("completion")),
+            prompt_cached_micro_per_m=(
+                _microdollars_per_million(cached) if cached not in (None, "") else None
+            ),
+        )
+        errors = validate({model_id: price}, [], allow_all_zero=model_id in _FREE_MODELS)
+        if errors:
+            raise RuntimeError(f"openrouter: invalid {model_id} pricing: {errors}")
+        context = row.get("context_length")
+        if isinstance(context, bool) or not isinstance(context, int) or context <= 0:
+            raise RuntimeError(f"openrouter: {model_id} has no valid context limit")
+        architecture = data.get("architecture")
+        if not isinstance(architecture, dict):
+            raise RuntimeError(f"openrouter: {model_id} has no architecture")
+        prices[model_id] = price
+        discovered[model_id] = {
+            "id": model_id, "upstream_id": model_id,
+            "display_name": data.get("name") or model_id,
+            "context_length": context,
+            "max_completion_tokens": row.get("max_completion_tokens"),
+            "input_modalities": architecture.get("input_modalities", ["text"]),
+            "output_modalities": architecture.get("output_modalities", ["text"]),
+            "supported_parameters": row.get("supported_parameters", []),
+            "endpoints": ["chat/completions"],
+            "pricing_source": source,
+        }
+    errors = validate(prices, EXPECTED_MODELS, allow_all_zero=set(prices) <= _FREE_MODELS)
     if errors:
-        raise RuntimeError(f"openrouter: invalid Seed pricing: {errors}")
+        raise RuntimeError(f"openrouter: invalid pricing: {errors}")
+    global _DISCOVERED_MANIFEST_ROWS
+    _DISCOVERED_MANIFEST_ROWS = discovered
     return ProviderPricingResult(
         slug=SLUG,
         prices=prices,
@@ -81,27 +116,8 @@ def fetch() -> ProviderPricingResult:
 
 
 def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
-    raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-    rows = raw.get("models")
-    if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
-        raise RuntimeError("openrouter: provider manifest must contain exactly one model")
-    price = result.prices.get(MODEL_ID)
-    if price is None:
-        raise RuntimeError("openrouter: refreshed pricing did not include Seed")
-    row = rows[0]
-    tier = price.tiers[0]
-    row["input_token_price_per_m"] = tier.prompt_micro_per_m
-    row["output_token_price_per_m"] = tier.completion_micro_per_m
-    if tier.prompt_cached_micro_per_m is not None:
-        row["cached_input_token_price_per_m"] = tier.prompt_cached_micro_per_m
-    else:
-        row.pop("cached_input_token_price_per_m", None)
-    raw["source"] = URL
-    raw["generated_at"] = (
-        datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return write_discovered_chat_manifest(
+        result, manifest_path=MANIFEST_PATH,
+        discovered_rows=_DISCOVERED_MANIFEST_ROWS,
+        source_url=URL, pricing_source_url=URL,
     )
-    MANIFEST_PATH.write_text(
-        json.dumps(raw, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-    return ["openrouter: refreshed Seed 2.1 Turbo pricing from OpenRouter's Seed endpoint"]

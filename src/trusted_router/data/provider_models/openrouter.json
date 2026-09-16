@@ -1,15 +1,15 @@
 {
-  "_about": "ByteDance Seed 2.1 Turbo served through one explicitly allowlisted OpenRouter route. ByteDance sells no provider-direct credential this deployment can obtain, so OpenRouter is the billing source. This is not BYOK, ZDR, confidential-compute, or E2EE.",
+  "_about": "Explicitly allowlisted OpenRouter-only models. OpenRouter is the downstream API and billing source. These routes are not BYOK, ZDR, confidential-compute, or E2EE. Explicit zero upstream prices receive the normal TrustedRouter customer price floor.",
   "provider": "openrouter",
-  "source": "https://openrouter.ai/api/v1/models/bytedance-seed/seed-2-1-turbo/endpoints",
-  "generated_at": "2026-09-16T19:27:58Z",
+  "source": "https://openrouter.ai/api/v1/models",
+  "generated_at": "2026-09-16T21:51:36Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 1,
+  "model_count": 2,
   "models": [
     {
       "id": "bytedance-seed/seed-2-1-turbo",
       "upstream_id": "bytedance-seed/seed-2-1-turbo",
-      "display_name": "Seed 2.1 Turbo",
+      "display_name": "ByteDance Seed: Seed 2.1 Turbo",
       "context_length": 262144,
       "endpoints": [
         "chat/completions"
@@ -28,7 +28,56 @@
         "first_token_timeout_seconds": 45,
         "completion_timeout_seconds": 600,
         "stream_idle_timeout_seconds": 120
+      },
+      "max_completion_tokens": 235929,
+      "supported_parameters": [
+        "reasoning",
+        "include_reasoning",
+        "frequency_penalty",
+        "max_tokens",
+        "temperature",
+        "top_p",
+        "stop",
+        "tools",
+        "response_format",
+        "structured_outputs",
+        "tool_choice"
+      ],
+      "pricing_source": "https://openrouter.ai/api/v1/models/bytedance-seed/seed-2-1-turbo/endpoints"
+    },
+    {
+      "id": "stealth/union-alpha",
+      "upstream_id": "stealth/union-alpha",
+      "display_name": "Union Alpha",
+      "context_length": 262144,
+      "max_completion_tokens": 131072,
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "supported_parameters": [
+        "max_tokens",
+        "temperature",
+        "top_p",
+        "tools",
+        "tool_choice",
+        "response_format"
+      ],
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0,
+      "pricing_source": "https://openrouter.ai/api/v1/models/stealth/union-alpha/endpoints",
+      "reliability": {
+        "first_token_timeout_seconds": 45,
+        "completion_timeout_seconds": 600,
+        "stream_idle_timeout_seconds": 120
       }
     }
-  ]
+  ],
+  "pricing_source": "https://openrouter.ai/api/v1/models"
 }
