@@ -29,6 +29,8 @@ from urllib.parse import quote
 
 import httpx
 
+from trusted_router.provider_lifecycle import provider_model_retired
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -315,6 +317,8 @@ def select_deployment_candidates(
             continue
         canonical_id = canonical_model_id(native_name)
         if canonical_id is None or canonical_id not in priced_model_ids:
+            continue
+        if provider_model_retired("azure", canonical_id, native_name):
             continue
         if allowed_versions is not None and version not in allowed_versions.get(
             canonical_id, frozenset()

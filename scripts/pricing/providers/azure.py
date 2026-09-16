@@ -29,6 +29,7 @@ from scripts.pricing.base import (
     validate,
 )
 from scripts.pricing.manifest import write_discovered_chat_manifest
+from trusted_router.provider_lifecycle import provider_model_retired
 
 SLUG = "azure"
 URL = (
@@ -406,6 +407,7 @@ def retail_model_ids() -> frozenset[str]:
         model_id
         for model_id, rule in _RETAIL_RULES.items()
         if rule.production_hold_reason is None
+        and not provider_model_retired(SLUG, model_id)
     )
 
 
@@ -464,7 +466,7 @@ def parse_retail_prices(
         # meters, so an unavailable model's ambiguous feed rows cannot abort a
         # healthy sync.  A present but unreviewed checkpoint remains dark.
         if model_versions is not None:
-            if rule.production_hold_reason is not None:
+            if rule.production_hold_reason is not None or provider_model_retired(SLUG, model_id):
                 continue
             if model_id not in model_versions:
                 continue
