@@ -72,7 +72,7 @@ def test_price_refresh_validates_generated_catalog_before_committing() -> None:
     ]
     assert "uv run ruff check ." in validation
     assert "uv run mypy" in validation
-    assert "uv run pytest -q" in validation
+    assert "uv run pytest -q -n 4 --dist loadgroup" in validation
 
 
 def test_model_discovery_gap_alerts_without_freezing_safe_provider_updates() -> None:

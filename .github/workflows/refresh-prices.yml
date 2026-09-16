@@ -299,7 +299,9 @@ jobs:
         run: |
           uv run ruff check .
           uv run mypy
-          uv run pytest -q
+          # Match CI's file-grouped workers: keep the full suite, avoid a
+          # 35-minute serial pass that makes publication miss its main head.
+          uv run pytest -q -n 4 --dist loadgroup
 
       - name: Commit, verify, and push if changed
         run: |
