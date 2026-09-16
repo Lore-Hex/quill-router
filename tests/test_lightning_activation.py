@@ -57,16 +57,21 @@ def test_funding_alerts_are_narrow_and_do_not_blend_revisions() -> None:
     from scripts.lightning.reliability import policies
 
     configured = policies("projects/test/notificationChannels/existing")
-    assert len(configured) == 3
+    assert len(configured) == 5
     for policy in configured:
         assert policy["enabled"]
         assert policy["notificationChannels"] == ["projects/test/notificationChannels/existing"]
         assert "lightning-router-web" in json.dumps(policy)
-    absence = configured[-1]["conditions"][0]["conditionAbsent"]
+    absence = configured[2]["conditions"][0]["conditionAbsent"]
     assert absence["duration"] == "600s"
     assert absence["aggregations"][0]["groupByFields"] == ["resource.label.service_name"]
     assert 'resource.label.service_name="lightning-router-web"' in absence["filter"]
     assert "lightning.funding_stalled" in configured[0]["conditions"][0]["conditionMatchedLog"]["filter"]
+    liquidity = configured[3]
+    assert liquidity["alertStrategy"]["notificationRateLimit"]["period"] == "3600s"
+    assert "lightning.liquidity_low" in str(liquidity)
+    assert "lightning.liquidity_check_failed" in str(liquidity)
+    assert "lightning_funding_liquidity_heartbeat" in str(configured[4])
 
 
 @pytest.mark.parametrize("live", [False, True])
@@ -96,13 +101,37 @@ def test_alert_install_requires_live_post_metric_heartbeat(monkeypatch, live) ->
     monkeypatch.setattr("scripts.lightning.reliability.time.sleep", lambda _: None)
     if live:
         install(operator)
-        assert len(written) == 3
+        assert len(written) == 5
     else:
         with pytest.raises(RuntimeError, match="No live funding heartbeat"):
             install(operator)
         assert len(reads) == 12
-        assert not written
+        assert len(written) == 3  # Failure detection is installed even while the node is failing.
     assert all('timestamp>"' in call[2] for call in reads)
+
+
+def test_alert_install_needs_liquidity_not_only_delivery_heartbeat(monkeypatch) -> None:
+    import json
+    from unittest.mock import Mock
+
+    from scripts.lightning.reliability import install
+
+    def gc(*args):
+        if args[:3] == ("beta", "monitoring", "channels"):
+            return json.dumps([{"name": "existing", "displayName": "TrustedRouter Spanner on-call", "enabled": True}])
+        if args[:2] == ("logging", "read") and "lightning.funding_health" in args[2]:
+            return "2026-09-16T00:00:00Z"
+        if args[:3] == ("monitoring", "policies", "list"):
+            return "[]"
+        return ""
+
+    operator = Mock(spec=Operator)
+    operator.gc.side_effect = gc
+    monkeypatch.setattr("scripts.lightning.reliability.time.sleep", lambda _: None)
+    with pytest.raises(RuntimeError, match="No live funding heartbeat"):
+        install(operator)
+    writes = [call for call in operator.gc.call_args_list if call.args[:3] == ("monitoring", "policies", "create")]
+    assert len(writes) == 3
 
 
 @pytest.mark.parametrize("enabled", [False, None])

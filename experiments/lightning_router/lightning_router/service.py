@@ -202,5 +202,22 @@ class Funding:
                 # Stable text trigger survives a formatter wrapping the JSON.
                 logger.error("lightning.funding_stalled uncredited_count=%s review_required=%s oldest_uncredited_seconds=%s",
                              health["uncredited_count"], health["review_required"], health["oldest_uncredited_seconds"])
+            if self.check_capacity:
+                self.log_liquidity()
             self._last_health_log = now
         return counts
+
+    def log_liquidity(self) -> None:
+        # Monitoring uses the existing invoice-only capability. Failures must
+        # not interrupt settlement/reconciliation or leak upstream diagnostics.
+        try:
+            liquidity = self.lnd.liquidity()
+            low = liquidity["receiving_capacity_msat"] < 300_000_000
+            logger.warning(json.dumps({"severity": "WARNING" if low else "INFO",
+                                       "event": "lightning.liquidity_health", **liquidity}))
+            if low:
+                logger.warning("lightning.liquidity_low receiving_capacity_sat=%s active_channels=%s synced=%s",
+                               liquidity["receiving_capacity_msat"] // 1000,
+                               liquidity["active_channels"], liquidity["synced"])
+        except Exception as exc:
+            logger.error("lightning.liquidity_check_failed error_type=%s", type(exc).__name__)
