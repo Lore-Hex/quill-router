@@ -54,7 +54,7 @@ jobs:
           path: src
 
       - name: Authenticate to AWS via GitHub OIDC
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::330422590279:role/tr-router-github-deploy
           aws-region: eu-west-3
