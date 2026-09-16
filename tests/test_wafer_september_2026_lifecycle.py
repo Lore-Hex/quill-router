@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
+import httpx
 import pytest
 
 from scripts.pricing import refresh
@@ -14,6 +16,8 @@ from trusted_router.catalog import endpoints_for_model
 _CUTOFF = datetime(2026, 9, 5, 6, 59, tzinfo=UTC)
 _MODEL_ID = "z-ai/glm-5.2"
 _UPSTREAM_ID = "GLM-5.2"
+_KIMI_CUTOFF = datetime(2026, 9, 18, 19, tzinfo=UTC)
+_KIMI_MODEL = "moonshotai/kimi-k2.6"
 
 
 def test_wafer_glm52_retires_at_announced_pacific_cutoff() -> None:
@@ -132,3 +136,68 @@ def test_wafer_manifest_records_glm52_retirement() -> None:
     }
 
     assert rows[_MODEL_ID]["retirement_at"] == "2026-09-05T06:59:00Z"
+
+
+def test_wafer_kimi26_cutoff_invalidates_public_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = {row["id"]: row for row in json.loads(wafer.MANIFEST_PATH.read_text())["models"]}
+    assert rows[_KIMI_MODEL]["retirement_at"] == "2026-09-18T19:00:00Z"
+    assert "replacement_model_id" not in rows[_KIMI_MODEL]
+    assert _KIMI_MODEL not in wafer.EXPECTED_MODELS
+    assert provider_lifecycle.provider_model_retired(
+        "wafer", _KIMI_MODEL, at="2026-09-18T12:00:00-07:00",
+    )
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _KIMI_CUTOFF - timedelta(microseconds=1))
+    before, _ = provider_lifecycle.provider_catalog_revision()
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _KIMI_CUTOFF)
+    after, _ = provider_lifecycle.provider_catalog_revision()
+    assert after == before + 1
+
+
+def test_wafer_kimi26_stale_feed_preserves_deadline_and_cannot_restore_route(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    ids = {
+        _KIMI_MODEL: "Kimi-K2.6",
+        "moonshotai/kimi-k3": "Kimi-K3",
+        "z-ai/glm-5.3-flash": "GLM-5.3-Flash",
+    }
+    manifest = json.loads(wafer.MANIFEST_PATH.read_text())
+    manifest["models"] = [row for row in manifest["models"] if row["id"] in ids]
+    path = tmp_path / "wafer.json"
+    path.write_text(json.dumps(manifest))
+    payload = {"data": [
+        {"id": native, "wafer": {"pricing": {
+            "input_cents_per_million": 114, "output_cents_per_million": 480,
+        }}}
+        for native in ids.values()
+    ]}
+    monkeypatch.setattr(wafer.httpx, "HTTPTransport", lambda **_: httpx.MockTransport(
+        lambda request: httpx.Response(200, json=payload),
+    ))
+    monkeypatch.setattr(wafer, "MANIFEST_PATH", path)
+    monkeypatch.setattr(wafer, "UPSTREAM_ID_MAP", dict(wafer.UPSTREAM_ID_MAP))
+    monkeypatch.setattr(wafer, "_DISCOVERED_MANIFEST_ROWS", {})
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _KIMI_CUTOFF - timedelta(microseconds=1))
+    before = wafer.fetch()
+    assert set(before.prices) == set(ids)
+    wafer.write_provider_manifest(before)
+    rows = {row["id"]: row for row in json.loads(path.read_text())["models"]}
+    assert rows[_KIMI_MODEL].get("routable") is not False
+    assert rows[_KIMI_MODEL]["retirement_at"] == "2026-09-18T19:00:00Z"
+
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _KIMI_CUTOFF)
+    after = wafer.fetch()
+    assert set(after.prices) == set(ids) - {_KIMI_MODEL}
+    assert _KIMI_MODEL not in wafer._DISCOVERED_MANIFEST_ROWS
+    wafer.write_provider_manifest(after)
+    rows = {row["id"]: row for row in json.loads(path.read_text())["models"]}
+    assert rows[_KIMI_MODEL]["missing_since"]
+    # Runtime retirement is immediate, even during discovery's two-miss grace.
+    assert provider_lifecycle.provider_model_retired("wafer", _KIMI_MODEL)
+    wafer.write_provider_manifest(wafer.fetch())
+    rows = {row["id"]: row for row in json.loads(path.read_text())["models"]}
+    assert rows[_KIMI_MODEL]["routable"] is False
+    assert rows[_KIMI_MODEL]["retirement_at"] == "2026-09-18T19:00:00Z"
+    assert "replacement_model_id" not in rows[_KIMI_MODEL]

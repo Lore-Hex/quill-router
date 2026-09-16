@@ -34,6 +34,7 @@
       "id": "moonshotai/kimi-k2.6",
       "upstream_id": "Kimi-K2.6",
       "display_name": "Kimi-K2.6",
+      "retirement_at": "2026-09-18T19:00:00Z",
       "endpoints": [
         "chat/completions"
       ],

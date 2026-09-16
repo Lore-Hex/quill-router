@@ -44,6 +44,7 @@ CRUSOE_NEMOTRON_3_ULTRA_RETIREMENT_AT = datetime(2026, 7, 28, 18, 0, tzinfo=UTC)
 CRUSOE_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 13, 4, 0, tzinfo=UTC)
 WAFER_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
 WAFER_GLM52_RETIREMENT_AT = datetime(2026, 9, 5, 6, 59, tzinfo=UTC)
+WAFER_KIMI_K26_RETIREMENT_AT = datetime(2026, 9, 18, 19, 0, tzinfo=UTC)
 DEEPINFRA_TERMINUS_RETIREMENT_AT = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
 DEEPINFRA_QWEN3_235B_THINKING_RETIREMENT_AT = datetime(
     2026, 8, 24, 0, 0, tzinfo=UTC
@@ -544,6 +545,14 @@ _RETIREMENTS = (
         model_ids=frozenset({"z-ai/glm-5.2"}),
         upstream_ids=frozenset({"GLM-5.2"}),
         effective_at=WAFER_GLM52_RETIREMENT_AT,
+    ),
+    # Wafer Serverless: September 18 at noon PDT (19:00 UTC). No replacement
+    # was announced; preserve K2.6 identity on other providers.
+    _Retirement(
+        provider="wafer",
+        model_ids=frozenset({"moonshotai/kimi-k2.6"}),
+        upstream_ids=frozenset({"Kimi-K2.6"}),
+        effective_at=WAFER_KIMI_K26_RETIREMENT_AT,
     ),
     # Crusoe announced that Nemotron 3 Ultra retires from its Serverless
     # offering at 2026-07-28 11:00 PT, which is 2026-07-28 18:00 UTC.
