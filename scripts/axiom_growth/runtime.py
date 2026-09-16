@@ -176,7 +176,7 @@ class Sources:
         raise ValueError('Cloud Logging pagination budget exceeded')
 
     def usage(self, start, end):
-        sql = f"""SELECT toString(day, 'UTC') AS day, workspace_fingerprint,
+        sql = f"""SELECT toString(day, 'UTC') AS usage_day, workspace_fingerprint,
         marketing_workspace_fingerprint, model, provider, successful_calls,
         input_tokens, output_tokens, usage_microdollars,
         toString(first_call_at, 'UTC') AS first_call_at, toString(last_call_at, 'UTC') AS last_call_at
@@ -194,7 +194,7 @@ class Sources:
         for row in values:
             for f in ('successful_calls', 'input_tokens', 'output_tokens', 'usage_microdollars'):
                 row[f] = int(row[f])
-            row['_time'] = row.pop('day').replace(' ', 'T') + 'Z'
+            row['_time'] = row.pop('usage_day').replace(' ', 'T') + 'Z'
             for f in ('first_call_at', 'last_call_at'):
                 row[f] = row[f].replace(' ', 'T') + 'Z'
             row.update(event='growth.daily_usage', record_type='daily_usage_snapshot',

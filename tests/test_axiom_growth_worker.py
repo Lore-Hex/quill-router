@@ -181,3 +181,17 @@ def test_stale_alert_debounces_and_checks_observed_data_not_only_job_time():
     from scripts.axiom_growth.alerts import QUERY
     assert 'observed_through' in QUERY
     assert '999999' in QUERY  # An empty time window is stale, not healthy.
+
+
+def test_clickhouse_formatted_day_does_not_shadow_date_predicate(monkeypatch):
+    monkeypatch.setenv('GROWTH_CH_PASSWORD', 'test-only')
+    queries = []
+    def respond(request):
+        queries.append(request.content.decode())
+        return httpx.Response(200, text='')
+    sources = object.__new__(Sources)
+    sources.http = httpx.Client(transport=httpx.MockTransport(respond))
+    assert sources.usage(NOW-dt.timedelta(days=1), NOW) == []
+    assert "toString(day, 'UTC') AS usage_day" in queries[0]
+    assert "toString(day, 'UTC') AS day," not in queries[0]
+    assert 'FROM tr.growth_daily_usage' in queries[0]
