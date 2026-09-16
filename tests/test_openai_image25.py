@@ -4,6 +4,7 @@ import html
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -25,6 +26,25 @@ Batch
 | gpt-image-2.5-flare | Image | $4 | $1 | $15 |
 | gpt-image-2.5-flare | Text | $2.5 | $0.625 | - |
 """
+
+
+@pytest.mark.parametrize("invalid", ["empty", "bad-total", "fractional", "boolean"])
+def test_image_canary_rejects_invalid_output_or_accounting(
+    monkeypatch: pytest.MonkeyPatch, invalid: str,
+) -> None:
+    usage: dict[str, object] = {"input_tokens": 12, "output_tokens": 196, "total_tokens": 208}
+    images = [{"b64_json": "image-data"}]
+    if invalid == "empty":
+        images = []
+    elif invalid == "bad-total":
+        usage["total_tokens"] = 209
+    elif invalid == "fractional":
+        usage["input_tokens"] = 12.5
+    else:
+        usage["input_tokens"] = True
+    response = httpx.Response(200, json={"usage": usage, "data": images}, request=httpx.Request("POST", "https://api.openai.com/v1/images/generations"))
+    monkeypatch.setattr(openai.httpx, "post", lambda *_a, **_k: response)
+    assert not openai.probe_openai_image(api_key="test", model="gpt-image-2.5-flare")
 
 
 def test_image_text_input_and_image_output_prices_are_not_conflated() -> None:
@@ -55,8 +75,9 @@ def test_hidden_standard_group_beats_rendered_batch_projection() -> None:
 
 
 @pytest.mark.parametrize("healthy", [True, False])
+@pytest.mark.parametrize("image_only", [True, False])
 def test_image_discovery_uses_native_image_canary_not_chat(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, healthy: bool,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, healthy: bool, image_only: bool,
 ) -> None:
     manifest = tmp_path / "openai.json"
     manifest.write_text(json.dumps({"models": []}))
@@ -65,8 +86,8 @@ def test_image_discovery_uses_native_image_canary_not_chat(
     monkeypatch.setattr(openai, "_DISCOVERED_MANIFEST_ROWS", {})
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setattr(base, "fetch_html", lambda *_a, **_k: IMAGE_PRICES)
-    monkeypatch.setattr(openai, "fetch_json", lambda *_a, **_k: {"data": [
-        {"id": "gpt-4.1"}, {"id": "gpt-image-2.5-flare"}, {"id": "gpt-image-2.5-sunburst"},
+    monkeypatch.setattr(openai, "fetch_json", lambda *_a, **_k: {"data": ([] if image_only else [{"id": "gpt-4.1"}]) + [
+        {"id": "gpt-image-2.5-flare"}, {"id": "gpt-image-2.5-sunburst"},
         {"id": "gpt-image-99-unknown"},
     ]})
     chat_calls: list[str] = []
@@ -84,7 +105,7 @@ def test_image_discovery_uses_native_image_canary_not_chat(
     monkeypatch.setattr(openai, "probe_openai_image", image)
     openai.write_provider_manifest(openai.fetch())
     rows = {row["id"]: row for row in json.loads(manifest.read_text())["models"]}
-    assert chat_calls == ["gpt-4.1"]
+    assert chat_calls == ([] if image_only else ["gpt-4.1"])
     assert set(image_calls) == {model.removeprefix("openai/") for model in OPENAI_IMAGE_MODEL_IDS}
     for model in OPENAI_IMAGE_MODEL_IDS:
         assert rows[model]["model_type"] == "image"

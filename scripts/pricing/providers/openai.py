@@ -94,9 +94,17 @@ def probe_openai_image(*, api_key: str, model: str) -> bool:
         response.raise_for_status()
         data = response.json()
         usage = data.get("usage", {})
-        return bool(data.get("data")) and all(
+        images = data.get("data")
+        return (
+            isinstance(images, list) and len(images) == 1
+            and isinstance(images[0], dict)
+            and isinstance(images[0].get("b64_json"), str)
+            and bool(images[0]["b64_json"])
+            and all(
             type(usage.get(field)) is int and usage[field] > 0
             for field in ("input_tokens", "output_tokens", "total_tokens")
+            )
+            and usage["total_tokens"] == usage["input_tokens"] + usage["output_tokens"]
         )
     except (httpx.HTTPError, ValueError, TypeError, AttributeError):
         return False
@@ -150,8 +158,6 @@ def fetch() -> ProviderPricingResult:
         upstream_id_map=UPSTREAM_ID_MAP,
         include=_is_stable_chat_model,
     )
-    if not discovered:
-        raise RuntimeError("openai: no priced chat models found in authenticated catalog")
     for model_id, metadata in _MODEL_METADATA_OVERRIDES.items():
         if row := discovered.get(model_id):
             row.update(metadata)
@@ -169,11 +175,15 @@ def fetch() -> ProviderPricingResult:
             "input_modalities": ["text"], "output_modalities": ["image"],
         }
 
+    if not discovered:
+        raise RuntimeError("openai: no supported models found in authenticated catalog")
+
     checked = models_requiring_canary(MANIFEST_PATH, discovered)
     healthy = {
         model_id
         for model_id in sorted(checked)
-        if (probe_openai_image(api_key=api_key, model=UPSTREAM_ID_MAP[model_id])
+        if model_id in result.prices
+        and (probe_openai_image(api_key=api_key, model=UPSTREAM_ID_MAP[model_id])
             if model_id in OPENAI_IMAGE_MODEL_IDS else probe_openai_chat(
             base_url=BASE_URL,
             api_key=api_key,
@@ -191,7 +201,7 @@ def fetch() -> ProviderPricingResult:
     result.fetched_url = MODELS_URL
     result.notes.extend(
         [
-            f"intersected official pricing with {len(discovered)} authenticated chat models",
+            f"intersected official pricing with {len(discovered)} authenticated models",
             f"canaried {len(checked)} new/held routes ({len(healthy)} healthy)",
         ]
     )
