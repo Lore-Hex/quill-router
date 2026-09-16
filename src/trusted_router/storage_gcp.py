@@ -6021,10 +6021,22 @@ class SpannerBigtableStore:
                 # be blocked by our own just-recorded timestamp.
                 if not cooldown_passed:
                     if not self._credit_rebalance_cooldown_allows(workspace_id):
+                        # A peer may still be consolidating funds. Recheck
+                        # after a short wait outside any transaction rather
+                        # than exposing that sub-second race as an immediate
+                        # 503. The existing three-attempt cap bounds this to
+                        # two waits (0.5s), and the cooldown still gates writes.
+                        if _attempt < 2:
+                            time.sleep(0.25)
+                            continue
                         # Aggregate funds exist but are genuinely fragmented.
                         # The cooldown protects Spanner from a rebalance
                         # stampede; reporting 402 here would be an accounting
                         # lie, so ask the caller to retry instead.
+                        log.warning(
+                            "credit rebalance cooldown exhausted workspace=%s attempts=%d",
+                            workspace_id, _attempt + 1,
+                        )
                         raise StoreUnavailable("credit escrow rebalance is busy; retry")
                     cooldown_passed = True
                 rebalance_result = rebalance(credit_shard_candidates)

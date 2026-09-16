@@ -375,6 +375,89 @@ def test_repeated_headroom_races_return_retryable_error_not_false_402(
         _typed_authorize(store, key, estimate=50)
 
 
+@pytest.mark.parametrize("peer_result", ["funded", "exhausted", "still_busy"])
+def test_cooldown_wait_rechecks_without_another_rebalance(
+    monkeypatch: pytest.MonkeyPatch, peer_result: str,
+) -> None:
+    """A peer repair may finish milliseconds after the initial read-only check."""
+    from trusted_router import storage_gcp as gcp
+    from trusted_router import storage_gcp_credit_rebalance as rebalance_mod
+
+    store, database, key = _seed([100, 100], usage=[60, 60])
+    candidates = (0, 1)
+    monkeypatch.setattr(store, "_credit_shard_candidates", lambda _ws: candidates)
+    monkeypatch.setattr(store, "_refresh_credit_shard_candidates", lambda _ws: candidates)
+    monkeypatch.setattr(store, "_credit_rebalance_cooldown_allows", lambda _ws: False)
+    original_rebalance = rebalance_mod.rebalance_credit_for_estimate
+    calls = _install_rebalance_spy(monkeypatch)
+    waits: list[float] = []
+
+    def peer_finishes(seconds: float) -> None:
+        waits.append(seconds)
+        # The real transaction runner has returned before sleeping. No current
+        # authorization exists yet, so this wait cannot double-charge on replay.
+        assert not database.reservations
+        if peer_result == "funded":
+            original_rebalance(
+                database, store._param_types, workspace_id=WORKSPACE_ID,
+                shard_count=2, target_shard=0, estimate=60,
+            )
+        elif peer_result == "exhausted":
+            _set_credit_rows(database, [100, 100], usage=[100, 100])
+
+    monkeypatch.setattr(gcp.time, "sleep", peer_finishes)
+    if peer_result == "still_busy":
+        with pytest.raises(StoreUnavailable, match="rebalance is busy"):
+            _typed_authorize(store, key, estimate=60)
+        assert len(waits) == 2
+        assert not database.reservations
+        assert sum(row["reserved"] for row in _typed_rows(database).values()) == 0
+    else:
+        outcome, authorization = _typed_authorize(
+            store, key, estimate=60, idempotency_key="waiting-request",
+        )
+        assert len(waits) == 1
+        if peer_result == "funded":
+            assert outcome == AuthorizeOutcome.ACCEPTED
+            assert authorization is not None
+            assert _typed_authorize(
+                store, key, estimate=60, idempotency_key="waiting-request",
+            )[0] == AuthorizeOutcome.REPLAY
+            rows = _typed_rows(database).values()
+            assert sum(row["total_credits"] for row in rows) == 200
+            assert sum(row["total_usage"] for row in rows) == 120
+            assert sum(row["reserved"] for row in rows) == 60
+        else:
+            assert outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS
+            assert authorization is None
+            assert not database.reservations
+    assert calls["count"] == 0
+    assert 0 < sum(waits) <= 0.5
+
+
+def test_cooldown_expiry_permits_one_guarded_repair(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trusted_router import storage_gcp as gcp
+
+    store, database, key = _seed([100, 100], usage=[60, 60])
+    now = [100.0]
+    monkeypatch.setattr(gcp.time, "monotonic", lambda: now[0])
+    waits: list[float] = []
+
+    def advance(seconds: float) -> None:
+        waits.append(seconds)
+        now[0] += seconds
+
+    monkeypatch.setattr(gcp.time, "sleep", advance)
+    assert store._credit_rebalance_cooldown_allows(WORKSPACE_ID)
+    calls = _install_rebalance_spy(monkeypatch)
+    outcome, authorization = _typed_authorize(store, key, estimate=60)
+    assert outcome == AuthorizeOutcome.ACCEPTED
+    assert authorization is not None
+    assert sum(waits) == 0.5
+    assert calls["count"] == 1
+    assert sum(row["reserved"] for row in _typed_rows(database).values()) == 60
+
+
 def test_reject_path_refresh_dedupes_loader(monkeypatch: pytest.MonkeyPatch) -> None:
     store, _database, key = _seed([100, 100], usage=[70, 70])
     original_factory = store._credit_shard_count_loader
