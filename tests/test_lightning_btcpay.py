@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 from typing import Any
@@ -10,14 +11,14 @@ from unittest.mock import Mock
 import pytest
 import yaml
 
-from scripts.lightning.btcpay import bootstrap, deploy
+from scripts.lightning.btcpay import bootstrap, deploy, explorer
 
 ROOT = Path(__file__).parents[1] / "scripts/lightning/btcpay"
 
 
 def test_images_are_immutable_and_no_node_is_created() -> None:
     compose = yaml.safe_load((ROOT / "compose.yaml").read_text())
-    assert set(compose["services"]) == {"postgres", "btcpay", "caddy"}
+    assert set(compose["services"]) == {"postgres", "btcpay", "caddy", "nbxplorer"}
     for service in compose["services"].values():
         assert "@sha256:" in service["image"]
         assert service["mem_limit"]
@@ -29,6 +30,117 @@ def test_images_are_immutable_and_no_node_is_created() -> None:
     assert compose["services"]["btcpay"]["ports"] == ["127.0.0.1:49392:49392"]
     assert compose["networks"]["database"]["internal"]
     assert not any("admin.macaroon" in line for line in (ROOT / "compose.yaml").read_text().splitlines())
+
+
+def test_bitcoin_explorer_is_connected_and_private() -> None:
+    compose = yaml.safe_load((ROOT / "compose.yaml").read_text())
+    explorer = compose["services"]["nbxplorer"]
+    assert "ports" not in explorer
+    assert explorer["environment"]["NBXPLORER_BTCRPCURL"] == "http://10.92.0.2:8332/"
+    assert explorer["environment"]["NBXPLORER_BTCNODEENDPOINT"] == "10.92.0.2:8333"
+    assert "NBXPLORER_NOAUTH" not in explorer["environment"]
+    env = compose["services"]["btcpay"]["environment"]
+    assert env["BTCPAY_BTCEXPLORERURL"] == "http://nbxplorer:24444/"
+    assert env["BTCPAY_BTCEXPLORERCOOKIEFILE"] == "/run/nbxplorer/Main/.cookie"
+    assert "./data/nbxplorer:/run/nbxplorer:ro" in compose["services"]["btcpay"]["volumes"]
+
+
+def test_explorer_configuration_preserves_existing_node() -> None:
+    before = "chain=main\ndisablewallet=1\nlisten=0\nprune=30000\nincludeconf=/etc/bitcoin/lightning.conf\n[main]\nrpcbind=127.0.0.1\nrpcallowip=127.0.0.1\n"
+    after = explorer.bitcoin_configuration(before)
+    assert "listen=1\n" in after
+    assert "prune=30000\n" in after
+    assert "rpcbind=127.0.0.1\n" in after
+    assert "includeconf=/etc/bitcoin/lightning.conf\n" in after
+    assert after.index("includeconf=/etc/bitcoin/btcpay.conf") < after.index("[main]")
+    assert explorer.bitcoin_configuration(after) == after
+
+
+@pytest.mark.parametrize("before", ["[main]\nlisten=0\n", "disablewallet=1\nlisten=0\n", "disablewallet=1\n[main]\n"])
+def test_explorer_rejects_unexpected_bitcoin_configuration(before: str) -> None:
+    with pytest.raises(ValueError):
+        explorer.bitcoin_configuration(before)
+
+
+def test_explorer_cannot_spend_or_administer_node() -> None:
+    assert not {"sendtoaddress", "sendrawtransaction", "stop", "setnetworkactive", "walletpassphrase", "dumpprivkey"} & set(explorer.RPC_METHODS)
+    assert "disablewallet=1" in explorer.NODE_PREPARE
+    assert "rpcwhitelistdefault=0" in explorer.NODE_PREPARE
+    assert "rpcallowip=10.92.2.2/32" in explorer.NODE_PREPARE
+    assert "bind=10.92.0.2:8333" in explorer.NODE_PREPARE
+    assert "pending_htlcs" in explorer.NODE_ACTIVATE
+    assert "tr-lnd-backup.service" in explorer.NODE_ACTIVATE
+    assert "before['identity_pubkey']" in explorer.NODE_ACTIVATE
+    assert "conf.write_text(p['previous'])" in explorer.NODE_ACTIVATE
+
+
+def test_explorer_firewall_is_single_source_private_only() -> None:
+    rule = {
+        "direction": "INGRESS", "sourceRanges": ["10.92.2.2/32"],
+        "targetTags": ["tr-lightning"], "network": "projects/test/global/networks/tr-lightning",
+        "allowed": [{"IPProtocol": "tcp", "ports": ["8332", "8333"]}],
+    }
+    explorer.validate_firewall(rule)
+    explorer.validate_firewall({**rule, "allowed": [
+        {"IPProtocol": "tcp", "ports": ["8332"]}, {"IPProtocol": "tcp", "ports": ["8333"]},
+    ]})
+    for change in ({"sourceRanges": ["0.0.0.0/0"]}, {"sourceTags": ["broad-access"]},
+                   {"allowed": [{"IPProtocol": "tcp"}]}, {"targetTags": []}, {"disabled": True},
+                   {"allowed": [{"IPProtocol": "tcp", "ports": ["8332", "8333"]}, {"IPProtocol": "udp"}]}):
+        with pytest.raises(ValueError, match="firewall scope"):
+            explorer.validate_firewall({**rule, **change})
+
+
+def test_explorer_backup_covers_both_databases_without_package_changes() -> None:
+    installer = (ROOT / "install.sh").read_text()
+    assert '"${1:-}" != "--configure-only"' in installer
+    assert "for db in btcpay nbxplorer" in installer
+    assert "db-$db-" in installer
+
+
+@pytest.mark.parametrize("synced", [False, True])
+def test_explorer_upgrade_requires_real_health(monkeypatch: pytest.MonkeyPatch, synced: bool) -> None:
+    operator = Mock()
+    operator.gc.side_effect = ["tr-btcpay-bitcoin", json.dumps({
+        "direction": "INGRESS", "sourceRanges": ["10.92.2.2/32"],
+        "targetTags": ["tr-lightning"], "network": "projects/test/global/networks/tr-lightning",
+        "allowed": [{"IPProtocol": "tcp", "ports": ["8332", "8333"]}],
+    })]
+    commands = Mock(return_value="")
+    monkeypatch.setattr(explorer, "ssh", commands)
+    monkeypatch.setattr(explorer.time, "sleep", lambda _: None)
+    monkeypatch.setattr(explorer, "committed_bundle", lambda: {
+        "compose.yaml": "committed-compose", "install.sh": base64.b64encode(b"installer").decode(),
+    })
+
+    def remote(_operator: Any, code: str, _payload: Any, **_kwargs: Any) -> str:
+        if code == explorer.NODE_PREPARE:
+            return json.dumps({"configuration": "disablewallet=1\nlisten=0\n[main]\n", "cookie": "private"})
+        if code == explorer.EXPLORER_CHECK:
+            return json.dumps({"isFullySynched": synced})
+        if code == explorer.BTCPAY_CHECK:
+            return '{"synchronized":true}'
+        return "{}"
+
+    monkeypatch.setattr(explorer, "remote", remote)
+    if synced:
+        explorer.apply(operator)
+    else:
+        with pytest.raises(RuntimeError, match="not synced"):
+            explorer.apply(operator)
+    executed = [call.args[1] for call in commands.call_args_list]
+    assert any("up -d --no-deps btcpay" in command for command in executed) is synced
+    assert any("start tr-btcpay-backup.service" in command for command in executed) is synced
+
+
+def test_publication_requires_synced_explorer(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(deploy, "ssh", lambda *_args, **_kwargs: '{"complete":true}')
+    monkeypatch.setattr(explorer, "remote", lambda *_args, **_kwargs: '{"isFullySynched":false}')
+    operator = Mock()
+    with pytest.raises(RuntimeError, match="NBXplorer is not synced"):
+        deploy.publish(operator, tmp_path)
+    operator.gc.assert_not_called()
+    assert not list(tmp_path.iterdir())
 
 
 def test_lnd_permissions_cannot_spend_or_manage_channels() -> None:

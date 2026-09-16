@@ -165,6 +165,11 @@ def publish(operator: Operator, output: Path) -> None:
     state = json.loads(ssh(operator, "sudo cat /opt/tr-btcpay/access.json"))
     if not state.get("complete"):
         raise RuntimeError("Private bootstrap incomplete")
+    from scripts.lightning.btcpay.explorer import EXPLORER_CHECK, remote
+
+    status = json.loads(remote(operator, EXPLORER_CHECK, {}))
+    if not status.get("isFullySynched"):
+        raise RuntimeError("NBXplorer is not synced; run the explorer deployment first")
     private_json(output / "owner-access.json", {"url": "https://btcpay.lightningrouter.ai/login", "email": state["owner_email"], "password": state["owner_password"]})
     private_json(output / "greg-invitation.json", {"email": state["greg_email"], "invitation_url": state["greg_invitation"], "role": "Observer"})
     ssh(operator, "sudo systemctl start tr-btcpay.service tr-btcpay-backup.timer")
