@@ -2,8 +2,8 @@
   "provider": "nvidia-nim",
   "source": "https://integrate.api.nvidia.com/v1/models",
   "pricing_source": "https://docs.api.nvidia.com/nim/docs/run-anywhere",
-  "generated_at": "2026-09-15T18:01:06Z",
-  "model_count": 121,
+  "generated_at": "2026-09-16T06:34:35Z",
+  "model_count": 122,
   "models": [
     {
       "id": "01-ai/yi-large",
@@ -2132,6 +2132,26 @@
       "status": 1,
       "id": "z-ai/glm-5.3-flash",
       "upstream_id": "z-ai/glm-5.3-flash",
+      "routable": true,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "display_name": "z-ai/glm-5.3",
+      "title": "z-ai/glm-5.3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3",
+      "upstream_id": "z-ai/glm-5.3",
       "routable": true,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000

@@ -3,7 +3,7 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://inference.makora.com/v1/models",
-  "generated_at": "2026-09-15T18:01:06Z",
+  "generated_at": "2026-09-16T06:34:34Z",
   "price_scale": "microdollars_per_million",
   "model_count": 15,
   "models": [
@@ -27,13 +27,13 @@
       "supported_parameters": [
         "temperature",
         "top_p",
-        "top_k",
-        "frequency_penalty",
         "stop",
         "max_tokens",
-        "repetition_penalty",
         "presence_penalty",
-        "seed"
+        "seed",
+        "top_k",
+        "frequency_penalty",
+        "repetition_penalty"
       ],
       "title": "deepseek-ai/DeepSeek-V4-Flash",
       "model_type": "chat",
@@ -43,8 +43,7 @@
         "tools",
         "reasoning",
         "json_mode",
-        "structured_outputs",
-        "logprobs"
+        "structured_outputs"
       ]
     },
     {
@@ -516,7 +515,8 @@
       ],
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 470000,
-      "cached_input_token_price_per_m": 24000
+      "cached_input_token_price_per_m": 24000,
+      "missing_since": "2026-09-16"
     },
     {
       "id": "z-ai/glm-5.3",
@@ -534,7 +534,7 @@
         "chat/completions"
       ],
       "status": 1,
-      "context_length": 1048576,
+      "context_length": 524288,
       "max_output_tokens": 128000,
       "features": [
         "tools",
@@ -600,7 +600,9 @@
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 470000,
       "cached_input_token_price_per_m": 16000,
-      "missing_since": "2026-09-15"
+      "missing_since": "2026-09-15",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     }
   ]
 }
