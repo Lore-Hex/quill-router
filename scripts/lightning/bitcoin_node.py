@@ -175,11 +175,14 @@ def write_config() -> None:
     runtime_options()
     CONFIG.parent.mkdir(mode=0o750, exist_ok=True)
     CONFIG.write_text(
-        "chain=main\nserver=1\ndisablewallet=1\nlisten=0\nnatpmp=0\n"
+        "chain=main\nserver=1\ndisablewallet=1\n"
+        + ("listen=1\n" if Path("/etc/bitcoin/btcpay.conf").is_file() else "listen=0\n")
+        + "natpmp=0\n"
         "prune=30000\ntxindex=0\nmaxmempool=100\nrpcthreads=2\n"
         "maxuploadtarget=512\nlogips=0\nnodebuglogfile=1\nprinttoconsole=1\n"
         "dbcache=512\npar=2\n"
         + ("includeconf=/etc/bitcoin/lightning.conf\n" if Path("/etc/bitcoin/lightning.conf").is_file() else "")
+        + ("includeconf=/etc/bitcoin/btcpay.conf\n" if Path("/etc/bitcoin/btcpay.conf").is_file() else "")
         +
         "[main]\nrpcbind=127.0.0.1\nrpcallowip=127.0.0.1\n"
     )

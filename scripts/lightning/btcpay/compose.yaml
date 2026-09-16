@@ -22,6 +22,30 @@ services:
     logging: &logs
       driver: json-file
       options: {max-size: 10m, max-file: '3'}
+  nbxplorer:
+    image: nicolasdorier/nbxplorer@sha256:51b0f1a614e8dab54ccc847519e54be4e8dab6363af6d1dda4ebaca6ff4bbb5b
+    restart: unless-stopped
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment:
+      NBXPLORER_POSTGRES: ${NBXPLORER_DATABASE_CONNECTION:-}
+      NBXPLORER_NETWORK: mainnet
+      NBXPLORER_CHAINS: btc
+      NBXPLORER_BIND: 0.0.0.0:24444
+      NBXPLORER_DATADIR: /datadir
+      NBXPLORER_BTCRPCURL: http://10.92.0.2:8332/
+      NBXPLORER_BTCRPCCOOKIEFILE: /run/secrets/bitcoin.cookie
+      NBXPLORER_BTCNODEENDPOINT: 10.92.0.2:8333
+      NBXPLORER_TRIMEVENTS: '10000'
+    volumes:
+      - ./data/nbxplorer:/datadir
+      - ./secrets/nbxplorer-bitcoin.cookie:/run/secrets/bitcoin.cookie:ro
+    networks: [database, edge]
+    mem_limit: 512m
+    pids_limit: 128
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: *logs
   btcpay:
     image: btcpayserver/btcpayserver@sha256:c264aa08cd32a469bd30d41978b73dc8bb2de1503ce67bdb0ab8fd5d934fb614
     restart: unless-stopped
@@ -36,11 +60,14 @@ services:
       BTCPAY_DISABLE_REGISTRATION: 'true'
       BTCPAY_DOCKERDEPLOYMENT: 'false'
       BTCPAY_UPDATEURL: https://api.github.com/repos/btcpayserver/btcpayserver/releases/latest
+      BTCPAY_BTCEXPLORERURL: http://nbxplorer:24444/
+      BTCPAY_BTCEXPLORERCOOKIEFILE: /run/nbxplorer/Main/.cookie
     ports: ['127.0.0.1:49392:49392']
     volumes:
       - ./data/btcpay:/datadir
       - ./secrets/lnd.macaroon:/run/secrets/lnd.macaroon:ro
       - ./secrets/lnd.pem:/run/secrets/lnd.pem:ro
+      - ./data/nbxplorer:/run/nbxplorer:ro
     networks: [database, edge]
     mem_limit: 1536m
     pids_limit: 256

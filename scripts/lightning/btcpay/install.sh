@@ -1,8 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y -qq docker.io docker-compose ca-certificates python3 unattended-upgrades
+if [ "${1:-}" != "--configure-only" ]; then
+  apt-get update -qq
+  apt-get install -y -qq docker.io docker-compose ca-certificates python3 unattended-upgrades
+fi
 systemctl enable --now docker
 install -d -m 0700 /opt/tr-btcpay /opt/tr-btcpay/secrets /opt/tr-btcpay/backups
 cat >/etc/systemd/system/tr-btcpay.service <<'UNIT'
@@ -31,7 +33,7 @@ After=tr-btcpay.service
 Type=oneshot
 WorkingDirectory=/opt/tr-btcpay
 UMask=0077
-ExecStart=/bin/bash -c 'set -euo pipefail; f=backups/db-$(date -u +%%F).dump; docker-compose exec -T postgres pg_dump -U btcpay -d btcpay -Fc >"$f.tmp"; mv "$f.tmp" "$f"; find backups -name "db-*.dump" -mtime +7 -delete'
+ExecStart=/bin/bash -c 'set -euo pipefail; for db in btcpay nbxplorer; do f=backups/db-$db-$(date -u +%%F).dump; docker-compose exec -T postgres pg_dump -U btcpay -d "$db" -Fc >"$f.tmp"; mv "$f.tmp" "$f"; done; find backups -name "db-*.dump" -mtime +7 -delete'
 UNIT
 cat >/etc/systemd/system/tr-btcpay-backup.timer <<'UNIT'
 [Unit]

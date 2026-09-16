@@ -9,6 +9,9 @@ The existing LightningRouter checkout remains authoritative for USD credits.
 - `btcpay.lightningrouter.ai`: separate `tr-btcpay-1` VM, `us-central1-a`,
   e2-medium, 30 GB disk. No attached service account or cloud API scopes.
 - BTCPay 2.4.4, PostgreSQL 17, and Caddy are pinned by image digest.
+- NBXplorer 2.6.14 runs on the dashboard VM with its own database/user, bounded
+  memory, authenticated API, and no host-published API port. BTCPay reads its
+  rotating authentication cookie through a read-only mount.
 - Only HTTPS and its HTTP ACME/redirect listener are public. SSH requires IAP
   and OS Login. PostgreSQL is on an internal container network; BTCPay's direct
   HTTP listener is loopback-only.
@@ -19,7 +22,14 @@ The existing LightningRouter checkout remains authoritative for USD credits.
   and AddInvoice. No payments, cancellations, withdrawals, peers, channels,
   macaroon administration, or seed access. Root key 23 used by checkout is untouched.
 - No host-control interface, Docker socket, Bitcoin RPC, wallet seed, or LND
-  admin credential is mounted into BTCPay.
+  admin credential is mounted into BTCPay. Only NBXplorer gets a separate scoped
+  Bitcoin RPC credential. Its connection is internal to the GCP VPC, with Core
+  RPC/P2P bound to the node's private IP and firewall ingress restricted to
+  `10.92.2.2/32`. The Bitcoin RPC protocol itself is HTTP, not application TLS.
+- Bitcoin's existing wallet remains disabled. NBXplorer has read-only RPCs and
+  the `createwallet` capability probe, which returns method-not-found because
+  Core's wallet module is disabled. Spending, broadcast and administration RPCs
+  are denied; existing LND RPC authentication and ZMQ endpoints are preserved.
 - Database passwords, macaroon, administrator password, and account invitation
   are root-only files. Never put them in Git, command arguments, metadata, logs,
   screenshots, support tickets, or chat.
@@ -48,9 +58,9 @@ invoices, but the BTCPay store initially has no historical orders. A BTCPay
 invoice does not automatically fund TrustedRouter credits. Do not replace the
 live checkout without a separately reviewed settlement integration.
 
-This is a Lightning-only dashboard. No BTCPay on-chain wallet or NBXplorer indexer
-is configured; BTCPay may report its optional Bitcoin explorer as disconnected.
-That is not Bitcoin Core/LND being offline. On-chain checkout is not enabled.
+This is a Lightning-only dashboard. NBXplorer monitors the existing Bitcoin node
+so BTCPay displays real synchronization status. No on-chain wallet or on-chain
+checkout is enabled. Do not hide the synchronization banner or fake its health.
 
 ## Deployment
 
@@ -62,6 +72,7 @@ refuses dirty source. Dry-run is the default:
 uv run python -m scripts.lightning.btcpay.deploy provision --account=DEPLOY_EMAIL
 uv run python -m scripts.lightning.btcpay.deploy provision --account=DEPLOY_EMAIL --apply
 uv run python -m scripts.lightning.btcpay.deploy install --account=DEPLOY_EMAIL --apply
+uv run python -m scripts.lightning.btcpay.explorer --account=DEPLOY_EMAIL --apply
 uv run python -m scripts.lightning.btcpay.deploy publish --account=DEPLOY_EMAIL --apply
 ```
 
@@ -69,6 +80,15 @@ uv run python -m scripts.lightning.btcpay.deploy publish --account=DEPLOY_EMAIL 
 and revokes the temporary administrator API key. Only then does it enable public
 ingress. Credentials are captured into ignored mode-0600 `.private/btcpay/` files.
 Never share `owner-access.json` with Greg; share only `greg-invitation.json`.
+
+The explorer installer refuses unexpected node configuration or in-flight
+channel HTLCs, runs the existing encrypted LND backup, and preserves the node
+identity. The initial private listener change needs one controlled Core/LND
+restart. Later runs do not restart a correctly configured node. A failed node
+restart restores the previous configuration. No chain redownload or second
+wallet is needed. Publication requires NBXplorer synchronization; verify
+`GET /api/v1/health` returns `synchronized: true` afterward, along with the
+existing funding service's `/health` and Observer-role restrictions.
 
 Database dumps run at 04:00 UTC; encrypted disk snapshots run at 05:00 UTC with
 seven-day retention. These protect BTCPay configuration/invoice metadata, not
@@ -88,5 +108,8 @@ negative LND permission, backup, and live checkout-health checks. Do not use
 unattended image upgrades.
 
 Official references: [BTCPay releases](https://github.com/btcpayserver/btcpayserver/releases),
+[Docker configuration](https://docs.btcpayserver.org/Docker/configuration/),
+[Docker networking](https://docs.btcpayserver.org/Docker/networking/),
+[External Lightning nodes](https://docs.btcpayserver.org/Docker/lightning/),
 [Lightning setup](https://docs.btcpayserver.org/LightningNetwork-Setup/),
 [Greenfield API](https://docs.btcpayserver.org/API/Greenfield/v1/).
