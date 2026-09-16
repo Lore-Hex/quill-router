@@ -150,6 +150,18 @@ targets before the next starts; a failed region is restored to its previous
 task definition and verified before exit. No IAM, DNS, EventBridge, or new
 service provisioning is part of this release path.
 
+Dispatch the workflow from `main`, which is the only ref allowed by AWS OIDC.
+To promote an older baked release, use its full merged SHA instead of running
+the workflow on a release branch:
+
+```bash
+gh workflow run deploy-aws-control-plane.yml --repo Lore-Hex/quill-router \
+  --ref main -f mode=deploy -f release_sha=<full-40-character-main-commit>
+```
+
+Release selection rejects short/unmerged refs before cloud authentication;
+the selected release still must pass the existing CI, bake, and health gates.
+
 The operator/deployment role must be able to pass the existing `tr-eu-app`
 and `tr-cp-exec` roles to ECS. The GitHub role currently covers `tr-eu-*` only;
 its additional `iam:PassRole` grant for the exact `tr-cp-exec` ARN should be

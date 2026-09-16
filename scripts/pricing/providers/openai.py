@@ -26,6 +26,7 @@ from scripts.pricing.openai_catalog import (
     probe_openai_chat,
 )
 from trusted_router.image_generation import OPENAI_IMAGE_MODEL_IDS
+from trusted_router.provider_lifecycle import provider_model_retired
 
 SLUG = "openai"
 URL = "https://developers.openai.com/api/docs/pricing"
@@ -115,6 +116,8 @@ def _is_stable_chat_model(row: dict[str, Any]) -> bool:
     if not isinstance(native_id, str):
         return False
     value = native_id.casefold()
+    if provider_model_retired(SLUG, f"openai/{value}", native_id):
+        return False
     if value.startswith("ft:") or _DATED_MODEL_RE.search(value):
         return False
     if any(marker in value for marker in _NON_CHAT_MARKERS):
