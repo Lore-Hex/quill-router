@@ -361,10 +361,10 @@
   },
   "lightning": {
     "card_version": 2,
-    "model_count": 36,
+    "model_count": 33,
     "name": "Lightning AI",
     "privacy": "Policy documented",
-    "route_count": 62,
+    "route_count": 56,
     "route_mode": "Prepaid + BYOK",
     "slug": "lightning"
   },
@@ -388,10 +388,10 @@
   },
   "makora": {
     "card_version": 2,
-    "model_count": 5,
+    "model_count": 4,
     "name": "Makora",
     "privacy": "Policy documented",
-    "route_count": 10,
+    "route_count": 8,
     "route_mode": "Prepaid + BYOK",
     "slug": "makora"
   },
@@ -757,10 +757,10 @@
   },
   "together": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 12,
     "name": "Together",
     "privacy": "Zero retention",
-    "route_count": 22,
+    "route_count": 24,
     "route_mode": "Prepaid + BYOK",
     "slug": "together"
   },

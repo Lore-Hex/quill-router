@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Wafer serverless API. Refreshed hourly from Wafer's OpenAI-compatible /v1/models feed.",
   "provider": "wafer",
   "source": "https://pass.wafer.ai/v1/models",
-  "generated_at": "2026-09-16T06:34:35Z",
+  "generated_at": "2026-09-16T08:13:17Z",
   "price_scale": "microdollars_per_million",
   "zdr_header": "Wafer-ZDR: required",
   "model_count": 13,
@@ -114,7 +114,7 @@
       ],
       "zdr_supported": false,
       "routable": false,
-      "routable_reason": "awaiting-price",
+      "routable_reason": "delisted-upstream",
       "context_length": 262144,
       "input_modalities": [
         "text",
