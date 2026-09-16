@@ -165,3 +165,19 @@ def test_older_usage_days_are_preserved_when_recent_days_refresh():
                           'workspace_fingerprint': '', 'marketing_workspace_fingerprint': ''}]
     updated, _ = cycle(original, FakeIO(), NOW)
     assert updated['daily'][0]['event_id'] == 'older'
+
+
+def test_dashboards_use_live_cohort_age_and_source_watermark():
+    from scripts.axiom_growth.dashboards import FRESH, JOURNEY, build
+    assert 'Minutes_behind>15' in FRESH
+    assert 'Observed_through' in FRESH
+    assert "datetime_diff('day', now(), _time)" in JOURNEY
+    for doc in build():
+        assert doc['dashboard']['refreshTime'] == 300
+        assert doc['dashboard']['owner'] == 'X-AXIOM-EVERYONE'
+
+
+def test_stale_alert_debounces_and_checks_observed_data_not_only_job_time():
+    from scripts.axiom_growth.alerts import QUERY
+    assert 'observed_through' in QUERY
+    assert '999999' in QUERY  # An empty time window is stale, not healthy.

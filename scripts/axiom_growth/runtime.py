@@ -121,6 +121,9 @@ class Sources:
     def checked(response):
         if response.status_code >= 400:
             # Do not log response bodies, request headers, source rows or credentials.
+            print(json.dumps({'event': 'growth.upstream_failed',
+                              'upstream': response.request.url.host,
+                              'http_status': response.status_code}), flush=True)
             raise RuntimeError(f'Analytics upstream HTTP {response.status_code}')
         return response
 
