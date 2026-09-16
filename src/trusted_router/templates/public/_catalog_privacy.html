@@ -9,5 +9,5 @@
 {%- endmacro %}
 
 {% macro serving_provider_chip(provider, overflow=false) -%}
-<a class="pill provider-chip catalog-provider-chip{% if overflow %} provider-chip-overflow{% endif %}" href="/providers/{{ provider.slug }}" title="{{ provider.name }}: privacy labels describe available routes for this model."><img class="provider-logo" src="{{ provider.logo_url }}" alt="" width="22" height="22" loading="lazy" decoding="async"><span>{{ provider.name }}</span>{{ privacy_badges(provider.confidential_available, provider.zdr_available) }}</a>
+<a class="pill provider-chip catalog-provider-chip{% if overflow %} provider-chip-overflow{% endif %}" href="/providers/{{ provider.slug }}" title="{{ provider.name }}: privacy labels describe available routes for this model."><img class="provider-logo" src="{{ provider.logo_url }}" alt="{{ provider.name }} logo" aria-hidden="true" width="22" height="22" loading="lazy" decoding="async"><span>{{ provider.name }}</span>{{ privacy_badges(provider.confidential_available, provider.zdr_available) }}</a>
 {%- endmacro %}

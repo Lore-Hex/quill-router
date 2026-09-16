@@ -1157,7 +1157,7 @@ def test_vertex_provider_page_presents_zdr_with_managed_route_scope(
     response = client.get("/providers/google-vertex")
 
     assert response.status_code == 200
-    assert ">ZDR</span>" in response.text
+    assert ">ZDR · TR-funded</span>" in response.text
     assert ">yes</span>" in response.text
     assert "TR-funded routes" in response.text
     assert "No logs (prepaid)" not in response.text
@@ -1172,7 +1172,7 @@ def test_openai_provider_page_presents_zdr_with_managed_route_scope(
     response = client.get("/providers/openai")
 
     assert response.status_code == 200
-    assert ">ZDR</span>" in response.text
+    assert ">ZDR · TR-funded</span>" in response.text
     assert ">yes</span>" in response.text
     assert "TR-funded routes" in response.text
     assert "No logs (prepaid)" not in response.text
