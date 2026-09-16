@@ -1,0 +1,19 @@
+{
+    admin off
+    email security@trustedrouter.com
+}
+
+btcpay.lightningrouter.ai {
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+        X-Robots-Tag "noindex, nofollow"
+        -Server
+    }
+    # Do not enable access logs: account invitation URLs contain credentials.
+    request_body {
+        max_size 2MB
+    }
+    reverse_proxy btcpay:49392
+}
