@@ -22,6 +22,7 @@ _CASES = [
     *(('openai', f'openai/{native}', native, _OPENAI_CUTOFF) for native in _OPENAI_NATIVE),
     ('together', 'deepseek/deepseek-v4-flash-0731',
      'deepseek-ai/DeepSeek-V4-Flash-0731', _TOGETHER_CUTOFF),
+    ('wafer', 'moonshotai/kimi-k2.6', 'Kimi-K2.6', datetime(2026, 9, 18, 19, tzinfo=UTC)),
 ]
 _REPLACEMENT = "deepseek/deepseek-v4.1-flash"
 _REPLACEMENT_NATIVE = "deepseek-ai/DeepSeek-V4.1-Flash"
@@ -96,7 +97,7 @@ def test_openai_discovery_does_not_probe_or_republish_retired_ids(
 def test_together_refresh_probes_replacement_missing_from_endpoint_feed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, after_cutoff: bool,
 ) -> None:
-    _, old, old_native, _ = _CASES[-1]
+    _, old, old_native, _ = next(case for case in _CASES if case[0] == "together")
     probes = []
 
     def respond(request: httpx.Request) -> httpx.Response:

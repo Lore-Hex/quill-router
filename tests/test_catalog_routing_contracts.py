@@ -2328,10 +2328,6 @@ def test_wafer_manifest_drives_zdr_routing_and_gateway_enforcement(
     assert _gateway_provider_route_payload(zdr_endpoint) == {
         "wafer_zdr_required": True
     }
-    standard_endpoint = MODEL_ENDPOINTS.get("moonshotai/kimi-k2.6@wafer/prepaid")
-    if standard_endpoint is not None:
-        assert endpoint_zero_data_retention(standard_endpoint) is False
-        assert _gateway_provider_route_payload(standard_endpoint) == {}
 
 
 def test_glm_52_supplements_publish_current_model_across_providers() -> None:

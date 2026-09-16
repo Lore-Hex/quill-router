@@ -7,6 +7,9 @@ from pathlib import Path
 import pytest
 
 from trusted_router import wafer_policy
+from trusted_router.catalog_data import ModelEndpoint
+from trusted_router.catalog_privacy import endpoint_zero_data_retention
+from trusted_router.routes.internal.gateway import _gateway_provider_route_payload
 
 
 @pytest.fixture(autouse=True)
@@ -49,6 +52,14 @@ def test_wafer_zdr_policy_indexes_canonical_and_native_ids(
     assert wafer_policy.wafer_zdr_support("Kimi-K3") is True
     assert wafer_policy.wafer_zdr_support("Kimi-K2.6") is False
     assert wafer_policy.wafer_zdr_support("unknown/model") is None
+
+    # The negative privacy contract must survive removal of the live route.
+    standard_endpoint = ModelEndpoint(
+        id="wafer-standard-fixture", model_id="moonshotai/kimi-k2.6",
+        provider="wafer", usage_type="Credits", upstream_id="Kimi-K2.6",
+    )
+    assert endpoint_zero_data_retention(standard_endpoint) is False
+    assert _gateway_provider_route_payload(standard_endpoint) == {}
 
 
 def test_wafer_zdr_policy_fails_closed_on_invalid_manifest(
