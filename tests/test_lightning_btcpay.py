@@ -81,8 +81,12 @@ def test_explorer_firewall_is_single_source_private_only() -> None:
         "allowed": [{"IPProtocol": "tcp", "ports": ["8332", "8333"]}],
     }
     explorer.validate_firewall(rule)
+    explorer.validate_firewall({**rule, "allowed": [
+        {"IPProtocol": "tcp", "ports": ["8332"]}, {"IPProtocol": "tcp", "ports": ["8333"]},
+    ]})
     for change in ({"sourceRanges": ["0.0.0.0/0"]}, {"sourceTags": ["broad-access"]},
-                   {"allowed": [{"IPProtocol": "tcp"}]}, {"targetTags": []}, {"disabled": True}):
+                   {"allowed": [{"IPProtocol": "tcp"}]}, {"targetTags": []}, {"disabled": True},
+                   {"allowed": [{"IPProtocol": "tcp", "ports": ["8332", "8333"]}, {"IPProtocol": "udp"}]}):
         with pytest.raises(ValueError, match="firewall scope"):
             explorer.validate_firewall({**rule, **change})
 

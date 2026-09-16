@@ -158,12 +158,15 @@ with urllib.request.urlopen('http://127.0.0.1:49392/api/v1/health',timeout=10) a
 
 
 def validate_firewall(rule: dict[str, Any]) -> None:
+    allowed = rule.get("allowed", [])
+    ports = {port for entry in allowed for port in entry.get("ports", [])}
     if (rule.get("direction") != "INGRESS" or rule.get("disabled", False)
             or rule.get("sourceRanges") != [PRIVATE_IP + "/32"]
             or rule.get("targetTags") != ["tr-lightning"]
             or not rule.get("network", "").endswith("/networks/tr-lightning")
             or rule.get("sourceTags") or rule.get("sourceServiceAccounts")
-            or rule.get("allowed") != [{"IPProtocol": "tcp", "ports": ["8332", "8333"]}]):
+            or ports != {"8332", "8333"}
+            or any(entry.get("IPProtocol") != "tcp" or not entry.get("ports") for entry in allowed)):
         raise ValueError("Unexpected Bitcoin firewall scope; refusing deployment")
 
 
