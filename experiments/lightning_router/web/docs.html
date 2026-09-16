@@ -10,6 +10,8 @@
 <p>The <a href="/#setup-title">setup tabs</a> include Trusted Cowork, OpenCode, Crush and OMP. For your own application, follow the <a href="https://trustedrouter.com/docs">TrustedRouter API docs</a>. Those docs apply to your LightningRouter key too.</p>
 <p><a href="/pricing">Pricing</a> lists model costs in USD. <a href="/usage">Usage</a> shows your available credits and total spend when you connect your key.</p>
 <h2>Check the privacy boundary</h2>
+<p>The CLI setup tabs default to E2EE with attested model execution. Choose privacy before the model. Generated configs include <code>provider.min_privacy</code>, so fallback must meet that requirement or the request fails. ZDR and no-store are separate choices, not guarantees implied by encryption. <strong>All models</strong> removes the restriction.</p>
+<p>This choice applies to the generated config, not the API key itself. Use current clients that support custom request-body fields. Trusted Cowork has its own model selection; start with <code>trustedrouter/confidential</code> there.</p>
 <p>This site handles funding. Inference goes separately to TrustedRouter's attested API. You or your agent can <a href="https://trust.trustedrouter.com">verify gateway attestation</a> before sending requests.</p>
 <p>The selected model provider still processes your request. Retention and confidential computing guarantees vary by provider. Review <a href="https://trustedrouter.com/providers">provider policies</a> and our <a href="/privacy">Privacy Policy</a> before sending sensitive data.</p>
 <h2>Payment help</h2>

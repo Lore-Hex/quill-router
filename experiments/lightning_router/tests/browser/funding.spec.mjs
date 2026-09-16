@@ -137,6 +137,7 @@ test("model-specific reasoning updates snippets without a global dropdown or pay
   await expect(page.locator("#qr")).toBeVisible();
   const before = await page.evaluate(() => sessionStorage.getItem("lightningrouter-usd-session-v1"));
   await page.getByRole("tab", {name: "OpenCode", exact: true}).click();
+  await page.getByLabel("Privacy", {exact: true}).selectOption("any");
   await expect(page.locator("#reasoning-effort")).toHaveCount(0);
   await expect(page.locator("#reasoning-values")).toHaveText("reasoning_effort: low, high, max");
   await expect(page.locator("#config-code")).toContainText('"reasoningEffort": "high"');
@@ -154,6 +155,7 @@ test("model-specific reasoning updates snippets without a global dropdown or pay
 test("Anthropic native effort is not confused with TR's thinking-token budget", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("tab", {name: "OpenCode", exact: true}).click();
+  await page.getByLabel("Privacy", {exact: true}).selectOption("zdr");
   await expect(page.locator("#model")).toBeEnabled();
   await page.selectOption("#model", "anthropic/claude-opus-4.8");
   await expect(page.locator("#reasoning-values")).toContainText("output_config.effort: low, medium, high, xhigh, max");

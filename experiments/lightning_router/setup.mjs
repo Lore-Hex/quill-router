@@ -7,6 +7,18 @@ export function centsFromText(text) {
 }
 
 const CLIENT_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+const PRIVACY_LEVELS = ["confidential", "zdr", "no_store", "any"];
+
+export function privacyProviders(model, privacy) {
+  if (!PRIVACY_LEVELS.includes(privacy)) return [];
+  const values = model.privacy?.[privacy];
+  if (!Array.isArray(values) || values.some(slug => typeof slug !== "string" || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(slug))) return [];
+  return [...new Set(values)];
+}
+
+export function modelMatchesPrivacy(model, privacy) {
+  return privacy === "any" || privacyProviders(model, privacy).length > 0;
+}
 
 function checkedProviderOrder(value) {
   if (!Array.isArray(value) || value.length > 16 ||
@@ -25,11 +37,18 @@ export function providerOrderFromText(text) {
   return checkedProviderOrder(value);
 }
 
-export function setupFor(agent, model, apiBase, providerOrder = []) {
+export function setupFor(agent, model, apiBase, providerOrder = [], privacy = "confidential") {
   if (!/^[A-Za-z0-9_./:-]{1,180}$/.test(model.id)) throw new Error("Invalid model ID");
   if (!["https://api.lightningrouter.ai/v1", "https://api.trustedrouter.com/v1"].includes(apiBase)) throw new Error("Unexpected API endpoint");
   const order = checkedProviderOrder(providerOrder);
-  const routing = order.length ? { provider: { order } } : {};
+  if (!PRIVACY_LEVELS.includes(privacy)) throw new Error("Choose a supported privacy level.");
+  if (!modelMatchesPrivacy(model, privacy)) throw new Error("This model has no eligible route for the selected privacy level.");
+  if (privacy !== "any" && order.some(slug => !privacyProviders(model, privacy).includes(slug))) {
+    throw new Error("Provider order must use eligible providers for this model and privacy level.");
+  }
+  const routing = privacy !== "any" || order.length
+    ? {provider: {...(privacy !== "any" ? {min_privacy: privacy} : {}), ...(order.length ? {order} : {})}} : {};
+  const hasRouting = Boolean(routing.provider);
   const profile = model.reasoning;
   const efforts = profile?.status === "reviewed" ? profile.setup_efforts || [] : [];
   const effort = profile?.status === "reviewed" ? profile.setup_default : null;
@@ -57,7 +76,7 @@ export function setupFor(agent, model, apiBase, providerOrder = []) {
         options: { baseURL: apiBase, apiKey: "{env:LIGHTNINGROUTER_API_KEY}" },
         models: { [model.id]: { name: model.name, ...(context && output ? { limit: { context, output } } : {}),
           reasoning: canReason, variants,
-          ...(explicit || order.length ? { options: { ...(explicit ? { reasoningEffort: effort } : {}), ...routing } } : {}),
+          ...(explicit || hasRouting ? { options: { ...(explicit ? { reasoningEffort: effort } : {}), ...routing } } : {}),
         } },
       } },
     }, null, 2),
@@ -70,7 +89,7 @@ export function setupFor(agent, model, apiBase, providerOrder = []) {
       providers: { lightningrouter: {
         name: "LightningRouter", type: "openai-compat", base_url: apiBase,
         api_key: "$LIGHTNINGROUTER_API_KEY",
-        ...(order.length ? { extra_body: routing } : {}),
+        ...(hasRouting ? { extra_body: routing } : {}),
         models: [{ id: model.id, name: model.name, ...(context ? { context_window: context } : {}),
           ...(defaultOutput || output ? { default_max_tokens: defaultOutput || output } : {}),
           can_reason: canReason,
@@ -92,7 +111,7 @@ export function setupFor(agent, model, apiBase, providerOrder = []) {
         "\n        compat:\n          supportsReasoningEffort: true\n          thinkingFormat: openai" +
         (efforts.includes("none") ? "\n          reasoningDisableMode: none-effort" : "")
         : `\n        reasoning: ${canReason}\n        compat:\n          supportsReasoningParams: false`) +
-      (order.length ? `\n          extraBody: ${JSON.stringify(routing)}` : ""),
+      (hasRouting ? `\n          extraBody: ${JSON.stringify(routing)}` : ""),
     command: `omp --model '${ref}'` + (explicit ? ` --thinking ${effort === "none" ? "off" : effort}` : ""),
     docs: "https://github.com/can1357/oh-my-pi/blob/main/docs/models.md", reasoningSummary,
   };

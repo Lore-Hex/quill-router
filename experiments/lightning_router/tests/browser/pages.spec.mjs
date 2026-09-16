@@ -14,7 +14,7 @@ test("default selects V4.1 Flash instead of an alphabetically earlier retired Fl
     {id: "deepseek/deepseek-v4-flash-0731-fast", name: "DeepSeek V4 Flash Fast"},
     {id: "deepseek/deepseek-flash", name: "DeepSeek Flash (rolling)"},
     {id: "deepseek/deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", context: 1048576, output: 393216, default_output: 65536},
-  ]}}));
+  ].map(model => ({...model, privacy: {confidential: ["tinfoil"]}}))}}));
   await page.goto("/");
   await expect(page.locator("#model")).toHaveValue("deepseek/deepseek-v4.1-flash");
   await page.getByRole("tab", {name: "Crush", exact: true}).click();

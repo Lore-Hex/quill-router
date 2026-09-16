@@ -1,5 +1,5 @@
 import { createIcons, ArrowRight, Copy, Eye, LogOut, RefreshCw } from "lucide";
-import { centsFromText, providerOrderFromText, setupFor } from "./setup.mjs";
+import { centsFromText, modelMatchesPrivacy, privacyProviders, providerOrderFromText, setupFor } from "./setup.mjs";
 import { KEY, SESSION, savedSession } from "./session.mjs";
 import { connectSupport } from "./chrome.mjs";
 
@@ -19,6 +19,31 @@ let amountDirty = false;
 let balanceKey = null;
 let creditedInvoice = null;
 const providerOrders = new Map();
+const privacyNotes = {
+  confidential: "Attested model execution. Provider retention policies are separate.",
+  zdr: "Routes with an explicit zero data retention policy or agreement. This does not require attested model execution.",
+  no_store: "Routes marked as not storing prompts or outputs. This does not require a ZDR agreement or attested model execution.",
+  any: "No upstream privacy restriction. Provider retention and encryption policies vary.",
+};
+const orderKey = () => JSON.stringify([$("privacy").value, $("model").value]);
+
+function renderModels(requested = $("model").value) {
+  const privacy = $("privacy").value;
+  const eligible = models.filter(model => modelMatchesPrivacy(model, privacy));
+  $("privacy-note").textContent = privacyNotes[privacy] || "Choose a supported privacy level.";
+  $("model").replaceChildren(...eligible.map(model => new Option(model.name, model.id)));
+  const preferred = eligible.find(model => model.id === requested)
+    || eligible.find(model => model.id === "deepseek/deepseek-v4.1-flash")
+    || eligible.find(model => model.id === "deepseek/deepseek-flash")
+    || eligible[0];
+  if (preferred) $("model").value = preferred.id;
+  else $("model").replaceChildren(new Option("No matching models", ""));
+  $("model").disabled = !eligible.length;
+  $("model-empty").hidden = Boolean(eligible.length);
+  $("model-count").textContent = `${eligible.length} of ${models.length} models`;
+  $("provider-order").value = providerOrders.get(orderKey()) || "";
+  renderSetup();
+}
 
 function remember() { sessionStorage.setItem(SESSION, JSON.stringify(state)); }
 function secret() {
@@ -79,12 +104,21 @@ function renderSetup() {
   $("copy-cowork-key").disabled = !state?.reveal;
   $("cowork-key-status").hidden = Boolean(state?.reveal);
   $("env-code").textContent = "export LIGHTNINGROUTER_API_KEY='" + (state?.reveal ? state.key : "YOUR_API_KEY") + "'";
-  if (cowork) { setup = null; return; }
+  setup = null;
+  $("copy-config").disabled = true;
+  $("copy-command").disabled = true;
+  for (const id of ["config-code", "command-code", "config-path", "model-limits", "reasoning-values", "reasoning-default", "reasoning-note", "eligible-providers", "provider-order-error"]) $(id).textContent = "";
+  $("reasoning-source").hidden = true;
+  $("provider-order").setAttribute("aria-invalid", "false");
+  if (cowork) return;
   const model = models.find((item) => item.id === $("model").value);
   $("provider-order").disabled = !model || !config;
   if (!model || !config) return;
+  const providers = privacyProviders(model, $("privacy").value);
+  $("eligible-providers").textContent = providers.length ? `Eligible providers: ${providers.join(", ")}` : "Provider eligibility is checked at request time.";
+  $("provider-order").placeholder = JSON.stringify(providers.slice(0, 2));
   try {
-    setup = setupFor(agent, model, config.api_base, providerOrderFromText($("provider-order").value));
+    setup = setupFor(agent, model, config.api_base, providerOrderFromText($("provider-order").value), $("privacy").value);
     $("provider-order-error").textContent = "";
     $("provider-order").setAttribute("aria-invalid", "false");
     $("copy-config").disabled = false;
@@ -350,12 +384,13 @@ $("copy-env").addEventListener("click", () => copy($("env-code").textContent));
 $("copy-config").addEventListener("click", () => { if (setup) copy(setup.config); });
 $("copy-command").addEventListener("click", () => { if (setup) copy(setup.command); });
 $("refresh-balance").addEventListener("click", () => exclusive(showBalance));
+$("privacy").addEventListener("change", () => renderModels());
 $("model").addEventListener("change", () => {
-  $("provider-order").value = providerOrders.get($("model").value) || "";
+  $("provider-order").value = providerOrders.get(orderKey()) || "";
   renderSetup();
 });
 $("provider-order").addEventListener("input", () => {
-  providerOrders.set($("model").value, $("provider-order").value);
+  providerOrders.set(orderKey(), $("provider-order").value);
   renderSetup();
 });
 for (const tab of document.querySelectorAll("[role=tab]")) {
@@ -379,6 +414,7 @@ document.addEventListener("visibilitychange", () => { clearTimeout(pollTimer); i
 
 async function start() {
   icons();
+  $("privacy").value = "confidential";
   try {
     config = await api("/api/config", { key: null });
     $("connection").hidden = config.network !== "regtest" && config.payments_ready;
@@ -416,16 +452,13 @@ async function start() {
   try {
     const result = await api("/api/models", { key: null });
     models = result.data;
-    $("model").replaceChildren(...models.map((model) => new Option(model.name, model.id)));
     const requested = new URLSearchParams(location.search).get("model");
-    const preferred = models.find(model => model.id === requested)
-      || models.find(model => model.id === "deepseek/deepseek-v4.1-flash")
-      || models.find(model => model.id === "deepseek/deepseek-flash")
-      || models.find((model) => model.id.includes("deepseek") && model.id.includes("flash"));
-    if (preferred) $("model").value = preferred.id;
-    $("model").disabled = !models.length;
-    $("model-count").textContent = `${models.length} models`;
-    if (config) renderSetup();
-  } catch { $("model").replaceChildren(new Option("Model catalog unavailable", "")); $("model-count").textContent = "Try again shortly"; }
+    renderModels(requested);
+  } catch {
+    models = [];
+    renderModels();
+    $("model").replaceChildren(new Option("Model catalog unavailable", ""));
+    $("model-count").textContent = "Try again shortly";
+  }
 }
 start();

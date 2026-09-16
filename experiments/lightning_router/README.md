@@ -116,15 +116,36 @@ References: [OpenCode](https://opencode.ai/docs/models/#configure-models),
 [Crush](https://github.com/charmbracelet/crush/blob/main/internal/agent/coordinator.go),
 [OMP](https://github.com/can1357/oh-my-pi/blob/main/docs/models.md).
 
+### Privacy-first CLI setup
+
+Privacy appears before the model selector and defaults to `confidential` (E2EE
+with attested model execution), including on reload and model deep links. Other
+choices are ZDR, no-store and All models. The catalog derives eligible providers
+from explicit prepaid, tool-capable endpoint flags, never the publisher's flags
+or a model's maximum numeric privacy tier. Confidential execution, ZDR and
+no-store are independent claims. Unknown metadata does not qualify.
+
+The generated config carries `provider.min_privacy` through OpenCode's provider
+options, Crush's `extra_body`, and OMP's `compat.extraBody`. The existing router
+enforces this hard requirement on fallback too; no eligible route means failure,
+not a privacy downgrade. Empty selections clear the old config and disable copy.
+This is a config constraint, not an account or API-key policy. Cowork keeps its
+separate in-app model selection and the `trustedrouter/confidential` starting route.
+
+Tests cover metadata classification, stale-config clearing, independent privacy
+dimensions, browser reloads, checkout isolation, and actual outgoing HTTP bodies
+from the pinned OpenCode SDK and OMP provider. No funding or gateway changes.
+
 ### Provider order
 
 The CLI setup tabs accept an optional JSON array of provider slugs, for example
-`["deepinfra", "novita"]`. Each selected model keeps its own preference within
+`["tinfoil", "chutes"]` when both qualify. Each model and privacy level keeps its own preference within
 the page; changing it does not mutate the funding session or create an invoice.
-Blank input or `[]` leaves routing unchanged. Malformed arrays, duplicates, and
-oversized values block configuration copying rather than retaining a stale setup.
+Blank input or `[]` keeps the selected privacy requirement without a preferred order.
+Malformed arrays, duplicates, oversized values and providers outside a restricted
+privacy selection block copying rather than retaining a stale setup.
 
-Generated requests contain `"provider": {"order": ["deepinfra", "novita"]}`.
+For example: `"provider": {"min_privacy": "confidential", "order": ["tinfoil", "chutes"]}`.
 This is a preference, not an allowlist: other eligible providers remain available
 as fallbacks, and the requested model does not change. It makes no US residency
 or jurisdiction guarantee. No backend change is needed.

@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
 from starlette.exceptions import HTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .catalog import limits, pricing
+from .catalog import limits, pricing, privacy
 from .errors import FundingReviewRequired
 from .lookup import LookupGate
 from .pages import public_page
@@ -74,7 +74,7 @@ class Catalog:
                     continue
                 models.append({
                     "id": model_id, "name": str(item.get("name") or model_id)[:180],
-                    **limits(item), "pricing": pricing(item),
+                    **limits(item), "pricing": pricing(item), "privacy": privacy(item),
                     "reasoning": reasoning_profile(item),
                 })
             self.models = sorted(models, key=lambda row: row["name"].lower())
