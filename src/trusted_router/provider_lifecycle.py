@@ -55,6 +55,7 @@ NEBIUS_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 31, 0, 0, tzinfo=UTC)
 CEREBRAS_GEMMA4_SHARED_RETIREMENT_AT = datetime(2026, 9, 3, 0, 0, tzinfo=UTC)
 NOVITA_LING_30_TINY_RETIREMENT_AT = datetime(2026, 8, 13, 15, 0, tzinfo=UTC)
 ALIBABA_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 9, 16, 0, tzinfo=UTC)
+AZURE_COMMAND_A_PLUS_RETIREMENT_AT = datetime(2026, 10, 16, 0, 0, tzinfo=UTC)
 DEEPSEEK_V4_PRICING_EFFECTIVE_AT = datetime(2026, 8, 16, 16, 0, tzinfo=UTC)
 DEEPSEEK_V41_FLASH_EFFECTIVE_AT = datetime(2026, 9, 10, 4, 0, tzinfo=UTC)
 # The launch-day pricing page supersedes the earlier email: Pro remains
@@ -131,6 +132,18 @@ class _Retirement:
 
 
 _RETIREMENTS = (
+    # Microsoft publishes a date, not a time; stop at 00:00 UTC conservatively.
+    # The suggested Hugging Face replacements require managed compute and are
+    # not interchangeable serverless routes. Keep the existing conformance hold.
+    # https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule
+    _Retirement(
+        provider="azure",
+        model_ids=frozenset({"cohere/command-a-plus-05-2026"}),
+        upstream_ids=frozenset({
+            "Cohere-command-a-plus-05-2026", "cohere-command-a-plus-05-2026",
+        }),
+        effective_at=AZURE_COMMAND_A_PLUS_RETIREMENT_AT,
+    ),
     # Notices give dates without an exact time; stop at 00:00 UTC conservatively.
     # OpenAI: https://developers.openai.com/api/docs/deprecations
     # Together: September 29 serverless retirement notice. V4.1 is a distinct
