@@ -1,0 +1,67 @@
+version: '3.8'
+services:
+  postgres:
+    image: postgres@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: btcpay
+      POSTGRES_DB: btcpay
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    networks: [database]
+    mem_limit: 512m
+    pids_limit: 128
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U btcpay -d btcpay]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    logging: &logs
+      driver: json-file
+      options: {max-size: 10m, max-file: '3'}
+  btcpay:
+    image: btcpayserver/btcpayserver@sha256:c264aa08cd32a469bd30d41978b73dc8bb2de1503ce67bdb0ab8fd5d934fb614
+    restart: unless-stopped
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment:
+      BTCPAY_POSTGRES: ${BTCPAY_DATABASE_CONNECTION:?required}
+      BTCPAY_NETWORK: mainnet
+      BTCPAY_CHAINS: btc
+      BTCPAY_BIND: 0.0.0.0:49392
+      BTCPAY_EXTERNALURL: https://btcpay.lightningrouter.ai
+      BTCPAY_DISABLE_REGISTRATION: 'true'
+      BTCPAY_DOCKERDEPLOYMENT: 'false'
+      BTCPAY_UPDATEURL: https://api.github.com/repos/btcpayserver/btcpayserver/releases/latest
+    ports: ['127.0.0.1:49392:49392']
+    volumes:
+      - ./data/btcpay:/datadir
+      - ./secrets/lnd.macaroon:/run/secrets/lnd.macaroon:ro
+      - ./secrets/lnd.pem:/run/secrets/lnd.pem:ro
+    networks: [database, edge]
+    mem_limit: 1536m
+    pids_limit: 256
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: *logs
+  caddy:
+    image: caddy@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+    restart: unless-stopped
+    ports: ['80:80', '443:443']
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data/caddy:/data
+      - ./data/caddy-config:/config
+    networks: [edge]
+    mem_limit: 256m
+    pids_limit: 128
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+    logging: *logs
+networks:
+  database: {internal: true}
+  edge: {}
