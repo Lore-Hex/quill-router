@@ -17,6 +17,21 @@ PROJECT = 'quill-cloud-proxy'
 BUCKET = 'quill-cloud-proxy-growth-sync'
 
 
+def source_filter():
+    events = ' OR '.join(f'jsonPayload.event="{event}"'
+                         for event in sorted(m.BROWSER_EVENTS | m.CONVERSION_EVENTS))
+    return ('resource.type="cloud_run_revision" '
+            '(resource.labels.service_name="trusted-router-public" OR '
+            'resource.labels.service_name="trusted-router") '
+            f'({events})')
+
+
+def update_source_filter():
+    run(['gcloud', 'logging', 'sinks', 'update', 'tr-growth-source',
+         '--project='+PROJECT, '--log-filter='+source_filter()])
+    print(json.dumps({'updated': 'tr-growth-source', 'exact_events': 12}))
+
+
 def run(args, *, data=None):
     result = subprocess.run(args, input=data, capture_output=True, timeout=180)  # noqa: S603
     if result.returncode:
@@ -96,13 +111,15 @@ def bootstrap(cache_path):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['axiom', 'clickhouse', 'bootstrap'])
+    parser.add_argument('action', choices=['axiom', 'clickhouse', 'bootstrap', 'source-filter'])
     parser.add_argument('--cache')
     args = parser.parse_args()
     if args.action == 'axiom':
         provision_axiom()
     elif args.action == 'clickhouse':
         provision_clickhouse()
+    elif args.action == 'source-filter':
+        update_source_filter()
     else:
         if not args.cache:
             parser.error('--cache is required for bootstrap')

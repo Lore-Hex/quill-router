@@ -72,3 +72,13 @@ replay-safe. Never delete the live state to make a failing job look healthy.
 Verify two successive scheduled completions, fresh `growth.sync_completed`
 rows, a real acquisition event, and updated daily usage before declaring the
 feed live. Dashboard stale state and missing-data notices remain visible.
+
+The acquisition sink uses exact event-name comparisons, not a regex. Reapply
+its allowlist with `python -m scripts.axiom_growth.provision source-filter`.
+During rollout an overescaped filter was caught by comparing an actual browser
+event in the primary logs with the isolated bucket. HTTP success and a worker
+heartbeat alone do not prove source delivery.
+
+The optional operator tool `scripts.axiom_growth.alerts` configures a debounced
+email monitor. It has not been enabled: notification delivery requires separate
+approval. Freshness warnings on all four dashboards are active.

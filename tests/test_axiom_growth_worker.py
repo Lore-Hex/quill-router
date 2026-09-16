@@ -195,3 +195,14 @@ def test_clickhouse_formatted_day_does_not_shadow_date_predicate(monkeypatch):
     assert "toString(day, 'UTC') AS usage_day" in queries[0]
     assert "toString(day, 'UTC') AS day," not in queries[0]
     assert 'FROM tr.growth_daily_usage' in queries[0]
+
+
+def test_logging_sink_uses_exact_event_allowlist_without_regex_escaping():
+    from scripts.axiom_growth.provision import source_filter
+    value = source_filter()
+    assert '=~' not in value
+    assert '\\' not in value
+    assert value.count('jsonPayload.event=') == 12
+    for name in m.BROWSER_EVENTS | m.CONVERSION_EVENTS:
+        assert f'jsonPayload.event="{name}"' in value
+    assert 'resource.type="cloud_run_revision"' in value
