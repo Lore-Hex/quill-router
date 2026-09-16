@@ -18,6 +18,8 @@ PATHS = (
 BLOCKED = {".private", ".env", ".venv", "node_modules", "__pycache__", "test-results"}
 SUFFIXES = {".db", ".sqlite", ".pem", ".key", ".macaroon", ".wallet", ".pyc"}
 BRAND_MARK = f"{APP}/web/lightningrouter-mark.webp"
+SOCIAL_IMAGE = f"{APP}/web/lightningrouter-og.jpg"
+SOCIAL_IMAGE_SHA256 = "698c899d0bb009795f1a816a520d59aae2f30cac6e3b3eb97f3d2ea716276718"
 
 
 def git(root: Path, *args: str) -> bytes:
@@ -42,12 +44,17 @@ def export(root: Path, ref: str, output: Path) -> dict[str, str]:
         target = name.removeprefix(TEMPLATES + "/") if name.startswith(TEMPLATES + "/") else name
         content = git(root, "cat-file", "blob", oid)
         if name == BRAND_MARK:
-            # Only this reviewed raster asset may bypass text validation.
+            # Reviewed brand assets are the only binary publication exceptions.
             if (not 20 <= len(content) <= 100_000 or content[:4] != b"RIFF"
                     or content[8:12] != b"WEBP"
                     or content[12:16] not in {b"VP8 ", b"VP8L", b"VP8X"}
                     or int.from_bytes(content[4:8], "little") != len(content) - 8):
                 raise ValueError("invalid public brand image")
+        elif name == SOCIAL_IMAGE:
+            if (not 1000 <= len(content) <= 500_000 or not content.startswith(b"\xff\xd8\xff")
+                    or not content.endswith(b"\xff\xd9")
+                    or hashlib.sha256(content).hexdigest() != SOCIAL_IMAGE_SHA256):
+                raise ValueError("invalid public social image")
         else:
             content.decode("utf-8")
         if path.suffix == ".json":

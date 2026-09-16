@@ -3,9 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="robots" content="noindex">
-  <meta name="description" content="Fund an API key with Bitcoin over Lightning. No email, username, or password.">
-  <title>LightningRouter</title>
+  {{metadata}}
   <link rel="icon" href="/assets/lightningrouter-mark.webp" type="image/webp">
   <script src="/assets/theme.js"></script>
   <link rel="stylesheet" href="/assets/style.css">
@@ -16,6 +14,7 @@
   <main>
     <section class="funding" aria-label="Fund your API key">
       <div class="intro"><h1>No account needed.</h1><p>Private inference.<br>Pay with BTC over Lightning ⚡ and you're good to go!</p></div>
+      <noscript><p>Funding and key lookup need JavaScript. Read the <a href="/docs">setup guide</a>, <a href="/pricing">pricing</a> or <a href="/llms.txt">agent guide</a> without it.</p></noscript>
       <p id="connection" role="status" hidden></p>
       <div class="qr-frame" aria-live="polite">
         <img id="qr" width="280" height="280" alt="Lightning payment invoice" hidden>
@@ -79,10 +78,10 @@
         <a id="agent-docs" rel="noreferrer" target="_blank">Configuration reference</a>
         </div>
       </div>
-      <p id="api-readiness" class="muted small">API activation is pending. These are setup previews, not a live inference endpoint.</p>
+      <p id="api-readiness" class="muted small">Use your funded key with <code>https://api.trustedrouter.com/v1</code>. Read the <a href="/docs">API setup guide</a> or get <a href="/api/models">current models and prices as JSON</a>.</p>
     </section>
   </main>
-  <footer><span>LightningRouter by Lore Hex Corp</span><nav aria-label="Community"><a href="https://x.com/lightningrouter" rel="noopener noreferrer">@lightningrouter</a><a href="https://x.com/trustedrouter" rel="noopener noreferrer">@trustedrouter</a><a href="https://discord.gg/FREVts9KAG" rel="noopener noreferrer">Discord</a><a href="https://github.com/Lore-Hex/lightning-router/issues" rel="noopener noreferrer">Support &amp; issues</a><a href="https://github.com/Lore-Hex/lightning-router" rel="noopener noreferrer">Source code</a></nav><nav aria-label="Footer"><a href="/terms">Terms of Service</a><a href="/privacy">Privacy Policy</a><a href="https://trust.trustedrouter.com">Verify trust</a></nav></footer>
+  <footer><span>LightningRouter by Lore Hex Corp</span><nav aria-label="Community"><a href="https://x.com/lightningrouter" rel="noopener noreferrer">@lightningrouter</a><a href="https://x.com/trustedrouter" rel="noopener noreferrer">@trustedrouter</a><a href="https://discord.gg/FREVts9KAG" rel="noopener noreferrer">Discord</a><a href="https://github.com/Lore-Hex/lightning-router/issues" rel="noopener noreferrer">Support &amp; issues</a><a href="https://github.com/Lore-Hex/lightning-router" rel="noopener noreferrer">Source code</a></nav><nav aria-label="Footer"><a href="/terms">Terms of Service</a><a href="/privacy">Privacy Policy</a><a href="https://trust.trustedrouter.com">Verify trust</a><a href="/llms.txt">Agent guide</a><a href="/openapi.json">OpenAPI</a></nav></footer>
   <div id="toast" role="status" hidden>Copied</div>
 </body>
 </html>

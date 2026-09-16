@@ -1,0 +1,103 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "LightningRouter public discovery API",
+    "version": "1.0.0",
+    "description": "Read-only discovery for the LightningRouter funding website. No key is required. This contract covers only catalog and health reads, not payment operations or private accounts. Send inference to https://api.trustedrouter.com/v1 using your funded key.",
+    "contact": {"url": "https://lightningrouter.ai/docs", "email": "support@trustedrouter.com"}
+  },
+  "servers": [{"url": "https://lightningrouter.ai"}],
+  "externalDocs": {"description": "TrustedRouter inference API documentation", "url": "https://trustedrouter.com/docs"},
+  "security": [],
+  "paths": {
+    "/api/models": {
+      "get": {
+        "operationId": "listModels",
+        "summary": "List currently eligible models, prices and reasoning controls",
+        "description": "Metadata only. Does not run inference or create an invoice. USD rates are decimal strings or null when unavailable. Null is not zero. Model capabilities and provider prices may change.",
+        "responses": {
+          "200": {
+            "description": "Current cached catalog",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ModelList"}}}
+          },
+          "503": {"$ref": "#/components/responses/Unavailable"}
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "getFundingHealth",
+        "summary": "Check funding and USD credit delivery readiness",
+        "description": "This is funding-site readiness, not a guarantee of model-provider availability. A degraded or unavailable service returns HTTP 503. Does not create an invoice or account.",
+        "responses": {
+          "200": {
+            "description": "Funding is ready",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Health"}}}
+          },
+          "503": {
+            "description": "Funding is degraded, not ready, or temporarily unavailable. Do not initiate a new payment based on this response.",
+            "content": {"application/json": {"schema": {"oneOf": [{"$ref": "#/components/schemas/Health"}, {"$ref": "#/components/schemas/Error"}]}}}
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "responses": {
+      "Unavailable": {
+        "description": "Temporarily unavailable; honor Retry-After before retrying",
+        "headers": {"Retry-After": {"description": "Retry delay in seconds", "schema": {"type": "string"}}},
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+      }
+    },
+    "schemas": {
+      "Error": {"type": "object", "required": ["error"], "properties": {"error": {"type": "string"}}},
+      "Health": {
+        "type": "object", "required": ["status", "payments_ready", "inference_configured", "delivery"],
+        "properties": {
+          "status": {"type": "string", "enum": ["up", "degraded"]},
+          "payments_ready": {"type": "boolean"},
+          "inference_configured": {"type": "boolean"},
+          "delivery": {"type": "object", "properties": {
+            "uncredited_count": {"type": "integer", "minimum": 0},
+            "oldest_uncredited_seconds": {"type": "integer", "minimum": 0},
+            "review_required": {"type": "integer", "minimum": 0}
+          }}
+        }
+      },
+      "ModelList": {
+        "type": "object", "required": ["data", "inference_configured"],
+        "properties": {
+          "inference_configured": {"type": "boolean"},
+          "data": {"type": "array", "items": {"$ref": "#/components/schemas/Model"}}
+        }
+      },
+      "Model": {
+        "type": "object", "required": ["id", "name", "pricing", "reasoning"],
+        "properties": {
+          "id": {"type": "string", "description": "Use this exact model ID for inference"},
+          "name": {"type": "string"},
+          "context": {"type": ["integer", "null"]},
+          "output": {"type": ["integer", "null"]},
+          "default_output": {"type": ["integer", "null"]},
+          "pricing": {"type": "object", "description": "Published starting rates in USD. Final route pricing can differ.", "properties": {
+            "input_per_million": {"type": ["string", "null"]},
+            "output_per_million": {"type": ["string", "null"]},
+            "cached_input_per_million": {"type": ["string", "null"]},
+            "request_usd": {"type": ["string", "null"]},
+            "minimum_charge_usd": {"type": ["string", "null"]}
+          }},
+          "reasoning": {"type": "object", "description": "Model-specific reviewed controls. Do not invent generic effort levels for unverified models.", "properties": {
+            "status": {"type": "string"},
+            "field": {"type": ["string", "null"]},
+            "values": {"type": "array", "items": {"type": "string"}},
+            "setup_efforts": {"type": "array", "items": {"type": "string"}},
+            "setup_default": {"type": ["string", "null"]},
+            "source": {"type": ["string", "null"]},
+            "note": {"type": ["string", "null"]}
+          }}
+        }
+      }
+    }
+  }
+}

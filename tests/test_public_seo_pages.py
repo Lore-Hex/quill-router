@@ -45,6 +45,13 @@ def isolated_comparison_catalog() -> Iterator[None]:
             cache.cache_clear()
 
 
+def test_public_footer_has_exactly_one_lightning_router_link(client: TestClient) -> None:
+    response = client.get("/")
+    footer = response.text.split('<footer class="site-footer"', maxsplit=1)[1].split("</footer>", maxsplit=1)[0]
+    assert footer.count('href="https://lightningrouter.ai"') == 1
+    assert '>LightningRouter</a>' in footer
+
+
 def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     robots = client.get("/robots.txt")
     assert robots.status_code == 200

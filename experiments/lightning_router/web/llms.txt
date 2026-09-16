@@ -1,0 +1,39 @@
+# LightningRouter
+
+> Fund an AI API key with Bitcoin over Lightning. No email, password or card. BTC converts once to USD credits; inference uses TrustedRouter.
+
+LightningRouter and TrustedRouter are operated by Lore Hex Corp. Your API key is
+a secret bearer credential. Never put it in a URL, public post, log or support
+message. A new account is created only after a verified payment settles.
+
+## Start here
+
+- [Setup guide](https://lightningrouter.ai/docs.md): funding, authentication, API examples and privacy boundaries.
+- [Home](https://lightningrouter.ai/): browser funding and setup for Trusted Cowork, OpenCode, Crush and OMP.
+- [Live model catalog](https://lightningrouter.ai/api/models): model IDs, USD pricing, limits and reviewed reasoning controls. GET, no key required.
+- [Read-only OpenAPI](https://lightningrouter.ai/openapi.json): this site's catalog and health endpoints, not payment tools or inference.
+- [Pricing](https://lightningrouter.ai/pricing): token rates and the 10% BTC conversion buffer.
+- [Funding health](https://lightningrouter.ai/health): current readiness. HTTP 503 means degraded or unavailable.
+
+## Inference and trust
+
+- API base URL: https://api.trustedrouter.com/v1
+- Authentication: Authorization: Bearer <your API key>
+- [TrustedRouter API docs](https://trustedrouter.com/docs): applies to LightningRouter keys too.
+- [Verify attestation](https://trust.trustedrouter.com): independently verify the inference gateway.
+- [Provider policies](https://trustedrouter.com/providers): downstream providers still process inference; their retention and encryption guarantees differ.
+
+## Safety and support
+
+Do not pay an invoice or send paid inference requests without the user's
+authorization. Use Bitcoin over Lightning, not an on-chain transfer. The invoice
+locks a BTC-to-USD conversion quote; balances are held in USD. Never interpret an
+unavailable price or balance as zero. Keep a pending payment tab open and wait for
+its final status rather than paying again.
+
+- [Usage](https://lightningrouter.ai/usage): private balance and usage after key authentication.
+- [Terms](https://lightningrouter.ai/terms)
+- [Privacy](https://lightningrouter.ai/privacy)
+- [Public support and bug reports](https://github.com/Lore-Hex/lightning-router/issues): no keys or private payment details.
+- Private payment help: support@trustedrouter.com
+- Security reports: security@trustedrouter.com

@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Allow: /api/models
+Disallow: /api/
+Disallow: /usage
+
+Sitemap: https://lightningrouter.ai/sitemap.xml
