@@ -62,6 +62,10 @@ This is a Lightning-only dashboard. NBXplorer monitors the existing Bitcoin node
 so BTCPay displays real synchronization status. No on-chain wallet or on-chain
 checkout is enabled. Do not hide the synchronization banner or fake its health.
 
+Inbound capacity is monitored separately by the funding worker. See
+[liquidity monitoring and the proposed capped replenishment policy](lightning-liquidity.md).
+BTCPay and Greg's account do not receive spending authority for replenishment.
+
 ## Deployment
 
 Use a separately authenticated deployment identity, not `tr-ops-local`.

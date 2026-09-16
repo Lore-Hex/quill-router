@@ -62,25 +62,34 @@ class Lnd:
         return self._parse(response.json(), payment_hash)
 
     def receiving_capacity(self) -> int:
+        return self.liquidity()["receiving_capacity_msat"]
+
+    def liquidity(self) -> dict[str, int]:
+        """Metadata only; no invoice, peer, channel ID or wallet data leaves here."""
+        result = {"synced": 0, "active_channels": 0, "inbound_msat": 0, "receiving_capacity_msat": 0}
         info = self.client.get("/v1/getinfo")
         info.raise_for_status()
         data = info.json()
         if data.get("synced_to_chain") is not True or data.get("synced_to_graph") is not True:
-            return 0
+            return result
         if {("bitcoin", self.network)} != {(chain.get("chain"), chain.get("network")) for chain in data.get("chains", [])}:
             raise ValueError("LND is on the wrong network")
         response = self.client.get("/v1/channels")
         response.raise_for_status()
+        result["synced"] = 1
         capacities = []
         for channel in response.json()["channels"]:
             if channel.get("active") is not True:
                 continue
+            result["active_channels"] += 1
             pending = sum(msats(htlc["amount"]) * 1000 for htlc in channel.get("pending_htlcs", []))
             balance = max(0, (msats(channel["remote_balance"]) - msats(channel["remote_constraints"]["chan_reserve_sat"])) * 1000 - pending)
             inflight = max(0, msats(channel["remote_constraints"]["max_pending_amt_msat"]) - pending)
             capacities.append(min(balance, inflight))
+            result["inbound_msat"] += balance
         # Do not assume a payer can use MPP across all our channels.
-        return max(capacities, default=0)
+        result["receiving_capacity_msat"] = max(capacities, default=0)
+        return result
 
     def ensure(self, preimage: bytes, amount_msat: int, *, expires_at: int) -> Invoice | None:
         payment_hash = hashlib.sha256(preimage).hexdigest()
