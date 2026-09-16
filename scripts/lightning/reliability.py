@@ -110,6 +110,25 @@ def install(operator: Operator) -> None:
     ]
     if len(channels) != 1:
         raise ValueError("Exactly one existing verified on-call notification channel is required")
+    current = json.loads(operator.gc("monitoring", "policies", "list", "--format=json"))
+    configured = policies(channels[0]["name"])
+
+    def write_policy(policy: dict[str, Any]) -> None:
+        matches = [p for p in current if p.get("displayName") == policy["displayName"]]
+        if len(matches) > 1:
+            raise ValueError("Ambiguous funding alert policy")
+        with tempfile.TemporaryDirectory(prefix="lightning-alert-") as directory:
+            path = Path(directory) / "policy.json"
+            path.write_text(json.dumps(policy))
+            args = ("update", matches[0]["name"]) if matches else ("create",)
+            operator.gc("monitoring", "policies", *args, "--policy-from-file=" + str(path))
+        print("Configured " + policy["displayName"])
+
+    # A failed node read emits no successful heartbeat. Install its failure
+    # alert first so the failure cannot block its own detection.
+    for policy in configured:
+        if "conditionMatchedLog" in policy["conditions"][0]:
+            write_policy(policy)
     metrics = operator.gc("logging", "metrics", "list", "--format=value(name)").splitlines()
     for name, query in ((HEARTBEAT_METRIC, HEARTBEAT), (LIQUIDITY_METRIC, LIQUIDITY_HEARTBEAT)):
         operator.gc("logging", "metrics", "update" if name in metrics else "create", name,
@@ -126,17 +145,9 @@ def install(operator: Operator) -> None:
             time.sleep(15)
         else:
             raise RuntimeError("No live funding heartbeat; alert installation is not complete")
-    current = json.loads(operator.gc("monitoring", "policies", "list", "--format=json"))
-    for policy in policies(channels[0]["name"]):
-        matches = [p for p in current if p.get("displayName") == policy["displayName"]]
-        if len(matches) > 1:
-            raise ValueError("Ambiguous funding alert policy")
-        with tempfile.TemporaryDirectory(prefix="lightning-alert-") as directory:
-            path = Path(directory) / "policy.json"
-            path.write_text(json.dumps(policy))
-            args = ("update", matches[0]["name"]) if matches else ("create",)
-            operator.gc("monitoring", "policies", *args, "--policy-from-file=" + str(path))
-        print("Configured " + policy["displayName"])
+    for policy in configured:
+        if "conditionAbsent" in policy["conditions"][0]:
+            write_policy(policy)
 
 
 def main() -> None:

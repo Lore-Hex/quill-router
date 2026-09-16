@@ -106,7 +106,7 @@ def test_alert_install_requires_live_post_metric_heartbeat(monkeypatch, live) ->
         with pytest.raises(RuntimeError, match="No live funding heartbeat"):
             install(operator)
         assert len(reads) == 12
-        assert not written
+        assert len(written) == 3  # Failure detection is installed even while the node is failing.
     assert all('timestamp>"' in call[2] for call in reads)
 
 
@@ -121,6 +121,8 @@ def test_alert_install_needs_liquidity_not_only_delivery_heartbeat(monkeypatch) 
             return json.dumps([{"name": "existing", "displayName": "TrustedRouter Spanner on-call", "enabled": True}])
         if args[:2] == ("logging", "read") and "lightning.funding_health" in args[2]:
             return "2026-09-16T00:00:00Z"
+        if args[:3] == ("monitoring", "policies", "list"):
+            return "[]"
         return ""
 
     operator = Mock(spec=Operator)
@@ -128,7 +130,8 @@ def test_alert_install_needs_liquidity_not_only_delivery_heartbeat(monkeypatch) 
     monkeypatch.setattr("scripts.lightning.reliability.time.sleep", lambda _: None)
     with pytest.raises(RuntimeError, match="No live funding heartbeat"):
         install(operator)
-    assert not any(call.args[:2] == ("monitoring", "policies") for call in operator.gc.call_args_list)
+    writes = [call for call in operator.gc.call_args_list if call.args[:3] == ("monitoring", "policies", "create")]
+    assert len(writes) == 3
 
 
 @pytest.mark.parametrize("enabled", [False, None])
