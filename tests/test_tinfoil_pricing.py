@@ -185,11 +185,11 @@ def test_tinfoil_review_gates_unknown_ids_and_deployment_suffixes(
     }
 
 
-def test_tinfoil_fetch_discovers_deepseek_v4_flash(monkeypatch) -> None:  # noqa: ANN001
+def test_tinfoil_fetch_discovers_deepseek_v41_flash(monkeypatch) -> None:  # noqa: ANN001
     payload = {
         "data": [
             {
-                "id": "deepseek-v4-flash",
+                "id": "deepseek-v4-1-flash",
                 "pricing": {
                     "inputTokenPricePer1M": 0.2,
                     "cachedInputTokenPricePer1M": 0.02,
@@ -215,13 +215,13 @@ def test_tinfoil_fetch_discovers_deepseek_v4_flash(monkeypatch) -> None:  # noqa
     monkeypatch.setattr(tinfoil, "fetch_json", lambda _url: payload)
 
     result = tinfoil.fetch()
-    deepseek = result.prices["deepseek/deepseek-v4-flash"]
+    deepseek = result.prices["deepseek/deepseek-v4.1-flash"]
 
-    assert tinfoil.UPSTREAM_ID_MAP["deepseek/deepseek-v4-flash"] == ("deepseek-v4-flash")
+    assert tinfoil.UPSTREAM_ID_MAP["deepseek/deepseek-v4.1-flash"] == "deepseek-v4-1-flash"
     assert deepseek.prompt_micro_per_m == 200_000
     assert deepseek.completion_micro_per_m == 400_000
     assert deepseek.tiers[0].prompt_cached_micro_per_m == 20_000
-    assert not any("deepseek/deepseek-v4-flash" in note for note in result.notes)
+    assert not any("deepseek/deepseek-v4.1-flash" in note for note in result.notes)
 
 
 def test_tinfoil_manifest_writer_publishes_discovered_chat_metadata(
@@ -236,8 +236,8 @@ def test_tinfoil_manifest_writer_publishes_discovered_chat_metadata(
     payload = {
         "data": [
             {
-                "id": "deepseek-v4-flash",
-                "name": "DeepSeek V4 Flash",
+                "id": "deepseek-v4-1-flash",
+                "name": "DeepSeek V4.1 Flash",
                 "type": "chat",
                 "context_window": 1_048_576,
                 "endpoints": ["/v1/chat/completions", "/v1/responses"],
@@ -264,15 +264,15 @@ def test_tinfoil_manifest_writer_publishes_discovered_chat_metadata(
     assert written["price_scale"] == "microdollars_per_million"
     assert written["models"] == [
         {
-            "display_name": "DeepSeek V4 Flash",
-            "title": "deepseek/deepseek-v4-flash",
+            "display_name": "DeepSeek V4.1 Flash",
+            "title": "deepseek/deepseek-v4.1-flash",
             "model_type": "chat",
             "input_modalities": ["text"],
             "output_modalities": ["text"],
             "endpoints": ["chat/completions", "responses"],
             "status": 1,
-            "id": "deepseek/deepseek-v4-flash",
-            "upstream_id": "deepseek-v4-flash",
+            "id": "deepseek/deepseek-v4.1-flash",
+            "upstream_id": "deepseek-v4-1-flash",
             "features": ["reasoning", "function-calling"],
             "context_length": 1_048_576,
             "input_token_price_per_m": 200_000,
@@ -283,16 +283,16 @@ def test_tinfoil_manifest_writer_publishes_discovered_chat_metadata(
 
 
 def test_tinfoil_deepseek_route_is_confidential_and_uses_live_prices() -> None:
-    endpoint = MODEL_ENDPOINTS["deepseek/deepseek-v4-flash@tinfoil/prepaid"]
+    endpoint = MODEL_ENDPOINTS["deepseek/deepseek-v4.1-flash@tinfoil/prepaid"]
     provider = PROVIDERS["tinfoil"]
 
-    assert endpoint.upstream_id == "deepseek-v4-flash"
+    assert endpoint.upstream_id == "deepseek-v4-1-flash"
     # Accepted against Tinfoil's authoritative /v1/models feed on
-    # 2026-08-21: $0.30 input, $0.06 cached input, and $0.70 output.
+    # 2026-09-15: $0.65 input, $0.13 cached input, and $1.45 output.
     # Customer prices below include TrustedRouter's 5.5% markup.
-    assert endpoint.prompt_price_microdollars_per_million_tokens == 316_500
-    assert endpoint.completion_price_microdollars_per_million_tokens == 738_500
-    assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 63_300
+    assert endpoint.prompt_price_microdollars_per_million_tokens == 685_750
+    assert endpoint.completion_price_microdollars_per_million_tokens == 1_529_750
+    assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 137_150
     assert provider.provider_zero_data_retention is True
     assert provider.provider_confidential_compute is True
     assert provider.provider_e2ee is True

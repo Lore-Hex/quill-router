@@ -2,8 +2,8 @@
   "_about": "Provider-native supplement for Tinfoil models whose live API is ahead of the snapshot. Tinfoil launched Kimi K3 and DeepSeek V4 Flash on 2026-08-20, then GLM 5.3 and multimodal GLM 5.3 Flash on 2026-09-03. Tinfoil supports confidential prompt caching where published by its live feed. Deprecated Tinfoil routes are filtered in catalog.py.",
   "provider": "tinfoil",
   "source": "https://inference.tinfoil.sh/v1/models",
-  "generated_at": "2026-09-15T18:01:06Z",
-  "model_count": 6,
+  "generated_at": "2026-09-16T00:29:20Z",
+  "model_count": 7,
   "models": [
     {
       "id": "deepseek/deepseek-v4-flash",
@@ -30,7 +30,9 @@
         "responses"
       ],
       "status": 1,
-      "missing_since": "2026-09-15"
+      "missing_since": "2026-09-15",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "moonshotai/kimi-k3",
@@ -171,6 +173,34 @@
       "input_token_price_per_m": 400000,
       "output_token_price_per_m": 1250000,
       "cached_input_token_price_per_m": 100000
+    },
+    {
+      "display_name": "DeepSeek V4.1 Flash",
+      "title": "deepseek/deepseek-v4.1-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions",
+        "responses"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4.1-flash",
+      "upstream_id": "deepseek-v4-1-flash",
+      "features": [
+        "reasoning",
+        "function-calling",
+        "multimodal"
+      ],
+      "context_length": 1048576,
+      "input_token_price_per_m": 650000,
+      "output_token_price_per_m": 1450000,
+      "cached_input_token_price_per_m": 130000
     }
   ],
   "price_scale": "microdollars_per_million"
