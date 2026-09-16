@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parse } from "yaml";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { providerOrderFromText, setupFor } from "../setup.mjs";
+import { providerOrderFromText, setupFor as buildSetup } from "../setup.mjs";
+
+// Test unrestricted ordering separately from the privacy gate in privacy.test.mjs.
+const setupFor = (agent, model, base, order) => buildSetup(agent, model, base, order, "any");
 
 const model = {id: "deepseek/deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash",
   reasoning: {status: "reviewed", field: "reasoning_effort", setup_efforts: ["low", "high", "max"], setup_default: "high"}};

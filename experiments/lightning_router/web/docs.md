@@ -34,12 +34,24 @@ environment. A small Chat Completions example, after the user authorizes a paid 
 curl --fail-with-body https://api.trustedrouter.com/v1/chat/completions \
   -H "Authorization: Bearer ${TRUSTEDROUTER_API_KEY}" \
   -H "Content-Type: application/json" \
-  -d '{"model":"deepseek/deepseek-flash","messages":[{"role":"user","content":"What is the capital of France?"}],"max_tokens":1024,"reasoning_effort":"low"}'
+  -d '{"model":"deepseek/deepseek-v4.1-flash","provider":{"min_privacy":"confidential"},"messages":[{"role":"user","content":"What is the capital of France?"}],"max_tokens":1024,"reasoning_effort":"low"}'
 ```
 
 Use the [homepage setup tabs](https://lightningrouter.ai/#setup-title) for Trusted
 Cowork, OpenCode, Crush and OMP. The generated configs show reviewed model-specific
 reasoning settings. Do not assume every model supports the same effort values.
+
+The CLI setup tabs default to E2EE with attested model execution. Choose privacy
+before the model. Generated configs send `provider.min_privacy` as `confidential`,
+`zdr`, or `no_store`; All models removes that restriction. Fallback must meet the
+selected requirement. If no eligible route exists, the request fails rather than
+downgrading. This setting applies to the generated config, not the API key itself.
+Cowork has its own model selection; start with `trustedrouter/confidential` there.
+Use current clients that support custom request-body fields.
+
+E2EE is not a retention promise. ZDR and no-store are separate provider policies.
+The public model JSON lists eligible prepaid providers for each requirement in
+`privacy`. Missing metadata never qualifies a model for a restricted filter.
 
 - [Current models, prices, limits and reasoning controls](https://lightningrouter.ai/api/models)
 - [TrustedRouter API reference](https://trustedrouter.com/docs)

@@ -58,10 +58,20 @@
         </div>
         <div id="cli-setup" hidden>
         <div id="agent-model-settings" hidden>
+          <label for="privacy">Privacy</label>
+          <select id="privacy" aria-describedby="privacy-note">
+            <option value="confidential" selected>E2EE (attested inference)</option>
+            <option value="zdr">Zero data retention (ZDR)</option>
+            <option value="no_store">No prompt or output storage</option>
+            <option value="any">All models</option>
+          </select>
+          <p id="privacy-note" class="muted small">Attested model execution. Provider retention policies are separate.</p>
           <label for="model">Model</label><select id="model" disabled><option>Loading models</option></select>
+          <p id="model-empty" class="muted small" role="status" hidden>No models match this privacy level.</p>
           <p id="model-limits" class="muted small"></p>
-          <label for="provider-order" title="Preferred providers in order. Other eligible providers remain available as fallbacks. This does not restrict provider jurisdiction.">Provider order <span class="muted">(optional JSON array)</span></label>
-          <input id="provider-order" type="text" placeholder='["deepinfra", "novita"]' maxlength="2048" autocomplete="off" spellcheck="false" aria-describedby="provider-order-error" disabled>
+          <label for="provider-order" title="Preferred providers in order. Fallback stays within the selected privacy requirement. This does not restrict provider jurisdiction.">Provider order <span class="muted">(optional JSON array)</span></label>
+          <input id="provider-order" type="text" placeholder='[]' maxlength="2048" autocomplete="off" spellcheck="false" aria-describedby="eligible-providers provider-order-error" disabled>
+          <p id="eligible-providers" class="muted small"></p>
           <p id="provider-order-error" class="error small" role="alert"></p>
           <dl id="reasoning-details" class="reasoning-details">
             <dt>Model reasoning</dt><dd id="reasoning-values"></dd>
@@ -72,8 +82,8 @@
         </div>
         <table class="instructions"><tbody>
           <tr><th scope="row">1. API key</th><td><div class="code-heading"><span>Terminal</span><button id="copy-env" class="icon-button" aria-label="Copy environment variable" title="Copy environment variable"><i data-lucide="copy"></i></button></div><pre id="env-code"></pre></td></tr>
-          <tr><th scope="row">2. Configure</th><td><div class="code-heading"><span id="config-path"></span><button id="copy-config" class="icon-button" aria-label="Copy configuration" title="Copy configuration"><i data-lucide="copy"></i></button></div><pre id="config-code"></pre></td></tr>
-          <tr><th scope="row">3. Run</th><td><div class="code-heading"><span>Terminal</span><button id="copy-command" class="icon-button" aria-label="Copy launch command" title="Copy launch command"><i data-lucide="copy"></i></button></div><pre id="command-code"></pre></td></tr>
+          <tr><th scope="row">2. Configure</th><td><div class="code-heading"><span id="config-path"></span><button id="copy-config" class="icon-button" aria-label="Copy configuration" title="Copy configuration" disabled><i data-lucide="copy"></i></button></div><pre id="config-code"></pre></td></tr>
+          <tr><th scope="row">3. Run</th><td><div class="code-heading"><span>Terminal</span><button id="copy-command" class="icon-button" aria-label="Copy launch command" title="Copy launch command" disabled><i data-lucide="copy"></i></button></div><pre id="command-code"></pre></td></tr>
         </tbody></table>
         <a id="agent-docs" rel="noreferrer" target="_blank">Configuration reference</a>
         </div>

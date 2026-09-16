@@ -28,10 +28,14 @@ class Catalog:
     def current(self):
         return [
             {"id": "deepseek/deepseek-flash", "name": "DeepSeek Flash", "context": 1048576, "output": 393216,
+             "privacy": {"confidential": ["chutes", "tinfoil"], "zdr": ["tinfoil"], "no_store": ["tinfoil"],
+                         "any": ["chutes", "deepinfra", "novita", "tinfoil"]},
              "default_output": 65536, "reasoning": reasoning_profile({"id": "deepseek/deepseek-flash"}),
              "pricing": {"input_per_million": "0.042200", "output_per_million": "0.084400", "cached_input_per_million": "0.01"}},
-            {"id": "kimi/kimi-k2.7", "name": "Kimi K2.7", "context": 262144, "output": 8192},
+            {"id": "kimi/kimi-k2.7", "name": "Kimi K2.7", "context": 262144, "output": 8192,
+             "privacy": {"confidential": ["chutes"], "zdr": [], "no_store": [], "any": ["chutes"]}},
             {"id": "anthropic/claude-opus-4.8", "name": "Claude Opus 4.8",
+             "privacy": {"confidential": [], "zdr": ["anthropic"], "no_store": ["anthropic"], "any": ["anthropic"]},
              "reasoning": reasoning_profile({"id": "anthropic/claude-opus-4.8"})},
         ]
 

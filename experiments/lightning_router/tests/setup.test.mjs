@@ -5,7 +5,8 @@ import { parse } from "yaml";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { centsFromText, setupFor } from "../setup.mjs";
 
-const model = { id: "deepseek/deepseek-flash", name: "DeepSeek Flash", context: 128000, output: 8192 };
+const model = { id: "deepseek/deepseek-flash", name: "DeepSeek Flash", context: 128000, output: 8192,
+  privacy: {confidential: ["tinfoil"]} };
 const base = "https://api.lightningrouter.ai/v1";
 
 for (const [text, cents] of [["10", 1000], ["0.01", 1], ["5.5", 550], ["1000.00", 100000]]) {
@@ -93,7 +94,7 @@ for (const [id, reasoning] of Object.entries(profiles)) {
       assert.equal(pi.compat.reasoningDisableMode, reasoning.setup_efforts.includes("none") ? "none-effort" : undefined);
       assert.ok(omp.command.endsWith(` --thinking ${reasoning.setup_default === "none" ? "off" : reasoning.setup_default}`));
     } else {
-      assert.equal(code.options, undefined);
+      assert.deepEqual(code.options, {provider: {min_privacy: "confidential"}});
       assert.ok(Object.values(code.variants).every(value => value.disabled));
       assert.equal(crush.models.large.reasoning_effort, undefined);
       assert.equal(pi.compat.supportsReasoningParams, false);

@@ -12,6 +12,7 @@ test("ordered provider array updates all configs and leaves funding unchanged", 
   const mutations = [];
   page.on("request", req => { if (req.method() !== "GET") mutations.push(req.url()); });
   await page.getByRole("tab", {name: "OpenCode", exact: true}).click();
+  await page.getByLabel("Privacy", {exact: true}).selectOption("any");
   await page.getByLabel("Provider order").fill(JSON.stringify(order));
   let config = JSON.parse(await page.locator("#config-code").textContent());
   expect(config.provider.lightningrouter.models["deepseek/deepseek-flash"].options.provider).toEqual({order});
@@ -33,6 +34,7 @@ test("ordered provider array updates all configs and leaves funding unchanged", 
 test("invalid arrays block stale copying and recover; choices stay scoped to each model", async ({page}) => {
   await page.goto("/");
   await page.getByRole("tab", {name: "OpenCode", exact: true}).click();
+  await page.getByLabel("Privacy", {exact: true}).selectOption("any");
   const input = page.getByLabel("Provider order");
   await input.fill(JSON.stringify(order));
   await page.locator("#model").selectOption("anthropic/claude-opus-4.8");
@@ -67,6 +69,7 @@ for (const width of [320, 375, 768, 1440]) {
     await page.setViewportSize({width, height: 950});
     await page.goto("/");
     await page.getByRole("tab", {name: "OMP", exact: true}).click();
+    await page.getByLabel("Privacy", {exact: true}).selectOption("any");
     await page.getByLabel("Provider order").fill(JSON.stringify(order));
     await expect(page.locator("#config-code")).toContainText("extraBody");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

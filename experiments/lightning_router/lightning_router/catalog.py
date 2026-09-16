@@ -1,5 +1,6 @@
 """Public setup metadata. Unknown limits stay unknown, not invented caps."""
 
+import re
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -10,6 +11,28 @@ DEEPSEEK_LIMITS = {
     "deepseek/deepseek-v4.1-flash", "deepseek/deepseek-flash",
     "deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-pro-0813",
 }
+
+
+def privacy(item: dict[str, Any]) -> dict[str, list[str]]:
+    providers: dict[str, set[str]] = {key: set() for key in ("any", "no_store", "zdr", "confidential")}
+    endpoints = (item.get("trustedrouter") or {}).get("endpoints")
+    for endpoint in endpoints if isinstance(endpoints, list) else []:
+        if not isinstance(endpoint, dict) or endpoint.get("usage_type") != "Credits":
+            continue
+        slug = endpoint.get("provider")
+        parameters = endpoint.get("supported_parameters")
+        if (not isinstance(slug, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", slug)
+                or not isinstance(parameters, list) or "tools" not in parameters):
+            continue
+        providers["any"].add(slug)
+        # These are separate guarantees, not a numeric implication chain.
+        if endpoint.get("stores_content") is False:
+            providers["no_store"].add(slug)
+        if endpoint.get("provider_zero_data_retention") is True:
+            providers["zdr"].add(slug)
+        if endpoint.get("provider_confidential_compute") is True and endpoint.get("provider_e2ee") is True:
+            providers["confidential"].add(slug)
+    return {key: sorted(slugs) for key, slugs in providers.items()}
 
 
 def positive_int(value: Any) -> int | None:

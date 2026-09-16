@@ -73,13 +73,19 @@
         }
       },
       "Model": {
-        "type": "object", "required": ["id", "name", "pricing", "reasoning"],
+        "type": "object", "required": ["id", "name", "pricing", "reasoning", "privacy"],
         "properties": {
           "id": {"type": "string", "description": "Use this exact model ID for inference"},
           "name": {"type": "string"},
           "context": {"type": ["integer", "null"]},
           "output": {"type": ["integer", "null"]},
           "default_output": {"type": ["integer", "null"]},
+          "privacy": {"type": "object", "description": "Eligible prepaid tool-capable provider slugs by independent privacy requirement. Empty or missing lists do not qualify. Send provider.min_privacy on inference requests; a model listing alone does not constrain routing.", "required": ["any", "no_store", "zdr", "confidential"], "additionalProperties": false, "properties": {
+            "any": {"type": "array", "items": {"type": "string"}},
+            "no_store": {"type": "array", "items": {"type": "string"}},
+            "zdr": {"type": "array", "items": {"type": "string"}},
+            "confidential": {"type": "array", "items": {"type": "string"}}
+          }},
           "pricing": {"type": "object", "description": "Published starting rates in USD. Final route pricing can differ.", "properties": {
             "input_per_million": {"type": ["string", "null"]},
             "output_per_million": {"type": ["string", "null"]},

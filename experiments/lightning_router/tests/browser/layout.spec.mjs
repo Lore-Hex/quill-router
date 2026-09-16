@@ -133,6 +133,7 @@ test("provider preferences wait for the selected model catalog", async ({ page }
     await expect(page.locator("#provider-order")).toBeDisabled();
     release();
     await expect(page.locator("#provider-order")).toBeEnabled();
+    await page.getByLabel("Privacy", {exact: true}).selectOption("any");
     await page.locator("#provider-order").fill('["deepinfra"]');
     await page.locator("#model").selectOption("anthropic/claude-opus-4.8");
     await page.locator("#model").selectOption("deepseek/deepseek-flash");
