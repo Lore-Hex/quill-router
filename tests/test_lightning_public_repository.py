@@ -105,6 +105,23 @@ def test_export_preserves_committed_brand_image(source: Path, tmp_path: Path) ->
     assert hashes[name] == hashlib.sha256(image).hexdigest()
 
 
+def test_export_preserves_only_the_reviewed_social_image(source: Path, tmp_path: Path) -> None:
+    name = f"{APP}/web/lightningrouter-og.jpg"
+    image = (Path(__file__).resolve().parents[1] / name).read_bytes()
+    (source / name).write_bytes(image)
+    run(source, "add", ".")
+    run(source, "commit", "-m", "reviewed social image")
+    output = tmp_path / "export"
+    hashes = export(source, "HEAD", output)
+    assert (output / name).read_bytes() == image
+    assert hashes[name] == hashlib.sha256(image).hexdigest()
+    (source / name).write_bytes(image[:-2] + b"unreviewed metadata\xff\xd9")
+    run(source, "add", ".")
+    run(source, "commit", "-m", "changed binary")
+    with pytest.raises(ValueError, match="invalid public social image"):
+        export(source, "HEAD", tmp_path / "changed")
+
+
 @pytest.mark.parametrize("name,content", [
     (f"{APP}/web/other.webp", b"RIFF\x00\x00\x00\x00WEBP\xff"),
     (f"{APP}/web/lightningrouter-mark.webp", b"not an image"),

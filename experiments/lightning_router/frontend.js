@@ -386,6 +386,7 @@ async function start() {
     $("use-key").disabled = false;
     $("update-invoice").disabled = !config.payments_ready;
     $("api-readiness").hidden = config.inference_configured;
+    if (!config.inference_configured) $("api-readiness").textContent = "API activation is pending. These are setup previews, not a live inference endpoint.";
     const saved = savedSession();
     if (saved) {
       state = saved;

@@ -13,9 +13,10 @@ from typing import Any
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
+from starlette.exceptions import HTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .catalog import limits, pricing
@@ -169,6 +170,13 @@ def create_app(service: Funding | None = None, *, rates: Rates | None = None,
     async def validation_error(_: Request, __: RequestValidationError) -> JSONResponse:
         return JSONResponse({"error": "invalid_request"}, status_code=400)
 
+    @app.exception_handler(HTTPException)
+    async def http_error(request: Request, exc: HTTPException) -> Response:
+        if (exc.status_code == 404 and request.method in {"GET", "HEAD"}
+                and not request.url.path.startswith(("/api/", "/assets/"))):
+            return public_page("not-found", accept=request.headers.get("accept", ""), status_code=404)
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
+
     @app.exception_handler(Exception)
     async def failure(_: Request, exc: Exception) -> JSONResponse:
         logger.error("lightning.request_failed error_type=%s", type(exc).__name__)
@@ -199,9 +207,22 @@ def create_app(service: Funding | None = None, *, rates: Rates | None = None,
             return JSONResponse({"error": "rate_limited"}, status_code=429, headers={"Retry-After": "900"})
         return None
 
-    @app.get("/")
-    def home() -> FileResponse:
-        return FileResponse(STATIC / "index.html")
+    @app.api_route("/", methods=["GET", "HEAD"])
+    def home(request: Request) -> Response:
+        return public_page("index", accept=request.headers.get("accept", ""))
+
+    @app.api_route("/llms.txt", methods=["GET", "HEAD"])
+    @app.api_route("/robots.txt", methods=["GET", "HEAD"])
+    @app.api_route("/sitemap.xml", methods=["GET", "HEAD"])
+    @app.api_route("/openapi.json", methods=["GET", "HEAD"])
+    @app.api_route("/docs.md", methods=["GET", "HEAD"])
+    @app.api_route("/index.md", methods=["GET", "HEAD"])
+    def discovery(request: Request) -> FileResponse:
+        resources = {
+            "/llms.txt": "text/plain", "/robots.txt": "text/plain", "/sitemap.xml": "application/xml",
+            "/openapi.json": "application/json", "/docs.md": "text/markdown", "/index.md": "text/markdown",
+        }
+        return FileResponse(STATIC / request.url.path.removeprefix("/"), media_type=resources[request.url.path])
 
     @app.get("/health")
     def health() -> JSONResponse:
@@ -223,9 +244,9 @@ def create_app(service: Funding | None = None, *, rates: Rates | None = None,
     def terms_page() -> Any:
         return public_page("terms")
 
-    @app.get("/docs")
-    def docs_page() -> Any:
-        return public_page("docs")
+    @app.api_route("/docs", methods=["GET", "HEAD"])
+    def docs_page(request: Request) -> Response:
+        return public_page("docs", accept=request.headers.get("accept", ""))
 
     @app.get("/privacy")
     def privacy_page() -> Any:

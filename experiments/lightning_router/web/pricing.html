@@ -1,6 +1,7 @@
 <h1>Pricing</h1>
 <p class="lead">Pay for the tokens you use. Fund your key with Bitcoin over Lightning.</p>
 <section class="pricing-terms"><h2>BTC to USD credits</h2><p>The invoice includes a 10% FX buffer against the quoted Coinbase BTC/USD spot rate. 90% of the invoice's spot value becomes USD credits, rounded to whole satoshis. For $10 in credits, expect approximately $11.11 of BTC at that spot rate, plus any routing fee charged by your wallet.</p><p>Your invoice locks the conversion rate. Your balance is then held and spent in USD, not BTC. The model prices below already include TrustedRouter's token pricing markup. The FX buffer is separate.</p></section>
+<p><a href="/api/models">Current models and prices as JSON</a> are available without a key or JavaScript. Prices are route-dependent; use the live catalog rather than a saved quote for new requests.</p>
 <label for="price-search">Find a model</label><input id="price-search" type="search" placeholder="DeepSeek, Kimi, Claude..." autocomplete="off">
 <p id="price-status" class="muted small" role="status">Loading current prices</p><p class="error" id="page-error" role="alert"></p>
 <div class="table-scroll"><table class="data-table prices"><caption>USD per 1 million tokens. From the current routing catalog; the selected provider and route can cost more.</caption><thead><tr><th scope="col">Model</th><th scope="col">Input from</th><th scope="col">Output from</th><th scope="col">Cached input from</th></tr></thead><tbody id="price-rows"></tbody></table></div>

@@ -26,3 +26,36 @@ explicitly allows this one reviewed binary path and validates its file envelope;
 all other source still requires UTF-8. Browser tests decode the image and check
 both transparent corners and a near-opaque center, all page headers, favicon links,
 mobile layout, and light/dark themes.
+
+## Social preview
+
+Asset: `web/lightningrouter-og.jpg`, 1732 by 908 pixels, about 305 KB. Shared
+server-rendered Open Graph and Twitter metadata reference this image with its
+actual dimensions and descriptive alt text. The canonical URL is always
+`https://lightningrouter.ai`, including when a visitor uses a domain alias.
+
+Created with the built-in image generation tool, using the existing mascot as
+the reference. The generated PNG was encoded as JPEG with `sips` at quality 88;
+its original composition and dimensions were preserved. The public exporter
+allows only this exact reviewed JPEG digest, not arbitrary binary files.
+
+Final generation prompt:
+
+> Create a polished wide Open Graph social sharing image for LightningRouter,
+> landscape 1.91:1 aspect ratio, ideally 1200x630. Use the attached transparent
+> lightning-bolt robot as the exact brand mascot reference. Preserve its
+> recognizable orange/red/yellow bolt silhouette, black face, smiling yellow
+> eyes, and circular ear pieces; no new limbs or accessories. Make a bold,
+> clean developer-product poster: crisp white background, nearly black
+> typography, the large glossy mascot fully visible on the right with generous
+> safe margins, restrained orange accents. On the left place clean, extremely
+> legible modern sans-serif typography with exactly these words: top brand
+> 'LightningRouter'; large two-line headline 'Pay with Bitcoin.' then 'Start
+> building.'; below in smaller type 'No email. No password. No card.'; at the
+> bottom 'lightningrouter.ai'. Add a small secondary label near the brand reading
+> 'BITCOIN OVER LIGHTNING'. Keep the complete brand name and every word legible,
+> no clipping, no other text. Avoid QR codes, coins, provider logos, gradients,
+> decorative orbs, dashboards, screenshot frames, watermarks, drop shadows
+> behind text, or generic circuit-board backgrounds. The composition should be
+> distinctive because of the original mascot and precise typography, not busy
+> decoration. This is a finished public marketing asset, not a mockup.
