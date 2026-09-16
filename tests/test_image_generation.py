@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from trusted_router.catalog import endpoints_for_model
 from trusted_router.catalog_registry import MODELS
-from trusted_router.image_generation import IMAGE_MODEL_ID_SET
+from trusted_router.image_generation import IMAGE_MODEL_ID_SET, OPENAI_IMAGE_MODEL_IDS
 from trusted_router.storage import STORE
 
 
@@ -27,7 +27,7 @@ def test_image_catalog_is_machine_readable_and_matches_general_filter(
             "max": 1,
             "default": 1,
         }
-        assert "output_format" not in model["supported_parameters"]
+        assert ("output_format" in model["supported_parameters"]) == (model["id"] in OPENAI_IMAGE_MODEL_IDS)
         assert "seed" not in model["supported_parameters"]
         assert model["supports_streaming"] is False
         assert model["endpoints"] == f"/v1/images/models/{model['id']}/endpoints"
