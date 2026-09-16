@@ -3041,6 +3041,10 @@ body.auth.auth-shell {
   color: var(--gold);
 }
 
+:root[data-theme="light"] .privacy-zdr {
+  color: #725820;
+}
+
 .catalog-privacy-legend {
   margin: 12px 0;
   color: var(--text-muted);

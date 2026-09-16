@@ -159,6 +159,7 @@ def test_detail_route_badges_use_both_verification_flags(
         "provider_zero_data_retention": zdr,
     })
     soup = BeautifulSoup(html, "html.parser")
+    assert soup.get_text(strip=True)
     assert bool(soup.select('[data-privacy="confidential"]')) is (compute is True and e2ee is True)
     assert bool(soup.select('[data-privacy="zdr"]')) is (zdr is True)
 

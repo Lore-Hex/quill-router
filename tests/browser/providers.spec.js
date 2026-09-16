@@ -72,3 +72,40 @@ test("privacy filters match verified flags, preserve search, and survive reload"
   await expect(page.getByRole("searchbox", { name: "Search providers" })).toHaveValue("phala");
   await expect(page.locator("[data-provider-result-count]")).toHaveText("1 entry");
 });
+
+test("privacy badges have readable contrast in both themes", async ({ page }) => {
+  for (const path of ["/providers", "/models?q=glm-5.3-flash"]) {
+    await page.goto(path);
+    for (const theme of ["dark", "light"]) {
+      await page.evaluate(value => { document.documentElement.dataset.theme = value; }, theme);
+      const ratios = await page.locator(".privacy-badge:visible").evaluateAll(badges => {
+        const context = document.createElement("canvas").getContext("2d");
+        const rgba = color => {
+          context.clearRect(0, 0, 1, 1);
+          context.fillStyle = color;
+          context.fillRect(0, 0, 1, 1);
+          return Array.from(context.getImageData(0, 0, 1, 1).data);
+        };
+        const luminance = rgb => rgb.slice(0, 3).map(value => {
+          const channel = value / 255;
+          return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+        }).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+        return badges.map(badge => {
+          const ancestors = [];
+          for (let node = badge; node; node = node.parentElement) ancestors.unshift(node);
+          let background = [255, 255, 255];
+          for (const node of ancestors) {
+            const color = rgba(getComputedStyle(node).backgroundColor);
+            const alpha = color[3] / 255;
+            background = background.map((value, index) => alpha * color[index] + (1 - alpha) * value);
+          }
+          const foreground = luminance(rgba(getComputedStyle(badge).color));
+          const behind = luminance(background);
+          return (Math.max(foreground, behind) + 0.05) / (Math.min(foreground, behind) + 0.05);
+        });
+      });
+      expect(ratios.length).toBeGreaterThan(0);
+      expect(Math.min(...ratios)).toBeGreaterThanOrEqual(4.5);
+    }
+  }
+});
