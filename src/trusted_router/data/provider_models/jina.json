@@ -370,7 +370,7 @@
   ],
   "source": "https://api.jina.ai/v1/models",
   "pricing_source": "https://api.jina.ai/v1/models",
-  "generated_at": "2026-09-16T08:13:17Z",
+  "generated_at": "2026-09-16T11:01:39Z",
   "price_scale": "microdollars_per_million",
   "model_count": 17
 }

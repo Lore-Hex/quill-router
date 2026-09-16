@@ -100,7 +100,7 @@
   ],
   "source": "https://api.stepfun.ai/v1/models",
   "pricing_source": "https://platform.stepfun.ai/docs/en/guides/pricing/details",
-  "generated_at": "2026-09-16T08:13:17Z",
+  "generated_at": "2026-09-16T11:01:39Z",
   "price_scale": "microdollars_per_million",
   "model_count": 3
 }
