@@ -14,6 +14,8 @@ from typing import Final
 from trusted_router.pricing import customer_fixed_price_microdollars
 
 IMAGE_MODEL_IDS: Final[tuple[str, ...]] = (
+    "openai/gpt-image-2.5-flare",
+    "openai/gpt-image-2.5-sunburst",
     "google/gemini-3.1-flash-image",
     "google/gemini-3.1-flash-image-preview",
     "recraft/recraftv4_1_pro",
@@ -35,6 +37,15 @@ IMAGE_MODEL_IDS: Final[tuple[str, ...]] = (
     "fal/flux-1-schnell",
 )
 IMAGE_MODEL_ID_SET: Final[frozenset[str]] = frozenset(IMAGE_MODEL_IDS)
+
+# Text-to-image only until edit input modalities are priced separately.
+OPENAI_IMAGE_MODEL_IDS: Final[frozenset[str]] = frozenset({
+    "openai/gpt-image-2.5-flare", "openai/gpt-image-2.5-sunburst",
+})
+OPENAI_IMAGE_NATIVE_SIZES: Final[tuple[str, ...]] = (
+    "1024x1024", "1536x1024", "1024x1536", "1536x1152", "1152x1536",
+    "1536x864", "864x1536", "1536x672",
+)
 
 GEMINI_IMAGE_MODEL_IDS: Final[frozenset[str]] = frozenset(
     {
@@ -161,7 +172,17 @@ def image_supported_parameters(model_id: str) -> dict[str, dict[str, object]]:
     parameters: dict[str, dict[str, object]] = {
         "n": {"type": "range", "min": 1, "max": 1, "default": 1},
     }
-    if model_id in GEMINI_IMAGE_MODEL_IDS:
+    if model_id in OPENAI_IMAGE_MODEL_IDS:
+        parameters.update({
+            "size": {"type": "enum", "values": list(OPENAI_IMAGE_NATIVE_SIZES)},
+            "aspect_ratio": {"type": "enum", "values": ["1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16", "21:9", "auto"], "default": "auto"},
+            "quality": {"type": "enum", "values": ["auto", "low", "medium", "high", "xhigh", "max"], "default": "auto"},
+            "background": {"type": "enum", "values": ["auto", "transparent", "opaque"], "default": "auto"},
+            "output_format": {"type": "enum", "values": ["png", "jpeg", "webp"], "default": "png"},
+            "output_compression": {"type": "range", "min": 0, "max": 100, "default": 100},
+            "input_references": {"type": "range", "min": 0, "max": 0},
+        })
+    elif model_id in GEMINI_IMAGE_MODEL_IDS:
         parameters.update(
             {
                 "resolution": {
@@ -226,8 +247,18 @@ def image_pricing_by_resolution(
     model_id: str,
     prompt_price_microdollars_per_million_tokens: int,
     completion_price_microdollars_per_million_tokens: int,
+    cached_price_microdollars_per_million_tokens: int | None = None,
 ) -> list[dict[str, object]]:
     """Return input-token and exact resolution-tier output prices."""
+
+    if model_id in OPENAI_IMAGE_MODEL_IDS:
+        rates = [
+            ("input_text", prompt_price_microdollars_per_million_tokens),
+            ("output_image", completion_price_microdollars_per_million_tokens),
+        ]
+        if cached_price_microdollars_per_million_tokens is not None:
+            rates.append(("input_text_cache_read", cached_price_microdollars_per_million_tokens))
+        return [{"billable": kind, "unit": "token", "cost_usd": rate / 1_000_000_000_000} for kind, rate in rates]
 
     fixed = FIXED_IMAGE_PRICES_MICRODOLLARS.get(model_id)
     if fixed is not None:

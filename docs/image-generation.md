@@ -31,6 +31,27 @@ behind the same normalized contract without changing callers.
 
 ## Generate an image
 
+### GPT Image 2.5
+
+`openai/gpt-image-2.5-flare` and `openai/gpt-image-2.5-sunburst` route directly
+to OpenAI through `/v1/images`. This release supports text-to-image generation,
+one image per request, and the sizes/formats/quality levels listed in discovery.
+Image references, masks, and image edits are not yet supported on these routes
+and are rejected before billing. `stream: true` returns completion-only SSE,
+not progressive partial renders.
+
+```json
+{"model":"openai/gpt-image-2.5-flare","prompt":"A red square on white.","size":"1024x1024","quality":"low","n":1}
+```
+
+Billing uses OpenAI's actual text-input, cached-text-input, and image-output
+token counts, not a fixed per-image estimate. Endpoint discovery reports the
+current customer rates including markup. `usage.prompt_tokens_details.cached_tokens`
+reports cache reads; `usage.cost` is the final charge. The hourly refresh parses
+OpenAI's Standard image pricing table and checks account availability.
+
+### Gemini
+
 ```bash
 curl https://api.trustedrouter.com/v1/images \
   -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \

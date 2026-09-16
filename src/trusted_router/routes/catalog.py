@@ -38,6 +38,7 @@ from trusted_router.catalog_capabilities import (
 from trusted_router.chat_capabilities import reasoning_modes
 from trusted_router.image_generation import (
     IMAGE_MODEL_ID_SET,
+    OPENAI_IMAGE_MODEL_IDS,
     image_input_modalities,
     image_pricing_by_resolution,
     image_supported_parameters,
@@ -378,12 +379,14 @@ def _image_endpoint_shape(model: Any, endpoint: ModelEndpoint) -> dict[str, Any]
         "provider_slug": endpoint.provider,
         "provider_tag": endpoint.provider,
         "supported_parameters": image_supported_parameters(model.id),
-        "allowed_passthrough_parameters": [],
+        "allowed_passthrough_parameters": ["moderation"] if model.id in OPENAI_IMAGE_MODEL_IDS else [],
         "supports_streaming": False,
         "pricing": image_pricing_by_resolution(
             model.id,
             endpoint.prompt_price_microdollars_per_million_tokens,
             endpoint.completion_price_microdollars_per_million_tokens,
+            endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
+            if endpoint.price_tiers else None,
         ),
         "trustedrouter": {
             "attested_gateway": provider.attested_gateway,

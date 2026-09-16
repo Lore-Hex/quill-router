@@ -32,6 +32,7 @@ from trusted_router.catalog_data import (
     ModelEndpoint,
     _EmbeddingSpec,
 )
+from trusted_router.image_generation import OPENAI_IMAGE_MODEL_IDS
 from trusted_router.pricing import (
     PriceTier,
     _as_positive_int,
@@ -1027,7 +1028,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
             ):
                 continue
             request_price = customer_fixed_price_microdollars(raw_request_price)
-            if raw_model.get("model_type") == "image":
+            if raw_model.get("model_type") == "image" and model_id not in OPENAI_IMAGE_MODEL_IDS:
                 # These providers bill per generated image. The enclave sends
                 # an exact fixed-price hold; applying the global token-price
                 # floor here would add a second, prompt-length-dependent charge.

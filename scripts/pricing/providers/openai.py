@@ -7,6 +7,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from scripts.pricing.base import (
     ProviderPricingResult,
     emit_workflow_warning,
@@ -23,6 +25,7 @@ from scripts.pricing.openai_catalog import (
     discover_available_priced_chat_catalog,
     probe_openai_chat,
 )
+from trusted_router.image_generation import OPENAI_IMAGE_MODEL_IDS
 
 SLUG = "openai"
 URL = "https://developers.openai.com/api/docs/pricing"
@@ -79,6 +82,34 @@ UPSTREAM_ID_MAP: dict[str, str] = {}
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 
 
+def probe_openai_image(*, api_key: str, model: str) -> bool:
+    """One low-quality canary only for new or previously held image routes."""
+    try:
+        response = httpx.post(
+            f"{BASE_URL}/images/generations",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={"model": model, "prompt": "A red square on white.", "size": "1024x1024", "quality": "low", "n": 1},
+            timeout=180,
+        )
+        response.raise_for_status()
+        data = response.json()
+        usage = data.get("usage", {})
+        images = data.get("data")
+        return (
+            isinstance(images, list) and len(images) == 1
+            and isinstance(images[0], dict)
+            and isinstance(images[0].get("b64_json"), str)
+            and bool(images[0]["b64_json"])
+            and all(
+            type(usage.get(field)) is int and usage[field] > 0
+            for field in ("input_tokens", "output_tokens", "total_tokens")
+            )
+            and usage["total_tokens"] == usage["input_tokens"] + usage["output_tokens"]
+        )
+    except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+        return False
+
+
 def _is_stable_chat_model(row: dict[str, Any]) -> bool:
     native_id = row.get("id")
     if not isinstance(native_id, str):
@@ -127,22 +158,38 @@ def fetch() -> ProviderPricingResult:
         upstream_id_map=UPSTREAM_ID_MAP,
         include=_is_stable_chat_model,
     )
-    if not discovered:
-        raise RuntimeError("openai: no priced chat models found in authenticated catalog")
     for model_id, metadata in _MODEL_METADATA_OVERRIDES.items():
         if row := discovered.get(model_id):
             row.update(metadata)
+
+    available = {row.get("id") for row in rows}
+    for model_id in sorted(OPENAI_IMAGE_MODEL_IDS):
+        native_id = model_id.removeprefix("openai/")
+        if native_id not in available:
+            continue
+        UPSTREAM_ID_MAP[model_id] = native_id
+        discovered[model_id] = {
+            "id": model_id, "upstream_id": native_id,
+            "display_name": "GPT Image 2.5 " + native_id.rsplit("-", 1)[1].title(),
+            "model_type": "image", "endpoints": ["images"],
+            "input_modalities": ["text"], "output_modalities": ["image"],
+        }
+
+    if not discovered:
+        raise RuntimeError("openai: no supported models found in authenticated catalog")
 
     checked = models_requiring_canary(MANIFEST_PATH, discovered)
     healthy = {
         model_id
         for model_id in sorted(checked)
-        if probe_openai_chat(
+        if model_id in result.prices
+        and (probe_openai_image(api_key=api_key, model=UPSTREAM_ID_MAP[model_id])
+            if model_id in OPENAI_IMAGE_MODEL_IDS else probe_openai_chat(
             base_url=BASE_URL,
             api_key=api_key,
             model=UPSTREAM_ID_MAP[model_id],
             max_tokens_field="max_completion_tokens",
-        )
+        ))
     }
     apply_canary_results(
         discovered,
@@ -154,7 +201,7 @@ def fetch() -> ProviderPricingResult:
     result.fetched_url = MODELS_URL
     result.notes.extend(
         [
-            f"intersected official pricing with {len(discovered)} authenticated chat models",
+            f"intersected official pricing with {len(discovered)} authenticated models",
             f"canaried {len(checked)} new/held routes ({len(healthy)} healthy)",
         ]
     )

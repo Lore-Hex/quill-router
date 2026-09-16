@@ -171,6 +171,61 @@ def _tiered_row(short_in: int, short_out: int, short_cached: int | None,
     return {"tiers": [tier_low, tier_high]}
 
 
+def _image_generation_prices(md: str) -> dict:
+    # The image table has separate Text and Image input rows. Text-to-image
+    # uses Text input + Image output, never the Image input rate or Batch.
+    rows = []
+    standard = True
+    for line in md.splitlines():
+        heading = line.strip().strip("#* ").casefold()
+        if heading in {"batch", "flex", "priority"}:
+            standard = False
+        elif heading == "standard":
+            standard = True
+        if standard and line.startswith("|"):
+            rows.append([cell.strip() for cell in line.strip("|").split("|")])
+    rows.extend(_embedded_standard_rows(md))
+    embedded = []
+    soup = BeautifulSoup(md, "html.parser")
+    for island in soup.find_all("astro-island", {"component-export": "GroupedPricingTable"}):
+        pane = island.find_parent(attrs={"data-content-switcher-pane": "true"})
+        if pane is None or pane.get("data-value") != "standard":
+            continue
+        try:
+            decoded = _astro_unwrap(json.loads(island.get("props", "{}")))
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(decoded, dict):
+            continue
+        for group in decoded.get("groups", []):
+            if not isinstance(group, dict):
+                continue
+            for row in group.get("rows", []):
+                if isinstance(row, list):
+                    embedded.append([group.get("model"), *row])
+    # Hidden Standard rows beat the rendered Batch rows in a normalized
+    # projection, whose surrounding processing-tier labels may be absent.
+    rows = embedded + rows
+    modalities = {}
+    for cells in rows:
+        if len(cells) != 5:
+            continue
+        name, modality = str(cells[0]).strip(), str(cells[1]).casefold()
+        if not re.fullmatch(r"gpt-image-[0-9][a-z0-9.-]*", name) or modality not in {"text", "image"}:
+            continue
+        modalities.setdefault(name, {}).setdefault(modality, cells)
+    out = {}
+    for name, parts in modalities.items():
+        if "text" not in parts or "image" not in parts:
+            continue
+        prompt = _embedded_to_micro_per_m(parts["text"][2])
+        cached = _embedded_to_micro_per_m(parts["text"][3])
+        output = _embedded_to_micro_per_m(parts["image"][4])
+        if prompt is not None and output is not None:
+            out["openai/" + name] = _flat_row(prompt, output, cached)
+    return out
+
+
 def parse(md: str) -> dict:
     out: dict = {}
     _live_seen: set[str] = set()
@@ -312,4 +367,5 @@ def parse(md: str) -> dict:
             "prompt_micro_per_m": int(round(prompt_usd * 1_000_000)),
             "completion_micro_per_m": int(round(completion_usd * 1_000_000)),
         }
+    out.update(_image_generation_prices(md))
     return out
