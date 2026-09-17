@@ -14,6 +14,7 @@ from sqlalchemy import select
 
 from .app import create_app
 from .credentials import Credentials
+from .lexe import Lexe
 from .lnd import Lnd
 from .rates import Rates
 from .service import Funding
@@ -39,7 +40,7 @@ class Readiness:
                 with self.funding.store.transaction() as connection:
                     connection.execute(select(invoices.c.id).limit(1)).first()
                 self.credits.health()
-                self.ready = self.funding.lnd.receiving_capacity() >= 1000
+                self.ready = self.funding.receiving_ready()
             except Exception as exc:
                 self.ready = False
                 logger.error("lightning.readiness_failed error_type=%s", type(exc).__name__)
@@ -67,8 +68,13 @@ def production_app() -> FastAPI:
     rate_client = httpx.Client(timeout=8, follow_redirects=False, trust_env=False)
     credits = TrustedRouterCredits(endpoint, os.environ["LR_CREDITS_TOKEN"], credit_client)
     store = Store(database_url)
+    lexe = None
+    if os.environ.get("LR_LEXE_WALLET_ID"):
+        lexe = Lexe(httpx.Client(base_url="http://127.0.0.1:5393", timeout=20, follow_redirects=False, trust_env=False),
+                    os.environ["LR_LEXE_WALLET_ID"])
     funding = Funding(store, Credentials(bytes.fromhex(os.environ["LR_CHECKOUT_SECRET"])),
-                      Lnd(lnd_client), Rates(rate_client), credits, check_capacity=True)
+                      Lnd(lnd_client), Rates(rate_client), credits, check_capacity=True,
+                      lexe=lexe, new_invoice_backend=os.environ.get("LR_INVOICE_BACKEND", "lnd"))
     store.pin_credentials(funding.credentials)
     readiness = Readiness(funding, credits)
     if not readiness():

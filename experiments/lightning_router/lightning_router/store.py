@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import re
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -53,7 +54,12 @@ invoices = Table(
     Column("id", String(32), primary_key=True),
     Column("key_hash", String(64), ForeignKey("lr_checkouts.key_hash"), nullable=False),
     Column("request_id", String(32), nullable=False),
-    Column("payment_hash", String(64), nullable=False, unique=True),
+    Column("payment_hash", String(64), nullable=True, unique=True),
+    Column("backend", String(12), nullable=False, server_default="lnd"),
+    Column("wallet_id", String(64), nullable=False, server_default=""),
+    Column("provider_index", String(128), nullable=False, server_default=""),
+    Column("create_started_at", BigInteger, nullable=False, server_default="0"),
+    Column("provider_fee_msat", BigInteger, nullable=False, server_default="0"),
     Column("bolt11", String(8192), nullable=False, default=""),
     Column("state", String(12), nullable=False, default="OPEN"),
     Column("created_at", BigInteger, nullable=False),
@@ -87,6 +93,8 @@ deposits = Table(
     Column("credit_microdollars", BigInteger, nullable=False),
     Column("usd_per_btc", String(40), nullable=False),
     Column("settled_at", BigInteger, nullable=False),
+    Column("backend", String(12), nullable=False, server_default="lnd"),
+    Column("provider_fee_msat", BigInteger, nullable=False, server_default="0"),
     CheckConstraint(f"amount_msat > 0 AND amount_msat <= {MAX_MSATS}"),
     CheckConstraint(f"credit_microdollars > 0 AND credit_microdollars <= {MAX_MICRODOLLARS}"),
 )
@@ -123,7 +131,11 @@ class Store:
                 "lr_checkouts": {"created_at": "BIGINT NOT NULL DEFAULT 0"},
                 "lr_invoices": {"settled_at": "BIGINT", "failure_code": "VARCHAR(32) NOT NULL DEFAULT ''",
                                 "failure_since": "BIGINT NOT NULL DEFAULT 0", "next_attempt_at": "BIGINT NOT NULL DEFAULT 0",
+                                "backend": "VARCHAR(12) NOT NULL DEFAULT 'lnd'", "wallet_id": "VARCHAR(64) NOT NULL DEFAULT ''",
+                                "provider_index": "VARCHAR(128) NOT NULL DEFAULT ''", "create_started_at": "BIGINT NOT NULL DEFAULT 0",
+                                "provider_fee_msat": "BIGINT NOT NULL DEFAULT 0",
                                 "fx_margin_bps": "INTEGER NOT NULL DEFAULT 0 CHECK (fx_margin_bps >= 0 AND fx_margin_bps < 10000)"},
+                "lr_deposits": {"backend": "VARCHAR(12) NOT NULL DEFAULT 'lnd'", "provider_fee_msat": "BIGINT NOT NULL DEFAULT 0"},
                 "lr_rate_limits": {"available_at": "BIGINT NOT NULL DEFAULT 0"},
             }
             for table, columns in additions.items():
@@ -136,19 +148,18 @@ class Store:
                         if table == "lr_checkouts" and name == "created_at":
                             conn.execute(update(checkouts).values(created_at=int(time.time())))
             if inspect(conn).has_table("lr_invoices"):
+                hash_nullable = next(col["nullable"] for col in inspect(conn).get_columns("lr_invoices") if col["name"] == "payment_hash")
+                if not hash_nullable:
+                    if self.engine.dialect.name == "postgresql":
+                        conn.exec_driver_sql("ALTER TABLE lr_invoices ALTER COLUMN payment_hash DROP NOT NULL")
+                    else:
+                        self._rebuild_invoices(conn)
                 for constraint in inspect(conn).get_unique_constraints("lr_invoices"):
                     if constraint["column_names"] == ["settle_index"]:
                         if self.engine.dialect.name == "sqlite":
                             # SQLite cannot drop a UNIQUE constraint. Rebuild
                             # atomically; no table references invoices by FK.
-                            replacement_metadata = MetaData()
-                            checkouts.to_metadata(replacement_metadata)
-                            replacement = invoices.to_metadata(replacement_metadata, name="lr_invoices_upgrade")
-                            replacement.indexes.clear()
-                            replacement.create(conn)
-                            conn.execute(insert(replacement).from_select(list(invoices.c.keys()), select(invoices)))
-                            conn.exec_driver_sql("DROP TABLE lr_invoices")
-                            conn.exec_driver_sql("ALTER TABLE lr_invoices_upgrade RENAME TO lr_invoices")
+                            self._rebuild_invoices(conn)
                             break
                         constraint_name = constraint["name"]
                         if not constraint_name:
@@ -158,6 +169,17 @@ class Store:
             metadata.create_all(conn)
             for index in invoices.indexes:
                 index.create(conn, checkfirst=True)
+
+    @staticmethod
+    def _rebuild_invoices(conn: Connection) -> None:
+        replacement_metadata = MetaData()
+        checkouts.to_metadata(replacement_metadata)
+        replacement = invoices.to_metadata(replacement_metadata, name="lr_invoices_upgrade")
+        replacement.indexes.clear()
+        replacement.create(conn)
+        conn.execute(insert(replacement).from_select(list(invoices.c.keys()), select(invoices)))
+        conn.exec_driver_sql("DROP TABLE lr_invoices")
+        conn.exec_driver_sql("ALTER TABLE lr_invoices_upgrade RENAME TO lr_invoices")
 
     @contextmanager
     def transaction(self) -> Iterator[Connection]:
@@ -191,7 +213,7 @@ class Store:
     def pin_credentials(self, credentials: Credentials) -> None:
         with self.transaction() as conn:
             # Validate existing recovery material before establishing the first pin.
-            prior = conn.execute(select(invoices.c.id, invoices.c.payment_hash).limit(1)).first()
+            prior = conn.execute(select(invoices.c.id, invoices.c.payment_hash).where(invoices.c.backend == "lnd").limit(1)).first()
             if prior and not hmac.compare_digest(hashlib.sha256(credentials.invoice_preimage(prior.id)).hexdigest(), prior.payment_hash):
                 raise ValueError("Checkout secret changed; restore the existing version")
             pending = conn.execute(select(checkouts.c.pending_key, checkouts.c.key_hash).where(checkouts.c.pending_key.is_not(None)).limit(1)).first()
@@ -232,8 +254,12 @@ class Store:
             return dict(row) if row else None
 
     def prepare(self, key_hash: str, request_id: str, invoice_id: str,
-                payment_hash: str, now: int, *, requested_msat: int,
-                usd_cents: int, usd_per_btc: str, fx_margin_bps: int = 0) -> dict[str, Any]:
+                payment_hash: str | None, now: int, *, requested_msat: int,
+                usd_cents: int, usd_per_btc: str, fx_margin_bps: int = 0,
+                backend: str = "lnd", wallet_id: str = "") -> dict[str, Any]:
+        if (backend not in {"lnd", "lexe"} or (backend == "lnd" and not payment_hash)
+                or (backend == "lexe" and (payment_hash is not None or not re.fullmatch(r"[0-9a-f]{64}", wallet_id)))):
+            raise ValueError("Invalid invoice backend identity")
         msats(requested_msat)
         Rate(Decimal(usd_per_btc), now, fx_margin_bps)
         if requested_msat <= 0 or not 1 <= usd_cents <= 100_000:
@@ -258,7 +284,7 @@ class Store:
                 id=invoice_id, key_hash=key_hash, request_id=request_id,
                 payment_hash=payment_hash, created_at=now, expires_at=now + 900,
                 requested_msat=requested_msat, usd_cents=usd_cents, usd_per_btc=usd_per_btc,
-                fx_margin_bps=fx_margin_bps,
+                fx_margin_bps=fx_margin_bps, backend=backend, wallet_id=wallet_id,
             ))
             return dict(conn.execute(select(invoices).where(invoices.c.id == invoice_id)).mappings().one())
 
@@ -277,6 +303,28 @@ class Store:
                 bolt11=bolt11, expires_at=expires_at,
             ))
 
+    def claim_creation(self, invoice_id: str, now: int) -> bool:
+        # Commit before the non-idempotent remote call. Ownership NEVER expires:
+        # a crashed owner is recovered by correlation, not a second create.
+        with self.transaction() as conn:
+            return conn.execute(update(invoices).where(
+                invoices.c.id == invoice_id, invoices.c.backend == "lexe",
+                invoices.c.create_started_at == 0, invoices.c.payment_hash.is_(None),
+                invoices.c.state == "OPEN", invoices.c.expires_at > now + 30,
+            ).values(create_started_at=now).returning(invoices.c.id)).first() is not None
+
+    def bind_provider_invoice(self, invoice_id: str, wallet_id: str, payment_hash: str, provider_index: str) -> None:
+        if not re.fullmatch(r"[0-9a-f]{64}", payment_hash) or not re.fullmatch(r"[0-9]{19}-ln_" + payment_hash, provider_index):
+            raise ValueError("Invalid provider invoice identity")
+        with self.transaction() as conn:
+            row = conn.execute(select(invoices).where(invoices.c.id == invoice_id).with_for_update()).mappings().one()
+            if (row["backend"] != "lexe" or row["wallet_id"] != wallet_id or not row["create_started_at"]
+                    or row["payment_hash"] not in {None, payment_hash} or row["provider_index"] not in {"", provider_index}):
+                raise ValueError("Provider invoice binding changed")
+            conn.execute(update(invoices).where(invoices.c.id == invoice_id).values(
+                payment_hash=payment_hash, provider_index=provider_index,
+            ))
+
     def expire_unissued(self, invoice_id: str) -> None:
         # A BOLT11 is only shown after attach+observe. This conditional update
         # cannot cancel a previously published invoice from a stale caller.
@@ -284,13 +332,17 @@ class Store:
             conn.execute(update(invoices).where(
                 invoices.c.id == invoice_id, invoices.c.bolt11 == "",
                 invoices.c.state == "OPEN",
+                invoices.c.create_started_at == 0,
             ).values(state="CANCELED"))
 
     def observe(self, invoice_id: str, *, state: str, payment_hash: str,
-                amount_msat: int, settle_index: int, now: int) -> None:
+                amount_msat: int, settle_index: int, now: int, provider_fee_msat: int = 0) -> None:
         if state not in {"OPEN", "ACCEPTED", "SETTLED", "CANCELED"}:
             raise ValueError("Unknown LND invoice state")
         amount = msats(amount_msat)
+        fee = msats(provider_fee_msat)
+        if fee > amount:
+            raise ValueError("Fee exceeds receipt")
         settle_index = msats(settle_index)
         with self.transaction() as conn:
             # Lock order is always account then invoice, including concurrent
@@ -301,7 +353,7 @@ class Store:
             if row["payment_hash"] != payment_hash:
                 raise ValueError("LND returned a different payment hash")
             if row["state"] == "SETTLED":
-                if state == "SETTLED" and (row["amount_msat"] != amount or row["settle_index"] != settle_index):
+                if state == "SETTLED" and (row["amount_msat"] != amount or row["settle_index"] != settle_index or row["provider_fee_msat"] != fee):
                     raise ValueError("Settlement replay changed amount or index")
                 return
             if row["state"] == "CANCELED":
@@ -318,8 +370,9 @@ class Store:
                 conn.execute(insert(deposits).values(
                     payment_hash=payment_hash, key_hash=owner, amount_msat=amount, settled_at=now,
                     credit_microdollars=credit, usd_per_btc=row["usd_per_btc"],
+                    backend=row["backend"], provider_fee_msat=fee,
                 ))
-                values.update(amount_msat=amount, settle_index=settle_index, credit_microdollars=credit, settled_at=now)
+                values.update(amount_msat=amount, settle_index=settle_index, credit_microdollars=credit, settled_at=now, provider_fee_msat=fee)
             elif row["state"] == "ACCEPTED" and state == "OPEN":
                 values["state"] = "ACCEPTED"
             conn.execute(update(invoices).where(invoices.c.id == invoice_id).values(**values))

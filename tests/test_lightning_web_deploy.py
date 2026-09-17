@@ -19,6 +19,9 @@ def test_web_image_runs_unprivileged_and_has_no_tr_backend_or_credentials() -> N
     docker = (root / "experiments/lightning_router/Dockerfile").read_text()
     assert "USER 10001:10001" in docker
     assert "LR_PAYMENTS_ENABLED=false" in docker
-    assert '"--no-access-log"' in docker
-    assert '"--no-proxy-headers"' in docker
+    assert 'CMD ["python", "-m", "lightning_router.launch"]' in docker
+    launcher = (root / "experiments/lightning_router/lightning_router/launch.py").read_text()
+    assert '"--no-access-log"' in launcher
+    assert '"--no-proxy-headers"' in launcher
+    assert '"127.0.0.1:5393"' in launcher
     assert "COPY src" not in docker

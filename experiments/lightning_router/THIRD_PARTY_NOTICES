@@ -2,6 +2,34 @@ LightningRouter's Business Source License does not replace the licenses of
 third-party dependencies. Python and npm packages retain their own notices.
 uv.lock and package-lock.json identify the resolved dependencies.
 
+The image includes the official Lexe sidecar SDK v0.4.20, independently
+licensed under MIT, from https://github.com/lexe-app/lexe-sidecar-sdk.
+This does not relicense Lexe's node or other non-SDK code.
+
+MIT License
+
+Copyright (c) 2025-2026 Lexe Corporation
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
 Lucide icons are included in the browser bundles under the following terms:
 
 ISC License
