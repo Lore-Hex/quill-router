@@ -1,0 +1,73 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "LightningRouter L402 funding API",
+    "version": "1.0.0",
+    "description": "Optional payment operations, separate from read-only discovery and inference. Obtain user authorization before paying. BTC converts once into USD credits at the locked invoice quote, including the 10% FX buffer. Accounts are created only after verified settlement. Never log API keys or payment proofs."
+  },
+  "servers": [{"url": "https://lightningrouter.ai"}],
+  "externalDocs": {"url": "https://lightningrouter.ai/l402.md"},
+  "paths": {
+    "/api/l402/funding": {
+      "post": {
+        "operationId": "fundWithL402",
+        "summary": "Request an L402 invoice or redeem its payment proof for USD credits",
+        "description": "Send X-API-Key and Idempotency-Key on every call. The initial call has no Authorization header and returns 402. After paying once, repeat the identical request with Authorization: L402 <macaroon>:<hex preimage>. For a new account, generate sk-tr-v1- followed by 32 cryptographically random bytes encoded as unpadded base64url, save it securely, and set new_account=true. Never generate another key or purchase ID during retries. Tokens expire after 24 hours, but paid credit does not. Does not accept prompts or authorize inference.",
+        "security": [{"FundingKey": []}, {"FundingKey": [], "L402": []}],
+        "parameters": [{"name": "Idempotency-Key", "in": "header", "required": true, "schema": {"type": "string", "pattern": "^[0-9a-f]{32}$"}}],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {
+            "type": "object", "additionalProperties": false, "required": ["usd_cents"],
+            "properties": {
+              "usd_cents": {"type": "integer", "minimum": 1, "maximum": 100000},
+              "new_account": {"type": "boolean", "default": false}
+            }
+          }}}
+        },
+        "responses": {
+          "200": {"description": "Verified payment credited exactly once; repeated redemption returns the same receipt", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Receipt"}}}},
+          "202": {"description": "Payment or credit delivery is pending; retry without paying again", "headers": {"Retry-After": {"schema": {"type": "string"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Receipt"}}}},
+          "402": {
+            "description": "Pay the existing invoice once, then retry with its payment proof",
+            "headers": {"WWW-Authenticate": {"schema": {"type": "string"}, "description": "L402 macaroon=\"...\", invoice=\"lnbc...\""}},
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Challenge"}}}
+          },
+          "400": {"description": "Invalid body, amount or idempotency key"},
+          "401": {"description": "Invalid/revoked API key or invalid/expired L402 proof"},
+          "409": {"description": "Purchase conflict, expired invoice or another unresolved invoice"},
+          "410": {"description": "Invoice canceled; no replacement invoice created"},
+          "413": {"description": "Missing Content-Length or body larger than 1024 bytes"},
+          "429": {"description": "Rate limited; honor Retry-After", "headers": {"Retry-After": {"schema": {"type": "string"}}}},
+          "503": {"description": "Unavailable or payment needs review. Do not pay again. Honor Retry-After when present.", "headers": {"Retry-After": {"schema": {"type": "string"}}}}
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "FundingKey": {"type": "apiKey", "in": "header", "name": "X-API-Key", "description": "Destination account key or securely generated new checkout key. Required on initial request and redemption."},
+      "L402": {"type": "http", "scheme": "L402", "description": "Use after paying: <macaroon>:<64-character hexadecimal preimage>. Keep X-API-Key and Idempotency-Key unchanged."}
+    },
+    "schemas": {
+      "Receipt": {
+        "type": "object", "required": ["id", "state", "credited", "credit_usd", "balance_usd", "currency", "account_created"],
+        "properties": {
+          "id": {"type": "string"}, "state": {"type": "string", "enum": ["OPEN", "ACCEPTED", "SETTLED", "CANCELED"]},
+          "credited": {"type": "boolean"}, "account_created": {"type": "boolean"},
+          "credit_usd": {"type": "string"}, "credit_microdollars": {"type": "string"},
+          "balance_usd": {"type": "string"}, "currency": {"const": "USD"},
+          "usd_amount": {"type": "string"}, "requested_msat": {"type": "string"},
+          "invoice_btc": {"type": "string"}, "bolt11": {"type": "string"},
+          "expires_at": {"type": "integer"}, "fx_margin_bps": {"type": "integer"}
+        }
+      },
+      "Challenge": {
+        "allOf": [{"$ref": "#/components/schemas/Receipt"}, {
+          "type": "object", "required": ["macaroon", "proof_expires_at"],
+          "properties": {"macaroon": {"type": "string"}, "proof_expires_at": {"type": "integer"}}
+        }]
+      }
+    }
+  }
+}

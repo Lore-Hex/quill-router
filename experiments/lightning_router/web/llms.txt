@@ -12,6 +12,7 @@ message. A new account is created only after a verified payment settles.
 - [Home](https://lightningrouter.ai/): browser funding and setup for Trusted Cowork, OpenCode, Crush and OMP.
 - [Live model catalog](https://lightningrouter.ai/api/models): model IDs, USD pricing, limits and reviewed reasoning controls. GET, no key required.
 - [Read-only OpenAPI](https://lightningrouter.ai/openapi.json): this site's catalog and health endpoints, not payment tools or inference.
+- [L402 funding](https://lightningrouter.ai/l402.md): optional invoice challenge and payment-proof redemption for USD credits. Requires explicit spending authorization. Separate [funding OpenAPI](https://lightningrouter.ai/funding-openapi.json).
 - [Pricing](https://lightningrouter.ai/pricing): token rates and the 10% BTC conversion buffer.
 - [Funding health](https://lightningrouter.ai/health): current readiness. HTTP 503 means degraded or unavailable.
 

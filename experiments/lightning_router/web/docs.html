@@ -4,6 +4,7 @@
 <p><a href="/">Pay a Lightning invoice</a> to create a funded key, or paste an existing key to add credits to its account. BTC converts once into USD credits at the invoice's quoted rate, including the displayed FX buffer. Your balance stays in USD.</p>
 <p>No email or separate password is needed. Keep your API key safe: it grants access to your balance and inference. This tab remembers it until you sign out. Never send your key to support or put it in a public repository.</p>
 <h2>Connect your app</h2>
+<p>Agents can also <a href="/l402.md">fund a key through L402</a>: request an invoice, pay it once, then retry with payment proof. The <a href="/funding-openapi.json">funding API contract</a> is separate from read-only discovery. The same USD credits, conversion terms and API key apply.</p>
 <p>Use your funded key with this API base URL:</p>
 <pre>https://api.trustedrouter.com/v1</pre>
 <p>For agents: <a href="/docs.md">read this setup guide as Markdown</a>, use the <a href="/llms.txt">agent index</a> or fetch <a href="/api/models">current models and prices as JSON</a>. The <a href="/openapi.json">read-only OpenAPI description</a> covers this site's catalog and health endpoints. It does not expose payment tools. Inference uses the TrustedRouter API, not this website's domain.</p>
