@@ -2,7 +2,7 @@
   "_about": "Explicitly allowlisted OpenRouter-only models. OpenRouter is the downstream API and billing source. These routes are not BYOK, ZDR, confidential-compute, or E2EE. Explicit zero upstream prices receive the normal TrustedRouter customer price floor.",
   "provider": "openrouter",
   "source": "https://openrouter.ai/api/v1/models",
-  "generated_at": "2026-09-17T13:09:03Z",
+  "generated_at": "2026-09-17T18:00:34Z",
   "price_scale": "microdollars_per_million",
   "model_count": 2,
   "models": [
