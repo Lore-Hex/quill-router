@@ -22,6 +22,9 @@ class Credentials:
     def key_id(self) -> str:
         return hmac.new(self._secret, b"checkout-secret-pin-v1", hashlib.sha256).hexdigest()
 
+    def l402_root_key(self) -> bytes:
+        return hmac.new(self._secret, b"l402-funding-macaroons-v1", hashlib.sha256).digest()
+
     def invoice_preimage(self, invoice_id: str) -> bytes:
         # Persist the hash before calling LND. Retries recover the SAME invoice,
         # including when LND accepted creation but its HTTP response was lost.

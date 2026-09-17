@@ -23,6 +23,11 @@ money on inference or a Lightning payment.
 
 ## Inference API
 
+For programmatic funding, use the optional [L402 funding API](https://lightningrouter.ai/l402.md).
+It creates a payment challenge and verifies payment before delivering USD credit.
+The [funding OpenAPI](https://lightningrouter.ai/funding-openapi.json) is separate
+from read-only discovery. Get user authorization before paying an invoice.
+
 Base URL: https://api.trustedrouter.com/v1
 
 Authentication: `Authorization: Bearer <your API key>`

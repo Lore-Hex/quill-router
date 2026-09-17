@@ -21,6 +21,8 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .catalog import limits, pricing, privacy
 from .errors import FundingReviewRequired
+from .l402 import PATH as L402_PATH
+from .l402 import L402Funding
 from .lookup import LookupGate
 from .pages import public_page
 from .rates import Rates
@@ -141,7 +143,7 @@ def create_app(service: Funding | None = None, *, rates: Rates | None = None,
                 expected_origin = str(request.base_url).rstrip("/")
             if origin and origin != expected_origin:
                 return JSONResponse({"error": "cross_origin_request"}, status_code=403)
-        gated = request.url.path in {"/api/account", "/api/usage", "/api/feedback"}
+        gated = request.url.path in {"/api/account", "/api/usage", "/api/feedback", L402_PATH}
         if gated and not lookup_gate.slots.acquire(blocking=False):
             return JSONResponse({"error": "rate_limited"}, status_code=429, headers={"Retry-After": "10"})
         try:
@@ -215,12 +217,15 @@ def create_app(service: Funding | None = None, *, rates: Rates | None = None,
     @app.api_route("/robots.txt", methods=["GET", "HEAD"])
     @app.api_route("/sitemap.xml", methods=["GET", "HEAD"])
     @app.api_route("/openapi.json", methods=["GET", "HEAD"])
+    @app.api_route("/funding-openapi.json", methods=["GET", "HEAD"])
+    @app.api_route("/l402.md", methods=["GET", "HEAD"])
     @app.api_route("/docs.md", methods=["GET", "HEAD"])
     @app.api_route("/index.md", methods=["GET", "HEAD"])
     def discovery(request: Request) -> FileResponse:
         resources = {
             "/llms.txt": "text/plain", "/robots.txt": "text/plain", "/sitemap.xml": "application/xml",
             "/openapi.json": "application/json", "/docs.md": "text/markdown", "/index.md": "text/markdown",
+            "/funding-openapi.json": "application/json", "/l402.md": "text/markdown",
         }
         return FileResponse(STATIC / request.url.path.removeprefix("/"), media_type=resources[request.url.path])
 
@@ -358,6 +363,42 @@ def create_app(service: Funding | None = None, *, rates: Rates | None = None,
             if row is None:
                 return unavailable()
             return service.public(row)
+        except KeyError:
+            return JSONResponse({"error": "invalid_api_key"}, status_code=401)
+        except ValueError:
+            return JSONResponse({"error": "invoice_conflict"}, status_code=409)
+
+    @app.post(L402_PATH)
+    def l402_funding(request: Request, body: CreateInvoice) -> Any:
+        if service is None:
+            return unavailable()
+        # Keep the destination credential separate from the standard L402
+        # Authorization header. Neither keys nor preimages belong in URLs.
+        raw = request.headers.get("x-api-key", "")
+        try:
+            hashed = service.credentials.fingerprint(raw)
+        except ValueError:
+            return JSONResponse({"error": "invalid_api_key"}, status_code=401)
+        request_id = request.headers.get("idempotency-key", "")
+        if not re.fullmatch(r"[0-9a-f]{32}", request_id):
+            return JSONResponse({"error": "idempotency_key_required"}, status_code=400)
+        authorization = request.headers.get("authorization", "")
+        peer = request.client.host if request.client else "unknown"
+        identity = hashlib.sha256(peer.encode()).hexdigest()
+        now = int(time.time())
+        if ((not edge_rate_limited and not service.store.rate_limit("peer:" + identity, now, 40))
+                or not service.store.rate_limit("l402:" + hashed, now, 60)):
+            return JSONResponse({"error": "rate_limited"}, status_code=429, headers={"Retry-After": "900"})
+        if not authorization and not service.store.rate_limit("key:" + hashed, now):
+            return JSONResponse({"error": "rate_limited"}, status_code=429, headers={"Retry-After": "900"})
+        # Settlement retries remain available when fresh receiving is disabled.
+        if not authorization and not payments_ready():
+            return unavailable()
+        try:
+            return L402Funding(service).respond(raw, request_id, body.usd_cents,
+                                                new=body.new_account, authorization=authorization)
+        except FundingReviewRequired:
+            return JSONResponse({"error": "funding_review_required"}, status_code=503, headers={"Retry-After": "30"})
         except KeyError:
             return JSONResponse({"error": "invalid_api_key"}, status_code=401)
         except ValueError:

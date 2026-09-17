@@ -163,7 +163,12 @@ def test_edge_policy_accepts_single_global_policy_shapes(as_list: bool) -> None:
     assert commands[3][:5] == ("compute", "security-policies", "rules", "create", "950")
     assert "--rate-limit-threshold-count=20" in commands[3]
     assert "--rate-limit-threshold-interval-sec=60" in commands[3]
-    assert all(path in str(commands[3]) for path in ("/api/account", "/api/usage", "/api/feedback"))
+    assert all(path in str(commands[3]) for path in ("/api/account", "/api/usage", "/api/feedback", "/api/l402/funding"))
+    create_expression = next(arg for arg in commands[2] if arg.startswith("--expression="))
+    assert "/api/l402/funding" in create_expression
+    assert "!has(request.headers['authorization'])" in create_expression
+    assert "request.headers['authorization'] == ''" in create_expression
+    assert "--rate-limit-threshold-interval-sec=900" in commands[2]
     assert commands[4][:5] == ("compute", "security-policies", "rules", "create", "1000")
     assert "--rate-limit-threshold-count=20" in commands[2]
     assert "--rate-limit-threshold-count=180" in commands[4]
