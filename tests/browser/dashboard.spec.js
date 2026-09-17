@@ -297,7 +297,7 @@ test("first-call activation runs live request and copies agent chat prompt", asy
       model: "trustedrouter/cheap",
       messages: [{ role: "user", content: "Reply with exactly PONG." }],
       temperature: 0,
-      max_tokens: 8,
+      max_tokens: 512,
       stream: false,
     });
     await route.fulfill({
@@ -354,7 +354,8 @@ test("first-call activation runs live request and copies agent chat prompt", asy
   await expect(page.locator("[data-result-provider]")).toHaveText("cerebras");
   await expect(page.locator("[data-result-latency]")).toContainText("ms");
   await expect(page.locator("[data-result-cost]")).toHaveText("$0.000017");
-  await expect.poll(() => analytics).toContain("first_call_started");
+  await expect.poll(() => analytics).toContain("onboarding_call_started");
+  await expect.poll(() => analytics).toContain("onboarding_call_succeeded");
 
   await page.getByRole("button", { name: "Copy message" }).click();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(

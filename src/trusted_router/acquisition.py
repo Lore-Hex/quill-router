@@ -523,7 +523,11 @@ def _record_post_signup_milestone_safely(
     return True
 
 
-def log_browser_funnel_event(request: Request, event: str) -> None:
+def log_browser_funnel_event(
+    request: Request, event: str, *, attempt_id: str | None = None,
+    http_status: int | None = None, elapsed_ms: int | None = None,
+    failure_reason: str | None = None, finish_reason: str | None = None,
+) -> None:
     context = request_attribution(request)
     if context is None:
         return
@@ -535,6 +539,11 @@ def log_browser_funnel_event(request: Request, event: str) -> None:
             "anonymous_fingerprint": _fingerprint(context.anonymous_id),
             **_safe_touch_log_fields(touch),
             **_click_id_log_fields(touch),
+            **({
+                "attempt_id": attempt_id, "flow": "welcome_test",
+                "http_status": http_status, "elapsed_ms": elapsed_ms,
+                "failure_reason": failure_reason, "finish_reason": finish_reason,
+            } if attempt_id is not None else {}),
         },
     )
 

@@ -124,6 +124,12 @@ _ACQUISITION_CLOUD_FIELDS = (
     "has_gbraid",
     "has_wbraid",
     "has_twclid",
+    "attempt_id",
+    "flow",
+    "http_status",
+    "elapsed_ms",
+    "failure_reason",
+    "finish_reason",
 )
 
 
