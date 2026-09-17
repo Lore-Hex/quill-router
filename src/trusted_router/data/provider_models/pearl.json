@@ -136,12 +136,11 @@
       "routable_reason": "delisted-upstream"
     },
     {
-      "display_name": "Google: Gemma 4 31B Instruct",
+      "display_name": "Google: Gemma 4 31B",
       "title": "google/gemma-4-31b-it",
       "model_type": "chat",
       "input_modalities": [
-        "text",
-        "image"
+        "text"
       ],
       "output_modalities": [
         "text"
@@ -151,7 +150,7 @@
       ],
       "status": 1,
       "id": "google/gemma-4-31b-it",
-      "upstream_id": "google/gemma-4-31b-it",
+      "upstream_id": "google/gemma-4-31B-it",
       "context_length": 262144,
       "max_output_tokens": 262144,
       "supported_features": [
@@ -159,6 +158,7 @@
         "completion",
         "tools",
         "json_mode",
+        "reasoning",
         "structured_outputs",
         "prompt_caching"
       ],
@@ -168,16 +168,15 @@
         "top_k",
         "frequency_penalty",
         "presence_penalty",
+        "repetition_penalty",
         "stop",
         "seed",
         "max_tokens"
       ],
-      "routable": false,
-      "input_token_price_per_m": 120000,
-      "output_token_price_per_m": 360000,
-      "cached_input_token_price_per_m": 90000,
-      "missing_since": "2026-09-03",
-      "routable_reason": "delisted-upstream"
+      "routable": true,
+      "input_token_price_per_m": 90000,
+      "output_token_price_per_m": 340000,
+      "cached_input_token_price_per_m": 50000
     },
     {
       "display_name": "Z.AI: GLM-5.2",
@@ -436,6 +435,6 @@
       "cached_input_token_price_per_m": 15000
     }
   ],
-  "generated_at": "2026-09-17T07:19:25Z",
+  "generated_at": "2026-09-17T13:09:03Z",
   "model_count": 10
 }

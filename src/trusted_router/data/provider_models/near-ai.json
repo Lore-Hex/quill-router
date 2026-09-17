@@ -25,7 +25,8 @@
       "output_token_price_per_m": 350000,
       "cached_input_token_price_per_m": 35000,
       "routable": false,
-      "routable_reason": "direct-endpoint-unavailable"
+      "routable_reason": "retired-upstream",
+      "missing_since": "2026-09-17"
     },
     {
       "display_name": "google/gemma-4-31B-it",
@@ -264,7 +265,7 @@
   ],
   "source": "https://completions.near.ai/endpoints",
   "pricing_source": "https://cloud-api.near.ai/v1/models",
-  "generated_at": "2026-09-17T07:19:25Z",
+  "generated_at": "2026-09-17T13:09:03Z",
   "price_scale": "microdollars_per_million",
   "model_count": 11
 }

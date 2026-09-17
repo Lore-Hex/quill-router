@@ -46,10 +46,10 @@
   },
   "atlas-cloud": {
     "card_version": 2,
-    "model_count": 78,
+    "model_count": 79,
     "name": "Atlas Cloud",
     "privacy": "Policy documented",
-    "route_count": 78,
+    "route_count": 79,
     "route_mode": "Prepaid",
     "slug": "atlas-cloud"
   },
@@ -487,10 +487,10 @@
   },
   "novita": {
     "card_version": 2,
-    "model_count": 98,
+    "model_count": 99,
     "name": "Novita AI",
     "privacy": "Policy documented",
-    "route_count": 191,
+    "route_count": 193,
     "route_mode": "Prepaid + BYOK",
     "slug": "novita"
   },
@@ -550,10 +550,10 @@
   },
   "pearl": {
     "card_version": 2,
-    "model_count": 5,
+    "model_count": 6,
     "name": "Pearl Research Labs",
     "privacy": "Policy documented",
-    "route_count": 5,
+    "route_count": 6,
     "route_mode": "Prepaid",
     "slug": "pearl"
   },
