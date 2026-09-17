@@ -460,10 +460,10 @@
   },
   "nebius": {
     "card_version": 2,
-    "model_count": 21,
+    "model_count": 22,
     "name": "Nebius Token Factory",
     "privacy": "Zero retention",
-    "route_count": 40,
+    "route_count": 42,
     "route_mode": "Prepaid + BYOK",
     "slug": "nebius"
   },
@@ -811,10 +811,10 @@
   },
   "wafer": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 6,
     "name": "Wafer",
     "privacy": "Policy documented",
-    "route_count": 14,
+    "route_count": 12,
     "route_mode": "Prepaid + BYOK",
     "slug": "wafer"
   },
