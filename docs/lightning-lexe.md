@@ -18,8 +18,8 @@ was sent or received. Wallet balance and channel count remained zero.
 The checksum-verified v0.4.20 sidecar also passed the live read-only preflight
 with node version 0.10.4. The temporary local sidecar was then stopped.
 
-**Lexe is not serving production payments yet.** These tools prepare and check
-credentials; they are not a funding adapter or proof of successful receipt.
+The runtime now supports Lexe behind `LR_INVOICE_BACKEND=lexe`. A code merge is
+not activation or proof of successful receipt. Use the staged rollout below.
 Existing Bitcoin Core, LND, channel, backups, BTCPay, and crediting remain intact.
 The prior monitoring-only rollout is independent of this migration.
 
@@ -46,8 +46,8 @@ Lexe. Checkout receives only the revocable receive credential. Keep the root
 seed off Cloud Run and out of the future sidecar container. Owner-controlled
 node upgrades/provisioning remain separate from payment processing.
 
-The local receive credential is not yet installed in production Secret Manager.
-Set a rotation reminder before its expiry when activating it. Do not treat
+Install only the receive credential in the dedicated production Secret Manager
+resource. Rotate it before expiry. Do not treat
 Lexe's planned credential budgets as an available spending control.
 
 ## Sidecar check
@@ -133,6 +133,62 @@ small amount, exact USD credit assertion, and provider-fee reconciliation.
 Then direct only new invoices to Lexe and keep LND reconciliation running.
 Do not close a channel, move the existing BTC, or delete either wallet as part
 of an application deploy. Those require an explicit funds migration decision.
+
+## Runtime and rollout
+
+`lr_invoices.backend` and `wallet_id` bind each invoice permanently. Legacy
+rows default to LND. A Lexe intent has no payment hash until a verified remote
+invoice is durably bound. `create_started_at` commits before the single remote
+create call and never expires. A lost response is recovered using a unique
+personal note and at most ten pages of payment updates. An unresolved intent
+requires review, never a blind create retry. The provider index is distinct
+from the legacy numeric settlement field, which holds Lexe's finalized-at
+timestamp for Lexe receipts. `provider_fee_msat` records fees separately in
+both the invoice and deposit. Existing USD-credit idempotency is unchanged.
+
+The pinned sidecar runs as the non-root funding UID, bound only to
+`127.0.0.1:5393`. The launcher supervises both processes and stops the other
+when one exits. The sidecar receives an allowlisted environment, not the
+checkout/SQL credentials. Its container-local cache is disposable; it is not
+the node, seed, channel database, or source of credit truth. SGX verification
+remains on. No root-seed, spend, admin, or channel capability is deployed.
+
+Deployment sequence:
+
+1. Run full root and funding gates, including PostgreSQL contracts and Docker
+   build. Merge green CI. Build an immutable image from the committed Git tree.
+2. Install receive credential version 1 as
+   `lightning-router-lexe-receive-client`, granting only the existing funding
+   runtime identity access to that one secret. No seed is uploaded.
+3. Run `python -m scripts.lightning.deploy_lexe --account <deploy-identity>
+   --image <immutable-image> --suffix lexe<release>-bridge --backend lnd --apply`.
+   This migrates separately and stages the dual-backend revision without
+   traffic. Verify Ready, then promote it and check public health and an
+   unpaid create/cancel flow. New invoices still use LND.
+4. Retire pre-Lexe Cloud Run revisions only after the bridge is serving 100%
+   and healthy. Old workers must not reconcile Lexe rows. Keep the old image
+   recorded, but all subsequent rollback revisions must use the dual-backend
+   code. Existing Bitcoin Core, LND, BTCPay, channel and backups stay running.
+5. Stage the same image with `--backend lexe` and a new suffix. The deployment
+   guard refuses this while pre-Lexe funding revisions exist. Verify dependency
+   preflight, promote, and run the public unpaid create/cancel smoke.
+6. Greg pays a small invoice through the unchanged website. Verify settled
+   gross equals net plus fee, the promised USD credit is applied exactly once,
+   and an API call works. Until that payment lands, report invoice-path
+   verification separately from funded end-to-end verification.
+
+Rollback changes **new invoices** to `LR_INVOICE_BACKEND=lnd` on this same
+dual-backend image. Keep the Lexe wallet setting and receive credential mounted
+so existing Lexe invoices still reconcile. Never deploy the old LND-only code
+after the first Lexe intent. Never close or move the old channel as rollback.
+
+An expired/revoked receive credential or a failed attestation fails closed.
+The existing liquidity heartbeat now reports `backend=lexe`, `jit_liquidity`
+and receive-authority readiness, not a fabricated amount of inbound capacity.
+It does not prove an actual payment succeeded. Payment/reconciliation errors
+continue to alert through the existing funding alerts. The credential expires
+in December 2026; rotate ahead of that date using a new scoped credential and
+explicit secret-version rollout.
 
 ## References
 

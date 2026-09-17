@@ -11,6 +11,7 @@ import segno
 from .credentials import Credentials
 from .credits import Credits
 from .errors import FundingReviewRequired
+from .lexe import Lexe
 from .lnd import Invoice, Lnd
 from .money import MAX_CREDIT_RECEIPT, btc, microdollars, usd
 from .rates import Rate, Rates
@@ -20,13 +21,18 @@ logger = logging.getLogger("lightning_router")
 
 
 class Funding:
-    def __init__(self, store: Store, credentials: Credentials, lnd: Lnd, rates: Rates, credits: Credits, *, check_capacity: bool = False) -> None:
+    def __init__(self, store: Store, credentials: Credentials, lnd: Lnd, rates: Rates, credits: Credits, *, check_capacity: bool = False,
+                 lexe: Lexe | None = None, new_invoice_backend: str = "lnd") -> None:
+        if new_invoice_backend not in {"lnd", "lexe"} or (new_invoice_backend == "lexe" and lexe is None):
+            raise ValueError("Unknown or unavailable funding backend")
         self.store = store
         self.credentials = credentials
         self.lnd = lnd
         self.rates = rates
         self.credits = credits
         self.check_capacity = check_capacity
+        self.lexe = lexe
+        self.new_invoice_backend = new_invoice_backend
         self._last_health_log = 0.0
         self._last_prune = 0.0
 
@@ -61,16 +67,26 @@ class Funding:
         requested_msat = rate.invoice_msats(cents)
         if rate.credit_microdollars(2 * requested_msat) > MAX_CREDIT_RECEIPT:
             raise ValueError("Invoice exceeds receipt ceiling")
-        if self.check_capacity and self.lnd.receiving_capacity() < requested_msat:
+        if self.check_capacity and not self.receiving_ready(requested_msat):
             raise ValueError("Insufficient receiving capacity")
         invoice_id = uuid.uuid4().hex
         preimage = self.credentials.invoice_preimage(invoice_id)
         row = self.store.prepare(
-            key_hash, request_id, invoice_id, hashlib.sha256(preimage).hexdigest(),
+            key_hash, request_id, invoice_id, hashlib.sha256(preimage).hexdigest() if self.new_invoice_backend == "lnd" else None,
             int(time.time()), requested_msat=requested_msat,
             usd_cents=cents, usd_per_btc=str(rate.usd_per_btc), fx_margin_bps=rate.fx_margin_bps,
+            backend=self.new_invoice_backend, wallet_id=self.lexe.wallet_id if self.new_invoice_backend == "lexe" and self.lexe else "",
         )
         return self.refresh(row)
+
+    def receiving_ready(self, amount_msat: int = 1000) -> bool:
+        if self.new_invoice_backend == "lexe":
+            assert self.lexe is not None
+            self.lexe.ready()
+            # Lexe supplies JIT liquidity. Do not invent a channel-capacity
+            # figure or reject a fresh wallet solely because it has no channel.
+            return True
+        return self.lnd.receiving_capacity() >= amount_msat
 
     def refresh(self, row: dict[str, Any], *, cancel: bool = False) -> dict[str, Any]:
         row = self.store.invoice(row["id"], row["key_hash"])
@@ -93,6 +109,10 @@ class Funding:
             return self.public(self.store.invoice(row["id"], row["key_hash"]))
         if row["state"] == "CANCELED":
             return self.public(row)
+        if row["backend"] == "lexe":
+            return self._refresh_lexe(row, cancel=cancel)
+        if row["backend"] != "lnd":
+            raise FundingReviewRequired("unknown_backend")
         preimage = self.credentials.invoice_preimage(row["id"])
         # Once published, loss of an LND record is a recovery incident, never
         # authority to issue the payment again (even under the same hash).
@@ -114,6 +134,44 @@ class Funding:
         self._observe(row, invoice)
         row = self.store.invoice(row["id"], row["key_hash"])
         self._deliver_credit(row)
+        return self.public(self.store.invoice(row["id"], row["key_hash"]))
+
+    def _refresh_lexe(self, row: dict[str, Any], *, cancel: bool) -> dict[str, Any]:
+        if self.lexe is None or row["wallet_id"] != self.lexe.wallet_id:
+            raise FundingReviewRequired("wallet_unavailable")
+        try:
+            if row["provider_index"]:
+                invoice = self.lexe.lookup(row)
+            else:
+                if not row["create_started_at"] and (cancel or row["expires_at"] <= int(time.time()) + 30):
+                    self.store.expire_unissued(row["id"])
+                    return self.public(self.store.invoice(row["id"], row["key_hash"]))
+                self.lexe.ready()
+                if self.store.claim_creation(row["id"], int(time.time())):
+                    invoice = self.lexe.create(row)
+                else:
+                    row = self.store.invoice(row["id"], row["key_hash"])
+                    if row["state"] in {"CANCELED", "SETTLED"}:
+                        self._deliver_credit(row)
+                        return self.public(self.store.invoice(row["id"], row["key_hash"]))
+                    if not row["create_started_at"]:
+                        self.store.expire_unissued(row["id"])
+                        return self.public(self.store.invoice(row["id"], row["key_hash"]))
+                    # Another caller can be creating it right now. Bounded
+                    # recovery is safe; issuing a second invoice is not.
+                    invoice = self.lexe.lookup(row) if row["provider_index"] else self.lexe.recover(row)
+                self.store.bind_provider_invoice(row["id"], self.lexe.wallet_id, invoice.payment_hash, invoice.provider_index)
+                row = self.store.invoice(row["id"], row["key_hash"])
+            if (cancel or invoice.expires_at > row["expires_at"]) and invoice.state not in {"SETTLED", "CANCELED"}:
+                invoice = self.lexe.cancel(row)
+            if invoice.expires_at > row["expires_at"] and invoice.state != "CANCELED":
+                raise FundingReviewRequired("quote_expiry_changed")
+            self._observe(row, invoice)
+        except FundingReviewRequired:
+            raise
+        except ValueError as exc:
+            raise FundingReviewRequired("invoice_invalid") from exc
+        self._deliver_credit(self.store.invoice(row["id"], row["key_hash"]))
         return self.public(self.store.invoice(row["id"], row["key_hash"]))
 
     def _deliver_credit(self, row: dict[str, Any]) -> None:
@@ -153,6 +211,7 @@ class Funding:
                 row["id"], state=invoice.state, payment_hash=invoice.payment_hash,
                 amount_msat=invoice.amount_msat, settle_index=invoice.settle_index,
                 now=int(time.time()),
+                provider_fee_msat=invoice.provider_fee_msat,
             )
         except ValueError as exc:
             raise FundingReviewRequired("invoice_invalid") from exc
@@ -211,6 +270,11 @@ class Funding:
         # Monitoring uses the existing invoice-only capability. Failures must
         # not interrupt settlement/reconciliation or leak upstream diagnostics.
         try:
+            if self.new_invoice_backend == "lexe":
+                self.receiving_ready()
+                logger.warning(json.dumps({"severity": "INFO", "event": "lightning.liquidity_health",
+                                           "backend": "lexe", "jit_liquidity": True, "receive_authority_ready": True}))
+                return
             liquidity = self.lnd.liquidity()
             low = liquidity["receiving_capacity_msat"] < 300_000_000
             logger.warning(json.dumps({"severity": "WARNING" if low else "INFO",

@@ -19,6 +19,8 @@ class Invoice:
     settle_index: int
     expires_at: int
     requested_msat: int
+    provider_index: str = ""
+    provider_fee_msat: int = 0
 
 
 class Lnd:
