@@ -262,10 +262,10 @@
   },
   "google-ai-studio": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 14,
     "name": "Google AI Studio",
     "privacy": "Policy documented",
-    "route_count": 24,
+    "route_count": 26,
     "route_mode": "Prepaid + BYOK",
     "slug": "google-ai-studio"
   },
@@ -505,10 +505,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 14,
+    "model_count": 13,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 14,
+    "route_count": 13,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
