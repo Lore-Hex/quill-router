@@ -202,7 +202,52 @@ def test_logging_sink_uses_exact_event_allowlist_without_regex_escaping():
     value = source_filter()
     assert '=~' not in value
     assert '\\' not in value
-    assert value.count('jsonPayload.event=') == 12
+    assert value.count('jsonPayload.event=') == 15
     for name in m.BROWSER_EVENTS | m.CONVERSION_EVENTS:
         assert f'jsonPayload.event="{name}"' in value
     assert 'resource.type="cloud_run_revision"' in value
+
+
+def onboarding(name='succeeded', **kwargs):
+    return project({'_time': '2026-09-16T21:55:00Z',
+        'event': 'acquisition.onboarding_call_' + name,
+        'anonymous_fingerprint': 'a'*64, 'flow': 'welcome_test',
+        'attempt_id': 'cd0fb379-6d48-4660-bde1-7c80b7be174d',
+        'http_status': 200, 'elapsed_ms': 1000, **kwargs}, 'cloud_logging')
+
+
+def test_onboarding_replay_deduplicates_but_distinguishes_attempts_and_outcomes():
+    row = onboarding()
+    assert row['event_id'] == onboarding(_time='2026-09-16T21:55:01Z')['event_id']
+    assert row['event_id'] != onboarding('started')['event_id']
+    assert row['event_id'] != onboarding(attempt_id='cd0fb379-6d48-4660-bde1-7c80b7be174e')['event_id']
+
+
+def test_onboarding_projection_exports_only_classified_metadata():
+    row = onboarding('failed', failure_reason='output_budget_exhausted', finish_reason='length',
+                     prompt='secret', output='secret', error='secret', api_key='sk-secret')
+    assert row['http_status'] == 200
+    assert row['failure_reason'] == 'output_budget_exhausted'
+    assert not {'prompt', 'output', 'error', 'api_key'} & row.keys()
+    assert onboarding(finish_reason='private provider message').get('finish_reason') is None
+
+
+@pytest.mark.parametrize('details', [
+    {'attempt_id': 'sk-secret'}, {'flow': 'private flow'},
+    {'http_status': 99}, {'http_status': True}, {'elapsed_ms': -1},
+    {'http_status': 500}, {'failure_reason': 'network_error'},
+])
+def test_onboarding_projection_rejects_invalid_metadata(details):
+    with pytest.raises(ValueError):
+        onboarding(**details)
+
+
+def test_onboarding_dashboard_separates_attempts_from_server_activation():
+    from scripts.axiom_growth.dashboards import ATTEMPTS, onboarding_query
+    query = onboarding_query()
+    assert 'first_successful_api_call' not in query
+    assert 'first_call_started' not in query
+    assert 'by anonymous_fingerprint, attempt_id' in ATTEMPTS
+    assert 'Matched_completed>0' in query
+    for field in ('Missing_outcome_5m', 'Pending', 'Orphan_outcomes', 'Conflicting_outcomes'):
+        assert field in query

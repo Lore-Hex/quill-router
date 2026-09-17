@@ -41,6 +41,25 @@ EVENTS=f"""['{DATASET}'] | where event startswith 'acquisition.'
 | summarize arg_max(exported_at, _time, event, anonymous_fingerprint, utm_source, utm_medium, utm_campaign, creative_id, landing_path, referrer_domain, customer_domain, amount_microdollars) by event_id
 """+FILTER
 FRESH=f"['{DATASET}'] | where event == 'growth.sync_completed' | summarize arg_max(_time, observed_through) | project Latest_export=todatetime(_time), Observed_through=todatetime(observed_through) | extend Minutes_behind=datetime_diff('minute',now(),Observed_through) | extend Status=iff(isnull(Observed_through) or Minutes_behind>15,'STALE: refresh delayed','Automatic refresh every 5 minutes')"
+ONBOARDING=f"""['{DATASET}'] | where event in ('acquisition.onboarding_call_started','acquisition.onboarding_call_succeeded','acquisition.onboarding_call_failed')
+| extend attempt_id=tostring(column_ifexists('attempt_id','')), failure_reason=tostring(column_ifexists('failure_reason','')), http_status=tolong(column_ifexists('http_status',0)), elapsed_ms=tolong(column_ifexists('elapsed_ms',0))
+| where isnotempty(attempt_id)
+| take {INPUT_LIMIT}
+| summarize _time=min(_time) by event_id, event, anonymous_fingerprint, attempt_id, failure_reason, http_status, elapsed_ms, utm_source, utm_medium, utm_campaign, landing_path
+| extend _time=todatetime(_time)
+"""+FILTER
+ATTEMPTS=ONBOARDING+"""
+| summarize Starts=countif(event=='acquisition.onboarding_call_started'), Successes=countif(event=='acquisition.onboarding_call_succeeded'), Failures=countif(event=='acquisition.onboarding_call_failed'), Started_at=minif(_time,event=='acquisition.onboarding_call_started') by anonymous_fingerprint, attempt_id
+| extend Matched_success=Starts>0 and Successes>0 and Failures==0, Matched_failure=Starts>0 and Failures>0 and Successes==0
+| extend Complete=Matched_success or Matched_failure, Missing_outcome=Starts>0 and Successes==0 and Failures==0
+"""
+
+
+def onboarding_query():
+    return ATTEMPTS+"""
+| summarize Started_attempts=countif(Starts>0), Matched_completed=countif(Complete), Visible_answer_successes=countif(Matched_success), Failures=countif(Matched_failure), Pending=countif(Missing_outcome and todatetime(Started_at)>ago(5m)), Missing_outcome_5m=countif(Missing_outcome and todatetime(Started_at)<=ago(5m)), Orphan_outcomes=countif(Starts==0), Conflicting_outcomes=countif(Successes>0 and Failures>0)
+| extend Success_pct=iff(Matched_completed>0,round(100.0*Visible_answer_successes/Matched_completed,2),real(null)), Failure_pct=iff(Matched_completed>0,round(100.0*Failures/Matched_completed,2),real(null))
+"""
 
 
 def funnel_query():
@@ -116,6 +135,9 @@ def build():
         freshness,
         ('Daily event coverage: missing visits are not zero traffic','Table',EVENTS+" | summarize Engagement_events=countif(event=='acquisition.landing_engaged'), Signup_events=countif(event=='acquisition.signup_completed'), Activation_events=countif(event=='acquisition.first_successful_api_call'), Purchase_events=countif(event=='acquisition.credit_purchase_completed') by Day=bin(_time,1d) | extend Browser_coverage=case(Day>=datetime(2026-08-24) and Day<datetime(2026-09-04),'Missing visitor attribution',Day==datetime(2026-08-23) or Day==datetime(2026-09-04),'Partial visitor attribution','Observed records') | sort by Day desc",12),
         ('Ordered funnel and conversion percentages','Table',funnel_query(),12),
+        ('Welcome test: matched attempts only (browser-reported, not all API traffic)','Table',onboarding_query(),12),
+        ('Welcome test failures: reason and HTTP status','Table',ONBOARDING+" | where event=='acquisition.onboarding_call_failed' | summarize Attempts=count() by failure_reason, http_status | sort by Attempts desc",12),
+        ('Legacy welcome clicks: unpaired, not an API failure rate','Table',EVENTS+" | where event in ('acquisition.first_call_started','acquisition.first_call_failed') | summarize Events=count(), Visitors=dcount(anonymous_fingerprint) by event",12),
         ('Observed signup visitors','Statistic',JOURNEY+' | summarize Signups=countif(has_signup)',6),
         ('Signup to activation (%)','Statistic',JOURNEY+' | summarize S=countif(has_signup), A=countif(active_after_signup) | project Activation_pct=iff(S>0,round(100.0*A/S,2),real(null))',6),
         ('Signup to purchase (%)','Statistic',JOURNEY+' | summarize S=countif(has_signup), P=countif(paid_after_signup) | project Paid_pct=iff(S>0,round(100.0*P/S,2),real(null))',6),
@@ -141,6 +163,7 @@ def build():
         freshness,
         ('Find a visitor and their conversion milestones','Table',JOURNEY+' | project anonymous_fingerprint, utm_source, utm_medium, utm_campaign, landing_path, first_observed_at, signup_completed_at, first_successful_api_call_at, credit_purchase_completed_at, retained_api_usage_7d_at, last_observed_at | sort by last_observed_at desc | take 100',12),
         ('Chronological tagged actions (first 300 matches)','Table',EVENTS+' | project Occurred_at=todatetime(_time), anonymous_fingerprint, event, utm_source, utm_medium, utm_campaign, creative_id, landing_path, referrer_domain, amount_microdollars | sort by Occurred_at asc | take 300',12),
+        ('Welcome test attempts and outcomes','Table',ONBOARDING+' | project Occurred_at=todatetime(_time), anonymous_fingerprint, attempt_id, event, http_status, failure_reason, elapsed_ms | sort by Occurred_at desc | take 100',12),
         ('Linked daily token consumption','Table',USAGE+' | project Day=todatetime(_time), anonymous_fingerprint, marketing_workspace_fingerprint, identity_link_status, model, provider, successful_calls, input_tokens, output_tokens, usage_microdollars | sort by Day desc | take 100',12),
         ('Identity links and coverage','Table',JOURNEY+" | summarize Journeys=count(), Account_link=countif(isnotempty(account_fingerprint)), Workspace_link=countif(isnotempty(workspace_fingerprint) or isnotempty(marketing_workspace_fingerprint)), With_usage=countif(linked_usage_days>0) | extend Workspace_link_pct=round(100.0*Workspace_link/Journeys,1)",12),
       ]),
@@ -168,6 +191,9 @@ def main():
     failures=[]
     validations=[]
     if args.validate or args.publish:
+        from scripts.axiom_growth.validate_onboarding import validate
+        validate()
+        print('PASS matched-attempt APL arithmetic fixture',flush=True)
         result=query(f"['{DATASET}'] | summarize Rows=count()")
         raw_rows=result['tables'][0]['columns'][0][0]
         if raw_rows >= INPUT_LIMIT:

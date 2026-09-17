@@ -50,14 +50,14 @@ function templateCopyText(target, secret) {
   return copyTargetText(target).replaceAll("YOUR_TRUSTEDROUTER_API_KEY", secret);
 }
 
-function postActivationEvent(event) {
-  fetch("/analytics/events", {
+function postActivationEvent(event, details = {}) {
+  Promise.resolve().then(() => fetch("/analytics/events", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ event }),
+    body: JSON.stringify({ event, ...details }),
     credentials: "same-origin",
     keepalive: true,
-  }).catch(() => {
+  })).catch(() => {
     /* Acquisition telemetry is best-effort and must never block setup. */
   });
 }
@@ -186,7 +186,15 @@ async function runFirstActivationCall(button) {
     return;
   const keySource = document.getElementById(flow.dataset.keySource || "");
   const apiKey = keySource ? copyTargetText(keySource) : "";
+  const requestId = crypto.randomUUID();
+  const started = performance.now();
+  const elapsedMs = () => Math.min(120000, Math.max(0, Math.round(performance.now() - started)));
+  const details = { attempt_id: requestId };
+  postActivationEvent("onboarding_call_started", details);
   if (!apiKey) {
+    postActivationEvent("onboarding_call_failed", {
+      ...details, http_status: 0, elapsed_ms: elapsedMs(), failure_reason: "missing_key",
+    });
     showActivationError(flow, 401);
     return;
   }
@@ -200,36 +208,44 @@ async function runFirstActivationCall(button) {
   button.setAttribute("aria-busy", "true");
   if (label)
     label.textContent = "Routing live request...";
-  postActivationEvent("first_call_started");
-
-  const started = performance.now();
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 75000);
   let status = 0;
+  let failureReason = "network_error";
+  let finishReason = "unknown";
   try {
-    const requestId = window.crypto?.randomUUID
-      ? window.crypto.randomUUID()
-      : `first-call-${Date.now()}`;
     const response = await fetch(endpoint, {
       method: "POST",
+      signal: controller.signal,
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
         "Idempotency-Key": `welcome-${requestId}`,
+        "X-Request-ID": requestId,
       },
       body: JSON.stringify({
         model: "trustedrouter/cheap",
         messages: [{ role: "user", content: "Reply with exactly PONG." }],
         temperature: 0,
-        max_tokens: 8,
+        // Reasoning tokens share this budget on some cheap routes.
+        max_tokens: 512,
         stream: false,
       }),
     });
     status = response.status;
+    failureReason = "http_error";
     if (!response.ok)
       throw new Error("request_failed");
+    failureReason = "invalid_response";
     const payload = await response.json();
+    const rawFinishReason = payload?.choices?.[0]?.finish_reason;
+    if (["stop", "length", "content_filter", "tool_calls"].includes(rawFinishReason))
+      finishReason = rawFinishReason;
     const output = completionText(payload);
+    failureReason = finishReason === "length" ? "output_budget_exhausted" : "empty_output";
     if (!output)
       throw new Error("empty_response");
+    failureReason = "client_error";
     const metadata = completionMetadata(payload, response);
     const elapsed = Math.max(1, Math.round(performance.now() - started));
     const result = flow.querySelector("[data-call-result]");
@@ -245,13 +261,20 @@ async function runFirstActivationCall(button) {
     if (label)
       label.textContent = "Test passed";
     button.classList.add("activation-run-success");
+    postActivationEvent("onboarding_call_succeeded", {
+      ...details, http_status: status, elapsed_ms: elapsedMs(), finish_reason: finishReason,
+    });
   } catch {
-    postActivationEvent("first_call_failed");
+    postActivationEvent("onboarding_call_failed", {
+      ...details, http_status: status, elapsed_ms: elapsedMs(), finish_reason: finishReason,
+      failure_reason: controller.signal.aborted ? "timeout" : failureReason,
+    });
     showActivationError(flow, status);
     button.disabled = false;
     if (label)
       label.textContent = "Try the live request again";
   } finally {
+    window.clearTimeout(timeout);
     button.removeAttribute("aria-busy");
   }
 }

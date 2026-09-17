@@ -8,6 +8,7 @@ import json
 import re
 from collections import defaultdict
 from collections.abc import Mapping
+from uuid import UUID
 
 
 def domain(value: object) -> str:
@@ -36,6 +37,7 @@ EDGE_REGION = "eu-central-1.aws.edge.axiom.co"
 BROWSER_EVENTS = frozenset(
     f"acquisition.{name}" for name in (
         "landing_engaged", "sign_in_opened", "first_call_started", "first_call_failed",
+        "onboarding_call_started", "onboarding_call_succeeded", "onboarding_call_failed",
     )
 )
 CONVERSION_EVENTS = frozenset(
@@ -49,7 +51,8 @@ DIMENSIONS = (
     "utm_source", "utm_medium", "utm_campaign", "creative_id",
     "experiment_id", "experiment_cell_id", "landing_path",
 )
-FIELDS = ("event", "anonymous_fingerprint", "amount_microdollars", "referer_host", *DIMENSIONS)
+ATTEMPT_FIELDS = ("attempt_id", "flow", "http_status", "elapsed_ms", "failure_reason", "finish_reason")
+FIELDS = ("event", "anonymous_fingerprint", "amount_microdollars", "referer_host", *DIMENSIONS, *ATTEMPT_FIELDS)
 MAX_ROWS = 20_000
 PAGE_SIZE = 1000
 LABEL_RE = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_. /:-]{0,119}\Z")
@@ -135,6 +138,38 @@ def project_event(
             raise ValueError("Purchase amount must be positive integer microdollars")
         output["amount_microdollars"] = amount
     identity = [source, output["_time"], event, fingerprint, output.get("amount_microdollars")]
+    if event.startswith("acquisition.onboarding_call_"):
+        attempt = row.get("attempt_id")
+        if not isinstance(attempt, str):
+            raise ValueError("Missing onboarding attempt ID")
+        parsed = UUID(attempt)
+        if str(parsed) != attempt or parsed.version != 4 or row.get("flow") != "welcome_test":
+            raise ValueError("Invalid onboarding attempt metadata")
+        output.update(attempt_id=attempt, flow="welcome_test")
+        if event != "acquisition.onboarding_call_started":
+            for field, maximum in (("http_status", 599), ("elapsed_ms", 120_000)):
+                value = row.get(field)
+                if type(value) is not int or not 0 <= value <= maximum:
+                    raise ValueError("Invalid onboarding outcome number")
+                output[field] = value
+            if 0 < output["http_status"] < 100:
+                raise ValueError("Invalid onboarding HTTP status")
+            if event == "acquisition.onboarding_call_succeeded":
+                if not 200 <= output["http_status"] < 300 or row.get("failure_reason"):
+                    raise ValueError("Invalid onboarding success")
+            else:
+                reason = row.get("failure_reason")
+                if reason not in {
+                    "http_error", "empty_output", "output_budget_exhausted", "invalid_response",
+                    "network_error", "timeout", "client_error", "missing_key",
+                }:
+                    raise ValueError("Invalid onboarding failure reason")
+                output["failure_reason"] = reason
+            finish = row.get("finish_reason")
+            if finish in {"stop", "length", "content_filter", "tool_calls", "unknown"}:
+                output["finish_reason"] = finish
+        # Replayed delivery of one attempt event must not inflate attempts.
+        identity = [source, event, fingerprint, attempt]
     output["event_id"] = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
     return output
 

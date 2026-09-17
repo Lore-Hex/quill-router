@@ -29,7 +29,7 @@ def source_filter():
 def update_source_filter():
     run(['gcloud', 'logging', 'sinks', 'update', 'tr-growth-source',
          '--project='+PROJECT, '--log-filter='+source_filter()])
-    print(json.dumps({'updated': 'tr-growth-source', 'exact_events': 12}))
+    print(json.dumps({'updated': 'tr-growth-source', 'exact_events': len(m.BROWSER_EVENTS | m.CONVERSION_EVENTS)}))
 
 
 def run(args, *, data=None):

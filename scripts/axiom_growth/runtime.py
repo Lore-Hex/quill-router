@@ -135,7 +135,7 @@ class Sources:
 
     def events(self, start, end):
         fields = (*m.FIELDS, *EXTRAS)
-        projection = ', '.join(f"{f}=column_ifexists('{f}', {0 if f == 'amount_microdollars' else chr(39)*2})" for f in fields)
+        projection = ', '.join(f"{f}=column_ifexists('{f}', {0 if f in {'amount_microdollars', 'http_status', 'elapsed_ms'} else chr(39)*2})" for f in fields)
         filters = ','.join(repr(e) for e in sorted(m.CONVERSION_EVENTS))
         base = f"['{m.SOURCE_DATASET}'] | where event in ({filters})"
         pending, rows, queries = [(start, end)], [], 0
