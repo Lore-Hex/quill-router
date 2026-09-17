@@ -139,6 +139,7 @@ class Funding:
     def _refresh_lexe(self, row: dict[str, Any], *, cancel: bool) -> dict[str, Any]:
         if self.lexe is None or row["wallet_id"] != self.lexe.wallet_id:
             raise FundingReviewRequired("wallet_unavailable")
+        invoice: Invoice | None
         try:
             if row["provider_index"]:
                 invoice = self.lexe.lookup(row)
@@ -160,6 +161,12 @@ class Funding:
                     # Another caller can be creating it right now. Bounded
                     # recovery is safe; issuing a second invoice is not.
                     invoice = self.lexe.lookup(row) if row["provider_index"] else self.lexe.recover(row)
+                if invoice is None:
+                    self.store.expire_absent_lexe_creation(row["id"], self.lexe.wallet_id, int(time.time()))
+                    latest = self.store.invoice(row["id"], row["key_hash"])
+                    if latest["state"] != "OPEN" or latest["provider_index"]:
+                        return self._refresh(latest, cancel=cancel)
+                    raise FundingReviewRequired("creation_ambiguous")
                 self.store.bind_provider_invoice(row["id"], self.lexe.wallet_id, invoice.payment_hash, invoice.provider_index)
                 row = self.store.invoice(row["id"], row["key_hash"])
             if (cancel or invoice.expires_at > row["expires_at"]) and invoice.state not in {"SETTLED", "CANCELED"}:
@@ -228,7 +235,7 @@ class Funding:
             "credit_microdollars": str(row["credit_microdollars"]),
             "credit_usd": usd(row["credit_microdollars"]),
             "credited": row["credited_at"] is not None,
-            "attention_required": row["failure_code"] not in {"", "credit_unavailable", "invoice_unavailable"},
+            "attention_required": row["failure_code"] not in {"", "credit_unavailable", "invoice_unavailable", "creation_absent"},
             "bolt11": row["bolt11"],
             "qr": segno.make(row["bolt11"].upper(), error="m").png_data_uri(scale=5, border=4) if row["bolt11"] else None,
             **rate.quote_fields(row["requested_msat"]),

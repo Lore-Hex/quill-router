@@ -17,6 +17,10 @@ and canceled again successfully using that restricted credential. No payment
 was sent or received. Wallet balance and channel count remained zero.
 The checksum-verified v0.4.20 sidecar also passed the live read-only preflight
 with node version 0.10.4. The temporary local sidecar was then stopped.
+On September 17, the production adapter also recovered a fresh, never-updated
+pending invoice through the real node's `updated_payments` endpoint, matched
+the signed invoice exactly, and canceled it. This verifies the recovery cursor
+and creation-feed semantics independently of the test double. No funds moved.
 
 The runtime now supports Lexe behind `LR_INVOICE_BACKEND=lexe`. A code merge is
 not activation or proof of successful receipt. Use the staged rollout below.
@@ -141,7 +145,13 @@ rows default to LND. A Lexe intent has no payment hash until a verified remote
 invoice is durably bound. `create_started_at` commits before the single remote
 create call and never expires. A lost response is recovered using a unique
 personal note and at most ten pages of payment updates. An unresolved intent
-requires review, never a blind create retry. The provider index is distinct
+requires review, never a blind create retry. A completed authenticated recovery
+scan with zero matches may retire an entirely unbound, unpublished intent only
+after the original quote expiry plus 120 seconds. Conditional database guards
+prevent retirement racing a binding or settlement. The terminal
+`creation_absent` audit code does not keep checkout or health permanently
+blocked; provider outages, truncated scans, duplicate matches and published
+invoices remain fail-closed. The provider index is distinct
 from the legacy numeric settlement field, which holds Lexe's finalized-at
 timestamp for Lexe receipts. `provider_fee_msat` records fees separately in
 both the invoice and deposit. Existing USD-credit idempotency is unchanged.

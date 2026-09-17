@@ -154,7 +154,7 @@ class Lexe:
         # Always verify by a fresh authenticated payment read before publishing.
         return self.lookup({**row, "provider_index": index})
 
-    def recover(self, row: dict[str, Any]) -> Invoice:
+    def recover(self, row: dict[str, Any]) -> Invoice | None:
         self.ready()
         # Read remote updates, not sidecar's possibly incomplete local cache.
         # Bound recovery to ten pages after the intent time, never full history.
@@ -174,6 +174,8 @@ class Lexe:
             if len(payments) < 100:
                 if not matches and time.time() - row["create_started_at"] < 60:
                     raise RuntimeError("Invoice creation in progress")
+                if not matches:
+                    return None  # Only a completed authoritative scan proves absence.
                 if len(matches) != 1:
                     raise FundingReviewRequired("creation_ambiguous")
                 index = next(iter(matches))
