@@ -31,6 +31,7 @@ class Node:
         self.reject_create = False
         self.lose_cancel = False
         self.pay_on_cancel = False
+        self.persist_delay_ms = 0
         self.broken = False
         self.wallet_id = WALLET
         self.permissions = sorted(PERMISSIONS)
@@ -57,7 +58,8 @@ class Node:
                 self.creates += 1
                 if self.reject_create:
                     raise httpx.ReadTimeout("ambiguous failure before commit")
-                created = int(time.time()) * 1000
+                signed_at = int(time.time())
+                created = int(time.time() * 1000) + self.persist_delay_ms
                 preimage = secrets.token_hex(32)
                 payment_hash = hashlib.sha256(bytes.fromhex(preimage)).hexdigest()
                 index = f"{created:019d}-ln_{payment_hash}"
@@ -65,10 +67,10 @@ class Node:
                 for tag, value in [(TagChar.payment_hash, payment_hash), (TagChar.payment_secret, "2" * 64),
                                    (TagChar.description, body["description"]), (TagChar.expire_time, body["expiration_secs"])]:
                     tags.add(tag, value)
-                encoded = bolt11.encode(Bolt11("bc", created // 1000, tags, MilliSatoshi(satoshis(body["amount"]))), private_key="3" * 64)
+                encoded = bolt11.encode(Bolt11("bc", signed_at, tags, MilliSatoshi(satoshis(body["amount"]))), private_key="3" * 64)
                 self.rows[index] = {"index": index, "hash": payment_hash, "invoice": encoded, "rail": "invoice", "kind": "invoice",
                                     "direction": "inbound", "status": "pending", "amount": body["amount"], "fees": "0",
-                                    "created_at": created, "expires_at": created + body["expiration_secs"] * 1000,
+                                    "created_at": created, "expires_at": (signed_at + body["expiration_secs"]) * 1000,
                                     "personal_note": body["personal_note"]}
                 self.preimages[index] = preimage
                 if self.lose_create:
@@ -103,6 +105,78 @@ def lexe(funding):
 def create(funding, key, request_id=None):
     result = funding.create(key, request_id or uuid.uuid4().hex, 100, new=True)
     return funding.store.invoice(result["id"], funding.credentials.fingerprint(key))
+
+
+@pytest.mark.parametrize("delay_ms", [17, 2017, 17017])
+def test_invoice_persistence_can_cross_signed_timestamp_boundary(lexe, raw_key, monkeypatch, delay_ms):
+    funding, node = lexe
+    monkeypatch.setattr(time, "time", lambda: 1789674257.999)
+    node.persist_delay_ms = delay_ms
+    row = create(funding, raw_key)
+    remote = node.rows[row["provider_index"]]
+    assert remote["created_at"] // 1000 > bolt11.decode(remote["invoice"]).date
+    assert row["state"] == "OPEN" and row["bolt11"] == remote["invoice"]
+    assert not funding.credits.balances and not funding.credits.payments
+    assert funding.store.delivery_health(int(time.time()))["review_required"] == 0
+
+
+@pytest.mark.parametrize("paid", [False, True])
+def test_reviewed_timestamp_mismatch_recovers_once_without_reissuing(lexe, raw_key, monkeypatch, paid):
+    funding, node = lexe
+    monkeypatch.setattr(time, "time", lambda: 1789674257.999)
+    node.persist_delay_ms = 17
+    node.lose_create = True
+    with pytest.raises(httpx.ReadTimeout):
+        create(funding, raw_key)
+    row = funding.store.pending()[0]
+    funding.store.failed(row["id"], "invoice_invalid", int(time.time()), review=True)
+    assert funding.store.delivery_health(int(time.time()))["review_required"] == 1
+    monkeypatch.setattr(time, "time", lambda: 1789674317.0)
+    index = next(iter(node.rows))
+    if paid:
+        node.pay(index)
+    else:
+        node.rows[index]["status"] = "failed"
+    monkeypatch.setattr(time, "time", lambda: 1789675257.0)
+    for _ in range(3):
+        assert funding.reconcile()["failed"] == 0
+    saved = funding.store.invoice(row["id"], row["key_hash"])
+    assert saved["state"] == ("SETTLED" if paid else "CANCELED")
+    assert saved["failure_code"] == ""
+    assert saved["provider_index"] == index and node.creates == 1
+    assert len(funding.credits.payments) == int(paid)
+    assert len(funding.credits.balances) == int(paid)
+    assert funding.store.delivery_health(int(time.time()))["review_required"] == 0
+
+
+@pytest.mark.parametrize("signed_offset,persist_delay_ms", [(-31, 0), (1, 0), (0, 900000)])
+def test_invoice_timestamps_must_still_be_fresh_and_ordered(lexe, raw_key, monkeypatch, signed_offset, persist_delay_ms):
+    funding, node = lexe
+    monkeypatch.setattr(time, "time", lambda: 1789674257.999)
+    row = create(funding, raw_key)
+    remote = copy.deepcopy(node.rows[row["provider_index"]])
+    decoded = bolt11.decode(remote["invoice"])
+    decoded.date += signed_offset
+    remote["invoice"] = bolt11.encode(decoded, private_key="3" * 64)
+    remote["expires_at"] = decoded.expiry_time * 1000
+    remote["created_at"] += persist_delay_ms
+    remote["index"] = f"{remote['created_at']:019d}-ln_{remote['hash']}"
+    with pytest.raises(FundingReviewRequired, match="invoice_timestamp_invalid"):
+        funding.lexe.parse(remote, {**row, "provider_index": ""})
+    assert not funding.credits.balances and not funding.credits.payments
+
+
+def test_reconciler_logs_safe_timestamp_reason_without_payment_secrets(lexe, raw_key, caplog):
+    funding, node = lexe
+    row = create(funding, raw_key)
+    remote = node.rows[row["provider_index"]]
+    remote["created_at"] += 1
+    assert funding.reconcile()["failed"] == 1
+    assert "failure_code=invoice_timestamp_invalid" in caplog.text
+    assert row["id"] in caplog.text
+    for private in [raw_key, remote["hash"], remote["invoice"], node.preimages[row["provider_index"]]]:
+        assert private not in caplog.text
+    assert not funding.credits.payments
 
 
 @pytest.mark.parametrize("backend", ["lnd", "lexe"])

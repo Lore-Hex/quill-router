@@ -252,7 +252,9 @@ class Funding:
                 counts["failed"] += 1
                 # Deliberately omit exceptions' text, bearer keys, BOLT11s,
                 # preimages and upstream response bodies from durable logs.
-                logger.error("lightning.reconcile_failed invoice_id=%s error_type=%s", row["id"], type(exc).__name__)
+                code = exc.code if isinstance(exc, FundingReviewRequired) else "unexpected"
+                logger.error("lightning.reconcile_failed invoice_id=%s error_type=%s failure_code=%s",
+                             row["id"], type(exc).__name__, code)
             finally:
                 self.store.checked(row["id"], int(time.time()))
         now = time.monotonic()

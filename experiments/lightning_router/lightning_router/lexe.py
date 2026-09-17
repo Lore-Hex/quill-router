@@ -105,10 +105,14 @@ class Lexe:
         created = timestamp(data.get("created_at"))
         expires = timestamp(data.get("expires_at")) // 1000
         if (not decoded.is_mainnet() or decoded.payment_hash != payment_hash
-                or decoded.amount_msat != row["requested_msat"] or decoded.expiry_time != expires
-                or int(index[:19]) != created or decoded.date != created // 1000
-                or created < (row["created_at"] - 30) * 1000):
+                or decoded.amount_msat != row["requested_msat"] or decoded.expiry_time != expires):
             raise ValueError("Invoice terms differ from quote")
+        # Lexe assigns created_at on first persist, after signing the invoice.
+        # Validate ordering/freshness, not equality across two clock reads.
+        if (int(index[:19]) != created
+                or not row["created_at"] - 30 <= decoded.date <= created // 1000
+                or created >= expires * 1000):
+            raise FundingReviewRequired("invoice_timestamp_invalid")
         state = {"pending": "OPEN", "completed": "SETTLED", "failed": "CANCELED"}.get(str(data.get("status")))
         if state is None:
             raise ValueError("Unknown Lexe payment state")
