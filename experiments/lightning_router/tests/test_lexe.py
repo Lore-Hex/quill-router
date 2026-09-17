@@ -176,6 +176,70 @@ def test_creation_claim_is_durable_across_store_restart(lexe, raw_key):
     assert funding.store.pending()[0]["bolt11"]
 
 
+def test_expired_absent_creation_unlocks_checkout_without_retry_or_credit(lexe, raw_key):
+    funding, node = lexe
+    node.reject_create = True
+    with pytest.raises(httpx.ReadTimeout):
+        create(funding, raw_key)
+    row = funding.store.pending()[0]
+    now = int(time.time())
+    with funding.store.transaction() as conn:
+        conn.execute(update(invoices).where(invoices.c.id == row["id"]).values(
+            created_at=now - 1200, create_started_at=now - 1200, expires_at=now - 121))
+    funding.store.failed(row["id"], "creation_ambiguous", now, review=True)
+    result = funding.refresh(row, cancel=True)
+    assert result["state"] == "CANCELED" and not result["attention_required"]
+    assert not result["account_created"] and not result["credited"]
+    assert funding.store.active(row["key_hash"]) is None
+    assert funding.store.delivery_health(now)["review_required"] == 0
+    funding.store.failed(row["id"], "creation_ambiguous", now, review=True)
+    funding.store.failed(row["id"], "invoice_unavailable", now, review=False)
+    assert funding.store.delivery_health(now)["review_required"] == 0
+    assert funding.store.invoice(row["id"], row["key_hash"])["failure_code"] == "creation_absent"
+    assert node.creates == 1 and not funding.credits.balances
+    with pytest.raises(ValueError, match="binding changed"):
+        funding.store.bind_provider_invoice(row["id"], WALLET, "a" * 64, f"{now * 1000:019d}-ln_{'a' * 64}")
+    node.reject_create = False
+    assert create(funding, raw_key)["bolt11"]
+
+
+@pytest.mark.parametrize("expired", [False, True])
+def test_absent_creation_requires_elapsed_grace_and_authoritative_scan(lexe, raw_key, expired):
+    funding, node = lexe
+    node.reject_create = True
+    with pytest.raises(httpx.ReadTimeout):
+        create(funding, raw_key)
+    row = funding.store.pending()[0]
+    now = int(time.time())
+    with funding.store.transaction() as conn:
+        conn.execute(update(invoices).where(invoices.c.id == row["id"]).values(
+            create_started_at=now - 1200, expires_at=now - (121 if expired else 119)))
+    node.broken = expired
+    with pytest.raises((RuntimeError, FundingReviewRequired)):
+        funding.refresh(row, cancel=True)
+    assert funding.store.active(row["key_hash"]) == row["id"]
+    assert not funding.credits.balances and node.creates == 1
+
+
+def test_recovery_absence_racing_binding_still_credits_verified_receipt(lexe, raw_key, monkeypatch):
+    funding, node = lexe
+    node.lose_create = True
+    with pytest.raises(httpx.ReadTimeout):
+        create(funding, raw_key)
+    row = funding.store.pending()[0]
+    index = next(iter(node.rows))
+    node.pay(index)
+
+    def stale_scan(_row):
+        funding.store.bind_provider_invoice(row["id"], WALLET, node.rows[index]["hash"], index)
+        return None
+
+    monkeypatch.setattr(funding.lexe, "recover", stale_scan)
+    result = funding.refresh(row)
+    assert result["credited"] and result["credit_usd"] == "1.000000"
+    assert node.creates == 1 and len(funding.credits.payments) == 1
+
+
 def test_concurrent_creates_do_not_issue_duplicate_invoices(lexe, raw_key):
     funding, node = lexe
     request_id = uuid.uuid4().hex

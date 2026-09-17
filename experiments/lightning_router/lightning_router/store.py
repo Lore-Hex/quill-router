@@ -319,6 +319,7 @@ class Store:
         with self.transaction() as conn:
             row = conn.execute(select(invoices).where(invoices.c.id == invoice_id).with_for_update()).mappings().one()
             if (row["backend"] != "lexe" or row["wallet_id"] != wallet_id or not row["create_started_at"]
+                    or (row["state"] == "CANCELED" and not row["provider_index"])
                     or row["payment_hash"] not in {None, payment_hash} or row["provider_index"] not in {"", provider_index}):
                 raise ValueError("Provider invoice binding changed")
             conn.execute(update(invoices).where(invoices.c.id == invoice_id).values(
@@ -334,6 +335,19 @@ class Store:
                 invoices.c.state == "OPEN",
                 invoices.c.create_started_at == 0,
             ).values(state="CANCELED"))
+
+    def expire_absent_lexe_creation(self, invoice_id: str, wallet_id: str, now: int) -> None:
+        # Caller must first finish an authoritative recovery scan with no match.
+        # Guard every binding field against a concurrent creator/reconciler.
+        with self.transaction() as conn:
+            conn.execute(update(invoices).where(
+                invoices.c.id == invoice_id, invoices.c.backend == "lexe",
+                invoices.c.wallet_id == wallet_id, invoices.c.state == "OPEN",
+                invoices.c.create_started_at > 0, invoices.c.expires_at < now - 120,
+                invoices.c.payment_hash.is_(None), invoices.c.provider_index == "",
+                invoices.c.bolt11 == "", invoices.c.amount_msat == 0,
+            ).values(state="CANCELED", failure_code="creation_absent", failure_since=0,
+                     next_attempt_at=0, last_checked=now))
 
     def observe(self, invoice_id: str, *, state: str, payment_hash: str,
                 amount_msat: int, settle_index: int, now: int, provider_fee_msat: int = 0) -> None:
@@ -396,6 +410,9 @@ class Store:
             row = conn.execute(select(invoices).where(invoices.c.id == invoice_id).with_for_update()).mappings().one()
             if row["credited_at"] is not None:
                 return
+            if (row["state"] == "CANCELED" and row["failure_code"] == "creation_absent"
+                    and code in {"creation_ambiguous", "invoice_unavailable"}):
+                return  # A stale recovery failure cannot reopen resolved absence.
             conn.execute(update(invoices).where(invoices.c.id == invoice_id).values(
                 failure_code=code, failure_since=row["failure_since"] or now,
                 next_attempt_at=now + 300 if review else 0,
@@ -408,6 +425,7 @@ class Store:
             )).one()
             reviews = conn.execute(select(func.count()).select_from(invoices).where(
                 invoices.c.failure_code.not_in(["", "credit_unavailable", "invoice_unavailable"]), invoices.c.credited_at.is_(None),
+                ~((invoices.c.state == "CANCELED") & (invoices.c.failure_code == "creation_absent") & (invoices.c.amount_msat == 0)),
             )).scalar_one()
         return {"uncredited_count": uncredited, "oldest_uncredited_seconds": max(0, now - oldest) if oldest is not None else 0,
                 "review_required": reviews}
