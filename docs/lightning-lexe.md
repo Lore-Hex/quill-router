@@ -27,6 +27,30 @@ not activation or proof of successful receipt. Use the staged rollout below.
 Existing Bitcoin Core, LND, channel, backups, BTCPay, and crediting remain intact.
 The prior monitoring-only rollout is independent of this migration.
 
+## Invoice timestamp boundary incident (September 17)
+
+A legitimate unpaid invoice was quarantined because the adapter required its
+signed BOLT11 timestamp to equal the whole-second part of Lexe's `created_at`.
+The signed time was 19:44:17 UTC, but the payment record was first persisted at
+19:44:18.016 UTC. These timestamps describe separate operations. Lexe's
+[inbound payment implementation](https://github.com/lexe-app/lexe-public/blob/bcabbd3d703e337a96727042a49379101feca25f/lexe-ln/src/payments/inbound.rs)
+sets `created_at` on first persist, after the invoice is signed. The test node
+previously reused one timestamp and hid this boundary case.
+
+Validation now checks that the signed time is fresh relative to the original
+quote, does not follow the persistence time, and persistence precedes expiry.
+The payment index must still match the exact persistence timestamp. Signature,
+network, amount, hash, note, wallet, expiry, and settlement-proof checks remain
+mandatory. Regression tests cover crossing the second boundary, delayed
+persistence, stale/reversed timestamps, post-expiry persistence, and recovery
+of reviewed paid and unpaid rows without duplicate invoice creation or credit.
+
+After deploying this repair, let the existing worker re-read and reconcile the
+original invoice. Do not clear its review flag or edit credit records manually.
+Verify `/health` returns 200 with no review backlog. Alerts stay strict; future
+reconciler failures include an allowlisted `failure_code`, never upstream text
+or payment secrets. A source merge alone does not prove production recovery.
+
 ## Owner setup and recovery
 
 Use a dedicated private directory outside disposable Git worktrees. The setup

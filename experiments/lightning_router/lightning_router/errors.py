@@ -4,7 +4,7 @@
 class FundingReviewRequired(ValueError):
     def __init__(self, code: str) -> None:
         if code not in {"credit_rejected", "credit_account_unavailable", "credit_amount_limit", "invoice_missing", "invoice_invalid",
-                        "unknown_backend", "wallet_unavailable", "quote_expiry_changed", "creation_expired",
+                        "unknown_backend", "wallet_unavailable", "quote_expiry_changed", "creation_expired", "invoice_timestamp_invalid",
                         "creation_ambiguous", "creation_recovery_limit"}:
             raise ValueError("Unknown funding failure code")
         self.code = code
