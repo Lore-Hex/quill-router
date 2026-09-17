@@ -56,6 +56,7 @@ CEREBRAS_GEMMA4_SHARED_RETIREMENT_AT = datetime(2026, 9, 3, 0, 0, tzinfo=UTC)
 NOVITA_LING_30_TINY_RETIREMENT_AT = datetime(2026, 8, 13, 15, 0, tzinfo=UTC)
 ALIBABA_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 9, 16, 0, tzinfo=UTC)
 AZURE_COMMAND_A_PLUS_RETIREMENT_AT = datetime(2026, 10, 16, 0, 0, tzinfo=UTC)
+WANDB_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 5, 0, 0, tzinfo=UTC)
 DEEPSEEK_V4_PRICING_EFFECTIVE_AT = datetime(2026, 8, 16, 16, 0, tzinfo=UTC)
 DEEPSEEK_V41_FLASH_EFFECTIVE_AT = datetime(2026, 9, 10, 4, 0, tzinfo=UTC)
 # The launch-day pricing page supersedes the earlier email: Pro remains
@@ -132,6 +133,37 @@ class _Retirement:
 
 
 _RETIREMENTS = (
+    # W&B's September notice gives October 5 without a time zone. Stop at
+    # 00:00 UTC conservatively, only for these exact Serverless Inference ids.
+    # Dated DeepSeek releases and other providers are unaffected; never
+    # substitute different weights for an explicitly requested model.
+    # https://docs.wandb.ai/inference/models#deprecated-models
+    _Retirement(
+        provider="wandb",
+        model_ids=frozenset({
+            "deepseek/deepseek-v4-pro",
+            "deepseek/deepseek-v4-flash",
+            "ibm-granite/granite-4.1-8b",
+            "jetbrains/mellum2-12b-a2.5b-instruct",
+            "meta-llama/llama-3.1-70b-instruct",
+            "openpipe/qwen3-14b-instruct",
+            "qwen/qwen3.6-27b",
+            "qwen/qwen3.5-35b-a3b",
+            "qwen/qwen3-30b-a3b-instruct-2507",
+        }),
+        upstream_ids=frozenset({
+            "deepseek-ai/DeepSeek-V4-Pro",
+            "deepseek-ai/DeepSeek-V4-Flash",
+            "ibm-granite/granite-4.1-8b",
+            "JetBrains/Mellum2-12B-A2.5B-Instruct",
+            "meta-llama/Llama-3.1-70B-Instruct",
+            "OpenPipe/Qwen3-14B-Instruct",
+            "Qwen/Qwen3.6-27B",
+            "Qwen/Qwen3.5-35B-A3B",
+            "Qwen/Qwen3-30B-A3B-Instruct-2507",
+        }),
+        effective_at=WANDB_OCTOBER_2026_RETIREMENT_AT,
+    ),
     # Microsoft publishes a date, not a time; stop at 00:00 UTC conservatively.
     # The suggested Hugging Face replacements require managed compute and are
     # not interchangeable serverless routes. Keep the existing conformance hold.

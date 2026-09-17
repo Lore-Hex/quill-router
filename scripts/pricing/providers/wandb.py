@@ -16,6 +16,7 @@ from scripts.pricing.providers._direct_openai import (
     DirectOpenAIProvider,
     DirectOpenAIProviderSpec,
 )
+from trusted_router.provider_lifecycle import provider_model_retired
 
 SLUG = "wandb"
 BASE_URL = "https://api.inference.wandb.ai/v1"
@@ -200,6 +201,14 @@ def _normalize_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return normalized
 
 
+def _include_active_model(row: dict[str, Any]) -> bool:
+    native_id = row.get("id")
+    if not isinstance(native_id, str):
+        return False
+    model_id = mapped_or_canonical_model_id(native_id, {})
+    return model_id is not None and not provider_model_retired(SLUG, model_id, native_id)
+
+
 CATALOG = DirectOpenAIProvider(
     DirectOpenAIProviderSpec(
         slug=SLUG,
@@ -211,6 +220,7 @@ CATALOG = DirectOpenAIProvider(
         pricing_source_url=PRICING_URL,
         price_loader=_load_prices,
         normalize_rows=_normalize_rows,
+        include=_include_active_model,
         canary_max_tokens=16,
     ),
     manifest_path=MANIFEST_PATH,

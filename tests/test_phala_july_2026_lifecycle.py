@@ -9,15 +9,13 @@ from fastapi.testclient import TestClient
 
 from scripts.pricing.base import ModelPrice
 from scripts.pricing.providers import phala
-from tests.lifecycle_clock import catalog_predates
-from trusted_router import provider_lifecycle
+from trusted_router import catalog, provider_lifecycle
 from trusted_router.catalog import (
-    MODELS,
     endpoint_for_id,
     endpoints_for_model,
     model_to_openrouter_shape,
 )
-from trusted_router.catalog_data import PRIVACY_TIER_STANDARD, ModelEndpoint
+from trusted_router.catalog_data import PRIVACY_TIER_STANDARD, Model, ModelEndpoint
 from trusted_router.catalog_privacy import (
     endpoint_confidential_compute,
     endpoint_e2ee,
@@ -30,6 +28,29 @@ from trusted_router.config import Settings
 from trusted_router.main import create_app
 
 _CUTOFF = datetime(2026, 7, 29, 18, 0, tzinfo=UTC)
+
+
+@pytest.fixture
+def july_catalog(monkeypatch: pytest.MonkeyPatch) -> dict[str, Model]:
+    # Historical Phala tests must not depend on which other providers still
+    # serve these models when the suite runs months after the July cutover.
+    models = {
+        model_id: Model(id=model_id, name=model_id, provider="phala", context_length=131_072)
+        for model_id in ("z-ai/glm-4.7", "qwen/qwen3-30b-a3b-instruct-2507")
+    }
+    endpoints = {}
+    for model_id in models:
+        for index, provider in enumerate(("phala", "alibaba", "wandb"), start=1):
+            endpoint = ModelEndpoint(
+                id=f"{model_id}@{provider}/prepaid", model_id=model_id,
+                provider=provider, usage_type="Credits",
+                prompt_price_microdollars_per_million_tokens=index * 100_000,
+                completion_price_microdollars_per_million_tokens=index * 200_000,
+            )
+            endpoints[endpoint.id] = endpoint
+    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", endpoints)
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
+    return models
 
 
 def test_phala_retirements_switch_at_announced_instant() -> None:
@@ -48,9 +69,7 @@ def test_phala_retirements_switch_at_announced_instant() -> None:
         assert provider_lifecycle.provider_model_retired("phala", model_id, upstream_id, at=_CUTOFF)
 
 
-def test_phala_retirement_is_provider_scoped(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-
+def test_phala_retirement_is_provider_scoped(july_catalog: dict[str, Model]) -> None:
     glm_providers = {endpoint.provider for endpoint in endpoints_for_model("z-ai/glm-4.7")}
     qwen_providers = {
         endpoint.provider for endpoint in endpoints_for_model("qwen/qwen3-30b-a3b-instruct-2507")
@@ -59,11 +78,7 @@ def test_phala_retirement_is_provider_scoped(monkeypatch: pytest.MonkeyPatch) ->
     assert "phala" not in glm_providers
     assert glm_providers
     assert "phala" not in qwen_providers
-    # Retirement is provider-scoped: Alibaba and W&B still serve this exact
-    # Qwen revision after Phala's route is removed. Their own lifecycle notices
-    # govern those independent routes.
-    if catalog_predates(provider_lifecycle.ALIBABA_OCTOBER_2026_RETIREMENT_AT):
-        assert {"alibaba", "wandb"} <= qwen_providers
+    assert {"alibaba", "wandb"} == qwen_providers
 
 
 def test_non_confidential_phala_qwen_route_is_not_published() -> None:
@@ -75,12 +90,10 @@ def test_non_confidential_phala_qwen_route_is_not_published() -> None:
 
 
 def test_public_catalog_uses_effective_price_and_active_routes(
-    monkeypatch: pytest.MonkeyPatch,
+    july_catalog: dict[str, Model],
 ) -> None:
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
-
     model_id = "qwen/qwen3-30b-a3b-instruct-2507"
-    qwen_price = model_to_openrouter_shape(MODELS[model_id])
+    qwen_price = model_to_openrouter_shape(july_catalog[model_id])
     qwen_endpoints = endpoints_for_model(model_id)
     assert qwen_endpoints
     assert all(endpoint.provider != "phala" for endpoint in qwen_endpoints)
@@ -88,21 +101,9 @@ def test_public_catalog_uses_effective_price_and_active_routes(
         endpoint.prompt_price_microdollars_per_million_tokens for endpoint in qwen_endpoints
     )
 
-    # Alibaba retires this same Qwen revision on 2026-10-09, but W&B continues
-    # to serve it. Provider lifecycle policy must remove only the retired
-    # Phala and Alibaba routes rather than deleting the canonical model.
-    if catalog_predates(provider_lifecycle.ALIBABA_OCTOBER_2026_RETIREMENT_AT):
-        retired_qwen = model_to_openrouter_shape(MODELS[model_id])
-        assert all(
-            endpoint["provider"] != "phala"
-            for endpoint in retired_qwen["trustedrouter"]["endpoints"]
-        )
-    else:
-        surviving_providers = {
-            endpoint.provider for endpoint in endpoints_for_model(model_id)
-        }
-        assert "wandb" in surviving_providers
-        assert {"phala", "alibaba"}.isdisjoint(surviving_providers)
+    assert {endpoint["provider"] for endpoint in qwen_price["trustedrouter"]["endpoints"]} == {
+        "alibaba", "wandb",
+    }
 
 
 def test_phala_hourly_parser_applies_announced_policy() -> None:
