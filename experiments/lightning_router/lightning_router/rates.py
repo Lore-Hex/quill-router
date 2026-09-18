@@ -9,6 +9,8 @@ from .errors import QuoteUnavailable
 from .money import MICRODOLLARS_PER_DOLLAR, MSATS_PER_BTC, microdollars, msats, usd
 
 FX_MARGIN_BPS = 1000
+RATE_REFRESH_WAIT_SECONDS = 1.0
+RATE_REFRESH_MAX_WAITERS = 8
 
 
 @dataclass(frozen=True)
@@ -57,6 +59,7 @@ class Rates:
         self.client = client
         self._rate: Rate | None = None
         self._lock = threading.Lock()
+        self._waiters = threading.BoundedSemaphore(RATE_REFRESH_MAX_WAITERS)
         self._retry_at = 0.0
 
     def current(self) -> Rate:
@@ -64,9 +67,15 @@ class Rates:
         cached = self._rate
         if cached and 0 <= int(time.time()) - cached.as_of < 60:
             return cached
-        # Single flight without queuing every request behind an upstream stall.
+        # Share a normal refresh, but bound both waiting time and blocked threads.
         if not self._lock.acquire(blocking=False):
-            raise QuoteUnavailable("Quote refresh in progress")
+            if not self._waiters.acquire(blocking=False):
+                raise QuoteUnavailable("Quote refresh busy")
+            try:
+                if not self._lock.acquire(timeout=RATE_REFRESH_WAIT_SECONDS):
+                    raise QuoteUnavailable("Quote refresh timed out")
+            finally:
+                self._waiters.release()
         fetching = False
         try:
             now = int(time.time())

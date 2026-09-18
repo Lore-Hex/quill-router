@@ -164,7 +164,7 @@ def test_negative_cache_recovers_even_under_continued_requests(monkeypatch):
     assert len(calls) == 2
 
 
-def test_rate_fetch_does_not_queue_other_threads():
+def test_stalled_rate_fetch_bounds_other_threads_wait():
     started, finish = Event(), Event()
 
     def fetch(_):
@@ -177,8 +177,10 @@ def test_rate_fetch_does_not_queue_other_threads():
         future = pool.submit(rates.current)
         try:
             assert started.wait(5)
+            before = time.monotonic()
             with pytest.raises(QuoteUnavailable):
                 rates.current()
+            assert time.monotonic() - before < 2
         finally:
             finish.set()
         assert future.result(timeout=5).usd_per_btc == 90000
