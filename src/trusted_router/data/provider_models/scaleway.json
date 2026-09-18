@@ -252,13 +252,12 @@
       "created": 1782376549,
       "routable": true,
       "input_token_price_per_m": 2169909,
-      "output_token_price_per_m": 6630278,
-      "cached_input_token_price_per_m": 433982
+      "output_token_price_per_m": 6630278
     }
   ],
   "source": "https://api.scaleway.ai/v1/models",
   "pricing_source": "https://www.scaleway.com/en/pricing/model-as-a-service/",
-  "generated_at": "2026-09-18T04:21:06Z",
+  "generated_at": "2026-09-18T09:27:52Z",
   "price_scale": "microdollars_per_million",
   "model_count": 12
 }
