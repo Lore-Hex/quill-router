@@ -74,6 +74,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import os
 import re
 import shutil
@@ -137,14 +138,14 @@ _IGNORED = shutil.ignore_patterns(
 _STUB = r"""#!/usr/bin/env bash
 # Recording stub. Writes one tab-separated line per invocation to the shared
 # ordered log, answers from the fixture table if anything matches, and exits 0.
-{ printf '%s' "${0##*/}"; for a in "$@"; do
+record="${0##*/}"
+for a in "$@"; do
     recorded="${a//$'\n'/\\n}"
     recorded="${recorded//$'\t'/\\t}"
-    printf '\t%s' "$recorded"
-  done
-  printf '\n'
-} \
-  >> "$HARNESS_ARGV_LOG"
+    printf -v record '%s\t%s' "$record" "$recorded"
+done
+# Background reconcilers share this log: append the complete record at once.
+printf '%s\n' "$record" >> "$HARNESS_ARGV_LOG"
 # Drain stdin before answering. A stub that exits without reading closes the
 # pipe under its upstream, and `aws ecr get-login-password | docker login
 # --password-stdin` then dies of SIGPIPE -- 141 through `set -o pipefail`, in
@@ -1869,7 +1870,14 @@ class DeployScriptHarness:
         so a property that holds only BECAUSE the fixture supplied something is
         a property that does not hold on a first run. See
         ``test_the_gate_status_survives_without_the_operator_attestation``.
+
+        ``HARNESS_TIMEOUT_SCALE`` in the invoking environment multiplies every
+        subprocess budget (default 120 seconds, or the caller's override).
+        It defaults to 1; loaded runs can opt into a larger positive scale.
         """
+        timeout_scale = float(os.environ.get("HARNESS_TIMEOUT_SCALE", "1"))
+        if not math.isfinite(timeout_scale) or timeout_scale <= 0:
+            raise ValueError("HARNESS_TIMEOUT_SCALE must be finite and positive")
         fixture = SCRIPT_FIXTURES.get(script, ScriptFixture())
         self._runs += 1
         run_dir = self.root / f"run-{self._runs:03d}"
@@ -2042,7 +2050,7 @@ class DeployScriptHarness:
             text=True,
             env=env,
             cwd=str(self.mirror),
-            timeout=timeout,
+            timeout=timeout * timeout_scale,
             # So a stub draining stdin sees EOF at once unless it is genuinely
             # downstream of a pipe.
             stdin=subprocess.DEVNULL,
