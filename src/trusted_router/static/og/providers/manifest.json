@@ -271,10 +271,10 @@
   },
   "google-vertex": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 10,
     "name": "Google Vertex AI",
     "privacy": "Zero retention",
-    "route_count": 11,
+    "route_count": 10,
     "route_mode": "Prepaid",
     "slug": "google-vertex"
   },
