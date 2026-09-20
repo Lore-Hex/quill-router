@@ -285,6 +285,10 @@ _PROVIDER_PREFERENCE = {
 # affect only default routing; caller-supplied provider.order/sort still wins.
 _MODEL_PROVIDER_PREFERENCE: dict[str, dict[str, int]] = {
     "z-ai/glm-5.2": {"parasail": -1},
+    # Jev's vendor before the relay: one third party instead of two, and a
+    # measured 238 ms median against ~330 ms through Vercel (2026-09-19, the
+    # gateway's labeled ticket set). The relay stays as the failover.
+    "typesafe-ai/jev": {"typesafe": -1},
 }
 
 _CandidateT = TypeVar("_CandidateT")
@@ -732,6 +736,19 @@ def _strip_variant_suffix(model_id: str) -> tuple[str, dict[str, str]]:
         if model_id.endswith(suffix):
             return model_id[: -len(suffix)], {key: value}
     return model_id, {}
+
+
+def routing_variant_of(model_id: str) -> tuple[str, str]:
+    """Split a request's model string into `(catalog_id, variant_suffix)`.
+
+    `catalog_id` is what routing will actually resolve: the variant suffix
+    (`:nitro`, `:floor`) stripped and aliases followed. `variant_suffix` is ""
+    when there was none. A guard that must hold for a MODEL has to compare this
+    id, never the raw string: `trev-1.0:nitro` is `trev-1.0` to the router and a
+    different string to `==`.
+    """
+    stripped, overrides = _strip_variant_suffix(model_id)
+    return resolve_model_alias(stripped), model_id[len(stripped) :] if overrides else ""
 
 
 def _routing_for_body(

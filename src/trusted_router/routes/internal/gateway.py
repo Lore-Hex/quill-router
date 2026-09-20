@@ -131,6 +131,7 @@ from trusted_router.routing import (
     normalize_routing_inputs,
     provider_route_preferences,
     resolved_route_preferences,
+    routing_variant_of,
     video_route_endpoint_candidates,
 )
 from trusted_router.schemas import (
@@ -953,6 +954,23 @@ def _authorize_gateway_sync_impl(
     body_dict.update(attribution.body_fields())
     _require_monitor_model_key(body_dict, api_key.lookup_hash, settings)
     requested_model_id = body.model
+    # Every guard below keys on the model id as a STRING, and routing strips a
+    # variant suffix before it resolves one. `trev-1.0:nitro` therefore matched
+    # none of them and routed as the model anyway: no decide-only rule, no host
+    # chain, and a response naming the backing model. A pinned model has no
+    # routing to vary, so the variant is refused rather than reinterpreted.
+    for raw_model_id in (requested_model_id, *(body.models or [])):
+        catalog_id, variant = routing_variant_of(raw_model_id)
+        catalog_model = MODELS.get(catalog_id)
+        if variant and (
+            catalog_id in PRIVATE_PROXY_MODEL_TARGETS
+            or (catalog_model is not None and catalog_model.supports_decide)
+        ):
+            raise api_error(
+                400,
+                f"{catalog_id} does not take a routing variant ({variant})",
+                ErrorType.BAD_REQUEST,
+            )
     private_proxy_ids = {
         model_id
         for model_id in (requested_model_id, *(body.models or []))

@@ -1,8 +1,8 @@
 """POST /v1/decide: decision models in the catalog and on gateway authorize.
 
-Two kinds of model answer the route. A HOSTED decision model (TypeSafe AI's Jev
-through Vercel AI Gateway) is its own catalog entry: no chat, input-only
-pricing. A NATIVE decision model is an ordinary chat model the attested gateway
+Two kinds of model answer the route. A HOSTED decision model (TypeSafe AI's Jev,
+at TypeSafe's own API with Vercel AI Gateway as the failover) is its own catalog
+entry: no chat, input-only pricing. A NATIVE decision model is an ordinary chat model the attested gateway
 drives with strict structured output; it keeps its chat entry and authorizes as
 chat, pinned to one provider.
 """
@@ -36,20 +36,51 @@ JEV = "typesafe-ai/jev"
 AUTHORIZE = "/v1/internal/gateway/authorize"
 
 
+JEV_HOSTS = [("typesafe", "jev-latest"), ("vercel-ai-gateway", JEV)]
+
+
 def test_jev_is_an_input_only_decision_model() -> None:
     model = MODELS[JEV]
     assert model.supports_decide and not model.supports_chat and not model.supports_embeddings
-    assert model.provider == "vercel-ai-gateway"
-    assert model.upstream_id == JEV
+    assert model.provider == "typesafe"
+    assert model.upstream_id == "jev-latest"
     assert model.prompt_price_microdollars_per_million_tokens > 42_000  # cost plus markup
     assert model.completion_price_microdollars_per_million_tokens == 0
     assert all(
         tier.completion_price_microdollars_per_million_tokens == 0 for tier in model.price_tiers
     )
+
+
+def test_jev_runs_at_its_vendor_with_the_relay_as_a_priced_fallback() -> None:
     endpoints = endpoints_for_model(JEV)
-    assert [endpoint.provider for endpoint in endpoints] == ["vercel-ai-gateway"]
-    assert not PROVIDERS["vercel-ai-gateway"].supports_chat
-    assert not PROVIDERS["vercel-ai-gateway"].supports_byok
+    # Each host is called by ITS name for the model: the vendor's alias is not
+    # the relay's id, and sending one to the other is a 404 on every request.
+    assert [(e.provider, e.upstream_id) for e in endpoints] == JEV_HOSTS
+    for endpoint in endpoints:
+        assert endpoint.usage_type == "Credits" and not endpoint.is_byok
+        # The host that serves a request bills it, so EACH endpoint carries a
+        # real input price and meters no output.
+        assert endpoint.prompt_price_microdollars_per_million_tokens > 42_000, endpoint.id
+        assert endpoint.completion_price_microdollars_per_million_tokens == 0, endpoint.id
+        assert not PROVIDERS[endpoint.provider].supports_chat
+        assert not PROVIDERS[endpoint.provider].supports_byok
+    # No ZDR is configured on our TypeSafe account; the catalog must not claim it.
+    assert not PROVIDERS["typesafe"].provider_zero_data_retention
+    assert not PROVIDERS["typesafe"].prepaid_zero_data_retention
+
+
+def test_every_decision_fallback_route_became_an_endpoint() -> None:
+    # A fallback on a provider missing from PROVIDERS or the prepaid set is
+    # skipped by the builder. Silently losing the failover is the failure this
+    # guards: the vendor has an outage and there is nowhere to go.
+    from trusted_router.catalog_data import _DECISION_SPECS
+
+    for spec in _DECISION_SPECS:
+        served = {(e.provider, e.upstream_id) for e in endpoints_for_model(spec["id"])}
+        assert (spec["provider"], spec["upstream_id"]) in served
+        assert spec["fallback_routes"], f"{spec['id']} has no failover host"
+        for route in spec["fallback_routes"]:
+            assert (route["provider"], route["upstream_id"]) in served, route
 
 
 def test_public_shape_marks_hosted_and_native_decision_models() -> None:
@@ -111,7 +142,11 @@ def test_trev_is_a_named_decision_model_priced_from_its_host_chain() -> None:
 
 def test_decide_resolver_accepts_only_decision_models() -> None:
     candidates = decide_route_endpoint_candidates({"model": JEV}, Settings(environment="test"))
-    assert [(m.id, e.provider) for m, e in candidates] == [(JEV, "vercel-ai-gateway")]
+    # Vendor first by default, relay second: the order IS the failover plan.
+    assert [(m.id, e.provider) for m, e in candidates] == [
+        (JEV, "typesafe"),
+        (JEV, "vercel-ai-gateway"),
+    ]
     with pytest.raises(Exception) as raised:  # noqa: PT011 - api_error is an HTTPException
         decide_route_endpoint_candidates(
             {"model": "openai/gpt-5.4-nano"}, Settings(environment="test")
@@ -152,8 +187,46 @@ async def test_gateway_authorizes_the_hosted_decision_model() -> None:
     )
     assert response.status_code == 200, response.text
     payload = response.json()["data"] if "data" in response.json() else response.json()
-    assert payload["provider"] == "vercel-ai-gateway"
+    assert payload["provider"] == "typesafe"
     assert payload["model"] == JEV
+    # The gateway fails over by walking this list, so both hosts must be in
+    # it, in order, each with the upstream id that host understands.
+    assert [
+        (candidate["provider"], candidate["upstream_model"])
+        for candidate in payload["route_candidates"]
+    ] == JEV_HOSTS
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "expected"),
+    [
+        # Default and an explicit vendor-first order agree.
+        (None, ["typesafe", "vercel-ai-gateway"]),
+        ({"order": ["typesafe", "vercel-ai-gateway"]}, ["typesafe", "vercel-ai-gateway"]),
+        # A caller's explicit preference still beats the default ranking.
+        ({"order": ["vercel-ai-gateway"]}, ["vercel-ai-gateway", "typesafe"]),
+        ({"only": ["vercel-ai-gateway"]}, ["vercel-ai-gateway"]),
+        ({"only": ["typesafe"]}, ["typesafe"]),
+        ({"ignore": ["typesafe"]}, ["vercel-ai-gateway"]),
+    ],
+)
+async def test_jev_host_order_follows_the_default_then_the_caller(
+    provider: dict[str, Any] | None, expected: list[str]
+) -> None:
+    body: dict[str, Any] = {
+        "model": JEV,
+        "route_type": "decide",
+        "estimated_input_tokens": 400,
+        "max_output_tokens": 1,
+    }
+    if provider is not None:
+        body["provider"] = provider
+    response = await _authorize(body)
+    assert response.status_code == 200, response.text
+    payload = response.json().get("data", response.json())
+    assert [c["provider"] for c in payload["route_candidates"]] == expected
+    assert payload["provider"] == expected[0]
 
 
 @pytest.mark.asyncio
@@ -230,7 +303,6 @@ async def test_trev_authorizes_on_its_chain_in_order() -> None:
         None,
         {"sort": "price"},
         {"order": ["deepinfra", "together"], "allow_fallbacks": True},
-        {"only": ["deepinfra"]},
     ],
 )
 async def test_trev_chain_cannot_be_widened_or_reordered_by_the_request(
@@ -239,12 +311,149 @@ async def test_trev_chain_cannot_be_widened_or_reordered_by_the_request(
     """The chain is enforced at authorize, not merely requested by the gateway:
     no preference may add a slow host or promote one over Cerebras."""
     chain = list(NAMED_DECISION_MODEL_PROVIDERS[TREV_1_0_MODEL_ID])
-    try:
-        ordered = await _trev_candidates(provider)
-    except AssertionError:
-        # `only` a host outside the chain leaves nothing to route to; refusing
-        # is fine, serving from outside the chain is not.
-        assert provider == {"only": ["deepinfra"]}
-        return
+    ordered = await _trev_candidates(provider)
     assert ordered == chain[: len(ordered)], ordered
     assert ordered[0] == "cerebras"
+
+
+@pytest.mark.asyncio
+async def test_trev_refuses_a_request_pinned_outside_its_chain() -> None:
+    """`only` a host outside the chain leaves nothing to route to. Refusing is
+    right; serving from outside the chain is not. Asserted on the response
+    itself: this used to be an `except AssertionError` around the helper, which
+    would also have swallowed a 200 that leaked the backing model."""
+    response = await _authorize(
+        {
+            "model": TREV_1_0_MODEL_ID,
+            "route_type": "decide",
+            "estimated_input_tokens": 480,
+            "max_output_tokens": 700,
+            "provider": {"only": ["deepinfra"]},
+        }
+    )
+    assert response.status_code in {400, 503}, response.text
+    assert "deepinfra" not in response.text
+    assert PRIVATE_PROXY_MODEL_TARGETS[TREV_1_0_MODEL_ID] not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("suffix", [":nitro", ":floor"])
+@pytest.mark.parametrize("route_type", ["chat.completions", "decide"])
+async def test_a_routing_variant_cannot_unlock_a_named_decision_model(
+    suffix: str, route_type: str
+) -> None:
+    """`trev-1.0:nitro` is not `trev-1.0` to a string comparison, so the guards
+    that key on the model id never fired: the request authorized as plain chat
+    on any host, and the response named the backing model."""
+    response = await _authorize(
+        {
+            "model": TREV_1_0_MODEL_ID + suffix,
+            "route_type": route_type,
+            "estimated_input_tokens": 480,
+            "max_output_tokens": 700,
+            "provider": {"only": ["deepinfra"]},
+        }
+    )
+    assert response.status_code == 400, response.text
+    assert PRIVATE_PROXY_MODEL_TARGETS[TREV_1_0_MODEL_ID] not in response.text
+    assert "gpt-oss" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_a_routing_variant_cannot_unmask_any_private_proxy_model() -> None:
+    # The same hole, older than trev: every private proxy keyed on the raw id.
+    for model_id, backing in PRIVATE_PROXY_MODEL_TARGETS.items():
+        route_type = "decide" if MODELS[model_id].supports_decide else "chat.completions"
+        response = await _authorize(
+            {
+                "model": model_id + ":nitro",
+                "route_type": route_type,
+                "estimated_input_tokens": 100,
+                "max_output_tokens": 100,
+            }
+        )
+        assert response.status_code == 400, (model_id, response.text)
+        assert backing not in response.text, model_id
+
+
+@pytest.mark.asyncio
+async def test_a_routing_variant_in_a_fallback_array_is_still_a_private_proxy() -> None:
+    response = await _authorize(
+        {
+            "model": "openai/gpt-oss-20b",
+            "models": [TREV_1_0_MODEL_ID + ":floor"],
+            "route_type": "chat.completions",
+            "estimated_input_tokens": 100,
+            "max_output_tokens": 100,
+        }
+    )
+    assert response.status_code == 400, response.text
+
+
+def test_a_host_delisting_the_backing_model_never_stops_the_control_plane(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Chain pricing runs at import. It used to raise when the preferred host
+    stopped serving the backing model, so one provider's hourly manifest refresh
+    could keep the whole control plane from starting."""
+    from trusted_router import catalog_registry
+
+    backing = PRIVATE_PROXY_MODEL_TARGETS[TREV_1_0_MODEL_ID]
+    chain = NAMED_DECISION_MODEL_PROVIDERS[TREV_1_0_MODEL_ID]
+    live = dict(catalog_registry.MODEL_ENDPOINTS)
+
+    def without(*providers: str) -> dict[str, Any]:
+        return {
+            key: endpoint
+            for key, endpoint in live.items()
+            if not (endpoint.model_id == backing and endpoint.provider in providers)
+        }
+
+    def chain_prices(endpoints: dict[str, Any]) -> list[int]:
+        return [
+            e.prompt_price_microdollars_per_million_tokens
+            for e in endpoints.values()
+            if e.model_id == backing and e.provider in chain and not e.is_byok
+        ]
+
+    # The preferred host is gone: still priced, from the hosts that remain.
+    monkeypatch.setattr(catalog_registry, "MODEL_ENDPOINTS", without(chain[0]))
+    degraded = catalog_registry._named_decision_model_with_chain_prices(TREV_1_0_MODEL_ID)
+    remaining = chain_prices(without(chain[0]))
+    assert remaining, "fixture: the chain needs more than one host for this to mean anything"
+    assert degraded.prompt_price_microdollars_per_million_tokens == max(remaining)
+
+    # Every chain host is gone: no price to read, and still no exception.
+    monkeypatch.setattr(catalog_registry, "MODEL_ENDPOINTS", without(*chain))
+    unroutable = catalog_registry._named_decision_model_with_chain_prices(TREV_1_0_MODEL_ID)
+    assert unroutable == MODELS[TREV_1_0_MODEL_ID]
+
+
+def test_the_preferred_host_still_serves_the_backing_model() -> None:
+    # The name sells this host's speed. If this fails, a provider delisted the
+    # model: re-measure the chain before reordering it. Production is already
+    # serving from the rest of the chain, which is why this is a test and not a
+    # RuntimeError at import.
+    backing = PRIVATE_PROXY_MODEL_TARGETS[TREV_1_0_MODEL_ID]
+    preferred = NAMED_DECISION_MODEL_PROVIDERS[TREV_1_0_MODEL_ID][0]
+    assert preferred in {
+        endpoint.provider for endpoint in endpoints_for_model(backing) if not endpoint.is_byok
+    }
+
+
+def test_a_decision_model_is_not_a_base_for_a_custom_chat_model() -> None:
+    from trusted_router.custom_model_rules import (
+        is_allowed_custom_model_base,
+        require_custom_model_base_model,
+    )
+
+    for model_id in (JEV, TREV_1_0_MODEL_ID):
+        assert not is_allowed_custom_model_base(MODELS[model_id]), model_id
+        with pytest.raises(Exception) as raised:  # noqa: PT011 - api_error is an HTTPException
+            require_custom_model_base_model(model_id)
+        assert getattr(raised.value, "status_code", None) == 400
+    # The chat models the gateway happens to drive as decision functions are
+    # ordinary chat models and stay valid bases.
+    for model_id in NATIVE_DECISION_MODEL_IDS:
+        if model_id != TREV_1_0_MODEL_ID:
+            assert is_allowed_custom_model_base(MODELS[model_id]), model_id

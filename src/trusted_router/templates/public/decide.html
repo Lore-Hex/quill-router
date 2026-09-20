@@ -94,21 +94,21 @@
   <div class="panel">
     <div class="panel-head"><h2>Models</h2><span class="pill good">Any chat model works</span></div>
     <div class="panel-body">
-      <p><strong><code>trustedrouter/trev-1.0</code></strong> is TrustedRouter's own decision model: an open-weight 120B reasoning model on the fastest inference hardware we could measure, with automatic failover across four hosts so a rate limit on one never becomes an error for you. <strong><code>typesafe-ai/jev</code></strong> is TypeSafe AI's hosted decision model. The others are chat models we have tuned and measured as decision models.</p>
+      <p><strong><code>trustedrouter/trev-1.0</code></strong> is TrustedRouter's own decision model: an open-weight 120B reasoning model on the fastest inference hardware we could measure, with automatic failover across four hosts so a rate limit on one never becomes an error for you. <strong><code>typesafe-ai/jev</code></strong> is TypeSafe AI's hosted decision model, called at TypeSafe's own API with automatic failover to Vercel AI Gateway. The others are chat models we have tuned and measured as decision models.</p>
       <div class="model-table-wrap">
         <table>
           <thead><tr><th>Model</th><th>Kind</th><th>Median model latency</th><th>Eval accuracy</th><th>About one decision costs</th></tr></thead>
           <tbody>
-            <tr><td><span class="mono">trustedrouter/trev-1.0</span></td><td>TrustedRouter, reasons briefly</td><td>about 350 ms</td><td>29 / 29</td><td>$0.00037</td></tr>
-            <tr><td><span class="mono">typesafe-ai/jev</span></td><td>Hosted decision model</td><td>about 330 ms</td><td>29 / 29</td><td>$0.00002</td></tr>
-            <tr><td><span class="mono">google/gemini-3.1-flash-lite</span></td><td>Tuned chat model</td><td>about 0.9 s</td><td>29 / 29</td><td>$0.00027</td></tr>
-            <tr><td><span class="mono">deepseek/deepseek-v4.1-flash</span></td><td>Tuned chat model</td><td>about 0.8 s</td><td>29 / 29</td><td>$0.00014</td></tr>
-            <tr><td><span class="mono">openai/gpt-oss-20b</span></td><td>Tuned chat model</td><td>about 1.7 s</td><td>29 / 29</td><td>$0.00004</td></tr>
+            <tr><td><span class="mono">trustedrouter/trev-1.0</span></td><td>TrustedRouter, reasons briefly</td><td>about 330 ms</td><td>29 / 29</td><td>$0.00034</td></tr>
+            <tr><td><span class="mono">typesafe-ai/jev</span></td><td>Hosted decision model</td><td>about 250 ms</td><td>29 / 29</td><td>$0.00002</td></tr>
+            <tr><td><span class="mono">google/gemini-3.1-flash-lite</span></td><td>Tuned chat model</td><td>about 0.9 s</td><td>29 / 29</td><td>$0.00023</td></tr>
+            <tr><td><span class="mono">deepseek/deepseek-v4.1-flash</span></td><td>Tuned chat model</td><td>about 0.7 s</td><td>29 / 29</td><td>$0.00013</td></tr>
+            <tr><td><span class="mono">openai/gpt-oss-20b</span></td><td>Tuned chat model</td><td>about 1.6 s</td><td>29 / 29</td><td>$0.00004</td></tr>
             <tr><td><span class="mono">google/gemma-4-e4b-it</span></td><td>Tuned chat model, cheapest</td><td>2 to 3 s</td><td>29 / 29</td><td>$0.00002</td></tr>
           </tbody>
         </table>
       </div>
-      <p><strong>How to read this.</strong> The eval is small and deliberately easy: eight labeled support tickets, four questions each, 29 checks, run in September 2026. It shows that every model here answers clear cases correctly in the right form; it does not rank them on hard ones, and across repeated runs one borderline ticket occasionally costs a model a single check. Latency is the typical median time for the model host to answer, measured from one client over repeated runs; hosts vary from run to run, and your request also pays for authorization and settlement through the gateway. Cost is for that four-question request, about 450 to 520 input tokens. Live per-token prices are always in <a href="/models"><code>GET /v1/models</code></a>.</p>
+      <p><strong>How to read this.</strong> The eval is small and deliberately easy: eight labeled support tickets, four questions each, 29 checks, run in September 2026. It shows that every model here answers clear cases correctly in the right form; it does not rank them on hard ones, and across repeated runs one borderline ticket occasionally costs a model a single check. Latency is the typical median time for the model host to answer, measured from one client over repeated runs; hosts vary from run to run, and your request also pays for authorization and settlement through the gateway. Cost is for that four-question request, about 410 to 480 input tokens, at list price. Live per-token prices are always in <a href="/models"><code>GET /v1/models</code></a>.</p>
       <p><strong>Any other chat model works too.</strong> Name any chat model in the catalog, such as <code>anthropic/claude-opus-5</code>, and it is driven the same way, untuned. Larger models do better on harder judgments; the models above are the ones we have measured and stand behind.</p>
     </div>
   </div>
@@ -215,12 +215,12 @@ else:
     <div class="marketing-card">
       <span class="card-label">Privacy</span>
       <h3>Your state never reaches our control plane.</h3>
-      <p>As with chat, <code>state</code> and <code>questions</code> terminate inside the <a href="/security">attested gateway</a> and go only to the model host. Authorization and billing see token counts, not content. <code>typesafe-ai/jev</code> is reached through Vercel AI Gateway, so that route crosses two third parties.</p>
+      <p>As with chat, <code>state</code> and <code>questions</code> terminate inside the <a href="/security">attested gateway</a> and go only to the model host. Authorization and billing see token counts, not content. <code>typesafe-ai/jev</code> is called at TypeSafe's own API. Only if TypeSafe is down or rate limiting does the request fail over to Vercel AI Gateway, and only then does it cross two third parties.</p>
     </div>
     <div class="marketing-card">
       <span class="card-label">Limits</span>
       <h3>Sized for real applications.</h3>
-      <p>Up to 64 questions per request and 255 options per question. Question and option names up to 128 characters. No streaming: a decision is one small JSON object. <code>typesafe-ai/jev</code> accepts about 32,000 tokens of state.</p>
+      <p>Up to 64 questions per request and 255 options per question. Question and option names up to 128 characters, with no control characters. The questions must be small enough that their answer fits in 2 MB, which only a request near every limit at once approaches. No streaming: a decision is one small JSON object. <code>typesafe-ai/jev</code> accepts about 32,000 tokens of state.</p>
     </div>
   </div>
 </section>
@@ -235,7 +235,7 @@ else:
           <tbody>
             <tr><td><span class="mono">400</span></td><td>The request is malformed. <code>error.param</code> names the field, for example <code>questions.route.criteria</code>. Also returned when a decision model is named on a chat endpoint.</td></tr>
             <tr><td><span class="mono">401</span> / <span class="mono">402</span></td><td>Invalid API key, or not enough credit.</td></tr>
-            <tr><td><span class="mono">502</span></td><td>The model host failed, or the model's answer failed verification twice. No unverified answer is ever returned.</td></tr>
+            <tr><td><span class="mono">502</span></td><td>The model host failed, or the model's answer failed verification twice. No unverified answer is ever returned. When a model had already run, the response carries <code>x-should-retry: false</code>: retrying would pay for it again.</td></tr>
             <tr><td><span class="mono">503</span></td><td>Every host in a model's chain is unavailable. Retry shortly.</td></tr>
           </tbody>
         </table>

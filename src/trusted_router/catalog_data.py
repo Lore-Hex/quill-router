@@ -191,6 +191,14 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
         "mailing address and New York governing law, but do not identify the "
         "API operator's legal entity or incorporation country."
     ),
+    "typesafe": (
+        "Checked docs.typesafe.ai/legal, the privacy policy and the data "
+        "processing addendum (2026-09-19). All three name TypeSafe AI, Inc. as "
+        "the operator, but none gives a postal address, a country, or a home "
+        "governing law; the addendum's Irish and Swiss clauses are the standard "
+        "transfer terms, not a headquarters. Jurisdiction filters therefore "
+        "exclude this route."
+    ),
 }
 
 
@@ -1912,20 +1920,38 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://docs.liquid.ai/",
     ),
-    "vercel-ai-gateway": Provider(
-        slug="vercel-ai-gateway",
-        name="Vercel AI Gateway",
-        # Carried for ONE modality: TypeSafe's Jev decision model, which
-        # TypeSafe itself still gates behind a waitlist. Chat models are
-        # deliberately not resold through a second gateway.
+    "typesafe": Provider(
+        slug="typesafe",
+        name="TypeSafe AI",
+        # The vendor of the Jev decision model, reached directly. Jev answers
+        # POST /v1/decide only; TypeSafe serves no chat models.
         supports_chat=False,
         supports_prepaid=True,
         supports_byok=False,
         provider_policy=(
-            "TrustedRouter reaches TypeSafe AI's Jev decision model through "
-            "Vercel AI Gateway's /v1/evaluate endpoint. Requests transit two "
-            "third parties (Vercel, then TypeSafe). No contractual ZDR, "
-            "confidential-compute, or E2EE claim is tracked for this route."
+            "TrustedRouter calls TypeSafe AI's own API for the Jev decision "
+            "model. TypeSafe states that it does not train models on customer "
+            "data. It offers zero data retention to enterprise customers on "
+            "request; that is NOT configured for TrustedRouter's account, so no "
+            "ZDR, confidential-compute, or E2EE claim is tracked for this route."
+        ),
+        provider_policy_url="https://docs.typesafe.ai/legal",
+    ),
+    "vercel-ai-gateway": Provider(
+        slug="vercel-ai-gateway",
+        name="Vercel AI Gateway",
+        # Carried for ONE modality and ONE job: the automatic fallback for
+        # TypeSafe's Jev decision model when TypeSafe's own API is down or
+        # rate limiting. Chat models are deliberately not resold through a
+        # second gateway.
+        supports_chat=False,
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "Fallback route for TypeSafe AI's Jev decision model, through "
+            "Vercel AI Gateway's /v1/evaluate endpoint. A request served here "
+            "transits two third parties (Vercel, then TypeSafe). No contractual "
+            "ZDR, confidential-compute, or E2EE claim is tracked for this route."
         ),
         provider_policy_url="https://vercel.com/docs/ai-gateway/modalities/evaluation",
         provider_headquarters_country="US",
@@ -2055,6 +2081,7 @@ PROVIDERS: dict[str, Provider] = {
 GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
     {
         "vercel-ai-gateway",
+        "typesafe",
         "regolo",
         "anthropic",
         "openai",
@@ -2924,6 +2951,12 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
 }
 
 
+class _DecisionFallbackRoute(TypedDict):
+    provider: str
+    upstream_id: str
+    cost_dollars_per_million: str
+
+
 class _DecisionSpec(TypedDict):
     id: str
     name: str
@@ -2931,20 +2964,35 @@ class _DecisionSpec(TypedDict):
     upstream_id: str
     context_length: int
     cost_dollars_per_million: str
+    fallback_routes: tuple[_DecisionFallbackRoute, ...]
 
 
 # Hosted decision models. Input-only pricing; the provider does not meter
 # output. Native decision models (an ordinary chat model driven with strict
 # structured output) are NOT listed here -- they keep their chat catalog entry
 # and are named in NATIVE_DECISION_MODEL_IDS below.
+#
+# `provider` is the vendor's own API and is tried first (routing.py prefers it
+# by default). `fallback_routes` are other hosts for the SAME model, each with
+# its own upstream id and its own price, that the gateway fails over to when
+# the vendor is down or rate limiting. Each host speaks its own wire format;
+# the gateway translates every one of them to the public /v1/decide shape.
 _DECISION_SPECS: tuple[_DecisionSpec, ...] = (
     {
         "id": "typesafe-ai/jev",
         "name": "TypeSafe AI Jev",
-        "provider": "vercel-ai-gateway",
-        "upstream_id": "typesafe-ai/jev",
+        "provider": "typesafe",
+        "upstream_id": "jev-latest",
+        # TypeSafe budgets 32k tokens for `state` plus the longest question.
         "context_length": 32000,
         "cost_dollars_per_million": "0.042",
+        "fallback_routes": (
+            {
+                "provider": "vercel-ai-gateway",
+                "upstream_id": "typesafe-ai/jev",
+                "cost_dollars_per_million": "0.042",
+            },
+        ),
     },
 )
 

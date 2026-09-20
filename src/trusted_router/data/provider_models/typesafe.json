@@ -1,0 +1,22 @@
+{
+  "_about": "TypeSafe AI's Jev decision model, reached at TypeSafe's own API (POST /v1/systemone). Input-only pricing refreshes hourly from TypeSafe's public models page.",
+  "provider": "typesafe",
+  "source": "https://docs.typesafe.ai/models",
+  "pricing_source": "https://docs.typesafe.ai/models.md",
+  "generated_at": "2026-09-19T00:00:00Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 1,
+  "models": [
+    {
+      "id": "typesafe-ai/jev",
+      "upstream_id": "jev-latest",
+      "display_name": "TypeSafe AI Jev",
+      "context_length": 32000,
+      "model_type": "decision",
+      "endpoints": ["decide"],
+      "input_token_price_per_m": 42000,
+      "output_token_price_per_m": 0,
+      "pricing_source": "https://docs.typesafe.ai/models.md"
+    }
+  ]
+}

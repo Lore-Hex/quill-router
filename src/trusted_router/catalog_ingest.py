@@ -1236,6 +1236,49 @@ def _decision_models() -> dict[str, Model]:
     return models
 
 
+def _decision_fallback_endpoints(models: dict[str, Model]) -> dict[str, ModelEndpoint]:
+    """Extra prepaid hosts for a hosted decision model.
+
+    `_build_endpoints` synthesizes one endpoint per model, on the model's own
+    provider (the vendor). A fallback host serves the same model under a
+    different upstream id and may charge a different rate, so its endpoint is
+    built here with ITS price: the host that serves a request is the host that
+    bills it. The manifest price wins over the checked-in fallback, exactly as
+    it does for the primary route.
+    """
+    endpoints: dict[str, ModelEndpoint] = {}
+    for spec in _DECISION_SPECS:
+        model = models.get(spec["id"])
+        if model is None:
+            continue
+        for route in spec["fallback_routes"]:
+            provider = route["provider"]
+            if provider not in PROVIDERS or provider not in GATEWAY_PREPAID_PROVIDER_SLUGS:
+                continue
+            manifest_cost = _input_only_manifest_cost(
+                provider, spec["id"], model_type="decision", endpoint="decide"
+            )
+            if manifest_cost is None:
+                prompt_price, published_price, _cost = _priced(route["cost_dollars_per_million"])
+            else:
+                prompt_price = _customer_price(manifest_cost)
+                published_price = prompt_price
+            endpoint = replace(
+                _endpoint(
+                    model,
+                    usage_type="Credits",
+                    provider=provider,
+                    upstream_id=route["upstream_id"],
+                ),
+                prompt_price_microdollars_per_million_tokens=prompt_price,
+                completion_price_microdollars_per_million_tokens=0,
+                published_prompt_price_microdollars_per_million_tokens=published_price,
+                published_completion_price_microdollars_per_million_tokens=0,
+            )
+            endpoints[endpoint.id] = endpoint
+    return endpoints
+
+
 def _embedding_models() -> dict[str, Model]:
     """Seed the embedding-model catalog (input-only pricing).
 

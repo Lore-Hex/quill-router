@@ -170,6 +170,8 @@ PROVIDER_SLUGS = [
     "voyage",
     # Input-only decision model read from Vercel's public model list.
     "vercel_ai_gateway",
+    # The same decision model at its vendor, read from TypeSafe's models page.
+    "typesafe",
 ]
 
 # Product adapters own independent availability and prices. Aliases here map

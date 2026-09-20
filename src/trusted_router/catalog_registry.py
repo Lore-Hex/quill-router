@@ -155,6 +155,7 @@ from trusted_router.catalog_ingest import (  # noqa: F401 - used by import-time 
     _apply_provider_manifest_expiry,
     _author_provider,
     _build_endpoints,
+    _decision_fallback_endpoints,
     _decision_models,
     _embedding_models,
     _endpoint,
@@ -1221,6 +1222,9 @@ MODELS.update(_VIDEO_MODELS)
 MODEL_ENDPOINTS: dict[str, ModelEndpoint] = _build_endpoints(MODELS)
 MODEL_ENDPOINTS.update(_INGESTED_ENDPOINTS)
 MODEL_ENDPOINTS.update(_SUPPLEMENTAL_ENDPOINTS)
+# A hosted decision model's vendor route came from `_build_endpoints`; its
+# fallback hosts (same model, different upstream id and price) are explicit.
+MODEL_ENDPOINTS.update(_decision_fallback_endpoints(_DECISION_MODELS))
 
 
 def _install_deepseek_v4_pro_release_routes() -> None:
@@ -1454,6 +1458,15 @@ def _named_decision_model_with_chain_prices(model_id: str) -> Model:
     that cost more, and each request is billed at the rate of the host that
     served it -- so the honest public price is the most expensive host in the
     chain. Read from live endpoints so an hourly price refresh carries through.
+
+    This runs at import, so it must never raise. Provider manifests refresh
+    hourly without a human in the loop; if the preferred host delists the
+    backing model, raising here would stop the WHOLE control plane from
+    starting over one model's speed promise. Instead the model is priced from
+    whichever chain hosts remain and keeps serving on them; with none left it is
+    returned as it was, authorize finds no host in its chain, and that one model
+    answers 503. That the preferred host still serves it is pinned where a
+    human is told about it without an outage: in tests/test_decide_models.py.
     """
     model = MODELS[model_id]
     backing = PRIVATE_PROXY_MODEL_TARGETS[model_id]
@@ -1463,12 +1476,8 @@ def _named_decision_model_with_chain_prices(model_id: str) -> Model:
         for endpoint in MODEL_ENDPOINTS.values()
         if endpoint.model_id == backing and endpoint.provider in chain and not endpoint.is_byok
     ]
-    served = {endpoint.provider for endpoint in endpoints}
-    if chain[0] not in served:
-        raise RuntimeError(
-            f"{model_id}: preferred host {chain[0]} no longer serves {backing}; "
-            "the name promises that host's speed, so re-measure before changing the chain"
-        )
+    if not endpoints:
+        return model
     prompt = max(e.prompt_price_microdollars_per_million_tokens for e in endpoints)
     completion = max(e.completion_price_microdollars_per_million_tokens for e in endpoints)
     return replace(

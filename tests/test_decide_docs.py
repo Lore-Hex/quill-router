@@ -42,8 +42,13 @@ def test_decide_docs_state_the_guarantee_and_its_cost_honestly(client: TestClien
     assert "The eval is small and deliberately easy" in text
     assert "your request also pays for authorization and settlement through the gateway" in text
     assert "hosts vary from run to run" in text
-    # Where the state goes.
-    assert "crosses two third parties" in text
+    # Where the state goes: the vendor directly, and the one case where it
+    # does not. The fallback is disclosed, not discovered.
+    assert "called at TypeSafe's own API" in text
+    assert "fail over to Vercel AI Gateway" in text
+    assert "cross two third parties" in text
+    # A client must be told when retrying would pay twice.
+    assert "x-should-retry: false" in text
 
 
 def test_decide_docs_are_discoverable(client: TestClient) -> None:

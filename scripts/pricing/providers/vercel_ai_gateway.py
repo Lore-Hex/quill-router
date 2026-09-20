@@ -26,6 +26,7 @@ MANIFEST_PATH = (
 )
 # Fixed-shape input-only rows are not comparable with chat token prices.
 INCLUDE_IN_PRICE_INDEX = False
+_UNDERSTOOD_PRICING_KEYS = frozenset({"input", "output"})
 
 
 def _micro_per_million(per_token: object) -> int:
@@ -48,7 +49,20 @@ def parse(payload: object) -> dict[str, ModelPrice]:
             continue
         if row.get("type") != "evaluation":
             raise RuntimeError(f"{SLUG}: {row.get('id')} is no longer an evaluation model")
-        pricing = row.get("pricing") or {}
+        pricing = row.get("pricing")
+        if not isinstance(pricing, dict):
+            raise RuntimeError(f"{SLUG}: {row['id']} has no pricing object")
+        # Vercel prices other models with input_tiers, regional, peak_pricing,
+        # service_tiers and twenty more keys. Any of them on THIS row changes
+        # what a request costs us while `input` alone still parses, so a flat
+        # rate read from it would be published and billed wrong. Two keys are
+        # understood; anything else stops the refresh.
+        unknown = sorted(set(pricing) - _UNDERSTOOD_PRICING_KEYS)
+        if unknown:
+            raise RuntimeError(
+                f"{SLUG}: {row['id']} pricing has keys this parser does not "
+                f"understand {unknown}; a flat input rate would be wrong"
+            )
         prompt = _micro_per_million(pricing.get("input"))
         completion = _micro_per_million(pricing.get("output", "0"))
         if prompt <= 0 or completion != 0:
