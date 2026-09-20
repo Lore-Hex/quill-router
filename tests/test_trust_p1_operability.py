@@ -22,6 +22,7 @@ import dataclasses
 import importlib
 import json
 import logging
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -1127,6 +1128,40 @@ def _job_calls(run: HarnessRun, *command: str) -> list[list[str]]:
         call for call in run.calls
         if call[0] == "gcloud" and call[3 : 3 + len(command)] == list(command)
     ]
+
+
+@pytest.mark.parametrize(
+    "missing_secret",
+    [None, "TR_PAYPAL_CLIENT_ID", "TR_PAYPAL_CLIENT_SECRET", "TR_PAYPAL_WEBHOOK_ID"],
+)
+def test_tier_job_deployed_settings_require_complete_paypal_bindings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing_secret: str | None,
+) -> None:
+    run = _trust_run(tmp_path, monkeypatch, "scripts/deploy/trust_tier_job.sh", account_id=None)
+    assert run.returncode == 0, summarise(run)
+    (job,) = _job_calls(run, "run", "jobs", "update", "trusted-router-trust-tier")
+    env_argument = job[job.index("--set-env-vars") + 1]
+    assignments = dict(item.split("=", 1) for item in env_argument.removeprefix("^|^").split("|"))
+    secrets_argument = next(argument for argument in job if argument.startswith("--update-secrets="))
+    bindings = dict(item.split("=", 1) for item in secrets_argument.removeprefix("--update-secrets=").split(","))
+    # Validate the emitted deployment, with dummy values, through the real startup validator.
+    with monkeypatch.context() as isolated:
+        for name in os.environ:
+            if name.startswith("TR_"):
+                isolated.delenv(name)
+        for name, value in assignments.items():
+            isolated.setenv(name, value)
+        for name in bindings:
+            if name != missing_secret:
+                isolated.setenv(name, "test-secret-value")
+        if missing_secret is not None:
+            with pytest.raises(ValueError, match="must all be set or all unset"):
+                Settings(_env_file=None)
+        else:
+            settings = Settings(_env_file=None)
+            assert settings.environment == "worker"
+            assert settings.paypal_webhook_id == "test-secret-value"
+            assert bindings["TR_PAYPAL_WEBHOOK_ID"] == "trustedrouter-paypal-webhook-id:latest"
 
 
 @pytest.mark.parametrize(
