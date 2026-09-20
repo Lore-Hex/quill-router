@@ -7,6 +7,12 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from trusted_router.catalog import MODELS, PROVIDERS
+from trusted_router.public_catalog_aliases import (
+    canonical_public_model_id,
+    canonical_public_provider_slug,
+)
+
 _REPORTS_PATH = Path(__file__).parent / "data" / "monthly_benchmark_reports.json"
 
 
@@ -41,10 +47,17 @@ def monthly_benchmark_report_view(report: dict[str, Any]) -> dict[str, Any]:
     view["model_count_label"] = f"{int(report.get('model_count') or 0):,}"
     view["overall"] = _metrics_view(dict(report.get("overall") or {}))
     view["top_providers"] = [
-        {**row, **_metrics_view(row)} for row in report.get("top_providers", [])
+        {**row, **_metrics_view(row), "provider_page_id": canonical_public_provider_slug(row["provider"], PROVIDERS)}
+        for row in report.get("top_providers", [])
     ]
     view["top_model_routes"] = [
-        {**row, **_metrics_view(row)} for row in report.get("top_model_routes", [])
+        {
+            **row,
+            **_metrics_view(row),
+            "provider_page_id": canonical_public_provider_slug(row["provider"], PROVIDERS),
+            "model_page_id": canonical_public_model_id(row["model"], MODELS),
+        }
+        for row in report.get("top_model_routes", [])
     ]
     return view
 

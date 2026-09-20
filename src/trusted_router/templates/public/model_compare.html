@@ -18,7 +18,7 @@
       <div><strong>{{ comparison.left_ttft }}</strong><span>{{ left.name }} fastest measured p50 TTFT{% if comparison.left_ttft_provider %} via {{ comparison.left_ttft_provider }}{% endif %}</span></div>
       <div><strong>{{ comparison.right_ttft }}</strong><span>{{ right.name }} fastest measured p50 TTFT{% if comparison.right_ttft_provider %} via {{ comparison.right_ttft_provider }}{% endif %}</span></div>
     </div>
-    <p class="muted">Prices and live route measurements can change. Use the <a href="/benchmarks/reports">monthly reports</a> when you need a stable evidence window, then run a small <a href="/docs/evals">task-specific eval</a> before choosing a production default.</p>
+    <p class="muted">The price comparison adds each route's rate for one million input tokens and one million output tokens; your cost depends on your input/output mix. Prices and live route measurements can change. Use the <a href="/benchmarks/reports">monthly reports</a> when you need a stable evidence window, then run a small <a href="/docs/evals">task-specific eval</a> before choosing a production default.</p>
   </div>
 </section>
 

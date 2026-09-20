@@ -46,6 +46,7 @@ from trusted_router.benchmark_samples import (
 from trusted_router.catalog import (
     META_MODEL_IDS,
     MODELS,
+    PROVIDERS,
     endpoints_for_model,
     provider_to_openrouter_shape,
     providers_for_display,
@@ -145,6 +146,10 @@ from trusted_router.provider_contract import (
     PROVIDER_CATALOG_V2_SCHEMA,
 )
 from trusted_router.public_analytics_snapshots import current_public_analytics_snapshot
+from trusted_router.public_catalog_aliases import (
+    canonical_public_model_id,
+    canonical_public_provider_slug,
+)
 from trusted_router.receipt_keys import (
     is_canonical_receipt_kid,
     with_receipt_attestation_sha256,
@@ -193,27 +198,14 @@ LEGACY_MODEL_PAGE_REDIRECTS: dict[str, str] = {
     # backlink by sending readers to the current open-weight catalog.
     "meta/muse-spark-1.1": "/models?filter=open",
 }
-LEGACY_MODEL_ID_ALIASES: dict[str, str] = {
-    "lightning-ai/nemotron-3-nano-omni-30b-a3b-reasoning": (
-        "nvidia/nemotron-3-nano-omni-reasoning-30b-a3b"
-    ),
-    "nvidia/nemotron-120b-a12b": "nvidia/nemotron-3-120b-a12b",
-    "nvidia/nvidia-nemotron-3-ultra-550b-a55b": "nvidia/nemotron-3-ultra-550b-a55b",
-    "xiaomi/mimo-v2-flash": "xiaomimimo/mimo-v2-flash",
-    "zai-org/glm-4.5": "z-ai/glm-4.5",
-}
+
+
+def _canonical_public_provider_slug(provider_slug: str) -> str:
+    return canonical_public_provider_slug(provider_slug, PROVIDERS)
 
 
 def _canonical_public_model_id(model_id: str) -> str:
-    """Resolve known aliases and unambiguous casing to existing catalog IDs."""
-    # Exact native IDs remain authoritative, including mixed-case provider IDs.
-    if model_id in MODELS:
-        return model_id
-    alias = LEGACY_MODEL_ID_ALIASES.get(model_id.casefold())
-    if alias is not None and alias in MODELS:
-        return alias
-    matches = [candidate for candidate in MODELS if candidate.casefold() == model_id.casefold()]
-    return matches[0] if len(matches) == 1 else model_id
+    return canonical_public_model_id(model_id, MODELS)
 
 
 STATUS_RAW_SAMPLE_LIMIT_PER_DAY = 35_000
@@ -2078,8 +2070,12 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         )
 
     @public_html_route("/providers/{provider_slug}/performance")
-    async def provider_performance(provider_slug: str) -> HTMLResponse:
-        body = public_provider_performance_html(settings, provider_slug.strip())
+    async def provider_performance(provider_slug: str) -> Response:
+        requested = provider_slug.strip()
+        canonical = _canonical_public_provider_slug(requested)
+        if canonical != requested:
+            return RedirectResponse(url=f"/providers/{canonical}/performance", status_code=301)
+        body = public_provider_performance_html(settings, canonical)
         if body is None:
             return HTMLResponse(
                 public_page_html(settings, "security"),
@@ -2088,8 +2084,12 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         return HTMLResponse(body)
 
     @public_html_route("/providers/{provider_slug}")
-    async def provider_detail(provider_slug: str) -> HTMLResponse:
-        body = public_provider_detail_html(settings, provider_slug.strip())
+    async def provider_detail(provider_slug: str) -> Response:
+        requested = provider_slug.strip()
+        canonical = _canonical_public_provider_slug(requested)
+        if canonical != requested:
+            return RedirectResponse(url=f"/providers/{canonical}", status_code=301)
+        body = public_provider_detail_html(settings, canonical)
         if body is None:
             return HTMLResponse(
                 public_page_html(settings, "security"),

@@ -1,9 +1,9 @@
 {% extends "public/_base.html" %}
 {% block body %}
 
-<section class="marketing-split" aria-label="Batch API quickstart">
+<section class="marketing-split" aria-label="OpenRouter-compatible Batch API quickstart">
   <div class="marketing-copy">
-    <span class="eyebrow">Batch API</span>
+    <span class="eyebrow">OpenRouter-compatible Batch API</span>
     <h2>Submit many requests. Poll one batch.</h2>
     <p>TrustedRouter implements the OpenRouter inline Batch API shape at <code>/api/beta/batches</code>. Existing integrations can switch the hostname and API key without uploading a JSONL file.</p>
     <p>Batch items use the same attested authorization, routing, fallback, and integer billing as ordinary inference. When native execution is enabled for an eligible direct route, TrustedRouter uses that provider's Batch API and applies its published discount.</p>
@@ -79,6 +79,15 @@ print(batch["results"])</code></pre>
       <h3>Response or error per item</h3>
       <p>Every result preserves <code>custom_id</code> and has either a response with status, request ID, and body, or a stable error.</p>
     </div>
+  </div>
+</section>
+
+<section class="panel" style="margin-top:48px" aria-label="Batch-only model error">
+  <div class="panel-head"><h2>“This model is only available through the Batch API”</h2></div>
+  <div class="panel-body">
+    <p>If an integration returns <code>This model is only available through the Batch API. Use the /api/beta/batches endpoint instead.</code>, the selected route requires asynchronous submission. Retrying the same model on the synchronous endpoint will not resolve that error.</p>
+    <p>Use the create-and-poll example above: send <code>endpoint</code>, <code>model</code>, and the inline <code>requests</code> array to <code>POST /api/beta/batches</code>. Poll the returned batch ID with the same API key until it reaches a terminal status, then inspect each item's response or error. Use a model ID available in the destination gateway's catalog.</p>
+    <p>If you need an immediate or streaming response, select a route that supports synchronous requests instead. Batch submission opts into the encrypted retention described below.</p>
   </div>
 </section>
 

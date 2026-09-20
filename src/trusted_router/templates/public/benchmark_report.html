@@ -19,7 +19,7 @@
   <div class="model-catalog-head"><div><span class="eyebrow">Providers</span><h2>Highest measured provider availability.</h2></div><p>Minimum 30 observations and three TTFT measurements. Ranking uses the 95% Wilson confidence floor, then latency.</p></div>
   <div class="model-table-wrap"><table>
     <thead><tr><th>Provider</th><th>Observations</th><th>Availability</th><th>p50 TTFT</th><th>p95 TTFT</th><th>Throughput</th></tr></thead>
-    <tbody>{% for row in report.top_providers %}<tr><td><a href="/providers/{{ row.provider }}"><strong>{{ row.provider }}</strong></a></td><td>{{ row.observation_count_label }}</td><td>{{ row.availability_label }}</td><td>{{ row.p50_ttft_label }}</td><td>{{ row.p95_ttft_label }}</td><td>{{ row.throughput_label }}</td></tr>{% endfor %}</tbody>
+    <tbody>{% for row in report.top_providers %}<tr><td><a href="/providers/{{ row.provider_page_id }}"><strong>{{ row.provider }}</strong></a></td><td>{{ row.observation_count_label }}</td><td>{{ row.availability_label }}</td><td>{{ row.p50_ttft_label }}</td><td>{{ row.p95_ttft_label }}</td><td>{{ row.throughput_label }}</td></tr>{% endfor %}</tbody>
   </table></div>
 </section>
 
@@ -27,7 +27,7 @@
   <div class="model-catalog-head"><div><span class="eyebrow">Routes</span><h2>Highest measured model-route availability.</h2></div><p>One model can behave differently across providers. These rows keep that distinction visible.</p></div>
   <div class="model-table-wrap"><table>
     <thead><tr><th>Model route</th><th>Provider</th><th>Observations</th><th>Availability</th><th>p50 TTFT</th><th>p95 TTFT</th></tr></thead>
-    <tbody>{% for row in report.top_model_routes %}<tr><td><a href="/models/{{ row.model }}"><code>{{ row.model }}</code></a></td><td><a href="/providers/{{ row.provider }}">{{ row.provider }}</a></td><td>{{ row.observation_count_label }}</td><td>{{ row.availability_label }}</td><td>{{ row.p50_ttft_label }}</td><td>{{ row.p95_ttft_label }}</td></tr>{% endfor %}</tbody>
+    <tbody>{% for row in report.top_model_routes %}<tr><td><a href="/models/{{ row.model_page_id }}"><code>{{ row.model }}</code></a></td><td><a href="/providers/{{ row.provider_page_id }}">{{ row.provider }}</a></td><td>{{ row.observation_count_label }}</td><td>{{ row.availability_label }}</td><td>{{ row.p50_ttft_label }}</td><td>{{ row.p95_ttft_label }}</td></tr>{% endfor %}</tbody>
   </table></div>
 </section>
 
