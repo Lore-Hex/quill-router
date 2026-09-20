@@ -60,8 +60,24 @@ _AMOUNT = r"\\?\$([0-9][0-9,]*(?:\.[0-9]+)?)"
 _PRICE_LABEL = "Price (per Btok / per Mtok)"
 _PRICE_PAIR = re.compile(_AMOUNT + r"\s*/\s*" + _AMOUNT)
 _ANY_DOLLAR_AMOUNT = re.compile(r"\$\s*[0-9]")
-_MODEL_VERSION = re.compile(r"\bjev-[0-9]+\.[0-9]+\.[0-9]+\b")
 _INPUT_ONLY = re.compile(r"charged per input token\.\s+output tokens are free\.", re.IGNORECASE)
+# A versioned model id as a COMPLETE token. Matching `jev-1.13.0` with word
+# boundaries also matched it inside `jev-1.13.0-pro`, so a page that priced
+# Standard and pointed the alias at a dearer Pro variant read as one model. A
+# token runs to the end of the identifier; trailing sentence punctuation is not
+# part of it. An id has all three numeric parts, with or without a suffix: the
+# page also links to `/model-jaggedness/jev-1.13`, a docs slug for the model
+# FAMILY, which is not an id and is not counted. (`jev-latest` and
+# `jev-preview` are aliases: no digit follows.)
+_JEV_TOKEN = re.compile(r"(?<![A-Za-z0-9._-])jev-[0-9][A-Za-z0-9._-]*")
+_ID_SHAPED = re.compile(r"jev-[0-9]+\.[0-9]+\.[0-9]+(?![0-9]).*")
+_PLAIN_VERSION = re.compile(r"jev-[0-9]+\.[0-9]+\.[0-9]+")
+
+
+def _model_versions(text: str) -> list[str]:
+    """Every versioned model id in text, each as its whole identifier."""
+    tokens = (token.rstrip("._-") for token in _JEV_TOKEN.findall(text))
+    return [token for token in tokens if _ID_SHAPED.fullmatch(token)]
 
 
 def _cells(line: str) -> list[str] | None:
@@ -79,7 +95,7 @@ def _aliased_version(page: str) -> str:
         cells = _cells(line)
         if not cells or len(cells) < 2 or cells[0].strip("` ") != UPSTREAM_ALIAS:
             continue
-        named = _MODEL_VERSION.findall(cells[1])
+        named = _model_versions(cells[1])
         if len(named) != 1:
             raise RuntimeError(
                 f"{SLUG}: the {UPSTREAM_ALIAS} row does not name one versioned model"
@@ -140,8 +156,8 @@ def parse(page: object) -> dict[str, ModelPrice]:
         # The pair is two amounts. Any other dollar figure on the page is a
         # price this parser does not understand: a fee, a tier, another model.
         raise RuntimeError(f"{SLUG}: the page holds dollar amounts beyond the one price pair")
-    versions = sorted(set(_MODEL_VERSION.findall(page)))
-    if len(versions) != 1:
+    versions = sorted(set(_model_versions(page)))
+    if len(versions) != 1 or not _PLAIN_VERSION.fullmatch(versions[0]):
         raise RuntimeError(
             f"{SLUG}: the page names {versions or 'no versioned model'}; which one "
             "`jev-latest` costs is only certain when there is exactly one"
@@ -149,7 +165,7 @@ def parse(page: object) -> dict[str, ModelPrice]:
     # The price belongs to the model the pricing table names; the route calls
     # UPSTREAM_ALIAS. Those must be the same model, said so by the page itself.
     aliased = _aliased_version(page)
-    if _MODEL_VERSION.findall(block) != [aliased]:
+    if _model_versions(block) != [aliased]:
         raise RuntimeError(
             f"{SLUG}: the pricing table does not name {aliased}, the model "
             f"{UPSTREAM_ALIAS} points at"

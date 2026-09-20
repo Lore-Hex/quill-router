@@ -27,6 +27,7 @@ TYPESAFE_PAGE = r"""
 | Rate limits                 | 250,000 tokens per second / 1,200 requests per minute                                     |
 
 * **Price:** Charged per input token. Output tokens are free. A Btok is a billion tokens and an Mtok is a million tokens.
+* **Context length:** See [Jev 1.13 jaggedness](/model-jaggedness/jev-1.13) for how accuracy shifts as the state grows.
 
 | Alias         | Points to    | Notes                                         |
 | ------------- | ------------ | --------------------------------------------- |
@@ -214,6 +215,47 @@ def test_typesafe_refuses_a_page_that_does_not_say_what_the_alias_is(
     assert old in TYPESAFE_PAGE, label
     with pytest.raises(RuntimeError):
         typesafe.parse(TYPESAFE_PAGE.replace(old, new))
+
+
+def test_typesafe_compares_whole_model_ids_not_prefixes() -> None:
+    """`jev-1.13.0` is a prefix of `jev-1.13.0-pro`. Matched with word boundaries
+    they were one id, so this page -- Standard priced in the table, the alias
+    moved to a dearer Pro variant -- passed every guard at Standard's price."""
+    pro_page = r"""
+## Jev Standard
+
+| Model | Identifier |
+| --- | --- |
+| Jev Standard | `jev-1.13.0` |
+| Price (per Btok / per Mtok) | \$42 / \$0.042 |
+
+Charged per input token. Output tokens are free.
+
+## Jev Pro
+
+`jev-1.13.0-pro` is the new higher-accuracy variant. Pro costs twice the Standard rate.
+
+| Alias | Points to |
+| --- | --- |
+| `jev-latest` | `jev-1.13.0-pro` |
+"""
+    with pytest.raises(RuntimeError):
+        typesafe.parse(pro_page)
+    assert typesafe._model_versions("`jev-1.13.0-pro` and jev-1.13.0.") == [
+        "jev-1.13.0-pro",
+        "jev-1.13.0",  # the sentence's full stop is not part of the id
+    ]
+    # The real page links to a docs slug for the model FAMILY. Two numeric parts
+    # is not an id; counting it refused the real page while every fixture passed.
+    assert typesafe._model_versions("see (/model-jaggedness/jev-1.13) and `jev-latest`") == []
+    assert typesafe._model_versions("jev-1.14.0 is out") == [
+        "jev-1.14.0"
+    ]  # unbackticked prose counts
+    # A suffixed id is refused even when it is the ONLY one and the alias names
+    # it: this parser knows what `jev-X.Y.Z` costs, not what a variant does.
+    only_pro = TYPESAFE_PAGE.replace("jev-1.13.0", "jev-1.13.0-pro")
+    with pytest.raises(RuntimeError):
+        typesafe.parse(only_pro)
 
 
 def test_the_scraper_checks_the_alias_the_catalog_actually_calls() -> None:
