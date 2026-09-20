@@ -22,6 +22,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
 from functools import lru_cache
@@ -257,6 +258,7 @@ from trusted_router.storage_models import (
     ByokProviderConfig,
     CustomModelMarkupPayout,
     GatewayAuthorization,
+    Reservation,
     SettleOutboxRow,
     TypedFinalizeResult,
     UserModelPayout,
@@ -1975,6 +1977,7 @@ def _authorize_gateway_sync_impl(
             if _is_native_batch_route(body.route_type)
             else None
         )
+        credit_reservation: Reservation | None = None
         if has_credit_candidate:
             try:
                 with gateway_phase("store_ms", after="post_commit_ms"):
@@ -2135,6 +2138,72 @@ def _authorize_gateway_sync_impl(
         except BaseException:
             release_user_model_slot_after_error()
             raise
+        if authorization.id != authorization_id:
+            release_user_model_slot_after_error()
+
+            def refund_replay_hold(
+                refund: Callable[[], Any], event_name: str, reserved_microdollars: int
+            ) -> None:
+                for attempt in range(3):
+                    try:
+                        refund()
+                        return
+                    except Exception as exc:
+                        # Only StoreConflict proves the transaction rolled back.
+                        if isinstance(exc, StoreConflict) and attempt < 2:
+                            time.sleep((0.05, 0.1)[attempt])
+                            continue
+                        outcome = (
+                            "rolled_back_after_retries" if isinstance(exc, StoreConflict)
+                            else "unknown"
+                        )
+                        logger.error(
+                            "%s workspace_id=%s request_id=%s "
+                            "key_hash=%s reserved_microdollars=%s error_class=%s outcome=%s",
+                            event_name,
+                            _log_value(workspace.id),
+                            _log_value(getattr(request.state, "request_id", None)),
+                            _log_value(api_key.hash[:12]),
+                            reserved_microdollars,
+                            type(exc).__name__,
+                            outcome,
+                        )
+                        return
+
+            # Recovery when a refund's outcome is unknown needs attempt-scoped,
+            # durable key holds in the stores; this change does not add them.
+            if key_limit_reservation.reserved_microdollars > 0:
+                refund_replay_hold(
+                    functools.partial(
+                        STORE.refund_key_limit,
+                        api_key.hash,
+                        key_limit_reservation.reserved_microdollars,
+                        usage_type=reservation_usage_type,
+                    ),
+                    "billing.replay_key_refund_failed",
+                    key_limit_reservation.reserved_microdollars,
+                )
+            # Keep credit referenced by the winner. Reclaim only an unreferenced
+            # reservation whose returned ownership proves it belongs to us.
+            if (
+                credit_reservation_id is not None
+                and credit_reservation_id != authorization.credit_reservation_id
+                and credit_reservation is not None
+                and credit_reservation.workspace_id == workspace.id
+                and credit_reservation.key_hash == api_key.hash
+            ):
+                refund_replay_hold(
+                    functools.partial(STORE.refund, credit_reservation_id),
+                    "billing.replay_credit_refund_failed",
+                    credit_reservation.amount_microdollars,
+                )
+            if authorization.idempotency_fingerprint != request_fingerprint:
+                raise api_error(
+                    409,
+                    "Idempotency key was already used for a different gateway request",
+                    ErrorType.CONFLICT,
+                )
+            return _replay_response(authorization)
     byok_config = (
         _get_byok_provider(workspace.id, endpoint.provider, byok_configs) if model_usage_type.is_byok() else None
     )
