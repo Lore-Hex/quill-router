@@ -27,6 +27,11 @@ TYPESAFE_PAGE = r"""
 | Rate limits                 | 250,000 tokens per second / 1,200 requests per minute                                     |
 
 * **Price:** Charged per input token. Output tokens are free. A Btok is a billion tokens and an Mtok is a million tokens.
+
+| Alias         | Points to    | Notes                                         |
+| ------------- | ------------ | --------------------------------------------- |
+| `jev-latest`  | `jev-1.13.0` | The most recent stable, official release.     |
+| `jev-preview` | `jev-1.13.0` | The most recent release, official or not.     |
 """
 
 
@@ -158,6 +163,66 @@ def test_typesafe_refuses_a_header_wider_than_the_price_row() -> None:
 def test_typesafe_needs_exactly_one_model_version_on_the_page() -> None:
     with pytest.raises(RuntimeError, match="no versioned model"):
         typesafe.parse(TYPESAFE_PAGE.replace("jev-1.13.0", "jev"))
+
+
+def test_typesafe_prices_the_model_the_called_alias_points_at() -> None:
+    """The route calls `jev-latest`, so the price that matters is the price of
+    whatever that names. This page passed every earlier guard and returned the
+    LEGACY model's 42,000: one price label, one dollar pair, one versioned id,
+    a clean two-column table -- while prose moved the alias to a model priced
+    in words, with no id and no dollar sign."""
+    legacy_page = r"""
+# Models
+
+## Jev 1.13 (legacy)
+
+| Model | Identifier |
+| --- | --- |
+| Jev 1.13 | `jev-1.13.0` |
+| Price (per Btok / per Mtok) | \$42 / \$0.042 |
+| Context length | 32,000 tokens |
+
+Charged per input token. Output tokens are free.
+
+## Jev 1.14
+
+`jev-latest` now points to Jev 1.14.
+Input price: USD 84 per billion tokens / USD 0.084 per million tokens.
+"""
+    with pytest.raises(RuntimeError, match="does not bind jev-latest"):
+        typesafe.parse(legacy_page)
+
+
+@pytest.mark.parametrize(
+    ("label", "old", "new"),
+    [
+        (
+            "the alias row is gone",
+            "| `jev-latest`  | `jev-1.13.0` |",
+            "| `jev-stable`  | `jev-1.13.0` |",
+        ),
+        (
+            "the alias row names no version",
+            "| `jev-latest`  | `jev-1.13.0` |",
+            "| `jev-latest`  | the newest   |",
+        ),
+    ],
+)
+def test_typesafe_refuses_a_page_that_does_not_say_what_the_alias_is(
+    label: str, old: str, new: str
+) -> None:
+    assert old in TYPESAFE_PAGE, label
+    with pytest.raises(RuntimeError):
+        typesafe.parse(TYPESAFE_PAGE.replace(old, new))
+
+
+def test_the_scraper_checks_the_alias_the_catalog_actually_calls() -> None:
+    # If the catalog ever pins a version instead of `jev-latest`, the page check
+    # has to follow, or it verifies the price of an id nobody sends.
+    from trusted_router.catalog import endpoints_for_model
+
+    upstream = {e.upstream_id for e in endpoints_for_model(JEV) if e.provider == typesafe.SLUG}
+    assert upstream == {typesafe.UPSTREAM_ALIAS}
 
 
 def test_typesafe_refuses_a_non_text_page() -> None:

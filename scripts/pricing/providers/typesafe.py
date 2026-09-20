@@ -15,13 +15,21 @@ change arrives in, and refuses the page if any stops being true:
   * the price label appears exactly once, anywhere;
   * the page holds exactly two dollar amounts, and they are that one pair (so
     no second model's price, no per-request fee, in any table, list or HTML);
-  * exactly one versioned model id (``jev-1.13.0``) is named, so `jev-latest`
-    cannot have moved to a model this page prices differently;
+  * exactly one versioned model id (``jev-1.13.0``) is named anywhere;
+  * the page's alias table binds ``jev-latest`` -- the id this route actually
+    calls -- to that same versioned model, and the pricing table names it too.
+    Counting ids alone was not enough: a page could price a "legacy" table and
+    describe the alias's new target in prose with no id and no dollar sign;
   * the table around the price row is two columns wide on every line;
   * the per-billion and per-million figures agree, and output is still free.
 
 A refusal fails the refresh loudly and leaves the last-known-good price in
 force. That is the point: a human looks at the page.
+
+The threat model is a vendor EDITING its page in a way nobody here anticipated,
+not a vendor writing a page to deceive this parser: a page that binds the alias
+to one model in its table and to another in its prose contradicts itself, and
+no parser can say which half is true.
 """
 
 from __future__ import annotations
@@ -39,6 +47,9 @@ from scripts.pricing.base import ModelPrice, ProviderPricingResult
 SLUG = "typesafe"
 URL = "https://docs.typesafe.ai/models.md"
 EXPECTED_MODELS = ["typesafe-ai/jev"]
+# The upstream id the catalog sends to TypeSafe for this model. The price that
+# matters is the price of whatever THIS names, so the page must say what it is.
+UPSTREAM_ALIAS = "jev-latest"
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3] / "src/trusted_router/data/provider_models/typesafe.json"
 )
@@ -61,7 +72,29 @@ def _cells(line: str) -> list[str] | None:
     return [cell.strip() for cell in row[1:-1].split("|")]
 
 
-def _price_cell(page: str) -> str:
+def _aliased_version(page: str) -> str:
+    """The versioned model the page's alias table binds UPSTREAM_ALIAS to."""
+    targets: set[str] = set()
+    for line in page.splitlines():
+        cells = _cells(line)
+        if not cells or len(cells) < 2 or cells[0].strip("` ") != UPSTREAM_ALIAS:
+            continue
+        named = _MODEL_VERSION.findall(cells[1])
+        if len(named) != 1:
+            raise RuntimeError(
+                f"{SLUG}: the {UPSTREAM_ALIAS} row does not name one versioned model"
+            )
+        targets.add(named[0])
+    if len(targets) != 1:
+        raise RuntimeError(
+            f"{SLUG}: the page does not bind {UPSTREAM_ALIAS} to exactly one versioned model "
+            f"(found {sorted(targets) or 'no alias row'})"
+        )
+    return targets.pop()
+
+
+def _price_block(page: str) -> tuple[str, str]:
+    """(value cell of the price row, text of the table block it sits in)."""
     if page.count(_PRICE_LABEL) != 1:
         # Zero: the table moved. More: TypeSafe prices more than one model, in
         # whatever syntax, and "the" price no longer exists.
@@ -86,7 +119,7 @@ def _price_cell(page: str) -> str:
     label, value = _cells(lines[at]) or ("", "")
     if label != _PRICE_LABEL:
         raise RuntimeError(f"{SLUG}: the price label is not the first cell of its row")
-    return value
+    return value, "\n".join(lines[first : last + 1])
 
 
 def _dollars(text: str) -> Decimal:
@@ -99,7 +132,7 @@ def _dollars(text: str) -> Decimal:
 def parse(page: object) -> dict[str, ModelPrice]:
     if not isinstance(page, str):
         raise RuntimeError(f"{SLUG}: models page is not text")
-    cell = _price_cell(page)
+    cell, block = _price_block(page)
     pairs = _PRICE_PAIR.findall(cell)
     if len(pairs) != 1 or _PRICE_PAIR.sub("", cell).strip():
         raise RuntimeError(f"{SLUG}: the price cell is not a single '$x / $y' pair")
@@ -112,6 +145,14 @@ def parse(page: object) -> dict[str, ModelPrice]:
         raise RuntimeError(
             f"{SLUG}: the page names {versions or 'no versioned model'}; which one "
             "`jev-latest` costs is only certain when there is exactly one"
+        )
+    # The price belongs to the model the pricing table names; the route calls
+    # UPSTREAM_ALIAS. Those must be the same model, said so by the page itself.
+    aliased = _aliased_version(page)
+    if _MODEL_VERSION.findall(block) != [aliased]:
+        raise RuntimeError(
+            f"{SLUG}: the pricing table does not name {aliased}, the model "
+            f"{UPSTREAM_ALIAS} points at"
         )
     rows = pairs
     if not _INPUT_ONLY.search(page):
