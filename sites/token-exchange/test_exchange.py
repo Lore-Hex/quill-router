@@ -1,11 +1,30 @@
 import copy
 import tempfile
 import unittest
+from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from build import build, load_markets, render, tracked_url
 from deploy import domains, url_map
+
+
+class MarketLinkParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.in_markets = False
+        self.links = []
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        if tag == "nav" and attributes.get("aria-label") == "Exchange markets":
+            self.in_markets = True
+        if tag == "a" and self.in_markets:
+            self.links.append(attributes.get("href"))
+
+    def handle_endtag(self, tag):
+        if tag == "nav":
+            self.in_markets = False
 
 
 class ExchangeTests(unittest.TestCase):
@@ -33,6 +52,16 @@ class ExchangeTests(unittest.TestCase):
         market = copy.deepcopy(load_markets()[0])
         market["name"] = '<script>alert("x")</script>'
         self.assertNotIn("<script>alert", render(market, [market], "test"))
+
+    def test_global_page_links_all_regional_exchanges(self):
+        markets = load_markets()
+        global_market = next(m for m in markets if m["domain"] == "thetokenexchange.com")
+        parser = MarketLinkParser()
+        parser.feed(render(global_market, markets, "test"))
+        expected = [f'https://{market["domain"]}/' for market in markets]
+        self.assertCountEqual(parser.links, expected)
+        self.assertEqual(len(set(parser.links)), len(markets))
+        self.assertEqual(len(markets) - 1, 11)
 
     def test_attribution(self):
         market = load_markets()[0]
