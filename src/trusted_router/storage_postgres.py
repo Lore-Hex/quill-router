@@ -2,6 +2,8 @@
 
 The generic ``tr_entities`` table mirrors the Spanner adapter's entity model.
 Money remains in typed tables and is changed only with conditional DML.
+Fresh scoped reservations also insert the full legacy pointer during rollout;
+legacy fallback adoption checks ownership and leaves that pointer unchanged.
 """
 
 from __future__ import annotations
@@ -5894,7 +5896,8 @@ class PostgresStore:
             conn, _RESERVATION_IDEMPOTENCY_SCOPED_KIND, index_id, dict, for_update=True,
         )
         if pointer is None:
-            # 2026-09-19: remove this fallback after the next full drain of the legacy index.
+            # 2026-09-20: stop writing the legacy pointer once every Postgres plane runs
+            # this version; then remove the read fallback after the legacy index drains.
             legacy = self._read_entity_tx(
                 conn, _RESERVATION_IDEMPOTENCY_KIND, idempotency_key, dict,
             )
@@ -5979,9 +5982,22 @@ class PostgresStore:
                 if terminal or attempt == 1:
                     # The scoped read locked a terminal pointer or one without an owned reservation.
                     self._write_entity_tx(conn, _RESERVATION_IDEMPOTENCY_SCOPED_KIND, index_id, reservation)
+                    if terminal:
+                        # This cold path touches the gateway pointer after the reservation pointer.
+                        gateway_id = _gateway_idempotency_id(workspace_id, key_hash, idempotency_key or "")
+                        gateway = self._read_entity_tx(
+                            conn, _GATEWAY_IDEMPOTENCY_KIND, gateway_id, dict, for_update=True,
+                        )
+                        if gateway and gateway.get("reason") == "billing_paused" and "authorization_id" not in gateway:
+                            self._delete_entity_tx(conn, _GATEWAY_IDEMPOTENCY_KIND, gateway_id)
                     break
                 if self._insert_entity_once_tx(conn, _RESERVATION_IDEMPOTENCY_SCOPED_KIND, index_id, reservation):
                     break
+
+            if idempotency_key is not None:
+                # 2026-09-20: stop writing the legacy pointer once every Postgres plane runs
+                # this version; then remove the read fallback after the legacy index drains.
+                self._insert_entity_once_tx(conn, _RESERVATION_IDEMPOTENCY_KIND, idempotency_key, reservation)
 
             inserted = self._insert_entity_once_tx(
                 conn,

@@ -194,7 +194,7 @@ def legacy_pause_epoch(store: Any, workspace_id: str) -> int:
 
 
 def reject_postgres_reservation(conn: Any, store: Any, reservation_id: str) -> None:
-    """Finalize a rejected hold once and retire its pointer in the same transaction."""
+    """Finalize once and retire the scoped pointer, preserving the rollout's legacy row."""
     from trusted_router.storage_models import Reservation
     from trusted_router.storage_postgres import (
         _RESERVATION_FINALIZATION_KIND,

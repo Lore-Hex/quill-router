@@ -355,6 +355,7 @@ class InMemoryApiKeys:
                     entry[1] += cost_microdollars
 
     # ── Credit reservations ─────────────────────────────────────────────
+    # InMemoryStore owns terminal takeover and restores its index if reserve fails.
     def reserve(
         self,
         workspace_id: str,
