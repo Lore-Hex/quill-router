@@ -1,6 +1,7 @@
 {% extends "public/_base.html" %}
 {% from "public/_provider_privacy_badges.html" import provider_privacy_badges %}
 {% from "public/_provider_identity.html" import provider_identity %}
+{% from "public/_decide_example.html" import decide_curl %}
 {% block body %}
 <section class="panel">
   <div class="panel-head">
@@ -208,6 +209,10 @@
         </ul>
       </div>
     </div>
+    {% elif section == "api" and not model.supports_chat and model.supports_decide %}
+    <p class="muted-copy">A decision model answers <span class="mono">POST /v1/decide</span>: one state, a set of typed questions, a verified answer to each. It does not take chat requests. <a href="/docs/decide">The API, the models, the numbers</a>.</p>
+    <pre class="code-block"><code>{{ decide_curl(model.id, api_base_url) }}</code></pre>
+    <p class="signup-foot">Endpoint metadata: <span class="mono">{{ api_base_url }}/models/{{ model.id }}/endpoints</span></p>
     {% elif section == "api" %}
     <p class="muted-copy">Use the same OpenAI compatible clients you already use. Only the base URL and model change.</p>
     <pre class="code-block"><code>from openai import OpenAI

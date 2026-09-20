@@ -84,6 +84,7 @@ from trusted_router.catalog_data import (
     ZEUS_CODE_MODEL_ID,
     ZEUS_MODEL_ID,
     Model,
+    offers_chat,
 )
 from trusted_router.catalog_energy import GREEN_MODEL_ID, renewable_provider_slugs
 from trusted_router.catalog_privacy import (
@@ -521,7 +522,7 @@ def _meta_route_kind(model_id: str) -> str:
 def _is_regular_chat_model(model: Model) -> bool:
     return (
         model.id not in META_MODEL_IDS
-        and model.supports_chat
+        and offers_chat(model)
         and (model.provider, model.id) not in INPUT_ONLY_PROVIDER_MODELS
     )
 

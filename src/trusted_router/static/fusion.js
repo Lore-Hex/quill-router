@@ -365,6 +365,9 @@
     const q = pickerQuery.toLowerCase();
     let filtered = MODELS.filter((model) => {
       if (model.internal_only) return false;
+      // A synthesis panel is made of chat models. The catalog also lists
+      // embedding, image, video and decision models.
+      if (model.supports_chat === false) return false;
       if (q && !model.id.toLowerCase().includes(q) && !(model.name || "").toLowerCase().includes(q)) {
         return false;
       }

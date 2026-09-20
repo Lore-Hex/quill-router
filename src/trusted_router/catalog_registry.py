@@ -62,6 +62,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     MISTRAL_LARGE_MODEL_ID,
     MONITOR_MODEL_ID,
     NAMED_DECISION_MODEL_PROVIDERS,
+    NAMED_DECISION_MODELS,
     OPEN_PATCHER_A1_MODEL_ID,
     OPEN_PATCHER_FAST1_MODEL_ID,
     OPEN_PATCHER_G1_MODEL_ID,
@@ -131,8 +132,6 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     SYNTH_PROMETHEUS_3_MODEL_ORDER,
     SYNTH_QUALITY_1M_MODEL_ORDER,
     SYNTH_QUALITY_MODEL_ORDER,
-    TREV_1_0_BACKING_MODEL_ID,
-    TREV_1_0_MODEL_ID,
     US_PROVIDER_ONLY_MODEL_IDS,
     ZDR_MODEL_ID,
     ZEUS_1_0_MINI_MODEL_ID,
@@ -929,27 +928,34 @@ MODELS[ARCHIMEDES_1_0_MODEL_ID] = replace(
     byok_available=False,
     hidden_public_metadata=True,
 )
-# Trev is a one-model private proxy like Archimedes, but a DECISION model: it
-# answers POST /v1/decide only, and only on its pinned host chain. Prices are
-# filled in below, once endpoints exist, from that chain rather than from the
-# backing model's cheapest host.
+# A named decision model is a one-model private proxy like Archimedes, but a
+# DECISION model: it answers POST /v1/decide only, and only on its pinned host
+# chain. Prices are filled in below, once endpoints exist, from that chain
+# rather than from the backing model's cheapest host.
+#
 # This runs at import, and the catalog it reads is refreshed hourly without a
-# human in the loop. If the backing model ever left the catalog altogether, a
+# human in the loop. If a backing model ever left the catalog altogether, a
 # bare MODELS[...] here would stop the whole control plane from starting over
-# one model. Without its backing model trev simply is not offered: authorize
+# one model. Without its backing model a name simply is not offered: authorize
 # answers "unknown model" for it and everything else serves.
-_trev_backing_model = MODELS.get(TREV_1_0_BACKING_MODEL_ID)
-if _trev_backing_model is not None:
-    MODELS[TREV_1_0_MODEL_ID] = replace(
-        _trev_backing_model,
-        id=TREV_1_0_MODEL_ID,
-        name="TrustedRouter Trev 1.0",
+for _named in NAMED_DECISION_MODELS:
+    _named_backing_model = MODELS.get(_named.backing_model_id)
+    if _named_backing_model is None:
+        continue
+    MODELS[_named.id] = replace(
+        _named_backing_model,
+        id=_named.id,
+        name=_named.name,
         provider="trustedrouter",
         upstream_id=None,
         supports_messages=False,
         supports_decide=True,
         input_modalities=("text",),
         output_modalities=("decision",),
+        # What POST /v1/decide takes for a name, not the backing chat model's
+        # parameter list: tools, temperature and the rest mean nothing here, and
+        # the exact list is a fingerprint of the model behind the name.
+        supported_parameters=("max_tokens", "reasoning"),
         prepaid_available=True,
         byok_available=False,
         hidden_public_metadata=True,

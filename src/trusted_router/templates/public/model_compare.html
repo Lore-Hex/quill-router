@@ -1,5 +1,6 @@
 {% extends "public/_base.html" %}
 {% from "public/_provider_identity.html" import provider_identity %}
+{% from "public/_decide_example.html" import decide_curl %}
 {% block body %}
 <section class="public-proof-strip">
   <div><strong>Compare routes</strong><span>Providers, price, context, and policy posture in one view.</span></div>
@@ -72,11 +73,13 @@
     <span>Modes</span>
     <span>
       {% if left.supports_chat %}<span class="pill">chat</span>{% endif %}
+      {% if left.supports_decide %}<span class="pill">decide</span>{% endif %}
       {% if left.supports_messages %}<span class="pill">messages</span>{% endif %}
       {% if left.supports_embeddings %}<span class="pill">embeddings</span>{% endif %}
     </span>
     <span>
       {% if right.supports_chat %}<span class="pill">chat</span>{% endif %}
+      {% if right.supports_decide %}<span class="pill">decide</span>{% endif %}
       {% if right.supports_messages %}<span class="pill">messages</span>{% endif %}
       {% if right.supports_embeddings %}<span class="pill">embeddings</span>{% endif %}
     </span>
@@ -140,6 +143,10 @@
     <h2>Pick a default model. Keep fallback enabled.</h2>
     <p>TrustedRouter is useful when you know the model you want, but still need provider rollover, budget limits, usage records, and a prompt path you can verify.</p>
   </div>
+  {# The example has to be a call the model accepts: a decision model answers
+     POST /v1/decide and refuses chat; an embedding, image or video model has
+     its own route and gets no example here rather than a wrong one. #}
+  {% if left.supports_chat %}
   <div class="copy-terminal">
     <div class="code-head"><span>OpenAI client</span><span>Python</span></div>
     <pre><code>client = OpenAI(
@@ -152,5 +159,12 @@ response = client.chat.completions.create(
     messages=messages,
 )</code></pre>
   </div>
+  {% elif left.supports_decide %}
+  <div class="copy-terminal">
+    <div class="code-head"><span>POST /v1/decide</span><span>curl</span></div>
+    <pre><code>{{ decide_curl(left.id, api_base_url) }}</code></pre>
+    <p><a href="/docs/decide">Decision models: the API, the models, the numbers</a></p>
+  </div>
+  {% endif %}
 </section>
 {% endblock %}

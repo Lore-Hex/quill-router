@@ -40,6 +40,7 @@ from trusted_router.catalog import (
     endpoints_for_model,
     model_open_weights,
     model_to_openrouter_shape,
+    offers_chat,
 )
 from trusted_router.measured import measured_snapshot
 from trusted_router.storage_models import utcnow
@@ -197,7 +198,7 @@ def _public_chat_models() -> list[Model]:
             model
             for model in MODELS.values()
             if model.id not in META_MODEL_IDS
-            and model.supports_chat
+            and offers_chat(model)
             and not model.hidden_public_metadata
             and endpoints_for_model(model.id)
         ),

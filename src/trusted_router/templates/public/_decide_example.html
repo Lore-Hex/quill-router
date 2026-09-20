@@ -1,0 +1,15 @@
+{# The smallest POST /v1/decide call for one model. Shared by the pages that
+   show "how to call this model", so a decision model never gets a chat
+   example: it answers this route and refuses that one. #}
+{% macro decide_curl(model_id, api_base_url) -%}
+curl {{ api_base_url }}/decide \
+  -H "Authorization: Bearer sk-tr-v1-..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "{{ model_id }}",
+    "state": "Customer: I was charged twice for order A-1.",
+    "questions": {
+      "refund": {"type": "boolean", "instructions": "Is a refund requested?"}
+    }
+  }'
+{%- endmacro %}
