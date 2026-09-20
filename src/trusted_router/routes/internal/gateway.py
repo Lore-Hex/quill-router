@@ -2212,34 +2212,25 @@ def _authorize_gateway_sync_impl(
             def refund_replay_hold(
                 refund: Callable[[], Any], event_name: str, reserved_microdollars: int
             ) -> None:
-                for attempt in range(3):
-                    try:
-                        refund()
-                        return
-                    except Exception as exc:
-                        # Only StoreConflict proves the transaction rolled back.
-                        if isinstance(exc, StoreConflict) and attempt < 2:
-                            time.sleep((0.05, 0.1)[attempt])
-                            continue
-                        outcome = (
-                            "rolled_back_after_retries" if isinstance(exc, StoreConflict)
-                            else "unknown"
-                        )
-                        logger.error(
-                            "%s workspace_id=%s request_id=%s "
-                            "key_hash=%s reserved_microdollars=%s error_class=%s outcome=%s",
-                            event_name,
-                            _log_value(workspace.id),
-                            _log_value(getattr(request.state, "request_id", None)),
-                            _log_value(api_key.hash[:12]),
-                            reserved_microdollars,
-                            type(exc).__name__,
-                            outcome,
-                        )
-                        return
+                try:
+                    refund()
+                except Exception as exc:
+                    outcome = "rolled_back" if isinstance(exc, StoreConflict) else "unknown"
+                    logger.error(
+                        "%s workspace_id=%s request_id=%s "
+                        "key_hash=%s reserved_microdollars=%s error_class=%s outcome=%s",
+                        event_name,
+                        _log_value(workspace.id),
+                        _log_value(getattr(request.state, "request_id", None)),
+                        _log_value(api_key.hash[:12]),
+                        reserved_microdollars,
+                        type(exc).__name__,
+                        outcome,
+                    )
 
-            # Recovery when a refund's outcome is unknown needs attempt-scoped,
-            # durable key holds in the stores; this change does not add them.
+            # Stores own the conflict retry budget; an unknown commit outcome makes
+            # a blind retry risk double refunds. Durable recovery needs attempt-scoped
+            # key holds in the stores, which this change does not add.
             if key_limit_reservation.reserved_microdollars > 0:
                 refund_replay_hold(
                     functools.partial(
@@ -2251,8 +2242,9 @@ def _authorize_gateway_sync_impl(
                     "billing.replay_key_refund_failed",
                     key_limit_reservation.reserved_microdollars,
                 )
-            # Keep credit referenced by the winner. Reclaim only an unreferenced
-            # reservation whose returned ownership proves it belongs to us.
+            # Only this workspace/key/idempotency slot can receive our reservation;
+            # the winner owns that slot forever (pointers are never deleted, replays
+            # write nothing), so no later attempt can attach an unreferenced hold.
             if (
                 credit_reservation_id is not None
                 and credit_reservation_id != authorization.credit_reservation_id

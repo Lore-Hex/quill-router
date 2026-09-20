@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 
@@ -101,8 +102,8 @@ def race(backend: Any, request: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
     return run
 
 
-@pytest.fixture
-def deferred_race(backend: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
+@pytest.fixture(params=["before_reserve", "after_reserve"])
+def deferred_race(backend: Any, request: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
     store, conn, workspace_id, key_hash = backend
     settings = Settings(environment="test", federation_deferred_settlement_enabled=True)
     # Simulate eligibility of a federated key without replacing the local fixture's identity.
@@ -111,13 +112,17 @@ def deferred_race(backend: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
         lambda settings, api_key: settings.federation_deferred_settlement_enabled,
     )
 
-    def run(*, foreign_field: str | None = None) -> Any:
+    def run(
+        *, foreign_field: str | None = None,
+        on_stage: Callable[[str, Reservation | None], None] = lambda stage, reservation: None,
+    ) -> Any:
         balance = live_credit_summary(workspace_id, store=store)
         assert balance is not None
         assert store.debit_workspace_guarded(
             workspace_id, balance["total_credits"], "empty-local-credit", kind="test"
         ) == "accepted"
         original = type(store).reserve
+        original_create = type(store).create_gateway_authorization
         body = _body(key_hash)
         winner: dict[str, Any] = {}
         entered = False
@@ -127,17 +132,40 @@ def deferred_race(backend: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
             if entered:
                 return original(self, *args, **kwargs)
             entered = True
-            # B passed the empty pre-probe but has not reserved credit. A has
-            # no local credit and wins with a deferred, reservation-free authorization.
+            reservation: Reservation | None = None
+
+            def reserve_b() -> None:
+                nonlocal reservation
+                assert store.claim_credit_transfer(
+                    transfer_id="credit-arrives", workspace_id=workspace_id,
+                    amount_microdollars=10_000_000, source="home", accept=True,
+                ) == "accepted"
+                on_stage("before_reserve", None)
+                before = _holds(backend)[1]
+                reservation = original(self, *args, **kwargs)
+                assert _holds(backend)[1] == before + reservation.amount_microdollars
+                assert reservation.amount_microdollars > 0
+                on_stage("before_create", reservation)
+
+            def create_a(self: Any, *a: Any, **kw: Any) -> Any:
+                if kw["key_hash"] == key_hash and kw["settlement"] == "deferred_home":
+                    assert kw["credit_reservation_id"] is None
+                    assert _holds(backend)[1] == 0
+                    if request.param == "after_reserve":
+                        reserve_b()
+                return original_create(self, *a, **kw)
+
+            # A fails its credit reserve before the transfer. Its deferred create
+            # lands either before or after B acquires a local credit reservation.
+            monkeypatch.setattr(type(store), "create_gateway_authorization", create_a)
             winner.update(_authorize(body, settings))
             authorization = store.get_gateway_authorization(winner["authorization_id"])
             assert authorization is not None
             assert authorization.settlement == "deferred_home"
             assert authorization.credit_reservation_id is None
-            assert _holds(backend)[1] == 0
-            store.credit_workspace_once(workspace_id, 10_000_000, "credit-arrives")
-            reservation = original(self, *args, **kwargs)
-            assert _holds(backend)[1] == reservation.amount_microdollars > 0
+            if request.param == "before_reserve":
+                reserve_b()
+            assert reservation is not None
             if foreign_field is not None:
                 # Return foreign ownership metadata as if reserve found another
                 # tenant's keyed reservation; the replay must not refund it.
@@ -146,6 +174,7 @@ def deferred_race(backend: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
 
         monkeypatch.setattr(type(store), "reserve", complete_deferred_a)
         loser = _authorize(body, settings)
+        on_stage("after_reclaim", None)
         authorization = store.get_gateway_authorization(winner["authorization_id"])
         assert authorization is not None
         assert loser["idempotent_replay"] is True
@@ -191,8 +220,19 @@ def _holds(result: Any) -> tuple[int, int]:
     return reserved, balance["reserved"]
 
 
+def _assert_winner_holds(result: Any) -> None:
+    authorization = result[-1]
+    assert authorization.key_reserved_microdollars > 0
+    assert authorization.estimated_microdollars > 0
+    assert _holds(result) == (
+        authorization.key_reserved_microdollars, authorization.estimated_microdollars,
+    )
+
+
 def test_concurrent_replay_keeps_one_authorization(race: Any) -> None:
-    store, conn, workspace_id, key_hash, winner, loser, authorization = race()
+    result = race()
+    store, conn, workspace_id, key_hash, winner, loser, authorization = result
+    _assert_winner_holds(result)
     assert not isinstance(loser, HTTPException)
     if conn is None:
         assert len(store.api_keys.gateway_authorizations) == 1
@@ -205,14 +245,13 @@ def test_concurrent_replay_keeps_one_authorization(race: Any) -> None:
 
 
 def test_concurrent_replay_refunds_loser_key_hold(race: Any) -> None:
-    result = race()
-    assert _holds(result)[0] == result[-1].estimated_microdollars > 0
+    _assert_winner_holds(race())
 
 
 def test_concurrent_replay_preserves_winner_credit_hold(race: Any) -> None:
     result = race()
     store, conn, *_, authorization = result
-    assert _holds(result)[1] == authorization.estimated_microdollars > 0
+    _assert_winner_holds(result)
     reservation_id = authorization.credit_reservation_id
     assert reservation_id is not None
     if conn is None:
@@ -257,12 +296,146 @@ def test_concurrent_replay_preserves_foreign_credit(
     assert _holds(result) == (authorization.estimated_microdollars,) * 2
 
 
-def test_concurrent_replay_returns_stored_response(race: Any) -> None:
-    *_, winner, loser, _ = race()
+@pytest.mark.parametrize("other_workspace", [False, True])
+@pytest.mark.parametrize("contender_stage", ["before_reserve", "before_create", "after_reclaim"])
+def test_deferred_reclaim_cannot_release_another_callers_reservation(
+    deferred_race: Any, backend: Any, monkeypatch: pytest.MonkeyPatch,
+    other_workspace: bool, contender_stage: str,
+) -> None:
+    store, conn, workspace_id, key_hash = backend
+    owner = store.get_key_by_hash(key_hash).creator_user_id
+    contender_workspace = workspace_id
+    if other_workspace:
+        contender_workspace = store.create_workspace(
+            owner, "contender", trial_credit_microdollars=0,
+        ).id
+        store.credit_workspace_once(contender_workspace, 10_000_000, "contender-seed")
+    _, contender_key = store.create_api_key(
+        workspace_id=contender_workspace, name="contender", creator_user_id=owner,
+        limit_microdollars=5_000_000,
+    )
+    contender_backend = store, conn, contender_workspace, contender_key.hash
+    contender: Any = None
+    orphan: Reservation | None = None
+    original_reserve = type(store).reserve
+    original_refund = type(store).refund
+    reservations: list[Reservation] = []
+    refunds: list[str] = []
+
+    def record_reserve(self: Any, *args: Any, **kwargs: Any) -> Reservation:
+        reservation = original_reserve(self, *args, **kwargs)
+        if reservation.key_hash == contender_key.hash:
+            reservations.append(reservation)
+        return reservation
+
+    def record_refund(self: Any, reservation_id: str) -> Any:
+        refunds.append(reservation_id)
+        before = _holds(contender_backend)
+        result = original_refund(self, reservation_id)
+        if contender is not None:
+            # Shared workspaces lose only B's escrow; C's key hold stays intact.
+            assert orphan is not None
+            assert before == (
+                contender.key_reserved_microdollars,
+                contender.estimated_microdollars + (
+                    0 if other_workspace else orphan.amount_microdollars
+                ),
+            )
+            assert _holds(contender_backend) == (
+                contender.key_reserved_microdollars, contender.estimated_microdollars,
+            )
+        return result
+
+    def at_stage(stage: str, reservation: Reservation | None) -> None:
+        nonlocal contender, orphan
+        if reservation is not None:
+            orphan = reservation
+        if stage == contender_stage:
+            response = _authorize(_body(contender_key.hash))
+            assert response["idempotent_replay"] is False
+            contender = store.get_gateway_authorization(response["authorization_id"])
+            assert contender is not None and not contender.settled
+            assert contender.settlement == "local"
+            assert len(reservations) == 1
+            own_reservation = reservations[0]
+            assert own_reservation.workspace_id == contender_workspace
+            assert own_reservation.key_hash == contender_key.hash
+            assert contender.credit_reservation_id == own_reservation.id
+            assert own_reservation.amount_microdollars == contender.estimated_microdollars > 0
+            expected_credit = contender.estimated_microdollars
+            if stage == "before_create" and not other_workspace:
+                assert orphan is not None
+                expected_credit += orphan.amount_microdollars
+            assert _holds(contender_backend) == (contender.key_reserved_microdollars, expected_credit)
+
+    monkeypatch.setattr(type(store), "reserve", record_reserve)
+    monkeypatch.setattr(type(store), "refund", record_refund)
+    result = deferred_race(on_stage=at_stage)
+    winner = result[-1]
+    assert contender is not None and orphan is not None
+    assert contender.credit_reservation_id != orphan.id
+    assert refunds == [orphan.id]
+    assert _holds(contender_backend) == (
+        contender.key_reserved_microdollars, contender.estimated_microdollars,
+    )
+    assert _holds(backend) == (
+        winner.key_reserved_microdollars,
+        0 if other_workspace else contender.estimated_microdollars,
+    )
+    for authorization in (winner, contender):
+        assert store.finalize_gateway_authorization(
+            authorization.id, success=True, actual_microdollars=authorization.estimated_microdollars,
+            selected_usage_type=authorization.usage_type,
+        )
+    assert _holds(backend) == _holds(contender_backend) == (0, 0)
+
+
+def test_concurrent_replay_returns_stored_response(
+    race: Any, backend: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, *_ = backend
+    original_routes = gateway.chat_route_endpoint_candidates
+    original_create = type(store).create_gateway_authorization
+    routes: list[Any] = []
+    attempts: list[dict[str, Any]] = []
+
+    def drifting_routes(*args: Any, **kwargs: Any) -> Any:
+        candidates = (
+            original_routes({"model": "openai/gpt-4.1-mini"}, Settings(environment="test"))
+            if not routes else original_routes(*args, **kwargs)
+        )
+        routes.append(candidates)
+        return candidates
+
+    def record_create(self: Any, **kwargs: Any) -> Any:
+        attempts.append(kwargs)
+        return original_create(self, **kwargs)
+
+    monkeypatch.setattr(gateway, "chat_route_endpoint_candidates", drifting_routes)
+    monkeypatch.setattr(
+        gateway, "_endpoint_cost_microdollars",
+        lambda *args, **kwargs: 2_000 if len(routes) == 1 else 1_000,
+    )
+    monkeypatch.setattr(type(store), "create_gateway_authorization", record_create)
+    *_, winner, loser, authorization = race()
+    assert len(routes) == len(attempts) == 2
+    loser_attempt = next(a for a in attempts if a["authorization_id"] != authorization.id)
+    assert loser_attempt["estimated_microdollars"] != authorization.estimated_microdollars
+    assert loser_attempt["candidate_endpoint_ids"] != authorization.candidate_endpoint_ids
+    for field in ("model_id", "provider", "endpoint_id"):
+        assert loser_attempt[field] != getattr(authorization, field)
     assert not isinstance(loser, HTTPException)
     assert loser["idempotent_replay"] is True
-    assert loser["authorization_id"] == winner["authorization_id"]
-    assert loser["credit_reservation_id"] == winner["credit_reservation_id"]
+    expected = {
+        "authorization_id": authorization.id,
+        "estimated_cost_microdollars": authorization.estimated_microdollars,
+        "model": authorization.model_id,
+        "provider": authorization.provider,
+        "endpoint_id": authorization.endpoint_id,
+        "credit_reservation_id": authorization.credit_reservation_id,
+    }
+    for field, value in expected.items():
+        assert loser[field] == winner[field] == value
 
 
 def test_concurrent_replay_settlement_leaves_no_holds(race: Any) -> None:
@@ -326,6 +499,105 @@ def test_create_conflict_retry_adopts_credit_reservation(
     assert reservation_ids == [authorization.credit_reservation_id] * 2
 
 
+def test_failed_create_reservation_reclaimed_once_when_retry_replays_deferred_winner(
+    backend: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, _, workspace_id, key_hash = backend
+    body = _body(key_hash)
+    unrelated_response = _authorize(body.model_copy(update={"idempotency_key": "unrelated"}))
+    unrelated = store.get_gateway_authorization(unrelated_response["authorization_id"])
+    assert unrelated is not None
+    baseline = _holds(backend)[1]
+    assert baseline == unrelated.estimated_microdollars > 0
+    balance = live_credit_summary(workspace_id, store=store)
+    assert balance is not None
+    assert store.debit_workspace_guarded(
+        workspace_id, balance["total_credits"] - balance["total_usage"] - baseline,
+        "leave-only-unrelated-escrow", kind="test",
+    ) == "accepted"
+    settings = Settings(environment="test", federation_deferred_settlement_enabled=True)
+    monkeypatch.setattr(gateway, "_deferred_settlement_applies", lambda settings, api_key: True)
+    original_create = type(store).create_gateway_authorization
+    original_reserve = type(store).reserve
+    original_refund = type(store).refund
+    reservations: list[Reservation] = []
+    refunds: list[str] = []
+    credit_samples = [baseline]
+    winner_args: dict[str, Any] = {}
+    phase = "winner"
+
+    def record_reserve(self: Any, *args: Any, **kwargs: Any) -> Reservation:
+        reservation = original_reserve(self, *args, **kwargs)
+        reservations.append(reservation)
+        credit_samples.append(_holds(backend)[1])
+        return reservation
+
+    def record_refund(self: Any, reservation_id: str) -> Any:
+        refunds.append(reservation_id)
+        credit_samples.append(_holds(backend)[1])
+        result = original_refund(self, reservation_id)
+        credit_samples.append(_holds(backend)[1])
+        return result
+
+    def staged_create(self: Any, **kwargs: Any) -> Any:
+        nonlocal phase
+        if phase == "first_b":
+            raise StoreConflict("B's first create rolled back")
+        if phase == "retry_b":
+            # A's deferred reserve predates the transfer, but its create lands
+            # only after B's failed create and B's retry of the same reservation.
+            original_create(self, **winner_args)
+            return original_create(self, **kwargs)
+        assert phase == "winner"
+        winner_args.update(kwargs)
+        assert kwargs["settlement"] == "deferred_home"
+        assert kwargs["credit_reservation_id"] is None
+        assert store.claim_credit_transfer(
+            transfer_id="credit-arrives", workspace_id=workspace_id,
+            amount_microdollars=10_000_000, source="home", accept=True,
+        ) == "accepted"
+        phase = "first_b"
+        with pytest.raises(HTTPException) as failed:
+            _authorize(body, settings)
+        assert failed.value.status_code == 503
+        assert len(reservations) == 1
+        assert _holds(backend) == (
+            unrelated.key_reserved_microdollars + kwargs["key_reserved_microdollars"],
+            baseline + reservations[0].amount_microdollars,
+        )
+        phase = "retry_b"
+        replay = _authorize(body, settings)
+        assert replay["idempotent_replay"] is True
+        assert replay["authorization_id"] == kwargs["authorization_id"]
+        assert replay["credit_reservation_id"] is None
+        assert len(reservations) == 2 and reservations[0].id == reservations[1].id
+        assert refunds == [reservations[0].id]
+        expected_holds = (
+            unrelated.key_reserved_microdollars + kwargs["key_reserved_microdollars"], baseline,
+        )
+        assert _holds(backend) == expected_holds
+        phase = "replayed"
+        assert _authorize(body, settings)["authorization_id"] == kwargs["authorization_id"]
+        assert len(reservations) == 2
+        assert refunds == [reservations[0].id]
+        assert _holds(backend) == expected_holds
+        assert min(credit_samples) >= baseline
+        return store.get_gateway_authorization(kwargs["authorization_id"])
+
+    monkeypatch.setattr(type(store), "reserve", record_reserve)
+    monkeypatch.setattr(type(store), "refund", record_refund)
+    monkeypatch.setattr(type(store), "create_gateway_authorization", staged_create)
+    response = _authorize(body, settings)
+    winner = store.get_gateway_authorization(response["authorization_id"])
+    assert winner is not None
+    for authorization in (winner, unrelated):
+        assert store.finalize_gateway_authorization(
+            authorization.id, success=True, actual_microdollars=authorization.estimated_microdollars,
+            selected_usage_type=authorization.usage_type,
+        )
+    assert _holds(backend) == (0, 0)
+
+
 def test_concurrent_replay_with_only_one_estimate_of_credit(race: Any) -> None:
     result = race(last_credits=True)
     *_, winner, loser, authorization = result
@@ -336,13 +608,14 @@ def test_concurrent_replay_with_only_one_estimate_of_credit(race: Any) -> None:
 
 
 @pytest.mark.parametrize("mismatch", [False, True])
-@pytest.mark.parametrize("error_type", [StoreConflict, RuntimeError])
-def test_replay_key_refund_failure_logs_once_and_preserves_response(
+@pytest.mark.parametrize("error_type", [None, StoreConflict, RuntimeError])
+def test_replay_key_refund_called_once_and_preserves_response(
     race: Any, backend: Any, monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture, mismatch: bool, error_type: type[Exception],
+    caplog: pytest.LogCaptureFixture, mismatch: bool, error_type: type[Exception] | None,
 ) -> None:
     store, _, workspace_id, key_hash = backend
     calls: list[tuple[str, int, Any]] = []
+    original = type(store).refund_key_limit
     sleeps: list[float] = []
     monkeypatch.setattr(gateway.time, "sleep", sleeps.append)
 
@@ -350,7 +623,9 @@ def test_replay_key_refund_failure_logs_once_and_preserves_response(
         self: Any, refunded_key: str, amount: int, *, usage_type: Any
     ) -> None:
         calls.append((refunded_key, amount, usage_type))
-        raise error_type(f"private request content: racing-request {key_hash}\nsecret")
+        if error_type is not None:
+            raise error_type(f"private request content: racing-request {key_hash}\nsecret")
+        original(self, refunded_key, amount, usage_type=usage_type)
 
     monkeypatch.setattr(type(store), "refund_key_limit", fail_refund)
     with caplog.at_level(logging.ERROR, logger=gateway.logger.name):
@@ -364,14 +639,16 @@ def test_replay_key_refund_failure_logs_once_and_preserves_response(
         assert loser["idempotent_replay"] is True
         assert loser["authorization_id"] == winner["authorization_id"]
     estimate = authorization.estimated_microdollars
-    conflicts = error_type is StoreConflict
-    assert calls == [(key_hash, estimate, authorization.usage_type)] * (3 if conflicts else 1)
-    assert sleeps == ([0.05, 0.1] if conflicts else [])
-    assert _holds(result) == (estimate * 2, estimate)
+    assert calls == [(key_hash, authorization.key_reserved_microdollars, authorization.usage_type)]
+    assert sleeps == []
+    assert _holds(result) == (estimate * (2 if error_type else 1), estimate)
     records = [record for record in caplog.records if record.name == gateway.logger.name]
+    if error_type is None:
+        assert records == []
+        return
     assert len(records) == 1
     assert records[0].levelno == logging.ERROR
-    outcome = "rolled_back_after_retries" if conflicts else "unknown"
+    outcome = "rolled_back" if error_type is StoreConflict else "unknown"
     assert records[0].getMessage() == (
         f"billing.replay_key_refund_failed workspace_id={workspace_id} "
         f"request_id=replay-test-request key_hash={key_hash[:12]} "
@@ -380,39 +657,10 @@ def test_replay_key_refund_failure_logs_once_and_preserves_response(
     assert records[0].exc_info is None
 
 
-@pytest.mark.parametrize("conflict_count", [1, 2])
-def test_replay_key_refund_retries_rolled_back_conflicts(
-    race: Any, backend: Any, monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture, conflict_count: int,
-) -> None:
-    store, *_ = backend
-    original = type(store).refund_key_limit
-    calls = 0
-    sleeps: list[float] = []
-    monkeypatch.setattr(gateway.time, "sleep", sleeps.append)
-
-    def conflict_then_refund(self: Any, *args: Any, **kwargs: Any) -> None:
-        nonlocal calls
-        calls += 1
-        if calls <= conflict_count:
-            raise StoreConflict("rolled back")
-        original(self, *args, **kwargs)
-
-    monkeypatch.setattr(type(store), "refund_key_limit", conflict_then_refund)
-    with caplog.at_level(logging.ERROR, logger=gateway.logger.name):
-        result = race()
-    *_, loser, authorization = result
-    assert loser["idempotent_replay"] is True
-    assert calls == conflict_count + 1
-    assert sleeps == [0.05, 0.1][:conflict_count]
-    assert _holds(result) == (authorization.estimated_microdollars,) * 2
-    assert not [record for record in caplog.records if record.name == gateway.logger.name]
-
-
-@pytest.mark.parametrize("failure", ["conflict_once", "conflict_twice", "conflict_always", "unknown"])
-def test_replay_credit_refund_retry_policy(
+@pytest.mark.parametrize("error_type", [None, StoreConflict, RuntimeError])
+def test_replay_credit_refund_called_once_and_preserves_response(
     deferred_race: Any, backend: Any, monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture, failure: str,
+    caplog: pytest.LogCaptureFixture, error_type: type[Exception] | None,
 ) -> None:
     store, _, workspace_id, key_hash = backend
     original = type(store).refund
@@ -422,34 +670,30 @@ def test_replay_credit_refund_retry_policy(
 
     def fail_refund(self: Any, reservation_id: str) -> Any:
         calls.append(reservation_id)
-        if failure == "unknown":
-            raise RuntimeError(f"private request content: racing-request {key_hash}\nsecret")
-        if failure == "conflict_always" or len(calls) <= (2 if failure == "conflict_twice" else 1):
-            raise StoreConflict(f"private request content: racing-request {key_hash}\nsecret")
+        if error_type is not None:
+            raise error_type(f"private request content: racing-request {key_hash}\nsecret")
         return original(self, reservation_id)
 
     monkeypatch.setattr(type(store), "refund", fail_refund)
     with caplog.at_level(logging.ERROR, logger=gateway.logger.name):
         result = deferred_race()
     authorization = result[-1]
-    expected_calls = {"conflict_once": 2, "conflict_twice": 3, "conflict_always": 3, "unknown": 1}
-    assert len(calls) == expected_calls[failure]
-    assert len(set(calls)) == 1
-    assert sleeps == [0.05, 0.1][:len(calls) - 1]
+    assert len(calls) == 1
+    assert sleeps == []
     records = [record for record in caplog.records if record.name == gateway.logger.name]
-    succeeded = failure in {"conflict_once", "conflict_twice"}
+    succeeded = error_type is None
     if succeeded:
         assert records == []
     else:
         assert len(records) == 1
         assert records[0].levelno == logging.ERROR
-        outcome = "unknown" if failure == "unknown" else "rolled_back_after_retries"
-        error_class = "RuntimeError" if failure == "unknown" else "StoreConflict"
+        assert error_type is not None
+        outcome = "rolled_back" if error_type is StoreConflict else "unknown"
         assert records[0].getMessage() == (
             f"billing.replay_credit_refund_failed workspace_id={workspace_id} "
             f"request_id=replay-test-request key_hash={key_hash[:12]} "
             f"reserved_microdollars={authorization.estimated_microdollars} "
-            f"error_class={error_class} outcome={outcome}"
+            f"error_class={error_type.__name__} outcome={outcome}"
         )
         assert records[0].exc_info is None
     assert _holds(result) == (
