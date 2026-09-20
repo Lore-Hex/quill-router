@@ -501,6 +501,7 @@ def test_every_authenticated_discovery_feed_is_wired_to_narrow_secret_access() -
     feeds.extend(
         (provider, env_names)
         for provider, _url, env_names in _GLM_DISCOVERABLE_PROVIDER_APIS
+        if env_names
     )
 
     for provider, env_names in feeds:

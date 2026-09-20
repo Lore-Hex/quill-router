@@ -119,7 +119,7 @@ jobs:
           echo "::add-mask::${KEY}"
           echo "TOGETHER_API_KEY=${KEY}" >> "$GITHUB_ENV"
 
-      - name: Pull provider discovery credentials
+      - name: Pull PARASAIL_API_KEY / LIGHTNING_API_KEY / GMI_API_KEY
         # Same /v1/models-Bearer-auth pattern as Together. Each
         # provider's /v1/models call needs the right key; without
         # them the respective adapter returns 401 and the new

@@ -130,3 +130,5 @@ def test_phala_audit_and_committed_manifest_use_same_first_party_source() -> Non
     assert discovery == ("phala", CATALOG_URL, ())
     assert phala.URL == CATALOG_URL
     assert json.loads(phala.MANIFEST_PATH.read_text())["source"] == CATALOG_URL
+    workflow = Path(".github/workflows/refresh-prices.yml").read_text()
+    assert "PHALA_CONFIDENTIAL_API_KEY:trustedrouter-phala-confidential-api-key" not in workflow
