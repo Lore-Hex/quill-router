@@ -10,16 +10,16 @@ docs.phala.com/phala-cloud/confidential-ai/confidential-model/confidential-ai-ap
 for the official model-id convention.
 
 This adapter is API-direct (no HTML scraping, no LLM self-heal):
-GET https://api.redpill.ai/v1/models returns every served model
+GET https://inference.phala.com/v1/models returns Phala's served models
 WITH its own `pricing` block (USD/token). For phala-prefixed ids
 the block carries the rate the confidential tier charges; we
 strip the `phala/` prefix, look up the OR-canonical form in
 `_NATIVE_TO_OR_ID`, and emit a ModelPrice for it.
 
-Auth: Bearer token in `PHALA_CONFIDENTIAL_API_KEY` env. Without it
-the fetch may still succeed (Phala's /v1/models tolerates anon GET)
-but is treated as one failure under MAX_TOLERATED_FAILURES if it
-401s for any reason.
+This first-party catalog is public. Do not send inference credentials or
+fall back to Redpill's separate catalog. A failed fetch must retain the
+last-known-good catalog, not silently change providers. Discovery alone
+does not change the runtime transport or attest a route's confidentiality.
 
 Ordinary future GLM releases are normalized automatically. Other families
 remain on reviewed explicit mappings. Arbitrary proprietary rows and rows
@@ -28,7 +28,6 @@ without embedded prices remain blocked.
 
 from __future__ import annotations
 
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -58,7 +57,7 @@ from trusted_router.provider_lifecycle import (
 )
 
 SLUG = "phala"
-URL = "https://api.redpill.ai/v1/models"
+URL = "https://inference.phala.com/v1/models"
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
     / "src"
@@ -81,7 +80,7 @@ EXPECTED_MODELS = [
 
 
 # Phala-native id (`phala/<bare>`) → OR-canonical. Source of truth
-# is the live /v1/models response on api.redpill.ai cross-checked
+# is the live /v1/models response on inference.phala.com cross-checked
 # against the OR snapshot. Add entries when Phala publishes new
 # `phala/<bare>` aliases for OR-known models.
 _NATIVE_TO_OR_ID = {
@@ -199,22 +198,20 @@ def _apply_lifecycle_policy(
 def fetch() -> ProviderPricingResult:
     global _DISCOVERED_MANIFEST_ROWS  # noqa: PLW0603
 
-    api_key = os.environ.get("PHALA_CONFIDENTIAL_API_KEY") or os.environ.get("PHALA_API_KEY")
+    _DISCOVERED_MANIFEST_ROWS = {}
     headers = {"User-Agent": PROVIDER_FETCH_UA, "Accept": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
     transport = httpx.HTTPTransport(retries=PROVIDER_FETCH_TRANSPORT_RETRIES)
     with httpx.Client(
         timeout=PROVIDER_FETCH_TIMEOUT,
-        follow_redirects=True,
+        follow_redirects=False,
         transport=transport,
     ) as client:
         response = client.get(URL, headers=headers)
         response.raise_for_status()
         payload = response.json()
-    rows = payload.get("data") or []
-    if not isinstance(rows, list):
-        raise RuntimeError("phala: /v1/models response has no data list")
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(rows, list) or not rows:
+        raise RuntimeError("phala: /v1/models response has no nonempty data list")
     discoverable_rows, discovered_id_map = _discoverable_rows(
         [row for row in rows if isinstance(row, dict)]
     )
@@ -230,6 +227,8 @@ def fetch() -> ProviderPricingResult:
     UPSTREAM_ID_MAP.update(current_upstream_ids)
 
     prices = _apply_lifecycle_policy(prices)
+    if not prices:
+        raise RuntimeError("phala: /v1/models response has no eligible priced models")
     _DISCOVERED_MANIFEST_ROWS = {}
     for model_id, row in discovered.items():
         if model_id not in prices:

@@ -57,6 +57,7 @@ from scripts.pricing.providers import (
     nscale,
     nvidia_nim,
     perplexity,
+    phala,
     recraft,
     regolo,
     reka,
@@ -581,8 +582,8 @@ _GLM_DISCOVERABLE_PROVIDER_APIS: tuple[tuple[str, str, tuple[str, ...]], ...] = 
     ),
     (
         "phala",
-        "https://api.redpill.ai/v1/models",
-        ("PHALA_CONFIDENTIAL_API_KEY", "PHALA_API_KEY"),
+        phala.URL,
+        (),
     ),
     (
         "siliconflow",

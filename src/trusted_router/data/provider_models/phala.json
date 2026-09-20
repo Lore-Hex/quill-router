@@ -1,8 +1,8 @@
 {
   "_about": "Provider-native supplement for Phala routes live ahead of the shared snapshot. phala/* upstream IDs select the Confidential AI tier. Upstream-author pass-through routes are separately classified and must not inherit the confidential or ZDR posture of phala/* routes.",
   "provider": "phala",
-  "source": "https://api.redpill.ai/v1/models",
-  "generated_at": "2026-09-20T02:44:07Z",
+  "source": "https://inference.phala.com/v1/models",
+  "generated_at": "2026-09-20T03:53:46Z",
   "model_count": 5,
   "models": [
     {
