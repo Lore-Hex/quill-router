@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for the Fireworks AI serverless models enabled on the TrustedRouter Fireworks account. Verified against https://api.fireworks.ai/inference/v1/models, Fireworks' first-party pricing page, and direct chat completions. Kimi K3 is a verified launch route served before the account model-list feed caught up. Fireworks uses full accounts/fireworks/models/... upstream IDs, so the enclave preserves upstream_id verbatim for this provider.",
   "provider": "fireworks",
   "source": "https://api.fireworks.ai/inference/v1/models",
-  "generated_at": "2026-09-18T09:27:51Z",
+  "generated_at": "2026-09-20T02:44:07Z",
   "model_count": 25,
   "models": [
     {
@@ -611,9 +611,9 @@
       "upstream_id": "accounts/fireworks/models/deepseek-v4p1-flash",
       "context_length": 1048576,
       "created": 1789019014,
-      "input_token_price_per_m": 220000,
-      "output_token_price_per_m": 660000,
-      "cached_input_token_price_per_m": 7000
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 6000
     }
   ],
   "pricing_source": "https://docs.fireworks.ai/serverless/pricing.md",

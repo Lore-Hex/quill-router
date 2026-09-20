@@ -3,7 +3,7 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-09-18T09:27:52Z",
+  "generated_at": "2026-09-20T02:44:07Z",
   "model_count": 159,
   "models": [
     {
@@ -690,7 +690,8 @@
       ],
       "endpoints": [
         "chat/completions",
-        "anthropic"
+        "anthropic",
+        "responses"
       ],
       "status": 1,
       "upstream_id": "deepseek/deepseek-v4-flash",
@@ -720,7 +721,8 @@
       ],
       "endpoints": [
         "chat/completions",
-        "anthropic"
+        "anthropic",
+        "responses"
       ],
       "status": 1,
       "upstream_id": "deepseek/deepseek-v4-pro",
