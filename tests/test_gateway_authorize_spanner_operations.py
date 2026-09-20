@@ -13,6 +13,7 @@ from trusted_router import (
     storage_gcp_key_escrow,
     storage_gcp_spend_lease_authorize,
 )
+from trusted_router.catalog import MODEL_ENDPOINTS, ModelEndpoint
 from trusted_router.config import Settings
 from trusted_router.routes.internal import gateway
 from trusted_router.schemas import GatewayAuthorizeRequest
@@ -58,6 +59,31 @@ def _body(key_hash: str, *, idempotency_key: str = "rpc-idem") -> GatewayAuthori
         estimated_input_tokens=100,
         max_output_tokens=100,
     )
+
+
+@pytest.fixture
+def fixed_operation_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Count storage operations against a fixed prepaid/BYOK route shape.
+
+    Hourly catalog changes can add/remove BYOK eligibility reads. They must
+    not change the fixture under an exact transaction-operation assertion.
+    """
+    model = "anthropic/claude-haiku-4.5"
+    for endpoint_id, endpoint in tuple(MODEL_ENDPOINTS.items()):
+        if endpoint.model_id == model:
+            monkeypatch.delitem(MODEL_ENDPOINTS, endpoint_id)
+    for usage_type, suffix in (("Credits", "prepaid"), ("BYOK", "byok")):
+        endpoint = ModelEndpoint(
+            id=f"{model}@anthropic/{suffix}",
+            model_id=model,
+            provider="anthropic",
+            usage_type=usage_type,
+            upstream_id="claude-haiku-4-5-20251001",
+            supported_parameters=("max_tokens",),
+            prompt_price_microdollars_per_million_tokens=1_000_000,
+            completion_price_microdollars_per_million_tokens=5_000_000,
+        )
+        monkeypatch.setitem(MODEL_ENDPOINTS, endpoint.id, endpoint)
 
 
 def test_typed_authorize_route_does_not_call_legacy_idempotency_probe(
@@ -192,7 +218,9 @@ def test_typed_replay_race_returns_stored_authorization_without_second_reservati
     assert list(database.reservations) == [first["data"]["credit_reservation_id"]]
 
 
-def test_typed_replay_has_exact_sequential_spanner_operation_count() -> None:
+def test_typed_replay_has_exact_sequential_spanner_operation_count(
+    fixed_operation_catalog: None,
+) -> None:
     _store, database, key = _seed_typed_gateway_store()
     gateway._BROADCAST_EMPTY_CACHE.clear()
     assert gateway._broadcast_destinations_for_authorize(key.workspace_id) == []
@@ -217,7 +245,8 @@ def test_typed_replay_has_exact_sequential_spanner_operation_count() -> None:
     # Stage C adds one same-transaction read of the nullable receipt columns.
     # It is unconditional on replay so rollback cannot let a receipt-less
     # request reuse a historical locally admitted authorization.
-    assert operation_count == 7
+    # One provider BYOK lookup; no dependence on optional live catalog routes.
+    assert operation_count == 6
 
 
 def test_typed_accepted_authorization_is_returned_without_post_commit_read(
@@ -278,7 +307,9 @@ def test_typed_accepted_authorization_matches_persisted_record() -> None:
 
 
 @pytest.mark.parametrize("armed", [False, True])
-def test_fresh_typed_gateway_authorize_has_exact_sequential_spanner_operation_count(armed: bool) -> None:
+def test_fresh_typed_gateway_authorize_has_exact_sequential_spanner_operation_count(
+    armed: bool, fixed_operation_catalog: None,
+) -> None:
     store, database, key = _seed_typed_gateway_store()
     store.trust_settings = Settings(environment="test", spend_lease_trust_eligibility_enabled=armed)
     gateway._BROADCAST_EMPTY_CACHE.clear()
@@ -302,9 +333,9 @@ def test_fresh_typed_gateway_authorize_has_exact_sequential_spanner_operation_co
     assert response["data"]["authorization_id"]
     # Representative steady-state fresh request: the workspace's observed-empty
     # broadcast cache is warm, while this idempotency key and authorization are new.
-    # The original ten operations stay exact with the trust program disarmed.
+    # Nine operations for the fixed single-provider prepaid/BYOK catalog.
     # Armed authorization adds one selected-shard pause/epoch read.
-    assert operation_count == 10 + int(armed)
+    assert operation_count == 9 + int(armed)
 
 
 def test_broadcast_empty_results_are_cached_until_ttl(

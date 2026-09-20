@@ -3863,6 +3863,7 @@ async def test_provider_rotation_probe_has_total_deadline_for_trickling_stream(
 
     class _Deadline:
         first_token_seconds = 0.03
+        completion_seconds = 0.12
 
     monkeypatch.setattr(
         probes_module,
@@ -3887,6 +3888,94 @@ async def test_provider_rotation_probe_has_total_deadline_for_trickling_stream(
     assert sample.status == "error"
     assert sample.error_type == "TimeoutError"
     assert sample.error_status is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("events", "expected_status", "expected_extensions"),
+    [
+        ([(9, "content"), (30, "done")], "success", 1),
+        ([(9, "reasoning"), (30, "done")], "success", 1),
+        ([(2, "role"), (9, "heartbeat"), (11, "content")], "error", 0),
+        ([(9, "content"), (20, "content"), (39, "content"), (41, "done")], "error", 1),
+        ([(9, "content"), (12, "error")], "error", 1),
+    ],
+)
+async def test_rotation_first_token_and_completion_deadlines_are_independent(
+    monkeypatch: pytest.MonkeyPatch,
+    events: list[tuple[int, str]],
+    expected_status: str,
+    expected_extensions: int,
+) -> None:
+    """Advance a virtual stream clock, without slow or timing-sensitive sleeps."""
+    from trusted_router.provider_reliability import ModelDeadlines
+    from trusted_router.synthetic import probes as probes_module
+
+    start = asyncio.get_running_loop().time()
+    extensions: list[float] = []
+
+    class VirtualTimeout:
+        def __init__(self, delay: float) -> None:
+            self.deadline = start + delay
+
+        async def __aenter__(self) -> VirtualTimeout:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+        def reschedule(self, when: float) -> None:
+            extensions.append(when)
+            self.deadline = when
+
+    deadlines: list[VirtualTimeout] = []
+
+    def timeout(delay: float) -> VirtualTimeout:
+        deadline = VirtualTimeout(delay)
+        deadlines.append(deadline)
+        return deadline
+
+    chunks = {
+        "content": b'data: {"choices":[{"delta":{"content":"PONG"}}]}\n\n',
+        "reasoning": b'data: {"choices":[{"delta":{"reasoning":"checking"}}]}\n\n',
+        "role": b'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n',
+        "heartbeat": b": keepalive\n\n",
+        "done": b"data: [DONE]\n\n",
+        "error": b'data: {"error":{"type":"provider_error","code":502}}\n\n',
+    }
+    closed = False
+
+    class TimedStream(httpx.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            for elapsed, kind in events:
+                if start + elapsed > deadlines[-1].deadline:
+                    raise TimeoutError("virtual stream deadline exceeded")
+                yield chunks[kind]
+
+        async def aclose(self) -> None:
+            nonlocal closed
+            closed = True
+
+    monkeypatch.setattr(probes_module.asyncio, "timeout", timeout)
+    monkeypatch.setattr(
+        probes_module, "model_deadlines", lambda *_args, **_kwargs: ModelDeadlines(10, 40)
+    )
+    target = SyntheticTarget("rotation", "https://api.trustedrouter.com/v1", "us-central1")
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, stream=TimedStream()))
+    ) as client:
+        sample = await provider_rotation_probe(
+            client, target, monitor_region="us-central1", api_key="sk-test",  # noqa: S106
+            provider="test", model="test/reasoning",
+        )
+
+    assert sample.status == expected_status
+    assert len(extensions) == expected_extensions
+    if extensions:
+        assert extensions[0] == pytest.approx(start + 40, abs=0.1)
+    if expected_status == "error":
+        assert sample.error_type == ("provider_error" if events[-1][1] == "error" else "TimeoutError")
+    assert closed
 
 
 @pytest.mark.asyncio
@@ -3922,6 +4011,31 @@ async def test_provider_rotation_probe_counts_reasoning_as_token_flow() -> None:
     assert sample.status == "success"
     assert sample.first_token_milliseconds is not None
     assert sample.error_type is None
+
+
+@pytest.mark.asyncio
+async def test_provider_rotation_probe_propagates_cancellation_and_closes_stream() -> None:
+    closed = False
+
+    class CancelledStream(httpx.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            yield b'data: {"choices":[{"delta":{"content":"PONG"}}]}\n\n'
+            raise asyncio.CancelledError
+
+        async def aclose(self) -> None:
+            nonlocal closed
+            closed = True
+
+    target = SyntheticTarget("rotation", "https://api.trustedrouter.com/v1", "us-central1")
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, stream=CancelledStream()))
+    ) as client:
+        with pytest.raises(asyncio.CancelledError):
+            await provider_rotation_probe(
+                client, target, monitor_region="us-central1", api_key="sk-test",  # noqa: S106
+                provider="test", model="test/reasoning",
+            )
+    assert closed
 
 
 @pytest.mark.asyncio

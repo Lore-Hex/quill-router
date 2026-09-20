@@ -229,7 +229,7 @@
     "model_id_pattern": "^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$",
     "owner_pattern": "^[a-z0-9][a-z0-9._-]*$"
   },
-  "contract_version": "43cdfa5e6b0090bcc020997661002267320a5bfce946893e17836bb50d015cc9",
+  "contract_version": "a83c650b0fc1bdd65dd5b77e47eb519b913ea7a0f286b3bfda5a7fdbb49760ad",
   "decision_tables": [
     {
       "max_tokens": 512,
@@ -4352,7 +4352,7 @@
     "probes._chat_text": "d93e2345277c7fc9f2f201a308768f3cc42b2d53a9715a5cfe7801e3a0f2a3bb",
     "probes._elapsed_ms_with_clock": "ffe5c0dcede88715e77c5e15672aee78b2b3eb40731a98cbce277642d82a22a4",
     "probes._first_int": "29a2c84649a74c53afb4bfe4d017f9b799908bcd08704a26d1e4d2b7ac46c64a",
-    "probes._observe_provider_stream": "eb68ab6008853ff16e7930e20f151de978bf6b498bffd55dcce2023a50542c58",
+    "probes._observe_provider_stream": "de45aa5fe6070644fdbbe01ffb3794e6392ceb36a2e27576e5365cc87bfe5ab1",
     "probes._pong_matches": "998237bb5709cb6804b12310face8e43876dd189fa179eed2802df8871716b0b",
     "probes._response_error": "b99b11a62e9d331e655f65b612fb6dbab94885c3accb3dd30989311baa469d13",
     "probes._responses_text": "99429cf72be3c5cd8dadd9569a08bfe1c17a6c42318309a376f4bf12d31bf1fa",

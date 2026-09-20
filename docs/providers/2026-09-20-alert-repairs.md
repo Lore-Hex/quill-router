@@ -22,6 +22,18 @@
   though its token budget already classified it as reasoning. It now uses
   the existing 45-second reasoning deadline. Measured latency is unchanged;
   exceeding the budget still alerts. No global alert threshold changed.
+  Follow-up inspection found the rotation probe also bounded the entire
+  stream with that first-token deadline. It now switches once on the first
+  content/reasoning token to the existing absolute completion deadline.
+  Role/heartbeat frames cannot extend either deadline. Deterministic tests
+  reproduced the premature timeout before the fix, and cover late errors,
+  never-ending streams and cancellation. Live NVIDIA recovery remains
+  unverified and its issue remains open.
+* After the Kimi writer repair, price refresh reached catalog validation.
+  Three exact Spanner-operation tests failed because removal of a GMI BYOK
+  catalog endpoint removed one eligibility lookup. The tests now use a
+  fixed prepaid/BYOK catalog while retaining exact operation-count gates;
+  no billing transaction or pricing safety guard was changed.
 * Together retired its shared E5 embedding endpoint on September 14. The
   remaining BGE catalog entry returns HTTP 400 requiring a dedicated endpoint.
   The daily probe now reports that retirement rather than calling a model
