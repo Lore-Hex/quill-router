@@ -67,6 +67,34 @@ def test_typesafe_refuses_a_page_that_prices_two_models() -> None:
         typesafe.parse(TYPESAFE_PAGE + second)
 
 
+def test_typesafe_refuses_a_second_model_arriving_as_a_column() -> None:
+    # Reading only the first value cell published 42,000 for a page on which
+    # `jev-latest` had moved to the model in the SECOND column, at twice that.
+    page = TYPESAFE_PAGE.replace(
+        "| Jev 1.13                    | `jev-1.13.0`", "| Jev 1.13 | Jev 1.14 | `jev-1.13.0`"
+    ).replace(
+        r"| \$42 / \$0.042                                                                            |",
+        r"| \$42 / \$0.042 | \$84 / \$0.084 |",
+    )
+    assert r"\$84 / \$0.084" in page, "fixture: the second column did not land"
+    with pytest.raises(RuntimeError, match="more than one model"):
+        typesafe.parse(page)
+
+
+@pytest.mark.parametrize(
+    "cell",
+    [
+        r"\$42 / \$0.042 (\$84 / \$0.084 from October)",  # two pairs in one cell
+        r"\$42 / \$0.042 plus \$1 per request",  # a fee beside the rate
+        "contact sales",
+    ],
+)
+def test_typesafe_refuses_a_price_cell_that_says_more_than_one_rate(cell: str) -> None:
+    page = TYPESAFE_PAGE.replace(r"\$42 / \$0.042", cell, 1)
+    with pytest.raises(RuntimeError):
+        typesafe.parse(page)
+
+
 def test_typesafe_refuses_a_non_text_page() -> None:
     with pytest.raises(RuntimeError):
         typesafe.parse(None)

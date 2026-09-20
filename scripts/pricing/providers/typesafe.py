@@ -33,11 +33,23 @@ MANIFEST_PATH = (
 INCLUDE_IN_PRICE_INDEX = False
 
 _AMOUNT = r"\\?\$([0-9][0-9,]*(?:\.[0-9]+)?)"
-_PRICE_ROW = re.compile(
-    r"^\|\s*Price \(per Btok / per Mtok\)\s*\|\s*" + _AMOUNT + r"\s*/\s*" + _AMOUNT + r"\s*\|",
-    re.MULTILINE,
-)
+_PRICE_LABEL = "Price (per Btok / per Mtok)"
+_PRICE_PAIR = re.compile(_AMOUNT + r"\s*/\s*" + _AMOUNT)
 _INPUT_ONLY = re.compile(r"charged per input token\.\s+output tokens are free\.", re.IGNORECASE)
+
+
+def _price_cells(page: str) -> list[str]:
+    """The value cells of every table row labelled as the price row."""
+    rows: list[list[str]] = []
+    for line in page.splitlines():
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if cells and cells[0] == _PRICE_LABEL:
+            rows.append(cells[1:])
+    if len(rows) != 1:
+        # Zero rows: the table moved. Two or more: TypeSafe now prices more
+        # than one model and "the" price no longer exists.
+        raise RuntimeError(f"{SLUG}: expected exactly one price row, found {len(rows)}")
+    return rows[0]
 
 
 def _dollars(text: str) -> Decimal:
@@ -50,11 +62,20 @@ def _dollars(text: str) -> Decimal:
 def parse(page: object) -> dict[str, ModelPrice]:
     if not isinstance(page, str):
         raise RuntimeError(f"{SLUG}: models page is not text")
-    rows = _PRICE_ROW.findall(page)
-    if len(rows) != 1:
-        # Zero rows: the table moved. Two or more: TypeSafe now prices more
-        # than one model and "the" price no longer exists.
-        raise RuntimeError(f"{SLUG}: expected exactly one price row, found {len(rows)}")
+    cells = _price_cells(page)
+    # One value cell holding one "$x / $y" pair, and nothing else in it. A
+    # second model arrives as a second COLUMN as easily as a second row
+    # (`| Price | $42 / $0.042 | $84 / $0.084 |`), and reading only the first
+    # cell would publish the old model's price for whichever one `jev-latest`
+    # now points at.
+    if len(cells) != 1:
+        raise RuntimeError(
+            f"{SLUG}: the price row has {len(cells)} value cells; it prices more than one model"
+        )
+    pairs = _PRICE_PAIR.findall(cells[0])
+    if len(pairs) != 1 or _PRICE_PAIR.sub("", cells[0]).strip():
+        raise RuntimeError(f"{SLUG}: the price cell is not a single '$x / $y' pair")
+    rows = pairs
     if not _INPUT_ONLY.search(page):
         # The route bills input only. A vendor that starts metering output
         # must fail the refresh loudly, not be billed at zero.

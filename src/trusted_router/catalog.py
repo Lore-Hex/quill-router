@@ -565,11 +565,24 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
     is_meta = model.id in META_MODEL_IDS
     endpoints = endpoints_for_model(model.id)
-    prepaid_available = (
-        model.prepaid_available
-        if is_meta
-        else any(endpoint.usage_type == "Credits" for endpoint in endpoints)
-    )
+    named_chain = NAMED_DECISION_MODEL_PROVIDERS.get(model.id)
+    if named_chain is not None:
+        # A named decision model has no endpoints of its own: authorize serves
+        # it from its backing model's routes on the pinned chain. Reading its
+        # own (empty) endpoint list advertised it as unavailable for Credits
+        # while authorize served it on Credits. Ask the question authorize
+        # asks, so the flag cannot be wrong in either direction: true while a
+        # chain host can serve it, false when none can (authorize says 503).
+        prepaid_available = any(
+            endpoint.usage_type == "Credits" and endpoint.provider in named_chain
+            for endpoint in endpoints_for_model(PRIVATE_PROXY_MODEL_TARGETS[model.id])
+        )
+    else:
+        prepaid_available = (
+            model.prepaid_available
+            if is_meta
+            else any(endpoint.usage_type == "Credits" for endpoint in endpoints)
+        )
     byok_available = (
         False if is_meta else any(endpoint.usage_type == "BYOK" for endpoint in endpoints)
     )

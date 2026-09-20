@@ -124,6 +124,7 @@ from trusted_router.request_tags import InvalidTags, merge_tags, tags_match, val
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.routing import (
     NormalizedRoutingInputs,
+    canonical_model_id,
     chat_route_endpoint_candidates,
     decide_route_endpoint_candidates,
     embeddings_route_endpoint_candidates,
@@ -131,7 +132,6 @@ from trusted_router.routing import (
     normalize_routing_inputs,
     provider_route_preferences,
     resolved_route_preferences,
-    routing_variant_of,
     video_route_endpoint_candidates,
 )
 from trusted_router.schemas import (
@@ -954,21 +954,26 @@ def _authorize_gateway_sync_impl(
     body_dict.update(attribution.body_fields())
     _require_monitor_model_key(body_dict, api_key.lookup_hash, settings)
     requested_model_id = body.model
-    # Every guard below keys on the model id as a STRING, and routing strips a
-    # variant suffix before it resolves one. `trev-1.0:nitro` therefore matched
-    # none of them and routed as the model anyway: no decide-only rule, no host
-    # chain, and a response naming the backing model. A pinned model has no
-    # routing to vary, so the variant is refused rather than reinterpreted.
+    # Every guard below keys on the model id as a STRING, and routing rewrites
+    # that string before it resolves a model (variant suffix, alias, dated
+    # snapshot). `trev-1.0:nitro` and `trev-1.0-2026-09-19` therefore matched no
+    # guard and routed as the model anyway: no decide-only rule, no host chain,
+    # and a response naming the backing model. A pinned model is accepted under
+    # its exact id only. Stated as "routing resolved it from something else",
+    # not as a list of spellings: the first version of this guard listed the
+    # variant suffixes and missed the dated one.
     for raw_model_id in (requested_model_id, *(body.models or [])):
-        catalog_id, variant = routing_variant_of(raw_model_id)
+        catalog_id = canonical_model_id(raw_model_id)
+        if catalog_id == raw_model_id:
+            continue
         catalog_model = MODELS.get(catalog_id)
-        if variant and (
-            catalog_id in PRIVATE_PROXY_MODEL_TARGETS
-            or (catalog_model is not None and catalog_model.supports_decide)
+        if catalog_id in PRIVATE_PROXY_MODEL_TARGETS or (
+            catalog_model is not None and catalog_model.supports_decide
         ):
             raise api_error(
                 400,
-                f"{catalog_id} does not take a routing variant ({variant})",
+                f"{catalog_id} must be requested by its exact id, "
+                "without a routing variant or dated suffix",
                 ErrorType.BAD_REQUEST,
             )
     private_proxy_ids = {

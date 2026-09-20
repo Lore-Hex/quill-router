@@ -738,17 +738,21 @@ def _strip_variant_suffix(model_id: str) -> tuple[str, dict[str, str]]:
     return model_id, {}
 
 
-def routing_variant_of(model_id: str) -> tuple[str, str]:
-    """Split a request's model string into `(catalog_id, variant_suffix)`.
+def canonical_model_id(model_id: str) -> str:
+    """The catalog id routing resolves a request's model string to.
 
-    `catalog_id` is what routing will actually resolve: the variant suffix
-    (`:nitro`, `:floor`) stripped and aliases followed. `variant_suffix` is ""
-    when there was none. A guard that must hold for a MODEL has to compare this
-    id, never the raw string: `trev-1.0:nitro` is `trev-1.0` to the router and a
-    different string to `==`.
+    Routing rewrites what the client typed before it looks anything up: a
+    variant suffix is stripped (`:nitro`, `:floor`), an alias is followed, a
+    dated snapshot suffix is dropped (`-2026-09-19`), a bare OpenAI name gains
+    its vendor prefix -- and these compose. A guard that must hold for a MODEL
+    has to compare THIS id, never the raw string: `trev-1.0:nitro` and
+    `trev-1.0-2026-09-19` are both `trev-1.0` to the router and different
+    strings to `==`. Written as "whatever routing would do" rather than as a
+    list of spellings, so a rewrite added later is covered without anyone
+    remembering this function exists.
     """
-    stripped, overrides = _strip_variant_suffix(model_id)
-    return resolve_model_alias(stripped), model_id[len(stripped) :] if overrides else ""
+    stripped, _overrides = _strip_variant_suffix(model_id)
+    return resolve_model_alias(stripped)
 
 
 def _routing_for_body(

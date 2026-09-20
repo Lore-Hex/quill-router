@@ -336,8 +336,25 @@ async def test_trev_refuses_a_request_pinned_outside_its_chain() -> None:
     assert PRIVATE_PROXY_MODEL_TARGETS[TREV_1_0_MODEL_ID] not in response.text
 
 
+# Every way routing rewrites a model string before resolving it. The first
+# version of the guard handled the variant suffixes and missed the dated one;
+# the combinations are here because the rewrites compose.
+NON_CANONICAL_SPELLINGS = [":nitro", ":floor", "-2026-09-19", "-2026-09-19:nitro"]
+
+
+def test_the_spellings_above_are_all_ones_routing_actually_rewrites() -> None:
+    # If routing stops rewriting one of these the tests below would pass for the
+    # wrong reason (unknown model -> 400), so pin that each still resolves.
+    from trusted_router.routing import canonical_model_id
+
+    for spelling in NON_CANONICAL_SPELLINGS:
+        assert canonical_model_id(TREV_1_0_MODEL_ID + spelling) == TREV_1_0_MODEL_ID, spelling
+        assert canonical_model_id(JEV + spelling) == JEV, spelling
+    assert canonical_model_id(TREV_1_0_MODEL_ID) == TREV_1_0_MODEL_ID
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("suffix", [":nitro", ":floor"])
+@pytest.mark.parametrize("suffix", NON_CANONICAL_SPELLINGS)
 @pytest.mark.parametrize("route_type", ["chat.completions", "decide"])
 async def test_a_routing_variant_cannot_unlock_a_named_decision_model(
     suffix: str, route_type: str
@@ -364,16 +381,18 @@ async def test_a_routing_variant_cannot_unmask_any_private_proxy_model() -> None
     # The same hole, older than trev: every private proxy keyed on the raw id.
     for model_id, backing in PRIVATE_PROXY_MODEL_TARGETS.items():
         route_type = "decide" if MODELS[model_id].supports_decide else "chat.completions"
-        response = await _authorize(
-            {
-                "model": model_id + ":nitro",
-                "route_type": route_type,
-                "estimated_input_tokens": 100,
-                "max_output_tokens": 100,
-            }
-        )
-        assert response.status_code == 400, (model_id, response.text)
-        assert backing not in response.text, model_id
+        for spelling in NON_CANONICAL_SPELLINGS:
+            response = await _authorize(
+                {
+                    "model": model_id + spelling,
+                    "route_type": route_type,
+                    "estimated_input_tokens": 100,
+                    "max_output_tokens": 100,
+                }
+            )
+            assert response.status_code == 400, (model_id, spelling, response.text)
+            assert "exact id" in response.text, (model_id, spelling, response.text)
+            assert backing not in response.text, (model_id, spelling)
 
 
 @pytest.mark.asyncio
@@ -388,6 +407,30 @@ async def test_a_routing_variant_in_a_fallback_array_is_still_a_private_proxy() 
         }
     )
     assert response.status_code == 400, response.text
+    dated = await _authorize(
+        {
+            "model": "openai/gpt-oss-20b",
+            "models": [TREV_1_0_MODEL_ID + "-2026-09-19"],
+            "route_type": "chat.completions",
+            "estimated_input_tokens": 100,
+            "max_output_tokens": 100,
+        }
+    )
+    assert dated.status_code == 400, dated.text
+
+
+@pytest.mark.asyncio
+async def test_ordinary_models_keep_their_variants_and_dated_spellings() -> None:
+    # The refusal is for pinned models only. Everyone else's `:nitro` still works.
+    response = await _authorize(
+        {
+            "model": "openai/gpt-oss-20b:nitro",
+            "route_type": "chat.completions",
+            "estimated_input_tokens": 100,
+            "max_output_tokens": 100,
+        }
+    )
+    assert response.status_code == 200, response.text
 
 
 def test_a_host_delisting_the_backing_model_never_stops_the_control_plane(
@@ -457,3 +500,29 @@ def test_a_decision_model_is_not_a_base_for_a_custom_chat_model() -> None:
     for model_id in NATIVE_DECISION_MODEL_IDS:
         if model_id != TREV_1_0_MODEL_ID:
             assert is_allowed_custom_model_base(MODELS[model_id]), model_id
+
+
+def test_trev_is_advertised_as_available_exactly_when_authorize_can_serve_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A named decision model has no endpoints of its own, so GET /v1/models read
+    an empty list and said `prepaid_available: false` while authorize served it
+    on Credits. A client filtering the catalog on that flag never saw trev."""
+    from trusted_router import catalog, catalog_registry
+
+    shape = model_to_openrouter_shape(MODELS[TREV_1_0_MODEL_ID])["trustedrouter"]
+    assert shape["prepaid_available"] is True  # type: ignore[index]
+    assert shape["byok_available"] is False  # type: ignore[index]
+
+    # ...and it is not a constant: with no chain host left, authorize answers
+    # 503 and the catalog must stop advertising it.
+    backing = PRIVATE_PROXY_MODEL_TARGETS[TREV_1_0_MODEL_ID]
+    chain = NAMED_DECISION_MODEL_PROVIDERS[TREV_1_0_MODEL_ID]
+    without_chain = {
+        key: endpoint
+        for key, endpoint in catalog_registry.MODEL_ENDPOINTS.items()
+        if not (endpoint.model_id == backing and endpoint.provider in chain)
+    }
+    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", without_chain)
+    dark = model_to_openrouter_shape(MODELS[TREV_1_0_MODEL_ID])["trustedrouter"]
+    assert dark["prepaid_available"] is False  # type: ignore[index]
