@@ -1,6 +1,8 @@
 # Direct provider activation: 2026-09-20
 
-Status: implementation and local validation only. Not merged or deployed.
+Status: release authorized; implementation and local validation complete. AWS
+secret copies and Azure's encrypted bundle are provisioned. GCP provisioning is
+blocked by authentication/IAM. No new routes have been deployed yet.
 
 ## Verified services
 
@@ -66,7 +68,8 @@ plaintext or mark ordinary HTTPS as confidential.
 
 ### Swisscom
 
-No Swisscom inference credential was identified in the operator keyfile. Need the
+The operator has contacted Swisscom. No Swisscom inference credential was identified
+in the operator keyfile. Need the
 key variable, entitled Swiss AI Platform project/model endpoint, and current
 pricing. Infomaniak hosting Apertus is not a Swisscom route. Keep the provider
 visible but unroutable until those inputs are verified.
@@ -75,24 +78,23 @@ visible but unroutable until those inputs are verified.
 
 Local validation:
 
-- Router `ruff check .` and `mypy` pass (384 source files).
+- Router `ruff check .` and `mypy` pass (385 source files).
 - Focused provider and route-scoped privacy tests: 28 passed.
 - Full router coverage reached 84.59%, above the 70% requirement. That run
   exposed an obsolete page-wide assertion that all GPT 5.5 routes were ZDR.
   The corrected test scopes OpenAI's claim to its own routes and verifies
   Redpill has no inherited privacy badge. Full-suite confirmation passes:
-  11,499 passed, 472 skipped, 11 expected failures in 253.53 seconds. Runtime
-  source is unchanged from the coverage run; only this test assertion changed.
-- Enclave `internal/llm` passes with `llm_multi`, and with each of
-  `cloud_gcp,llm_multi`, `cloud_aws,llm_multi`, and `cloud_azure,llm_multi`.
-- Cloud configuration parity correctly remains red: AWS's parent lists 33
-  direct providers, while the staged registry contains 37. This is a release
-  blocker, not a test to skip or weaken. Other cloud wiring is also pending.
+  11,523 passed, 472 skipped, 11 expected failures in 248.46 seconds after
+  rebasing onto main `58f96af8`.
+- Full enclave suites pass for `cloud_gcp,llm_multi`, `cloud_aws,llm_multi`,
+  `cloud_azure,llm_multi`, `cloud_gcp,llm_vertex`, and `cloud_aws,llm_bedrock`.
+- Registry, parent, sealer, and egress parity now include all four providers.
+  The exact-match assertions remain enabled. AWS has 89 matched vsock tunnels.
+- Parent: 39 tests, lint, format check, and strict types pass.
+- Azure deployment script: 97 tests pass; sealed-bundle manifest: 8 tests pass.
 
-Cloud-wiring edits were denied by the tool safety review. No cloud credentials or
-production configuration have been changed. Explicit approval is required for
-the four keys below to be distributed to each standalone GCP, AWS, and Azure
-deployment. Do not retry the denied operation until that approval is received.
+The operator explicitly authorized deployment and cloud-local distribution of
+the four keys below on September 20. No secret values are stored in this report.
 
 | Local key variable | Cloud-local secret name |
 | --- | --- |
@@ -101,20 +103,28 @@ deployment. Do not retry the denied operation until that approval is received.
 | `GENERAL_COMPUTE_KEY` | `trustedrouter-general-compute-api-key` |
 | `INFOMANIAK_API_KEY` | `trustedrouter-infomaniak-api-key` |
 
-The enclave registry and focused transport tests are implemented, but cloud
-parity is intentionally incomplete until the approved bootstrap, secret, and
-egress wiring is present. The existing parity test must stay enabled and fail
-until all deployments cover the new registry entries.
+Credential provisioning:
 
-After approval:
+- AWS: four independent Secrets Manager values verified in `eu-west-1` and
+  `eu-west-3`. No enclave has been rolled yet.
+- Azure: additive sealed bundle `tr-bootstrap-bundle-direct-20260920`, version
+  `4e0e7838167c4318bba19cb3d0246548`, contains 69 entries (existing 65 plus four).
+  The generated manifest is committed with the enclave wiring. Running ACI
+  containers still use the previous bundle and release policy.
+- GCP: `tr-deploy` lacks `secretmanager.versions.add`; the interactive operator
+  session requires reauthentication. An attempted create may have created an
+  empty Redpill secret, but no provider value was uploaded. After login, inspect
+  this explicitly and provision only the four authorized values. Do not grant
+  broader IAM privileges or use another cloud as a secret source.
 
-1. Complete the standard per-cloud credential/bootstrap/allowlist plumbing.
-   AWS additionally needs native Meta, General Compute, and Infomaniak egress
-   destinations. Never load one cloud's credentials from another cloud.
+Remaining release sequence:
+
+1. Finish GCP secret provisioning and verify least-privilege runtime access.
+   Never load one cloud's credentials from another cloud.
    Re-run native discovery, prices, FX, and canaries before activation; do not
-   publish an expired September 20 manifest if approval or rollout is delayed.
-2. Run full router lint, types, tests and coverage; run the complete enclave
-   cloud build/test matrix including registry-to-cloud parity.
+   publish an expired September 20 manifest if rollout is delayed.
+2. Require green release-head CI in both repositories, including the enclave
+   cloud build/test matrix and registry-to-cloud parity.
 3. Roll out enclave transports first through reviewed regional health and
    attestation gates. Publish router catalog/config only after ready transports
    and secrets are available. Do not merge the catalog ahead of its transports.
