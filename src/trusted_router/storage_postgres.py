@@ -5937,7 +5937,12 @@ class PostgresStore:
         amount_microdollars: int,
         *,
         idempotency_key: str | None = None,
+        key_reserved_microdollars: int | None = None,
     ) -> Reservation:
+        attempt_key_hold = (
+            max(0, int(key_reserved_microdollars))
+            if key_reserved_microdollars is not None else amount_microdollars
+        )
         reservation = Reservation(
             id=str(uuid.uuid4()),
             workspace_id=workspace_id,
@@ -5968,7 +5973,7 @@ class PostgresStore:
                     self._write_entity_tx(conn, _GATEWAY_IDEMPOTENCY_KIND,
                         _gateway_idempotency_id(workspace_id, key_hash, idempotency_key or ""),
                         {"reason": "billing_paused"})
-                self._release_key_hold_tx(conn, key_hash, amount_microdollars,
+                self._release_key_hold_tx(conn, key_hash, attempt_key_hold,
                                           usage_type=UsageType.CREDITS, window_amount=0)
 
             if idempotency_key is not None:

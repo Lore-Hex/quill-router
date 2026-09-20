@@ -2990,8 +2990,13 @@ class InMemoryStore:
         amount_microdollars: int,
         *,
         idempotency_key: str | None = None,
+        key_reserved_microdollars: int | None = None,
     ) -> Reservation:
         from trusted_router.storage_legacy_trust import BillingPausedError
+        attempt_key_hold = (
+            max(0, int(key_reserved_microdollars))
+            if key_reserved_microdollars is not None else amount_microdollars
+        )
         with self._lock:
             terminal_key = (workspace_id, key_hash, idempotency_key or "")
             # Only a keyed request has a pointer to be terminal; None must not alias "".
@@ -3008,7 +3013,7 @@ class InMemoryStore:
                     ):
                         self.refund(existing.id)
                     self._paused_authorizations.add(terminal_key)
-                self.api_keys.refund_limit(key_hash, amount_microdollars, usage_type=UsageType.CREDITS)
+                self.api_keys.refund_limit(key_hash, attempt_key_hold, usage_type=UsageType.CREDITS)
                 raise BillingPausedError()
             reservation = self.api_keys.reserve(workspace_id, key_hash, amount_microdollars,
                                                 idempotency_key=idempotency_key)

@@ -1974,6 +1974,7 @@ def _authorize_gateway_sync_impl(
                     api_key.hash,
                     estimate,
                     idempotency_key=request_idempotency_key,
+                    key_reserved_microdollars=key_limit_reservation.reserved_microdollars,
                 )
                 credit_reservation_id = credit_reservation.id
             except BillingPausedError as exc:

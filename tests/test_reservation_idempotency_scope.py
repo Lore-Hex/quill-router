@@ -18,6 +18,7 @@ from tests.fakes.postgres import postgres_store_on, sqlite_postgres_conn
 from trusted_router.config import Settings
 from trusted_router.routes.internal.gateway import _authorize_gateway_sync_impl
 from trusted_router.schemas import GatewayAuthorizeRequest
+from trusted_router.spend_windows import KeyLimitExceeded
 from trusted_router.storage import InMemoryStore, configure_store
 from trusted_router.storage_legacy_trust import BillingPausedError, reject_postgres_reservation
 from trusted_router.storage_models import ApiKey, Reservation
@@ -444,6 +445,7 @@ def test_postgres_mixed_version_gateway_interleaving_settles_one_hold(
 
     def mixed_reserve(self: Any, *args: Any, **kwargs: Any) -> Reservation:
         if new_reserved.is_set():
+            kwargs.pop("key_reserved_microdollars", None)
             return _old_worker_reserve(self, *args, **kwargs)
         result = new_reserve(self, *args, **kwargs)
         reservations.append(result)
@@ -493,6 +495,75 @@ def _assert_pause_tombstones(store: Any, key: ApiKey, idem: str) -> None:
             conn, _GATEWAY_IDEMPOTENCY_KIND, _gateway_idempotency_id(key.workspace_id, key.hash, idem), dict,
         ))
         assert gateway == {"reason": "billing_paused"}
+
+
+@pytest.mark.parametrize("state", ["armed-paused", "disarmed-terminal"])
+@pytest.mark.parametrize("recorded_hold", [None, 0, 40, 100, -10])
+def test_reject_releases_recorded_key_hold_only(
+    store: Any, state: str, recorded_hold: int | None,
+) -> None:
+    key = _key(store, "a", capped=True)
+    assert store.reserve_key_limit(key.hash, 70, usage_type="Credits").reserved_microdollars == 70
+    sibling = _reserve(store, key, 70, "sibling")
+    before = _balance(store, key)
+    _pause(store, key)
+    if state == "disarmed-terminal":
+        with pytest.raises(BillingPausedError):
+            store.reserve(key.workspace_id, key.hash, 100, idempotency_key="shared", key_reserved_microdollars=0)
+        _pause(store, key, False)
+        store.trust_settings.spend_lease_trust_eligibility_enabled = False
+    hold = 100 if recorded_hold is None else max(0, recorded_hold)
+    if hold == 0:
+        assert store.update_key(key.hash, {"limit_microdollars": None}) is not None
+    attempt = store.reserve_key_limit(key.hash, hold or 100, usage_type="Credits")
+    assert attempt.reserved_microdollars == hold
+    assert _key_reserved(store, key) == 70 + hold
+    kwargs = {} if recorded_hold is None else {"key_reserved_microdollars": recorded_hold}
+    with pytest.raises(BillingPausedError):
+        store.reserve(key.workspace_id, key.hash, 100, idempotency_key="shared", **kwargs)
+    assert _key_reserved(store, key) == 70
+    assert _balance(store, key) == before
+    assert not _finalized(store, sibling.id)
+    _assert_pause_tombstones(store, key, "shared")
+    assert store.update_key(key.hash, {"limit_microdollars": 100}) is not None
+    with pytest.raises(KeyLimitExceeded):
+        store.reserve_key_limit(key.hash, 31, usage_type="Credits")
+    assert _key_reserved(store, key) == 70
+    assert store.reserve_key_limit(key.hash, 30, usage_type="Credits").reserved_microdollars == 30
+    assert _key_reserved(store, key) == 100
+    assert _balance(store, key) == before
+
+
+def test_gateway_terminal_reject_passes_recorded_zero_key_hold(
+    store: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = _key(store, "a", capped=True)
+    assert store.reserve_key_limit(key.hash, 70, usage_type="Credits").reserved_microdollars == 70
+    sibling = _reserve(store, key, 70, "sibling")
+    before = _balance(store, key)
+    _pause(store, key)
+    with pytest.raises(BillingPausedError):
+        store.reserve(key.workspace_id, key.hash, 100, idempotency_key="shared", key_reserved_microdollars=0)
+    _pause(store, key, False)
+    store.trust_settings.spend_lease_trust_eligibility_enabled = False
+    assert store.update_key(key.hash, {"limit_microdollars": None}) is not None
+    reserve = type(store).reserve
+    calls: list[dict[str, Any]] = []
+
+    def record_hold(self: Any, *args: Any, **kwargs: Any) -> Reservation:
+        calls.append(kwargs.copy())
+        return reserve(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(store), "reserve", record_hold)
+    with pytest.raises(HTTPException) as exc:
+        _authorize(store, key)
+    assert exc.value.status_code == 403
+    assert "billing_paused" in str(exc.value.detail)
+    assert calls == [{"idempotency_key": "shared", "key_reserved_microdollars": 0}]
+    assert _key_reserved(store, key) == 70
+    assert _balance(store, key) == before
+    assert not _finalized(store, sibling.id)
+    assert store.get_gateway_authorization_by_idempotency_key(key.workspace_id, key.hash, "shared") is None
 
 
 @pytest.mark.parametrize("with_reservation", [False, True])
@@ -644,8 +715,9 @@ def _pointer_reads(conn: Any) -> list[str]:
 
 @pytest.mark.parametrize("armed", [False, True])
 @pytest.mark.parametrize("terminal", [False, True])
+@pytest.mark.parametrize("recorded_hold", [None, 0, 40, 100])
 def test_postgres_concurrent_scoped_claim_replays_or_rejects(
-    pg_store: Any, monkeypatch: pytest.MonkeyPatch, armed: bool, terminal: bool,
+    pg_store: Any, monkeypatch: pytest.MonkeyPatch, armed: bool, terminal: bool, recorded_hold: int | None,
 ) -> None:
     key = _key(pg_store, "a", capped=True)
     winner = _reserve(pg_store, key, idem=None)
@@ -653,7 +725,8 @@ def test_postgres_concurrent_scoped_claim_replays_or_rejects(
     pg_store.trust_settings.spend_lease_trust_eligibility_enabled = armed
     assert pg_store.reserve_key_limit(key.hash, 70, usage_type="Credits").reserved_microdollars == 70
     key_before = _key_reserved(pg_store, key)
-    assert pg_store.reserve_key_limit(key.hash, 100, usage_type="Credits").reserved_microdollars == 100
+    hold = 100 if recorded_hold is None else recorded_hold
+    assert pg_store.reserve_key_limit(key.hash, hold, usage_type="Credits").reserved_microdollars == hold
     insert = type(pg_store)._insert_entity_once_tx
     staged = False
 
@@ -666,15 +739,16 @@ def test_postgres_concurrent_scoped_claim_replays_or_rejects(
         return insert(self, conn, kind, entity_id, value)
 
     monkeypatch.setattr(type(pg_store), "_insert_entity_once_tx", stage_scoped_winner)
+    kwargs = {} if recorded_hold is None else {"key_reserved_microdollars": recorded_hold}
     if terminal:
         with pytest.raises(BillingPausedError):
-            _reserve(pg_store, key)
+            pg_store.reserve(key.workspace_id, key.hash, 100, idempotency_key="shared", **kwargs)
         assert _balance(pg_store, key)["reserved"] == 0
         assert _key_reserved(pg_store, key) == key_before
         assert _finalized(pg_store, winner.id)
         _assert_pause_tombstones(pg_store, key, "shared")
     else:
-        assert _reserve(pg_store, key).id == winner.id
+        assert pg_store.reserve(key.workspace_id, key.hash, 100, idempotency_key="shared", **kwargs).id == winner.id
         assert _balance(pg_store, key)["reserved"] == 100
         assert not _finalized(pg_store, winner.id)
     assert staged

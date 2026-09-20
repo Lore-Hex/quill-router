@@ -4633,6 +4633,7 @@ class SpannerBigtableStore:
         amount_microdollars: int,
         *,
         idempotency_key: str | None = None,
+        key_reserved_microdollars: int | None = None,
     ) -> Reservation:
         raise RuntimeError(
             "legacy JSON reserve path removed (C1); direct inference requires the memory store"
