@@ -42,8 +42,15 @@ def _price_cells(page: str) -> list[str]:
     """The value cells of every table row labelled as the price row."""
     rows: list[list[str]] = []
     for line in page.splitlines():
-        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-        if cells and cells[0] == _PRICE_LABEL:
+        row = line.strip()
+        # Exactly ONE boundary pipe off each end, and empty cells kept.
+        # `.strip("|")` ate every trailing pipe, so `| Price | $42 / $0.042||`
+        # -- a second model's column, its price not filled in yet -- lost that
+        # column and read as a one-model table.
+        if not (row.startswith("|") and row.endswith("|") and len(row) >= 2):
+            continue
+        cells = [cell.strip() for cell in row[1:-1].split("|")]
+        if cells[0] == _PRICE_LABEL:
             rows.append(cells[1:])
     if len(rows) != 1:
         # Zero rows: the table moved. Two or more: TypeSafe now prices more

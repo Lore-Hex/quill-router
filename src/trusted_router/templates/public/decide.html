@@ -84,8 +84,8 @@
     <div class="marketing-card">
       <span class="card-label">score</span>
       <h3>Rate along an ordered scale.</h3>
-      <p><code>criteria</code> is required: an array of at least two level labels, lowest first.</p>
-      <p>Returns <code>probabilities</code> keyed <code>"0"</code> to <code>"n-1"</code>, and <code>score</code>, their expected value.</p>
+      <p><code>criteria</code> is required: an array of 2 to 10 level labels, lowest first.</p>
+      <p>Returns <code>probabilities</code> keyed <code>"0"</code> to <code>"n-1"</code>, and <code>score</code>, their expected value. The gateway computes it from the probabilities it returns, so the two always agree.</p>
     </div>
   </div>
 </section>
@@ -102,7 +102,7 @@
             <tr><td><span class="mono">trustedrouter/trev-1.0</span></td><td>TrustedRouter, reasons briefly</td><td>about 330 ms</td><td>29 / 29</td><td>$0.00034</td></tr>
             <tr><td><span class="mono">typesafe-ai/jev</span></td><td>Hosted decision model</td><td>about 250 ms</td><td>29 / 29</td><td>$0.00002</td></tr>
             <tr><td><span class="mono">google/gemini-3.1-flash-lite</span></td><td>Tuned chat model</td><td>about 0.9 s</td><td>29 / 29</td><td>$0.00023</td></tr>
-            <tr><td><span class="mono">deepseek/deepseek-v4.1-flash</span></td><td>Tuned chat model</td><td>about 0.7 s</td><td>29 / 29</td><td>$0.00013</td></tr>
+            <tr><td><span class="mono">deepseek/deepseek-v4.1-flash</span></td><td>Tuned chat model</td><td>0.7 to 1.4 s</td><td>29 / 29</td><td>$0.00013</td></tr>
             <tr><td><span class="mono">openai/gpt-oss-20b</span></td><td>Tuned chat model</td><td>about 1.6 s</td><td>29 / 29</td><td>$0.00004</td></tr>
             <tr><td><span class="mono">google/gemma-4-e4b-it</span></td><td>Tuned chat model, cheapest</td><td>2 to 3 s</td><td>29 / 29</td><td>$0.00002</td></tr>
           </tbody>
@@ -118,7 +118,7 @@
   <div class="marketing-copy">
     <span class="eyebrow">Harder decisions</span>
     <h2>Turn reasoning on. The output does not change.</h2>
-    <p>By default a decision model answers without deliberating, which is what makes it fast. For a judgment that needs thought, pass <code>reasoning</code> and the model thinks first. You still get exactly the same typed answers, verified the same way.</p>
+    <p>By default a decision model answers without deliberating, which is what makes it fast. For a judgment that needs thought, pass <code>reasoning</code> (<code>true</code>, or <code>{"effort": "low" | "medium" | "high"}</code>) or <code>reasoning_effort</code>, and the model thinks first. You still get exactly the same typed answers, verified the same way.</p>
     <p><code>provider</code> accepts the same <a href="/docs/provider-routing">routing preferences</a> as chat, so you can move a tuned model to a cheaper or regional host. <code>max_tokens</code> raises the budget if a long deliberation is being cut short.</p>
     <p>These three options apply to chat-model-backed decisions. <code>typesafe-ai/jev</code> has no reasoning to turn on and rejects them with a clear 400 rather than ignoring them. <code>trustedrouter/trev-1.0</code> always runs on its own host chain.</p>
   </div>
@@ -220,7 +220,7 @@ else:
     <div class="marketing-card">
       <span class="card-label">Limits</span>
       <h3>Sized for real applications.</h3>
-      <p>Up to 64 questions per request and 255 options per question. Question and option names up to 128 characters, with no control characters. The questions must be small enough that their answer fits in 2 MB, which only a request near every limit at once approaches. No streaming: a decision is one small JSON object. <code>typesafe-ai/jev</code> accepts about 32,000 tokens of state.</p>
+      <p>Up to 64 questions per request, 255 options per choice and 10 levels per score: the same limits on every model, so a request written for one runs on any other. Question and option names up to 128 characters, with no control characters. No streaming: a decision is one small JSON object. <code>typesafe-ai/jev</code> accepts about 32,000 tokens of state.</p>
     </div>
   </div>
 </section>
@@ -233,7 +233,7 @@ else:
         <table>
           <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
           <tbody>
-            <tr><td><span class="mono">400</span></td><td>The request is malformed. <code>error.param</code> names the field, for example <code>questions.route.criteria</code>. Also returned when a decision model is named on a chat endpoint.</td></tr>
+            <tr><td><span class="mono">400</span></td><td>The request is malformed. <code>error.param</code> names the field, for example <code>questions.route.criteria</code>. Also returned when a decision model is named on a chat endpoint, or when the hosted model itself rejects the request, for example as too long.</td></tr>
             <tr><td><span class="mono">401</span> / <span class="mono">402</span></td><td>Invalid API key, or not enough credit.</td></tr>
             <tr><td><span class="mono">502</span></td><td>The model host failed, or the model's answer failed verification twice. No unverified answer is ever returned. When a model had already run, the response carries <code>x-should-retry: false</code>: retrying would pay for it again.</td></tr>
             <tr><td><span class="mono">503</span></td><td>Every host in a model's chain is unavailable. Retry shortly.</td></tr>

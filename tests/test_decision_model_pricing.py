@@ -82,6 +82,26 @@ def test_typesafe_refuses_a_second_model_arriving_as_a_column() -> None:
 
 
 @pytest.mark.parametrize(
+    "row",
+    [
+        r"| Price (per Btok / per Mtok) | \$42 / \$0.042||",  # second column, not priced yet
+        r"| Price (per Btok / per Mtok) | \$42 / \$0.042 | |",
+        r"| Price (per Btok / per Mtok) || \$42 / \$0.042 |",  # the FIRST column is the empty one
+    ],
+)
+def test_typesafe_counts_an_empty_price_cell_as_a_cell(row: str) -> None:
+    # `.strip("|")` removed every trailing pipe, so an empty second column
+    # vanished and the older model's price was published for `jev-latest`.
+    lines = [
+        row if line.startswith("| Price (per Btok / per Mtok)") else line
+        for line in TYPESAFE_PAGE.splitlines()
+    ]
+    assert row in lines, "fixture: the price row was not replaced"
+    with pytest.raises(RuntimeError, match="more than one model"):
+        typesafe.parse("\n".join(lines))
+
+
+@pytest.mark.parametrize(
     "cell",
     [
         r"\$42 / \$0.042 (\$84 / \$0.084 from October)",  # two pairs in one cell
