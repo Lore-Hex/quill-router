@@ -411,9 +411,68 @@ async def test_a_named_model_refuses_a_request_pinned_outside_its_chain(
             "provider": {"only": [outsider]},
         }
     )
-    assert response.status_code in {400, 503}, response.text
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["type"] == "bad_request"
+    assert "retry-after" not in response.headers
+    assert not STORE.api_keys.reservations
+    assert not STORE.api_keys.gateway_authorizations
     assert outsider not in response.text
     assert PRIVATE_PROXY_MODEL_TARGETS[model_id] not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model_id", NAMED_IDS)
+@pytest.mark.parametrize("filter_kind", ["ignore_all", "only_then_ignore"])
+async def test_excluding_every_named_host_is_not_a_retryable_outage(
+    model_id: str, filter_kind: str
+) -> None:
+    chain = list(NAMED_DECISION_MODEL_PROVIDERS[model_id])
+    preferences: dict[str, Any] = {"ignore": chain}
+    if filter_kind == "only_then_ignore":
+        preferences = {"only": [chain[0]], "ignore": [chain[0]]}
+    response = await _authorize(
+        {
+            "model": model_id,
+            "route_type": "decide",
+            "provider": preferences,
+            "estimated_input_tokens": 480,
+            "max_output_tokens": 700,
+        }
+    )
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["type"] == "bad_request"
+    assert "retry-after" not in response.headers
+    assert not STORE.api_keys.reservations
+    assert not STORE.api_keys.gateway_authorizations
+    assert PRIVATE_PROXY_MODEL_TARGETS[model_id] not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model_id", NAMED_IDS)
+async def test_a_genuine_named_host_outage_stays_retryable_and_attributable(
+    model_id: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from trusted_router.routes.internal import gateway
+
+    monkeypatch.setattr(gateway, "provider_model_available_from_gateway_region", lambda *_: False)
+    response = await _authorize(
+        {
+            "model": model_id,
+            "route_type": "decide",
+            "provider": {"only": list(NAMED_DECISION_MODEL_PROVIDERS[model_id])},
+            "estimated_input_tokens": 480,
+            "max_output_tokens": 700,
+        }
+    )
+    assert response.status_code == 503, response.text
+    assert response.json()["error"]["type"] == "service_unavailable"
+    assert response.headers["retry-after"] == "2"
+    assert not STORE.api_keys.reservations
+    assert not STORE.api_keys.gateway_authorizations
+    assert PRIVATE_PROXY_MODEL_TARGETS[model_id] not in response.text
+    assert "billing.authorize_named_chain_unavailable" in caplog.text
+    assert "workspace_id=" in caplog.text
+    assert f"model={model_id}" in caplog.text
 
 
 # Every way routing rewrites a model string before resolving it. The first
