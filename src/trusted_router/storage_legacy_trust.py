@@ -200,6 +200,7 @@ def reject_postgres_reservation(conn: Any, store: Any, reservation_id: str) -> N
         _RESERVATION_FINALIZATION_KIND,
         _RESERVATION_IDEMPOTENCY_KIND,
         _RESERVATION_KIND,
+        _reservation_idempotency_id,
     )
 
     reservation = store._read_entity_tx(
@@ -226,10 +227,12 @@ def reject_postgres_reservation(conn: Any, store: Any, reservation_id: str) -> N
         if released.rowcount != 1:
             raise RuntimeError("paused reservation release lost")
         recover_released_postgres(conn, reservation.workspace_id, store)
-    if reservation.idempotency_key:
+    if reservation.idempotency_key is not None:
         store._write_entity_tx(
             conn,
             _RESERVATION_IDEMPOTENCY_KIND,
-            reservation.idempotency_key,
+            _reservation_idempotency_id(
+                reservation.workspace_id, reservation.key_hash, reservation.idempotency_key
+            ),
             {"reason": "billing_paused", "reservation_id": reservation_id},
         )

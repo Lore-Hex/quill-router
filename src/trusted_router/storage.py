@@ -2997,9 +2997,16 @@ class InMemoryStore:
                 terminal_key = (workspace_id, key_hash, idempotency_key or "")
                 if self._legacy_paused(workspace_id) or terminal_key in self._paused_authorizations:
                     if idempotency_key is not None:
-                        existing_id = self.api_keys.reservation_id_by_idempotency_key.get(idempotency_key)
-                        if existing_id is not None:
-                            self.refund(existing_id)
+                        existing_id = self.api_keys.reservation_id_by_idempotency_key.get(
+                            (workspace_id, key_hash, idempotency_key)
+                        )
+                        existing = self.api_keys.reservations.get(existing_id) if existing_id is not None else None
+                        if (
+                            existing is not None
+                            and existing.workspace_id == workspace_id
+                            and existing.key_hash == key_hash
+                        ):
+                            self.refund(existing.id)
                         self._paused_authorizations.add(terminal_key)
                     self.api_keys.refund_limit(key_hash, amount_microdollars, usage_type=UsageType.CREDITS)
                     raise BillingPausedError()

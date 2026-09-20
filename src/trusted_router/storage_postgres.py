@@ -5884,6 +5884,48 @@ class PostgresStore:
 
         return self._run_transaction(read)
 
+    def _read_reservation_idempotency_tx(
+        self, conn: Any, workspace_id: str, key_hash: str, idempotency_key: str,
+    ) -> tuple[Reservation | None, bool]:
+        """Return an owned reservation and whether its index is terminal."""
+        index_id = _reservation_idempotency_id(workspace_id, key_hash, idempotency_key)
+        pointer = self._read_entity_tx(
+            conn, _RESERVATION_IDEMPOTENCY_KIND, index_id, dict, for_update=True,
+        )
+        if pointer is None:
+            # 2026-09-19: remove this fallback after the next full drain of the legacy index.
+            legacy = self._read_entity_tx(
+                conn, _RESERVATION_IDEMPOTENCY_KIND, idempotency_key, dict,
+            )
+            legacy_id = (legacy or {}).get("id") or (legacy or {}).get("reservation_id")
+            existing = (
+                self._read_entity_tx(conn, _RESERVATION_KIND, str(legacy_id), Reservation)
+                if legacy_id else None
+            )
+            if (
+                existing is None
+                or existing.workspace_id != workspace_id
+                or existing.key_hash != key_hash
+            ):
+                return None, False
+            if self._insert_entity_once_tx(conn, _RESERVATION_IDEMPOTENCY_KIND, index_id, legacy):
+                return existing, (legacy or {}).get("reason") == "billing_paused"
+            pointer = self._read_entity_tx(
+                conn, _RESERVATION_IDEMPOTENCY_KIND, index_id, dict, for_update=True,
+            )
+        reservation_id = (pointer or {}).get("id") or (pointer or {}).get("reservation_id")
+        terminal = (pointer or {}).get("reason") == "billing_paused"
+        if not reservation_id:
+            return None, terminal
+        existing = self._read_entity_tx(conn, _RESERVATION_KIND, str(reservation_id), Reservation)
+        if (
+            existing is None
+            or existing.workspace_id != workspace_id
+            or existing.key_hash != key_hash
+        ):
+            return None, False
+        return existing, terminal
+
     def reserve(
         self,
         workspace_id: str,
@@ -5903,40 +5945,41 @@ class PostgresStore:
         from trusted_router.storage_legacy_trust import BillingPausedError, postgres_pause
 
         def reserve_credit(conn: Any) -> Reservation | None:
+            existing, terminal = None, False
+            index_id = None
+            if idempotency_key is not None:
+                index_id = _reservation_idempotency_id(workspace_id, key_hash, idempotency_key)
+                existing, terminal = self._read_reservation_idempotency_tx(
+                    conn, workspace_id, key_hash, idempotency_key,
+                )
+                if existing is None and not terminal:
+                    won = self._insert_entity_once_tx(
+                        conn, _RESERVATION_IDEMPOTENCY_KIND, index_id, reservation,
+                    )
+                    if not won:
+                        existing, terminal = self._read_reservation_idempotency_tx(
+                            conn, workspace_id, key_hash, idempotency_key,
+                        )
+                        if existing is None and not terminal:
+                            self._write_entity_tx(conn, _RESERVATION_IDEMPOTENCY_KIND, index_id, reservation)
             if trust_program_armed(self):
                 paused, epoch = postgres_pause(conn, workspace_id)
-                terminal = self._read_entity_tx(conn, _RESERVATION_IDEMPOTENCY_KIND, idempotency_key, dict) if idempotency_key else None
-                if paused or (terminal and terminal.get("reason") == "billing_paused"):
+                if paused or terminal:
                     from trusted_router.storage_legacy_trust import reject_postgres_reservation
 
-                    if terminal and terminal.get("id"):
-                        reject_postgres_reservation(conn, self, str(terminal["id"]))
-                    if idempotency_key:
-                        self._write_entity_tx(conn, _RESERVATION_IDEMPOTENCY_KIND, idempotency_key,
+                    if existing is not None:
+                        reject_postgres_reservation(conn, self, existing.id)
+                    if index_id is not None:
+                        self._write_entity_tx(conn, _RESERVATION_IDEMPOTENCY_KIND, index_id,
                                               {"reason": "billing_paused"})
                         self._write_entity_tx(conn, _GATEWAY_IDEMPOTENCY_KIND,
-                            _gateway_idempotency_id(workspace_id, key_hash, idempotency_key),
+                            _gateway_idempotency_id(workspace_id, key_hash, idempotency_key or ""),
                             {"reason": "billing_paused"})
                     self._release_key_hold_tx(conn, key_hash, amount_microdollars,
                                               usage_type=UsageType.CREDITS, window_amount=0)
                     return None
-            if idempotency_key is not None:
-                won = self._insert_entity_once_tx(
-                    conn,
-                    _RESERVATION_IDEMPOTENCY_KIND,
-                    idempotency_key,
-                    reservation,
-                )
-                if not won:
-                    existing = self._read_entity_tx(
-                        conn,
-                        _RESERVATION_IDEMPOTENCY_KIND,
-                        idempotency_key,
-                        Reservation,
-                    )
-                    if existing is None:
-                        raise RuntimeError("reservation idempotency row disappeared after conflict")
-                    return existing
+            if existing is not None:
+                return existing
 
             inserted = self._insert_entity_once_tx(
                 conn,
@@ -7489,6 +7532,15 @@ def _as_utc(value: dt.datetime) -> dt.datetime:
     what every writer here stores.
     """
     return value if value.tzinfo is not None else value.replace(tzinfo=dt.UTC)
+
+
+def _reservation_idempotency_id(workspace_id: str, key_hash: str, idempotency_key: str) -> str:
+    """Scoped like authorization idempotency; bare keys can belong to other callers."""
+    # JSON preserves field boundaries even when a key contains separators or NULs.
+    digest = hashlib.sha256(
+        json.dumps((workspace_id, key_hash, idempotency_key), separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return f"residem_{digest}"
 
 
 def _gateway_idempotency_id(workspace_id: str, key_hash: str, idempotency_key: str) -> str:
