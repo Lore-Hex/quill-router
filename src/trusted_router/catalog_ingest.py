@@ -20,6 +20,7 @@ from trusted_router.catalog_capabilities import (
     union_supported_parameters,
 )
 from trusted_router.catalog_data import (
+    _DECISION_SPECS,
     _EMBEDDING_SPECS,
     _PROVIDER_SERVED_MODEL_ALLOWLIST,
     _PROVIDER_UNSERVED_CREDITS_MODELS,
@@ -1199,6 +1200,42 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
     return models, endpoints
 
 
+def _decision_models() -> dict[str, Model]:
+    """Seed hosted decision models (input-only pricing, no text output)."""
+    models: dict[str, Model] = {}
+    for spec in _DECISION_SPECS:
+        if spec["provider"] not in PROVIDERS:
+            continue
+        manifest_cost = _input_only_manifest_cost(
+            spec["provider"], spec["id"], model_type="decision", endpoint="decide"
+        )
+        if manifest_cost is None:
+            prompt_price, published_price, _cost = _priced(spec["cost_dollars_per_million"])
+        else:
+            prompt_price = _customer_price(manifest_cost)
+            published_price = prompt_price
+        models[spec["id"]] = Model(
+            id=spec["id"],
+            name=spec["name"],
+            provider=spec["provider"],
+            context_length=spec["context_length"],
+            upstream_id=spec["upstream_id"],
+            supports_chat=False,
+            supports_messages=False,
+            supports_decide=True,
+            output_modalities=("decision",),
+            prepaid_available=True,
+            byok_available=False,
+            prompt_price_microdollars_per_million_tokens=prompt_price,
+            completion_price_microdollars_per_million_tokens=0,
+            published_prompt_price_microdollars_per_million_tokens=published_price,
+            published_completion_price_microdollars_per_million_tokens=0,
+            price_tiers=_flat_tier(prompt_price, 0, None),
+            published_price_tiers=_flat_tier(published_price, 0, None),
+        )
+    return models
+
+
 def _embedding_models() -> dict[str, Model]:
     """Seed the embedding-model catalog (input-only pricing).
 
@@ -1306,7 +1343,16 @@ def _embedding_models() -> dict[str, Model]:
 
 def _embedding_manifest_cost(spec: _EmbeddingSpec) -> int | None:
     """Return a provider-manifest input cost in microdollars/M, if valid."""
-    path = _PROVIDER_MODELS_DIR / f"{spec['provider']}.json"
+    return _input_only_manifest_cost(
+        spec["provider"], spec["id"], model_type="embedding", endpoint="embeddings"
+    )
+
+
+def _input_only_manifest_cost(
+    provider: str, model_id: str, *, model_type: str, endpoint: str
+) -> int | None:
+    """Manifest input cost for an input-only row (embedding or decision)."""
+    path = _PROVIDER_MODELS_DIR / f"{provider}.json"
     if not path.exists():
         return None
     try:
@@ -1318,11 +1364,11 @@ def _embedding_manifest_cost(spec: _EmbeddingSpec) -> int | None:
         return None
     price_scale = _provider_manifest_price_scale(raw)
     for row in rows:
-        if not isinstance(row, dict) or row.get("id") != spec["id"]:
+        if not isinstance(row, dict) or row.get("id") != model_id:
             continue
-        if row.get("model_type") != "embedding":
+        if row.get("model_type") != model_type:
             return None
-        if "embeddings" not in {str(item) for item in (row.get("endpoints") or [])}:
+        if endpoint not in {str(item) for item in (row.get("endpoints") or [])}:
             return None
         cost = _provider_manifest_price_cost(
             row.get("input_token_price_per_m"),

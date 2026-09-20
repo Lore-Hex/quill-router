@@ -57,6 +57,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     META_MODEL_IDS,
     MISTRAL_LARGE_MODEL_ID,
     MONITOR_MODEL_ID,
+    NATIVE_DECISION_MODEL_IDS,
     OPEN_PATCHER_A1_MODEL_ID,
     OPEN_PATCHER_FAST1_MODEL_ID,
     OPEN_PATCHER_G1_MODEL_ID,
@@ -728,6 +729,9 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "supports_chat": model.supports_chat,
         "supports_embeddings": model.supports_embeddings,
         "supports_video": model.supports_video,
+        # True for hosted decision models AND for the chat models the gateway
+        # drives as decision models on POST /v1/decide.
+        "supports_decide": model.supports_decide or model.id in NATIVE_DECISION_MODEL_IDS,
         "endpoints": [
             {
                 "id": endpoint.id,
@@ -818,6 +822,8 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
             "modality": (
                 "text->embedding"
                 if model.supports_embeddings and not model.supports_chat
+                else "text->decision"
+                if model.supports_decide and not model.supports_chat
                 else (f"{'+'.join(model.input_modalities)}->{'+'.join(model.output_modalities)}")
             ),
             "input_modalities": list(model.input_modalities),

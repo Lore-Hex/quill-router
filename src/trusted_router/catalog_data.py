@@ -362,6 +362,10 @@ class Model:
     supports_messages: bool = False
     supports_embeddings: bool = False
     supports_video: bool = False
+    # Decision ("System One") models: state + typed questions in, typed
+    # answers with probabilities out. No text generation, so output is free
+    # and the route bills input tokens only -- the same shape as embeddings.
+    supports_decide: bool = False
     supported_parameters: tuple[str, ...] = ()
     input_modalities: tuple[str, ...] = ("text",)
     output_modalities: tuple[str, ...] = ("text",)
@@ -1908,6 +1912,24 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://docs.liquid.ai/",
     ),
+    "vercel-ai-gateway": Provider(
+        slug="vercel-ai-gateway",
+        name="Vercel AI Gateway",
+        # Carried for ONE modality: TypeSafe's Jev decision model, which
+        # TypeSafe itself still gates behind a waitlist. Chat models are
+        # deliberately not resold through a second gateway.
+        supports_chat=False,
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "TrustedRouter reaches TypeSafe AI's Jev decision model through "
+            "Vercel AI Gateway's /v1/evaluate endpoint. Requests transit two "
+            "third parties (Vercel, then TypeSafe). No contractual ZDR, "
+            "confidential-compute, or E2EE claim is tracked for this route."
+        ),
+        provider_policy_url="https://vercel.com/docs/ai-gateway/modalities/evaluation",
+        provider_headquarters_country="US",
+    ),
     "fal": Provider(
         slug="fal",
         name="fal.ai",
@@ -2032,6 +2054,7 @@ PROVIDERS: dict[str, Provider] = {
 
 GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
     {
+        "vercel-ai-gateway",
         "regolo",
         "anthropic",
         "openai",
@@ -2879,6 +2902,51 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         LIBERTY_1_0_1M_MODEL_ID,
         "thinkingmachines/inkling",
     ),
+}
+
+
+class _DecisionSpec(TypedDict):
+    id: str
+    name: str
+    provider: str
+    upstream_id: str
+    context_length: int
+    cost_dollars_per_million: str
+
+
+# Hosted decision models. Input-only pricing; the provider does not meter
+# output. Native decision models (an ordinary chat model driven with strict
+# structured output) are NOT listed here -- they keep their chat catalog entry
+# and are named in NATIVE_DECISION_MODEL_IDS below.
+_DECISION_SPECS: tuple[_DecisionSpec, ...] = (
+    {
+        "id": "typesafe-ai/jev",
+        "name": "TypeSafe AI Jev",
+        "provider": "vercel-ai-gateway",
+        "upstream_id": "typesafe-ai/jev",
+        "context_length": 32000,
+        "cost_dollars_per_million": "0.042",
+    },
+)
+
+# Chat models the attested gateway will drive as decision models on
+# POST /v1/decide: reasoning off, strict json_schema constrained to each
+# question's options, then a second verification pass over the output. Chosen
+# for strict structured-output support, price, and uptime. The gateway holds
+# its own copy of this list; tests pin the two together.
+NATIVE_DECISION_MODEL_IDS: tuple[str, ...] = (
+    "openai/gpt-5.4-nano",
+    "google/gemini-3.1-flash-lite",
+    "openai/gpt-oss-20b",
+)
+
+# The provider the gateway pins for each native decision model. Strict
+# json_schema support is a property of the (model, provider) pair, so a native
+# decision request must not fall back to another host of the same weights.
+NATIVE_DECISION_MODEL_PROVIDERS: dict[str, str] = {
+    "openai/gpt-5.4-nano": "openai",
+    "google/gemini-3.1-flash-lite": "google-ai-studio",
+    "openai/gpt-oss-20b": "deepinfra",
 }
 
 

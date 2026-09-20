@@ -140,6 +140,7 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "together": ProviderBrand("https://www.together.ai/"),
     "trustedrouter": ProviderBrand("https://trustedrouter.com/"),
     "venice": ProviderBrand("https://venice.ai/"),
+    "vercel-ai-gateway": ProviderBrand("https://vercel.com/ai-gateway"),
     "voyage": ProviderBrand("https://www.voyageai.com/"),
     "vultr": ProviderBrand("https://www.vultr.com/"),
     "wafer": ProviderBrand("https://wafer.ai/"),

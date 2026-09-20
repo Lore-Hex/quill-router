@@ -434,6 +434,51 @@ def catalog_endpoint_candidates(
     return candidates
 
 
+def decide_route_endpoint_candidates(
+    inputs: NormalizedRoutingInputs | dict[str, Any],
+    settings: Settings | None = None,
+    *,
+    defer_no_fallback_selection: bool = False,
+) -> list[tuple[Model, ModelEndpoint]]:
+    """Endpoint candidates for a HOSTED decision model on POST /v1/decide.
+
+    Only `supports_decide` models resolve here. A native decision request (an
+    ordinary chat model the gateway drives with strict structured output)
+    authorizes through `chat_route_endpoint_candidates` instead, because it
+    really is a chat completion and bills as one. Cost here falls out of the
+    per-endpoint prompt price: completion price is 0 on decision endpoints."""
+    inputs = _coerce_routing_inputs(inputs, settings)
+    raw_ids, prefs = list(inputs.model_ids), inputs.preferences
+    candidates: list[tuple[Model, ModelEndpoint]] = []
+    seen: set[str] = set()
+    for model_id in raw_ids:
+        model = MODELS.get(model_id)
+        if model is None or not model.supports_decide:
+            raise api_error(
+                400,
+                f"Model is not a decision model: {model_id}",
+                ErrorType.MODEL_NOT_SUPPORTED,
+            )
+        for endpoint in endpoints_for_model(model.id):
+            if endpoint.id in seen:
+                continue
+            candidates.append((model, endpoint))
+            seen.add(endpoint.id)
+    candidates = _filter_candidates_soft_data_collection(
+        candidates, prefs, _apply_endpoint_provider_filters
+    )
+    if not candidates:
+        raise api_error(
+            400,
+            "No route candidates match the requested provider filters",
+            ErrorType.MODEL_NOT_SUPPORTED,
+        )
+    candidates = _sort_endpoint_candidates(candidates, prefs)
+    if not prefs.allow_fallbacks and not defer_no_fallback_selection:
+        return candidates[:1]
+    return candidates
+
+
 def embeddings_route_endpoint_candidates(
     inputs: NormalizedRoutingInputs | dict[str, Any],
     settings: Settings | None = None,

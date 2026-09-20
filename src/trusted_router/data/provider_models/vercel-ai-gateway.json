@@ -1,0 +1,22 @@
+{
+  "_about": "TypeSafe AI's Jev decision model, reached through Vercel AI Gateway's /v1/evaluate endpoint. Input-only pricing refreshes hourly from Vercel's public model list.",
+  "provider": "vercel-ai-gateway",
+  "source": "https://vercel.com/docs/ai-gateway/modalities/evaluation",
+  "pricing_source": "https://ai-gateway.vercel.sh/v1/models",
+  "generated_at": "2026-09-19T00:00:00Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 1,
+  "models": [
+    {
+      "id": "typesafe-ai/jev",
+      "upstream_id": "typesafe-ai/jev",
+      "display_name": "TypeSafe AI Jev",
+      "context_length": 32000,
+      "model_type": "decision",
+      "endpoints": ["decide"],
+      "input_token_price_per_m": 42000,
+      "output_token_price_per_m": 0,
+      "pricing_source": "https://ai-gateway.vercel.sh/v1/models"
+    }
+  ]
+}

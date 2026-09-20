@@ -124,6 +124,7 @@ from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.routing import (
     NormalizedRoutingInputs,
     chat_route_endpoint_candidates,
+    decide_route_endpoint_candidates,
     embeddings_route_endpoint_candidates,
     image_route_endpoint_candidates,
     normalize_routing_inputs,
@@ -1057,6 +1058,13 @@ def _authorize_gateway_sync_impl(
         and requested_model.supports_embeddings
         and not requested_model.supports_chat
     )
+    # Hosted decision models dispatch on the MODEL, like embeddings: a native
+    # decision request names an ordinary chat model and takes the chat arm.
+    is_decide_request = (
+        requested_model is not None
+        and requested_model.supports_decide
+        and not requested_model.supports_chat
+    )
     if user_model is not None:
         if is_image_request:
             raise api_error(
@@ -1078,6 +1086,11 @@ def _authorize_gateway_sync_impl(
                 ErrorType.MODEL_NOT_SUPPORTED,
             )
         endpoint_candidates = image_route_endpoint_candidates(
+            normalized_routing,
+            defer_no_fallback_selection=True,
+        )
+    elif is_decide_request:
+        endpoint_candidates = decide_route_endpoint_candidates(
             normalized_routing,
             defer_no_fallback_selection=True,
         )

@@ -151,6 +151,7 @@ from trusted_router.catalog_ingest import (  # noqa: F401 - used by import-time 
     _apply_provider_manifest_expiry,
     _author_provider,
     _build_endpoints,
+    _decision_models,
     _embedding_models,
     _endpoint,
     _filter_unserved_provider_endpoints,
@@ -881,6 +882,7 @@ MODELS: dict[str, Model] = {
 
 
 _EMBEDDING_MODELS = _embedding_models()
+_DECISION_MODELS = _decision_models()
 
 
 _INGESTED_MODELS, _INGESTED_ENDPOINTS = _ingested_models_and_endpoints()
@@ -927,6 +929,10 @@ MODELS[ARCHIMEDES_1_0_MODEL_ID] = replace(
 # authoritative for these IDs. Merge BEFORE `_build_endpoints` so each gets
 # its Credits + BYOK endpoints synthesized.
 for _model_id, _model in _EMBEDDING_MODELS.items():
+    MODELS[_model_id] = _model
+# Hosted decision models: same contract as embeddings (hand-curated entry is
+# authoritative, merged before `_build_endpoints`).
+for _model_id, _model in _DECISION_MODELS.items():
     MODELS[_model_id] = _model
 
 # Video generation is a separate asynchronous product surface. These models
