@@ -73,6 +73,22 @@ visible but unroutable until those inputs are verified.
 
 ## Release gate
 
+Local validation:
+
+- Router `ruff check .` and `mypy` pass (384 source files).
+- Focused provider and route-scoped privacy tests: 28 passed.
+- Full router coverage reached 84.59%, above the 70% requirement. That run
+  exposed an obsolete page-wide assertion that all GPT 5.5 routes were ZDR.
+  The corrected test scopes OpenAI's claim to its own routes and verifies
+  Redpill has no inherited privacy badge. Full-suite confirmation passes:
+  11,499 passed, 472 skipped, 11 expected failures in 253.53 seconds. Runtime
+  source is unchanged from the coverage run; only this test assertion changed.
+- Enclave `internal/llm` passes with `llm_multi`, and with each of
+  `cloud_gcp,llm_multi`, `cloud_aws,llm_multi`, and `cloud_azure,llm_multi`.
+- Cloud configuration parity correctly remains red: AWS's parent lists 33
+  direct providers, while the staged registry contains 37. This is a release
+  blocker, not a test to skip or weaken. Other cloud wiring is also pending.
+
 Cloud-wiring edits were denied by the tool safety review. No cloud credentials or
 production configuration have been changed. Explicit approval is required for
 the four keys below to be distributed to each standalone GCP, AWS, and Azure
@@ -95,6 +111,8 @@ After approval:
 1. Complete the standard per-cloud credential/bootstrap/allowlist plumbing.
    AWS additionally needs native Meta, General Compute, and Infomaniak egress
    destinations. Never load one cloud's credentials from another cloud.
+   Re-run native discovery, prices, FX, and canaries before activation; do not
+   publish an expired September 20 manifest if approval or rollout is delayed.
 2. Run full router lint, types, tests and coverage; run the complete enclave
    cloud build/test matrix including registry-to-cloud parity.
 3. Roll out enclave transports first through reviewed regional health and
