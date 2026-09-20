@@ -198,7 +198,7 @@ def reject_postgres_reservation(conn: Any, store: Any, reservation_id: str) -> N
     from trusted_router.storage_models import Reservation
     from trusted_router.storage_postgres import (
         _RESERVATION_FINALIZATION_KIND,
-        _RESERVATION_IDEMPOTENCY_KIND,
+        _RESERVATION_IDEMPOTENCY_SCOPED_KIND,
         _RESERVATION_KIND,
         _reservation_idempotency_id,
     )
@@ -230,7 +230,7 @@ def reject_postgres_reservation(conn: Any, store: Any, reservation_id: str) -> N
     if reservation.idempotency_key is not None:
         store._write_entity_tx(
             conn,
-            _RESERVATION_IDEMPOTENCY_KIND,
+            _RESERVATION_IDEMPOTENCY_SCOPED_KIND,
             _reservation_idempotency_id(
                 reservation.workspace_id, reservation.key_hash, reservation.idempotency_key
             ),

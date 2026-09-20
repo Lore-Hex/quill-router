@@ -3010,6 +3010,11 @@ class InMemoryStore:
                         self._paused_authorizations.add(terminal_key)
                     self.api_keys.refund_limit(key_hash, amount_microdollars, usage_type=UsageType.CREDITS)
                     raise BillingPausedError()
+            elif idempotency_key is not None:
+                terminal_key = (workspace_id, key_hash, idempotency_key)
+                if terminal_key in self._paused_authorizations:
+                    self._paused_authorizations.remove(terminal_key)
+                    self.api_keys.reservation_id_by_idempotency_key.pop(terminal_key, None)
             reservation = self.api_keys.reserve(workspace_id, key_hash, amount_microdollars,
                                                 idempotency_key=idempotency_key)
             if trust_program_armed(self):
@@ -3261,9 +3266,14 @@ class InMemoryStore:
         with self._lock:
             if trust_program_armed(self):
                 terminal_key = (workspace_id, key_hash, idempotency_key or "")
-                existing = self.api_keys.get_gateway_authorization_by_idempotency_key(workspace_id, key_hash, idempotency_key) if idempotency_key else None
+                existing = self.api_keys.get_gateway_authorization_by_idempotency_key(workspace_id, key_hash, idempotency_key) if idempotency_key is not None else None
                 if existing is not None:
                     return existing
+                reservation = self.api_keys.reservations.get(credit_reservation_id) if credit_reservation_id is not None else None
+                if reservation is not None and (
+                    reservation.workspace_id != workspace_id or reservation.key_hash != key_hash
+                ):
+                    raise ValueError("credit reservation belongs to another caller")
                 stale_epoch = (expected_pause_epoch is not None and expected_pause_epoch != self._legacy_pause_epoch(workspace_id)) or (credit_reservation_id is not None and
                     self._reservation_pause_epochs.get(credit_reservation_id, 0) != self._legacy_pause_epoch(workspace_id))
                 if self._legacy_paused(workspace_id) or stale_epoch or terminal_key in self._paused_authorizations:

@@ -476,6 +476,11 @@ class InMemoryApiKeys:
                     # does the counter move inside this method rather than
                     # before it.
                     return self.gateway_authorizations[existing_id]
+            reservation = self.reservations.get(credit_reservation_id) if credit_reservation_id is not None else None
+            if reservation is not None and (
+                reservation.workspace_id != workspace_id or reservation.key_hash != key_hash
+            ):
+                raise ValueError("credit reservation belongs to another caller")
             if deferred_cap_microdollars is not None:
                 held = self.deferred_outstanding.get(workspace_id, 0)
                 if held + estimated_microdollars > deferred_cap_microdollars:

@@ -384,6 +384,7 @@ _GATEWAY_FINALIZATION_KIND = "gateway_authorization_finalization"
 _DEFERRED_HOME_SETTLEMENT = "deferred_home"
 _RESERVATION_KIND = "reservation"
 _RESERVATION_IDEMPOTENCY_KIND = "reservation_idempotency"
+_RESERVATION_IDEMPOTENCY_SCOPED_KIND = "reservation_idempotency_scoped"
 _RESERVATION_FINALIZATION_KIND = "reservation_finalization"
 # Cross-plane credit transfer (see trusted_router.credit_transfer).
 _CREDIT_TRANSFER_KIND = "credit_transfer"
@@ -5890,7 +5891,7 @@ class PostgresStore:
         """Return an owned reservation and whether its index is terminal."""
         index_id = _reservation_idempotency_id(workspace_id, key_hash, idempotency_key)
         pointer = self._read_entity_tx(
-            conn, _RESERVATION_IDEMPOTENCY_KIND, index_id, dict, for_update=True,
+            conn, _RESERVATION_IDEMPOTENCY_SCOPED_KIND, index_id, dict, for_update=True,
         )
         if pointer is None:
             # 2026-09-19: remove this fallback after the next full drain of the legacy index.
@@ -5908,10 +5909,10 @@ class PostgresStore:
                 or existing.key_hash != key_hash
             ):
                 return None, False
-            if self._insert_entity_once_tx(conn, _RESERVATION_IDEMPOTENCY_KIND, index_id, legacy):
+            if self._insert_entity_once_tx(conn, _RESERVATION_IDEMPOTENCY_SCOPED_KIND, index_id, legacy):
                 return existing, (legacy or {}).get("reason") == "billing_paused"
             pointer = self._read_entity_tx(
-                conn, _RESERVATION_IDEMPOTENCY_KIND, index_id, dict, for_update=True,
+                conn, _RESERVATION_IDEMPOTENCY_SCOPED_KIND, index_id, dict, for_update=True,
             )
         reservation_id = (pointer or {}).get("id") or (pointer or {}).get("reservation_id")
         terminal = (pointer or {}).get("reason") == "billing_paused"
@@ -5945,32 +5946,25 @@ class PostgresStore:
         from trusted_router.storage_legacy_trust import BillingPausedError, postgres_pause
 
         def reserve_credit(conn: Any) -> Reservation | None:
-            existing, terminal = None, False
-            index_id = None
-            if idempotency_key is not None:
-                index_id = _reservation_idempotency_id(workspace_id, key_hash, idempotency_key)
-                existing, terminal = self._read_reservation_idempotency_tx(
-                    conn, workspace_id, key_hash, idempotency_key,
-                )
-                if existing is None and not terminal:
-                    won = self._insert_entity_once_tx(
-                        conn, _RESERVATION_IDEMPOTENCY_KIND, index_id, reservation,
+            index_id = (
+                _reservation_idempotency_id(workspace_id, key_hash, idempotency_key)
+                if idempotency_key is not None else None
+            )
+            armed = trust_program_armed(self)
+            paused, epoch = postgres_pause(conn, workspace_id) if armed else (False, None)
+            for attempt in range(2):
+                existing, terminal = None, False
+                if idempotency_key is not None:
+                    existing, terminal = self._read_reservation_idempotency_tx(
+                        conn, workspace_id, key_hash, idempotency_key,
                     )
-                    if not won:
-                        existing, terminal = self._read_reservation_idempotency_tx(
-                            conn, workspace_id, key_hash, idempotency_key,
-                        )
-                        if existing is None and not terminal:
-                            self._write_entity_tx(conn, _RESERVATION_IDEMPOTENCY_KIND, index_id, reservation)
-            if trust_program_armed(self):
-                paused, epoch = postgres_pause(conn, workspace_id)
-                if paused or terminal:
+                if armed and (paused or terminal):
                     from trusted_router.storage_legacy_trust import reject_postgres_reservation
 
                     if existing is not None:
                         reject_postgres_reservation(conn, self, existing.id)
                     if index_id is not None:
-                        self._write_entity_tx(conn, _RESERVATION_IDEMPOTENCY_KIND, index_id,
+                        self._write_entity_tx(conn, _RESERVATION_IDEMPOTENCY_SCOPED_KIND, index_id,
                                               {"reason": "billing_paused"})
                         self._write_entity_tx(conn, _GATEWAY_IDEMPOTENCY_KIND,
                             _gateway_idempotency_id(workspace_id, key_hash, idempotency_key or ""),
@@ -5978,8 +5972,16 @@ class PostgresStore:
                     self._release_key_hold_tx(conn, key_hash, amount_microdollars,
                                               usage_type=UsageType.CREDITS, window_amount=0)
                     return None
-            if existing is not None:
-                return existing
+                if existing is not None and not terminal:
+                    return existing
+                if index_id is None:
+                    break
+                if terminal or attempt == 1:
+                    # The scoped read locked a terminal pointer or one without an owned reservation.
+                    self._write_entity_tx(conn, _RESERVATION_IDEMPOTENCY_SCOPED_KIND, index_id, reservation)
+                    break
+                if self._insert_entity_once_tx(conn, _RESERVATION_IDEMPOTENCY_SCOPED_KIND, index_id, reservation):
+                    break
 
             inserted = self._insert_entity_once_tx(
                 conn,
@@ -6550,16 +6552,22 @@ class PostgresStore:
         )
 
         def create(conn: Any) -> GatewayAuthorization | None:
-            if trust_program_armed(self):
-                paused, epoch = postgres_pause(conn, workspace_id)
-                pointer_id = _gateway_idempotency_id(workspace_id, key_hash, idempotency_key) if idempotency_key else None
-                prior = self._read_entity_tx(conn, _GATEWAY_IDEMPOTENCY_KIND, pointer_id, dict, for_update=True) if pointer_id else None
+            armed = trust_program_armed(self)
+            paused, epoch = postgres_pause(conn, workspace_id) if armed else (False, None)
+            pointer_id = _gateway_idempotency_id(workspace_id, key_hash, idempotency_key) if idempotency_key else None
+            prior = self._read_entity_tx(conn, _GATEWAY_IDEMPOTENCY_KIND, pointer_id, dict, for_update=armed) if pointer_id else None
+            if prior and prior.get("authorization_id"):
+                existing = self._read_entity_tx(conn, _GATEWAY_AUTHORIZATION_KIND, str(prior["authorization_id"]), GatewayAuthorization)
+                if existing is not None:
+                    return existing
+            reservation = self._read_entity_tx(conn, _RESERVATION_KIND, credit_reservation_id, Reservation) if credit_reservation_id is not None else None
+            if reservation is not None and (
+                reservation.workspace_id != workspace_id or reservation.key_hash != key_hash
+            ):
+                raise ValueError("credit reservation belongs to another caller")
+            if armed:
                 if prior and prior.get("reason") == "billing_paused":
                     return None
-                if prior and prior.get("authorization_id"):
-                    existing = self._read_entity_tx(conn, _GATEWAY_AUTHORIZATION_KIND, str(prior["authorization_id"]), GatewayAuthorization)
-                    if existing is not None:
-                        return existing
                 observed = self._read_entity_tx(conn, "reservation_pause_epoch", credit_reservation_id, dict) if credit_reservation_id else None
                 if paused or (expected_pause_epoch is not None and expected_pause_epoch != epoch) or (credit_reservation_id and int((observed or {}).get("pause_epoch", 0)) != epoch):
                     if credit_reservation_id:

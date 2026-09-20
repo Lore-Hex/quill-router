@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import asdict
+from copy import deepcopy
+from dataclasses import asdict, replace
 from typing import Any
 
 import pytest
@@ -18,7 +19,9 @@ from trusted_router.storage import InMemoryStore, configure_store
 from trusted_router.storage_legacy_trust import BillingPausedError, reject_postgres_reservation
 from trusted_router.storage_models import ApiKey, Reservation
 from trusted_router.storage_postgres import (
+    _RESERVATION_FINALIZATION_KIND,
     _RESERVATION_IDEMPOTENCY_KIND,
+    _RESERVATION_IDEMPOTENCY_SCOPED_KIND,
     _RESERVATION_KIND,
     _gateway_idempotency_id,
     _reservation_idempotency_id,
@@ -28,7 +31,7 @@ from trusted_router.typed_balance import LiveCreditSummary, live_credit_summary
 
 @pytest.fixture(params=["memory", "postgres"])
 def store(request: pytest.FixtureRequest) -> Iterator[Any]:
-    backend = InMemoryStore() if request.param == "memory" else postgres_store_on(sqlite_postgres_conn())
+    backend = InMemoryStore() if request.param == "memory" else postgres_store_on(sqlite_postgres_conn(check_same_thread=False))
     backend.trust_settings = Settings(environment="test", spend_lease_trust_eligibility_enabled=False)
     configure_store(backend)
     try:
@@ -48,10 +51,16 @@ def pg_store() -> Iterator[Any]:
         configure_store(InMemoryStore())
 
 
-def _key(store: Any, name: str, credits: int = 5_000_000, *, workspace_id: str | None = None) -> ApiKey:
+def _key(
+    store: Any, name: str, credits: int = 5_000_000, *,
+    workspace_id: str | None = None, capped: bool = False,
+) -> ApiKey:
     if workspace_id is None:
         workspace_id = store.create_workspace(name, name, trial_credit_microdollars=credits).id
-    return store.create_api_key(workspace_id=workspace_id, name=name, creator_user_id=name)[1]
+    return store.create_api_key(
+        workspace_id=workspace_id, name=name, creator_user_id=name,
+        limit_microdollars=5_000_000 if capped else None,
+    )[1]
 
 
 def _balance(store: Any, key: ApiKey) -> LiveCreditSummary:
@@ -80,16 +89,32 @@ def _reserve(store: Any, key: ApiKey, amount: int = 100, idem: str | None = "sha
     return store.reserve(key.workspace_id, key.hash, amount, idempotency_key=idem)
 
 
-def _pointer(store: Any, index_id: str) -> dict[str, Any] | None:
+def _pointer(store: Any, index_id: str, *, scoped: bool = False) -> dict[str, Any] | None:
+    kind = _RESERVATION_IDEMPOTENCY_SCOPED_KIND if scoped else _RESERVATION_IDEMPOTENCY_KIND
     return store._run_transaction(
-        lambda conn: store._read_entity_tx(conn, _RESERVATION_IDEMPOTENCY_KIND, index_id, dict)
+        lambda conn: store._read_entity_tx(conn, kind, index_id, dict)
     )
 
 
-def _write_pointer(store: Any, index_id: str, value: dict[str, Any]) -> None:
+def _write_pointer(store: Any, index_id: str, value: dict[str, Any], *, scoped: bool = False) -> None:
+    kind = _RESERVATION_IDEMPOTENCY_SCOPED_KIND if scoped else _RESERVATION_IDEMPOTENCY_KIND
     store._run_transaction(
-        lambda conn: store._write_entity_tx(conn, _RESERVATION_IDEMPOTENCY_KIND, index_id, value)
+        lambda conn: store._write_entity_tx(conn, kind, index_id, value)
     )
+
+
+def _finalized(store: Any, reservation_id: str) -> bool:
+    if isinstance(store, InMemoryStore):
+        return store.api_keys.reservations[reservation_id].settled
+    return store._run_transaction(lambda conn: conn.has_entity(_RESERVATION_FINALIZATION_KIND, reservation_id))
+
+
+def _key_reserved(store: Any, key: ApiKey) -> int:
+    if isinstance(store, InMemoryStore):
+        return store.get_key_by_hash(key.hash).reserved_microdollars
+    return store._run_transaction(lambda conn: conn.execute(
+        "SELECT reserved FROM tr_key_limit WHERE key_hash = %s AND shard = 0", (key.hash,),
+    ).fetchone()[0])
 
 
 def _reservation(store: Any, reservation_id: str) -> Reservation:
@@ -197,13 +222,14 @@ def test_postgres_legacy_owned_reservation_is_adopted(pg_store: Any, paused: boo
         assert _reserve(pg_store, key, 999).id == original.id
         assert _reserve(pg_store, key, 999).id == original.id
         assert _balance(pg_store, key)["reserved"] == 100
-    scoped = _pointer(pg_store, _reservation_idempotency_id(key.workspace_id, key.hash, "shared"))
+    scoped = _pointer(pg_store, _reservation_idempotency_id(key.workspace_id, key.hash, "shared"), scoped=True)
     assert scoped is not None
     if paused:
         assert scoped.get("reason") == "billing_paused"
     else:
         assert scoped["id"] == original.id
     assert _pointer(pg_store, "shared") == legacy
+    assert _pointer(pg_store, _reservation_idempotency_id(key.workspace_id, key.hash, "shared")) is None
 
 
 @pytest.mark.parametrize("owner", ["workspace", "key", "missing"])
@@ -236,7 +262,7 @@ def test_postgres_scoped_reservation_takes_precedence_over_legacy(pg_store: Any)
     key = _key(pg_store, "a")
     legacy = _legacy_reservation(pg_store, key)
     scoped = _reserve(pg_store, key, idem=None)
-    _write_pointer(pg_store, _reservation_idempotency_id(key.workspace_id, key.hash, "shared"), asdict(scoped))
+    _write_pointer(pg_store, _reservation_idempotency_id(key.workspace_id, key.hash, "shared"), asdict(scoped), scoped=True)
     assert _reserve(pg_store, key).id == scoped.id
     assert _pointer(pg_store, "shared") == asdict(legacy)
     assert _balance(pg_store, key)["reserved"] == 200
@@ -270,7 +296,7 @@ def test_reservation_scoped_pointer_checks_ownership(store: Any, owner: str, pau
     if isinstance(store, InMemoryStore):
         store.api_keys.reservation_id_by_idempotency_key[(b.workspace_id, b.hash, "shared")] = original.id
     else:
-        _write_pointer(store, _reservation_idempotency_id(b.workspace_id, b.hash, "shared"), asdict(original))
+        _write_pointer(store, _reservation_idempotency_id(b.workspace_id, b.hash, "shared"), asdict(original), scoped=True)
     before = _balance(store, a)
     if paused:
         _pause(store, b)
@@ -282,7 +308,8 @@ def test_reservation_scoped_pointer_checks_ownership(store: Any, owner: str, pau
         assert own.id != original.id
         assert (own.workspace_id, own.key_hash) == (b.workspace_id, b.hash)
         assert _reserve(store, b).id == own.id
-    assert not _reservation(store, original.id).settled
+    assert not _finalized(store, original.id)
+    assert _balance(store, a)["reserved"] == (200 if owner == "key" and not paused else 100)
 
 
 def test_paused_reservation_cannot_refund_another_workspace(store: Any) -> None:
@@ -296,21 +323,30 @@ def test_paused_reservation_cannot_refund_another_workspace(store: Any) -> None:
     with pytest.raises(BillingPausedError):
         _reserve(store, b)
     assert _balance(store, a) == before
-    assert not _reservation(store, original.id).settled
+    assert not _finalized(store, original.id)
+    assert _balance(store, a)["reserved"] == 100
     assert _reserve(store, a).id == original.id
 
 
 def test_paused_reservation_releases_owned_hold_once(store: Any) -> None:
-    key = _key(store, "a")
-    _reserve(store, key)
+    key = _key(store, "a", capped=True)
+    original = _reserve(store, key)
     sibling = _reserve(store, key, 70, "sibling")
+    assert store.reserve_key_limit(key.hash, 70, usage_type="Credits").reserved_microdollars == 70
+    before = _key_reserved(store, key)
     _pause(store, key)
+    assert store.reserve_key_limit(key.hash, 999, usage_type="Credits").reserved_microdollars == 999
     with pytest.raises(BillingPausedError):
         _reserve(store, key, 999)
+    assert _key_reserved(store, key) == before
     assert _balance(store, key)["reserved"] == 70
+    assert _finalized(store, original.id)
+    assert not _finalized(store, sibling.id)
     _pause(store, key, False)
+    assert store.reserve_key_limit(key.hash, 999, usage_type="Credits").reserved_microdollars == 999
     with pytest.raises(BillingPausedError):
         _reserve(store, key, 999)
+    assert _key_reserved(store, key) == before
     assert _balance(store, key)["reserved"] == 70
     assert _reserve(store, key, 70, "sibling").id == sibling.id
 
@@ -335,7 +371,7 @@ def test_postgres_reject_reservation_writes_only_scoped_terminal(pg_store: Any, 
     assert _pointer(pg_store, idem) is None
     pg_store._run_transaction(lambda conn: reject_postgres_reservation(conn, pg_store, original.id))
     assert _pointer(pg_store, idem) is None
-    scoped = _pointer(pg_store, _reservation_idempotency_id(key.workspace_id, key.hash, idem))
+    scoped = _pointer(pg_store, _reservation_idempotency_id(key.workspace_id, key.hash, idem), scoped=True)
     assert scoped == {"reason": "billing_paused", "reservation_id": original.id}
     assert _balance(pg_store, key)["reserved"] == 0
     _pause(pg_store, key, False)
@@ -353,4 +389,274 @@ def test_reservation_idempotency_hash_has_distinct_domain_and_field_boundaries(s
     ids = [_reservation_idempotency_id(*value) for value in values]
     assert len(set(ids)) == len(values)
     assert set(ids).isdisjoint(_gateway_idempotency_id(*value) for value in values)
-    assert ids == [_reservation_idempotency_id(*value) for value in values]
+
+
+@pytest.mark.parametrize(("fields", "expected"), [
+    (("w", "k", "i"), "residem_89e3af4800f55ee298233f00f2399ebe7c340ceea6a2458412527ba0d49cb1bd"),
+    (("workspace", "key", ""), "residem_119c26e1689a37e9d434f841459362c56120c7bdaf20ed2525de06f67fda5a2d"),
+    (("w#x", "k\x00z", "a:b"), "residem_9e8031c5d741912d2bb69735a71384a173f82ea027d765aaff46a5be733374e2"),
+])
+def test_reservation_idempotency_hash_fixed_vectors(fields: tuple[str, str, str], expected: str) -> None:
+    assert _reservation_idempotency_id(*fields) == expected
+
+
+@pytest.mark.parametrize("exhausted", [False, True])
+def test_gateway_client_key_and_scoped_pointer_have_separate_namespaces(store: Any, exhausted: bool) -> None:
+    key = _key(store, "a")
+    first = _authorize(store, key)
+    original = asdict(_reservation(store, first.credit_reservation_id))
+    if exhausted:
+        balance = _balance(store, key)
+        _reserve(store, key, balance["total_credits"] - balance["reserved"], "remainder")
+    before = _balance(store, key)
+    idem = _reservation_idempotency_id(key.workspace_id, key.hash, "shared")
+    if exhausted:
+        with pytest.raises(HTTPException) as exc:
+            _authorize(store, key, idem)
+        assert exc.value.status_code == 402
+        assert store.get_gateway_authorization_by_idempotency_key(key.workspace_id, key.hash, idem) is None
+        assert _balance(store, key) == before
+        if not isinstance(store, InMemoryStore):
+            assert _pointer(store, _reservation_idempotency_id(key.workspace_id, key.hash, idem), scoped=True) is None
+    else:
+        second = _authorize(store, key, idem)
+        assert first.id != second.id
+        assert first.credit_reservation_id != second.credit_reservation_id
+        assert _balance(store, key)["reserved"] == before["reserved"] + second.estimated_microdollars
+    assert asdict(_reservation(store, first.credit_reservation_id)) == original
+    assert not _finalized(store, first.credit_reservation_id)
+    assert _reserve(store, key).id == first.credit_reservation_id
+
+
+@pytest.mark.parametrize("legacy_type", ["reservation", "missing", "tombstone"])
+def test_postgres_legacy_scoped_string_is_neither_adopted_nor_overwritten(pg_store: Any, legacy_type: str) -> None:
+    key = _key(pg_store, "a")
+    original = _reserve(pg_store, key, idem=None)
+    legacy = asdict(original)
+    if legacy_type == "missing":
+        legacy["id"] = "missing"
+    elif legacy_type == "tombstone":
+        legacy = {"reason": "billing_paused"}
+    index_id = _reservation_idempotency_id(key.workspace_id, key.hash, "shared")
+    _write_pointer(pg_store, index_id, legacy)
+    _pause(pg_store, key, False)
+    own = _reserve(pg_store, key)
+    assert own.id != original.id
+    assert _reserve(pg_store, key).id == own.id
+    assert _balance(pg_store, key)["reserved"] == 200
+    assert not _finalized(pg_store, original.id)
+    assert _pointer(pg_store, index_id) == legacy
+    assert _pointer(pg_store, index_id, scoped=True) == asdict(own)
+
+
+def test_disarmed_reservation_takes_over_pause_tombstone_once(store: Any) -> None:
+    key = _key(store, "a")
+    _pause(store, key)
+    with pytest.raises(BillingPausedError):
+        _reserve(store, key)
+    assert _balance(store, key)["reserved"] == 0
+    store.trust_settings.spend_lease_trust_eligibility_enabled = False
+    first, second = _reserve(store, key), _reserve(store, key)
+    assert first.id == second.id
+    assert _balance(store, key)["reserved"] == 100
+    if isinstance(store, InMemoryStore):
+        assert list(store.api_keys.reservations) == [first.id]
+        assert store.api_keys.reservation_id_by_idempotency_key[(key.workspace_id, key.hash, "shared")] == first.id
+    else:
+        assert store._run_transaction(lambda conn: conn.count_entities(_RESERVATION_KIND)) == 1
+        assert _pointer(store, _reservation_idempotency_id(key.workspace_id, key.hash, "shared"), scoped=True) == asdict(first)
+    _pause(store, key)
+    with pytest.raises(BillingPausedError):
+        _reserve(store, key)
+    assert _balance(store, key)["reserved"] == 0
+    assert _finalized(store, first.id)
+
+
+@pytest.mark.parametrize("state", ["fresh", "legacy", "paused", "terminal", "foreign"])
+def test_postgres_reservation_pause_lock_precedes_all_pointer_access(pg_store: Any, state: str) -> None:
+    key = _key(pg_store, "a")
+    if state == "legacy":
+        _legacy_reservation(pg_store, key)
+    if state == "terminal":
+        _write_pointer(pg_store, _reservation_idempotency_id(key.workspace_id, key.hash, "shared"),
+                       {"reason": "billing_paused"}, scoped=True)
+    if state == "foreign":
+        other = _reserve(pg_store, _key(pg_store, "b"))
+        _write_pointer(pg_store, _reservation_idempotency_id(key.workspace_id, key.hash, "shared"),
+                       asdict(other), scoped=True)
+    _pause(pg_store, key, state == "paused")
+    conn = pg_store._run_transaction(lambda conn: conn)
+    conn.statements.clear()
+    if state in {"paused", "terminal"}:
+        with pytest.raises(BillingPausedError):
+            _reserve(pg_store, key)
+    else:
+        _reserve(pg_store, key)
+    pause_reads = [i for i, (sql, _) in enumerate(conn.statements)
+                   if sql.startswith("SELECT billing_pause_causes, pause_epoch FROM tr_credit_balance")]
+    pointer_access = [i for i, (_, params) in enumerate(conn.statements)
+                      if _RESERVATION_IDEMPOTENCY_KIND in params or _RESERVATION_IDEMPOTENCY_SCOPED_KIND in params]
+    assert len(pause_reads) == 1
+    assert pointer_access and all(pause_reads[0] < i for i in pointer_access)
+    assert all(sql.startswith("SELECT") for sql, params in conn.statements if _RESERVATION_IDEMPOTENCY_KIND in params)
+
+
+def _billing_state(store: Any) -> Any:
+    if isinstance(store, InMemoryStore):
+        return deepcopy((
+            store.credit_money, store.api_keys.reservations,
+            store.api_keys.reservation_id_by_idempotency_key,
+            store.api_keys.gateway_authorizations,
+            store.api_keys.gateway_authorization_id_by_idempotency_key,
+            store.api_keys.deferred_outstanding, store._paused_authorizations,
+            [store.list_keys(ws) for ws in store.workspaces],
+        ))
+    return store._run_transaction(lambda conn: (
+        conn.execute("SELECT * FROM tr_entities ORDER BY kind, id").fetchall(),
+        conn.execute("SELECT * FROM tr_credit_balance ORDER BY workspace_id, shard").fetchall(),
+        conn.execute("SELECT * FROM tr_key_limit ORDER BY key_hash, shard").fetchall(),
+        conn.execute("SELECT * FROM tr_deferred_outstanding ORDER BY workspace_id").fetchall(),
+    ))
+
+
+def _create_authorization(store: Any, key: ApiKey, reservation_id: str | None, **kwargs: Any) -> Any:
+    return store.create_gateway_authorization(
+        workspace_id=key.workspace_id, key_hash=key.hash, model_id="m", provider="p",
+        usage_type="Credits", estimated_microdollars=100, credit_reservation_id=reservation_id,
+        idempotency_key="auth", **kwargs,
+    )
+
+
+@pytest.mark.parametrize("owner", ["workspace", "key", "both"])
+@pytest.mark.parametrize("state", ["disarmed", "armed", "paused"])
+def test_authorization_refuses_foreign_reservation_before_any_mutation(store: Any, owner: str, state: str) -> None:
+    a = _key(store, "a", capped=True)
+    b = _key(store, "b", workspace_id=a.workspace_id if owner == "key" else None, capped=True)
+    caller = replace(b, hash=a.hash) if owner == "workspace" else b
+    foreign = _reserve(store, a)
+    _reserve(store, b, 70, "caller")
+    assert store.reserve_key_limit(caller.hash, 100, usage_type="Credits").reserved_microdollars == 100
+    if state != "disarmed":
+        _pause(store, b, state == "paused")
+    before = _billing_state(store)
+    if not isinstance(store, InMemoryStore):
+        conn = store._run_transaction(lambda conn: conn)
+        conn.statements.clear()
+    with pytest.raises(ValueError, match="^credit reservation belongs to another caller$"):
+        _create_authorization(store, caller, foreign.id, deferred_cap_microdollars=1000)
+    if not isinstance(store, InMemoryStore):
+        assert all(sql.startswith("SELECT") for sql, _ in conn.statements)
+        reservation_reads = [sql for sql, params in conn.statements if params == (_RESERVATION_KIND, foreign.id)]
+        assert reservation_reads and all("FOR UPDATE" not in sql for sql in reservation_reads)
+    assert _billing_state(store) == before
+    assert not _finalized(store, foreign.id)
+
+
+@pytest.mark.parametrize("reservation_type", ["own", "missing", "none"])
+@pytest.mark.parametrize("armed", [False, True])
+def test_authorization_accepts_own_or_absent_reservation_and_preserves_replay(
+    store: Any, reservation_type: str, armed: bool,
+) -> None:
+    key = _key(store, "a")
+    other = _key(store, "b")
+    foreign = _reserve(store, other)
+    if armed:
+        _pause(store, key, False)
+    reservation_id = _reserve(store, key).id if reservation_type == "own" else "missing" if reservation_type == "missing" else None
+    auth = _create_authorization(store, key, reservation_id, deferred_cap_microdollars=1000)
+    assert auth.credit_reservation_id == reservation_id
+    if armed:
+        _pause(store, key)
+    before = _billing_state(store)
+    assert _create_authorization(store, key, foreign.id, deferred_cap_microdollars=0).id == auth.id
+    assert _billing_state(store) == before
+
+
+def test_memory_authorization_empty_key_replay_precedes_ownership_guard() -> None:
+    store = InMemoryStore()
+    key = _key(store, "a")
+    own = _reserve(store, key)
+    foreign = _reserve(store, _key(store, "b"))
+    args: dict[str, Any] = dict(
+        workspace_id=key.workspace_id, key_hash=key.hash, model_id="m", provider="p",
+        usage_type="Credits", estimated_microdollars=100, idempotency_key="",
+    )
+    auth = store.create_gateway_authorization(**args, credit_reservation_id=own.id)
+    for armed in (False, True):
+        store.trust_settings = Settings(environment="test", spend_lease_trust_eligibility_enabled=armed)
+        before = _billing_state(store)
+        assert store.create_gateway_authorization(**args, credit_reservation_id=foreign.id).id == auth.id
+        assert _billing_state(store) == before
+
+
+@pytest.mark.parametrize("retry_before_rearm", [False, True])
+def test_disarmed_reservation_replaces_refunded_terminal_once(store: Any, retry_before_rearm: bool) -> None:
+    key = _key(store, "a", capped=True)
+    _pause(store, key, False)
+    assert store.reserve_key_limit(key.hash, 70, usage_type="Credits").reserved_microdollars == 70
+    sibling = _reserve(store, key, 70, "sibling")
+    before = _balance(store, key)
+    key_before = _key_reserved(store, key)
+    assert store.reserve_key_limit(key.hash, 100, usage_type="Credits").reserved_microdollars == 100
+    first = _reserve(store, key, idem="auth")
+    assert not _finalized(store, first.id)
+    assert _balance(store, key)["reserved"] == before["reserved"] + 100
+    assert _key_reserved(store, key) == key_before + 100
+
+    if isinstance(store, InMemoryStore):
+        store.credit_trust_shards[(key.workspace_id, 0)]["pause_epoch"] += 1
+    else:
+        store._run_transaction(lambda conn: conn.execute(
+            "UPDATE tr_credit_balance SET pause_epoch = pause_epoch + 1 WHERE workspace_id = %s",
+            (key.workspace_id,),
+        ))
+    with pytest.raises(BillingPausedError):
+        _create_authorization(store, key, first.id, key_reserved_microdollars=100)
+    assert _finalized(store, first.id)
+    assert _balance(store, key) == before
+    assert _key_reserved(store, key) == key_before
+    refunded = asdict(_reservation(store, first.id))
+
+    def assert_refund_unchanged() -> None:
+        assert asdict(_reservation(store, first.id)) == refunded
+        assert _finalized(store, first.id)
+        if not isinstance(store, InMemoryStore):
+            marker = store._run_transaction(lambda conn: store._read_entity_tx(
+                conn, _RESERVATION_FINALIZATION_KIND, first.id, dict,
+            ))
+            assert marker == {"actual_microdollars": 0, "operation": "billing_paused"}
+
+    assert_refund_unchanged()
+    store.trust_settings.spend_lease_trust_eligibility_enabled = False
+    assert store.reserve_key_limit(key.hash, 100, usage_type="Credits").reserved_microdollars == 100
+    second = _reserve(store, key, idem="auth")
+    assert second.id != first.id
+    assert not _finalized(store, second.id)
+    assert _balance(store, key)["reserved"] == before["reserved"] + 100
+    assert _key_reserved(store, key) == key_before + 100
+    assert_refund_unchanged()
+    auth = _create_authorization(store, key, second.id, key_reserved_microdollars=100)
+    assert auth.credit_reservation_id == second.id
+    if retry_before_rearm:
+        assert _reserve(store, key, idem="auth").id == second.id
+    assert _balance(store, key)["reserved"] == before["reserved"] + 100
+    assert _key_reserved(store, key) == key_before + 100
+    assert_refund_unchanged()
+
+    assert store.finalize_gateway_authorization(
+        auth.id, success=True, actual_microdollars=31, selected_usage_type="Credits",
+    )
+    assert _finalized(store, second.id)
+    settled = _balance(store, key)
+    assert settled["reserved"] == before["reserved"]
+    assert settled["total_usage"] == before["total_usage"] + 31
+    assert settled["total_credits"] == before["total_credits"]
+    assert _key_reserved(store, key) == key_before
+    assert_refund_unchanged()
+
+    store.trust_settings.spend_lease_trust_eligibility_enabled = True
+    assert _reserve(store, key, idem="auth").id == second.id
+    assert _balance(store, key) == settled
+    assert _key_reserved(store, key) == key_before
+    assert_refund_unchanged()
+    assert not _finalized(store, sibling.id)
