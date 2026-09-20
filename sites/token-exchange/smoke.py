@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import http.client
 import ssl
+from urllib.parse import parse_qs, urlparse
 
 from build import load_markets
 
@@ -47,7 +48,15 @@ def smoke(staged: bool) -> None:
         ]:
             status, headers, _ = get(alias, "/?utm_source=smoke", staged)
             location = next((v for k, v in headers.items() if k.lower() == "location"), "")
-            if status != 301 or location != f"https://{host}/?utm_source=smoke":
+            target = urlparse(location)
+            if (
+                status != 301
+                or target.scheme != "https"
+                or target.hostname != host
+                or target.port not in (None, 443)
+                or target.path != "/"
+                or parse_qs(target.query) != {"utm_source": ["smoke"]}
+            ):
                 raise AssertionError(f"{alias}: unexpected redirect {status} {location}")
         print(f"PASS {host}: content, robots, sitemap, OG, aliases", flush=True)
     for host in ("trustedrouter.com", "trust.trustedrouter.com", "status.trustedrouter.com"):
