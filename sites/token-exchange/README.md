@@ -3,6 +3,9 @@
 Static enterprise acquisition sites for 12 markets and 29 owned domains.
 The global site is **thetokenexchange.com**; New York is **nytokenexchange.com**.
 `markets.json` is the source of truth for canonical hosts, aliases and local copy.
+Its `scope` field separates the prominent city navigation from global/regional
+links. Every page shows the city directory above its hero and the full market
+directory in its footer.
 
 ## Architecture
 
@@ -20,6 +23,13 @@ The global site is **thetokenexchange.com**; New York is **nytokenexchange.com**
 - No application server, Spanner access, inference, cookies or third-party pixels
   on these sites. Allowlisted UTM fields pass to intake. Initial site visits are
   not funnel events; central intake and signup use TrustedRouter's existing tracking.
+
+The HTTPS proxy also retains independent flagship certificates
+`token-exchange-global-20260920` and `token-exchange-new-york-20260920` for each
+site's apex and `www`. These isolate their availability from the larger regional
+certificate batches. Preserve them on future publishes. A hostname marked
+`ACTIVE` inside a batch is not sufficient: the certificate itself must be
+`ACTIVE`, and a normal public HTTPS request must pass without disabling validation.
 
 ## Build and Test
 

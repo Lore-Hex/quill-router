@@ -10,17 +10,21 @@ from deploy import domains, url_map
 
 
 class MarketLinkParser(HTMLParser):
-    def __init__(self):
+    def __init__(self, label="Exchange markets"):
         super().__init__()
+        self.label = label
         self.in_markets = False
         self.links = []
+        self.current = []
 
     def handle_starttag(self, tag, attrs):
         attributes = dict(attrs)
-        if tag == "nav" and attributes.get("aria-label") == "Exchange markets":
+        if tag == "nav" and attributes.get("aria-label") == self.label:
             self.in_markets = True
         if tag == "a" and self.in_markets:
             self.links.append(attributes.get("href"))
+            if attributes.get("aria-current") == "page":
+                self.current.append(attributes.get("href"))
 
     def handle_endtag(self, tag):
         if tag == "nav":
@@ -62,6 +66,28 @@ class ExchangeTests(unittest.TestCase):
         self.assertCountEqual(parser.links, expected)
         self.assertEqual(len(set(parser.links)), len(markets))
         self.assertEqual(len(markets) - 1, 11)
+
+    def test_city_navigation_precedes_hero_on_every_market(self):
+        markets = load_markets()
+        city_slugs = {
+            "new-york", "chicago", "san-francisco", "london",
+            "dubai", "hong-kong", "shanghai", "tokyo",
+        }
+        expected = [f'https://{m["domain"]}/' for m in markets if m["slug"] in city_slugs]
+        for market in markets:
+            with self.subTest(market=market["slug"]):
+                page = render(market, markets, "test")
+                self.assertTrue('aria-label="Exchange cities"' in page, "City navigation missing")
+                self.assertLess(page.index('aria-label="Exchange cities"'), page.index('<main'))
+                cities = MarketLinkParser("Exchange cities")
+                cities.feed(page)
+                self.assertEqual(cities.links, expected)
+                regions = MarketLinkParser("Exchange regions")
+                regions.feed(page)
+                self.assertCountEqual(
+                    cities.links + regions.links, [f'https://{m["domain"]}/' for m in markets]
+                )
+                self.assertEqual(cities.current + regions.current, [f'https://{market["domain"]}/'])
 
     def test_attribution(self):
         market = load_markets()[0]

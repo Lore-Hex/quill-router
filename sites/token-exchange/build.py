@@ -24,6 +24,7 @@ def load_markets() -> list[dict]:
     for market in markets:
         assert re.fullmatch(r"[a-z][a-z-]+", market["slug"])
         assert market["slug"] not in slugs
+        assert market["scope"] in {"global", "region", "city"}
         slugs.add(market["slug"])
         for domain in [market["domain"], *market["aliases"]]:
             assert re.fullmatch(r"[a-z0-9-]+\.[a-z]+", domain)
@@ -47,6 +48,15 @@ def tracked_url(url: str, market: dict, intent: str, fragment: str = "") -> str:
             }
         )
         + fragment
+    )
+
+
+def market_links(markets: list[dict], current: dict) -> str:
+    return "".join(
+        f'<a href="https://{html.escape(m["domain"], quote=True)}/"'
+        + (' aria-current="page"' if m["slug"] == current["slug"] else "")
+        + f">{html.escape(m['region'])}</a>"
+        for m in markets
     )
 
 
@@ -76,12 +86,9 @@ def render(market: dict, markets: list[dict], version: str) -> str:
                 f"<article><h3>{html.escape(title)}</h3><p>{html.escape(body)}</p></article>"
                 for title, body in market["sectors"]
             ),
-            "markets": "".join(
-                f'<a href="https://{m["domain"]}/"'
-                + (' aria-current="page"' if m == market else "")
-                + f">{html.escape(m['region'])}</a>"
-                for m in markets
-            ),
+            "markets": market_links(markets, market),
+            "city_markets": market_links([m for m in markets if m["scope"] == "city"], market),
+            "region_markets": market_links([m for m in markets if m["scope"] != "city"], market),
             "schema": json.dumps(
                 {
                     "@context": "https://schema.org",
