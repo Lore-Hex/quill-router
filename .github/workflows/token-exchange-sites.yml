@@ -1,0 +1,23 @@
+name: Token Exchange Sites
+on:
+  pull_request:
+    paths:
+      - 'sites/token-exchange/**'
+      - '.github/workflows/token-exchange-sites.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'sites/token-exchange/**'
+      - '.github/workflows/token-exchange-sites.yml'
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s sites/token-exchange -p 'test_*.py' -v
+      - run: python sites/token-exchange/build.py --output /tmp/token-exchange-build

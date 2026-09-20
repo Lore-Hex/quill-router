@@ -52,6 +52,16 @@ def test_public_footer_has_exactly_one_lightning_router_link(client: TestClient)
     assert '>LightningRouter</a>' in footer
 
 
+@pytest.mark.parametrize("path", ["/", "/models", "/providers", "/token-exchange"])
+def test_public_footer_links_to_global_token_exchange(client: TestClient, path: str) -> None:
+    response = client.get(path)
+    assert response.status_code == 200
+    footer = response.text.split('<footer class="site-footer"', maxsplit=1)[1].split("</footer>", maxsplit=1)[0]
+    assert footer.count('href="https://thetokenexchange.com/"') == 1
+    assert '>The Token Exchange</a>' in footer
+    assert 'href="/token-exchange"' in footer
+
+
 def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     robots = client.get("/robots.txt")
     assert robots.status_code == 200

@@ -1,0 +1,110 @@
+[
+  {
+    "slug": "global", "name": "The Token Exchange", "region": "Global", "domain": "thetokenexchange.com", "aliases": ["thetoken.exchange"],
+    "headline": "A better market for AI.",
+    "lead": "Buy intelligence on your terms. Bring your AI workloads to competing model providers through one enterprise API. Or bring your inference capacity to the market.",
+    "focus": "Global ambition. One procurement conversation.",
+    "intro": "Your teams use different models, in different products, at different scales. The Token Exchange brings those purchasing decisions together through TrustedRouter, while keeping model choice and provider requirements in your hands.",
+    "sectors": [["Enterprise platforms", "Compare models against the tasks that matter to your business, then route production traffic through the providers you approve."], ["AI product teams", "Keep one integration as prices, models and capacity change. Evaluate the cost of a successful result alongside speed and quality."], ["Procurement and security", "Review the operating entity, provider policies and verification evidence together. Agree on route requirements before moving sensitive workloads."]],
+    "seller": "Bring your model endpoints, available capacity and service regions. We will review integration, pricing, performance and privacy evidence with you."
+  },
+  {
+    "slug": "new-york", "name": "New York Token Exchange", "region": "New York", "domain": "nytokenexchange.com", "aliases": ["newyorktoken.exchange", "nytoken.exchange"],
+    "headline": "Intelligence, bought on your terms.",
+    "lead": "For New York's financial, legal and enterprise teams: compare AI models, choose approved providers and put every token to work through TrustedRouter.",
+    "focus": "Built around the work that moves New York.",
+    "intro": "Research, contracts and client communications deserve more than a single model choice. Start with a representative workload, compare quality and economics, and review the privacy of the entire route.",
+    "sectors": [["Investment research", "Evaluate document analysis and research synthesis against your own acceptance criteria. Compare output quality, latency and total token cost."], ["Legal operations", "Review retention policies and provider eligibility before routing client material. Test document workflows with a controlled evaluation set."], ["Financial platforms", "Define approved routes, fallback choices and application spending limits before putting an AI feature into production."]],
+    "seller": "Offer inference capacity for research, document and enterprise workloads. Share throughput, pricing and privacy evidence so buyers can evaluate your service."
+  },
+  {
+    "slug": "chicago", "name": "Chicago Token Exchange", "region": "Chicago", "domain": "chicagotokenexchange.com", "aliases": ["chicagotoken.exchange"],
+    "headline": "Put intelligence to work.",
+    "lead": "A market for Chicago's industrial, logistics and financial AI workloads. Compare models and providers through one TrustedRouter integration.",
+    "focus": "From the research desk to the supply chain.",
+    "intro": "Some jobs need fast answers. Others need careful reasoning over long documents. Buy the right inference for each workload, with cost and provider requirements defined up front.",
+    "sectors": [["Industrial operations", "Evaluate extraction, maintenance knowledge and internal assistants using representative documents and clear quality thresholds."], ["Logistics", "Measure the cost and response time of high volume classification and document workflows before expanding the rollout."], ["Financial research", "Compare models for research synthesis while keeping sensitive inputs on the provider routes your team approves."]],
+    "seller": "Bring reliable capacity for both interactive and batch workloads. Publish your model support and performance characteristics for enterprise evaluation."
+  },
+  {
+    "slug": "san-francisco", "name": "San Francisco Token Exchange", "region": "San Francisco", "domain": "sftokenexchange.com", "aliases": ["sftoken.exchange"],
+    "headline": "Ship the product. Choose the intelligence.",
+    "lead": "For the Bay Area teams building with AI: compare models, reduce inference spend and keep provider choice through a single API.",
+    "focus": "Model choice is a product decision.",
+    "intro": "The right model for a prototype may be different from the right model at scale. Evaluate alternatives on real tasks and keep your application connected to a competitive supply of inference.",
+    "sectors": [["Agent products", "Compare reasoning, tool support and cost per completed task. Select routes that support the capabilities your agent actually uses."], ["Developer platforms", "Give teams a consistent API while controlling provider selection and spending by application."], ["Growth stage companies", "Turn an expanding inference bill into a measured model evaluation, with clear quality thresholds and rollout criteria."]],
+    "seller": "Reach teams evaluating new models and production inference. Bring a working endpoint, documented capabilities and enough capacity for a measured pilot."
+  },
+  {
+    "slug": "texas", "name": "Texas Token Exchange", "region": "Texas", "domain": "texastokenexchange.com", "aliases": ["texastoken.exchange", "txtokenexchange.com", "txtoken.exchange"],
+    "headline": "Connect compute to demand.",
+    "lead": "For Texas enterprises and inference operators: put AI capacity to work, with competing providers and a common enterprise API.",
+    "focus": "Practical AI for energy, industry and software.",
+    "intro": "Texas brings together compute operators and businesses with substantial operational data. Start with a defined workload and an agreed provider policy, then measure what works.",
+    "sectors": [["Energy and engineering", "Evaluate technical document analysis and knowledge retrieval against expert reviewed examples."], ["Enterprise software", "Compare models for support, classification and agent workflows while tracking application costs."], ["Compute operators", "Turn an inference endpoint into an enterprise offering. Prepare model coverage, capacity, service regions and pricing for review."]],
+    "seller": "Run inference infrastructure? Apply with your available models, service locations, capacity and privacy controls. Hardware ownership alone does not establish a supported inference service."
+  },
+  {
+    "slug": "united-states", "name": "US Token Exchange", "region": "United States", "domain": "usatokenexchange.com", "aliases": ["usatoken.exchange", "ustoken.exchange"],
+    "headline": "A purchasing advantage for enterprise AI.",
+    "lead": "Bring AI purchasing together across teams. Compare models, review providers and control inference spend with TrustedRouter.",
+    "focus": "One evaluation. A company wide opportunity.",
+    "intro": "Different business units often buy intelligence separately. Build a shared evaluation and approved provider policy, while preserving the model choice each application needs.",
+    "sectors": [["Enterprise procurement", "Inventory workloads, volumes and existing commitments. Compare the full cost of serving each application."], ["Security teams", "Review routing evidence, retention policies and contractual requirements before authorizing a provider."], ["Platform engineering", "Standardize integration and usage controls while evaluating model quality at the application level."]],
+    "seller": "Offer enterprise inference with clear capacity, model support and service terms. Buyers need verifiable provider information alongside competitive rates."
+  },
+  {
+    "slug": "europe", "name": "European Token Exchange", "region": "Europe", "domain": "eutokenexchange.com", "aliases": ["eurotokenexchange.com", "eutoken.exchange"],
+    "headline": "Your intelligence. Your requirements.",
+    "lead": "A place for European teams to evaluate AI economics, provider policies and deployment requirements together. Powered by TrustedRouter.",
+    "focus": "Make procurement part of the architecture.",
+    "intro": "Provider location, processing terms and model quality belong in the same decision. Specify your residency and contractual requirements, then confirm which routes can meet them.",
+    "sectors": [["Privacy led procurement", "Review subprocessors, data processing terms and retention policies for every intended provider route."], ["Multilingual products", "Compare performance on the languages and document formats your customers use, rather than relying on a general ranking."], ["European inference operators", "Present service locations and processing evidence alongside supported models, throughput and commercial terms."]],
+    "seller": "Bring European inference capacity with documented processing locations and provider terms. Regional branding alone is not residency evidence."
+  },
+  {
+    "slug": "london", "name": "London Token Exchange", "region": "London", "domain": "londontoken.exchange", "aliases": ["ltokenexchange.com"],
+    "headline": "Make intelligence a better buy.",
+    "lead": "For London's financial, insurance and professional services teams: evaluate AI quality, privacy and cost through one enterprise conversation.",
+    "focus": "A considered approach to AI purchasing.",
+    "intro": "Compare models using the documents and tasks your business understands. Review provider terms alongside the results, then choose a production route with a clear commercial case.",
+    "sectors": [["Financial services", "Evaluate research and document workflows with an approved dataset and explicit provider requirements."], ["Insurance operations", "Compare extraction and classification accuracy on representative forms, policies and supporting documents."], ["Professional services", "Set expectations for confidentiality, review and retention before expanding internal AI tools."]],
+    "seller": "Offer reliable inference for professional workloads. Include processing locations, retention policies and support arrangements in your application."
+  },
+  {
+    "slug": "dubai", "name": "Dubai Token Exchange", "region": "Dubai", "domain": "dubaitokenexchange.com", "aliases": ["dubaitoken.exchange"],
+    "headline": "A new connection for enterprise AI.",
+    "lead": "For Dubai's enterprises, digital businesses and compute operators: bring model choice, provider review and inference economics into one place.",
+    "focus": "Evaluate across languages and business lines.",
+    "intro": "A regional AI rollout needs more than a model benchmark. Test Arabic and English workloads, agree on processing requirements, and compare the economics of the complete task.",
+    "sectors": [["Multilingual services", "Evaluate Arabic and English quality on your own examples, including the terminology and formats your teams use."], ["Financial and business services", "Review confidentiality, processing locations and model capabilities together before choosing a provider."], ["Infrastructure operators", "Bring inference endpoints and regional capacity with clear commercial and operational specifications."]],
+    "seller": "Apply with your supported models, Arabic and English capabilities, capacity and service locations. Regional availability is reviewed per provider."
+  },
+  {
+    "slug": "hong-kong", "name": "Hong Kong Token Exchange", "region": "Hong Kong", "domain": "hktokenexchange.com", "aliases": ["hktoken.exchange", "hongkongtoken.exchange"],
+    "headline": "Connect your business to better intelligence.",
+    "lead": "For Hong Kong's financial, trade and enterprise teams: compare multilingual AI workloads and provider requirements through TrustedRouter.",
+    "focus": "Built around cross market workflows.",
+    "intro": "Research, client service and trade documentation cross languages and jurisdictions. Evaluate those actual tasks and confirm provider availability and processing terms before deployment.",
+    "sectors": [["Financial research", "Compare models on multilingual research and document synthesis, with task level quality checks."], ["Trade operations", "Test extraction and classification across the documents your counterparties actually exchange."], ["Enterprise platforms", "Review processing locations and access restrictions alongside latency, cost and supported model capabilities."]],
+    "seller": "Present multilingual model support, processing locations and capacity. Commercial availability and jurisdictional requirements are assessed before onboarding."
+  },
+  {
+    "slug": "shanghai", "name": "Shanghai Token Exchange", "region": "Shanghai", "domain": "shanghaitokenexchange.com", "aliases": ["shanghaitoken.exchange"],
+    "headline": "Evaluate the next generation of intelligence.",
+    "lead": "For teams with Shanghai focused operations: explore model quality, inference economics and provider eligibility with TrustedRouter.",
+    "focus": "Start with the workload and the requirements.",
+    "intro": "Chinese language quality, technical terminology and processing rules all matter. Begin with a non-sensitive evaluation and confirm service availability and applicable requirements before production use.",
+    "sectors": [["Manufacturing knowledge", "Compare technical document understanding against examples reviewed by your engineering team."], ["Chinese language workflows", "Evaluate extraction, classification and reasoning using the formats and vocabulary of your business."], ["International teams", "Confirm provider eligibility, data transfer requirements and commercial availability before routing production traffic."]],
+    "seller": "Submit model coverage, service locations and operating information for review. An application is subject to provider eligibility and applicable legal requirements."
+  },
+  {
+    "slug": "tokyo", "name": "Tokyo Token Exchange", "region": "Tokyo", "domain": "tokyotokenexchange.com", "aliases": [],
+    "headline": "Precision in every AI purchasing decision.",
+    "lead": "For Japan's enterprise, manufacturing and software teams: compare models on the work that matters, through TrustedRouter.",
+    "focus": "Japanese language quality meets enterprise economics.",
+    "intro": "General rankings can miss the details of Japanese business documents and technical language. Run a focused evaluation, review provider requirements and measure the cost of a useful result.",
+    "sectors": [["Enterprise documents", "Test Japanese extraction and summarization on representative documents and expert reviewed answers."], ["Manufacturing", "Evaluate technical reasoning and internal knowledge workflows with clear accuracy criteria."], ["Software platforms", "Compare response time, model capabilities and application costs while keeping provider choice flexible."]],
+    "seller": "Bring inference services with documented Japanese language support, capacity and processing locations. Start with a measured enterprise pilot."
+  }
+]
