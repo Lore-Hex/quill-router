@@ -436,7 +436,8 @@ def test_second_credit_recovery_bypasses_own_refresh_dedupe(
     assert reloads == [1, 3]  # One aged refresh and one forced JSON-row read.
     assert invalidations == [3]  # Never force on the first recovery too.
     # Unchanged budget: initial + key retry + 2*(count-change retry + 3 loop
-    # retries) <= 10 authorize calls, and at most two 0.25s cooldown sleeps.
+    # retries) <= 10 authorize calls, and at most four 0.25s cooldown sleeps
+    # (two per recovery entry). See the request-wide maxima test below.
     # These concrete traces need only five / three calls and zero sleeps.
     assert attempts == (5 if remote_split else 3)
     assert not sleeps
@@ -489,6 +490,165 @@ def test_credit_moved_beyond_prefix_during_key_repair_is_recovered(
     assert verdict == billing.AuthorizeOutcome.ACCEPTED
     assert repairs == 1
     _assert_repaired_totals(db, authorization, credit_shard=shards - 1)
+
+
+def test_remote_unshard_after_proactive_reload_keeps_incomplete_reload_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import storage_gcp
+    from trusted_router import storage_gcp_credit_rebalance as credit
+    from trusted_router import storage_gcp_key_escrow as escrow
+    from trusted_router.storage_gcp_credit_shard_admin import reshard_credit_account
+    from trusted_router.storage_gcp_credit_shards import CreditShardCountCache
+
+    store, db, key = _fragmented_store([2_000] * 6, 20_000)
+    monkeypatch.setattr(storage_gcp, "randomized_credit_shards", lambda count: tuple(range(count)))
+    # A peer shares only the database, not this process's shard-count cache.
+    peer = copy.copy(store)
+    peer._credit_shard_counts = CreditShardCountCache()
+    rebalance_key = escrow.rebalance_key_limit_headroom
+    precheck = credit.credit_headroom_precheck
+    invalidate = store._credit_shard_counts.invalidate
+    reload_counts: list[int] = []
+    precheck_outcomes: list[str] = []
+    key_repaired = False
+    unsharded = False
+
+    def force_reload(workspace_id: str) -> None:
+        reload_counts.append(store._credit_shard_count(workspace_id))
+        invalidate(workspace_id)
+
+    def move_after_key_repair(*args: Any, **kwargs: Any) -> bool:
+        nonlocal key_repaired
+        assert rebalance_key(*args, **kwargs)
+        moved = credit.rebalance_credit_for_estimate(
+            db, store._param_types, workspace_id=key.workspace_id,
+            shard_count=6, target_shard=5, estimate=12_000,
+        )
+        assert moved["outcome"] == credit.RebalanceOutcome.MOVED
+        assert moved["moved_micro"] == 12_000
+        assert 5 >= billing.MAX_CREDIT_SHARD_ATTEMPTS_PER_TRANSACTION
+        key_repaired = True
+        return True
+
+    def unshard_before_snapshot(*args: Any, **kwargs: Any) -> Any:
+        nonlocal unsharded
+        if key_repaired and not unsharded:
+            # The post-key retry missed shard 5; proactive freshness has just
+            # reloaded six shards. The peer now retires five of those rows.
+            assert reload_counts == [6]
+            assert kwargs["shard_count"] == 6
+            workspace = Workspace(
+                id=key.workspace_id, name="remote unshard", owner_user_id="owner",
+                billing_paused=True,
+            )
+            peer._write_entity("workspace", workspace.id, workspace)
+            result = reshard_credit_account(peer, workspace.id, 1, apply=True)
+            assert result.applied and result.ready, result.reasons
+            workspace.billing_paused = False
+            peer._write_entity("workspace", workspace.id, workspace)
+            assert store._credit_shard_count(workspace.id) == 6
+            unsharded = True
+        result = precheck(*args, **kwargs)
+        precheck_outcomes.append(result.outcome)
+        return result
+
+    monkeypatch.setattr(store._credit_shard_counts, "invalidate", force_reload)
+    monkeypatch.setattr(escrow, "rebalance_key_limit_headroom", move_after_key_repair)
+    monkeypatch.setattr(credit, "credit_headroom_precheck", unshard_before_snapshot)
+    verdict, authorization = _fragmented_authorize(store, key)
+    assert verdict == billing.AuthorizeOutcome.ACCEPTED
+    assert unsharded and reload_counts == [6, 6]
+    assert precheck_outcomes == [credit.RebalanceOutcome.MOVED, credit.RebalanceOutcome.INCOMPLETE]
+    assert store._credit_shard_count(key.workspace_id) == 1
+    assert set(db.typed[CREDIT_BALANCE_TABLE]) == {(key.workspace_id, 0)}
+    _assert_repaired_totals(db, authorization, credit_shard=0)
+
+
+@pytest.mark.parametrize(
+    ("scenario", "expected"),
+    [
+        ("repairs", (10, 6, 1, 1, 0)),
+        ("cooldown", (4, 0, 1, 1, 4)),
+        ("reloads", (6, 4, 1, 2, 0)),
+    ],
+)
+def test_credit_recovery_request_wide_maxima(
+    monkeypatch: pytest.MonkeyPatch, scenario: str, expected: tuple[int, ...],
+) -> None:
+    """Adversarial peers exhaust each bound; sleeps and repairs compete for iterations."""
+    from trusted_router import storage_gcp
+    from trusted_router import storage_gcp_credit_rebalance as credit
+    from trusted_router import storage_gcp_key_escrow as escrow
+
+    store, db, key = _fragmented_store([6_000, 6_000], 20_000)
+    attempts = credit_repairs = key_repairs = forced_reloads = prechecks = 0
+    sleeps: list[float] = []
+    invalidate = store._credit_shard_counts.invalidate
+
+    def attempt(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        nonlocal attempts
+        attempts += 1
+        # Only the last retry of the first recovery reaches the fragmented key.
+        first_recovery_end = 5 if scenario == "repairs" else 2
+        return {"outcome": (
+            billing.AuthorizeOutcome.KEY_LIMIT_EXCEEDED
+            if attempts == first_recovery_end else billing.AuthorizeOutcome.INSUFFICIENT_CREDITS
+        )}
+
+    def precheck(*args: Any, **kwargs: Any) -> Any:
+        nonlocal prechecks
+        prechecks += 1
+        if scenario == "reloads":
+            # Repeated evidence in BOTH entries must share one evidence budget.
+            return credit.CreditHeadroomPrecheck(credit.RebalanceOutcome.INCOMPLETE)
+        if scenario == "cooldown" and prechecks % 3 == 0:
+            # A peer consolidates on each third snapshot, without our acquiring
+            # the cooldown. Both entries can therefore spend two sleeps each.
+            return credit.CreditHeadroomPrecheck(credit.RebalanceOutcome.NOT_NEEDED, 0)
+        return credit.CreditHeadroomPrecheck(credit.RebalanceOutcome.MOVED)
+
+    def repair_credit(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        nonlocal credit_repairs
+        credit_repairs += 1
+        return {"outcome": credit.RebalanceOutcome.MOVED}
+
+    def repair_key(*args: Any, **kwargs: Any) -> bool:
+        nonlocal key_repairs
+        key_repairs += 1
+        return True
+
+    def force_reload(workspace_id: str) -> None:
+        nonlocal forced_reloads
+        forced_reloads += 1
+        invalidate(workspace_id)
+
+    monkeypatch.setattr(billing, "authorize_atomic", attempt)
+    monkeypatch.setattr(credit, "credit_headroom_precheck", precheck)
+    monkeypatch.setattr(credit, "rebalance_credit_for_estimate", repair_credit)
+    monkeypatch.setattr(escrow, "rebalance_key_limit_headroom", repair_key)
+    monkeypatch.setattr(store._credit_shard_counts, "invalidate", force_reload)
+    monkeypatch.setattr(store, "_credit_rebalance_cooldown_allows", lambda _ws: scenario != "cooldown")
+    monkeypatch.setattr(storage_gcp.time, "sleep", sleeps.append)
+    if scenario == "repairs":
+        # Both entry refreshes discover a changed topology, adding one outer
+        # authorize each before their three repair/retry iterations.
+        monkeypatch.setattr(store, "_refresh_credit_shard_candidates", lambda _ws: (0, 1, 2))
+        monkeypatch.setattr(
+            store, "_credit_shard_candidates", lambda _ws: tuple(range(4 if key_repairs else 2))
+        )
+
+    with pytest.raises(StoreUnavailable, match="credit headroom changed concurrently; retry"):
+        _fragmented_authorize(store, key)
+    observed = (attempts, credit_repairs, key_repairs, forced_reloads, len(sleeps))
+    assert observed == expected
+    # Initial + key retry + 2*(count-change retry + 3 loop retries) <= 10;
+    # 3 credit repairs per entry, one key repair, one reload per independent
+    # budget, and TWO sleeps per entry (FOUR 0.25s sleeps per request).
+    assert all(count <= maximum for count, maximum in zip(observed, (10, 6, 1, 2, 4), strict=True))
+    assert sleeps == [0.25] * expected[-1]
+    assert not db.reservations
+    assert key.hash not in store._lifetime_cap_exhausted_keys
 
 
 def test_credit_recovery_authorize_attempts_are_bounded(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -5949,6 +5949,7 @@ class SpannerBigtableStore:
             return run_authorize(candidates)
 
         aggregate_exhaustion_proven = False
+        proactive_reload_done = False
         forced_reload_done = False
         cooldown_passed = False
 
@@ -5956,7 +5957,7 @@ class SpannerBigtableStore:
             result: dict[str, Any], *, after_key_repair: bool = False,
         ) -> dict[str, Any]:
             nonlocal credit_shard_candidates, aggregate_exhaustion_proven
-            nonlocal forced_reload_done, cooldown_passed
+            nonlocal proactive_reload_done, forced_reload_done, cooldown_passed
             # run_tracked shares last_credit_candidates across both entries too.
             if result["outcome"] != AuthorizeOutcome.INSUFFICIENT_CREDITS or not has_credit_candidate:
                 return result
@@ -5968,11 +5969,12 @@ class SpannerBigtableStore:
             # never pay this read; a later funded shard needs one snapshot.
             previous_count = len(credit_shard_candidates)
             try:
-                if after_key_repair and not forced_reload_done:
+                if after_key_repair and not proactive_reload_done:
                     # A remote split during key repair can hide behind this
-                    # request's first refresh. Share the ONE forced-reload
-                    # budget with the incomplete-precheck path below.
-                    forced_reload_done = True
+                    # request's first refresh. Proactive freshness and an
+                    # INCOMPLETE precheck each get one independent reload:
+                    # at most TWO dedupe-bypassing reads per request, both cold.
+                    proactive_reload_done = True
                     self._credit_shard_counts.invalidate(workspace_id)
                     refreshed_candidates = self._credit_shard_candidates(workspace_id)
                 else:
@@ -6064,7 +6066,8 @@ class SpannerBigtableStore:
                         # after a short wait outside any transaction rather
                         # than exposing that sub-second race as an immediate
                         # 503. The existing three-attempt cap bounds this to
-                        # two waits (0.5s), and the cooldown still gates writes.
+                        # two waits per recovery entry (four / 1s per request),
+                        # and the cooldown still gates writes.
                         if _attempt < 2:
                             time.sleep(0.25)
                             continue
