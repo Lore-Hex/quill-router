@@ -4861,6 +4861,8 @@ class PostgresStore:
             rows = conn.execute(
                 "SELECT provider, adverse_ref, payload, received_at "
                 "FROM tr_trust_inbox WHERE received_at < %s "
+                "AND NOT EXISTS (SELECT 1 FROM tr_entities WHERE kind='trust_inbox_resolution' "
+                "AND id=(tr_trust_inbox.provider || ':' || tr_trust_inbox.adverse_ref)) "
                 "ORDER BY received_at, provider, adverse_ref",
                 (older_than,),
                 prepare=False,

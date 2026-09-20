@@ -50,7 +50,7 @@ gc run jobs "$mutation" "$JOB_NAME" \
   --args="-m,trusted_router.trust_tier_cli,--environment,${TIER_ENVIRONMENT}" \
   --service-account "$RUN_SERVICE_ACCOUNT" \
   --set-env-vars "$set_env_vars" \
-  --update-secrets="TR_SENTRY_DSN=trustedrouter-sentry-dsn:latest" \
+  --update-secrets="TR_SENTRY_DSN=trustedrouter-sentry-dsn:latest,TR_PAYPAL_CLIENT_ID=trustedrouter-paypal-client-id:latest,TR_PAYPAL_CLIENT_SECRET=trustedrouter-paypal-client-secret:latest" \
   --max-retries=0 \
   --task-timeout=14m \
   --cpu=1 \

@@ -186,6 +186,8 @@ class InMemoryStore:
         self.lightning_payments: dict[str, dict[str, Any]] = {}
         self.trust_events: dict[tuple[str, str], TrustEvent] = {}
         self.trust_inbox: dict[tuple[str, str], TrustInboxRow] = {}
+        self.trust_inbox_resolutions: dict[str, dict[str, Any]] = {}
+        self.trust_paypal_refunds: dict[str, str] = {}
         self.owner_workspaces: set[tuple[str, str]] = set()
         self.trust_overrides: dict[str, TrustOverride] = {}
         self.trust_abuse_audits: dict[tuple[str, str], dict[str, Any]] = {}
@@ -2366,7 +2368,8 @@ class InMemoryStore:
         with self._lock:
             return tuple(
                 sorted(
-                    (row for row in self.trust_inbox.values() if row.received_at < older_than),
+                    (row for row in self.trust_inbox.values() if row.received_at < older_than
+                     and f"{row.provider}:{row.adverse_ref}" not in self.trust_inbox_resolutions),
                     key=lambda row: (row.received_at, row.provider, row.adverse_ref),
                 )
             )
