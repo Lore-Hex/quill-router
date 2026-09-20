@@ -1,7 +1,9 @@
 import re
+import tomllib
 from pathlib import Path
 
 import pytest
+import yaml
 
 from scripts.smoke_all_providers import REGIONS as SMOKE_REGIONS
 from trusted_router.config import Settings
@@ -95,6 +97,38 @@ def test_deploy_syncs_the_shared_public_snapshot_worker() -> None:
 
     assert "- name: Sync shared public analytics snapshots" in workflow
     assert "scripts/deploy/sync_public_analytics_snapshots.sh --apply" in workflow
+
+
+def test_snapshot_upload_uses_isolated_iap_acceleration_without_runtime_bloat() -> None:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    workflow = yaml.safe_load((ROOT / ".github/workflows/deploy.yml").read_text())
+    steps = workflow["jobs"]["migrate-schema"]["steps"]
+    install = next(step for step in steps if step.get("name") == "Install migration runtime")
+    sync = next(step for step in steps if step.get("name") == "Sync shared public analytics snapshots")
+
+    assert not any(dep.startswith("numpy") for dep in project["project"]["dependencies"])
+    assert install["run"] == "uv sync --frozen --no-dev"
+    assert "uv run --isolated --no-project --python 3.12 --with numpy==2.4.6 bash -eu -c" in sync["run"]
+    assert 'export CLOUDSDK_PYTHON="$(command -v python)"' in sync["run"]
+    assert "export CLOUDSDK_PYTHON_SITEPACKAGES=1" in sync["run"]
+    assert sync["run"].index('"$CLOUDSDK_PYTHON" -c') < sync["run"].index(
+        "scripts/deploy/sync_public_analytics_snapshots.sh --apply"
+    )
+    assert "import numpy" in sync["run"]
+
+
+def test_snapshot_failure_is_reported_using_outcome_not_masked_conclusion() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/deploy.yml").read_text())
+    steps = workflow["jobs"]["migrate-schema"]["steps"]
+    sync = next(step for step in steps if step.get("name") == "Sync shared public analytics snapshots")
+    report = next(step for step in steps if step.get("name") == "Report snapshot publication failure")
+
+    assert sync["id"] == "snapshot-sync"
+    assert sync["continue-on-error"] is True
+    assert "steps.snapshot-sync.outcome == 'failure'" in report["if"]
+    assert "::warning::" in report["run"]
+    assert "GITHUB_STEP_SUMMARY" in report["run"]
+    assert "not updated" in report["run"]
 
 
 def test_snapshot_sync_cannot_gate_the_control_plane_deploy() -> None:
