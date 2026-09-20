@@ -1,6 +1,7 @@
 [
   {
     "slug": "global", "name": "The Token Exchange", "region": "Global", "domain": "thetokenexchange.com", "aliases": ["thetoken.exchange"],
+    "scope": "global",
     "headline": "A better market for AI.",
     "lead": "Buy intelligence on your terms. Bring your AI workloads to competing model providers through one enterprise API. Or bring your inference capacity to the market.",
     "focus": "Global ambition. One procurement conversation.",
@@ -10,6 +11,7 @@
   },
   {
     "slug": "new-york", "name": "New York Token Exchange", "region": "New York", "domain": "nytokenexchange.com", "aliases": ["newyorktoken.exchange", "nytoken.exchange"],
+    "scope": "city",
     "headline": "Intelligence, bought on your terms.",
     "lead": "For New York's financial, legal and enterprise teams: compare AI models, choose approved providers and put every token to work through TrustedRouter.",
     "focus": "Built around the work that moves New York.",
@@ -19,6 +21,7 @@
   },
   {
     "slug": "chicago", "name": "Chicago Token Exchange", "region": "Chicago", "domain": "chicagotokenexchange.com", "aliases": ["chicagotoken.exchange"],
+    "scope": "city",
     "headline": "Put intelligence to work.",
     "lead": "A market for Chicago's industrial, logistics and financial AI workloads. Compare models and providers through one TrustedRouter integration.",
     "focus": "From the research desk to the supply chain.",
@@ -28,6 +31,7 @@
   },
   {
     "slug": "san-francisco", "name": "San Francisco Token Exchange", "region": "San Francisco", "domain": "sftokenexchange.com", "aliases": ["sftoken.exchange"],
+    "scope": "city",
     "headline": "Ship the product. Choose the intelligence.",
     "lead": "For the Bay Area teams building with AI: compare models, reduce inference spend and keep provider choice through a single API.",
     "focus": "Model choice is a product decision.",
@@ -37,6 +41,7 @@
   },
   {
     "slug": "texas", "name": "Texas Token Exchange", "region": "Texas", "domain": "texastokenexchange.com", "aliases": ["texastoken.exchange", "txtokenexchange.com", "txtoken.exchange"],
+    "scope": "region",
     "headline": "Connect compute to demand.",
     "lead": "For Texas enterprises and inference operators: put AI capacity to work, with competing providers and a common enterprise API.",
     "focus": "Practical AI for energy, industry and software.",
@@ -46,6 +51,7 @@
   },
   {
     "slug": "united-states", "name": "US Token Exchange", "region": "United States", "domain": "usatokenexchange.com", "aliases": ["usatoken.exchange", "ustoken.exchange"],
+    "scope": "region",
     "headline": "A purchasing advantage for enterprise AI.",
     "lead": "Bring AI purchasing together across teams. Compare models, review providers and control inference spend with TrustedRouter.",
     "focus": "One evaluation. A company wide opportunity.",
@@ -55,6 +61,7 @@
   },
   {
     "slug": "europe", "name": "European Token Exchange", "region": "Europe", "domain": "eutokenexchange.com", "aliases": ["eurotokenexchange.com", "eutoken.exchange"],
+    "scope": "region",
     "headline": "Your intelligence. Your requirements.",
     "lead": "A place for European teams to evaluate AI economics, provider policies and deployment requirements together. Powered by TrustedRouter.",
     "focus": "Make procurement part of the architecture.",
@@ -64,6 +71,7 @@
   },
   {
     "slug": "london", "name": "London Token Exchange", "region": "London", "domain": "londontoken.exchange", "aliases": ["ltokenexchange.com"],
+    "scope": "city",
     "headline": "Make intelligence a better buy.",
     "lead": "For London's financial, insurance and professional services teams: evaluate AI quality, privacy and cost through one enterprise conversation.",
     "focus": "A considered approach to AI purchasing.",
@@ -73,6 +81,7 @@
   },
   {
     "slug": "dubai", "name": "Dubai Token Exchange", "region": "Dubai", "domain": "dubaitokenexchange.com", "aliases": ["dubaitoken.exchange"],
+    "scope": "city",
     "headline": "A new connection for enterprise AI.",
     "lead": "For Dubai's enterprises, digital businesses and compute operators: bring model choice, provider review and inference economics into one place.",
     "focus": "Evaluate across languages and business lines.",
@@ -82,6 +91,7 @@
   },
   {
     "slug": "hong-kong", "name": "Hong Kong Token Exchange", "region": "Hong Kong", "domain": "hktokenexchange.com", "aliases": ["hktoken.exchange", "hongkongtoken.exchange"],
+    "scope": "city",
     "headline": "Connect your business to better intelligence.",
     "lead": "For Hong Kong's financial, trade and enterprise teams: compare multilingual AI workloads and provider requirements through TrustedRouter.",
     "focus": "Built around cross market workflows.",
@@ -91,6 +101,7 @@
   },
   {
     "slug": "shanghai", "name": "Shanghai Token Exchange", "region": "Shanghai", "domain": "shanghaitokenexchange.com", "aliases": ["shanghaitoken.exchange"],
+    "scope": "city",
     "headline": "Evaluate the next generation of intelligence.",
     "lead": "For teams with Shanghai focused operations: explore model quality, inference economics and provider eligibility with TrustedRouter.",
     "focus": "Start with the workload and the requirements.",
@@ -100,6 +111,7 @@
   },
   {
     "slug": "tokyo", "name": "Tokyo Token Exchange", "region": "Tokyo", "domain": "tokyotokenexchange.com", "aliases": [],
+    "scope": "city",
     "headline": "Precision in every AI purchasing decision.",
     "lead": "For Japan's enterprise, manufacturing and software teams: compare models on the work that matters, through TrustedRouter.",
     "focus": "Japanese language quality meets enterprise economics.",
