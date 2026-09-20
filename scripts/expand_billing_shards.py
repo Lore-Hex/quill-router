@@ -202,10 +202,10 @@ class Reader:
         if not 1 <= len(inventory) <= MAX_OWNER_WORKSPACES:
             raise ValueError("missing or oversized owner inventory")
         owned = self.entities([["user", owner_id], *[["credit", ws] for ws in inventory]])
-        # Match finalization's key -> credit lock order. The inverse produces
-        # S-credit/X-key versus X-key/X-credit cycles on a busy account.
-        key_rows = self.read("tr_key_limit", KEY_COLUMNS, [[key_id, str(shard)] for shard in range(MAX_CREDIT_SHARDS)])
+        # Match the credit -> key lock order used by authorize, settle,
+        # finalize, the reaper and the regional close.
         credits = self.read("tr_credit_balance", CREDIT_COLUMNS, [[workspace_id, str(shard)] for shard in range(MAX_CREDIT_SHARDS)])
+        key_rows = self.read("tr_key_limit", KEY_COLUMNS, [[key_id, str(shard)] for shard in range(MAX_CREDIT_SHARDS)])
         credits.sort(key=lambda row: int(row["shard"]))
         key_rows.sort(key=lambda row: int(row["shard"]))
         return make_plan(workspace, records[("credit", workspace_id)], records[("api_key", key_id)], credits, key_rows, owned[("user", owner_id)], {ws: owned[("credit", ws)] for ws in inventory}, target, allow_management_key=self.allow_management_key)

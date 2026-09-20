@@ -5617,6 +5617,7 @@ class SpannerBigtableStore:
             AuthorizeOutcome,
             authorize_atomic,
             bounded_credit_shard_candidates,
+            key_lifetime_cap_exhausted,
         )
         from trusted_router.storage_gcp_keys import (
             _gateway_authorization_idempotency_index_id,
@@ -5790,6 +5791,25 @@ class SpannerBigtableStore:
                     None,
                 )
 
+        if not skip_key_limit and key_lifetime_cap_exhausted(
+            self._database,
+            self._param_types,
+            key_hash=key_hash,
+            estimate=estimate,
+            has_credit_candidate=has_credit_candidate,
+            shard_count=key_counter_shards,
+            idempotency_scope=scope,
+            idempotency_fingerprint=idempotency_fingerprint,
+        ):
+            from trusted_router.storage_gcp_authorize import AuthorizeVerdict
+
+            # Same response shape as the transactional rejection below: carry
+            # the window decision so the 402 keeps its spend-window headers.
+            return (
+                AuthorizeVerdict(AuthorizeOutcome.KEY_LIMIT_EXCEEDED, rate_limit=window_decision),
+                None,
+            )
+
         credit_shard_candidates = (
             self._credit_shard_candidates(workspace_id) if has_credit_candidate else (UNSHARDED,)
         )
@@ -5921,9 +5941,16 @@ class SpannerBigtableStore:
             last_credit_candidates = candidates
             return run_authorize(candidates)
 
-        result = run_tracked(credit_shard_candidates)
         aggregate_exhaustion_proven = False
-        if result["outcome"] == AuthorizeOutcome.INSUFFICIENT_CREDITS and has_credit_candidate:
+        forced_reload_done = False
+        cooldown_passed = False
+
+        def recover_credit(result: dict[str, Any]) -> dict[str, Any]:
+            nonlocal credit_shard_candidates, aggregate_exhaustion_proven
+            nonlocal forced_reload_done, cooldown_passed
+            # run_tracked shares last_credit_candidates across both entries too.
+            if result["outcome"] != AuthorizeOutcome.INSUFFICIENT_CREDITS or not has_credit_candidate:
+                return result
             from trusted_router import storage_gcp_credit_rebalance as rebalance_mod
 
             # A bounded write-set rejection is cold. Refresh once so a remote
@@ -5959,8 +5986,6 @@ class SpannerBigtableStore:
             # between rebalance commit and our retry. Retry this cold path a
             # small bounded number of times; true aggregate exhaustion exits
             # from the snapshot precheck before entering the RW repair.
-            forced_reload_done = False
-            cooldown_passed = False
             for _attempt in range(3):
                 if (
                     result["outcome"] != AuthorizeOutcome.INSUFFICIENT_CREDITS
@@ -6063,6 +6088,9 @@ class SpannerBigtableStore:
                     # concurrent final-credit race into a spurious 503.
                     aggregate_exhaustion_proven = True
                 break
+            return result
+
+        result = recover_credit(run_tracked(credit_shard_candidates))
 
         # Match authorize's credit-before-key precedence when both escrows fragment.
         if result["outcome"] == AuthorizeOutcome.KEY_LIMIT_EXCEEDED and key_counter_shards > 1:
@@ -6079,6 +6107,7 @@ class SpannerBigtableStore:
                 preferred_shard=key_shard_candidates[0],
             ):
                 result = run_tracked(last_credit_candidates)
+                result = recover_credit(result)
         if (
             result["outcome"] == AuthorizeOutcome.INSUFFICIENT_CREDITS
             and len(credit_shard_candidates) > 1

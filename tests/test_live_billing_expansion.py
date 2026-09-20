@@ -275,7 +275,7 @@ def test_dry_run_never_commits_or_rolls_back(monkeypatch, management):
 
 
 @pytest.mark.parametrize("management", [False, True])
-def test_transaction_reads_key_before_credit_to_match_settlement(monkeypatch, management):
+def test_transaction_reads_credit_before_key_to_match_settlement(monkeypatch, management):
     from google.cloud.spanner_v1.types import ResultSet
 
     inputs = state()
@@ -297,4 +297,4 @@ def test_transaction_reads_key_before_credit_to_match_settlement(monkeypatch, ma
         return key_rows if table == "tr_key_limit" else credit_rows
     monkeypatch.setattr(reader, "read", read)
     assert reader.plan("ws", "key", 16)["changed"]
-    assert tables == ["tr_key_limit", "tr_credit_balance"]
+    assert tables == ["tr_credit_balance", "tr_key_limit"]

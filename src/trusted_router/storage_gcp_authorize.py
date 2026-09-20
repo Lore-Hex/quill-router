@@ -153,6 +153,63 @@ class _Reject(Exception):
         self.outcome = outcome
 
 
+def key_lifetime_cap_exhausted(
+    database: Any,
+    param_types: Any,
+    *,
+    key_hash: str,
+    estimate: int,
+    has_credit_candidate: bool,
+    shard_count: int = 1,
+    idempotency_scope: str | None = None,
+    idempotency_fingerprint: str | None = None,
+) -> bool:
+    """Reject proven lifetime-cap exhaustion without locking a credit row.
+
+    Read a lock-free snapshot OUTSIDE the authorize read-write transaction,
+    just like key_window_limit_decision. A same-fingerprint reservation passes
+    through so the transaction can REPLAY. Missing/incomplete rows, an uncapped
+    shard, excluded BYOK, and snapshot failures also pass through: the
+    transaction remains the authority. Aggregate headroom uses reserve_key's
+    arithmetic, so fragmentation alone never rejects an affordable request.
+    The caller skips this check entirely for known uncapped keys.
+    """
+    pt = param_types
+    try:
+        with database.snapshot(multi_use=True) as snapshot:
+            if idempotency_scope is not None:
+                existing = read_reservation_by_idempotency(snapshot, pt, idempotency_scope)
+                if (
+                    existing is not None
+                    and existing["idempotency_fingerprint"] == idempotency_fingerprint
+                ):
+                    return False
+            rows = list(
+                snapshot.execute_sql(
+                    "SELECT shard, limit_micro, usage, byok_usage, reserved, include_byok "
+                    "FROM tr_key_limit WHERE key_hash=@kh "
+                    "AND shard>=0 AND shard<@shard_count ORDER BY shard",
+                    params={"kh": key_hash, "shard_count": shard_count},
+                    param_types={"kh": pt.STRING, "shard_count": pt.INT64},
+                )
+            )
+    except Exception:
+        log.warning(
+            "key lifetime-cap snapshot failed; deferring to authorize transaction key=%s",
+            key_hash,
+            exc_info=True,
+        )
+        return False
+    if not rows or [int(row[0]) for row in rows] != list(range(shard_count)):
+        return False
+    if any(row[1] is None or (not has_credit_candidate and not row[5]) for row in rows):
+        return False
+    return sum(
+        int(limit_micro) - int(usage) - (int(byok_usage) if include_byok else 0) - int(reserved)
+        for _, limit_micro, usage, byok_usage, reserved, include_byok in rows
+    ) < estimate
+
+
 def key_window_limit_decision(
     database: Any,
     param_types: Any,

@@ -1,4 +1,9 @@
-"""Record locking reads and writes; assert the credit-before-key invariant."""
+"""Record SQL and buffered mutations; check DML-only hot billing lock order.
+
+The invariant covers DML statements in the hot billing transactions. Mutation
+administrative repairs such as repair_typed_reserved are outside it: their
+writes are buffered until commit, so call order does not establish lock order.
+"""
 
 from __future__ import annotations
 
@@ -26,20 +31,49 @@ def record_statements(monkeypatch: pytest.MonkeyPatch) -> StatementCalls:
 
     monkeypatch.setattr(_FakeTransaction, "execute_update", update)
     monkeypatch.setattr(_FakeTransaction, "execute_sql", read)
+
+    def record_mutation(name: str) -> None:
+        original = getattr(_FakeTransaction, name)
+
+        def mutation(transaction: Any, *args: Any, **kwargs: Any) -> Any:
+            table = kwargs["table"] if "table" in kwargs else args[0]
+            calls.append((transaction, f"mutation:{name} {table}".lower()))
+            return original(transaction, *args, **kwargs)
+
+        monkeypatch.setattr(_FakeTransaction, name, mutation)
+
+    for name in ("insert", "update", "insert_or_update", "replace", "delete"):
+        if hasattr(_FakeTransaction, name):
+            record_mutation(name)
     return calls
 
 
 def transaction_statements(calls: StatementCalls) -> list[str]:
+    """Extract one hot billing transaction and require DML-only counter writes."""
     assert len({id(tx) for tx, _ in calls}) == 1
-    return [sql for _, sql in calls]
+    statements = [sql for _, sql in calls]
+    no_counter_mutations(statements)
+    return statements
+
+
+def no_counter_mutations(statements: list[str]) -> None:
+    assert not any(
+        sql.startswith("mutation:") and any(
+            table in sql for table in ("tr_credit_balance", "tr_key_limit")
+        )
+        for sql in statements
+    ), statements
 
 
 def credit_before_key(statements: list[str], *, key_last: bool = False) -> None:
-    """No credit/recovery/pause read or write may follow the first key statement.
+    """Hot billing DML: no credit/recovery/pause access follows the first key.
 
     Release paths additionally require the key UPDATE to be the final statement.
     Authorize only requires credit before key: request INSERTs follow the key.
+    repair_typed_reserved and other mutation-based administrative repairs are
+    outside this invariant because mutation writes are buffered until commit.
     """
+    no_counter_mutations(statements)
     credit = [
         i for i, sql in enumerate(statements)
         if any(name in sql for name in (

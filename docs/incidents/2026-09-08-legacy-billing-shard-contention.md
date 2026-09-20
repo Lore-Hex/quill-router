@@ -116,3 +116,10 @@ The fix adds that reader entry without expanding access to arbitrary names.
 The actual HTTP-backed reader contract test was extended to cover it and was
 observed failing on the previous code. Unknown-product rejection remains tested.
 This independent fix does not repair the billing contention described above.
+
+2026-09-19 follow-up: the global billing lock order was flipped to credit-then-key
+so key rows no longer inherit waits on contended credit rows. Authorize, settle,
+typed finalize, the reaper and regional close now follow that order, and
+`scripts/expand_billing_shards.py` reads credit rows before key rows to match;
+its regression test pins the new order. The earlier incident account above
+describes the order in use at that time.

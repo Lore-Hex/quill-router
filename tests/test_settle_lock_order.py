@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from tests.fakes.spanner import _ParamTypes
+from tests.fakes.spanner import _FakeSnapshot, _KeySet, _ParamTypes
 from tests.fakes.spanner_order import (
     authorize_credit_before_key,
     credit_before_key,
@@ -22,6 +22,7 @@ from tests.test_stage_d_heartbeat import NOW, _seed, _seed_reaper_counters
 from trusted_router import storage_gcp_authorize as billing
 from trusted_router.storage_errors import StoreUnavailable
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
+from trusted_router.storage_models import Workspace
 
 
 @pytest.fixture
@@ -201,8 +202,8 @@ def test_armed_pause_precedes_capped_key_and_rolls_back(
         authorize_credit_before_key(statements)
 
 
-def _fragmented_authorize(store: Any, key: Any) -> tuple[str, Any]:
-    return store.authorize_gateway_typed(
+def _fragmented_authorize(store: Any, key: Any, **kwargs: Any) -> tuple[str, Any]:
+    options = dict(
         workspace_id=key.workspace_id, key_hash=key.hash, estimate=10_000,
         has_credit_candidate=True, reservation_usage_type="Credits",
         model_id="model", provider="provider", requested_model_id=None,
@@ -210,6 +211,8 @@ def _fragmented_authorize(store: Any, key: Any) -> tuple[str, Any]:
         candidate_endpoint_ids=["endpoint"], idempotency_key=None,
         idempotency_fingerprint=None, key_usage_shards=4,
     )
+    options.update(kwargs)
+    return store.authorize_gateway_typed(**options)
 
 
 def _fragmented_store(credits: list[int], key_limit: int) -> tuple[Any, Any, Any]:
@@ -291,6 +294,157 @@ def test_key_repair_retries_on_the_credit_shard_that_held_funds(
     assert sum(row["total_credits"] for row in credit_rows) == 12_000
 
 
+@pytest.mark.parametrize("initial_shards", [1, 2], ids=["new_split", "second_repair"])
+def test_credit_split_during_key_repair_is_recovered(
+    monkeypatch: pytest.MonkeyPatch, initial_shards: int,
+) -> None:
+    from trusted_router import storage_gcp
+    from trusted_router import storage_gcp_key_escrow as escrow
+    from trusted_router.storage_gcp_credit_shard_admin import reshard_credit_account
+
+    store, db, key = _fragmented_store([12_000 // initial_shards] * initial_shards, 20_000)
+    monkeypatch.setattr(storage_gcp, "randomized_credit_shards", lambda count: tuple(range(count)))
+    rebalance = escrow.rebalance_key_limit_headroom
+    repairs = 0
+    cooldown_checks = 0
+    cooldown_allows = store._credit_rebalance_cooldown_allows
+
+    def cooldown(workspace_id: str) -> bool:
+        nonlocal cooldown_checks
+        cooldown_checks += 1
+        # Any second check would be this request's own cooldown timestamp.
+        return cooldown_checks == 1 and cooldown_allows(workspace_id)
+
+    def split_after_repair(*args: Any, **kwargs: Any) -> bool:
+        nonlocal repairs
+        repairs += 1
+        repaired = rebalance(*args, **kwargs)
+        assert repaired
+        workspace = Workspace(
+            id=key.workspace_id, name="split during repair", owner_user_id="owner",
+            billing_paused=True,
+        )
+        store._write_entity("workspace", workspace.id, workspace)
+        split = reshard_credit_account(store, workspace.id, initial_shards * 2, apply=True)
+        assert split.applied and split.ready, split.reasons
+        workspace.billing_paused = False
+        store._write_entity("workspace", workspace.id, workspace)
+        assert [row["total_credits"] for row in db.typed[CREDIT_BALANCE_TABLE].values()] == (
+            [12_000 // (initial_shards * 2)] * (initial_shards * 2)
+        )
+        return repaired
+
+    monkeypatch.setattr(store, "_credit_rebalance_cooldown_allows", cooldown)
+    monkeypatch.setattr(escrow, "rebalance_key_limit_headroom", split_after_repair)
+    verdict, authorization = _fragmented_authorize(store, key)
+    assert verdict == billing.AuthorizeOutcome.ACCEPTED
+    assert repairs == cooldown_checks == 1
+    _assert_repaired_totals(db, authorization, credit_shard=0)
+
+
+def _assert_repaired_totals(db: Any, authorization: Any, *, credit_shard: int) -> None:
+    assert authorization is not None
+    reservation = db.reservations[authorization.credit_reservation_id]
+    assert reservation["credit_shard"] == credit_shard
+    assert reservation["credit_reserved_micro"] == reservation["key_reserved_micro"] == 10_000
+    credit_rows = list(db.typed[CREDIT_BALANCE_TABLE].values())
+    key_rows = list(db.typed[KEY_LIMIT_TABLE].values())
+    assert sum(row["total_credits"] for row in credit_rows) == 12_000
+    assert sum(row["total_usage"] for row in credit_rows) == 0
+    assert sum(row["reserved"] for row in credit_rows) == 10_000
+    assert sum(row["limit_micro"] for row in key_rows) == 20_000
+    assert sum(row["usage"] + row["byok_usage"] for row in key_rows) == 0
+    assert sum(row["reserved"] for row in key_rows) == 10_000
+    assert len(db.reservations) == 1
+
+
+def test_credit_moved_beyond_prefix_during_key_repair_is_recovered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import storage_gcp
+    from trusted_router import storage_gcp_key_escrow as escrow
+    from trusted_router.storage_gcp_credit_rebalance import (
+        RebalanceOutcome,
+        rebalance_credit_for_estimate,
+    )
+
+    shards = billing.MAX_CREDIT_SHARD_ATTEMPTS_PER_TRANSACTION + 2
+    store, db, key = _fragmented_store([12_000] + [0] * (shards - 1), 20_000)
+    monkeypatch.setattr(storage_gcp, "randomized_credit_shards", lambda count: tuple(range(count)))
+    rebalance = escrow.rebalance_key_limit_headroom
+    repairs = 0
+
+    def move_after_repair(*args: Any, **kwargs: Any) -> bool:
+        nonlocal repairs
+        repairs += 1
+        repaired = rebalance(*args, **kwargs)
+        assert repaired
+        moved = rebalance_credit_for_estimate(
+            db, store._param_types, workspace_id=key.workspace_id,
+            shard_count=shards, target_shard=shards - 1, estimate=12_000,
+        )
+        assert moved["outcome"] == RebalanceOutcome.MOVED
+        assert moved["moved_micro"] == 12_000
+        return repaired
+
+    monkeypatch.setattr(escrow, "rebalance_key_limit_headroom", move_after_repair)
+    verdict, authorization = _fragmented_authorize(store, key)
+    assert verdict == billing.AuthorizeOutcome.ACCEPTED
+    assert repairs == 1
+    _assert_repaired_totals(db, authorization, credit_shard=shards - 1)
+
+
+def test_credit_recovery_authorize_attempts_are_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    store, db, key = _fragmented_store([12_000, 0], 20_000)
+    attempts = 0
+
+    def insufficient(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        nonlocal attempts
+        attempts += 1
+        assert attempts <= 4
+        return {"outcome": billing.AuthorizeOutcome.INSUFFICIENT_CREDITS}
+
+    monkeypatch.setattr(billing, "authorize_atomic", insufficient)
+    with pytest.raises(StoreUnavailable, match="credit headroom changed concurrently; retry"):
+        _fragmented_authorize(store, key)
+    # One initial run_authorize + three funded-shard retries. The count refresh
+    # is unchanged, and no KEY_LIMIT_EXCEEDED means no key repair/second entry.
+    assert attempts == 4
+    assert not db.reservations
+
+
+def test_second_credit_recovery_key_rejection_does_not_repeat_key_repair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import storage_gcp_key_escrow as escrow
+
+    store, db, key = _fragmented_store([12_000, 0], 20_000)
+    outcomes = iter([
+        billing.AuthorizeOutcome.KEY_LIMIT_EXCEEDED,
+        billing.AuthorizeOutcome.INSUFFICIENT_CREDITS,
+        billing.AuthorizeOutcome.KEY_LIMIT_EXCEEDED,
+    ])
+    attempts = 0
+    repairs = 0
+    rebalance = escrow.rebalance_key_limit_headroom
+
+    def attempt(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        nonlocal attempts
+        attempts += 1
+        return {"outcome": next(outcomes)}
+
+    def repair(*args: Any, **kwargs: Any) -> bool:
+        nonlocal repairs
+        repairs += 1
+        return rebalance(*args, **kwargs)
+
+    monkeypatch.setattr(billing, "authorize_atomic", attempt)
+    monkeypatch.setattr(escrow, "rebalance_key_limit_headroom", repair)
+    assert _fragmented_authorize(store, key) == (billing.AuthorizeOutcome.KEY_LIMIT_EXCEEDED, None)
+    assert attempts == 3 and repairs == 1
+    assert not db.reservations
+
+
 @pytest.mark.parametrize("credits", [[6_000, 6_000], [12_000, 0]], ids=["both", "key_only"])
 def test_credit_consumed_after_key_repair_is_retryable(
     monkeypatch: pytest.MonkeyPatch, credits: list[int],
@@ -309,11 +463,182 @@ def test_credit_consumed_after_key_repair_is_retryable(
         return repaired
 
     monkeypatch.setattr(escrow, "rebalance_key_limit_headroom", consume_after_repair)
-    with pytest.raises(StoreUnavailable, match="credit headroom changed concurrently; retry"):
-        _fragmented_authorize(store, key)
+    # The second recovery now proves aggregate exhaustion (9,000 < 10,000),
+    # so an honest 402 is preferable to the previous unproven retryable 503.
+    verdict, authorization = _fragmented_authorize(store, key)
+    assert verdict == billing.AuthorizeOutcome.INSUFFICIENT_CREDITS
+    assert authorization is None
+    assert sum(row["total_credits"] - row["total_usage"]
+               for row in db.typed[CREDIT_BALANCE_TABLE].values()) == 9_000
     assert sum(row["reserved"] for row in db.typed[CREDIT_BALANCE_TABLE].values()) == 0
     assert sum(row["reserved"] for row in db.typed[KEY_LIMIT_TABLE].values()) == 0
     assert not db.reservations
+
+
+def test_lifetime_cap_exhausted_never_locks_credit(calls: list[tuple[Any, str]]) -> None:
+    store, db, key = _fragmented_store([12_000], 8_000)
+    calls.clear()
+    before = copy.deepcopy(db.typed)
+    assert _fragmented_authorize(store, key) == (billing.AuthorizeOutcome.KEY_LIMIT_EXCEEDED, None)
+    assert not any("tr_credit_balance" in sql for _, sql in calls)
+    assert not calls  # No read-write transaction, including a pointless key repair.
+    assert db.typed == before and not db.reservations
+    assert sum("SELECT shard, limit_micro, usage, byok_usage, reserved, include_byok" in sql
+               for sql in db.snapshot_sql) == 1
+
+
+def test_lifetime_cap_exact_headroom_is_accepted(calls: list[tuple[Any, str]]) -> None:
+    store, db, key = _fragmented_store([12_000], 10_000)
+    calls.clear()
+    verdict, authorization = _fragmented_authorize(store, key)
+    assert verdict == billing.AuthorizeOutcome.ACCEPTED
+    assert authorization is not None
+    assert any(sql.startswith("update tr_credit_balance") for _, sql in calls)
+    assert sum(row["reserved"] for row in db.typed[KEY_LIMIT_TABLE].values()) == 10_000
+    assert sum(row["limit_micro"] for row in db.typed[KEY_LIMIT_TABLE].values()) == 10_000
+
+
+def test_lifetime_cap_exhausted_idempotent_authorize_replays(
+    calls: list[tuple[Any, str]],
+) -> None:
+    store, db, key = _fragmented_store([12_000], 10_000)
+    options = {"idempotency_key": "cap-retry", "idempotency_fingerprint": "same-body"}
+    verdict, authorization = _fragmented_authorize(store, key, **options)
+    assert verdict == billing.AuthorizeOutcome.ACCEPTED
+    before = copy.deepcopy((db.typed, db.reservations))
+    calls.clear()
+    verdict, replay = _fragmented_authorize(store, key, **options)
+    assert verdict == billing.AuthorizeOutcome.REPLAY
+    assert replay == authorization
+    assert not any("tr_credit_balance" in sql for _, sql in calls)
+    assert (db.typed, db.reservations) == before
+
+
+def test_lifetime_cap_excluded_byok_is_accepted() -> None:
+    store, db, key = _fragmented_store([12_000], 0)
+    assert store.api_keys.update(key.hash, {"include_byok_in_limit": False}) is not None
+    verdict, authorization = _fragmented_authorize(
+        store, key, has_credit_candidate=False, reservation_usage_type="BYOK",
+    )
+    assert verdict == billing.AuthorizeOutcome.ACCEPTED
+    assert authorization is not None
+    reservation = db.reservations[authorization.credit_reservation_id]
+    assert reservation["credit_reserved_micro"] == reservation["key_reserved_micro"] == 0
+    assert all(row["reserved"] == 0 for row in db.typed[KEY_LIMIT_TABLE].values())
+
+
+@pytest.mark.parametrize("key_limit", [8_000, 20_000], ids=["reject", "accept"])
+def test_lifetime_cap_snapshot_failure_defers_to_transaction(
+    monkeypatch: pytest.MonkeyPatch, calls: list[tuple[Any, str]],
+    caplog: pytest.LogCaptureFixture, key_limit: int,
+) -> None:
+    store, db, key = _fragmented_store([12_000], key_limit)
+    execute_sql = _FakeSnapshot.execute_sql
+
+    def fail_cap_snapshot(snapshot: Any, sql: str, **kwargs: Any) -> Any:
+        if "SELECT shard, limit_micro, usage, byok_usage, reserved, include_byok" in sql:
+            raise RuntimeError("snapshot unavailable")
+        return execute_sql(snapshot, sql, **kwargs)
+
+    monkeypatch.setattr(_FakeSnapshot, "execute_sql", fail_cap_snapshot)
+    calls.clear()
+    verdict, authorization = _fragmented_authorize(store, key)
+    expected = billing.AuthorizeOutcome.ACCEPTED if key_limit == 20_000 else billing.AuthorizeOutcome.KEY_LIMIT_EXCEEDED
+    assert verdict == expected
+    assert (authorization is not None) == (key_limit == 20_000)
+    assert any(sql.startswith("update tr_credit_balance") for _, sql in calls)
+    warnings = [record for record in caplog.records if "key lifetime-cap snapshot failed" in record.message]
+    assert len(warnings) == 1 and warnings[0].levelname == "WARNING"
+    hold = 10_000 if authorization else 0
+    assert sum(row["reserved"] for row in db.typed[CREDIT_BALANCE_TABLE].values()) == hold
+
+
+def test_lifetime_cap_precheck_rejection_keeps_window_decision(
+    monkeypatch: pytest.MonkeyPatch, calls: list[tuple[Any, str]],
+) -> None:
+    from trusted_router.spend_windows import KeyWindowLimitDecision
+
+    store, db, key = _fragmented_store([12_000], 8_000)
+    decision = KeyWindowLimitDecision(
+        window="day", limit=50_000, remaining=40_000,
+        resets_at=NOW + timedelta(hours=1), reset_seconds=3_600, allowed=True,
+    )
+    monkeypatch.setattr(billing, "key_window_limit_decision", lambda *args, **kwargs: decision)
+    calls.clear()
+    verdict, authorization = _fragmented_authorize(store, key, window_limits={"day": 50_000})
+    # The snapshot rejection answers like the transactional one: same outcome,
+    # same spend-window headers, and no counter row was ever locked.
+    assert verdict == billing.AuthorizeOutcome.KEY_LIMIT_EXCEEDED and authorization is None
+    assert isinstance(verdict, billing.AuthorizeVerdict) and verdict.rate_limit is decision
+    assert not any(sql.startswith("update tr_") for _, sql in calls)
+    assert not db.reservations
+
+
+def test_uncapped_authorize_skips_lifetime_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    store, _db, key = _fragmented_store([12_000], 20_000)
+    assert store.api_keys.update(key.hash, {"limit_microdollars": None}) is not None
+
+    def unexpected(*args: Any, **kwargs: Any) -> bool:
+        pytest.fail("known uncapped key paid for a lifetime-cap snapshot")
+
+    monkeypatch.setattr(billing, "key_lifetime_cap_exhausted", unexpected)
+    assert _fragmented_authorize(store, key, skip_key_limit=True)[0] == billing.AuthorizeOutcome.ACCEPTED
+
+
+@pytest.mark.parametrize("state", ["missing", "incomplete", "uncapped"])
+def test_lifetime_cap_uncertain_rows_pass_through(state: str) -> None:
+    store, db, key = _fragmented_store([12_000], 0)
+    rows = db.typed[KEY_LIMIT_TABLE]
+    if state == "missing":
+        rows.clear()
+    elif state == "incomplete":
+        del rows[(key.hash, 3)]
+    else:
+        rows[(key.hash, 3)]["limit_micro"] = None
+    assert not billing.key_lifetime_cap_exhausted(
+        db, store._param_types, key_hash=key.hash, estimate=10_000,
+        has_credit_candidate=True, shard_count=4,
+    )
+
+
+@pytest.mark.parametrize("counter", ["usage", "byok_usage", "reserved"])
+@pytest.mark.parametrize("include_byok", [False, True])
+def test_lifetime_cap_headroom_matches_reserve_arithmetic(counter: str, include_byok: bool) -> None:
+    store, db, key = _fragmented_store([12_000], 20_000)
+    for row in db.typed[KEY_LIMIT_TABLE].values():
+        row[counter] = 3_000
+        row["include_byok"] = include_byok
+    assert billing.key_lifetime_cap_exhausted(
+        db, store._param_types, key_hash=key.hash, estimate=10_000,
+        has_credit_candidate=True, shard_count=4,
+    ) == (counter != "byok_usage" or include_byok)
+
+
+@pytest.mark.parametrize("table", [CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE])
+@pytest.mark.parametrize("method", ["insert_or_update", "delete"])
+def test_order_spy_records_counter_mutations(
+    calls: list[tuple[Any, str]], table: str, method: str,
+) -> None:
+    db, _ = _seed()
+    _seed_reaper_counters(db)
+    calls.clear()
+
+    def mutate(transaction: Any) -> None:
+        if method == "delete":
+            transaction.delete(table, _KeySet(keys=[("workspace" if table == CREDIT_BALANCE_TABLE else "key", 0)]))
+        else:
+            row = next(iter(db.typed[table].values()))
+            transaction.insert_or_update(table=table, columns=tuple(row), values=[tuple(row.values())])
+
+    db.run_in_transaction(mutate)
+    assert [sql for _, sql in calls] == [f"mutation:{method} {table}"]
+    # Counter mutations must not pass the hot-path DML invariant even if the
+    # SQL reads alone appear to be ordered correctly.
+    with pytest.raises(AssertionError):
+        credit_before_key([
+            "select reserved from tr_credit_balance", "select reserved from tr_key_limit",
+            *[sql for _, sql in calls],
+        ])
 
 
 @pytest.mark.parametrize("escrowed", [False, True], ids=["ordinary_hold", "lease_escrowed"])
