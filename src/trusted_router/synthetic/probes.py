@@ -2226,6 +2226,7 @@ async def _observe_provider_stream(
     *,
     started: float,
     clock: Callable[[], float] = time.perf_counter,
+    on_first_token: Callable[[], None] | None = None,
 ) -> _StreamObservation:
     observation = _StreamObservation()
     tail = ""
@@ -2241,6 +2242,8 @@ async def _observe_provider_stream(
         if _sse_line_has_content(line):
             if observation.first_token_milliseconds is None:
                 observation.first_token_milliseconds = now_milliseconds
+                if on_first_token is not None:
+                    on_first_token()
             observation.last_token_milliseconds = now_milliseconds
         usage = _sse_line_usage(line)
         if usage is not None:
@@ -2442,11 +2445,14 @@ async def provider_rotation_probe(
         provider=provider,
         default_first_token_seconds=default_timeout_seconds,
     )
+    completion_deadline = asyncio.get_running_loop().time() + deadline.completion_seconds
     try:
-        # httpx's read timeout resets whenever another chunk arrives. The
-        # outer wall-clock deadline is therefore the primary bound for a
-        # provider that trickles bytes forever without completing the stream.
-        async with asyncio.timeout(deadline.first_token_seconds):
+        # Heartbeats cannot extend the first-token deadline. Actual token flow
+        # switches once to the absolute completion deadline, never a rolling
+        # budget that a trickling provider could keep alive indefinitely.
+        async with asyncio.timeout(
+            min(deadline.first_token_seconds, deadline.completion_seconds)
+        ) as request_deadline:
             async with client.stream(
                 "POST",
                 url,
@@ -2468,7 +2474,11 @@ async def provider_rotation_probe(
                         error_type=error_type,
                         error_message=message,
                     )
-                observation = await _observe_provider_stream(response, started=started)
+                observation = await _observe_provider_stream(
+                    response,
+                    started=started,
+                    on_first_token=lambda: request_deadline.reschedule(completion_deadline),
+                )
                 if observation.stream_error is not None:
                     error_type, status, message = observation.stream_error
                     return _rotation_error_sample(
