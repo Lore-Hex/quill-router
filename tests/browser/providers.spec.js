@@ -12,7 +12,13 @@ test("provider privacy separates retention from verified inference", async ({ pa
   const search = page.getByRole("searchbox", { name: "Search providers" });
   await search.fill("phala");
   await expect(phala).toBeVisible();
-  await expect(page.locator("[data-provider-result-count]")).toHaveText("1 entry");
+  // Policy text is searchable: Redpill explicitly distinguishes itself from Phala.
+  const redpill = page.locator('[data-provider-id="redpill"]');
+  await expect(redpill).toBeVisible();
+  await expect(redpill).toHaveAttribute("data-zdr", "false");
+  await expect(redpill).toHaveAttribute("data-confidential", "false");
+  await expect(redpill.locator('.provider-card-trust [data-privacy="zdr"], .provider-card-trust [data-privacy="confidential"]')).toHaveCount(0);
+  await expect(page.locator("[data-provider-result-count]")).toHaveText("2 entries");
   await phala.getByRole("link", { name: /Phala/ }).click();
   await expect(page.getByRole("row", { name: "Verified confidential inference Not verified" })).toBeVisible();
 });

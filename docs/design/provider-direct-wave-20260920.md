@@ -92,6 +92,10 @@ Local validation:
   The exact-match assertions remain enabled. AWS has 89 matched vsock tunnels.
 - Parent: 39 tests, lint, format check, and strict types pass.
 - Azure deployment script: 97 tests pass; sealed-bundle manifest: 8 tests pass.
+- Enclave PR #348 CI passes, including build, vet, lint, and race tests for all
+  cloud variants, both sidecars, and deployment-script validation.
+- All 112 local browser tests pass. The search test now verifies that a Phala
+  search also matches Redpill's policy note, without inheriting Phala's badges.
 
 The operator explicitly authorized deployment and cloud-local distribution of
 the four keys below on September 20. No secret values are stored in this report.
