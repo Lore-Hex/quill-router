@@ -4582,8 +4582,10 @@ def make_fake_store(
     store._spend_lease_ledger = None
     store._regional_quota_lease_cache = {}
     store._regional_quota_lease_cache_lock = threading.Lock()
+    from trusted_router.storage_gcp_authorize import ExhaustedKeyCache
     from trusted_router.storage_gcp_credit_shards import CreditShardCountCache
 
+    store._lifetime_cap_exhausted_keys = ExhaustedKeyCache()
     store._credit_shard_counts = CreditShardCountCache()
     io = SpannerIO(
         database=db,

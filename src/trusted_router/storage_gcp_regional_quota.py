@@ -502,6 +502,14 @@ def reconcile_regional_quota_lease(
         if sum(key_deltas.values()) != spent_delta:
             raise RuntimeError("regional workspace and key settlement totals differ")
 
+        unused = 0
+        next_state = "active"
+        if close:
+            unused = current.granted_microdollars - local_lease.spent_microdollars
+            if unused < 0:
+                raise RuntimeError("regional lease spent more than its grant")
+
+        # Finish both credit releases (including recovery/pause) before keys.
         if (
             spent_delta
             and release_credit(
@@ -515,6 +523,21 @@ def reconcile_regional_quota_lease(
             != 1
         ):
             raise RuntimeError("global regional credit escrow release failed")
+        if close:
+            if (
+                unused
+                and release_credit(
+                    transaction,
+                    store._param_types,
+                    current.workspace_id,
+                    unused,
+                    0,
+                    shard=current.credit_shard,
+                )
+                != 1
+            ):
+                raise RuntimeError("unused regional credit escrow release failed")
+
         floors = window_floors(now)
         for key, amount in key_deltas.items():
             key_hash, key_shard = _parse_key_total_id(key)
@@ -536,25 +559,7 @@ def reconcile_regional_quota_lease(
             ):
                 raise RuntimeError("regional API key usage reconciliation failed")
 
-        unused = 0
-        next_state = "active"
         if close:
-            unused = current.granted_microdollars - local_lease.spent_microdollars
-            if unused < 0:
-                raise RuntimeError("regional lease spent more than its grant")
-            if (
-                unused
-                and release_credit(
-                    transaction,
-                    store._param_types,
-                    current.workspace_id,
-                    unused,
-                    0,
-                    shard=current.credit_shard,
-                )
-                != 1
-            ):
-                raise RuntimeError("unused regional credit escrow release failed")
             next_state = "closed"
             fence_id = _fence_entity_id(
                 current.workspace_id,

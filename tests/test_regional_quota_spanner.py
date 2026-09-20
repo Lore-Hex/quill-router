@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from tests.fakes.spanner import make_fake_store
+from tests.fakes.spanner_order import credit_before_key, record_statements, transaction_statements
 from trusted_router.regional_quota_ledger import (
     InMemoryRegionalQuotaLedger,
     RegionalLeaseLedgerError,
@@ -971,3 +972,58 @@ def test_reconciler_lock_is_single_owner_and_fenced_after_expiry() -> None:
         )
         is True
     )
+
+
+
+def test_regional_close_finishes_credit_and_recovery_before_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, database, _ = make_fake_store(request_record_write_mode="typed")
+    workspace = store.create_workspace("owner", "close-order", trial_credit_microdollars=100_000_000)
+    _raw, key = store.create_api_key(
+        workspace_id=workspace.id, name="uncapped", creator_user_id="owner",
+    )
+    lease = grant_regional_quota_lease(
+        store, workspace_id=workspace.id, region="us-central1",
+        requested_microdollars=10_000_000, per_lease_cap_microdollars=10_000_000,
+        max_available_basis_points=1_000, ttl_seconds=60,
+        minimum_grant_microdollars=1_000, now=NOW,
+    )
+    assert lease is not None
+    lease = activate_regional_quota_lease(store, lease, now=NOW)
+    ledger = InMemoryRegionalQuotaLedger()
+    local = ledger.initialize(regional_lease_from_global(lease))
+    local = ledger.reserve(
+        local.lease_id, region=local.region, hold_id="auth-close", fingerprint="fp-close",
+        amount_microdollars=5_000, fencing_token=local.fencing_token,
+        key_hash=key.hash, key_shard=7, hold_expires_at=NOW + timedelta(hours=2), now=NOW,
+    )
+    local = ledger.settle(
+        local.lease_id, region=local.region, hold_id="auth-close",
+        actual_microdollars=3_250, fencing_token=local.fencing_token,
+    )
+    local = ledger.begin_drain(
+        local.lease_id, region=local.region, fencing_token=local.fencing_token,
+    )
+    calls = record_statements(monkeypatch)
+    result = reconcile_regional_quota_lease(
+        store, lease, local, close=True, now=NOW + timedelta(minutes=2),
+    )
+    statements = transaction_statements(calls)
+    credit_before_key(statements)
+    assert sum(sql.startswith("update tr_credit_balance") for sql in statements) == 2
+    assert any("from tr_trust_event" in sql for sql in statements)
+    assert result.spent_delta_microdollars == 3_250
+    assert result.unused_released_microdollars == lease.granted_microdollars - 3_250
+    assert result.closed and not result.replayed
+    assert _credit_totals(database, workspace.id) == (100_000_000, 3_250, 0)
+    assert database.typed[KEY_LIMIT_TABLE][(key.hash, 7)]["usage"] == 3_250
+    assert audit_typed_invariants(store).clean
+    calls.clear()
+    replay = reconcile_regional_quota_lease(
+        store, lease, local, close=True, now=NOW + timedelta(minutes=3),
+    )
+    assert replay.replayed and replay.closed
+    assert replay.spent_delta_microdollars == replay.unused_released_microdollars == 0
+    assert not any("tr_credit_balance" in sql or "tr_key_limit" in sql for _, sql in calls)
+    assert _credit_totals(database, workspace.id) == (100_000_000, 3_250, 0)

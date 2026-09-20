@@ -118,11 +118,24 @@ unchanged. No Redis on the enforcement path.
 
 ## 4. Flows (final enforcement shape — Step 3+)
 
-### Lock order — ONE order everywhere: **key, then credit**
+### Lock order — ONE order everywhere: **credit, then key**
 
 codex finding #2: the panel had authorize=key→credit but settle=credit→key,
-which still deadlocks. Both authorize and settle acquire **key first, then
-credit**.
+which still deadlocks. Authorize, settle, typed finalize, the reaper, regional
+close, and `scripts/expand_billing_shards.py` must all acquire **credit first,
+then key**. Settle used to update the key row and then wait for the contended
+credit row while holding the key row, so key rows inherited credit-row wait
+(production `LOCK_STATS`, 2026-09-07). Taking every credit-table cell first
+means the key row is held only until commit.
+
+A bounded per-process negative cache remembers final lifetime-cap rejections;
+only cached keys pay a lock-free snapshot precheck, so healthy keys pay nothing.
+The snapshot remains authoritative on every hit, dropping the entry when it
+finds headroom and preserving replay pass-through, so repeated exhausted-key
+requests avoid locking the workspace's credit row.
+Each process learns from its first transactional rejection, bounding the
+residual cost to one credit-row lock and rollback per exhausted key per process
+per headroom flip.
 
 ### authorize — ONE atomic read-write transaction
 
@@ -156,7 +169,12 @@ the whole authorize decision in one transaction:
      authorization," not "execute again." (The route already returns
      `idempotent_replay`; the contract is that the caller resumes, not
      re-executes.)
-2. **Key cap** (only if the key is capped and the hold applies — see BYOK):
+2. **Credit balance** (CREDITS usage only):
+   `UPDATE tr_credit_balance SET reserved = reserved + @est
+      WHERE workspace_id=@ws AND shard=@ws_shard
+        AND (total_credits - total_usage - reserved) >= @est`.
+   row-count 0 → insufficient credits → 402.
+3. **Key cap** (only if the key is capped and the hold applies — see BYOK):
    `UPDATE tr_key_limit SET reserved = reserved + @est
       WHERE key_hash=@kh AND shard=@ks AND limit_micro IS NOT NULL
         AND (limit_micro - usage - IF(include_byok, byok_usage, 0) - reserved) >= @est`.
@@ -168,13 +186,9 @@ the whole authorize decision in one transaction:
    - BYOK-excluded (`usage_type==BYOK AND include_byok=false`) → no hold (the
      statement is skipped up front for this case);
    - capped & insufficient → 402.
-3. **Credit balance** (CREDITS usage only):
-   `UPDATE tr_credit_balance SET reserved = reserved + @est
-      WHERE workspace_id=@ws AND shard=@ws_shard
-        AND (total_credits - total_usage - reserved) >= @est`.
-   row-count 0 → insufficient credits → 402. (We already grabbed the key hold in
-   the SAME transaction, so a credit reject simply aborts the txn and releases
-   the key hold atomically — no compensation DML needed.)
+   We already grabbed the credit hold in the SAME transaction, so a key reject
+   simply aborts the txn and releases the credit hold atomically — no
+   compensation DML needed.
 4. Insert `tr_reservation` recording **the exact holds taken** (`credit_reserved_micro`,
    `key_reserved_micro`), the resolved `usage_type`, shards, `expires_at`, and
    the idempotency scope/fingerprint; insert the `gateway_authorization`.
@@ -196,10 +210,10 @@ codex findings #4 & #5:
    `authorization.settled` contract.
 2. Winner releases **the exact recorded holds** (never `GREATEST(0, reserved -
    est)`, which masks double-release/drift):
-   - key: `UPDATE tr_key_limit SET reserved = reserved - @key_reserved_micro
-       [, usage += @actual | byok_usage += @actual]  WHERE key_hash=@kh AND shard=@ks`
    - credit: `UPDATE tr_credit_balance SET reserved = reserved - @credit_reserved_micro
        [, total_usage += @actual]  WHERE workspace_id=@ws AND shard=@ws_shard`
+   - key: `UPDATE tr_key_limit SET reserved = reserved - @key_reserved_micro
+       [, usage += @actual | byok_usage += @actual]  WHERE key_hash=@kh AND shard=@ks`
    Release the hold using the recorded **`hold_usage_type`** (so the exact
    key/credit holds taken at reserve are released even if the selected endpoint
    differs); book the **actual** to the column chosen by **`settled_usage_type`**
@@ -207,7 +221,7 @@ codex findings #4 & #5:
    existed — yet actually run a BYOK endpoint; the hold must be released as
    CREDITS while the actual is bucketed as BYOK `byok_usage`, and credit
    `total_usage` is incremented only when `settled_usage_type == CREDITS`).
-   key first, then credit; usage increment only on `success`.
+   credit first, then key; usage increment only on `success`.
    **Assert each release UPDATE returns row-count == 1** (red-team polish): a
    0-row release (e.g. the recorded shard no longer exists after a future Step-4
    rebalance, or a missing counter row) must **not** silently commit
@@ -398,7 +412,7 @@ InMemory store mirrors the same contracts so the suite runs without Spanner.
 - **Design panel** (5 architects + synthesis): chose typed-column conditional DML
   over lease/ledger/sharded/async for a high-scale router at current scale.
 - **codex review #1** (REVISE): 7 money-safety findings (atomic authorize;
-  single key→credit lock order; scoped idempotency+fingerprint; claim-gated
+  single credit→key lock order; scoped idempotency+fingerprint; claim-gated
   settle; exact recorded-hold release; explicit overdraft decision; BYOK
   predicate) + Spanner mechanics (execute_update row-count; no DML/mutation
   mixing; exact-mirror dual-write not shadow-conditional). All folded in.
@@ -408,7 +422,7 @@ InMemory store mirrors the same contracts so the suite runs without Spanner.
   unique-conflict→replay; cache-token overdraft. All folded in.
 - **Money-safety red team** (7 attackers + synthesis): **no blockers** — Step 1
   ready now; double-charge and deadlock-reintroduction are FALSE alarms (claim +
-  releases in one atomic txn = exactly-once; key→credit order holds). Pre-cutover
+  releases in one atomic txn = exactly-once; credit→key order holds). Pre-cutover
   fixes P1 (reaper books actual + durable outbox), P2 (independent comparator +
   flip-time rescan), P3 (PCT poisons whole table), P4 (`ALREADY_EXISTS` not
   retried → catch→replay), plus row-count==1 on releases. All folded in.
