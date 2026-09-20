@@ -309,7 +309,8 @@
         "logprobs",
         "top_logprobs"
       ],
-      "routable": true,
+      "routable": false,
+      "routable_reason": "provider-alias-unavailable",
       "input_token_price_per_m": 400000,
       "output_token_price_per_m": 400000
     },

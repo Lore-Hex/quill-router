@@ -478,10 +478,10 @@
   },
   "nextbit": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 6,
     "name": "NextBit",
     "privacy": "Policy documented",
-    "route_count": 7,
+    "route_count": 6,
     "route_mode": "Prepaid",
     "slug": "nextbit"
   },
