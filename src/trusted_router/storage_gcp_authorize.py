@@ -6,7 +6,7 @@ ONE Spanner read-write transaction (no mutation mixing) owns the whole authorize
 decision, so a crash can never leak a hold (codex#1 #1):
 
   scoped idempotency read (+ fingerprint) ->
-  conditional key-cap DML -> conditional credit DML ->
+  conditional credit DML -> pause / spend-lease checks -> conditional key-cap DML ->
   tr_reservation INSERT (exact holds + hold usage type + authorization_id) ->
   gateway_authorization DML INSERT.
 
@@ -416,6 +416,40 @@ def authorize_atomic(
                 raise _Reject(AuthorizeOutcome.INSUFFICIENT_CREDITS)
             credit_hold = estimate
 
+        # Authorize-time pause enforcement belongs to the armed trust program,
+        # not today's path. Shipping it unarmed changed the enclave rollout
+        # gate's behavior in production.
+        if trust_settings is not None and trust_settings.spend_lease_trust_eligibility_enabled:
+            # Pause state is replicated atomically across the credit shards. Read
+            # only the selected shard, whose balance DML already joined this txn's
+            # read set; a workspace-wide scan couples otherwise independent holds
+            # and can exhaust the retry budget under contention. BYOK / lease-
+            # escrowed requests use shard zero. A pause still conflicts on this
+            # shard and rejection rolls back every staged credit hold.
+            from trusted_router.trust_eligibility import billing_paused_tx
+            if billing_paused_tx(transaction, pt, workspace_id, shard=selected_credit_shard):
+                raise _Reject("billing_paused")
+
+        lease_result: dict[str, Any] = {
+            "bound": False,
+            "no_lease_reason": None,
+            "spend_lease_outcome": None,
+        }
+        # The hook may escrow or release credit, including recovery/pause work.
+        # Its writes share this transaction and roll back if the key rejects;
+        # regional binding happens only after commit. Keep credit before key.
+        if spend_lease_hook is not None:
+            lease_result = spend_lease_hook(transaction, selected_credit_shard)
+        if spend_lease_receipt_hash is not None and not lease_result.get("bound"):
+            no_lease_reason = lease_result.get("no_lease_reason")
+            if no_lease_reason == "scope_arbitrated":
+                reason = "scope_conflict"
+            elif no_lease_reason == "unpaid_workspace":
+                reason = "hold_refused"
+            else:
+                reason = "reuse_lost"
+            raise _Reject(f"admission_rejected:{reason}")
+
         # Bounded lifetime-cap TOCTOU: a cap committed after the gateway's
         # entity read can miss only requests already in flight at that commit,
         # each admitted for its own estimate (aggregate: sum of those estimates).
@@ -450,37 +484,6 @@ def authorize_atomic(
                     AuthorizeOutcome.KEY_LIMIT_EXCEEDED if saw_key_row else AuthorizeOutcome.KEY_MISSING
                 )
         key_hold = estimate if key_result == KEY_ACCEPTED else 0
-
-        # Authorize-time pause enforcement belongs to the armed trust program,
-        # not today's path. Shipping it unarmed changed the enclave rollout
-        # gate's behavior in production.
-        if trust_settings is not None and trust_settings.spend_lease_trust_eligibility_enabled:
-            # Pause state is replicated atomically across the credit shards. Read
-            # only the selected shard, whose balance DML already joined this txn's
-            # read set; a workspace-wide scan couples otherwise independent holds
-            # and can exhaust the retry budget under contention. BYOK / lease-
-            # escrowed requests use shard zero. A pause still conflicts on this
-            # shard and rejection rolls back every staged key and credit hold.
-            from trusted_router.trust_eligibility import billing_paused_tx
-            if billing_paused_tx(transaction, pt, workspace_id, shard=selected_credit_shard):
-                raise _Reject("billing_paused")
-
-        lease_result: dict[str, Any] = {
-            "bound": False,
-            "no_lease_reason": None,
-            "spend_lease_outcome": None,
-        }
-        if spend_lease_hook is not None:
-            lease_result = spend_lease_hook(transaction, selected_credit_shard)
-        if spend_lease_receipt_hash is not None and not lease_result.get("bound"):
-            no_lease_reason = lease_result.get("no_lease_reason")
-            if no_lease_reason == "scope_arbitrated":
-                reason = "scope_conflict"
-            elif no_lease_reason == "unpaid_workspace":
-                reason = "hold_refused"
-            else:
-                reason = "reuse_lost"
-            raise _Reject(f"admission_rejected:{reason}")
 
         insert_reservation(
             transaction,
