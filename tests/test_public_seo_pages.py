@@ -583,7 +583,7 @@ def test_homepage_has_plain_llm_seo_positioning(client: TestClient) -> None:
     assert "Cheaper routes" in response.text
     assert "Faster migration" in response.text
     assert "More reliable inference" in response.text
-    assert "<strong>90+</strong><span>providers</span>" in response.text
+    assert "<strong>100+</strong><span>providers</span>" in response.text
     assert 'href="/llms.txt"' in response.text
 
 
