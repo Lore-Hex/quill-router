@@ -36,8 +36,9 @@ prevents unknown captures from starving newer work. Existing alert thresholds
 and the three-hour PayPal consistency window are unchanged.
 
 Deployment uses the existing trust-tier job, service account and secret IDs.
-The job needs the PayPal client ID/secret already used by the control plane. It
-uses them for OAuth and canonical GETs only. No IAM grants or new resources are
+The job needs the existing PayPal client ID, client secret, and webhook ID
+bindings. Startup validation requires all three together, even though this
+worker uses only OAuth and canonical GETs. No IAM grants or new resources are
 part of this change. After rollout, verify `trust.inbox_reconciled` job logs,
 unchanged balances, retained original events, committed receipts, and a subsequent
 scheduled tier pass without stale alerts for the reconciled observations.
