@@ -1,10 +1,10 @@
 {
-  "_about": "Provider-native supplement for Google Vertex AI models whose availability is verified independently from Google AI Studio discovery. Gemini 3.6 Flash was verified with a direct global Vertex streamGenerateContent request in the TrustedRouter GCP project on 2026-07-21.",
+  "_about": "Vertex-native publisher discovery with independent standard global pricing. New chat routes require a successful generateContent probe in the TrustedRouter project. Specialized APIs and models without complete prices or model limits remain explicitly held. AI Studio metadata supplies model limits, never proof of Vertex availability or prices.",
   "provider": "google-vertex",
-  "source": "https://cloud.google.com/vertex-ai/generative-ai/docs/models/gemini/3-6-flash",
+  "source": "https://aiplatform.googleapis.com/v1beta1/publishers/google/models",
   "pricing_source": "https://cloud.google.com/vertex-ai/generative-ai/pricing",
-  "generated_at": "2026-09-20T02:44:07Z",
-  "model_count": 1,
+  "generated_at": "2026-09-20T03:14:27Z",
+  "model_count": 26,
   "models": [
     {
       "id": "google/gemini-3.6-flash",
@@ -31,6 +31,579 @@
         "chat/completions"
       ],
       "status": 1
+    },
+    {
+      "display_name": "google/gemini-1.5-pro-002",
+      "title": "gemini-1.5-pro-002",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-1.5-pro-002",
+      "upstream_id": "gemini-1.5-pro-002",
+      "routable": false,
+      "routable_reason": "unsupported-vertex-api"
+    },
+    {
+      "display_name": "Gemini 2.5 Flash",
+      "title": "gemini-2.5-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-2.5-flash",
+      "upstream_id": "gemini-2.5-flash",
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "features": [],
+      "canary_status_code": 200,
+      "canary_verified_at": "2026-09-20T03:14:17.183201+00:00",
+      "routable": true,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 2500000,
+      "cached_input_token_price_per_m": 30000
+    },
+    {
+      "display_name": "Gemini 2.5 Flash-Lite",
+      "title": "gemini-2.5-flash-lite",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-2.5-flash-lite",
+      "upstream_id": "gemini-2.5-flash-lite",
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "features": [],
+      "canary_status_code": 200,
+      "canary_verified_at": "2026-09-20T03:14:17.717946+00:00",
+      "routable": true,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 10000
+    },
+    {
+      "display_name": "google/gemini-2.5-flash-preview-04-17",
+      "title": "gemini-2.5-flash-preview-04-17",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-2.5-flash-preview-04-17",
+      "upstream_id": "gemini-2.5-flash-preview-04-17",
+      "routable": false,
+      "routable_reason": "unsupported-vertex-api"
+    },
+    {
+      "display_name": "google/gemini-2.5-flash-tts",
+      "title": "gemini-2.5-flash-tts",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-2.5-flash-tts",
+      "upstream_id": "gemini-2.5-flash-tts",
+      "routable": false,
+      "routable_reason": "unsupported-vertex-api"
+    },
+    {
+      "display_name": "Gemini 2.5 Pro",
+      "title": "gemini-2.5-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-2.5-pro",
+      "upstream_id": "gemini-2.5-pro",
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "features": [],
+      "canary_status_code": 200,
+      "canary_verified_at": "2026-09-20T03:14:19.926691+00:00",
+      "routable": true,
+      "input_token_price_per_m": 1250000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 125000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 200000,
+          "input_token_price_per_m": 1250000,
+          "output_token_price_per_m": 10000000,
+          "cached_input_token_price_per_m": 125000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 2500000,
+          "output_token_price_per_m": 15000000,
+          "cached_input_token_price_per_m": 250000
+        }
+      ]
+    },
+    {
+      "display_name": "google/gemini-2.5-pro-exp-03-25",
+      "title": "gemini-2.5-pro-exp-03-25",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-2.5-pro-exp-03-25",
+      "upstream_id": "gemini-2.5-pro-exp-03-25",
+      "routable": false,
+      "routable_reason": "unsupported-vertex-api"
+    },
+    {
+      "display_name": "google/gemini-2.5-pro-tts",
+      "title": "gemini-2.5-pro-tts",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-2.5-pro-tts",
+      "upstream_id": "gemini-2.5-pro-tts",
+      "routable": false,
+      "routable_reason": "unsupported-vertex-api"
+    },
+    {
+      "display_name": "Gemini 3 Flash Preview",
+      "title": "gemini-3-flash-preview",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3-flash-preview",
+      "upstream_id": "gemini-3-flash-preview",
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "features": [],
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-09-20"
+    },
+    {
+      "display_name": "google/gemini-3-pro-image",
+      "title": "gemini-3-pro-image",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3-pro-image",
+      "upstream_id": "gemini-3-pro-image",
+      "routable": false,
+      "routable_reason": "unsupported-vertex-api"
+    },
+    {
+      "display_name": "google/gemini-3.1-flash-image",
+      "title": "gemini-3.1-flash-image",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.1-flash-image",
+      "upstream_id": "gemini-3.1-flash-image",
+      "routable": false,
+      "routable_reason": "unsupported-vertex-api"
+    },
+    {
+      "display_name": "google/gemini-3.1-flash-image-preview",
+      "title": "gemini-3.1-flash-image-preview",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.1-flash-image-preview",
+      "upstream_id": "gemini-3.1-flash-image-preview",
+      "routable": false,
+      "routable_reason": "unsupported-vertex-api"
+    },
+    {
+      "display_name": "Gemini 3.1 Flash Lite",
+      "title": "gemini-3.1-flash-lite",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.1-flash-lite",
+      "upstream_id": "gemini-3.1-flash-lite",
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "features": [],
+      "canary_status_code": 200,
+      "canary_verified_at": "2026-09-20T03:14:21.074238+00:00",
+      "routable": true,
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 1500000,
+      "cached_input_token_price_per_m": 25000
+    },
+    {
+      "display_name": "google/gemini-3.1-flash-lite-image",
+      "title": "gemini-3.1-flash-lite-image",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.1-flash-lite-image",
+      "upstream_id": "gemini-3.1-flash-lite-image",
+      "routable": false,
+      "routable_reason": "unsupported-vertex-api"
+    },
+    {
+      "display_name": "Gemini 3.1 Pro Preview",
+      "title": "gemini-3.1-pro-preview",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.1-pro-preview",
+      "upstream_id": "gemini-3.1-pro-preview",
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "features": [],
+      "canary_status_code": 200,
+      "canary_verified_at": "2026-09-20T03:14:23.363975+00:00",
+      "routable": true,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 12000000,
+      "cached_input_token_price_per_m": 200000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 200000,
+          "input_token_price_per_m": 2000000,
+          "output_token_price_per_m": 12000000,
+          "cached_input_token_price_per_m": 200000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 4000000,
+          "output_token_price_per_m": 18000000,
+          "cached_input_token_price_per_m": 400000
+        }
+      ]
+    },
+    {
+      "display_name": "Gemini 3.5 Flash",
+      "title": "gemini-3.5-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.5-flash",
+      "upstream_id": "gemini-3.5-flash",
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "features": [
+        "reasoning"
+      ],
+      "canary_status_code": 200,
+      "canary_verified_at": "2026-09-20T03:14:24.514857+00:00",
+      "routable": true,
+      "input_token_price_per_m": 1500000,
+      "output_token_price_per_m": 9000000,
+      "cached_input_token_price_per_m": 150000
+    },
+    {
+      "display_name": "Gemini 3.5 Flash Lite",
+      "title": "gemini-3.5-flash-lite",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.5-flash-lite",
+      "upstream_id": "gemini-3.5-flash-lite",
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "features": [],
+      "canary_status_code": 200,
+      "canary_verified_at": "2026-09-20T03:14:25.151294+00:00",
+      "routable": true,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 2500000,
+      "cached_input_token_price_per_m": 30000
+    },
+    {
+      "display_name": "google/gemini-3.5-live-translate-preview",
+      "title": "gemini-3.5-live-translate-preview",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.5-live-translate-preview",
+      "upstream_id": "gemini-3.5-live-translate-preview",
+      "routable": false,
+      "routable_reason": "unsupported-vertex-api"
+    },
+    {
+      "display_name": "google/gemini-3.5-transcribe-live-preview",
+      "title": "gemini-3.5-transcribe-live-preview",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.5-transcribe-live-preview",
+      "upstream_id": "gemini-3.5-transcribe-live-preview",
+      "routable": false,
+      "routable_reason": "unsupported-vertex-api"
+    },
+    {
+      "display_name": "google/gemini-3.5-transcribe-preview",
+      "title": "gemini-3.5-transcribe-preview",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.5-transcribe-preview",
+      "upstream_id": "gemini-3.5-transcribe-preview",
+      "routable": false,
+      "routable_reason": "unsupported-vertex-api"
+    },
+    {
+      "display_name": "Gemini 3.7 Flash",
+      "title": "gemini-3.7-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.7-flash",
+      "upstream_id": "gemini-3.7-flash",
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "features": [],
+      "canary_status_code": 200,
+      "canary_verified_at": "2026-09-20T03:14:26.665789+00:00",
+      "routable": true,
+      "input_token_price_per_m": 750000,
+      "output_token_price_per_m": 3750000,
+      "cached_input_token_price_per_m": 75000
+    },
+    {
+      "display_name": "Gemini 3.8 Flash",
+      "title": "gemini-3.8-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.8-flash",
+      "upstream_id": "gemini-3.8-flash",
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "features": [],
+      "canary_status_code": 200,
+      "canary_verified_at": "2026-09-20T03:14:27.424244+00:00",
+      "routable": true,
+      "input_token_price_per_m": 750000,
+      "output_token_price_per_m": 3750000,
+      "cached_input_token_price_per_m": 75000
+    },
+    {
+      "display_name": "google/gemini-embedding-2",
+      "title": "gemini-embedding-2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-embedding-2",
+      "upstream_id": "gemini-embedding-2",
+      "routable": false,
+      "routable_reason": "unsupported-vertex-api"
+    },
+    {
+      "display_name": "google/gemini-live-2.5-flash-native-audio",
+      "title": "gemini-live-2.5-flash-native-audio",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-live-2.5-flash-native-audio",
+      "upstream_id": "gemini-live-2.5-flash-native-audio",
+      "routable": false,
+      "routable_reason": "unsupported-vertex-api"
+    },
+    {
+      "display_name": "google/gemini-omni-1.1-flash-preview",
+      "title": "gemini-omni-1.1-flash-preview",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-omni-1.1-flash-preview",
+      "upstream_id": "gemini-omni-1.1-flash-preview",
+      "routable": false,
+      "routable_reason": "unsupported-vertex-api"
     }
-  ]
+  ],
+  "price_scale": "microdollars_per_million"
 }

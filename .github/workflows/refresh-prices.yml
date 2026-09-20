@@ -55,6 +55,9 @@ jobs:
       # domain). TLS terminates inside the attested enclave; this is
       # what /v1/chat/completions calls reach.
       TR_API_BASE: https://api.trustedrouter.com
+      # Vertex discovery/canaries use the existing WIF ADC identity, not the
+      # unrelated AI Studio key. Production Gemini inference uses global.
+      VERTEX_PROJECT_ID: quill-cloud-proxy
     steps:
       - uses: actions/checkout@v4
         with:

@@ -87,7 +87,7 @@ def test_google_vertex_ingest_rejects_third_party_publishers() -> None:
     assert endpoints == []
 
 
-def test_gemini_price_feed_prices_both_products_without_inventing_vertex_route() -> None:
+def test_ai_studio_price_feed_cannot_price_or_invent_vertex_routes() -> None:
     model_id = "google/gemini-2.5-flash"
     result = ProviderPricingResult(
         slug="gemini",
@@ -96,7 +96,7 @@ def test_gemini_price_feed_prices_both_products_without_inventing_vertex_route()
         fetched_url="https://ai.google.dev/gemini-api/docs/pricing",
     )
     provider_index = refresh._index_provider_prices({"gemini": result})
-    assert set(provider_index[model_id]) == {"google-ai-studio", "google-vertex"}
+    assert set(provider_index[model_id]) == {"google-ai-studio"}
 
     snapshot = {
         "tr_keyed_providers": ["google-ai-studio", "google-vertex"],
@@ -122,10 +122,10 @@ def test_gemini_price_feed_prices_both_products_without_inventing_vertex_route()
     assert slugs == {"google-ai-studio"}
 
 
-def test_gemini_price_feed_preserves_existing_vertex_route() -> None:
+def test_vertex_price_feed_preserves_existing_vertex_route() -> None:
     model_id = "google/gemini-2.5-flash"
     result = ProviderPricingResult(
-        slug="gemini",
+        slug="google-vertex",
         prices={model_id: ModelPrice(300_000, 2_500_000)},
         source="deterministic",
         fetched_url="https://ai.google.dev/gemini-api/docs/pricing",
@@ -148,7 +148,7 @@ def test_gemini_price_feed_preserves_existing_vertex_route() -> None:
 
     merged = refresh._merge_snapshot(
         snapshot,
-        refresh._index_provider_prices({"gemini": result}),
+        refresh._index_provider_prices({"google_vertex": result}),
         set(),
     )
     endpoint = merged["models"][0]["endpoints"][0]

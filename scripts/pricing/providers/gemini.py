@@ -10,10 +10,8 @@ The Gemini docs pricing page has explicit context-tier breakdowns
 for Gemini 2.5 Pro) which the parser converts into PriceTier objects
 for tier-aware billing.
 
-TrustedRouter publishes Google AI Studio and Google Vertex as separate runtime
-providers. This adapter owns AI Studio model discovery. The shared refresh may
-apply Google's standard Gemini token prices to existing Vertex endpoint rows,
-but it never invents Vertex availability from AI Studio discovery.
+This adapter owns only Google AI Studio. Vertex has independent native
+discovery, authenticated admission probes and prices in google_vertex.py.
 """
 
 from __future__ import annotations
@@ -42,7 +40,6 @@ from scripts.pricing.manifest import apply_canary_results, models_requiring_cana
 
 SLUG = "gemini"
 URL = "https://ai.google.dev/gemini-api/docs/pricing"
-VERTEX_PRICING_URL = "https://cloud.google.com/vertex-ai/generative-ai/pricing"
 MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
@@ -245,36 +242,6 @@ def _refresh_price(row: dict[str, Any], result: ProviderPricingResult, model_id:
     return True
 
 
-def _refresh_verified_vertex_manifest(result: ProviderPricingResult) -> int:
-    """Refresh prices for Vertex rows whose availability was verified separately."""
-
-    path = MANIFEST_PATH.with_name("google-vertex.json")
-    if not path.exists():
-        return 0
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    rows = raw.get("models")
-    if not isinstance(rows, list):
-        raise RuntimeError("google-vertex manifest has no models list")
-    updated = 0
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        model_id = row.get("id")
-        if isinstance(model_id, str) and _refresh_price(row, result, model_id):
-            updated += 1
-    if not updated:
-        return 0
-    raw["pricing_source"] = VERTEX_PRICING_URL
-    raw["generated_at"] = (
-        datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    )
-    path.write_text(
-        json.dumps(raw, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-    return updated
-
-
 def fetch() -> ProviderPricingResult:
     global _DISCOVERED_MANIFEST_ROWS  # noqa: PLW0603
 
@@ -396,13 +363,10 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         json.dumps(raw, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
-    vertex_updated = _refresh_verified_vertex_manifest(result)
     changes: list[str] = []
     if appended:
         changes.append(f"appended {len(appended)}")
     if tombstoned:
         changes.append(f"tombstoned {len(tombstoned)} unavailable")
-    if vertex_updated:
-        changes.append(f"repriced {vertex_updated} verified Vertex rows")
     suffix = f", {', '.join(changes)}" if changes else ""
     return [f"gemini: refreshed Google AI Studio manifest ({len(updated)} priced rows{suffix})"]

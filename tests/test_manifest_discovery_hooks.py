@@ -222,7 +222,7 @@ def test_gemini_tombstones_second_miss_and_empty_discovery_keeps_old_manifest(
     assert manifest_path.read_text(encoding="utf-8") == old_text
 
 
-def test_gemini_refresh_reprices_only_verified_vertex_rows(
+def test_ai_studio_refresh_never_overwrites_vertex_prices(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ai_studio_path = tmp_path / "google-ai-studio.json"
@@ -237,6 +237,7 @@ def test_gemini_refresh_reprices_only_verified_vertex_rows(
         "google-vertex",
         [_manifest_row("google/gemini-3.6-flash", "gemini-3.6-flash")],
     )
+    vertex_before = vertex_path.read_bytes()
     result = ProviderPricingResult(
         slug="gemini",
         prices={
@@ -263,13 +264,7 @@ def test_gemini_refresh_reprices_only_verified_vertex_rows(
 
     gemini.write_provider_manifest(result)
 
-    vertex = json.loads(vertex_path.read_text(encoding="utf-8"))
-    assert len(vertex["models"]) == 1
-    row = vertex["models"][0]
-    assert row["input_token_price_per_m"] == 1_500_000
-    assert row["output_token_price_per_m"] == 7_500_000
-    assert row["cached_input_token_price_per_m"] == 150_000
-    assert vertex["pricing_source"] == gemini.VERTEX_PRICING_URL
+    assert vertex_path.read_bytes() == vertex_before
 
 
 def test_wafer_feed_presence_survives_pricing_schema_drift(
