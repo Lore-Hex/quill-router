@@ -7,7 +7,9 @@ from typing import Any
 
 
 def trust_program_armed(store: Any) -> bool:
-    """Legacy trust enforcement must also ship inert until the arm flag flips."""
+    """A Postgres plane must not be armed while workers predating scoped reservation pointers run.
+    Such workers cannot retire a scoped pointer when they pause-reject a reservation.
+    """
     settings = getattr(store, "trust_settings", None)
     return bool(getattr(settings, "spend_lease_trust_eligibility_enabled", False))
 
@@ -194,12 +196,13 @@ def legacy_pause_epoch(store: Any, workspace_id: str) -> int:
 
 
 def reject_postgres_reservation(conn: Any, store: Any, reservation_id: str) -> None:
-    """Finalize a rejected hold once and retire its pointer in the same transaction."""
+    """Finalize once and retire the scoped pointer, preserving the rollout's legacy row."""
     from trusted_router.storage_models import Reservation
     from trusted_router.storage_postgres import (
         _RESERVATION_FINALIZATION_KIND,
-        _RESERVATION_IDEMPOTENCY_KIND,
+        _RESERVATION_IDEMPOTENCY_SCOPED_KIND,
         _RESERVATION_KIND,
+        _reservation_idempotency_id,
     )
 
     reservation = store._read_entity_tx(
@@ -226,10 +229,12 @@ def reject_postgres_reservation(conn: Any, store: Any, reservation_id: str) -> N
         if released.rowcount != 1:
             raise RuntimeError("paused reservation release lost")
         recover_released_postgres(conn, reservation.workspace_id, store)
-    if reservation.idempotency_key:
+    if reservation.idempotency_key is not None:
         store._write_entity_tx(
             conn,
-            _RESERVATION_IDEMPOTENCY_KIND,
-            reservation.idempotency_key,
+            _RESERVATION_IDEMPOTENCY_SCOPED_KIND,
+            _reservation_idempotency_id(
+                reservation.workspace_id, reservation.key_hash, reservation.idempotency_key
+            ),
             {"reason": "billing_paused", "reservation_id": reservation_id},
         )
