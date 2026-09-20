@@ -187,6 +187,9 @@ def test_public_snapshot_worker_swap_is_verified_and_rollbackable() -> None:
     assert '--ssh-flag="-T"' in script
     assert 'tar -xzf \\"\\$archive\\" -C \\"\\$stage\\"' in script
     assert '<"$archive"' not in script
+    assert 'build_clickhouse_bundle "$ROOT" "$archive" public-snapshots' in script
+    assert 'source "${SCRIPT_DIR}/_clickhouse_bundle.sh"' in script
+    assert 'bundle_bytes="$(wc -c < "$archive"' in script
 
 
 def test_all_regions_launch_together_but_only_primary_warm_gates_traffic() -> None:

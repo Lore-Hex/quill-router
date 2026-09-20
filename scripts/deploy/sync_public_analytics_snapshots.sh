@@ -7,6 +7,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck source=scripts/deploy/_lib.sh
 source "${SCRIPT_DIR}/_lib.sh"
+# shellcheck source=scripts/deploy/_clickhouse_bundle.sh
+source "${SCRIPT_DIR}/_clickhouse_bundle.sh"
 
 NAME="${TR_CLICKHOUSE_SNAPSHOT_NODE:-tr-clickhouse-1}"
 ZONE="${TR_CLICKHOUSE_SNAPSHOT_ZONE:-us-central1-a}"
@@ -42,16 +44,15 @@ cleanup() {
   return "$status"
 }
 trap cleanup EXIT
-tar --exclude='__pycache__' --exclude='*.pyc' -C "$ROOT" -czf "$archive" \
-  clickhouse/build_public_snapshots.py \
-  src/trusted_router
+build_clickhouse_bundle "$ROOT" "$archive" public-snapshots
+bundle_bytes="$(wc -c < "$archive" | tr -d ' ')"
 
 # Streaming the archive over gcloud's SSH stdin can leave the IAP transport
 # alive after the remote shell exits. Upload first so the deployment command
 # has no open stdin channel to keep the GitHub runner stuck.
 remote_archive="/tmp/tr-public-snapshots.${GITHUB_RUN_ID:-local}.${RANDOM}.tar.gz"
 
-log "syncing public analytics snapshot worker to ${NAME}"
+log "syncing public analytics snapshot worker to ${NAME} (${bundle_bytes} compressed bytes)"
 # Bound and clean the legacy metadata-based access path before gcloud adds the
 # current runner's ten-minute key. The daily API-only reconciler is a second
 # line of defense. Both paths remove only CI usernames and preserve human keys.
@@ -76,9 +77,8 @@ if ! timeout -k 30 300 gcloud --project "$PROJECT_ID" compute scp \
   --ssh-key-expire-after=10m \
   --quiet; then
   echo "ERROR: could not upload the snapshot bundle to ${NAME} within 300s;" \
-    "the node was NOT modified. Check for stuck" \
-    "compute.projects.setCommonInstanceMetadata operations and the size of" \
-    "the project ssh-keys metadata value." >&2
+    "the node was NOT modified. Bundle size: ${bundle_bytes} compressed bytes." \
+    "Check IAP transfer throughput, SSH authentication, and metadata operations." >&2
   exit 1
 fi
 gc compute ssh "$NAME" \
