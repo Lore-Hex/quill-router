@@ -291,6 +291,7 @@ jobs:
           SPANNER_DATABASE_ID: trusted-router
         run: scripts/deploy/migrate_operational_analytics_outbox.sh
       - name: Sync shared public analytics snapshots
+        id: snapshot-sync
         # Publishing the public snapshot builder MUST NOT gate the control
         # plane. On 2026-09-04 this step blocked every deploy for ~61 minutes
         # and then failed, holding a Stripe-credit fix out of production:
@@ -300,14 +301,28 @@ jobs:
         # 365-entry ssh-keys value that every CI run appends to. A stale
         # analytics snapshot is a reporting defect; a control plane that
         # cannot ship is an outage. So the deploy continues past a failure --
-        # the step still goes red in the run, so it stays visible.
+        # report the raw step outcome below, not its masked conclusion.
         #
         # Deliberately NO timeout-minutes here: the script bounds the upload,
         # which is the part that hangs, and a deadline on the step could
         # instead sever SSH midway through the remote swap and leave the node
         # with no live source tree. Bound the transfer, never the swap.
         continue-on-error: true
-        run: scripts/deploy/sync_public_analytics_snapshots.sh --apply
+        run: |
+          # Give gcloud an isolated, pinned upload accelerator without
+          # modifying its installation or the application's runtime.
+          uv run --isolated --no-project --python 3.12 --with numpy==2.4.6 bash -eu -c '
+            export CLOUDSDK_PYTHON="$(command -v python)"
+            export CLOUDSDK_PYTHON_SITEPACKAGES=1
+            "$CLOUDSDK_PYTHON" -c "import numpy; print(numpy.__version__)"
+            exec scripts/deploy/sync_public_analytics_snapshots.sh --apply
+          '
+      - name: Report snapshot publication failure
+        if: ${{ always() && steps.snapshot-sync.outcome == 'failure' }}
+        run: |
+          echo "::warning::Public snapshot worker was not updated. Control-plane deployment continues independently; inspect the snapshot-sync log before declaring publication repaired."
+          echo '### Public snapshot worker not updated' >> "$GITHUB_STEP_SUMMARY"
+          echo 'The worker sync failed. The previous worker was retained or rollback was attempted; check its service and five snapshot products before declaring it healthy. Control-plane success is not worker-publication success.' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Provision bounded regional quota ledger
         # Idempotent. The table and fixed single-cluster app profiles must

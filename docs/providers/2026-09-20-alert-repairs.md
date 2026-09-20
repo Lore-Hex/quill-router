@@ -54,6 +54,15 @@
   import of the reduced bundle loaded the snapshot worker and all 625 models.
   The 300-second bound, short-lived SSH access, rollback, and publication
   checks are unchanged. Production upload still requires verification.
+  Follow-up run 35483932283 also timed out: only 2,350,080 of 2,580,921 bytes
+  reached the node. CPU, memory and disk checks found no resource exhaustion.
+  Reducing the archive was therefore not a sufficient repair. CI now installs
+  the pinned NumPy IAP accelerator into an isolated Python used by gcloud, with
+  site packages enabled only for this step, as recommended in
+  [Google's IAP documentation](https://docs.cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth).
+  It also reports the raw failed step outcome explicitly; `continue-on-error`
+  can otherwise present a green job despite a failed worker update. This
+  mitigation still requires a successful real upload and publication check.
 
 ## Open operational work
 
