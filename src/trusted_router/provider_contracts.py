@@ -3,9 +3,14 @@
 SAKANA_FUGU_MODEL_ID = "sakana-ai/fugu-ultra-v1.1"
 SAKANA_NAMAZU_MODEL_ID = "sakana-ai/sakana-namazu-v1.0"
 SAKANA_NAMAZU_ROUTE_HOLD_REASON = "provider-geographic-restriction"
+NEXTBIT_UNSLOPNEMO_MODEL_ID = "thedrummer/unslopnemo-12b-v4.1"
+NEXTBIT_UNSLOPNEMO_HOLD_REASON = "provider-alias-unavailable"
 OPERATOR_HELD_PROVIDER_MODELS = frozenset(
     {
         ("sakana", SAKANA_NAMAZU_MODEL_ID),
+        # A listed alias is not proof of serving availability. Require a
+        # reviewed recovery before refresh can re-enable this route.
+        ("nextbit", NEXTBIT_UNSLOPNEMO_MODEL_ID),
         # September 20: discovery admits these standard RedPill IDs, but the
         # enclave's reviewed Phala dispatch map does not. Keep them out of
         # routing until a reviewed adapter release, not an attestation bypass.

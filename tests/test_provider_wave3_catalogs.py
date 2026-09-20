@@ -135,6 +135,7 @@ def test_wave3_manifests_publish_only_canaried_priced_chat_routes() -> None:
                     "provider-canary-failed",
                     "delisted-upstream",
                     "provider-geographic-restriction",
+                    "provider-alias-unavailable",
                 }
                 if reason == "delisted-upstream":
                     assert row.get("missing_since")
