@@ -189,6 +189,7 @@ _SLOW_REASONING_MARKERS = (
     "gpt-5.5",
     "gpt-5.6",
     "glm-5",
+    "kimi-k3",
     "opus",
     "/o1",
     "/o3",

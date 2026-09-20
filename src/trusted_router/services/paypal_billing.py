@@ -205,13 +205,26 @@ def credit_paypal_capture(
     expected_workspace_id: str | None = None,
 ) -> PayPalCaptureResult:
     parsed = _extract_capture(event_or_order)
-    if parsed["status"] != "COMPLETED":
+    if parsed["status"] not in {"COMPLETED", "PENDING"}:
         raise api_error(400, "PayPal capture is not completed", ErrorType.BAD_REQUEST)
     workspace_id = parsed["workspace_id"]
     if expected_workspace_id is not None and workspace_id != expected_workspace_id:
         raise api_error(403, "PayPal order belongs to a different workspace", ErrorType.FORBIDDEN)
     if STORE.get_credit_account(workspace_id) is None:
         raise api_error(404, "Credit account not found", ErrorType.NOT_FOUND)
+    # A held capture is not a failed purchase. Only a later COMPLETED
+    # callback may enter the idempotent credit transaction below.
+    if parsed["status"] == "PENDING":
+        return PayPalCaptureResult(
+            order_id=parsed["order_id"],
+            capture_id=parsed["capture_id"],
+            workspace_id=workspace_id,
+            amount_microdollars=parsed["amount_microdollars"],
+            credited=False,
+            status="PENDING",
+            processing_fee_microdollars=parsed["processing_fee_microdollars"],
+            charge_amount_microdollars=parsed["charge_amount_microdollars"],
+        )
     workspace = STORE.get_workspace(workspace_id)
     amount_microdollars = parsed["amount_microdollars"]
     processing_fee_microdollars = parsed["processing_fee_microdollars"]

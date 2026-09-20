@@ -40,12 +40,12 @@ INCLUDE_DEEPINFRA = os.environ.get("TR_EMBEDDINGS_INCLUDE_DEEPINFRA", "") == "1"
 SPACING_SECONDS = float(os.environ.get("TR_EMBEDDINGS_PROBE_SPACING_SECONDS", "3"))
 TIMEOUT_SECONDS = float(os.environ.get("TR_EMBEDDINGS_PROBE_TIMEOUT_SECONDS", "30"))
 
-# One representative model per embedding provider. OpenAI + Together always
-# run (their keys are wired). The rest are opt-in until their enclave route +
-# key are live.
+# One representative model per enabled embedding provider. Together retired
+# its last supported serverless embedding route on 2026-09-14; its remaining
+# BGE listing requires a separately provisioned dedicated endpoint. Do not
+# manufacture a replacement route or count retirement as provider downtime.
 PROBES = [
     {"provider": "openai", "model": "openai/text-embedding-3-large", "required": True},
-    {"provider": "together", "model": "intfloat/multilingual-e5-large-instruct", "required": True},
     {"provider": "cohere", "model": "cohere/embed-v4.0", "required": INCLUDE_COHERE},
     {"provider": "voyage", "model": "voyage/voyage-3-large", "required": INCLUDE_VOYAGE},
     {"provider": "deepinfra", "model": "Qwen/Qwen3-Embedding-8B", "required": INCLUDE_DEEPINFRA},
@@ -100,6 +100,7 @@ def main() -> int:
         print("FATAL: TR_MONITOR_API_KEY is not set", file=sys.stderr)
         return 2
     print(f"Embeddings probe against {API_BASE} (cohere {'on' if INCLUDE_COHERE else 'skipped'})")
+    print("  RETIRED together: shared E5 endpoint retired September 14; no shared replacement")
     failures = 0
     for index, spec in enumerate(PROBES):
         if not spec["required"]:

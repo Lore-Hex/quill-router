@@ -276,9 +276,11 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         present_rows[model_id] = row
         updated.append(model_id)
 
-    missing = sorted(set(EXPECTED_MODELS) - set(updated))
-    if missing:
-        raise RuntimeError(f"kimi manifest did not update expected model(s): {missing}")
+    # fetch() already validates required prices and live account availability.
+    # Expected families are discovery hints, not a promise they remain priced.
+    missing = sorted(set(result.prices) - set(updated))
+    if missing or not updated:
+        raise RuntimeError(f"kimi manifest prices lack live discovery: {missing}")
 
     reconciled_rows = reconcile_manifest_tombstones(
         rows,

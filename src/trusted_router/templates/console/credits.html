@@ -19,6 +19,12 @@
       <a href="/console/account/preferences">Preferences</a> to use cards or other payment methods.
     </div>
     {% endif %}
+    {% if paypal_pending %}
+    <div class="notice warn" role="status" style="margin-top:18px">
+      PayPal is reviewing your payment. No credits have been added yet.
+      Credits will be added only after PayPal confirms completion. Please do not repeat this purchase while it is pending.
+    </div>
+    {% endif %}
     {% if identity_verification_checkout %}
     <div class="notice" style="margin-top:18px">
       Identity verification requires {{ verification_topup_remaining_display }} more in lifetime top-ups. With email requirements met, a successful top-up unlocks direct phone verification for US, Canadian, and most European numbers; other regions require identity verification first. Identity verification does not require a verified phone. <a href="https://github.com/Lore-Hex/quill-router/blob/main/src/trusted_router/phone_verification.py">Exact phone-region rule</a>.

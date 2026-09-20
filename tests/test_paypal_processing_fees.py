@@ -185,6 +185,46 @@ def test_paypal_capture_rejects_charge_that_does_not_match_reference(
     assert after == before
 
 
+def test_pending_paypal_capture_then_completion_credits_exactly_once(
+    client: TestClient, user_headers: dict[str, str],
+) -> None:
+    workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
+    before = live_credit_summary(workspace_id)
+    assert before is not None
+    order = _completed_order(
+        workspace_id=workspace_id, custom_id=f"tr1|{workspace_id}|2500|2606",
+    )
+    capture = order["purchase_units"][0]["payments"]["captures"][0]
+    capture["status"] = "PENDING"
+    capture["status_details"] = {"reason": "PENDING_REVIEW"}
+    for _ in range(2):
+        pending = credit_paypal_capture(order, expected_workspace_id=workspace_id)
+        assert pending.status == "PENDING"
+        assert pending.credited is False
+        assert live_credit_summary(workspace_id) == before
+    capture["status"] = "COMPLETED"
+    assert credit_paypal_capture(order, expected_workspace_id=workspace_id).credited is True
+    assert credit_paypal_capture(order, expected_workspace_id=workspace_id).credited is False
+    after = live_credit_summary(workspace_id)
+    assert after is not None
+    assert after["total_credits"] - before["total_credits"] == 25_000_000
+
+
+def test_pending_paypal_capture_still_checks_ownership(
+    client: TestClient, user_headers: dict[str, str],
+) -> None:
+    workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
+    order = _completed_order(
+        workspace_id=workspace_id, custom_id=f"tr1|{workspace_id}|2500|2606",
+    )
+    order["purchase_units"][0]["payments"]["captures"][0]["status"] = "PENDING"
+    before = live_credit_summary(workspace_id)
+    with pytest.raises(HTTPException) as raised:
+        credit_paypal_capture(order, expected_workspace_id="other-workspace")
+    assert raised.value.status_code == 403
+    assert live_credit_summary(workspace_id) == before
+
+
 def test_legacy_paypal_capture_still_credits_the_full_capture(
     client: TestClient,
     user_headers: dict[str, str],

@@ -64,6 +64,7 @@ def register(app: FastAPI) -> None:
         ctx: ConsoleDep,
         settings: SettingsDep,
         purpose: str = "",
+        checkout: str = "",
     ) -> Response:
         credit = STORE.get_credit_account(ctx.workspace.id)
         summary = live_credit_summary(ctx.workspace.id)
@@ -133,6 +134,7 @@ def register(app: FastAPI) -> None:
                 saved_payment_method=saved_payment_method,
                 api_base_url=ctx.api_base_url,
                 identity_verification_checkout=purpose == "identity_verification",
+                paypal_pending=checkout == "paypal_pending",
                 **verification_nudge,
             ),
             headers=_PRIVATE_CREDITS_HEADERS,
@@ -319,6 +321,8 @@ def register(app: FastAPI) -> None:
             )
         except HTTPException:
             return RedirectResponse(url="/console/credits?error=paypal_capture_failed", status_code=303)
+        if result.status == "PENDING":
+            return RedirectResponse(url="/console/credits?checkout=paypal_pending", status_code=303)
         suffix = "paypal=credited" if result.credited else "paypal=duplicate"
         return RedirectResponse(url=f"/console/credits?checkout=success&{suffix}", status_code=303)
 

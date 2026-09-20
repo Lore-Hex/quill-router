@@ -6,6 +6,11 @@ SAKANA_NAMAZU_ROUTE_HOLD_REASON = "provider-geographic-restriction"
 OPERATOR_HELD_PROVIDER_MODELS = frozenset(
     {
         ("sakana", SAKANA_NAMAZU_MODEL_ID),
+        # September 20: discovery admits these standard RedPill IDs, but the
+        # enclave's reviewed Phala dispatch map does not. Keep them out of
+        # routing until a reviewed adapter release, not an attestation bypass.
+        ("phala", "z-ai/glm-5.3"),
+        ("phala", "z-ai/glm-5.3-flash"),
     }
 )
 EXACT_GLOBAL_SETTLEMENT_PROVIDER_MODELS = frozenset(
