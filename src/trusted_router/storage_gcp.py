@@ -3346,6 +3346,8 @@ class SpannerBigtableStore:
             rows = snapshot.execute_sql(
                 "SELECT provider, adverse_ref, payload, received_at "
                 "FROM tr_trust_inbox WHERE received_at<@older_than "
+                "AND NOT EXISTS (SELECT 1 FROM tr_entities WHERE kind='trust_inbox_resolution' "
+                "AND id=CONCAT(tr_trust_inbox.provider, ':', tr_trust_inbox.adverse_ref)) "
                 "ORDER BY received_at, provider, adverse_ref",
                 params={"older_than": older_than},
                 param_types={"older_than": self._param_types.TIMESTAMP},

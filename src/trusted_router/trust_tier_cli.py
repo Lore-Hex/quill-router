@@ -86,6 +86,12 @@ def run(
             owner_budget_failed, time.monotonic() - started,
         )
     if hasattr(store, "list_stale_trust_inbox"):
+        from trusted_router.services.paypal_inbox import reconcile_uncredited_paypal_inbox
+
+        try:
+            reconcile_uncredited_paypal_inbox(store, settings, now=computed_at)
+        except Exception:
+            log.exception("trust.inbox_reconciliation_failed")
         alert_stale_trust_inbox(store, now=computed_at)
     workspace_ids = store.list_trust_tier_workspace_ids()
     failed: list[str] = []

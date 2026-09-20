@@ -1178,6 +1178,9 @@ def test_trust_job_scripts_deploy_module_invocations_with_the_pinned_account(
     (job,) = _job_calls(tier, "run", "jobs", "update", "trusted-router-trust-tier")
     assert "--args=-m,trusted_router.trust_tier_cli,--environment,production" in job
     assert "--task-timeout=14m" in job
+    assert any("TR_PAYPAL_CLIENT_ID=trustedrouter-paypal-client-id:latest" in argument
+               and "TR_PAYPAL_CLIENT_SECRET=trustedrouter-paypal-client-secret:latest" in argument
+               for argument in job)
     assert "--region" in job and job[job.index("--region") + 1] == "us-east4"
     (schedule,) = _job_calls(tier, "scheduler", "jobs", "update", "http", "trusted-router-trust-tier-15m")
     assert "--schedule=7,22,37,52 * * * *" in schedule

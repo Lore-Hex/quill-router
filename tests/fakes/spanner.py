@@ -4206,6 +4206,11 @@ def _execute_sql(
         rows = [row for row in rows if row is not None]
         if "provider" in params:
             rows = [row for row in rows if row.get("provider") == params["provider"]]
+        if "adverse_ref" in params:
+            rows = [row for row in rows if row.get("adverse_ref") == params["adverse_ref"]]
+        if "kind='trust_inbox_resolution'" in sql:
+            rows = [row for row in rows if ("trust_inbox_resolution",
+                    f"{row['provider']}:{row['adverse_ref']}") not in db.rows]
         if "older_than" in params:
             rows = [row for row in rows if row.get("received_at") < params["older_than"]]
         rows.sort(
