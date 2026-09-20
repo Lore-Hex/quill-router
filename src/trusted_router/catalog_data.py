@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TypedDict
+from typing import NamedTuple, TypedDict
 
 from trusted_router.pricing import PriceTier
 
@@ -2237,31 +2237,87 @@ MISTRAL_LARGE_MODEL_ID = "mistralai/mistral-large"
 
 ARCHIMEDES_1_0_MODEL_ID = "trustedrouter/archimedes-1.0"
 
-# TrustedRouter's own named decision model for POST /v1/decide: one stable
-# name for the fastest tuned configuration, so callers do not have to track
-# which open model and host currently wins.
+# TrustedRouter's named decision models for POST /v1/decide: one stable, short
+# name per tuned configuration, so a caller picks "the fast one" or "the cheap
+# one" without tracking which open model and host currently wins. The names
+# rhyme with Jev, the hosted decision model they sit beside; the first letter
+# is the family (t for TrustedRouter's flagship, g Gemini, d DeepSeek, o
+# gpt-oss, m Gemma).
 TREV_1_0_MODEL_ID = "trustedrouter/trev-1.0"
 TREV_1_0_BACKING_MODEL_ID = "openai/gpt-oss-120b"
+GEV_1_0_MODEL_ID = "trustedrouter/gev-1.0"
+DEV_1_0_MODEL_ID = "trustedrouter/dev-1.0"
+OEV_1_0_MODEL_ID = "trustedrouter/oev-1.0"
+MEV_1_0_MODEL_ID = "trustedrouter/mev-1.0"
+
+
+class NamedDecisionModel(NamedTuple):
+    id: str
+    name: str
+    backing_model_id: str
+    # The ONLY hosts this name may run on, in order. The chain is part of what
+    # the name means (and of its advertised price): the same weights on another
+    # host are a different product. trev-1.0 is sold on speed, and gpt-oss-120b
+    # on DeepInfra takes 3.7 s against Cerebras' 353 ms; Cerebras is heavily
+    # rate limited, hence a chain rather than one host (measured medians, in
+    # order: 353, 522, 941, 1125 ms). The others are pinned to the single host
+    # they were measured on; a host is added to a chain only after it has been
+    # measured there. The attested gateway asks for exactly this chain and
+    # authorize enforces it, so neither side can widen it alone.
+    chain: tuple[str, ...]
+
+
+NAMED_DECISION_MODELS: tuple[NamedDecisionModel, ...] = (
+    NamedDecisionModel(
+        TREV_1_0_MODEL_ID,
+        "TrustedRouter Trev 1.0",
+        TREV_1_0_BACKING_MODEL_ID,
+        ("cerebras", "sambanova", "fireworks", "together"),
+    ),
+    NamedDecisionModel(
+        GEV_1_0_MODEL_ID,
+        "TrustedRouter Gev 1.0",
+        "google/gemini-3.1-flash-lite",
+        ("google-ai-studio",),
+    ),
+    NamedDecisionModel(
+        DEV_1_0_MODEL_ID,
+        "TrustedRouter Dev 1.0",
+        "deepseek/deepseek-v4.1-flash",
+        ("deepinfra",),
+    ),
+    NamedDecisionModel(
+        OEV_1_0_MODEL_ID, "TrustedRouter Oev 1.0", "openai/gpt-oss-20b", ("deepinfra",)
+    ),
+    NamedDecisionModel(
+        MEV_1_0_MODEL_ID, "TrustedRouter Mev 1.0", "google/gemma-4-e4b-it", ("deepinfra",)
+    ),
+)
 
 # Private proxy aliases select one ordinary catalog model without publishing
 # the backing model/provider in customer-visible responses or catalog metadata.
 # Billing and provider fallback still use the concrete target internally.
 PRIVATE_PROXY_MODEL_TARGETS: dict[str, str] = {
     ARCHIMEDES_1_0_MODEL_ID: MISTRAL_LARGE_MODEL_ID,
-    TREV_1_0_MODEL_ID: TREV_1_0_BACKING_MODEL_ID,
+    **{named.id: named.backing_model_id for named in NAMED_DECISION_MODELS},
 }
 
-# A named decision model may run ONLY on these hosts, in this order. The chain
-# is part of what the name means: trev-1.0 is sold on speed, and the same
-# weights on DeepInfra take 3.7 s against Cerebras' 353 ms. Cerebras is heavily
-# rate limited, hence a chain rather than one host; the gateway moves to the
-# next on any error before the first output byte. Measured medians for one
-# decision, from the gateway's paid live eval, in order: 353, 522, 941, 1125 ms.
-# The attested gateway asks for exactly this chain and authorize enforces it, so
-# neither side can widen it alone.
 NAMED_DECISION_MODEL_PROVIDERS: dict[str, tuple[str, ...]] = {
-    TREV_1_0_MODEL_ID: ("cerebras", "sambanova", "fireworks", "together"),
+    named.id: named.chain for named in NAMED_DECISION_MODELS
 }
+
+
+def offers_chat(model: Model) -> bool:
+    """Can a caller use this model on the chat routes?
+
+    Not `Model.supports_chat` for a named decision model. The name keeps that
+    flag because authorize routes the chat model behind it through the chat
+    machinery, but it is served on POST /v1/decide only. Everything that OFFERS
+    models for chat -- the public catalog, the pickers, the model pages, the
+    pools the meta-routers draw from -- asks this, so a name cannot be offered
+    somewhere that then refuses it.
+    """
+    return model.supports_chat and model.id not in NAMED_DECISION_MODEL_PROVIDERS
 
 SOCRATES_1_0_MODEL_ID = "trustedrouter/socrates-1.0"
 
@@ -3003,7 +3059,9 @@ _DECISION_SPECS: tuple[_DecisionSpec, ...] = (
 # through the same strict verification pass as a hosted model's answer. The
 # gateway holds its own copy of this list; tests on both sides pin it.
 NATIVE_DECISION_MODEL_IDS: tuple[str, ...] = (
-    TREV_1_0_MODEL_ID,
+    *(named.id for named in NAMED_DECISION_MODELS),
+    # The chat models behind the names stay callable under their own ids, tuned
+    # the same way: a name is a convenience, not a gate.
     "google/gemini-3.1-flash-lite",
     "openai/gpt-oss-20b",
     "google/gemma-4-e4b-it",
@@ -3019,7 +3077,7 @@ NATIVE_DECISION_MODEL_IDS: tuple[str, ...] = (
 # CREDITS route: openai/gpt-5.4-nano was measured too and left out because its
 # only OpenAI route is bring-your-own-key, so most customers could not call it.
 NATIVE_DECISION_MODEL_PROVIDERS: dict[str, str] = {
-    TREV_1_0_MODEL_ID: "cerebras",
+    **{named.id: named.chain[0] for named in NAMED_DECISION_MODELS},
     "google/gemini-3.1-flash-lite": "google-ai-studio",
     "openai/gpt-oss-20b": "deepinfra",
     "google/gemma-4-e4b-it": "deepinfra",

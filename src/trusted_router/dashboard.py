@@ -35,6 +35,7 @@ from trusted_router.catalog import (
     META_MODEL_IDS,
     MODELS,
     MONITOR_MODEL_ID,
+    NATIVE_DECISION_MODEL_IDS,
     PROVIDERS,
     Model,
     ModelEndpoint,
@@ -49,6 +50,7 @@ from trusted_router.catalog import (
     model_eu_focused_provider_available,
     model_open_weights,
     model_us_provider_available,
+    offers_chat,
     orchestration_primitive,
     orchestration_role,
     provider_is_routable,
@@ -5382,9 +5384,12 @@ def _model_detail_view(
         "orchestration_role": orchestration_role(model.id),
         "canonical_model_id": canonical_orchestration_model_id(model.id),
         "candidate_models": candidate_models,
-        "supports_chat": model.supports_chat,
+        "supports_chat": offers_chat(model),
         "supports_messages": model.supports_messages,
         "supports_embeddings": model.supports_embeddings,
+        # Same rule as the public catalog shape: hosted and named decision
+        # models, and the chat models the gateway drives on POST /v1/decide.
+        "supports_decide": model.supports_decide or model.id in NATIVE_DECISION_MODEL_IDS,
         # Keep the public billing claim tied to an actual Credits route. Meta
         # models are the only exception because they authorize component
         # routes dynamically rather than carrying direct endpoint rows.
@@ -5974,10 +5979,44 @@ def _model_comparison_faq_items(
         ),
         (
             f"Can I test {left.name} and {right.name} with the same API?",
+            _same_api_answer(left, right),
+        ),
+    )
+
+
+def _takes_decisions(model: Model) -> bool:
+    # Authorize drives ANY chat model on the decide route (the gateway prompts it
+    # and verifies the answer), tuned for it or not.
+    return offers_chat(model) or model.supports_decide
+
+
+def _same_api_answer(left: Model, right: Model) -> str:
+    # This was "change only the model id" for every pair, which is a 400 when
+    # one is a decision model and the call is chat. Two attempts to say which
+    # call each pair DOES share (by capability flag, then by output medium) each
+    # denied a route some pair really has: a chat model that also makes images,
+    # beside an image model. So it claims only what the flags prove -- both
+    # chat, or both take decisions -- and otherwise promises nothing either way.
+    if offers_chat(left) and offers_chat(right):
+        return (
             "Yes. Use the same OpenAI-compatible TrustedRouter base URL and API key, "
             f"then change only the model id between {left.id} and {right.id}. This makes "
-            "side-by-side evals possible without maintaining two provider integrations.",
-        ),
+            "side-by-side evals possible without maintaining two provider integrations."
+        )
+    if _takes_decisions(left) and _takes_decisions(right):
+        answer = (
+            "Yes. Both take the same request on POST /v1/decide, with the same "
+            "TrustedRouter base URL and API key, so a side-by-side eval changes only the "
+            f"model id between {left.id} and {right.id}."
+        )
+        without_chat = [model.name for model in (left, right) if not offers_chat(model)]
+        if len(without_chat) == 1:
+            answer += f" {without_chat[0]} does not take chat requests."
+        return answer
+    return (
+        "Both use the same TrustedRouter base URL and API key. At least one of them is not "
+        "a chat model, so the request can differ as well as the model id: the API docs "
+        "list the route for each kind of model."
     )
 
 

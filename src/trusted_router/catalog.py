@@ -58,6 +58,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     MISTRAL_LARGE_MODEL_ID,
     MONITOR_MODEL_ID,
     NAMED_DECISION_MODEL_PROVIDERS,
+    NAMED_DECISION_MODELS,
     NATIVE_DECISION_MODEL_IDS,
     NATIVE_DECISION_MODEL_PROVIDERS,
     OPEN_PATCHER_A1_MODEL_ID,
@@ -146,6 +147,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     ModelProviderPrivacyOverride,
     Provider,
     _EmbeddingSpec,
+    offers_chat,
 )
 from trusted_router.catalog_energy import (
     GREEN_MODEL_ID,
@@ -742,7 +744,12 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         # Capability flags so OpenRouter-compat clients (and TR's own chat
         # picker) can tell an embedding model from a chat model without
         # parsing `architecture.modality`.
-        "supports_chat": model.supports_chat,
+        # What a CALLER can do with it. A named decision model keeps
+        # Model.supports_chat so authorize can route its backing chat model, but
+        # it answers POST /v1/decide only: advertised as chat-capable it showed
+        # up in the chat picker and as a custom-model base, and both then
+        # refused it.
+        "supports_chat": offers_chat(model),
         "supports_embeddings": model.supports_embeddings,
         "supports_video": model.supports_video,
         # True for hosted decision models AND for the chat models the gateway

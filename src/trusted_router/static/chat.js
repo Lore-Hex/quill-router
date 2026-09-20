@@ -54,6 +54,11 @@
         "/auth/session";
     const URL_MODEL_ID = LOCKED_MODEL_ID ? "" : queryModelId();
     const DEFAULT_MODEL_ID = LOCKED_MODEL_ID || URL_MODEL_ID || "trustedrouter/plato";
+    // What a slot falls back to when the model it was given cannot chat. Not
+    // DEFAULT_MODEL_ID: with a ?model= deep link that IS the model being
+    // replaced. Set once the catalog says so; see dropModelsThatCannotChat.
+    const FALLBACK_CHAT_MODEL_ID = "trustedrouter/plato";
+    let URL_MODEL_CANNOT_CHAT = false;
     const MAX_MODELS_PER_CHAT = 4; // matches OpenRouter's apparent cap
 
     // Curated "Popular" list surfaced at the top of the picker when the
@@ -266,7 +271,7 @@
         // (TDZ for the `let STATE = loadState()` line). DEFAULT_MODEL_ID
         // is the safest fallback.
         return {
-            model_id: DEFAULT_MODEL_ID,
+            model_id: URL_MODEL_CANNOT_CHAT ? FALLBACK_CHAT_MODEL_ID : DEFAULT_MODEL_ID,
             system_prompt: "",
             params: { ...DEFAULT_PARAMS },
             enabled: true,
@@ -509,6 +514,7 @@
                     internal_only: false,
                 });
             }
+            dropModelsThatCannotChat();
             renderModelPicker();
             renderModelsBar();
             updateInputEstimate();
@@ -517,6 +523,47 @@
         } finally {
             MODELS_LOADING = false;
         }
+    }
+
+    // A model can reach a chat without passing through the picker: a
+    // ?model= deep link, or a chat saved before the catalog said what the
+    // model was. Once the catalog is known, a model it marks as not
+    // chat-capable (embedding, image, video, decision) is swapped for the
+    // default instead of being sent and refused. A model the catalog does
+    // not list at all is left alone: custom and locked models are not in it.
+    function dropModelsThatCannotChat() {
+        ensureActiveChat();
+        const dropped = [];
+        // Every saved chat, not only the open one: switching chats does not
+        // come back through here.
+        for (const chat of Object.values(STATE.chats || {})) {
+            for (const slot of chat.models || []) {
+                const row = MODELS.find((m) => m.id === slot.model_id);
+                if (!row || row.supports_chat !== false) continue;
+                dropped.push(slot.model_id);
+                // The same change selectModel() makes, in place: the slot keeps
+                // its id, label and system prompt, and whatever is linked to it.
+                slot.model_id = FALLBACK_CHAT_MODEL_ID;
+                slot.reasoning_mode = "default";
+                slot.provider_preferences = {};
+                if (slot.params) delete slot.params.seed;
+            }
+        }
+        if (dropped.length === 0) return;
+        // New chats in this page view start from the default slot, which a
+        // deep link points at the model that was just refused.
+        if (dropped.includes(URL_MODEL_ID)) URL_MODEL_CANNOT_CHAT = true;
+        if (dropped.includes(STATE.preferences.lastModelId)) {
+            STATE.preferences.lastModelId = FALLBACK_CHAT_MODEL_ID;
+        }
+        STATE.preferences.recentModelIds = (STATE.preferences.recentModelIds || []).filter(
+            (id) => !dropped.includes(id),
+        );
+        saveState();
+        showToast(
+            dropped[0] + " is not a chat model, so this chat uses the default. " +
+                "See its model page for how to call it.",
+        );
     }
 
     function normalizeModel(raw) {
@@ -561,6 +608,7 @@
             // through some catalog snapshots; track the flag so the
             // picker can drop them defensively.
             internal_only: !!ext.internal_only,
+            supports_chat: ext.supports_chat !== false,
         };
     }
 
@@ -2314,6 +2362,10 @@
             // must never show in the picker even when the catalog
             // emits them.
             if (m.internal_only) return false;
+            // This page calls /v1/chat/completions and nothing else. The
+            // catalog also lists embedding, image, video and decision
+            // models; picking one only earned a refusal.
+            if (m.supports_chat === false) return false;
             if (
                 q &&
                 !m.id.toLowerCase().includes(q) &&
