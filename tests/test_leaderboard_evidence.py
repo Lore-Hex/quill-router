@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+from collections import defaultdict
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -85,6 +88,80 @@ def test_evidence_query_is_bounded_balanced_and_does_not_filter_failures(monkeyp
         assert fragment in sql
     assert "status =" not in sql
     assert "error_type =" not in sql
+
+
+def test_evidence_ranking_does_not_sort_full_metadata_rows(monkeypatch) -> None:
+    queries = []
+    monkeypatch.setattr(worker, "_query", lambda password, query: queries.append(query) or "")
+    worker._evidence_samples("unused")
+    sql = queries[0]
+    assert "(provider, model, created_at, id) IN" in sql
+    selection = sql.split("(provider, model, created_at, id) IN", 1)[1]
+    assert "SELECT *" not in selection
+    assert "SELECT provider, model, source, created_at, id," in selection
+    assert "LIMIT 30 BY provider, model, source" in selection
+    assert "max_memory_usage = 268435456" in sql
+    assert "max_bytes_before_external_sort = 67108864" in sql
+    assert "max_execution_time = 15" in sql
+    assert "max_threads = 2" in sql
+
+
+def test_worker_deploy_gate_requires_all_current_snapshot_products() -> None:
+    script = (Path(__file__).parents[1] / "scripts/deploy/sync_public_analytics_snapshots.sh").read_text()
+    snapshots = worker.build_snapshots([], generated_at="2026-09-20T00:00:00Z")
+    for name in snapshots:
+        assert f"'{name}'" in script.replace("\\'", "'").replace("'''", "'")
+    assert len(snapshots) == 6
+    assert '!= 6 ]; then' in script
+    assert "publishing all six products" in script
+
+
+def test_evidence_key_selection_preserves_fair_caps_ties_errors_and_full_keys(monkeypatch) -> None:
+    queries = []
+    monkeypatch.setattr(worker, "_query", lambda password, query: queries.append(query) or "")
+    worker._evidence_samples("unused")
+    # SQLite executes the window/tuple selection locally. Its dialect lacks
+    # LIMIT BY; the existing route_rank <= 30 guard gives the same membership.
+    # The opt-in ClickHouse test also executes the early LIMIT BY in real SQL.
+    sql = queries[0].split("SETTINGS", 1)[0].replace("* EXCEPT ingest_version", "*")
+    sql = sql.replace(" FINAL", "").replace("now64(3) - INTERVAL 7 DAY", "100")
+    sql = sql.replace("LIMIT 30 BY provider, model, source", "")
+    rows = [
+        (f"sample-{p:02}-{m:02}-{source}-{n:02}", 100 + n // 3, f"p{p:02}", f"m{m:02}", source,
+         "error" if n % 3 == 0 else "success", "metadata")
+        for p in range(23)
+        for m in range(20)
+        for source in ("organic", "synthetic")
+        for n in range(35)
+    ]
+    # An old row reuses a current id. Membership and the outer date predicate
+    # must not fetch an out-of-window row along with its selected counterpart.
+    rows.append((rows[-1][0], 99, "old", "old", "organic", "error", "old"))
+    with sqlite3.connect(":memory:") as db:
+        db.execute("CREATE TABLE provider_benchmark_samples "
+                   "(id TEXT, created_at INTEGER, provider TEXT, model TEXT, "
+                   "source TEXT, status TEXT, error_message TEXT)")
+        db.executemany("INSERT INTO provider_benchmark_samples VALUES (?,?,?,?,?,?,?)", rows)
+        actual = db.execute(sql).fetchall()
+
+    routes = defaultdict(list)
+    for row in rows:
+        if row[1] >= 100:
+            routes[(row[2], row[3], row[4])].append(row)
+    providers = defaultdict(list)
+    for route in routes.values():
+        for rank, row in enumerate(sorted(route, key=lambda row: (row[1], row[0]), reverse=True)[:30], 1):
+            providers[row[2]].append((rank, row))
+    expected = []
+    for provider in providers.values():
+        provider.sort(key=lambda item: (item[1][1], item[1][0]), reverse=True)
+        provider.sort(key=lambda item: item[0])
+        expected.extend((rank, row) for rank, (_, row) in enumerate(provider[:500], 1))
+    expected.sort(key=lambda item: (item[1][1], item[1][0]), reverse=True)
+    expected.sort(key=lambda item: item[0])
+    assert {tuple(row) for row in actual} == {row for _, row in expected[:10000]}
+    assert len(actual) == 10000
+    assert {row[5] for row in actual} == {"success", "error"}
 
 
 def test_monthly_worker_query_uses_stored_months_and_preserves_histograms(monkeypatch) -> None:

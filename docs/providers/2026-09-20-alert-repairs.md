@@ -82,3 +82,25 @@
 Resolve Sentry issues only after the corresponding release is live and its
 behavior has been checked. Route holds are containment, not evidence that
 the excluded upstream integration is repaired.
+# Snapshot worker publication follow-up
+
+The real CI upload in run `35486243827` completed within the existing 300-second
+deadline. The worker publication then failed independently: ClickHouse query
+code 241 at 03:34:07 UTC reported a 258.45 MiB allocation against the unchanged
+256 MiB cap while sorting seven days of leaderboard evidence. The deployment
+rolled back; the previous worker continued publishing its five products.
+
+The evidence selector now sorts narrow keys and applies a streaming per-route
+`LIMIT 30 BY` before window ranking. It retains the same 30-per-route/source,
+500-per-provider and 10,000-total selection, including failed requests, and
+hydrates full metadata only for the selected storage keys. Memory, deadline
+and thread limits remain 256 MiB, 15 seconds and two threads. The read-only
+production SELECT returned 10,000 rows in 1.070 seconds at 133.97 MiB; output
+was discarded. Selecting narrow keys without the early cap was insufficient
+and is not the deployed solution.
+
+Default local tests exercise cap/fairness/tie/error membership and reject a
+full-row ranking plan. An opt-in local Docker ClickHouse test proves identical
+membership and metadata to the original query, including replayed rows. The
+publication gate now requires all six current products, including evidence
+and client reliability. Keep rollback and inference-independent publication.

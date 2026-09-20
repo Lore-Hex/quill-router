@@ -125,27 +125,42 @@ FORMAT JSONEachRow
 def _evidence_samples(password: str) -> list[ProviderBenchmarkSample]:
     # Equal opportunity for quiet routes without extra paid probes. Keep
     # source-specific slots so long throughput calls cannot displace uptime.
+    # Rank only keys: sorting a week of full metadata exceeded the 256 MiB
+    # ceiling. Fetch wide rows only for the bounded, balanced selection.
     output = _query(
         password,
         """
-SELECT * EXCEPT (ingest_version, route_rank, provider_rank)
-FROM (
-  SELECT *, row_number() OVER (
-    PARTITION BY provider ORDER BY route_rank, created_at DESC, id DESC
-  ) AS provider_rank
+SELECT * EXCEPT ingest_version
+FROM provider_benchmark_samples FINAL
+WHERE created_at >= now64(3) - INTERVAL 7 DAY
+  AND (provider, model, created_at, id) IN
+(
+  SELECT provider, model, created_at, id
   FROM (
-    SELECT *, row_number() OVER (
-      PARTITION BY provider, model, source ORDER BY created_at DESC, id DESC
-    ) AS route_rank
-    FROM provider_benchmark_samples FINAL
-    WHERE created_at >= now64(3) - INTERVAL 7 DAY
+    SELECT provider, model, created_at, id, route_rank, row_number() OVER (
+      PARTITION BY provider ORDER BY route_rank, created_at DESC, id DESC
+    ) AS provider_rank
+    FROM (
+      SELECT provider, model, source, created_at, id, row_number() OVER (
+        PARTITION BY provider, model, source ORDER BY created_at DESC, id DESC
+      ) AS route_rank
+      FROM (
+        SELECT provider, model, source, created_at, id
+        FROM provider_benchmark_samples FINAL
+        WHERE created_at >= now64(3) - INTERVAL 7 DAY
+        ORDER BY created_at DESC, id DESC
+        LIMIT 30 BY provider, model, source
+      )
+    )
+    WHERE route_rank <= 30
   )
-  WHERE route_rank <= 30
+  WHERE provider_rank <= 500
+  ORDER BY provider_rank, created_at DESC, id DESC
+  LIMIT 10000
 )
-WHERE provider_rank <= 500
-ORDER BY provider_rank, created_at DESC, id DESC
-LIMIT 10000
-SETTINGS max_execution_time = 15, max_memory_usage = 268435456, max_threads = 2
+ORDER BY created_at DESC, id DESC
+SETTINGS max_execution_time = 15, max_memory_usage = 268435456, max_threads = 2,
+         max_bytes_before_external_sort = 67108864
 FORMAT JSONEachRow
 """,
     )
