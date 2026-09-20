@@ -251,6 +251,15 @@
     "route_mode": "Prepaid + BYOK",
     "slug": "friendli"
   },
+  "general-compute": {
+    "card_version": 2,
+    "model_count": 4,
+    "name": "General Compute",
+    "privacy": "Policy documented",
+    "route_count": 4,
+    "route_mode": "Prepaid",
+    "slug": "general-compute"
+  },
   "gmi": {
     "card_version": 2,
     "model_count": 68,
@@ -313,6 +322,15 @@
     "route_count": 6,
     "route_mode": "Prepaid",
     "slug": "inceptron"
+  },
+  "infomaniak": {
+    "card_version": 2,
+    "model_count": 1,
+    "name": "Infomaniak",
+    "privacy": "Policy documented",
+    "route_count": 1,
+    "route_mode": "Prepaid",
+    "slug": "infomaniak"
   },
   "io-net": {
     "card_version": 2,
@@ -412,6 +430,15 @@
     "route_count": 0,
     "route_mode": "Catalog profile",
     "slug": "meta"
+  },
+  "meta-direct": {
+    "card_version": 2,
+    "model_count": 3,
+    "name": "Meta (direct)",
+    "privacy": "Policy documented",
+    "route_count": 3,
+    "route_mode": "Prepaid",
+    "slug": "meta-direct"
   },
   "minimax": {
     "card_version": 2,
@@ -593,6 +620,15 @@
     "route_mode": "Catalog profile",
     "slug": "poolside"
   },
+  "privatemode": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "Privatemode (Edgeless Systems)",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "privatemode"
+  },
   "recraft": {
     "card_version": 2,
     "model_count": 8,
@@ -601,6 +637,15 @@
     "route_count": 8,
     "route_mode": "Prepaid",
     "slug": "recraft"
+  },
+  "redpill": {
+    "card_version": 2,
+    "model_count": 40,
+    "name": "Redpill",
+    "privacy": "Policy documented",
+    "route_count": 40,
+    "route_mode": "Prepaid",
+    "slug": "redpill"
   },
   "regolo": {
     "card_version": 2,
@@ -718,6 +763,15 @@
     "route_count": 3,
     "route_mode": "Prepaid",
     "slug": "streamlake"
+  },
+  "swisscom": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "Swisscom",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "swisscom"
   },
   "telnyx": {
     "card_version": 2,

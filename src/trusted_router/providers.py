@@ -40,6 +40,10 @@ from trusted_router.secrets import LocalKeyFile
 from trusted_router.wafer_policy import wafer_zdr_support
 
 OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
+    "redpill": (("REDPILL_API_KEY",), "https://api.redpill.ai/v1"),
+    "meta-direct": (("META_API_KEY",), "https://api.meta.ai/v1"),
+    "general-compute": (("GENERAL_COMPUTE_KEY",), "https://api.generalcompute.com/v1"),
+    "infomaniak": (("INFOMANIAK_API_KEY",), "https://api.infomaniak.com/2/ai/111565/openai/v1"),
     "meta": (("OPENROUTER_API_KEY",), "https://openrouter.ai/api/v1"),
     "openrouter": (("OPENROUTER_API_KEY",), "https://openrouter.ai/api/v1"),
     "openai": (("OPENAI_API_KEY",), "https://api.openai.com/v1"),

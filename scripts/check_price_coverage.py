@@ -47,11 +47,14 @@ from scripts.pricing.providers import (
     decart,
     fal,
     featherless,
+    general_compute,
     inception,
+    infomaniak,
     io_net,
     jina,
     krea,
     mancer,
+    meta_direct,
     near_ai,
     nextbit,
     nscale,
@@ -59,6 +62,7 @@ from scripts.pricing.providers import (
     perplexity,
     phala,
     recraft,
+    redpill,
     regolo,
     reka,
     relace,
@@ -505,6 +509,10 @@ _CI_DIRECT_OPENAI_DISCOVERY_MODULES = (
     confidential_ai,
     perplexity,
     regolo,
+    redpill,
+    meta_direct,
+    general_compute,
+    infomaniak,
     scaleway,
     featherless,
     sakana,
@@ -926,6 +934,17 @@ def _model_discovery_audit(
             if not _active_discovery_row(row):
                 continue
             raw_id = row.get("id") or row.get("name")
+            if slug == "infomaniak":
+                if row.get("type") != "llm" or row.get("info_status") != "ready":
+                    continue
+                raw_id = row.get("name")
+            if slug == "meta-direct" and isinstance(raw_id, str):
+                # Deliberate exclusions, not discovery misses: Contributor
+                # trains on caller data; these modalities have separate meters.
+                if raw_id.endswith("-contributor") or raw_id in {
+                    "muse-image-1.0", "muse-voice-transcribe-1.0", "sam-3.1",
+                }:
+                    continue
             if slug == "regolo":
                 raw_id = row.get("model_group")
                 if row.get("mode") != "chat" or str(raw_id).startswith("brick-"):

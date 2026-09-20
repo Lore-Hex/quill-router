@@ -1,0 +1,34 @@
+{
+  "provider": "infomaniak",
+  "models": [
+    {
+      "display_name": "mistralai/Ministral-3-14B-Instruct-2512",
+      "title": "mistralai/Ministral-3-14B-Instruct-2512",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "mistralai/ministral-3-14b-instruct-2512",
+      "upstream_id": "mistralai/Ministral-3-14B-Instruct-2512",
+      "context_length": 100000,
+      "supported_features": [
+        "streaming"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 363348,
+      "output_token_price_per_m": 484464
+    }
+  ],
+  "source": "https://api.infomaniak.com/1/ai/models",
+  "pricing_source": "https://www.infomaniak.com/en/hosting/ai-services/prices",
+  "generated_at": "2026-09-20T16:49:41Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 1
+}

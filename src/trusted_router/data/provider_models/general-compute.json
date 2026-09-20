@@ -1,0 +1,128 @@
+{
+  "provider": "general-compute",
+  "models": [
+    {
+      "display_name": "DeepSeek V3.1",
+      "title": "deepseek-v3.1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v3.1",
+      "upstream_id": "deepseek-v3.1",
+      "context_length": 128000,
+      "supported_features": [
+        "streaming",
+        "reasoning"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 210000,
+      "output_token_price_per_m": 790000
+    },
+    {
+      "display_name": "DeepSeek V3.2",
+      "title": "deepseek-v3.2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v3.2",
+      "upstream_id": "deepseek-v3.2",
+      "context_length": 32000,
+      "supported_features": [
+        "streaming",
+        "reasoning"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 380000
+    },
+    {
+      "display_name": "MiniMax M2.7",
+      "title": "minimax-m2.7",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "minimax/minimax-m2.7",
+      "upstream_id": "minimax-m2.7",
+      "context_length": 192000,
+      "supported_features": [
+        "streaming"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 280000,
+      "output_token_price_per_m": 1200000
+    },
+    {
+      "display_name": "GPT-OSS 120B",
+      "title": "gpt-oss-120b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-oss-120b",
+      "upstream_id": "gpt-oss-120b",
+      "context_length": 128000,
+      "supported_features": [
+        "streaming"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 210000,
+      "output_token_price_per_m": 790000
+    },
+    {
+      "display_name": "Gemma 4 31B",
+      "title": "gemma-4-31B-it",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemma-4-31b-it",
+      "upstream_id": "gemma-4-31B-it",
+      "routable": false,
+      "routable_reason": "price-unavailable",
+      "unresolved_since": "2026-09-20"
+    }
+  ],
+  "source": "https://api.generalcompute.com/v1/models",
+  "pricing_source": "https://docs.generalcompute.com/models.md",
+  "generated_at": "2026-09-20T16:54:15Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 5
+}

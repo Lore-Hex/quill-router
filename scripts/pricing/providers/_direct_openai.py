@@ -198,6 +198,16 @@ class DirectOpenAIProvider:
                 upstream_id_map=self.upstream_id_map,
                 include=self.spec.include,
             )
+            if self.spec.reviewed_unpriced_model_ids:
+                # Keep explicitly reviewed missing-price rows visible even
+                # when the provider embeds rates rather than joining them.
+                reviewed = discover_available_priced_chat_catalog(
+                    rows, prices=prices, explicit_map=explicit_model_map,
+                    upstream_id_map=self.upstream_id_map, include=self.spec.include,
+                    preserve_unpriced_model_ids=self.spec.reviewed_unpriced_model_ids,
+                )
+                for model_id, row in reviewed.items():
+                    discovered.setdefault(model_id, row)
         if not prices:
             raise RuntimeError(f"{self.spec.slug}: no priced chat models discovered")
 
