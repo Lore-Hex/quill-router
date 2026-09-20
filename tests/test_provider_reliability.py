@@ -116,6 +116,14 @@ def test_provider_contract_deadlines_override_generic_policy(
     assert deadlines.completion_seconds == 456
 
 
+def test_kimi_k3_has_reasoning_deadline_without_changing_other_models() -> None:
+    for provider in ("nvidia-nim", "kimi", "novita"):
+        deadlines = model_deadlines("moonshotai/kimi-k3", provider=provider)
+        assert deadlines.first_token_seconds == 45
+        assert deadlines.completion_seconds == 180
+    assert model_deadlines("test/normal-model").first_token_seconds == 20
+
+
 def test_model_deadline_rejects_invalid_default() -> None:
     try:
         model_deadlines("test/model", default_first_token_seconds=0)

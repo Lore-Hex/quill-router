@@ -1373,6 +1373,32 @@ def test_console_checkout_exposes_and_enforces_paypal_minimum(
     assert minimum.headers["location"] == "/console/credits?checkout=mock"
 
 
+def test_console_paypal_review_is_pending_not_success_or_failure(
+    console_session: tuple[TestClient, str], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.services.paypal_billing import PayPalCaptureResult
+
+    client, _ = console_session
+    monkeypatch.setattr(
+        "trusted_router.routes.console.credits.capture_paypal_order_for_workspace",
+        lambda **kwargs: PayPalCaptureResult(
+            order_id="ORDER-PENDING", capture_id="CAPTURE-PENDING",
+            workspace_id=kwargs["workspace_id"], amount_microdollars=25_000_000,
+            credited=False, status="PENDING",
+        ),
+    )
+    response = client.get(
+        "/console/credits/paypal/capture?token=ORDER-PENDING", follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/console/credits?checkout=paypal_pending"
+    page = client.get(response.headers["location"])
+    assert page.status_code == 200
+    assert "PayPal is reviewing your payment" in page.text
+    assert "No credits have been added yet" in page.text
+    assert "PayPal is reviewing your payment" not in client.get("/console/credits").text
+
+
 def test_console_checkout_get_redirects_back_to_credits(
     console_session: tuple[TestClient, str],
 ) -> None:

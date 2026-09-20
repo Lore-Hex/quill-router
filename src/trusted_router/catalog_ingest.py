@@ -340,6 +340,16 @@ _AUTHOR_TO_PROVIDER_SLUG: dict[str, str] = {
 }
 
 _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
+    # Verified against authenticated catalogs and direct requests 2026-09-20.
+    # Keep these provider-scoped, including aliases from stale snapshot rows.
+    "morph": frozenset({
+        "morph-qwen36-27b", "qwen/qwen3.6-27b",
+        "morph-qwen35-397b", "qwen/qwen3.5-397b-a17b",
+        "morph-minimax27-230b", "minimax/minimax-m2.7",
+        "morph-minimax3-428b", "minimax/minimax-m3",
+    }),
+    "nextbit": frozenset({"mythomax:13b", "gryphe/mythomax-l2-13b"}),
+    "inceptron": frozenset({"MiniMaxAI/MiniMax-M2.5", "minimax/minimax-m2.5"}),
     # Cloudflare's OpenAI-compatible endpoint serves Llama Guard 3 only for
     # non-streaming chat. The exact request used by provider rotation succeeds
     # with stream=false and returns HTTP 400 "Invalid input" with stream=true.

@@ -194,6 +194,43 @@ def test_manifest_tombstones_models_after_two_fresh_absences(
     assert retired["routable_reason"] == "delisted-upstream"
 
 
+def test_manifest_accepts_validated_partial_prices_without_inventing_a_price(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    manifest_path = tmp_path / "kimi.json"
+    # A known model may temporarily lack a price without blocking other models.
+    manifest_path.write_text(json.dumps({"models": [{"id": "moonshotai/kimi-k3"}]}))
+    monkeypatch.setenv("KIMI_API_KEY", "test-kimi-key")
+    monkeypatch.setattr(kimi, "MANIFEST_PATH", manifest_path)
+    monkeypatch.setattr(kimi, "fetch_html", lambda *_args: _pricing_doc(include_k3=False))
+    monkeypatch.setattr(kimi, "fetch_json", lambda *_args, **_kwargs: _live_payload())
+    monkeypatch.setattr(kimi, "runtime_required_models", lambda _slug: frozenset())
+
+    result = kimi.fetch()
+    kimi.write_provider_manifest(result)
+
+    manifest = json.loads(manifest_path.read_text())
+    rows = {row["id"]: row for row in manifest["models"]}
+    assert manifest["model_count"] == 3
+    assert rows["moonshotai/kimi-k2.6"]["input_token_price_per_m"] == 950_000
+    assert "input_token_price_per_m" not in rows["moonshotai/kimi-k3"]
+
+
+def test_manifest_rejects_prices_not_backed_by_discovery_before_writing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    manifest_path = tmp_path / "kimi.json"
+    monkeypatch.setenv("KIMI_API_KEY", "test-kimi-key")
+    monkeypatch.setattr(kimi, "MANIFEST_PATH", manifest_path)
+    monkeypatch.setattr(kimi, "fetch_html", _fake_docs)
+    monkeypatch.setattr(kimi, "fetch_json", lambda *_args, **_kwargs: _live_payload())
+    result = kimi.fetch()
+    monkeypatch.setattr(kimi, "_DISCOVERED_MANIFEST_ROWS", {})
+    with pytest.raises(RuntimeError, match="discovery"):
+        kimi.write_provider_manifest(result)
+    assert not manifest_path.exists()
+
+
 def test_missing_key_fails_closed_before_publishing_provider_routes(
     monkeypatch: Any,
 ) -> None:

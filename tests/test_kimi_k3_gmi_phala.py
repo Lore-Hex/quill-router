@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from scripts.pricing.providers import gmi
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, model_open_weights
-from trusted_router.catalog_data import PRIVACY_TIER_STANDARD
+from trusted_router.catalog_data import PRIVACY_TIER_STANDARD, ModelEndpoint
 from trusted_router.catalog_privacy import (
     endpoint_confidential_compute,
     endpoint_e2ee,
@@ -319,7 +319,12 @@ def test_phala_glm_52_pass_through_is_standard_not_confidential() -> None:
 
 
 def test_phala_glm_53_pass_through_is_standard_not_confidential() -> None:
-    endpoint = MODEL_ENDPOINTS["z-ai/glm-5.3-flash@phala/prepaid"]
+    # Privacy classification stays correct even while the dispatch route is held.
+    assert "z-ai/glm-5.3-flash@phala/prepaid" not in MODEL_ENDPOINTS
+    endpoint = ModelEndpoint(
+        id="z-ai/glm-5.3-flash@phala/prepaid", model_id="z-ai/glm-5.3-flash",
+        provider="phala", usage_type="Credits", upstream_id="z-ai/glm-5.3-flash",
+    )
 
     assert endpoint.upstream_id == "z-ai/glm-5.3-flash"
     assert endpoint_privacy_tier(endpoint) == PRIVACY_TIER_STANDARD
@@ -332,7 +337,11 @@ def test_phala_glm_53_pass_through_is_standard_not_confidential() -> None:
 def test_new_phala_glm_release_is_dynamically_standard_not_confidential() -> None:
     # GLM 5.3 is intentionally absent from the static privacy-override table.
     # The exact upstream route must carry the boundary for future releases.
-    endpoint = MODEL_ENDPOINTS["z-ai/glm-5.3@phala/prepaid"]
+    assert "z-ai/glm-5.3@phala/prepaid" not in MODEL_ENDPOINTS
+    endpoint = ModelEndpoint(
+        id="z-ai/glm-5.3@phala/prepaid", model_id="z-ai/glm-5.3",
+        provider="phala", usage_type="Credits", upstream_id="z-ai/glm-5.3",
+    )
 
     assert endpoint.upstream_id == "z-ai/glm-5.3"
     assert endpoint_privacy_tier(endpoint) == PRIVACY_TIER_STANDARD

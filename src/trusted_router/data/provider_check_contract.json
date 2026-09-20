@@ -229,7 +229,7 @@
     "model_id_pattern": "^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$",
     "owner_pattern": "^[a-z0-9][a-z0-9._-]*$"
   },
-  "contract_version": "abf10fb4e4b68f1e188f87c1dd6d7bde6ae3e8b82a48eb9bb7ef8cff12966faf",
+  "contract_version": "43cdfa5e6b0090bcc020997661002267320a5bfce946893e17836bb50d015cc9",
   "decision_tables": [
     {
       "max_tokens": 512,
@@ -2317,6 +2317,21 @@
       "input": {
         "error_message": null,
         "error_status": null,
+        "error_type": "synthetic_kimi-k3_failure",
+        "status": "error"
+      },
+      "name": "slow_reasoning_markers:kimi-k3"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": false,
+        "counts_toward_provider_availability": false,
+        "failure_class": "unknown",
+        "owner": "unknown"
+      },
+      "input": {
+        "error_message": null,
+        "error_status": null,
         "error_type": "synthetic_opus_failure",
         "status": "error"
       },
@@ -3317,6 +3332,7 @@
       "glm-5",
       "gpt-5.5",
       "gpt-5.6",
+      "kimi-k3",
       "opus",
       "reasoning",
       "thinking"
@@ -4241,6 +4257,10 @@
       },
       {
         "input": "synthetic_incomplete_stream_failure",
+        "result": false
+      },
+      {
+        "input": "synthetic_kimi-k3_failure",
         "result": false
       },
       {

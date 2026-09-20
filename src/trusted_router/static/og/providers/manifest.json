@@ -307,10 +307,10 @@
   },
   "inceptron": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 6,
     "name": "Inceptron",
     "privacy": "Zero retention",
-    "route_count": 7,
+    "route_count": 6,
     "route_mode": "Prepaid",
     "slug": "inceptron"
   },
@@ -442,10 +442,10 @@
   },
   "morph": {
     "card_version": 2,
-    "model_count": 8,
+    "model_count": 4,
     "name": "Morph",
     "privacy": "Policy documented",
-    "route_count": 8,
+    "route_count": 4,
     "route_mode": "Prepaid",
     "slug": "morph"
   },
@@ -478,10 +478,10 @@
   },
   "nextbit": {
     "card_version": 2,
-    "model_count": 8,
+    "model_count": 7,
     "name": "NextBit",
     "privacy": "Policy documented",
-    "route_count": 8,
+    "route_count": 7,
     "route_mode": "Prepaid",
     "slug": "nextbit"
   },
@@ -577,10 +577,10 @@
   },
   "phala": {
     "card_version": 2,
-    "model_count": 5,
+    "model_count": 3,
     "name": "Phala",
     "privacy": "Zero retention",
-    "route_count": 10,
+    "route_count": 6,
     "route_mode": "Prepaid + BYOK",
     "slug": "phala"
   },
@@ -811,10 +811,10 @@
   },
   "wafer": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 5,
     "name": "Wafer",
     "privacy": "Policy documented",
-    "route_count": 12,
+    "route_count": 10,
     "route_mode": "Prepaid + BYOK",
     "slug": "wafer"
   },
