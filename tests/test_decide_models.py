@@ -23,6 +23,7 @@ from trusted_router.catalog import (
     model_to_openrouter_shape,
 )
 from trusted_router.catalog_data import (
+    DECIDE_PATH,
     NAMED_DECISION_MODEL_PROVIDERS,
     NAMED_DECISION_MODELS,
     NATIVE_DECISION_MODEL_PROVIDERS,
@@ -115,15 +116,26 @@ def test_every_native_decision_model_has_a_prepaid_route_on_its_pinned_provider(
         assert provider in providers, f"{model_id} lost its {provider} route: {sorted(providers)}"
 
 
-def test_the_named_models_are_the_five_people_were_promised() -> None:
-    # Public model ids are forever once someone hardcodes one.
-    assert NAMED_IDS == [
-        "trustedrouter/trev-1.0",
-        "trustedrouter/gev-1.0",
-        "trustedrouter/dev-1.0",
-        "trustedrouter/oev-1.0",
-        "trustedrouter/mev-1.0",
+def test_the_named_models_are_the_eight_people_were_promised() -> None:
+    # Public model ids are forever once someone hardcodes one. The one exception
+    # on record: mev-1.0 meant Gemma 4 E4B for a few hours on 2026-09-20, before
+    # Joseph gave the name to Mercury 2 and Gemma became gemmev-1.0. Do not do
+    # that to a name with traffic: ship a new name or a new version instead.
+    assert [(named.id, named.backing_model_id) for named in NAMED_DECISION_MODELS] == [
+        ("trustedrouter/trev-1.0", "openai/gpt-oss-120b"),
+        ("trustedrouter/mev-1.0", "inception/mercury-2"),
+        ("trustedrouter/zev-1.0", "z-ai/glm-5.2-fast"),
+        ("trustedrouter/lev-1.0", "meta-llama/llama-3.3-70b-instruct"),
+        ("trustedrouter/gev-1.0", "google/gemini-3.1-flash-lite"),
+        ("trustedrouter/dev-1.0", "deepseek/deepseek-v4.1-flash"),
+        ("trustedrouter/oev-1.0", "openai/gpt-oss-20b"),
+        ("trustedrouter/gemmev-1.0", "google/gemma-4-e4b-it"),
     ]
+    assert {named.id: named.chain for named in NAMED_DECISION_MODELS if len(named.chain) > 1} == {
+        "trustedrouter/trev-1.0": ("cerebras", "sambanova", "fireworks", "together"),
+        "trustedrouter/zev-1.0": ("fireworks", "baseten"),
+        "trustedrouter/lev-1.0": ("sambanova", "parasail", "together"),
+    }
     trev_chain = NAMED_DECISION_MODEL_PROVIDERS[TREV_1_0_MODEL_ID]
     assert trev_chain[0] == "cerebras"
     assert len(trev_chain) >= 3, "Cerebras is heavily rate limited; trev needs real fallbacks"
@@ -286,7 +298,7 @@ async def test_a_decision_model_answers_only_the_decide_route(
     response = await _authorize(body)
     assert response.status_code == 400, response.text
     assert response.json()["error"]["type"] == "model_not_supported"
-    assert "POST /v1/decide" in response.json()["error"]["message"]
+    assert f"POST {DECIDE_PATH}" in response.json()["error"]["message"]
 
 
 async def _named_candidates(model_id: str, provider: dict[str, Any] | None) -> list[str]:
@@ -822,11 +834,11 @@ def test_a_comparison_faq_names_a_call_both_models_accept(client: Any) -> None:
     both take decisions -- authorize drives any chat model on /v1/decide) and
     otherwise promises nothing either way."""
     mixed = client.get("/compare/models/openai/gpt-oss-20b/vs/trustedrouter/oev-1.0").text
-    assert "Both take the same request on POST /v1/decide" in mixed
+    assert f"Both take the same request on POST {DECIDE_PATH}" in mixed
     assert "TrustedRouter Oev 1.0 does not take chat requests." in mixed
     assert "OpenAI-compatible TrustedRouter base URL and API key" not in mixed  # the chat answer
     both_decide = client.get("/compare/models/trustedrouter/mev-1.0/vs/trustedrouter/trev-1.0").text
-    assert "Both take the same request on POST /v1/decide" in both_decide
+    assert f"Both take the same request on POST {DECIDE_PATH}" in both_decide
     assert "does not take chat requests" not in both_decide
     both_chat = client.get("/compare/models/openai/gpt-oss-20b/vs/openai/gpt-oss-120b").text
     assert "OpenAI-compatible TrustedRouter base URL and API key" in both_chat

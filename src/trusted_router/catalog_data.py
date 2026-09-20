@@ -2241,14 +2241,35 @@ ARCHIMEDES_1_0_MODEL_ID = "trustedrouter/archimedes-1.0"
 # name per tuned configuration, so a caller picks "the fast one" or "the cheap
 # one" without tracking which open model and host currently wins. The names
 # rhyme with Jev, the hosted decision model they sit beside; the first letter
-# is the family (t for TrustedRouter's flagship, g Gemini, d DeepSeek, o
-# gpt-oss, m Gemma).
+# is the family (t for TrustedRouter's flagship, m Mercury, z Z.ai's GLM, l
+# Llama, g Gemini, d DeepSeek, o gpt-oss). Gemma is "gemmev": it was mev-1.0 for
+# a few hours on 2026-09-20, before Mercury took that name.
 TREV_1_0_MODEL_ID = "trustedrouter/trev-1.0"
 TREV_1_0_BACKING_MODEL_ID = "openai/gpt-oss-120b"
+MEV_1_0_MODEL_ID = "trustedrouter/mev-1.0"
+ZEV_1_0_MODEL_ID = "trustedrouter/zev-1.0"
+LEV_1_0_MODEL_ID = "trustedrouter/lev-1.0"
 GEV_1_0_MODEL_ID = "trustedrouter/gev-1.0"
 DEV_1_0_MODEL_ID = "trustedrouter/dev-1.0"
 OEV_1_0_MODEL_ID = "trustedrouter/oev-1.0"
-MEV_1_0_MODEL_ID = "trustedrouter/mev-1.0"
+GEMMEV_1_0_MODEL_ID = "trustedrouter/gemmev-1.0"
+
+# The decide route's name. "alpha" because the contract may still change. The
+# attested gateway also answers the paths in DECIDE_PATH_ALIASES (its
+# isDecidePath is the authority; this list is what the docs promise).
+DECIDE_PATH = "/api/alpha/decide"
+DECIDE_PATH_ALIASES: tuple[tuple[str, str], ...] = (
+    ("/api/decide", "the same name, for when it leaves alpha"),
+    ("/v1/decide", "where this route was first published"),
+    ("/v1/evaluate", "Vercel AI Gateway and the AI SDK"),
+    ("/api/alpha/decisions", "OpenRouter's Decisions API"),
+    ("/api/decisions", "the same, for when it leaves alpha"),
+)
+
+
+def decide_url(api_base_url: str) -> str:
+    """The decide route on the API host: it sits beside /v1, not under it."""
+    return api_base_url.rstrip("/").removesuffix("/v1") + DECIDE_PATH
 
 
 class NamedDecisionModel(NamedTuple):
@@ -2260,10 +2281,12 @@ class NamedDecisionModel(NamedTuple):
     # host are a different product. trev-1.0 is sold on speed, and gpt-oss-120b
     # on DeepInfra takes 3.7 s against Cerebras' 353 ms; Cerebras is heavily
     # rate limited, hence a chain rather than one host (measured medians, in
-    # order: 353, 522, 941, 1125 ms). The others are pinned to the single host
-    # they were measured on; a host is added to a chain only after it has been
-    # measured there. The attested gateway asks for exactly this chain and
-    # authorize enforces it, so neither side can widen it alone.
+    # order: 353, 522, 941, 1125 ms). A host joins a chain only after it has been
+    # measured there, and only if it is fast enough to be the same product:
+    # zev is Fireworks 340-468 ms then Baseten 616 ms; lev is SambaNova 371-450
+    # ms, Parasail 927 ms, Together 1576 ms. The rest are pinned to the single
+    # host they were measured on. The attested gateway asks for exactly this
+    # chain and authorize enforces it, so neither side can widen it alone.
     chain: tuple[str, ...]
 
 
@@ -2273,6 +2296,20 @@ NAMED_DECISION_MODELS: tuple[NamedDecisionModel, ...] = (
         "TrustedRouter Trev 1.0",
         TREV_1_0_BACKING_MODEL_ID,
         ("cerebras", "sambanova", "fireworks", "together"),
+    ),
+    # Reasoning off: 275-310 ms median and the cheapest of the fast ones, 28/29
+    # on the eval every run (29/29 at "low" effort, ~600 ms).
+    NamedDecisionModel(
+        MEV_1_0_MODEL_ID, "TrustedRouter Mev 1.0", "inception/mercury-2", ("inception",)
+    ),
+    NamedDecisionModel(
+        ZEV_1_0_MODEL_ID, "TrustedRouter Zev 1.0", "z-ai/glm-5.2-fast", ("fireworks", "baseten")
+    ),
+    NamedDecisionModel(
+        LEV_1_0_MODEL_ID,
+        "TrustedRouter Lev 1.0",
+        "meta-llama/llama-3.3-70b-instruct",
+        ("sambanova", "parasail", "together"),
     ),
     NamedDecisionModel(
         GEV_1_0_MODEL_ID,
@@ -2290,7 +2327,10 @@ NAMED_DECISION_MODELS: tuple[NamedDecisionModel, ...] = (
         OEV_1_0_MODEL_ID, "TrustedRouter Oev 1.0", "openai/gpt-oss-20b", ("deepinfra",)
     ),
     NamedDecisionModel(
-        MEV_1_0_MODEL_ID, "TrustedRouter Mev 1.0", "google/gemma-4-e4b-it", ("deepinfra",)
+        GEMMEV_1_0_MODEL_ID,
+        "TrustedRouter Gemmev 1.0",
+        "google/gemma-4-e4b-it",
+        ("deepinfra",),
     ),
 )
 
@@ -3062,6 +3102,9 @@ NATIVE_DECISION_MODEL_IDS: tuple[str, ...] = (
     *(named.id for named in NAMED_DECISION_MODELS),
     # The chat models behind the names stay callable under their own ids, tuned
     # the same way: a name is a convenience, not a gate.
+    "inception/mercury-2",
+    "z-ai/glm-5.2-fast",
+    "meta-llama/llama-3.3-70b-instruct",
     "google/gemini-3.1-flash-lite",
     "openai/gpt-oss-20b",
     "google/gemma-4-e4b-it",
@@ -3078,6 +3121,9 @@ NATIVE_DECISION_MODEL_IDS: tuple[str, ...] = (
 # only OpenAI route is bring-your-own-key, so most customers could not call it.
 NATIVE_DECISION_MODEL_PROVIDERS: dict[str, str] = {
     **{named.id: named.chain[0] for named in NAMED_DECISION_MODELS},
+    "inception/mercury-2": "inception",
+    "z-ai/glm-5.2-fast": "fireworks",
+    "meta-llama/llama-3.3-70b-instruct": "sambanova",
     "google/gemini-3.1-flash-lite": "google-ai-studio",
     "openai/gpt-oss-20b": "deepinfra",
     "google/gemma-4-e4b-it": "deepinfra",

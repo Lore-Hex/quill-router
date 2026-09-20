@@ -144,7 +144,7 @@
     <p>TrustedRouter is useful when you know the model you want, but still need provider rollover, budget limits, usage records, and a prompt path you can verify.</p>
   </div>
   {# The example has to be a call the model accepts: a decision model answers
-     POST /v1/decide and refuses chat; an embedding, image or video model has
+     the decide route and refuses chat; an embedding, image or video model has
      its own route and gets no example here rather than a wrong one. #}
   {% if left.supports_chat %}
   <div class="copy-terminal">
@@ -161,7 +161,7 @@ response = client.chat.completions.create(
   </div>
   {% elif left.supports_decide %}
   <div class="copy-terminal">
-    <div class="code-head"><span>POST /v1/decide</span><span>curl</span></div>
+    <div class="code-head"><span>POST {{ decide_path }}</span><span>curl</span></div>
     <pre><code>{{ decide_curl(left.id, api_base_url) }}</code></pre>
     <p><a href="/docs/decide">Decision models: the API, the models, the numbers</a></p>
   </div>

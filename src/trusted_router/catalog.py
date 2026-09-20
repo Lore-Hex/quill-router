@@ -29,6 +29,8 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     CANONICAL_ORCHESTRATION_MODEL_ID,
     CHEAP_MODEL_ID,
     CONFIDENTIAL_MODEL_ID,
+    DECIDE_PATH,
+    DECIDE_PATH_ALIASES,
     DEEPSEEK_V4_PRO_0423_MODEL_ID,
     DEEPSEEK_V4_PRO_0813_MODEL_ID,
     DEFAULT_AUTO_MODEL_ORDER,
@@ -147,6 +149,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     ModelProviderPrivacyOverride,
     Provider,
     _EmbeddingSpec,
+    decide_url,
     offers_chat,
 )
 from trusted_router.catalog_energy import (
