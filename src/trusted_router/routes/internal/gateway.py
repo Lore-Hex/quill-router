@@ -1100,6 +1100,19 @@ def _authorize_gateway_sync_impl(
             f"{route_model_id} is a decision model: call POST /v1/decide",
             ErrorType.MODEL_NOT_SUPPORTED,
         )
+    if named_decision_chain is not None:
+        # A caller excluding the entire pinned chain is an invalid request,
+        # not an outage. Check policy before live regional availability so a
+        # genuinely unavailable permitted host still returns retryable 503.
+        permitted_hosts = set(named_decision_chain) - route_preferences.ignore
+        if route_preferences.only:
+            permitted_hosts.intersection_update(route_preferences.only)
+        if not permitted_hosts:
+            raise api_error(
+                400,
+                f"Provider filters exclude every supported host for {route_model_id}",
+                ErrorType.BAD_REQUEST,
+            )
     if user_model is not None:
         if is_image_request:
             raise api_error(
@@ -1170,6 +1183,14 @@ def _authorize_gateway_sync_impl(
             key=lambda candidate: chain_rank[candidate[1].provider],
         )
         if not endpoint_candidates:
+            logger.warning(
+                "billing.authorize_named_chain_unavailable workspace_id=%s request_id=%s "
+                "model=%s region=%s",
+                workspace.id,
+                getattr(request.state, "request_id", None),
+                _log_value(route_model_id),
+                _log_value(region),
+            )
             raise api_error(
                 503,
                 f"No host in the {route_model_id} chain is available; retry shortly",
