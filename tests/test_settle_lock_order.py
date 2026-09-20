@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -246,6 +247,9 @@ def test_fragmented_credit_and_key_repair_conserves_totals(
     store, db, key = _fragmented_store(credits, key_limit)
     verdict, authorization = _fragmented_authorize(store, key)
     assert verdict == outcome
+    assert (key.hash in store._lifetime_cap_exhausted_keys) == (
+        outcome == billing.AuthorizeOutcome.KEY_LIMIT_EXCEEDED
+    )
     hold = 10_000 if outcome == billing.AuthorizeOutcome.ACCEPTED else 0
     credit_rows = list(db.typed[CREDIT_BALANCE_TABLE].values())
     key_rows = list(db.typed[KEY_LIMIT_TABLE].values())
@@ -410,6 +414,7 @@ def test_credit_recovery_authorize_attempts_are_bounded(monkeypatch: pytest.Monk
     # One initial run_authorize + three funded-shard retries. The count refresh
     # is unchanged, and no KEY_LIMIT_EXCEEDED means no key repair/second entry.
     assert attempts == 4
+    assert key.hash not in store._lifetime_cap_exhausted_keys
     assert not db.reservations
 
 
@@ -442,6 +447,7 @@ def test_second_credit_recovery_key_rejection_does_not_repeat_key_repair(
     monkeypatch.setattr(escrow, "rebalance_key_limit_headroom", repair)
     assert _fragmented_authorize(store, key) == (billing.AuthorizeOutcome.KEY_LIMIT_EXCEEDED, None)
     assert attempts == 3 and repairs == 1
+    assert key.hash in store._lifetime_cap_exhausted_keys
     assert not db.reservations
 
 
@@ -475,48 +481,104 @@ def test_credit_consumed_after_key_repair_is_retryable(
     assert not db.reservations
 
 
-def test_lifetime_cap_exhausted_never_locks_credit(calls: list[tuple[Any, str]]) -> None:
-    store, db, key = _fragmented_store([12_000], 8_000)
-    calls.clear()
-    before = copy.deepcopy(db.typed)
-    assert _fragmented_authorize(store, key) == (billing.AuthorizeOutcome.KEY_LIMIT_EXCEEDED, None)
-    assert not any("tr_credit_balance" in sql for _, sql in calls)
-    assert not calls  # No read-write transaction, including a pointless key repair.
-    assert db.typed == before and not db.reservations
-    assert sum("SELECT shard, limit_micro, usage, byok_usage, reserved, include_byok" in sql
-               for sql in db.snapshot_sql) == 1
+LIFETIME_SQL = "SELECT shard, limit_micro, usage, byok_usage, reserved, include_byok"
+
+
+def _lifetime_snapshot_reads(db: Any) -> list[str]:
+    return [sql for sql in db.snapshot_sql if LIFETIME_SQL in sql]
 
 
 def test_lifetime_cap_exact_headroom_is_accepted(calls: list[tuple[Any, str]]) -> None:
     store, db, key = _fragmented_store([12_000], 10_000)
     calls.clear()
+    db.snapshot_sql.clear()
     verdict, authorization = _fragmented_authorize(store, key)
     assert verdict == billing.AuthorizeOutcome.ACCEPTED
     assert authorization is not None
     assert any(sql.startswith("update tr_credit_balance") for _, sql in calls)
     assert sum(row["reserved"] for row in db.typed[KEY_LIMIT_TABLE].values()) == 10_000
     assert sum(row["limit_micro"] for row in db.typed[KEY_LIMIT_TABLE].values()) == 10_000
+    assert not _lifetime_snapshot_reads(db)
+    # Fragmented escrow was repaired; its provisional rejection must not cache.
+    assert key.hash not in store._lifetime_cap_exhausted_keys
+
+
+@pytest.mark.parametrize("restore", ["raise_cap", "release_reserved"])
+def test_lifetime_cap_headroom_drops_cache_and_snapshot_cost(
+    restore: str, calls: list[tuple[Any, str]], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, db, key = _fragmented_store([30_000], 8_000 if restore == "raise_cap" else 40_000)
+    if restore == "release_reserved":
+        for row in db.typed[KEY_LIMIT_TABLE].values():
+            row["reserved"] = 9_000
+    options = {"idempotency_key": "headroom", "idempotency_fingerprint": "same-body"}
+    assert _fragmented_authorize(store, key, **options)[0] == billing.AuthorizeOutcome.KEY_LIMIT_EXCEEDED
+    assert key.hash in store._lifetime_cap_exhausted_keys
+
+    snapshots: list[tuple[Any, str]] = []
+    execute_sql = _FakeSnapshot.execute_sql
+
+    def record_snapshot(snapshot: Any, sql: str, **kwargs: Any) -> Any:
+        snapshots.append((snapshot, sql))
+        return execute_sql(snapshot, sql, **kwargs)
+
+    monkeypatch.setattr(_FakeSnapshot, "execute_sql", record_snapshot)
+    calls.clear()
+    db.snapshot_sql.clear()
+    assert _fragmented_authorize(store, key, **options)[0] == billing.AuthorizeOutcome.KEY_LIMIT_EXCEEDED
+    assert not calls and not db.reservations
+    assert len(db.snapshot_sql) == 2
+    assert LIFETIME_SQL in db.snapshot_sql[0]
+    assert "FROM tr_reservation WHERE idempotency_scope=@scope" in db.snapshot_sql[1]
+    assert snapshots[0][0] is snapshots[1][0]  # ONE multi-use snapshot.
+    assert snapshots[0][0]._multi_use
+
+    if restore == "raise_cap":
+        assert store.api_keys.update(key.hash, {"limit_microdollars": 40_000}) is not None
+    else:
+        for row in db.typed[KEY_LIMIT_TABLE].values():
+            row["reserved"] = 0
+    db.snapshot_sql.clear()
+    verdict, authorization = _fragmented_authorize(store, key, **options)
+    assert verdict == billing.AuthorizeOutcome.ACCEPTED and authorization is not None
+    assert key.hash not in store._lifetime_cap_exhausted_keys
+    assert len(_lifetime_snapshot_reads(db)) == 1
+    assert LIFETIME_SQL in db.snapshot_sql[0]
+    # Headroom needs no reservation lookup, even when an idempotency key exists.
+    assert not any("FROM tr_reservation" in sql for sql in db.snapshot_sql)
+    db.snapshot_sql.clear()
+    assert _fragmented_authorize(store, key, idempotency_key="next")[0] == billing.AuthorizeOutcome.ACCEPTED
+    assert not _lifetime_snapshot_reads(db)
+    assert key.hash not in store._lifetime_cap_exhausted_keys
 
 
 def test_lifetime_cap_exhausted_idempotent_authorize_replays(
     calls: list[tuple[Any, str]],
 ) -> None:
-    store, db, key = _fragmented_store([12_000], 10_000)
+    store, db, key = _fragmented_store([30_000], 10_000)
     options = {"idempotency_key": "cap-retry", "idempotency_fingerprint": "same-body"}
     verdict, authorization = _fragmented_authorize(store, key, **options)
     assert verdict == billing.AuthorizeOutcome.ACCEPTED
+    assert key.hash not in store._lifetime_cap_exhausted_keys
+    assert _fragmented_authorize(store, key)[0] == billing.AuthorizeOutcome.KEY_LIMIT_EXCEEDED
+    assert key.hash in store._lifetime_cap_exhausted_keys
     before = copy.deepcopy((db.typed, db.reservations))
     calls.clear()
+    db.snapshot_sql.clear()
     verdict, replay = _fragmented_authorize(store, key, **options)
     assert verdict == billing.AuthorizeOutcome.REPLAY
     assert replay == authorization
     assert not any("tr_credit_balance" in sql for _, sql in calls)
     assert (db.typed, db.reservations) == before
+    assert len(_lifetime_snapshot_reads(db)) == 1
+    assert key.hash in store._lifetime_cap_exhausted_keys
 
 
 def test_lifetime_cap_excluded_byok_is_accepted() -> None:
     store, db, key = _fragmented_store([12_000], 0)
     assert store.api_keys.update(key.hash, {"include_byok_in_limit": False}) is not None
+    store._lifetime_cap_exhausted_keys.add(key.hash)
+    db.snapshot_sql.clear()
     verdict, authorization = _fragmented_authorize(
         store, key, has_credit_candidate=False, reservation_usage_type="BYOK",
     )
@@ -525,6 +587,8 @@ def test_lifetime_cap_excluded_byok_is_accepted() -> None:
     reservation = db.reservations[authorization.credit_reservation_id]
     assert reservation["credit_reserved_micro"] == reservation["key_reserved_micro"] == 0
     assert all(row["reserved"] == 0 for row in db.typed[KEY_LIMIT_TABLE].values())
+    assert len(_lifetime_snapshot_reads(db)) == 1
+    assert key.hash not in store._lifetime_cap_exhausted_keys
 
 
 @pytest.mark.parametrize("key_limit", [8_000, 20_000], ids=["reject", "accept"])
@@ -533,10 +597,11 @@ def test_lifetime_cap_snapshot_failure_defers_to_transaction(
     caplog: pytest.LogCaptureFixture, key_limit: int,
 ) -> None:
     store, db, key = _fragmented_store([12_000], key_limit)
+    store._lifetime_cap_exhausted_keys.add(key.hash)
     execute_sql = _FakeSnapshot.execute_sql
 
     def fail_cap_snapshot(snapshot: Any, sql: str, **kwargs: Any) -> Any:
-        if "SELECT shard, limit_micro, usage, byok_usage, reserved, include_byok" in sql:
+        if LIFETIME_SQL in sql:
             raise RuntimeError("snapshot unavailable")
         return execute_sql(snapshot, sql, **kwargs)
 
@@ -547,8 +612,10 @@ def test_lifetime_cap_snapshot_failure_defers_to_transaction(
     assert verdict == expected
     assert (authorization is not None) == (key_limit == 20_000)
     assert any(sql.startswith("update tr_credit_balance") for _, sql in calls)
-    warnings = [record for record in caplog.records if "key lifetime-cap snapshot failed" in record.message]
-    assert len(warnings) == 1 and warnings[0].levelname == "WARNING"
+    warnings = [record for record in caplog.records if record.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert "key lifetime-cap snapshot failed" in warnings[0].message
+    assert key.hash in store._lifetime_cap_exhausted_keys
     hold = 10_000 if authorization else 0
     assert sum(row["reserved"] for row in db.typed[CREDIT_BALANCE_TABLE].values()) == hold
 
@@ -564,28 +631,82 @@ def test_lifetime_cap_precheck_rejection_keeps_window_decision(
         resets_at=NOW + timedelta(hours=1), reset_seconds=3_600, allowed=True,
     )
     monkeypatch.setattr(billing, "key_window_limit_decision", lambda *args, **kwargs: decision)
-    calls.clear()
-    verdict, authorization = _fragmented_authorize(store, key, window_limits={"day": 50_000})
-    # The snapshot rejection answers like the transactional one: same outcome,
-    # same spend-window headers, and no counter row was ever locked.
-    assert verdict == billing.AuthorizeOutcome.KEY_LIMIT_EXCEEDED and authorization is None
-    assert isinstance(verdict, billing.AuthorizeVerdict) and verdict.rate_limit is decision
-    assert not any(sql.startswith("update tr_") for _, sql in calls)
+    before = copy.deepcopy(db.typed)
+    for cached in (False, True):
+        calls.clear()
+        db.snapshot_sql.clear()
+        verdict, authorization = _fragmented_authorize(store, key, window_limits={"day": 50_000})
+        assert verdict == billing.AuthorizeOutcome.KEY_LIMIT_EXCEEDED and authorization is None
+        assert isinstance(verdict, billing.AuthorizeVerdict) and verdict.rate_limit is decision
+        assert key.hash in store._lifetime_cap_exhausted_keys
+        assert db.typed == before and not db.reservations
+        if cached:
+            assert not any(sql.startswith("update tr_credit_balance") for _, sql in calls)
+            assert not calls  # No RW statements, including key-escrow repair.
+            assert len(_lifetime_snapshot_reads(db)) == 1
+        else:
+            assert any(sql.startswith("update tr_credit_balance") for _, sql in calls)
+            assert not _lifetime_snapshot_reads(db)
+
+
+@pytest.mark.parametrize("failure", ["window", "credit", "unavailable"])
+def test_only_lifetime_rejection_is_cached(failure: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    from trusted_router.spend_windows import KeyWindowLimitDecision
+
+    store, db, key = _fragmented_store([0 if failure == "credit" else 12_000], 20_000)
+    options: dict[str, Any] = {}
+    if failure == "window":
+        decision = KeyWindowLimitDecision(
+            window="day", limit=5_000, remaining=0,
+            resets_at=NOW + timedelta(hours=1), reset_seconds=3_600, allowed=False,
+        )
+        monkeypatch.setattr(billing, "key_window_limit_decision", lambda *args, **kwargs: decision)
+        options["window_limits"] = {"day": 5_000}
+    elif failure == "unavailable":
+        def unavailable(*args: Any, **kwargs: Any) -> Any:
+            raise StoreUnavailable("unavailable")
+        monkeypatch.setattr(billing, "authorize_atomic", unavailable)
+    if failure == "unavailable":
+        with pytest.raises(StoreUnavailable, match="unavailable"):
+            _fragmented_authorize(store, key)
+    else:
+        expected = (
+            f"{billing.AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED}:day"
+            if failure == "window" else billing.AuthorizeOutcome.INSUFFICIENT_CREDITS
+        )
+        assert _fragmented_authorize(store, key, **options) == (expected, None)
     assert not db.reservations
+    assert key.hash not in store._lifetime_cap_exhausted_keys
 
 
-def test_uncapped_authorize_skips_lifetime_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
-    store, _db, key = _fragmented_store([12_000], 20_000)
+@pytest.mark.parametrize("seeded", [False, True])
+def test_uncapped_authorize_skips_lifetime_snapshot(
+    monkeypatch: pytest.MonkeyPatch, seeded: bool,
+) -> None:
+    store, db, key = _fragmented_store([30_000], 20_000)
     assert store.api_keys.update(key.hash, {"limit_microdollars": None}) is not None
+    if seeded:
+        store._lifetime_cap_exhausted_keys.add(key.hash)
 
-    def unexpected(*args: Any, **kwargs: Any) -> bool:
+    def unexpected(*args: Any, **kwargs: Any) -> str:
         pytest.fail("known uncapped key paid for a lifetime-cap snapshot")
 
-    monkeypatch.setattr(billing, "key_lifetime_cap_exhausted", unexpected)
+    monkeypatch.setattr(billing, "key_lifetime_cap_precheck", unexpected)
+    db.snapshot_sql.clear()
     assert _fragmented_authorize(store, key, skip_key_limit=True)[0] == billing.AuthorizeOutcome.ACCEPTED
+    assert not _lifetime_snapshot_reads(db)
+    assert (key.hash in store._lifetime_cap_exhausted_keys) == seeded
+    # Even an unexpected lifetime outcome must respect the caller's skip flag.
+    monkeypatch.setattr(billing, "authorize_atomic", lambda *args, **kwargs: {
+        "outcome": billing.AuthorizeOutcome.KEY_LIMIT_EXCEEDED,
+    })
+    assert _fragmented_authorize(store, key, skip_key_limit=True, key_usage_shards=1) == (
+        billing.AuthorizeOutcome.KEY_LIMIT_EXCEEDED, None,
+    )
+    assert (key.hash in store._lifetime_cap_exhausted_keys) == seeded
 
 
-@pytest.mark.parametrize("state", ["missing", "incomplete", "uncapped"])
+@pytest.mark.parametrize("state", ["missing", "incomplete", "uncapped", "byok_excluded"])
 def test_lifetime_cap_uncertain_rows_pass_through(state: str) -> None:
     store, db, key = _fragmented_store([12_000], 0)
     rows = db.typed[KEY_LIMIT_TABLE]
@@ -593,12 +714,14 @@ def test_lifetime_cap_uncertain_rows_pass_through(state: str) -> None:
         rows.clear()
     elif state == "incomplete":
         del rows[(key.hash, 3)]
-    else:
+    elif state == "uncapped":
         rows[(key.hash, 3)]["limit_micro"] = None
-    assert not billing.key_lifetime_cap_exhausted(
+    else:
+        rows[(key.hash, 3)]["include_byok"] = False
+    assert billing.key_lifetime_cap_precheck(
         db, store._param_types, key_hash=key.hash, estimate=10_000,
-        has_credit_candidate=True, shard_count=4,
-    )
+        has_credit_candidate=state != "byok_excluded", shard_count=4,
+    ) == billing.HEADROOM
 
 
 @pytest.mark.parametrize("counter", ["usage", "byok_usage", "reserved"])
@@ -608,10 +731,48 @@ def test_lifetime_cap_headroom_matches_reserve_arithmetic(counter: str, include_
     for row in db.typed[KEY_LIMIT_TABLE].values():
         row[counter] = 3_000
         row["include_byok"] = include_byok
-    assert billing.key_lifetime_cap_exhausted(
+    assert billing.key_lifetime_cap_precheck(
         db, store._param_types, key_hash=key.hash, estimate=10_000,
         has_credit_candidate=True, shard_count=4,
-    ) == (counter != "byok_usage" or include_byok)
+    ) == (billing.EXHAUSTED if counter != "byok_usage" or include_byok else billing.HEADROOM)
+
+
+def test_exhausted_key_cache_lru_bound() -> None:
+    cache = billing.ExhaustedKeyCache(max_entries=2)
+    cache.add("oldest")
+    cache.add("newer")
+    assert cache.contains("oldest")  # Membership refreshes recency.
+    cache.add("newest")
+    assert not cache.contains("newer")
+    assert len(cache) == 2
+    cache.add("oldest")  # Adding an existing entry also refreshes it.
+    cache.add("last")
+    assert "newest" not in cache
+    assert "oldest" in cache and "last" in cache
+    cache.discard("absent")
+    assert len(cache) == 2
+    cache.discard("last")
+    assert len(cache) == 1 and "last" not in cache
+    assert "absent" not in cache
+    with pytest.raises(ValueError, match="max_entries must be positive"):
+        billing.ExhaustedKeyCache(max_entries=0)
+
+
+def test_exhausted_key_cache_threaded_bound() -> None:
+    cache = billing.ExhaustedKeyCache(max_entries=16)
+
+    def hammer(worker: int) -> None:
+        for i in range(300):
+            key = f"{worker}-{i % 32}"
+            cache.add(key)
+            cache.contains(key)
+            if i % 3 == 0:
+                cache.discard(key)
+            assert len(cache) <= 16
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(hammer, range(4)))  # Propagate every worker exception.
+    assert len(cache) <= 16
 
 
 @pytest.mark.parametrize("table", [CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE])

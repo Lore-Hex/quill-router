@@ -626,6 +626,9 @@ class SpannerBigtableStore:
         # on its own — keeps the core SpannerBigtableStore body focused on
         # identity + credit ledger. Mirrors the InMemoryStore pattern.
 
+        from trusted_router.storage_gcp_authorize import ExhaustedKeyCache
+
+        self._lifetime_cap_exhausted_keys = ExhaustedKeyCache()
         self._credit_shard_counts = CreditShardCountCache(
             ttl_seconds=float(os.environ.get("TR_CREDIT_SHARD_COUNT_CACHE_SECONDS", "60")),
             max_entries=int(os.environ.get("TR_CREDIT_SHARD_COUNT_CACHE_ENTRIES", "10000")),
@@ -5614,10 +5617,12 @@ class SpannerBigtableStore:
         "key_window_limit_exceeded:<daily|weekly|monthly>" when a per-window cap
         blocked (see authorize_atomic's window_limits contract)."""
         from trusted_router.storage_gcp_authorize import (
+            EXHAUSTED,
+            HEADROOM,
             AuthorizeOutcome,
             authorize_atomic,
             bounded_credit_shard_candidates,
-            key_lifetime_cap_exhausted,
+            key_lifetime_cap_precheck,
         )
         from trusted_router.storage_gcp_keys import (
             _gateway_authorization_idempotency_index_id,
@@ -5791,24 +5796,27 @@ class SpannerBigtableStore:
                     None,
                 )
 
-        if not skip_key_limit and key_lifetime_cap_exhausted(
-            self._database,
-            self._param_types,
-            key_hash=key_hash,
-            estimate=estimate,
-            has_credit_candidate=has_credit_candidate,
-            shard_count=key_counter_shards,
-            idempotency_scope=scope,
-            idempotency_fingerprint=idempotency_fingerprint,
-        ):
-            from trusted_router.storage_gcp_authorize import AuthorizeVerdict
-
-            # Same response shape as the transactional rejection below: carry
-            # the window decision so the 402 keeps its spend-window headers.
-            return (
-                AuthorizeVerdict(AuthorizeOutcome.KEY_LIMIT_EXCEEDED, rate_limit=window_decision),
-                None,
+        if not skip_key_limit and key_hash in self._lifetime_cap_exhausted_keys:
+            cap_verdict = key_lifetime_cap_precheck(
+                self._database,
+                self._param_types,
+                key_hash=key_hash,
+                estimate=estimate,
+                has_credit_candidate=has_credit_candidate,
+                shard_count=key_counter_shards,
+                idempotency_scope=scope,
+                idempotency_fingerprint=idempotency_fingerprint,
             )
+            if cap_verdict == EXHAUSTED:
+                from trusted_router.storage_gcp_authorize import AuthorizeVerdict
+
+                # Carry the same spend-window headers as a transactional rejection.
+                return (
+                    AuthorizeVerdict(AuthorizeOutcome.KEY_LIMIT_EXCEEDED, rate_limit=window_decision),
+                    None,
+                )
+            if cap_verdict == HEADROOM:
+                self._lifetime_cap_exhausted_keys.discard(key_hash)
 
         credit_shard_candidates = (
             self._credit_shard_candidates(workspace_id) if has_credit_candidate else (UNSHARDED,)
@@ -6119,6 +6127,8 @@ class SpannerBigtableStore:
             # only proven aggregate exhaustion above may return a 402.
             raise StoreUnavailable("credit headroom changed concurrently; retry")
         outcome = result["outcome"]
+        if outcome == AuthorizeOutcome.KEY_LIMIT_EXCEEDED and not skip_key_limit:
+            self._lifetime_cap_exhausted_keys.add(key_hash)
         authorization: GatewayAuthorization | None = None
         if outcome == AuthorizeOutcome.ACCEPTED:
             # authorize_atomic stamps one client timestamp onto both the object

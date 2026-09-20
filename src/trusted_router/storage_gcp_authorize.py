@@ -24,6 +24,7 @@ import logging
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -153,7 +154,48 @@ class _Reject(Exception):
         self.outcome = outcome
 
 
-def key_lifetime_cap_exhausted(
+EXHAUSTED = "exhausted"
+HEADROOM = "headroom"
+DEFER = "defer"
+
+
+class ExhaustedKeyCache:
+    """Bounded negative LRU; each hit must recheck the authoritative snapshot."""
+
+    def __init__(self, *, max_entries: int = 4096) -> None:
+        if max_entries < 1:
+            raise ValueError("exhausted key cache max_entries must be positive")
+        self._max_entries = max_entries
+        self._entries: OrderedDict[str, None] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def __contains__(self, key_hash: str) -> bool:
+        with self._lock:
+            if key_hash not in self._entries:
+                return False
+            self._entries.move_to_end(key_hash)
+            return True
+
+    def contains(self, key_hash: str) -> bool:
+        return key_hash in self
+
+    def add(self, key_hash: str) -> None:
+        with self._lock:
+            self._entries[key_hash] = None
+            self._entries.move_to_end(key_hash)
+            while len(self._entries) > self._max_entries:
+                self._entries.popitem(last=False)
+
+    def discard(self, key_hash: str) -> None:
+        with self._lock:
+            self._entries.pop(key_hash, None)
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._entries)
+
+
+def key_lifetime_cap_precheck(
     database: Any,
     param_types: Any,
     *,
@@ -163,27 +205,17 @@ def key_lifetime_cap_exhausted(
     shard_count: int = 1,
     idempotency_scope: str | None = None,
     idempotency_fingerprint: str | None = None,
-) -> bool:
-    """Reject proven lifetime-cap exhaustion without locking a credit row.
+) -> str:
+    """Recheck a cached rejection without locking credit, using reserve_key arithmetic.
 
-    Read a lock-free snapshot OUTSIDE the authorize read-write transaction,
-    just like key_window_limit_decision. A same-fingerprint reservation passes
-    through so the transaction can REPLAY. Missing/incomplete rows, an uncapped
-    shard, excluded BYOK, and snapshot failures also pass through: the
-    transaction remains the authority. Aggregate headroom uses reserve_key's
-    arithmetic, so fragmentation alone never rejects an affordable request.
-    The caller skips this check entirely for known uncapped keys.
+    Each process learns from its first transactional rejection: one credit-row
+    lock + rollback per exhausted key per process per headroom flip. Healthy
+    keys never pay a snapshot. HEADROOM drops the entry; replay or read failure
+    defers to the transaction and keeps it.
     """
     pt = param_types
     try:
         with database.snapshot(multi_use=True) as snapshot:
-            if idempotency_scope is not None:
-                existing = read_reservation_by_idempotency(snapshot, pt, idempotency_scope)
-                if (
-                    existing is not None
-                    and existing["idempotency_fingerprint"] == idempotency_fingerprint
-                ):
-                    return False
             rows = list(
                 snapshot.execute_sql(
                     "SELECT shard, limit_micro, usage, byok_usage, reserved, include_byok "
@@ -193,21 +225,30 @@ def key_lifetime_cap_exhausted(
                     param_types={"kh": pt.STRING, "shard_count": pt.INT64},
                 )
             )
+            if not rows or [int(row[0]) for row in rows] != list(range(shard_count)):
+                return HEADROOM
+            if any(row[1] is None or (not has_credit_candidate and not row[5]) for row in rows):
+                return HEADROOM
+            if sum(
+                int(limit_micro) - int(usage) - (int(byok_usage) if include_byok else 0) - int(reserved)
+                for _, limit_micro, usage, byok_usage, reserved, include_byok in rows
+            ) >= estimate:
+                return HEADROOM
+            if idempotency_scope is not None:
+                existing = read_reservation_by_idempotency(snapshot, pt, idempotency_scope)
+                if (
+                    existing is not None
+                    and existing["idempotency_fingerprint"] == idempotency_fingerprint
+                ):
+                    return DEFER
+            return EXHAUSTED
     except Exception:
         log.warning(
             "key lifetime-cap snapshot failed; deferring to authorize transaction key=%s",
             key_hash,
             exc_info=True,
         )
-        return False
-    if not rows or [int(row[0]) for row in rows] != list(range(shard_count)):
-        return False
-    if any(row[1] is None or (not has_credit_candidate and not row[5]) for row in rows):
-        return False
-    return sum(
-        int(limit_micro) - int(usage) - (int(byok_usage) if include_byok else 0) - int(reserved)
-        for _, limit_micro, usage, byok_usage, reserved, include_byok in rows
-    ) < estimate
+        return DEFER
 
 
 def key_window_limit_decision(

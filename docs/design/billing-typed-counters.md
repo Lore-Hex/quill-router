@@ -128,6 +128,15 @@ credit row while holding the key row, so key rows inherited credit-row wait
 (production `LOCK_STATS`, 2026-09-07). Taking every credit-table cell first
 means the key row is held only until commit.
 
+A bounded per-process negative cache remembers final lifetime-cap rejections;
+only cached keys pay a lock-free snapshot precheck, so healthy keys pay nothing.
+The snapshot remains authoritative on every hit, dropping the entry when it
+finds headroom and preserving replay pass-through, so repeated exhausted-key
+requests avoid locking the workspace's credit row.
+Each process learns from its first transactional rejection, bounding the
+residual cost to one credit-row lock and rollback per exhausted key per process
+per headroom flip.
+
 ### authorize — ONE atomic read-write transaction
 
 codex finding #1: today key reserve, credit reserve, and auth-create are three
