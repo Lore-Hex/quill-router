@@ -204,14 +204,15 @@ def key_lifetime_cap_precheck(
     has_credit_candidate: bool,
     shard_count: int = 1,
     idempotency_scope: str | None = None,
-    idempotency_fingerprint: str | None = None,
 ) -> str:
     """Recheck a cached rejection without locking credit, using reserve_key arithmetic.
 
     Each process learns from its first transactional rejection: one credit-row
     lock + rollback per exhausted key per process per headroom flip. Healthy
-    keys never pay a snapshot. HEADROOM drops the entry; replay or read failure
-    defers to the transaction and keeps it.
+    keys never pay a snapshot. HEADROOM drops the entry; any existing reservation
+    or read failure defers to the transaction and keeps it. This is conservative:
+    it may pass a request the transaction refuses (which re-records the key), but
+    must never refuse one it would accept, either per shard or after pooling.
     """
     pt = param_types
     try:
@@ -229,17 +230,15 @@ def key_lifetime_cap_precheck(
                 return HEADROOM
             if any(row[1] is None or (not has_credit_candidate and not row[5]) for row in rows):
                 return HEADROOM
-            if sum(
+            headroom = [
                 int(limit_micro) - int(usage) - (int(byok_usage) if include_byok else 0) - int(reserved)
                 for _, limit_micro, usage, byok_usage, reserved, include_byok in rows
-            ) >= estimate:
+            ]
+            if max(headroom) >= estimate or sum(headroom) >= estimate:
                 return HEADROOM
             if idempotency_scope is not None:
                 existing = read_reservation_by_idempotency(snapshot, pt, idempotency_scope)
-                if (
-                    existing is not None
-                    and existing["idempotency_fingerprint"] == idempotency_fingerprint
-                ):
+                if existing is not None:
                     return DEFER
             return EXHAUSTED
     except Exception:

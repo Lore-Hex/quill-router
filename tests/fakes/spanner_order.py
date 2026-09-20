@@ -65,10 +65,14 @@ def no_counter_mutations(statements: list[str]) -> None:
     ), statements
 
 
-def credit_before_key(statements: list[str], *, key_last: bool = False) -> None:
+def credit_before_key(
+    statements: list[str], *, key_last: bool = False, require_both: bool = True,
+) -> None:
     """Hot billing DML: no credit/recovery/pause access follows the first key.
 
     Release paths additionally require the key UPDATE to be the final statement.
+    Failed transactions may exit before either table; require_both=False still
+    checks the order of every access that actually happened.
     Authorize only requires credit before key: request INSERTs follow the key.
     repair_typed_reserved and other mutation-based administrative repairs are
     outside this invariant because mutation writes are buffered until commit.
@@ -81,8 +85,10 @@ def credit_before_key(statements: list[str], *, key_last: bool = False) -> None:
         ))
     ]
     key = [i for i, sql in enumerate(statements) if "tr_key_limit" in sql]
-    assert credit and key, statements
-    assert max(credit) < min(key), statements
+    if require_both:
+        assert credit and key, statements
+    if credit and key:
+        assert max(credit) < min(key), statements
     if key_last:
         assert key[-1] == len(statements) - 1, statements
         assert statements[-1].startswith("update tr_key_limit"), statements

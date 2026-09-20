@@ -5805,7 +5805,6 @@ class SpannerBigtableStore:
                 has_credit_candidate=has_credit_candidate,
                 shard_count=key_counter_shards,
                 idempotency_scope=scope,
-                idempotency_fingerprint=idempotency_fingerprint,
             )
             if cap_verdict == EXHAUSTED:
                 from trusted_router.storage_gcp_authorize import AuthorizeVerdict
@@ -5953,7 +5952,9 @@ class SpannerBigtableStore:
         forced_reload_done = False
         cooldown_passed = False
 
-        def recover_credit(result: dict[str, Any]) -> dict[str, Any]:
+        def recover_credit(
+            result: dict[str, Any], *, after_key_repair: bool = False,
+        ) -> dict[str, Any]:
             nonlocal credit_shard_candidates, aggregate_exhaustion_proven
             nonlocal forced_reload_done, cooldown_passed
             # run_tracked shares last_credit_candidates across both entries too.
@@ -5967,7 +5968,15 @@ class SpannerBigtableStore:
             # never pay this read; a later funded shard needs one snapshot.
             previous_count = len(credit_shard_candidates)
             try:
-                refreshed_candidates = self._refresh_credit_shard_candidates(workspace_id)
+                if after_key_repair and not forced_reload_done:
+                    # A remote split during key repair can hide behind this
+                    # request's first refresh. Share the ONE forced-reload
+                    # budget with the incomplete-precheck path below.
+                    forced_reload_done = True
+                    self._credit_shard_counts.invalidate(workspace_id)
+                    refreshed_candidates = self._credit_shard_candidates(workspace_id)
+                else:
+                    refreshed_candidates = self._refresh_credit_shard_candidates(workspace_id)
             except Exception:
                 log.warning(
                     "credit shard-count refresh failed on reject path; "
@@ -6115,7 +6124,7 @@ class SpannerBigtableStore:
                 preferred_shard=key_shard_candidates[0],
             ):
                 result = run_tracked(last_credit_candidates)
-                result = recover_credit(result)
+                result = recover_credit(result, after_key_repair=True)
         if (
             result["outcome"] == AuthorizeOutcome.INSUFFICIENT_CREDITS
             and len(credit_shard_candidates) > 1
