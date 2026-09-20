@@ -1677,29 +1677,19 @@ def test_typed_finalize_releases_hot_rows_last_in_the_same_transaction(
     credit_release = next(
         i for i, sql in enumerate(statements) if sql.startswith("UPDATE tr_credit_balance")
     )
-    # Key then credit (unchanged lock order), both in the SAME transaction as
-    # the claim, after every other write of that transaction: the
-    # authorization mark, and (when enabled) the outbox done-mark, generation
-    # record and activity intent all precede the first hot-row lock.
-    assert key_release < credit_release
-    before = statements[:key_release]
+    # Credit then key, both in the SAME transaction as the claim, after
+    # authorization, outbox, generation and activity writes.
+    assert credit_release < key_release
+    before = statements[:credit_release]
     assert any(sql.startswith("UPDATE tr_gateway_authorization SET settled=true") for sql in before)
     assert not any("tr_key_limit" in sql or "tr_credit_balance" in sql for sql in before)
-    # From the first hot-row lock to commit: only the releases themselves
-    # (release_key's fast/slow UPDATE pair, then the credit release) plus the
-    # single tr_trust_event debt-indicator read. No other statement may ride
-    # inside the hold. (Restoring the old order puts ~8 statements here.)
-    after_first_release = statements[key_release + 1 :]
-    releases = [
-        sql
-        for sql in after_first_release
-        if sql.startswith(("UPDATE tr_key_limit", "UPDATE tr_credit_balance"))
-    ]
+    # Only key releases and the debt-indicator read may follow the credit lock.
+    after_first_release = statements[credit_release + 1 :]
+    releases = [sql for sql in after_first_release if sql.startswith("UPDATE tr_key_limit")]
     reads = [sql for sql in after_first_release if "FROM tr_trust_event" in sql]
     assert len(releases) + len(reads) == len(after_first_release), after_first_release
     assert len(reads) <= 1
-    assert releases[-1] == statements[credit_release], "credit release is the last DML"
-    assert len(statements[credit_release + 1 :]) <= 1
+    assert statements[-1] == releases[-1], "key release is the last DML"
     # Money unchanged by the reorder.
     assert _typed_credit(db, ws)["total_usage"] == 777_777
     assert _typed_credit(db, ws)["reserved"] == 0

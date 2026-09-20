@@ -403,6 +403,19 @@ def authorize_atomic(
             if existing is not None:
                 return _replay(transaction, existing)
 
+        # Reserve credit before key so both paths use the same counter lock order.
+        # Reservation/authorization INSERTs below consume the selected shards and holds.
+        credit_hold = 0
+        selected_credit_shard = UNSHARDED
+        if has_credit_candidate and not credit_escrowed_by_spend_lease:
+            for candidate in shard_candidates:
+                if reserve_credit(transaction, pt, workspace_id, estimate, shard=candidate):
+                    selected_credit_shard = candidate
+                    break
+            else:
+                raise _Reject(AuthorizeOutcome.INSUFFICIENT_CREDITS)
+            credit_hold = estimate
+
         # Bounded lifetime-cap TOCTOU: a cap committed after the gateway's
         # entity read can miss only requests already in flight at that commit,
         # each admitted for its own estimate (aggregate: sum of those estimates).
@@ -437,17 +450,6 @@ def authorize_atomic(
                     AuthorizeOutcome.KEY_LIMIT_EXCEEDED if saw_key_row else AuthorizeOutcome.KEY_MISSING
                 )
         key_hold = estimate if key_result == KEY_ACCEPTED else 0
-
-        credit_hold = 0
-        selected_credit_shard = UNSHARDED
-        if has_credit_candidate and not credit_escrowed_by_spend_lease:
-            for candidate in shard_candidates:
-                if reserve_credit(transaction, pt, workspace_id, estimate, shard=candidate):
-                    selected_credit_shard = candidate
-                    break
-            else:
-                raise _Reject(AuthorizeOutcome.INSUFFICIENT_CREDITS)
-            credit_hold = estimate
 
         # Authorize-time pause enforcement belongs to the armed trust program,
         # not today's path. Shipping it unarmed changed the enclave rollout
@@ -720,7 +722,7 @@ def settle_atomic(
     outbox_available: bool | None = None,
     expires_before: Any | None = None,
 ) -> dict:
-    """Claim-gated settle/refund in ONE transaction (key then credit lock order).
+    """Claim-gated settle/refund in ONE transaction (credit then key lock order).
 
     Claim flips settled false->true (first-writer-wins); only the winner releases
     the EXACT recorded holds and books `actual`. `success=False` is a refund:
@@ -785,19 +787,6 @@ def settle_atomic(
                 "missing_key_releases": [],
             }
 
-        # key first, then credit (single lock order everywhere — codex#2 #2).
-        key_actual = book_actual  # key usage counts under both Credits and BYOK
-        missing_key_releases = []
-        key_count, warning = _release_key_or_skip_deleted(
-            transaction, pt, res, key_actual, book_to_byok=book_to_byok
-        )
-        if warning is not None:
-            missing_key_releases.append(warning)
-        # A recorded hold MUST release; an uncapped/no-hold row (key_reserved==0)
-        # with positive usage must book or raise in the shared helper.
-        if res["key_reserved_micro"] > 0 and key_count != 1:
-            raise _SettleError("key release row-count != 1")
-
         if res["credit_reserved_micro"] > 0:
             credit_actual = book_actual if settled_usage_type == "Credits" else 0
             credit_count = release_credit(
@@ -810,6 +799,20 @@ def settle_atomic(
             )
             if credit_count != 1:
                 raise _SettleError("credit release row-count != 1")
+
+        # Credit first, key last: never hold the key while waiting for credit.
+        key_actual = book_actual  # key usage counts under both Credits and BYOK
+        missing_key_releases = []
+        key_count, warning = _release_key_or_skip_deleted(
+            transaction, pt, res, key_actual, book_to_byok=book_to_byok
+        )
+        if warning is not None:
+            missing_key_releases.append(warning)
+        # A recorded hold MUST release; an uncapped/no-hold row (key_reserved==0)
+        # with positive usage must book or raise in the shared helper.
+        if res["key_reserved_micro"] > 0 and key_count != 1:
+            raise _SettleError("key release row-count != 1")
+
         return {
             "outcome": SettleOutcome.SETTLED,
             "missing_key_releases": missing_key_releases,
@@ -1279,31 +1282,6 @@ def _finalize_reaped_reservation_atomic(
         if not won:
             raise _ReapGuardLost("expired reservation claim guard lost")
 
-        missing_key_releases = []
-        if res.get("hold_usage_type") != "RegionalCredits":
-            key_count, warning = _release_key_or_skip_deleted(
-                transaction,
-                pt,
-                res,
-                actual_micro,
-                book_to_byok=False,
-            )
-            if warning is not None:
-                missing_key_releases.append(warning)
-            if res["key_reserved_micro"] > 0 and key_count != 1:
-                raise _SettleError("key release row-count != 1")
-            if res["credit_reserved_micro"] > 0:
-                credit_count = release_credit(
-                    transaction,
-                    pt,
-                    res["workspace_id"],
-                    res["credit_reserved_micro"],
-                    actual_micro,
-                    shard=res["credit_shard"],
-                )
-                if credit_count != 1:
-                    raise _SettleError("credit release row-count != 1")
-
         if (
             snapshot_booked
             and app_markup_payout is not None
@@ -1358,6 +1336,33 @@ def _finalize_reaped_reservation_atomic(
             != 1
         ):
             raise _ReapGuardLost("authorization retention guard lost")
+        # Release credit first and key last, after all other transaction DML.
+        missing_key_releases = []
+        if res.get("hold_usage_type") != "RegionalCredits":
+            if res["credit_reserved_micro"] > 0:
+                credit_count = release_credit(
+                    transaction,
+                    pt,
+                    res["workspace_id"],
+                    res["credit_reserved_micro"],
+                    actual_micro,
+                    shard=res["credit_shard"],
+                )
+                if credit_count != 1:
+                    raise _SettleError("credit release row-count != 1")
+
+            key_count, warning = _release_key_or_skip_deleted(
+                transaction,
+                pt,
+                res,
+                actual_micro,
+                book_to_byok=False,
+            )
+            if warning is not None:
+                missing_key_releases.append(warning)
+            if res["key_reserved_micro"] > 0 and key_count != 1:
+                raise _SettleError("key release row-count != 1")
+
         return _ReapOneResult(
             outcome=SettleOutcome.SETTLED,
             released_hold_micro=max(
@@ -1438,8 +1443,8 @@ def typed_finalize_atomic(
 
     ONE transaction reproduces legacy finalize_gateway_authorization's whole
     behavior so a crash can't leave counters charged but the authorization
-    active: claim the reservation -> release the EXACT holds (key then credit)
-    and book actual -> DML-mark the authorization settled. Typed request records
+    active: claim the reservation -> DML-mark the authorization settled ->
+    release the EXACT holds and book actual (credit then key). Typed request records
     keep their repair payload until durable analytics delivery is confirmed;
     rolling legacy records retain the old generic generation repair rows.
 
@@ -1606,16 +1611,9 @@ def typed_finalize_atomic(
         # concurrent settle of one key/workspace serializes on; taking their
         # Exclusive locks after the authorization, outbox, generation and
         # activity writes holds them for ~2 RPCs + commit instead of ~12 RPCs +
-        # commit. The `!= 1` raises still abort the whole transaction.
+        # commit. Credit goes first so its contention cannot extend the key lock.
+        # The `!= 1` raises still abort the whole transaction.
         missing_key_releases = []
-        key_count, warning = _release_key_or_skip_deleted(
-            transaction, pt, res, book_actual, book_to_byok=book_to_byok
-        )
-        if warning is not None:
-            missing_key_releases.append(warning)
-        if res["key_reserved_micro"] > 0 and key_count != 1:
-            raise _SettleError("key release row-count != 1")
-
         if res["credit_reserved_micro"] > 0:
             credit_actual = book_actual if settled_usage_type == "Credits" else 0
             credit_count = release_credit(
@@ -1646,6 +1644,15 @@ def typed_finalize_atomic(
             )
             if credit_count != 1:
                 raise _SettleError("regional fallback credit booking row-count != 1")
+
+        key_count, warning = _release_key_or_skip_deleted(
+            transaction, pt, res, book_actual, book_to_byok=book_to_byok
+        )
+        if warning is not None:
+            missing_key_releases.append(warning)
+        if res["key_reserved_micro"] > 0 and key_count != 1:
+            raise _SettleError("key release row-count != 1")
+
         return {
             "outcome": SettleOutcome.SETTLED,
             "missing_key_releases": missing_key_releases,
