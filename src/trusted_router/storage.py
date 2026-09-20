@@ -2993,42 +2993,25 @@ class InMemoryStore:
     ) -> Reservation:
         from trusted_router.storage_legacy_trust import BillingPausedError
         with self._lock:
-            takeover_key: tuple[str, str, str] | None = None
-            previous_id = None
-            if trust_program_armed(self):
-                terminal_key = (workspace_id, key_hash, idempotency_key or "")
-                if self._legacy_paused(workspace_id) or terminal_key in self._paused_authorizations:
-                    if idempotency_key is not None:
-                        existing_id = self.api_keys.reservation_id_by_idempotency_key.get(
-                            (workspace_id, key_hash, idempotency_key)
-                        )
-                        existing = self.api_keys.reservations.get(existing_id) if existing_id is not None else None
-                        if (
-                            existing is not None
-                            and existing.workspace_id == workspace_id
-                            and existing.key_hash == key_hash
-                        ):
-                            self.refund(existing.id)
-                        self._paused_authorizations.add(terminal_key)
-                    self.api_keys.refund_limit(key_hash, amount_microdollars, usage_type=UsageType.CREDITS)
-                    raise BillingPausedError()
-            elif idempotency_key is not None:
-                terminal_key = (workspace_id, key_hash, idempotency_key)
-                if terminal_key in self._paused_authorizations:
-                    takeover_key = terminal_key
-                    self._paused_authorizations.remove(terminal_key)
-                    previous_id = self.api_keys.reservation_id_by_idempotency_key.pop(terminal_key, None)
-            try:
-                reservation = self.api_keys.reserve(workspace_id, key_hash, amount_microdollars,
-                                                    idempotency_key=idempotency_key)
-            except Exception:
-                if takeover_key is not None:
-                    self._paused_authorizations.add(takeover_key)
-                    if previous_id is not None:
-                        self.api_keys.reservation_id_by_idempotency_key[takeover_key] = previous_id
-                    else:
-                        self.api_keys.reservation_id_by_idempotency_key.pop(takeover_key, None)
-                raise
+            terminal_key = (workspace_id, key_hash, idempotency_key or "")
+            # Only a keyed request has a pointer to be terminal; None must not alias "".
+            terminal = idempotency_key is not None and terminal_key in self._paused_authorizations
+            paused = self._legacy_paused(workspace_id) if trust_program_armed(self) else False
+            if paused or terminal:
+                if idempotency_key is not None:
+                    existing_id = self.api_keys.reservation_id_by_idempotency_key.get(terminal_key)
+                    existing = self.api_keys.reservations.get(existing_id) if existing_id is not None else None
+                    if (
+                        existing is not None
+                        and existing.workspace_id == workspace_id
+                        and existing.key_hash == key_hash
+                    ):
+                        self.refund(existing.id)
+                    self._paused_authorizations.add(terminal_key)
+                self.api_keys.refund_limit(key_hash, amount_microdollars, usage_type=UsageType.CREDITS)
+                raise BillingPausedError()
+            reservation = self.api_keys.reserve(workspace_id, key_hash, amount_microdollars,
+                                                idempotency_key=idempotency_key)
             if trust_program_armed(self):
                 self._reservation_pause_epochs.setdefault(reservation.id, self._legacy_pause_epoch(workspace_id))
             return reservation

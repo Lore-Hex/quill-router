@@ -7,7 +7,9 @@ from typing import Any
 
 
 def trust_program_armed(store: Any) -> bool:
-    """Legacy trust enforcement must also ship inert until the arm flag flips."""
+    """A Postgres plane must not be armed while workers predating scoped reservation pointers run.
+    Such workers cannot retire a scoped pointer when they pause-reject a reservation.
+    """
     settings = getattr(store, "trust_settings", None)
     return bool(getattr(settings, "spend_lease_trust_eligibility_enabled", False))
 
