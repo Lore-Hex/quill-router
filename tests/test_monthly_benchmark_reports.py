@@ -7,6 +7,21 @@ from fastapi.testclient import TestClient
 from trusted_router.benchmark_reports import monthly_benchmark_reports
 
 
+def test_report_links_are_canonical_without_rewriting_historical_evidence(client: TestClient) -> None:
+    page = client.get("/benchmarks/reports/2026-07")
+    download = client.get("/benchmarks/reports/2026-07.json")
+    assert 'href="/providers/google-ai-studio"' in page.text
+    assert 'href="/providers/gemini"' not in page.text
+    assert 'href="/models/mistralai/mistral-small-3.2-24b-instruct-2506"' in page.text
+    assert 'href="/models/mistralai/mistral-small-3.2-24b-instruct"' not in page.text
+    assert '<code>mistralai/mistral-small-3.2-24b-instruct</code>' in page.text
+    assert any(row["provider"] == "gemini" for row in download.json()["data"]["top_providers"])
+    assert any(
+        row["model"] == "mistralai/mistral-small-3.2-24b-instruct"
+        for row in download.json()["data"]["top_model_routes"]
+    )
+
+
 def test_checked_in_monthly_reports_cover_june_and_july() -> None:
     reports = monthly_benchmark_reports()
 
