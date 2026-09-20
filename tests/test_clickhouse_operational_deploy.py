@@ -150,6 +150,9 @@ def _committed_clickhouse_fixture(tmp_path: Path, *, manifest: bytes) -> Path:
     data.mkdir(parents=True)
     (repo / "clickhouse/worker.py").write_text("VALUE = 1\n")
     (data / "provider.json").write_bytes(manifest)
+    static = repo / "src/trusted_router/static"
+    static.mkdir()
+    (static / "og.png").write_bytes(b"website image")
     for command in (
         ["git", "init", "-q"],
         ["git", "config", "user.email", "test@trustedrouter.com"],
@@ -161,17 +164,20 @@ def _committed_clickhouse_fixture(tmp_path: Path, *, manifest: bytes) -> Path:
     return repo
 
 
-def _run_bundle_helper(repo: Path, archive: Path) -> subprocess.CompletedProcess[str]:
+def _run_bundle_helper(
+    repo: Path, archive: Path, scope: str = "full",
+) -> subprocess.CompletedProcess[str]:
     helper = ROOT / "scripts/deploy/_clickhouse_bundle.sh"
     return subprocess.run(  # noqa: S603
         [
             "/bin/bash",
             "-c",
-            'source "$1"; build_clickhouse_bundle "$2" "$3"',
+            'source "$1"; build_clickhouse_bundle "$2" "$3" "$4"',
             "bundle-test",
             str(helper),
             str(repo),
             str(archive),
+            scope,
         ],
         check=False,
         capture_output=True,
@@ -209,6 +215,32 @@ def test_clickhouse_bundle_rejects_dirty_or_invalid_source(tmp_path: Path) -> No
     invalid = _run_bundle_helper(invalid_repo, tmp_path / "invalid.tar.gz")
     assert invalid.returncode != 0
     assert "provider bundle contains invalid JSON" in invalid.stderr
+
+
+def test_public_snapshot_bundle_omits_web_assets_but_keeps_worker_inputs(tmp_path: Path) -> None:
+    repo = _committed_clickhouse_fixture(tmp_path, manifest=b'{"models": []}\n')
+    for scope in ("full", "public-snapshots"):
+        archive = tmp_path / f"{scope}.tar.gz"
+        result = _run_bundle_helper(repo, archive, scope)
+        assert result.returncode == 0, result.stderr
+        with tarfile.open(archive) as bundle:
+            names = bundle.getnames()
+        assert "clickhouse/worker.py" in names
+        assert "src/trusted_router/data/provider_models/provider.json" in names
+        assert ("src/trusted_router/static/og.png" in names) == (scope == "full")
+
+
+def test_public_snapshot_bundle_fails_closed_on_dirty_and_invalid_catalog(tmp_path: Path) -> None:
+    repo = _committed_clickhouse_fixture(tmp_path / "dirty", manifest=b'{"models": []}\n')
+    manifest = repo / "src/trusted_router/data/provider_models/provider.json"
+    manifest.write_bytes(b"\xff")
+    result = _run_bundle_helper(repo, tmp_path / "dirty.tar.gz", "public-snapshots")
+    assert result.returncode != 0
+    assert "modified worker source" in result.stderr
+    repo = _committed_clickhouse_fixture(tmp_path / "invalid", manifest=b"\xff")
+    result = _run_bundle_helper(repo, tmp_path / "invalid.tar.gz", "public-snapshots")
+    assert result.returncode != 0
+    assert "provider bundle contains invalid JSON" in result.stderr
 
 
 def test_client_telemetry_single_node_schema_is_applied_with_operational_schema() -> None:

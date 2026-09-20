@@ -4,8 +4,20 @@
 build_clickhouse_bundle() {
   local root="$1"
   local archive="$2"
+  local scope="${3:-full}"
   local dirty
   local stage
+  local -a paths=(clickhouse src/trusted_router)
+
+  case "$scope" in
+    full) ;;
+    public-snapshots)
+      # The analytics workers import Python and catalog data, not website
+      # images/CSS/JS. Shipping those assets saturated the bounded IAP upload.
+      paths+=(':(exclude)src/trusted_router/static')
+      ;;
+    *) echo "unknown ClickHouse bundle scope: $scope" >&2; return 1 ;;
+  esac
 
   dirty="$(git -C "$root" status --porcelain --untracked-files=all -- \
     clickhouse src/trusted_router)"
@@ -19,8 +31,7 @@ build_clickhouse_bundle() {
     --format=tar.gz \
     --output="$archive" \
     HEAD \
-    clickhouse \
-    src/trusted_router
+    "${paths[@]}"
 
   stage="$(mktemp -d "${TMPDIR:-/tmp}/tr-clickhouse-bundle.XXXXXX")"
   if ! tar -xzf "$archive" -C "$stage"; then

@@ -43,6 +43,17 @@
   result and show a notice. Only COMPLETED enters the existing idempotent
   credit transaction. Repeated pending/completed deliveries and workspace
   ownership are regression tested. No refunds or dispute actions were taken.
+* Deployment 35481392420 could not finish uploading the public snapshot
+  worker within 300 seconds. SSH authentication succeeded; project SSH
+  metadata contained only two keys. The temporary archive reached 14,100,480
+  bytes but failed a read-only gzip integrity check with unexpected EOF.
+  The old worker remained healthy, publishing all five snapshots every minute.
+  Public snapshot bundles now exclude website static assets and use the
+  existing committed-source/valid-JSON builder. Equivalent committed bundles
+  shrink from 14,484,681 to 2,581,099 bytes, about 82 percent. An isolated
+  import of the reduced bundle loaded the snapshot worker and all 625 models.
+  The 300-second bound, short-lived SSH access, rollback, and publication
+  checks are unchanged. Production upload still requires verification.
 
 ## Open operational work
 
