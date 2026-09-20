@@ -1,0 +1,247 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="Decision models quickstart">
+  <div class="marketing-copy">
+    <span class="eyebrow">Decision models</span>
+    <h2>Ask your software a question. Get a typed answer with a probability.</h2>
+    <p>Most calls to a language model inside an application are not conversations. They are decisions: <em>is this a refund request, which queue does it go to, how urgent is it, did the agent finish, should it retry.</em> Asking a chat model for prose and then parsing it is slow, expensive, and fragile.</p>
+    <p><code>POST /v1/decide</code> takes a piece of <strong>state</strong> and a set of <strong>typed questions</strong>, and returns one typed answer per question, each with probabilities you can threshold on. All questions are answered in a single call.</p>
+    <p>Every answer is verified against your request before it is returned. You never receive an option you did not declare, a probability outside 0 to 1, or a distribution that does not add up.</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>One call, three decisions</span><span>curl</span></div>
+    <pre><code>curl {{ api_base_url }}/decide \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "trustedrouter/trev-1.0",
+    "state": "I was charged twice for order A-1 and need this fixed today.",
+    "questions": {
+      "refund": {
+        "type": "boolean",
+        "instructions": "Is the customer asking for money back?"
+      },
+      "route": {
+        "type": "choice",
+        "instructions": "Route this support ticket.",
+        "criteria": {
+          "billing": "payment or charge problems",
+          "shipping": "delivery problems",
+          "technical": "application bugs"
+        }
+      },
+      "urgency": {
+        "type": "score",
+        "instructions": "How urgent is this ticket?",
+        "criteria": ["low", "medium", "high"]
+      }
+    }
+  }'</code></pre>
+  </div>
+</section>
+
+<section class="marketing-split" style="margin-top:48px">
+  <div class="marketing-copy">
+    <span class="eyebrow">Response</span>
+    <h2>One answer per question, keyed by the names you chose.</h2>
+    <p>A <strong>boolean</strong> returns the probability that the answer is yes. A <strong>choice</strong> returns the selected option and a probability for every option you declared. A <strong>score</strong> returns a probability for each level and the expected level as a single number, so <code>1.8</code> on a three-level scale sits between medium and high.</p>
+    <p>Automate the confident cases and send the uncertain ones to a person: <code>if answers.refund.probability &gt; 0.9</code>.</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>200 OK</span><span>JSON</span></div>
+    <pre><code>{
+  "model": "trustedrouter/trev-1.0",
+  "answers": {
+    "refund":  { "type": "boolean", "probability": 0.97 },
+    "route":   { "type": "choice", "choice": "billing",
+                 "probabilities": { "billing": 0.96,
+                                    "shipping": 0.02,
+                                    "technical": 0.02 } },
+    "urgency": { "type": "score", "score": 1.8,
+                 "probabilities": { "0": 0.0, "1": 0.2, "2": 0.8 } }
+  },
+  "usage": { "inputTokens": 519, "outputTokens": 229 }
+}</code></pre>
+  </div>
+</section>
+
+<section style="margin-top:48px">
+  <h2 class="section-center">Question types</h2>
+  <div class="marketing-grid three">
+    <div class="marketing-card">
+      <span class="card-label">boolean</span>
+      <h3>Yes or no, with a probability.</h3>
+      <p><code>instructions</code> is required. <code>criteria</code> is optional: an object with <code>"true"</code> and/or <code>"false"</code> describing what each side means.</p>
+      <p>Returns <code>probability</code>, the chance the answer is yes.</p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">choice</span>
+      <h3>Pick one of your options.</h3>
+      <p><code>criteria</code> is required: an object mapping each option name to a description. Between 2 and 255 options.</p>
+      <p>Returns <code>choice</code> and <code>probabilities</code> for every option. The choice is always the most probable option.</p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">score</span>
+      <h3>Rate along an ordered scale.</h3>
+      <p><code>criteria</code> is required: an array of at least two level labels, lowest first.</p>
+      <p>Returns <code>probabilities</code> keyed <code>"0"</code> to <code>"n-1"</code>, and <code>score</code>, their expected value.</p>
+    </div>
+  </div>
+</section>
+
+<section style="margin-top:48px">
+  <div class="panel">
+    <div class="panel-head"><h2>Models</h2><span class="pill good">Any chat model works</span></div>
+    <div class="panel-body">
+      <p><strong><code>trustedrouter/trev-1.0</code></strong> is TrustedRouter's own decision model: an open-weight 120B reasoning model on the fastest inference hardware we could measure, with automatic failover across four hosts so a rate limit on one never becomes an error for you. <strong><code>typesafe-ai/jev</code></strong> is TypeSafe AI's hosted decision model. The others are chat models we have tuned and measured as decision models.</p>
+      <div class="model-table-wrap">
+        <table>
+          <thead><tr><th>Model</th><th>Kind</th><th>Median model latency</th><th>Eval accuracy</th><th>About one decision costs</th></tr></thead>
+          <tbody>
+            <tr><td><span class="mono">trustedrouter/trev-1.0</span></td><td>TrustedRouter, reasons briefly</td><td>about 350 ms</td><td>29 / 29</td><td>$0.00037</td></tr>
+            <tr><td><span class="mono">typesafe-ai/jev</span></td><td>Hosted decision model</td><td>about 330 ms</td><td>29 / 29</td><td>$0.00002</td></tr>
+            <tr><td><span class="mono">google/gemini-3.1-flash-lite</span></td><td>Tuned chat model</td><td>about 0.9 s</td><td>29 / 29</td><td>$0.00027</td></tr>
+            <tr><td><span class="mono">deepseek/deepseek-v4.1-flash</span></td><td>Tuned chat model</td><td>about 0.8 s</td><td>29 / 29</td><td>$0.00014</td></tr>
+            <tr><td><span class="mono">openai/gpt-oss-20b</span></td><td>Tuned chat model</td><td>about 1.7 s</td><td>29 / 29</td><td>$0.00004</td></tr>
+            <tr><td><span class="mono">google/gemma-4-e4b-it</span></td><td>Tuned chat model, cheapest</td><td>2 to 3 s</td><td>29 / 29</td><td>$0.00002</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><strong>How to read this.</strong> The eval is small and deliberately easy: eight labeled support tickets, four questions each, 29 checks, run in September 2026. It shows that every model here answers clear cases correctly in the right form; it does not rank them on hard ones, and across repeated runs one borderline ticket occasionally costs a model a single check. Latency is the typical median time for the model host to answer, measured from one client over repeated runs; hosts vary from run to run, and your request also pays for authorization and settlement through the gateway. Cost is for that four-question request, about 450 to 520 input tokens. Live per-token prices are always in <a href="/models"><code>GET /v1/models</code></a>.</p>
+      <p><strong>Any other chat model works too.</strong> Name any chat model in the catalog, such as <code>anthropic/claude-opus-5</code>, and it is driven the same way, untuned. Larger models do better on harder judgments; the models above are the ones we have measured and stand behind.</p>
+    </div>
+  </div>
+</section>
+
+<section class="marketing-split" style="margin-top:48px">
+  <div class="marketing-copy">
+    <span class="eyebrow">Harder decisions</span>
+    <h2>Turn reasoning on. The output does not change.</h2>
+    <p>By default a decision model answers without deliberating, which is what makes it fast. For a judgment that needs thought, pass <code>reasoning</code> and the model thinks first. You still get exactly the same typed answers, verified the same way.</p>
+    <p><code>provider</code> accepts the same <a href="/docs/provider-routing">routing preferences</a> as chat, so you can move a tuned model to a cheaper or regional host. <code>max_tokens</code> raises the budget if a long deliberation is being cut short.</p>
+    <p>These three options apply to chat-model-backed decisions. <code>typesafe-ai/jev</code> has no reasoning to turn on and rejects them with a clear 400 rather than ignoring them. <code>trustedrouter/trev-1.0</code> always runs on its own host chain.</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>A bigger model, thinking</span><span>JSON</span></div>
+    <pre><code>{
+  "model": "deepseek/deepseek-v4.1-flash",
+  "reasoning": { "effort": "high" },
+  "provider": { "only": ["deepinfra"] },
+  "state": { "diff": "...", "tests": "12 passed, 1 failed" },
+  "questions": {
+    "safe_to_merge": {
+      "type": "boolean",
+      "instructions": "Is this change safe to merge as is?",
+      "criteria": {
+        "true": "no failing tests, no behavior change outside the diff's stated purpose",
+        "false": "any failing test or unexplained behavior change"
+      }
+    }
+  }
+}</code></pre>
+  </div>
+</section>
+
+<section style="margin-top:48px">
+  <h2 class="section-center">What "verified" means</h2>
+  <div class="marketing-grid three">
+    <div class="marketing-card">
+      <span class="card-label">1. The prompt carries the format</span>
+      <h3>No special model support needed.</h3>
+      <p>The gateway shows the model the exact JSON shape to fill in, and adds a strict JSON schema where the model's host can enforce one. That is why models with no structured-output support, such as Gemma 4 E4B, still work.</p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">2. Form is repaired</span>
+      <h3>Never the answer.</h3>
+      <p>Code fences, surrounding prose, percentages, and an option written by name are normalized. A missing question, a word where a number belongs, an option you did not declare, or probabilities far from summing to one are <em>not</em> repaired.</p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">3. A second pass decides</span>
+      <h3>The same check for every model.</h3>
+      <p>Exactly one answer per question, of the right type. Every probability between 0 and 1. Every declared option present, none invented, mass summing to one. The choice is the most probable option; the score is the distribution's mean. Hosted models are checked exactly as chat models are.</p>
+    </div>
+  </div>
+  <p style="margin-top:20px">If a chat model's answer fails the second pass, the gateway asks once more. If that also fails you receive a <code>502</code>, never a guess. Both attempts consumed tokens at the model host and both are billed.</p>
+</section>
+
+<section class="marketing-split" style="margin-top:48px">
+  <div class="marketing-copy">
+    <span class="eyebrow">Drop-in</span>
+    <h2>Same request and response as Vercel AI Gateway's evaluate endpoint.</h2>
+    <p><code>POST /v1/evaluate</code> is an alias for <code>POST /v1/decide</code>. The <code>model</code>, <code>state</code>, and <code>questions</code> fields, the three question types, and the <code>answers</code> and <code>usage</code> response fields are the same, so an HTTP client written for that endpoint needs only its base URL and key changed.</p>
+    <p><code>state</code> may be a string, an object, or an array, so you can pass a record or a message history without serializing it yourself.</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Route a ticket</span><span>Python</span></div>
+    <pre><code>import httpx, os
+
+r = httpx.post(
+    "{{ api_base_url }}/decide",
+    headers={"Authorization": f"Bearer {os.environ['TRUSTEDROUTER_API_KEY']}"},
+    json={
+        "model": "trustedrouter/trev-1.0",
+        "state": ticket_text,
+        "questions": {
+            "route": {
+                "type": "choice",
+                "instructions": "Route this support ticket.",
+                "criteria": {
+                    "billing": "payment or charge problems",
+                    "shipping": "delivery problems",
+                    "technical": "application bugs",
+                },
+            },
+        },
+    },
+    timeout=30,
+)
+route = r.json()["answers"]["route"]
+if route["probabilities"][route["choice"]] &gt; 0.9:
+    assign(route["choice"])
+else:
+    send_to_human()</code></pre>
+  </div>
+</section>
+
+<section style="margin-top:48px">
+  <h2 class="section-center">Billing, privacy, limits</h2>
+  <div class="marketing-grid three">
+    <div class="marketing-card">
+      <span class="card-label">Billing</span>
+      <h3>Tokens, like everything else.</h3>
+      <p><code>typesafe-ai/jev</code> bills input tokens only; its output is free. Chat-model-backed decisions bill the input and output tokens of the underlying call at the rate of the host that served it. <code>trustedrouter/trev-1.0</code> lists the rate of its most expensive host; a request served by a fallback host costs less.</p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Privacy</span>
+      <h3>Your state never reaches our control plane.</h3>
+      <p>As with chat, <code>state</code> and <code>questions</code> terminate inside the <a href="/security">attested gateway</a> and go only to the model host. Authorization and billing see token counts, not content. <code>typesafe-ai/jev</code> is reached through Vercel AI Gateway, so that route crosses two third parties.</p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Limits</span>
+      <h3>Sized for real applications.</h3>
+      <p>Up to 64 questions per request and 255 options per question. Question and option names up to 128 characters. No streaming: a decision is one small JSON object. <code>typesafe-ai/jev</code> accepts about 32,000 tokens of state.</p>
+    </div>
+  </div>
+</section>
+
+<section style="margin-top:48px">
+  <div class="panel">
+    <div class="panel-head"><h2>Errors</h2></div>
+    <div class="panel-body">
+      <div class="model-table-wrap">
+        <table>
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="mono">400</span></td><td>The request is malformed. <code>error.param</code> names the field, for example <code>questions.route.criteria</code>. Also returned when a decision model is named on a chat endpoint.</td></tr>
+            <tr><td><span class="mono">401</span> / <span class="mono">402</span></td><td>Invalid API key, or not enough credit.</td></tr>
+            <tr><td><span class="mono">502</span></td><td>The model host failed, or the model's answer failed verification twice. No unverified answer is ever returned.</td></tr>
+            <tr><td><span class="mono">503</span></td><td>Every host in a model's chain is unavailable. Retry shortly.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+{% endblock %}

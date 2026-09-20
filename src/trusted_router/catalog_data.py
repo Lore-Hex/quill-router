@@ -2210,11 +2210,30 @@ MISTRAL_LARGE_MODEL_ID = "mistralai/mistral-large"
 
 ARCHIMEDES_1_0_MODEL_ID = "trustedrouter/archimedes-1.0"
 
+# TrustedRouter's own named decision model for POST /v1/decide: one stable
+# name for the fastest tuned configuration, so callers do not have to track
+# which open model and host currently wins.
+TREV_1_0_MODEL_ID = "trustedrouter/trev-1.0"
+TREV_1_0_BACKING_MODEL_ID = "openai/gpt-oss-120b"
+
 # Private proxy aliases select one ordinary catalog model without publishing
 # the backing model/provider in customer-visible responses or catalog metadata.
 # Billing and provider fallback still use the concrete target internally.
 PRIVATE_PROXY_MODEL_TARGETS: dict[str, str] = {
     ARCHIMEDES_1_0_MODEL_ID: MISTRAL_LARGE_MODEL_ID,
+    TREV_1_0_MODEL_ID: TREV_1_0_BACKING_MODEL_ID,
+}
+
+# A named decision model may run ONLY on these hosts, in this order. The chain
+# is part of what the name means: trev-1.0 is sold on speed, and the same
+# weights on DeepInfra take 3.7 s against Cerebras' 353 ms. Cerebras is heavily
+# rate limited, hence a chain rather than one host; the gateway moves to the
+# next on any error before the first output byte. Measured medians for one
+# decision, from the gateway's paid live eval, in order: 353, 522, 941, 1125 ms.
+# The attested gateway asks for exactly this chain and authorize enforces it, so
+# neither side can widen it alone.
+NAMED_DECISION_MODEL_PROVIDERS: dict[str, tuple[str, ...]] = {
+    TREV_1_0_MODEL_ID: ("cerebras", "sambanova", "fireworks", "together"),
 }
 
 SOCRATES_1_0_MODEL_ID = "trustedrouter/socrates-1.0"
@@ -2929,24 +2948,34 @@ _DECISION_SPECS: tuple[_DecisionSpec, ...] = (
     },
 )
 
-# Chat models the attested gateway will drive as decision models on
-# POST /v1/decide: reasoning off, strict json_schema constrained to each
-# question's options, then a second verification pass over the output. Chosen
-# for strict structured-output support, price, and uptime. The gateway holds
-# its own copy of this list; tests pin the two together.
+# Chat models the attested gateway drives as decision models on POST
+# /v1/decide. The prompt carries the exact output skeleton, a strict json_schema
+# is added where the host can enforce one, reasoning is off unless the caller
+# asks for it, and whatever comes back is coerced into form and then put
+# through the same strict verification pass as a hosted model's answer. The
+# gateway holds its own copy of this list; tests on both sides pin it.
 NATIVE_DECISION_MODEL_IDS: tuple[str, ...] = (
-    "openai/gpt-5.4-nano",
+    TREV_1_0_MODEL_ID,
     "google/gemini-3.1-flash-lite",
     "openai/gpt-oss-20b",
+    "google/gemma-4-e4b-it",
+    "deepseek/deepseek-v4.1-flash",
 )
 
-# The provider the gateway pins for each native decision model. Strict
-# json_schema support is a property of the (model, provider) pair, so a native
-# decision request must not fall back to another host of the same weights.
+# The host the gateway prefers for each tuned native decision model (for the
+# named model, the head of its chain). Tuned entries were chosen from a paid
+# live eval, not a capability table: e.g. Gemma 4 E4B is driven by prompt alone
+# because DeepInfra rejects json_schema for it, and scores 29/29 that way. ANY
+# other chat model also works on /v1/decide, untuned; these are the ones
+# TrustedRouter has measured and stands behind. Every pinned host must offer a
+# CREDITS route: openai/gpt-5.4-nano was measured too and left out because its
+# only OpenAI route is bring-your-own-key, so most customers could not call it.
 NATIVE_DECISION_MODEL_PROVIDERS: dict[str, str] = {
-    "openai/gpt-5.4-nano": "openai",
+    TREV_1_0_MODEL_ID: "cerebras",
     "google/gemini-3.1-flash-lite": "google-ai-studio",
     "openai/gpt-oss-20b": "deepinfra",
+    "google/gemma-4-e4b-it": "deepinfra",
+    "deepseek/deepseek-v4.1-flash": "deepinfra",
 }
 
 

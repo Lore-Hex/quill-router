@@ -47,6 +47,7 @@ from trusted_router.byok_crypto import byok_cache_key, encrypted_secret_payload
 from trusted_router.catalog import (
     MODELS,
     MONITOR_MODEL_ID,
+    NAMED_DECISION_MODEL_PROVIDERS,
     PRIVATE_PROXY_MODEL_TARGETS,
     PROVIDERS,
     Model,
@@ -1065,6 +1066,17 @@ def _authorize_gateway_sync_impl(
         and requested_model.supports_decide
         and not requested_model.supports_chat
     )
+    named_decision_chain = NAMED_DECISION_MODEL_PROVIDERS.get(route_model_id or "")
+    if (is_decide_request or named_decision_chain is not None) and body.route_type != "decide":
+        # A decision model has no chat surface. Jev would fail at the provider,
+        # and a named model like trev-1.0 would silently become a plain chat
+        # alias for its backing model on whichever host is cheapest -- not the
+        # thing the name promises. Say so instead.
+        raise api_error(
+            400,
+            f"{route_model_id} is a decision model: call POST /v1/decide",
+            ErrorType.MODEL_NOT_SUPPORTED,
+        )
     if user_model is not None:
         if is_image_request:
             raise api_error(
@@ -1120,6 +1132,27 @@ def _authorize_gateway_sync_impl(
         )
     ]
     endpoint_candidates = _eligible_gateway_endpoint_candidates(endpoint_candidates, workspace.id)
+    if named_decision_chain is not None:
+        # The chain is part of what the name means (and of its advertised
+        # price), so it is enforced HERE, not merely requested by the gateway:
+        # only the pinned hosts, in the pinned order, whatever the request's
+        # provider preferences say.
+        chain_rank = {provider: rank for rank, provider in enumerate(named_decision_chain)}
+        endpoint_candidates = sorted(
+            (
+                candidate
+                for candidate in endpoint_candidates
+                if candidate[1].provider in chain_rank and not candidate[1].is_byok
+            ),
+            key=lambda candidate: chain_rank[candidate[1].provider],
+        )
+        if not endpoint_candidates:
+            raise api_error(
+                503,
+                f"No host in the {route_model_id} chain is available; retry shortly",
+                ErrorType.SERVICE_UNAVAILABLE,
+                headers={"Retry-After": "2"},
+            )
     input_tokens = body.estimated_input_tokens
     if custom_model is not None and custom_model.hidden_prompt.strip():
         input_tokens += estimate_tokens_from_text(custom_model.hidden_prompt)

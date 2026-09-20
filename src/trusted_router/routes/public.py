@@ -1158,6 +1158,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def batch_docs() -> str:
         return public_page_html(settings, "docs/batch")
 
+    @public_html_route("/docs/decide")
+    async def decide_docs() -> str:
+        return public_page_html(settings, "docs/decide")
+
     @public_html_route("/docs/web-search")
     async def web_search_docs() -> str:
         return public_page_html(settings, "docs/web-search")

@@ -249,6 +249,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/docs/provider-routing",
     "/docs/prompt-caching",
     "/docs/batch",
+    "/docs/decide",
     "/docs/web-search",
     "/docs/video",
     "/vibe-coders",
@@ -1393,6 +1394,15 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         description=(
             "Submit OpenRouter-compatible inline batches through the attested "
             "TrustedRouter gateway and poll encrypted results by batch ID."
+        ),
+    ),
+    "docs/decide": PublicPage(
+        template="public/decide.html",
+        title="Decision Models API: Typed Answers With Probabilities",
+        description=(
+            "POST /v1/decide takes state plus typed boolean, choice, and score questions "
+            "and returns verified answers with probabilities. Use trev-1.0, Jev, or any "
+            "chat model through the attested TrustedRouter gateway."
         ),
     ),
     "docs/web-search": PublicPage(
@@ -4457,6 +4467,7 @@ def llms_txt(settings: Settings) -> str:
         f"- [Responses web search](https://{domain}/docs/web-search)",
         f"- [Prompt caching](https://{domain}/docs/prompt-caching)",
         f"- [Batch API](https://{domain}/docs/batch)",
+        f"- [Decision models](https://{domain}/docs/decide)",
         f"- [Video generation](https://{domain}/docs/video)",
         f"- [Request tagging and cost allocation](https://{domain}/docs/tagging)",
         f"- [Client reliability telemetry](https://{domain}/docs/telemetry)",
@@ -4593,6 +4604,7 @@ def docs_llms_txt(settings: Settings) -> str:
             f"- Responses web search: https://{domain}/docs/web-search",
             f"- Prompt caching: https://{domain}/docs/prompt-caching",
             f"- Batch API: https://{domain}/docs/batch",
+            f"- Decision models (POST /v1/decide): https://{domain}/docs/decide",
             f"- Video generation: https://{domain}/docs/video",
             f"- AI gateway comparison directory: https://{domain}/compare",
             f"- OpenRouter alternative: https://{domain}/openrouter-alternative",
@@ -4717,6 +4729,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         f"- Responses web search: https://{domain}/docs/web-search",
         f"- Prompt caching: https://{domain}/docs/prompt-caching",
         f"- Batch API: https://{domain}/docs/batch",
+        f"- Decision models (POST /v1/decide): https://{domain}/docs/decide",
         f"- Video generation: https://{domain}/docs/video",
         f"- Blog: https://{domain}/blog",
         f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
