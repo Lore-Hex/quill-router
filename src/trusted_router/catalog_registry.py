@@ -933,20 +933,27 @@ MODELS[ARCHIMEDES_1_0_MODEL_ID] = replace(
 # answers POST /v1/decide only, and only on its pinned host chain. Prices are
 # filled in below, once endpoints exist, from that chain rather than from the
 # backing model's cheapest host.
-MODELS[TREV_1_0_MODEL_ID] = replace(
-    MODELS[TREV_1_0_BACKING_MODEL_ID],
-    id=TREV_1_0_MODEL_ID,
-    name="TrustedRouter Trev 1.0",
-    provider="trustedrouter",
-    upstream_id=None,
-    supports_messages=False,
-    supports_decide=True,
-    input_modalities=("text",),
-    output_modalities=("decision",),
-    prepaid_available=True,
-    byok_available=False,
-    hidden_public_metadata=True,
-)
+# This runs at import, and the catalog it reads is refreshed hourly without a
+# human in the loop. If the backing model ever left the catalog altogether, a
+# bare MODELS[...] here would stop the whole control plane from starting over
+# one model. Without its backing model trev simply is not offered: authorize
+# answers "unknown model" for it and everything else serves.
+_trev_backing_model = MODELS.get(TREV_1_0_BACKING_MODEL_ID)
+if _trev_backing_model is not None:
+    MODELS[TREV_1_0_MODEL_ID] = replace(
+        _trev_backing_model,
+        id=TREV_1_0_MODEL_ID,
+        name="TrustedRouter Trev 1.0",
+        provider="trustedrouter",
+        upstream_id=None,
+        supports_messages=False,
+        supports_decide=True,
+        input_modalities=("text",),
+        output_modalities=("decision",),
+        prepaid_available=True,
+        byok_available=False,
+        hidden_public_metadata=True,
+    )
 # Embedding models override any snapshot/supplemental collision: the
 # hand-curated embedding entry (input-only pricing, supports_embeddings) is
 # authoritative for these IDs. Merge BEFORE `_build_endpoints` so each gets
@@ -1492,6 +1499,7 @@ def _named_decision_model_with_chain_prices(model_id: str) -> Model:
 
 
 for _named_decision_model_id in NAMED_DECISION_MODEL_PROVIDERS:
-    MODELS[_named_decision_model_id] = _named_decision_model_with_chain_prices(
-        _named_decision_model_id
-    )
+    if _named_decision_model_id in MODELS:
+        MODELS[_named_decision_model_id] = _named_decision_model_with_chain_prices(
+            _named_decision_model_id
+        )

@@ -526,3 +526,63 @@ def test_trev_is_advertised_as_available_exactly_when_authorize_can_serve_it(
     monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", without_chain)
     dark = model_to_openrouter_shape(MODELS[TREV_1_0_MODEL_ID])["trustedrouter"]
     assert dark["prepaid_available"] is False  # type: ignore[index]
+
+
+def test_the_control_plane_starts_without_trevs_backing_model() -> None:
+    """The catalog is rebuilt at import from data an hourly job refreshes. If the
+    backing model left it ALTOGETHER, `MODELS[backing]` in the trev clone raised
+    KeyError and nothing started. The earlier delisting test removed endpoints
+    AFTER a successful import, so it could not see this. A fresh interpreter is
+    the only honest way to test import, and the only one that does not poison
+    the modules the rest of the suite shares."""
+    import os
+    import subprocess
+    import sys
+    import textwrap
+
+    backing = PRIVATE_PROXY_MODEL_TARGETS[TREV_1_0_MODEL_ID]
+    program = textwrap.dedent(
+        f"""
+        from trusted_router import catalog_ingest
+
+        BACKING = {backing!r}
+
+        def without_backing(build):
+            def filtered():
+                models, endpoints = build()
+                assert BACKING in models, "fixture: nothing to remove"
+                return (
+                    {{k: v for k, v in models.items() if k != BACKING}},
+                    {{k: v for k, v in endpoints.items() if v.model_id != BACKING}},
+                )
+            return filtered
+
+        catalog_ingest._ingested_models_and_endpoints = without_backing(
+            catalog_ingest._ingested_models_and_endpoints
+        )
+        supplemental = catalog_ingest._supplemental_provider_models_and_endpoints
+        def supplemental_without_backing():
+            models, endpoints = supplemental()
+            return (
+                {{k: v for k, v in models.items() if k != BACKING}},
+                {{k: v for k, v in endpoints.items() if v.model_id != BACKING}},
+            )
+        catalog_ingest._supplemental_provider_models_and_endpoints = supplemental_without_backing
+
+        from trusted_router.catalog import MODELS, model_to_openrouter_shape  # the import under test
+        assert BACKING not in MODELS, "fixture: the backing model is still in the catalog"
+        assert {TREV_1_0_MODEL_ID!r} not in MODELS, "trev is offered without a model behind it"
+        assert "typesafe-ai/jev" in MODELS and "openai/gpt-oss-20b" in MODELS
+        print("STARTED", len(MODELS))
+        """
+    )
+    result = subprocess.run(  # noqa: S603 - fixed argv: this interpreter, a literal program
+        [sys.executable, "-c", program],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        env={**os.environ, "PYTHONPATH": "src"},
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr[-1500:]
+    assert "STARTED" in result.stdout

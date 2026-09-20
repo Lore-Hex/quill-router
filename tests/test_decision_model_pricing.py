@@ -63,7 +63,7 @@ def test_typesafe_refuses_to_guess(label: str, old: str, new: str) -> None:
 
 def test_typesafe_refuses_a_page_that_prices_two_models() -> None:
     second = "\n| Price (per Btok / per Mtok) | \\$99 / \\$0.099 |\n"
-    with pytest.raises(RuntimeError, match="exactly one price row, found 2"):
+    with pytest.raises(RuntimeError, match="price label exactly once, found 2"):
         typesafe.parse(TYPESAFE_PAGE + second)
 
 
@@ -77,7 +77,7 @@ def test_typesafe_refuses_a_second_model_arriving_as_a_column() -> None:
         r"| \$42 / \$0.042 | \$84 / \$0.084 |",
     )
     assert r"\$84 / \$0.084" in page, "fixture: the second column did not land"
-    with pytest.raises(RuntimeError, match="more than one model"):
+    with pytest.raises(RuntimeError):
         typesafe.parse(page)
 
 
@@ -97,7 +97,7 @@ def test_typesafe_counts_an_empty_price_cell_as_a_cell(row: str) -> None:
         for line in TYPESAFE_PAGE.splitlines()
     ]
     assert row in lines, "fixture: the price row was not replaced"
-    with pytest.raises(RuntimeError, match="more than one model"):
+    with pytest.raises(RuntimeError):
         typesafe.parse("\n".join(lines))
 
 
@@ -113,6 +113,51 @@ def test_typesafe_refuses_a_price_cell_that_says_more_than_one_rate(cell: str) -
     page = TYPESAFE_PAGE.replace(r"\$42 / \$0.042", cell, 1)
     with pytest.raises(RuntimeError):
         typesafe.parse(page)
+
+
+@pytest.mark.parametrize(
+    ("label", "addition"),
+    [
+        # Each of these once parsed as 42,000 -- the OLD model's price -- while
+        # `jev-latest` had moved to the model in the addition.
+        (
+            "a second table whose price row has no closing pipe",
+            "\n## Jev 1.14 (jev-latest)\n| Model | Identifier |\n| --- | --- |\n"
+            "| Price (per Btok / per Mtok) | \\$84 / \\$0.084\n",
+        ),
+        (
+            "a second table inside a blockquote",
+            "\n> | Price (per Btok / per Mtok) | \\$84 / \\$0.084 |\n",
+        ),
+        (
+            "a second price in HTML",
+            "\n<table><tr><td>Price</td><td>$84 / $0.084</td></tr></table>\n",
+        ),
+        ("a per-request fee in prose", "\nRequests also cost $0.001 each.\n"),
+        ("a second model version named anywhere", "\n`jev-latest` now points at `jev-1.14.0`.\n"),
+    ],
+)
+def test_typesafe_refuses_a_page_that_prices_or_names_a_second_model(
+    label: str, addition: str
+) -> None:
+    with pytest.raises(RuntimeError):
+        typesafe.parse(TYPESAFE_PAGE + addition)
+
+
+def test_typesafe_refuses_a_header_wider_than_the_price_row() -> None:
+    # GFM fills a missing cell in silently, so counting the PRICE row's own
+    # cells saw one value under a header that had two models.
+    page = TYPESAFE_PAGE.replace(
+        "| Model                       | Identifier", "| Model | Jev 1.13 | Jev 1.14 (jev-latest)"
+    )
+    assert "Jev 1.14 (jev-latest)" in page, "fixture: the header was not widened"
+    with pytest.raises(RuntimeError, match="not two columns"):
+        typesafe.parse(page)
+
+
+def test_typesafe_needs_exactly_one_model_version_on_the_page() -> None:
+    with pytest.raises(RuntimeError, match="no versioned model"):
+        typesafe.parse(TYPESAFE_PAGE.replace("jev-1.13.0", "jev"))
 
 
 def test_typesafe_refuses_a_non_text_page() -> None:

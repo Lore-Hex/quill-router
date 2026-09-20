@@ -1,14 +1,27 @@
 """TypeSafe AI: the Jev decision model, input-only pricing, read from the vendor.
 
-TypeSafe publishes Jev's rate on its public models page as one markdown table
-row (``| Price (per Btok / per Mtok) | \\$42 / \\$0.042 |``) plus one sentence
-that fixes the shape ("Charged per input token. Output tokens are free.").
+TypeSafe publishes Jev's rate on its public models page: one two-column table
+with a row ``| Price (per Btok / per Mtok) | \\$42 / \\$0.042 |`` and one
+sentence that fixes the shape ("Charged per input token. Output tokens are
+free.").
 
-This parser reads both and refuses to guess. The per-billion and per-million
-figures must agree with each other, the sentence must still be there, and the
-page must price exactly one model. If TypeSafe starts metering output, prices a
-second model, or moves the table, the refresh fails loudly and the last-known-
-good price in the manifest stays in force.
+The number this writes is the number customers are billed, so the parser does
+not try to be a good markdown reader. Three attempts at "find the price row and
+read it" were each beaten by a table it did not anticipate -- a second model as
+a second column, an empty cell, a row with no closing pipe, GFM's implicit
+cells. It now checks things that are true of the WHOLE page whatever syntax a
+change arrives in, and refuses the page if any stops being true:
+
+  * the price label appears exactly once, anywhere;
+  * the page holds exactly two dollar amounts, and they are that one pair (so
+    no second model's price, no per-request fee, in any table, list or HTML);
+  * exactly one versioned model id (``jev-1.13.0``) is named, so `jev-latest`
+    cannot have moved to a model this page prices differently;
+  * the table around the price row is two columns wide on every line;
+  * the per-billion and per-million figures agree, and output is still free.
+
+A refusal fails the refresh loudly and leaves the last-known-good price in
+force. That is the point: a human looks at the page.
 """
 
 from __future__ import annotations
@@ -35,28 +48,45 @@ INCLUDE_IN_PRICE_INDEX = False
 _AMOUNT = r"\\?\$([0-9][0-9,]*(?:\.[0-9]+)?)"
 _PRICE_LABEL = "Price (per Btok / per Mtok)"
 _PRICE_PAIR = re.compile(_AMOUNT + r"\s*/\s*" + _AMOUNT)
+_ANY_DOLLAR_AMOUNT = re.compile(r"\$\s*[0-9]")
+_MODEL_VERSION = re.compile(r"\bjev-[0-9]+\.[0-9]+\.[0-9]+\b")
 _INPUT_ONLY = re.compile(r"charged per input token\.\s+output tokens are free\.", re.IGNORECASE)
 
 
-def _price_cells(page: str) -> list[str]:
-    """The value cells of every table row labelled as the price row."""
-    rows: list[list[str]] = []
-    for line in page.splitlines():
-        row = line.strip()
-        # Exactly ONE boundary pipe off each end, and empty cells kept.
-        # `.strip("|")` ate every trailing pipe, so `| Price | $42 / $0.042||`
-        # -- a second model's column, its price not filled in yet -- lost that
-        # column and read as a one-model table.
-        if not (row.startswith("|") and row.endswith("|") and len(row) >= 2):
-            continue
-        cells = [cell.strip() for cell in row[1:-1].split("|")]
-        if cells[0] == _PRICE_LABEL:
-            rows.append(cells[1:])
-    if len(rows) != 1:
-        # Zero rows: the table moved. Two or more: TypeSafe now prices more
-        # than one model and "the" price no longer exists.
-        raise RuntimeError(f"{SLUG}: expected exactly one price row, found {len(rows)}")
-    return rows[0]
+def _cells(line: str) -> list[str] | None:
+    """The cells of a table line written with both boundary pipes, else None."""
+    row = line.strip()
+    if len(row) < 2 or not (row.startswith("|") and row.endswith("|")):
+        return None
+    return [cell.strip() for cell in row[1:-1].split("|")]
+
+
+def _price_cell(page: str) -> str:
+    if page.count(_PRICE_LABEL) != 1:
+        # Zero: the table moved. More: TypeSafe prices more than one model, in
+        # whatever syntax, and "the" price no longer exists.
+        raise RuntimeError(
+            f"{SLUG}: expected the price label exactly once, found {page.count(_PRICE_LABEL)}"
+        )
+    lines = page.splitlines()
+    at = next(index for index, line in enumerate(lines) if _PRICE_LABEL in line)
+    first, last = at, at
+    while first > 0 and lines[first - 1].strip().startswith("|"):
+        first -= 1
+    while last + 1 < len(lines) and lines[last + 1].strip().startswith("|"):
+        last += 1
+    for line in lines[first : last + 1]:
+        cells = _cells(line)
+        if cells is None or len(cells) != 2:
+            # A third column is a second model. A row narrower than its header
+            # is one too: markdown fills the missing cell in silently.
+            raise RuntimeError(
+                f"{SLUG}: the pricing table is not two columns on every line: {line.strip()[:60]!r}"
+            )
+    label, value = _cells(lines[at]) or ("", "")
+    if label != _PRICE_LABEL:
+        raise RuntimeError(f"{SLUG}: the price label is not the first cell of its row")
+    return value
 
 
 def _dollars(text: str) -> Decimal:
@@ -69,19 +99,20 @@ def _dollars(text: str) -> Decimal:
 def parse(page: object) -> dict[str, ModelPrice]:
     if not isinstance(page, str):
         raise RuntimeError(f"{SLUG}: models page is not text")
-    cells = _price_cells(page)
-    # One value cell holding one "$x / $y" pair, and nothing else in it. A
-    # second model arrives as a second COLUMN as easily as a second row
-    # (`| Price | $42 / $0.042 | $84 / $0.084 |`), and reading only the first
-    # cell would publish the old model's price for whichever one `jev-latest`
-    # now points at.
-    if len(cells) != 1:
-        raise RuntimeError(
-            f"{SLUG}: the price row has {len(cells)} value cells; it prices more than one model"
-        )
-    pairs = _PRICE_PAIR.findall(cells[0])
-    if len(pairs) != 1 or _PRICE_PAIR.sub("", cells[0]).strip():
+    cell = _price_cell(page)
+    pairs = _PRICE_PAIR.findall(cell)
+    if len(pairs) != 1 or _PRICE_PAIR.sub("", cell).strip():
         raise RuntimeError(f"{SLUG}: the price cell is not a single '$x / $y' pair")
+    if len(_ANY_DOLLAR_AMOUNT.findall(page)) != 2:
+        # The pair is two amounts. Any other dollar figure on the page is a
+        # price this parser does not understand: a fee, a tier, another model.
+        raise RuntimeError(f"{SLUG}: the page holds dollar amounts beyond the one price pair")
+    versions = sorted(set(_MODEL_VERSION.findall(page)))
+    if len(versions) != 1:
+        raise RuntimeError(
+            f"{SLUG}: the page names {versions or 'no versioned model'}; which one "
+            "`jev-latest` costs is only certain when there is exactly one"
+        )
     rows = pairs
     if not _INPUT_ONLY.search(page):
         # The route bills input only. A vendor that starts metering output
