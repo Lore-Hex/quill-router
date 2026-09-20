@@ -47,6 +47,7 @@ from trusted_router.byok_crypto import byok_cache_key, encrypted_secret_payload
 from trusted_router.catalog import (
     MODELS,
     MONITOR_MODEL_ID,
+    NAMED_DECISION_MODEL_PROVIDERS,
     PRIVATE_PROXY_MODEL_TARGETS,
     PROVIDERS,
     Model,
@@ -123,7 +124,9 @@ from trusted_router.request_tags import InvalidTags, merge_tags, tags_match, val
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.routing import (
     NormalizedRoutingInputs,
+    canonical_model_id,
     chat_route_endpoint_candidates,
+    decide_route_endpoint_candidates,
     embeddings_route_endpoint_candidates,
     image_route_endpoint_candidates,
     normalize_routing_inputs,
@@ -951,6 +954,28 @@ def _authorize_gateway_sync_impl(
     body_dict.update(attribution.body_fields())
     _require_monitor_model_key(body_dict, api_key.lookup_hash, settings)
     requested_model_id = body.model
+    # Every guard below keys on the model id as a STRING, and routing rewrites
+    # that string before it resolves a model (variant suffix, alias, dated
+    # snapshot). `trev-1.0:nitro` and `trev-1.0-2026-09-19` therefore matched no
+    # guard and routed as the model anyway: no decide-only rule, no host chain,
+    # and a response naming the backing model. A pinned model is accepted under
+    # its exact id only. Stated as "routing resolved it from something else",
+    # not as a list of spellings: the first version of this guard listed the
+    # variant suffixes and missed the dated one.
+    for raw_model_id in (requested_model_id, *(body.models or [])):
+        catalog_id = canonical_model_id(raw_model_id)
+        if catalog_id == raw_model_id:
+            continue
+        catalog_model = MODELS.get(catalog_id)
+        if catalog_id in PRIVATE_PROXY_MODEL_TARGETS or (
+            catalog_model is not None and catalog_model.supports_decide
+        ):
+            raise api_error(
+                400,
+                f"{catalog_id} must be requested by its exact id, "
+                "without a routing variant or dated suffix",
+                ErrorType.BAD_REQUEST,
+            )
     private_proxy_ids = {
         model_id
         for model_id in (requested_model_id, *(body.models or []))
@@ -1057,6 +1082,24 @@ def _authorize_gateway_sync_impl(
         and requested_model.supports_embeddings
         and not requested_model.supports_chat
     )
+    # Hosted decision models dispatch on the MODEL, like embeddings: a native
+    # decision request names an ordinary chat model and takes the chat arm.
+    is_decide_request = (
+        requested_model is not None
+        and requested_model.supports_decide
+        and not requested_model.supports_chat
+    )
+    named_decision_chain = NAMED_DECISION_MODEL_PROVIDERS.get(route_model_id or "")
+    if (is_decide_request or named_decision_chain is not None) and body.route_type != "decide":
+        # A decision model has no chat surface. Jev would fail at the provider,
+        # and a named model like trev-1.0 would silently become a plain chat
+        # alias for its backing model on whichever host is cheapest -- not the
+        # thing the name promises. Say so instead.
+        raise api_error(
+            400,
+            f"{route_model_id} is a decision model: call POST /v1/decide",
+            ErrorType.MODEL_NOT_SUPPORTED,
+        )
     if user_model is not None:
         if is_image_request:
             raise api_error(
@@ -1078,6 +1121,11 @@ def _authorize_gateway_sync_impl(
                 ErrorType.MODEL_NOT_SUPPORTED,
             )
         endpoint_candidates = image_route_endpoint_candidates(
+            normalized_routing,
+            defer_no_fallback_selection=True,
+        )
+    elif is_decide_request:
+        endpoint_candidates = decide_route_endpoint_candidates(
             normalized_routing,
             defer_no_fallback_selection=True,
         )
@@ -1107,6 +1155,27 @@ def _authorize_gateway_sync_impl(
         )
     ]
     endpoint_candidates = _eligible_gateway_endpoint_candidates(endpoint_candidates, workspace.id)
+    if named_decision_chain is not None:
+        # The chain is part of what the name means (and of its advertised
+        # price), so it is enforced HERE, not merely requested by the gateway:
+        # only the pinned hosts, in the pinned order, whatever the request's
+        # provider preferences say.
+        chain_rank = {provider: rank for rank, provider in enumerate(named_decision_chain)}
+        endpoint_candidates = sorted(
+            (
+                candidate
+                for candidate in endpoint_candidates
+                if candidate[1].provider in chain_rank and not candidate[1].is_byok
+            ),
+            key=lambda candidate: chain_rank[candidate[1].provider],
+        )
+        if not endpoint_candidates:
+            raise api_error(
+                503,
+                f"No host in the {route_model_id} chain is available; retry shortly",
+                ErrorType.SERVICE_UNAVAILABLE,
+                headers={"Retry-After": "2"},
+            )
     input_tokens = body.estimated_input_tokens
     if custom_model is not None and custom_model.hidden_prompt.strip():
         input_tokens += estimate_tokens_from_text(custom_model.hidden_prompt)

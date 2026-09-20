@@ -168,6 +168,10 @@ PROVIDER_SLUGS = [
     # manifests that the runtime embedding catalog reads directly.
     "cohere",
     "voyage",
+    # Input-only decision model read from Vercel's public model list.
+    "vercel_ai_gateway",
+    # The same decision model at its vendor, read from TypeSafe's models page.
+    "typesafe",
 ]
 
 # Product adapters own independent availability and prices. Aliases here map
@@ -182,6 +186,7 @@ _PRICING_RESULT_PROVIDER_ALIASES: dict[str, tuple[str, ...]] = {
     "nvidia_nim": ("nvidia-nim",),
     "sail_research": ("sail-research",),
     "aion_labs": ("aion-labs",),
+    "vercel_ai_gateway": ("vercel-ai-gateway",),
     "io_net": ("io-net",),
     "near_ai": ("near-ai",),
 }

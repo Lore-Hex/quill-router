@@ -11,7 +11,12 @@ from trusted_router.types import ErrorType
 def is_allowed_custom_model_base(model: Model) -> bool:
     if not model.supports_chat or model.id == MONITOR_MODEL_ID or is_creator_model_id(model.id):
         return False
-    return True
+    # A custom model is a chat wrapper, and a decision model answers POST
+    # /v1/decide only. A NAMED one (trev-1.0) keeps supports_chat so the
+    # gateway can drive its backing chat model, which let it through here: the
+    # wrapper was created, could never be called as chat, and authorized as a
+    # decision it named the backing model the name exists to hide.
+    return not model.supports_decide
 
 
 def require_custom_model_base_model(model_id: str) -> None:

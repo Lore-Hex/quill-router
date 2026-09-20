@@ -61,6 +61,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     META_MODEL_IDS,
     MISTRAL_LARGE_MODEL_ID,
     MONITOR_MODEL_ID,
+    NAMED_DECISION_MODEL_PROVIDERS,
     OPEN_PATCHER_A1_MODEL_ID,
     OPEN_PATCHER_FAST1_MODEL_ID,
     OPEN_PATCHER_G1_MODEL_ID,
@@ -87,6 +88,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     PRIVACY_TIER_NO_STORE,
     PRIVACY_TIER_STANDARD,
     PRIVACY_TIER_ZERO_RETENTION,
+    PRIVATE_PROXY_MODEL_TARGETS,
     PROMETHEUS_1_0_1M_MODEL_ID,
     PROMETHEUS_1_0_MODEL_ID,
     PROMETHEUS_2_0_MODEL_ID,
@@ -129,6 +131,8 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     SYNTH_PROMETHEUS_3_MODEL_ORDER,
     SYNTH_QUALITY_1M_MODEL_ORDER,
     SYNTH_QUALITY_MODEL_ORDER,
+    TREV_1_0_BACKING_MODEL_ID,
+    TREV_1_0_MODEL_ID,
     US_PROVIDER_ONLY_MODEL_IDS,
     ZDR_MODEL_ID,
     ZEUS_1_0_MINI_MODEL_ID,
@@ -151,6 +155,8 @@ from trusted_router.catalog_ingest import (  # noqa: F401 - used by import-time 
     _apply_provider_manifest_expiry,
     _author_provider,
     _build_endpoints,
+    _decision_fallback_endpoints,
+    _decision_models,
     _embedding_models,
     _endpoint,
     _filter_unserved_provider_endpoints,
@@ -881,6 +887,7 @@ MODELS: dict[str, Model] = {
 
 
 _EMBEDDING_MODELS = _embedding_models()
+_DECISION_MODELS = _decision_models()
 
 
 _INGESTED_MODELS, _INGESTED_ENDPOINTS = _ingested_models_and_endpoints()
@@ -922,11 +929,40 @@ MODELS[ARCHIMEDES_1_0_MODEL_ID] = replace(
     byok_available=False,
     hidden_public_metadata=True,
 )
+# Trev is a one-model private proxy like Archimedes, but a DECISION model: it
+# answers POST /v1/decide only, and only on its pinned host chain. Prices are
+# filled in below, once endpoints exist, from that chain rather than from the
+# backing model's cheapest host.
+# This runs at import, and the catalog it reads is refreshed hourly without a
+# human in the loop. If the backing model ever left the catalog altogether, a
+# bare MODELS[...] here would stop the whole control plane from starting over
+# one model. Without its backing model trev simply is not offered: authorize
+# answers "unknown model" for it and everything else serves.
+_trev_backing_model = MODELS.get(TREV_1_0_BACKING_MODEL_ID)
+if _trev_backing_model is not None:
+    MODELS[TREV_1_0_MODEL_ID] = replace(
+        _trev_backing_model,
+        id=TREV_1_0_MODEL_ID,
+        name="TrustedRouter Trev 1.0",
+        provider="trustedrouter",
+        upstream_id=None,
+        supports_messages=False,
+        supports_decide=True,
+        input_modalities=("text",),
+        output_modalities=("decision",),
+        prepaid_available=True,
+        byok_available=False,
+        hidden_public_metadata=True,
+    )
 # Embedding models override any snapshot/supplemental collision: the
 # hand-curated embedding entry (input-only pricing, supports_embeddings) is
 # authoritative for these IDs. Merge BEFORE `_build_endpoints` so each gets
 # its Credits + BYOK endpoints synthesized.
 for _model_id, _model in _EMBEDDING_MODELS.items():
+    MODELS[_model_id] = _model
+# Hosted decision models: same contract as embeddings (hand-curated entry is
+# authoritative, merged before `_build_endpoints`).
+for _model_id, _model in _DECISION_MODELS.items():
     MODELS[_model_id] = _model
 
 # Video generation is a separate asynchronous product surface. These models
@@ -1193,6 +1229,9 @@ MODELS.update(_VIDEO_MODELS)
 MODEL_ENDPOINTS: dict[str, ModelEndpoint] = _build_endpoints(MODELS)
 MODEL_ENDPOINTS.update(_INGESTED_ENDPOINTS)
 MODEL_ENDPOINTS.update(_SUPPLEMENTAL_ENDPOINTS)
+# A hosted decision model's vendor route came from `_build_endpoints`; its
+# fallback hosts (same model, different upstream id and price) are explicit.
+MODEL_ENDPOINTS.update(_decision_fallback_endpoints(_DECISION_MODELS))
 
 
 def _install_deepseek_v4_pro_release_routes() -> None:
@@ -1416,3 +1455,51 @@ MODEL_ENDPOINTS = _filter_unserved_provider_endpoints(
     MODEL_ENDPOINTS,
     explicit_model_ids=frozenset(_VIDEO_MODELS),
 )
+
+
+def _named_decision_model_with_chain_prices(model_id: str) -> Model:
+    """Advertise what a named decision model can actually cost.
+
+    The clone above inherited the backing model's headline price, which is its
+    CHEAPEST host. A named decision model is pinned to a chain of fast hosts
+    that cost more, and each request is billed at the rate of the host that
+    served it -- so the honest public price is the most expensive host in the
+    chain. Read from live endpoints so an hourly price refresh carries through.
+
+    This runs at import, so it must never raise. Provider manifests refresh
+    hourly without a human in the loop; if the preferred host delists the
+    backing model, raising here would stop the WHOLE control plane from
+    starting over one model's speed promise. Instead the model is priced from
+    whichever chain hosts remain and keeps serving on them; with none left it is
+    returned as it was, authorize finds no host in its chain, and that one model
+    answers 503. That the preferred host still serves it is pinned where a
+    human is told about it without an outage: in tests/test_decide_models.py.
+    """
+    model = MODELS[model_id]
+    backing = PRIVATE_PROXY_MODEL_TARGETS[model_id]
+    chain = NAMED_DECISION_MODEL_PROVIDERS[model_id]
+    endpoints = [
+        endpoint
+        for endpoint in MODEL_ENDPOINTS.values()
+        if endpoint.model_id == backing and endpoint.provider in chain and not endpoint.is_byok
+    ]
+    if not endpoints:
+        return model
+    prompt = max(e.prompt_price_microdollars_per_million_tokens for e in endpoints)
+    completion = max(e.completion_price_microdollars_per_million_tokens for e in endpoints)
+    return replace(
+        model,
+        prompt_price_microdollars_per_million_tokens=prompt,
+        completion_price_microdollars_per_million_tokens=completion,
+        published_prompt_price_microdollars_per_million_tokens=prompt,
+        published_completion_price_microdollars_per_million_tokens=completion,
+        price_tiers=_flat_tier(prompt, completion, None),
+        published_price_tiers=_flat_tier(prompt, completion, None),
+    )
+
+
+for _named_decision_model_id in NAMED_DECISION_MODEL_PROVIDERS:
+    if _named_decision_model_id in MODELS:
+        MODELS[_named_decision_model_id] = _named_decision_model_with_chain_prices(
+            _named_decision_model_id
+        )

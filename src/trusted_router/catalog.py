@@ -57,6 +57,9 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     META_MODEL_IDS,
     MISTRAL_LARGE_MODEL_ID,
     MONITOR_MODEL_ID,
+    NAMED_DECISION_MODEL_PROVIDERS,
+    NATIVE_DECISION_MODEL_IDS,
+    NATIVE_DECISION_MODEL_PROVIDERS,
     OPEN_PATCHER_A1_MODEL_ID,
     OPEN_PATCHER_FAST1_MODEL_ID,
     OPEN_PATCHER_G1_MODEL_ID,
@@ -128,6 +131,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     SYNTH_PROMETHEUS_3_MODEL_ORDER,
     SYNTH_QUALITY_1M_MODEL_ORDER,
     SYNTH_QUALITY_MODEL_ORDER,
+    TREV_1_0_MODEL_ID,
     US_PROVIDER_ONLY_MODEL_IDS,
     ZDR_MODEL_ID,
     ZEUS_1_0_MINI_MODEL_ID,
@@ -561,11 +565,24 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
     is_meta = model.id in META_MODEL_IDS
     endpoints = endpoints_for_model(model.id)
-    prepaid_available = (
-        model.prepaid_available
-        if is_meta
-        else any(endpoint.usage_type == "Credits" for endpoint in endpoints)
-    )
+    named_chain = NAMED_DECISION_MODEL_PROVIDERS.get(model.id)
+    if named_chain is not None:
+        # A named decision model has no endpoints of its own: authorize serves
+        # it from its backing model's routes on the pinned chain. Reading its
+        # own (empty) endpoint list advertised it as unavailable for Credits
+        # while authorize served it on Credits. Ask the question authorize
+        # asks, so the flag cannot be wrong in either direction: true while a
+        # chain host can serve it, false when none can (authorize says 503).
+        prepaid_available = any(
+            endpoint.usage_type == "Credits" and endpoint.provider in named_chain
+            for endpoint in endpoints_for_model(PRIVATE_PROXY_MODEL_TARGETS[model.id])
+        )
+    else:
+        prepaid_available = (
+            model.prepaid_available
+            if is_meta
+            else any(endpoint.usage_type == "Credits" for endpoint in endpoints)
+        )
     byok_available = (
         False if is_meta else any(endpoint.usage_type == "BYOK" for endpoint in endpoints)
     )
@@ -728,6 +745,9 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "supports_chat": model.supports_chat,
         "supports_embeddings": model.supports_embeddings,
         "supports_video": model.supports_video,
+        # True for hosted decision models AND for the chat models the gateway
+        # drives as decision models on POST /v1/decide.
+        "supports_decide": model.supports_decide or model.id in NATIVE_DECISION_MODEL_IDS,
         "endpoints": [
             {
                 "id": endpoint.id,
@@ -818,6 +838,8 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
             "modality": (
                 "text->embedding"
                 if model.supports_embeddings and not model.supports_chat
+                else "text->decision"
+                if model.supports_decide and not model.supports_chat
                 else (f"{'+'.join(model.input_modalities)}->{'+'.join(model.output_modalities)}")
             ),
             "input_modalities": list(model.input_modalities),

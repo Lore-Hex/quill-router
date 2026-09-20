@@ -70,6 +70,7 @@ const r = await client.chat.completions.create({
     <a class="marketing-card card-as-link" href="/docs/receipts"><h3>Signed inference receipts</h3><p>Opt into an offline-verifiable proof of every response — exact bytes, routed model, and a hardware-attested signing key.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/telemetry"><h3>Client reliability telemetry</h3><p>See the content-free fields TrustedRouter SDKs report, the retention policy, and every opt-out.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/prompt-caching"><h3>Prompt caching</h3><p>Reuse stable prompt prefixes, inspect cache hits, and keep the router itself free of prompt storage.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/decide"><h3>Decision models</h3><p>Send state plus typed yes/no, choice, and score questions to <code>POST /v1/decide</code>. Get verified answers with probabilities from trev-1.0, Jev, or any chat model.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/batch"><h3>Batch API</h3><p>Submit OpenRouter-compatible inline batches and poll encrypted results through the attested gateway.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/web-search"><h3>Responses web search</h3><p>Search the live web inside the attested gateway and return source citations through the OpenAI Responses API.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/video"><h3>Video generation</h3><p>Generate video with Seedance, Veo, Sora, Runway, Kling, Wan, Vidu, PixVerse, LTX, Gemini Omni, and Hailuo 3 through asynchronous jobs with exact quoted billing.</p><span class="card-link">Open →</span></a>
@@ -121,6 +122,7 @@ const r = await client.chat.completions.create({
         <li><code>POST /v1/chat/completions</code></li>
         <li><code>POST /v1/responses</code></li>
         <li><code>POST /v1/embeddings</code></li>
+            <li><code>POST /v1/decide</code> — decision models: shared <code>state</code> plus typed <code>questions</code> (boolean, choice, score) in, verified answers with probabilities out. <code>POST /v1/evaluate</code> is an alias with the same shape as Vercel AI Gateway. Use <code>trustedrouter/trev-1.0</code>, <code>typesafe-ai/jev</code>, or any chat model. See <a href="/docs/decide">/docs/decide</a>.</li>
         <li><code>POST /v1/videos</code></li>
         <li><a href="https://api.trustedrouter.com/v1/models"><code>GET /v1/models</code></a> <span class="muted">public, no API key</span></li>
       </ul>
@@ -140,6 +142,7 @@ const r = await client.chat.completions.create({
         <li><a href="/docs/user-models">/docs/user-models</a> — post your own endpoint as a priced model; verification, dispatch, payouts</li>
         <li><a href="/docs/custom-models">/docs/custom-models</a> — publish a hidden-prompt model, set markup, and collect creator earnings</li>
         <li><a href="/docs/prompt-caching">/docs/prompt-caching</a> — provider cache behavior, usage fields, billing, and routing tradeoffs</li>
+        <li><a href="/docs/decide">/docs/decide</a> — decision models: typed questions, verified answers with probabilities, trev-1.0 and Jev, reasoning and routing options</li>
         <li><a href="/docs/batch">/docs/batch</a> — inline Batch API quickstart, response contract, limits, and encrypted retention</li>
         <li><a href="/docs/web-search">/docs/web-search</a> — Responses API web search, citations, controls, and privacy boundaries</li>
         <li><a href="/docs/provider-conformance">/docs/provider-conformance</a> — public provider contract checks, result meanings, and production parity</li>

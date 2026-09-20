@@ -285,6 +285,10 @@ _PROVIDER_PREFERENCE = {
 # affect only default routing; caller-supplied provider.order/sort still wins.
 _MODEL_PROVIDER_PREFERENCE: dict[str, dict[str, int]] = {
     "z-ai/glm-5.2": {"parasail": -1},
+    # Jev's vendor before the relay: one third party instead of two, and a
+    # measured 238 ms median against ~330 ms through Vercel (2026-09-19, the
+    # gateway's labeled ticket set). The relay stays as the failover.
+    "typesafe-ai/jev": {"typesafe": -1},
 }
 
 _CandidateT = TypeVar("_CandidateT")
@@ -430,6 +434,51 @@ def catalog_endpoint_candidates(
     )
     candidates = _sort_endpoint_candidates(candidates, prefs)
     if not prefs.allow_fallbacks:
+        return candidates[:1]
+    return candidates
+
+
+def decide_route_endpoint_candidates(
+    inputs: NormalizedRoutingInputs | dict[str, Any],
+    settings: Settings | None = None,
+    *,
+    defer_no_fallback_selection: bool = False,
+) -> list[tuple[Model, ModelEndpoint]]:
+    """Endpoint candidates for a HOSTED decision model on POST /v1/decide.
+
+    Only `supports_decide` models resolve here. A native decision request (an
+    ordinary chat model the gateway drives with strict structured output)
+    authorizes through `chat_route_endpoint_candidates` instead, because it
+    really is a chat completion and bills as one. Cost here falls out of the
+    per-endpoint prompt price: completion price is 0 on decision endpoints."""
+    inputs = _coerce_routing_inputs(inputs, settings)
+    raw_ids, prefs = list(inputs.model_ids), inputs.preferences
+    candidates: list[tuple[Model, ModelEndpoint]] = []
+    seen: set[str] = set()
+    for model_id in raw_ids:
+        model = MODELS.get(model_id)
+        if model is None or not model.supports_decide:
+            raise api_error(
+                400,
+                f"Model is not a decision model: {model_id}",
+                ErrorType.MODEL_NOT_SUPPORTED,
+            )
+        for endpoint in endpoints_for_model(model.id):
+            if endpoint.id in seen:
+                continue
+            candidates.append((model, endpoint))
+            seen.add(endpoint.id)
+    candidates = _filter_candidates_soft_data_collection(
+        candidates, prefs, _apply_endpoint_provider_filters
+    )
+    if not candidates:
+        raise api_error(
+            400,
+            "No route candidates match the requested provider filters",
+            ErrorType.MODEL_NOT_SUPPORTED,
+        )
+    candidates = _sort_endpoint_candidates(candidates, prefs)
+    if not prefs.allow_fallbacks and not defer_no_fallback_selection:
         return candidates[:1]
     return candidates
 
@@ -687,6 +736,23 @@ def _strip_variant_suffix(model_id: str) -> tuple[str, dict[str, str]]:
         if model_id.endswith(suffix):
             return model_id[: -len(suffix)], {key: value}
     return model_id, {}
+
+
+def canonical_model_id(model_id: str) -> str:
+    """The catalog id routing resolves a request's model string to.
+
+    Routing rewrites what the client typed before it looks anything up: a
+    variant suffix is stripped (`:nitro`, `:floor`), an alias is followed, a
+    dated snapshot suffix is dropped (`-2026-09-19`), a bare OpenAI name gains
+    its vendor prefix -- and these compose. A guard that must hold for a MODEL
+    has to compare THIS id, never the raw string: `trev-1.0:nitro` and
+    `trev-1.0-2026-09-19` are both `trev-1.0` to the router and different
+    strings to `==`. Written as "whatever routing would do" rather than as a
+    list of spellings, so a rewrite added later is covered without anyone
+    remembering this function exists.
+    """
+    stripped, _overrides = _strip_variant_suffix(model_id)
+    return resolve_model_alias(stripped)
 
 
 def _routing_for_body(

@@ -109,6 +109,8 @@ CONTROL_PATH_PATTERNS = (
     "/chat/completions",
     "/messages",
     "/embeddings",
+    "/decide",
+    "/evaluate",
     "/responses",
     "/audio",
     "/audio/*",

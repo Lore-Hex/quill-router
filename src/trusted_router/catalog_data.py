@@ -191,6 +191,14 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
         "mailing address and New York governing law, but do not identify the "
         "API operator's legal entity or incorporation country."
     ),
+    "typesafe": (
+        "Checked docs.typesafe.ai/legal, the privacy policy and the data "
+        "processing addendum (2026-09-19). All three name TypeSafe AI, Inc. as "
+        "the operator, but none gives a postal address, a country, or a home "
+        "governing law; the addendum's Irish and Swiss clauses are the standard "
+        "transfer terms, not a headquarters. Jurisdiction filters therefore "
+        "exclude this route."
+    ),
 }
 
 
@@ -362,6 +370,10 @@ class Model:
     supports_messages: bool = False
     supports_embeddings: bool = False
     supports_video: bool = False
+    # Decision ("System One") models: state + typed questions in, typed
+    # answers with probabilities out. No text generation, so output is free
+    # and the route bills input tokens only -- the same shape as embeddings.
+    supports_decide: bool = False
     supported_parameters: tuple[str, ...] = ()
     input_modalities: tuple[str, ...] = ("text",)
     output_modalities: tuple[str, ...] = ("text",)
@@ -1908,6 +1920,42 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://docs.liquid.ai/",
     ),
+    "typesafe": Provider(
+        slug="typesafe",
+        name="TypeSafe AI",
+        # The vendor of the Jev decision model, reached directly. Jev answers
+        # POST /v1/decide only; TypeSafe serves no chat models.
+        supports_chat=False,
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "TrustedRouter calls TypeSafe AI's own API for the Jev decision "
+            "model. TypeSafe states that it does not train models on customer "
+            "data. It offers zero data retention to enterprise customers on "
+            "request; that is NOT configured for TrustedRouter's account, so no "
+            "ZDR, confidential-compute, or E2EE claim is tracked for this route."
+        ),
+        provider_policy_url="https://docs.typesafe.ai/legal",
+    ),
+    "vercel-ai-gateway": Provider(
+        slug="vercel-ai-gateway",
+        name="Vercel AI Gateway",
+        # Carried for ONE modality and ONE job: the automatic fallback for
+        # TypeSafe's Jev decision model when TypeSafe's own API is down or
+        # rate limiting. Chat models are deliberately not resold through a
+        # second gateway.
+        supports_chat=False,
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "Fallback route for TypeSafe AI's Jev decision model, through "
+            "Vercel AI Gateway's /v1/evaluate endpoint. A request served here "
+            "transits two third parties (Vercel, then TypeSafe). No contractual "
+            "ZDR, confidential-compute, or E2EE claim is tracked for this route."
+        ),
+        provider_policy_url="https://vercel.com/docs/ai-gateway/modalities/evaluation",
+        provider_headquarters_country="US",
+    ),
     "fal": Provider(
         slug="fal",
         name="fal.ai",
@@ -2032,6 +2080,8 @@ PROVIDERS: dict[str, Provider] = {
 
 GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
     {
+        "vercel-ai-gateway",
+        "typesafe",
         "regolo",
         "anthropic",
         "openai",
@@ -2187,11 +2237,30 @@ MISTRAL_LARGE_MODEL_ID = "mistralai/mistral-large"
 
 ARCHIMEDES_1_0_MODEL_ID = "trustedrouter/archimedes-1.0"
 
+# TrustedRouter's own named decision model for POST /v1/decide: one stable
+# name for the fastest tuned configuration, so callers do not have to track
+# which open model and host currently wins.
+TREV_1_0_MODEL_ID = "trustedrouter/trev-1.0"
+TREV_1_0_BACKING_MODEL_ID = "openai/gpt-oss-120b"
+
 # Private proxy aliases select one ordinary catalog model without publishing
 # the backing model/provider in customer-visible responses or catalog metadata.
 # Billing and provider fallback still use the concrete target internally.
 PRIVATE_PROXY_MODEL_TARGETS: dict[str, str] = {
     ARCHIMEDES_1_0_MODEL_ID: MISTRAL_LARGE_MODEL_ID,
+    TREV_1_0_MODEL_ID: TREV_1_0_BACKING_MODEL_ID,
+}
+
+# A named decision model may run ONLY on these hosts, in this order. The chain
+# is part of what the name means: trev-1.0 is sold on speed, and the same
+# weights on DeepInfra take 3.7 s against Cerebras' 353 ms. Cerebras is heavily
+# rate limited, hence a chain rather than one host; the gateway moves to the
+# next on any error before the first output byte. Measured medians for one
+# decision, from the gateway's paid live eval, in order: 353, 522, 941, 1125 ms.
+# The attested gateway asks for exactly this chain and authorize enforces it, so
+# neither side can widen it alone.
+NAMED_DECISION_MODEL_PROVIDERS: dict[str, tuple[str, ...]] = {
+    TREV_1_0_MODEL_ID: ("cerebras", "sambanova", "fireworks", "together"),
 }
 
 SOCRATES_1_0_MODEL_ID = "trustedrouter/socrates-1.0"
@@ -2879,6 +2948,82 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         LIBERTY_1_0_1M_MODEL_ID,
         "thinkingmachines/inkling",
     ),
+}
+
+
+class _DecisionFallbackRoute(TypedDict):
+    provider: str
+    upstream_id: str
+    cost_dollars_per_million: str
+
+
+class _DecisionSpec(TypedDict):
+    id: str
+    name: str
+    provider: str
+    upstream_id: str
+    context_length: int
+    cost_dollars_per_million: str
+    fallback_routes: tuple[_DecisionFallbackRoute, ...]
+
+
+# Hosted decision models. Input-only pricing; the provider does not meter
+# output. Native decision models (an ordinary chat model driven with strict
+# structured output) are NOT listed here -- they keep their chat catalog entry
+# and are named in NATIVE_DECISION_MODEL_IDS below.
+#
+# `provider` is the vendor's own API and is tried first (routing.py prefers it
+# by default). `fallback_routes` are other hosts for the SAME model, each with
+# its own upstream id and its own price, that the gateway fails over to when
+# the vendor is down or rate limiting. Each host speaks its own wire format;
+# the gateway translates every one of them to the public /v1/decide shape.
+_DECISION_SPECS: tuple[_DecisionSpec, ...] = (
+    {
+        "id": "typesafe-ai/jev",
+        "name": "TypeSafe AI Jev",
+        "provider": "typesafe",
+        "upstream_id": "jev-latest",
+        # TypeSafe budgets 32k tokens for `state` plus the longest question.
+        "context_length": 32000,
+        "cost_dollars_per_million": "0.042",
+        "fallback_routes": (
+            {
+                "provider": "vercel-ai-gateway",
+                "upstream_id": "typesafe-ai/jev",
+                "cost_dollars_per_million": "0.042",
+            },
+        ),
+    },
+)
+
+# Chat models the attested gateway drives as decision models on POST
+# /v1/decide. The prompt carries the exact output skeleton, a strict json_schema
+# is added where the host can enforce one, reasoning is off unless the caller
+# asks for it, and whatever comes back is coerced into form and then put
+# through the same strict verification pass as a hosted model's answer. The
+# gateway holds its own copy of this list; tests on both sides pin it.
+NATIVE_DECISION_MODEL_IDS: tuple[str, ...] = (
+    TREV_1_0_MODEL_ID,
+    "google/gemini-3.1-flash-lite",
+    "openai/gpt-oss-20b",
+    "google/gemma-4-e4b-it",
+    "deepseek/deepseek-v4.1-flash",
+)
+
+# The host the gateway prefers for each tuned native decision model (for the
+# named model, the head of its chain). Tuned entries were chosen from a paid
+# live eval, not a capability table: e.g. Gemma 4 E4B is driven by prompt alone
+# because DeepInfra rejects json_schema for it, and scores 29/29 that way. ANY
+# other chat model also works on /v1/decide, untuned; these are the ones
+# TrustedRouter has measured and stands behind. Every pinned host must offer a
+# CREDITS route: openai/gpt-5.4-nano was measured too and left out because its
+# only OpenAI route is bring-your-own-key, so most customers could not call it.
+NATIVE_DECISION_MODEL_PROVIDERS: dict[str, str] = {
+    TREV_1_0_MODEL_ID: "cerebras",
+    "google/gemini-3.1-flash-lite": "google-ai-studio",
+    "openai/gpt-oss-20b": "deepinfra",
+    "google/gemma-4-e4b-it": "deepinfra",
+    "deepseek/deepseek-v4.1-flash": "deepinfra",
 }
 
 

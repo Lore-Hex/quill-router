@@ -131,6 +131,8 @@ ensure_secret_from_env_file "OPENAI_VIDEO_API_KEY" "trustedrouter-openai-video-a
 # compatibility fallback for older environments and key files.
 ensure_secret_from_env_file "GOOGLE_AI_STUDIO_KEY" "trustedrouter-gemini-api-key" "GEMINI_API_KEY"
 ensure_secret_from_env_file "CEREBRAS_API_KEY" "trustedrouter-cerebras-api-key"
+ensure_secret_from_env_file "TYPESAFE_API_KEY" "trustedrouter-typesafe-api-key"
+ensure_secret_from_env_file "VERCEL_AI_GATEWAY_API_KEY" "trustedrouter-vercel-ai-gateway-api-key" "VERCEL_API_KEY"
 ensure_secret_from_env_file "DEEPSEEK_API_KEY" "trustedrouter-deepseek-api-key"
 ensure_secret_from_env_file "MISTRAL_API_KEY" "trustedrouter-mistral-api-key"
 ensure_secret_from_env_file "KIMI_API_KEY" "trustedrouter-kimi-api-key" "MOONSHOT_API_KEY"

@@ -773,6 +773,15 @@
     "route_mode": "Catalog profile",
     "slug": "trustedrouter"
   },
+  "typesafe": {
+    "card_version": 2,
+    "model_count": 1,
+    "name": "TypeSafe AI",
+    "privacy": "Policy documented",
+    "route_count": 1,
+    "route_mode": "Prepaid",
+    "slug": "typesafe"
+  },
   "upstage": {
     "card_version": 2,
     "model_count": 3,
@@ -790,6 +799,15 @@
     "route_count": 99,
     "route_mode": "Prepaid + BYOK",
     "slug": "venice"
+  },
+  "vercel-ai-gateway": {
+    "card_version": 2,
+    "model_count": 1,
+    "name": "Vercel AI Gateway",
+    "privacy": "Policy documented",
+    "route_count": 1,
+    "route_mode": "Prepaid",
+    "slug": "vercel-ai-gateway"
   },
   "voyage": {
     "card_version": 2,
