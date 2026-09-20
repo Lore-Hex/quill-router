@@ -6,7 +6,7 @@ Status: implementation and local validation only. Not merged or deployed.
 
 | Provider | Native discovery | Routable local rows | Live checks |
 | --- | --- | ---: | --- |
-| Redpill | `https://api.redpill.ai/v1/models` | 40 | All 68 priced chat rows probed; 18 failed canaries and remain held. Ten more are excluded by existing routing policy. Streaming GLM 5.3 Flash passed. |
+| Redpill | `https://api.redpill.ai/v1/models` | 55 | All 68 priced chat rows probed; GLM 5.1 and 5.2 failed canaries and remain held. Eleven more are excluded by existing routing policy. Streaming GLM 5.3 Flash passed. |
 | Meta direct | `https://api.meta.ai/v1/models` | 3 | Muse Spark 1.1, 1.2, and 1.3 returned PONG. Streaming 1.3 passed. |
 | General Compute | `https://api.generalcompute.com/v1/models` | 4 | Four priced chat models returned PONG. Streaming MiniMax M2.7 passed. Gemma 4 31B remains held without an official price. |
 | Infomaniak | `https://api.infomaniak.com/1/ai/models` | 1 | Ministral 3 14B returned PONG in both modes. Seven other chat models are explicitly coming soon. |
@@ -14,9 +14,17 @@ Status: implementation and local validation only. Not merged or deployed.
 These are provider-direct checks, not production TrustedRouter requests. Streaming
 checks required content, termination, and integer usage. No customer prompts were
 used. Standard privacy applies; none inherits another provider's ZDR/E2EE status.
-There are 58 successful provider canaries but 48 final eligible routes. The nine
+There are 74 successful provider canaries but 63 final eligible routes. The nine
 Redpill Claude models remain excluded by the existing first-party-only policy;
-the Redpill DeepSeek V4 Pro 0813 route does not alter that frozen route set.
+the Redpill DeepSeek V4 Pro 0813 route does not alter that frozen route set, and
+the global GPT 5.4 hold remains unchanged.
+
+Redpill's modern OpenAI models reject `max_tokens`. Initial canaries exposed
+that contract mismatch. The shared Python runtime/discovery field selector and
+the existing enclave selector now use `max_completion_tokens` for GPT 5+ and
+o-series models on Redpill, preserving the caller's bound. Legacy/OpenWeight
+models keep `max_tokens`. After this fix and a 2048-token probe bound, 16 of the
+initially held 18 routes passed. Stream/non-stream serialization tests cover it.
 
 Redpill has its own credential and identity, independent of Phala. Phala discovery
 stays on `inference.phala.com`. The new `meta-direct` provider calls `api.meta.ai`;

@@ -104,6 +104,34 @@ def test_phala_key_sync_never_falls_back_to_redpill():
     assert '"trustedrouter-phala-api-key" "REDPILL_API_KEY"' not in source
 
 
+@pytest.mark.parametrize("model,field", [
+    ("openai/gpt-5.6-sol", "max_completion_tokens"),
+    ("openai/gpt-10", "max_completion_tokens"),
+    ("openai/o3", "max_completion_tokens"),
+    ("openai/gpt-oss-120b", "max_tokens"),
+    ("openai/gpt-4o", "max_tokens"),
+    ("z-ai/glm-5.3", "max_tokens"),
+])
+def test_redpill_canary_token_field_matches_native_model(model, field):
+    assert redpill.max_tokens_field(model) == field
+
+
+def test_redpill_fetch_forwards_model_specific_canary_cap(monkeypatch, tmp_path):
+    rows = [{"id": model, "context_length": 128_000,
+             "pricing": {"prompt": "0.000001", "completion": "0.000002"}}
+            for model in ("openai/gpt-5.6-sol", "z-ai/glm-5.3")]
+    spec = replace(redpill.CATALOG.spec, catalog_loader=lambda _: rows)
+    catalog = _direct_openai.DirectOpenAIProvider(spec, manifest_path=tmp_path / "models.json")
+    monkeypatch.setenv("REDPILL_API_KEY", "test-key")
+    calls = []
+    monkeypatch.setattr(_direct_openai, "probe_openai_chat", lambda **kw: calls.append(kw) or True)
+    catalog.fetch()
+    assert {c["model"]: c["max_tokens_field"] for c in calls} == {
+        "openai/gpt-5.6-sol": "max_completion_tokens", "z-ai/glm-5.3": "max_tokens",
+    }
+    assert all(c["max_tokens"] == 2048 for c in calls)
+
+
 def test_reviewed_missing_price_never_probes_or_routes(monkeypatch, tmp_path):
     import json
 
@@ -154,6 +182,7 @@ def test_native_manifest_routes_preserve_identity_price_floor_and_holds():
     import json
 
     from trusted_router.catalog import MODEL_ENDPOINTS
+    from trusted_router.catalog_data import _UNSERVED_CREDITS_MODELS
 
     for slug in ("redpill", "meta-direct", "general-compute", "infomaniak"):
         manifest = json.loads(Path(f"src/trusted_router/data/provider_models/{slug}.json").read_text())
@@ -161,6 +190,9 @@ def test_native_manifest_routes_preserve_identity_price_floor_and_holds():
             routes = [e for e in MODEL_ENDPOINTS.values() if e.provider == slug and e.model_id == row["id"]]
             if not row["routable"]:
                 assert routes == [], (slug, row["id"])
+                continue
+            if row["id"] in _UNSERVED_CREDITS_MODELS:
+                assert routes == [], row["id"]
                 continue
             if slug == "redpill" and (
                 row["id"].startswith("anthropic/")
@@ -178,3 +210,36 @@ def test_native_manifest_routes_preserve_identity_price_floor_and_holds():
             assert endpoint.completion_price_microdollars_per_million_tokens >= row["output_token_price_per_m"]
             if "cached_input_token_price_per_m" in row:
                 assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens >= row["cached_input_token_price_per_m"]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_redpill_python_adapter_preserves_cap_for_both_modes(httpx_mock, stream):
+    import json
+
+    from trusted_router.catalog import Model
+    from trusted_router.provider_adapters import (
+        openai_compatible_chat,
+        openai_compatible_chat_stream,
+    )
+    from trusted_router.provider_types import ProviderStreamState
+
+    model = Model(id="openai/gpt-5.6-sol", name="GPT 5.6 Sol", provider="redpill",
+                  upstream_id="openai/gpt-5.6-sol", context_length=128_000)
+    url = "https://api.redpill.ai/v1/chat/completions"
+    if stream:
+        httpx_mock.add_response(url=url, text='data: {"choices":[{"delta":{"content":"PONG"}}]}\n\ndata: [DONE]\n\n')
+    else:
+        httpx_mock.add_response(url=url, json={"choices": [{"message": {"content": "PONG"}}]})
+    request = {"messages": [{"role": "user", "content": "PONG"}], "max_tokens": 123, "temperature": 0}
+    kwargs = {"api_key": "test-key", "base_url": "https://api.redpill.ai/v1"}
+    if stream:
+        state = ProviderStreamState(provider_name="Redpill", request_id="probe", input_tokens=1)
+        chunks = [chunk async for chunk in openai_compatible_chat_stream(model, request, state, **kwargs)]
+        assert b"PONG" in b"".join(chunks)
+    else:
+        result = await openai_compatible_chat(model, request, **kwargs)
+        assert result.text == "PONG"
+    sent = json.loads(httpx_mock.get_request().content)
+    assert sent["max_completion_tokens"] == 123
+    assert "max_tokens" not in sent
+    assert "temperature" not in sent

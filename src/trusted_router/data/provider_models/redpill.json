@@ -792,8 +792,7 @@
         "top_k",
         "top_p"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 1090000,
       "output_token_price_per_m": 4600000,
       "cached_input_token_price_per_m": 370000
@@ -964,8 +963,7 @@
         "top_k",
         "top_p"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 70000,
       "output_token_price_per_m": 200000,
       "cached_input_token_price_per_m": 40000
@@ -1263,8 +1261,7 @@
         "max_tokens",
         "seed"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 1250000,
       "output_token_price_per_m": 10000000
     },
@@ -1298,8 +1295,7 @@
         "max_tokens",
         "seed"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 250000,
       "output_token_price_per_m": 2000000
     },
@@ -1333,8 +1329,7 @@
         "max_tokens",
         "seed"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 50000,
       "output_token_price_per_m": 400000
     },
@@ -1368,8 +1363,7 @@
         "max_tokens",
         "seed"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 1250000,
       "output_token_price_per_m": 10000000
     },
@@ -1403,8 +1397,7 @@
         "max_tokens",
         "seed"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 1750000,
       "output_token_price_per_m": 14000000
     },
@@ -1438,8 +1431,7 @@
         "max_tokens",
         "seed"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 2500000,
       "output_token_price_per_m": 15000000
     },
@@ -1473,8 +1465,7 @@
         "max_tokens",
         "seed"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 750000,
       "output_token_price_per_m": 4500000
     },
@@ -1508,8 +1499,7 @@
         "max_tokens",
         "seed"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 5000000,
       "output_token_price_per_m": 30000000
     },
@@ -1535,8 +1525,7 @@
       "max_output_tokens": 1050000,
       "supported_features": [],
       "supported_sampling_parameters": [],
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 400000,
       "output_token_price_per_m": 1800000
     },
@@ -1562,8 +1551,7 @@
       "max_output_tokens": 1050000,
       "supported_features": [],
       "supported_sampling_parameters": [],
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 10000000,
       "output_token_price_per_m": 45000000
     },
@@ -1589,8 +1577,7 @@
       "max_output_tokens": 1050000,
       "supported_features": [],
       "supported_sampling_parameters": [],
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 4000000,
       "output_token_price_per_m": 18000000
     },
@@ -1666,8 +1653,7 @@
         "max_tokens",
         "seed"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 8000000
     },
@@ -1701,8 +1687,7 @@
         "max_tokens",
         "seed"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 1100000,
       "output_token_price_per_m": 4400000
     },
@@ -2446,8 +2431,7 @@
         "top_k",
         "top_p"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000,
       "cached_input_token_price_per_m": 260000
@@ -2497,7 +2481,7 @@
     }
   ],
   "source": "https://api.redpill.ai/v1/models",
-  "generated_at": "2026-09-20T16:53:14Z",
+  "generated_at": "2026-09-20T17:17:59Z",
   "price_scale": "microdollars_per_million",
   "model_count": 68
 }

@@ -10,6 +10,7 @@ import httpx
 
 from trusted_router.adapter import resolve_max_output_tokens
 from trusted_router.catalog import PROVIDERS, Model
+from trusted_router.provider_contracts import redpill_token_limit_field
 from trusted_router.provider_payloads import (
     anthropic_messages_payload,
     gemini_payload,
@@ -86,6 +87,17 @@ def _openai_tool_calls(message: dict[str, Any]) -> list[dict[str, Any]] | None:
     return parsed or None
 
 
+def _openai_token_options(model: Model, request: dict[str, Any]) -> dict[str, Any]:
+    limit_field = (
+        redpill_token_limit_field(upstream_model_id(model))
+        if model.provider == "redpill" else "max_tokens"
+    )
+    return {
+        limit_field: resolve_max_output_tokens(request),
+        "temperature": request.get("temperature") if limit_field == "max_tokens" else None,
+    }
+
+
 async def openai_compatible_chat(
     model: Model,
     request: dict[str, Any],
@@ -99,8 +111,7 @@ async def openai_compatible_chat(
         "model": upstream_model_id(model),
         "messages": messages(request),
         "stream": False,
-        "temperature": request.get("temperature"),
-        "max_tokens": resolve_max_output_tokens(request),
+        **_openai_token_options(model, request),
     }
     payload.update(_openai_compatible_passthrough(request))
     payload = {k: v for k, v in payload.items() if v is not None}
@@ -151,8 +162,7 @@ async def openai_compatible_chat_stream(
         "messages": messages(request),
         "stream": True,
         "stream_options": {"include_usage": True},
-        "temperature": request.get("temperature"),
-        "max_tokens": resolve_max_output_tokens(request),
+        **_openai_token_options(model, request),
     }
     payload.update(_openai_compatible_passthrough(request))
     payload = {k: v for k, v in payload.items() if v is not None}

@@ -640,10 +640,10 @@
   },
   "redpill": {
     "card_version": 2,
-    "model_count": 40,
+    "model_count": 55,
     "name": "Redpill",
     "privacy": "Policy documented",
-    "route_count": 40,
+    "route_count": 55,
     "route_mode": "Prepaid",
     "slug": "redpill"
   },
