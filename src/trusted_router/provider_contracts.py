@@ -1,5 +1,7 @@
 """Pinned provider contract identifiers shared by runtime and refresh code."""
 
+import re
+
 SAKANA_FUGU_MODEL_ID = "sakana-ai/fugu-ultra-v1.1"
 SAKANA_NAMAZU_MODEL_ID = "sakana-ai/sakana-namazu-v1.0"
 SAKANA_NAMAZU_ROUTE_HOLD_REASON = "provider-geographic-restriction"
@@ -61,6 +63,15 @@ UNSUPPORTED_GATEWAY_REGIONS_BY_PROVIDER_MODEL = {
 
 def provider_model_operator_held(provider_slug: str, model_id: str) -> bool:
     return (provider_slug, model_id) in OPERATOR_HELD_PROVIDER_MODELS
+
+
+def redpill_token_limit_field(upstream_id: str) -> str:
+    """Redpill forwards OpenAI's modern token-cap contract without translating it."""
+    model = upstream_id.removeprefix("openai/")
+    generation = re.match(r"gpt-(\d+)", model)
+    if (generation and int(generation[1]) >= 5) or model.startswith(("o1", "o3", "o4")):
+        return "max_completion_tokens"
+    return "max_tokens"
 
 
 def provider_model_requires_exact_global_settlement(

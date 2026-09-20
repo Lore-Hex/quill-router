@@ -68,6 +68,7 @@ class DirectOpenAIProviderSpec:
     # providers. A fresh price removes this hold, but still requires a canary.
     reviewed_unpriced_model_ids: frozenset[str] = frozenset()
     canary_max_tokens: int = 16
+    canary_max_tokens_field: Callable[[str], str] | None = None
     canary_expected_content: str | None = None
     canary_endpoint_path: str = "/chat/completions"
     canary_extra_body: dict[str, Any] = field(default_factory=dict)
@@ -198,6 +199,16 @@ class DirectOpenAIProvider:
                 upstream_id_map=self.upstream_id_map,
                 include=self.spec.include,
             )
+            if self.spec.reviewed_unpriced_model_ids:
+                # Keep explicitly reviewed missing-price rows visible even
+                # when the provider embeds rates rather than joining them.
+                reviewed = discover_available_priced_chat_catalog(
+                    rows, prices=prices, explicit_map=explicit_model_map,
+                    upstream_id_map=self.upstream_id_map, include=self.spec.include,
+                    preserve_unpriced_model_ids=self.spec.reviewed_unpriced_model_ids,
+                )
+                for model_id, row in reviewed.items():
+                    discovered.setdefault(model_id, row)
         if not prices:
             raise RuntimeError(f"{self.spec.slug}: no priced chat models discovered")
 
@@ -240,6 +251,10 @@ class DirectOpenAIProvider:
                 api_key=api_key,
                 model=self.upstream_id_map[model_id],
                 max_tokens=self.spec.canary_max_tokens,
+                max_tokens_field=(
+                    self.spec.canary_max_tokens_field(self.upstream_id_map[model_id])
+                    if self.spec.canary_max_tokens_field is not None else "max_tokens"
+                ),
                 expected_content=self.spec.canary_expected_content,
                 endpoint_path=self.spec.canary_endpoint_path,
                 extra_body=self.spec.canary_extra_body,

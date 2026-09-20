@@ -14,7 +14,7 @@ MODEL_ID = "meta/muse-spark-1.1"
 ENDPOINT_ID = f"{MODEL_ID}@meta/prepaid"
 
 
-def test_muse_spark_route_is_quarantined_but_provider_stays_configured() -> None:
+def test_muse_spark_reseller_stays_quarantined_with_independent_direct_route() -> None:
     provider = PROVIDERS["meta"]
     assert provider.name == "Meta via OpenRouter"
     assert provider.supports_prepaid is True
@@ -27,9 +27,13 @@ def test_muse_spark_route_is_quarantined_but_provider_stays_configured() -> None
     assert provider.provider_policy_url
 
     assert "meta" in GATEWAY_PREPAID_PROVIDER_SLUGS
-    assert MODEL_ID not in MODELS
+    assert MODEL_ID in MODELS
     assert ENDPOINT_ID not in MODEL_ENDPOINTS
     assert f"{MODEL_ID}@meta/byok" not in MODEL_ENDPOINTS
+    direct = MODEL_ENDPOINTS[f"{MODEL_ID}@meta-direct/prepaid"]
+    assert direct.provider == "meta-direct"
+    assert direct.upstream_id == "muse-spark-1.1"
+    assert direct.usage_type == "Credits"
 
 
 def test_meta_openrouter_route_stays_in_automated_catalog_refresh() -> None:

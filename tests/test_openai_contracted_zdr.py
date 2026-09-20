@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 
 from trusted_router.catalog import (
@@ -115,4 +116,20 @@ def test_public_pages_explain_active_openai_prepaid_scope(client: TestClient) ->
     assert "Credits" in model.text
     assert "BYOK" not in model.text
     assert ">ZDR<" in model.text
-    assert "no verified privacy claim" not in model.text
+    # Privacy belongs to the serving route, not the model's author. A new
+    # reseller must not inherit the contract on our first-party OpenAI key.
+    soup = BeautifulSoup(model.text, "html.parser")
+    route_rows = {
+        slug: [
+            row
+            for row in soup.select('.model-table-wrap table[data-sortable="true"] tbody tr')
+            if row.select_one(f'a[href="/providers/{slug}"]')
+        ]
+        for slug in ("openai", "redpill")
+    }
+    assert route_rows["openai"]
+    assert all(row.select_one('[data-privacy="zdr"]') for row in route_rows["openai"])
+    assert all("no verified privacy claim" not in row.get_text() for row in route_rows["openai"])
+    assert route_rows["redpill"]
+    assert all(not row.select("[data-privacy]") for row in route_rows["redpill"])
+    assert all("no verified privacy claim" in row.get_text() for row in route_rows["redpill"])

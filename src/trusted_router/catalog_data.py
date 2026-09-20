@@ -127,6 +127,8 @@ PROVIDER_JURISDICTION_SG = "SG"
 # starts where this one stopped instead of repeating it. Keys must be provider
 # slugs whose provider_headquarters_country is None.
 PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
+    "redpill": "Checked Redpill's API documentation and pricing site; they establish the service and downstream providers but not a verified contracting jurisdiction for this account.",
+    "general-compute": "Checked General Compute's model and API documentation. A us-west-2 serving location does not establish the legal operator's headquarters, so jurisdiction remains unverified.",
     **{
         slug: (
             "Checked the provider API and product documentation, but the "
@@ -468,6 +470,50 @@ PROVIDERS: dict[str, Provider] = {
             "confidential-compute, and E2EE routing."
         ),
         provider_policy_url="https://openrouter.ai/docs/features/privacy-and-logging",
+    ),
+    "redpill": Provider(
+        slug="redpill", name="Redpill", supports_prepaid=True, supports_byok=False,
+        stores_content=True, provider_zero_data_retention=False,
+        provider_confidential_compute=False, provider_e2ee=False,
+        provider_policy="Redpill is a separate aggregator with its own catalog and credential. These HTTPS routes are Standard privacy; they do not inherit Phala attestation or privacy guarantees.",
+        provider_policy_url="https://redpill.ai/privacy",
+    ),
+    "meta-direct": Provider(
+        slug="meta-direct", name="Meta (direct)", supports_prepaid=True, supports_byok=False,
+        stores_content=True, provider_zero_data_retention=False,
+        provider_confidential_compute=False, provider_e2ee=False,
+        provider_policy="Direct Meta Model API Standard tier. Meta states these prompts and completions are not used for training. This is not a ZDR or confidential-compute claim. Training-enabled Contributor tiers are excluded.",
+        provider_policy_url="https://dev.meta.ai/docs/pricing-rate-limits",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "general-compute": Provider(
+        slug="general-compute", name="General Compute", supports_prepaid=True, supports_byok=False,
+        stores_content=True, provider_zero_data_retention=False,
+        provider_confidential_compute=False, provider_e2ee=False,
+        provider_policy="Direct OpenAI-compatible inference. No verified ZDR or confidential-compute guarantee is recorded for this account; routes use Standard privacy.",
+        provider_policy_url="https://docs.generalcompute.com/models",
+    ),
+    "infomaniak": Provider(
+        slug="infomaniak", name="Infomaniak", supports_prepaid=True, supports_byok=False,
+        stores_content=True, provider_zero_data_retention=False,
+        provider_confidential_compute=False, provider_e2ee=False,
+        provider_policy="Infomaniak AI Services processes requests in Switzerland. Routes remain Standard until account-specific retention guarantees are verified. Only ready, priced, canary-tested models are published.",
+        provider_policy_url="https://www.infomaniak.com/en/hosting/ai-services",
+        provider_headquarters_country="CH",
+    ),
+    "privatemode": Provider(
+        slug="privatemode", name="Privatemode (Edgeless Systems)", supports_prepaid=False, supports_byok=False,
+        provider_zero_data_retention=False, provider_confidential_compute=False, provider_e2ee=False,
+        provider_policy="Not routable yet: Privatemode requires an attesting and encrypting client. A verified in-enclave transport is required before activation. No plaintext fallback is permitted.",
+        provider_policy_url="https://docs.privatemode.ai/architecture/overview/",
+        provider_headquarters_country=PROVIDER_JURISDICTION_DE,
+    ),
+    "swisscom": Provider(
+        slug="swisscom", name="Swisscom", supports_prepaid=False, supports_byok=False,
+        provider_zero_data_retention=False, provider_confidential_compute=False, provider_e2ee=False,
+        provider_policy="Not routable yet: Swiss AI Platform inference requires an entitled API key and confirmed endpoint and pricing. The provider remains listed while these are verified.",
+        provider_policy_url="https://digital.swisscom.com/products/swiss-ai-platform",
+        provider_headquarters_country="CH",
     ),
     "meta": Provider(
         slug="meta",
@@ -2144,6 +2190,10 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "neurometric",
         "engy",
         "pearl",
+        "redpill",
+        "meta-direct",
+        "general-compute",
+        "infomaniak",
         "stepfun",
         "relace",
         "recraft",
@@ -3544,6 +3594,12 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
             "Parkway, Mountain View, California. The code records that parent's "
             "home, not the location of every team that worked on a model."
         ),
+    ),
+    "meta": ModelOrigin(
+        country=PROVIDER_JURISDICTION_US,
+        lab_name="Meta",
+        source_url="https://dev.meta.ai/docs/overview",
+        note="Muse models are developed by Meta; this records the model creator, independently of which inference provider hosts them.",
     ),
     "meta-llama": ModelOrigin(
         country=PROVIDER_JURISDICTION_US,

@@ -1715,12 +1715,20 @@ def test_retired_model_pages_redirect_to_current_catalog_entries(client: TestCli
         "/models/google/gemini-3-pro-image/performance": (
             "/models/google/gemini-3.1-flash-image-preview"
         ),
-        "/models/meta/muse-spark-1.1/performance": "/models?filter=open",
     }
     for path, target in redirects.items():
         response = client.get(path, follow_redirects=False)
         assert response.status_code == 301, path
         assert response.headers["location"] == target
+
+
+@pytest.mark.parametrize("version", ["1.1", "1.2", "1.3"])
+def test_muse_spark_direct_pages_do_not_use_the_retired_reseller_redirect(
+    client: TestClient, version: str,
+) -> None:
+    response = client.get(f"/models/meta/muse-spark-{version}", follow_redirects=False)
+    assert response.status_code == 200
+    assert "Meta (direct)" in response.text
 
 
 @pytest.mark.usefixtures("isolated_comparison_catalog")
