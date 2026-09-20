@@ -89,12 +89,10 @@ DEFAULT_MAX_AGE_DAYS = 14
 ZAI_MODEL_DISCOVERY_URL = "https://docs.z.ai/devpack/latest-model.md"
 _ZAI_MODEL_RE = re.compile(r"\bglm-\d+(?:\.\d+)?(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?(?:\[1m\])?\b", re.I)
 
-# One parser can own pricing for more than one separately routed provider.
-# Gemini pricing is shared between AI Studio and existing Vertex endpoints;
-# availability remains provider-specific and is never synthesized here.
+# Map public provider names to their independently fetched pricing adapters.
 _SHARED_LIVE_SCRAPER_OWNERS = {
     "google-ai-studio": "gemini",
-    "google-vertex": "gemini",
+    "google-vertex": "google_vertex",
 }
 
 

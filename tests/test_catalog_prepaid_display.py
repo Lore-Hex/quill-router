@@ -401,14 +401,8 @@ def test_gemini_native_supplement_publishes_missing_text_models() -> None:
     assert gemini_35.prompt_price_microdollars_per_million_tokens == 1_582_500
     assert gemini_35.completion_price_microdollars_per_million_tokens == 9_495_000
     assert MODELS["google/gemini-3.6-flash"].context_length == 1_048_576
-    assert (
-        gemini_36_ai_studio.prompt_price_microdollars_per_million_tokens
-        == gemini_36_vertex.prompt_price_microdollars_per_million_tokens
-    )
-    assert (
-        gemini_36_ai_studio.completion_price_microdollars_per_million_tokens
-        == gemini_36_vertex.completion_price_microdollars_per_million_tokens
-    )
+    # The two Google products have independent rates and discount schedules.
+    # Their price-index isolation is covered by test_vertex_native_discovery.
     for endpoint in (gemini_36_ai_studio, gemini_36_vertex):
         assert endpoint.upstream_id == "gemini-3.6-flash"
         assert endpoint.prompt_price_microdollars_per_million_tokens > 0

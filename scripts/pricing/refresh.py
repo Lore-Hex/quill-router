@@ -83,6 +83,7 @@ PROVIDER_SLUGS = [
     "anthropic",
     "openai",
     "gemini",
+    "google_vertex",
     "cerebras",
     "deepseek",
     "mistral",
@@ -169,13 +170,12 @@ PROVIDER_SLUGS = [
     "voyage",
 ]
 
-# Google's official Gemini pricing/model feed is shared by the two product
-# adapters for now, but their public provider identities, credentials, health,
-# cache affinity, and settlement records remain separate. This alias is applied
-# only at catalog-refresh time; runtime routing never collapses the providers.
+# Product adapters own independent availability and prices. Aliases here map
+# Python module names to public provider identities, never across products.
 _PRICING_RESULT_PROVIDER_ALIASES: dict[str, tuple[str, ...]] = {
     "confidential_ai": ("confidential-ai",),
-    "gemini": ("google-ai-studio", "google-vertex"),
+    "gemini": ("google-ai-studio",),
+    "google_vertex": ("google-vertex",),
     "cloudflare_workers_ai": ("cloudflare-workers-ai",),
     "atlas_cloud": ("atlas-cloud",),
     "zero_g": ("zero-g",),
@@ -213,10 +213,8 @@ _SELF_HEALING_PARSER_SLUGS = frozenset(
     }
 )
 
-# A shared official price feed does not prove shared model availability.
-# Vertex routes must already exist in the endpoint snapshot before the merger
-# prices them; only the AI Studio side may be synthesized from Gemini's live
-# model discovery feed.
+# Vertex-native manifests publish independently canaried routes. Do not invent
+# additional Vertex endpoints from the third-party snapshot's model metadata.
 _NO_SYNTHETIC_ENDPOINT_PROVIDER_SLUGS = frozenset({"google-vertex"})
 
 # >N providers failing entirely (network down, blocked, etc.) fails

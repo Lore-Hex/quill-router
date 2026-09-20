@@ -791,6 +791,8 @@ def reconcile_manifest_tombstones(
         "delisted-upstream",
         "price-unavailable",
         "provider-canary-failed",
+        # A later successful Vertex admission probe may recover missing limits.
+        "vertex-metadata-unavailable",
     }
     today = missing_date or datetime.now(UTC).date().isoformat()
     existing_ids = {
