@@ -5,6 +5,10 @@ def test_batch_docs_publish_drop_in_contract(client: TestClient) -> None:
     response = client.get("/docs/batch")
 
     assert response.status_code == 200
+    assert "OpenRouter-Compatible Batch API Quickstart" in response.text
+    assert '<link rel="canonical" href="https://trustedrouter.com/docs/batch">' in response.text
+    assert "This model is only available through the Batch API." in response.text
+    assert "Does TrustedRouter support the OpenRouter Batch API?" in response.text
     assert "POST /api/beta/batches" in response.text
     assert "GET /api/beta/batches/{id}" in response.text
     assert "/v1/chat/completions" in response.text

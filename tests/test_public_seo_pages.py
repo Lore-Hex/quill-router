@@ -1728,6 +1728,10 @@ def test_retired_model_pages_redirect_to_current_catalog_entries(client: TestCli
 @pytest.mark.parametrize(
     ("requested", "canonical"),
     [
+        ("meta-llama/llama-4-scout", "meta-llama/llama-4-scout-17b-16e-instruct"),
+        ("meta-llama/llama-4-scout/providers", "meta-llama/llama-4-scout-17b-16e-instruct/providers"),
+        ("mistralai/mistral-small-3.2-24b-instruct", "mistralai/mistral-small-3.2-24b-instruct-2506"),
+        ("MistralAI/Mistral-Small-3.2-24B-Instruct/performance", "mistralai/mistral-small-3.2-24b-instruct-2506/performance"),
         ("nvidia/Nemotron-3-Ultra-550b-a55b", "nvidia/nemotron-3-ultra-550b-a55b"),
         ("xiaomi/mimo-v2-flash", "xiaomimimo/mimo-v2-flash"),
         ("xiaomi/mimo-v2-flash/pricing", "xiaomimimo/mimo-v2-flash/pricing"),
@@ -1814,6 +1818,49 @@ def test_model_normalization_requires_live_unambiguous_targets(monkeypatch) -> N
     monkeypatch.setattr(public, "MODELS", {"native/Case": object(), "native/case": object()})
     assert public._canonical_public_model_id("native/Case") == "native/Case"
     assert public._canonical_public_model_id("native/CASE") == "native/CASE"
+
+
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+@pytest.mark.parametrize("suffix", ["", "/performance"])
+def test_gemini_provider_alias_preserves_section(
+    client: TestClient, method: str, suffix: str,
+) -> None:
+    target = f"/providers/google-ai-studio{suffix}"
+    response = client.request(method, f"/providers/gemini{suffix}", follow_redirects=False)
+    assert response.status_code == 301
+    assert response.headers["location"] == target
+    assert client.request(method, target, follow_redirects=False).status_code == 200
+
+
+def test_provider_alias_requires_live_target_and_preserves_native_id(monkeypatch) -> None:
+    from trusted_router.routes import public
+
+    monkeypatch.setattr(public, "PROVIDERS", {})
+    assert public._canonical_public_provider_slug("gemini") == "gemini"
+    monkeypatch.setattr(public, "PROVIDERS", {"google-ai-studio": object()})
+    assert public._canonical_public_provider_slug("gemini") == "google-ai-studio"
+    assert public._canonical_public_provider_slug("unknown") == "unknown"
+    monkeypatch.setitem(public.PROVIDERS, "gemini", object())
+    assert public._canonical_public_provider_slug("gemini") == "gemini"
+
+
+@pytest.mark.usefixtures("isolated_comparison_catalog")
+def test_mistral_alias_comparison_redirects_directly_to_canonical_order(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.routes import public
+
+    canonical_id = "mistralai/mistral-small-3.2-24b-instruct-2506"
+    monkeypatch.delitem(public.MODELS, "mistralai/mistral-small-3.2-24b-instruct", raising=False)
+    monkeypatch.setitem(public.MODELS, canonical_id, replace(public.MODELS["z-ai/glm-5.3"], id=canonical_id))
+    response = client.get(
+        "/compare/models/z-ai/glm-5.3/vs/mistralai/mistral-small-3.2-24b-instruct",
+        follow_redirects=False,
+    )
+    target = f"/compare/models/{canonical_id}/vs/z-ai/glm-5.3"
+    assert response.status_code == 301
+    assert response.headers["location"] == target
+    assert client.get(target, follow_redirects=False).status_code == 200
 
 
 def test_native_mixed_case_model_page_remains_canonical(client: TestClient) -> None:

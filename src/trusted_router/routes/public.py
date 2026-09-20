@@ -46,6 +46,7 @@ from trusted_router.benchmark_samples import (
 from trusted_router.catalog import (
     META_MODEL_IDS,
     MODELS,
+    PROVIDERS,
     endpoints_for_model,
     provider_to_openrouter_shape,
     providers_for_display,
@@ -194,6 +195,8 @@ LEGACY_MODEL_PAGE_REDIRECTS: dict[str, str] = {
     "meta/muse-spark-1.1": "/models?filter=open",
 }
 LEGACY_MODEL_ID_ALIASES: dict[str, str] = {
+    "meta-llama/llama-4-scout": "meta-llama/llama-4-scout-17b-16e-instruct",
+    "mistralai/mistral-small-3.2-24b-instruct": "mistralai/mistral-small-3.2-24b-instruct-2506",
     "lightning-ai/nemotron-3-nano-omni-30b-a3b-reasoning": (
         "nvidia/nemotron-3-nano-omni-reasoning-30b-a3b"
     ),
@@ -202,6 +205,14 @@ LEGACY_MODEL_ID_ALIASES: dict[str, str] = {
     "xiaomi/mimo-v2-flash": "xiaomimimo/mimo-v2-flash",
     "zai-org/glm-4.5": "z-ai/glm-4.5",
 }
+LEGACY_PROVIDER_PAGE_ALIASES = {"gemini": "google-ai-studio"}
+
+
+def _canonical_public_provider_slug(provider_slug: str) -> str:
+    if provider_slug in PROVIDERS:
+        return provider_slug
+    target = LEGACY_PROVIDER_PAGE_ALIASES.get(provider_slug.casefold())
+    return target if target is not None and target in PROVIDERS else provider_slug
 
 
 def _canonical_public_model_id(model_id: str) -> str:
@@ -2078,8 +2089,12 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         )
 
     @public_html_route("/providers/{provider_slug}/performance")
-    async def provider_performance(provider_slug: str) -> HTMLResponse:
-        body = public_provider_performance_html(settings, provider_slug.strip())
+    async def provider_performance(provider_slug: str) -> Response:
+        requested = provider_slug.strip()
+        canonical = _canonical_public_provider_slug(requested)
+        if canonical != requested:
+            return RedirectResponse(url=f"/providers/{canonical}/performance", status_code=301)
+        body = public_provider_performance_html(settings, canonical)
         if body is None:
             return HTMLResponse(
                 public_page_html(settings, "security"),
@@ -2088,8 +2103,12 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         return HTMLResponse(body)
 
     @public_html_route("/providers/{provider_slug}")
-    async def provider_detail(provider_slug: str) -> HTMLResponse:
-        body = public_provider_detail_html(settings, provider_slug.strip())
+    async def provider_detail(provider_slug: str) -> Response:
+        requested = provider_slug.strip()
+        canonical = _canonical_public_provider_slug(requested)
+        if canonical != requested:
+            return RedirectResponse(url=f"/providers/{canonical}", status_code=301)
+        body = public_provider_detail_html(settings, canonical)
         if body is None:
             return HTMLResponse(
                 public_page_html(settings, "security"),

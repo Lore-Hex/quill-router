@@ -1392,10 +1392,24 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     ),
     "docs/batch": PublicPage(
         template="public/batch.html",
-        title="Batch API Quickstart",
+        title="OpenRouter-Compatible Batch API Quickstart",
         description=(
             "Submit OpenRouter-compatible inline batches through the attested "
             "TrustedRouter gateway and poll encrypted results by batch ID."
+        ),
+        faq_items=(
+            (
+                "Does TrustedRouter support the OpenRouter Batch API?",
+                "Yes. Submit an inline request to POST /api/beta/batches, then poll GET /api/beta/batches/{id} with the same API key. Switch the hostname and API key in an existing compatible integration; no JSONL upload is required.",
+            ),
+            (
+                "Which endpoints can I use in a batch?",
+                "Batch items support Chat Completions, Responses, Anthropic Messages, and Embeddings. Streaming, file uploads, listing, and cancellation are not supported by this beta.",
+            ),
+            (
+                "Does the Batch API retain prompts and outputs?",
+                "Batch is an opt-in encrypted-retention mode. Artifacts are encrypted inside the attested gateway and automatically deleted after 30 days. Eligible provider-native execution has an additional provider retention boundary; review the retention and eligibility details on this page before submitting sensitive content.",
+            ),
         ),
     ),
     "docs/decide": PublicPage(
@@ -6031,19 +6045,45 @@ def _comparison_summary(
     left_measured: int | None,
     right_measured: int | None,
 ) -> str:
-    cheaper = left.name if left_total <= right_total else right.name
-    broader = left.name if left_routes >= right_routes else right.name
-    context = left.name if left.context_length >= right.context_length else right.name
-    if left_measured is not None and right_measured is not None:
-        faster = left.name if left_measured <= right_measured else right.name
-        speed_clause = f" Current TrustedRouter probes show {faster} with the lower p50 TTFT."
+    # Group advantages by model so one name is not repeated for every metric.
+    # A tie or absent route/measurement must never become a claimed winner.
+    advantages: tuple[list[str], list[str]] = ([], [])
+    notes: list[str] = []
+    if left_routes and right_routes and left_total > 0 and right_total > 0:
+        if left_total == right_total:
+            notes.append("The lowest published input-plus-output rates are equal.")
+        else:
+            advantages[0 if left_total < right_total else 1].append(
+                "the lower published input-plus-output rate"
+            )
     else:
-        speed_clause = " Probe-backed speed data is shown when enough recent samples exist."
-    return (
-        f"{cheaper} has the lower cheapest prompt+completion route on TrustedRouter. "
-        f"{broader} has more provider fallback routes, while {context} has the larger context window."
-        f"{speed_clause}"
-    )
+        notes.append("A published Credits price comparison is not available for both models.")
+    if left_routes != right_routes:
+        advantages[0 if left_routes > right_routes else 1].append("more Credits provider routes")
+    else:
+        notes.append(f"Both have {left_routes} Credits provider routes.")
+    if left.context_length and right.context_length:
+        if left.context_length == right.context_length:
+            notes.append("Their context windows are the same size.")
+        else:
+            advantages[0 if left.context_length > right.context_length else 1].append(
+                "the larger context window"
+            )
+    if left_measured is not None and right_measured is not None:
+        if left_measured == right_measured:
+            notes.append("Recent probes show equal p50 time to first token.")
+        else:
+            advantages[0 if left_measured < right_measured else 1].append(
+                "the lower measured p50 time to first token"
+            )
+    else:
+        notes.append("There is not enough recent probe data to compare speed.")
+    sentences = []
+    for model, metrics in zip((left, right), advantages, strict=True):
+        if metrics:
+            joined = metrics[0] if len(metrics) == 1 else ", ".join(metrics[:-1]) + " and " + metrics[-1]
+            sentences.append(f"{_seo_model_name(model)} has {joined}.")
+    return " ".join(sentences + notes)
 
 
 def _cheapest_total_microdollars(model: Model) -> int:
