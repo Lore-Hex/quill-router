@@ -63,6 +63,11 @@ authorized operator. Do not broaden service-account IAM as part of a site deploy
    canonical content, alias redirects, assets and intake links. Check the
    main TrustedRouter, trust and status sites still serve normally.
 
+`python3 sites/token-exchange/smoke.py --staged` verifies host routing through
+the existing load balancer before DNS cutover. It deliberately does not claim
+new-domain TLS verification. Rerun without `--staged` after propagation to
+check actual public HTTPS on every canonical hostname and alias.
+
 For repeated content-only publishes, use `gcloud storage rsync` on the build
 directory. Objects have a five-minute browser cache. Update the versioned CSS/JS
 references via the build step; invalidate the CDN only if an urgent correction
