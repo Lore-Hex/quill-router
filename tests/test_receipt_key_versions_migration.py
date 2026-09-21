@@ -24,13 +24,17 @@ from trusted_router.storage_postgres import (
 ROOT = Path(__file__).parents[1]
 SCRIPT = "scripts/deploy/migrate_receipt_key_versions.sh"
 
+# Detect ADD COLUMN broadly (quoted, schema-qualified or oddly spaced table
+# names included), then validate the complete shape: a statement that merely
+# LOOKS different must never slip past the guard with a constraint on board.
+_IDENT = r'(?:"(?:[^"]|"")+"|\w+)'
 _ADD_COLUMN_HEAD = re.compile(
-    r"\s*ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?",
-    re.IGNORECASE,
+    r"\s*ALTER\s+TABLE\b.*?\bADD\s+(?:COLUMN\b)?", re.IGNORECASE | re.DOTALL,
 )
 _BARE_ADD_COLUMN = re.compile(
-    _ADD_COLUMN_HEAD.pattern
-    + r"\w+\s+(?:TEXT|BIGINT|INTEGER|BOOLEAN|TIMESTAMPTZ|JSONB|DOUBLE\s+PRECISION|"
+    rf"\s*ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?{_IDENT}(?:\s*\.\s*{_IDENT})?\s+"
+    rf"ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?{_IDENT}\s+"
+    r"(?:TEXT|BIGINT|INTEGER|BOOLEAN|TIMESTAMPTZ|JSONB|DOUBLE\s+PRECISION|"
     r"NUMERIC(?:\s*\(\s*\d+\s*,\s*\d+\s*\))?)\s*;?\s*",
     re.IGNORECASE,
 )
@@ -354,6 +358,41 @@ def test_postgres_dsql_add_column_forbidden_tails(
         ):
             conn.execute(statement, prepare=False)
         assert conn.accepted == []
+
+
+@pytest.mark.parametrize("table", [
+    '"tr_credit_balance"', "public.tr_credit_balance", 'public."tr_credit_balance"',
+    '"public"."tr credit"', "IF EXISTS tr_credit_balance", "ONLY tr_credit_balance",
+])
+@pytest.mark.parametrize("validator", ["guard", "fake"])
+def test_postgres_dsql_add_column_guard_sees_quoted_and_qualified_tables(
+    table: str, validator: str,
+) -> None:
+    # A constraint must not slip past because the TABLE name is spelled differently.
+    bad = f"ALTER TABLE {table} ADD COLUMN bad BIGINT DEFAULT 0;"
+    good = f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS fine BIGINT;"
+    if validator == "guard":
+        with pytest.raises(AssertionError, match="DSQL.*bare ADD COLUMN"):
+            _assert_dsql_add_column(bad)
+        _assert_dsql_add_column(good)
+    else:
+        conn = DsqlConnection()
+        with pytest.raises(psycopg.errors.FeatureNotSupported, match="DSQL.*bare ADD COLUMN"):
+            conn.execute(bad, prepare=False)
+        conn.execute(good, prepare=False)
+        assert conn.accepted == [good]
+
+
+def test_postgres_dsql_add_column_guard_ignores_other_alter_forms() -> None:
+    # ALTER COLUMN SET DEFAULT is the supported second step and must pass untouched.
+    for statement in (
+        "ALTER TABLE tr_credit_balance ALTER COLUMN trust_tier SET DEFAULT 0;",
+        'ALTER TABLE "tr_credit_balance" ALTER COLUMN pause_epoch SET DEFAULT 0;',
+    ):
+        _assert_dsql_add_column(statement)
+        conn = DsqlConnection()
+        conn.execute(statement, prepare=False)
+        assert conn.accepted == [statement]
 
 
 @pytest.mark.parametrize("column_type", [
