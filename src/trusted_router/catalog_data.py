@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import NamedTuple, TypedDict
 
+from trusted_router.polyphemus import MODEL_ID as POLYPHEMUS_MODEL_ID
 from trusted_router.pricing import PriceTier
 
 
@@ -431,6 +432,21 @@ class ModelEndpoint:
 
 
 PROVIDERS: dict[str, Provider] = {
+    "telluvian": Provider(
+        slug="telluvian",
+        name="Telluvian",
+        supports_chat=False,
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "Polyphemus sends the conversation and tool definitions to Telluvian "
+            "for model selection. No ZDR or confidential-compute claim is made."
+        ),
+        provider_policy_url="https://telluvian.ai/privacy",
+    ),
     "trustedrouter": Provider(
         slug="trustedrouter",
         name="TrustedRouter",
@@ -2080,6 +2096,7 @@ PROVIDERS: dict[str, Provider] = {
 
 GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
     {
+        "telluvian",
         "vercel-ai-gateway",
         "typesafe",
         "regolo",
@@ -2357,7 +2374,11 @@ def offers_chat(model: Model) -> bool:
     pools the meta-routers draw from -- asks this, so a name cannot be offered
     somewhere that then refuses it.
     """
-    return model.supports_chat and model.id not in NAMED_DECISION_MODEL_PROVIDERS
+    return (
+        model.supports_chat
+        and model.id not in NAMED_DECISION_MODEL_PROVIDERS
+        and model.id != POLYPHEMUS_MODEL_ID
+    )
 
 SOCRATES_1_0_MODEL_ID = "trustedrouter/socrates-1.0"
 
@@ -2495,6 +2516,7 @@ MAPREDUCE_MODEL_ID = "trustedrouter/mapreduce"
 
 META_MODEL_IDS = frozenset(
     {
+        POLYPHEMUS_MODEL_ID,
         "trustedrouter/green",
         AUTO_MODEL_ID,
         FREE_MODEL_ID,

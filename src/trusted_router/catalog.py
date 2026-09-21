@@ -753,6 +753,9 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         # up in the chat picker and as a custom-model base, and both then
         # refused it.
         "supports_chat": offers_chat(model),
+        "supports_responses": offers_chat(model) or model.id == "trustedrouter/polyphemus-1.0",
+        **({"pricing_type": "selection_fee_plus_selected_model_tokens"}
+           if model.id == "trustedrouter/polyphemus-1.0" else {}),
         "supports_embeddings": model.supports_embeddings,
         "supports_video": model.supports_video,
         # True for hosted decision models AND for the chat models the gateway

@@ -141,6 +141,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     ZEUS_CODE_MODEL_ID,
     ZEUS_MODEL_ID,
     Model,
+    ModelDocumentation,
     ModelEndpoint,
     ModelProviderPrivacyOverride,
     Provider,
@@ -168,6 +169,8 @@ from trusted_router.partner_billing import (
     PARASAIL_LIBERTY_2_0_MINIMUM_CHARGE_MICRODOLLARS,
     PARASAIL_LIBERTY_2_0_OUTPUT_MICRODOLLARS_PER_MILLION,
 )
+from trusted_router.polyphemus import MODEL_ID as POLYPHEMUS_MODEL_ID
+from trusted_router.polyphemus import SELECTOR_FEE_MICRODOLLARS
 from trusted_router.pricing import (  # noqa: F401 - re-exported for back-compat
     _CACHE_READ_PRICE_MULTIPLIER,
     _CACHE_WRITE_PRICE_MULTIPLIER,
@@ -1233,6 +1236,31 @@ _VIDEO_MODELS: dict[str, Model] = {
 MODELS.update(_VIDEO_MODELS)
 
 MODEL_ENDPOINTS: dict[str, ModelEndpoint] = _build_endpoints(MODELS)
+MODELS[POLYPHEMUS_MODEL_ID] = Model(
+    id=POLYPHEMUS_MODEL_ID,
+    name="Polyphemus 1.0",
+    provider="telluvian",
+    context_length=65_536,
+    supports_messages=False,
+    prepaid_available=True,
+    byok_available=False,
+    request_price_microdollars=SELECTOR_FEE_MICRODOLLARS,
+    documentation=ModelDocumentation(
+        description=(
+            "Telluvian selects a model for your task, then TrustedRouter runs it. "
+            "Responses API only. Standard privacy, not ZDR or confidential. "
+            "One microdollar per successful selection plus the selected model's "
+            "normal token charges; generation is not free. "
+            "If selection fails, trustedrouter/auto handles the request without a selector fee."
+        ),
+        input_format="POST /v1/responses with text input and optional function tools.",
+        output_format="A standard Responses response or event stream with cost breakdown.",
+        example_input='{"model":"trustedrouter/polyphemus-1.0","input":"What is the capital of France?"}',
+        example_output='{"model":"trustedrouter/polyphemus-1.0","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Paris."}]}]}',
+    ),
+)
+_polyphemus_endpoint = _endpoint(MODELS[POLYPHEMUS_MODEL_ID], usage_type="Credits")
+MODEL_ENDPOINTS[_polyphemus_endpoint.id] = _polyphemus_endpoint
 MODEL_ENDPOINTS.update(_INGESTED_ENDPOINTS)
 MODEL_ENDPOINTS.update(_SUPPLEMENTAL_ENDPOINTS)
 # A hosted decision model's vendor route came from `_build_endpoints`; its
