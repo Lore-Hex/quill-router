@@ -9,13 +9,22 @@ import pytest
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.parsers import fireworks as fireworks_parser
 from scripts.pricing.providers import fireworks
-from trusted_router.catalog import MODEL_ENDPOINTS, effective_endpoint
+from trusted_router import provider_lifecycle
+from trusted_router.catalog import effective_endpoint
+from trusted_router.catalog_data import ModelEndpoint
 from trusted_router.provider_lifecycle import (
     FIREWORKS_DSV4_FLASH_0731_PRICING_EFFECTIVE_AT,
     ProviderPrice,
     provider_price_microdollars,
     provider_pricing_schedule,
 )
+
+
+@pytest.fixture(autouse=True)
+def _historical_pricing_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    # These fixtures describe the pre-retirement feed; the lifecycle suite
+    # separately exercises discovery after the September retirement.
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: datetime(2026, 9, 20, tzinfo=UTC))
 
 
 def _price() -> ModelPrice:
@@ -97,9 +106,11 @@ def test_fireworks_dsv4_flash_announced_cutover_is_exact() -> None:
 
 
 def test_fireworks_dsv4_flash_cutover_applies_markup_and_cache_floor() -> None:
-    endpoint = MODEL_ENDPOINTS[
-        "deepseek/deepseek-v4-flash-0731@fireworks/prepaid"
-    ]
+    endpoint = ModelEndpoint(
+        id="deepseek/deepseek-v4-flash-0731@fireworks/prepaid",
+        model_id="deepseek/deepseek-v4-flash-0731", provider="fireworks", usage_type="Credits",
+        upstream_id="accounts/fireworks/models/deepseek-v4-flash-0731",
+    )
 
     before = effective_endpoint(
         endpoint,
