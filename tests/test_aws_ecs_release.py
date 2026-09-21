@@ -107,10 +107,14 @@ elif tool == "aws":
     elif op == "ecr get-login-password": print("fixture-password")
     elif op == "ecr describe-images": print(digest)
     elif op == "ecs describe-services":
-        print(json.dumps({"services": [{"taskDefinition": "old:19",
+        service = {"taskDefinition": "old:19",
             "deploymentController": {"type": "ECS"},
-            "deploymentConfiguration": {"minimumHealthyPercent": 100,
-                "maximumPercent": 200, "deploymentCircuitBreaker": {"enable": True, "rollback": True}}}]}))
+            "deploymentConfiguration": {"bakeTimeInMinutes": 0,
+                "deploymentCircuitBreaker": {"enable": True, "resetOnHealthyTask": True,
+                    "rollback": True, "thresholdConfiguration": {"type": "BOUNDED_PERCENT", "value": 50}},
+                "maximumPercent": 200, "minimumHealthyPercent": 100, "strategy": "ROLLING"}}
+        service.update(json.loads(os.environ.get("ECS_DEPLOYMENT_SETTINGS", "{}")))
+        print(json.dumps({"services": [service]}))
     elif op == "ecs describe-task-definition":
         print(pathlib.Path(os.environ["ECS_DEFINITION"]).read_text())
     elif op == "ecs register-task-definition":
@@ -197,3 +201,89 @@ def test_ecs_rollout_is_gated_sequential_and_rolls_back_failed_region(tmp_path: 
     elif failure:
         assert updates[-1][updates[-1].index("--task-definition") + 1] == "old:19"
     assert not any("apprunner" in c for c in recorded)
+
+
+@pytest.mark.parametrize(("field", "value", "failed_checks"), [
+    ("deploymentCircuitBreaker.enable", False, ["deploymentCircuitBreaker.enable"]),
+    ("deploymentCircuitBreaker.rollback", False, ["deploymentCircuitBreaker.rollback"]),
+    ("deploymentCircuitBreaker", None,
+     ["deploymentCircuitBreaker.enable", "deploymentCircuitBreaker.rollback"]),
+    ("deploymentCircuitBreaker.enable", "true", ["deploymentCircuitBreaker.enable"]),
+    ("deploymentCircuitBreaker.enable", 1, ["deploymentCircuitBreaker.enable"]),
+    ("deploymentCircuitBreaker.rollback", "true", ["deploymentCircuitBreaker.rollback"]),
+    ("deploymentCircuitBreaker.rollback", 1, ["deploymentCircuitBreaker.rollback"]),
+    ("deploymentCircuitBreaker.enable", None, ["deploymentCircuitBreaker.enable"]),
+    ("deploymentCircuitBreaker.rollback", None, ["deploymentCircuitBreaker.rollback"]),
+    ("minimumHealthyPercent", 50, ["minimumHealthyPercent"]),
+    ("maximumPercent", 150, ["maximumPercent"]),
+    ("deploymentController.type", "CODE_DEPLOY", ["deploymentController.type"]),
+    ("strategy", "BLUE_GREEN", ["strategy"]),
+])
+def test_ecs_rollout_refuses_missing_protections_before_registration(
+    tmp_path: Path, field: str, value: object, failed_checks: list[str],
+) -> None:
+    config = {"minimumHealthyPercent": 100, "maximumPercent": 200, "strategy": "ROLLING",
+              "deploymentCircuitBreaker": {"enable": True, "rollback": True}}
+    settings = {"deploymentController": {"type": "ECS"}, "deploymentConfiguration": config}
+    target = settings if field.startswith("deploymentController.") else config
+    *parents, key = field.split(".")
+    for parent in parents:
+        target = target[parent]
+    if value is None:
+        target.pop(key)
+    else:
+        target[key] = value
+    result, recorded = run_ecs_fixture(
+        tmp_path, extra_env={"ECS_DEPLOYMENT_SETTINGS": json.dumps(settings)},
+    )
+    assert result.returncode != 0
+    assert (
+        "refusing rollout without healthy-capacity and automatic rollback protections: "
+        + "; ".join(failed_checks) + " (observed " + json.dumps(config, sort_keys=True)
+        + ", controller " + json.dumps(settings["deploymentController"], sort_keys=True) + ")"
+    ) in result.stderr
+    assert not any(c[:3] == ["aws", "ecs", "register-task-definition"] for c in recorded)
+    assert not any(c[:3] == ["aws", "ecs", "update-service"] for c in recorded)
+
+
+@pytest.mark.parametrize(("settings", "failed_checks"), [
+    ({"deploymentConfiguration": None},
+     ["minimumHealthyPercent", "maximumPercent", "deploymentCircuitBreaker.enable", "deploymentCircuitBreaker.rollback"]),
+    ({"deploymentConfiguration": {"minimumHealthyPercent": 100, "maximumPercent": 200, "deploymentCircuitBreaker": None}},
+     ["deploymentCircuitBreaker.enable", "deploymentCircuitBreaker.rollback"]),
+    ({"deploymentConfiguration": {"minimumHealthyPercent": None, "maximumPercent": None,
+                                  "deploymentCircuitBreaker": {"enable": True, "rollback": True}}},
+     ["minimumHealthyPercent", "maximumPercent"]),
+    ({"deploymentConfiguration": {"minimumHealthyPercent": "100", "maximumPercent": 200,
+                                  "deploymentCircuitBreaker": {"enable": True, "rollback": True}}},
+     ["minimumHealthyPercent"]),
+    ({"deploymentController": None}, ["deploymentController.type"]),
+], ids=["null-configuration", "null-breaker", "null-percents", "string-minimum", "null-controller"])
+def test_ecs_rollout_refuses_null_and_malformed_protections(
+    tmp_path: Path, settings: dict, failed_checks: list[str],
+) -> None:
+    # JSON null, not an absent key: the API contract allows it and it must never pass.
+    result, recorded = run_ecs_fixture(
+        tmp_path, extra_env={"ECS_DEPLOYMENT_SETTINGS": json.dumps(settings)},
+    )
+    assert result.returncode != 0
+    assert (
+        "refusing rollout without healthy-capacity and automatic rollback protections: "
+        + "; ".join(failed_checks) + " (observed "
+    ) in result.stderr
+    assert not any(c[:3] == ["aws", "ecs", "register-task-definition"] for c in recorded)
+    assert not any(c[:3] == ["aws", "ecs", "update-service"] for c in recorded)
+
+
+@pytest.mark.parametrize("future_field", [False, True], ids=["legacy", "future-sibling"])
+def test_ecs_rollout_accepts_legacy_and_future_breaker_fields(tmp_path: Path, future_field: bool) -> None:
+    config = {"minimumHealthyPercent": 100, "maximumPercent": 200,
+              "deploymentCircuitBreaker": {"enable": True, "rollback": True}}
+    if future_field:
+        config["deploymentCircuitBreaker"]["someFutureField"] = {"x": 1}
+    result, recorded = run_ecs_fixture(
+        tmp_path, extra_env={"ECS_DEPLOYMENT_SETTINGS": json.dumps({"deploymentConfiguration": config})},
+    )
+    assert result.returncode == 0, result.stderr
+    updates = [c for c in recorded if c[:3] == ["aws", "ecs", "update-service"]]
+    assert [c[c.index("--region") + 1] for c in updates] == ["eu-west-1", "eu-west-3"]
