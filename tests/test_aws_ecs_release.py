@@ -75,6 +75,25 @@ def expected_registration(original: dict, image: str) -> dict:
     return expected
 
 
+@pytest.mark.parametrize("tags", [None, []], ids=["absent", "empty"])
+def test_untagged_task_definition_registers_without_a_tags_field(tags: list | None) -> None:
+    # describe-task-definition returns no tags for an untagged definition, and
+    # RegisterTaskDefinition rejects an empty list ("Tags can not be empty").
+    payload = task_definition("eu-west-3")
+    if tags is None:
+        payload.pop("tags")
+    else:
+        payload["tags"] = tags
+    result = load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, "true")
+    assert "tags" not in result
+
+
+def test_tagged_task_definition_keeps_its_tags() -> None:
+    payload = task_definition("eu-west-3")
+    result = load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, "true")
+    assert result["tags"] == payload["tags"] and result["tags"]
+
+
 @pytest.mark.parametrize(("region", "required_outbox"), [("eu-west-1", "false"), ("eu-west-3", "true")])
 def test_image_release_update_preserves_all_native_runtime_configuration(region: str, required_outbox: str) -> None:
     original = task_definition(region)
@@ -170,6 +189,9 @@ elif tool == "aws":
     elif op == "ecs register-task-definition":
         data = json.loads(pathlib.Path(args[args.index("--cli-input-json") + 1][7:]).read_text())
         assert data["containerDefinitions"][0]["image"].endswith("@" + digest)
+        if "tags" in data and not data["tags"]:
+            # The real API: ClientException "Tags can not be empty."
+            sys.stderr.write("Tags can not be empty.\n"); sys.exit(254)
         with open(os.environ["ECS_REGISTRATIONS"], "a") as f:
             f.write(json.dumps([region, data]) + "\n")
         print("arn:aws:ecs:" + region + ":330422590279:task-definition/tr-cp:20")
@@ -304,6 +326,18 @@ def test_ecs_rollout_refuses_outbox_drift_without_rolling_back_healthy_region(
     assert json.loads((tmp_path / "state").read_text()) == (
         {} if region == "eu-west-1" else {"eu-west-1": "c" * 40}
     )
+
+
+def test_ecs_rollout_registers_untagged_live_definitions(tmp_path: Path) -> None:
+    # Production shape: neither live definition carries tags. The rollout must
+    # register both regions anyway (the fake API refuses an empty tags list).
+    definitions = {region: task_definition(region) for region in ("eu-west-1", "eu-west-3")}
+    for definition in definitions.values():
+        definition.pop("tags")
+    result, recorded = run_ecs_fixture(tmp_path, definitions=definitions)
+    assert result.returncode == 0, result.stderr
+    updates = [c for c in recorded if c[:3] == ["aws", "ecs", "update-service"]]
+    assert [c[c.index("--region") + 1] for c in updates] == ["eu-west-1", "eu-west-3"]
 
 
 @pytest.mark.parametrize(("full_table", "short_table"), [
