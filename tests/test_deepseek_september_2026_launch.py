@@ -9,6 +9,7 @@ from scripts.pricing.parsers import deepseek as parser
 from scripts.pricing.providers import deepseek
 from trusted_router import catalog
 from trusted_router import provider_lifecycle as lifecycle
+from trusted_router.catalog_data import ModelEndpoint
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.provider_lifecycle import ProviderPrice
@@ -73,6 +74,20 @@ def test_dated_routes_cannot_silently_follow_upstream_flash_redirect(
 def test_stale_process_filters_dated_pro_without_changing_other_providers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Recreate the pre-redirect routes even when this suite starts after a
+    # later provider retirement has already filtered the live catalog.
+    endpoints = {
+        provider: ModelEndpoint(
+            id=f"{DATED_PRO}@{provider}/prepaid", model_id=DATED_PRO,
+            provider=provider, usage_type="Credits", upstream_id=upstream,
+        )
+        for provider, upstream in {
+            "deepseek": "deepseek-v4-pro",
+            "baseten": "deepseek-ai/DeepSeek-V4-Pro-0813",
+            "fireworks": "accounts/fireworks/models/deepseek-v4-pro-0813",
+        }.items()
+    }
+    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", endpoints)
     monkeypatch.setattr(lifecycle, "_utc_now", lambda: PRO_CUTOVER)
     routes = catalog.endpoints_for_model(DATED_PRO)
     assert {route.provider for route in routes} == {"baseten", "fireworks"}
