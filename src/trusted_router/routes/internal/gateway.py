@@ -94,6 +94,8 @@ from trusted_router.partner_billing import (
     partner_billing_mode,
     partner_cost_microdollars,
 )
+from trusted_router.polyphemus import MODEL_ID as POLYPHEMUS_MODEL_ID
+from trusted_router.polyphemus import SELECT_ROUTE_TYPE as POLYPHEMUS_SELECT_ROUTE_TYPE
 from trusted_router.pricing import (
     SIGNED_RECEIPT_TOTAL_FEE_BASIS_POINTS,
     signed_receipt_price_microdollars,
@@ -968,7 +970,7 @@ def _authorize_gateway_sync_impl(
         if catalog_id == raw_model_id:
             continue
         catalog_model = MODELS.get(catalog_id)
-        if catalog_id in PRIVATE_PROXY_MODEL_TARGETS or (
+        if catalog_id in PRIVATE_PROXY_MODEL_TARGETS or catalog_id == POLYPHEMUS_MODEL_ID or (
             catalog_model is not None and catalog_model.supports_decide
         ):
             raise api_error(
@@ -977,6 +979,11 @@ def _authorize_gateway_sync_impl(
                 "without a routing variant or dated suffix",
                 ErrorType.BAD_REQUEST,
             )
+    if body.models and any(
+        canonical_model_id(model_id) == POLYPHEMUS_MODEL_ID
+        for model_id in (requested_model_id, *body.models)
+    ):
+        raise api_error(400, "Polyphemus cannot be used with models fallback arrays", ErrorType.BAD_REQUEST)
     private_proxy_ids = {
         model_id
         for model_id in (requested_model_id, *(body.models or []))
@@ -1059,6 +1066,16 @@ def _authorize_gateway_sync_impl(
     # resolver so the attested enclave can authorize + bill an
     # embeddings call exactly like a chat one.
     route_model_id = str(body_dict.get("model") or body.model)
+    if route_model_id == POLYPHEMUS_MODEL_ID:
+        if body.route_type != POLYPHEMUS_SELECT_ROUTE_TYPE or custom_model is not None:
+            raise api_error(
+                400, "Polyphemus requires POST /v1/responses", ErrorType.MODEL_NOT_SUPPORTED
+            )
+        provider_options = body_dict.get("provider") or {}
+        if isinstance(provider_options, dict) and provider_options.get("data_collection") == "deny":
+            raise api_error(400, "Polyphemus does not support no-retention requests", ErrorType.BAD_REQUEST)
+    elif body.route_type == POLYPHEMUS_SELECT_ROUTE_TYPE:
+        raise api_error(400, "Invalid Polyphemus selection route", ErrorType.BAD_REQUEST)
     if body.additional_cost_reservation_microdollars and (
         _is_web_search_restricted_model(route_model_id)
         or _is_web_search_restricted_provider(body_dict.get("provider"))
@@ -1325,6 +1342,10 @@ def _authorize_gateway_sync_impl(
     admission_snapshot_candidates: tuple[dict[str, Any], ...] | None = None
 
     def _replay_response(existing_authorization: Any) -> dict[str, Any]:
+        if body.route_type == POLYPHEMUS_SELECT_ROUTE_TYPE:
+            # The selector has no upstream idempotency contract. Never repeat
+            # selection (including concurrent replays) on an existing hold.
+            raise api_error(409, "Polyphemus request already admitted; use a new idempotency key for a new request", ErrorType.BAD_REQUEST)
         # Build the replay response from the STORED authorization (NOT current
         # routing), so a replay across catalog/pricing/BYOK drift advertises
         # the endpoint that was actually authorized (codex 3e route review #1).
