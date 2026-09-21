@@ -14,11 +14,13 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import re
 import secrets
 import time
 import uuid
 from collections.abc import Callable
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Never, TypeVar, cast
 
@@ -510,6 +512,15 @@ _DSQL_RECEIPT_KEY_VERSIONS_INDEX = (
 )
 
 
+@lru_cache(maxsize=1)
+def _schema_unique_index_wait_seconds() -> int:
+    """Read the DSQL unique-index wait budget once, on first use."""
+    value = os.environ.get("TR_SCHEMA_UNIQUE_INDEX_WAIT_SECONDS", "60")
+    if not value.isascii() or not value.isdecimal() or int(value) < 1:
+        raise ValueError("TR_SCHEMA_UNIQUE_INDEX_WAIT_SECONDS must be a positive integer")
+    return int(value)
+
+
 def _video_due_id(job: VideoJob) -> str:
     """Ordering key for the video due-index: `<next_poll_at>#<job_id>`.
 
@@ -687,8 +698,12 @@ class PostgresStore:
             conn.execute(statement, prepare=False)
             return
         except psycopg.errors.FeatureNotSupported:
-            index_head = re.match(r"\s*CREATE\s+(?:UNIQUE\s+)?INDEX\b", statement, re.IGNORECASE)
-            if index_head is None:
+            index_head = re.match(
+                r"\s*CREATE\s+(?P<unique>UNIQUE\s+)?INDEX\b", statement, re.IGNORECASE,
+            )
+            if index_head is None or re.match(
+                r"\s*ASYNC\b", statement[index_head.end():], re.IGNORECASE,
+            ):
                 raise
         if statement.lstrip().startswith(
             "CREATE INDEX IF NOT EXISTS tr_receipt_key_versions"
@@ -700,6 +715,41 @@ class PostgresStore:
         else:
             async_statement = statement[:index_head.end()] + " ASYNC" + statement[index_head.end():]
         conn.execute(async_statement, prepare=False)
+        if index_head.group("unique"):
+            name_match = re.match(
+                r'\s*(?:IF\s+NOT\s+EXISTS\s+)?("(?:[^"]|"")+"|\S+)',
+                statement[index_head.end():], re.IGNORECASE,
+            )
+            assert name_match is not None  # The server accepted the index DDL.
+            name = name_match[1]
+            name = name[1:-1].replace('""', '"') if name.startswith('"') else name.lower()
+            wait_seconds = _schema_unique_index_wait_seconds()
+            warned = False
+            for attempt in range(wait_seconds + 1):
+                try:
+                    row = conn.execute(
+                        "SELECT i.indisvalid FROM pg_index i "
+                        "JOIN pg_class c ON c.oid = i.indexrelid "
+                        "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                        "WHERE c.relname = %s AND n.nspname = current_schema()",
+                        (name,), prepare=False,
+                    ).fetchone()
+                    if row and row[0]:
+                        return
+                except psycopg.Error:
+                    if not warned:
+                        log.warning("Could not read validity of DSQL unique index %s; retrying", name)
+                        warned = True
+                if attempt < wait_seconds:
+                    time.sleep(1)
+            # Without a valid arbiter, dependent writes fail closed: no insert,
+            # no duplicate; the provider redelivers. Raising here would instead
+            # crash-loop the whole control plane over one dedup index.
+            log.error(
+                "DSQL unique index %s is not valid; writes depending on it will be refused "
+                "until it is valid. Check SELECT * FROM sys.jobs; drop and recreate a failed build.",
+                name,
+            )
 
     # Generic entity IO ------------------------------------------------------
 
