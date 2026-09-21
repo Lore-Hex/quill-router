@@ -121,6 +121,7 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
             ("Serving regions", "USA, EU, Australia and UAE; availability varies by model. Region availability alone is not a residency guarantee."),
             ("API", "OpenAI-compatible chat completions, streaming, tools, structured output and reasoning content on supported models."),
             ("Catalog", "Authenticated native OpenAI catalog; not yet a Provider Reliability Contract v2 declaration."),
+            ("Pricing", "Input, output and cached-input rates refresh hourly from Telnyx's authenticated APIs. Listed routes use default service-tier prices; priority and flex tiers are not enabled through TrustedRouter."),
         ),
         resources=(
             ("API catalog", "https://api.telnyx.com/v2/ai/openai/models"),
@@ -132,6 +133,8 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
             ("Data processing addendum", "https://telnyx.com/legal/data-processing-addendum"),
             ("Subprocessors", "https://telnyx.com/legal/subprocessors"),
             ("Trust center and compliance reports", "https://trust.telnyx.com/"),
+            ("Service status", "https://status.telnyx.com"),
+            ("Support", "https://support.telnyx.com"),
         ),
     ),
     "tencent": ProviderBrand("https://www.tencentcloud.com/products/tokenhub"),

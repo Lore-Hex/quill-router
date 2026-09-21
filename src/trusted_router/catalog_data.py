@@ -948,8 +948,8 @@ PROVIDERS: dict[str, Provider] = {
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # Telnyx Inference — OpenAI-compatible chat completions at
-    # api.telnyx.com/v2/ai/openai. The authenticated model feed is joined
-    # hourly with Telnyx's current pricing page and public x402 catalog.
+    # api.telnyx.com/v2/ai/openai. Hourly refresh uses authenticated model
+    # prices, with standard-tier product API prices for missing rates.
     "telnyx": Provider(
         slug="telnyx",
         name="Telnyx",

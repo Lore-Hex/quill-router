@@ -57,7 +57,9 @@ def test_telnyx_profile_keeps_application_contacts_private(test_settings) -> Non
     for text in ("Telnyx LLC", "966115342", "27-0273220", "Telnyx-owned GPUs",
                  "third-party BYOK", "not yet a Provider Reliability Contract v2",
                  "https://telnyx.com/legal/data-processing-addendum",
-                 "https://api.telnyx.com/v2/pricing/products/inference"):
+                 "https://api.telnyx.com/v2/pricing/products/inference",
+                 "https://status.telnyx.com", "https://support.telnyx.com",
+                 "priority and flex tiers are not enabled through TrustedRouter"):
         assert text in html
     profile = PROVIDER_BRANDS["telnyx"]
     for label, value in (*profile.company_details, *profile.resources):
