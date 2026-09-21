@@ -15,6 +15,7 @@ from typing import Any
 import httpx
 import pytest
 
+from tests.lifecycle_clock import catalog_predates
 from trusted_router.catalog import (
     MODELS,
     NATIVE_DECISION_MODEL_IDS,
@@ -29,9 +30,11 @@ from trusted_router.catalog_data import (
     NATIVE_DECISION_MODEL_PROVIDERS,
     PRIVATE_PROXY_MODEL_TARGETS,
     TREV_1_0_MODEL_ID,
+    ZEV_1_0_MODEL_ID,
 )
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.provider_lifecycle import FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT
 from trusted_router.routing import decide_route_endpoint_candidates
 from trusted_router.storage import STORE
 
@@ -41,6 +44,16 @@ AUTHORIZE = "/v1/internal/gateway/authorize"
 
 
 JEV_HOSTS = [("typesafe", "jev-latest"), ("vercel-ai-gateway", JEV)]
+
+
+def _expected_active_chain(model_id: str) -> tuple[str, ...]:
+    chain = NAMED_DECISION_MODEL_PROVIDERS[model_id]
+    if model_id == ZEV_1_0_MODEL_ID and not catalog_predates(FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT):
+        # A reviewed retirement removes one host, not the named checkpoint.
+        # All unannounced missing hosts must still fail the contracts below.
+        assert chain == ("fireworks", "baseten")
+        return ("baseten",)
+    return chain
 
 
 def test_jev_is_an_input_only_decision_model() -> None:
@@ -104,16 +117,21 @@ def test_public_shape_marks_hosted_and_native_decision_models() -> None:
     assert model_to_openrouter_shape(ordinary)["trustedrouter"]["supports_decide"] is False
 
 
-def test_every_native_decision_model_has_a_prepaid_route_on_its_pinned_provider() -> None:
-    """The gateway asks for the pinned host with fallbacks off. If the catalog
-    drops that (model, provider) route, /v1/decide 400s for the model -- so the
-    pairing is pinned here, where a catalog refresh will trip it."""
+def test_every_native_decision_model_has_a_prepaid_route_on_its_unretired_chain() -> None:
+    """Named models and their bare backing IDs share the gateway's tuned
+    host chains. An announced retirement may advance to the existing next
+    host, but an unannounced loss still fails this availability contract."""
     assert set(NATIVE_DECISION_MODEL_PROVIDERS) == set(NATIVE_DECISION_MODEL_IDS)
     for model_id, provider in NATIVE_DECISION_MODEL_PROVIDERS.items():
         assert MODELS[model_id].supports_chat, model_id
         backing = PRIVATE_PROXY_MODEL_TARGETS.get(model_id, model_id)
         providers = {e.provider for e in endpoints_for_model(backing) if not e.is_byok}
-        assert provider in providers, f"{model_id} lost its {provider} route: {sorted(providers)}"
+        named_id = next((
+            named.id for named in NAMED_DECISION_MODELS
+            if model_id in (named.id, named.backing_model_id)
+        ), None)
+        expected = _expected_active_chain(named_id)[0] if named_id is not None else provider
+        assert expected in providers, f"{model_id} lost its {expected} route: {sorted(providers)}"
 
 
 def test_the_named_models_are_the_eight_people_were_promised() -> None:
@@ -154,7 +172,9 @@ def test_a_named_decision_model_is_priced_from_its_host_chain(model_id: str) -> 
     chain_endpoints = [
         e for e in endpoints_for_model(backing.id) if e.provider in chain and not e.is_byok
     ]
-    assert {e.provider for e in chain_endpoints} == set(chain), "a chained host lost the model"
+    assert {e.provider for e in chain_endpoints} == set(_expected_active_chain(model_id)), (
+        "an unretired chained host lost the model"
+    )
     dearest_prompt = max(e.prompt_price_microdollars_per_million_tokens for e in chain_endpoints)
     dearest_completion = max(
         e.completion_price_microdollars_per_million_tokens for e in chain_endpoints
@@ -372,14 +392,53 @@ async def _assert_the_outsider_is_routable(model_id: str, outsider: str) -> None
 @pytest.mark.parametrize("model_id", NAMED_IDS)
 async def test_a_named_model_authorizes_on_its_chain_in_order(model_id: str) -> None:
     chain = list(NAMED_DECISION_MODEL_PROVIDERS[model_id])
-    assert await _named_candidates(model_id, None) == chain
+    expected = list(_expected_active_chain(model_id))
+    assert await _named_candidates(model_id, None) == expected
     # What the attested gateway sends.
     assert (
         await _named_candidates(
             model_id, {"only": chain, "order": chain, "allow_fallbacks": len(chain) > 1}
         )
-        == chain
+        == expected
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model_id", [ZEV_1_0_MODEL_ID, "z-ai/glm-5.2-fast"])
+async def test_zev_and_bare_model_advance_to_existing_host_at_fireworks_cutoff(
+    model_id: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+    from datetime import timedelta
+
+    from trusted_router import catalog, provider_lifecycle
+
+    backing = "z-ai/glm-5.2-fast"
+    baseten = next(e for e in endpoints_for_model(backing) if e.provider == "baseten" and not e.is_byok)
+    fireworks = replace(
+        baseten, id=f"{backing}@fireworks/prepaid", provider="fireworks",
+        upstream_id="accounts/fireworks/routers/glm-5p2-fast",
+    )
+    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", {
+        **catalog.MODEL_ENDPOINTS, fireworks.id: fireworks,
+    })
+    cutoff = FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT
+    for at, expected in [
+        (cutoff - timedelta(microseconds=1), ["fireworks", "baseten"]),
+        (cutoff, ["baseten"]),
+    ]:
+        monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: at)
+        response = await _authorize({
+            "model": model_id, "route_type": "decide",
+            "estimated_input_tokens": 480, "max_output_tokens": 700,
+            "provider": {"only": ["fireworks", "baseten"], "order": ["fireworks", "baseten"],
+                         "allow_fallbacks": True},
+        })
+        assert response.status_code == 200, response.text
+        payload = response.json().get("data", response.json())
+        assert payload["model"] == backing
+        assert payload["provider"] == expected[0]
+        assert list(dict.fromkeys(c["provider"] for c in payload["route_candidates"])) == expected
 
 
 @pytest.mark.asyncio
@@ -399,8 +458,9 @@ async def test_a_named_chain_cannot_be_widened_or_reordered_by_the_request(
         "outsider first": {"order": [outsider, chain[-1]], "allow_fallbacks": True},
     }[preference]
     ordered = await _named_candidates(model_id, provider)
-    assert ordered == chain[: len(ordered)], ordered
-    assert ordered[0] == chain[0]
+    expected = list(_expected_active_chain(model_id))
+    assert ordered == expected[: len(ordered)], ordered
+    assert ordered[0] == expected[0]
 
 
 @pytest.mark.asyncio
@@ -631,13 +691,13 @@ def test_a_host_delisting_the_backing_model_never_stops_the_control_plane(
 
 
 @pytest.mark.parametrize("model_id", NAMED_IDS)
-def test_the_preferred_host_still_serves_the_backing_model(model_id: str) -> None:
+def test_the_preferred_unretired_host_still_serves_the_backing_model(model_id: str) -> None:
     # The name sells this host's measured speed. If this fails, a provider
     # delisted the model: re-measure before changing the chain. Production is
     # already serving from the rest of the chain (or answering 503 for this one
     # name), which is why this is a test and not a RuntimeError at import.
     backing = PRIVATE_PROXY_MODEL_TARGETS[model_id]
-    preferred = NAMED_DECISION_MODEL_PROVIDERS[model_id][0]
+    preferred = _expected_active_chain(model_id)[0]
     assert preferred in {
         endpoint.provider for endpoint in endpoints_for_model(backing) if not endpoint.is_byok
     }

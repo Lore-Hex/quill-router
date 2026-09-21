@@ -24,6 +24,9 @@ Only Fireworks endpoints are removed. Other providers may still serve the
 same checkpoint. Replacement models retain distinct IDs; requesting an old
 model never silently substitutes one of the recommendations above. Immutable
 DeepSeek 0813 routes can start without Fireworks after its announced retirement.
+`trustedrouter/zev-1.0` keeps its GLM 5.2 Fast backing model and uses its already
+configured Baseten fallback after the Fireworks host retires. It is not upgraded
+silently to GLM 5.3.
 
 The lifecycle check runs at request time and during discovery and refresh, so
 a stale upstream feed cannot restore these routes. Tests cover the exact
