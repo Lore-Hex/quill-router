@@ -239,7 +239,37 @@ def test_ecs_rollout_refuses_missing_protections_before_registration(
     assert result.returncode != 0
     assert (
         "refusing rollout without healthy-capacity and automatic rollback protections: "
-        + "; ".join(failed_checks) + " (observed " + json.dumps(config, sort_keys=True) + ")"
+        + "; ".join(failed_checks) + " (observed " + json.dumps(config, sort_keys=True)
+        + ", controller " + json.dumps(settings["deploymentController"], sort_keys=True) + ")"
+    ) in result.stderr
+    assert not any(c[:3] == ["aws", "ecs", "register-task-definition"] for c in recorded)
+    assert not any(c[:3] == ["aws", "ecs", "update-service"] for c in recorded)
+
+
+@pytest.mark.parametrize(("settings", "failed_checks"), [
+    ({"deploymentConfiguration": None},
+     ["minimumHealthyPercent", "maximumPercent", "deploymentCircuitBreaker.enable", "deploymentCircuitBreaker.rollback"]),
+    ({"deploymentConfiguration": {"minimumHealthyPercent": 100, "maximumPercent": 200, "deploymentCircuitBreaker": None}},
+     ["deploymentCircuitBreaker.enable", "deploymentCircuitBreaker.rollback"]),
+    ({"deploymentConfiguration": {"minimumHealthyPercent": None, "maximumPercent": None,
+                                  "deploymentCircuitBreaker": {"enable": True, "rollback": True}}},
+     ["minimumHealthyPercent", "maximumPercent"]),
+    ({"deploymentConfiguration": {"minimumHealthyPercent": "100", "maximumPercent": 200,
+                                  "deploymentCircuitBreaker": {"enable": True, "rollback": True}}},
+     ["minimumHealthyPercent"]),
+    ({"deploymentController": None}, ["deploymentController.type"]),
+], ids=["null-configuration", "null-breaker", "null-percents", "string-minimum", "null-controller"])
+def test_ecs_rollout_refuses_null_and_malformed_protections(
+    tmp_path: Path, settings: dict, failed_checks: list[str],
+) -> None:
+    # JSON null, not an absent key: the API contract allows it and it must never pass.
+    result, recorded = run_ecs_fixture(
+        tmp_path, extra_env={"ECS_DEPLOYMENT_SETTINGS": json.dumps(settings)},
+    )
+    assert result.returncode != 0
+    assert (
+        "refusing rollout without healthy-capacity and automatic rollback protections: "
+        + "; ".join(failed_checks) + " (observed "
     ) in result.stderr
     assert not any(c[:3] == ["aws", "ecs", "register-task-definition"] for c in recorded)
     assert not any(c[:3] == ["aws", "ecs", "update-service"] for c in recorded)

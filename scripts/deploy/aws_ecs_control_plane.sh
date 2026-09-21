@@ -96,7 +96,7 @@ for index in "${!REGIONS[@]}"; do
   python3 - "${WORK}/service.json" <<'PY'
 import json, sys
 s = json.load(open(sys.argv[1]))["services"][0]
-c = s["deploymentConfiguration"]
+c = s.get("deploymentConfiguration") or {}
 # ECS may add sibling fields to deploymentCircuitBreaker as the API evolves.
 # Check each required protection so extra fields do not reject safe rollouts.
 breaker = c.get("deploymentCircuitBreaker") or {}
@@ -111,7 +111,8 @@ checks = [
 failed = [name for name, passed in checks if not passed]
 if failed:
     raise SystemExit("refusing rollout without healthy-capacity and automatic rollback protections: "
-                     + "; ".join(failed) + " (observed " + json.dumps(c, sort_keys=True) + ")")
+                     + "; ".join(failed) + " (observed " + json.dumps(c, sort_keys=True)
+                     + ", controller " + json.dumps(s.get("deploymentController"), sort_keys=True) + ")")
 PY
   previous="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["services"][0]["taskDefinition"])' "${WORK}/service.json")"
   aws ecs describe-task-definition --task-definition "$previous" --include TAGS \
