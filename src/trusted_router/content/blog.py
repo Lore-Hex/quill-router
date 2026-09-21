@@ -49,6 +49,73 @@ FEATURED_SLUGS: tuple[str, ...] = (
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
+        slug="most-llm-calls-are-decisions",
+        title="Most LLM calls are decisions",
+        description=(
+            "TrustedRouter has an API for decisions now: POST a state and a set of "
+            "named questions to /api/alpha/decide and get a probability back for "
+            "every one. It serves Jev, TypeSafe AI's decision model, at about 250 ms "
+            "and $0.00002 a decision, and eight more models under names that rhyme "
+            "with it."
+        ),
+        published_date="2026-09-21",
+        source_label="Read the decide docs",
+        source_url="https://trustedrouter.com/docs/decide",
+        body_html="""
+<figure class="blog-hero-image"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif" role="img" aria-label="Most LLM calls are decisions: one request, a probability for every question">
+  <rect width="1200" height="630" fill="#ffffff"/>
+  <rect x="0" y="0" width="1200" height="8" fill="#0f6e56"/>
+  <text x="72" y="118" font-size="26" font-weight="600" fill="#6b7280" letter-spacing="2">DECISION MODELS</text>
+  <text x="72" y="216" font-size="66" font-weight="700" fill="#111827">Most LLM calls are decisions.</text>
+  <text x="72" y="286" font-size="40" font-weight="500" fill="#374151">One request, a probability for every question.</text>
+  <rect x="72" y="330" width="1056" height="1" fill="#eef0f2"/>
+  <g>
+    <text x="72" y="410" font-size="52" font-weight="700" fill="#0f6e56">250 ms</text>
+    <text x="72" y="448" font-size="24" fill="#6b7280">Jev, at the model</text>
+  </g>
+  <g>
+    <text x="452" y="410" font-size="52" font-weight="700" fill="#0f6e56">$0.00002</text>
+    <text x="452" y="448" font-size="24" fill="#6b7280">about one decision</text>
+  </g>
+  <g>
+    <text x="912" y="410" font-size="52" font-weight="700" fill="#111827">9 models</text>
+    <text x="912" y="448" font-size="24" fill="#6b7280">one request shape</text>
+  </g>
+  <rect x="72" y="512" width="1056" height="62" rx="8" fill="#111827"/>
+  <text x="600" y="552" font-size="30" fill="#f8fafc" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,monospace">POST /api/alpha/decide</text>
+</svg></figure>
+<p>Most LLM calls in production are decisions. Look at what your own code does with the model's answer. It checks whether the customer is asking for a refund, picks one of five queues, rates how urgent a ticket is, or decides whether a message is spam. The paragraph that came back gets thrown away as soon as an if-statement has read it. We have been buying essays and using one word of each.</p>
+
+<p>TrustedRouter has an API for decisions now. You POST a model, a state and a set of questions to <code>/api/alpha/decide</code>. The state is whatever JSON you have about the situation, and you name the questions. Each question is a boolean, a choice among options you declare, or a score on a scale you declare, and every one of them comes back with a probability, all in one call. I sent it a support ticket that said "I was charged twice for order A-1 and I need this fixed today" and asked three things at once: is this customer asking for money back, which queue does it belong in, and how urgent is it. The answer was refund 0.86, billing with probability 1, and urgency 2 on a scale of 0 to 2. Over eight calls on a warm connection the median round trip from my laptop was about 0.7 seconds, and about 250 milliseconds of that is the model. The response said it read 411 tokens, which at list price is about two thousandths of a cent.</p>
+
+<pre><code>curl https://api.trustedrouter.com/api/alpha/decide \\
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "typesafe-ai/jev",
+    "state": "I was charged twice for order A-1 and I need this fixed today.",
+    "questions": {
+      "refund": {"type": "boolean",
+        "instructions": "Is the customer asking for money back or for a charge to be reversed?"},
+      "route": {"type": "choice", "instructions": "Route this support ticket.",
+        "criteria": {"billing": "payment or charge problems",
+                     "shipping": "delivery problems",
+                     "technical": "bugs and outages"}},
+      "urgency": {"type": "score", "instructions": "How urgent is this ticket?",
+        "criteria": ["low: no time pressure", "medium: wants it soon", "high: demands action today"]}
+    }
+  }'</code></pre>
+
+<p>The model behind that answer is <a href="/models/typesafe-ai/jev">Jev</a>, a decision model from TypeSafe AI. It answers in about 250 milliseconds at the model, and it got 29 of 29 in our eval, which is small: 29 checks on eight support tickets. We call it at TypeSafe's own API, with automatic failover to Vercel's AI Gateway. OpenRouter carries Jev too, in beta, at a path called <code>/api/alpha/decisions</code> with a yes-or-no question type spelled <code>noul</code>. We accept that path and that spelling too.</p>
+
+<p>Eight more models answer the same route under names that rhyme with Jev. <code>trustedrouter/trev-1.0</code> is the default. It is an open-weight 120B reasoning model on the fastest hardware we could measure, it answers in about 300 milliseconds, it got 29 of 29, it fails over across four hosts, and it costs $0.00034 a decision. <code>trustedrouter/mev-1.0</code> is Mercury 2, a diffusion model, answering without deliberating in about 290 milliseconds at half of trev's price. It gets 28 of 29, because it over-rates the urgency of one ticket, and if you pass <code>reasoning_effort: "low"</code> it gets all 29 at about 600 milliseconds. The other six run from Llama 3.3 70B at about 390 milliseconds down to a small Gemma at Jev's price that takes about two seconds. All nine take the same request and answer in the same shape, so switching models means changing one string. A name is one configuration: the model, the hosts we measured it on, its reasoning setting and its output format. It runs only on those hosts, so the numbers on the <a href="/docs/decide">docs page</a> were measured on the machines that will answer you, and an improvement ships as trev-1.1, so a name you pinned keeps meaning what it meant. The route runs on the same attested gateway as the rest of TrustedRouter, with the same API key and the same billing, and it is in alpha, which is why alpha is in the path.</p>
+
+<p>Why not ask a chat model for JSON? You can. You can do it on this route too: name any chat model in the catalog, such as <code>anthropic/claude-opus-5</code>, and it answers the same questions with no tuning from us. Larger models do better on harder judgments. But a decision sits in the middle of a request, with a user waiting on the far side of it, and a frontier model working out whether a ticket is about billing is time and money spent on an essay nobody reads. A chat model also hands you a string, and a string can say anything. Every answer from the decide route is checked against your request before it leaves the gateway: every option that comes back is one you declared, every probability is between 0 and 1, and every distribution adds up.</p>
+
+<p>The probability is the part I care about most. A bare yes or no forces you to trust the model everywhere or nowhere. A number lets you draw the line yourself: refund requests above 0.9 go straight to the billing queue, everything between 0.3 and 0.9 goes to a person, and the rest is left alone. My double-charged customer scored 0.86, so under that rule a person reads it before any money moves. You will move that line as you watch what lands on each side of it, and moving it is a config change. Count the LLM calls in your codebase whose output ends in an if-statement. Each of those is a decision, and a decision should come back in under a second and cost two thousandths of a cent.</p>
+""",
+    ),
+    BlogPost(
         slug="we-raised-1-25m-seed",
         title=(
             "We Raised a $1.25M Seed to Continue Building the Open Source, "
