@@ -134,6 +134,19 @@ regional_quota_normalize_issuance_control() {
   esac
 }
 
+regional_quota_migrate_legacy_pilot() {
+  local live_workspaces="$1"
+  # The original synthetic account has no payment history and correctly fails
+  # the shared lease trust gate. Use the existing paid first-party smoke pilot,
+  # not a trust exemption. Preserve custom allowlists and issuance-off state.
+  case "$live_workspaces" in
+    d385c399-b245-4147-a528-0a4f6f170c71)
+      printf '%s\n' '45819281-0ce9-4811-a0cd-c660ab3a116d'
+      ;;
+    *) printf '%s\n' "$live_workspaces" ;;
+  esac
+}
+
 regional_quota_preflight_issuance_fleet() {
   local raw_regions="${TR_CONTROL_PLANE_REGIONS:-}"
   if [ -z "$raw_regions" ]; then
