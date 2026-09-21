@@ -59,12 +59,18 @@ resource "aws_cloudwatch_event_target" "tr_eu_synthetic" {
     arn = aws_sqs_queue.tr_eu_synthetic_dlq.arn
   }
 
-  # scripts/deploy/aws_eu_control_plane.sh also writes this input. Keep both
-  # definitions identical, including this key order and every value.
+  # scripts/deploy/aws_eu_control_plane.sh also writes this input, and it
+  # writes `run_remediator = true` as well. That key is DELIBERATELY ABSENT
+  # here: on 2026-09-02 the scheduled remediator pass on tr-eu was reading
+  # ~18 GB/min from DSQL (about $500/day), and an operator removed the key from
+  # the live target to stop it. TR_REMEDIATOR_MODE=off does not stop this pass;
+  # it only gates the in-process loop. This file still said `true`, so the next
+  # apply (2026-09-21, for an unrelated one-line change) silently turned the
+  # pass back on. Put the key back only together with an AWS EU deploy of a
+  # build whose remediator reads are bounded, after checking DSQL BytesRead.
   input = jsonencode({
     monitor_region = "eu-west-3"
     rotation_count = 8
-    run_remediator = true
     detach         = true
   })
 }
