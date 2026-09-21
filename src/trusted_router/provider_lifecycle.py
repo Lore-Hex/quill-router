@@ -27,6 +27,7 @@ PHALA_JULY_2026_EFFECTIVE_AT = datetime(2026, 7, 29, 18, 0, tzinfo=UTC)
 TOGETHER_MINIMAX_M27_RETIREMENT_AT = datetime(2026, 7, 27, 0, 0, tzinfo=UTC)
 TOGETHER_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 14, 0, 0, tzinfo=UTC)
 OPENAI_SEPTEMBER_28_RETIREMENT_AT = datetime(2026, 9, 28, 0, 0, tzinfo=UTC)
+FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 25, 0, 0, tzinfo=UTC)
 TOGETHER_DEEPSEEK_V4_FLASH_0731_RETIREMENT_AT = datetime(2026, 9, 29, 0, 0, tzinfo=UTC)
 BASETEN_JULY_2026_RETIREMENT_AT = datetime(2026, 7, 25, 0, 0, tzinfo=UTC)
 BASETEN_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 26, 0, 0, tzinfo=UTC)
@@ -325,6 +326,36 @@ _RETIREMENTS = (
         model_ids=frozenset({"qwen/qwen3.7-plus"}),
         upstream_ids=frozenset({"accounts/fireworks/models/qwen3p7-plus"}),
         effective_at=FIREWORKS_QWEN37_RETIREMENT_AT,
+    ),
+    # Fireworks' September 12 notice retires these shared Serverless routes,
+    # including Fast and US-only variants, on September 25. No time zone was
+    # given: use 00:00 UTC conservatively. Dedicated deployments are separate
+    # products, not these catalog routes. Replacements are distinct models,
+    # never aliases that may silently change a caller's requested checkpoint.
+    # https://docs.fireworks.ai/updates/changelog#2026-09-12
+    _Retirement(
+        provider="fireworks",
+        model_ids=frozenset({
+            "deepseek/deepseek-v4-flash-0731",
+            "deepseek/deepseek-v4-pro-0813",
+            "deepseek/deepseek-v4-flash-vision-exp",
+            "z-ai/glm-5.2",
+            "z-ai/glm-5.2-fast",
+            "meta-models/muse-glimmer-30b",
+            "moonshotai/kimi-k2.6",
+            "moonshotai/kimi-k2.7-code",
+        }),
+        upstream_ids=frozenset({
+            "accounts/fireworks/models/deepseek-v4-flash-0731",
+            "accounts/fireworks/models/deepseek-v4-pro-0813",
+            "accounts/fireworks/models/deepseek-v4-flash-vision-exp",
+            "accounts/fireworks/models/glm-5p2",
+            "accounts/fireworks/routers/glm-5p2-fast",
+            "accounts/fireworks/models/muse-glimmer-30b",
+            "accounts/fireworks/models/kimi-k2p6",
+            "accounts/fireworks/models/kimi-k2p7-code",
+        }),
+        effective_at=FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT,
     ),
     # Cerebras announced that Qwen 3.8 27B replaces Gemma 4 31B on its
     # Shared Tier on 2026-09-03. The notice did not specify a time zone, so

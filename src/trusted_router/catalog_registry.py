@@ -192,6 +192,7 @@ from trusted_router.pricing import (  # noqa: F401 - re-exported for back-compat
     cache_token_prices_microdollars,
     select_price_tier,
 )
+from trusted_router.provider_lifecycle import provider_model_retired
 
 # Catalog seed — only TR's Auto meta-model is hand-coded. Every other
 # entry comes from `_INGESTED_MODELS` below, which is built from
@@ -1311,7 +1312,10 @@ def _install_deepseek_v4_pro_release_routes() -> None:
         not historical
         or current is None
         or baseten_current is None
-        or fireworks_current is None
+        or (
+            fireworks_current is None
+            and not provider_model_retired("fireworks", DEEPSEEK_V4_PRO_0813_MODEL_ID)
+        )
     ):
         raise RuntimeError("DeepSeek V4 Pro release routes are incomplete")
 
@@ -1368,7 +1372,7 @@ def _install_deepseek_v4_pro_release_routes() -> None:
     install(
         DEEPSEEK_V4_PRO_0813_MODEL_ID,
         "DeepSeek V4 Pro 0813",
-        [current, baseten_current, fireworks_current],
+        [current, baseten_current] + ([fireworks_current] if fireworks_current is not None else []),
     )
 
 

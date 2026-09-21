@@ -100,6 +100,7 @@ from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.provider_lifecycle import (
     BASETEN_SEPTEMBER_2026_RETIREMENT_AT,
+    FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT,
     XIAOMI_MIMO_V25_PRO_ULTRASPEED_RETIREMENT_AT,
     provider_model_retired,
 )
@@ -247,8 +248,13 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
         ("z-ai/glm-5.2", "friendli"),
         ("cerebras/gpt-oss-120b", "cerebras"),
     ]:
-        assert f"{model_id}@{provider}/prepaid" in MODEL_ENDPOINTS
-        assert f"{model_id}@{provider}/byok" in MODEL_ENDPOINTS
+        expected = not (
+            provider == "fireworks"
+            and model_id == "z-ai/glm-5.2"
+            and not catalog_predates(FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT)
+        )
+        assert (f"{model_id}@{provider}/prepaid" in MODEL_ENDPOINTS) is expected
+        assert (f"{model_id}@{provider}/byok" in MODEL_ENDPOINTS) is expected
     for model in MODELS.values():
         assert model.provider in PROVIDERS
         assert isinstance(model.prompt_price_microdollars_per_million_tokens, int)
@@ -879,8 +885,11 @@ def test_deepseek_v4_pro_release_routes_are_keyed_and_credits_only() -> None:
     assert current_routes
     assert all(endpoint.usage_type == "Credits" for endpoint in current_routes)
     direct_is_pro = catalog_predates(DEEPSEEK_V4_PRO_REDIRECT_AT)
+    fireworks_is_live = catalog_predates(FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT)
     assert {endpoint.provider for endpoint in current_routes} == (
-        {"baseten", "fireworks"} | ({"deepseek"} if direct_is_pro else set())
+        {"baseten"}
+        | ({"fireworks"} if fireworks_is_live else set())
+        | ({"deepseek"} if direct_is_pro else set())
     )
     assert {endpoint.provider for endpoint in current_routes} <= GATEWAY_PREPAID_PROVIDER_SLUGS
     assert [
@@ -897,7 +906,10 @@ def test_deepseek_v4_pro_release_routes_are_keyed_and_credits_only() -> None:
         (endpoint.provider, endpoint.upstream_id)
         for endpoint in current_routes
         if endpoint.provider == "fireworks"
-    ] == [("fireworks", "accounts/fireworks/models/deepseek-v4-pro-0813")]
+    ] == (
+        [("fireworks", "accounts/fireworks/models/deepseek-v4-pro-0813")]
+        if fireworks_is_live else []
+    )
     baseten = next(
         endpoint for endpoint in current_routes if endpoint.provider == "baseten"
     )
@@ -2336,7 +2348,10 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     byok = MODEL_ENDPOINTS["z-ai/glm-5.2@zai/byok"]
     gmi = MODEL_ENDPOINTS.get("z-ai/glm-5.2@gmi/prepaid")
     deepinfra = MODEL_ENDPOINTS["z-ai/glm-5.2@deepinfra/prepaid"]
-    fireworks = MODEL_ENDPOINTS["z-ai/glm-5.2@fireworks/prepaid"]
+    fireworks = next((
+        endpoint for endpoint in endpoints_for_model("z-ai/glm-5.2")
+        if endpoint.provider == "fireworks" and endpoint.usage_type == "Credits"
+    ), None)
     novita = MODEL_ENDPOINTS["z-ai/glm-5.2@novita/prepaid"]
     phala = MODEL_ENDPOINTS["z-ai/glm-5.2@phala/prepaid"]
     siliconflow = MODEL_ENDPOINTS["z-ai/glm-5.2@siliconflow/prepaid"]
@@ -2356,7 +2371,11 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     if gmi is not None:
         assert gmi.upstream_id == "zai-org/GLM-5.2-FP8"
     assert deepinfra.upstream_id == "zai-org/GLM-5.2"
-    assert fireworks.upstream_id == "accounts/fireworks/models/glm-5p2"
+    if catalog_predates(FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT):
+        assert fireworks is not None
+        assert fireworks.upstream_id == "accounts/fireworks/models/glm-5p2"
+    else:
+        assert fireworks is None
     assert novita.upstream_id == "zai-org/glm-5.2"
     assert phala.upstream_id == "z-ai/glm-5.2"
     assert siliconflow.upstream_id == "zai-org/GLM-5.2"
@@ -2365,13 +2384,12 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     assert parasail.upstream_id == "parasail-glm-52"
     assert friendli.upstream_id == "zai-org/GLM-5.2"
     assert baseten.upstream_id == "zai-org/GLM-5.2"
-    for endpoint in (
+    for endpoint in [
         deepinfra,
-        fireworks,
         novita,
         friendli,
         baseten,
-    ):
+    ] + ([fireworks] if fireworks is not None else []):
         assert endpoint.prompt_price_microdollars_per_million_tokens > 0
         assert endpoint.completion_price_microdollars_per_million_tokens > 0
     if gmi is not None:

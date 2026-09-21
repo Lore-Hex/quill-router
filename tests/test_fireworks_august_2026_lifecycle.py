@@ -6,8 +6,9 @@ import pytest
 
 from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
-from trusted_router import provider_lifecycle
+from trusted_router import catalog, provider_lifecycle
 from trusted_router.catalog import endpoints_for_model
+from trusted_router.catalog_data import ModelEndpoint
 
 _AUGUST_CUTOFF = datetime(2026, 8, 27, 0, 0, tzinfo=UTC)
 _QWEN_CUTOFF = datetime(2026, 9, 4, 0, 0, tzinfo=UTC)
@@ -129,6 +130,14 @@ def test_hourly_refresh_cannot_restore_retired_fireworks_routes(
 def test_catalog_filters_fireworks_route_at_cutoff(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    endpoints = {
+        model_id: ModelEndpoint(
+            id=f"{model_id}@fireworks/prepaid", model_id=model_id,
+            provider="fireworks", usage_type="Credits", upstream_id=upstream_id,
+        )
+        for model_id, upstream_id in (_AUGUST_RETIRING | _AUGUST_REPLACEMENTS).items()
+    }
+    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", endpoints)
     monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _AUGUST_CUTOFF)
 
     assert all(
