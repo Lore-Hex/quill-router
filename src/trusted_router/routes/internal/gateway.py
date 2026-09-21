@@ -2247,6 +2247,14 @@ def _gateway_validate_sync(
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
     assert_workspace_billing_active(workspace)
+    from trusted_router.services.gateway_contract_warnings import report_gateway_contract_rejection
+
+    report_gateway_contract_rejection(
+        body.contract_rejection,
+        route=body.route_type,
+        workspace_id=workspace.id,
+        credential_id=api_key.hash,
+    )
     return {
         "data": {
             "workspace_id": workspace.id,
