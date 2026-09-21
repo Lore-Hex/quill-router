@@ -122,6 +122,43 @@ def test_aws_uses_both_live_ecs_regions_not_retired_apprunner(tmp_path: Path) ->
     assert result.stdout.strip() == SHA
 
 
+def test_aws_draining_target_after_a_rollout_is_not_serving_evidence(tmp_path: Path) -> None:
+    # After a rollout the deregistered target stays listed as "draining" for the
+    # deregistration delay. It must not make the healthy fleet unreadable.
+    payload = aws_payloads()
+    for region in ("eu-west-1", "eu-west-3"):
+        targets = payload[f"elbv2 describe-target-health:{region}"]["TargetHealthDescriptions"]
+        old = copy.deepcopy(targets[0])
+        old["Target"]["Id"] = "10.9.9.9"
+        old["TargetHealth"] = {"State": "draining", "Reason": "Target.DeregistrationInProgress"}
+        targets.append(old)
+    result = discover(tmp_path, "aws", payload)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == SHA
+
+
+@pytest.mark.parametrize("state", ["initial", "unhealthy", "unused", "unavailable"])
+def test_aws_extra_target_that_is_not_draining_still_fails_closed(tmp_path: Path, state: str) -> None:
+    payload = aws_payloads()
+    targets = payload["elbv2 describe-target-health:eu-west-3"]["TargetHealthDescriptions"]
+    extra = copy.deepcopy(targets[0])
+    extra["Target"]["Id"] = "10.9.9.9"
+    extra["TargetHealth"] = {"State": state}
+    targets.append(extra)
+    result = discover(tmp_path, "aws", payload)
+    assert result.returncode != 0, result.stdout
+    assert result.stdout == ""
+
+
+def test_aws_only_a_draining_target_is_not_a_serving_fleet(tmp_path: Path) -> None:
+    payload = aws_payloads()
+    targets = payload["elbv2 describe-target-health:eu-west-3"]["TargetHealthDescriptions"]
+    targets[0]["TargetHealth"] = {"State": "draining"}
+    result = discover(tmp_path, "aws", payload)
+    assert result.returncode != 0, result.stdout
+    assert result.stdout == ""
+
+
 @pytest.mark.parametrize("fault", [
     "missing_region", "service_failure", "zero_tasks", "pending", "rolling",
     "two_deployments", "missing_task", "task_failure", "old_task_definition",
