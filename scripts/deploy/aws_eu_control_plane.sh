@@ -411,8 +411,10 @@ echo "https://${URL}"
 #
 # This one existing rule is the only recurring-work owner for the AWS observer:
 # App Runner replicas explicitly disable both in-process loops. The detached
-# request runs one bounded synthetic pass and one semaphore-protected
-# remediation pass. No second rule, task service, or paid scheduler is created.
+# request runs one bounded synthetic pass, and one semaphore-protected
+# remediation pass when the target's Input asks for it (that Input is owned by
+# infra/aws_synthetic_monitoring.tf; see below). No second rule, task service,
+# or paid scheduler is created.
 #
 # rotation_count=8 (the route's hard clamp) with NO rotation_models pin. The
 # pin to two DeepSeek ids meant exactly two of the 448 catalogue models ever
@@ -518,36 +520,60 @@ PY
   log "connection AUTHORIZED with current token"
 
   DEST_ARN=$(aws events list-api-destinations --region "$REGION" --name-prefix tr-eu-synthetic-run --query 'ApiDestinations[0].ApiDestinationArn' --output text)
-  TARGETS=$(python3 - "$DEST_ARN" "$ROLE_ARN" "$REGION" "$DLQ_ARN" <<'PY'
+  aws events put-rule --region "$REGION" --name "$RULE_NAME" --schedule-expression 'rate(2 minutes)' --state ENABLED >/dev/null
+
+  # The target's Input (what each tick asks the observer to do, including
+  # whether it runs a remediator pass) has ONE owner:
+  # infra/aws_synthetic_monitoring.tf. This script used to write its own copy,
+  # with run_remediator=true, while Terraform wrote another. On 2026-09-02 an
+  # operator removed that key from the live target to stop a DSQL read bill of
+  # about $500 a day; on 2026-09-21 a Terraform apply for an unrelated change
+  # put it back, and the next run of this script would have done the same. So
+  # this script no longer has an opinion: it carries the live Input forward
+  # byte for byte (read as JSON, written as JSON, never as shell text) and only
+  # re-asserts the parts of the target it has always derived (destination,
+  # role, dead-letter queue). Change the Input with a pull request against the
+  # Terraform file. To stop remediation NOW, set TR_REMEDIATOR_MODE=off on the
+  # observer: that refuses scheduled passes too.
+  LIVE_TARGETS=$(aws events list-targets-by-rule --region "$REGION" --rule "$RULE_NAME" --output json)
+  TARGETS=$(python3 - "$DEST_ARN" "$ROLE_ARN" "$DLQ_ARN" "$LIVE_TARGETS" <<'PY'
 import json
 import sys
 
-dest_arn, role_arn, region, dlq_arn = sys.argv[1:5]
-rule_input = {
-    "monitor_region": region,
-    "rotation_count": 8,
-    # The App Runner remediator loop is disabled. Reuse this singleton owner
-    # instead of multiplying remediation by autoscaled web replicas.
-    "run_remediator": True,
-    # REQUIRED here: EventBridge API destinations abandon the request
-    # after ~5s and a probe pass takes 10-17s, so without detach every
-    # tick is a FailedInvocation (observed 15/15) even though the app
-    # completes the run and returns 200. detach acknowledges in
-    # milliseconds and probes in the background.
-    "detach": True,
-}
+dest_arn, role_arn, dlq_arn, live_targets = sys.argv[1:5]
+# The listing is read as JSON, so the Input arrives as the exact string
+# EventBridge holds, and it leaves inside a JSON document too. (Text output
+# through $(...) would drop a trailing newline.)
+inputs = [
+    target.get("Input")
+    for target in json.loads(live_targets).get("Targets", [])
+    if target.get("Id") == "synthetic"
+]
+if len(inputs) != 1 or not isinstance(inputs[0], str):
+    raise SystemExit(
+        "FAILED: the rule has no 'synthetic' target with an Input. That target is "
+        "declared in infra/aws_synthetic_monitoring.tf: apply the Terraform root, "
+        "then run this again."
+    )
+live_input = inputs[0]
+# Refuse to carry forward something the observer could not read.
+try:
+    parsed = json.loads(live_input)
+except ValueError:
+    parsed = None
+if not isinstance(parsed, dict):
+    raise SystemExit("FAILED: the live EventBridge Input is not a JSON object")
 print(json.dumps([
     {
         "Id": "synthetic",
         "Arn": dest_arn,
         "RoleArn": role_arn,
         "DeadLetterConfig": {"Arn": dlq_arn},
-        "Input": json.dumps(rule_input),
+        "Input": live_input,
     }
 ]))
 PY
 )
-  aws events put-rule --region "$REGION" --name "$RULE_NAME" --schedule-expression 'rate(2 minutes)' --state ENABLED >/dev/null
   aws events put-targets --region "$REGION" --rule "$RULE_NAME" --targets "$TARGETS" >/dev/null
 
   # tr-ops-chat-cloudwatch-alarms exists only in us-east-1. CloudWatch alarm

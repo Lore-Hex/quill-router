@@ -8,7 +8,10 @@ fixed cadence, and records every decision it makes as a durable, queryable
 row — so automation history is evidence, not folklore.
 
 MODES (settings.remediator_mode):
-  * "off"      — loop does not start.
+  * "off"      — no pass runs in this process: the in-process loop does not
+                 start (main.py), and the internal routes that schedulers call
+                 (routes/internal/synthetic.py) skip the pass and say so once.
+                 This is the operator's kill switch.
   * "observe"  — detectors run, decisions are recorded and page-worthy ones
                  alert, but NOTHING that would move traffic or mutate state
                  executes. This is the calibration mode: a week of decision

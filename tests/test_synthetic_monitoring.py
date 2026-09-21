@@ -5028,3 +5028,96 @@ def test_internal_remediator_runs_between_heartbeats_and_requires_token(
     assert response.status_code == 200
     assert response.json() == {"data": {"decisions": 2}}
     assert events == ["heartbeat", "remediate", "heartbeat"]
+
+
+def test_internal_remediator_is_refused_when_the_mode_is_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GCP's scheduled worker calls this route. With the kill switch on it must
+    do nothing and still answer 200 with a decision count, because the worker
+    treats anything else as a failed scheduler run and pages.
+
+    The test above is the positive control: same route, default mode, the pass
+    runs between two heartbeats."""
+    from trusted_router.routes.internal import synthetic as synthetic_routes
+
+    events: list[str] = []
+    monkeypatch.setattr(
+        synthetic_routes, "record_heartbeat", lambda name, *, settings: events.append("heartbeat")
+    )
+    monkeypatch.setattr(
+        synthetic_routes, "run_remediator_pass", lambda settings: events.append("remediate") or []
+    )
+    admitted: list[str] = []
+    real_admit = synthetic_routes._admit_operation
+    monkeypatch.setattr(
+        synthetic_routes,
+        "_admit_operation",
+        lambda name: admitted.append(name) or real_admit(name),
+    )
+    settings = _benchmark_ingest_settings().model_copy(update={"remediator_mode": "off"})
+    client = TestClient(create_app(settings, init_observability=False))
+
+    unauthorized = client.post("/v1/internal/synthetic/remediate")
+    response = client.post(
+        "/v1/internal/synthetic/remediate",
+        headers={"x-trustedrouter-internal-token": "test-observer-secret"},
+    )
+
+    # The switch is not a way around authentication.
+    assert unauthorized.status_code in (401, 403)
+    assert response.status_code == 200
+    assert response.json() == {"data": {"decisions": 0, "skipped": "remediator_mode_off"}}
+    assert events == []
+    # It neither holds the remediation slot nor spends its rate limit.
+    assert admitted == []
+
+
+@pytest.mark.asyncio
+async def test_scheduled_worker_accepts_the_mode_off_answer(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The worker and the route ship in the same image but are read by
+    different people. This feeds the route's REAL mode-off answer through the
+    worker's REAL parser, so neither side can change shape alone: a worker that
+    rejected it would fail its scheduled job every few minutes for as long as
+    the switch stayed off."""
+    from trusted_router.synthetic import cli as cli_module
+
+    settings = _benchmark_ingest_settings().model_copy(update={"remediator_mode": "off"})
+    app_client = TestClient(create_app(settings, init_observability=False))
+
+    def relay(request: httpx.Request) -> httpx.Response:
+        answered = app_client.post(
+            request.url.path,
+            headers={
+                "x-trustedrouter-internal-token": request.headers[
+                    "x-trustedrouter-internal-token"
+                ]
+            },
+        )
+        return httpx.Response(
+            answered.status_code,
+            content=answered.content,
+            headers={"content-type": "application/json"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(relay)) as client:
+        accepted = await cli_module._post_remediator(
+            client,
+            url="https://trustedrouter.com/v1/internal/synthetic/remediate",
+            internal_token="test-observer-secret",  # noqa: S106 - test placeholder.
+        )
+        wrong_token = await cli_module._post_remediator(
+            client,
+            url="https://trustedrouter.com/v1/internal/synthetic/remediate",
+            internal_token="not-the-secret",  # noqa: S106 - test placeholder.
+        )
+
+    output = capsys.readouterr()
+    assert accepted is True
+    assert "remediator decisions: 0" in output.out
+    # Control: the relay is not a rubber stamp; the same call without the right
+    # token is a failed run.
+    assert wrong_token is False
+    assert "remediator check failed:" in output.err

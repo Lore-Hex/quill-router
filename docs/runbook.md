@@ -632,6 +632,74 @@ The collector verifies every key before append (kid derivation, commitment
 set membership, GCP attestation chain); a kid observed with a different key
 logs `ALERT receipt_key_kid_collision` and never replaces the stored key.
 
+## <a id="stop-remediator"></a>Stopping the remediator
+
+The remediator (`src/trusted_router/synthetic/remediator.py`) reads the health
+signals of its own cloud on a cadence and records decisions. When it has to stop
+now, because it is reading too much or paging wrongly, the switch is one
+environment variable on the control-plane services of that cloud:
+
+```
+TR_REMEDIATOR_MODE=off
+```
+
+`off` stops the in-process loop and ALSO every pass a scheduler requests over
+HTTP: AWS's EventBridge tick (`run_remediator` on `/internal/synthetic/run`) and
+GCP's scheduled worker (`/internal/synthetic/remediate`). Neither scheduler sees
+a failure, so turning the remediator off does not page as a failed scheduler
+run:
+
+- AWS's tick is detached (`detach: true`), so it gets the same
+  `202 {"data": {"scheduled": true}}` as always, and the pass is skipped in the
+  background. A caller that waits on `/run` instead gets a 200 whose `data` has
+  `"remediator_skipped": "remediator_mode_off"` and no `remediator_decisions`.
+- GCP's worker gets `200 {"data": {"decisions": 0, "skipped":
+  "remediator_mode_off"}}`, which it accepts as a run with no decisions.
+
+The process logs `synthetic.remediator_skipped reason=mode_off` once, on the
+first pass it refuses. On AWS and GCP, where a scheduler asks over HTTP, that
+log line is how you confirm the switch took; the scheduler's own result will
+not tell you.
+
+The accepted values are `off`, `observe` and `act`; case and surrounding
+whitespace do not matter. Anything else (`disabled`, `false`, an empty value)
+refuses to start, so a misspelling is an error in front of you and the previous
+revision keeps serving, instead of a remediator that silently kept running.
+
+Until 2026-09-21 `off` covered only the in-process loop. Both AWS observers ran
+with it set and a scheduled pass still read about 309 MB from DSQL every two
+minutes. If a service runs a build older than that fix, `off` is not enough:
+also remove `run_remediator` from the scheduler's request.
+
+Where the variable lives, and whether a deploy keeps your change:
+
+- **AWS** (`tr-cp-euw3`, `tr-cp-euw1`): the ECS task definition. It STAYS: an
+  ECS release clones the live task definition and changes only the image and
+  the release marker (`scripts/deploy/prepare_ecs_release.py`). Both services
+  had it set to `off` when this was written (checked 2026-09-21).
+- **GCP**: the Cloud Run service environment. It does NOT stay:
+  `scripts/deploy/rollout.sh` deploys with `--set-env-vars`, which replaces the
+  whole environment with the script's list, and the mode is not in that list,
+  so the next deploy (several a day) returns it to the default `observe`. Set
+  it live to stop the bleeding, then add it to the script in a pull request.
+- **Azure**: the Container App environment. It does NOT stay either, and on
+  purpose: `scripts/deploy/azure_control_plane.sh` re-asserts `observe` and
+  refuses `off`, because the in-process loop is Azure's only remediation owner.
+  Set it live in an emergency; keeping it off means changing that script.
+
+Do not stop it by editing the EventBridge target by hand. That target's `input`
+is owned by `infra/aws_synthetic_monitoring.tf`, and the next merge that touches
+`infra/**` re-applies the whole root and undoes a live-only edit (see
+`infra/README.md`). Changing what the tick asks for is a pull request against
+that file.
+
+Before turning the AWS remediator back on, deploy a build that includes the
+batched route-health reads (#1000) and then watch DSQL `BytesRead` per minute
+for the Paris cluster (`AWS/AuroraDSQL`, `ClusterId`
+`tnt642i3ofzpn5z62msacutpuu`). Baseline is about 1.6 MB/min. On the pre-#1000
+build (`a31daa4`) one pass read a flat ~309 MB, about 287 ReadDPU per minute
+against a baseline of 6.
+
 ## <a id="settle-outbox"></a>Settle outbox: flip, verify, monitor, roll back
 
 Durably recover completed charges whose settle intent was recorded but whose

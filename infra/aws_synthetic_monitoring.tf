@@ -59,15 +59,30 @@ resource "aws_cloudwatch_event_target" "tr_eu_synthetic" {
     arn = aws_sqs_queue.tr_eu_synthetic_dlq.arn
   }
 
-  # scripts/deploy/aws_eu_control_plane.sh also writes this input, and it
-  # writes `run_remediator = true` as well. That key is DELIBERATELY ABSENT
-  # here: on 2026-09-02 the scheduled remediator pass on tr-eu was reading
-  # ~18 GB/min from DSQL (about $500/day), and an operator removed the key from
-  # the live target to stop it. TR_REMEDIATOR_MODE=off does not stop this pass;
-  # it only gates the in-process loop. This file still said `true`, so the next
-  # apply (2026-09-21, for an unrelated one-line change) silently turned the
-  # pass back on. Put the key back only together with an AWS EU deploy of a
-  # build whose remediator reads are bounded, after checking DSQL BytesRead.
+  # THIS FILE IS THE ONLY OWNER OF `input`: what each tick asks the observer to
+  # do, including whether it runs a remediator pass (`run_remediator`).
+  #
+  # It used to have two writers. scripts/deploy/aws_eu_control_plane.sh (the
+  # retired App Runner deploy) wrote its own copy with `run_remediator = true`.
+  # On 2026-09-02 an operator removed that key from the LIVE target because the
+  # scheduled pass was reading ~18 GB/min from DSQL (about $500/day); this file
+  # still said `true`, so on 2026-09-21 an apply for an unrelated one-line
+  # change turned the pass back on for 27 minutes. That script now carries the
+  # live value forward unchanged, and the ECS deploy never touches EventBridge.
+  #
+  # Every apply of this root re-asserts this value, whatever the pull request
+  # was about. So a hand edit of the live target lasts only until the next
+  # infra merge: change it HERE. To stop remediation in a hurry, do not edit
+  # the target at all: set TR_REMEDIATOR_MODE=off on the observer services. That
+  # refuses scheduled passes too, and an ECS release clones the live task
+  # definition, so it survives deploys.
+  #
+  # `run_remediator` is absent on purpose. Measured 2026-09-21 on the build
+  # then deployed (a31daa4, which predates the batched route-health reads of
+  # #1000): one scheduled pass read a flat ~309 MB from the Paris cluster, every
+  # 2 minutes (about 287 ReadDPU/min against a baseline of 6). Put the key back
+  # only after the AWS observers run a build with #1000, and then check DSQL
+  # BytesRead per minute before leaving it on.
   input = jsonencode({
     monitor_region = "eu-west-3"
     rotation_count = 8
