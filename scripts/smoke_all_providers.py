@@ -84,7 +84,16 @@ PROBES: list[tuple[str, str]] = [
 #     running instance. If the MIG is at targetSize=0 the smoke will
 #     fail TLS for this region — that's a deployment-state signal,
 #     not a smoke bug. Resize the MIG and re-probe.
-# Control-plane-only regions have no entry in this gateway inventory.
+#   - us-west1: a gateway-only region, so the us-east4 caveat about a
+#     regional certificate needing a running MIG instance applies and
+#     there is one more thing to know. It has no Cloud Run control
+#     plane of its own: its authorize and settle calls go through the
+#     global load balancer to the nearest control-plane region
+#     (us-central1) instead of to a same-region one. If its latency
+#     reads higher than the regions that have a local control plane,
+#     that extra hop is the first explanation, not a provider.
+# Control-plane-only regions have no entry in this gateway inventory. A
+# gateway-only region does: this smoke dials gateways, never Cloud Run.
 REGIONS = {
     region: (
         "https://api.trustedrouter.com"

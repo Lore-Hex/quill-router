@@ -64,7 +64,7 @@ value = [a-z0-9_]{1,24}                          ; total header ≤ 160 bytes
 a  = attempt index 0..99 (0 = first attempt; same semantics as x-stainless-retry-count)
 po = previous attempt outcome: none | http_error | transport_error | timeout | stream_broken
 pc = previous error class (ErrorClass, §5.3) or none
-ph = previous host: apex | ally | uptime | us_central1 | us_east4 | europe_west4 | control | custom | none
+ph = previous host: apex | ally | uptime | us_central1 | us_east4 | us_west1 | europe_west4 | control | custom | none
 pm = previous attempt elapsed ms 0..3600000
 sm = ms since the first attempt started 0..3600000
 s  = 0|1 streaming
@@ -139,7 +139,7 @@ the server assigns wall time).
 
 ### 5.2 Enums (closed)
 ```
-Host       = apex | ally | uptime | us_central1 | us_east4 | europe_west4 | control | custom
+Host       = apex | ally | uptime | us_central1 | us_east4 | us_west1 | europe_west4 | control | custom
 Endpoint   = chat_completions | messages | responses | embeddings | images | videos | models | fusion
            | control_other | inference_other
 Outcome    = ok | http_error | transport_error | timeout | stream_broken | aborted
@@ -154,6 +154,9 @@ LatencyBucket = lt100 | lt200 | lt400 | lt800 | lt1600 | lt3200 | lt6400 | lt128
 ```
 Host mapping (SDK-side): `api.trustedrouter.com`→apex, `api.allyrouter.com`→ally, `api.uptimerouter.com`→uptime,
 `api-<region>.quillrouter.com`→region enum, `trustedrouter.com`→control, anything else→custom.
+The SDK-side region table is closed as well, so an SDK released before a gateway region existed reports that
+region's hostname as `custom`. A new region therefore enters this server-side enum FIRST (an unknown value drops
+the whole `x-tr-client` header and rejects the beacon batch) and the SDKs follow; `us_west1` was added that way.
 
 ### 5.3 Per-request event (sampled diagnostics)
 ```

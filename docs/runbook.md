@@ -460,13 +460,16 @@ succeed.
 Most likely a synthetic monitor problem, not a TR problem.
 
 1. Check `scripts/deploy/synthetic.sh` deployed a Cloud Run Job per
-   `TR_REGIONS`. The synthetic monitor for each region runs on Cloud
-   Scheduler (cron `* * * * *`).
+   `TR_SYNTHETIC_MONITOR_REGIONS` entry (default `us-central1,europe-west4`).
+   That is NOT one job per `TR_REGIONS` entry: every monitor job probes every
+   gateway region in `TR_REGIONS`, so a gateway-only region such as `us-west1`
+   is probed from those monitors and has no job of its own. The monitors run
+   on Cloud Scheduler (cron `*/3 * * * *`).
 2. Look at the monitor's logs:
    ```bash
    gcloud run jobs executions list \
-     --job=trusted-router-synthetic-<region> \
-     --region=<region> --project=quill-cloud-proxy --limit=3
+     --job=trusted-router-synthetic-<monitor-region> \
+     --region=<monitor-region> --project=quill-cloud-proxy --limit=3
    ```
 3. If executions are failing, the monitor's API key (`TR_SYNTHETIC_MONITOR_API_KEY`)
    may have rotated. Check the env var on the job and the secret in
@@ -1406,12 +1409,14 @@ for prov, n in sorted(c.items(), key=lambda kv: -kv[1]):
 ```
 
 Per-region MIG status (GCP enclave). São Paulo’s enclave MIG is retired; its
-`southamerica-east1` Cloud Run control plane remains live and deployed:
+`southamerica-east1` Cloud Run control plane remains live and deployed.
+`us-west1` is the reverse: an enclave MIG with no Cloud Run control plane:
 ```bash
 for entry in \
   us-central1:quill-enclave-mig-us \
   us-east4:quill-enclave-mig-useast4 \
-  europe-west4:quill-enclave-mig-eu; do
+  europe-west4:quill-enclave-mig-eu \
+  us-west1:quill-enclave-mig-uswest1; do
   region=${entry%%:*}
   mig=${entry#*:}
   echo "=== ${region} ==="

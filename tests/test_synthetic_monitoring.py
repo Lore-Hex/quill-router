@@ -389,6 +389,16 @@ def test_gateway_latency_anatomy_distinguishes_global_and_direct_targets() -> No
             latency_milliseconds=120,
             created_at=created_at,
         ),
+        _sample(
+            id="oregon",
+            target="us-west1",
+            target_region="us-west1",
+            monitor_region="us-central1",
+            probe_type="gateway_reused_path",
+            status="up",
+            latency_milliseconds=40,
+            created_at=created_at,
+        ),
     ]
 
     rows = status_snapshot(samples, now=now)["headline_metrics"]["latency_anatomy"]
@@ -400,6 +410,9 @@ def test_gateway_latency_anatomy_distinguishes_global_and_direct_targets() -> No
         "southamerica-east1": (
             "São Paulo direct · us-central1 -> southamerica-east1"
         ),
+        # Without its own entry a target falls back to a title-cased slug,
+        # which would put "Us West1" on the public page.
+        "us-west1": "US West direct · us-central1 -> us-west1",
     }
 
 
@@ -2369,7 +2382,7 @@ def test_configured_targets_include_primary_gateway_and_ignore_retired_enclave()
     settings = Settings(
         environment="test",
         api_base_url="https://api.trustedrouter.com/v1",
-        regions="us-central1,us-east4,europe-west4,southamerica-east1",
+        regions="us-central1,us-east4,europe-west4,us-west1,southamerica-east1",
         primary_region="us-central1",
         synthetic_control_plane_health_url="https://trustedrouter.com",
     )
@@ -2388,8 +2401,18 @@ def test_configured_targets_include_primary_gateway_and_ignore_retired_enclave()
     assert by_name["europe-west4"].api_base_url == (
         "https://api-europe-west4.quillrouter.com/v1"
     )
+    # Gateway-only: no Cloud Run region stands behind it, and it is probed
+    # exactly like the others because the probe dials the gateway itself.
+    assert by_name["us-west1"].api_base_url == "https://api-us-west1.quillrouter.com/v1"
+    assert by_name["us-west1"].region == "us-west1"
     assert "southamerica-east1" not in by_name
-    assert set(by_name) == {"canonical", "us-central1", "us-east4", "europe-west4"}
+    assert set(by_name) == {
+        "canonical",
+        "us-central1",
+        "us-east4",
+        "europe-west4",
+        "us-west1",
+    }
     assert all(
         target.control_plane_url is None
         for name, target in by_name.items()
@@ -2439,16 +2462,63 @@ def test_status_components_include_all_warm_regional_gateways() -> None:
             status="up",
             created_at=(now - dt.timedelta(seconds=10)).isoformat().replace("+00:00", "Z"),
         ),
+        _sample(
+            id="syn_us_west",
+            target="us-west1",
+            target_region="us-west1",
+            probe_type="tls_health",
+            status="up",
+            created_at=(now - dt.timedelta(seconds=10)).isoformat().replace("+00:00", "Z"),
+        ),
     ]
 
     components = {row["id"]: row for row in status_snapshot(samples, now=now)["components"]}
 
     assert components["us_central1_regional_api"]["status"] == "up"
     assert components["us_east4_regional_api"]["status"] == "up"
+    assert components["us_west1_regional_api"]["status"] == "up"
+    assert components["us_west1_regional_api"]["name"] == "US West Regional API"
     assert components["eu_regional_api"]["status"] == "up"
     # southamerica-east1 retired 2026-09-04; a sample for it would now land in
     # the uncategorised bucket rather than publish a component.
     assert "sa_regional_api" not in components
+
+
+@pytest.mark.parametrize(
+    ("target", "component_id"),
+    [
+        ("us-central1", "us_central1_regional_api"),
+        ("us-east4", "us_east4_regional_api"),
+        ("us-west1", "us_west1_regional_api"),
+        ("europe-west4", "eu_regional_api"),
+    ],
+)
+def test_regional_gateway_history_survives_on_rollups_alone(target: str, component_id: str) -> None:
+    """A regional row's history reaches it only through COMPONENT_PROBES.
+
+    status_snapshot keeps a component's hourly rollups only when their probe
+    type is in component_probe_types(component_id). A component left out of
+    COMPONENT_PROBES therefore still renders its LIVE samples, so it looks
+    fully wired, while every rollup is discarded and its uptime history sits
+    empty. Nothing else notices: dropping the us-west1 entry left the rest of
+    this file green. So the sample here is two hours old and reaches the
+    snapshot as a rollup only.
+    """
+    now = utcnow()
+    sample = _sample(
+        id=f"syn_{target}_two_hours_ago",
+        target=target,
+        target_region=target,
+        probe_type="tls_health",
+        status="up",
+        created_at=(now - dt.timedelta(hours=2)).isoformat().replace("+00:00", "Z"),
+        latency_milliseconds=40,
+    )
+
+    snapshot = status_snapshot([], rollups=_rollups_for_samples([sample]), now=now)
+
+    component = next(row for row in snapshot["components"] if row["id"] == component_id)
+    assert sum(bucket["sample_count"] for bucket in component["history"]) == 1
 
 
 @pytest.mark.asyncio

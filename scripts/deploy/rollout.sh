@@ -1008,11 +1008,13 @@ deploy_one_region() {
   return 1
 }
 
-# Fan deploys out in parallel across every TR_REGIONS entry. Each
-# region's gcloud invocation runs in its own subshell so a slow image
-# pull in one cold region doesn't block the warm regions. Cloud Run scales to zero in
-# unused regions so the bill stays the same as a single-region deploy
-# at idle.
+# Fan deploys out in parallel across every control-plane region (the
+# DEPLOY_TARGET_REGIONS below). NOT TR_REGIONS: that is the attested gateway
+# inventory, and a gateway-only region such as us-west1 has no Cloud Run
+# service to deploy. Each region's gcloud invocation runs in its own subshell
+# so a slow image pull in one cold region doesn't block the warm regions.
+# Cloud Run scales to zero in unused regions so the bill stays the same as a
+# single-region deploy at idle.
 log_dir="$(mktemp -d "${TMPDIR:-/tmp}/tr-deploy-XXXXXX")"
 log "parallel deploy logs in ${log_dir}"
 

@@ -575,6 +575,7 @@ def test_unset_configuration_is_exactly_todays_target_list() -> None:
         "us-central1",
         "us-east4",
         "europe-west4",
+        "us-west1",
     ]
     assert all(target.connect_host is None for target in gcp)
     assert all(target.paid_probes is True for target in gcp)
@@ -861,6 +862,7 @@ def test_unconfigured_deployments_publish_none_of_them() -> None:
         "canonical_api",
         "us_central1_regional_api",
         "us_east4_regional_api",
+        "us_west1_regional_api",
         "eu_regional_api",
         "attestation",
         "billing_settlement",

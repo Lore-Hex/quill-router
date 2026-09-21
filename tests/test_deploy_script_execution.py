@@ -2328,7 +2328,7 @@ def test_combined_synthetic_refresh_preserves_security_boundaries(tmp_path: Path
         assert "TR_RELEASE=1234567" in update_text
         env_update = update[update.index("--update-env-vars") + 1]
         assert env_update.startswith("^|^")
-        assert "TR_REGIONS=us-central1,us-east4,europe-west4" in env_update.split("|")
+        assert "TR_REGIONS=us-central1,us-east4,europe-west4,us-west1" in env_update.split("|")
         assert "southamerica-east1" not in env_update
         assert "--set-secrets" not in update
         assert "--update-secrets" not in update
