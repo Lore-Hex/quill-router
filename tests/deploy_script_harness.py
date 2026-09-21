@@ -1354,6 +1354,22 @@ _INTERNAL_EDGE_LIVE_MAP_JSON = json.dumps(
 )
 
 
+def live_schedule_targets(*inputs: str | None, target_id: str = "synthetic") -> str:
+    """What `aws events list-targets-by-rule --output json` prints for the
+    observer's rule: one target per given Input (None = a target with no Input,
+    as one using an InputTransformer would be)."""
+    targets = []
+    for value in inputs:
+        target: dict[str, str] = {
+            "Id": target_id,
+            "Arn": "arn:aws:events:eu-west-3:330422590279:api-destination/tr-eu-synthetic-run/harness",
+        }
+        if value is not None:
+            target["Input"] = value
+        targets.append(target)
+    return json.dumps({"Targets": targets})
+
+
 @dataclass(frozen=True)
 class ScriptFixture:
     """What one script needs in order to reach its own last line under stubs."""
@@ -1633,6 +1649,16 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
             ),
             # It waits for the EventBridge API-key connection to authorize.
             (r"events describe-connection", "AUTHORIZED"),
+            # The target's Input is owned by infra/aws_synthetic_monitoring.tf;
+            # the script reads the live target and carries its Input forward.
+            # The Input here is the string Terraform's jsonencode writes
+            # (sorted keys, no spaces).
+            (
+                r"events list-targets-by-rule",
+                live_schedule_targets(
+                    '{"detach":true,"monitor_region":"eu-west-3","rotation_count":8}'
+                ),
+            ),
         ),
         cleanup_after_gate=(r"gcloud storage rm .*trusted-router-production[.]json",),
     ),

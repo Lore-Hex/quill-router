@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Literal, NamedTuple
 from urllib.parse import urlsplit
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -1226,10 +1226,11 @@ class Settings(BaseSettings):
     # with no per-cloud env edits. Empty disables (tests set environment=test,
     # which also gates the probes off — see run_synthetic_once).
     # The standing remediator (synthetic/remediator.py): "off" | "observe" |
-    # "act". Observe-first is the contract — a week of recorded decisions
-    # calibrates flap rates before any actuator moves traffic. "act" is
-    # accepted now so the flip is config-only later, but until actuators
-    # ship it behaves as observe.
+    # "act". "off" is the kill switch: it stops the in-process loop AND every
+    # pass a scheduler requests over HTTP. Observe-first is the contract — a
+    # week of recorded decisions calibrates flap rates before any actuator
+    # moves traffic. "act" is accepted now so the flip is config-only later,
+    # but until actuators ship it behaves as observe.
     remediator_mode: str = "observe"
     remediator_interval_seconds: int = 120
     # Cloud Run request-based CPU may pause background coroutines between
@@ -1282,6 +1283,20 @@ class Settings(BaseSettings):
             _LocalKeyFileSource(settings_cls),
             file_secret_settings,
         )
+
+    @field_validator("remediator_mode")
+    @classmethod
+    def remediator_mode_is_known(cls, value: str) -> str:
+        # A kill switch must not have a silent spelling. The readers compare
+        # with "off" exactly, so "OFF" or "disabled" used to mean "not off":
+        # the remediator kept running while the operator believed it stopped.
+        # A misspelt "observe" is no better the other way. Refuse to start, so
+        # the mistake is an error on the operator's screen and the previous
+        # revision keeps serving.
+        mode = value.strip().lower()
+        if mode not in {"off", "observe", "act"}:
+            raise ValueError("TR_REMEDIATOR_MODE must be one of: off, observe, act")
+        return mode
 
     @model_validator(mode="after")
     def production_is_fail_closed(self) -> Settings:

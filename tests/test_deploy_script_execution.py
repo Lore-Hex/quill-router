@@ -56,6 +56,7 @@ from .deploy_script_harness import (
     DeployScriptHarness,
     HarnessRun,
     ScriptFixture,
+    live_schedule_targets,
     summarise,
 )
 
@@ -1203,13 +1204,17 @@ def test_aws_observer_executes_bounded_capacity_tcp_health_and_waf_before_schedu
     assert targets[0]["DeadLetterConfig"] == {
         "Arn": "arn:aws:sqs:eu-west-3:330422590279:tr-eu-synthetic-dlq"
     }
-    scheduled_body = json.loads(targets[0]["Input"])
-    assert scheduled_body == {
-        "monitor_region": "eu-west-3",
-        "rotation_count": 8,
-        "run_remediator": True,
-        "detach": True,
-    }
+    # The Input is owned by infra/aws_synthetic_monitoring.tf. This script has
+    # no opinion about it: it reads the live value and passes the same bytes
+    # back, after the rule exists and before it rewrites the target.
+    input_reads = [
+        (index, call)
+        for index, call in enumerate(run.calls)
+        if call[:3] == ["aws", "events", "list-targets-by-rule"]
+    ]
+    assert len(input_reads) == 1
+    assert scheduler_index < input_reads[0][0] < run.calls.index(scheduler_targets[0])
+    assert targets[0]["Input"] == '{"detach":true,"monitor_region":"eu-west-3","rotation_count":8}'
     (queue_policy_call,) = [
         call for call in run.calls if call[:3] == ["aws", "sqs", "set-queue-attributes"]
     ]
@@ -1266,6 +1271,83 @@ def test_aws_observer_executes_bounded_capacity_tcp_health_and_waf_before_schedu
         for call in alarms
     )
     assert waf_attach_index < scheduler_index
+
+
+@pytest.mark.parametrize(
+    "live_input",
+    [
+        # What is live today: the operator's state, mirrored by Terraform.
+        '{"detach":true,"monitor_region":"eu-west-3","rotation_count":8}',
+        # What will be live after a reviewed Terraform change re-enables the
+        # pass. The script must carry THAT forward too: it is not the one that
+        # decides, in either direction. Deliberately odd spacing and key order,
+        # because a re-serialised value is a diff in the next Terraform plan.
+        '{"rotation_count": 8, "run_remediator":true, "monitor_region":"eu-west-3","detach":true}',
+        # Trailing newlines are what a text-mode read through $(...) loses.
+        '{"detach":true,"monitor_region":"eu-west-3","rotation_count":8}\n\n',
+    ],
+)
+def test_aws_observer_carries_the_terraform_owned_schedule_input_forward_unchanged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    live_input: str,
+) -> None:
+    script = "scripts/deploy/aws_eu_control_plane.sh"
+    fixture = SCRIPT_FIXTURES[script]
+    responses = (
+        (r"events list-targets-by-rule", live_schedule_targets(live_input)),
+        *(r for r in fixture.responses if "list-targets-by-rule" not in r[0]),
+    )
+    monkeypatch.setitem(SCRIPT_FIXTURES, script, replace(fixture, responses=responses))
+    isolated = DeployScriptHarness(tmp_path / "aws-live-input")
+
+    run = isolated.run(script, verifier_rc=0)
+
+    assert run.returncode == 0, summarise(run)
+    (put_targets,) = [c for c in run.calls if c[:3] == ["aws", "events", "put-targets"]]
+    (target,) = json.loads(put_targets[put_targets.index("--targets") + 1])
+    assert target["Input"] == live_input
+    # The script itself names no remediator flag any more.
+    source = (ROOT / script).read_text(encoding="utf-8")
+    assert '"run_remediator"' not in source
+
+
+@pytest.mark.parametrize(
+    ("live_targets", "expected_error"),
+    [
+        # The rule has no targets at all (the Terraform root was never applied).
+        (live_schedule_targets(), "apply the Terraform root"),
+        # It has a target, but not the observer's.
+        (live_schedule_targets("{}", target_id="something-else"), "apply the Terraform root"),
+        # The observer's target has no Input (an InputTransformer, say).
+        (live_schedule_targets(None), "apply the Terraform root"),
+        # Two targets claim the id: there is no single value to carry forward.
+        (live_schedule_targets("{}", "{}"), "apply the Terraform root"),
+        # Not something the observer could parse: refuse to re-assert it.
+        (live_schedule_targets("[1, 2]"), "not a JSON object"),
+        (live_schedule_targets("run_remediator=true"), "not a JSON object"),
+    ],
+)
+def test_aws_observer_never_invents_a_schedule_input(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    live_targets: str,
+    expected_error: str,
+) -> None:
+    script = "scripts/deploy/aws_eu_control_plane.sh"
+    fixture = SCRIPT_FIXTURES[script]
+    responses = (
+        (r"events list-targets-by-rule", live_targets),
+        *(r for r in fixture.responses if "list-targets-by-rule" not in r[0]),
+    )
+    monkeypatch.setitem(SCRIPT_FIXTURES, script, replace(fixture, responses=responses))
+    isolated = DeployScriptHarness(tmp_path / "aws-no-input")
+
+    run = isolated.run(script, verifier_rc=0)
+
+    assert run.returncode != 0
+    assert expected_error in run.stderr
+    assert not any(c[:3] == ["aws", "events", "put-targets"] for c in run.calls)
 
 
 def test_aws_observer_initial_create_reaches_running_postconditions_waf_and_schedule(

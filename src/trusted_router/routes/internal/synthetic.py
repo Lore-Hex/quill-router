@@ -258,9 +258,10 @@ async def _run_and_record_impl(
     # replica's startup loop) when that authenticated scheduler asks for it.
     # The separate remediation semaphore still collapses an operator-triggered
     # pass that happens to overlap this tick.
+    remediator_off = _is_true(body.get("run_remediator")) and _remediator_is_off(settings)
     remediator_task = (
         asyncio.create_task(_run_scheduled_remediator_pass(settings))
-        if _is_true(body.get("run_remediator"))
+        if _is_true(body.get("run_remediator")) and not remediator_off
         else None
     )
     monitor_region = _optional_str(body.get("monitor_region"))
@@ -355,7 +356,39 @@ async def _run_and_record_impl(
         )
     if remediator_decisions is not None:
         result["data"]["remediator_decisions"] = remediator_decisions
+    if remediator_off:
+        # Asked for, and refused by the kill switch: say so to a caller who is
+        # looking (a detached scheduler tick never reads this).
+        result["data"]["remediator_skipped"] = "remediator_mode_off"
     return result
+
+
+# Set once per process so the refusal below is logged once, not on every tick.
+_REMEDIATOR_OFF_LOGGED = threading.Event()
+
+
+def _remediator_is_off(settings: Settings) -> bool:
+    """True when TR_REMEDIATOR_MODE=off forbids a remediator pass in this process.
+
+    "off" used to stop only the in-process loop (main.py). A scheduler that asks
+    for a pass over HTTP still got one: AWS's EventBridge tick (`run_remediator`
+    on /internal/synthetic/run) and GCP's scheduled worker
+    (/internal/synthetic/remediate). On 2026-09-21 both AWS observers ran with
+    the mode off, and a scheduled pass still read about 309 MB from DSQL every
+    two minutes. An operator who turns the remediator off is stopping a cost or
+    an incident, so off means off for every caller. The schedulers get an
+    ordinary success with no decisions: refusing loudly would page the people
+    who just pulled the switch.
+    """
+    if settings.remediator_mode != "off":
+        return False
+    if not _REMEDIATOR_OFF_LOGGED.is_set():
+        _REMEDIATOR_OFF_LOGGED.set()
+        log.warning(
+            "synthetic.remediator_skipped reason=mode_off "
+            "detail=TR_REMEDIATOR_MODE=off refuses scheduled and requested passes"
+        )
+    return True
 
 
 def _run_remediator_with_held_slot(
@@ -547,6 +580,11 @@ def register(router: APIRouter) -> None:
         even while the durable analytics copy catches up.
         """
         require_internal_gateway(request, settings)
+        if _remediator_is_off(settings):
+            # Checked before admission: a switched-off remediator must not
+            # hold the slot or spend the rate limit either. The count keeps
+            # the response shape the scheduled worker requires.
+            return {"data": {"decisions": 0, "skipped": "remediator_mode_off"}}
         slot = _HeldOperationSlot(_admit_operation("remediate"))
         decisions = await _run_remediator_with_deadline(settings, slot)
         return {"data": {"decisions": decisions}}

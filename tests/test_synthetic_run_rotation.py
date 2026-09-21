@@ -16,6 +16,7 @@ tests pin the two behaviors that deployment relies on:
 from __future__ import annotations
 
 import asyncio
+import threading
 from typing import Any
 
 import pytest
@@ -334,6 +335,108 @@ class TestDetachMode:
         assert events == ["heartbeat", "remediate", "heartbeat"]
         assert len(no_network_probes["rotation_calls"]) == 1
         assert no_network_probes["gateway_tokens"] == []
+
+    @pytest.mark.parametrize(
+        ("mode", "expected_passes"),
+        [
+            # Positive control first: the same tick DOES run a pass in the
+            # default mode, so the "off" rows below are not passing for some
+            # other reason (a body the route ignored, a stub that never fires).
+            ("observe", 1),
+            ("act", 1),
+            ("off", 0),
+        ],
+    )
+    def test_remediator_mode_off_refuses_the_scheduled_pass(
+        self,
+        no_network_probes: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+        mode: str,
+        expected_passes: int,
+    ) -> None:
+        # 2026-09-21: both AWS observers ran with TR_REMEDIATOR_MODE=off and the
+        # EventBridge tick still ran a pass every two minutes (~309 MB of DSQL
+        # reads each), because "off" only stopped the in-process loop.
+        events: list[str] = []
+        monkeypatch.setattr(
+            synthetic_route, "record_heartbeat", lambda name, *, settings: events.append("heartbeat")
+        )
+        monkeypatch.setattr(
+            synthetic_route,
+            "run_remediator_pass",
+            lambda settings: events.append("remediate") or [object()],
+        )
+
+        response = _post_run(
+            _settings(synthetic_monitor_api_key="sk-test-monitor", remediator_mode=mode),
+            {"rotation_count": 1, "run_remediator": True},
+        )
+
+        assert response.status_code == 200, response.text
+        assert events.count("remediate") == expected_passes
+        # The synthetic pass itself is untouched by the switch.
+        assert len(no_network_probes["rotation_calls"]) == 1
+        data = response.json()["data"]
+        if expected_passes:
+            assert data["remediator_decisions"] == 1
+            assert "remediator_skipped" not in data
+        else:
+            # No heartbeat either: a remediator that is off must not look alive.
+            assert events == []
+            assert "remediator_decisions" not in data
+            assert data["remediator_skipped"] == "remediator_mode_off"
+
+    def test_remediator_mode_off_is_logged_once_not_every_tick(
+        self,
+        no_network_probes: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        monkeypatch.setattr(synthetic_route, "_REMEDIATOR_OFF_LOGGED", threading.Event())
+        settings = _settings(synthetic_monitor_api_key="sk-test-monitor", remediator_mode="off")
+        with caplog.at_level("WARNING", logger=synthetic_route.log.name):
+            for _ in range(3):
+                _post_run(settings, {"rotation_count": 1, "run_remediator": True})
+        skipped = [r for r in caplog.records if "synthetic.remediator_skipped" in r.getMessage()]
+        assert len(skipped) == 1
+        assert "reason=mode_off" in skipped[0].getMessage()
+
+    @pytest.mark.parametrize("spelling", ["OFF", " Off ", "off\n"])
+    def test_kill_switch_spelling_from_the_environment_still_refuses_the_pass(
+        self,
+        no_network_probes: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+        spelling: str,
+    ) -> None:
+        # The operator's real path is the environment variable, typed in a
+        # hurry. Every reader compares with "off" exactly, so "OFF" used to
+        # mean "not off" and the pass kept running.
+        passes: list[str] = []
+        monkeypatch.setattr(synthetic_route, "record_heartbeat", lambda name, *, settings: None)
+        monkeypatch.setattr(
+            synthetic_route, "run_remediator_pass", lambda settings: passes.append("pass") or []
+        )
+        monkeypatch.setenv("TR_REMEDIATOR_MODE", spelling)
+        settings = _settings(synthetic_monitor_api_key="sk-test-monitor")
+
+        assert settings.remediator_mode == "off"
+        response = _post_run(settings, {"rotation_count": 1, "run_remediator": True})
+
+        assert response.status_code == 200, response.text
+        assert passes == []
+        assert response.json()["data"]["remediator_skipped"] == "remediator_mode_off"
+
+    @pytest.mark.parametrize("unknown", ["disabled", "observ", "false", "0", ""])
+    def test_unknown_remediator_mode_refuses_to_start(
+        self, monkeypatch: pytest.MonkeyPatch, unknown: str
+    ) -> None:
+        # Neither direction may be silent: "disabled" must not leave the
+        # remediator running, and a misspelt "observe" must not switch it off.
+        # The three known values are the positive control (they build settings
+        # in test_remediator_mode_off_refuses_the_scheduled_pass above).
+        monkeypatch.setenv("TR_REMEDIATOR_MODE", unknown)
+        with pytest.raises(ValueError, match="TR_REMEDIATOR_MODE must be one of: off, observe, act"):
+            _settings()
 
     def test_synthetic_tick_does_not_remediate_without_explicit_scheduler_flag(
         self,
