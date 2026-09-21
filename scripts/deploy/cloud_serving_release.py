@@ -120,12 +120,6 @@ def ecs_region_release(region: str, service: str) -> str:
     balancer = balancers[0]
     targets = aws_json(region, "elbv2", "describe-target-health", "--target-group-arn",
                        balancer["targetGroupArn"])["TargetHealthDescriptions"]
-    # A deregistered target stays listed as "draining" for the whole
-    # deregistration delay (300 s here) after a rollout completes. It takes no
-    # new requests, so it is not serving evidence; counting it made the
-    # post-rollout check fail and roll a healthy release back. Everything that
-    # is NOT draining must still match the running tasks exactly.
-    targets = [t for t in targets if t["TargetHealth"]["State"] != "draining"]
     require(len(targets) == len(addresses))
     require({t["Target"]["Id"] for t in targets} == addresses)
     require(all(t["TargetHealth"]["State"] == "healthy"

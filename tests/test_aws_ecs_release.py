@@ -170,6 +170,7 @@ elif tool == "gcloud":
     print(digest if args[0] == "artifacts" else "fixture-token")
 elif tool == "docker":
     if args[0] == "login": sys.stdin.read()
+elif tool == "sleep": pass
 elif tool == "aws":
     op = " ".join(args[:2])
     if op == "sts get-caller-identity": print("330422590279")
@@ -207,6 +208,36 @@ else: sys.exit(2)
 '''
 
 
+READER_STUB = r'''import json, os, pathlib, sys
+state = json.loads(pathlib.Path(os.environ["ECS_STATE"]).read_text())
+key = ":".join(sys.argv[1:3]) if sys.argv[1] == "aws-region" else "aws"
+if sys.argv[1] == "aws-region":
+    value = state.get(sys.argv[2], "old")
+    phase = "preflight" if sys.argv[2] not in state else "rollback" if value == "old" else "rollout"
+else:
+    values = list(state.values())
+    assert not values or len(set(values)) == 1
+    value = values[0] if values else "old"
+    phase = "rollout" if values else "preflight"
+with open(os.environ["ECS_CALLS"], "a") as f:
+    f.write(json.dumps(["reader", key, phase]) + "\n")
+if phase != "preflight":
+    counter_path = pathlib.Path(os.environ["ECS_READER_COUNTS"])
+    counts = json.loads(counter_path.read_text())
+    counter = phase + ":" + key
+    counts[counter] = counts.get(counter, 0) + 1
+    counter_path.write_text(json.dumps(counts))
+    prefix = "ECS_ROLLBACK_READER_" if phase == "rollback" else "ECS_READER_"
+    for kind, output, status in (("UNREADABLE", "", 1), ("WRONG", "wrong-release", 0),
+                                 ("ERROR_OUTPUT", value, 1)):
+        limits = dict(item.split("=") for item in os.environ.get(prefix + kind, "").split(",") if item)
+        if counts[counter] <= int(limits.get(key, "0")):
+            if output: print(output)
+            sys.exit(status)
+print(value)
+'''
+
+
 def run_ecs_fixture(
     tmp_path: Path, *, failure: str = "", verifier_rc: int = 0,
     source_root: Path = ROOT, extra_env: dict | None = None, timeout: int = 120,
@@ -231,29 +262,25 @@ def run_ecs_fixture(
         'printf \'["verify_cloud_complete.sh","%s"]\\n\' "$1" >> "$ECS_CALLS"\n'
         'exit "$HARNESS_VERIFIER_RC"\n'
     )
-    (scripts / "cloud_serving_release.py").write_text(
-        'import json, os, sys\n'
-        'state=json.load(open(os.environ["ECS_STATE"]))\n'
-        'values=list(state.values())\n'
-        'if sys.argv[1] == "aws-region": print(state.get(sys.argv[2], "old"))\n'
-        'else:\n'
-        '    assert not values or len(set(values)) == 1\n'
-        '    print(values[0] if values else "old")\n'
-    )
-    for tool in ("git", "gh", "aws", "gcloud", "docker"):
+    (scripts / "cloud_serving_release.py").write_text(READER_STUB)
+    for tool in ("git", "gh", "aws", "gcloud", "docker", "sleep"):
         executable = bin_dir / tool
         executable.write_text(CLI_STUB)
         executable.chmod(0o755)
     state, calls, definition, unlock = (tmp_path / name for name in ("state", "calls", "definition", "unlock"))
     state.write_text("{}")
+    calls.write_text("")
+    reader_counts = tmp_path / "reader-counts"
+    reader_counts.write_text("{}")
     definition.write_text(json.dumps(definitions if definitions is not None else {
         region: task_definition(region) for region in ("eu-west-1", "eu-west-3")
     }))
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("TR_CLOUD_", "TR_DEPLOY_"))}
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("TR_CLOUD_", "TR_DEPLOY_", "TR_ECS_", "ECS_"))}
     result = subprocess.run(  # noqa: S603 - copied script, all cloud and image tools stubbed
         [shutil.which("bash") or "/bin/bash", str(scripts / "aws_ecs_control_plane.sh")],
         env={**env, "PATH": f"{bin_dir}:{env['PATH']}", "ECS_STATE": str(state),
              "ECS_CALLS": str(calls), "ECS_DEFINITION": str(definition),
+             "ECS_READER_COUNTS": str(reader_counts),
              "ECS_REGISTRATIONS": str(tmp_path / "registrations"),
              "ECS_UNLOCK": str(unlock), "ECS_FAIL_REGION": failure,
              "HARNESS_VERIFIER_RC": str(verifier_rc), **(extra_env or {})},
@@ -291,6 +318,111 @@ def test_ecs_rollout_is_gated_sequential_and_rolls_back_failed_region(tmp_path: 
     assert not any("apprunner" in c for c in recorded)
     if not failure:
         assert_registrations_preserve_regional_configuration(tmp_path)
+
+
+@pytest.mark.parametrize(("kind", "key", "failures"), [
+    ("UNREADABLE", "aws-region:eu-west-1", 3),
+    ("UNREADABLE", "aws", 2),
+    ("WRONG", "aws-region:eu-west-1", 3),
+    ("ERROR_OUTPUT", "aws-region:eu-west-1", 3),
+])
+def test_ecs_verification_retries_until_exact_success(
+    tmp_path: Path, kind: str, key: str, failures: int,
+) -> None:
+    result, recorded = run_ecs_fixture(tmp_path, extra_env={f"ECS_READER_{kind}": f"{key}={failures}"})
+    assert result.returncode == 0, result.stderr
+    updates = [c for c in recorded if c[:3] == ["aws", "ecs", "update-service"]]
+    assert [c[c.index("--region") + 1] for c in updates] == ["eu-west-1", "eu-west-3"]
+    assert all(c[c.index("--task-definition") + 1] != "old:19" for c in updates)
+    assert recorded.count(["reader", key, "rollout"]) == failures + 1
+    assert [c for c in recorded if c[0] == "sleep"] == [["sleep", "15"]] * failures
+    if key == "aws-region:eu-west-1":
+        assert recorded.index(updates[0]) < recorded.index(["reader", key, "rollout"])
+        assert max(i for i, c in enumerate(recorded) if c == ["reader", key, "rollout"]) < recorded.index(updates[1])
+    else:
+        assert recorded.index(updates[-1]) < recorded.index(["reader", key, "rollout"])
+    assert (tmp_path / "unlock").read_text().strip() == "released"
+
+
+@pytest.mark.parametrize(("region", "kind", "timeout_seconds", "attempts"), [
+    ("eu-west-1", "UNREADABLE", "30", 2),
+    ("eu-west-3", "WRONG", "30", 2),
+    ("eu-west-1", "UNREADABLE", "31", 3),
+    ("eu-west-1", "UNREADABLE", "1", 1),
+    ("eu-west-1", "UNREADABLE", None, 32),
+])
+def test_ecs_verification_attempt_budget_rolls_back_only_active_region(
+    tmp_path: Path, region: str, kind: str, timeout_seconds: str | None, attempts: int,
+) -> None:
+    key = f"aws-region:{region}"
+    env = {f"ECS_READER_{kind}": f"{key}=10000"}
+    if timeout_seconds is not None:
+        env.update(TR_ECS_VERIFY_TIMEOUT_SECONDS=timeout_seconds, TR_ECS_VERIFY_INTERVAL_SECONDS="15")
+    # A wall-clock loop with the no-op sleep must time out and fail this test.
+    result, recorded = run_ecs_fixture(tmp_path, extra_env=env, timeout=10)
+    assert result.returncode != 0
+    assert recorded.count(["reader", key, "rollout"]) == attempts
+    assert [c for c in recorded if c[0] == "sleep"] == [["sleep", "15"]] * (attempts - 1)
+    assert f"last observed={'UNREADABLE' if kind == 'UNREADABLE' else 'wrong-release'}" in result.stderr
+    updates = [c for c in recorded if c[:3] == ["aws", "ecs", "update-service"]]
+    assert [c[c.index("--region") + 1] for c in updates] == (
+        ["eu-west-1", "eu-west-1"] if region == "eu-west-1" else ["eu-west-1", "eu-west-3", "eu-west-3"]
+    )
+    assert [c[c.index("--region") + 1] for c in updates if c[c.index("--task-definition") + 1] == "old:19"] == [region]
+    assert f"rollback stabilized in {region}" in result.stderr
+    assert (tmp_path / "unlock").read_text().strip() == "released"
+
+
+@pytest.mark.parametrize("failures", [1, 10000])
+def test_ecs_rollback_verification_retries_with_a_budget(tmp_path: Path, failures: int) -> None:
+    result, recorded = run_ecs_fixture(tmp_path, failure="eu-west-1", timeout=10, extra_env={
+        "ECS_ROLLBACK_READER_UNREADABLE": f"aws-region:eu-west-1={failures}",
+        "TR_ECS_VERIFY_TIMEOUT_SECONDS": "30", "TR_ECS_VERIFY_INTERVAL_SECONDS": "15",
+    })
+    assert result.returncode != 0
+    assert recorded.count(["reader", "aws-region:eu-west-1", "rollback"]) == 2
+    assert [c for c in recorded if c[0] == "sleep"] == [["sleep", "15"]]
+    assert ("rollback stabilized" in result.stderr) == (failures == 1)
+    assert ("needs operator attention" in result.stderr) == (failures != 1)
+    assert (tmp_path / "unlock").read_text().strip() == "released"
+
+
+def test_ecs_final_verification_exhaustion_does_not_roll_back(tmp_path: Path) -> None:
+    result, recorded = run_ecs_fixture(tmp_path, timeout=10, extra_env={
+        "ECS_READER_WRONG": "aws=10000",
+        "TR_ECS_VERIFY_TIMEOUT_SECONDS": "30", "TR_ECS_VERIFY_INTERVAL_SECONDS": "15",
+    })
+    assert result.returncode != 0
+    assert "last observed=wrong-release" in result.stderr
+    assert "final fleet verification failed" in result.stderr
+    assert recorded.count(["reader", "aws", "rollout"]) == 2
+    updates = [c for c in recorded if c[:3] == ["aws", "ecs", "update-service"]]
+    assert len(updates) == 2
+    assert all(c[c.index("--task-definition") + 1] != "old:19" for c in updates)
+    assert (tmp_path / "unlock").read_text().strip() == "released"
+
+
+@pytest.mark.parametrize("setting", ["TR_ECS_VERIFY_TIMEOUT_SECONDS", "TR_ECS_VERIFY_INTERVAL_SECONDS"])
+@pytest.mark.parametrize("value", ["0", "abc", "", "-1", "1.5"])
+def test_ecs_verification_refuses_invalid_timing_before_registration(
+    tmp_path: Path, setting: str, value: str,
+) -> None:
+    result, recorded = run_ecs_fixture(tmp_path, extra_env={setting: value})
+    assert result.returncode != 0
+    assert f"{setting} must be a positive integer" in result.stderr
+    assert not any(c[:3] == ["aws", "ecs", "register-task-definition"] for c in recorded)
+    assert not any(c[:3] == ["aws", "ecs", "update-service"] for c in recorded)
+
+
+@pytest.mark.parametrize("verifier_rc", [0, 1, 5])
+def test_ecs_completeness_exit_code_is_preserved(tmp_path: Path, verifier_rc: int) -> None:
+    result, recorded = run_ecs_fixture(tmp_path, verifier_rc=verifier_rc)
+    assert result.returncode == verifier_rc, result.stderr
+    assert ["verify_cloud_complete.sh", "aws"] in recorded
+    updates = [c for c in recorded if c[:3] == ["aws", "ecs", "update-service"]]
+    assert len(updates) == 2
+    assert all(c[c.index("--task-definition") + 1] != "old:19" for c in updates)
+    assert (tmp_path / "unlock").read_text().strip() == "released"
 
 
 @pytest.mark.parametrize("region", ["eu-west-1", "eu-west-3"])
