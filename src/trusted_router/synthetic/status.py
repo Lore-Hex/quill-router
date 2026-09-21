@@ -1257,6 +1257,7 @@ def _target_label(target: str) -> str:
         "canonical": "Global endpoint",
         "us-central1": "US Central direct",
         "us-east4": "US East direct",
+        "us-west1": "US West direct",
         "europe-west4": "EU direct",
         "southamerica-east1": "São Paulo direct",
         # Per-region AWS targets: same hostname as "canonical", pinned to

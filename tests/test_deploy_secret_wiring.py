@@ -13,7 +13,10 @@ from scripts.check_price_coverage import (
     _OPTIONAL_STALE_MANIFEST_PROVIDER_SLUGS,
 )
 from tests.deploy_script_harness import SCRIPT_FIXTURES, DeployScriptHarness, summarise
-from trusted_router.enclave_regions import ENCLAVE_REGIONS
+from trusted_router.enclave_regions import (
+    ENCLAVE_REGIONS,
+    ENCLAVE_REGIONS_WITHOUT_LOCAL_CONTROL_PLANE,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -263,6 +266,8 @@ def test_all_attested_control_plane_regions_remain_warm() -> None:
 
     # The shell reads this inventory; deploy execution tests cover that wiring.
     attested = ENCLAVE_REGIONS
+    gateway_only = ENCLAVE_REGIONS_WITHOUT_LOCAL_CONTROL_PLANE
+    control_plane = [r for r in _default("TR_CONTROL_PLANE_REGIONS").split(",") if r]
     warm = [r for r in _default("TR_WARM_REGIONS").split(",") if r]
     minimums = dict(
         entry.split("=", 1)
@@ -271,10 +276,37 @@ def test_all_attested_control_plane_regions_remain_warm() -> None:
     )
 
     assert attested, "TR_REGIONS must name at least one attested region"
-    for region in attested:
+    # "Attested" stopped implying "has a Cloud Run region" when us-west1 was
+    # added as a gateway-only region: its gateway reaches the control plane
+    # through the global load balancer. The invariant is therefore stated per
+    # kind, and the gateway-only kind is an explicit, attested set -- a typo
+    # there must not be able to excuse a real region from the warm check.
+    assert gateway_only <= set(attested), (
+        "a region without a local control plane must still be an attested region: "
+        f"{sorted(gateway_only - set(attested))}"
+    )
+    with_local_control_plane = [r for r in attested if r not in gateway_only]
+    assert with_local_control_plane, "no attested region has a local control plane"
+    for region in with_local_control_plane:
+        assert region in control_plane, (
+            f"attested region {region} claims a local control plane but is not in "
+            "TR_CONTROL_PLANE_REGIONS"
+        )
         assert region in warm, f"attested region {region} is not in TR_WARM_REGIONS"
         assert region in minimums, f"attested region {region} has no min-instances entry"
         assert int(minimums[region]) >= 1, f"attested region {region} is allowed to scale to zero"
+    # The other direction, and the reason the set above exists. Making a
+    # gateway-only region pass the old "every attested region is warm" check
+    # took nothing more than a warm or min-instances entry for a Cloud Run
+    # service that does not exist: inert, and it reads as capacity we run.
+    for region in sorted(gateway_only):
+        assert region not in control_plane, (
+            f"{region} is declared gateway-only but is in TR_CONTROL_PLANE_REGIONS"
+        )
+        assert region not in warm, f"{region} is declared gateway-only but is in TR_WARM_REGIONS"
+        assert region not in minimums, (
+            f"{region} is declared gateway-only but has a min-instances entry"
+        )
     # And nothing is kept warm that we no longer serve.
     for region in warm:
         assert region in attested, f"{region} is warmed but is not an attested region"

@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from trusted_router import storage_rate_limits
 from trusted_router.config import Settings
+from trusted_router.enclave_regions import ENCLAVE_REGIONS
 from trusted_router.main import create_app
 from trusted_router.routes.helpers import (
     _CLIENT_EVENT_RATE_LIMITS,
@@ -197,6 +198,52 @@ def test_client_events_accepts_inference_scoped_key(
             "pause_seconds": 0,
         },
     }
+
+
+@pytest.mark.parametrize("region", ENCLAVE_REGIONS)
+def test_client_events_accepts_every_gateway_region_host(
+    test_settings: Settings,
+    region: str,
+) -> None:
+    """The host vocabulary is closed, so a gateway region has to be IN it.
+
+    One unknown host rejects the entire batch (the test below), which means a
+    region missing from the enum costs every event in every batch that touched
+    it, not just the one field. Driven by the gateway inventory so the next
+    region cannot be added without its host.
+    """
+    host = region.replace("-", "_")
+    client, headers, _ = _client_with_key(test_settings)
+    body = _batch(
+        events=[_event(attempts=[_attempt(host=host)])],
+        counters=[_counter(host=host)],
+    )
+
+    response = client.post("/v1/client-events", headers=headers, json=body)
+
+    assert response.status_code == 202, response.text
+    [stored] = STORE.in_memory_target.client_events_batches
+    assert stored["events"][0]["attempts"][0]["host"] == host
+    assert stored["counters"][0]["host"] == host
+
+
+@pytest.mark.parametrize("level", ["attempt", "counter"])
+def test_client_events_rejects_a_regional_host_that_is_not_a_gateway_region(
+    test_settings: Settings,
+    level: str,
+) -> None:
+    """The control for the test above: region-shaped is not enough."""
+    client, headers, _ = _client_with_key(test_settings)
+    body = (
+        _batch(events=[_event(attempts=[_attempt(host="us_west2")])])
+        if level == "attempt"
+        else _batch(counters=[_counter(host="us_west2")])
+    )
+
+    response = client.post("/v1/client-events", headers=headers, json=body)
+
+    assert response.status_code == 400, response.text
+    assert STORE.in_memory_target.client_events_batches == []
 
 
 def test_client_events_flag_off_returns_pause_before_auth_or_body_read(

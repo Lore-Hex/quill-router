@@ -115,6 +115,7 @@ def test_default_region_map_shows_gcp_region_marketing_footprint() -> None:
         "us-central1",
         "europe-west4",
         "us-east4",
+        "us-west1",
         "asia-northeast1",
         "asia-east2",
         "asia-southeast1",
@@ -185,9 +186,18 @@ def test_map_shows_multicloud_deployments_with_honest_serving_flags() -> None:
     # come with compute actually serving there.
     assert rows["aws-eu-north-1"]["serving"] is False
 
-    # Six, not seven: southamerica-east1 was retired on 2026-09-04 and its row
-    # is gone rather than flipped to serving=False, so the count moved with it.
-    assert sum(row["serving"] for row in rows.values()) == 6
+    # us-west1 is a gateway-only region: it serves from its own attested
+    # gateway and has no Cloud Run control plane, which is still "live" here
+    # because the map claims where prompts are served, not where the dashboard
+    # runs.
+    assert rows["us-west1"]["city"] == "Oregon"
+    assert rows["us-west1"]["cloud"] == "gcp"
+    assert rows["us-west1"]["serving"] is True
+
+    # Seven. southamerica-east1 was retired on 2026-09-04 and its row is gone
+    # rather than flipped to serving=False, which took the count from seven to
+    # six; us-west1 brought it back to seven.
+    assert sum(row["serving"] for row in rows.values()) == 7
     assert {row["cloud"] for row in rows.values() if row["serving"]} == {
         "gcp",
         "aws",

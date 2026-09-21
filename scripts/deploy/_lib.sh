@@ -9,24 +9,34 @@ set -euo pipefail
 
 PROJECT_ID="${PROJECT_ID:-quill-cloud-proxy}"
 REGION="${REGION:-us-central1}"
-# Only enumerate regions where a real attested-gateway VM is deployed.
-# The control plane (this Cloud Run service) gets deployed to each of
-# these for low-latency dashboard reads, AND each entry shows up in
-# /v1/regions which the SDK's region= shortcut resolves against. Adding
-# a region without a backing gateway VM gives callers a TLS-broken
-# `api-<region>.quillrouter.com` and weakens the trust story.
+# Attested gateway regions. Only enumerate regions where a real
+# attested-gateway VM is deployed: each entry shows up in /v1/regions, which
+# the SDK's region= shortcut resolves against, and becomes a synthetic probe
+# target. Adding a region without a backing gateway VM gives callers a
+# TLS-broken `api-<region>.quillrouter.com` and weakens the trust story.
+#
+# An entry here does NOT imply a Cloud Run region. Nothing deploys Cloud Run
+# from this list; deploy targets come from TR_CONTROL_PLANE_REGIONS below. A
+# gateway-only region (us-west1; ENCLAVE_REGIONS_WITHOUT_LOCAL_CONTROL_PLANE in
+# enclave_regions.py) reaches the control plane through the global load
+# balancer, which sends it to the nearest control-plane region.
 TR_REGIONS="${TR_REGIONS:-$(python3 "$(dirname "${BASH_SOURCE[0]}")/../../src/trusted_router/enclave_regions.py")}"
 TR_PRIMARY_REGION="${TR_PRIMARY_REGION:-us-central1}"
-# Cloud Run control-plane regions behind trustedrouter.com. This is broader
-# than TR_REGIONS because cold control-plane regions can serve cached public
-# pages without advertising non-existent regional attested gateway hostnames.
+# Cloud Run control-plane regions behind trustedrouter.com. Neither this list
+# nor TR_REGIONS contains the other: a cold control-plane region
+# (southamerica-east1) serves cached public pages without advertising a
+# non-existent regional attested gateway hostname, and a gateway-only region
+# (us-west1) has no Cloud Run service.
 TR_CONTROL_PLANE_REGIONS="${TR_CONTROL_PLANE_REGIONS:-us-central1,us-east4,europe-west4,southamerica-east1}"
-# Comma-separated subset of TR_REGIONS that should run with always-on warm
-# capacity. Anything outside TR_WARM_REGIONS gets min_scale=0 unless the
-# per-region map below says otherwise.
+# Comma-separated subset of the control-plane regions that should run with
+# always-on warm capacity: every attested gateway region that has a local
+# control plane. Anything outside TR_WARM_REGIONS gets min_scale=0 unless the
+# per-region map below says otherwise. A gateway-only region gets no entry in
+# either list; an entry for a Cloud Run service that does not exist would be
+# inert, and would read as warm capacity nobody is running.
 TR_WARM_REGIONS="${TR_WARM_REGIONS:-us-central1,europe-west4,us-east4}"
 # Service-level minimums stay allocated across staged revision traffic shifts.
-# Both US regions need burst headroom before autoscaling catches up.
+# Both US Cloud Run regions need burst headroom before autoscaling catches up.
 # Keep concurrency and billing admission bounded, but prewarm capacity.
 TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION="${TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION:-us-central1=8,us-east4=8,europe-west4=2}"
 # Billing handlers are small, synchronous Spanner operations dispatched to a

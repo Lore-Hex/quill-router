@@ -9,7 +9,7 @@ public page reads as "we are not sure our own service works".
 
 The published list is therefore derived from configuration (the probe
 targets the monitor builds from regions + synthetic_regional_probes_enabled),
-never from a per-cloud hardcoded list. GCP, which legitimately has all eight,
+never from a per-cloud hardcoded list. GCP, which legitimately has all nine,
 must be completely unaffected.
 """
 
@@ -34,6 +34,7 @@ GCP_COMPONENT_IDS = (
     "canonical_api",
     "us_central1_regional_api",
     "us_east4_regional_api",
+    "us_west1_regional_api",
     "eu_regional_api",
     "attestation",
     "billing_settlement",
@@ -44,16 +45,19 @@ GCP_COMPONENT_IDS = (
 REGIONAL_GCP_COMPONENT_IDS = (
     "us_central1_regional_api",
     "us_east4_regional_api",
+    "us_west1_regional_api",
     "eu_regional_api",
 )
 
 
 def _gcp_settings() -> Settings:
-    """Production GCP shape: three warm attested regions.
+    """Production GCP shape: four attested gateway regions.
 
-    Four until 2026-09-04, when southamerica-east1 was retired. sa_regional_api
-    stays in the CATALOGUE so 24-month rollups naming it still render; it drops
-    out of the PUBLISHED set on its own because no probe target produces it.
+    southamerica-east1 was retired on 2026-09-04, which left three; us-west1
+    was added after it, as a gateway-only region with no Cloud Run control
+    plane of its own. sa_regional_api stays in the CATALOGUE so 24-month
+    rollups naming it still render; it drops out of the PUBLISHED set on its
+    own because no probe target produces it.
     """
     return Settings(
         environment="test",
@@ -149,6 +153,7 @@ def test_gcp_current_checks_expose_regions_without_blending_router_core_slo() ->
             "us-central1",
             "us-east4",
             "europe-west4",
+            "us-west1",
         )
     ]
 
@@ -163,11 +168,13 @@ def test_gcp_current_checks_expose_regions_without_blending_router_core_slo() ->
         "us-central1",
         "us-east4",
         "europe-west4",
+        "us-west1",
     }
     assert {row["target_region"] for row in checks if row["target"] != "canonical"} == {
         "us-central1",
         "us-east4",
         "europe-west4",
+        "us-west1",
     }
 
     # Direct regional diagnostics must not inflate uptime denominators or
@@ -415,6 +422,7 @@ def test_scope_follows_configuration_not_a_hardcoded_cloud_list() -> None:
     assert "us_central1_regional_api" in ids
     assert "us_east4_regional_api" in ids
     assert "eu_regional_api" not in ids
+    assert "us_west1_regional_api" not in ids
 
 
 def test_historical_rollup_for_an_inapplicable_component_still_renders() -> None:

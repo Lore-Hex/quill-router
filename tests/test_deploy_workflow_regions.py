@@ -7,7 +7,10 @@ import yaml
 
 from scripts.smoke_all_providers import REGIONS as SMOKE_REGIONS
 from trusted_router.config import Settings
-from trusted_router.enclave_regions import ENCLAVE_REGIONS
+from trusted_router.enclave_regions import (
+    ENCLAVE_REGIONS,
+    ENCLAVE_REGIONS_WITHOUT_LOCAL_CONTROL_PLANE,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -528,15 +531,26 @@ def test_mutex_acquire_step_cannot_swallow_a_blocked_exit() -> None:
 
 
 def test_enclave_inventory_is_separate_from_live_control_plane_regions() -> None:
-    assert ENCLAVE_REGIONS == ("us-central1", "us-east4", "europe-west4")
+    assert ENCLAVE_REGIONS == ("us-central1", "us-east4", "europe-west4", "us-west1")
     assert "southamerica-east1" not in ENCLAVE_REGIONS
     assert Settings().regions == ",".join(ENCLAVE_REGIONS)
     assert set(SMOKE_REGIONS) - {"us", "europe"} == set(ENCLAVE_REGIONS)
     assert SMOKE_REGIONS["us"] == SMOKE_REGIONS["us-central1"]
     assert SMOKE_REGIONS["europe"] == SMOKE_REGIONS["europe-west4"]
+    assert SMOKE_REGIONS["us-west1"] == "https://api-us-west1.quillrouter.com"
+
+    # The two inventories differ in BOTH directions. southamerica-east1 is a
+    # control plane with no gateway (its enclave MIG was retired); us-west1 is
+    # a gateway with no control plane (it reaches one through the global load
+    # balancer). Pinned as sets so that adding a Cloud Run region for us-west1,
+    # or a gateway-only region nobody declared, has to be said here.
+    assert ENCLAVE_REGIONS_WITHOUT_LOCAL_CONTROL_PLANE == frozenset({"us-west1"})
+    assert set(ENCLAVE_REGIONS) >= ENCLAVE_REGIONS_WITHOUT_LOCAL_CONTROL_PLANE
 
     library = (ROOT / "scripts/deploy/_lib.sh").read_text()
     match = re.search(r'TR_CONTROL_PLANE_REGIONS:-([^}]+)', library)
     assert match is not None
     control_plane_regions = set(match.group(1).split(","))
-    assert control_plane_regions == set(ENCLAVE_REGIONS) | {"southamerica-east1"}
+    assert control_plane_regions == (
+        set(ENCLAVE_REGIONS) - ENCLAVE_REGIONS_WITHOUT_LOCAL_CONTROL_PLANE
+    ) | {"southamerica-east1"}

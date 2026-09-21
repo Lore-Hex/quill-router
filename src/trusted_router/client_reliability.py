@@ -24,6 +24,7 @@ HOSTS = (
     "uptime",
     "us_central1",
     "us_east4",
+    "us_west1",
     "europe_west4",
     "control",
     "custom",

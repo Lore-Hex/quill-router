@@ -1016,7 +1016,7 @@ class Settings(BaseSettings):
     # mismatch breaks TLS and the attestation page lies.
     regions: str = ",".join(ENCLAVE_REGIONS)
     marketing_regions: str = (
-        "us-central1,europe-west4,us-east4,"
+        "us-central1,europe-west4,us-east4,us-west1,"
         "asia-northeast1,asia-east2,asia-southeast1,"
         # Standalone deployments on other clouds (multi-cloud-separation.md).
         "aws-eu-west-1,aws-eu-west-3,aws-eu-north-1,azure-australiaeast"

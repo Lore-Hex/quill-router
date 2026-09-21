@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from trusted_router.enclave_regions import ENCLAVE_REGIONS
 from trusted_router.routes.internal import gateway as gateway_routes
 from trusted_router.storage import STORE
 from trusted_router.storage_models import Generation, generation_id_for_authorization
@@ -168,6 +169,34 @@ def test_valid_client_context_is_stored_and_emitted_to_activity(client: TestClie
         assert payload[field_name] == expected
 
 
+@pytest.mark.parametrize("region", ENCLAVE_REGIONS)
+def test_every_gateway_region_is_an_accepted_previous_host(
+    client: TestClient,
+    region: str,
+) -> None:
+    """A retry that left a regional hostname must not cost the whole context.
+
+    prev_host is a closed enum and one bad value drops EVERY client field (the
+    case below), so a gateway region missing from it silently blanks the
+    telemetry of exactly the requests that failed over away from that region.
+    Driven by the gateway inventory so the next region cannot skip this.
+    """
+    host = region.replace("-", "_")
+    key = _create_key(client)
+    authorization = _authorize(client, key)
+
+    _response, generation = _settle(
+        client,
+        authorization,
+        client_context={**VALID_CLIENT_CONTEXT, "prev_host": host},
+    )
+
+    assert generation.client_prev_host == host
+    for field_name, expected in EXPECTED_CLIENT_GENERATION.items():
+        if field_name != "client_prev_host":
+            assert getattr(generation, field_name) == expected
+
+
 @pytest.mark.parametrize(
     "garbage",
     [
@@ -176,8 +205,20 @@ def test_valid_client_context_is_stored_and_emitted_to_activity(client: TestClie
         {"extra": "not allowed"},
         {"sdk_version": "x" * 5_000},
         {"runtime": {"nested": True}},
+        # Otherwise valid: the ONLY defect is a regional host that is not a
+        # gateway region. The control for the test above -- the enum is still
+        # closed, so a region is accepted because it was added, not because
+        # anything region-shaped now validates.
+        {**VALID_CLIENT_CONTEXT, "prev_host": "us_west2"},
     ],
-    ids=["wrong-types", "unknown-enum", "extra-key", "five-kb-string", "nested-dict"],
+    ids=[
+        "wrong-types",
+        "unknown-enum",
+        "extra-key",
+        "five-kb-string",
+        "nested-dict",
+        "unknown-regional-host",
+    ],
 )
 def test_invalid_client_context_is_dropped_without_failing_settlement(
     client: TestClient,
