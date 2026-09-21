@@ -14,11 +14,13 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import re
 import secrets
 import time
 import uuid
 from collections.abc import Callable
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Never, TypeVar, cast
 
@@ -510,6 +512,15 @@ _DSQL_RECEIPT_KEY_VERSIONS_INDEX = (
 )
 
 
+@lru_cache(maxsize=1)
+def _schema_unique_index_wait_seconds() -> int:
+    """Read the DSQL unique-index wait budget once, on first use."""
+    value = os.environ.get("TR_SCHEMA_UNIQUE_INDEX_WAIT_SECONDS", "60")
+    if not value.isascii() or not value.isdecimal() or int(value) < 1:
+        raise ValueError("TR_SCHEMA_UNIQUE_INDEX_WAIT_SECONDS must be a positive integer")
+    return int(value)
+
+
 def _video_due_id(job: VideoJob) -> str:
     """Ordering key for the video due-index: `<next_poll_at>#<job_id>`.
 
@@ -679,15 +690,20 @@ class PostgresStore:
         is actually connected to.
 
         DSQL's ASYNC build returns immediately and completes in the background.
-        That is acceptable here: these indexes serve read paths that are correct
-        (just slower) while the index is still building.
+        Read indexes serve correct (just slower) queries while building.
+        An ASYNC unique index enforces uniqueness once its background build
+        completes (seconds on these small tables).
         """
         try:
             conn.execute(statement, prepare=False)
             return
         except psycopg.errors.FeatureNotSupported:
-            head = statement.lstrip()[:12].upper()
-            if not head.startswith("CREATE INDEX"):
+            index_head = re.match(
+                r"\s*CREATE\s+(?P<unique>UNIQUE\s+)?INDEX\b", statement, re.IGNORECASE,
+            )
+            if index_head is None or re.match(
+                r"\s*ASYNC\b", statement[index_head.end():], re.IGNORECASE,
+            ):
                 raise
         if statement.lstrip().startswith(
             "CREATE INDEX IF NOT EXISTS tr_receipt_key_versions"
@@ -697,8 +713,43 @@ class PostgresStore:
             # query still excludes NULL rows on every dialect.
             async_statement = _DSQL_RECEIPT_KEY_VERSIONS_INDEX
         else:
-            async_statement = statement.replace("CREATE INDEX", "CREATE INDEX ASYNC", 1)
+            async_statement = statement[:index_head.end()] + " ASYNC" + statement[index_head.end():]
         conn.execute(async_statement, prepare=False)
+        if index_head.group("unique"):
+            name_match = re.match(
+                r'\s*(?:IF\s+NOT\s+EXISTS\s+)?("(?:[^"]|"")+"|\S+)',
+                statement[index_head.end():], re.IGNORECASE,
+            )
+            assert name_match is not None  # The server accepted the index DDL.
+            name = name_match[1]
+            name = name[1:-1].replace('""', '"') if name.startswith('"') else name.lower()
+            wait_seconds = _schema_unique_index_wait_seconds()
+            warned = False
+            for attempt in range(wait_seconds + 1):
+                try:
+                    row = conn.execute(
+                        "SELECT i.indisvalid FROM pg_index i "
+                        "JOIN pg_class c ON c.oid = i.indexrelid "
+                        "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                        "WHERE c.relname = %s AND n.nspname = current_schema()",
+                        (name,), prepare=False,
+                    ).fetchone()
+                    if row and row[0]:
+                        return
+                except psycopg.Error:
+                    if not warned:
+                        log.warning("Could not read validity of DSQL unique index %s; retrying", name)
+                        warned = True
+                if attempt < wait_seconds:
+                    time.sleep(1)
+            # Without a valid arbiter, dependent writes fail closed: no insert,
+            # no duplicate; the provider redelivers. Raising here would instead
+            # crash-loop the whole control plane over one dedup index.
+            log.error(
+                "DSQL unique index %s is not valid; writes depending on it will be refused "
+                "until it is valid. Check SELECT * FROM sys.jobs; drop and recreate a failed build.",
+                name,
+            )
 
     # Generic entity IO ------------------------------------------------------
 
@@ -1959,7 +2010,7 @@ class PostgresStore:
             updated = conn.execute(
                 "UPDATE tr_credit_balance SET trust_tier = 0, "
                 "trust_latched_at = COALESCE(trust_latched_at, %s), "
-                "billing_pause_causes = %s::jsonb, pause_epoch = pause_epoch + 1, "
+                "billing_pause_causes = %s::jsonb, pause_epoch = COALESCE(pause_epoch, 0) + 1, "
                 "updated_at = CURRENT_TIMESTAMP WHERE workspace_id = %s",
                 (latched_at or now, json.dumps(causes), workspace_id),
             )
@@ -2010,7 +2061,7 @@ class PostgresStore:
             causes = sorted(set(workspace.billing_pause_causes) - {"abuse"})
             updated = conn.execute(
                 "UPDATE tr_credit_balance SET billing_pause_causes = %s::jsonb, "
-                "pause_epoch = pause_epoch + 1, updated_at = CURRENT_TIMESTAMP "
+                "pause_epoch = COALESCE(pause_epoch, 0) + 1, updated_at = CURRENT_TIMESTAMP "
                 "WHERE workspace_id = %s",
                 (json.dumps(causes), workspace_id),
             )
@@ -2214,7 +2265,7 @@ class PostgresStore:
                 continue
             updated = conn.execute(
                 "UPDATE tr_credit_balance SET trust_tier = "
-                "CASE WHEN trust_tier > 1 THEN 1 ELSE trust_tier END, "
+                "CASE WHEN COALESCE(trust_tier, 0) > 1 THEN 1 ELSE COALESCE(trust_tier, 0) END, "
                 "trust_computed_at = %s, updated_at = CURRENT_TIMESTAMP "
                 "WHERE workspace_id = %s",
                 (now, workspace_id),
@@ -2414,7 +2465,7 @@ class PostgresStore:
                 if override is None or not bool(override[0]):
                     conn.execute(
                         "UPDATE tr_credit_balance SET trust_tier = "
-                        "CASE WHEN trust_tier > %s THEN %s ELSE trust_tier END, "
+                        "CASE WHEN COALESCE(trust_tier, 0) > %s THEN %s ELSE COALESCE(trust_tier, 0) END, "
                         "trust_computed_at = CURRENT_TIMESTAMP, "
                         "updated_at = CURRENT_TIMESTAMP WHERE workspace_id = %s",
                         (int(ceiling), int(ceiling), str(workspace_id)),
@@ -6595,7 +6646,7 @@ class PostgresStore:
                 if prior and prior.get("reason") == "billing_paused":
                     return None
                 observed = self._read_entity_tx(conn, "reservation_pause_epoch", credit_reservation_id, dict) if credit_reservation_id else None
-                if paused or (expected_pause_epoch is not None and expected_pause_epoch != epoch) or (credit_reservation_id and int((observed or {}).get("pause_epoch", 0)) != epoch):
+                if paused or (expected_pause_epoch is not None and expected_pause_epoch != epoch) or (credit_reservation_id and int((observed or {}).get("pause_epoch") or 0) != epoch):
                     if credit_reservation_id:
                         reject_postgres_reservation(conn, self, credit_reservation_id)
                     from trusted_router.storage_legacy_trust import legacy_key_hold
