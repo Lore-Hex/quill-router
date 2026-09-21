@@ -732,7 +732,7 @@
     "card_version": 2,
     "model_count": 17,
     "name": "Telnyx",
-    "privacy": "Policy documented",
+    "privacy": "Zero retention",
     "route_count": 34,
     "route_mode": "Prepaid + BYOK",
     "slug": "telnyx"
