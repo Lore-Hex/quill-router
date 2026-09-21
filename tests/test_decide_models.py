@@ -427,7 +427,7 @@ async def test_zev_and_bare_model_advance_to_existing_host_at_fireworks_cutoff(
         (cutoff - timedelta(microseconds=1), ["fireworks", "baseten"]),
         (cutoff, ["baseten"]),
     ]:
-        monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: at)
+        monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda at=at: at)
         response = await _authorize({
             "model": model_id, "route_type": "decide",
             "estimated_input_tokens": 480, "max_output_tokens": 700,
