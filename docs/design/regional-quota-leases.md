@@ -174,3 +174,20 @@ available balance.
 Before expanding the allowlist, verify zero reconciliation errors, bounded
 lease-row size and CAS retries under the canary's real concurrency, no global
 counter drift, and successful failback when a Bigtable profile is disabled.
+
+### Paid pilot repair
+
+The original synthetic monitoring workspace is funded administratively, not by
+a customer payment. It correctly fails the shared paid-workspace trust gate;
+configured issuance flags alone are therefore not evidence of an exercised
+regional lease. The rollout migrates only that exact legacy singleton allowlist
+to the already-paid first-party smoke workspace used by the spend-lease pilot.
+Empty lists, custom lists, explicit overrides and issuance-off state are
+preserved. No payment record or trust tier is fabricated.
+
+After rollout, verify an uncapped first-party request through the US Central
+gateway actually reports regional settlement in its authorization record, then
+verify the reconciler closes that lease and imports the exact usage without
+counter drift. A successful HTTP response on the global fallback path does not
+pass this check. Customer expansion and additional regional ledgers remain
+separate gated steps.

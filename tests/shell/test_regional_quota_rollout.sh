@@ -200,6 +200,20 @@ test_all_compatible_active_revisions_pass() {
   [ "$revision_reads" -eq 4 ] || fail "preflight read ${revision_reads} revisions, expected 4"
 }
 
+test_legacy_unpaid_pilot_moves_only_to_paid_first_party_canary() {
+  local legacy='d385c399-b245-4147-a528-0a4f6f170c71'
+  local paid='45819281-0ce9-4811-a0cd-c660ab3a116d'
+  [ "$(regional_quota_migrate_legacy_pilot "$legacy")" = "$paid" ] ||
+    fail "legacy unpaid pilot was not replaced"
+  local preserved
+  for preserved in "" "$paid" customer-workspace "$legacy,customer-workspace"; do
+    [ "$(regional_quota_migrate_legacy_pilot "$preserved")" = "$preserved" ] ||
+      fail "pilot migration changed an empty, repaired, or custom allowlist"
+  done
+  [ "$(regional_quota_normalize_issuance_control preserve false)" = false ] ||
+    fail "pilot repair must not enable issuance"
+}
+
 test_rollback_reads_the_traffic_revision_not_latest_candidate
 test_ambiguous_traffic_fails_closed
 test_read_errors_are_not_fresh_environments
@@ -210,4 +224,5 @@ test_revision_env_rejects_non_plain_values
 test_missing_issuance_marker_blocks_enable
 test_capability_false_blocks_enable
 test_all_compatible_active_revisions_pass
-printf '%s\n' 'regional quota rollout shell tests: 10 passed'
+test_legacy_unpaid_pilot_moves_only_to_paid_first_party_canary
+printf '%s\n' 'regional quota rollout shell tests: 11 passed'
