@@ -1,6 +1,6 @@
 # Polyphemus 1.0
 
-Status: implementation in progress; not enabled in production.
+Status: merged; production verification recorded below (2026-09-21).
 
 `trustedrouter/polyphemus-1.0` is a Responses-only named model. Telluvian
 recommends a concrete model, and TrustedRouter authorizes and executes that
@@ -67,9 +67,60 @@ All eleven recommended `gemini-3.8-flash` with reasoning effort `high`.
 The unprefixed result needs catalog resolution to `google/gemini-3.8-flash`;
 it must not be treated as a pre-authorized route.
 
-## Remaining release work
+## Release evidence (2026-09-21)
 
-- Provision the credential separately in each cloud's secret store.
-- Run full repository and cloud-variant gates and Claude CLI Opus review.
-- Release through the documented regional rollout paths and verify production
-  Responses calls, charges, streaming, attestation, and regional health.
+Implementation:
+- [Router and billing, PR #1264](https://github.com/Lore-Hex/quill-router/pull/1264).
+- [Enclave and automatic fallback, PR #353](https://github.com/Lore-Hex/quill-cloud-proxy/pull/353).
+- [Pin rollout scripts to the built source, PR #355](https://github.com/Lore-Hex/quill-cloud-proxy/pull/355).
+- [Final AWS and Azure attestation pins, PR #357](https://github.com/Lore-Hex/quill-cloud-proxy/pull/357).
+
+The selector credential is provisioned separately in GCP Secret Manager,
+AWS Secrets Manager, and Azure Key Vault. It is not fetched from GCP by the
+AWS or Azure enclave at runtime.
+
+Local validation passed ruff, mypy, the full router test suite (11,857 passed,
+472 skipped, 11 expected failures), enclave cloud-variant CI, and Claude CLI
+Opus review. Focused HTTP/SSE tests exercise both successful selection and
+injected selector failure. They require exactly one selector refund and no
+selector settlement on fallback, independent authorization of
+`trustedrouter/auto`, and preservation of the public Polyphemus model ID.
+Additional tests cover timeout, missing selector, unusable recommendation,
+privacy rejection, replay, cancellation, and failed refund/settlement.
+
+Live synthetic `PONG` requests passed through GCP US Central and US East,
+AWS Paris and Ireland, and Azure Dubai and Sydney. JSON and SSE responses
+completed, reported
+`trustedrouter/polyphemus-1.0`, and reconciled 14 microdollars of generation
+with the 1-microdollar selector fee: 15 microdollars total. These are tiny
+functional probes, not a latency benchmark or a fixed per-request price.
+A confidential request returned HTTP 400 before calling Telluvian.
+
+GCP Europe also passed the non-streaming cost check. Two European SSE probes
+completed with the correct answer but omitted generation/total cost because
+the existing Stage D two-second settlement deadline expired. Metadata-only
+logs confirm the idempotent retry succeeded on attempt 1, 2065 ms and 1426 ms
+after enqueue. No unknown charge was reported as zero. This shared streaming
+receipt limitation is tracked separately in
+[enclave issue #358](https://github.com/Lore-Hex/quill-cloud-proxy/issues/358);
+do not describe all streaming receipts as immediately complete.
+
+Fallback was failure-injected locally, not by breaking the production
+credential or upstream service. Live success does not by itself prove an
+upstream-outage scenario; the deterministic integration tests provide that
+coverage.
+
+Deployment records:
+- [GCP enclave rollout](https://github.com/Lore-Hex/quill-cloud-proxy/actions/runs/35622463339).
+- [Router and public catalog rollout](https://github.com/Lore-Hex/quill-router/actions/runs/35628469273).
+
+AWS and Azure regional deployments passed their attestation gates and were
+narrowed to the new measurements. The temporary AWS canary was terminated.
+The router workflow completed all backend, public-service, and cloud-completeness
+gates. The public catalog lists the model with Standard privacy, no BYOK, and
+`selection_fee_plus_selected_model_tokens` pricing. Its
+[model page](https://trustedrouter.com/models/trustedrouter/polyphemus-1.0)
+returns HTTP 200 and explains the selector and fallback charges.
+
+Use the linked GCP workflow for the final regional rollout conclusion rather
+than inferring deployment completeness from a successful single-instance smoke.
