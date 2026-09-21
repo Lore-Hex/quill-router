@@ -16,8 +16,9 @@ log() { printf '%s\n' "$*" >&2; }
 [ -z "$(git status --porcelain)" ] || die "refusing dirty checkout"
 [ "${TR_CLOUD_BAKE_AWS_BACKEND:-ecs}" = ecs ] || die "this deployment requires the ECS fleet gate"
 RELEASE="$(git rev-parse HEAD)"
-# Required runtime configuration, checked against the cloned task by the
-# builder below. This cannot turn an already-disabled outbox on silently.
+# Cloud-level declaration, read as text by cloud_rollout_completeness: AWS
+# publishes operational analytics, from the one region that has ClickHouse.
+# The per-region table below derives that region's expectation from it.
 TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true
 # GitHub's shallow build checkout uses seven-character tags. Resolve it
 # unambiguously in the full checkout before trusting the registry lookup.
@@ -75,6 +76,13 @@ docker pull --platform linux/amd64 "$SOURCE_IMAGE" >/dev/null
 
 REGIONS=(eu-west-1 eu-west-3)
 SERVICES=(tr-cp-euw1 tr-cp-euw3)
+# eu-west-1 has no ClickHouse secret, so its outbox is off by design
+# (see aws_eu_control_plane.sh). The clone NEVER changes this flag.
+# A live value differing from this table is drift in either direction
+# and refuses the rollout.
+EXPECTED_OUTBOX=(false "$TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED")
+[[ ${#REGIONS[@]} -eq ${#SERVICES[@]} && ${#REGIONS[@]} -eq ${#EXPECTED_OUTBOX[@]} ]] \
+  || die "REGIONS, SERVICES, and EXPECTED_OUTBOX must have the same length"
 for region in "${REGIONS[@]}"; do
   registry="330422590279.dkr.ecr.${region}.amazonaws.com"
   aws ecr get-login-password --region "$region" \
@@ -119,7 +127,7 @@ PY
     --region "$region" --output json > "${WORK}/previous.json"
   image="330422590279.dkr.ecr.${region}.amazonaws.com/trusted-router@${SOURCE_DIGEST}"
   python3 "${SCRIPT_DIR}/prepare_ecs_release.py" "${WORK}/previous.json" "$image" \
-    "$RELEASE" "${WORK}/next.json" "$TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED"
+    "$RELEASE" "${WORK}/next.json" "${EXPECTED_OUTBOX[$index]}"
   next="$(aws ecs register-task-definition --cli-input-json "file://${WORK}/next.json" \
     --region "$region" --query taskDefinition.taskDefinitionArn --output text)"
   [[ "$next" = arn:aws:ecs:* ]] || die "no registered task definition"

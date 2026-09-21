@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import importlib.util
 import json
 import os
@@ -10,6 +11,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+ENV_SENTINEL = "fixture-env-value-must-not-appear-in-errors"
 
 
 def test_aws_workflow_deploys_ecs_not_retired_apprunner() -> None:
@@ -27,38 +29,59 @@ def load_builder():
     return module.prepare
 
 
-def task_definition() -> dict:
-    return {"taskDefinition": {
+def task_definition(region: str = "eu-west-3") -> dict:
+    payload = {"taskDefinition": {
         "taskDefinitionArn": "old:19", "revision": 19, "status": "ACTIVE",
-        "family": "tr-cp-euw3", "networkMode": "awsvpc", "cpu": "256", "memory": "512",
+        "family": {"eu-west-1": "tr-cp-euw1", "eu-west-3": "tr-cp-euw3"}[region],
+        "networkMode": "awsvpc", "cpu": "256", "memory": "512",
         "taskRoleArn": "native-task-role", "executionRoleArn": "native-execution-role",
         "containerDefinitions": [{
             "name": "trusted-router", "image": "old@sha256:" + "a" * 64,
             "environment": [
                 {"name": "TR_RELEASE", "value": "old-release"},
                 {"name": "TR_SERVICE_SURFACE", "value": "observer"},
-                {"name": "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED", "value": "true"},
+                {"name": "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED", "value": "true" if region == "eu-west-3" else "false"},
                 {"name": "TR_ATTESTATION_PCR0", "value": "unchanged-pin"},
+                {"name": "TR_CONFIG_SENTINEL", "value": ENV_SENTINEL},
+                {"name": "RELEASE_COMMIT", "value": "old-release"},
             ],
             "secrets": [{"name": "TR_POSTGRES_DSN", "valueFrom": "arn:aws:secretsmanager:native"}],
             "portMappings": [{"containerPort": 8080}],
         }],
     }, "tags": [{"key": "owner", "value": "trustedrouter"}]}
+    if region == "eu-west-3":
+        container = payload["taskDefinition"]["containerDefinitions"][0]
+        container["environment"].extend([
+            {"name": "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL", "value": "http://fixture-clickhouse:8123"},
+            {"name": "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER", "value": "fixture-user"},
+            {"name": "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE", "value": "fixture-database"},
+        ])
+        container["secrets"].append({
+            "name": "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD",
+            "valueFrom": "arn:aws:secretsmanager:eu-west-3:330422590279:secret:fixture-clickhouse",
+        })
+    return payload
 
 
-def test_image_release_update_preserves_all_native_runtime_configuration() -> None:
-    import copy
-
-    original = task_definition()
-    before = copy.deepcopy(original)
-    image = "registry/trusted-router@sha256:" + "b" * 64
-    result = load_builder()(original, image, "c" * 40)
+def expected_registration(original: dict, image: str) -> dict:
     expected = copy.deepcopy(original["taskDefinition"])
     for field in ("taskDefinitionArn", "revision", "status"):
         expected.pop(field)
     expected["tags"] = original["tags"]
     expected["containerDefinitions"][0]["image"] = image
-    expected["containerDefinitions"][0]["environment"][0]["value"] = "c" * 40
+    for entry in expected["containerDefinitions"][0]["environment"]:
+        if entry["name"] in {"TR_RELEASE", "RELEASE_COMMIT"}:
+            entry["value"] = "c" * 40
+    return expected
+
+
+@pytest.mark.parametrize(("region", "required_outbox"), [("eu-west-1", "false"), ("eu-west-3", "true")])
+def test_image_release_update_preserves_all_native_runtime_configuration(region: str, required_outbox: str) -> None:
+    original = task_definition(region)
+    before = copy.deepcopy(original)
+    image = "registry/trusted-router@sha256:" + "b" * 64
+    result = load_builder()(original, image, "c" * 40, required_outbox)
+    expected = expected_registration(original, image)
     assert result == expected
     assert original == before
 
@@ -82,6 +105,33 @@ def test_task_builder_fails_closed(fault: str) -> None:
         release = "main"
     with pytest.raises(ValueError):
         load_builder()(payload, image, release)
+
+
+@pytest.mark.parametrize(("region", "required_outbox"), [("eu-west-1", "true"), ("eu-west-3", "false")])
+def test_task_builder_refuses_outbox_drift(region: str, required_outbox: str) -> None:
+    # Keep the live secret/flag pair consistent to isolate the regional expectation.
+    payload = task_definition(region)
+    before = copy.deepcopy(payload)
+    with pytest.raises(ValueError, match="TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED"):
+        load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, required_outbox)
+    assert payload == before
+
+
+@pytest.mark.parametrize(("region", "required_outbox"), [("eu-west-1", "true"), ("eu-west-3", "false")])
+def test_task_builder_refuses_inconsistent_clickhouse_secret(region: str, required_outbox: str) -> None:
+    payload = task_definition(region)
+    payload["taskDefinition"]["containerDefinitions"][0]["environment"][2]["value"] = required_outbox
+    with pytest.raises(ValueError, match="TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD"):
+        load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, required_outbox)
+
+
+@pytest.mark.parametrize("required_outbox", ["yes", "", "TRUE"])
+def test_task_builder_refuses_invalid_required_outbox(required_outbox: str) -> None:
+    payload = task_definition("eu-west-1")
+    # Match the invalid live value so the equality check cannot mask validation.
+    payload["taskDefinition"]["containerDefinitions"][0]["environment"][2]["value"] = required_outbox
+    with pytest.raises(ValueError, match="invalid required TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED"):
+        load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, required_outbox)
 
 
 CLI_STUB = r'''#!/usr/bin/env python3
@@ -116,10 +166,12 @@ elif tool == "aws":
         service.update(json.loads(os.environ.get("ECS_DEPLOYMENT_SETTINGS", "{}")))
         print(json.dumps({"services": [service]}))
     elif op == "ecs describe-task-definition":
-        print(pathlib.Path(os.environ["ECS_DEFINITION"]).read_text())
+        print(json.dumps(json.loads(pathlib.Path(os.environ["ECS_DEFINITION"]).read_text())[region]))
     elif op == "ecs register-task-definition":
         data = json.loads(pathlib.Path(args[args.index("--cli-input-json") + 1][7:]).read_text())
         assert data["containerDefinitions"][0]["image"].endswith("@" + digest)
+        with open(os.environ["ECS_REGISTRATIONS"], "a") as f:
+            f.write(json.dumps([region, data]) + "\n")
         print("arn:aws:ecs:" + region + ":330422590279:task-definition/tr-cp:20")
     elif op == "ecs update-service":
         definition = args[args.index("--task-definition") + 1]
@@ -136,6 +188,7 @@ else: sys.exit(2)
 def run_ecs_fixture(
     tmp_path: Path, *, failure: str = "", verifier_rc: int = 0,
     source_root: Path = ROOT, extra_env: dict | None = None, timeout: int = 120,
+    definitions: dict[str, dict] | None = None,
 ) -> tuple[subprocess.CompletedProcess, list[list[str]]]:
     scripts = tmp_path / "scripts/deploy"
     scripts.mkdir(parents=True)
@@ -171,18 +224,31 @@ def run_ecs_fixture(
         executable.chmod(0o755)
     state, calls, definition, unlock = (tmp_path / name for name in ("state", "calls", "definition", "unlock"))
     state.write_text("{}")
-    definition.write_text(json.dumps(task_definition()))
+    definition.write_text(json.dumps(definitions if definitions is not None else {
+        region: task_definition(region) for region in ("eu-west-1", "eu-west-3")
+    }))
     env = {k: v for k, v in os.environ.items() if not k.startswith(("TR_CLOUD_", "TR_DEPLOY_"))}
     result = subprocess.run(  # noqa: S603 - copied script, all cloud and image tools stubbed
         [shutil.which("bash") or "/bin/bash", str(scripts / "aws_ecs_control_plane.sh")],
         env={**env, "PATH": f"{bin_dir}:{env['PATH']}", "ECS_STATE": str(state),
              "ECS_CALLS": str(calls), "ECS_DEFINITION": str(definition),
+             "ECS_REGISTRATIONS": str(tmp_path / "registrations"),
              "ECS_UNLOCK": str(unlock), "ECS_FAIL_REGION": failure,
              "HARNESS_VERIFIER_RC": str(verifier_rc), **(extra_env or {})},
         capture_output=True, text=True, check=False, timeout=timeout,
     )
     recorded = [json.loads(line) for line in calls.read_text().splitlines()]
+    assert ENV_SENTINEL not in result.stdout + result.stderr
     return result, recorded
+
+
+def assert_registrations_preserve_regional_configuration(tmp_path: Path) -> None:
+    definitions = json.loads((tmp_path / "definition").read_text())
+    registrations = [json.loads(line) for line in (tmp_path / "registrations").read_text().splitlines()]
+    assert [region for region, _ in registrations] == ["eu-west-1", "eu-west-3"]
+    for region, registered in registrations:
+        image = f"330422590279.dkr.ecr.{region}.amazonaws.com/trusted-router@sha256:" + "b" * 64
+        assert registered == expected_registration(definitions[region], image)
 
 
 @pytest.mark.parametrize("failure", ["", "gate", "eu-west-1", "eu-west-3"])
@@ -201,6 +267,67 @@ def test_ecs_rollout_is_gated_sequential_and_rolls_back_failed_region(tmp_path: 
     elif failure:
         assert updates[-1][updates[-1].index("--task-definition") + 1] == "old:19"
     assert not any("apprunner" in c for c in recorded)
+    if not failure:
+        assert_registrations_preserve_regional_configuration(tmp_path)
+
+
+@pytest.mark.parametrize("region", ["eu-west-1", "eu-west-3"])
+@pytest.mark.parametrize("consistent_clickhouse", [False, True], ids=["flag-only", "consistent-secret"])
+def test_ecs_rollout_refuses_outbox_drift_without_rolling_back_healthy_region(
+    tmp_path: Path, region: str, consistent_clickhouse: bool,
+) -> None:
+    definitions = {name: task_definition(name) for name in ("eu-west-1", "eu-west-3")}
+    container = definitions[region]["taskDefinition"]["containerDefinitions"][0]
+    other = task_definition("eu-west-3" if region == "eu-west-1" else "eu-west-1")
+    other_container = other["taskDefinition"]["containerDefinitions"][0]
+    container["environment"][2]["value"] = other_container["environment"][2]["value"]
+    if consistent_clickhouse:
+        container["environment"] = other_container["environment"]
+        container["secrets"] = other_container["secrets"]
+    result, recorded = run_ecs_fixture(tmp_path, definitions=definitions)
+    assert result.returncode != 0
+    assert "Cannot safely clone the ECS workload; no runtime configuration printed" in result.stderr
+    # The refusal names the setting (never a value) so the CI log explains itself.
+    assert "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED" in result.stderr
+    assert (tmp_path / "unlock").read_text().strip() == "released"
+    mutations = [c for c in recorded if c[:3] in (
+        ["aws", "ecs", "register-task-definition"], ["aws", "ecs", "update-service"],
+    )]
+    expected = [] if region == "eu-west-1" else [
+        ("register-task-definition", "eu-west-1"), ("update-service", "eu-west-1"),
+    ]
+    assert [(c[2], c[c.index("--region") + 1]) for c in mutations] == expected
+    if region == "eu-west-3":
+        assert mutations[-1][mutations[-1].index("--task-definition") + 1] == (
+            "arn:aws:ecs:eu-west-1:330422590279:task-definition/tr-cp:20"
+        )
+    assert json.loads((tmp_path / "state").read_text()) == (
+        {} if region == "eu-west-1" else {"eu-west-1": "c" * 40}
+    )
+
+
+@pytest.mark.parametrize(("full_table", "short_table"), [
+    ("REGIONS=(eu-west-1 eu-west-3)", "REGIONS=(eu-west-1)"),
+    ("SERVICES=(tr-cp-euw1 tr-cp-euw3)", "SERVICES=(tr-cp-euw1)"),
+    ('EXPECTED_OUTBOX=(false "$TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED")', "EXPECTED_OUTBOX=(false)"),
+])
+def test_ecs_rollout_refuses_misaligned_tables_before_registration(
+    tmp_path: Path, full_table: str, short_table: str,
+) -> None:
+    source_root = tmp_path / "source"
+    scripts = source_root / "scripts/deploy"
+    scripts.mkdir(parents=True)
+    for name in ("aws_ecs_control_plane.sh", "prepare_ecs_release.py", "cloud_complete_gate.sh"):
+        shutil.copy2(ROOT / "scripts/deploy" / name, scripts / name)
+    script = scripts / "aws_ecs_control_plane.sh"
+    text = script.read_text()
+    assert text.count(full_table) == 1  # a renamed table must fail here, not pass by doing nothing
+    script.write_text(text.replace(full_table, short_table))
+    result, recorded = run_ecs_fixture(tmp_path / "run", source_root=source_root)
+    assert result.returncode != 0
+    assert "REGIONS, SERVICES, and EXPECTED_OUTBOX must have the same length" in result.stderr
+    assert not any(c[:3] == ["aws", "ecs", "register-task-definition"] for c in recorded)
+    assert not any(c[:3] == ["aws", "ecs", "update-service"] for c in recorded)
 
 
 @pytest.mark.parametrize(("field", "value", "failed_checks"), [
@@ -287,3 +414,4 @@ def test_ecs_rollout_accepts_legacy_and_future_breaker_fields(tmp_path: Path, fu
     assert result.returncode == 0, result.stderr
     updates = [c for c in recorded if c[:3] == ["aws", "ecs", "update-service"]]
     assert [c[c.index("--region") + 1] for c in updates] == ["eu-west-1", "eu-west-3"]
+    assert_registrations_preserve_regional_configuration(tmp_path)

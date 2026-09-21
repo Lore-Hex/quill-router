@@ -21,8 +21,8 @@ RESPONSE_FIELDS = frozenset({
 
 
 def prepare(payload: dict, image: str, release: str, required_outbox: str = "true") -> dict:
-    if required_outbox != "true":
-        raise ValueError("analytics must remain enabled")
+    if required_outbox not in ("true", "false"):
+        raise ValueError("invalid required TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED")
     if not re.fullmatch(r"[^\s@]+@sha256:[0-9a-f]{64}", image):
         raise ValueError("immutable image required")
     if not re.fullmatch(r"[0-9a-f]{40}", release):
@@ -40,10 +40,16 @@ def prepare(payload: dict, image: str, release: str, required_outbox: str = "tru
     values = {e["name"]: e["value"] for e in env}
     if len(values) != len(env):
         raise ValueError("duplicate environment variables")
-    if (values.get("TR_SERVICE_SURFACE") != "observer"
-            or values.get("TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED") != required_outbox
-            or not values.get("TR_RELEASE")):
-        raise ValueError("expected live observer with analytics and release marker")
+    if values.get("TR_SERVICE_SURFACE") != "observer" or not values.get("TR_RELEASE"):
+        raise ValueError("expected live observer with release marker")
+    if values.get("TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED") != required_outbox:
+        raise ValueError("live TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED differs from regional expectation")
+    has_clickhouse_secret = any(
+        secret["name"] == "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD"
+        for secret in container.get("secrets", [])
+    )
+    if (values.get("TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED") == "true") != has_clickhouse_secret:
+        raise ValueError("TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED conflicts with TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD")
     container["image"] = image
     for entry in env:
         if entry["name"] in {"TR_RELEASE", "RELEASE_COMMIT"}:
@@ -57,5 +63,11 @@ if __name__ == "__main__":
             result = prepare(json.load(source), sys.argv[2], sys.argv[3], sys.argv[5])
         with open(sys.argv[4], "w", encoding="utf-8") as destination:
             json.dump(result, destination)
-    except (OSError, KeyError, TypeError, ValueError):
+    except ValueError as reason:
+        # prepare()'s own refusals name settings, never their values, so the
+        # reason is safe to print and makes the next refusal explain itself.
+        raise SystemExit(
+            f"Cannot safely clone the ECS workload; no runtime configuration printed ({reason})"
+        ) from None
+    except (OSError, KeyError, TypeError):
         raise SystemExit("Cannot safely clone the ECS workload; no runtime configuration printed") from None
