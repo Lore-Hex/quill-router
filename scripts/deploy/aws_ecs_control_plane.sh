@@ -16,6 +16,10 @@ log() { printf '%s\n' "$*" >&2; }
 [ -z "$(git status --porcelain)" ] || die "refusing dirty checkout"
 [ "${TR_CLOUD_BAKE_AWS_BACKEND:-ecs}" = ecs ] || die "this deployment requires the ECS fleet gate"
 RELEASE="$(git rev-parse HEAD)"
+# Cloud-level declaration, read as text by cloud_rollout_completeness: AWS
+# publishes operational analytics, from the one region that has ClickHouse.
+# The per-region table below derives that region's expectation from it.
+TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true
 # GitHub's shallow build checkout uses seven-character tags. Resolve it
 # unambiguously in the full checkout before trusting the registry lookup.
 IMAGE_TAG="${RELEASE:0:7}"
@@ -76,7 +80,7 @@ SERVICES=(tr-cp-euw1 tr-cp-euw3)
 # (see aws_eu_control_plane.sh). The clone NEVER changes this flag.
 # A live value differing from this table is drift in either direction
 # and refuses the rollout.
-EXPECTED_OUTBOX=(false true)
+EXPECTED_OUTBOX=(false "$TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED")
 [[ ${#REGIONS[@]} -eq ${#SERVICES[@]} && ${#REGIONS[@]} -eq ${#EXPECTED_OUTBOX[@]} ]] \
   || die "REGIONS, SERVICES, and EXPECTED_OUTBOX must have the same length"
 for region in "${REGIONS[@]}"; do

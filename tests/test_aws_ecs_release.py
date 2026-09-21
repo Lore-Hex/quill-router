@@ -309,7 +309,7 @@ def test_ecs_rollout_refuses_outbox_drift_without_rolling_back_healthy_region(
 @pytest.mark.parametrize(("full_table", "short_table"), [
     ("REGIONS=(eu-west-1 eu-west-3)", "REGIONS=(eu-west-1)"),
     ("SERVICES=(tr-cp-euw1 tr-cp-euw3)", "SERVICES=(tr-cp-euw1)"),
-    ("EXPECTED_OUTBOX=(false true)", "EXPECTED_OUTBOX=(false)"),
+    ('EXPECTED_OUTBOX=(false "$TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED")', "EXPECTED_OUTBOX=(false)"),
 ])
 def test_ecs_rollout_refuses_misaligned_tables_before_registration(
     tmp_path: Path, full_table: str, short_table: str,
@@ -320,7 +320,9 @@ def test_ecs_rollout_refuses_misaligned_tables_before_registration(
     for name in ("aws_ecs_control_plane.sh", "prepare_ecs_release.py", "cloud_complete_gate.sh"):
         shutil.copy2(ROOT / "scripts/deploy" / name, scripts / name)
     script = scripts / "aws_ecs_control_plane.sh"
-    script.write_text(script.read_text().replace(full_table, short_table))
+    text = script.read_text()
+    assert text.count(full_table) == 1  # a renamed table must fail here, not pass by doing nothing
+    script.write_text(text.replace(full_table, short_table))
     result, recorded = run_ecs_fixture(tmp_path / "run", source_root=source_root)
     assert result.returncode != 0
     assert "REGIONS, SERVICES, and EXPECTED_OUTBOX must have the same length" in result.stderr
