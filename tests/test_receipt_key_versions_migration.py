@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import contextlib
 import os
+import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import psycopg
 import pytest
@@ -12,6 +15,118 @@ from trusted_router.storage_postgres import PostgresStore, _split_sql_statements
 
 ROOT = Path(__file__).parents[1]
 SCRIPT = "scripts/deploy/migrate_receipt_key_versions.sh"
+
+
+class DsqlConnection:
+    """Reject unsupported DSQL DDL without opening a database connection."""
+
+    def __init__(self) -> None:
+        self.autocommit = False
+        self.accepted: list[str] = []
+
+    def execute(self, ddl: str, *, prepare: bool) -> None:
+        assert prepare is False
+        normalized = " ".join(ddl.upper().split())
+        if "ADD COLUMN" in normalized and re.search(
+            r"\b(?:DEFAULT|NOT NULL|CHECK|REFERENCES)\b", normalized
+        ):
+            raise psycopg.errors.FeatureNotSupported(
+                "ALTER TABLE ADD COLUMN with constraint not supported"
+            )
+        if re.match(r"CREATE (?:UNIQUE )?INDEX\b", normalized):
+            if not re.match(r"CREATE (?:UNIQUE )?INDEX ASYNC\b", normalized):
+                raise psycopg.errors.FeatureNotSupported(
+                    "unsupported mode. please use CREATE INDEX ASYNC."
+                )
+            if re.search(r"\bWHERE\b", normalized):
+                raise psycopg.errors.FeatureNotSupported("partial indexes not supported")
+        self.accepted.append(ddl)
+
+
+def test_postgres_entire_schema_applies_on_dsql() -> None:
+    conn = DsqlConnection()
+    store = PostgresStore.__new__(PostgresStore)
+    store._pool = SimpleNamespace(connection=lambda: contextlib.nullcontext(conn))
+    store.apply_schema()
+
+    statements = _split_sql_statements(
+        (ROOT / "src/trusted_router/storage_postgres_schema.sql").read_text()
+    )
+    assert len(conn.accepted) == len(statements)
+    assert conn.autocommit is False
+    for name in ("tr_trust_event_adverse_dedup", "tr_trust_event_payment_dedup"):
+        assert any(
+            ddl.startswith(f"CREATE UNIQUE INDEX ASYNC IF NOT EXISTS {name}\n")
+            for ddl in conn.accepted
+        )
+    assert (
+        "CREATE INDEX ASYNC IF NOT EXISTS tr_receipt_key_versions\n"
+        "    ON tr_entities (kid, att_sha256)"
+    ) in conn.accepted
+
+
+def test_postgres_schema_add_column_obeys_dsql_constraint_rule() -> None:
+    statements = _split_sql_statements(
+        (ROOT / "src/trusted_router/storage_postgres_schema.sql").read_text()
+    )
+    for statement in statements:
+        normalized = " ".join(statement.upper().split())
+        if normalized.startswith("ALTER TABLE ") and "ADD COLUMN" in normalized:
+            assert not re.search(r"\b(?:DEFAULT|NOT NULL|CHECK|REFERENCES)\b", normalized), (
+                "DSQL forbids constraints in ALTER TABLE ADD COLUMN; add the bare "
+                f"column, then SET DEFAULT separately: {statement}"
+            )
+    for column in ("trust_tier", "pause_epoch"):
+        add = f"ALTER TABLE tr_credit_balance ADD COLUMN IF NOT EXISTS {column} BIGINT"
+        default = f"ALTER TABLE tr_credit_balance ALTER COLUMN {column} SET DEFAULT 0"
+        assert statements.index(add) < statements.index(default)
+
+
+@pytest.mark.parametrize("unique", [False, True])
+@pytest.mark.parametrize("error", [None, psycopg.errors.FeatureNotSupported,
+                                  psycopg.errors.SyntaxError, psycopg.errors.UniqueViolation])
+def test_postgres_index_fallback_only_on_feature_not_supported(
+    unique: bool, error: type[psycopg.Error] | None,
+) -> None:
+    prefix = "CREATE UNIQUE INDEX" if unique else "CREATE INDEX"
+    statement = f"{prefix} IF NOT EXISTS example ON tr_entities (id)"
+
+    class Connection:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def execute(self, ddl: str, *, prepare: bool) -> None:
+            assert prepare is False
+            self.calls.append(ddl)
+            if error is not None and len(self.calls) == 1:
+                raise error("DDL rejected")
+
+    conn = Connection()
+    if error not in (None, psycopg.errors.FeatureNotSupported):
+        with pytest.raises(error):
+            PostgresStore._execute_ddl(conn, statement)
+    else:
+        PostgresStore._execute_ddl(conn, statement)
+    expected = [statement]
+    if error is psycopg.errors.FeatureNotSupported:
+        expected.append(f"{prefix} ASYNC IF NOT EXISTS example ON tr_entities (id)")
+    assert conn.calls == expected
+
+
+def test_postgres_non_index_feature_not_supported_is_not_retried() -> None:
+    calls: list[str] = []
+    error = psycopg.errors.FeatureNotSupported("unsupported column constraint")
+
+    class Connection:
+        def execute(self, ddl: str, *, prepare: bool) -> None:
+            calls.append(ddl)
+            raise error
+
+    statement = "ALTER TABLE example ADD COLUMN value BIGINT DEFAULT 0"
+    with pytest.raises(psycopg.errors.FeatureNotSupported) as raised:
+        PostgresStore._execute_ddl(Connection(), statement)
+    assert raised.value is error
+    assert calls == [statement]
 
 
 def test_spanner_receipt_key_version_migration_is_additive_and_idempotent(

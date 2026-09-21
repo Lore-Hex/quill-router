@@ -679,15 +679,16 @@ class PostgresStore:
         is actually connected to.
 
         DSQL's ASYNC build returns immediately and completes in the background.
-        That is acceptable here: these indexes serve read paths that are correct
-        (just slower) while the index is still building.
+        Read indexes serve correct (just slower) queries while building.
+        An ASYNC unique index enforces uniqueness once its background build
+        completes (seconds on these small tables).
         """
         try:
             conn.execute(statement, prepare=False)
             return
         except psycopg.errors.FeatureNotSupported:
-            head = statement.lstrip()[:12].upper()
-            if not head.startswith("CREATE INDEX"):
+            index_head = re.match(r"\s*CREATE\s+(?:UNIQUE\s+)?INDEX\b", statement, re.IGNORECASE)
+            if index_head is None:
                 raise
         if statement.lstrip().startswith(
             "CREATE INDEX IF NOT EXISTS tr_receipt_key_versions"
@@ -697,7 +698,7 @@ class PostgresStore:
             # query still excludes NULL rows on every dialect.
             async_statement = _DSQL_RECEIPT_KEY_VERSIONS_INDEX
         else:
-            async_statement = statement.replace("CREATE INDEX", "CREATE INDEX ASYNC", 1)
+            async_statement = statement[:index_head.end()] + " ASYNC" + statement[index_head.end():]
         conn.execute(async_statement, prepare=False)
 
     # Generic entity IO ------------------------------------------------------
@@ -1959,7 +1960,7 @@ class PostgresStore:
             updated = conn.execute(
                 "UPDATE tr_credit_balance SET trust_tier = 0, "
                 "trust_latched_at = COALESCE(trust_latched_at, %s), "
-                "billing_pause_causes = %s::jsonb, pause_epoch = pause_epoch + 1, "
+                "billing_pause_causes = %s::jsonb, pause_epoch = COALESCE(pause_epoch, 0) + 1, "
                 "updated_at = CURRENT_TIMESTAMP WHERE workspace_id = %s",
                 (latched_at or now, json.dumps(causes), workspace_id),
             )
@@ -2010,7 +2011,7 @@ class PostgresStore:
             causes = sorted(set(workspace.billing_pause_causes) - {"abuse"})
             updated = conn.execute(
                 "UPDATE tr_credit_balance SET billing_pause_causes = %s::jsonb, "
-                "pause_epoch = pause_epoch + 1, updated_at = CURRENT_TIMESTAMP "
+                "pause_epoch = COALESCE(pause_epoch, 0) + 1, updated_at = CURRENT_TIMESTAMP "
                 "WHERE workspace_id = %s",
                 (json.dumps(causes), workspace_id),
             )
@@ -2214,7 +2215,7 @@ class PostgresStore:
                 continue
             updated = conn.execute(
                 "UPDATE tr_credit_balance SET trust_tier = "
-                "CASE WHEN trust_tier > 1 THEN 1 ELSE trust_tier END, "
+                "CASE WHEN COALESCE(trust_tier, 0) > 1 THEN 1 ELSE COALESCE(trust_tier, 0) END, "
                 "trust_computed_at = %s, updated_at = CURRENT_TIMESTAMP "
                 "WHERE workspace_id = %s",
                 (now, workspace_id),
@@ -2414,7 +2415,7 @@ class PostgresStore:
                 if override is None or not bool(override[0]):
                     conn.execute(
                         "UPDATE tr_credit_balance SET trust_tier = "
-                        "CASE WHEN trust_tier > %s THEN %s ELSE trust_tier END, "
+                        "CASE WHEN COALESCE(trust_tier, 0) > %s THEN %s ELSE COALESCE(trust_tier, 0) END, "
                         "trust_computed_at = CURRENT_TIMESTAMP, "
                         "updated_at = CURRENT_TIMESTAMP WHERE workspace_id = %s",
                         (int(ceiling), int(ceiling), str(workspace_id)),
@@ -6595,7 +6596,7 @@ class PostgresStore:
                 if prior and prior.get("reason") == "billing_paused":
                     return None
                 observed = self._read_entity_tx(conn, "reservation_pause_epoch", credit_reservation_id, dict) if credit_reservation_id else None
-                if paused or (expected_pause_epoch is not None and expected_pause_epoch != epoch) or (credit_reservation_id and int((observed or {}).get("pause_epoch", 0)) != epoch):
+                if paused or (expected_pause_epoch is not None and expected_pause_epoch != epoch) or (credit_reservation_id and int((observed or {}).get("pause_epoch") or 0) != epoch):
                     if credit_reservation_id:
                         reject_postgres_reservation(conn, self, credit_reservation_id)
                     from trusted_router.storage_legacy_trust import legacy_key_hold

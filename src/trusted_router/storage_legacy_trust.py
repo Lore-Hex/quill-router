@@ -100,7 +100,7 @@ def recover_released_postgres(conn: Any, workspace_id: str, store: Any) -> None:
             causes = sorted(set(workspace.billing_pause_causes) - {"principal_recovery"})
             conn.execute(
                 "UPDATE tr_credit_balance SET billing_pause_causes = %s::jsonb, "
-                "pause_epoch = pause_epoch + 1 WHERE workspace_id = %s",
+                "pause_epoch = COALESCE(pause_epoch, 0) + 1 WHERE workspace_id = %s",
                 (json.dumps(causes), workspace_id),
             )
             workspace.billing_pause_causes = causes

@@ -83,12 +83,14 @@ CREATE TABLE IF NOT EXISTS tr_credit_balance (
     PRIMARY KEY (workspace_id, shard)
 );
 
-ALTER TABLE tr_credit_balance ADD COLUMN IF NOT EXISTS trust_tier BIGINT DEFAULT 0;
+ALTER TABLE tr_credit_balance ADD COLUMN IF NOT EXISTS trust_tier BIGINT;
+ALTER TABLE tr_credit_balance ALTER COLUMN trust_tier SET DEFAULT 0;
 ALTER TABLE tr_credit_balance ADD COLUMN IF NOT EXISTS trust_computed_at TIMESTAMPTZ;
 ALTER TABLE tr_credit_balance ADD COLUMN IF NOT EXISTS trust_latched_at TIMESTAMPTZ;
 ALTER TABLE tr_credit_balance ADD COLUMN IF NOT EXISTS trust_override_tier BIGINT;
 ALTER TABLE tr_credit_balance ADD COLUMN IF NOT EXISTS billing_pause_causes JSONB;
-ALTER TABLE tr_credit_balance ADD COLUMN IF NOT EXISTS pause_epoch BIGINT DEFAULT 0;
+ALTER TABLE tr_credit_balance ADD COLUMN IF NOT EXISTS pause_epoch BIGINT;
+ALTER TABLE tr_credit_balance ALTER COLUMN pause_epoch SET DEFAULT 0;
 ALTER TABLE tr_credit_balance ADD COLUMN IF NOT EXISTS trust_reconciled_through TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS tr_trust_event (
@@ -259,6 +261,8 @@ CREATE INDEX IF NOT EXISTS tr_key_limit_by_key_hash ON tr_key_limit (key_hash, s
 -- to validate it against existing rows, and the readers already coalesce a
 -- NULL window counter to zero (a NULL *_start means "window not started",
 -- which is the same lazy-floor case as a stale one).
+-- The same bare-add/set-default pattern applies to tr_credit_balance's
+-- trust_tier and pause_epoch above; readers and updates coalesce old NULLs to 0.
 ALTER TABLE tr_key_limit ADD COLUMN IF NOT EXISTS day_usage BIGINT;
 ALTER TABLE tr_key_limit ALTER COLUMN day_usage SET DEFAULT 0;
 ALTER TABLE tr_key_limit ADD COLUMN IF NOT EXISTS day_start TIMESTAMPTZ;
