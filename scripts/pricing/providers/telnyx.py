@@ -1,18 +1,17 @@
 """Telnyx provider-native catalog and pricing refresh.
 
 Telnyx's authenticated OpenAI-compatible model feed is authoritative for
-models callable by the operator account. Pricing is reconciled from three
-provider-owned sources:
+models callable by the operator account. Pricing is reconciled from two
+authenticated provider-owned sources:
 
 1. positive rates in the authenticated model feed;
-2. the current inference pricing page;
-3. the public x402 model catalog for the remaining models.
+2. standard-tier rates from the inference product pricing API.
 
 The authenticated feed now publishes positive, cached-inclusive USD rates.
-Legacy zero placeholders are never interpreted as free. Secondary sources
-are consulted only for missing prices, never as a prerequisite for a complete
-authenticated catalog. Their parsers remain covered by offline fixtures;
-missing fallback evidence must still block publication, not invent prices.
+Legacy zero placeholders are never interpreted as free. Product pricing is
+consulted only for missing prices, never as a prerequisite for a complete
+authenticated catalog. Unpriced models are held out of routing by the manifest
+writer. Account-level free allowances are not per-request token discounts.
 """
 
 from __future__ import annotations
@@ -26,7 +25,6 @@ from scripts.pricing.base import (
     ModelPrice,
     ProviderPricingResult,
     fetch_json,
-    fetch_provider,
     validate,
 )
 from scripts.pricing.manifest import write_discovered_chat_manifest
@@ -37,7 +35,7 @@ SLUG = "telnyx"
 BASE_URL = "https://api.telnyx.com/v2/ai/openai"
 MODELS_URL = f"{BASE_URL}/models"
 PRICING_URL = "https://telnyx.com/pricing/inference-api"
-X402_MODELS_URL = "https://x402.telnyx.com/v1/models"
+PRODUCT_PRICING_URL = "https://api.telnyx.com/v2/pricing/products/inference"
 URL = PRICING_URL
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
@@ -67,13 +65,20 @@ EXPECTED_MODELS = list(_NATIVE_TO_OR_ID.values())
 UPSTREAM_ID_MAP = {model_id: native_id for native_id, model_id in _NATIVE_TO_OR_ID.items()}
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 
+# Product billing names are not inference IDs. Join exact native basenames
+# except for these two names verified against both authenticated feeds.
+_PRODUCT_NAMES = {
+    "deepseek-ai/DeepSeek-V4-Flash-0731": "deepseek-v4-flash",
+    "deepseek-ai/DeepSeek-V4.1-Flash": "deepseek-v41-flash",
+}
 
-def _dollars_per_m_to_micro_per_m(value: object) -> int | None:
+
+def _dollars_per_m_to_micro_per_m(value: object, *, allow_zero: bool = False) -> int | None:
     try:
         parsed = Decimal(str(value))
     except (InvalidOperation, TypeError, ValueError):
         return None
-    if not parsed.is_finite() or parsed <= 0:
+    if not parsed.is_finite() or parsed < 0 or (parsed == 0 and not allow_zero):
         return None
     return int((parsed * Decimal(1_000_000)).to_integral_value(ROUND_HALF_UP))
 
@@ -88,10 +93,13 @@ def _model_price(
     completion_micro = _dollars_per_m_to_micro_per_m(completion)
     if prompt_micro is None or completion_micro is None:
         return None
+    cached_micro = _dollars_per_m_to_micro_per_m(cached, allow_zero=True)
+    if cached is not None and cached_micro is None:
+        return None
     return ModelPrice(
         prompt_micro_per_m=prompt_micro,
         completion_micro_per_m=completion_micro,
-        prompt_cached_micro_per_m=_dollars_per_m_to_micro_per_m(cached),
+        prompt_cached_micro_per_m=cached_micro,
     )
 
 
@@ -141,18 +149,29 @@ def _live_catalog(
             "output_modalities": ["text"],
             "endpoints": ["chat/completions"],
             "status": 1,
+            # Available upstream tiers are metadata, not TR routing support.
+            # Our published prices and requests remain on the default tier.
+            "provider_service_tiers": sorted(
+                {tier.strip().casefold() for tier in (service_tiers or ["default"])}
+            ),
+            "pricing_source": MODELS_URL,
         }
+        license_name = source.get("license")
+        if isinstance(license_name, str) and license_name.strip():
+            row["license"] = license_name.strip()
         context_length = positive_int(source.get("context_length"))
         if context_length is not None:
             row["context_length"] = context_length
         max_output_tokens = positive_int(source.get("max_completion_tokens"))
-        if max_output_tokens is not None:
+        if "max_completion_tokens" in source:
             row["max_output_tokens"] = max_output_tokens
         regions = source.get("regions")
         if isinstance(regions, list):
             row["provider_regions"] = [
                 str(region) for region in regions if isinstance(region, str) and region
             ]
+        if model_id in discovered:
+            raise RuntimeError(f"telnyx: duplicate canonical model {model_id}")
         discovered[model_id] = row
 
         pricing = source.get("pricing")
@@ -177,32 +196,68 @@ def _live_catalog(
     return discovered, direct_prices
 
 
-def _x402_prices(payload: object) -> dict[str, ModelPrice]:
+def _product_rate(value: object) -> Decimal | None:
+    """Accept a flat paid rate, never reinterpret volume tiers as context tiers."""
+    if not isinstance(value, list) or not value:
+        return None
+    rates: set[Decimal] = set()
+    for band in value:
+        if not isinstance(band, dict):
+            return None
+        try:
+            rate = Decimal(str(band.get("rate")))
+        except (InvalidOperation, TypeError, ValueError):
+            return None
+        if not rate.is_finite() or rate < 0:
+            return None
+        rates.add(rate)
+    if len(rates) != 1:
+        return None
+    return rates.pop() * 1000  # Product API uses USD/1k, catalog uses USD/1M.
+
+
+def _product_prices(
+    payload: object,
+    discovered: dict[str, dict[str, Any]],
+) -> dict[str, ModelPrice]:
     source_rows = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(source_rows, list):
-        raise RuntimeError("telnyx: x402 model catalog has no data list")
+        raise RuntimeError("telnyx: product pricing response has no data list")
+    product_models: dict[str, str] = {}
+    for model_id, row in discovered.items():
+        native_id = row["upstream_id"]
+        product_name = _PRODUCT_NAMES.get(native_id, native_id.split("/", 1)[-1].casefold())
+        if product_name in product_models:
+            raise RuntimeError(f"telnyx: ambiguous product name {product_name}")
+        product_models[product_name] = model_id
     prices: dict[str, ModelPrice] = {}
     for source in source_rows:
         if not isinstance(source, dict):
             continue
-        if str(source.get("owned_by") or "").casefold() != "telnyx":
+        if source.get("service_tier") != "standard":
             continue
-        native_id = source.get("id")
-        if not isinstance(native_id, str):
-            continue
-        model_id = _NATIVE_TO_OR_ID.get(native_id)
+        model_id = product_models.get(str(source.get("model") or ""))
         if model_id is None:
             continue
-        pricing = source.get("pricing")
-        rates = pricing.get("rates") if isinstance(pricing, dict) else None
+        rates = source.get("rates")
         if not isinstance(rates, dict):
             continue
+        if rates.get("currency") != "USD" or rates.get("unit") != "per_1k_tokens":
+            raise RuntimeError(f"telnyx: unsupported product pricing units for {model_id}")
+        values = rates.get("values")
+        if not isinstance(values, dict):
+            continue
+        cached = _product_rate(values.get("cached_input"))
+        if "cached_input" in values and cached is None:
+            continue
         price = _model_price(
-            prompt=rates.get("input"),
-            completion=rates.get("output"),
-            cached=rates.get("cached"),
+            prompt=_product_rate(values.get("input")),
+            completion=_product_rate(values.get("output")),
+            cached=cached,
         )
         if price is not None:
+            if model_id in prices:
+                raise RuntimeError(f"telnyx: duplicate standard product price for {model_id}")
             prices[model_id] = price
     return prices
 
@@ -218,28 +273,16 @@ def fetch() -> ProviderPricingResult:
     discovered, direct_prices = _live_catalog(live_payload)
     prices = dict(direct_prices)
     if discovered.keys() - prices.keys():
-        x402_prices = _x402_prices(fetch_json(X402_MODELS_URL))
-        page_result = fetch_provider(
-            slug=SLUG,
-            url=PRICING_URL,
-            expected_models=[
-                "moonshotai/kimi-k2.6",
-                "z-ai/glm-5.2",
-                "minimax/minimax-m3",
-            ],
+        product_prices = _product_prices(
+            fetch_json(PRODUCT_PRICING_URL, extra_headers=headers),
+            discovered,
         )
-        prices = {
-            model_id: price
-            for model_id, price in x402_prices.items()
-            if model_id in discovered
-        }
-        prices.update({
-            model_id: price
-            for model_id, price in page_result.prices.items()
-            if model_id in discovered
-        })
-        prices.update(direct_prices)
-    errors = validate(prices, EXPECTED_MODELS)
+        for model_id in discovered.keys() - prices.keys():
+            if model_id in product_prices:
+                prices[model_id] = product_prices[model_id]
+                discovered[model_id]["pricing_source"] = PRODUCT_PRICING_URL
+    # Delisted historical IDs must not freeze discovery of the current catalog.
+    errors = validate(prices, [])
     if errors:
         raise RuntimeError("; ".join(errors))
 
@@ -251,7 +294,8 @@ def fetch() -> ProviderPricingResult:
         fetched_url=MODELS_URL,
         notes=[
             f"discovered {len(discovered)} Telnyx-owned text models",
-            "pricing precedence: authenticated catalog > current pricing page > x402 catalog",
+            "pricing precedence: authenticated catalog > standard-tier product pricing API",
+            f"{len(discovered.keys() - prices.keys())} models withheld for missing prices",
         ],
     )
 
