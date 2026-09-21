@@ -954,12 +954,17 @@ PROVIDERS: dict[str, Provider] = {
         slug="telnyx",
         name="Telnyx",
         supports_prepaid=True,
+        stores_content=False,
+        provider_zero_data_retention=True,
         provider_policy=(
-            "No provider-ZDR or confidential-compute claim is tracked here. "
-            "Telnyx's privacy policy is linked for users who need to review "
-            "inference data handling."
+            "Telnyx states that hosted chat completions have zero data retention: "
+            "request and response content is not stored. TrustedRouter uses this "
+            "path for Telnyx-hosted models, including adapted Responses requests. "
+            "Telnyx's separate Responses endpoint stores conversations and is "
+            "not used here. This is a provider policy claim, not verified "
+            "confidential compute or end-to-end attestation."
         ),
-        provider_policy_url="https://telnyx.com/privacy-policy",
+        provider_policy_url="https://developers.telnyx.com/docs/inference/data-residency",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # Wafer — OpenAI-compatible serverless API at pass.wafer.ai/v1. Wafer

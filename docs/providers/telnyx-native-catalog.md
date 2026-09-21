@@ -45,9 +45,31 @@ DPA, subprocessors, trust-center, locality, status and support links remain on
 the provider page. Regional availability is not a residency guarantee, and a
 generic trust-center URL does not establish ZDR, TEE or end-to-end attestation.
 
+## Inference privacy
+
+Verified September 21, 2026 against Telnyx's
+[hosted inference page](https://telnyx.com/products/inference) and
+[inference retention documentation](https://developers.telnyx.com/docs/inference/data-residency).
+Telnyx advertises ZDR for hosted inference and documents that chat completions
+do not store request or response content. Mark these catalog routes ZDR for
+both Credits and BYOK; this is a published provider policy, not an account-only
+exception or cryptographic verification.
+
+TrustedRouter sends Telnyx requests through its OpenAI-compatible chat
+completions endpoint, including when adapting TrustedRouter Responses calls.
+Telnyx's native Responses endpoint stores conversations and is not used here.
+Voice assistants, storage products, and third-party passthrough are outside
+this classification. Do not inherit this ZDR flag when adding those paths.
+
+Confidential compute and E2EE remain unverified. Telnyx's documentation is not
+a contractual guarantee; customers needing contractual commitments should
+review their agreement and DPA with Telnyx.
+
 ## Verification
 
-Run `uv run pytest -q tests/test_telnyx_pricing.py tests/test_provider_branding.py`.
+Run `uv run pytest -q tests/test_telnyx_pricing.py tests/test_provider_branding.py tests/test_telnyx_zdr.py`.
 Tests cover hosted-only discovery, USD scaling, currency/tier rejection, cached
 input, native price precedence, cleared output limits, new and retired model
 IDs, duplicate IDs, and holding unpriced routes out of the catalog.
+Privacy tests cover published source links, Credits/BYOK ZDR routing, and
+exclusion from confidential-compute-only routing.

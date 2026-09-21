@@ -69,7 +69,8 @@ def test_telnyx_profile_keeps_application_contacts_private(test_settings) -> Non
         assert not re.search(r"contact|phone|signer", label, re.I)
     provider = PROVIDERS["telnyx"]
     assert provider.provider_e2ee is not True
-    assert provider.provider_zero_data_retention is not True
+    assert provider.provider_confidential_compute is not True
+    assert provider.provider_zero_data_retention is True
     assert provider.prepaid_zero_data_retention is False
 
 

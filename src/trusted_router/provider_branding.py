@@ -127,6 +127,8 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
             ("API catalog", "https://api.telnyx.com/v2/ai/openai/models"),
             ("Inference pricing", "https://telnyx.com/pricing/inference-api"),
             ("Machine-readable pricing", "https://api.telnyx.com/v2/pricing/products/inference"),
+            ("Hosted inference ZDR", "https://telnyx.com/products/inference"),
+            ("Inference retention and endpoint scope", "https://developers.telnyx.com/docs/inference/data-residency"),
             ("Data locality", "https://developers.telnyx.com/docs/account-setup/data-locality"),
             ("Privacy policy", "https://telnyx.com/privacy-policy"),
             ("Terms of service", "https://telnyx.com/terms-and-conditions-of-service"),
