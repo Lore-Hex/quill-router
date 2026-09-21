@@ -62,6 +62,8 @@ EXPECTED_MODELS = [
     "z-ai/glm-5.3-flash",
     # September 16: catalog-priced and callable, but absent from endpoint feed.
     "deepseek/deepseek-v4.1-flash",
+    # Retirement canceled; live inference verified despite its missing feed row.
+    "deepseek/deepseek-v4-flash-0731",
 ]
 
 
@@ -77,6 +79,7 @@ _NATIVE_TO_OR_ID = {
     "deepseek-ai/DeepSeek-V3": "deepseek/deepseek-v3",
     "deepseek-ai/DeepSeek-V3-OCR": "deepseek/deepseek-v3-ocr",
     "deepseek-ai/DeepSeek-V4.1-Flash": "deepseek/deepseek-v4.1-flash",
+    "deepseek-ai/DeepSeek-V4-Flash-0731": "deepseek/deepseek-v4-flash-0731",
     "Qwen/Qwen2.5-7B-Instruct-Turbo": "qwen/qwen-2.5-7b-instruct",
     "Qwen/Qwen2.5-72B-Instruct-Turbo": "qwen/qwen-2.5-72b-instruct",
     "mistralai/Mixtral-8x7B-Instruct-v0.1": "mistralai/mixtral-8x7b-instruct",

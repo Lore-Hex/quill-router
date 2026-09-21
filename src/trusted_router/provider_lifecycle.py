@@ -28,7 +28,6 @@ TOGETHER_MINIMAX_M27_RETIREMENT_AT = datetime(2026, 7, 27, 0, 0, tzinfo=UTC)
 TOGETHER_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 14, 0, 0, tzinfo=UTC)
 OPENAI_SEPTEMBER_28_RETIREMENT_AT = datetime(2026, 9, 28, 0, 0, tzinfo=UTC)
 FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 25, 0, 0, tzinfo=UTC)
-TOGETHER_DEEPSEEK_V4_FLASH_0731_RETIREMENT_AT = datetime(2026, 9, 29, 0, 0, tzinfo=UTC)
 BASETEN_JULY_2026_RETIREMENT_AT = datetime(2026, 7, 25, 0, 0, tzinfo=UTC)
 BASETEN_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 26, 0, 0, tzinfo=UTC)
 TINFOIL_KIMI_K26_RETIREMENT_AT = datetime(2026, 8, 3, 0, 0, tzinfo=UTC)
@@ -179,8 +178,8 @@ _RETIREMENTS = (
     ),
     # Notices give dates without an exact time; stop at 00:00 UTC conservatively.
     # OpenAI: https://developers.openai.com/api/docs/deprecations
-    # Together: September 29 serverless retirement notice. V4.1 is a distinct
-    # replacement, never an alias for callers pinning V4 Flash 0731 weights.
+    # Together canceled its September 29 V4 Flash 0731 retirement. Keep that
+    # exact model eligible; V4.1 remains a distinct model, never a redirect.
     _Retirement(
         provider="openai",
         model_ids=frozenset({
@@ -191,12 +190,6 @@ _RETIREMENTS = (
             "gpt-3.5-turbo-instruct", "babbage-002", "davinci-002", "gpt-3.5-turbo-1106",
         }),
         effective_at=OPENAI_SEPTEMBER_28_RETIREMENT_AT,
-    ),
-    _Retirement(
-        provider="together",
-        model_ids=frozenset({"deepseek/deepseek-v4-flash-0731"}),
-        upstream_ids=frozenset({"deepseek-ai/DeepSeek-V4-Flash-0731"}),
-        effective_at=TOGETHER_DEEPSEEK_V4_FLASH_0731_RETIREMENT_AT,
     ),
     # Baseten's September 13 notice: September 25 at 17:00 PDT is September
     # 26 at 00:00 UTC. These exact shared Model API ids retire; the distinct
