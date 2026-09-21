@@ -32,6 +32,8 @@ from trusted_router.benchmark_reports import (
 )
 from trusted_router.benchmark_scores import scores_for_model
 from trusted_router.catalog import (
+    DECIDE_PATH,
+    DECIDE_PATH_ALIASES,
     META_MODEL_IDS,
     MODELS,
     MONITOR_MODEL_ID,
@@ -41,6 +43,7 @@ from trusted_router.catalog import (
     ModelEndpoint,
     Provider,
     canonical_orchestration_model_id,
+    decide_url,
     endpoint_confidential_compute,
     endpoint_e2ee,
     endpoint_provider_policy,
@@ -1416,7 +1419,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         template="public/decide.html",
         title="Decision Models API: Typed Answers With Probabilities",
         description=(
-            "POST /v1/decide takes state plus typed boolean, choice, and score questions "
+            "POST /api/alpha/decide takes state plus typed boolean, choice, and score questions "
             "and returns verified answers with probabilities. Use trev-1.0, Jev, or any "
             "chat model through the attested TrustedRouter gateway."
         ),
@@ -2205,6 +2208,9 @@ def _env() -> Environment:
     env.filters["seo_title"] = seo_title
     env.filters["seo_meta_description"] = seo_meta_description
     env.globals["provider_logo_url"] = provider_logo_url
+    env.globals["decide_url"] = decide_url
+    env.globals["decide_path"] = DECIDE_PATH
+    env.globals["decide_path_aliases"] = DECIDE_PATH_ALIASES
     env.globals["content_handling_claim"] = CONTENT_HANDLING_CLAIM
     # Callable, not a value: this env is lru_cached and shared across
     # requests, so it must read the per-request ContextVar at render time.
@@ -4620,7 +4626,7 @@ def docs_llms_txt(settings: Settings) -> str:
             f"- Responses web search: https://{domain}/docs/web-search",
             f"- Prompt caching: https://{domain}/docs/prompt-caching",
             f"- Batch API: https://{domain}/docs/batch",
-            f"- Decision models (POST /v1/decide): https://{domain}/docs/decide",
+            f"- Decision models (POST {DECIDE_PATH}): https://{domain}/docs/decide",
             f"- Video generation: https://{domain}/docs/video",
             f"- AI gateway comparison directory: https://{domain}/compare",
             f"- OpenRouter alternative: https://{domain}/openrouter-alternative",
@@ -4745,7 +4751,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         f"- Responses web search: https://{domain}/docs/web-search",
         f"- Prompt caching: https://{domain}/docs/prompt-caching",
         f"- Batch API: https://{domain}/docs/batch",
-        f"- Decision models (POST /v1/decide): https://{domain}/docs/decide",
+        f"- Decision models (POST {DECIDE_PATH}): https://{domain}/docs/decide",
         f"- Video generation: https://{domain}/docs/video",
         f"- Blog: https://{domain}/blog",
         f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
@@ -5402,7 +5408,7 @@ def _model_detail_view(
         "supports_messages": model.supports_messages,
         "supports_embeddings": model.supports_embeddings,
         # Same rule as the public catalog shape: hosted and named decision
-        # models, and the chat models the gateway drives on POST /v1/decide.
+        # models, and the chat models the gateway drives on the decide route.
         "supports_decide": model.supports_decide or model.id in NATIVE_DECISION_MODEL_IDS,
         # Keep the public billing claim tied to an actual Credits route. Meta
         # models are the only exception because they authorize component
@@ -6019,7 +6025,7 @@ def _same_api_answer(left: Model, right: Model) -> str:
         )
     if _takes_decisions(left) and _takes_decisions(right):
         answer = (
-            "Yes. Both take the same request on POST /v1/decide, with the same "
+            f"Yes. Both take the same request on POST {DECIDE_PATH}, with the same "
             "TrustedRouter base URL and API key, so a side-by-side eval changes only the "
             f"model id between {left.id} and {right.id}."
         )

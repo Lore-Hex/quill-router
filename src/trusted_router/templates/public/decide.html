@@ -6,12 +6,12 @@
     <span class="eyebrow">Decision models</span>
     <h2>Ask your software a question. Get a typed answer with a probability.</h2>
     <p>Most calls to a language model inside an application are not conversations. They are decisions: <em>is this a refund request, which queue does it go to, how urgent is it, did the agent finish, should it retry.</em> Asking a chat model for prose and then parsing it is slow, expensive, and fragile.</p>
-    <p><code>POST /v1/decide</code> takes a piece of <strong>state</strong> and a set of <strong>typed questions</strong>, and returns one typed answer per question, each with probabilities you can threshold on. All questions are answered in a single call.</p>
+    <p><code>POST {{ decide_path }}</code> takes a piece of <strong>state</strong> and a set of <strong>typed questions</strong>, and returns one typed answer per question, each with probabilities you can threshold on. All questions are answered in a single call.</p>
     <p>Every answer is verified against your request before it is returned. You never receive an option you did not declare, a probability outside 0 to 1, or a distribution that does not add up.</p>
   </div>
   <div class="copy-terminal">
     <div class="code-head"><span>One call, three decisions</span><span>curl</span></div>
-    <pre><code>curl {{ api_base_url }}/decide \
+    <pre><code>curl {{ decide_url(api_base_url) }} \
   -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -92,28 +92,34 @@
 
 <section style="margin-top:48px">
   <div class="panel">
-    <div class="panel-head"><h2>Models</h2><span class="pill good">Six names, one API</span></div>
+    <div class="panel-head"><h2>Models</h2><span class="pill good">Nine names, one API</span></div>
     <div class="panel-body">
-      <p>Every model below takes the same request and returns the same response, so switching is changing one string. <strong>Start with <code>trustedrouter/trev-1.0</code></strong>: it is the fastest, and it reasons briefly before it answers.</p>
+      <p>Every model below takes the same request and returns the same response, so switching is changing one string. A decision usually sits in the middle of a request, so speed comes first: <strong>four of these answer in about a third of a second, and a fifth in about half.</strong> Start with <code>trustedrouter/trev-1.0</code>: it is among the fastest, it reasons briefly before it answers, and it fails over across four hosts.</p>
       <div class="model-table-wrap">
         <table>
           <thead><tr><th>Model</th><th>Pick it for</th><th>Median model latency</th><th>Eval accuracy</th><th>About one decision costs</th></tr></thead>
           <tbody>
-            <tr><td><span class="mono">trustedrouter/trev-1.0</span></td><td>Speed. An open-weight 120B reasoning model on the fastest hardware we could measure, with automatic failover across four hosts.</td><td>about 330 ms</td><td>29 / 29</td><td>$0.00034</td></tr>
             <tr><td><span class="mono">typesafe-ai/jev</span></td><td>A purpose-built decision model from TypeSafe AI, called at TypeSafe's own API with automatic failover to Vercel AI Gateway.</td><td>about 250 ms</td><td>29 / 29</td><td>$0.00002</td></tr>
+            <tr><td><span class="mono">trustedrouter/trev-1.0</span></td><td>The default. An open-weight 120B reasoning model on the fastest hardware we could measure, with automatic failover across four hosts.</td><td>about 300 ms</td><td>29 / 29</td><td>$0.00034</td></tr>
+            <tr><td><span class="mono">trustedrouter/mev-1.0</span></td><td>Speed at half the price. Mercury 2, a diffusion model, answering without deliberating. It over-rates the urgency of one eval ticket; pass <code>reasoning_effort: "low"</code> for 29 / 29 at about 600 ms.</td><td>about 290 ms</td><td>28 / 29</td><td>$0.00017</td></tr>
+            <tr><td><span class="mono">trustedrouter/lev-1.0</span></td><td>The steadiest tail. Llama 3.3 70B does not deliberate, so its slowest answer in the eval took 565 ms. Fails over across three hosts.</td><td>about 390 ms</td><td>29 / 29</td><td>$0.00036</td></tr>
+            <tr><td><span class="mono">trustedrouter/zev-1.0</span></td><td>A larger fast model. GLM 5.2 Fast, with failover to a second host. About four times the price of the others here.</td><td>about 0.5 s (0.35 to 0.7 s)</td><td>29 / 29</td><td>$0.0014</td></tr>
             <tr><td><span class="mono">trustedrouter/gev-1.0</span></td><td>A Google model. Small, from the Gemini family, with the format enforced by the host.</td><td>about 0.8 s</td><td>29 / 29</td><td>$0.00023</td></tr>
             <tr><td><span class="mono">trustedrouter/dev-1.0</span></td><td>Harder judgments on a budget. A DeepSeek flash model: strong judgment, cheap input.</td><td>about 1 s (0.7 to 2.4 s)</td><td>29 / 29</td><td>$0.00013</td></tr>
             <tr><td><span class="mono">trustedrouter/oev-1.0</span></td><td>A cheap all-rounder. An open-weight 20B model that reasons briefly.</td><td>about 1.6 s</td><td>29 / 29</td><td>$0.00004</td></tr>
-            <tr><td><span class="mono">trustedrouter/mev-1.0</span></td><td>The lowest price. A small open Gemma model.</td><td>about 2 s</td><td>29 / 29</td><td>$0.00002</td></tr>
+            <tr><td><span class="mono">trustedrouter/gemmev-1.0</span></td><td>The lowest price. A small open Gemma model.</td><td>about 2 s</td><td>29 / 29</td><td>$0.00002</td></tr>
           </tbody>
         </table>
       </div>
-      <p><strong>What a name is.</strong> A <code>trustedrouter/</code> name is one tuned configuration: a model, the host it was measured on, its reasoning setting and its output format. It runs only on its own hosts, so the speed and price above are what you get, and it answers <code>POST /v1/decide</code> only. Improvements ship as a new version (<code>trev-1.1</code>) rather than by changing a name you have pinned.</p>
+      <p><strong>What a name is.</strong> A <code>trustedrouter/</code> name is one tuned configuration: a model, the hosts it was measured on, its reasoning setting and its output format. It runs only on its own hosts, so the speed and price above are what you get, and it answers the decide route only. Improvements ship as a new version (<code>trev-1.1</code>) rather than by changing a name you have pinned.</p>
       <p><strong>Prefer a plain model id?</strong> The same tuning applies when you name one of these chat models directly, and any other chat model in the catalog, such as <code>anthropic/claude-opus-5</code>, works too, untuned. Larger models do better on harder judgments.</p>
       <div class="model-table-wrap">
         <table>
           <thead><tr><th>Tuned chat model</th><th>Runs on</th></tr></thead>
           <tbody>
+            <tr><td><span class="mono">inception/mercury-2</span></td><td>Inception</td></tr>
+            <tr><td><span class="mono">meta-llama/llama-3.3-70b-instruct</span></td><td>SambaNova, then Parasail, then Together</td></tr>
+            <tr><td><span class="mono">z-ai/glm-5.2-fast</span></td><td>Fireworks, then Baseten</td></tr>
             <tr><td><span class="mono">google/gemini-3.1-flash-lite</span></td><td>Google AI Studio</td></tr>
             <tr><td><span class="mono">deepseek/deepseek-v4.1-flash</span></td><td>DeepInfra</td></tr>
             <tr><td><span class="mono">openai/gpt-oss-20b</span></td><td>DeepInfra</td></tr>
@@ -180,8 +186,13 @@
 <section class="marketing-split" style="margin-top:48px">
   <div class="marketing-copy">
     <span class="eyebrow">Drop-in</span>
-    <h2>Same request and response as Vercel AI Gateway's evaluate endpoint.</h2>
-    <p><code>POST /v1/evaluate</code> is an alias for <code>POST /v1/decide</code>. The <code>model</code>, <code>state</code>, and <code>questions</code> fields, the three question types, and the <code>answers</code> and <code>usage</code> response fields are the same, so an HTTP client written for that endpoint needs only its base URL and key changed.</p>
+    <h2>The same contract as Vercel's evaluate endpoint and OpenRouter's Decisions API.</h2>
+    <p>The route is <code>POST {{ decide_path }}</code>: <em>alpha</em> because the contract may still change, <em>decide</em> because that is what it does. It also answers, identically, to the paths other gateways use for the same <code>model</code>, <code>state</code>, <code>questions</code> request, so a client written for one of them needs only its host, key and model id changed:</p>
+    <ul>
+      {% for path, whose in decide_path_aliases %}<li><code>POST {{ path }}</code> — {{ whose }}</li>
+      {% endfor %}
+    </ul>
+    <p><strong>Coming from OpenRouter or TypeSafe?</strong> They call the yes/no question <code>noul</code>. Send <code>"type": "noul"</code> and the answer comes back the way they return it, <code>{"type": "noul", "noul": 0.97}</code>; send <code>"type": "boolean"</code> and you get <code>{"type": "boolean", "probability": 0.97}</code>. It is the same question either way, and you can mix them in one request. Their <code>typesafe/jev-1.13</code> is <code>typesafe-ai/jev</code> here.</p>
     <p><code>state</code> may be a string, an object, or an array, so you can pass a record or a message history without serializing it yourself.</p>
   </div>
   <div class="copy-terminal">
@@ -189,7 +200,7 @@
     <pre><code>import httpx, os
 
 r = httpx.post(
-    "{{ api_base_url }}/decide",
+    "{{ decide_url(api_base_url) }}",
     headers={"Authorization": f"Bearer {os.environ['TRUSTEDROUTER_API_KEY']}"},
     json={
         "model": "trustedrouter/trev-1.0",

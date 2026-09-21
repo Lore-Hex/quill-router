@@ -45,6 +45,7 @@ from trusted_router.app_markup_billing import (
 from trusted_router.auth import SettingsDep, is_api_key_expired
 from trusted_router.byok_crypto import byok_cache_key, encrypted_secret_payload
 from trusted_router.catalog import (
+    DECIDE_PATH,
     MODELS,
     MONITOR_MODEL_ID,
     NAMED_DECISION_MODEL_PROVIDERS,
@@ -1097,7 +1098,7 @@ def _authorize_gateway_sync_impl(
         # thing the name promises. Say so instead.
         raise api_error(
             400,
-            f"{route_model_id} is a decision model: call POST /v1/decide",
+            f"{route_model_id} is a decision model: call POST {DECIDE_PATH}",
             ErrorType.MODEL_NOT_SUPPORTED,
         )
     if named_decision_chain is not None:
