@@ -498,16 +498,19 @@ def test_grok_45_uses_xai_native_model_id_and_pricing() -> None:
     assert 0 < cached_prompt < prepaid.prompt_price_microdollars_per_million_tokens
 
 
-def test_grok_46_uses_xai_native_model_id_and_long_context_pricing() -> None:
-    model = MODELS["x-ai/grok-4.6"]
-    prepaid = MODEL_ENDPOINTS["x-ai/grok-4.6@grok/prepaid"]
-    byok = MODEL_ENDPOINTS["x-ai/grok-4.6@grok/byok"]
+@pytest.mark.parametrize("native_id", ["grok-4.6", "grok-4.7"])
+def test_grok_uses_xai_native_model_id_and_long_context_pricing(native_id: str) -> None:
+    model = MODELS[f"x-ai/{native_id}"]
+    prepaid = MODEL_ENDPOINTS[f"x-ai/{native_id}@grok/prepaid"]
+    byok = MODEL_ENDPOINTS[f"x-ai/{native_id}@grok/byok"]
 
     assert model.provider == "grok"
     assert model.context_length == 500_000
-    assert prepaid.upstream_id == "grok-4.6"
-    assert byok.upstream_id == "grok-4.6"
-    assert [tier.max_prompt_tokens for tier in prepaid.price_tiers] == [200_000, None]
+    assert prepaid.upstream_id == native_id
+    assert byok.upstream_id == native_id
+    assert set(model.input_modalities) == {"text", "image"}
+    assert "tools" in model.supported_parameters
+    assert [tier.max_prompt_tokens for tier in prepaid.price_tiers] == [199_999, None]
     for tier in prepaid.price_tiers:
         assert tier.prompt_price_microdollars_per_million_tokens > 0
         assert tier.completion_price_microdollars_per_million_tokens > 0
@@ -517,6 +520,21 @@ def test_grok_46_uses_xai_native_model_id_and_long_context_pricing() -> None:
             < tier.prompt_cached_price_microdollars_per_million_tokens
             < tier.prompt_price_microdollars_per_million_tokens
         )
+
+
+def test_grok_47_advertises_verified_capabilities() -> None:
+    expected = {
+        "tools", "tool_choice", "reasoning_effort", "temperature", "top_p", "seed",
+        "response_format", "structured_outputs",
+    }
+    assert expected <= set(MODELS["x-ai/grok-4.7"].supported_parameters)
+    assert expected <= set(
+        MODEL_ENDPOINTS["x-ai/grok-4.7@grok/prepaid"].supported_parameters
+    )
+    # xAI explicitly ignores these for Grok 4.20 and newer.
+    assert not {"logprobs", "top_logprobs"} & set(
+        MODELS["x-ai/grok-4.7"].supported_parameters
+    )
 
 
 def test_openai_astra_uses_first_party_long_context_vision_route() -> None:

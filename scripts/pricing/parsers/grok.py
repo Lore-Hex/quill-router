@@ -79,7 +79,7 @@ def parse(markdown: str) -> dict:
         if "short" in rows and "long" in rows:
             output[model_id] = {
                 "tiers": [
-                    {"max_prompt_tokens": 200_000, **rows["short"]},
+                    {"max_prompt_tokens": 199_999, **rows["short"]},
                     {"max_prompt_tokens": None, **rows["long"]},
                 ]
             }
