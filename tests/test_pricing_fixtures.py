@@ -492,7 +492,7 @@ def test_grok_parser_extracts_current_long_context_tiers_and_future_names() -> N
 
     assert result["x-ai/grok-6"]["tiers"] == [
         {
-            "max_prompt_tokens": 200_000,
+            "max_prompt_tokens": 199_999,
             "prompt_micro_per_m": 1_000_000,
             "completion_micro_per_m": 3_000_000,
             "prompt_cached_micro_per_m": 100_000,
@@ -521,7 +521,7 @@ def test_grok_parser_extracts_grok_46_official_tiered_pricing() -> None:
     assert result["x-ai/grok-4.6"] == {
         "tiers": [
             {
-                "max_prompt_tokens": 200_000,
+                "max_prompt_tokens": 199_999,
                 "prompt_micro_per_m": 2_000_000,
                 "completion_micro_per_m": 6_000_000,
                 "prompt_cached_micro_per_m": 500_000,

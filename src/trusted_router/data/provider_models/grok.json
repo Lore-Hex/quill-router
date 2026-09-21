@@ -1,8 +1,8 @@
 {
   "provider": "grok",
   "source": "https://api.x.ai/v1/language-models",
-  "generated_at": "2026-09-20T02:44:07Z",
-  "model_count": 7,
+  "generated_at": "2026-09-21T20:38:19Z",
+  "model_count": 8,
   "_note": "xAI first-party OpenAI-compatible chat at api.x.ai/v1. Model IDs are verified against the authenticated xAI catalog; context and tiered prices come from xAI's official pricing table.",
   "models": [
     {
@@ -17,7 +17,7 @@
       "output_token_price_per_m": 6000000,
       "price_tiers": [
         {
-          "max_prompt_tokens": 200000,
+          "max_prompt_tokens": 199999,
           "input_token_price_per_m": 2000000,
           "output_token_price_per_m": 6000000,
           "cached_input_token_price_per_m": 500000
@@ -76,7 +76,7 @@
       "status": 1,
       "price_tiers": [
         {
-          "max_prompt_tokens": 200000,
+          "max_prompt_tokens": 199999,
           "input_token_price_per_m": 2000000,
           "output_token_price_per_m": 6000000,
           "cached_input_token_price_per_m": 300000
@@ -113,7 +113,7 @@
       "cached_input_token_price_per_m": 200000,
       "price_tiers": [
         {
-          "max_prompt_tokens": 200000,
+          "max_prompt_tokens": 199999,
           "input_token_price_per_m": 1250000,
           "output_token_price_per_m": 2500000,
           "cached_input_token_price_per_m": 200000
@@ -151,7 +151,7 @@
       "cached_input_token_price_per_m": 200000,
       "price_tiers": [
         {
-          "max_prompt_tokens": 200000,
+          "max_prompt_tokens": 199999,
           "input_token_price_per_m": 1250000,
           "output_token_price_per_m": 2500000,
           "cached_input_token_price_per_m": 200000
@@ -188,7 +188,7 @@
       "cached_input_token_price_per_m": 200000,
       "price_tiers": [
         {
-          "max_prompt_tokens": 200000,
+          "max_prompt_tokens": 199999,
           "input_token_price_per_m": 1250000,
           "output_token_price_per_m": 2500000,
           "cached_input_token_price_per_m": 200000
@@ -225,7 +225,7 @@
       "cached_input_token_price_per_m": 200000,
       "price_tiers": [
         {
-          "max_prompt_tokens": 200000,
+          "max_prompt_tokens": 199999,
           "input_token_price_per_m": 1250000,
           "output_token_price_per_m": 2500000,
           "cached_input_token_price_per_m": 200000
@@ -262,7 +262,7 @@
       "cached_input_token_price_per_m": 200000,
       "price_tiers": [
         {
-          "max_prompt_tokens": 200000,
+          "max_prompt_tokens": 199999,
           "input_token_price_per_m": 1000000,
           "output_token_price_per_m": 2000000,
           "cached_input_token_price_per_m": 200000
@@ -272,6 +272,49 @@
           "input_token_price_per_m": 2000000,
           "output_token_price_per_m": 4000000,
           "cached_input_token_price_per_m": 400000
+        }
+      ]
+    },
+    {
+      "display_name": "grok-4.7",
+      "title": "grok-4.7",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "context_length": 500000,
+      "features": [
+        "function-calling",
+        "tool-choice",
+        "reasoning-effort"
+      ],
+      "id": "x-ai/grok-4.7",
+      "upstream_id": "grok-4.7",
+      "created": 1788307200,
+      "routable": true,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 6000000,
+      "cached_input_token_price_per_m": 500000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 199999,
+          "input_token_price_per_m": 2000000,
+          "output_token_price_per_m": 6000000,
+          "cached_input_token_price_per_m": 500000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 4000000,
+          "output_token_price_per_m": 12000000,
+          "cached_input_token_price_per_m": 1000000
         }
       ]
     }

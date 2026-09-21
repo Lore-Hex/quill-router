@@ -301,7 +301,7 @@ def test_grok_api_discovers_new_model_with_exact_tiered_prices(
     assert probed == ["grok-6"]
     assert by_id["x-ai/grok-6"]["price_tiers"] == [
         {
-            "max_prompt_tokens": 200_000,
+            "max_prompt_tokens": 199_999,
             "input_token_price_per_m": 1_000_000,
             "output_token_price_per_m": 3_000_000,
             "cached_input_token_price_per_m": 100_000,

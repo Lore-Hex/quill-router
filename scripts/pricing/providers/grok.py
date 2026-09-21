@@ -27,6 +27,15 @@ MANIFEST_PATH = (
 )
 EXPECTED_MODELS = ["x-ai/grok-4.6", "x-ai/grok-4.5"]
 
+# /language-models currently omits these fields for Grok 4.7.
+# https://docs.x.ai/developers/grok-4-7
+_DOCUMENTED_METADATA: dict[str, dict[str, Any]] = {
+    "grok-4.7": {
+        "context_length": 500_000,
+        "features": ["function-calling", "tool-choice", "reasoning-effort"],
+    },
+}
+
 _NATIVE_TO_MODEL_ID = {
     "grok-4.20-multi-agent-0309": "x-ai/grok-4.20-multi-agent",
     "grok-4.20-0309-reasoning": "x-ai/grok-4.20-reasoning",
@@ -76,7 +85,9 @@ def _price(row: dict[str, Any]) -> ModelPrice | None:
         )
     return ModelPrice(
         tiers=[
-            PriceTier(threshold, prompt, completion, cached),
+            # xAI's threshold is the first long-context token count; our
+            # max_prompt_tokens bounds are inclusive.
+            PriceTier(threshold - 1, prompt, completion, cached),
             PriceTier(None, long_prompt, long_completion, long_cached or cached),
         ]
     )
@@ -113,6 +124,7 @@ def fetch() -> ProviderPricingResult:
         UPSTREAM_ID_MAP[model_id] = native_id
         prices[model_id] = price
         row: dict[str, Any] = {
+            **_DOCUMENTED_METADATA.get(native_id, {}),
             "id": model_id,
             "upstream_id": native_id,
             "display_name": native_id,

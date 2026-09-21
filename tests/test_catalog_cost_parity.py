@@ -1,8 +1,49 @@
 from __future__ import annotations
 
-from trusted_router.catalog import MODELS, Model, ModelEndpoint, endpoints_for_model
+import pytest
+
+from trusted_router.catalog import (
+    MODEL_ENDPOINTS,
+    MODELS,
+    Model,
+    ModelEndpoint,
+    endpoints_for_model,
+)
+from trusted_router.pricing import _customer_price, select_price_tier
 from trusted_router.routes.helpers import cost_microdollars
 from trusted_router.routes.internal.gateway import _endpoint_cost_microdollars
+
+
+@pytest.mark.parametrize("prompt_tokens", [199_999, 200_000, 200_001])
+@pytest.mark.parametrize("cached_tokens", [0, 100_000])
+def test_grok_47_billing_matches_xai_at_long_context_boundary(
+    prompt_tokens: int, cached_tokens: int,
+) -> None:
+    model = MODELS["x-ai/grok-4.7"]
+    endpoint = MODEL_ENDPOINTS["x-ai/grok-4.7@grok/prepaid"]
+    multiplier = 1 if prompt_tokens < 200_000 else 2
+    input_rate = _customer_price(2_000_000 * multiplier)
+    cached_rate = _customer_price(500_000 * multiplier)
+    output_rate = _customer_price(6_000_000 * multiplier)
+    tier = select_price_tier(endpoint.price_tiers, prompt_tokens)
+    assert tier.prompt_price_microdollars_per_million_tokens == input_rate
+    assert tier.prompt_cached_price_microdollars_per_million_tokens == cached_rate
+    assert tier.completion_price_microdollars_per_million_tokens == output_rate
+    expected = sum(
+        (tokens * rate + 500_000) // 1_000_000
+        for tokens, rate in (
+            (prompt_tokens - cached_tokens, input_rate),
+            (cached_tokens, cached_rate),
+            (100, output_rate),
+        )
+    )
+    assert cost_microdollars(
+        model, prompt_tokens, 100, cached_input_tokens=cached_tokens,
+    ) == expected
+    assert _endpoint_cost_microdollars(
+        # Stage D takes uncached input separately; the model helper takes total input.
+        endpoint, prompt_tokens - cached_tokens, 100, cache_read_tokens=cached_tokens,
+    ) == expected
 
 
 def _aligned_credit_endpoints() -> list[tuple[Model, ModelEndpoint]]:
