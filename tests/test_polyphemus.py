@@ -12,6 +12,9 @@ def test_polyphemus_catalog_is_responses_only_standard_privacy() -> None:
     model = MODELS[MODEL_ID]
     shape = model_to_openrouter_shape(model)
     assert shape["pricing"]["request"] == "0.000001"
+    assert float(shape["pricing"]["prompt"]) > 0
+    assert float(shape["pricing"]["completion"]) > 0
+    assert float(shape["pricing"]["completion_max"]) >= float(shape["pricing"]["completion"])
     tr = shape["trustedrouter"]
     assert tr["supports_chat"] is False
     assert tr["supports_responses"] is True
@@ -91,6 +94,7 @@ def test_polyphemus_failed_selection_refunds_hold() -> None:
     {"min_privacy": "zdr"}, {"min_privacy": "confidential"},
     {"zdr": True}, {"data_collection": "deny"}, {"usage": "byok"},
     {"jurisdiction": "eu"}, {"jurisdiction": "us"}, {"only": ["openai"]},
+    {"min_privacy": "no-store"}, {"min_privacy": "e2e"}, {"min_privacy": "e2ee"},
 ])
 def test_polyphemus_rejects_incompatible_provider_constraints(provider: dict) -> None:
     client, key = _client_and_key()

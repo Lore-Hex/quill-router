@@ -128,6 +128,10 @@ PROVIDER_JURISDICTION_SG = "SG"
 # starts where this one stopped instead of repeating it. Keys must be provider
 # slugs whose provider_headquarters_country is None.
 PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
+    "telluvian": (
+        "Checked Telluvian's product and privacy pages for selector integration; "
+        "the contracting operator's jurisdiction has not been verified. Excluded from US/EU filters."
+    ),
     **{
         slug: (
             "Checked the provider API and product documentation, but the "
@@ -435,6 +439,9 @@ PROVIDERS: dict[str, Provider] = {
     "telluvian": Provider(
         slug="telluvian",
         name="Telluvian",
+        # The TR routing code executes inside our attested gateway; this is
+        # distinct from upstream confidential compute, explicitly false below.
+        attested_gateway=True,
         supports_chat=False,
         supports_prepaid=True,
         supports_byok=False,

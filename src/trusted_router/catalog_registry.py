@@ -1241,6 +1241,8 @@ MODELS[POLYPHEMUS_MODEL_ID] = Model(
     name="Polyphemus 1.0",
     provider="telluvian",
     context_length=65_536,
+    # Internal selector admission uses the shared text routing machinery.
+    # Public chat capability is disabled by offers_chat; only Responses enters.
     supports_messages=False,
     prepaid_available=True,
     byok_available=False,

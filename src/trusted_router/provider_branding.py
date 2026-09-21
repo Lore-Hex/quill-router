@@ -136,6 +136,7 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     ),
     "tencent": ProviderBrand("https://www.tencentcloud.com/products/tokenhub"),
     "thinkingmachines": ProviderBrand("https://thinkingmachines.ai/"),
+    "telluvian": ProviderBrand("https://telluvian.ai/"),
     "tinfoil": ProviderBrand("https://tinfoil.sh/"),
     "together": ProviderBrand("https://www.together.ai/"),
     "trustedrouter": ProviderBrand("https://trustedrouter.com/"),

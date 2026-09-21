@@ -1169,6 +1169,13 @@ def _run_audit(
         hard_fail_warnings.extend(video_prices.hard_failures)
 
     for slug in sorted(GATEWAY_PREPAID_PROVIDER_SLUGS):
+        if slug == "telluvian":
+            from trusted_router.polyphemus import MODEL_ID, SELECTOR_FEE_MICRODOLLARS
+
+            selector_models = [model for model in MODELS.values() if model.provider == slug]
+            if len(selector_models) == 1 and selector_models[0].id == MODEL_ID and selector_models[0].request_price_microdollars == SELECTOR_FEE_MICRODOLLARS:
+                info.append("telluvian: router-set fixed selector fee; upstream selector cost unknown, not a token-price source")
+                continue
         if slug in VIDEO_PRICE_PROVIDER_SLUGS:
             if not check_model_discovery:
                 info.append(f"{slug}: official fixed-cost video price gate (network skipped) ✓")

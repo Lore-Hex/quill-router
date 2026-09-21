@@ -200,6 +200,7 @@ from trusted_router.money import (
     microdollars_per_million_tokens_to_token_decimal,
     microdollars_to_decimal,
 )
+from trusted_router.polyphemus import MODEL_ID as POLYPHEMUS_MODEL_ID
 from trusted_router.pricing import (  # noqa: F401 - re-exported for back-compat
     _CACHE_READ_PRICE_MULTIPLIER,
     _CACHE_WRITE_PRICE_MULTIPLIER,
@@ -415,6 +416,17 @@ def _meta_price_range(
     the request lands on whatever model the router picks — so we
     surface the range so /v1/models doesn't show a misleading $0."""
     candidates = meta_candidate_models(model_id)
+    if model_id == POLYPHEMUS_MODEL_ID:
+        # Selection has no token rate. Publish the price envelope of eligible
+        # paid generation routes, not the selector's zero-token meter.
+        values = [
+            getattr(endpoint, attr)
+            for candidate in MODELS.values()
+            if candidate.id not in META_MODEL_IDS and offers_chat(candidate)
+            for endpoint in endpoints_for_model(candidate.id)
+            if endpoint.usage_type == "Credits" and getattr(endpoint, attr, 0) > 0
+        ]
+        return (min(values), max(values)) if values else (0, 0)
     if model_id == GREEN_MODEL_ID:
         values = [
             getattr(endpoint, attr)
@@ -753,9 +765,9 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         # up in the chat picker and as a custom-model base, and both then
         # refused it.
         "supports_chat": offers_chat(model),
-        "supports_responses": offers_chat(model) or model.id == "trustedrouter/polyphemus-1.0",
+        "supports_responses": offers_chat(model) or model.id == POLYPHEMUS_MODEL_ID,
         **({"pricing_type": "selection_fee_plus_selected_model_tokens"}
-           if model.id == "trustedrouter/polyphemus-1.0" else {}),
+           if model.id == POLYPHEMUS_MODEL_ID else {}),
         "supports_embeddings": model.supports_embeddings,
         "supports_video": model.supports_video,
         # True for hosted decision models AND for the chat models the gateway
