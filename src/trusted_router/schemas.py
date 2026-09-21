@@ -441,10 +441,17 @@ class GatewayVideoJobUpdateRequest(_Strict):
     poll_after_seconds: int = Field(default=5, ge=1, le=300)
 
 
+class GatewayContractRejection(_Strict):
+    status: Literal[400, 422, 501]
+    parameter: str = Field(min_length=1, max_length=64)
+    request_id: str = Field(pattern=r"^rlog_[0-9a-f]{32}$")
+
+
 class GatewayValidateRequest(_Lenient):
     api_key_hash: str | None = Field(default=None, min_length=1)
     api_key_lookup_hash: str | None = Field(default=None, min_length=1)
     route_type: str | None = None
+    contract_rejection: GatewayContractRejection | None = None
 
     @model_validator(mode="after")
     def key_identifier_required(self) -> GatewayValidateRequest:
