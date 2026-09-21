@@ -1,7 +1,7 @@
 {
   "provider": "grok",
   "source": "https://api.x.ai/v1/language-models",
-  "generated_at": "2026-09-21T20:38:19Z",
+  "generated_at": "2026-09-21T21:03:43Z",
   "model_count": 8,
   "_note": "xAI first-party OpenAI-compatible chat at api.x.ai/v1. Model IDs are verified against the authenticated xAI catalog; context and tiered prices come from xAI's official pricing table.",
   "models": [
@@ -316,6 +316,13 @@
           "output_token_price_per_m": 12000000,
           "cached_input_token_price_per_m": 1000000
         }
+      ],
+      "supported_parameters": [
+        "temperature",
+        "top_p",
+        "seed",
+        "response_format",
+        "structured_outputs"
       ]
     }
   ],

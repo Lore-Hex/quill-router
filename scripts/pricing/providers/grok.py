@@ -33,6 +33,9 @@ _DOCUMENTED_METADATA: dict[str, dict[str, Any]] = {
     "grok-4.7": {
         "context_length": 500_000,
         "features": ["function-calling", "tool-choice", "reasoning-effort"],
+        "supported_parameters": [
+            "temperature", "top_p", "seed", "response_format", "structured_outputs",
+        ],
     },
 }
 
@@ -139,6 +142,10 @@ def fetch() -> ProviderPricingResult:
         context_length = positive_int(source.get("context_length"))
         if context_length is not None:
             row["context_length"] = context_length
+        for field in ("features", "supported_parameters", "supported_sampling_parameters"):
+            values = source.get(field)
+            if isinstance(values, list) and all(isinstance(value, str) for value in values):
+                row[field] = values
         created = positive_int(source.get("created"))
         if created is not None:
             row["created"] = created

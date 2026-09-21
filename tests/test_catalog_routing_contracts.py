@@ -522,6 +522,21 @@ def test_grok_uses_xai_native_model_id_and_long_context_pricing(native_id: str) 
         )
 
 
+def test_grok_47_advertises_verified_capabilities() -> None:
+    expected = {
+        "tools", "tool_choice", "reasoning_effort", "temperature", "top_p", "seed",
+        "response_format", "structured_outputs",
+    }
+    assert expected <= set(MODELS["x-ai/grok-4.7"].supported_parameters)
+    assert expected <= set(
+        MODEL_ENDPOINTS["x-ai/grok-4.7@grok/prepaid"].supported_parameters
+    )
+    # xAI explicitly ignores these for Grok 4.20 and newer.
+    assert not {"logprobs", "top_logprobs"} & set(
+        MODELS["x-ai/grok-4.7"].supported_parameters
+    )
+
+
 def test_openai_astra_uses_first_party_long_context_vision_route() -> None:
     model = MODELS["openai/gpt-6-astra"]
     prepaid = MODEL_ENDPOINTS["openai/gpt-6-astra@openai/prepaid"]

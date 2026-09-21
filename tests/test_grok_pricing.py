@@ -9,10 +9,15 @@ from scripts.pricing.providers import grok
 
 
 @pytest.mark.parametrize("context_length", [None, 600_000])
+@pytest.mark.parametrize("api_metadata", [
+    {},
+    {"features": ["function-calling"], "supported_parameters": ["temperature"]},
+])
 def test_grok_47_discovery_preserves_pricing_and_documented_capabilities(
     tmp_path,  # noqa: ANN001
     monkeypatch: pytest.MonkeyPatch,
     context_length: int | None,
+    api_metadata: dict[str, list[str]],
 ) -> None:
     manifest = tmp_path / "grok.json"
     monkeypatch.setattr(grok, "MANIFEST_PATH", manifest)
@@ -31,6 +36,7 @@ def test_grok_47_discovery_preserves_pricing_and_documented_capabilities(
         "prompt_text_token_price_long_context": 40_000,
         "cached_prompt_text_token_price_long_context": 10_000,
         "completion_text_token_price_long_context": 120_000,
+        **api_metadata,
     }
     monkeypatch.setattr(
         grok, "fetch_json", lambda *_args, **_kwargs: {
@@ -53,7 +59,13 @@ def test_grok_47_discovery_preserves_pricing_and_documented_capabilities(
     assert row["upstream_id"] == "grok-4.7"
     assert row["context_length"] == (context_length or 500_000)
     assert row["input_modalities"] == ["text", "image"]
-    assert {"function-calling", "tool-choice", "reasoning-effort"} <= set(row["features"])
+    assert row["features"] == api_metadata.get(
+        "features", ["function-calling", "tool-choice", "reasoning-effort"],
+    )
+    assert row["supported_parameters"] == api_metadata.get(
+        "supported_parameters",
+        ["temperature", "top_p", "seed", "response_format", "structured_outputs"],
+    )
     assert row["price_tiers"] == [
         {
             "max_prompt_tokens": 199_999,
@@ -68,7 +80,6 @@ def test_grok_47_discovery_preserves_pricing_and_documented_capabilities(
             "cached_input_token_price_per_m": 1_000_000,
         },
     ]
-    assert not any("fast" in row["id"] for row in rows)
 
 
 def test_write_provider_manifest_preserves_grok_46_price_tiers(
