@@ -31,7 +31,11 @@ def prepare(payload: dict, image: str, release: str, required_outbox: str = "tru
     if set(definition) - REGISTER_FIELDS - RESPONSE_FIELDS:
         raise ValueError("unrecognized task-definition fields; review before deploying")
     result = copy.deepcopy({k: v for k, v in definition.items() if k in REGISTER_FIELDS})
-    result["tags"] = copy.deepcopy(payload.get("tags", []))
+    # RegisterTaskDefinition rejects an empty list ("Tags can not be empty"), and
+    # describe-task-definition returns none for an untagged definition.
+    tags = copy.deepcopy(payload.get("tags") or [])
+    if tags:
+        result["tags"] = tags
     containers = result["containerDefinitions"]
     if len(containers) != 1 or containers[0]["name"] != "trusted-router":
         raise ValueError("unexpected ECS workload")

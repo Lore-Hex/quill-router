@@ -13,6 +13,32 @@ source "${SCRIPT_DIR}/cloud_complete_gate.sh"
 
 die() { printf '%s\n' "[FAIL] $*" >&2; exit 1; }
 log() { printf '%s\n' "$*" >&2; }
+TR_ECS_VERIFY_TIMEOUT_SECONDS="${TR_ECS_VERIFY_TIMEOUT_SECONDS-480}"
+TR_ECS_VERIFY_INTERVAL_SECONDS="${TR_ECS_VERIFY_INTERVAL_SECONDS-15}"
+[[ "$TR_ECS_VERIFY_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] \
+  || die "TR_ECS_VERIFY_TIMEOUT_SECONDS must be a positive integer"
+[[ "$TR_ECS_VERIFY_INTERVAL_SECONDS" =~ ^[1-9][0-9]*$ ]] \
+  || die "TR_ECS_VERIFY_INTERVAL_SECONDS must be a positive integer"
+
+# NLB targets can still serve while draining for the 300-second deregistration
+# delay, even after ECS services-stable returns. A single read can reject a
+# healthy rollout or rollback. Keep the reader strict and wait for its evidence.
+await_serving_release() {
+  local expected="${!#}" actual="" attempt
+  local attempts=$(( (TR_ECS_VERIFY_TIMEOUT_SECONDS - 1) / TR_ECS_VERIFY_INTERVAL_SECONDS + 1 ))
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    if actual="$(python3 "${SCRIPT_DIR}/cloud_serving_release.py" "${@:1:$#-1}")" \
+      && [ "$actual" = "$expected" ]; then
+      return 0
+    fi
+    if [ "$attempt" -lt "$attempts" ]; then
+      sleep "$TR_ECS_VERIFY_INTERVAL_SECONDS"
+    fi
+  done
+  log "serving release verification exhausted for ${*:1:$#-1}; expected=${expected}; last observed=${actual:-UNREADABLE}"
+  return 1
+}
+
 [ -z "$(git status --porcelain)" ] || die "refusing dirty checkout"
 [ "${TR_CLOUD_BAKE_AWS_BACKEND:-ecs}" = ecs ] || die "this deployment requires the ECS fleet gate"
 RELEASE="$(git rev-parse HEAD)"
@@ -47,7 +73,7 @@ cleanup() {
         --task-definition "$PREVIOUS_DEFINITION" --region "$ACTIVE_REGION" \
         --query service.taskDefinition --output text >/dev/null \
       && aws ecs wait services-stable --cluster tr-cp --services "$ACTIVE_SERVICE" --region "$ACTIVE_REGION" \
-      && [ "$(python3 "${SCRIPT_DIR}/cloud_serving_release.py" aws-region "$ACTIVE_REGION" "$ACTIVE_SERVICE")" = "$PREVIOUS_RELEASE" ]; then
+      && await_serving_release aws-region "$ACTIVE_REGION" "$ACTIVE_SERVICE" "$PREVIOUS_RELEASE"; then
       log "rollback stabilized in ${ACTIVE_REGION}"
     else
       log "[FAIL] rollback needs operator attention in ${ACTIVE_REGION}"
@@ -139,11 +165,11 @@ PY
   aws ecs update-service --cluster tr-cp --service "$service" --task-definition "$next" \
     --region "$region" --query service.taskDefinition --output text >/dev/null
   aws ecs wait services-stable --cluster tr-cp --services "$service" --region "$region"
-  actual="$(python3 "${SCRIPT_DIR}/cloud_serving_release.py" aws-region "$region" "$service")"
-  [ "$actual" = "$RELEASE" ] || die "${region} did not serve the requested release"
+  await_serving_release aws-region "$region" "$service" "$RELEASE" \
+    || die "${region} did not serve the requested release"
   ACTIVE_REGION=""
   log "verified ${region}: healthy targets and exact image/release"
 done
-[ "$(python3 "${SCRIPT_DIR}/cloud_serving_release.py" aws)" = "$RELEASE" ] \
+await_serving_release aws "$RELEASE" \
   || die "final fleet verification failed"
 require_cloud_complete aws

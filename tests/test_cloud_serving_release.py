@@ -122,6 +122,21 @@ def test_aws_uses_both_live_ecs_regions_not_retired_apprunner(tmp_path: Path) ->
     assert result.stdout.strip() == SHA
 
 
+def test_aws_healthy_fleet_with_draining_leftover_fails_closed(tmp_path: Path) -> None:
+    # A draining NLB target can still serve. Callers must wait out the
+    # deregistration delay instead of weakening the serving-evidence reader.
+    payload = aws_payloads()
+    for region in ("eu-west-1", "eu-west-3"):
+        targets = payload[f"elbv2 describe-target-health:{region}"]["TargetHealthDescriptions"]
+        old = copy.deepcopy(targets[0])
+        old["Target"]["Id"] = "10.9.9.9"
+        old["TargetHealth"] = {"State": "draining", "Reason": "Target.DeregistrationInProgress"}
+        targets.append(old)
+    result = discover(tmp_path, "aws", payload)
+    assert result.returncode != 0, result.stdout
+    assert result.stdout == ""
+
+
 @pytest.mark.parametrize("fault", [
     "missing_region", "service_failure", "zero_tasks", "pending", "rolling",
     "two_deployments", "missing_task", "task_failure", "old_task_definition",
