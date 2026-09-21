@@ -2242,9 +2242,12 @@ def _authorize_gateway_sync_impl(
                     "billing.replay_key_refund_failed",
                     key_limit_reservation.reserved_microdollars,
                 )
-            # Only this workspace/key/idempotency slot can receive our reservation;
-            # the winner owns that slot forever (pointers are never deleted, replays
-            # write nothing), so no later attempt can attach an unreferenced hold.
+            # Only this workspace/key/idempotency slot can receive our reservation, and
+            # the winner already owns it (a replay writes nothing; pointers are only
+            # replaced by an armed pause rejection), so no later attempt can attach an
+            # unreferenced hold. Holds ONLY once no worker predating the scoped
+            # reservation index is running: such a worker hands reservations out by the
+            # bare idempotency key. Do not deploy this before that rollout has drained.
             if (
                 credit_reservation_id is not None
                 and credit_reservation_id != authorization.credit_reservation_id
