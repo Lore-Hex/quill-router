@@ -1174,6 +1174,8 @@ async def openai_chat_pong_probe(
         # phase if they're ever reached.
         "max_tokens": 128,
         "temperature": 0,
+        # Exercise OpenCode's OpenAI-compatible request shape, not just bare PONG.
+        "store": False,
         "metadata": {"trustedrouter_synthetic": "true"},
     }
     started = time.perf_counter()
