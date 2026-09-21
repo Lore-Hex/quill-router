@@ -2348,7 +2348,10 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     byok = MODEL_ENDPOINTS["z-ai/glm-5.2@zai/byok"]
     gmi = MODEL_ENDPOINTS.get("z-ai/glm-5.2@gmi/prepaid")
     deepinfra = MODEL_ENDPOINTS["z-ai/glm-5.2@deepinfra/prepaid"]
-    fireworks = MODEL_ENDPOINTS.get("z-ai/glm-5.2@fireworks/prepaid")
+    fireworks = next((
+        endpoint for endpoint in endpoints_for_model("z-ai/glm-5.2")
+        if endpoint.provider == "fireworks" and endpoint.usage_type == "Credits"
+    ), None)
     novita = MODEL_ENDPOINTS["z-ai/glm-5.2@novita/prepaid"]
     phala = MODEL_ENDPOINTS["z-ai/glm-5.2@phala/prepaid"]
     siliconflow = MODEL_ENDPOINTS["z-ai/glm-5.2@siliconflow/prepaid"]

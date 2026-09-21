@@ -7,7 +7,9 @@ from typing import Any
 import httpx
 import pytest
 
+from tests.lifecycle_clock import catalog_predates
 from trusted_router.catalog import MODELS, Model, endpoints_for_model
+from trusted_router.provider_lifecycle import FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT
 from trusted_router.providers import (
     OPENAI_COMPATIBLE_PROVIDERS,
     ProviderClient,
@@ -679,6 +681,10 @@ def test_fireworks_catalog_exposes_kimi_k3_with_cached_pricing() -> None:
 def test_fireworks_catalog_exposes_glm_52_fast_router() -> None:
     endpoints = endpoints_for_model("z-ai/glm-5.2-fast")
     fireworks = [endpoint for endpoint in endpoints if endpoint.provider == "fireworks"]
+    if not catalog_predates(FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT):
+        assert fireworks == []
+        assert any(endpoint.provider == "baseten" for endpoint in endpoints)
+        return
 
     assert {endpoint.usage_type for endpoint in fireworks} == {"Credits", "BYOK"}
     assert {endpoint.upstream_id for endpoint in fireworks} == {

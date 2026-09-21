@@ -107,7 +107,7 @@ def test_fireworks_dsv4_flash_announced_cutover_is_exact() -> None:
 
 def test_fireworks_dsv4_flash_cutover_applies_markup_and_cache_floor() -> None:
     endpoint = ModelEndpoint(
-        id="deepseek/deepseek-v4-flash-0731@fireworks/prepaid",
+        id="historical-fireworks-pricing-fixture",
         model_id="deepseek/deepseek-v4-flash-0731", provider="fireworks", usage_type="Credits",
         upstream_id="accounts/fireworks/models/deepseek-v4-flash-0731",
     )
