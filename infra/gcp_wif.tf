@@ -18,6 +18,11 @@ locals {
     "${local.github_owner}/quill-cloud-proxy/.github/workflows/deploy-enclave-dns-reconciler.yml@refs/heads/main",
     "${local.github_owner}/quill-cloud-proxy/.github/workflows/deploy-enclave-gcp.yml@refs/heads/main",
     "${local.github_owner}/quill-cloud-proxy/.github/workflows/reconcile-enclave-dns.yml@refs/heads/main",
+    # Operator-dispatched only. Moves a region's enclave VMs out of a zone with
+    # no capacity, add-first, so that a deploy can roll the region again. It
+    # does to the same groups what a deploy already does with this identity
+    # (resize, delete-instances, DNS drain), from the same repository's main.
+    "${local.github_owner}/quill-cloud-proxy/.github/workflows/relieve-mig-stockout.yml@refs/heads/main",
   ]
 
   github_attribute_condition = join(" ", [
