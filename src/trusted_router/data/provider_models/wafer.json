@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Wafer serverless API. Refreshed hourly from Wafer's OpenAI-compatible /v1/models feed.",
   "provider": "wafer",
   "source": "https://pass.wafer.ai/v1/models",
-  "generated_at": "2026-09-22T18:36:27Z",
+  "generated_at": "2026-09-22T23:37:35Z",
   "price_scale": "microdollars_per_million",
   "zdr_header": "Wafer-ZDR: required",
   "model_count": 15,
@@ -287,7 +287,7 @@
       "output_modalities": [
         "text"
       ],
-      "input_token_price_per_m": 120000,
+      "input_token_price_per_m": 110000,
       "output_token_price_per_m": 2500000,
       "cached_input_token_price_per_m": 50000
     }

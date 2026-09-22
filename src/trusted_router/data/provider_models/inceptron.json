@@ -270,9 +270,9 @@
         "top_p"
       ],
       "routable": true,
-      "input_token_price_per_m": 1013400,
-      "output_token_price_per_m": 3287700,
-      "cached_input_token_price_per_m": 255000
+      "input_token_price_per_m": 870200,
+      "output_token_price_per_m": 2823000,
+      "cached_input_token_price_per_m": 218900
     },
     {
       "display_name": "GLM 5.3 Flash",
@@ -319,6 +319,6 @@
       "cached_input_token_price_per_m": 70000
     }
   ],
-  "generated_at": "2026-09-22T18:36:26Z",
+  "generated_at": "2026-09-22T23:37:35Z",
   "model_count": 7
 }
