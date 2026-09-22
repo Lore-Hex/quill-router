@@ -13,6 +13,7 @@ from bs4 import BeautifulSoup, Tag
 from scripts.pricing.base import ProviderPricingResult, fetch_html, fetch_provider
 from trusted_router.provider_lifecycle import (
     XIAOMI_MIMO_V25_PRO_ULTRASPEED_RETIREMENT_AT,
+    provider_model_retired,
 )
 
 SLUG = "xiaomi"
@@ -30,6 +31,9 @@ MANIFEST_PATH = (
 EXPECTED_MODELS = [
     "xiaomi/mimo-v2.5",
     "xiaomi/mimo-v2.5-pro",
+    "xiaomi/mimo-v2.6-pro",
+    "xiaomi/mimo-v2.6-flash",
+    "xiaomi/mimo-v2.6-pro-ultraspeed",
 ]
 _ULTRASPEED_MODEL_ID = "xiaomi/mimo-v2.5-pro-ultraspeed"
 
@@ -54,7 +58,7 @@ def _token_limit(value: str) -> int:
 def _new_chat_model(model_id: str, *, created: int) -> dict[str, Any]:
     # Only fetch same-origin model cards named by the official USD price table.
     # Never copy another model's context/capabilities for an unseen release.
-    if not re.fullmatch(r"xiaomi/mimo-v[0-9]+(?:\.[0-9]+)?(?:-[a-z0-9]+)*", model_id):
+    if not re.fullmatch(r"xiaomi/mimo-v[0-9]+(?:\.[0-9]+)*(?:-[a-z0-9]+)*", model_id):
         raise ValueError("xiaomi: invalid priced model id")
     upstream_id = model_id.removeprefix("xiaomi/")
     source_url = f"https://mimo.mi.com/models/en-US/{upstream_id}"
@@ -93,7 +97,7 @@ def _new_chat_model(model_id: str, *, created: int) -> dict[str, Any]:
         "upstream_id": upstream_id,
         "display_name": f"Xiaomi {title.replace('-', ' ')}",
         "title": title,
-        "created": created,
+        "created": created,  # First discovery; the card does not publish a release timestamp.
         "context_length": context,
         "max_output_tokens": output,
         "model_type": "chat",
@@ -123,6 +127,17 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
 
     now = datetime.now(UTC).replace(microsecond=0)
     known = {row.get("id") for row in rows if isinstance(row, dict)}
+    required = {
+        row["id"] for row in rows
+        if isinstance(row, dict)
+        and isinstance(row.get("id"), str)
+        and (row["id"] in EXPECTED_MODELS or row.get("metadata_source"))
+        and not provider_model_retired(SLUG, row["id"], row.get("upstream_id"), at=now)
+    }
+    # Missing pricing is not proof of retirement. Do not renew stale rows' age.
+    missing_prices = sorted(required - result.prices.keys())
+    if missing_prices:
+        raise RuntimeError(f"xiaomi missing fresh prices for active models: {missing_prices}")
     for model_id in sorted(result.prices.keys() - known):
         rows.append(_new_chat_model(model_id, created=int(now.timestamp())))
 
@@ -153,7 +168,7 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
             row.pop("cached_input_token_price_per_m", None)
         updated.append(model_id)
 
-    missing = sorted(set(EXPECTED_MODELS) - set(updated))
+    missing = sorted(required - set(updated))
     if missing:
         raise RuntimeError(f"xiaomi manifest did not update expected model(s): {missing}")
 
