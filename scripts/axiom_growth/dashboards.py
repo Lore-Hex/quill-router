@@ -23,28 +23,34 @@ SNAPSHOT_FIELDS={
  'growth.journey': ['_time','anonymous_fingerprint','account_fingerprint','workspace_fingerprint','marketing_workspace_fingerprint','utm_source','utm_medium','utm_campaign','creative_id','landing_path','first_source','first_medium','first_landing_path','first_touch_basis','last_source','last_tagged_landing','referrer_domain','customer_domain','purchase_count','purchase_microdollars','linked_usage_days','linked_usage_calls','linked_input_tokens','linked_output_tokens','observed_through','first_observed_at','last_observed_at']+[s+'_at' for s in ['landing_engaged','sign_in_opened','signup_completed','api_key_created','first_call_started','first_call_failed','first_successful_api_call','checkout_started','payment_method_saved','credit_purchase_completed','retained_api_usage_7d']],
  'growth.daily_usage':['_time','anonymous_fingerprint','workspace_fingerprint','marketing_workspace_fingerprint','utm_source','utm_medium','utm_campaign','creative_id','landing_path','model','provider','successful_calls','input_tokens','output_tokens','usage_microdollars','first_call_at','last_call_at','identity_link_status'],
 }
+SNAPSHOT_FIELDS['growth.journey'] += [
+    'first_utm_source', 'first_utm_medium', 'first_utm_campaign', 'first_creative_id',
+    'first_referrer_domain', 'first_referrer_host', 'customer_domain_verified',
+    'customer_domain_basis', 'first_purchase_at', 'experiment_id', 'experiment_cell_id',
+    'identity_link_status',
+]
+SNAPSHOT_FIELDS['growth.daily_usage'] += ['account_fingerprint', 'experiment_id', 'experiment_cell_id']
 
 
 def snapshot(event):
     fields=', '.join(SNAPSHOT_FIELDS[event])
-    return f"['{DATASET}'] | where event == '{event}' | take {INPUT_LIMIT} | summarize arg_max(exported_at, {fields}) by event_id"
+    return f"['{DATASET}'] | where event == '{event}' | summarize arg_max(exported_at, {fields}) by event_id"
 
 
-JOURNEY=snapshot('growth.journey')+FILTER+"""
+ACCOUNT_JOURNEYS = snapshot('growth.journey') + " | extend journey_key=iff(isnotempty(account_fingerprint), account_fingerprint, anonymous_fingerprint) | summarize arg_max(exported_at, " + ', '.join(SNAPSHOT_FIELDS['growth.journey']) + ") by journey_key"
+JOURNEY=ACCOUNT_JOURNEYS+FILTER+"""
 | where datetime_diff('day', now(), _time) >= age_days
 | extend engaged=todatetime(landing_engaged_at), signup=todatetime(signup_completed_at), activated=todatetime(first_successful_api_call_at), paid=todatetime(credit_purchase_completed_at), returned=todatetime(retained_api_usage_7d_at)
 | extend has_engaged=isnotnull(engaged), has_signup=isnotnull(signup), signup_after_engaged=isnotnull(signup) and isnotnull(engaged) and signup>=engaged, active_after_signup=isnotnull(activated) and isnotnull(signup) and activated>=signup, paid_after_signup=isnotnull(paid) and isnotnull(signup) and paid>=signup
 """
 USAGE=snapshot('growth.daily_usage')+FILTER
 EVENTS=f"""['{DATASET}'] | where event startswith 'acquisition.'
-| take {INPUT_LIMIT}
 | summarize arg_max(exported_at, _time, event, anonymous_fingerprint, utm_source, utm_medium, utm_campaign, creative_id, landing_path, referrer_domain, customer_domain, amount_microdollars) by event_id
 """+FILTER
 FRESH=f"['{DATASET}'] | where event == 'growth.sync_completed' | summarize arg_max(_time, observed_through) | project Latest_export=todatetime(_time), Observed_through=todatetime(observed_through) | extend Minutes_behind=datetime_diff('minute',now(),Observed_through) | extend Status=iff(isnull(Observed_through) or Minutes_behind>15,'STALE: refresh delayed','Automatic refresh every 5 minutes')"
 ONBOARDING=f"""['{DATASET}'] | where event in ('acquisition.onboarding_call_started','acquisition.onboarding_call_succeeded','acquisition.onboarding_call_failed')
 | extend attempt_id=tostring(column_ifexists('attempt_id','')), failure_reason=tostring(column_ifexists('failure_reason','')), http_status=tolong(column_ifexists('http_status',0)), elapsed_ms=tolong(column_ifexists('elapsed_ms',0))
 | where isnotempty(attempt_id)
-| take {INPUT_LIMIT}
 | summarize _time=min(_time) by event_id, event, anonymous_fingerprint, attempt_id, failure_reason, http_status, elapsed_ms, utm_source, utm_medium, utm_campaign, landing_path
 | extend _time=todatetime(_time)
 """+FILTER

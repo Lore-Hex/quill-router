@@ -16,8 +16,6 @@ from google.auth.transport.requests import Request
 from scripts.axiom_growth import model as m
 
 MAX_EVENTS = 300_000
-EXTRAS = ('workspace_fingerprint', 'first_utm_source', 'first_utm_medium',
-          'first_utm_campaign', 'first_landing_path', 'first_creative_id')
 
 
 def complete(result):
@@ -31,14 +29,7 @@ def complete(result):
 
 
 def project(row, source):
-    item = m.project_event(row, source=source)
-    item['landing_path'] = m.safe_path(row.get('landing_path'))
-    if m.HASH.fullmatch(str(row.get('workspace_fingerprint', ''))):
-        item['workspace_fingerprint'] = row['workspace_fingerprint']
-    for field in EXTRAS[1:]:
-        item[field] = (m.safe_path(row.get(field)) if field.endswith('path')
-                       else m.safe_label(row.get(field)))
-    return item
+    return m.project_event(row, source=source)
 
 
 def content_hash(row):
@@ -69,7 +60,7 @@ def cycle(state, io, now):
         # Preserve previously recovered domain evidence on an overlapping refresh.
         prior = events.get(row['event_id'], {})
         for key in ('customer_domain', 'first_referrer_domain', 'domain_observed_at',
-                    'customer_domain_basis', 'customer_domain_verified'):
+                    'customer_domain_basis', 'customer_domain_verified', *m.IDENTITY_FIELDS):
             if prior.get(key) and (not row.get(key) or row.get(key) == 'not_linked'):
                 row[key] = prior[key]
         events[row['event_id']] = row
@@ -95,7 +86,7 @@ def cycle(state, io, now):
                  'event_rows': len(events), 'usage_rows': len(daily_rows),
                  'journey_rows': len(journeys), 'changed_rows': len(changed),
                  'source': 'scheduled_incremental', 'cloud_scope': 'gcp',
-                 'schema_version': 4}
+                 'schema_version': 5}
     io.ingest([heartbeat])
     state.update(events=list(events.values()), daily=daily_rows, hashes=hashes,
                  watermark=end.isoformat(), repair_day=now.date().isoformat())
@@ -134,8 +125,12 @@ class Sources:
         return complete(result)
 
     def events(self, start, end):
-        fields = (*m.FIELDS, *EXTRAS)
-        projection = ', '.join(f"{f}=column_ifexists('{f}', {0 if f in {'amount_microdollars', 'http_status', 'elapsed_ms'} else chr(39)*2})" for f in fields)
+        fields = m.FIELDS
+        def default(field):
+            if field == 'customer_domain_verified':
+                return 'false'
+            return '0' if field in {'amount_microdollars', 'http_status', 'elapsed_ms'} else "''"
+        projection = ', '.join(f"{f}=column_ifexists('{f}', {default(f)})" for f in fields)
         filters = ','.join(repr(e) for e in sorted(m.CONVERSION_EVENTS))
         base = f"['{m.SOURCE_DATASET}'] | where event in ({filters})"
         pending, rows, queries = [(start, end)], [], 0
