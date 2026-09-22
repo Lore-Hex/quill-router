@@ -52,7 +52,7 @@ def test_mirrors_batch_all_indexes_with_one_bounded_attempt(kind: str, count: in
     rows, retry, timeout = table.calls[0]
     assert len(rows) == count
     assert retry is None
-    assert timeout == 1.0
+    assert timeout == 5.0
     assert len({row.row_key for row in rows}) == count
     assert all(len(row.cells) == 1 for row in rows)
 
@@ -80,7 +80,7 @@ def test_transport_timeout_is_not_retried(kind: str) -> None:
         def mutate_rows(self, rows: list[Any], *, retry: Any, timeout: float) -> list[Any]:
             self.calls.append((rows, retry, timeout))
             assert retry is None
-            assert timeout == 1.0
+            assert timeout == 5.0
             raise TimeoutError("simulated unavailable mirror")
 
     table = TimeoutTable()
@@ -89,7 +89,7 @@ def test_transport_timeout_is_not_retried(kind: str) -> None:
     assert len(table.calls) == 1
 
 
-@pytest.mark.parametrize("failure", ["timeout", "status"])
+@pytest.mark.parametrize("failure", ["timeout", "status", "missing_status"])
 def test_failed_mirrors_preserve_settlement_replay_and_durable_repair(
     monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
@@ -110,10 +110,12 @@ def test_failed_mirrors_preserve_settlement_replay_and_durable_repair(
     def unavailable(
         self: Any, rows: list[Any], *, retry: Any, timeout: float
     ) -> list[Any]:
-        assert retry is None and timeout == 1.0
+        assert retry is None and timeout == 5.0
         calls.append(len(rows))
         if failure == "timeout":
             raise TimeoutError("simulated mirror timeout")
+        if failure == "missing_status":
+            return [None for _row in rows]
         return [SimpleNamespace(code=14) for _row in rows]
 
     with monkeypatch.context() as patch:
@@ -141,3 +143,72 @@ def test_failed_mirrors_preserve_settlement_replay_and_durable_repair(
     store.generation_store.mirror_after_commit(generation)
     assert len(table.committed) == 9
     assert credit["total_usage"] == 900_000
+
+
+@pytest.mark.parametrize("kind", ["activity", "benchmark"])
+def test_real_bigtable_sdk_has_a_positive_rpc_deadline(
+    monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    from google.auth.credentials import AnonymousCredentials
+    from google.cloud import bigtable
+    from google.cloud.bigtable_v2.types import MutateRowsResponse
+    from google.rpc.status_pb2 import Status
+
+    from trusted_router.storage_gcp_mirror import commit_mirror_rows
+
+    client = bigtable.Client(project="local-test", credentials=AnonymousCredentials())
+    table = client.instance("local").table("local")
+    calls: list[float] = []
+
+    def mutate_rows(*, entries: Any, timeout: Any, retry: Any, **kwargs: Any) -> Any:
+        assert retry is None
+
+        def rpc(*, timeout: float) -> list[Any]:
+            # Apply the actual google-api-core decorator produced by Table.
+            calls.append(timeout)
+            assert 3.0 <= timeout <= 5.0
+            return [
+                MutateRowsResponse(entries=[
+                    MutateRowsResponse.Entry(index=i, status=Status(code=0))
+                    for i in range(len(entries))
+                ])
+            ]
+
+        return timeout(rpc)()
+
+    monkeypatch.setattr(client.table_data_client, "mutate_rows", mutate_rows)
+    count = 3 if kind == "activity" else 6
+    rows = [table.direct_row(f"local-{i}".encode()) for i in range(count)]
+    for row in rows:
+        row.set_cell("activity", b"metadata", b"test")
+    commit_mirror_rows(table, rows)
+    assert len(calls) == 1
+    assert all(not row._get_mutations() for row in rows)
+
+
+def test_real_sdk_unresolved_status_reports_repairable_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from google.api_core.exceptions import DeadlineExceeded
+    from google.auth.credentials import AnonymousCredentials
+    from google.cloud import bigtable
+
+    from trusted_router.storage_gcp_mirror import commit_mirror_rows
+
+    client = bigtable.Client(project="local-test", credentials=AnonymousCredentials())
+    table = client.instance("local").table("local")
+    calls = 0
+
+    def mutate_rows(**kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        assert kwargs["retry"] is None
+        raise DeadlineExceeded("simulated transport deadline")
+
+    monkeypatch.setattr(client.table_data_client, "mutate_rows", mutate_rows)
+    row = table.direct_row(b"local-test")
+    row.set_cell("activity", b"metadata", b"test")
+    with pytest.raises(RuntimeError, match="reconciliation required"):
+        commit_mirror_rows(table, [row])
+    assert calls == 1
+    assert row._get_mutations()
