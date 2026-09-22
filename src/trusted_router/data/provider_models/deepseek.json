@@ -28,7 +28,7 @@
       ]
     },
     {
-      "display_name": "deepseek-v4-pro",
+      "display_name": "DeepSeek-V4-Pro",
       "title": "deepseek-v4-pro",
       "model_type": "chat",
       "input_modalities": [
@@ -58,7 +58,8 @@
       "title": "deepseek-flash",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -81,7 +82,7 @@
     }
   ],
   "source": "https://api.deepseek.com/models",
-  "generated_at": "2026-09-22T09:09:15Z",
+  "generated_at": "2026-09-22T14:27:45Z",
   "price_scale": "microdollars_per_million",
   "model_count": 3
 }

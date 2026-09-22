@@ -1341,7 +1341,9 @@
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 1200000,
       "cached_input_token_price_per_m": 60000,
-      "missing_since": "2026-09-22"
+      "missing_since": "2026-09-22",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "KAT Coder Pro V2.5",
@@ -4137,6 +4139,6 @@
       "cached_input_token_price_per_m": 75000
     }
   ],
-  "generated_at": "2026-09-22T09:09:15Z",
+  "generated_at": "2026-09-22T14:27:45Z",
   "model_count": 148
 }

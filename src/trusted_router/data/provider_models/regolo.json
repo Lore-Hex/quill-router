@@ -31,8 +31,8 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 459600,
-      "output_token_price_per_m": 2412900
+      "input_token_price_per_m": 458520,
+      "output_token_price_per_m": 2407230
     },
     {
       "display_name": "Llama-3.3-70B-Instruct",
@@ -97,8 +97,8 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 574500,
-      "output_token_price_per_m": 2412900
+      "input_token_price_per_m": 573150,
+      "output_token_price_per_m": 2407230
     },
     {
       "display_name": "gpt-oss-120b",
@@ -129,8 +129,8 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 1149000,
-      "output_token_price_per_m": 4825800
+      "input_token_price_per_m": 1146300,
+      "output_token_price_per_m": 4814460
     },
     {
       "display_name": "gpt-oss-20b",
@@ -161,8 +161,8 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 114900,
-      "output_token_price_per_m": 482580
+      "input_token_price_per_m": 114630,
+      "output_token_price_per_m": 481446
     },
     {
       "display_name": "qwen3-coder-next",
@@ -227,8 +227,8 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 1149000,
-      "output_token_price_per_m": 4825800
+      "input_token_price_per_m": 1146300,
+      "output_token_price_per_m": 4814460
     },
     {
       "display_name": "qwen3.5-9b",
@@ -259,8 +259,8 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 80430,
-      "output_token_price_per_m": 402150
+      "input_token_price_per_m": 80241,
+      "output_token_price_per_m": 401205
     },
     {
       "display_name": "qwen3.8-27b",
@@ -292,8 +292,8 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 574500,
-      "output_token_price_per_m": 2412900
+      "input_token_price_per_m": 573150,
+      "output_token_price_per_m": 2407230
     },
     {
       "display_name": "apertus-70b",
@@ -323,8 +323,8 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 459600,
-      "output_token_price_per_m": 2412900
+      "input_token_price_per_m": 458520,
+      "output_token_price_per_m": 2407230
     },
     {
       "display_name": "glm5.2",
@@ -355,13 +355,13 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 2298000,
-      "output_token_price_per_m": 5974800
+      "input_token_price_per_m": 2292600,
+      "output_token_price_per_m": 5960760
     }
   ],
   "source": "https://api.regolo.ai/model_group/info",
   "pricing_source": "https://docs.regolo.ai/models/catalog/",
-  "generated_at": "2026-09-22T09:09:15Z",
+  "generated_at": "2026-09-22T14:27:45Z",
   "price_scale": "microdollars_per_million",
   "model_count": 11
 }
