@@ -3194,3 +3194,206 @@ def test_the_unprovable_script_really_is_unprovable(harness: DeployScriptHarness
         "PROVEN_BY_EXECUTION in ROLLOUT_REGISTRY and delete this test's premise"
     )
     assert run.returncode != 0
+
+
+# --- azure_control_plane.sh: where the observer secrets come from -----------
+#
+# The order is a file in $SECRETS_DIR, then $KEYS_FILE, then the value the
+# RUNNING app already holds. The last is what lets
+# .github/workflows/deploy-azure-control-plane.yml deploy with no secret
+# files; the first is how an operator rotates a value.
+
+_AZURE = "scripts/deploy/azure_control_plane.sh"
+_APP_OBSERVER = "app-held-observer-value"
+_APP_MONITOR = "app-held-monitor-value"
+_APP_LEGACY = "app-held-legacy-gateway-value"
+
+
+_APP_SECRET_NAMES = ("observer-token", "monitor-key", "internal-token")
+
+
+def _azure_harness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    with_secret_files: bool,
+    app_secrets: dict[str, str],
+    name: str,
+    extra_responses: tuple[tuple[str, str], ...] = (),
+) -> DeployScriptHarness:
+    # Each of the three secrets this change reads back from the app
+    # (_APP_SECRET_NAMES) is either given a value here or made to fail, which
+    # is what `az containerapp secret show` does for a secret the app does not
+    # hold, so none of those reads reaches the stub's default output.
+    # pg-password, which the script read back before this change, is left to
+    # the fixture unless a test passes it in extra_responses.
+    fixture = SCRIPT_FIXTURES[_AZURE]
+    responses = extra_responses + tuple(
+        (rf"containerapp secret show .*--secret-name {secret} --query", app_secrets[secret])
+        for secret in _APP_SECRET_NAMES
+        if secret in app_secrets
+    ) + fixture.responses
+    failures = tuple(
+        rf"containerapp secret show .*--secret-name {secret} --query"
+        for secret in _APP_SECRET_NAMES
+        if secret not in app_secrets
+    ) + fixture.failures
+    home_files = fixture.home_files if with_secret_files else {}
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES,
+        _AZURE,
+        replace(fixture, responses=responses, failures=failures, home_files=home_files),
+    )
+    return DeployScriptHarness(tmp_path / name)
+
+
+def _secret_set_values(run: HarnessRun) -> dict[str, str]:
+    (secret_set,) = [c for c in run.calls if c[:4] == ["az", "containerapp", "secret", "set"]]
+    values = secret_set[secret_set.index("--secrets") + 1 :]
+    return dict(v.split("=", 1) for v in values if "=" in v and not v.startswith("-"))
+
+
+def _app_secret_reads(run: HarnessRun) -> list[str]:
+    return [
+        c[c.index("--secret-name") + 1]
+        for c in run.calls
+        if c[:4] == ["az", "containerapp", "secret", "show"]
+    ]
+
+
+def test_azure_deploy_with_no_secret_files_carries_the_running_apps_values_forward(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The CI shape: no $SECRETS_DIR, no $KEYS_FILE.
+    harness = _azure_harness(
+        tmp_path,
+        monkeypatch,
+        with_secret_files=False,
+        app_secrets={
+            "observer-token": _APP_OBSERVER,
+            "monitor-key": _APP_MONITOR,
+            "internal-token": _APP_LEGACY,
+        },
+        name="azure-no-files",
+    )
+
+    run = harness.run(_AZURE, verifier_rc=0)
+
+    assert run.returncode == 0, summarise(run)
+    written = _secret_set_values(run)
+    assert written["observer-token"] == _APP_OBSERVER
+    assert written["monitor-key"] == _APP_MONITOR
+    assert {"observer-token", "monitor-key", "internal-token"} <= set(_app_secret_reads(run))
+
+
+def test_azure_deploy_prefers_the_operators_secret_files_over_the_running_app(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A rotation: the operator's files hold new values, the app the old ones.
+    harness = _azure_harness(
+        tmp_path,
+        monkeypatch,
+        with_secret_files=True,
+        app_secrets={"observer-token": _APP_OBSERVER, "monitor-key": _APP_MONITOR},
+        name="azure-files-win",
+    )
+
+    run = harness.run(_AZURE, verifier_rc=0)
+
+    assert run.returncode == 0, summarise(run)
+    written = _secret_set_values(run)
+    assert written["observer-token"] == "harness-fake-observer"
+    assert written["monitor-key"] == "harness-fake-monitor"
+    reads = _app_secret_reads(run)
+    assert "observer-token" not in reads
+    assert "monitor-key" not in reads
+
+
+def test_azure_deploy_refuses_when_neither_files_nor_the_app_hold_the_observer_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness = _azure_harness(
+        tmp_path,
+        monkeypatch,
+        with_secret_files=False,
+        app_secrets={"monitor-key": _APP_MONITOR},
+        name="azure-no-observer",
+    )
+
+    run = harness.run(_AZURE, verifier_rc=0)
+
+    assert run.returncode != 0
+    assert "no observer internal token in" in run.stderr
+    assert "or the running app" in run.stderr
+    assert not any(c[:4] == ["az", "containerapp", "secret", "set"] for c in run.calls)
+    assert not any(c[:3] == ["az", "containerapp", "update"] for c in run.calls)
+
+
+def test_azure_deploy_keeps_the_observer_and_billing_tokens_apart_when_reading_the_app(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The separation check still runs when both values come from the app.
+    # The positive control is the first test above: different values deploy.
+    harness = _azure_harness(
+        tmp_path,
+        monkeypatch,
+        with_secret_files=False,
+        app_secrets={
+            "observer-token": _APP_LEGACY,
+            "monitor-key": _APP_MONITOR,
+            "internal-token": _APP_LEGACY,
+        },
+        name="azure-same-token",
+    )
+
+    run = harness.run(_AZURE, verifier_rc=0)
+
+    assert run.returncode != 0
+    assert "observer internal token must differ from the billing gateway token" in run.stderr
+    assert not any(c[:4] == ["az", "containerapp", "secret", "set"] for c in run.calls)
+
+
+_APP_PG_PASSWORD = "app-held-pg-password"  # noqa: S105 - test value, not a credential
+
+
+@pytest.mark.parametrize("in_github_actions", [True, False])
+def test_azure_deploy_masks_every_value_it_reads_when_running_in_github_actions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_github_actions: bool
+) -> None:
+    # Values read at run time are not registered GitHub secrets, so Actions
+    # would not mask them, and this repository's run logs are public.
+    harness = _azure_harness(
+        tmp_path,
+        monkeypatch,
+        with_secret_files=False,
+        app_secrets={
+            "observer-token": _APP_OBSERVER,
+            "monitor-key": _APP_MONITOR,
+            "internal-token": _APP_LEGACY,
+        },
+        extra_responses=(
+            (r"containerapp secret show .*--secret-name pg-password --query", _APP_PG_PASSWORD),
+        ),
+        name=f"azure-mask-{in_github_actions}",
+    )
+
+    run = harness.run(
+        _AZURE,
+        verifier_rc=0,
+        extra_env={"GITHUB_ACTIONS": "true"} if in_github_actions else {},
+    )
+
+    assert run.returncode == 0, summarise(run)
+    masks = [line for line in run.stdout.splitlines() if line.startswith("::add-mask::")]
+    values = (_APP_OBSERVER, _APP_MONITOR, _APP_LEGACY, _APP_PG_PASSWORD)
+    if in_github_actions:
+        assert masks == [f"::add-mask::{value}" for value in values]
+    else:
+        # Positive control: an operator's terminal gets no workflow commands.
+        assert masks == []
+    unmasked_output = "\n".join(
+        line for line in (run.stdout + "\n" + run.stderr).splitlines()
+        if not line.startswith("::add-mask::")
+    )
+    for value in values:
+        assert value not in unmasked_output

@@ -632,6 +632,48 @@ The collector verifies every key before append (kid derivation, commitment
 set membership, GCP attestation chain); a kid observed with a different key
 logs `ALERT receipt_key_kid_collision` and never replaces the stored key.
 
+## <a id="azure-deploy"></a>Deploying the Azure control plane
+
+The Azure control plane is the Container App `tr-azure-vnet` in resource group
+`tr-azure` (uaenorth). `scripts/deploy/azure_control_plane.sh` deploys it. In
+order, it takes the shared production deploy mutex, runs the cloud bake gate,
+builds the image with `az acr build`, updates the app, applies and then
+verifies the schema with `psql`, updates the `azure.trustedrouter.com` record
+in Cloud DNS, and ends with the completeness check
+(`scripts/deploy/verify_cloud_complete.sh`).
+
+**From CI:** dispatch `.github/workflows/deploy-azure-control-plane.yml` on
+`main`. Like the AWS deploy it takes an optional `release_sha` (a baked commit
+already on `main`) and a `bake_override_reason`, and it refuses a commit whose
+CI did not pass. Also like the AWS deploy, it runs the deploy script from the
+release it deploys. A release from before this workflow existed carries a
+script that reads the observer's secrets only from files, so under the
+workflow it stops at "no observer internal token", before it changes the app.
+Deploy such a release by hand.
+
+**One-time setup for CI:** someone with Owner on the subscription runs
+`scripts/deploy/azure_github_deploy_identity.sh` from a shell where `az login`
+and `gh auth login` are done. It creates the managed identity
+`tr-github-deploy`, trusts GitHub's OIDC token for
+`repo:Lore-Hex/quill-router:ref:refs/heads/main`, grants Contributor on
+`tr-azure` and Key Vault Secrets User on the one secret the deploy reads
+(`tr-azure-clickhouse-password`), and sets the repository variable
+`AZURE_DEPLOY_CLIENT_ID`. Until it has run, the workflow's first step fails
+and names the script.
+
+**Where the observer's secrets come from:** a file in `~/.quill-secrets`, then
+`~/.quill_cloud_keys.private`, then the value the running app already holds.
+To rotate a value, put the new one in the file and deploy from a machine that
+has it. A CI deploy has no files, so it carries the app's current values
+forward.
+
+**By hand**, from a checkout of the commit to deploy (the gate requires the
+image tag to equal `HEAD`):
+
+```
+bash scripts/deploy/azure_control_plane.sh
+```
+
 ## <a id="stop-remediator"></a>Stopping the remediator
 
 The remediator (`src/trusted_router/synthetic/remediator.py`) reads the health
