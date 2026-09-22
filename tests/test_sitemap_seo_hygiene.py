@@ -7,6 +7,7 @@ from urllib.parse import urljoin, urlsplit
 from defusedxml import ElementTree
 from fastapi.testclient import TestClient
 
+from trusted_router import dashboard
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.seo_meta import seo_meta_description, seo_title
@@ -139,3 +140,50 @@ def test_seo_metadata_helpers_bound_generated_text() -> None:
     assert len(seo_title("A" * 80)) == 60
     assert seo_meta_description("Repeated words " * 20).endswith("...")
     assert len(seo_meta_description("Repeated words " * 20)) <= 160
+
+
+def test_all_published_docs_are_in_core_sitemap(client: TestClient) -> None:
+    root = ElementTree.fromstring(client.get("/sitemap-core.xml").content)
+    namespace = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+    locations = [node.text for node in root.findall("s:url/s:loc", namespace)]
+    assert len(locations) == len(set(locations))
+    assert {urlsplit(url).netloc for url in locations if url} == {"trustedrouter.com"}
+    sitemap_paths = {urlsplit(url).path for url in locations if url}
+    expected_docs = {
+        f"/{slug}" for slug in dashboard.PUBLIC_PAGES
+        if slug == "docs" or slug.startswith("docs/")
+    }
+    assert "/docs/notify" in expected_docs
+    assert expected_docs <= sitemap_paths
+    assert {"/docs/llms.txt", "/docs/llms-full.txt", "/api/reference"} <= sitemap_paths
+
+    # Also inspect registered routes: a custom docs handler outside PUBLIC_PAGES
+    # must not silently introduce an indexable guide absent from the sitemap.
+    route_paths = {
+        route.path.rstrip("/") for route in client.app.routes
+        if hasattr(route, "path") and "{" not in route.path
+        and (route.path == "/docs" or route.path.startswith("/docs/"))
+    }
+    for path in sorted(route_paths):
+        response = client.get(path, headers={"accept": "text/html"}, follow_redirects=False)
+        if response.is_redirect:
+            assert path not in sitemap_paths
+            continue
+        assert response.status_code == 200, path
+        if "text/html" not in response.headers.get("content-type", ""):
+            continue
+        page = _SeoParser()
+        page.feed(response.text)
+        if page.robots and "noindex" in page.robots.lower():
+            assert path not in sitemap_paths
+            continue
+        assert page.canonical == f"https://trustedrouter.com{path}", path
+        assert path in sitemap_paths, f"Published docs route missing from sitemap: {path}"
+
+
+def test_new_docs_are_included_without_a_second_sitemap_registration(
+    test_settings: Settings, monkeypatch,
+) -> None:
+    monkeypatch.setitem(dashboard.PUBLIC_PAGES, "docs/new-guide", dashboard.PUBLIC_PAGES["docs"])
+    sitemap = dashboard.sitemap_core_xml(test_settings)
+    assert sitemap.count("<loc>https://trustedrouter.com/docs/new-guide</loc>") == 1

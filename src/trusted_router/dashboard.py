@@ -232,31 +232,12 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/gemini-flash-alternative",
     "/llm-provider-latency-benchmarks",
     "/pricing",
-    "/docs",
-    "/docs/x402",
-    "/docs/user-models",
-    "/docs/custom-models",
     "/api/reference",
     "/apps",
     "/resources",
     "/customers/robot-robot-human",
     "/careers",
     "/blog",
-    "/docs/agent-setup",
-    "/docs/evals",
-    "/docs/provider-conformance",
-    "/docs/synth",
-    "/docs/mcp",
-    "/docs/migrate-from-openrouter",
-    "/docs/tagging",
-    "/docs/telemetry",
-    "/docs/receipts",
-    "/docs/provider-routing",
-    "/docs/prompt-caching",
-    "/docs/batch",
-    "/docs/decide",
-    "/docs/web-search",
-    "/docs/video",
     "/vibe-coders",
     "/for-developers",
     "/llms.txt",
@@ -4358,7 +4339,10 @@ def sitemap_xml(settings: Settings) -> str:
 def sitemap_core_xml(settings: Settings) -> str:
     domain = settings.trusted_domain
     paths: list[tuple[str, str, str]] = []
-    for path in SEO_CORE_PATHS:
+    # Published docs are registered with their page metadata. Derive their
+    # sitemap entries here so a new guide cannot be lost in a second manual list.
+    doc_paths = (f"/{slug}" for slug in PUBLIC_PAGES if slug == "docs" or slug.startswith("docs/"))
+    for path in dict.fromkeys((*SEO_CORE_PATHS, *doc_paths)):
         paths.append((path, "daily" if path in {"/models", "/providers"} else "weekly", "0.9"))
     for post in BLOG_POSTS:
         paths.append((post.href, "monthly", "0.7"))
