@@ -513,6 +513,11 @@ def test_authorize_shadow_records_reason_without_lease_and_null_when_minted(
     minted_event = STORE.spend_lease_shadow_events[minted["data"]["authorization_id"]]
     assert rejected_event["no_lease_reason"] == "route_type"
     assert minted_event["no_lease_reason"] is None
+    claims = json.loads(b64url_decode(minted["data"]["spend_lease"]["token"].split(".")[1]))
+    assert minted_event["lease_id"] == claims["lease_id"]
+    assert minted_event["echo_lease_id"] is None
+    assert rejected_event["lease_id"] is None
+    assert rejected_event["echo_lease_id"] is None
 
 
 def test_authorize_shadow_names_current_boot_digest_approval_failure() -> None:

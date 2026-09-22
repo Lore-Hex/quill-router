@@ -42,6 +42,16 @@ ADMISSION_RECEIPT_PAYLOAD_FIELDS = frozenset(
 
 
 class AdmissionRefusalReason(StrEnum):
+    """Closed wire refusals.
+
+    ``not_streaming`` excludes non-streaming local admission from this rollout.
+    ``cap_not_enforceable`` requires the complete supported Stage D subset.
+    ``invocation_nonce_required`` preserves committed-reserve recovery.
+    """
+
+    NOT_STREAMING = "not_streaming"
+    CAP_NOT_ENFORCEABLE = "cap_not_enforceable"
+    INVOCATION_NONCE_REQUIRED = "invocation_nonce_required"
     RECEIPT_INVALID = "receipt_invalid"
     BOOT_NOT_ACCEPTED = "boot_not_accepted"
     BOOT_MISMATCH = "boot_mismatch"
