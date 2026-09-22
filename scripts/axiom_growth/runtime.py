@@ -98,7 +98,7 @@ def cycle(state, io, now):
         try:
             audits = gateway_attempts.collect(state, io, now, end)
             attempts = gateway_attempts.snapshots(audits, journeys, end)
-            attempts = gateway_attempts.pre_activation_attempts(attempts, daily_rows)
+            attempts = gateway_attempts.pre_activation_attempts(attempts, daily_rows, journeys)
             if owners is not None:
                 m.link_billing_accounts(attempts, owners, journeys)
             gateway_attempts.link_first_attempts(journeys, attempts)

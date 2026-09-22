@@ -29,8 +29,10 @@ query-deduplicated. A partial or failed ingest never advances the checkpoint.
 A conditional-write GCS lease prevents concurrent executions. The private state
 retains up to 365 days; explicit row and byte limits fail rather than truncate.
 
-Sources are bounded Axiom acquisition queries, acquisition-only Cloud Logging,
-and a SELECT-only ClickHouse view. Daily usage excludes synthetics and retains
+Sources are bounded Axiom acquisition queries, allowlisted acquisition and gateway
+audit Cloud Logging, and SELECT-only ClickHouse views. The gateway projection
+exports content-free first-attempt metadata for observed signup cohorts only.
+Daily usage excludes synthetics and retains
 the GCP source scope. Workspaces are not people; ambiguous visitor links remain
 unattributed. Credit purchases are top-ups, not recognized revenue.
 
@@ -38,12 +40,14 @@ unattributed. Credit purchases are top-ups, not recognized revenue.
 
 The worker identity is `tr-growth-sync`. It has no Spanner, billing or inference
 permissions. Its Cloud Logging access is restricted to the `tr-growth-source`
-bucket, fed only by the named acquisition-event sink. Its dedicated ClickHouse
-user can read only `tr.growth_daily_usage`, which hashes workspace IDs before
-returning them. It cannot read the underlying request table.
+bucket, fed only by the named acquisition-event/audit sink. Its dedicated ClickHouse
+user can read only `tr.growth_daily_usage` and `tr.growth_billing_owners`, which hash
+identities before returning them. It cannot read the underlying request or
+directory tables. Current billing ownership is not historical caller identity;
+see [the follow-through contract](attribution-completion.md).
 
 The dataset-scoped Axiom token and dedicated ClickHouse password live in Secret
-Manager. Only this job can read them. No personal CLI credentials ship in the
+Manager with dedicated worker access and authorized operator access. No personal CLI credentials ship in the
 image. Operator provisioning uses the existing local login; it is never scheduled.
 The Axiom token expires in one year and must be rotated before expiry.
 
@@ -54,7 +58,7 @@ historical journey each run. No data goes to Google Ads or another ad platform.
 ## Release And Recovery
 
 Run repository Ruff, mypy and the full test suite before releasing. Build only
-the worker directory with `cloudbuild.yaml`; the image contains three runtime
+the worker directory with `cloudbuild.yaml`; the image contains four runtime
 modules, not operator tools or local caches. Deploy the immutable image digest,
 one task, no automatic retries, 240-second timeout, private VPC egress, and the
 dedicated service account. The scheduler calls the authenticated Cloud Run job

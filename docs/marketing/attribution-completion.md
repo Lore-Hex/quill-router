@@ -53,8 +53,11 @@ GCP are not included until their audit sources have independent collectors.
 The collector runs off-path with a ten-minute overlap, 20-page query budget and
 a 20,000-row audit buffer cap within the existing 512 MiB worker.
 Completed pairs leave the buffer after 30 minutes; unmatched records have a
-three-day limit. Only identifiable workspace attempts before their first retained
-settled usage are exported. Existing established usage is not duplicated as
+three-day limit. Only workspaces in an observed signup cohort, with attempts
+after signup and before their first retained settled usage, are exported.
+Absence from organic usage is not treated as evidence of a new customer:
+synthetic monitor workspaces and other workspaces without signup evidence are
+excluded. Existing established usage is not duplicated as
 marketing telemetry. Compact first-attempt/error milestones survive that
 buffer with account/workspace identity checks. Source failure leaves its cursor
 unchanged and marks its heartbeat unavailable while other acquisition exports

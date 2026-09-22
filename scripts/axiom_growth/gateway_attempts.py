@@ -134,15 +134,22 @@ def collect(state, io, now, end):
     return list(rows.values())
 
 
-def pre_activation_attempts(attempts, daily):
-    """Established usage is not acquisition telemetry. Keep the first-call window."""
+def pre_activation_attempts(attempts, daily, journeys):
+    """Keep observed signup cohorts, not monitors absent from organic usage."""
+    signups = {}
+    for journey in journeys:
+        workspace, signup = journey.get('workspace_fingerprint'), journey.get('signup_completed_at')
+        if workspace and signup:
+            when = m.date(signup)
+            signups[workspace] = min(when, signups.get(workspace, when))
     successful_at = {}
     for row in daily:
         workspace, first = row.get('workspace_fingerprint'), row.get('first_call_at')
         if workspace and first:
             when = m.date(first)
             successful_at[workspace] = min(when, successful_at.get(workspace, when))
-    return [row for row in attempts if row['workspace_fingerprint'] and
+    return [row for row in attempts if row['workspace_fingerprint'] in signups and
+            m.date(row['started_at'] or row['finished_at']) >= signups[row['workspace_fingerprint']] and
             (row['workspace_fingerprint'] not in successful_at or
              m.date(row['started_at'] or row['finished_at']) <= successful_at[row['workspace_fingerprint']])]
 
