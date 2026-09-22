@@ -201,11 +201,21 @@ def test_gateway_source_failure_does_not_stop_conversion_export(monkeypatch, cap
 def test_established_traffic_is_not_reexported_as_acquisition_attempts():
     attempt = ga.snapshots([ga.project(audit('start')), ga.project(audit('end'))], [], NOW)
     workspace = m.digest('ws-private')
-    assert ga.pre_activation_attempts(attempt, []) == attempt
+    journeys = [{'workspace_fingerprint': workspace,
+                 'signup_completed_at': (NOW-dt.timedelta(days=3)).isoformat()}]
+    assert ga.pre_activation_attempts(attempt, [], journeys) == attempt
     earlier = [{'workspace_fingerprint': workspace, 'first_call_at': (NOW-dt.timedelta(days=2)).isoformat()}]
-    assert not ga.pre_activation_attempts(attempt, earlier)
+    assert not ga.pre_activation_attempts(attempt, earlier, journeys)
     first_call = [{'workspace_fingerprint': workspace, 'first_call_at': NOW.isoformat()}]
-    assert ga.pre_activation_attempts(attempt, first_call) == attempt
+    assert ga.pre_activation_attempts(attempt, first_call, journeys) == attempt
+
+
+def test_monitors_without_organic_usage_are_not_customer_first_attempts():
+    attempts = ga.snapshots([ga.project(audit('start')), ga.project(audit('end'))], [], NOW)
+    assert not ga.pre_activation_attempts(attempts, [], [])
+    assert not ga.pre_activation_attempts(attempts, [], [{'workspace_fingerprint': m.digest('ws-private')}])
+    later_signup = [{'workspace_fingerprint': m.digest('ws-private'), 'signup_completed_at': NOW.isoformat()}]
+    assert not ga.pre_activation_attempts(attempts, [], later_signup)
 
 
 def test_owner_refresh_time_alone_does_not_reexport_years_of_usage():
