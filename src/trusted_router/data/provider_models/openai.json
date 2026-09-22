@@ -907,8 +907,16 @@
       "display_name": "gpt-6-luna",
       "title": "gpt-6-luna",
       "model_type": "chat",
+      "context_length": 1050000,
+      "max_output_tokens": 128000,
+      "supported_features": [
+        "function-calling",
+        "reasoning-effort",
+        "structured-output"
+      ],
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -943,8 +951,16 @@
       "display_name": "gpt-6-sol",
       "title": "gpt-6-sol",
       "model_type": "chat",
+      "context_length": 1050000,
+      "max_output_tokens": 128000,
+      "supported_features": [
+        "function-calling",
+        "reasoning-effort",
+        "structured-output"
+      ],
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
