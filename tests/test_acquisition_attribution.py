@@ -44,6 +44,40 @@ def _signup(client: TestClient, email: str = "attributed@example.com") -> dict[s
     return payload
 
 
+def test_oauth_snapshot_keeps_first_touch_and_is_bound_to_login() -> None:
+    from starlette.requests import Request
+
+    settings = Settings()
+    now = dt.datetime.now(dt.UTC).isoformat()
+    touch = {"utm_source": "google", "utm_campaign": "launch", "utm_content": "creative-a",
+             "landing_path": "/vibe-coders", "referer_host": "www.google.com", "captured_at": now}
+    context = AttributionContext("a" * 32, touch, touch, now)
+    start = Request({"type": "http", "headers": []})
+    start.state.acquisition_attribution = context
+    value = acquisition_module.oauth_attribution_snapshot(start, settings, "login-state")
+    assert value and "www.google.com" not in value
+    callback = Request({"type": "http", "headers": []})
+    acquisition_module.restore_oauth_attribution(callback, settings, "other-state", value)
+    assert acquisition_module.request_attribution(callback) is None
+    acquisition_module.restore_oauth_attribution(callback, settings, "login-state", value)
+    assert acquisition_module.request_attribution(callback) == context
+    private = Request({"type": "http", "headers": [(b"sec-gpc", b"1")]})
+    acquisition_module.restore_oauth_attribution(private, settings, "login-state", value)
+    assert acquisition_module.request_attribution(private) is None
+
+
+def test_signup_logs_joinable_account_but_never_email_or_raw_user_id(client: TestClient, caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger="trusted_router.acquisition")
+    _campaign_landing(client)
+    payload = _signup(client)
+    event = next(r for r in caplog.records if r.getMessage() == "acquisition.signup_completed")
+    assert event.account_fingerprint == hashlib.sha256(("tr-account:" + str(payload["user_id"])).encode()).hexdigest()
+    assert event.identity_link_status == "linked"
+    assert event.customer_domain_verified is False
+    assert str(payload['user_id']) not in json.dumps(event.__dict__, default=str)
+    assert 'attributed@example.com' not in json.dumps(event.__dict__, default=str)
+
+
 def _legacy_cookie(
     context: AttributionContext,
     settings: Settings,

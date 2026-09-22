@@ -109,7 +109,8 @@ def test_raw_content_and_identifiers_never_survive_projection():
                 workspace_fingerprint='not-a-hash', landing_path='/console/secret',
                 creative_id='sk-secret', first_landing_path='/blog/a?email=x@y.com')
     assert not {'prompt', 'output', 'body', 'email', 'workspace_id', 'workspace_fingerprint'} & row.keys()
-    assert row['landing_path'] == row['first_landing_path'] == '(other)'
+    assert row['landing_path'] == '(account flow)'
+    assert row['first_landing_path'] == '/blog/*'
     assert row['creative_id'] == '(redacted)'
 
 
@@ -251,3 +252,153 @@ def test_onboarding_dashboard_separates_attempts_from_server_activation():
     assert 'Matched_completed>0' in query
     for field in ('Missing_outcome_5m', 'Pending', 'Orphan_outcomes', 'Conflicting_outcomes'):
         assert field in query
+
+
+def usage(**overrides):
+    return {'_time': '2026-09-16T00:00:00Z', 'workspace_fingerprint': 'b'*64,
+            'marketing_workspace_fingerprint': 'd'*64, 'successful_calls': 5,
+            'input_tokens': 100, 'output_tokens': 20, **overrides}
+
+
+def test_account_fingerprint_reaches_daily_usage_without_changing_namespace():
+    signup = event(workspace_fingerprint='b'*64, account_fingerprint='c'*64)
+    daily = [usage()]
+    journeys = m.build_journeys([signup, signup], daily, NOW)
+    assert journeys[0]['account_fingerprint'] == daily[0]['account_fingerprint'] == 'c'*64
+    assert daily[0]['identity_link_status'] == 'linked'
+    assert journeys[0]['linked_input_tokens'] == 100
+
+
+@pytest.mark.parametrize('account, expected', [('c'*64, 'linked'), ('e'*64, 'ambiguous'), ('', 'ambiguous')])
+def test_account_match_requires_all_workspace_visitors_to_agree(account, expected):
+    first = event(workspace_fingerprint='b'*64, account_fingerprint='c'*64)
+    second = event(workspace_fingerprint='b'*64, account_fingerprint=account,
+                   anonymous_fingerprint='f'*64)
+    daily = [usage()]
+    m.build_journeys([first, second], daily, NOW)
+    assert daily[0]['identity_link_status'] == expected
+    assert daily[0]['account_fingerprint'] == ('c'*64 if expected == 'linked' else '')
+
+
+def test_journey_preserves_frozen_touch_domain_purchase_and_experiment():
+    first = project({'_time': '2026-09-16T20:00:00Z', 'event': 'acquisition.landing_engaged',
+                     'anonymous_fingerprint': 'a'*64, 'utm_source': 'www.google.com',
+                     'landing_path': '/Vibe-Coders/?gclid=private'}, 'cloud_logging')
+    signup = event(workspace_fingerprint='b'*64, account_fingerprint='c'*64,
+                   first_utm_source='www.google.com', first_utm_medium='organic',
+                   first_utm_campaign='launch', first_creative_id='message-a',
+                   first_landing_path='/Vibe-Coders/', first_experiment_id='landing-v1',
+                   first_experiment_cell_id='cell-a', first_referrer_domain='www.google.com',
+                   utm_source='direct', customer_domain='example.com',
+                   customer_domain_verified=True, customer_domain_basis='verified_oauth_email')
+    purchase = event('credit_purchase_completed', amount_microdollars=10_000_000,
+                     first_purchase_at='2026-09-16T21:00:00Z')
+    journey = m.build_journeys([first, signup, purchase, purchase], [], NOW)[0]
+    assert journey['first_source'] == journey['first_utm_source'] == 'google'
+    assert journey['first_landing_path'] == '/vibe-coders'
+    assert journey['first_referrer_domain'] == journey['first_referrer_host'] == 'www.google.com'
+    assert journey['experiment_cell_id'] == 'cell-a'
+    assert journey['first_utm_campaign'] == 'launch'
+    assert journey['first_creative_id'] == 'message-a'
+    assert journey['customer_domain_verified'] is True
+    assert journey['customer_domain_basis'] == 'verified_oauth_email'
+    assert journey['first_purchase_at'] == '2026-09-16T21:00:00+00:00'
+    assert journey['purchase_microdollars'] == 10_000_000
+
+
+@pytest.mark.parametrize('raw, expected', [
+    ('/MODELS/Qwen/id?email=private#secret', '/models/*'),
+    ('/vibe-coders/', '/vibe-coders'), ('/docs/private/key', '/docs/*'),
+    ('/console/abcdef', '(account flow)'), ('https://evil.example/blog/a', '(unclassified)'),
+    ('/users/private@example.com', '(unclassified)'), ('//evil.example/path', '(unclassified)'),
+])
+def test_paths_are_normalized_and_cardinality_bounded(raw, expected):
+    assert m.safe_path(raw) == expected
+    assert m.safe_path(expected) == expected
+
+
+@pytest.mark.parametrize('raw, expected', [
+    ('www.google.com', 'google'), ('www.google.com.hk', 'google'), ('cn.bing.com', 'bing'),
+    ('gemini.google.com', 'gemini'), ('chatgpt.com', 'chatgpt'), ('t.co', 'x'),
+    ('news.ycombinator.com', 'hackernews'), ('creator', 'creator'),
+    ('forward_future', 'forward_future'), ('google.com.evil.example', 'google.com.evil.example'),
+])
+def test_canonical_source_keeps_explicit_campaigns(raw, expected):
+    assert m.canonical_source(raw, 'www.google.com') == expected
+
+
+def test_replay_preserves_historical_account_evidence():
+    original = state()
+    row = event(workspace_fingerprint='b'*64)
+    original['events'] = [{**row, 'account_fingerprint': 'c'*64,
+                           'customer_domain': 'example.com', 'customer_domain_verified': True,
+                           'customer_domain_basis': 'current_account_email'}]
+    updated, _ = cycle(original, FakeIO([row], [usage(event_id='usage')]), NOW)
+    assert updated['daily'][0]['account_fingerprint'] == 'c'*64
+    assert updated['events'][0]['customer_domain_verified'] is True
+
+
+def test_dashboard_deduplicates_before_aggregation_without_raw_row_truncation():
+    from scripts.axiom_growth.dashboards import ACCOUNT_JOURNEYS, USAGE
+    assert 'by event_id' in ACCOUNT_JOURNEYS
+    assert 'by journey_key' in ACCOUNT_JOURNEYS
+    assert ACCOUNT_JOURNEYS.index('by event_id') < ACCOUNT_JOURNEYS.index('by journey_key')
+    assert '| take ' not in ACCOUNT_JOURNEYS
+    assert 'account_fingerprint' in USAGE
+
+
+def test_evidence_repair_is_idempotent_and_never_invents_conversions():
+    from scripts.axiom_growth.repair_evidence import recover
+    rows = [event(workspace_fingerprint='b'*64)]
+    history = [{**rows[0], 'event': 'history.signup_completed', 'account_fingerprint': 'c'*64,
+                'customer_domain': 'example.com', 'customer_domain_verified': True,
+                'customer_domain_basis': 'current_account_email',
+                'domain_observed_at': NOW.isoformat()}]
+    original_id = rows[0]['event_id']
+    assert recover(rows, history) == 1
+    assert recover(rows, history) == 0
+    assert len(rows) == 1 and rows[0]['event_id'] == original_id
+    assert rows[0]['event'] == 'acquisition.signup_completed'
+    assert rows[0]['customer_domain_verified'] is True
+    assert m.build_journeys(rows, [], NOW)[0]['customer_domain_verified'] is True
+    ambiguous = [event()]
+    assert recover(ambiguous, history + [{**history[0], 'account_fingerprint': 'd'*64}]) == 0
+
+
+def test_auto_refill_does_not_fabricate_checkout_started():
+    purchase = event('credit_purchase_completed', amount_microdollars=10_000_000,
+                     payment_method='stripe_auto_refill')
+    assert purchase['purchase_path'] == 'auto_refill'
+    journey = m.build_journeys([purchase], [], NOW)[0]
+    assert journey['checkout_started_at'] is None
+    assert journey['first_purchase_at']
+
+
+def test_shared_browser_with_two_accounts_cannot_assign_usage_or_verified_domain():
+    first = event(workspace_fingerprint='b'*64, account_fingerprint='c'*64,
+                  customer_domain='example.com', customer_domain_verified=True,
+                  customer_domain_basis='verified_oauth_email')
+    second = {**first, 'account_fingerprint': 'e'*64, 'event_id': 'second-signup'}
+    daily = [usage()]
+    journey = m.build_journeys([first, second], daily, NOW)[0]
+    assert daily[0]['identity_link_status'] == journey['identity_link_status'] == 'ambiguous'
+    assert not daily[0]['anonymous_fingerprint']
+    assert not daily[0]['account_fingerprint']
+    assert journey['linked_usage_calls'] == 0
+    assert not journey['customer_domain_verified']
+    assert journey['customer_domain'] == ''
+
+
+def test_missing_pre_auth_cookie_is_unknown_not_an_invented_direct_visit():
+    row = event(account_fingerprint='c'*64, first_utm_source='direct',
+                first_touch_basis='missing_pre_auth_touch', identity_link_status='orphaned')
+    journey = m.build_journeys([row], [], NOW)[0]
+    assert row['identity_link_status'] == 'orphaned'
+    assert journey['first_touch_basis'] == 'missing_pre_auth_touch'
+    assert journey['first_source'] == '(unknown)'
+    assert journey['account_fingerprint'] == 'c'*64
+
+
+@pytest.mark.parametrize('label', ['(unknown)', '(unattributed)', '(redacted)'])
+def test_known_missing_source_labels_remain_explicit(label):
+    assert m.canonical_source(label) == label

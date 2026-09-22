@@ -28,7 +28,11 @@ from fastapi import APIRouter, BackgroundTasks, FastAPI, Request, Response
 from fastapi.responses import RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
-from trusted_router.acquisition import record_signup_attribution
+from trusted_router.acquisition import (
+    oauth_attribution_snapshot,
+    record_signup_attribution,
+    restore_oauth_attribution,
+)
 from trusted_router.auth import SettingsDep, set_session_cookie
 from trusted_router.config import Settings
 from trusted_router.domains import configured_control_domains, request_hostname
@@ -46,6 +50,7 @@ from trusted_router.types import ErrorType
 
 OAUTH_STATE_COOKIE = "tr_oauth_state"
 OAUTH_NEXT_COOKIE = "tr_oauth_next"
+OAUTH_ATTRIBUTION_COOKIE = "tr_oauth_attribution"
 OAUTH_STATE_COOKIE_MAX_AGE = 600  # 10 minutes
 OAUTH_STATE_VERSION = "v1"
 
@@ -129,6 +134,13 @@ async def _handle_login(
     response = RedirectResponse(url=url, status_code=302)
     _set_state_cookie(response, state, settings)
     _set_next_cookie(response, next_path, settings)
+    snapshot = oauth_attribution_snapshot(request, settings, state)
+    if snapshot:
+        response.set_cookie(
+            OAUTH_ATTRIBUTION_COOKIE, snapshot, max_age=OAUTH_STATE_COOKIE_MAX_AGE,
+            httponly=True, secure=settings.environment.lower() not in {"local", "test"},
+            samesite="lax", path="/",
+        )
     return response
 
 
@@ -259,6 +271,7 @@ async def _handle_callback(
     cookie_state = request.cookies.get(OAUTH_STATE_COOKIE)
     if not cookie_state or cookie_state != state:
         raise api_error(400, "Invalid OAuth state", ErrorType.BAD_REQUEST)
+    restore_oauth_attribution(request, settings, state, request.cookies.get(OAUTH_ATTRIBUTION_COOKIE))
 
     access_token = await exchange_code(
         provider=provider,
@@ -301,12 +314,15 @@ async def _handle_callback(
             workspace_id=workspace_id,
             signup_provider=provider.slug,
             starter_credit_microdollars=starter_credit,
+            user_id=login.user_id,
+            verified_email=info.email,
         )
 
     target = next_target or ("/console/welcome?first=1" if first_time else "/console/api-keys")
     response = RedirectResponse(url=target, status_code=302)
     set_session_cookie(response, raw_token, settings)
     _clear_state_and_next_cookies(response, settings)
+    response.delete_cookie(OAUTH_ATTRIBUTION_COOKIE, path="/")
     if pending_reveal_raw_key is not None and first_time:
         # One-shot hand-off to /console/welcome. Scoped to that path so
         # this cookie is never sent on any other request, which keeps

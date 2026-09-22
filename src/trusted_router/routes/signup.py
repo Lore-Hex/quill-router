@@ -44,6 +44,7 @@ def register_signup_routes(router: APIRouter) -> None:
             workspace_id=result.workspace.id,
             signup_provider="email",
             starter_credit_microdollars=result.trial_credit_microdollars,
+            user_id=result.user.id,
         )
         return JSONResponse(
             {

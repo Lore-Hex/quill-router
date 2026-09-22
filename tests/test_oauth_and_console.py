@@ -1899,6 +1899,46 @@ def test_signup_attribution_is_still_recorded_after_the_redirect(
     assert record.signup_provider == "google"
 
 
+def test_oauth_lost_marketing_cookie_retains_tagged_signup(google_client: TestClient, caplog: pytest.LogCaptureFixture) -> None:
+    import hashlib
+    import logging
+
+    from trusted_router.acquisition import ATTRIBUTION_COOKIE_NAME
+    from trusted_router.marketing_experiments import build_google_search_cells
+    from trusted_router.oauth_provider import OAuthUserInfo
+    from trusted_router.storage import STORE
+
+    cell = build_google_search_cells()[0]
+    google_client.get('/vibe-coders?utm_source=google&utm_medium=paid_search&utm_campaign=trial&utm_content=creative_a',
+                      headers={'referer': 'https://www.google.com/search?q=private'})
+    google_client.get(f'/openrouter-alternative/test/{cell.cell_id}?tr_exp={cell.experiment_id}&tr_cell={cell.cell_id}')
+    state = _begin_oauth(google_client, 'google')
+    google_client.cookies.delete(ATTRIBUTION_COOKIE_NAME)
+    caplog.set_level(logging.INFO, logger='trusted_router.acquisition')
+
+    async def exchange(**_: Any) -> str:
+        return 'fixture-access'  # noqa: S105
+
+    async def user(**_: Any) -> OAuthUserInfo:
+        return OAuthUserInfo(sub='new-oauth-join', email='join@example.com', email_verified=True, display_name='X')
+
+    with patch('trusted_router.routes.oauth.exchange_code', exchange), patch('trusted_router.routes.oauth.fetch_user', user):
+        response = google_client.get(f'/google_oauth_callback?code=fixture&state={state}', follow_redirects=False)
+    assert response.status_code == 302
+    account = STORE.find_user_by_email('join@example.com')
+    signup = next(r for r in caplog.records if r.getMessage() == 'acquisition.signup_completed')
+    assert signup.account_fingerprint == hashlib.sha256(('tr-account:' + account.id).encode()).hexdigest()
+    assert signup.first_utm_source == 'google'
+    assert signup.first_utm_campaign == 'trial'
+    assert signup.first_creative_id == 'creative_a'
+    assert signup.first_landing_path == '/vibe-coders'
+    assert signup.first_referrer_domain == 'www.google.com'
+    assert signup.first_experiment_cell_id == cell.cell_id
+    assert signup.customer_domain == 'example.com'
+    assert signup.customer_domain_verified is True
+    assert signup.identity_link_status == 'linked'
+
+
 def test_slow_signup_runs_off_the_event_loop(
     google_settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
