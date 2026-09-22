@@ -852,6 +852,85 @@ def test_operator_bake_gate_refusal_aborts_and_releases_mutex(
     assert any(call[:3] == ["gcloud", "storage", "rm"] for call in run.calls)
 
 
+def test_harness_git_discovery_stops_at_the_harness_root(tmp_path: Path) -> None:
+    """A harness root INSIDE a git checkout behaves exactly like one in /tmp.
+
+    ``pytest --basetemp=.pytest-tmp`` from the repo root puts every mirror
+    under the developer's checkout, and the mirror has no ``.git``. Git's
+    repository discovery walks upward, so ``cloud_bake_gate.sh``'s
+    ``git -C "$repo_root" fetch --quiet origin main`` found the REAL
+    repository and fetched from its origin: over SSH it spawned the harness's
+    stub ``ssh``, which does not speak the git protocol, and the two
+    deadlocked until the subprocess timeout, leaving the fetch orphaned.
+
+    The enclosing checkout here has one commit and an SSH-style origin at an
+    unresolvable host, so a regression reproduces that hang rather than a
+    quiet pass; the hang is bounded by ``timeout`` and reported with the
+    calls recorded up to it.
+    """
+
+    def run_git(*args: str) -> str:
+        return subprocess.run(  # noqa: S603 - fixed git operations in a temp repo
+            [GIT, *args], check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    enclosing = tmp_path / "checkout"
+    run_git("init", "--initial-branch=main", str(enclosing))
+    run_git("-C", str(enclosing), "config", "user.email", "enclosing@example.test")
+    run_git("-C", str(enclosing), "config", "user.name", "Enclosing Checkout")
+    (enclosing / "README").write_text("the developer's real checkout\n")
+    run_git("-C", str(enclosing), "add", "README")
+    run_git("-C", str(enclosing), "commit", "-q", "-m", "enclosing checkout commit")
+    enclosing_head = run_git("-C", str(enclosing), "rev-parse", "--short", "HEAD")
+    run_git(
+        "-C", str(enclosing), "remote", "add", "origin",
+        "git@harness.invalid:escape/never.git",
+    )
+
+    harness = DeployScriptHarness(enclosing / ".pytest-tmp" / "deploy-harness0")
+
+    # Positive control for the setup: from the mirror, with no ceiling, git
+    # does discover the enclosing checkout. Without this the assertions below
+    # would also pass for a mirror that was never inside a repository.
+    discovered = subprocess.run(  # noqa: S603 - fixed git operation in a temp repo
+        [GIT, "-C", str(harness.mirror), "rev-parse", "--show-toplevel"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={"PATH": os.environ["PATH"], "HOME": str(tmp_path)},
+    ).stdout.strip()
+    assert Path(discovered) == enclosing.resolve()
+
+    try:
+        run = harness.run(
+            "scripts/deploy/aws_eu_control_plane.sh",
+            omit_env=("TR_CLOUD_BAKE_OVERRIDE",),
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired as exc:
+        recorded = "".join(
+            log.read_text() for log in sorted(harness.root.glob("run-*/argv.log"))
+        )
+        pytest.fail(
+            "git discovery escaped the harness into the enclosing checkout and the"
+            f" script hung on its fetch: {exc}\nrecorded calls tail:\n{recorded[-2000:]}"
+        )
+
+    # The mirror is not a repository, so HEAD does not resolve ...
+    assert "candidate: FAIL unable to resolve HEAD and commit metadata" in run.stderr
+    assert f"CANDIDATE {enclosing_head}" not in run.stderr
+    # ... the fetch fails at once for the documented reason ...
+    assert "fatal: not a git repository" in run.stderr
+    assert "git fetch origin main failed" in run.stderr
+    # ... no transport was ever spawned ...
+    assert not any(call[0] == "ssh" for call in run.calls), run.calls
+    assert not any("git-upload-pack" in " ".join(call) for call in run.calls), run.calls
+    # ... and the script went on to the gate's verdict, exactly as under /tmp.
+    assert run.returncode != 0
+    assert "serving commit: UNKNOWN" in run.stderr
+    assert "fleet health: FAIL" in run.stderr
+
+
 @pytest.mark.parametrize(
     ("script", "tag_name", "mutation_prefix"),
     (
