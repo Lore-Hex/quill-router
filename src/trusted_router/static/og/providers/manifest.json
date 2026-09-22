@@ -28,10 +28,10 @@
   },
   "anthropic": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 12,
     "name": "Anthropic",
     "privacy": "Policy documented",
-    "route_count": 22,
+    "route_count": 24,
     "route_mode": "Prepaid + BYOK",
     "slug": "anthropic"
   },
@@ -226,10 +226,10 @@
   },
   "featherless": {
     "card_version": 2,
-    "model_count": 18,
+    "model_count": 19,
     "name": "Featherless AI",
     "privacy": "Policy documented",
-    "route_count": 18,
+    "route_count": 19,
     "route_mode": "Prepaid",
     "slug": "featherless"
   },
@@ -262,10 +262,10 @@
   },
   "google-ai-studio": {
     "card_version": 2,
-    "model_count": 14,
+    "model_count": 13,
     "name": "Google AI Studio",
     "privacy": "Policy documented",
-    "route_count": 26,
+    "route_count": 24,
     "route_mode": "Prepaid + BYOK",
     "slug": "google-ai-studio"
   },
@@ -505,19 +505,19 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 12,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 11,
+    "route_count": 12,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
   "openai": {
     "card_version": 2,
-    "model_count": 47,
+    "model_count": 49,
     "name": "OpenAI",
     "privacy": "Zero retention",
-    "route_count": 80,
+    "route_count": 84,
     "route_mode": "Prepaid + BYOK",
     "slug": "openai"
   },

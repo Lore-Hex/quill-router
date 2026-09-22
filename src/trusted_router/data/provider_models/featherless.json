@@ -408,11 +408,33 @@
       "input_token_price_per_m": 1300000,
       "output_token_price_per_m": 4300000,
       "cached_input_token_price_per_m": 260000
+    },
+    {
+      "display_name": "Qwen/Qwen3.8-2.4T-A95B",
+      "title": "Qwen/Qwen3.8-2.4T-A95B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.8-2.4t-a95b",
+      "upstream_id": "Qwen/Qwen3.8-2.4T-A95B",
+      "context_length": 262144,
+      "max_output_tokens": 32768,
+      "routable": true,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 4000000
     }
   ],
   "source": "https://api.featherless.ai/v1/models",
   "pricing_source": "https://featherless.ai/docs/request-pricing-and-credits",
-  "generated_at": "2026-09-22T14:27:45Z",
+  "generated_at": "2026-09-22T18:36:26Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 18
+  "model_count": 19
 }
