@@ -11,6 +11,11 @@ locals {
     "${local.github_owner}/quill-router/.github/workflows/reshard-billing-workspace.yml@refs/heads/main",
     "${local.github_owner}/quill-router/.github/workflows/typed-audit.yml@refs/heads/main",
     "${local.github_owner}/quill-router/.github/workflows/deploy-aws-control-plane.yml@refs/heads/main",
+    # Operator-dispatched only, like the AWS deploy above. The Azure deploy
+    # script uses this identity for the shared production deploy mutex in GCS,
+    # the cloud bake gate's lookup of GCP's serving commit, and the Cloud DNS
+    # record for azure.trustedrouter.com.
+    "${local.github_owner}/quill-router/.github/workflows/deploy-azure-control-plane.yml@refs/heads/main",
     "${local.github_owner}/quill-router/.github/workflows/infra-apply.yml@refs/heads/main",
   ]
 
