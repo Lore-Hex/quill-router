@@ -111,6 +111,8 @@ _storage_error_logger = logging.getLogger(__name__)
 _APP_CONSOLE_HANDLER_MARKER = "_trusted_router_app_console"
 _ACQUISITION_CLOUD_FIELDS = (
     "anonymous_fingerprint",
+    "account_fingerprint",
+    "workspace_fingerprint",
     "utm_source",
     "utm_medium",
     "utm_campaign",
@@ -151,6 +153,11 @@ class _ApplicationConsoleFormatter(logging.Formatter):
             }
             for field in _ACQUISITION_CLOUD_FIELDS:
                 value = getattr(record, field, None)
+                if field in {"account_fingerprint", "workspace_fingerprint"} and not (
+                    isinstance(value, str) and len(value) == 64
+                    and all(character in "0123456789abcdef" for character in value)
+                ):
+                    continue
                 if value is not None:
                     payload[field] = value
             return json.dumps(payload, separators=(",", ":"), sort_keys=True)

@@ -70,6 +70,7 @@ def test_refresh_projects_only_directory_fields_and_updates_both_tables() -> Non
             "tenant_id",
             "workspace_id",
             "workspace_name",
+            "billing_account_fingerprint",
             "deleted",
             "workspace_created_at",
             "refreshed_at",

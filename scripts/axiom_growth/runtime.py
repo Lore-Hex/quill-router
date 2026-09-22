@@ -13,6 +13,7 @@ import google.auth
 import httpx
 from google.auth.transport.requests import Request
 
+from scripts.axiom_growth import gateway_attempts
 from scripts.axiom_growth import model as m
 
 MAX_EVENTS = 300_000
@@ -34,7 +35,7 @@ def project(row, source):
 
 def content_hash(row):
     # Progress timestamps must not cause every unchanged journey to be reingested.
-    body = {k: v for k, v in row.items() if k not in {'exported_at', 'observed_through'}}
+    body = {k: v for k, v in row.items() if k not in {'exported_at', 'observed_through', 'billing_owner_observed_at'}}
     return m.digest(json.dumps(body, sort_keys=True, separators=(',', ':')))
 
 
@@ -75,7 +76,44 @@ def cycle(state, io, now):
         raise ValueError('Usage state bound reached')
     daily_rows = list(daily.values())
     journeys = m.build_journeys(list(events.values()), daily_rows, end)
+    owners = None
+    billing_status = 'disabled'
+    if os.environ.get('GROWTH_BILLING_OWNERS_ENABLED') == 'true':
+        try:
+            owners = io.billing_owners()
+            m.link_billing_accounts(daily_rows, owners, journeys)
+            state['billing_owners'] = owners
+            billing_status = 'current'
+        except Exception as exc:  # noqa: BLE001 - a directory outage must not stop conversion export.
+            owners = state.get('billing_owners', [])
+            m.link_billing_accounts(daily_rows, owners, journeys)
+            billing_status = 'stale' if owners else 'unavailable'
+            print(json.dumps({'event': 'growth.billing_directory_failed',
+                              'error_class': type(exc).__name__}), flush=True)
     candidates = list(events.values()) + daily_rows + journeys
+    gateway_status = 'disabled'
+    if os.environ.get('GROWTH_GATEWAY_ATTEMPTS_ENABLED') == 'true':
+        previous_audits = state.get('gateway_audits', [])
+        previous_gateway_watermark = state.get('gateway_watermark')
+        try:
+            audits = gateway_attempts.collect(state, io, now, end)
+            attempts = gateway_attempts.snapshots(audits, journeys, end)
+            attempts = gateway_attempts.pre_activation_attempts(attempts, daily_rows)
+            if owners is not None:
+                m.link_billing_accounts(attempts, owners, journeys)
+            gateway_attempts.link_first_attempts(journeys, attempts)
+            candidates += attempts
+            gateway_status = 'current'
+        except Exception as exc:  # noqa: BLE001 - keep acquisition exporting during audit-source failure.
+            state['gateway_audits'] = previous_audits
+            if previous_gateway_watermark is None:
+                state.pop('gateway_watermark', None)
+            else:
+                state['gateway_watermark'] = previous_gateway_watermark
+            gateway_status = 'unavailable'
+            print(json.dumps({'event': 'growth.gateway_collection_failed',
+                              'error_class': type(exc).__name__}), flush=True)
+    gateway_attempts.preserve_milestones(state, journeys)
     hashes = {r['event_id']: content_hash(r) for r in candidates}
     changed = [{**r, 'exported_at': now.isoformat()} for r in candidates
                if hashes[r['event_id']] != state.get('hashes', {}).get(r['event_id'])]
@@ -86,7 +124,10 @@ def cycle(state, io, now):
                  'event_rows': len(events), 'usage_rows': len(daily_rows),
                  'journey_rows': len(journeys), 'changed_rows': len(changed),
                  'source': 'scheduled_incremental', 'cloud_scope': 'gcp',
-                 'schema_version': 5}
+                 'schema_version': 6, 'gateway_status': gateway_status,
+                 'billing_owner_status': billing_status,
+                 'gateway_observed_through': state.get('gateway_watermark'),
+                 'billing_owners_observed_through': max((r.get('billing_owner_observed_at', '') for r in owners or []), default='')}
     io.ingest([heartbeat])
     state.update(events=list(events.values()), daily=daily_rows, hashes=hashes,
                  watermark=end.isoformat(), repair_day=now.date().isoformat())
@@ -197,6 +238,38 @@ class Sources:
             row['event_id'] = m.digest('|'.join(str(row[k]) for k in
                 ('event', '_time', 'workspace_fingerprint', 'model', 'provider')))
         return values
+
+    def gateway_audits(self, start, end):
+        view = f'projects/{self.project}/locations/global/buckets/tr-growth-source/views/_AllLogs'
+        body = {'resourceNames': [view], 'filter': gateway_attempts.source_filter() +
+                f' timestamp>="{start.isoformat()}" timestamp<"{end.isoformat()}"',
+                'pageSize': 1000, 'orderBy': 'timestamp asc'}
+        rows = []
+        for _ in range(20):
+            result = self.google('POST', 'https://logging.googleapis.com/v2/entries:list', json=body).json()
+            for entry in result.get('entries', []):
+                row = gateway_attempts.project(entry)
+                if row is not None:
+                    rows.append(row)
+            if not result.get('nextPageToken'):
+                return rows
+            body['pageToken'] = result['nextPageToken']
+        raise ValueError('Gateway audit pagination budget exceeded')
+
+    def billing_owners(self):
+        sql = """SELECT workspace_fingerprint, billing_account_fingerprint,
+            toString(billing_owner_observed_at, 'UTC') AS billing_owner_observed_at
+            FROM tr.growth_billing_owners LIMIT 50001 FORMAT JSONEachRow"""
+        result = self.checked(self.http.post('http://10.128.0.96:8123', content=sql,
+            auth=('tr_growth_read', os.environ['GROWTH_CH_PASSWORD']),
+            params={'readonly': 1, 'max_execution_time': 15, 'max_threads': 1,
+                    'max_memory_usage': 134217728})).text
+        rows = [json.loads(line) for line in result.splitlines() if line]
+        if len(rows) > 50_000:
+            raise ValueError('Billing owner row cap exceeded')
+        for row in rows:
+            row['billing_owner_observed_at'] = row['billing_owner_observed_at'].replace(' ', 'T') + 'Z'
+        return rows
 
     def ingest(self, values):
         forbidden = {'email', 'workspace_id', 'user_id', 'api_key', 'prompt', 'output',

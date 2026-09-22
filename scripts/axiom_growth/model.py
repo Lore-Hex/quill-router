@@ -38,6 +38,7 @@ BROWSER_EVENTS = frozenset(
     f"acquisition.{name}" for name in (
         "landing_engaged", "sign_in_opened", "first_call_started", "first_call_failed",
         "onboarding_call_started", "onboarding_call_succeeded", "onboarding_call_failed",
+        "experiment_exposed",
     )
 )
 CONVERSION_EVENTS = frozenset(
@@ -261,7 +262,8 @@ def canonical_source(value, referrer=''):
     host = domain(label) or domain(referrer)
     aliases = {
         'google': ('google.com', 'google.co.uk', 'google.com.hk', 'google.de', 'google.fr', 'google.ca', 'google.co.in', 'google.com.au'),
-        'bing': ('bing.com',), 'duckduckgo': ('duckduckgo.com',), 'brave': ('search.brave.com',),
+        'bing': ('bing.com',), 'yahoo': ('yahoo.com', 'yahoo.co.jp'),
+        'duckduckgo': ('duckduckgo.com',), 'brave': ('search.brave.com',),
         'yandex': ('yandex.ru', 'yandex.com'), 'kagi': ('kagi.com',),
         'chatgpt': ('chatgpt.com', 'chat.openai.com'), 'perplexity': ('perplexity.ai',),
         'claude': ('claude.ai',), 'gemini': ('gemini.google.com',), 'github': ('github.com',),
@@ -319,7 +321,7 @@ def build_journeys(events, daily, end):
             continue
         first = observed[0]
         stages = {}
-        for short in ('landing_engaged','sign_in_opened','signup_completed','api_key_created','first_call_started','first_call_failed','first_successful_api_call','checkout_started','payment_method_saved','credit_purchase_completed','retained_api_usage_7d'):
+        for short in ('landing_engaged','sign_in_opened','signup_completed','api_key_created','first_call_started','first_call_failed','first_successful_api_call','checkout_started','payment_method_saved','credit_purchase_completed','retained_api_usage_7d','experiment_exposed'):
             matches = [r for r in observed if r['event'] == 'acquisition.'+short]
             stages[short+'_at'] = stamp(matches[0]['_time']) if matches else None
         signup = next((r for r in observed if r['event']=='acquisition.signup_completed'), None)
@@ -390,3 +392,27 @@ def build_journeys(events, daily, end):
         for field in ('utm_source','utm_medium','utm_campaign','landing_path','creative_id','experiment_id','experiment_cell_id'):
             item[field] = linked.get(field) or '(unattributed)'
     return result
+
+
+def link_billing_accounts(daily, owners, journeys):
+    """Current commercial ownership is separate from historical caller identity."""
+    directory = {}
+    for row in owners:
+        workspace, account = row.get('workspace_fingerprint', ''), row.get('billing_account_fingerprint', '')
+        if not HASH.fullmatch(workspace) or not HASH.fullmatch(account):
+            raise ValueError('Invalid billing identity projection')
+        if workspace in directory and directory[workspace] != row:
+            raise ValueError('Conflicting billing ownership snapshot')
+        directory[workspace] = row
+    sources = defaultdict(set)
+    for j in journeys:
+        if j.get('account_fingerprint'):
+            sources[j['account_fingerprint']].add(j.get('first_source') or '(unknown)')
+    for row in daily:
+        owner = directory.get(row.get('workspace_fingerprint'), {})
+        account = owner.get('billing_account_fingerprint', '')
+        source = sources.get(account, set())
+        row.update(billing_account_fingerprint=account,
+                   billing_identity_basis='current_workspace_owner' if account else 'unresolved',
+                   billing_owner_observed_at=owner.get('billing_owner_observed_at'),
+                   billing_source=next(iter(source)) if len(source) == 1 else '(unattributed)')
