@@ -11,7 +11,9 @@ and then not again; by Aug 26 the directory was 685 workspaces behind while
 live usage stayed current. A dimension table that only updates when somebody
 remembers it is how that happens, so now the timer remembers.
 
-The projection permits workspace ids and workspace names only; all other
+The projection permits workspace ids, names and a pseudonymous billing-owner
+fingerprint. This identifies the current commercial account, not an API caller
+or a historical owner. All other
 entity attributes are discarded before a ClickHouse payload is built.
 ReplacingMergeTree uses ``refreshed_at`` as its version, making repeated runs
 idempotent. A workspace rename therefore converges on the newest row at
@@ -22,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import urllib.parse
@@ -93,9 +96,11 @@ class SpannerWorkspaceSource:
     def fetch(self) -> list[Mapping[str, Any]]:
         with self._database.snapshot() as snapshot:
             values = snapshot.execute_sql(
-                "SELECT body FROM tr_entities WHERE kind=@kind ORDER BY id",
+                "SELECT body FROM tr_entities WHERE kind=@kind ORDER BY id LIMIT 50001",
                 params={"kind": "workspace"},
                 param_types={"kind": self._pt.STRING},
+                timeout=30,
+                request_options={"priority": "PRIORITY_LOW", "request_tag": "tr_growth_directory"},
             )
             bodies: list[Mapping[str, Any]] = []
             for row in values:
@@ -103,6 +108,8 @@ class SpannerWorkspaceSource:
                 if not isinstance(body, dict):
                     raise ValueError("workspace body is not a JSON object")
                 bodies.append(body)
+                if len(bodies) > 50_000:
+                    raise ValueError("workspace directory row budget exceeded")
             return bodies
 
 
@@ -146,11 +153,17 @@ class ClickHouseDirectoryWriter:
 
 def _project_workspace(body: Mapping[str, Any], *, refreshed_at: dt.datetime) -> dict[str, Any]:
     workspace_id = str(body["id"])
+    owner = body.get('owner_user_id')
     return {
         "tenant_id": analytics_surrogate("workspace", workspace_id),
         "workspace_id": workspace_id,
         "workspace_name": str(body["name"]),
         "deleted": int(bool(body.get("deleted", False))),
+        "billing_account_fingerprint": (
+            hashlib.sha256(('tr-account:' + owner).encode()).hexdigest()
+            if isinstance(owner, str) and owner and not body.get('deleted')
+            and not body.get('federated_home') else ''
+        ),
         "workspace_created_at": _clickhouse_datetime(body["created_at"], field="created_at"),
         "refreshed_at": _clickhouse_datetime(refreshed_at, field="refreshed_at"),
     }

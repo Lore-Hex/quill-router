@@ -29,7 +29,11 @@ from fastapi import Request, Response
 
 from trusted_router.config import Settings
 from trusted_router.google_ads_conversions import encrypt_google_ads_click_id
-from trusted_router.marketing_experiments import valid_experiment_identity
+from trusted_router.marketing_experiments import (
+    ONBOARDING_EXPERIMENT_ID,
+    assigned_onboarding_cell,
+    valid_experiment_identity,
+)
 from trusted_router.storage import STORE
 from trusted_router.storage_models import AcquisitionAttribution, iso_now
 
@@ -112,8 +116,13 @@ def prepare_request_attribution(
     google_click_id_kind, google_click_id = _google_click_from_request(request)
     now = iso_now()
     if context is None:
+        anonymous_id = uuid.uuid4().hex
+        if (request.url.path == '/' and not _has_explicit_campaign_touch(request)
+                and 'tr_exp' not in request.query_params and 'tr_cell' not in request.query_params):
+            touch['experiment_id'] = ONBOARDING_EXPERIMENT_ID
+            touch['experiment_cell_id'] = assigned_onboarding_cell(anonymous_id)
         context = AttributionContext(
-            anonymous_id=uuid.uuid4().hex,
+            anonymous_id=anonymous_id,
             first_touch=touch,
             last_touch=touch,
             created_at=now,
@@ -605,6 +614,26 @@ def log_browser_funnel_event(
             } if attempt_id is not None else {}),
         },
     )
+
+
+def onboarding_exposure(request: Request, *, user_id: str, workspace_id: str, record: bool = True) -> str:
+    """Record only a rendered, actionable treatment, using already-loaded IDs."""
+    context = request_attribution(request)
+    if context is None or context.first_touch.get('experiment_id') != ONBOARDING_EXPERIMENT_ID:
+        return ''
+    cell = context.first_touch.get('experiment_cell_id', '')
+    if not valid_experiment_identity(ONBOARDING_EXPERIMENT_ID, cell):
+        return ''
+    if not record:
+        return cell
+    log.info('acquisition.experiment_exposed', extra={
+        'event': 'acquisition.experiment_exposed',
+        'anonymous_fingerprint': _fingerprint(context.anonymous_id),
+        'account_fingerprint': _fingerprint('tr-account:' + user_id),
+        'workspace_fingerprint': _fingerprint(workspace_id),
+        **_safe_touch_log_fields(context.first_touch),
+    })
+    return cell
 
 
 def pageview_attribution_fields(request: Request) -> dict[str, object]:

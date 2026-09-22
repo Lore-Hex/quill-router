@@ -15,6 +15,13 @@ from dataclasses import dataclass
 GOOGLE_SEARCH_EXPERIMENT_ID = "google_search_messages_v3"
 GOOGLE_SEARCH_ACTIVE_WAVE = 0
 GOOGLE_SEARCH_CELLS_PER_WAVE = 4
+ONBOARDING_EXPERIMENT_ID = "onboarding_first_call_v1"
+ONBOARDING_CELLS = ("run_request", "get_answer")
+
+
+def assigned_onboarding_cell(seed: str) -> str:
+    value = hashlib.sha256(f"{ONBOARDING_EXPERIMENT_ID}:{seed}".encode()).digest()
+    return ONBOARDING_CELLS[value[0] % len(ONBOARDING_CELLS)]
 
 EXPERIMENT_ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 EXPERIMENT_CELL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_]{0,95}$")
@@ -374,8 +381,8 @@ def valid_experiment_identity(experiment_id: str, cell_id: str) -> bool:
     ):
         return False
     return (
-        experiment_id == GOOGLE_SEARCH_EXPERIMENT_ID
-        and cell_id in GOOGLE_SEARCH_CELLS_BY_ID
+        (experiment_id == GOOGLE_SEARCH_EXPERIMENT_ID and cell_id in GOOGLE_SEARCH_CELLS_BY_ID)
+        or (experiment_id == ONBOARDING_EXPERIMENT_ID and cell_id in ONBOARDING_CELLS)
     )
 
 
