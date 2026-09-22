@@ -30,6 +30,7 @@ import datetime as dt
 import hashlib
 import re
 import ssl
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -47,10 +48,12 @@ from trusted_router.config import (
     Settings,
     parse_gateway_region_targets,
 )
-from trusted_router.storage_models import SyntheticProbeSample, utcnow
+from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup, utcnow
 from trusted_router.synthetic.components import (
+    COMPONENT_PROBE_TARGETS,
     GATEWAY_REGION_TARGET_NAMES,
     applicable_component_definitions,
+    published_gateway_region_components,
     sample_component_ids,
 )
 from trusted_router.synthetic.probes import (
@@ -63,6 +66,11 @@ from trusted_router.synthetic.probes import (
     gateway_latency_phase_probes,
     run_synthetic_once,
     tls_health_probe,
+)
+from trusted_router.synthetic.rollups import (
+    apply_sample_to_rollup,
+    new_rollup_for_sample,
+    sample_rollup_ids,
 )
 from trusted_router.synthetic.status import status_snapshot
 
@@ -551,6 +559,22 @@ def _aws_settings(**overrides: Any) -> Settings:
         synthetic_canonical_attested=True,
         attestation_expected_pcr0="2c" * 48,
         synthetic_control_plane_health_url="https://aws.trustedrouter.com",
+        **overrides,
+    )
+
+
+def _azure_settings(**overrides: Any) -> Settings:
+    """The Azure cloud, as scripts/deploy/azure_control_plane.sh deploys it."""
+    return Settings(
+        environment="test",
+        sentry_dsn=None,
+        api_base_url="https://api-azure.trustedrouter.com/v1",
+        primary_region="uaenorth",
+        regions="uaenorth",
+        synthetic_regional_probes_enabled=False,
+        synthetic_image_probe_enabled=False,
+        synthetic_canonical_attested=False,
+        synthetic_control_plane_health_url="https://azure.trustedrouter.com",
         **overrides,
     )
 
@@ -1179,7 +1203,7 @@ def test_a_missing_measurement_never_satisfies_a_pin() -> None:
 
 
 def test_every_regional_gateway_component_is_fully_wired() -> None:
-    """Adding a region touches four independent places, and missing any one
+    """Adding a region touches five independent places, and missing any one
     produces a DIFFERENT flavour of wrong — none of which is a loud failure:
 
       1. COMPONENTS            — absent: the region has no row at all
@@ -1190,9 +1214,20 @@ def test_every_regional_gateway_component_is_fully_wired() -> None:
       4. sample_component_ids — absent: samples never attribute to the row,
                                    so it sits permanently blank and a dead
                                    region looks like a quiet one
+      5. COMPONENT_PROBES     — absent: live samples still render, so the
+                                   row looks fully wired, while every hourly
+                                   and daily rollup for it is discarded: the
+                                   history and the uptime figure then rest on
+                                   live samples alone
 
-    The last is the dangerous one: a region that is never probed reports
+    The fourth is the dangerous one: a region that is never probed reports
     nothing, and nothing renders as "no incidents" rather than as "unknown".
+    The fifth is the quiet one: both Azure rows shipped without it. Its
+    symptoms are easy to miss because the row stays green — a history strip
+    that only reaches back as far as live samples do (measured on the live
+    Azure plane 2026-09-22: 2 of 48 hourly buckets, where every other
+    component on that page had 48 of 48), and an uptime percentage computed
+    from that remnant instead of from the full window.
     """
     import inspect
 
@@ -1216,8 +1251,85 @@ def test_every_regional_gateway_component_is_fully_wired() -> None:
             missing.append(
                 f"{cid}: sample_component_ids never attributes to it (permanently blank)"
             )
+        # The pinned rows are fed by exactly the regional gateway probes. A
+        # rollup reaches a component's history only if its component matches
+        # AND its probe type is in this set, so a type absent here has its
+        # rollups excluded from the row. Both Azure rows had NO entry at all:
+        # nothing survived, and the history fell back to live samples.
+        attributed = mod.component_probe_types(cid)
+        if attributed != mod.REGIONAL_GATEWAY_PROBES:
+            absent = sorted(mod.REGIONAL_GATEWAY_PROBES - attributed)
+            missing.append(
+                f"{cid}: COMPONENT_PROBES gives {sorted(attributed)}, "
+                f"not {sorted(mod.REGIONAL_GATEWAY_PROBES)}"
+                + (f" (rollups of {absent} are excluded from this row)" if absent else "")
+            )
 
     assert not missing, "regional gateway components are half-wired:\n  " + "\n  ".join(missing)
+
+
+def _rollups_for_samples(samples: list[SyntheticProbeSample]) -> list[SyntheticRollup]:
+    """Fold samples into the hour/day/month rollups a store would persist."""
+    rollups: dict[str, SyntheticRollup] = {}
+    for sample in samples:
+        for period, component in sample_rollup_ids(sample):
+            candidate = new_rollup_for_sample(sample, period=period, component=component)
+            existing = rollups.get(candidate.id)
+            if existing is None:
+                rollups[candidate.id] = candidate
+            else:
+                apply_sample_to_rollup(existing, sample)
+    return list(rollups.values())
+
+
+@pytest.mark.parametrize(
+    ("script", "settings_factory"),
+    [
+        pytest.param("scripts/deploy/aws_eu_control_plane.sh", _aws_settings, id="aws-eu"),
+        pytest.param("scripts/deploy/azure_control_plane.sh", _azure_settings, id="azure"),
+    ],
+)
+def test_pinned_gateway_history_survives_on_rollups_alone(
+    script: str, settings_factory: Callable[..., Settings]
+) -> None:
+    """The behavioural half of the wiring test above, for item 5.
+
+    A pinned row's uptime history is built from the precomputed rollups that
+    survive `rollup.probe_type in component_probe_types(component_id)`. A row
+    missing from COMPONENT_PROBES still renders every LIVE sample (status,
+    latency, current checks) — status.py falls back to raw samples when a
+    component has no surviving hour rollups — so what is lost is everything
+    older than the live-sample window, and the uptime figure derived from it.
+    Each of the other four wiring places has a test that turns red when it is
+    skipped; this one did not, which is how uaenorth_gateway and
+    australiaeast_gateway shipped with a history strip that never reached
+    back. So the sample here is two hours old and reaches the snapshot as a
+    rollup only, on the settings the cloud's deploy script really ships:
+    that is the part a live sample cannot cover for it.
+    """
+    settings = settings_factory(
+        synthetic_gateway_region_targets=_deploy_script_region_targets(script)
+    )
+    published = published_gateway_region_components(settings)
+    assert published, f"{script} publishes no pinned gateway row"
+
+    now = utcnow()
+    empty: list[str] = []
+    for component_id in published:
+        sample = _sample(
+            target=COMPONENT_PROBE_TARGETS[component_id],
+            probe_type="tls_health",
+            status="up",
+            created_at=_iso(now, 2 * 3600),
+        )
+        snapshot = status_snapshot(
+            [], rollups=_rollups_for_samples([sample]), now=now, settings=settings
+        )
+        row = next(row for row in snapshot["components"] if row["id"] == component_id)
+        if sum(int(bucket["sample_count"]) for bucket in row["history"]) != 1:
+            empty.append(component_id)
+
+    assert not empty, f"published rows whose history discards their rollups: {empty}"
 
 
 def test_azure_deploy_probes_every_azure_gateway_component() -> None:

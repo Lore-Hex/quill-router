@@ -1,0 +1,122 @@
+name: Deploy Azure control plane
+
+# Dispatch-only, after the 24-hour bake gate, like the AWS deploy. The live
+# Azure control plane is the Container App tr-azure-vnet (resource group
+# tr-azure, uaenorth). scripts/deploy/azure_control_plane.sh is the deploy;
+# the runbook section "Deploying the Azure control plane" lists its steps.
+#
+# One-time setup, by someone with Owner on the subscription:
+# scripts/deploy/azure_github_deploy_identity.sh creates the managed identity
+# this job logs in as and sets the AZURE_DEPLOY_CLIENT_ID repository
+# variable. Until then the first step fails and names that script.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: "Optional full SHA of a baked main release. Run this workflow from main; all CI and cloud bake gates still apply."
+        required: false
+        default: ""
+        type: string
+      bake_override_reason:
+        description: "Non-empty ONLY to override the cloud bake gate (TR_CLOUD_BAKE_OVERRIDE); state the incident/justification - it is recorded in the run log"
+        required: false
+        default: ""
+
+concurrency:
+  group: deploy-azure-control-plane
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+jobs:
+  deploy:
+    if: github.repository == 'Lore-Hex/quill-router' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Require the deploy identity
+        env:
+          CLIENT_ID: ${{ vars.AZURE_DEPLOY_CLIENT_ID }}
+        run: |
+          if [ -z "$CLIENT_ID" ]; then
+            echo "::error::AZURE_DEPLOY_CLIENT_ID is not set. Run scripts/deploy/azure_github_deploy_identity.sh once; it creates the identity and sets the variable."
+            exit 1
+          fi
+
+      # Checkout into a subdirectory: the GCP auth action writes its
+      # credentials file into the workspace ROOT, and the deploy refuses a
+      # dirty tree. Keeping the repo one level down keeps the tree clean.
+      - uses: actions/checkout@v4
+        with:
+          path: src
+          fetch-depth: 0
+
+      # Keep OIDC on main while promoting an older, fully baked commit.
+      # Never execute deploy scripts from an unmerged caller-provided ref.
+      - name: Select a merged release
+        working-directory: src
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          if [ -n "$RELEASE_SHA" ]; then
+            [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Full commit SHA required'; exit 1; }
+            git merge-base --is-ancestor "$RELEASE_SHA" HEAD || { echo 'Release must be on main'; exit 1; }
+            git checkout --detach "$RELEASE_SHA"
+          fi
+
+      # The same rule the AWS deploy applies inside its script: CI must have
+      # passed for the exact commit being deployed.
+      - name: Require green CI for this commit
+        working-directory: src
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release="$(git rev-parse HEAD)"
+          ci="$(gh run list --repo Lore-Hex/quill-router --workflow ci.yml --commit "$release" \
+            --limit 1 --json conclusion --jq '.[0].conclusion')"
+          [ "$ci" = success ] || { echo "::error::CI must pass for this exact release ($release): ${ci:-no run}"; exit 1; }
+
+      - name: Log in to Azure via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_DEPLOY_CLIENT_ID }}
+          tenant-id: 2abe2fae-5c28-491d-af5a-6255b33e534e
+          subscription-id: 2fc83893-ca6c-48e4-b090-8860fba33d33
+
+      # The production deploy mutex lives in GCS (deploy_mutex.sh) so ONE
+      # lock covers every cloud's deploy tooling, and the bake gate reads
+      # GCP's serving commit; both need GCP auth.
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      # The deploy ends with the repository's completeness check
+      # (scripts/deploy/verify_cloud_complete.sh), which imports the project.
+      # A runner has neither .venv nor uv, so without this it falls back to a
+      # bare python3 that cannot import the project's dependencies, after the
+      # app has already been updated.
+      - uses: astral-sh/setup-uv@v7
+
+      # The script calls `az containerapp`, an extension a fresh runner does
+      # not have, and it applies the schema with psql.
+      - name: Prepare the Azure CLI and psql
+        run: |
+          az extension add --name containerapp --upgrade --yes --only-show-errors
+          command -v psql >/dev/null || { sudo apt-get update -q && sudo apt-get install -y -q postgresql-client; }
+          psql --version
+
+      - name: Deploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TR_CLOUD_BAKE_OVERRIDE: ${{ inputs.bake_override_reason }}
+        working-directory: src
+        run: bash scripts/deploy/azure_control_plane.sh

@@ -23,28 +23,42 @@ SNAPSHOT_FIELDS={
  'growth.journey': ['_time','anonymous_fingerprint','account_fingerprint','workspace_fingerprint','marketing_workspace_fingerprint','utm_source','utm_medium','utm_campaign','creative_id','landing_path','first_source','first_medium','first_landing_path','first_touch_basis','last_source','last_tagged_landing','referrer_domain','customer_domain','purchase_count','purchase_microdollars','linked_usage_days','linked_usage_calls','linked_input_tokens','linked_output_tokens','observed_through','first_observed_at','last_observed_at']+[s+'_at' for s in ['landing_engaged','sign_in_opened','signup_completed','api_key_created','first_call_started','first_call_failed','first_successful_api_call','checkout_started','payment_method_saved','credit_purchase_completed','retained_api_usage_7d']],
  'growth.daily_usage':['_time','anonymous_fingerprint','workspace_fingerprint','marketing_workspace_fingerprint','utm_source','utm_medium','utm_campaign','creative_id','landing_path','model','provider','successful_calls','input_tokens','output_tokens','usage_microdollars','first_call_at','last_call_at','identity_link_status'],
 }
+SNAPSHOT_FIELDS['growth.journey'] += [
+    'first_utm_source', 'first_utm_medium', 'first_utm_campaign', 'first_creative_id',
+    'first_referrer_domain', 'first_referrer_host', 'customer_domain_verified',
+    'customer_domain_basis', 'first_purchase_at', 'experiment_id', 'experiment_cell_id',
+    'identity_link_status',
+]
+SNAPSHOT_FIELDS['growth.daily_usage'] += ['account_fingerprint', 'experiment_id', 'experiment_cell_id']
+SNAPSHOT_FIELDS['growth.daily_usage'] += ['billing_account_fingerprint', 'billing_identity_basis', 'billing_source', 'billing_owner_observed_at']
+SNAPSHOT_FIELDS['growth.journey'] += ['experiment_exposed_at']
+SNAPSHOT_FIELDS['growth.journey'] += ['first_gateway_attempt_at', 'first_gateway_http_error_at', 'first_gateway_http_status']
+NEW_FIELDS = {'billing_account_fingerprint', 'billing_identity_basis', 'billing_source',
+              'billing_owner_observed_at', 'experiment_exposed_at', 'first_gateway_attempt_at',
+              'first_gateway_http_error_at', 'first_gateway_http_status'}
 
 
 def snapshot(event):
     fields=', '.join(SNAPSHOT_FIELDS[event])
-    return f"['{DATASET}'] | where event == '{event}' | take {INPUT_LIMIT} | summarize arg_max(exported_at, {fields}) by event_id"
+    extend = ', '.join(f"{f}=tostring(column_ifexists('{f}',''))" for f in SNAPSHOT_FIELDS[event] if f in NEW_FIELDS)
+    defaults = ' | extend ' + extend if extend else ''
+    return f"['{DATASET}'] | where event == '{event}'" + defaults + f" | summarize arg_max(exported_at, {fields}) by event_id"
 
 
-JOURNEY=snapshot('growth.journey')+FILTER+"""
+ACCOUNT_JOURNEYS = snapshot('growth.journey') + " | extend journey_key=iff(isnotempty(account_fingerprint), account_fingerprint, anonymous_fingerprint) | summarize arg_max(exported_at, " + ', '.join(SNAPSHOT_FIELDS['growth.journey']) + ") by journey_key"
+JOURNEY=ACCOUNT_JOURNEYS+FILTER+"""
 | where datetime_diff('day', now(), _time) >= age_days
 | extend engaged=todatetime(landing_engaged_at), signup=todatetime(signup_completed_at), activated=todatetime(first_successful_api_call_at), paid=todatetime(credit_purchase_completed_at), returned=todatetime(retained_api_usage_7d_at)
 | extend has_engaged=isnotnull(engaged), has_signup=isnotnull(signup), signup_after_engaged=isnotnull(signup) and isnotnull(engaged) and signup>=engaged, active_after_signup=isnotnull(activated) and isnotnull(signup) and activated>=signup, paid_after_signup=isnotnull(paid) and isnotnull(signup) and paid>=signup
 """
 USAGE=snapshot('growth.daily_usage')+FILTER
 EVENTS=f"""['{DATASET}'] | where event startswith 'acquisition.'
-| take {INPUT_LIMIT}
 | summarize arg_max(exported_at, _time, event, anonymous_fingerprint, utm_source, utm_medium, utm_campaign, creative_id, landing_path, referrer_domain, customer_domain, amount_microdollars) by event_id
 """+FILTER
 FRESH=f"['{DATASET}'] | where event == 'growth.sync_completed' | summarize arg_max(_time, observed_through) | project Latest_export=todatetime(_time), Observed_through=todatetime(observed_through) | extend Minutes_behind=datetime_diff('minute',now(),Observed_through) | extend Status=iff(isnull(Observed_through) or Minutes_behind>15,'STALE: refresh delayed','Automatic refresh every 5 minutes')"
 ONBOARDING=f"""['{DATASET}'] | where event in ('acquisition.onboarding_call_started','acquisition.onboarding_call_succeeded','acquisition.onboarding_call_failed')
 | extend attempt_id=tostring(column_ifexists('attempt_id','')), failure_reason=tostring(column_ifexists('failure_reason','')), http_status=tolong(column_ifexists('http_status',0)), elapsed_ms=tolong(column_ifexists('elapsed_ms',0))
 | where isnotempty(attempt_id)
-| take {INPUT_LIMIT}
 | summarize _time=min(_time) by event_id, event, anonymous_fingerprint, attempt_id, failure_reason, http_status, elapsed_ms, utm_source, utm_medium, utm_campaign, landing_path
 | extend _time=todatetime(_time)
 """+FILTER
@@ -52,6 +66,20 @@ ATTEMPTS=ONBOARDING+"""
 | summarize Starts=countif(event=='acquisition.onboarding_call_started'), Successes=countif(event=='acquisition.onboarding_call_succeeded'), Failures=countif(event=='acquisition.onboarding_call_failed'), Started_at=minif(_time,event=='acquisition.onboarding_call_started') by anonymous_fingerprint, attempt_id
 | extend Matched_success=Starts>0 and Successes>0 and Failures==0, Matched_failure=Starts>0 and Failures>0 and Successes==0
 | extend Complete=Matched_success or Matched_failure, Missing_outcome=Starts>0 and Successes==0 and Failures==0
+"""
+GATEWAY=f"""['{DATASET}'] | where event=='growth.gateway_attempt'
+| extend paired=tobool(column_ifexists('paired',false)), gateway_outcome=tostring(column_ifexists('gateway_outcome','')), route=tostring(column_ifexists('route','')), http_status=tolong(column_ifexists('http_status',0)), started_at=tostring(column_ifexists('started_at','')), finished_at=tostring(column_ifexists('finished_at','')), billing_account_fingerprint=tostring(column_ifexists('billing_account_fingerprint',''))
+| summarize arg_max(exported_at, _time, paired, gateway_outcome, route, http_status, started_at, finished_at, account_fingerprint, billing_account_fingerprint) by event_id
+"""
+
+
+def experiment_query():
+    return JOURNEY+"""
+| where experiment_id=='onboarding_first_call_v1' and experiment_cell_id in ('run_request','get_answer')
+| extend exposed=todatetime(experiment_exposed_at)
+| summarize Assigned_accounts=countif(has_signup), Exposed_accounts=countif(isnotnull(exposed)), Activated_after_exposure=countif(isnotnull(exposed) and activated>=exposed), Purchasers_after_exposure=countif(isnotnull(exposed) and paid>=exposed) by experiment_id, experiment_cell_id
+| extend Activation_pct=iff(Exposed_accounts>0,round(100.0*Activated_after_exposure/Exposed_accounts,2),real(null)), Purchase_pct=iff(Exposed_accounts>0,round(100.0*Purchasers_after_exposure/Exposed_accounts,2),real(null))
+| sort by experiment_id asc, experiment_cell_id asc
 """
 
 
@@ -136,6 +164,10 @@ def build():
         ('Daily event coverage: missing visits are not zero traffic','Table',EVENTS+" | summarize Engagement_events=countif(event=='acquisition.landing_engaged'), Signup_events=countif(event=='acquisition.signup_completed'), Activation_events=countif(event=='acquisition.first_successful_api_call'), Purchase_events=countif(event=='acquisition.credit_purchase_completed') by Day=bin(_time,1d) | extend Browser_coverage=case(Day>=datetime(2026-08-24) and Day<datetime(2026-09-04),'Missing visitor attribution',Day==datetime(2026-08-23) or Day==datetime(2026-09-04),'Partial visitor attribution','Observed records') | sort by Day desc",12),
         ('Ordered funnel and conversion percentages','Table',funnel_query(),12),
         ('Welcome test: matched attempts only (browser-reported, not all API traffic)','Table',onboarding_query(),12),
+        ('GCP pre-activation HTTP attempts: 200 is not completed inference','Table',GATEWAY+" | summarize Attempts=count(), Matched=countif(paired), Http_errors=countif(paired and http_status>=400), Missing_start=countif(gateway_outcome=='missing_start'), Missing_end=countif(gateway_outcome=='pending'), Conflicting=countif(gateway_outcome=='conflicting') | extend Http_error_pct=iff(Matched>0,round(100.0*Http_errors/Matched,2),real(null))",12),
+        ('Gateway and billing-owner feed freshness','Table',f"['{DATASET}'] | where event=='growth.sync_completed' | extend gateway_status=tostring(column_ifexists('gateway_status','not enabled')), gateway_observed_through=tostring(column_ifexists('gateway_observed_through','')), billing_owners_observed_through=tostring(column_ifexists('billing_owners_observed_through','')), billing_owner_status=tostring(column_ifexists('billing_owner_status','not enabled')) | summarize arg_max(_time, gateway_status, gateway_observed_through, billing_owners_observed_through, billing_owner_status) | project Gateway_status=gateway_status, Gateway_through=todatetime(gateway_observed_through), Billing_owner_status=billing_owner_status, Billing_owner_snapshot=todatetime(billing_owners_observed_through)",12),
+        ('GCP gateway rejections by route and HTTP status','Table',GATEWAY+" | where http_status>=400 | summarize Attempts=count(), Matched=countif(paired), Linked_accounts=dcountif(account_fingerprint,isnotempty(account_fingerprint)) by route, http_status | sort by Attempts desc",12),
+        ('Observed first gateway attempts before activation: prospective GCP coverage','Table',JOURNEY+" | summarize Signups=countif(has_signup), Observed_attempts=countif(isnotempty(first_gateway_attempt_at)), Observed_http_failures=countif(isnotempty(first_gateway_http_error_at)), Activated_with_start=countif(active_after_signup and isnotempty(first_gateway_attempt_at)) | extend Attempt_to_activation_pct=iff(Observed_attempts>0,round(100.0*Activated_with_start/Observed_attempts,2),real(null))",12),
         ('Welcome test failures: reason and HTTP status','Table',ONBOARDING+" | where event=='acquisition.onboarding_call_failed' | summarize Attempts=count() by failure_reason, http_status | sort by Attempts desc",12),
         ('Legacy welcome clicks: unpaired, not an API failure rate','Table',EVENTS+" | where event in ('acquisition.first_call_started','acquisition.first_call_failed') | summarize Events=count(), Visitors=dcount(anonymous_fingerprint) by event",12),
         ('Observed signup visitors','Statistic',JOURNEY+' | summarize Signups=countif(has_signup)',6),
@@ -153,6 +185,7 @@ def build():
         ('Sources driving activation and purchases','Table',by_dimension('utm_source, utm_medium'),12),
         ('Landing content at signup','Table',by_dimension('landing_path'),12),
         ('Campaign and creative outcomes','Table',by_dimension('utm_source, utm_campaign, creative_id'),12),
+        ('Onboarding experiment: exposed accounts, not assigned visitors','Table',experiment_query(),12),
         ('First source versus latest tagged source','Table',JOURNEY+' | summarize Visitors=count(), Signups=countif(has_signup), Activated=countif(active_after_signup), Purchasers=countif(paid_after_signup) by first_source, last_source, first_touch_basis | sort by Signups desc | take 40',12),
         ('Content carried by each conversion event','Table',EVENTS+" | where event in ('acquisition.signup_completed','acquisition.first_successful_api_call','acquisition.credit_purchase_completed') | summarize Visitors=dcount(anonymous_fingerprint), Events=count() by event, landing_path, utm_source, utm_campaign | sort by Visitors desc | take 60",12),
         ('Referring domains','Table',by_dimension('referrer_domain'),12),
@@ -175,6 +208,8 @@ def build():
         ('Daily successful generations and usage cost','Table',USAGE+' | summarize Successful_generations=sum(successful_calls), Input_tokens=sum(input_tokens), Output_tokens=sum(output_tokens), Usage_USD=sum(usage_microdollars)/1000000.0 by Day=bin(_time,1d) | sort by Day desc',12),
         ('Models and providers used','Table',USAGE+' | summarize Calls=sum(successful_calls), Input_tokens=sum(input_tokens), Output_tokens=sum(output_tokens), Usage_USD=sum(usage_microdollars)/1000000.0 by model, provider | sort by Calls desc | take 40',12),
         ('Source to downstream token consumption','Table',USAGE+' | summarize Calls=sum(successful_calls), Tokens=sum(input_tokens)+sum(output_tokens), Usage_USD=sum(usage_microdollars)/1000000.0 by utm_source, utm_medium, identity_link_status | sort by Calls desc',12),
+        ('Current billing-owner source: not historical caller identity','Table',USAGE+" | summarize Accounts=dcountif(billing_account_fingerprint,isnotempty(billing_account_fingerprint)), Tokens=sum(input_tokens)+sum(output_tokens), Calls=sum(successful_calls) by billing_source, billing_identity_basis | sort by Tokens desc",12),
+        ('Current billing-owner linkage coverage','Table',USAGE+" | summarize Rows=count(), Linked_rows=countif(isnotempty(billing_account_fingerprint)), Tokens=sum(input_tokens)+sum(output_tokens), Linked_tokens=sumif(input_tokens+output_tokens,isnotempty(billing_account_fingerprint)) | extend Row_coverage_pct=iff(Rows>0,round(100.0*Linked_rows/Rows,2),real(null)), Token_coverage_pct=iff(Tokens>0,round(100.0*Linked_tokens/Tokens,2),real(null))",12),
         ('Usage linkage: do not hide unattributed traffic','Table',USAGE+' | summarize Aggregate_rows=count(), Calls=sum(successful_calls), Input_tokens=sum(input_tokens), Output_tokens=sum(output_tokens) by identity_link_status | sort by Calls desc',12),
         ('Frequency of use by workspace','Table',USAGE+" | where isnotempty(marketing_workspace_fingerprint) | summarize Active_days=dcount(_time), Calls=sum(successful_calls), Input_tokens=sum(input_tokens), Output_tokens=sum(output_tokens), Last_call=max(todatetime(last_call_at)) by marketing_workspace_fingerprint | extend Last_call=todatetime(Last_call) | sort by Calls desc | take 100",12),
       ]),

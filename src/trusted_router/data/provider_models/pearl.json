@@ -433,8 +433,51 @@
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 450000,
       "cached_input_token_price_per_m": 15000
+    },
+    {
+      "display_name": "DeepSeek: DeepSeek V4.1 Flash",
+      "title": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4.1-flash",
+      "upstream_id": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "context_length": 1048576,
+      "max_output_tokens": 1048576,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "reasoning",
+        "structured_outputs",
+        "prompt_caching"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "frequency_penalty",
+        "presence_penalty",
+        "stop",
+        "seed",
+        "max_tokens"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 420000,
+      "cached_input_token_price_per_m": 4000
     }
   ],
-  "generated_at": "2026-09-20T02:44:07Z",
-  "model_count": 10
+  "generated_at": "2026-09-22T18:36:27Z",
+  "model_count": 11
 }

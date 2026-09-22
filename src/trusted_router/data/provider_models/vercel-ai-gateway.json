@@ -3,7 +3,7 @@
   "provider": "vercel-ai-gateway",
   "source": "https://vercel.com/docs/ai-gateway/modalities/evaluation",
   "pricing_source": "https://ai-gateway.vercel.sh/v1/models",
-  "generated_at": "2026-09-19T00:00:00Z",
+  "generated_at": "2026-09-22T18:36:27Z",
   "price_scale": "microdollars_per_million",
   "model_count": 1,
   "models": [
@@ -13,7 +13,9 @@
       "display_name": "TypeSafe AI Jev",
       "context_length": 32000,
       "model_type": "decision",
-      "endpoints": ["decide"],
+      "endpoints": [
+        "decide"
+      ],
       "input_token_price_per_m": 42000,
       "output_token_price_per_m": 0,
       "pricing_source": "https://ai-gateway.vercel.sh/v1/models"

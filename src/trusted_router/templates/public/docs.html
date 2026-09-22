@@ -122,7 +122,7 @@ const r = await client.chat.completions.create({
         <li><code>POST /v1/chat/completions</code></li>
         <li><code>POST /v1/responses</code></li>
         <li><code>POST /v1/embeddings</code></li>
-            <li><code>POST {{ decide_path }}</code> — decision models: shared <code>state</code> plus typed <code>questions</code> (boolean, choice, score) in, verified answers with probabilities out. It also answers to the paths Vercel AI Gateway (<code>/v1/evaluate</code>) and OpenRouter (<code>/api/alpha/decisions</code>) use for the same request. Use <code>trustedrouter/trev-1.0</code>, <code>typesafe-ai/jev</code>, or any chat model. See <a href="/docs/decide">/docs/decide</a>.</li>
+            <li><code>POST {{ decide_path }}</code> — decision models: shared <code>state</code> plus typed <code>questions</code> (boolean, choice, score) in, verified answers with probabilities out. Like chat completions, <code>trustedrouter.routing</code> identifies the model and provider that served the decision, omitting fields the gateway cannot establish. It also answers to the paths Vercel AI Gateway (<code>/v1/evaluate</code>) and OpenRouter (<code>/api/alpha/decisions</code>) use for the same request. Use <code>trustedrouter/trev-1.0</code>, <code>typesafe-ai/jev</code>, or any chat model. See <a href="/docs/decide">/docs/decide</a>.</li>
         <li><code>POST /v1/videos</code></li>
         <li><a href="https://api.trustedrouter.com/v1/models"><code>GET /v1/models</code></a> <span class="muted">public, no API key</span></li>
       </ul>

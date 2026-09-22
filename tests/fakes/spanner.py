@@ -4472,6 +4472,13 @@ class FakeBigtableTable:
     def direct_row(self, key: bytes) -> _FakeDirectRow:
         return _FakeDirectRow(key, self)
 
+    def mutate_rows(self, rows: list[_FakeDirectRow], **_kwargs: Any) -> list[Any]:
+        from types import SimpleNamespace
+
+        for row in rows:
+            row.commit()
+        return [SimpleNamespace(code=0) for _row in rows]
+
     def read_rows(
         self,
         *,

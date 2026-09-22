@@ -37,7 +37,7 @@
     <div class="panel-head activation-panel-head">
       <div>
         <p class="activation-eyebrow">Live gateway check</p>
-        <h2 id="first-call-heading">Run your first API request</h2>
+        <h2 id="first-call-heading">{{ "Get your first AI answer" if onboarding_cell == "get_answer" else "Run your first API request" }}</h2>
         <p class="panel-kicker">A real, inexpensive PONG request confirms your key, billing path, provider route, and attested gateway.</p>
       </div>
       <span class="activation-step-number" aria-hidden="true">02</span>
@@ -46,7 +46,7 @@
       {% if can_run_first_call %}
       <div class="activation-primary-action">
         <button class="btn primary activation-run-button" type="button" data-action="run-first-call">
-          <span data-run-label>Run my first API request</span>
+          <span data-run-label>{{ "Get my first AI answer" if onboarding_cell == "get_answer" else "Run my first API request" }}</span>
           <span class="activation-button-arrow" aria-hidden="true">&#8594;</span>
         </button>
         <span class="activation-no-card">Ready to run</span>

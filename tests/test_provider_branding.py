@@ -74,6 +74,43 @@ def test_telnyx_profile_keeps_application_contacts_private(test_settings) -> Non
     assert provider.prepaid_zero_data_retention is False
 
 
+def test_telnyx_privacy_evidence_preserves_endpoint_scope_and_training_exceptions(
+    test_settings,
+) -> None:  # noqa: ANN001
+    from trusted_router.dashboard import public_provider_detail_html
+
+    provider = PROVIDERS["telnyx"]
+    assert provider.provider_policy_url == "https://telnyx.com/privacy-policy"
+    for detail in (
+        "/v2/ai/openai/chat/completions",
+        "/v2/ai/openai/embeddings",
+        "request metadata is retained",
+        "third-party models",
+        "/v2/ai/embeddings",
+        "any region",
+        "DPA 3.1",
+        "written opt-in",
+        "de-identified under 3.5",
+        "not confidential compute",
+    ):
+        assert detail in provider.provider_policy
+
+    profile = PROVIDER_BRANDS["telnyx"]
+    details = dict(profile.company_details)
+    assert "Personal Data" in details["Policy precedence"]
+    assert "SCCs and UK Addendum" in details["Policy precedence"]
+    assert "DPA 12.1" in details["Policy precedence"]
+    assert dict(profile.resources)["Content retention policy"] == provider.provider_policy_url
+    assert dict(profile.resources)["DPA: training and precedence"] == (
+        "https://telnyx.com/legal/data-processing-addendum"
+    )
+
+    html = public_provider_detail_html(test_settings, "telnyx")
+    assert html is not None
+    for detail in ("de-identified under 3.5", "DPA 12.1", "Content retention policy"):
+        assert detail in html
+
+
 @_needs_real_clock
 @pytest.mark.provider_health
 def test_provider_social_card_counts_match_current_catalog() -> None:

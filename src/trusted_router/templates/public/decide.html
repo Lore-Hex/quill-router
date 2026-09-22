@@ -47,6 +47,7 @@
     <h2>One answer per question, keyed by the names you chose.</h2>
     <p>A <strong>boolean</strong> returns the probability that the answer is yes. A <strong>choice</strong> returns the selected option and a probability for every option you declared. A <strong>score</strong> returns a probability for each level and the expected level as a single number, so <code>1.8</code> on a three-level scale sits between medium and high.</p>
     <p>Automate the confident cases and send the uncertain ones to a person: <code>if answers.refund.probability &gt; 0.9</code>.</p>
+    <p><code>trustedrouter.routing</code> tells you which model and provider actually served the decision, the same way a chat completion does. <code>trev-1.0</code> is a private configuration, so it names the gateway itself and omits the host it chose, while the counts still show how many hosts it could have used and how many it tried. A model whose configuration is not private names the vendor that ran it, with the endpoint it used. A field the gateway cannot establish is absent rather than guessed.</p>
   </div>
   <div class="copy-terminal">
     <div class="code-head"><span>200 OK</span><span>JSON</span></div>
@@ -61,7 +62,16 @@
     "urgency": { "type": "score", "score": 1.8,
                  "probabilities": { "0": 0.0, "1": 0.2, "2": 0.8 } }
   },
-  "usage": { "inputTokens": 519, "outputTokens": 229 }
+  "usage": { "inputTokens": 519, "outputTokens": 229 },
+  "trustedrouter": {
+    "routing": {
+      "selected_model": "trustedrouter/trev-1.0",
+      "selected_provider": "trustedrouter",
+      "fallback_candidate_count": 4,
+      "upstream_attempt_count": 1,
+      "fallback_attempt_count": 0
+    }
+  }
 }</code></pre>
   </div>
 </section>

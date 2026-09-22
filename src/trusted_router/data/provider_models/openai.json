@@ -176,21 +176,7 @@
       "routable": true,
       "input_token_price_per_m": 200000,
       "output_token_price_per_m": 1200000,
-      "cached_input_token_price_per_m": 20000,
-      "price_tiers": [
-        {
-          "max_prompt_tokens": 272000,
-          "input_token_price_per_m": 200000,
-          "output_token_price_per_m": 1200000,
-          "cached_input_token_price_per_m": 20000
-        },
-        {
-          "max_prompt_tokens": null,
-          "input_token_price_per_m": 400000,
-          "output_token_price_per_m": 1800000,
-          "cached_input_token_price_per_m": 40000
-        }
-      ]
+      "cached_input_token_price_per_m": 20000
     },
     {
       "display_name": "gpt-5.6-sol",
@@ -248,21 +234,7 @@
       "routable": true,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 12000000,
-      "cached_input_token_price_per_m": 200000,
-      "price_tiers": [
-        {
-          "max_prompt_tokens": 272000,
-          "input_token_price_per_m": 2000000,
-          "output_token_price_per_m": 12000000,
-          "cached_input_token_price_per_m": 200000
-        },
-        {
-          "max_prompt_tokens": null,
-          "input_token_price_per_m": 4000000,
-          "output_token_price_per_m": 18000000,
-          "cached_input_token_price_per_m": 400000
-        }
-      ]
+      "cached_input_token_price_per_m": 200000
     },
     {
       "display_name": "o1",
@@ -930,10 +902,98 @@
       "input_token_price_per_m": 5000000,
       "output_token_price_per_m": 30000000,
       "cached_input_token_price_per_m": 1250000
+    },
+    {
+      "display_name": "gpt-6-luna",
+      "title": "gpt-6-luna",
+      "model_type": "chat",
+      "context_length": 1050000,
+      "max_output_tokens": 128000,
+      "supported_features": [
+        "function-calling",
+        "reasoning-effort",
+        "structured-output"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-6-luna",
+      "upstream_id": "gpt-6-luna",
+      "created": 1789406102,
+      "routable": true,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 500000,
+      "cached_input_token_price_per_m": 10000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 272000,
+          "input_token_price_per_m": 100000,
+          "output_token_price_per_m": 500000,
+          "cached_input_token_price_per_m": 10000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 200000,
+          "output_token_price_per_m": 750000,
+          "cached_input_token_price_per_m": 20000
+        }
+      ]
+    },
+    {
+      "display_name": "gpt-6-sol",
+      "title": "gpt-6-sol",
+      "model_type": "chat",
+      "context_length": 1050000,
+      "max_output_tokens": 128000,
+      "supported_features": [
+        "function-calling",
+        "reasoning-effort",
+        "structured-output"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-6-sol",
+      "upstream_id": "gpt-6-sol",
+      "created": 1789405937,
+      "routable": true,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 200000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 272000,
+          "input_token_price_per_m": 2000000,
+          "output_token_price_per_m": 10000000,
+          "cached_input_token_price_per_m": 200000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 4000000,
+          "output_token_price_per_m": 15000000,
+          "cached_input_token_price_per_m": 400000
+        }
+      ]
     }
   ],
   "source": "https://api.openai.com/v1/models",
-  "generated_at": "2026-09-20T02:44:07Z",
+  "generated_at": "2026-09-22T18:36:27Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 37
+  "model_count": 39
 }

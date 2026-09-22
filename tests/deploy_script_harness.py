@@ -53,6 +53,23 @@ call and exits with ``HARNESS_VERIFIER_RC``; ``cloud_complete_gate.sh`` is the
 real one, because its behaviour is part of what is being proven, and it resolves
 its verifier relative to itself, which is how the stub gets found.
 
+The copy is not a git repository, and ``GIT_CEILING_DIRECTORIES`` is set to
+the harness root so git's upward repository discovery stops there. That
+boundary is load-bearing: ``cloud_bake_gate.sh`` runs ``git -C "$repo_root"
+fetch --quiet origin main`` (and ``mirror_repo_to_gcs.sh`` reads ``origin``'s
+URL the same way), and a basetemp INSIDE a checkout -- ``pytest
+--basetemp=.pytest-tmp`` from the repo root -- once let that discovery climb
+out of the copy into the developer's real repository and fetch from its
+origin. Over SSH that spawned the stub ``ssh``, which does not speak the git
+protocol, so git and the stub deadlocked until the subprocess timeout and were
+left orphaned; over HTTPS git uses libcurl rather than the stub ``curl``, so it
+would have been a real network fetch from inside a unit test. With the ceiling
+the scripts see exactly what a system-temp basetemp shows them: ``not a git
+repository`` and the documented ``git fetch origin main failed`` branch. A test
+that needs a repository ``git init``s the copy itself
+(``_initialize_bake_harness_repo``); the ceiling never excludes the directory
+git starts from, only its parents.
+
 WHAT THE STUB RESPONSES ARE, AND WHAT THEY ARE NOT
 --------------------------------------------------
 Some scripts check their own work — ``aws_eu_control_plane.sh`` refuses to
@@ -2036,6 +2053,15 @@ class DeployScriptHarness:
             "HOME": str(home),
             "TMPDIR": str(tmp),
             "LANG": "C",
+            # The mirror has no .git, and git's repository discovery walks UP
+            # from there. Under a system-temp basetemp it finds nothing and the
+            # scripts take their "not a git repository" branches. Under
+            # `pytest --basetemp=.pytest-tmp` from the repo root it found the
+            # developer's real checkout and `cloud_bake_gate.sh` fetched from
+            # its origin -- over SSH through the stub `ssh`, which does not
+            # speak the git protocol, so git and the stub deadlocked until the
+            # timeout and were left orphaned. Git never climbs past this root.
+            "GIT_CEILING_DIRECTORIES": str(self.root.resolve()),
             # rollout.sh's TRUST_FILE default is an operator-laptop path
             # (_lib.sh): present on that machine, absent on CI, where the
             # fallback curl hits the stub and returns a bare status code

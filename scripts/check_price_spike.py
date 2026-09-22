@@ -367,6 +367,43 @@ APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
             Decimal("0.00000003"),
             Decimal("0.000000075"),
         ),
+        # Verified 2026-09-22 against https://www.siliconflow.com/pricing:
+        # Gemma 4 31B realtime USD/M = 0.75 input / 0.25 cached / 1.00 output.
+        # Approve only the observed old-to-new endpoint rates, not future jumps.
+        (
+            "google/gemma-4-31b-it [siliconflow:siliconflow/fp8:google/gemma-4-31B-it]",
+            "prompt",
+            Decimal("0.00000013"),
+            Decimal("0.00000075"),
+        ),
+        (
+            "google/gemma-4-31b-it [siliconflow:siliconflow/fp8:google/gemma-4-31B-it]",
+            "completion",
+            Decimal("0.0000004"),
+            Decimal("0.000001"),
+        ),
+        (
+            "google/gemma-4-31b-it [siliconflow:siliconflow:google/gemma-4-31B-it]",
+            "prompt",
+            Decimal("0.00000013"),
+            Decimal("0.00000075"),
+        ),
+        (
+            "google/gemma-4-31b-it [siliconflow:siliconflow:google/gemma-4-31B-it]",
+            "completion",
+            Decimal("0.0000004"),
+            Decimal("0.000001"),
+        ),
+        # Verified in Inceptron's authenticated catalog on 2026-09-22:
+        # https://api.inceptron.io/v1/models, pricing.input_cache_reads=4E-8
+        # dollars/token (0.04 USD/M). Prompt=6E-8, completion=3E-7 unchanged.
+        (
+            "deepseek/deepseek-v4-flash-0731 "
+            "[inceptron:inceptron:deepseek-ai/DeepSeek-V4-Flash-0731] cached-input",
+            "prompt",
+            Decimal("0.00000002"),
+            Decimal("0.00000004"),
+        ),
         # SiliconFlow's public prices, verified 2026-09-09, per million
         # tokens (input / cached input / output): Flash-0731 0.22 / 0.014 / 0.66;
         # Flash-Vision-Exp 0.44 / 0.028 / 1.32. Pin only these observed spikes:

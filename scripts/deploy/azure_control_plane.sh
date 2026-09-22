@@ -314,11 +314,40 @@ shell history and re-run with:
 FAIL
 }
 
+# Where each secret comes from, in order: a file in $SECRETS_DIR, then
+# $KEYS_FILE, then the value the RUNNING app already holds (the way pg-password
+# is read below). A file wins so that an operator rotates a value by writing
+# it; the running app is the fallback so that a deploy with no secret files --
+# .github/workflows/deploy-azure-control-plane.yml -- carries the current
+# values forward instead of needing a copy of them.
+app_secret() {
+  az containerapp secret show -g "$RG" -n "$APP" --secret-name "$1" \
+    --query value -o tsv 2>/dev/null || true
+}
+
+# GitHub Actions masks only registered secrets, and a value read at run time
+# is not one; this repository's run logs are public. Register each such value
+# as a mask as soon as it is read.
+mask_in_ci() {
+  if [ "${GITHUB_ACTIONS:-}" = "true" ] && [ -n "${1:-}" ]; then
+    printf '::add-mask::%s\n' "$1"
+  fi
+}
+
 OBSERVER_TOKEN="$(read_secret trustedrouter-observer-internal-token TR_OBSERVER_INTERNAL_TOKEN)"
+[ -n "$OBSERVER_TOKEN" ] || OBSERVER_TOKEN="$(app_secret observer-token)"
+mask_in_ci "$OBSERVER_TOKEN"
 MONITOR_KEY="$(read_secret trustedrouter-synthetic-monitor-api-key TR_SYNTHETIC_MONITOR_API_KEY)"
-[ -n "$OBSERVER_TOKEN" ] || die "no observer internal token in $SECRETS_DIR or $KEYS_FILE"
+[ -n "$MONITOR_KEY" ] || MONITOR_KEY="$(app_secret monitor-key)"
+mask_in_ci "$MONITOR_KEY"
+[ -n "$OBSERVER_TOKEN" ] || die "no observer internal token in $SECRETS_DIR, $KEYS_FILE or the running app"
 [ -n "$MONITOR_KEY" ] || die "no synthetic monitor key: the leaderboard cannot run without it"
+# internal-token is where the first version of this script stored the billing
+# gateway token (TR_INTERNAL_GATEWAY_TOKEN, retired from the observer since
+# #714); the secret itself is still on the app.
 LEGACY_GATEWAY_TOKEN="$(read_secret trustedrouter-internal-gateway-token TR_INTERNAL_GATEWAY_TOKEN)"
+[ -n "$LEGACY_GATEWAY_TOKEN" ] || LEGACY_GATEWAY_TOKEN="$(app_secret internal-token)"
+mask_in_ci "$LEGACY_GATEWAY_TOKEN"
 if [ -n "$LEGACY_GATEWAY_TOKEN" ] && [ "$OBSERVER_TOKEN" = "$LEGACY_GATEWAY_TOKEN" ]; then
   die "observer internal token must differ from the billing gateway token"
 fi
@@ -378,6 +407,7 @@ ACR_SERVER="$(az acr show -g "$RG" -n "$ACR" --query loginServer -o tsv)"
 
 if exists az containerapp show -g "$RG" -n "$APP"; then
   PG_PASSWORD="$(az containerapp secret show -g "$RG" -n "$APP" --secret-name pg-password --query value -o tsv)"
+  mask_in_ci "$PG_PASSWORD"
 else
   [ -f "$PW_FILE" ] || die "no database password at $PW_FILE — azure_canary.sh writes it"
   PG_PASSWORD="$(cat "$PW_FILE")"

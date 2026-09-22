@@ -47,7 +47,9 @@
       "input_token_price_per_m": 220000,
       "output_token_price_per_m": 900000,
       "cached_input_token_price_per_m": 50000,
-      "missing_since": "2026-09-20"
+      "missing_since": "2026-09-20",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Kimi K2.6",
@@ -90,9 +92,9 @@
         "top_logprobs",
         "top_p"
       ],
-      "input_token_price_per_m": 374600,
-      "output_token_price_per_m": 2100700,
-      "cached_input_token_price_per_m": 70400
+      "input_token_price_per_m": 431500,
+      "output_token_price_per_m": 2376700,
+      "cached_input_token_price_per_m": 117200
     },
     {
       "display_name": "Kimi K2.7 Code",
@@ -136,7 +138,7 @@
         "top_p"
       ],
       "input_token_price_per_m": 706200,
-      "output_token_price_per_m": 3210000,
+      "output_token_price_per_m": 3300000,
       "cached_input_token_price_per_m": 180000
     },
     {
@@ -180,9 +182,9 @@
         "top_logprobs",
         "top_p"
       ],
-      "input_token_price_per_m": 1250700,
-      "output_token_price_per_m": 3340200,
-      "cached_input_token_price_per_m": 203700
+      "input_token_price_per_m": 1010500,
+      "output_token_price_per_m": 3175900,
+      "cached_input_token_price_per_m": 192900
     },
     {
       "display_name": "DeepSeek V4 Flash 0731",
@@ -225,9 +227,9 @@
         "top_logprobs",
         "top_p"
       ],
-      "input_token_price_per_m": 80000,
-      "output_token_price_per_m": 200000,
-      "cached_input_token_price_per_m": 20000
+      "input_token_price_per_m": 120000,
+      "output_token_price_per_m": 500000,
+      "cached_input_token_price_per_m": 50000
     },
     {
       "display_name": "GLM 5.3",
@@ -268,9 +270,9 @@
         "top_p"
       ],
       "routable": true,
-      "input_token_price_per_m": 1036700,
-      "output_token_price_per_m": 3882600,
-      "cached_input_token_price_per_m": 173900
+      "input_token_price_per_m": 1013400,
+      "output_token_price_per_m": 3287700,
+      "cached_input_token_price_per_m": 255000
     },
     {
       "display_name": "GLM 5.3 Flash",
@@ -314,9 +316,9 @@
       "routable": true,
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 500000,
-      "cached_input_token_price_per_m": 30000
+      "cached_input_token_price_per_m": 70000
     }
   ],
-  "generated_at": "2026-09-20T02:44:07Z",
+  "generated_at": "2026-09-22T18:36:26Z",
   "model_count": 7
 }

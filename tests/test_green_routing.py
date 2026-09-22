@@ -128,7 +128,11 @@ def test_green_landing_copy_is_provider_neutral_with_energy_sources(client):
     assert page.select_one('a[href="https://regolo.ai/zero-data-retention/"]')
     assert "provider-declared" in page.get_text().lower()
     assert "inference electricity" in page.get_text().lower()
-    assert len(page.select(".green-models a")) >= 11
+    expected = {
+        f"/models/{model.id}" for model in meta_candidate_models("trustedrouter/green")
+    }
+    assert expected
+    assert {link["href"] for link in page.select(".green-models a")} == expected
 
 
 def test_expired_regolo_catalog_fails_closed(monkeypatch):

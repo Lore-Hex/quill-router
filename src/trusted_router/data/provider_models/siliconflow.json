@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for SiliconFlow models whose live /v1/models feed is ahead of the shared snapshot. Verified against https://api.siliconflow.com/v1/models on 2026-06-22.",
   "provider": "siliconflow",
   "source": "https://api.siliconflow.com/v1/models",
-  "generated_at": "2026-09-20T02:44:07Z",
+  "generated_at": "2026-09-22T18:36:27Z",
   "model_count": 80,
   "models": [
     {
@@ -365,9 +365,8 @@
       "status": 1,
       "id": "deepseek/deepseek-v4-flash",
       "upstream_id": "deepseek-ai/DeepSeek-V4-Flash",
-      "input_token_price_per_m": 130000,
-      "output_token_price_per_m": 280000,
-      "cached_input_token_price_per_m": 28000
+      "routable": false,
+      "routable_reason": "price-unavailable"
     },
     {
       "display_name": "deepseek-ai/DeepSeek-V4-Flash-0731",
@@ -484,8 +483,9 @@
       "status": 1,
       "id": "google/gemma-4-26b-a4b-it",
       "upstream_id": "google/gemma-4-26B-A4B-it",
-      "input_token_price_per_m": 120000,
-      "output_token_price_per_m": 400000
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 50000
     },
     {
       "display_name": "google/gemma-4-31B-it",
@@ -503,8 +503,9 @@
       "status": 1,
       "id": "google/gemma-4-31b-it",
       "upstream_id": "google/gemma-4-31B-it",
-      "input_token_price_per_m": 130000,
-      "output_token_price_per_m": 400000
+      "input_token_price_per_m": 750000,
+      "output_token_price_per_m": 1000000,
+      "cached_input_token_price_per_m": 250000
     },
     {
       "display_name": "inclusionAI/Ling-flash-2.0",
@@ -585,7 +586,9 @@
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 1200000,
       "cached_input_token_price_per_m": 30000,
-      "missing_since": "2026-09-20"
+      "missing_since": "2026-09-20",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "MiniMaxAI/MiniMax-M3",
@@ -725,7 +728,8 @@
       "id": "openai/gpt-oss-120b",
       "upstream_id": "openai/gpt-oss-120b",
       "input_token_price_per_m": 50000,
-      "output_token_price_per_m": 450000
+      "output_token_price_per_m": 450000,
+      "cached_input_token_price_per_m": 75000
     },
     {
       "display_name": "openai/gpt-oss-20b",
@@ -1201,7 +1205,7 @@
       "id": "qwen/qwen3.5-397b-a17b",
       "upstream_id": "Qwen/Qwen3.5-397B-A17B",
       "routable": false,
-      "routable_reason": "awaiting-price",
+      "routable_reason": "delisted-upstream",
       "unresolved_since": "2026-08-13",
       "missing_since": "2026-09-20"
     },
@@ -1259,8 +1263,9 @@
       "status": 1,
       "id": "qwen/qwen3.6-35b-a3b",
       "upstream_id": "Qwen/Qwen3.6-35B-A3B",
-      "input_token_price_per_m": 200000,
-      "output_token_price_per_m": 1600000
+      "input_token_price_per_m": 240000,
+      "output_token_price_per_m": 1800000,
+      "cached_input_token_price_per_m": 150000
     },
     {
       "display_name": "Qwen/Qwen3.8-2.4T-A95B",
@@ -1579,9 +1584,10 @@
       "status": 1,
       "id": "deepseek/deepseek-v4.1-flash",
       "upstream_id": "deepseek-ai/DeepSeek-V4.1-Flash",
-      "routable": false,
-      "routable_reason": "awaiting-price",
-      "unresolved_since": "2026-09-10"
+      "routable": true,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 600000,
+      "cached_input_token_price_per_m": 3000
     },
     {
       "display_name": "tencent/Hy4-preview",

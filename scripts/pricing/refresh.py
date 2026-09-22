@@ -1102,7 +1102,9 @@ def _write_snapshot(snapshot: dict[str, Any]) -> None:
     SNAPSHOT_PATH.write_text(text, encoding="utf-8")
 
 
-def _write_provider_manifests(results: dict[str, ProviderPricingResult]) -> list[str]:
+def _write_provider_manifests(
+    results: dict[str, ProviderPricingResult],
+) -> tuple[list[str], list[tuple[str, str]]]:
     """Let provider adapters update supplemental provider model manifests.
 
     Most providers are fully represented by the OpenRouter-shaped snapshot.
@@ -1115,6 +1117,7 @@ def _write_provider_manifests(results: dict[str, ProviderPricingResult]) -> list
     """
 
     notes: list[str] = []
+    failures: list[tuple[str, str]] = []
     for slug, result in sorted(results.items()):
         # A stale fallback represents the last known good catalog state. Do not
         # let provider-specific hooks rewrite that state without fresh discovery
@@ -1128,10 +1131,13 @@ def _write_provider_manifests(results: dict[str, ProviderPricingResult]) -> list
             # before adding or expanding provider-owned rebuild behavior.
             continue
         manifest_path_value = getattr(module, "MANIFEST_PATH", None)
-        manifest_path = Path(manifest_path_value) if manifest_path_value is not None else None
+        if manifest_path_value is None:
+            # Without a rollback target, a writer cannot be isolated safely.
+            raise RuntimeError(f"{slug}: manifest writer must declare MANIFEST_PATH")
+        manifest_path = Path(manifest_path_value)
         before_text: str | None = None
         before_rows: list[Any] | None = None
-        if manifest_path is not None and manifest_path.exists():
+        if manifest_path.exists():
             before_text = manifest_path.read_text(encoding="utf-8")
             try:
                 before_raw = json.loads(before_text)
@@ -1140,33 +1146,37 @@ def _write_provider_manifests(results: dict[str, ProviderPricingResult]) -> list
             if isinstance(before_raw, dict) and isinstance(before_raw.get("models"), list):
                 before_rows = before_raw["models"]
 
-        raw_notes = hook(result)
-
-        # Provider hooks own their JSON shape, but this dispatch is the final
-        # shared safety boundary. Restore the exact old file if any hook omits
-        # its local guard or accidentally writes an invalid/empty manifest.
-        if before_text is not None and before_rows is not None and manifest_path is not None:
-            try:
-                after_raw = json.loads(manifest_path.read_text(encoding="utf-8"))
-            except (OSError, TypeError, ValueError):
-                after_raw = None
+        try:
+            raw_notes = hook(result)
+            after_raw = json.loads(manifest_path.read_text(encoding="utf-8"))
             after_rows = after_raw.get("models") if isinstance(after_raw, dict) else None
-            candidate_rows = after_rows if isinstance(after_rows, list) else []
-            guarded = guard_manifest_prune(
-                before_rows,
-                candidate_rows,
-                provider_slug=slug,
-                allow_confirmed_delistings=bool(
-                    getattr(module, "ALLOW_CONFIRMED_MASS_DELISTINGS", False)
-                ),
-            )
-            if guarded is before_rows:
+            if not isinstance(after_rows, list) or not after_rows:
+                raise ValueError("manifest writer produced no model rows")
+            if before_rows is not None:
+                guarded = guard_manifest_prune(
+                    before_rows,
+                    after_rows,
+                    provider_slug=slug,
+                    allow_confirmed_delistings=bool(
+                        getattr(module, "ALLOW_CONFIRMED_MASS_DELISTINGS", False)
+                    ),
+                )
+                if guarded is before_rows:
+                    raise ValueError("manifest writer triggered mass-prune guard")
+            if raw_notes is not None:
+                notes.extend(str(note) for note in raw_notes)
+        except Exception as exc:
+            # A hook may fail after a partial write. Roll back before using the
+            # same last-known-good recovery path as a provider fetch failure.
+            # A rollback error deliberately aborts the entire publication.
+            if before_text is not None:
                 manifest_path.write_text(before_text, encoding="utf-8")
-                raw_notes = [f"{slug}: kept old manifest (mass-prune guard)"]
-        if raw_notes is None:
-            continue
-        notes.extend(str(note) for note in raw_notes)
-    return notes
+            else:
+                manifest_path.unlink(missing_ok=True)
+            detail = f"stage=manifest {safe_exception_summary(exc)}"
+            failures.append((slug, detail))
+            log.error("pricing.manifest_failed slug=%s error=%s", slug, detail)
+    return notes, failures
 
 
 def _summary_lines(
@@ -1250,6 +1260,17 @@ def main(argv: list[str] | None = None) -> int:
         failures,
         committed_snapshot,
     )
+    manifest_notes: list[str] = []
+    if not args.summary_only:
+        manifest_notes, manifest_failures = _write_provider_manifests(results)
+        for slug, _error in manifest_failures:
+            # Never merge fresh prices from a rejected manifest. Recovery must
+            # prove a valid previous snapshot, or leave this provider absent.
+            results.pop(slug, None)
+        failures.extend(manifest_failures)
+        unrecovered_failures.extend(
+            _apply_stale_fallbacks(results, manifest_failures, committed_snapshot)
+        )
     healed = [slug for slug, res in results.items() if res.heal_diff is not None]
 
     if len(unrecovered_failures) > MAX_TOLERATED_FAILURES:
@@ -1269,10 +1290,8 @@ def main(argv: list[str] | None = None) -> int:
 
     merged = _merge_snapshot(or_snapshot, provider_index, set(healed))
 
-    manifest_notes: list[str] = []
     if not args.summary_only:
         _write_snapshot(merged)
-        manifest_notes = _write_provider_manifests(results)
         log.info("pricing.refresh.wrote path=%s models=%d", SNAPSHOT_PATH, merged["model_count"])
 
     summary = _summary_lines(results, healed, failures, disagreements, id_mismatches)

@@ -1,0 +1,102 @@
+name: Deploy marketing analytics worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type APPLY after the additive directory migration is verified
+        type: string
+        required: true
+      gateway_attempts:
+        description: Enable the existing GCP audit collector
+        type: boolean
+        default: false
+      billing_owners:
+        description: Enable the verified hash-only billing-owner view
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+concurrency:
+  group: deploy-growth-sync
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.repository == 'Lore-Hex/quill-router' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PROJECT: quill-cloud-proxy
+      REGION: us-central1
+      JOB: trusted-router-growth-sync
+      GH_TOKEN: ${{ github.token }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+      GATEWAY_ENABLED: ${{ inputs.gateway_attempts }}
+      OWNERS_ENABLED: ${{ inputs.billing_owners }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require confirmation and green CI for this exact commit
+        run: |
+          set -euo pipefail
+          test "$CONFIRMATION" = APPLY
+          result=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml \
+            --commit "$GITHUB_SHA" --json status,conclusion --jq '.[0]')
+          test "$(jq -r .status <<< "$result")" = completed
+          test "$(jq -r .conclusion <<< "$result")" = success
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v3
+      - uses: astral-sh/setup-uv@v7
+      - name: Preserve the existing worker configuration and exact source filter
+        run: |
+          set -euo pipefail
+          gcloud run jobs describe "$JOB" --project "$PROJECT" --region "$REGION" \
+            --format=json > "$RUNNER_TEMP/growth-before.json"
+          uv run --no-project --with httpx --with google-auth --with requests \
+            python -m scripts.axiom_growth.provision source-filter
+      - name: Build the reviewed worker and resolve its immutable image
+        run: |
+          set -euo pipefail
+          build=$(gcloud builds submit scripts/axiom_growth --project "$PROJECT" \
+            --config scripts/axiom_growth/cloudbuild.yaml \
+            --substitutions "_GROWTH_TAG=$GITHUB_SHA" --async --format='value(id)')
+          deadline=$(( $(date +%s) + 900 ))
+          while true; do
+            status=$(gcloud builds describe "$build" --project "$PROJECT" --format='value(status)')
+            case "$status" in
+              SUCCESS) break ;;
+              QUEUED|PENDING|WORKING) ;;
+              *) echo "Build failed: $status"; exit 1 ;;
+            esac
+            test "$(date +%s)" -lt "$deadline"
+            sleep 15
+          done
+          image="$REGION-docker.pkg.dev/$PROJECT/trusted-router/growth-sync"
+          digest=$(gcloud artifacts docker images describe "$image:$GITHUB_SHA" \
+            --project "$PROJECT" --format='value(image_summary.digest)')
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          echo "GROWTH_IMAGE=$image@$digest" >> "$GITHUB_ENV"
+      - name: Update only image and feature flags, execute, rollback on failure
+        run: |
+          set -euo pipefail
+          old_image=$(jq -r '.spec.template.spec.template.spec.containers[0].image' "$RUNNER_TEMP/growth-before.json")
+          old_gateway=$(jq -r '[.spec.template.spec.template.spec.containers[0].env[]? | select(.name=="GROWTH_GATEWAY_ATTEMPTS_ENABLED") | .value][0] // "false"' "$RUNNER_TEMP/growth-before.json")
+          old_owners=$(jq -r '[.spec.template.spec.template.spec.containers[0].env[]? | select(.name=="GROWTH_BILLING_OWNERS_ENABLED") | .value][0] // "false"' "$RUNNER_TEMP/growth-before.json")
+          test -n "$old_image" && test "$old_image" != null
+          gcloud run jobs update "$JOB" --project "$PROJECT" --region "$REGION" \
+            --image "$GROWTH_IMAGE" \
+            --update-env-vars "GROWTH_GATEWAY_ATTEMPTS_ENABLED=$GATEWAY_ENABLED,GROWTH_BILLING_OWNERS_ENABLED=$OWNERS_ENABLED"
+          if ! gcloud run jobs execute "$JOB" --project "$PROJECT" --region "$REGION" --wait; then
+            gcloud run jobs update "$JOB" --project "$PROJECT" --region "$REGION" \
+              --image "$old_image" \
+              --update-env-vars "GROWTH_GATEWAY_ATTEMPTS_ENABLED=$old_gateway,GROWTH_BILLING_OWNERS_ENABLED=$old_owners"
+            exit 1
+          fi
+          printf 'Deployed %s\nVerify live Axiom feed statuses and two scheduled cycles before declaring completion.\n' "$GROWTH_IMAGE" >> "$GITHUB_STEP_SUMMARY"

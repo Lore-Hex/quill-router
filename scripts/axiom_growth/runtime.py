@@ -13,11 +13,10 @@ import google.auth
 import httpx
 from google.auth.transport.requests import Request
 
+from scripts.axiom_growth import gateway_attempts
 from scripts.axiom_growth import model as m
 
 MAX_EVENTS = 300_000
-EXTRAS = ('workspace_fingerprint', 'first_utm_source', 'first_utm_medium',
-          'first_utm_campaign', 'first_landing_path', 'first_creative_id')
 
 
 def complete(result):
@@ -31,19 +30,12 @@ def complete(result):
 
 
 def project(row, source):
-    item = m.project_event(row, source=source)
-    item['landing_path'] = m.safe_path(row.get('landing_path'))
-    if m.HASH.fullmatch(str(row.get('workspace_fingerprint', ''))):
-        item['workspace_fingerprint'] = row['workspace_fingerprint']
-    for field in EXTRAS[1:]:
-        item[field] = (m.safe_path(row.get(field)) if field.endswith('path')
-                       else m.safe_label(row.get(field)))
-    return item
+    return m.project_event(row, source=source)
 
 
 def content_hash(row):
     # Progress timestamps must not cause every unchanged journey to be reingested.
-    body = {k: v for k, v in row.items() if k not in {'exported_at', 'observed_through'}}
+    body = {k: v for k, v in row.items() if k not in {'exported_at', 'observed_through', 'billing_owner_observed_at'}}
     return m.digest(json.dumps(body, sort_keys=True, separators=(',', ':')))
 
 
@@ -69,7 +61,7 @@ def cycle(state, io, now):
         # Preserve previously recovered domain evidence on an overlapping refresh.
         prior = events.get(row['event_id'], {})
         for key in ('customer_domain', 'first_referrer_domain', 'domain_observed_at',
-                    'customer_domain_basis', 'customer_domain_verified'):
+                    'customer_domain_basis', 'customer_domain_verified', *m.IDENTITY_FIELDS):
             if prior.get(key) and (not row.get(key) or row.get(key) == 'not_linked'):
                 row[key] = prior[key]
         events[row['event_id']] = row
@@ -84,7 +76,44 @@ def cycle(state, io, now):
         raise ValueError('Usage state bound reached')
     daily_rows = list(daily.values())
     journeys = m.build_journeys(list(events.values()), daily_rows, end)
+    owners = None
+    billing_status = 'disabled'
+    if os.environ.get('GROWTH_BILLING_OWNERS_ENABLED') == 'true':
+        try:
+            owners = io.billing_owners()
+            m.link_billing_accounts(daily_rows, owners, journeys)
+            state['billing_owners'] = owners
+            billing_status = 'current'
+        except Exception as exc:  # noqa: BLE001 - a directory outage must not stop conversion export.
+            owners = state.get('billing_owners', [])
+            m.link_billing_accounts(daily_rows, owners, journeys)
+            billing_status = 'stale' if owners else 'unavailable'
+            print(json.dumps({'event': 'growth.billing_directory_failed',
+                              'error_class': type(exc).__name__}), flush=True)
     candidates = list(events.values()) + daily_rows + journeys
+    gateway_status = 'disabled'
+    if os.environ.get('GROWTH_GATEWAY_ATTEMPTS_ENABLED') == 'true':
+        previous_audits = state.get('gateway_audits', [])
+        previous_gateway_watermark = state.get('gateway_watermark')
+        try:
+            audits = gateway_attempts.collect(state, io, now, end)
+            attempts = gateway_attempts.snapshots(audits, journeys, end)
+            attempts = gateway_attempts.pre_activation_attempts(attempts, daily_rows, journeys)
+            if owners is not None:
+                m.link_billing_accounts(attempts, owners, journeys)
+            gateway_attempts.link_first_attempts(journeys, attempts)
+            candidates += attempts
+            gateway_status = 'current'
+        except Exception as exc:  # noqa: BLE001 - keep acquisition exporting during audit-source failure.
+            state['gateway_audits'] = previous_audits
+            if previous_gateway_watermark is None:
+                state.pop('gateway_watermark', None)
+            else:
+                state['gateway_watermark'] = previous_gateway_watermark
+            gateway_status = 'unavailable'
+            print(json.dumps({'event': 'growth.gateway_collection_failed',
+                              'error_class': type(exc).__name__}), flush=True)
+    gateway_attempts.preserve_milestones(state, journeys)
     hashes = {r['event_id']: content_hash(r) for r in candidates}
     changed = [{**r, 'exported_at': now.isoformat()} for r in candidates
                if hashes[r['event_id']] != state.get('hashes', {}).get(r['event_id'])]
@@ -95,7 +124,10 @@ def cycle(state, io, now):
                  'event_rows': len(events), 'usage_rows': len(daily_rows),
                  'journey_rows': len(journeys), 'changed_rows': len(changed),
                  'source': 'scheduled_incremental', 'cloud_scope': 'gcp',
-                 'schema_version': 4}
+                 'schema_version': 6, 'gateway_status': gateway_status,
+                 'billing_owner_status': billing_status,
+                 'gateway_observed_through': state.get('gateway_watermark'),
+                 'billing_owners_observed_through': max((r.get('billing_owner_observed_at', '') for r in owners or []), default='')}
     io.ingest([heartbeat])
     state.update(events=list(events.values()), daily=daily_rows, hashes=hashes,
                  watermark=end.isoformat(), repair_day=now.date().isoformat())
@@ -134,8 +166,12 @@ class Sources:
         return complete(result)
 
     def events(self, start, end):
-        fields = (*m.FIELDS, *EXTRAS)
-        projection = ', '.join(f"{f}=column_ifexists('{f}', {0 if f in {'amount_microdollars', 'http_status', 'elapsed_ms'} else chr(39)*2})" for f in fields)
+        fields = m.FIELDS
+        def default(field):
+            if field == 'customer_domain_verified':
+                return 'false'
+            return '0' if field in {'amount_microdollars', 'http_status', 'elapsed_ms'} else "''"
+        projection = ', '.join(f"{f}=column_ifexists('{f}', {default(f)})" for f in fields)
         filters = ','.join(repr(e) for e in sorted(m.CONVERSION_EVENTS))
         base = f"['{m.SOURCE_DATASET}'] | where event in ({filters})"
         pending, rows, queries = [(start, end)], [], 0
@@ -202,6 +238,39 @@ class Sources:
             row['event_id'] = m.digest('|'.join(str(row[k]) for k in
                 ('event', '_time', 'workspace_fingerprint', 'model', 'provider')))
         return values
+
+    def gateway_audits(self, start, end):
+        view = f'projects/{self.project}/locations/global/buckets/tr-growth-source/views/_AllLogs'
+        body = {'resourceNames': [view], 'filter': gateway_attempts.source_filter() +
+                f' timestamp>="{start.isoformat()}" timestamp<"{end.isoformat()}"',
+                'pageSize': 1000, 'orderBy': 'timestamp asc'}
+        rows = []
+        for _ in range(20):
+            result = self.google('POST', 'https://logging.googleapis.com/v2/entries:list', json=body).json()
+            for entry in result.get('entries', []):
+                row = gateway_attempts.project(entry)
+                if row is not None:
+                    rows.append(row)
+            if not result.get('nextPageToken'):
+                return rows
+            body['pageToken'] = result['nextPageToken']
+        raise ValueError('Gateway audit pagination budget exceeded')
+
+    def billing_owners(self):
+        sql = """SELECT workspace_fingerprint, billing_account_fingerprint,
+            toString(billing_owner_observed_at, 'UTC') AS billing_owner_observed_at
+            FROM tr.growth_billing_owners LIMIT 50001 FORMAT JSONEachRow"""
+        # readonly=1 locks settings. Keep the role's server-enforced resource
+        # caps instead of trying to override them through HTTP query parameters.
+        result = self.checked(self.http.post('http://10.128.0.96:8123', content=sql,
+            auth=('tr_growth_read', os.environ['GROWTH_CH_PASSWORD']),
+            params={'readonly': 1})).text
+        rows = [json.loads(line) for line in result.splitlines() if line]
+        if len(rows) > 50_000:
+            raise ValueError('Billing owner row cap exceeded')
+        for row in rows:
+            row['billing_owner_observed_at'] = row['billing_owner_observed_at'].replace(' ', 'T') + 'Z'
+        return rows
 
     def ingest(self, values):
         forbidden = {'email', 'workspace_id', 'user_id', 'api_key', 'prompt', 'output',

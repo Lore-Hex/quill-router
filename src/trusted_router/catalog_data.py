@@ -957,14 +957,18 @@ PROVIDERS: dict[str, Provider] = {
         stores_content=False,
         provider_zero_data_retention=True,
         provider_policy=(
-            "Telnyx states that hosted chat completions have zero data retention: "
-            "request and response content is not stored. TrustedRouter uses this "
-            "path for Telnyx-hosted models, including adapted Responses requests. "
-            "Telnyx's separate Responses endpoint stores conversations and is "
-            "not used here. This is a provider policy claim, not verified "
-            "confidential compute or end-to-end attestation."
+            "Telnyx's published policy states zero data retention for Telnyx-hosted "
+            "/v2/ai/openai/chat/completions and /v2/ai/openai/embeddings: content is "
+            "processed in memory and discarded after the response; request metadata is retained. "
+            "TrustedRouter currently publishes hosted chat routes and adapts Responses "
+            "to chat completions. Stateful Responses, AI Assistants with conversation "
+            "history, third-party models and /v2/ai/embeddings are outside this ZDR scope. "
+            "OpenAI-compatible embeddings may run in any region. DPA 3.1 restricts training "
+            "of models available to others, with exceptions for written opt-in or "
+            "data de-identified under 3.5. "
+            "This is policy-backed ZDR, not confidential compute or verified end-to-end attestation."
         ),
-        provider_policy_url="https://developers.telnyx.com/docs/inference/data-residency",
+        provider_policy_url="https://telnyx.com/privacy-policy",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # Wafer — OpenAI-compatible serverless API at pass.wafer.ai/v1. Wafer

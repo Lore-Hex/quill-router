@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, is_dataclass
+from types import SimpleNamespace
 from typing import Any
 
 from tests.fakes.spanner import make_fake_store
@@ -484,6 +485,11 @@ class _FakeBigtable:
 
     def direct_row(self, key: bytes) -> _FakeDirectRow:
         return _FakeDirectRow(key, self.committed)
+
+    def mutate_rows(self, rows: list[_FakeDirectRow], **_kwargs: Any) -> list[Any]:
+        for row in rows:
+            row.commit()
+        return [SimpleNamespace(code=0) for _row in rows]
 
 
 def test_gcp_bigtable_activity_without_date_uses_recent_multi_day_index() -> None:

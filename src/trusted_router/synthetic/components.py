@@ -65,6 +65,16 @@ REGIONAL_DEPLOY_GATE_PROBES = frozenset(
     REGIONAL_GATEWAY_PROBES | MODEL_INFERENCE_PROBES
 )
 
+# Every catalogue component needs an entry here, not just the ones with a
+# probe target: status.py keeps a component's precomputed hourly/daily
+# rollups only when their probe type is in component_probe_types(id), and
+# component_probe_types() answers an EMPTY set for an id missing from this
+# map. A missing row still renders its live samples — so it looks fully
+# wired — while every rollup is discarded, leaving a history that reaches
+# back only as far as live samples do and an uptime figure computed from
+# that remnant. That is how the two Azure gateway rows shipped showing 2 of
+# 48 hourly buckets while every other component on the page showed 48.
+# test_component_probes_cover_the_catalogue keeps this map complete.
 COMPONENT_PROBES: dict[str, set[str]] = {
     "canonical_api": REGIONAL_GATEWAY_PROBES,
     "us_central1_regional_api": REGIONAL_GATEWAY_PROBES,
@@ -74,6 +84,8 @@ COMPONENT_PROBES: dict[str, set[str]] = {
     "sa_regional_api": REGIONAL_GATEWAY_PROBES,
     "eu_west_1_gateway": REGIONAL_GATEWAY_PROBES,
     "eu_west_3_gateway": REGIONAL_GATEWAY_PROBES,
+    "uaenorth_gateway": REGIONAL_GATEWAY_PROBES,
+    "australiaeast_gateway": REGIONAL_GATEWAY_PROBES,
     "attestation": {"attestation_nonce"},
     "billing_settlement": BILLING_PROBES,
     "provider_fallback": {"provider_fallback"},

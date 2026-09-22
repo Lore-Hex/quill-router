@@ -10,6 +10,7 @@ import base64
 import datetime as dt
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import re
@@ -28,7 +29,11 @@ from fastapi import Request, Response
 
 from trusted_router.config import Settings
 from trusted_router.google_ads_conversions import encrypt_google_ads_click_id
-from trusted_router.marketing_experiments import valid_experiment_identity
+from trusted_router.marketing_experiments import (
+    ONBOARDING_EXPERIMENT_ID,
+    assigned_onboarding_cell,
+    valid_experiment_identity,
+)
 from trusted_router.storage import STORE
 from trusted_router.storage_models import AcquisitionAttribution, iso_now
 
@@ -111,8 +116,13 @@ def prepare_request_attribution(
     google_click_id_kind, google_click_id = _google_click_from_request(request)
     now = iso_now()
     if context is None:
+        anonymous_id = uuid.uuid4().hex
+        if (request.url.path == '/' and not _has_explicit_campaign_touch(request)
+                and 'tr_exp' not in request.query_params and 'tr_cell' not in request.query_params):
+            touch['experiment_id'] = ONBOARDING_EXPERIMENT_ID
+            touch['experiment_cell_id'] = assigned_onboarding_cell(anonymous_id)
         context = AttributionContext(
-            anonymous_id=uuid.uuid4().hex,
+            anonymous_id=anonymous_id,
             first_touch=touch,
             last_touch=touch,
             created_at=now,
@@ -121,9 +131,15 @@ def prepare_request_attribution(
         )
         changed = True
     elif _has_explicit_campaign_touch(request):
+        first_touch = dict(context.first_touch)
+        # The experiment redirect happens after the first landing. Freeze its
+        # first actual assignment while retaining the original acquisition touch.
+        if touch.get("experiment_id") and not first_touch.get("experiment_id"):
+            first_touch["experiment_id"] = touch["experiment_id"]
+            first_touch["experiment_cell_id"] = touch["experiment_cell_id"]
         context = AttributionContext(
             anonymous_id=context.anonymous_id,
-            first_touch=context.first_touch,
+            first_touch=first_touch,
             last_touch=touch,
             created_at=context.created_at,
             google_click_id_kind=google_click_id_kind,
@@ -267,8 +283,13 @@ def record_signup_attribution(
     workspace_id: str,
     signup_provider: str,
     starter_credit_microdollars: int = 0,
+    user_id: str | None = None,
+    verified_email: str | None = None,
 ) -> None:
-    context = request_attribution(request) or _direct_context(request)
+    if _privacy_signal_enabled(request):
+        return
+    existing_context = request_attribution(request)
+    context = existing_context or _direct_context(request)
     occurred_at = iso_now()
     encrypted_google_click_id = None
     if context.google_click_id_kind and context.google_click_id:
@@ -319,8 +340,55 @@ def record_signup_attribution(
     if not created:
         return
     _clear_usage_check(workspace_id)
-    _log_conversion("acquisition.signup_completed", record)
-    _log_conversion("acquisition.api_key_created", record)
+    domain = _verified_email_domain(verified_email)
+    identity: dict[str, object] = {
+        # Preserve the namespace used by the original historical export.
+        "account_fingerprint": _fingerprint("tr-account:" + user_id) if user_id else "",
+        "identity_link_status": "linked" if existing_context is not None and user_id else "orphaned",
+        "first_touch_basis": "stored_cookie" if existing_context is not None else "missing_pre_auth_touch",
+        "customer_domain": domain,
+        "customer_domain_verified": bool(domain),
+        "customer_domain_basis": "verified_oauth_email" if domain else "not_linked",
+        "domain_observed_at": occurred_at if domain else "",
+    }
+    _log_conversion("acquisition.signup_completed", record, extra=identity)
+    _log_conversion("acquisition.api_key_created", record, extra=identity)
+
+
+def _verified_email_domain(email: str | None) -> str:
+    if not email or email.count("@") != 1:
+        return ""
+    host = email.rsplit("@", 1)[1].lower()
+    if len(host) > 253 or "." not in host or host.endswith((".local", ".internal", ".test", ".invalid")):
+        return ""
+    if not all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", p) for p in host.split(".")):
+        return ""
+    try:
+        ipaddress.ip_address(host)
+        return ""
+    except ValueError:
+        return host
+
+
+def oauth_attribution_snapshot(request: Request, settings: Settings, state: str) -> str | None:
+    context = request_attribution(request)
+    if context is None or _privacy_signal_enabled(request):
+        return None
+    encrypted = encode_attribution_cookie(context, settings)
+    signature = hmac.new(_cookie_signing_key(settings), (state + "|" + encrypted).encode(), hashlib.sha256).hexdigest()
+    return encrypted + "." + signature
+
+
+def restore_oauth_attribution(request: Request, settings: Settings, state: str, value: str | None) -> None:
+    if not value or len(value) > 4096 or _privacy_signal_enabled(request):
+        return
+    encrypted, _, signature = value.rpartition(".")
+    expected = hmac.new(_cookie_signing_key(settings), (state + "|" + encrypted).encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        return
+    context = decode_attribution_cookie(encrypted, settings)
+    if context is not None:
+        request.state.acquisition_attribution = context
 
 
 def record_successful_api_call(
@@ -548,6 +616,26 @@ def log_browser_funnel_event(
     )
 
 
+def onboarding_exposure(request: Request, *, user_id: str, workspace_id: str, record: bool = True) -> str:
+    """Record only a rendered, actionable treatment, using already-loaded IDs."""
+    context = request_attribution(request)
+    if context is None or context.first_touch.get('experiment_id') != ONBOARDING_EXPERIMENT_ID:
+        return ''
+    cell = context.first_touch.get('experiment_cell_id', '')
+    if not valid_experiment_identity(ONBOARDING_EXPERIMENT_ID, cell):
+        return ''
+    if not record:
+        return cell
+    log.info('acquisition.experiment_exposed', extra={
+        'event': 'acquisition.experiment_exposed',
+        'anonymous_fingerprint': _fingerprint(context.anonymous_id),
+        'account_fingerprint': _fingerprint('tr-account:' + user_id),
+        'workspace_fingerprint': _fingerprint(workspace_id),
+        **_safe_touch_log_fields(context.first_touch),
+    })
+    return cell
+
+
 def pageview_attribution_fields(request: Request) -> dict[str, object]:
     context = request_attribution(request)
     if context is None:
@@ -578,6 +666,8 @@ def _log_conversion(
         "first_experiment_id": record.first_touch.get("experiment_id"),
         "first_experiment_cell_id": record.first_touch.get("experiment_cell_id"),
         "first_landing_path": record.first_touch.get("landing_path"),
+        "first_referrer_domain": record.first_touch.get("referer_host"),
+        "first_purchase_at": record.first_purchase_at,
         "google_ads_click_persisted": bool(
             record.google_click_id_kind and record.encrypted_google_click_id
         ),

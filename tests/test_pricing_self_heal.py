@@ -1037,7 +1037,7 @@ def test_stale_snapshot_never_rewrites_provider_manifest(
         source="stale_snapshot",
     )
 
-    assert refresh._write_provider_manifests({"fireworks": stale}) == []
+    assert refresh._write_provider_manifests({"fireworks": stale}) == ([], [])
     assert calls == []
 
 
@@ -1128,8 +1128,9 @@ def test_manifest_dispatch_accepts_confirmed_authoritative_delistings(
         source="api",
     )
 
-    notes = refresh._write_provider_manifests({"fake": result})
+    notes, failures = refresh._write_provider_manifests({"fake": result})
 
     assert notes == ["fake: rewrote manifest"]
+    assert failures == []
     rows = json.loads(manifest_path.read_text(encoding="utf-8"))["models"]
     assert rows[1]["routable_reason"] == "delisted-upstream"

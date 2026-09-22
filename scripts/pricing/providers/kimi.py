@@ -168,29 +168,13 @@ def _live_model_rows() -> dict[str, dict[str, Any]]:
     return rows
 
 
-def _known_manifest_model_ids() -> set[str]:
-    if not MANIFEST_PATH.exists():
-        return set()
-    try:
-        raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return set()
-    rows = raw.get("models") if isinstance(raw, dict) else None
-    if not isinstance(rows, list):
-        return set()
-    return {
-        model_id
-        for row in rows
-        if isinstance(row, dict) and isinstance((model_id := row.get("id")), str) and model_id
-    }
-
-
-def _new_required_price_ids(live_rows: dict[str, dict[str, Any]]) -> frozenset[str]:
-    known = _known_manifest_model_ids()
+def _required_price_ids(live_rows: dict[str, dict[str, Any]]) -> frozenset[str]:
+    # A missing price is not an API delisting, even for a previously known ID.
+    # Keep last-known-good data through provider recovery instead of tombstoning it.
     return frozenset(
         model_id
         for model_id in live_rows
-        if model_id not in known and model_id != "moonshotai/moonshot-v1-auto"
+        if model_id != "moonshotai/moonshot-v1-auto"
     )
 
 
@@ -201,7 +185,7 @@ def fetch() -> ProviderPricingResult:
     _DISCOVERED_MANIFEST_ROWS = {}
 
     live_rows = _live_model_rows()
-    required_price_ids = _new_required_price_ids(live_rows) | runtime_required_models(SLUG)
+    required_price_ids = _required_price_ids(live_rows) | runtime_required_models(SLUG)
 
     html = _combined_html()
     if not html:
@@ -242,6 +226,10 @@ def fetch() -> ProviderPricingResult:
 def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
     """Refresh the provider-native Kimi manifest from live, priced models."""
 
+    unpriced_live_ids = sorted(_required_price_ids(_DISCOVERED_MANIFEST_ROWS) - result.prices.keys())
+    if unpriced_live_ids:
+        raise RuntimeError(f"kimi live discovery lacks prices: {unpriced_live_ids}")
+
     if MANIFEST_PATH.exists():
         raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     else:
@@ -276,8 +264,7 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         present_rows[model_id] = row
         updated.append(model_id)
 
-    # fetch() already validates required prices and live account availability.
-    # Expected families are discovery hints, not a promise they remain priced.
+    # Every concrete live model must have a fresh price before reconciliation.
     missing = sorted(set(result.prices) - set(updated))
     if missing or not updated:
         raise RuntimeError(f"kimi manifest prices lack live discovery: {missing}")

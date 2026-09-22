@@ -28,10 +28,10 @@
   },
   "anthropic": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 12,
     "name": "Anthropic",
     "privacy": "Policy documented",
-    "route_count": 22,
+    "route_count": 24,
     "route_mode": "Prepaid + BYOK",
     "slug": "anthropic"
   },
@@ -181,10 +181,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 101,
+    "model_count": 103,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 196,
+    "route_count": 200,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -226,10 +226,10 @@
   },
   "featherless": {
     "card_version": 2,
-    "model_count": 18,
+    "model_count": 19,
     "name": "Featherless AI",
     "privacy": "Policy documented",
-    "route_count": 18,
+    "route_count": 19,
     "route_mode": "Prepaid",
     "slug": "featherless"
   },
@@ -514,10 +514,10 @@
   },
   "openai": {
     "card_version": 2,
-    "model_count": 47,
+    "model_count": 49,
     "name": "OpenAI",
     "privacy": "Zero retention",
-    "route_count": 80,
+    "route_count": 84,
     "route_mode": "Prepaid + BYOK",
     "slug": "openai"
   },
@@ -550,10 +550,10 @@
   },
   "pearl": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 7,
     "name": "Pearl Research Labs",
     "privacy": "Policy documented",
-    "route_count": 6,
+    "route_count": 7,
     "route_mode": "Prepaid",
     "slug": "pearl"
   },
@@ -604,10 +604,10 @@
   },
   "regolo": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 9,
     "name": "Regolo",
     "privacy": "Zero retention",
-    "route_count": 22,
+    "route_count": 18,
     "route_mode": "Prepaid + BYOK",
     "slug": "regolo"
   },
@@ -694,10 +694,10 @@
   },
   "siliconflow": {
     "card_version": 2,
-    "model_count": 28,
+    "model_count": 27,
     "name": "SiliconFlow",
     "privacy": "Policy documented",
-    "route_count": 55,
+    "route_count": 53,
     "route_mode": "Prepaid + BYOK",
     "slug": "siliconflow"
   },
@@ -838,10 +838,10 @@
   },
   "wafer": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 7,
     "name": "Wafer",
     "privacy": "Policy documented",
-    "route_count": 12,
+    "route_count": 14,
     "route_mode": "Prepaid + BYOK",
     "slug": "wafer"
   },
@@ -856,10 +856,10 @@
   },
   "xiaomi": {
     "card_version": 2,
-    "model_count": 2,
+    "model_count": 5,
     "name": "Xiaomi MiMo",
     "privacy": "Policy documented",
-    "route_count": 4,
+    "route_count": 10,
     "route_mode": "Prepaid + BYOK",
     "slug": "xiaomi"
   },

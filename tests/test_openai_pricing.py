@@ -113,3 +113,29 @@ def test_openai_isolation_does_not_accept_invalid_prices(
     monkeypatch.setattr(base, "self_heal_parser", fail_self_heal)
     with pytest.raises(RuntimeError, match="invalid price still requires repair"):
         openai.fetch()
+
+
+@pytest.mark.parametrize("model", ["gpt-6-sol", "gpt-6-luna"])
+def test_sol_luna_discovery_preserves_verified_tool_and_vision_capabilities(
+    model: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = tmp_path / "openai.json"
+    monkeypatch.setattr(openai, "MANIFEST_PATH", manifest)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(openai, "UPSTREAM_ID_MAP", {})
+    monkeypatch.setattr(openai, "_DISCOVERED_MANIFEST_ROWS", {})
+    monkeypatch.setattr(openai, "fetch_json", lambda *_a, **_kw: {"data": [{"id": model}]})
+    monkeypatch.setattr(openai, "probe_openai_chat", lambda **_kw: True)
+    monkeypatch.setattr(openai, "fetch_provider", lambda **_kw: base.ProviderPricingResult(
+        slug="openai", source="api", fetched_url=openai.URL,
+        prices={f"openai/{model}": base.ModelPrice(
+            2_000_000, 10_000_000, prompt_cached_micro_per_m=200_000,
+        )},
+    ))
+    openai.write_provider_manifest(openai.fetch())
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    models, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
+    assert models[f"openai/{model}"].context_length == 1_050_000
+    for item in (models[f"openai/{model}"], endpoints[f"openai/{model}@openai/prepaid"]):
+        assert {"tools", "reasoning_effort", "structured_outputs"} <= set(item.supported_parameters)
+    assert models[f"openai/{model}"].input_modalities == ("text", "image")

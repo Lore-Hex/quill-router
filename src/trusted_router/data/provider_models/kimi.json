@@ -87,8 +87,7 @@
       "supports_reasoning": true,
       "input_token_price_per_m": 3000000,
       "output_token_price_per_m": 15000000,
-      "cached_input_token_price_per_m": 300000,
-      "missing_since": "2026-09-20"
+      "cached_input_token_price_per_m": 300000
     },
     {
       "id": "moonshotai/moonshot-v1-128k",
@@ -208,6 +207,6 @@
   "_about": "Provider-native Moonshot/Kimi routes. Refreshed hourly only for models present in both the official pricing docs and authenticated /v1/models feed.",
   "source": "https://api.moonshot.ai/v1/models",
   "pricing_source": "https://platform.kimi.ai/docs/llms.txt",
-  "generated_at": "2026-09-20T02:44:07Z",
-  "model_count": 3
+  "generated_at": "2026-09-22T18:36:26Z",
+  "model_count": 4
 }

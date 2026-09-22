@@ -38,6 +38,7 @@ BROWSER_EVENTS = frozenset(
     f"acquisition.{name}" for name in (
         "landing_engaged", "sign_in_opened", "first_call_started", "first_call_failed",
         "onboarding_call_started", "onboarding_call_succeeded", "onboarding_call_failed",
+        "experiment_exposed",
     )
 )
 CONVERSION_EVENTS = frozenset(
@@ -52,17 +53,20 @@ DIMENSIONS = (
     "experiment_id", "experiment_cell_id", "landing_path",
 )
 ATTEMPT_FIELDS = ("attempt_id", "flow", "http_status", "elapsed_ms", "failure_reason", "finish_reason")
-FIELDS = ("event", "anonymous_fingerprint", "amount_microdollars", "referer_host", *DIMENSIONS, *ATTEMPT_FIELDS)
+IDENTITY_FIELDS = ("account_fingerprint", "workspace_fingerprint", "marketing_workspace_fingerprint")
+FIRST_FIELDS = ("first_utm_source", "first_utm_medium", "first_utm_campaign", "first_creative_id",
+                "first_experiment_id", "first_experiment_cell_id", "first_landing_path")
+EVIDENCE_FIELDS = ("customer_domain", "customer_domain_verified", "customer_domain_basis",
+                   "domain_observed_at", "first_referrer_domain", "first_purchase_at",
+                   "identity_link_status", "payment_method", "first_touch_basis")
+FIELDS = ("event", "anonymous_fingerprint", "amount_microdollars", "referer_host",
+          *DIMENSIONS, *ATTEMPT_FIELDS, *IDENTITY_FIELDS, *FIRST_FIELDS, *EVIDENCE_FIELDS)
 MAX_ROWS = 20_000
 PAGE_SIZE = 1000
 LABEL_RE = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_. /:-]{0,119}\Z")
 SECRET_RE = re.compile(
     r"(?i)(?:sk[-_]|xaat-|xapt-|bearer|password|secret|token|authorization|"
     r"\b\d{1,3}(?:\.\d{1,3}){3}\b|https?://)"
-)
-PUBLIC_PATH_RE = re.compile(
-    r"/(?:|pricing|models|providers|leaderboard|blog|docs|trust|status|"
-    r"openrouter-alternative|compare|eu|agents|quickstart)\Z"
 )
 
 
@@ -110,28 +114,47 @@ def project_event(
         "event": event,
         "anonymous_fingerprint": fingerprint,
         "source": source,
-        "schema_version": 2,
+        "schema_version": 5,
         "record_type": "observed_event",
         "referrer_domain": domain(row.get("referer_host")),
     }
-    matched = (enrichment or {}).get(fingerprint, {})
+    matched = {**row, **(enrichment or {}).get(fingerprint, {})}
     output["customer_domain"] = domain(matched.get("customer_domain"))
     output["first_referrer_domain"] = domain(matched.get("first_referrer_domain"))
     output["customer_domain_verified"] = matched.get("customer_domain_verified") is True
     basis = matched.get("customer_domain_basis")
     output["customer_domain_basis"] = basis if basis in {
-        "current_workspace_owner_email", "ambiguous_visitor_multiple_owners",
+        "current_workspace_owner_email", "current_account_email", "verified_oauth_email",
+        "verified_account_email", "unverified_account_email", "ambiguous_visitor_multiple_owners",
     } else "not_linked"
     output["domain_observed_at"] = timestamp(matched["domain_observed_at"]) if matched.get("domain_observed_at") else ""
     for field in DIMENSIONS:
         value = row.get(field)
         if field == "landing_path":
             # Dynamic paths can contain account IDs, e-mails, or secrets.
-            output[field] = (
-                value if isinstance(value, str) and PUBLIC_PATH_RE.fullmatch(value) else "(other)"
-            )
+            output[field] = safe_path(value)
         else:
             output[field] = safe_label(value)
+    for field in IDENTITY_FIELDS:
+        if HASH.fullmatch(str(row.get(field, ""))):
+            output[field] = row[field]
+    for field in FIRST_FIELDS:
+        output[field] = safe_path(row.get(field)) if field.endswith("path") else safe_label(row.get(field))
+    output['utm_source'] = canonical_source(output['utm_source'], output['referrer_domain'])
+    if row.get('first_utm_source'):
+        output['first_utm_source'] = canonical_source(row['first_utm_source'], output['first_referrer_domain'])
+    output['identity_link_status'] = (
+        row.get('identity_link_status') if row.get('identity_link_status') in {'linked', 'orphaned', 'ambiguous'}
+        else ('linked' if output.get('account_fingerprint') else 'orphaned'))
+    if row.get('first_touch_basis') in {'stored_cookie', 'missing_pre_auth_touch'}:
+        output['first_touch_basis'] = row['first_touch_basis']
+    if row.get('first_purchase_at'):
+        output['first_purchase_at'] = timestamp(row['first_purchase_at'])
+    payment_method = row.get('payment_method')
+    if payment_method in {'stripe', 'stripe_card', 'stripe_ach', 'paypal', 'usdc', 'stablecoin', 'adyen', 'stripe_auto_refill'}:
+        output['payment_method'] = payment_method
+        output['purchase_path'] = 'auto_refill' if payment_method == 'stripe_auto_refill' else (
+            'stablecoin_api' if payment_method in {'usdc', 'stablecoin'} else 'checkout')
     if event == "acquisition.credit_purchase_completed":
         amount = row.get("amount_microdollars")
         if type(amount) is not int or not 0 < amount < 10**15:
@@ -175,7 +198,6 @@ def project_event(
 
 
 HASH = re.compile(r'[a-f0-9]{64}\Z')
-PUBLIC_PATH = re.compile(r'/(?:|pricing|models|providers|leaderboard|blog|docs|trust|status|choose|marketplace|support|vibe-coders|agents|quickstart|openrouter-alternative|compare|eu|(?:blog|docs|compare)/[a-z0-9-]+)\Z')
 
 
 def rows(result):
@@ -199,7 +221,63 @@ def digest(value):
 
 
 def safe_path(value):
-    return value if isinstance(value, str) and PUBLIC_PATH.fullmatch(value) and not SECRET_RE.search(value) else '(other)'
+    if not isinstance(value, str) or not value:
+        return '(unknown)'
+    if value in {'(unknown)', '(unclassified)', '(account flow)'}:
+        return value
+    # Keep a small vocabulary, never user-chosen slugs, IDs or query parameters.
+    if not value.startswith('/') or value.startswith('//') or len(value) > 4096:
+        return '(unclassified)'
+    path = value.split('?', 1)[0].split('#', 1)[0].lower().rstrip('/') or '/'
+    if path in PUBLIC_LANDINGS:
+        return path
+    for family in ('/openrouter-alternative/lp/', '/openrouter-alternative/test/'):
+        if path.startswith(family):
+            return family + '*'
+    for family in ('models', 'providers', 'blog', 'docs', 'compare', 'benchmarks', 'rankings'):
+        if path.startswith('/' + family + '/'):
+            return '/' + family + '/*'
+    if path.startswith(('/auth/', '/console/')) or path.endswith('_oauth_callback'):
+        return '(account flow)'
+    return '(unclassified)'
+
+
+PUBLIC_LANDINGS = frozenset(('/' + p) for p in (
+    '', 'pricing', 'models', 'providers', 'leaderboard', 'blog', 'docs', 'trust', 'status',
+    'choose', 'marketplace', 'support', 'vibe-coders', 'agents', 'quickstart',
+    'openrouter-alternative', 'compare', 'eu', 'token-exchange', 'green-tokens',
+    'private-llm-api', 'provider-failover', 'openai-compatible-api', 'migrate', 'chat',
+    'openrouter-alternative/experiment', 'openrouter-alternative/quickstart',
+    'private-llm-api/quickstart', 'kimi-k3-api', 'glm-5-2-api', 'deepseek-v4-api',
+    'latest-model-apis', 'hipaa-llm-api', 'llm-zero-data-retention', 'claude-api-privacy',
+))
+
+
+def canonical_source(value, referrer=''):
+    if isinstance(value, str) and value in {'(unknown)', '(unattributed)', '(redacted)'}:
+        return value
+    label = safe_label(value).strip().lower()
+    if '.' in label and not domain(label):
+        return '(redacted)'
+    host = domain(label) or domain(referrer)
+    aliases = {
+        'google': ('google.com', 'google.co.uk', 'google.com.hk', 'google.de', 'google.fr', 'google.ca', 'google.co.in', 'google.com.au'),
+        'bing': ('bing.com',), 'yahoo': ('yahoo.com', 'yahoo.co.jp'),
+        'duckduckgo': ('duckduckgo.com',), 'brave': ('search.brave.com',),
+        'yandex': ('yandex.ru', 'yandex.com'), 'kagi': ('kagi.com',),
+        'chatgpt': ('chatgpt.com', 'chat.openai.com'), 'perplexity': ('perplexity.ai',),
+        'claude': ('claude.ai',), 'gemini': ('gemini.google.com',), 'github': ('github.com',),
+        'reddit': ('reddit.com',), 'hackernews': ('news.ycombinator.com',),
+        'youtube': ('youtube.com', 'youtu.be'), 'linkedin': ('linkedin.com',),
+        'x': ('x.com', 'twitter.com', 't.co'), 'producthunt': ('producthunt.com',),
+    }
+    # Explicit campaign sources outrank referrer; only canonicalize host-shaped sources.
+    if label and label not in {'direct', '(unknown)', '(direct)'} and not domain(label):
+        return {'twitter': 'x', 'hn': 'hackernews'}.get(label, label)
+    for source, hosts in reversed(list(aliases.items())):
+        if any(host == h or host.endswith('.' + h) for h in hosts):
+            return source
+    return domain(label) or ('direct' if label in {'direct', '(direct)'} else label or host or '(unknown)')
 
 
 def build_journeys(events, daily, end):
@@ -212,8 +290,12 @@ def build_journeys(events, daily, end):
     # Map a workspace only where evidence gives exactly one visitor. This
     # avoids assigning a team's entire token usage to an arbitrary person.
     links = defaultdict(set)
+    accounts_by_anon = defaultdict(set)
     for anon, group in visitors.items():
         for row in group:
+            account = row.get('account_fingerprint')
+            if isinstance(account, str) and HASH.fullmatch(account):
+                accounts_by_anon[anon].add(account)
             for field in ('workspace_fingerprint', 'marketing_workspace_fingerprint'):
                 if row.get(field):
                     links[row[field]].add(anon)
@@ -221,10 +303,15 @@ def build_journeys(events, daily, end):
     for item in daily:
         candidates = set()
         for key in ('workspace_fingerprint', 'marketing_workspace_fingerprint'):
-            candidates |= links.get(item[key], set())
-        item['anonymous_fingerprint'] = next(iter(candidates)) if len(candidates) == 1 else ''
-        item['identity_link_status'] = 'linked' if len(candidates) == 1 else ('ambiguous' if candidates else 'unlinked')
-        if len(candidates) == 1:
+            candidates |= links.get(item.get(key), set())
+        accounts = set().union(*(accounts_by_anon[a] for a in candidates))
+        # A workspace may have multiple browser visitors. Account evidence must
+        # agree for all of them before assigning that workspace's usage.
+        account = next(iter(accounts)) if len(accounts) == 1 and all(accounts_by_anon[a] for a in candidates) else ''
+        item['account_fingerprint'] = account
+        item['anonymous_fingerprint'] = next(iter(candidates)) if len(candidates) == 1 and len(accounts) <= 1 else ''
+        item['identity_link_status'] = 'linked' if account else ('ambiguous' if len(candidates) > 1 or len(accounts) > 1 else 'orphaned')
+        if item['anonymous_fingerprint']:
             usage_by_anon[item['anonymous_fingerprint']].append(item)
     result = []
     for anon, group in visitors.items():
@@ -234,29 +321,55 @@ def build_journeys(events, daily, end):
             continue
         first = observed[0]
         stages = {}
-        for short in ('landing_engaged','sign_in_opened','signup_completed','api_key_created','first_call_started','first_call_failed','first_successful_api_call','checkout_started','payment_method_saved','credit_purchase_completed','retained_api_usage_7d'):
+        for short in ('landing_engaged','sign_in_opened','signup_completed','api_key_created','first_call_started','first_call_failed','first_successful_api_call','checkout_started','payment_method_saved','credit_purchase_completed','retained_api_usage_7d','experiment_exposed'):
             matches = [r for r in observed if r['event'] == 'acquisition.'+short]
             stages[short+'_at'] = stamp(matches[0]['_time']) if matches else None
         signup = next((r for r in observed if r['event']=='acquisition.signup_completed'), None)
         acquisition = signup or first
         spend = [r for r in observed if r['event']=='acquisition.credit_purchase_completed']
+        # First-touch values on signup were frozen before OAuth. Historical
+        # enrichment is evidence, not a second observed conversion.
+        referrer = domain(acquisition.get('first_referrer_domain')) or next(
+            (domain(r.get('first_referrer_domain')) for r in group if domain(r.get('first_referrer_domain'))),
+            domain(first.get('referrer_domain')))
+        evidence = next((r for r in reversed(group) if domain(r.get('customer_domain'))), {})
+        purchase_times = [stamp(r['first_purchase_at']) for r in group if r.get('first_purchase_at')]
+        purchase_times.extend(stamp(r['_time']) for r in spend)
+        first_source = canonical_source(acquisition.get('first_utm_source') or first.get('utm_source'), referrer)
+        touch_basis = acquisition.get('first_touch_basis') or (
+            'stored_first_touch' if acquisition.get('first_utm_source') else 'first_retained_event')
+        if touch_basis == 'missing_pre_auth_touch':
+            first_source = '(unknown)'
+        first_path = acquisition.get('first_landing_path')
+        if first_path in (None, '', '(other)', '(unknown)', '(unclassified)', '(account flow)'):
+            first_path = first.get('landing_path')
         item = {
             '_time':stamp(first['_time']), 'event':'growth.journey', 'event_id':digest('journey:'+anon),
-            'record_type':'journey_snapshot', 'schema_version':3, 'anonymous_fingerprint':anon,
+            'record_type':'journey_snapshot', 'schema_version':5, 'anonymous_fingerprint':anon,
             'first_observed_at':stamp(first['_time']), 'last_observed_at':stamp(observed[-1]['_time']),
-            'utm_source':acquisition.get('utm_source') or '(unknown)',
+            'utm_source':canonical_source(acquisition.get('utm_source'), acquisition.get('referrer_domain')),
             'utm_medium':acquisition.get('utm_medium') or '(unknown)',
             'utm_campaign':acquisition.get('utm_campaign') or '',
             'creative_id':acquisition.get('creative_id') or '',
-            'landing_path':acquisition.get('landing_path') or '(unknown)',
-            'first_source':acquisition.get('first_utm_source') or first.get('utm_source') or '(unknown)',
+            'landing_path':safe_path(acquisition.get('landing_path')),
+            'first_source':first_source,
+            'first_utm_source':first_source,
+            'first_utm_medium':acquisition.get('first_utm_medium') or first.get('utm_medium') or '',
+            'first_utm_campaign':acquisition.get('first_utm_campaign') or first.get('utm_campaign') or '',
+            'first_creative_id':acquisition.get('first_creative_id') or first.get('creative_id') or '',
+            'experiment_id':acquisition.get('first_experiment_id') or next((r.get('experiment_id') for r in observed if r.get('experiment_id')), ''),
+            'experiment_cell_id':acquisition.get('first_experiment_cell_id') or next((r.get('experiment_cell_id') for r in observed if r.get('experiment_cell_id')), ''),
             'first_medium':acquisition.get('first_utm_medium') or first.get('utm_medium') or '(unknown)',
-            'first_landing_path':acquisition.get('first_landing_path') if acquisition.get('first_landing_path') not in (None,'','(other)') else first.get('landing_path') or '(unknown)',
-            'first_touch_basis':'stored_cookie' if acquisition.get('first_utm_source') else 'first_retained_event',
-            'last_source':observed[-1].get('utm_source') or '(unknown)',
-            'last_tagged_landing':observed[-1].get('landing_path') or '(unknown)',
-            'referrer_domain':acquisition.get('referrer_domain') or '',
-            'customer_domain':next((r.get('customer_domain') for r in group if r.get('customer_domain')), ''),
+            'first_landing_path':safe_path(first_path),
+            'first_touch_basis':touch_basis,
+            'last_source':canonical_source(observed[-1].get('utm_source'), observed[-1].get('referrer_domain')),
+            'last_tagged_landing':safe_path(observed[-1].get('landing_path')),
+            'referrer_domain':domain(acquisition.get('referrer_domain')),
+            'first_referrer_domain':referrer, 'first_referrer_host':referrer,
+            'customer_domain':domain(evidence.get('customer_domain')),
+            'customer_domain_verified':evidence.get('customer_domain_verified') is True,
+            'customer_domain_basis':evidence.get('customer_domain_basis') or 'not_linked',
+            'first_purchase_at':min(purchase_times, key=date) if purchase_times else None,
             'purchase_count':len(spend),
             'purchase_microdollars':sum(int(r.get('amount_microdollars') or 0) for r in spend),
             'linked_usage_days':len({r['_time'] for r in usage_by_anon[anon]}),
@@ -268,10 +381,38 @@ def build_journeys(events, daily, end):
         for field in ('workspace_fingerprint','marketing_workspace_fingerprint','account_fingerprint'):
             values = {r[field] for r in group if r.get(field)}
             item[field] = next(iter(values)) if len(values)==1 else ''
+        item['identity_link_status'] = 'linked' if item['account_fingerprint'] else ('ambiguous' if len(accounts_by_anon[anon])>1 else 'orphaned')
+        if item['identity_link_status'] == 'ambiguous':
+            item.update(customer_domain='', customer_domain_verified=False,
+                        customer_domain_basis='ambiguous_visitor_multiple_owners')
         result.append(item)
     by_anon = {r['anonymous_fingerprint']:r for r in result}
     for item in daily:
         linked = by_anon.get(item['anonymous_fingerprint'], {})
-        for field in ('utm_source','utm_medium','utm_campaign','landing_path','creative_id'):
+        for field in ('utm_source','utm_medium','utm_campaign','landing_path','creative_id','experiment_id','experiment_cell_id'):
             item[field] = linked.get(field) or '(unattributed)'
     return result
+
+
+def link_billing_accounts(daily, owners, journeys):
+    """Current commercial ownership is separate from historical caller identity."""
+    directory = {}
+    for row in owners:
+        workspace, account = row.get('workspace_fingerprint', ''), row.get('billing_account_fingerprint', '')
+        if not HASH.fullmatch(workspace) or not HASH.fullmatch(account):
+            raise ValueError('Invalid billing identity projection')
+        if workspace in directory and directory[workspace] != row:
+            raise ValueError('Conflicting billing ownership snapshot')
+        directory[workspace] = row
+    sources = defaultdict(set)
+    for j in journeys:
+        if j.get('account_fingerprint'):
+            sources[j['account_fingerprint']].add(j.get('first_source') or '(unknown)')
+    for row in daily:
+        owner = directory.get(row.get('workspace_fingerprint'), {})
+        account = owner.get('billing_account_fingerprint', '')
+        source = sources.get(account, set())
+        row.update(billing_account_fingerprint=account,
+                   billing_identity_basis='current_workspace_owner' if account else 'unresolved',
+                   billing_owner_observed_at=owner.get('billing_owner_observed_at'),
+                   billing_source=next(iter(source)) if len(source) == 1 else '(unattributed)')
