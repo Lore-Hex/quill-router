@@ -14,6 +14,8 @@ NAMES=(tr-clickhouse-1 tr-clickhouse-2 tr-clickhouse-3)
 ZONES=(us-central1-a us-central1-b us-central1-c)
 SCHEMA="${ROOT}/clickhouse/004_operational_analytics_replicated.sql"
 CLIENT_SCHEMA="${ROOT}/clickhouse/008_client_events_replicated.sql"
+SPEND_LEASE_PARITY_SCHEMA="${ROOT}/clickhouse/016_spend_lease_parity.sql"
+SPEND_LEASE_IDENTITY_SCHEMA="${ROOT}/clickhouse/018_spend_lease_identity.sql"
 BENCHMARK_WORKSPACE_SCHEMA="${ROOT}/clickhouse/007_benchmark_samples_workspace_id.sql"
 BENCHMARK_WORKSPACE_BACKFILL_LIMIT="${TR_CLICKHOUSE_BENCHMARK_WORKSPACE_BACKFILL_LIMIT:-200000}"
 CONTROL_SECRET="trustedrouter-clickhouse-control-read-password"
@@ -88,9 +90,14 @@ SPANNER_DATABASE_ID="$SPANNER_DATABASE_ID" \
 log "creating replicated operational tables"
 schema="$(cat "$SCHEMA")"
 client_schema="$(cat "$CLIENT_SCHEMA")"
+spend_lease_parity_schema="$(cat "$SPEND_LEASE_PARITY_SCHEMA")"
 for index in 0 1 2; do
   node_query "$index" "CREATE DATABASE IF NOT EXISTS tr; ${schema} ${client_schema}"
 done
+# Create every replica before issuing the cluster-wide additive ALTER.
+node_query 0 "$spend_lease_parity_schema"
+spend_lease_identity_schema="$(cat "$SPEND_LEASE_IDENTITY_SCHEMA")"
+node_query 0 "$spend_lease_identity_schema"
 
 archive="$(mktemp "${TMPDIR:-/tmp}/tr-clickhouse-operational.XXXXXX.tar.gz")"
 ingester_stopped=0

@@ -49,7 +49,7 @@ SPEND_LEASE_ACTIVE_GRANT_KIND = "spend_lease_active_grant"
 
 LeaseStatus = Literal["active", "draining", "terminal", "expired"]
 ShadowVerdict = Literal["accepted", "declined_funds", "declined_other"]
-ShadowDivergence = Literal["none", "admit_diverged", "estimate_low", "echo_invalid"]
+ShadowDivergence = Literal["not_comparable", "estimate_equal", "estimate_low", "estimate_high", "echo_invalid"]
 SpendLeaseEligibilityFailure = Literal[
     "boot_digest_not_accepted",
     "unpaid_workspace",
@@ -198,6 +198,7 @@ class SpendLeaseShadowEvent:
     boot_kid: str
     boot_verified: bool
     lease_id: str | None
+    echo_lease_id: str | None
     no_lease_reason: SpendLeaseNoLeaseReason | None
     binding_outcome: SpendLeaseBindingOutcome | None
     echo_state: str
@@ -207,6 +208,9 @@ class SpendLeaseShadowEvent:
     server_verdict: ShadowVerdict
     catalog_version: str | None
     divergence: ShadowDivergence
+    frozen_server_estimate_micro: int | None
+    comparison_catalog_version: str | None
+    applicability_drift: str | None
 
     def payload(self) -> dict[str, Any]:
         return {"schema_version": 1, **asdict(self)}
@@ -736,22 +740,30 @@ def build_spend_lease_shadow_event(
     boot_kid: str,
     boot_verified: bool,
     no_lease_reason: SpendLeaseNoLeaseReason | None,
+    router_lease_id: str | None = None,
     binding_outcome: SpendLeaseBindingOutcome | None = None,
     echo: SpendLeaseEchoValue | None,
     server_estimate_micro: int | None,
     server_verdict: ShadowVerdict,
+    frozen_server_estimate_micro: int | None = None,
+    comparison_catalog_version: str | None = None,
+    applicability_drift: str | None = None,
 ) -> SpendLeaseShadowEvent:
-    divergence: ShadowDivergence = "none"
+    divergence: ShadowDivergence = "not_comparable"
     if not boot_verified or echo is None:
         divergence = "echo_invalid"
-    elif echo.would_admit is True and server_verdict != "accepted":
-        divergence = "admit_diverged"
     elif (
         echo.enclave_estimate_micro is not None
-        and server_estimate_micro is not None
-        and echo.enclave_estimate_micro < server_estimate_micro
+        and frozen_server_estimate_micro is not None
+        and comparison_catalog_version is not None
+        and echo.catalog_version == comparison_catalog_version
     ):
-        divergence = "estimate_low"
+        if echo.enclave_estimate_micro < frozen_server_estimate_micro:
+            divergence = "estimate_low"
+        elif echo.enclave_estimate_micro > frozen_server_estimate_micro:
+            divergence = "estimate_high"
+        else:
+            divergence = "estimate_equal"
     return SpendLeaseShadowEvent(
         event_id=event_id,
         created_at=created_at,
@@ -759,7 +771,8 @@ def build_spend_lease_shadow_event(
         key_hash=key_hash,
         boot_kid=boot_kid,
         boot_verified=boot_verified,
-        lease_id=echo.lease_id if echo else None,
+        lease_id=router_lease_id,
+        echo_lease_id=echo.lease_id if echo else None,
         no_lease_reason=no_lease_reason,
         binding_outcome=binding_outcome,
         echo_state=echo.state if echo else "missing",
@@ -769,4 +782,7 @@ def build_spend_lease_shadow_event(
         server_verdict=server_verdict,
         catalog_version=echo.catalog_version if echo else None,
         divergence=divergence,
+        frozen_server_estimate_micro=frozen_server_estimate_micro,
+        comparison_catalog_version=comparison_catalog_version,
+        applicability_drift=applicability_drift,
     )

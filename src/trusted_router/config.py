@@ -922,6 +922,7 @@ class Settings(BaseSettings):
     # closed ``not_accepting`` reason and newly minted leases do not advertise
     # local admission.
     spend_lease_admission_accept: bool = False
+    spend_lease_admission_workspace_ids: str = ""
     spend_lease_pilot_workspace_ids: str = ""
     spend_lease_signing_secret_name: str = ""
     # Audited break-glass addition to the signed Stage D runtime policy. This
@@ -2192,6 +2193,14 @@ class Settings(BaseSettings):
         return frozenset(
             workspace_id.strip()
             for workspace_id in self.regional_quota_lease_pilot_workspace_ids.split(",")
+            if workspace_id.strip()
+        )
+
+    @property
+    def spend_lease_admission_workspaces(self) -> frozenset[str]:
+        return frozenset(
+            workspace_id.strip()
+            for workspace_id in self.spend_lease_admission_workspace_ids.split(",")
             if workspace_id.strip()
         )
 

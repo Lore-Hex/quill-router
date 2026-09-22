@@ -112,6 +112,7 @@ from trusted_router.receipt_keys import (
     AZURE_ATTESTATION_KIND,
     GCP_ATTESTATION_KIND,
     attestation_commits_to_jwk,
+    b64url_decode,
     gcp_attestation_image_digest,
     normalize_receipt_jwk,
     receipt_kid,
@@ -421,8 +422,11 @@ def _stage_d_accepted_image_digests(
     app = request.scope.get("app")
     resolver = getattr(getattr(app, "state", None), "stage_d_policy_resolver", None)
     if resolver is not None:
-        resolver.kick()
-        accepted = resolver.accepted_image_digests()
+        try:
+            resolver.kick()
+            accepted = resolver.accepted_image_digests()
+        except Exception:
+            logger.exception("stage_d.policy_unavailable")
 
     override = settings.spend_lease_accepted_gcp_digests
     if override:
@@ -844,14 +848,94 @@ def _record_spend_lease_shadow(
                 SpendLeaseNoLeaseReason | None,
                 context.get("no_lease_reason"),
             ),
+            router_lease_id=cast(str | None, context.get("router_lease_id")),
             binding_outcome=cast(Any, context.get("binding_outcome")),
             echo=cast(SpendLeaseEchoValue | None, context.get("echo")),
             server_estimate_micro=cast(int | None, context.get("server_estimate_micro")),
             server_verdict=cast(Any, verdict),
+            frozen_server_estimate_micro=context.get("frozen_server_estimate_micro"),
+            comparison_catalog_version=context.get("comparison_catalog_version"),
+            applicability_drift=context.get("applicability_drift"),
         )
         _SPEND_LEASE_SHADOW_DISPATCHER.submit(event.event_id, event.payload())
     except Exception:
         logger.exception("spend_lease_shadow_dispatch_failed")
+
+
+def _observe_frozen_spend_lease_estimate(
+    body: GatewayAuthorizeRequest,
+    context: dict[str, Any],
+    normalized: NormalizedRoutingInputs,
+    endpoint_candidates: list[tuple[Model, ModelEndpoint]],
+) -> None:
+    """Best-effort P2 observation; never alter authorization or its hold.
+
+    Read the retained grant by its complete key/boot index before mint/reuse
+    can replace it. Decode only the immutable, server-stored token, including
+    Stage B tokens whose artifact did not retain the catalog separately.
+    """
+    echo = cast(SpendLeaseEchoValue | None, context.get("echo"))
+    if echo is None or not context.get("boot_verified") or not echo.lease_id:
+        return
+    context["applicability_drift"] = "snapshot_unavailable"
+    try:
+        artifact = STORE.get_active_spend_lease(context["key_hash"], context["boot_kid"])
+        if artifact is None or artifact.lease_id != echo.lease_id:
+            return
+        claims = json.loads(b64url_decode(artifact.token.split(".")[1]))
+        if (
+            claims.get("key_hash") != context["key_hash"]
+            or claims.get("workspace_id") != context["workspace_id"]
+            or claims.get("boot_kid") != context["boot_kid"]
+        ):
+            return
+        catalog = claims["catalog"]
+        context["comparison_catalog_version"] = catalog["version"]
+        if catalog["version"] != echo.catalog_version:
+            context["applicability_drift"] = "echo_catalog_mismatch"
+            return
+        # Echo estimation applies provider.only, or order when fallbacks are
+        # disabled, to the frozen candidates (the enclave's EstimateRequest).
+        constraints = normalized.preferences.only
+        if not constraints and not normalized.preferences.allow_fallbacks:
+            constraints = frozenset(normalized.preferences.order)
+        comparison_catalog = catalog
+        if constraints:
+            comparison_catalog = {
+                **catalog,
+                "candidates": [
+                    row for row in catalog["candidates"]
+                    if row.get("provider") in constraints
+                ],
+            }
+        estimate = spend_lease_catalog_estimate(
+            comparison_catalog,
+            model=normalized.model_ids[0],
+            provider=None,
+            route_type=str(normalized.route_type),
+            region=str(normalized.region),
+            service_tier=normalized.service_tier,
+            estimated_input_tokens=body.estimated_input_tokens,
+            max_tokens=body.output_estimate,
+        )
+        context["frozen_server_estimate_micro"] = estimate
+        if estimate is None:
+            context["applicability_drift"] = "request_inapplicable"
+            return
+        # Compare like-shaped catalogs: Stage B omitted dispatch-only fields.
+        current = freeze_spend_lease_catalog(
+            endpoint_candidates,
+            region=str(normalized.region),
+            route_type=str(normalized.route_type),
+            service_tier=normalized.service_tier,
+            stage_c=any("upstream_model" in row for row in catalog["candidates"]),
+        )
+        context["applicability_drift"] = (
+            "none" if current["version"] == catalog["version"] else "catalog_changed"
+        )
+    except Exception:
+        context["applicability_drift"] = "observation_failed"
+        logger.exception("spend_lease_parity_observation_failed")
 
 
 def _authorize_gateway_sync_impl(
@@ -871,6 +955,7 @@ def _authorize_gateway_sync_impl(
     spend_context["workspace_id"] = api_key.workspace_id
     spend_context["key_hash"] = api_key.hash
     boot_auth = cast(BootAuthHeader | None, spend_context["boot_auth"])
+    accepted_image_digests: frozenset[str] = frozenset()
     if boot_auth is not None:
         boot = STORE.get_spend_lease_boot(boot_auth.kid)
         accepted_image_digests = _stage_d_accepted_image_digests(request, settings)
@@ -1342,10 +1427,17 @@ def _authorize_gateway_sync_impl(
     admission_snapshot_candidates: tuple[dict[str, Any], ...] | None = None
 
     def _replay_response(existing_authorization: Any) -> dict[str, Any]:
+        spend_context["router_lease_id"] = existing_authorization.spend_lease_id
+        spend_context["binding_outcome"] = "replay"
         if body.route_type == POLYPHEMUS_SELECT_ROUTE_TYPE:
             # The selector has no upstream idempotency contract. Never repeat
             # selection (including concurrent replays) on an existing hold.
             raise api_error(409, "Polyphemus request already admitted; use a new idempotency key for a new request", ErrorType.BAD_REQUEST)
+        if body.spend_lease_admission is not None and (
+            existing_authorization.pricing_snapshot is None
+            or existing_authorization.stage_d_reason != "ok"
+        ):
+            raise _admission_rejected(AdmissionRefusalReason.CAP_NOT_ENFORCEABLE)
         # Build the replay response from the STORED authorization (NOT current
         # routing), so a replay across catalog/pricing/BYOK drift advertises
         # the endpoint that was actually authorized (codex 3e route review #1).
@@ -1377,7 +1469,9 @@ def _authorize_gateway_sync_impl(
             endpoint_candidates=existing_candidates,
             idempotent_replay=True,
             custom_model=custom_model,
-            stage_d_reason_override="replayed",
+            stage_d_reason_override=(
+                "ok" if body.spend_lease_admission is not None else "replayed"
+            ),
             spend_lease_admission_remaining_micro=admission_remaining_micro,
             spend_lease_snapshot_candidates=admission_snapshot_candidates,
         )
@@ -1414,6 +1508,10 @@ def _authorize_gateway_sync_impl(
         # only the base, those caps would claw the app markup back at settle.
         estimate += app_markup_microdollars(estimate, app_markup_basis_points)
     spend_context["server_estimate_micro"] = estimate
+    if settings.spend_lease_issuance_enabled:
+        _observe_frozen_spend_lease_estimate(
+            body, spend_context, normalized_routing, endpoint_candidates,
+        )
     # Minted up front so a user-model concurrency slot can be keyed by it
     # before the reservation exists. It is a fresh uuid — never derived from
     # the caller's Idempotency-Key: a deterministic id would outlive its
@@ -1517,6 +1615,7 @@ def _authorize_gateway_sync_impl(
             idempotency_key=presented_idempotency_key,
             normalized_routing=normalized_routing,
             cohort_eligible=stage_c_cohort_eligible,
+            accepted_image_digests=accepted_image_digests,
         )
         try:
             endpoint_candidates = _stage_c_snapshot_endpoint_candidates(
@@ -1558,7 +1657,13 @@ def _authorize_gateway_sync_impl(
                     for _candidate_model, candidate_endpoint in endpoint_candidates
                 )
             )
-        spend_context["server_estimate_micro"] = estimate
+        if (
+            stage_d_reason != "ok"
+            or pricing_snapshot is None
+            or body.route_type not in {"chat.completions", "responses"}
+            or service_tier in {"priority", "auto"}
+        ):
+            raise _admission_rejected(AdmissionRefusalReason.CAP_NOT_ENFORCEABLE)
         prepare_admission = getattr(
             _typed_store,
             "prepare_gateway_spend_lease_admission",
@@ -1691,6 +1796,10 @@ def _authorize_gateway_sync_impl(
             # Signer, Secret Manager, catalog, and generation failures all
             # degrade to today's synchronous authorization with no lease.
             logger.exception("spend_lease_mint_failed")
+    # Stage A issuance has already retained its grant, even if authorize later declines.
+    # Binding plans are provisional: their identity is recorded only after commit below.
+    if spend_lease is not None and not settings.spend_lease_binding_enabled:
+        spend_context["router_lease_id"] = spend_lease.lease_id
     binding_no_lease_reason = spend_lease_binding_ineligibility_reason(
         no_lease_reason,
         deferred_settlement_applies=(
@@ -1739,7 +1848,10 @@ def _authorize_gateway_sync_impl(
                 ),
                 echo_lease_id=echo.lease_id if echo is not None else None,
                 echo_state=echo.state if echo is not None else None,
-                local_admission_allowed=settings.spend_lease_admission_accept,
+                local_admission_allowed=(
+                    settings.spend_lease_admission_accept
+                    and workspace.id in settings.spend_lease_admission_workspaces
+                ),
                 routing_policy_hash=normalized_routing.routing_policy_hash,
                 trust_eligibility_enabled=(
                     settings.spend_lease_trust_eligibility_enabled
@@ -1957,6 +2069,8 @@ def _authorize_gateway_sync_impl(
         except BaseException:
             release_user_model_slot_after_error()
             raise
+        if authorization is not None:
+            spend_context["router_lease_id"] = authorization.spend_lease_id
         window_decision = getattr(outcome, "rate_limit", None)
         if settings.spend_lease_binding_enabled:
             spend_context["no_lease_reason"] = getattr(
@@ -2174,6 +2288,7 @@ def _authorize_gateway_sync_impl(
         )
         try:
             authorization = create_authorization()
+            spend_context["router_lease_id"] = authorization.spend_lease_id
         except BillingPausedError as exc:
             release_user_model_slot_after_error()
             raise api_error(403, "billing_paused", ErrorType.FORBIDDEN) from exc
@@ -2712,6 +2827,7 @@ def _verify_gateway_spend_lease_admission(
     idempotency_key: str | None,
     normalized_routing: NormalizedRoutingInputs,
     cohort_eligible: bool,
+    accepted_image_digests: frozenset[str],
 ) -> tuple[SpendLeaseArtifact, str, int, tuple[dict[str, Any], ...]]:
     compact = body.spend_lease_admission
     if compact is None:
@@ -2734,7 +2850,7 @@ def _verify_gateway_spend_lease_admission(
         boot is None
         or not boot.verified
         or boot.attestation_kind != GCP_ATTESTATION_KIND
-        or boot.image_digest not in settings.spend_lease_accepted_gcp_digests
+        or boot.image_digest not in accepted_image_digests
         or not bool(spend_context.get("boot_verified"))
     ):
         raise _admission_rejected(AdmissionRefusalReason.BOOT_NOT_ACCEPTED)
@@ -2819,8 +2935,15 @@ def _verify_gateway_spend_lease_admission(
     )
     if snapshot_estimate is None or snapshot_estimate != claims.enclave_estimate_micro:
         raise _admission_rejected(AdmissionRefusalReason.ESTIMATE_MISMATCH)
-    if not settings.spend_lease_admission_accept:
+    if (
+        not settings.spend_lease_admission_accept
+        or workspace_id not in settings.spend_lease_admission_workspaces
+    ):
         raise _admission_rejected(AdmissionRefusalReason.NOT_ACCEPTING)
+    if not body.invocation_nonce:
+        raise _admission_rejected(AdmissionRefusalReason.INVOCATION_NONCE_REQUIRED)
+    if body.stream is not True:
+        raise _admission_rejected(AdmissionRefusalReason.NOT_STREAMING)
     return artifact, receipt_hash(compact), snapshot_estimate, snapshot_candidates
 
 

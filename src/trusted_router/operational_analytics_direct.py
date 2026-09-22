@@ -168,11 +168,16 @@ SPEND_LEASE_SHADOW_COLUMNS = (
     "boot_kid",
     "boot_verified",
     "lease_id",
+    "echo_lease_id",
     "no_lease_reason",
     "echo_state",
     "would_admit",
     "enclave_estimate_micro",
     "server_estimate_micro",
+    "frozen_server_estimate_micro",
+    "comparison_catalog_version",
+    "applicability_drift",
+    "binding_outcome",
     "server_verdict",
     "catalog_version",
     "divergence",
@@ -485,7 +490,11 @@ def normalise_operational_event(
     elif row.event_kind == "spend_lease_shadow":
         allowed = SPEND_LEASE_SHADOW_COLUMNS
         required = tuple(
-            column for column in SPEND_LEASE_SHADOW_COLUMNS if column != "no_lease_reason"
+            column for column in SPEND_LEASE_SHADOW_COLUMNS
+            if column not in {
+                "echo_lease_id", "no_lease_reason", "binding_outcome", "frozen_server_estimate_micro",
+                "comparison_catalog_version", "applicability_drift",
+            }
         )
         if raw.get("schema_version") != 1:
             raise ValueError("spend_lease_shadow schema_version must be 1")

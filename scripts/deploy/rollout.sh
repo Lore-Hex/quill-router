@@ -777,6 +777,7 @@ ENV_VARS=(
   # Stage C ships inert. This literal source-controlled default is the router
   # kill switch; verification stays deployed so in-flight receipts fail closed.
   "TR_SPEND_LEASE_ADMISSION_ACCEPT=false"
+  "TR_SPEND_LEASE_ADMISSION_WORKSPACE_IDS="
   "TR_STAGE_D_HEARTBEAT_ENABLED=true"
   # Re-enabled 2026-09-06 after decision 77's four preconditions landed:
   # signed accepted-digest policy with a durable Spanner watermark (plane gcp,

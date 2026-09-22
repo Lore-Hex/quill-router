@@ -36,6 +36,8 @@ def _assert_canonical_json(name: str) -> dict:
 
 def test_fixture_manifest_is_the_exact_stage_c_wire_set() -> None:
     fixed = {
+        "wire_manifest.json",
+        "wire_manifest.ed25519",
         "admission_accepted_response.json",
         "admission_receipt_compact.jws",
         "admission_receipt_ed25519_seed.hex",
@@ -175,8 +177,8 @@ def test_receipt_bearing_request_and_boot_auth_are_exact_bytes() -> None:
         method="POST",
         path="/internal/gateway/authorize",
         exact_body_bytes=raw,
-        signed_lookup_hash=request["api_key_hash"],
-        resolved_lookup_hash=request["api_key_hash"],
+        signed_lookup_hash=request["api_key_lookup_hash"],
+        resolved_lookup_hash=request["api_key_lookup_hash"],
         accepted_image_digests={image_digest},
     )
 
@@ -223,3 +225,38 @@ def test_every_closed_rejection_response_is_canonical_and_named() -> None:
         SpendLeaseAdmissionRejected.model_validate(body)
         observed.add(body["error"]["reason"])
     assert observed == ADMISSION_REFUSAL_REASONS
+
+
+def test_all_fixture_bytes_match_signed_manifest() -> None:
+    manifest = _assert_canonical_json("wire_manifest.json")
+    assert manifest == {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in FIXTURES.iterdir()
+        if path.is_file() and not path.name.startswith("wire_manifest.")
+    }
+    private = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(_bytes("admission_receipt_ed25519_seed.hex").decode()))
+    assert b64url_encode(private.sign(_bytes("wire_manifest.json"))).encode() == _bytes("wire_manifest.ed25519")
+
+
+def test_fixture_uses_real_lookup_identity_and_supported_streaming_wire() -> None:
+    from scripts.fixtures.regenerate_stage_c import RAW_TEST_KEY, RESOLVED_KEY_ID
+    from trusted_router.config import Settings
+    from trusted_router.routing import normalize_routing_inputs
+    from trusted_router.schemas import GatewayAuthorizeRequest
+
+    body = _json("receipt_bearing_authorize_request.json")
+    request = GatewayAuthorizeRequest(**body)
+    lease = _json("authoritative_lease_payload.json")
+    receipt = _json("admission_receipt_payload.json")
+    assert "api_key_hash" not in body
+    assert request.api_key_lookup_hash == hashlib.sha256(RAW_TEST_KEY.encode()).hexdigest()
+    assert request.api_key_lookup_hash != lease["key_hash"] == receipt["key_hash"] == RESOLVED_KEY_ID
+    assert request.stream is True and request.invocation_nonce
+    assert request.tags and request.app and request.http_referer and request.metadata
+    assert {"max_price", "jurisdiction", "usage", "usage_type", "billing"} <= body["provider"].keys()
+    normalized = normalize_routing_inputs(body, Settings(environment="test"), resolved_region="us-central1")
+    assert normalized.canonical_json() == _bytes("normalized_routing_inputs.json")
+    response = _json("admission_accepted_response.json")["data"]
+    assert response["stage_d"] == {"eligible": True, "reason": "ok"}
+    assert response["cap_micro"] == receipt["enclave_estimate_micro"]
+    assert response["candidate_prices"][0]["endpoint_id"] == response["route_candidates"][0]["endpoint_id"]

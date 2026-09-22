@@ -321,6 +321,9 @@ class SpendLeaseAdmissionRejectedError(_Strict):
         "scope_conflict",
         "reuse_lost",
         "not_accepting",
+        "not_streaming",
+        "cap_not_enforceable",
+        "invocation_nonce_required",
     ]
 
 

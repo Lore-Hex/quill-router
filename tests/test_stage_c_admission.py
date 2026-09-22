@@ -123,6 +123,9 @@ def _settings(workspace_id: str, digest: str) -> Settings:
         spend_lease_binding_enabled=True,
         spend_lease_bigtable_app_profiles="us-central1=tr-spend-us-central1",
         spend_lease_admission_accept=True,
+        spend_lease_admission_workspace_ids=workspace_id,
+        stage_d_eligibility_enabled=True,
+        stage_d_pilot_workspace_ids=workspace_id,
         spend_lease_pilot_workspace_ids=workspace_id,
         spend_lease_signing_secret_name="stage-c-test-seed",  # noqa: S106
         spend_lease_accepted_gcp_image_digests=digest,
@@ -143,11 +146,13 @@ def _seed_store() -> tuple[Any, Any, Any, Ed25519PrivateKey, SpendLeaseBoot]:
         "source_updated_at": None,
         "updated_at": None,
     }
-    _raw_key, key = store.api_keys.create(
+    raw_key, key = store.api_keys.create(
         workspace_id=workspace.id,
         name="stage-c",
         creator_user_id=workspace.owner_user_id,
     )
+    assert key.lookup_hash == hashlib.sha256(raw_key.encode()).hexdigest()
+    assert key.lookup_hash != key.hash
     store._spend_lease_ledger = BigtableSpendLeaseLedger(
         {"us-central1": FakeBigtableTable()}
     )
@@ -173,6 +178,8 @@ def _base_body(key: Any, idempotency_key: str) -> dict[str, Any]:
         "api_key_lookup_hash": key.lookup_hash,
         "estimated_input_tokens": 100,
         "idempotency_key": idempotency_key,
+        "invocation_nonce": "nonce-" + idempotency_key,
+        "stream": True,
         "max_tokens": 100,
         "model": "anthropic/claude-haiku-4.5",
         "provider": {"allow_fallbacks": False, "usage": "credits"},
@@ -300,6 +307,7 @@ def _verify_harness(harness: dict[str, Any]) -> Any:
         idempotency_key="verify-stage-c",
         normalized_routing=harness["normalized"],
         cohort_eligible=True,
+        accepted_image_digests=harness["settings"].spend_lease_accepted_gcp_digests,
     )
 
 
@@ -317,6 +325,9 @@ def test_closed_refusal_set_is_exact() -> None:
         "scope_conflict",
         "reuse_lost",
         "not_accepting",
+        "not_streaming",
+        "cap_not_enforceable",
+        "invocation_nonce_required",
     }
 
 
@@ -619,6 +630,16 @@ def test_stage_c_mint_and_direct_presented_lease_reuse_end_to_end(
         lambda _settings: SpendLeaseSigner(lambda: bytes(range(32))),
     )
     monkeypatch.setattr(gateway, "_record_spend_lease_shadow", lambda *_a, **_kw: None)
+    # The production static override is empty. One signed-policy result must
+    # serve boot-auth and admission even if a refresh changes the next result.
+    settings = settings.model_copy(update={"spend_lease_accepted_gcp_image_digests": ""})
+    policy_calls = []
+
+    def signed_policy(_request: Request, _settings: Settings) -> frozenset[str]:
+        policy_calls.append(1)
+        return frozenset({boot.image_digest})
+
+    monkeypatch.setattr(gateway, "_stage_d_accepted_image_digests", signed_policy)
 
     mint_body = _base_body(key, "stage-c-mint")
     mint_raw = _canonical(mint_body)
@@ -670,6 +691,36 @@ def test_stage_c_mint_and_direct_presented_lease_reuse_end_to_end(
         (key.workspace_id, 0)
     ]["reserved"]
 
+    for update, reason in [
+        ({"stage_d_eligibility_enabled": False}, "cap_not_enforceable"),
+        ({"stage_d_heartbeat_enabled": False}, "cap_not_enforceable"),
+        ({"stage_d_pilot_workspace_ids": "another-workspace"}, "cap_not_enforceable"),
+        ({"spend_lease_admission_workspace_ids": ""}, "not_accepting"),
+    ]:
+        with pytest.raises(HTTPException) as refusal:
+            gateway._authorize_gateway_sync(
+                _request(reserve_raw, private, boot.kid),
+                GatewayAuthorizeRequest(**reserve_body),
+                settings.model_copy(update=update),
+                reserve_raw,
+            )
+        assert _admission_reason(refusal.value) == reason
+    for update, reason in [
+        ({"stream": False}, "not_streaming"),
+        ({"stream": None}, "not_streaming"),
+        ({"invocation_nonce": None}, "invocation_nonce_required"),
+        ({"invocation_nonce": ""}, "invocation_nonce_required"),
+    ]:
+        invalid_body = {**reserve_body, **update}
+        invalid_raw = _canonical(invalid_body)
+        with pytest.raises(HTTPException) as refusal:
+            gateway._authorize_gateway_sync(
+                _request(invalid_raw, private, boot.kid),
+                GatewayAuthorizeRequest(**invalid_body), settings, invalid_raw,
+            )
+        assert _admission_reason(refusal.value) == reason
+    policy_calls[:] = [1]  # only the successful mint counted below
+
     accepted = gateway._authorize_gateway_sync(
         _request(reserve_raw, private, boot.kid),
         GatewayAuthorizeRequest(**reserve_body),
@@ -677,7 +728,9 @@ def test_stage_c_mint_and_direct_presented_lease_reuse_end_to_end(
         reserve_raw,
     )
 
+    assert len(policy_calls) == 2  # exactly once per mint/reserve request
     data = accepted["data"]
+    assert data["stage_d"]["eligible"] is True
     assert data["estimated_cost_microdollars"] == estimate
     assert data["spend_lease_admission"] == {
         "accepted": True,
@@ -706,6 +759,8 @@ def test_stage_c_mint_and_direct_presented_lease_reuse_end_to_end(
         reserve_raw,
     )
     assert replay["data"]["idempotent_replay"] is True
+    assert replay["data"]["stage_d"]["eligible"] is True
+    assert replay["data"]["invocation_nonce"] == reserve_body["invocation_nonce"]
     assert replay["data"]["authorization_id"] == data["authorization_id"]
     assert replay["data"]["spend_lease"]["remaining_micro"] == data[
         "spend_lease"
@@ -924,6 +979,7 @@ def test_receipt_validation_runs_while_acceptance_flag_is_off() -> None:
             idempotency_key="idem",
             normalized_routing=normalized,
             cohort_eligible=True,
+            accepted_image_digests=frozenset(),
         )
     assert _admission_reason(raised.value) == "receipt_invalid"
 
@@ -932,3 +988,88 @@ def test_admission_flag_requires_binding_and_defaults_off() -> None:
     assert Settings(environment="test").spend_lease_admission_accept is False
     with pytest.raises(ValueError, match="TR_SPEND_LEASE_ADMISSION_ACCEPT"):
         Settings(environment="test", spend_lease_admission_accept=True)
+
+
+@pytest.mark.parametrize("cohort", ["", "another-workspace"])
+def test_mint_requires_independent_admission_cohort(cohort: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    _store, _database, key, private, boot = _seed_store()
+    settings = _settings(key.workspace_id, boot.image_digest).model_copy(
+        update={"spend_lease_admission_workspace_ids": cohort},
+    )
+    monkeypatch.setattr(gateway, "_spend_lease_signer", lambda _settings: SpendLeaseSigner(lambda: bytes(range(32))))
+    monkeypatch.setattr(gateway, "_record_spend_lease_shadow", lambda *_a, **_kw: None)
+    body = _base_body(key, "outside-admission-cohort")
+    # Receipt-less requests still need neither a nonce nor streaming.
+    body.pop("invocation_nonce")
+    body.pop("stream")
+    raw = _canonical(body)
+    result = gateway._authorize_gateway_sync(_request(raw, private, boot.kid), GatewayAuthorizeRequest(**body), settings, raw)
+    claims = json.loads(b64url_decode(result["data"]["spend_lease"]["token"].split(".")[1]))
+    assert claims["authoritative"] is True  # Stage B pilot gate is unchanged
+    assert claims.get("local_admission_allowed", False) is False
+
+
+@pytest.mark.parametrize("unavailable", [False, True])
+def test_signed_policy_unavailable_is_typed_refusal(unavailable: bool, monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    harness = _verification_harness()
+    settings = harness["settings"].model_copy(update={"spend_lease_accepted_gcp_image_digests": ""})
+
+    class Resolver:
+        calls = 0
+
+        def kick(self) -> None:
+            pass
+
+        def accepted_image_digests(self) -> frozenset[str]:
+            self.calls += 1
+            if unavailable:
+                raise RuntimeError("policy unavailable")
+            return frozenset()  # includes an expired signed policy
+
+    resolver = Resolver()
+    monkeypatch.setattr(gateway, "_record_spend_lease_shadow", lambda *_a, **_kw: None)
+    body = {**harness["raw_body"], "spend_lease_admission": _receipt(harness["private"], harness["receipt_claims"])}
+    raw = _canonical(body)
+    request = _request(raw, harness["private"], harness["boot"].kid)
+    request.scope["app"] = SimpleNamespace(state=SimpleNamespace(stage_d_policy_resolver=resolver))
+    with pytest.raises(HTTPException) as refusal:
+        gateway._authorize_gateway_sync(request, GatewayAuthorizeRequest(**body), settings, raw)
+    assert _admission_reason(refusal.value) == "boot_not_accepted"
+    assert resolver.calls == 1
+
+
+def test_signed_policy_and_emergency_override_are_additive() -> None:
+    from types import SimpleNamespace
+
+    request = Request({"type": "http", "app": SimpleNamespace(state=SimpleNamespace(
+        stage_d_policy_resolver=SimpleNamespace(kick=lambda: None, accepted_image_digests=lambda: frozenset({"signed"})),
+    ))})
+    settings = Settings(environment="test", spend_lease_accepted_gcp_image_digests="sha256:" + "ab" * 32)
+    assert gateway._stage_d_accepted_image_digests(request, settings) == {"signed", "sha256:" + "ab" * 32}
+
+
+def test_admission_cohort_defaults_empty_and_parses_like_pilot(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert Settings(environment="test").spend_lease_admission_workspaces == frozenset()
+    monkeypatch.setenv("TR_SPEND_LEASE_ADMISSION_WORKSPACE_IDS", " one, two ,one, ,")
+    assert Settings(environment="test").spend_lease_admission_workspaces == {"one", "two"}
+
+
+def test_ordinary_authorize_without_boot_auth_does_not_refresh_policy(monkeypatch: pytest.MonkeyPatch) -> None:
+    _store, _database, key, private, boot = _seed_store()
+    settings = _settings(key.workspace_id, boot.image_digest)
+
+    def unexpected_refresh(*_args: Any) -> frozenset[str]:
+        raise AssertionError("ordinary boot-less authorize must not refresh policy")
+
+    monkeypatch.setattr(gateway, "_stage_d_accepted_image_digests", unexpected_refresh)
+    monkeypatch.setattr(gateway, "_record_spend_lease_shadow", lambda *_a, **_kw: None)
+    body = _base_body(key, "ordinary-without-boot")
+    body.pop("invocation_nonce")
+    raw = _canonical(body)
+    request = _request(raw, private, boot.kid)
+    request.scope["headers"] = []
+    response = gateway._authorize_gateway_sync(request, GatewayAuthorizeRequest(**body), settings, raw)
+    assert response["data"]["authorization_id"]
+    assert "spend_lease" not in response["data"]
