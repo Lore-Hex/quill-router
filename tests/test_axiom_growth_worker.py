@@ -372,3 +372,18 @@ def test_auto_refill_does_not_fabricate_checkout_started():
     journey = m.build_journeys([purchase], [], NOW)[0]
     assert journey['checkout_started_at'] is None
     assert journey['first_purchase_at']
+
+
+def test_shared_browser_with_two_accounts_cannot_assign_usage_or_verified_domain():
+    first = event(workspace_fingerprint='b'*64, account_fingerprint='c'*64,
+                  customer_domain='example.com', customer_domain_verified=True,
+                  customer_domain_basis='verified_oauth_email')
+    second = {**first, 'account_fingerprint': 'e'*64, 'event_id': 'second-signup'}
+    daily = [usage()]
+    journey = m.build_journeys([first, second], daily, NOW)[0]
+    assert daily[0]['identity_link_status'] == journey['identity_link_status'] == 'ambiguous'
+    assert not daily[0]['anonymous_fingerprint']
+    assert not daily[0]['account_fingerprint']
+    assert journey['linked_usage_calls'] == 0
+    assert not journey['customer_domain_verified']
+    assert journey['customer_domain'] == ''

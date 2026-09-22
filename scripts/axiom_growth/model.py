@@ -67,10 +67,6 @@ SECRET_RE = re.compile(
     r"(?i)(?:sk[-_]|xaat-|xapt-|bearer|password|secret|token|authorization|"
     r"\b\d{1,3}(?:\.\d{1,3}){3}\b|https?://)"
 )
-PUBLIC_PATH_RE = re.compile(
-    r"/(?:|pricing|models|providers|leaderboard|blog|docs|trust|status|"
-    r"openrouter-alternative|compare|eu|agents|quickstart)\Z"
-)
 
 
 def timestamp(value: object) -> str:
@@ -199,7 +195,6 @@ def project_event(
 
 
 HASH = re.compile(r'[a-f0-9]{64}\Z')
-PUBLIC_PATH = re.compile(r'/(?:|pricing|models|providers|leaderboard|blog|docs|trust|status|choose|marketplace|support|vibe-coders|agents|quickstart|openrouter-alternative|compare|eu|(?:blog|docs|compare)/[a-z0-9-]+)\Z')
 
 
 def rows(result):
@@ -257,6 +252,8 @@ PUBLIC_LANDINGS = frozenset(('/' + p) for p in (
 
 def canonical_source(value, referrer=''):
     label = safe_label(value).strip().lower()
+    if '.' in label and not domain(label):
+        return '(redacted)'
     host = domain(label) or domain(referrer)
     aliases = {
         'google': ('google.com', 'google.co.uk', 'google.com.hk', 'google.de', 'google.fr', 'google.ca', 'google.co.in', 'google.com.au'),
@@ -306,9 +303,9 @@ def build_journeys(events, daily, end):
         # agree for all of them before assigning that workspace's usage.
         account = next(iter(accounts)) if len(accounts) == 1 and all(accounts_by_anon[a] for a in candidates) else ''
         item['account_fingerprint'] = account
-        item['anonymous_fingerprint'] = next(iter(candidates)) if len(candidates) == 1 else ''
+        item['anonymous_fingerprint'] = next(iter(candidates)) if len(candidates) == 1 and len(accounts) <= 1 else ''
         item['identity_link_status'] = 'linked' if account else ('ambiguous' if len(candidates) > 1 or len(accounts) > 1 else 'orphaned')
-        if len(candidates) == 1:
+        if item['anonymous_fingerprint']:
             usage_by_anon[item['anonymous_fingerprint']].append(item)
     result = []
     for anon, group in visitors.items():
@@ -375,6 +372,9 @@ def build_journeys(events, daily, end):
             values = {r[field] for r in group if r.get(field)}
             item[field] = next(iter(values)) if len(values)==1 else ''
         item['identity_link_status'] = 'linked' if item['account_fingerprint'] else ('ambiguous' if len(accounts_by_anon[anon])>1 else 'orphaned')
+        if item['identity_link_status'] == 'ambiguous':
+            item.update(customer_domain='', customer_domain_verified=False,
+                        customer_domain_basis='ambiguous_visitor_multiple_owners')
         result.append(item)
     by_anon = {r['anonymous_fingerprint']:r for r in result}
     for item in daily:
