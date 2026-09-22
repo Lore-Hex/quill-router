@@ -45,6 +45,15 @@ def test_manifest_capabilities_do_not_invent_tool_choice() -> None:
 
 def test_native_endpoint_replaces_stale_snapshot_model_capabilities(monkeypatch, tmp_path) -> None:
     model_id = "x-ai/grok-4.7"
+    manifests = tmp_path / "manifests"
+    manifests.mkdir()
+    (manifests / "grok.json").write_text(json.dumps({
+        "provider": "grok", "models": [{
+            "id": model_id, "upstream_id": "grok-4.7",
+            "supported_parameters": ["temperature", "top_p"],
+            "features": ["function-calling"],
+        }],
+    }))
     snapshot = tmp_path / "snapshot.json"
     snapshot.write_text(json.dumps({"models": [{
         "id": model_id,
@@ -55,6 +64,7 @@ def test_native_endpoint_replaces_stale_snapshot_model_capabilities(monkeypatch,
         }],
     }]}))
     monkeypatch.setattr(catalog_ingest, "_INGEST_PATH", snapshot)
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", manifests)
     models, endpoints = catalog_ingest._ingested_models_and_endpoints()
     assert "tools" in models[model_id].supported_parameters
     assert not {"logprobs", "top_logprobs"} & set(models[model_id].supported_parameters)
@@ -69,6 +79,7 @@ def test_native_capability_declaration_is_provider_scoped_and_explicit(monkeypat
         "partial": {"features": ["function-calling"]},
         "empty": {"supported_parameters": []},
         "invalid": {"supported_parameters": [7]},
+        "held": {"supported_parameters": ["logprobs"], "routable": False},
     }.items():
         (tmp_path / f"{provider}.json").write_text(json.dumps({
             "provider": provider, "models": [{"id": "model", **row}],
@@ -77,7 +88,6 @@ def test_native_capability_declaration_is_provider_scoped_and_explicit(monkeypat
     assert catalog_ingest._native_endpoint_capabilities() == {
         ("grok", "model"): ("tools", "max_tokens"),
         ("other", "model"): ("max_tokens", "logprobs"),
-        ("empty", "model"): ("max_tokens",),
     }
 
 

@@ -726,8 +726,13 @@ def _native_endpoint_capabilities() -> dict[tuple[str, str], tuple[str, ...]]:
         for row in rows:
             if not isinstance(row, dict) or not isinstance(row.get("id"), str):
                 continue
+            if row.get("routable") is False:
+                continue
             parameters = row.get("supported_parameters")
-            if isinstance(parameters, list) and all(isinstance(p, str) for p in parameters):
+            if (
+                isinstance(parameters, list) and parameters
+                and all(isinstance(p, str) and p.strip() for p in parameters)
+            ):
                 capabilities[(raw["provider"], row["id"])] = manifest_supported_parameters(row)
     return capabilities
 

@@ -232,11 +232,34 @@ def test_parser_rejects_conflicting_prices_in_duplicate_docs():
         kimi_parser.parse(_pricing_doc() + _pricing_doc().replace('15.00</>', '16.00</>'))
 
 
-def test_parser_ignores_unknown_four_price_column_shape():
-    assert kimi_parser.parse(
-        '["kimi-k3", "1M tokens", <>{"$"}6.00</>, <>{"$"}0.30</>, '
-        '<>{"$"}3.00</>, <>{"$"}15.00</>, "1,048,576 tokens"]'
-    ) == {}
+def test_cache_write_columns_are_not_mistaken_for_input_or_output():
+    parsed = kimi_parser.parse(
+        '["kimi-k3", "1M tokens", <>{"$"}3.10</>, <>{"$"}6.20</>, '
+        '<>{"$"}0.30</>, <>{"$"}3.00</>, <>{"$"}15.00</>, "1,048,576 tokens"]'
+    )
+    assert parsed["moonshotai/kimi-k3"] == {
+        "prompt_micro_per_m": 3_000_000,
+        "prompt_cached_micro_per_m": 300_000,
+        "completion_micro_per_m": 15_000_000,
+    }
+
+
+@pytest.mark.parametrize("summary_first", [True, False])
+def test_duplicate_summary_retains_richer_cached_price(summary_first):
+    summary = (
+        '["kimi-k3", "1M tokens", <>{"$"}3.00</>, <>{"$"}15.00</>, '
+        '"1,048,576 tokens"]'
+    )
+    pages = [summary, _pricing_doc()] if summary_first else [_pricing_doc(), summary]
+    assert kimi_parser.parse("\n".join(pages)) == kimi_parser.parse(_pricing_doc())
+
+
+def test_parser_rejects_unknown_four_price_column_shape():
+    with pytest.raises(ValueError, match="Unrecognized Kimi price column count"):
+        kimi_parser.parse(
+            '["kimi-k3", "1M tokens", <>{"$"}6.00</>, <>{"$"}0.30</>, '
+            '<>{"$"}3.00</>, <>{"$"}15.00</>, "1,048,576 tokens"]'
+        )
 
 
 def test_manifest_rejects_prices_not_backed_by_discovery_before_writing(

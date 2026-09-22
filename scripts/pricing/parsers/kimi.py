@@ -70,9 +70,9 @@ def _to_micro_per_m(usd: str) -> int:
 def parse(text: str) -> dict:
     out: dict = {}
     for match in _ROW_RE.finditer(text):
-        native_id, write_5min, write_1h, col_a, col_b, col_c, _context = match.groups()
-        if write_5min is not None and (write_1h is None or col_c is None):
-            continue
+        native_id, write_5min, _write_1h, col_a, col_b, col_c, _context = match.groups()
+        if write_5min is not None and col_c is None:
+            raise ValueError(f"Unrecognized Kimi price column count for {native_id}")
         or_id = _or_id(native_id)
         if or_id is None:
             continue
@@ -97,7 +97,8 @@ def parse(text: str) -> dict:
                 "prompt_micro_per_m": input_micro,
                 "completion_micro_per_m": output_micro,
             }
-        if or_id in out and out[or_id] != row_out:
+        previous = out.get(or_id, {})
+        if any(previous[key] != row_out[key] for key in previous.keys() & row_out.keys()):
             raise ValueError(f"Conflicting Kimi prices for {or_id}")
-        out[or_id] = row_out
+        out[or_id] = {**previous, **row_out}
     return out
