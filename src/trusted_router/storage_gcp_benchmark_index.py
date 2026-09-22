@@ -5,6 +5,7 @@ import json
 from typing import Any, TypeAlias
 
 from trusted_router.storage_gcp_codec import json_body, reverse_time_key
+from trusted_router.storage_gcp_mirror import commit_mirror_rows
 from trusted_router.storage_models import ProviderBenchmarkSample
 
 FamilyNames: TypeAlias = str | tuple[str, ...]
@@ -22,10 +23,12 @@ def write_provider_benchmark(table: Any, family: str, sample: ProviderBenchmarkS
         f"benchmark_provider_recent#{sample.provider}#{reverse_time}#{sample.id}",
         f"benchmark_model_recent#{sample.provider}#{sample.model}#{reverse_time}#{sample.id}",
     ]
+    rows = []
     for key in keys:
         row = table.direct_row(key.encode("utf-8"))
         row.set_cell(family, b"body", body)
-        row.commit()
+        rows.append(row)
+    commit_mirror_rows(table, rows)
 
 
 def provider_benchmark_samples(
