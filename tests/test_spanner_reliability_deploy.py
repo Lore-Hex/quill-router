@@ -114,7 +114,7 @@ def test_spanner_reliability_baseline_is_production_safe() -> None:
 
     assert 'SPANNER_CONFIG="${TR_SPANNER_CONFIG:-nam6}"' in library
     assert 'SPANNER_EDITION="${TR_SPANNER_EDITION:-ENTERPRISE_PLUS}"' in library
-    assert 'SPANNER_PROCESSING_UNITS="${TR_SPANNER_PROCESSING_UNITS:-300}"' in library
+    assert 'SPANNER_PROCESSING_UNITS="${TR_SPANNER_PROCESSING_UNITS:-400}"' in library
     assert "--enable-drop-protection" in reliability
     assert "version_retention_period = '7d'" in reliability
     assert "--backup-type=incremental-backup" in reliability

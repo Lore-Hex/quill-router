@@ -9,7 +9,7 @@ application bugs, quota exhaustion, or hot-row retries.
 
 - Source project: `quill-cloud-proxy`
 - Source instance/database: `trusted-router-nam6` / `trusted-router`
-- Configuration: `nam6`, Enterprise Plus, 300 processing units
+- Configuration: `nam6`, Enterprise Plus, 400 processing units
 - Replica topology: two read-write locations (`us-central1`, `us-east1`), two
   read-only locations (`us-west1`, `us-west2`), and one witness
   (`us-central2`). This is five replica locations, not four application
