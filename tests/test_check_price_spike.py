@@ -1339,7 +1339,35 @@ def _confirmed_refresh_prices(
     return before, after
 
 
-@pytest.mark.parametrize(("route", "dimension", "old", "new"), CONFIRMED_REFRESH_TRANSITIONS)
+SEPTEMBER_22_REFRESH_TRANSITIONS = [
+    (
+        "google/gemma-4-31b-it [siliconflow:siliconflow/fp8:google/gemma-4-31B-it]",
+        "prompt", "1.3E-7", "7.5E-7",
+    ),
+    (
+        "google/gemma-4-31b-it [siliconflow:siliconflow/fp8:google/gemma-4-31B-it]",
+        "completion", "4E-7", "1E-6",
+    ),
+    (
+        "google/gemma-4-31b-it [siliconflow:siliconflow:google/gemma-4-31B-it]",
+        "prompt", "1.3E-7", "7.5E-7",
+    ),
+    (
+        "google/gemma-4-31b-it [siliconflow:siliconflow:google/gemma-4-31B-it]",
+        "completion", "4E-7", "1E-6",
+    ),
+    (
+        "deepseek/deepseek-v4-flash-0731 "
+        "[inceptron:inceptron:deepseek-ai/DeepSeek-V4-Flash-0731] cached-input",
+        "prompt", "2E-8", "4E-8",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("route", "dimension", "old", "new"),
+    CONFIRMED_REFRESH_TRANSITIONS + SEPTEMBER_22_REFRESH_TRANSITIONS,
+)
 def test_confirmed_refresh_transition_is_allowed(
     route: str, dimension: str, old: str, new: str,
 ) -> None:
@@ -1367,7 +1395,10 @@ def test_all_fourteen_confirmed_refresh_transitions_are_allowed() -> None:
     assert removed == []
 
 
-@pytest.mark.parametrize(("route", "dimension", "old", "new"), CONFIRMED_REFRESH_TRANSITIONS)
+@pytest.mark.parametrize(
+    ("route", "dimension", "old", "new"),
+    CONFIRMED_REFRESH_TRANSITIONS + SEPTEMBER_22_REFRESH_TRANSITIONS,
+)
 @pytest.mark.parametrize("mutation", ["remove-approval", "after-price", "endpoint-tag"])
 def test_confirmed_refresh_mutations_still_block(
     monkeypatch: pytest.MonkeyPatch,
