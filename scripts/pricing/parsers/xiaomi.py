@@ -40,12 +40,31 @@ def _html_overseas_payg_prices(soup: BeautifulSoup) -> dict[str, dict[str, int]]
     table = next_section_node
 
     prices: dict[str, dict[str, int]] = {}
+    typed_table = any(
+        cell.get_text(" ", strip=True).casefold() == "inference type"
+        for cell in table.find_all("th")
+    )
+    inference_type = "real-time api"
+    remaining_rows = 0
     for row in table.find_all("tr"):
-        cells = row.find_all(["th", "td"])
-        if len(cells) < 4:
+        cells = row.find_all("td")
+        if not cells:
             continue
-        model_match = re.fullmatch(
-            r"mimo-[a-z0-9._-]+",
+        if typed_table:
+            if len(cells) == 5:
+                inference_type = cells[0].get_text(" ", strip=True).casefold()
+                remaining_rows = int(str(cells[0].get("rowspan", "1"))) - 1
+                cells = cells[1:]
+            elif len(cells) == 4 and remaining_rows > 0:
+                remaining_rows -= 1
+            else:
+                raise ValueError("xiaomi: ambiguous inference-type row span")
+            if inference_type != "real-time api":
+                continue
+        if len(cells) != 4:
+            continue
+        models = re.findall(
+            r"\bmimo-[a-z0-9._-]+",
             cells[0].get_text(" ", strip=True),
             flags=re.I,
         )
@@ -53,14 +72,19 @@ def _html_overseas_payg_prices(soup: BeautifulSoup) -> dict[str, dict[str, int]]
             re.fullmatch(r"\$\s*([0-9.]+)", cell.get_text(" ", strip=True))
             for cell in cells[1:4]
         ]
-        if model_match is None or any(value is None for value in values):
+        if not models or any(value is None for value in values):
             continue
         cache, prompt, completion = (value.group(1) for value in values if value)
-        prices[f"xiaomi/{model_match.group(0).casefold()}"] = {
+        price = {
             "prompt_micro_per_m": _money_to_micro_per_m(prompt),
             "completion_micro_per_m": _money_to_micro_per_m(completion),
             "prompt_cached_micro_per_m": _money_to_micro_per_m(cache),
         }
+        for model in models:
+            model_id = f"xiaomi/{model.casefold()}"
+            if model_id in prices and prices[model_id] != price:
+                raise ValueError("xiaomi: conflicting real-time USD prices")
+            prices[model_id] = price
     return prices
 
 
@@ -73,6 +97,10 @@ def _markdown_overseas_payg_prices(html: str) -> dict[str, dict[str, int]]:
     )
     if not section_match:
         return {}
+    # A flattened table loses row-span attribution. Never guess which rows
+    # are discounted batch prices; the rendered HTML path preserves that data.
+    if re.search(r"\bBatch\s+API\b", section_match.group(1), re.I):
+        raise ValueError("xiaomi: batch pricing requires the rendered inference-type table")
 
     prices: dict[str, dict[str, int]] = {}
     table_row_pattern = re.compile(

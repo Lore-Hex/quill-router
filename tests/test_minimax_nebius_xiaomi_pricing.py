@@ -4,6 +4,8 @@ import json
 from datetime import timedelta
 from pathlib import Path
 
+import pytest
+
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.parsers import minimax as minimax_parser
 from scripts.pricing.parsers import xiaomi as xiaomi_parser
@@ -245,6 +247,41 @@ def test_xiaomi_parser_normalizes_future_payg_model_rows() -> None:
             "prompt_cached_micro_per_m": 10_000,
         }
     }
+
+
+def test_xiaomi_realtime_rowspans_and_grouped_ids_never_use_batch_prices() -> None:
+    html = (Path(__file__).parent / "fixtures/pricing/xiaomi_realtime_batch.html").read_text()
+    prices = xiaomi_parser.parse(html)
+    assert set(prices) == {
+        "xiaomi/mimo-v2.5", "xiaomi/mimo-v2.5-pro", "xiaomi/mimo-v2.6-pro",
+        "xiaomi/mimo-v2.6-flash", "xiaomi/mimo-v2.6-pro-ultraspeed",
+    }
+    assert prices["xiaomi/mimo-v2.6-pro"] == prices["xiaomi/mimo-v2.5-pro"] == {
+        "prompt_micro_per_m": 435_000,
+        "completion_micro_per_m": 870_000,
+        "prompt_cached_micro_per_m": 3_600,
+    }
+    assert prices["xiaomi/mimo-v2.6-flash"] == prices["xiaomi/mimo-v2.5"] == {
+        "prompt_micro_per_m": 140_000,
+        "completion_micro_per_m": 280_000,
+        "prompt_cached_micro_per_m": 2_800,
+    }
+    assert prices["xiaomi/mimo-v2.6-pro-ultraspeed"]["prompt_micro_per_m"] == 4_350_000
+
+
+def test_xiaomi_rejects_lost_batch_row_attribution() -> None:
+    html = (Path(__file__).parent / "fixtures/pricing/xiaomi_realtime_batch.html").read_text()
+    with pytest.raises(ValueError, match="row span"):
+        xiaomi_parser.parse(html.replace('rowspan="2"', 'rowspan="1"'))
+
+
+def test_xiaomi_rejects_ambiguous_flattened_batch_prices() -> None:
+    with pytest.raises(ValueError, match="batch pricing requires"):
+        xiaomi_parser.parse("""
+        ### Overseas Pricing of the Model
+        Batch API
+        | mimo-v2.6-flash | $0.0014 | $0.07 | $0.14 |
+        """)
 
 
 class _FakeResponse:
