@@ -49,7 +49,19 @@ resource "aws_iam_role_policy" "tr_eu_role_writes" {
           # 33335052109 reported a node permission gap that did not exist.
           "iam:SimulatePrincipalPolicy",
         ]
-        Resource = "arn:aws:iam::${local.aws_account_id}:role/tr-eu-*"
+        # tr-eu-* is the App Runner-era naming. The ECS control plane (cluster
+        # tr-cp: services tr-cp-euw3 in eu-west-3 and tr-cp-euw1 in eu-west-1)
+        # registers task definitions with execution role tr-cp-exec and task
+        # role tr-eu-app, and RegisterTaskDefinition needs iam:PassRole on
+        # both. PowerUserAccess does not grant PassRole, so this statement is
+        # its only source; without tr-cp-* every ECS release failed (runs
+        # 35627342458, 35627841345, 35641570018 on 2026-09-21). Every action
+        # above now applies to tr-cp-* as well, not only PassRole; the deploy
+        # scripts write inline policies only on tr-eu-* roles today.
+        Resource = [
+          "arn:aws:iam::${local.aws_account_id}:role/tr-eu-*",
+          "arn:aws:iam::${local.aws_account_id}:role/tr-cp-*",
+        ]
       },
       {
         # Terraform manages this role's own inline policy; PowerUserAccess
