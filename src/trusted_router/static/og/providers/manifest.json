@@ -46,10 +46,10 @@
   },
   "atlas-cloud": {
     "card_version": 2,
-    "model_count": 80,
+    "model_count": 81,
     "name": "Atlas Cloud",
     "privacy": "Policy documented",
-    "route_count": 80,
+    "route_count": 81,
     "route_mode": "Prepaid",
     "slug": "atlas-cloud"
   },
@@ -181,10 +181,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 101,
+    "model_count": 102,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 196,
+    "route_count": 198,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -505,10 +505,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 14,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 12,
+    "route_count": 14,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
@@ -604,10 +604,10 @@
   },
   "regolo": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 9,
     "name": "Regolo",
     "privacy": "Zero retention",
-    "route_count": 22,
+    "route_count": 18,
     "route_mode": "Prepaid + BYOK",
     "slug": "regolo"
   },
@@ -694,10 +694,10 @@
   },
   "siliconflow": {
     "card_version": 2,
-    "model_count": 28,
+    "model_count": 27,
     "name": "SiliconFlow",
     "privacy": "Policy documented",
-    "route_count": 55,
+    "route_count": 53,
     "route_mode": "Prepaid + BYOK",
     "slug": "siliconflow"
   },
@@ -838,10 +838,10 @@
   },
   "wafer": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 7,
     "name": "Wafer",
     "privacy": "Policy documented",
-    "route_count": 12,
+    "route_count": 14,
     "route_mode": "Prepaid + BYOK",
     "slug": "wafer"
   },

@@ -2,10 +2,10 @@
   "_about": "Provider-native supplement for Wafer serverless API. Refreshed hourly from Wafer's OpenAI-compatible /v1/models feed.",
   "provider": "wafer",
   "source": "https://pass.wafer.ai/v1/models",
-  "generated_at": "2026-09-20T02:44:07Z",
+  "generated_at": "2026-09-22T05:29:33Z",
   "price_scale": "microdollars_per_million",
   "zdr_header": "Wafer-ZDR: required",
-  "model_count": 14,
+  "model_count": 15,
   "models": [
     {
       "id": "minimax/minimax-m3",
@@ -50,7 +50,9 @@
         "text"
       ],
       "cached_input_token_price_per_m": 190000,
-      "missing_since": "2026-09-20"
+      "missing_since": "2026-09-20",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "z-ai/glm-5.1",
@@ -268,6 +270,26 @@
       "input_token_price_per_m": 980000,
       "output_token_price_per_m": 2900000,
       "cached_input_token_price_per_m": 30000
+    },
+    {
+      "id": "qwen/qwen3.8-27b",
+      "upstream_id": "Qwen3.8-27B",
+      "display_name": "Qwen3.8-27B",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "zdr_supported": true,
+      "context_length": 262144,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "input_token_price_per_m": 120000,
+      "output_token_price_per_m": 2500000,
+      "cached_input_token_price_per_m": 50000
     }
   ]
 }
