@@ -198,6 +198,28 @@ def test_clickhouse_formatted_day_does_not_shadow_date_predicate(monkeypatch):
     assert 'FROM tr.growth_daily_usage' in queries[0]
 
 
+def test_billing_owner_query_respects_locked_readonly_profile(monkeypatch):
+    import json
+    monkeypatch.setenv('GROWTH_CH_PASSWORD', 'test-only')
+    owner = {'workspace_fingerprint': 'b'*64, 'billing_account_fingerprint': 'a'*64,
+             'billing_owner_observed_at': '2026-09-22 16:38:10'}
+
+    def respond(request):
+        # Production readonly=1 forbids query-level resource setting changes.
+        if any(name in request.url.params for name in
+               ('max_threads', 'max_memory_usage', 'max_execution_time')):
+            return httpx.Response(500, text='Code: 164. Cannot modify setting in readonly mode')
+        assert request.url.params['readonly'] == '1'
+        assert 'FROM tr.growth_billing_owners LIMIT 50001' in request.content.decode()
+        return httpx.Response(200, text=json.dumps(owner)+'\n')
+
+    sources = object.__new__(Sources)
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        sources.http = client
+        assert sources.billing_owners() == [
+            {**owner, 'billing_owner_observed_at': '2026-09-22T16:38:10Z'}]
+
+
 def test_logging_sink_uses_exact_event_allowlist_without_regex_escaping():
     from scripts.axiom_growth.provision import source_filter
     value = source_filter()

@@ -260,10 +260,11 @@ class Sources:
         sql = """SELECT workspace_fingerprint, billing_account_fingerprint,
             toString(billing_owner_observed_at, 'UTC') AS billing_owner_observed_at
             FROM tr.growth_billing_owners LIMIT 50001 FORMAT JSONEachRow"""
+        # readonly=1 locks settings. Keep the role's server-enforced resource
+        # caps instead of trying to override them through HTTP query parameters.
         result = self.checked(self.http.post('http://10.128.0.96:8123', content=sql,
             auth=('tr_growth_read', os.environ['GROWTH_CH_PASSWORD']),
-            params={'readonly': 1, 'max_execution_time': 15, 'max_threads': 1,
-                    'max_memory_usage': 134217728})).text
+            params={'readonly': 1})).text
         rows = [json.loads(line) for line in result.splitlines() if line]
         if len(rows) > 50_000:
             raise ValueError('Billing owner row cap exceeded')

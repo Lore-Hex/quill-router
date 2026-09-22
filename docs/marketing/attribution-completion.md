@@ -30,6 +30,10 @@ The source already reads workspace records; there are no new inference-path
 lookups, no user-table scans, and no new scheduled Spanner job. Its existing
 kind-scoped directory read now has a 50,000-row cap, low priority and a 30-second
 timeout. The growth worker has SELECT permission only on a hash-only view.
+The owner query keeps the read-only role's server-enforced 45-second,
+two-thread, 512 MiB limits. `readonly=1` rejects per-query changes to those
+settings, even attempts to lower them. The query also caps results at 50,001
+rows and refuses export above 50,000.
 
 ### Gateway attempts
 
