@@ -314,11 +314,11 @@
         "top_logprobs"
       ],
       "routable": true,
-      "input_token_price_per_m": 150000,
-      "output_token_price_per_m": 500000,
-      "cached_input_token_price_per_m": 30000
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 40000
     }
   ],
-  "generated_at": "2026-09-22T05:29:33Z",
+  "generated_at": "2026-09-22T09:09:15Z",
   "model_count": 7
 }

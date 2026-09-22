@@ -181,10 +181,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 102,
+    "model_count": 103,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 198,
+    "route_count": 200,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -505,10 +505,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 14,
+    "model_count": 11,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 14,
+    "route_count": 11,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
@@ -550,10 +550,10 @@
   },
   "pearl": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 7,
     "name": "Pearl Research Labs",
     "privacy": "Policy documented",
-    "route_count": 6,
+    "route_count": 7,
     "route_mode": "Prepaid",
     "slug": "pearl"
   },
