@@ -22,7 +22,8 @@ def _pricing_doc(*, include_k3: bool = True, include_ghost: bool = False) -> str
     ]
     if include_k3:
         rows.append(
-            '["kimi-k3", "1M tokens", <>{"$"}0.30</>, <>{"$"}3.00</>, '
+            '["kimi-k3", "1M tokens", <>{"$"}3.00</>, <>{"$"}6.00</>, '
+            '<>{"$"}0.30</>, <>{"$"}3.00</>, '
             '<>{"$"}15.00</>, "1,048,576 tokens"]'
         )
     if include_ghost:
@@ -125,7 +126,6 @@ def test_fetch_intersects_live_models_and_writes_manifest(
 
 def test_live_model_without_first_party_price_is_not_published(
     monkeypatch: Any,
-    capsys: Any,
 ) -> None:
     def docs_without_k3(url: str, *, extra_headers: dict[str, str] | None = None) -> str:
         del extra_headers
@@ -141,10 +141,8 @@ def test_live_model_without_first_party_price_is_not_published(
         lambda _url, **_kwargs: _live_payload(include_k3=True),
     )
 
-    result = kimi.fetch()
-
-    assert "moonshotai/kimi-k3" not in result.prices
-    assert "moonshotai/kimi-k3" in capsys.readouterr().err
+    with pytest.raises(RuntimeError, match="moonshotai/kimi-k3"):
+        kimi.fetch()
 
 
 def test_manifest_tombstones_models_after_two_fresh_absences(
@@ -194,26 +192,74 @@ def test_manifest_tombstones_models_after_two_fresh_absences(
     assert retired["routable_reason"] == "delisted-upstream"
 
 
-def test_manifest_accepts_validated_partial_prices_without_inventing_a_price(
+def test_known_live_model_with_missing_price_does_not_become_delisted(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     manifest_path = tmp_path / "kimi.json"
-    # A known model may temporarily lack a price without blocking other models.
-    manifest_path.write_text(json.dumps({"models": [{"id": "moonshotai/kimi-k3"}]}))
+    previous = json.dumps({"models": [{
+        "id": "moonshotai/kimi-k3", "input_token_price_per_m": 3_000_000,
+        "output_token_price_per_m": 15_000_000,
+    }]})
+    manifest_path.write_text(previous)
     monkeypatch.setenv("KIMI_API_KEY", "test-kimi-key")
     monkeypatch.setattr(kimi, "MANIFEST_PATH", manifest_path)
     monkeypatch.setattr(kimi, "fetch_html", lambda *_args: _pricing_doc(include_k3=False))
     monkeypatch.setattr(kimi, "fetch_json", lambda *_args, **_kwargs: _live_payload())
     monkeypatch.setattr(kimi, "runtime_required_models", lambda _slug: frozenset())
 
-    result = kimi.fetch()
-    kimi.write_provider_manifest(result)
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="moonshotai/kimi-k3"):
+            kimi.fetch()
+    assert manifest_path.read_text() == previous
 
-    manifest = json.loads(manifest_path.read_text())
-    rows = {row["id"]: row for row in manifest["models"]}
-    assert manifest["model_count"] == 3
-    assert rows["moonshotai/kimi-k2.6"]["input_token_price_per_m"] == 950_000
-    assert "input_token_price_per_m" not in rows["moonshotai/kimi-k3"]
+
+def test_writer_rejects_unpriced_live_rows_before_mutation(monkeypatch, tmp_path):
+    manifest = tmp_path / "kimi.json"
+    manifest.write_text('{"models": []}\n')
+    monkeypatch.setenv("KIMI_API_KEY", "test-kimi-key")
+    monkeypatch.setattr(kimi, "MANIFEST_PATH", manifest)
+    monkeypatch.setattr(kimi, "fetch_html", _fake_docs)
+    monkeypatch.setattr(kimi, "fetch_json", lambda *_args, **_kwargs: _live_payload())
+    result = kimi.fetch()
+    del result.prices["moonshotai/kimi-k3"]
+    with pytest.raises(RuntimeError, match="live discovery lacks prices"):
+        kimi.write_provider_manifest(result)
+    assert manifest.read_text() == '{"models": []}\n'
+
+
+def test_parser_rejects_conflicting_prices_in_duplicate_docs():
+    with pytest.raises(ValueError, match="Conflicting Kimi prices"):
+        kimi_parser.parse(_pricing_doc() + _pricing_doc().replace('15.00</>', '16.00</>'))
+
+
+def test_cache_write_columns_are_not_mistaken_for_input_or_output():
+    parsed = kimi_parser.parse(
+        '["kimi-k3", "1M tokens", <>{"$"}3.10</>, <>{"$"}6.20</>, '
+        '<>{"$"}0.30</>, <>{"$"}3.00</>, <>{"$"}15.00</>, "1,048,576 tokens"]'
+    )
+    assert parsed["moonshotai/kimi-k3"] == {
+        "prompt_micro_per_m": 3_000_000,
+        "prompt_cached_micro_per_m": 300_000,
+        "completion_micro_per_m": 15_000_000,
+    }
+
+
+@pytest.mark.parametrize("summary_first", [True, False])
+def test_duplicate_summary_retains_richer_cached_price(summary_first):
+    summary = (
+        '["kimi-k3", "1M tokens", <>{"$"}3.00</>, <>{"$"}15.00</>, '
+        '"1,048,576 tokens"]'
+    )
+    pages = [summary, _pricing_doc()] if summary_first else [_pricing_doc(), summary]
+    assert kimi_parser.parse("\n".join(pages)) == kimi_parser.parse(_pricing_doc())
+
+
+def test_parser_rejects_unknown_four_price_column_shape():
+    with pytest.raises(ValueError, match="Unrecognized Kimi price column count"):
+        kimi_parser.parse(
+            '["kimi-k3", "1M tokens", <>{"$"}6.00</>, <>{"$"}0.30</>, '
+            '<>{"$"}3.00</>, <>{"$"}15.00</>, "1,048,576 tokens"]'
+        )
 
 
 def test_manifest_rejects_prices_not_backed_by_discovery_before_writing(

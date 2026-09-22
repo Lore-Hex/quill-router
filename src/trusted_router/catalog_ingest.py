@@ -706,6 +706,37 @@ def _context_window(value: object) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
 
 
+def _native_endpoint_capabilities() -> dict[tuple[str, str], tuple[str, ...]]:
+    """Explicit native parameter declarations outrank a reseller's endpoint feed.
+
+    Feature-only manifests are partial evidence, not exhaustive declarations,
+    so they do not replace snapshot capabilities.
+    """
+    capabilities: dict[tuple[str, str], tuple[str, ...]] = {}
+    for path in _PROVIDER_MODELS_DIR.glob("*.json"):
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(raw, dict) or not isinstance(raw.get("provider"), str):
+            continue
+        rows = raw.get("models")
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get("id"), str):
+                continue
+            if row.get("routable") is False:
+                continue
+            parameters = row.get("supported_parameters")
+            if (
+                isinstance(parameters, list) and parameters
+                and all(isinstance(p, str) and p.strip() for p in parameters)
+            ):
+                capabilities[(raw["provider"], row["id"])] = manifest_supported_parameters(row)
+    return capabilities
+
+
 def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelEndpoint]]:
     """Read the OpenRouter snapshot and return (models, endpoints) dicts.
     Pricing is run through `_customer_price_from_dollars_per_token` so the
@@ -719,6 +750,11 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
 
     models: dict[str, Model] = {}
     endpoints: dict[str, ModelEndpoint] = {}
+    native_capabilities = _native_endpoint_capabilities()
+
+    def endpoint_capabilities(slug: str, model_id: str, row: dict[str, Any]) -> tuple[str, ...]:
+        native = native_capabilities.get((slug, model_id))
+        return native if native is not None else manifest_supported_parameters(row)
 
     for raw_model in raw_models:
         model_id = raw_model.get("id")
@@ -815,8 +851,8 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
             architecture = {}
         supported_parameters = union_supported_parameters(
             *(
-                manifest_supported_parameters(raw_ep)
-                for _p, _c, _t, _slug, raw_ep in per_endpoint_prices
+                endpoint_capabilities(slug, model_id, raw_ep)
+                for _p, _c, _t, slug, raw_ep in per_endpoint_prices
             )
         )
         prepaid_available = any(
@@ -860,7 +896,7 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
                     provider=slug,
                     usage_type="Credits",
                     upstream_id=upstream_id,
-                    supported_parameters=manifest_supported_parameters(raw_ep),
+                    supported_parameters=endpoint_capabilities(slug, model_id, raw_ep),
                     prompt_price_microdollars_per_million_tokens=prompt_price,
                     completion_price_microdollars_per_million_tokens=completion_price,
                     published_prompt_price_microdollars_per_million_tokens=prompt_price,
@@ -876,7 +912,7 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
                     provider=slug,
                     usage_type="BYOK",
                     upstream_id=upstream_id,
-                    supported_parameters=manifest_supported_parameters(raw_ep),
+                    supported_parameters=endpoint_capabilities(slug, model_id, raw_ep),
                     prompt_price_microdollars_per_million_tokens=prompt_price,
                     completion_price_microdollars_per_million_tokens=completion_price,
                     published_prompt_price_microdollars_per_million_tokens=prompt_price,
