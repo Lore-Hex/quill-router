@@ -19,7 +19,7 @@ from trusted_router.catalog_privacy import (
 from trusted_router.config import Settings
 from trusted_router.routing import chat_route_endpoint_candidates
 
-POLICY_URL = "https://developers.telnyx.com/docs/inference/data-residency"
+POLICY_URL = "https://telnyx.com/privacy-policy"
 
 
 def test_telnyx_hosted_chat_routes_are_zdr_not_confidential() -> None:
@@ -28,9 +28,10 @@ def test_telnyx_hosted_chat_routes_are_zdr_not_confidential() -> None:
     assert provider.provider_zero_data_retention is True
     assert provider_privacy_tier(provider) == PRIVACY_TIER_ZERO_RETENTION
     assert provider.provider_policy_url == POLICY_URL
-    assert "hosted chat completions" in provider.provider_policy
-    assert "separate Responses endpoint" in provider.provider_policy
-    assert "stores conversations" in provider.provider_policy
+    assert "/v2/ai/openai/chat/completions" in provider.provider_policy
+    assert "adapts Responses to chat completions" in provider.provider_policy
+    assert "Stateful Responses" in provider.provider_policy
+    assert "outside this ZDR scope" in provider.provider_policy
 
     endpoints = [
         endpoint for endpoint in endpoints_for_model("z-ai/glm-5.2")
@@ -73,5 +74,7 @@ def test_telnyx_public_zdr_metadata_has_evidence_and_endpoint_scope(client: Test
     assert "telnyx" in {item["provider"] for item in zdr}
     html = client.get("/providers/telnyx").text
     assert POLICY_URL in html
-    assert "hosted chat completions" in html
-    assert "separate Responses endpoint" in html
+    assert "/v2/ai/openai/chat/completions" in html
+    assert "Stateful Responses" in html
+    assert "outside this ZDR scope" in html
+    assert "de-identified under 3.5" in html
