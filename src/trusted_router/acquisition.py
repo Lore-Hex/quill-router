@@ -336,6 +336,7 @@ def record_signup_attribution(
         # Preserve the namespace used by the original historical export.
         "account_fingerprint": _fingerprint("tr-account:" + user_id) if user_id else "",
         "identity_link_status": "linked" if existing_context is not None and user_id else "orphaned",
+        "first_touch_basis": "stored_cookie" if existing_context is not None else "missing_pre_auth_touch",
         "customer_domain": domain,
         "customer_domain_verified": bool(domain),
         "customer_domain_basis": "verified_oauth_email" if domain else "not_linked",

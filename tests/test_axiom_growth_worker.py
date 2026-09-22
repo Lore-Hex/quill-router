@@ -387,3 +387,18 @@ def test_shared_browser_with_two_accounts_cannot_assign_usage_or_verified_domain
     assert journey['linked_usage_calls'] == 0
     assert not journey['customer_domain_verified']
     assert journey['customer_domain'] == ''
+
+
+def test_missing_pre_auth_cookie_is_unknown_not_an_invented_direct_visit():
+    row = event(account_fingerprint='c'*64, first_utm_source='direct',
+                first_touch_basis='missing_pre_auth_touch', identity_link_status='orphaned')
+    journey = m.build_journeys([row], [], NOW)[0]
+    assert row['identity_link_status'] == 'orphaned'
+    assert journey['first_touch_basis'] == 'missing_pre_auth_touch'
+    assert journey['first_source'] == '(unknown)'
+    assert journey['account_fingerprint'] == 'c'*64
+
+
+@pytest.mark.parametrize('label', ['(unknown)', '(unattributed)', '(redacted)'])
+def test_known_missing_source_labels_remain_explicit(label):
+    assert m.canonical_source(label) == label

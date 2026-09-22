@@ -20,6 +20,9 @@ conflicting accounts or incomplete multi-visitor evidence stay `ambiguous`.
 Missing evidence is `orphaned`. Do not assign all of a team's usage to an
 arbitrary visitor or equate workspaces with individual users. Coverage is
 reported, not manufactured to hit a percentage target.
+For a new signup without any pre-auth touch, `first_touch_basis` explicitly says
+`missing_pre_auth_touch` and the journey source is unknown, not an invented
+direct visit. Existing direct history is not relabeled without evidence.
 
 OAuth carries an encrypted attribution snapshot in a short-lived HttpOnly
 cookie, authenticated against the specific validated OAuth state. No campaign

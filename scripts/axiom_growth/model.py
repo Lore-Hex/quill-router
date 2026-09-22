@@ -57,7 +57,7 @@ FIRST_FIELDS = ("first_utm_source", "first_utm_medium", "first_utm_campaign", "f
                 "first_experiment_id", "first_experiment_cell_id", "first_landing_path")
 EVIDENCE_FIELDS = ("customer_domain", "customer_domain_verified", "customer_domain_basis",
                    "domain_observed_at", "first_referrer_domain", "first_purchase_at",
-                   "identity_link_status", "payment_method")
+                   "identity_link_status", "payment_method", "first_touch_basis")
 FIELDS = ("event", "anonymous_fingerprint", "amount_microdollars", "referer_host",
           *DIMENSIONS, *ATTEMPT_FIELDS, *IDENTITY_FIELDS, *FIRST_FIELDS, *EVIDENCE_FIELDS)
 MAX_ROWS = 20_000
@@ -145,6 +145,8 @@ def project_event(
     output['identity_link_status'] = (
         row.get('identity_link_status') if row.get('identity_link_status') in {'linked', 'orphaned', 'ambiguous'}
         else ('linked' if output.get('account_fingerprint') else 'orphaned'))
+    if row.get('first_touch_basis') in {'stored_cookie', 'missing_pre_auth_touch'}:
+        output['first_touch_basis'] = row['first_touch_basis']
     if row.get('first_purchase_at'):
         output['first_purchase_at'] = timestamp(row['first_purchase_at'])
     payment_method = row.get('payment_method')
@@ -251,6 +253,8 @@ PUBLIC_LANDINGS = frozenset(('/' + p) for p in (
 
 
 def canonical_source(value, referrer=''):
+    if isinstance(value, str) and value in {'(unknown)', '(unattributed)', '(redacted)'}:
+        return value
     label = safe_label(value).strip().lower()
     if '.' in label and not domain(label):
         return '(redacted)'
@@ -330,6 +334,10 @@ def build_journeys(events, daily, end):
         purchase_times = [stamp(r['first_purchase_at']) for r in group if r.get('first_purchase_at')]
         purchase_times.extend(stamp(r['_time']) for r in spend)
         first_source = canonical_source(acquisition.get('first_utm_source') or first.get('utm_source'), referrer)
+        touch_basis = acquisition.get('first_touch_basis') or (
+            'stored_first_touch' if acquisition.get('first_utm_source') else 'first_retained_event')
+        if touch_basis == 'missing_pre_auth_touch':
+            first_source = '(unknown)'
         first_path = acquisition.get('first_landing_path')
         if first_path in (None, '', '(other)', '(unknown)', '(unclassified)', '(account flow)'):
             first_path = first.get('landing_path')
@@ -351,7 +359,7 @@ def build_journeys(events, daily, end):
             'experiment_cell_id':acquisition.get('first_experiment_cell_id') or next((r.get('experiment_cell_id') for r in observed if r.get('experiment_cell_id')), ''),
             'first_medium':acquisition.get('first_utm_medium') or first.get('utm_medium') or '(unknown)',
             'first_landing_path':safe_path(first_path),
-            'first_touch_basis':'stored_cookie' if acquisition.get('first_utm_source') else 'first_retained_event',
+            'first_touch_basis':touch_basis,
             'last_source':canonical_source(observed[-1].get('utm_source'), observed[-1].get('referrer_domain')),
             'last_tagged_landing':safe_path(observed[-1].get('landing_path')),
             'referrer_domain':domain(acquisition.get('referrer_domain')),
