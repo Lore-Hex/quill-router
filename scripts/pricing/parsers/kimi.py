@@ -53,6 +53,9 @@ def _or_id(native_id: str) -> str | None:
 # OR  : ["model-id", "1M tokens", <>{"$"}X.X</>, <>{"$"}Y.Y</>, "context"]
 _ROW_RE = re.compile(
     r'\["([^"]+)"\s*,\s*"1M tokens"\s*,'
+    # K3 adds two cache-write TTL columns before cache hit/input/output.
+    r'(?:\s*<>\{"\$"\}([\d.]+)</>\s*,'
+    r'\s*<>\{"\$"\}([\d.]+)</>\s*,)?'
     r'\s*<>\{"\$"\}([\d.]+)</>\s*,'  # column A (cache hit OR input)
     r'\s*<>\{"\$"\}([\d.]+)</>\s*,'  # column B (cache miss OR output)
     r'(?:\s*<>\{"\$"\}([\d.]+)</>\s*,)?'  # column C (output, only K2 family)
@@ -67,11 +70,11 @@ def _to_micro_per_m(usd: str) -> int:
 def parse(text: str) -> dict:
     out: dict = {}
     for match in _ROW_RE.finditer(text):
-        native_id, col_a, col_b, col_c, _context = match.groups()
+        native_id, write_5min, write_1h, col_a, col_b, col_c, _context = match.groups()
+        if write_5min is not None and (write_1h is None or col_c is None):
+            continue
         or_id = _or_id(native_id)
         if or_id is None:
-            continue
-        if or_id in out:
             continue
         if col_c is not None:
             # 5-column shape: cache_hit, cache_miss, output. Use
@@ -94,5 +97,7 @@ def parse(text: str) -> dict:
                 "prompt_micro_per_m": input_micro,
                 "completion_micro_per_m": output_micro,
             }
+        if or_id in out and out[or_id] != row_out:
+            raise ValueError(f"Conflicting Kimi prices for {or_id}")
         out[or_id] = row_out
     return out

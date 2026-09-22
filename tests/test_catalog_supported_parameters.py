@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+
 from fastapi.testclient import TestClient
 
+from trusted_router import catalog_ingest
 from trusted_router.catalog import MODELS, model_to_openrouter_shape
 from trusted_router.catalog_capabilities import manifest_supported_parameters
 
@@ -38,6 +41,44 @@ def test_manifest_capabilities_do_not_invent_tool_choice() -> None:
 
     assert "tools" in supported
     assert "tool_choice" not in supported
+
+
+def test_native_endpoint_replaces_stale_snapshot_model_capabilities(monkeypatch, tmp_path) -> None:
+    model_id = "x-ai/grok-4.7"
+    snapshot = tmp_path / "snapshot.json"
+    snapshot.write_text(json.dumps({"models": [{
+        "id": model_id,
+        "endpoints": [{
+            "tr_provider_slug": "grok", "model_id": "grok-4.7",
+            "pricing": {"prompt": "0.000002", "completion": "0.000006"},
+            "supported_parameters": ["logprobs", "top_logprobs"],
+        }],
+    }]}))
+    monkeypatch.setattr(catalog_ingest, "_INGEST_PATH", snapshot)
+    models, endpoints = catalog_ingest._ingested_models_and_endpoints()
+    assert "tools" in models[model_id].supported_parameters
+    assert not {"logprobs", "top_logprobs"} & set(models[model_id].supported_parameters)
+    assert all(endpoint.supported_parameters == models[model_id].supported_parameters
+               for endpoint in endpoints.values())
+
+
+def test_native_capability_declaration_is_provider_scoped_and_explicit(monkeypatch, tmp_path):
+    for provider, row in {
+        "grok": {"supported_parameters": ["tools"]},
+        "other": {"supported_parameters": ["logprobs"]},
+        "partial": {"features": ["function-calling"]},
+        "empty": {"supported_parameters": []},
+        "invalid": {"supported_parameters": [7]},
+    }.items():
+        (tmp_path / f"{provider}.json").write_text(json.dumps({
+            "provider": provider, "models": [{"id": "model", **row}],
+        }))
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    assert catalog_ingest._native_endpoint_capabilities() == {
+        ("grok", "model"): ("tools", "max_tokens"),
+        ("other", "model"): ("max_tokens", "logprobs"),
+        ("empty", "model"): ("max_tokens",),
+    }
 
 
 def test_public_models_publish_openrouter_supported_parameters(client: TestClient) -> None:

@@ -54,3 +54,35 @@ the rehearsal. Existing route holds, manifest age limits, coverage checks,
 price-spike limits, and deployment locks remain in force. Runtime-only provider
 credentials were not granted to CI. Deployment evidence belongs in the PR;
 this local rehearsal alone does not establish production rollout.
+
+## Generated-catalog regression gate
+
+After the first repair merged in [#1280](https://github.com/Lore-Hex/quill-router/pull/1280),
+run [35676032393](https://github.com/Lore-Hex/quill-router/actions/runs/35676032393)
+passed discovery and price guards but stopped before publication on five tests.
+They exposed three separate problems:
+
+- Moonshot's [K3 pricing table](https://platform.kimi.ai/docs/pricing/chat-k3.md)
+  added two cache-write TTL columns before cached input, input, and output.
+  Its authenticated model list still includes `kimi-k3`, and a direct inference
+  probe returned HTTP 200 and `PONG`. The parser skipped its longer row, then
+  the manifest writer mistakenly treated missing pricing as missing discovery.
+  Parse the new row shape; require fresh prices for every concrete live Kimi
+  model, including previously known ones, before tombstone reconciliation.
+  Conflicting duplicate prices fail closed. Genuine API absences still follow
+  the existing two-observation delisting policy. The default cache-write rate
+  equals uncached input; this change does not add support for a custom 1h TTL.
+- Grok 4.7's native endpoint has the correct capability declaration, but the
+  model-level union retained `logprobs` and `top_logprobs` from the reseller
+  snapshot. Explicit native parameter declarations now take precedence for
+  that provider/model during snapshot ingestion, before both endpoint and
+  model construction. Partial feature-only manifests do not erase snapshot
+  metadata. Other providers' declarations remain independent.
+- The green-models page test assumed at least 11 models even though its
+  provider's current live catalog contains nine. Assert the exact current
+  eligible link set and a nonempty lineup instead of restoring delisted
+  routes or merely reducing the hard-coded count.
+
+All publication and rollout gates remain enabled. Generated data is tested in
+an isolated rehearsal worktree as well as the release workflow, not committed
+from a partial local refresh.
