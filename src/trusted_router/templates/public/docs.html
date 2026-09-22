@@ -57,6 +57,26 @@ const r = await client.chat.completions.create({
   <p class="muted" style="margin-top:14px"><code>trustedrouter/e2e</code> and <code>trustedrouter/confidential</code> select the same confidential + E2EE pool. <code>provider.data_collection = "deny"</code> remains an OpenRouter-compatible routing preference; use <code>min_privacy</code> when the privacy floor must never be relaxed.</p>
 </section>
 
+<section style="margin-top:48px" id="confidential-api">
+  <h2>Confidential-only API hostname</h2>
+  <p>Use <code>https://api.confidential.trustedrouter.com/v1</code> and explicitly include <code>"provider": {"min_privacy": "confidential"}</code> in every inference request. The hostname is an additional guard, not an implicit default: missing, weaker, or alias values such as <code>e2e</code> return <code>400 confidential_privacy_required</code> before inference.</p>
+  <pre><code>from openai import OpenAI
+import os
+
+client = OpenAI(
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+    base_url="https://api.confidential.trustedrouter.com/v1",
+)
+response = client.chat.completions.create(
+    model="trustedrouter/confidential",
+    messages=[{"role": "user", "content": "Hello"}],
+    extra_body={"provider": {"min_privacy": "confidential"}},
+)</code></pre>
+  <p>Chat Completions, Responses, and Anthropic Messages use the same hard confidential filter, including internal orchestration calls and fallback candidates. If no eligible endpoint remains, the request fails instead of using an ordinary provider. Hosted web search, batch/files, embeddings, and media APIs are not supported on this hostname.</p>
+  <p>The equivalent mirror base URLs are <code>https://api.confidential.quillrouter.com/v1</code>, <code>https://api.confidential.allyrouter.com/v1</code>, and <code>https://api.confidential.uptimerouter.com/v1</code>. They require the same explicit setting. Health, attestation, and public catalog discovery remain available without it; the catalog is not a filtered list of eligible endpoints.</p>
+  <p>The ordinary API hostname is unchanged. A hostname and HTTPS alone are not independent proof of confidential execution: clients that verify hardware attestation should still follow the <a href="/security">attestation verification guide</a>.</p>
+</section>
+
 <section style="margin-top:48px">
   <h2 class="section-center">Guides</h2>
   <div class="marketing-grid three">
