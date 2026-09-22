@@ -22,6 +22,7 @@ from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup,
 from trusted_router.synthetic.components import (
     COMPONENT_DEFINITIONS,
     COMPONENT_PROBE_TARGETS,
+    COMPONENT_PROBES,
     applicable_component_definitions,
     rollup_slo_class_ids,
     sample_slo_class_ids,
@@ -614,3 +615,22 @@ def test_component_probe_targets_cover_the_catalogue() -> None:
     assert {str(definition["id"]) for definition in COMPONENT_DEFINITIONS} == set(
         COMPONENT_PROBE_TARGETS
     )
+
+
+def test_component_probes_cover_the_catalogue() -> None:
+    """Every catalogue component declares which probe types feed it.
+
+    The sibling map to the one above, with a quieter failure: status_snapshot
+    keeps a component's precomputed hourly/daily rollups only when their
+    probe type is in component_probe_types(id), which answers an EMPTY set
+    for an id missing from COMPONENT_PROBES. Such a row still renders its
+    live samples, so it looks wired, while its uptime history reaches back
+    only as far as those samples do —
+    exactly how uaenorth_gateway and australiaeast_gateway shipped.
+    """
+    catalogue = {str(definition["id"]) for definition in COMPONENT_DEFINITIONS}
+
+    assert catalogue == set(COMPONENT_PROBES)
+    # An empty set is the same defect wearing a key.
+    empty = sorted(component_id for component_id in catalogue if not COMPONENT_PROBES[component_id])
+    assert not empty, f"catalogue components with no probe types: {empty}"
