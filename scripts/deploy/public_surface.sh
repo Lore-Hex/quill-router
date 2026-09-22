@@ -740,7 +740,7 @@ fail_routed_region() {
     service_json=""
     active_json="$(regional_quota_active_revision_json "$region" false)" || restore_failed=1
     active_revision="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["metadata"]["name"])' \
-      <<<"${active_json:-{}}")" || restore_failed=1
+      <<<"$active_json")" || restore_failed=1
     [ "$active_revision" = "$old_revision" ] || restore_failed=1
     service_json="$(gc run services describe "$PUBLIC_SERVICE" --region "$region" --format=json)" || \
       restore_failed=1
@@ -750,7 +750,7 @@ import sys
 service = json.load(sys.stdin)
 actual = service.get("metadata", {}).get("annotations", {}).get("run.googleapis.com/ingress")
 raise SystemExit(0 if actual == sys.argv[1] else 1)
-' "$old_ingress" <<<"${service_json:-{}}"; then
+' "$old_ingress" <<<"$service_json"; then
       restore_failed=1
     fi
   done
