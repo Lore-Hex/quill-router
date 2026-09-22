@@ -51,8 +51,10 @@ EXPECTED_MODELS = [
     "openai/gpt-5.4-mini",
 ]
 
+# The Models API supplies availability, not capabilities. These official model
+# cards share limits; tool requests use the enclave's native Responses bridge.
 _MODEL_METADATA_OVERRIDES: dict[str, dict[str, Any]] = {
-    "openai/gpt-6-astra": {
+    f"openai/{model}": {
         "context_length": 1_050_000,
         "max_output_tokens": 128_000,
         "input_modalities": ["text", "image"],
@@ -62,7 +64,8 @@ _MODEL_METADATA_OVERRIDES: dict[str, dict[str, Any]] = {
             "reasoning-effort",
             "structured-output",
         ],
-    },
+    }
+    for model in ("gpt-6-astra", "gpt-6-sol", "gpt-6-luna")
 }
 
 _NON_CHAT_MARKERS = (
