@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable, Iterator
-from dataclasses import asdict
+from dataclasses import asdict, replace
+from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
@@ -12,6 +13,7 @@ import trustedrouter._telemetry as sdk_telemetry
 
 from trusted_router.client_events_schema import ClientEventsBatch
 from trusted_router.storage_models import SyntheticProbeSample
+from trusted_router.synthetic.alerts import alert_on_failure_streak
 from trusted_router.synthetic.probes import (
     SyntheticTarget,
     _run_inference_sdk_probes,
@@ -93,7 +95,14 @@ async def test_real_sdk_pong_probes_mark_requests_and_flush_valid_telemetry(
         "/v1/responses",
     ]
     expected_top_level_keys = {
-        "/v1/chat/completions": {"model", "messages", "max_tokens", "temperature", "metadata"},
+        "/v1/chat/completions": {
+            "model",
+            "messages",
+            "max_tokens",
+            "temperature",
+            "metadata",
+            "store",
+        },
         "/v1/responses": {"model", "input", "max_output_tokens", "temperature", "metadata"},
     }
     for request in gateway_requests:
@@ -110,6 +119,9 @@ async def test_real_sdk_pong_probes_mark_requests_and_flush_valid_telemetry(
         # validateResponsesFields answers 501 not_supported_in_alpha for keys outside its
         # allowlist; on 2026-08-22 an added "app" key took responses_pong down.
         assert set(body) == expected_top_level_keys[request.url.path]
+        if request.url.path.endswith("/chat/completions"):
+            # OpenCode / @ai-sdk/openai-compatible sends this on every chat request.
+            assert body["store"] is False
 
     assert [sample.probe_type for sample in samples] == ["openai_sdk_pong", "responses_pong"]
     for sample in samples:
@@ -187,7 +199,7 @@ async def test_real_sdk_pong_probes_restore_httpx_transport_error_taxonomy(
         assert sample.ttfb_milliseconds is None
 
 
-@pytest.mark.parametrize("status", [401, 429, 500, 502, 503, 504])
+@pytest.mark.parametrize("status", [400, 401, 429, 500, 502, 503, 504])
 @pytest.mark.parametrize("source", ["provider", "router", None, "unknown"])
 @pytest.mark.asyncio
 async def test_pong_failures_preserve_explicit_gateway_error_source(
@@ -249,3 +261,65 @@ async def test_sdk_telemetry_delivery_failure_cannot_change_probe_outcomes(
 
     assert [sample.status for sample in samples] == ["up", "up"]
     assert [sample.output_match for sample in samples] == [True, True]
+
+
+@pytest.mark.asyncio
+async def test_chat_contract_rejection_reaches_debounced_sentry_without_content(
+    telemetry_requests: list[httpx.Request],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sentry_sdk
+
+    events: list[str] = []
+    monkeypatch.setattr(
+        sentry_sdk,
+        "capture_message",
+        lambda message, **_kwargs: events.append(message),
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/chat/completions"):
+            assert json.loads(request.content)["store"] is False
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "code": "bad_request",
+                        "message": "private request detail",
+                        "param": "store",
+                        "source": "router",
+                        "type": "invalid_request_error",
+                    }
+                },
+            )
+        return httpx.Response(200, json={"output": [{"content": [{"text": "PONG"}]}]})
+
+    chat, responses = await _run_pair(handler)
+    assert (chat.status, chat.http_status, chat.error_type) == ("down", 400, "router_error")
+    assert responses.status == "up"
+
+    class StreakStore:
+        def __init__(self) -> None:
+            self.rows: list[SyntheticProbeSample] = []
+
+        def synthetic_probe_samples(self, **kwargs: Any) -> list[SyntheticProbeSample]:
+            assert kwargs["probe_type"] == chat.probe_type
+            assert kwargs["target"] == chat.target
+            return self.rows[: kwargs["limit"]]
+
+    store = StreakStore()
+    fired: list[bool] = []
+    started = datetime.fromisoformat(chat.created_at)
+    for cycle in range(6):
+        sample = replace(
+            chat,
+            id=f"contract-{cycle}",
+            created_at=(started + timedelta(seconds=cycle)).isoformat(),
+        )
+        store.rows.insert(0, sample)
+        fired.append(alert_on_failure_streak(store, sample))
+    assert fired == [False, False, True, True, False, False]
+    assert all("router_error" in event and "http_status=400" in event for event in events)
+    serialized = json.dumps(asdict(chat), default=str) + " ".join(events)
+    assert "private request detail" not in serialized
+    assert _API_KEY not in serialized
