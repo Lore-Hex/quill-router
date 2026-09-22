@@ -118,8 +118,12 @@ def test_xiaomi_manifest_refresh_restores_retirement_metadata(
         ProviderPricingResult(
             slug="xiaomi",
             prices={
-                "xiaomi/mimo-v2.5": ModelPrice(140_000, 280_000),
-                _PRO: ModelPrice(435_000, 870_000),
+                row["id"]: ModelPrice(
+                    row["input_token_price_per_m"],
+                    row["output_token_price_per_m"],
+                    prompt_cached_micro_per_m=row.get("cached_input_token_price_per_m"),
+                )
+                for row in raw["models"]
             },
             source="fixture",
             fetched_url=xiaomi.URL,
