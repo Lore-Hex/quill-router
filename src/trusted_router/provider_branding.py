@@ -96,7 +96,7 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
         description="Verda, formerly DataCrunch, provides GPU cloud and inference services.",
         resources=(
             ("API documentation", "https://api.verda.com/v1/docs"),
-            ("Console", "https://console.verda.com"),
+            ("Console", "https://console.verda.com/"),
             ("Terms and conditions", "https://verda.com/terms-and-conditions"),
             ("Privacy policy", "https://verda.com/privacy-policy"),
         ),

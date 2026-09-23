@@ -1918,15 +1918,15 @@ PROVIDERS: dict[str, Provider] = {
         supports_prepaid=False,
         supports_byok=False,
         provider_policy=(
-            "Not routable: inference authentication succeeds, but the model "
-            "catalog currently returns only a no-default-models placeholder. "
-            "Verified model availability, billable token prices, and a successful "
+            "Registered but not routable. Verified model availability, "
+            "billable token prices, resale authorization, and a successful "
             "inference canary are required before activation. No ZDR, "
             "confidential-compute, or provider-side E2EE claim is tracked."
         ),
         provider_policy_url="https://verda.com/privacy-policy",
         # Verda (formerly DataCrunch Oy): Finnish operator identified in its
-        # published terms. This is not an inference data-residency guarantee.
+        # published terms (https://verda.com/terms-and-conditions).
+        # This is not an inference data-residency guarantee.
         provider_headquarters_country="FI",
     ),
     "ovhcloud": Provider(
