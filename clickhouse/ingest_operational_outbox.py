@@ -166,6 +166,10 @@ REGIONAL_SHADOW_COLUMNS = (
     "regional_unavailable_reason",
     "regional_requested_region",
     "regional_resolved_region",
+    "regional_actual_microdollars",
+    "regional_local_microdollars",
+    "regional_global_microdollars",
+    "regional_overrun_microdollars",
 )
 SPEND_LEASE_SHADOW_COLUMNS = (
     "event_id",

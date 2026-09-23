@@ -60,7 +60,7 @@ def regional_predicate_reason(
         additional_cost != 0,
         native_batch,
         app_markup != 0,
-        receipt_fee != 0,
+        False,  # Retired receipt_fee bit; positions remain an append-only contract.
     )
     mask = sum(1 << index for index, failed in enumerate(failures) if failed)
     reason = next(

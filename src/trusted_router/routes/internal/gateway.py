@@ -1847,6 +1847,7 @@ def _authorize_gateway_sync_impl(
                     idempotency_key=request_idempotency_key,
                     idempotency_fingerprint=request_fingerprint,
                     app_id=api_key.app_id,
+                    receipt_fee_basis_points=receipt_fee_basis_points,
                     tags=effective_tags,
                     expires_at=expires_at,
                     lease_ttl_seconds=settings.regional_quota_lease_ttl_seconds,
@@ -3879,22 +3880,6 @@ def _settle_gateway_authorization(
         actual_cost += proposed_app_markup_micro
     input_tokens = total_input
     selected_usage_type = UsageType.for_endpoint(selected_endpoint)
-    if (
-        success
-        and authorization.settlement == "regional_lease"
-        and actual_cost > authorization.estimated_microdollars
-    ):
-        logger.warning(
-            "billing.regional_settle_capped_to_escrow",
-            extra={
-                "authorization_id": authorization.id,
-                "workspace_id": authorization.workspace_id,
-                "estimated_microdollars": authorization.estimated_microdollars,
-                "actual_microdollars": actual_cost,
-                "overrun_microdollars": (actual_cost - authorization.estimated_microdollars),
-            },
-        )
-        actual_cost = authorization.estimated_microdollars
     if success and authorization.settlement == "spend_lease":
         actual_cost = clamp_spend_lease_charge(authorization, actual_cost)
     if success and selected_endpoint.model_id == POLYPHEMUS_MODEL_ID:
@@ -3908,7 +3893,7 @@ def _settle_gateway_authorization(
             actual_cost, authorization.app_markup_basis_points
         )
     if success and authorization.custom_model_markup_basis_points > 0:
-        # Regional and spend-lease caps can truncate the proposed charge. The
+        # Spend-lease caps can truncate the proposed charge. The
         # payout is based only on the prompt-wrapper markup that survived the
         # final cap, after the outer app markup and hosted costs are removed.
         collected_custom_markup = collected_custom_model_markup_microdollars(
@@ -4052,6 +4037,10 @@ def _settle_gateway_authorization(
         enqueue_start = perf_counter()
         try:
             frozen_settle_body = _settle_repair_metadata(settle_body)
+            if authorization.settlement == "regional_lease":
+                from trusted_router.regional_billing import regional_charge
+
+                frozen_settle_body.update(regional_charge(authorization, actual_cost, success).payload())
             if operator_cost is not None:
                 frozen_settle_body[PARTNER_OPERATOR_COST_SETTLE_FIELD] = operator_cost
             if user_model_payout is not None:
@@ -4083,7 +4072,7 @@ def _settle_gateway_authorization(
             # crashes before it still rely on enclave redelivery. MF4/MF5 freeze
             # the finalize path and exact resolved cost used by the inline attempt.
             settle_outbox = spanner_settle_outbox()
-            settle_outbox.enqueue(
+            enqueue_outcome = settle_outbox.enqueue(
                 SettleOutboxRow(
                     authorization_id=authorization.id,
                     intent_kind=intent_kind,
@@ -4101,12 +4090,17 @@ def _settle_gateway_authorization(
                 # Grace so inline finalize wins the benign race; the drain only
                 # sees rows whose inline attempt is dead >=60s, avoiding replays.
                 initial_delay_seconds=60,
+                **({"preserve_existing": True} if authorization.settlement == "regional_lease" else {}),
             )
             # The intent is durable at this exact point. Any later attachment,
             # inline-finalize, or response-side failure must report
             # intent_durable rather than inviting the enclave to infer that no
             # settlement record exists.
             outbox_enqueued = True
+            if authorization.settlement == "regional_lease" and enqueue_outcome != "inserted":
+                # Bigtable may already hold the first intent's local charge.
+                # Let the drain apply that immutable intent, including its excess.
+                return {"data": _intent_durable_gateway_data(authorization)}
             if refill_required:
                 # Pre-cutover combined rows have no refill columns. Attaching is
                 # an independent NULL -> pending transition, so it is safe even

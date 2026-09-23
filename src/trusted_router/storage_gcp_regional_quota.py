@@ -487,7 +487,7 @@ def get_global_regional_quota_lease(
 
 
 class _RegionalWindowAdvanced(RuntimeError):
-    """A concurrent key writer advanced past this import attempt's floors."""
+    """A concurrent key writer advanced past this booking attempt's floors."""
 
 
 def _check_regional_key_windows(
@@ -506,9 +506,9 @@ def _check_regional_key_windows(
     for row in rows:
         if any(stored is not None and stored > floors[period]
                for stored, period in zip(row, ("daily", "weekly", "monthly"), strict=True)):
-            # Roll back the whole import, including credits and hold IDs. The
+            # Roll back the whole booking, including credits and claims. The
             # next transaction attempt samples the clock and attributes again.
-            raise _RegionalWindowAdvanced("regional key window advanced during import")
+            raise _RegionalWindowAdvanced("regional key window advanced during booking")
 
 
 def reconcile_regional_quota_lease(
@@ -1228,7 +1228,8 @@ def terminal_regional_hold_amount(
 
     A live reservation can still receive an outbox intent AFTER this read, so
     even a currently empty outbox must leave its local hold untouched. The
-    settlement path owns pending/dead intents and all live reservations.
+    settlement path owns all live reservations and guarded positive outcomes.
+    A bound terminal zero permits refund even with pending/dead late intents.
     Absence becomes refund authority only after cancellation commits. The
     writer reads the same tombstone key, serializing record versus cancellation.
     """
@@ -1285,14 +1286,24 @@ def terminal_regional_hold_amount(
         if (reservation is None or not reservation["settled"]
             or reservation["authorization_id"] != hold_id):
             return None
+        actual = reservation["actual_micro"]
+        if actual == 0:
+            # Terminal zero is final, even if a late charge intent is pending
+            # or dead. settle_outbox_apply._apply_typed skips regional finalize
+            # for terminal reservations and returns ALREADY_RELEASED_FREE for
+            # a positive intent. typed_finalize_atomic also claims before CAS;
+            # RegionalQuotaLease.settle rejects REFUNDED holds. Neither replay
+            # nor re-arming a dead intent can revive the charge after recovery.
+            return 0
         guarded = list(transaction.execute_sql(
             GUARD_COUNT_SQL, params={"aid": hold_id},
             param_types={"aid": store._param_types.STRING},
         ))
         if guarded and int(guarded[0][0]):
             return None
-        actual = reservation["actual_micro"]
-        return None if actual is None else int(actual)
+        # The typed outcome includes any globally booked excess. Recovery may
+        # restore only the lease-backed component to Bigtable.
+        return None if actual is None else min(int(actual), auth.estimated_microdollars)
 
     return store._run_in_transaction(txn)
 
