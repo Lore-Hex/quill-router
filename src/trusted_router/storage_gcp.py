@@ -5035,15 +5035,22 @@ class SpannerBigtableStore:
         receipt_fee_basis_points: int = 0,
         app_owner_user_id: str = "",
         invocation_nonce: str | None = None,
+        observation: dict[str, Any] | None = None,
     ) -> tuple[str, GatewayAuthorization | None]:
         """Authorize from bounded regional escrow without touching hot counters."""
+
+        evidence = observation if observation is not None else {}
+
+        def unavailable(reason: str) -> tuple[str, None]:
+            evidence["regional_unavailable_reason"] = reason
+            return "unavailable", None
 
         ledger = self._regional_quota_ledger
         # Do not reserve global Spanner escrow for a region that has no fixed
         # transactional Bigtable app profile. Unsupported regions remain on
         # the exact Spanner path without creating a lease to quarantine later.
         if ledger is None or not ledger.supports_region(region):
-            return "unavailable", None
+            return unavailable("unmapped_region")
         from trusted_router.regional_quota_ledger import (
             RegionalLeaseLedgerError,
             RegionalLeaseNotFound,
@@ -5074,7 +5081,7 @@ class SpannerBigtableStore:
             else None
         )
         if lease_shard_count <= 0:
-            return "unavailable", None
+            return unavailable("other")
         shard_source = idempotency_fingerprint or authorization_id
         quota_shard = (
             int.from_bytes(
@@ -5087,6 +5094,10 @@ class SpannerBigtableStore:
         with self._regional_quota_lease_cache_lock:
             cached = self._regional_quota_lease_cache.get(cache_key)
         candidates = []
+        candidate_failure = (
+            "expired_lease" if cached is not None and cached.expires_datetime <= dt.datetime.now(dt.UTC)
+            else None
+        )
         if cached is not None and cached.expires_datetime > dt.datetime.now(dt.UTC):
             candidates.append(cached)
         else:
@@ -5127,7 +5138,14 @@ class SpannerBigtableStore:
                 )
                 selected_global = candidate
                 break
-            except (LeaseExhaustedError, LeaseUnavailableError):
+            except LeaseExhaustedError:
+                candidate_failure = "exhausted_lease"
+                continue
+            except LeaseUnavailableError:
+                candidate_failure = (
+                    "expired_lease" if candidate.expires_datetime <= dt.datetime.now(dt.UTC)
+                    else "other"
+                )
                 continue
             except RegionalLeaseNotFound:
                 # The row was readable a moment ago and is gone at reserve
@@ -5139,7 +5157,7 @@ class SpannerBigtableStore:
                     region,
                     exc_info=True,
                 )
-                return "unavailable", None
+                return unavailable("other")
             except RegionalLeaseLedgerError as exc:
                 # Expected under cross-region latency or row contention: the
                 # request continues on the exact Spanner path. One line, no
@@ -5152,7 +5170,8 @@ class SpannerBigtableStore:
                     exc,
                     type(exc.__cause__).__name__ if exc.__cause__ else "-",
                 )
-                return "unavailable", None
+                from trusted_router.storage_gcp_regional_quota import ledger_unavailable_reason
+                return unavailable(ledger_unavailable_reason(exc))
 
         if selected_global is None:
             # These caps describe the whole regional pool. Divide both across
@@ -5173,6 +5192,7 @@ class SpannerBigtableStore:
                 max_available_basis_points=per_shard_basis_points,
                 ttl_seconds=lease_ttl_seconds,
                 minimum_grant_microdollars=estimate,
+                observation=evidence,
             )
             if global_lease is None:
                 settings = self.trust_settings
@@ -5181,7 +5201,7 @@ class SpannerBigtableStore:
                     _tier, reason = lease_eligibility(self, settings, workspace_id)
                     if reason:
                         return reason, None
-                return "unavailable", None
+                return unavailable(candidate_failure or evidence.get("regional_unavailable_reason", "other"))
             try:
                 ledger.initialize(regional_lease_from_global(global_lease))
                 global_lease = activate_regional_quota_lease(self, global_lease)
@@ -5216,8 +5236,10 @@ class SpannerBigtableStore:
                     region,
                     exc_info=True,
                 )
-                return "unavailable", None
+                from trusted_router.storage_gcp_regional_quota import ledger_unavailable_reason
+                return unavailable(ledger_unavailable_reason(exc))
 
+        evidence.pop("regional_unavailable_reason", None)
         assert selected_global is not None and selected_local is not None
         with self._regional_quota_lease_cache_lock:
             self._regional_quota_lease_cache[cache_key] = selected_global
@@ -5242,6 +5264,7 @@ class SpannerBigtableStore:
             regional_lease_id=selected_global.lease_id,
             regional_fencing_token=selected_global.fencing_token,
             regional_hold_id=authorization_id,
+            regional_accounting_version=selected_global.accounting_version,
             stage_d_reason="pricing_kind",
             invocation_nonce=invocation_nonce,
         )

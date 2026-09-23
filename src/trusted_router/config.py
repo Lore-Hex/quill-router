@@ -876,6 +876,8 @@ class Settings(BaseSettings):
     # Fleet capability: initialize and retain the regional ledger so any
     # revision can settle/refund/reconcile leases created elsewhere.
     regional_quota_leases_enabled: bool = False
+    # Observation never authorizes leases or initializes a ledger.
+    regional_quota_observation_enabled: bool = False
     # Traffic mutation: authorize new requests from bounded regional escrow.
     # This is deliberately independent and default-off for two-phase rollouts.
     regional_quota_lease_issuance_enabled: bool = False
@@ -911,10 +913,11 @@ class Settings(BaseSettings):
     spend_lease_reconcile_limit: int = 25
     spend_lease_reconcile_max_attempts: int = 12
     # Stage A spend leases are signed advisory artifacts only. This one flag
-    # gates both minting and shadow evidence; default-off deploys never touch
+    # gates minting; observation is independent. Default-off deploys never touch
     # Secret Manager. Runtime boot acceptance comes from the separately signed
     # Stage D policy; the CSV below is only an explicit break-glass addition.
     spend_lease_issuance_enabled: bool = False
+    spend_lease_observation_enabled: bool = False
     # Stage B traffic mutation.  Keep independent from Stage A issuance so a
     # deployed revision can continue shadowing while binding remains inert.
     spend_lease_binding_enabled: bool = False

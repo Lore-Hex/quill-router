@@ -117,6 +117,119 @@ def _settings_kwargs_from_cloud_run_job(call: list[str]) -> dict[str, object]:
     return kwargs
 
 
+_TYPED_COUNTERS = "scripts/deploy/migrate_typed_counters.sh"
+_RESERVATION_INDEX = "tr_reservation_by_authorization"
+_TYPED_COUNTERS_GCLOUD_STUB = r"""#!/usr/bin/env bash
+record=gcloud
+for argument in "$@"; do
+  recorded="${argument//$'\n'/\\n}"
+  recorded="${recorded//$'\t'/\\t}"
+  record="$record"$'\t'"$recorded"
+done
+printf '%s\n' "$record" >> "$HARNESS_ARGV_LOG"
+
+state=$(cat "$HARNESS_INDEX_STATE")
+case "$*" in
+  *"spanner databases ddl update"*)
+    if [[ "$*" == *"CREATE NULL_FILTERED INDEX tr_reservation_by_authorization"* ]]; then
+      [ "$state" = MISSING ] || exit 1
+      printf 'WRITE_ONLY\n' > "$HARNESS_INDEX_STATE"
+    fi
+    ;;
+  *"SELECT COUNT(*) FROM INFORMATION_SCHEMA.INDEXES"*"index_name='tr_reservation_by_authorization'"*)
+    if [ "$state" = MISSING ]; then echo 0; else echo 1; fi
+    ;;
+  *"SELECT INDEX_STATE"*"index_name='tr_reservation_by_authorization'"*)
+    polls=0
+    [ ! -f "$HARNESS_INDEX_STATE.polls" ] || polls=$(cat "$HARNESS_INDEX_STATE.polls")
+    if [ "$state" = WRITE_ONLY ] && [ "$polls" -ge 2 ] && \
+       [ "$HARNESS_FINISH_BACKFILL" = true ]; then
+      state=READ_WRITE
+      printf '%s\n' "$state" > "$HARNESS_INDEX_STATE"
+    fi
+    printf '%s\n' "$((polls + 1))" > "$HARNESS_INDEX_STATE.polls"
+    printf 'index-state\t%s\n' "$state" >> "$HARNESS_ARGV_LOG"
+    [ "$state" = MISSING ] || printf '%s\n' "$state"
+    ;;
+  *"SELECT INDEX_STATE"*) echo READ_WRITE ;;
+  *"SELECT SPANNER_STATE"*) echo COMMITTED ;;
+  *"SELECT COUNT(*) FROM INFORMATION_SCHEMA."*) echo 1 ;;
+  *) exit 1 ;;
+esac
+"""
+
+
+@pytest.mark.parametrize(
+    ("initial_state", "finish_backfill"),
+    [
+        pytest.param("MISSING", True, id="fresh-index"),
+        pytest.param("WRITE_ONLY", True, id="resume-backfill"),
+        pytest.param("READ_WRITE", True, id="already-ready"),
+        pytest.param("WRITE_ONLY", False, id="unfinished-backfill"),
+    ],
+)
+def test_typed_counters_reservation_authorization_index(
+    tmp_path: Path, initial_state: str, finish_backfill: bool
+) -> None:
+    # Other schema objects already exist. Only this index's presence/readiness
+    # varies; creating it starts a backfill, not an immediately usable index.
+    isolated = DeployScriptHarness(tmp_path / "typed-counters")
+    gcloud = isolated.bin / "gcloud"
+    gcloud.write_text(_TYPED_COUNTERS_GCLOUD_STUB)
+    state_file = tmp_path / "index-state"
+    state_file.write_text(initial_state + "\n")
+
+    run = isolated.run(
+        _TYPED_COUNTERS,
+        extra_env={
+            "SPANNER_INSTANCE_ID": "harness-instance",
+            "SPANNER_DATABASE_ID": "harness-database",
+            "GCP_PROJECT_ID": "harness-project",
+            "HARNESS_INDEX_STATE": str(state_file),
+            "HARNESS_FINISH_BACKFILL": str(finish_backfill).lower(),
+        },
+    )
+
+    ddl_calls = [
+        call for call in run.calls
+        if call[:5] == ["gcloud", "spanner", "databases", "ddl", "update"]
+    ]
+    if initial_state == "MISSING":
+        assert len(ddl_calls) == 1, summarise(run)
+        ddl = next(arg.removeprefix("--ddl=") for arg in ddl_calls[0] if arg.startswith("--ddl="))
+        assert " ".join(ddl.replace("\\n", " ").split()) == (
+            f"CREATE NULL_FILTERED INDEX {_RESERVATION_INDEX} "
+            "ON tr_reservation (authorization_id)"
+        )
+        assert run.calls.index(ddl_calls[0]) < run.calls.index(["index-state", "WRITE_ONLY"])
+    else:
+        assert ddl_calls == [], summarise(run)
+
+    states = [call[1] for call in run.calls if call[0] == "index-state"]
+    sleeps = [call for call in run.calls if call[0] == "sleep"]
+    if not finish_backfill:
+        assert states and set(states) == {"WRITE_ONLY"}, summarise(run)
+        assert run.returncode != 0, summarise(run)
+        assert f"timed out waiting for {_RESERVATION_INDEX}" in run.stdout
+        assert f"{_RESERVATION_INDEX} is read-write" not in run.stdout
+        assert "[migrate_typed_counters] done" not in run.stdout
+        return
+
+    assert run.returncode == 0, summarise(run)
+    expected_states = ["READ_WRITE"] if initial_state == "READ_WRITE" else [
+        "WRITE_ONLY", "WRITE_ONLY", "READ_WRITE"
+    ]
+    assert states == expected_states, summarise(run)
+    assert sleeps == [["sleep", "5"]] * (len(expected_states) - 1)
+    ready = run.stdout.index(f"{_RESERVATION_INDEX} is read-write")
+    done = run.stdout.index("[migrate_typed_counters] done")
+    assert ready < done
+    if initial_state != "READ_WRITE":
+        waiting = run.stdout.index(f"waiting for {_RESERVATION_INDEX} backfill (state=WRITE_ONLY)")
+        assert waiting < ready
+    assert state_file.read_text().strip() == "READ_WRITE"
+
+
 _REGIONAL_QUOTA_RECONCILER = "scripts/deploy/regional_quota_reconciler.sh"
 _TYPED_COUNTERS_GCLOUD_STUB = r"""#!/usr/bin/env bash
 { printf '%s' "${0##*/}"; for argument in "$@"; do
@@ -581,6 +694,148 @@ def test_gcp_no_traffic_warm_preprovisions_and_validates_private_candidate(
         call[0] == "curl" and "staged-probe---" in call[-1]
         for call in run.calls
     )
+
+
+_LIVE_REGIONAL_QUOTA_ENV = {
+    "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true",
+    "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "true",
+    "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS": "workspace-pilot,workspace-canary",
+    "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES": "us-central1=tr-quota-us-central1",
+    "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS": "120",
+    "TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS": "5000000",
+    "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS": "2000",
+    "TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT": "8",
+}
+
+
+def _regional_quota_rollout_harness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    live_env: dict[str, str],
+) -> DeployScriptHarness:
+    script = "scripts/deploy/rollout.sh"
+    fixture = SCRIPT_FIXTURES[script]
+    revision_env = [{"name": name, "value": value} for name, value in live_env.items()]
+    active_revision = json.dumps(
+        {"spec": {"containers": [{"env": revision_env}]}},
+        separators=(",", ":"),
+    )
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES,
+        script,
+        replace(
+            fixture,
+            env={
+                key: value for key, value in fixture.env.items()
+                if not key.startswith("TR_REGIONAL_QUOTA_")
+            },
+            responses=(
+                (r"run revisions describe trusted-router-active .*--format=json", active_revision),
+                *fixture.responses,
+            ),
+        ),
+    )
+    return DeployScriptHarness(tmp_path / "regional-quota-rollout")
+
+
+@pytest.mark.parametrize(
+    ("control", "live", "expected"),
+    [
+        pytest.param(None, "true", "false", id="absent-pins-live-true-off"),
+        pytest.param("", "true", "false", id="empty-pins-live-true-off"),
+        pytest.param("preserve", "true", "true", id="dispatch-preserve-live-true"),
+        pytest.param("true", "false", "true", id="dispatch-enables-live-false"),
+        pytest.param("false", "true", "false", id="dispatch-disables-live-true"),
+    ],
+)
+def test_rollout_regional_quota_issuance_control(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    control: str | None,
+    live: str,
+    expected: str,
+) -> None:
+    live_env = {**_LIVE_REGIONAL_QUOTA_ENV, "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": live}
+    isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, live_env)
+    run = isolated.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={} if control is None else {"TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": control},
+    )
+
+    assert run.returncode == 0, summarise(run)
+    deploy = next(
+        call for call in run.calls
+        if call[0:6] == ["gcloud", "--project", "quill-cloud-proxy", "run", "deploy", "trusted-router"]
+    )
+    rendered_env = _cloud_run_job_env(deploy)
+    assert rendered_env["TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED"] == expected
+    for name, value in live_env.items():
+        if name != "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED":
+            assert rendered_env[name] == value
+    # Enabling (including preserve=true) must preflight every serving region
+    # before it creates a candidate; pausing does not need that preflight.
+    before_deploy = run.calls[:run.calls.index(deploy)]
+    for region in ("us-central1", "us-east4", "europe-west4", "southamerica-east1"):
+        fleet_checked = (
+            f"regional quota issuance compatibility: {region}=capable, marker={live}"
+            in run.stderr
+        )
+        assert fleet_checked is (expected == "true")
+        if expected == "true":
+            assert any(
+                "revisions" in call and "trusted-router-active" in call
+                and f"--region={region}" in call for call in before_deploy
+            )
+
+
+@pytest.mark.parametrize("missing", [
+    "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS",
+    "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES",
+])
+def test_rollout_regional_quota_dispatch_true_requires_pilot_and_profiles(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    missing: str,
+) -> None:
+    isolated = _regional_quota_rollout_harness(
+        tmp_path, monkeypatch, {**_LIVE_REGIONAL_QUOTA_ENV, missing: ""},
+    )
+    if missing == "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES":
+        # _lib.sh supplies the pilot's provisioning default even when live is
+        # empty. Remove it only in this test copy to exercise the rollout guard.
+        library = isolated.mirror / "scripts/deploy/_lib.sh"
+        original = library.read_text()
+        default = (
+            'TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES="'
+            '${TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES:-us-central1=tr-quota-us-central1}"'
+        )
+        assert default in original
+        library.write_text(original.replace(default, ""))
+    run = isolated.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={"TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "true"},
+    )
+
+    assert run.returncode != 0, summarise(run)
+    assert "issuance requires pilot workspaces and fixed Bigtable app profiles" in run.stderr
+    assert not any("run" in call and "deploy" in call for call in run.calls)
+
+
+def test_rollout_regional_quota_dispatch_true_refuses_incompatible_fleet(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    live_env = dict(_LIVE_REGIONAL_QUOTA_ENV)
+    del live_env["TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED"]
+    isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, live_env)
+    run = isolated.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={"TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "true"},
+    )
+
+    assert run.returncode != 0, summarise(run)
+    assert "lacks TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" in run.stderr
+    assert not any("run" in call and "deploy" in call for call in run.calls)
 
 
 def test_rollout_binding_unit_4_fence_passes_with_settle_clamp(

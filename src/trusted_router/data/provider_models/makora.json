@@ -3,7 +3,7 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://inference.makora.com/v1/models",
-  "generated_at": "2026-09-22T18:36:26Z",
+  "generated_at": "2026-09-23T10:59:43Z",
   "price_scale": "microdollars_per_million",
   "model_count": 16,
   "models": [
@@ -122,7 +122,7 @@
       "title": "google/gemma-4-26B-A4B",
       "model_type": "chat",
       "status": 1,
-      "max_output_tokens": 262144,
+      "max_output_tokens": 128000,
       "features": [
         "tools",
         "logprobs",

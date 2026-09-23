@@ -181,10 +181,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 103,
+    "model_count": 100,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 200,
+    "route_count": 194,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -262,10 +262,10 @@
   },
   "google-ai-studio": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 14,
     "name": "Google AI Studio",
     "privacy": "Policy documented",
-    "route_count": 24,
+    "route_count": 26,
     "route_mode": "Prepaid + BYOK",
     "slug": "google-ai-studio"
   },
@@ -361,10 +361,10 @@
   },
   "lightning": {
     "card_version": 2,
-    "model_count": 33,
+    "model_count": 34,
     "name": "Lightning AI",
     "privacy": "Policy documented",
-    "route_count": 56,
+    "route_count": 58,
     "route_mode": "Prepaid + BYOK",
     "slug": "lightning"
   },
@@ -505,10 +505,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 11,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 12,
+    "route_count": 11,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },

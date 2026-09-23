@@ -874,10 +874,15 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     ]
     plato_meta = models_by_id["trustedrouter/plato"]["trustedrouter"]
     plato_3_meta = models_by_id["trustedrouter/plato-3.0"]["trustedrouter"]
-    assert models_by_id["trustedrouter/plato"]["context_length"] == 1_048_576
-    assert plato_meta["canonical_model_id"] == "trustedrouter/plato-3.0"
-    assert plato_meta["auto_candidates"] == plato_3_meta["auto_candidates"]
+    assert models_by_id["trustedrouter/plato"]["context_length"] == 1_000_000
+    assert plato_meta["canonical_model_id"] == "trustedrouter/plato-4.0"
     assert plato_meta["auto_candidates"] == [
+        "xiaomi/mimo-v2.6-pro",
+        "deepseek/deepseek-v4.1-flash",
+        "z-ai/glm-5.3",
+        "trustedrouter/prometheus-4.0",
+    ]
+    assert plato_3_meta["auto_candidates"] == [
         "deepseek/deepseek-v4-pro-0813",
         "trustedrouter/prometheus-3.0",
     ]
@@ -916,10 +921,10 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert prometheus_code_meta["auto_candidates"][-1] == "deepseek/deepseek-v4-pro-0813"
     prometheus_2_meta = models_by_id["trustedrouter/prometheus-2.0"]["trustedrouter"]
     prometheus_3_meta = models_by_id["trustedrouter/prometheus-3.0"]["trustedrouter"]
-    assert models_by_id["trustedrouter/prometheus"]["context_length"] == 1_048_576
+    assert models_by_id["trustedrouter/prometheus"]["context_length"] == 1_000_000
     assert models_by_id["trustedrouter/prometheus-2.0"]["context_length"] == 1_048_576
     assert models_by_id["trustedrouter/prometheus"]["trustedrouter"]["canonical_model_id"] == (
-        "trustedrouter/prometheus-3.0"
+        "trustedrouter/prometheus-4.0"
     )
     assert prometheus_2_meta["auto_candidates"] == [
         "minimax/minimax-m3",
@@ -936,10 +941,19 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "xiaomi/mimo-v2.5-pro",
     ]
     zeus_meta = models_by_id["trustedrouter/zeus"]["trustedrouter"]
-    assert models_by_id["trustedrouter/zeus"]["context_length"] == 1_048_576
+    assert models_by_id["trustedrouter/zeus"]["context_length"] == 1_000_000
     assert models_by_id["trustedrouter/zeus-1.0"]["context_length"] == 1_048_576
     assert models_by_id["trustedrouter/zeus-1.0-mini"]["context_length"] == 1_048_576
     assert zeus_meta["auto_candidates"] == [
+        "openai/gpt-6-astra",
+        "anthropic/claude-fable-5.1",
+        "google/gemini-3.8-flash",
+        "xiaomi/mimo-v2.6-pro",
+        "z-ai/glm-5.3",
+        "moonshotai/kimi-k3",
+        "deepseek/deepseek-v4.1-flash",
+    ]
+    assert models_by_id["trustedrouter/zeus-2.0"]["trustedrouter"]["auto_candidates"] == [
         "anthropic/claude-opus-4.8",
         "openai/gpt-5.5",
         "google/gemini-3.1-pro-preview",
@@ -949,7 +963,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "xiaomi/mimo-v2.5-pro",
         "deepseek/deepseek-v4-pro-0813",
     ]
-    assert zeus_meta["canonical_model_id"] == "trustedrouter/zeus-2.0"
+    assert zeus_meta["canonical_model_id"] == "trustedrouter/zeus-3.0"
     assert models_by_id["trustedrouter/zeus-1.0"]["trustedrouter"]["auto_candidates"][-1] == (
         "deepseek/deepseek-v4-pro-0423"
     )

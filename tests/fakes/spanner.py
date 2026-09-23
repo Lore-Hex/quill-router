@@ -1255,7 +1255,12 @@ class _FakeTransaction:
                 raise AssertionError(
                     "key-release SQL must update exactly one lifetime usage column"
                 )
-            wamt_sql = "IF(include_byok, @actual, 0)" if byok_settle else "@actual"
+            window_expressions = {}
+            for window in ("day", "week", "month"):
+                amount_param = f"{window}_amount" if f"{window}_amount" in p else "actual"
+                window_expressions[window] = (
+                    f"IF(include_byok, @{amount_param}, 0)" if byok_settle else f"@{amount_param}"
+                )
             fast_window_bump = (
                 "day_usage = COALESCE(day_usage, 0) +" in sql
                 or "day_start IS NOT NULL" in sql
@@ -1268,7 +1273,7 @@ class _FakeTransaction:
                 ):
                     _require_pred(
                         sql,
-                        f"{window}_usage = COALESCE({window}_usage, 0) + {wamt_sql}",
+                        f"{window}_usage = COALESCE({window}_usage, 0) + {window_expressions[window]}",
                         f"key-release-current-{window}-usage",
                     )
                     _require_pred(
@@ -1294,9 +1299,11 @@ class _FakeTransaction:
             col = "byok_usage" if byok_settle else "usage"
             new = dict(rec, reserved=rec["reserved"] - p["hold"])
             new[col] = rec[col] + p["actual"]
-            wamt = p["actual"]
-            if byok_settle and not rec.get("include_byok", True):
-                wamt = 0
+            window_amounts = {
+                window: (0 if byok_settle and not rec.get("include_byok", True)
+                         else p.get(f"{window}_amount", p["actual"]))
+                for window in ("day", "week", "month")
+            }
             # Lazy window bump, mirroring release_key's IF() SQL: a stale window
             # (start < floor) is replaced, a fresh one accumulates. BYOK settles
             # count only when the row's include_byok says so (wamt gate).
@@ -1304,7 +1311,7 @@ class _FakeTransaction:
                 for window in ("day", "week", "month"):
                     new[f"{window}_usage"] = (
                         rec.get(f"{window}_usage") or 0
-                    ) + wamt
+                    ) + window_amounts[window]
             elif "day_usage = IF(" in sql:
                 for window, floor_param in (
                     ("day", "day_floor"),
@@ -1314,8 +1321,8 @@ class _FakeTransaction:
                     _require_pred(
                         sql,
                         f"{window}_usage = IF({window}_start IS NULL OR "
-                        f"{window}_start < @{floor_param}, {wamt_sql}, "
-                        f"COALESCE({window}_usage, 0) + {wamt_sql})",
+                        f"{window}_start < @{floor_param}, {window_expressions[window]}, "
+                        f"COALESCE({window}_usage, 0) + {window_expressions[window]})",
                         f"key-release-roll-{window}-usage",
                     )
                     _require_pred(
@@ -1328,12 +1335,12 @@ class _FakeTransaction:
                     floor = p[floor_param]
                     start = rec.get(f"{window}_start")
                     if start is None or start < floor:
-                        new[f"{window}_usage"] = wamt
+                        new[f"{window}_usage"] = window_amounts[window]
                         new[f"{window}_start"] = floor
                     else:
                         new[f"{window}_usage"] = (
                             rec.get(f"{window}_usage") or 0
-                        ) + wamt
+                        ) + window_amounts[window]
             self.pending_writes.append(("update_typed", "tr_key_limit", pk, new))
             return 1
         if sql.startswith("INSERT INTO tr_reservation"):

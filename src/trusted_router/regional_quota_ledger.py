@@ -640,6 +640,9 @@ def _serialize_lease(lease: RegionalQuotaLease) -> bytes:
                 ),
                 "state": hold.state.value,
                 "actual_microdollars": hold.actual_microdollars,
+                "settled_at": (
+                    hold.settled_at.isoformat() if hold.settled_at is not None else None
+                ),
             }
             for hold in lease.holds
         ],
@@ -674,6 +677,11 @@ def _deserialize_lease(value: bytes) -> RegionalQuotaLease:
                     None
                     if item.get("actual_microdollars") is None
                     else int(item["actual_microdollars"])
+                ),
+                settled_at=(
+                    None
+                    if item.get("settled_at") is None
+                    else datetime.fromisoformat(str(item["settled_at"]))
                 ),
             )
             for item in payload.get("holds", [])

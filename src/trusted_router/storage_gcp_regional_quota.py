@@ -15,6 +15,7 @@ from google.api_core.exceptions import AlreadyExists
 
 from trusted_router.regional_quota_ledger import settled_key_totals
 from trusted_router.services.regional_quota_leases import (
+    HoldState,
     RegionalQuotaLease,
     bounded_lease_grant_microdollars,
 )
@@ -74,6 +75,10 @@ class GlobalRegionalQuotaLease:
     issuance_tier: int | None = None
     tier_cap_micro: int | None = None
     issuance_pool_micro: int | None = None
+    # Missing fields on leases granted before R1 retain inline key accounting.
+    accounting_version: int = 1
+    # Bounded by this lease's holds; committed atomically with window counters.
+    reconciled_window_hold_ids: list[str] = field(default_factory=list)
 
     @property
     def entity_id(self) -> str:
@@ -239,8 +244,13 @@ def grant_regional_quota_lease(
     minimum_grant_microdollars: int,
     quota_shard: int = 0,
     now: datetime | None = None,
+    observation: dict[str, Any] | None = None,
 ) -> GlobalRegionalQuotaLease | None:
     """Reserve a bounded exact grant and persist its fence in one transaction."""
+
+    def unavailable(reason: str) -> None:
+        if observation is not None:
+            observation["regional_unavailable_reason"] = reason
 
     now = utcnow() if now is None else now
     if now.tzinfo is None:
@@ -260,6 +270,7 @@ def grant_regional_quota_lease(
         max_available_basis_points=max_available_basis_points,
     )
     if bounded < minimum_grant_microdollars:
+        unavailable("insufficient_grant")
         return None
     candidates = list(available_by_shard)
     random.SystemRandom().shuffle(candidates)
@@ -273,6 +284,7 @@ def grant_regional_quota_lease(
         None,
     )
     if selected_shard is None:
+        unavailable("insufficient_grant")
         return None
     grant = min(bounded, available_by_shard[selected_shard])
     lease_id = f"rql-{uuid.uuid4().hex}"
@@ -297,6 +309,7 @@ def grant_regional_quota_lease(
         # time. Without this guard, an exhausted row could mint another lease
         # before reconciliation and multiply the configured regional exposure.
         if fence is not None and fence.active_lease_id is not None:
+            unavailable("occupied_fence")
             return None
         from trusted_router.trust_eligibility import lease_eligibility, tier_cap
         tier = None
@@ -316,6 +329,7 @@ def grant_regional_quota_lease(
             pool = min(pool, *(lease.issuance_pool_micro or pool for lease in owned)) if owned else pool
             tx_grant = min(grant, max(0, pool - _regional_escrow_total(owned)))
             if tx_grant < minimum_grant_microdollars:
+                unavailable("pool_cap")
                 return None
         from trusted_router.storage_gcp_counter_dml import reserve_credit_for_spend_lease
         if not reserve_credit_for_spend_lease(
@@ -323,6 +337,7 @@ def grant_regional_quota_lease(
             trust_eligibility_enabled=armed, expected_trust_tier=tier,
             trust_max_age_seconds=settings.trust_reconcile_max_age_seconds if armed else 3600,
         ):
+            unavailable("insufficient_grant")
             return None
         fencing_token = 1 if fence is None else fence.fencing_token + 1
         updated_fence = RegionalQuotaFence(
@@ -339,6 +354,7 @@ def grant_regional_quota_lease(
             region=region,
             fencing_token=fencing_token,
             granted_microdollars=tx_grant,
+            accounting_version=2,
             issuance_tier=tier,
             tier_cap_micro=cap,
             issuance_pool_micro=pool,
@@ -470,6 +486,31 @@ def get_global_regional_quota_lease(
     )
 
 
+class _RegionalWindowAdvanced(RuntimeError):
+    """A concurrent key writer advanced past this import attempt's floors."""
+
+
+def _check_regional_key_windows(
+    transaction: Any,
+    param_types: Any,
+    key_hash: str,
+    shard: int,
+    floors: dict[str, datetime],
+) -> None:
+    rows = transaction.execute_sql(
+        "SELECT day_start, week_start, month_start FROM tr_key_limit "
+        "WHERE key_hash=@kh AND shard=@shard",
+        params={"kh": key_hash, "shard": shard},
+        param_types={"kh": param_types.STRING, "shard": param_types.INT64},
+    )
+    for row in rows:
+        if any(stored is not None and stored > floors[period]
+               for stored, period in zip(row, ("daily", "weekly", "monthly"), strict=True)):
+            # Roll back the whole import, including credits and hold IDs. The
+            # next transaction attempt samples the clock and attributes again.
+            raise _RegionalWindowAdvanced("regional key window advanced during import")
+
+
 def reconcile_regional_quota_lease(
     store: Any,
     global_lease: GlobalRegionalQuotaLease,
@@ -490,6 +531,7 @@ def reconcile_regional_quota_lease(
     }
 
     def txn(transaction: Any) -> RegionalReconcileResult:
+        accounting_now = utcnow()
         current = store._read_entity_tx(
             transaction,
             _LEASE_KIND,
@@ -520,14 +562,36 @@ def reconcile_regional_quota_lease(
             raise RuntimeError("regional settled total moved backwards")
         spent_delta = local_lease.spent_microdollars - current.reconciled_spent_microdollars
         key_deltas: dict[str, int] = {}
-        for key, total in current_key_totals.items():
+        # V1 holds book keys inline, including those settled before this deploy.
+        # Only V2 leases transfer key-accounting ownership to reconciliation.
+        imported_key_totals = current_key_totals if current.accounting_version == 2 else {}
+        for key, total in imported_key_totals.items():
             previous = int(current.reconciled_key_microdollars.get(key, 0))
             if total < previous:
                 raise RuntimeError("regional key usage moved backwards")
             if total > previous:
                 key_deltas[key] = total - previous
-        if sum(key_deltas.values()) != spent_delta:
+        if current.accounting_version == 2 and sum(key_deltas.values()) != spent_delta:
             raise RuntimeError("regional workspace and key settlement totals differ")
+
+        floors = window_floors(accounting_now)
+        imported_window_holds = set(current.reconciled_window_hold_ids)
+        window_deltas: dict[str, dict[str, int]] = {}
+        if current.accounting_version == 2:
+            for hold in local_lease.holds:
+                if hold.state != HoldState.SETTLED or hold.hold_id in imported_window_holds:
+                    continue
+                key = _key_total_id(hold.key_hash, hold.key_shard)
+                amounts = window_deltas.setdefault(key, dict.fromkeys(floors, 0))
+                # Old snapshots lacking a timestamp retain import-time attribution.
+                settled_at = hold.settled_at or accounting_now
+                for period, floor in floors.items():
+                    if settled_at >= floor:
+                        amounts[period] += int(hold.actual_microdollars or 0)
+                # Track IDs, not the latest timestamp: an earlier settlement may
+                # become visible after a later one. Even expired/zero holds are
+                # marked so they cannot reappear in a future window.
+                imported_window_holds.add(hold.hold_id)
 
         unused = 0
         next_state = "active"
@@ -565,9 +629,13 @@ def reconcile_regional_quota_lease(
             ):
                 raise RuntimeError("unused regional credit escrow release failed")
 
-        floors = window_floors(now)
-        for key, amount in key_deltas.items():
+        for key in sorted(key_deltas.keys() | window_deltas.keys()):
+            amount = key_deltas.get(key, 0)
+            window_amounts = window_deltas.get(key, dict.fromkeys(floors, 0))
             key_hash, key_shard = _parse_key_total_id(key)
+            _check_regional_key_windows(
+                transaction, store._param_types, key_hash, key_shard, floors,
+            )
             count = release_key(
                 transaction,
                 store._param_types,
@@ -576,8 +644,18 @@ def reconcile_regional_quota_lease(
                 amount,
                 book_to_byok=False,
                 window_floors=floors,
+                window_amounts=window_amounts,
                 shard=key_shard,
             )
+            if count != 1 and key_shard != 0:
+                _check_regional_key_windows(
+                    transaction, store._param_types, key_hash, 0, floors,
+                )
+                count = release_key(
+                    transaction, store._param_types, key_hash, 0, amount,
+                    book_to_byok=False, window_floors=floors, shard=0,
+                    window_amounts=window_amounts,
+                )
             if count != 1 and key_limit_exists(
                 transaction,
                 store._param_types,
@@ -625,7 +703,8 @@ def reconcile_regional_quota_lease(
             current,
             state=next_state,
             reconciled_spent_microdollars=local_lease.spent_microdollars,
-            reconciled_key_microdollars=current_key_totals,
+            reconciled_key_microdollars=imported_key_totals,
+            reconciled_window_hold_ids=[] if close else sorted(imported_window_holds),
             updated_at=_iso(now),
         )
         _upsert_entity_dml(
@@ -643,7 +722,9 @@ def reconcile_regional_quota_lease(
             replayed=spent_delta == 0 and unused == 0,
         )
 
-    return store._run_in_transaction(txn)
+    return run_in_transaction_with_retry(
+        store._database, txn, also_retry=(_RegionalWindowAdvanced,),
+    )
 
 
 def close_expired_uninitialized_regional_quota_lease(
@@ -924,6 +1005,7 @@ def _validate_same_global_lease(
         "granted_microdollars",
         "credit_shard",
         "quota_shard",
+        "accounting_version",
     )
     if any(getattr(expected, field) != getattr(current, field) for field in identity):
         raise RuntimeError("global regional lease identity changed")
@@ -1223,3 +1305,17 @@ def _regional_json_body(value: Any) -> str:
         body.pop("issuance_pool_micro")
         return json_body(body)
     return json_body(value)
+
+
+def ledger_unavailable_reason(exc: BaseException) -> str:
+    """Classify the existing error chain without probing the ledger again."""
+    from google.api_core.exceptions import DeadlineExceeded
+
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        if isinstance(current, (TimeoutError, DeadlineExceeded)):
+            return "ledger_timeout"
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return "other"

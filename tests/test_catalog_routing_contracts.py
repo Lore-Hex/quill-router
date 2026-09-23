@@ -50,6 +50,7 @@ from trusted_router.catalog import (
     PARASAIL_LIBERTY_2_0_MODEL_ID,
     PLATO_1_0_MODEL_ID,
     PLATO_3_0_MODEL_ID,
+    PLATO_4_0_MODEL_ID,
     PLATO_MODEL_ID,
     PLATO_PRO_1_0_MODEL_ID,
     PLATO_PRO_2_0_MODEL_ID,
@@ -61,6 +62,7 @@ from trusted_router.catalog import (
     PROMETHEUS_1_0_MODEL_ID,
     PROMETHEUS_2_0_MODEL_ID,
     PROMETHEUS_3_0_MODEL_ID,
+    PROMETHEUS_4_0_MODEL_ID,
     PROMETHEUS_MODEL_ID,
     PROVIDER_JURISDICTION_US,
     PROVIDERS,
@@ -68,6 +70,7 @@ from trusted_router.catalog import (
     SOCRATES_1_0_MODEL_ID,
     SOCRATES_1_1_MODEL_ID,
     SOCRATES_2_0_MODEL_ID,
+    SOCRATES_3_0_MODEL_ID,
     SOCRATES_MODEL_ID,
     SOCRATES_PRO_1_0_MODEL_ID,
     SOCRATES_PRO_MODEL_ID,
@@ -78,6 +81,7 @@ from trusted_router.catalog import (
     ZEUS_1_0_MINI_MODEL_ID,
     ZEUS_1_0_MODEL_ID,
     ZEUS_2_0_MODEL_ID,
+    ZEUS_3_0_MODEL_ID,
     ZEUS_MODEL_ID,
     InvalidAutoModelOrder,
     auto_candidate_models,
@@ -94,6 +98,12 @@ from trusted_router.catalog import (
     orchestration_primitive,
     orchestration_role,
     provider_privacy_tier,
+)
+from trusted_router.catalog_data import (
+    PLATO_4_0_CATALOG_MODEL_ORDER,
+    SOCRATES_3_0_CATALOG_MODEL_ORDER,
+    SYNTH_PROMETHEUS_4_MODEL_ORDER,
+    SYNTH_ZEUS_3_MODEL_ORDER,
 )
 from trusted_router.catalog_ingest import _authoritative_provider_model_ids, _modalities
 from trusted_router.config import Settings
@@ -1050,7 +1060,7 @@ def test_socrates_aliases_are_cataloged_with_advisor_candidates() -> None:
         (SOCRATES_1_0_MODEL_ID, socrates_1_0_candidates),
         (SOCRATES_1_1_MODEL_ID, socrates_1_1_candidates),
         (SOCRATES_2_0_MODEL_ID, socrates_2_0_candidates),
-        (SOCRATES_MODEL_ID, socrates_2_0_candidates),
+        (SOCRATES_MODEL_ID, list(SOCRATES_3_0_CATALOG_MODEL_ORDER)),
         (ADVISOR_MODEL_ID, socrates_1_0_candidates),
     ):
         model = MODELS[model_id]
@@ -1068,7 +1078,7 @@ def test_socrates_aliases_are_cataloged_with_advisor_candidates() -> None:
     assert orchestration_role(ADVISOR_MODEL_ID) == "primitive"
     assert canonical_orchestration_model_id(ADVISOR_MODEL_ID) == ADVISOR_MODEL_ID
     assert orchestration_role(SOCRATES_MODEL_ID) == "rolling_alias"
-    assert canonical_orchestration_model_id(SOCRATES_MODEL_ID) == SOCRATES_2_0_MODEL_ID
+    assert canonical_orchestration_model_id(SOCRATES_MODEL_ID) == SOCRATES_3_0_MODEL_ID
     assert orchestration_role(SOCRATES_1_1_MODEL_ID) == "named_preset"
     assert canonical_orchestration_model_id(SOCRATES_1_1_MODEL_ID) == SOCRATES_1_1_MODEL_ID
 
@@ -1080,7 +1090,7 @@ def test_orchestration_taxonomy_distinguishes_primitives_presets_and_legacy_alia
         FUSION_MODEL_ID: ("synth", "legacy_alias", SYNTH_MODEL_ID),
         SELECTOR_MODEL_ID: ("selector", "primitive", SELECTOR_MODEL_ID),
         MAPREDUCE_MODEL_ID: ("mapreduce", "primitive", MAPREDUCE_MODEL_ID),
-        SOCRATES_MODEL_ID: ("advisor", "rolling_alias", SOCRATES_2_0_MODEL_ID),
+        SOCRATES_MODEL_ID: ("advisor", "rolling_alias", SOCRATES_3_0_MODEL_ID),
         SOCRATES_1_1_MODEL_ID: ("advisor", "named_preset", SOCRATES_1_1_MODEL_ID),
         SOCRATES_2_0_MODEL_ID: ("advisor", "named_preset", SOCRATES_2_0_MODEL_ID),
         ARISTOTLE_MODEL_ID: ("advisor", "rolling_alias", ARISTOTLE_2_0_MODEL_ID),
@@ -1099,7 +1109,7 @@ def test_orchestration_taxonomy_distinguishes_primitives_presets_and_legacy_alia
             "named_preset",
             ARISTOTLE_2_0_MODEL_ID,
         ),
-        PLATO_MODEL_ID: ("advisor", "rolling_alias", PLATO_3_0_MODEL_ID),
+        PLATO_MODEL_ID: ("advisor", "rolling_alias", PLATO_4_0_MODEL_ID),
         PLATO_1_0_MODEL_ID: ("advisor", "named_preset", PLATO_1_0_MODEL_ID),
         PLATO_3_0_MODEL_ID: ("advisor", "named_preset", PLATO_3_0_MODEL_ID),
         PLATO_PRO_MODEL_ID: ("advisor", "rolling_alias", PLATO_PRO_2_0_MODEL_ID),
@@ -1116,7 +1126,7 @@ def test_orchestration_taxonomy_distinguishes_primitives_presets_and_legacy_alia
         IRIS_MODEL_ID: ("synth", "rolling_alias", IRIS_3_0_MODEL_ID),
         IRIS_2_0_MODEL_ID: ("synth", "named_preset", IRIS_2_0_MODEL_ID),
         IRIS_3_0_MODEL_ID: ("synth", "named_preset", IRIS_3_0_MODEL_ID),
-        PROMETHEUS_MODEL_ID: ("synth", "rolling_alias", PROMETHEUS_3_0_MODEL_ID),
+        PROMETHEUS_MODEL_ID: ("synth", "rolling_alias", PROMETHEUS_4_0_MODEL_ID),
         PROMETHEUS_2_0_MODEL_ID: (
             "synth",
             "named_preset",
@@ -1127,7 +1137,7 @@ def test_orchestration_taxonomy_distinguishes_primitives_presets_and_legacy_alia
             "named_preset",
             PROMETHEUS_3_0_MODEL_ID,
         ),
-        ZEUS_MODEL_ID: ("synth", "rolling_alias", ZEUS_2_0_MODEL_ID),
+        ZEUS_MODEL_ID: ("synth", "rolling_alias", ZEUS_3_0_MODEL_ID),
         ZEUS_2_0_MODEL_ID: ("synth", "named_preset", ZEUS_2_0_MODEL_ID),
         OPEN_PATCHER_S1_MODEL_ID: ("synth", "named_preset", OPEN_PATCHER_S1_MODEL_ID),
         OPEN_PATCHER_S2_MODEL_ID: ("synth", "named_preset", OPEN_PATCHER_S2_MODEL_ID),
@@ -1243,10 +1253,7 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
             "google/gemma-4-31b-it",
             DEEPSEEK_V4_PRO_0423_MODEL_ID,
         ],
-        PLATO_MODEL_ID: [
-            DEEPSEEK_V4_PRO_0813_MODEL_ID,
-            PROMETHEUS_3_0_MODEL_ID,
-        ],
+        PLATO_MODEL_ID: list(PLATO_4_0_CATALOG_MODEL_ORDER),
         PLATO_3_0_MODEL_ID: [
             DEEPSEEK_V4_PRO_0813_MODEL_ID,
             PROMETHEUS_3_0_MODEL_ID,
@@ -1294,13 +1301,7 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
             DEEPSEEK_V4_PRO_0813_MODEL_ID,
             ZEUS_2_0_MODEL_ID,
         ],
-        SOCRATES_MODEL_ID: [
-            "xiaomi/mimo-v2.5-pro-ultraspeed",
-            "minimax/minimax-m3",
-            "z-ai/glm-5.2-fast",
-            DEEPSEEK_V4_PRO_0813_MODEL_ID,
-            ZEUS_2_0_MODEL_ID,
-        ],
+        SOCRATES_MODEL_ID: list(SOCRATES_3_0_CATALOG_MODEL_ORDER),
         SOCRATES_PRO_PLUS_MODEL_ID: [
             "xiaomi/mimo-v2.5-pro-ultraspeed",
             "minimax/minimax-m3",
@@ -1530,8 +1531,8 @@ def test_athena_catalog_hides_orchestration_configuration() -> None:
     assert canonical_orchestration_model_id(ATHENA_MODEL_ID) == ATHENA_2_0_MODEL_ID
 
 
-def test_zeus_versions_are_frozen_and_rolling_alias_uses_2_0() -> None:
-    assert MODELS[ZEUS_MODEL_ID].context_length == 1_048_576
+def test_zeus_versions_are_frozen_and_rolling_alias_uses_3_0() -> None:
+    assert MODELS[ZEUS_MODEL_ID].context_length == 1_000_000
     assert MODELS[ZEUS_1_0_MODEL_ID].context_length == 1_048_576
     assert MODELS[ZEUS_1_0_MINI_MODEL_ID].context_length == 1_048_576
     zeus_1_0 = [
@@ -1547,7 +1548,7 @@ def test_zeus_versions_are_frozen_and_rolling_alias_uses_2_0() -> None:
     zeus_2_0 = [*zeus_1_0[:-1], DEEPSEEK_V4_PRO_0813_MODEL_ID]
     assert [model.id for model in meta_candidate_models(ZEUS_1_0_MODEL_ID)] == zeus_1_0
     assert [model.id for model in meta_candidate_models(ZEUS_2_0_MODEL_ID)] == zeus_2_0
-    assert [model.id for model in meta_candidate_models(ZEUS_MODEL_ID)] == zeus_2_0
+    assert [model.id for model in meta_candidate_models(ZEUS_MODEL_ID)] == list(SYNTH_ZEUS_3_MODEL_ORDER)
     zeus_shape = model_to_openrouter_shape(MODELS[ZEUS_1_0_MODEL_ID])
     assert zeus_shape["trustedrouter"]["us_provider_available"] is True
     assert zeus_shape["trustedrouter"]["eu_focused_provider_available"] is True
@@ -1561,7 +1562,7 @@ def test_zeus_versions_are_frozen_and_rolling_alias_uses_2_0() -> None:
     ]
     assert model_us_provider_available(MODELS[ZEUS_1_0_MINI_MODEL_ID]) is True
     assert model_eu_focused_provider_available(MODELS[ZEUS_1_0_MINI_MODEL_ID]) is True
-    assert canonical_orchestration_model_id(ZEUS_MODEL_ID) == ZEUS_2_0_MODEL_ID
+    assert canonical_orchestration_model_id(ZEUS_MODEL_ID) == ZEUS_3_0_MODEL_ID
 
 
 def test_openpatcher_s1_is_cataloged_as_custom_synth_preset() -> None:
@@ -1650,7 +1651,7 @@ def test_prometheus_1m_uses_only_long_context_open_weight_components() -> None:
     assert shape["trustedrouter"]["open_weights"] is True
 
 
-def test_prometheus_versions_are_frozen_and_rolling_alias_uses_3_0() -> None:
+def test_prometheus_versions_are_frozen_and_rolling_alias_uses_4_0() -> None:
     prometheus_2_0 = [
         "minimax/minimax-m3",
         "moonshotai/kimi-k3",
@@ -1666,7 +1667,7 @@ def test_prometheus_versions_are_frozen_and_rolling_alias_uses_3_0() -> None:
     assert [
         candidate.id for candidate in meta_candidate_models(PROMETHEUS_2_0_MODEL_ID)
     ] == prometheus_2_0
-    for model_id in (PROMETHEUS_MODEL_ID, PROMETHEUS_3_0_MODEL_ID):
+    for model_id in (PROMETHEUS_3_0_MODEL_ID,):
         model = MODELS[model_id]
         shape = model_to_openrouter_shape(model)
 
@@ -1675,7 +1676,10 @@ def test_prometheus_versions_are_frozen_and_rolling_alias_uses_3_0() -> None:
         assert shape["trustedrouter"]["auto_candidates"] == prometheus_3_0
         assert shape["trustedrouter"]["open_weights"] is True
 
-    assert canonical_orchestration_model_id(PROMETHEUS_MODEL_ID) == PROMETHEUS_3_0_MODEL_ID
+    assert canonical_orchestration_model_id(PROMETHEUS_MODEL_ID) == PROMETHEUS_4_0_MODEL_ID
+    assert [model.id for model in meta_candidate_models(PROMETHEUS_MODEL_ID)] == list(
+        SYNTH_PROMETHEUS_4_MODEL_ORDER
+    )
 
 
 def test_trustedrouter_meta_models_are_credits_only_not_byok() -> None:

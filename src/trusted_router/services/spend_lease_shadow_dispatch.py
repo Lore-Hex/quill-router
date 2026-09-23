@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import uuid
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -27,10 +28,13 @@ ERROR_AFTER_CONSECUTIVE_FAILURES = 4
 
 @dataclass(frozen=True)
 class SpendLeaseShadowDispatchStats:
+    attempted: int = 0
+    enqueued: int = 0
     submitted: int = 0
     delivered: int = 0
     dropped: int = 0
     failures: int = 0
+    pending: int = 0
 
 
 class SpendLeaseShadowDispatcher:
@@ -55,6 +59,9 @@ class SpendLeaseShadowDispatcher:
         self._thread: threading.Thread | None = None
         self._active = False
         self._closed = False
+        self._attempted = 0
+        self._instance_id = uuid.uuid4().hex
+        self._last_stats_log = 0.0
         self._submitted = 0
         self._delivered = 0
         self._dropped = 0
@@ -63,7 +70,10 @@ class SpendLeaseShadowDispatcher:
     def submit(self, event_id: str, payload: dict[str, Any]) -> None:
         dropped_total: int | None = None
         with self._condition:
+            self._attempted += 1
             if self._closed:
+                self._dropped += 1
+                self._log_stats_locked(force=True)
                 raise RuntimeError("spend-lease shadow dispatcher is closed")
             if len(self._pending) == self._max_pending:
                 self._dropped += 1
@@ -72,6 +82,7 @@ class SpendLeaseShadowDispatcher:
             self._submitted += 1
             self._ensure_thread_locked()
             self._condition.notify()
+            self._log_stats_locked(force=_should_log_count(dropped_total or 0))
 
         if dropped_total is not None and _should_log_count(dropped_total):
             log.error(
@@ -85,11 +96,35 @@ class SpendLeaseShadowDispatcher:
     def stats(self) -> SpendLeaseShadowDispatchStats:
         with self._condition:
             return SpendLeaseShadowDispatchStats(
+                attempted=self._attempted,
+                enqueued=self._submitted,
                 submitted=self._submitted,
                 delivered=self._delivered,
                 dropped=self._dropped,
                 failures=self._failures,
+                pending=len(self._pending) + int(self._active),
             )
+
+    def _log_stats_locked(self, *, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and now - self._last_stats_log < 60:
+            return
+        self._last_stats_log = now
+        log.info(
+            "spend_lease_shadow_dispatch_counts dispatcher_id=%s attempted=%s "
+            "enqueued=%s dropped=%s delivered=%s pending=%s failures=%s",
+            self._instance_id, self._attempted, self._submitted, self._dropped,
+            self._delivered, len(self._pending) + int(self._active), self._failures,
+            extra={
+                "dispatcher_id": self._instance_id,
+                "attempted": self._attempted,
+                "enqueued": self._submitted,
+                "dropped": self._dropped,
+                "delivered": self._delivered,
+                "pending": len(self._pending) + int(self._active),
+                "failures": self._failures,
+            },
+        )
 
     def wait_for_idle(self, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
@@ -104,6 +139,7 @@ class SpendLeaseShadowDispatcher:
     def close(self, timeout: float = 1.0) -> None:
         with self._condition:
             self._closed = True
+            self._log_stats_locked(force=True)
             self._condition.notify_all()
             thread = self._thread
         if thread is not None:
@@ -175,11 +211,14 @@ class SpendLeaseShadowDispatcher:
                     MAX_RETRY_SECONDS,
                 )
                 with self._condition:
+                    self._condition.wait_for(lambda: self._closed, timeout=delay)
                     if self._closed:
+                        self._dropped += 1 + len(self._pending)
+                        self._pending.clear()
                         self._active = False
+                        self._log_stats_locked(force=True)
                         self._condition.notify_all()
                         return
-                time.sleep(delay)
                 continue
 
             with self._condition:

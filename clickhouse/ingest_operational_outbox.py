@@ -158,6 +158,15 @@ SYNTHETIC_COLUMNS = (
     "output_match",
     "created_at",
 )
+REGIONAL_SHADOW_COLUMNS = (
+    "authorization_id",
+    "regional_predicate_reason",
+    "regional_predicate_mask",
+    "regional_outcome",
+    "regional_unavailable_reason",
+    "regional_requested_region",
+    "regional_resolved_region",
+)
 SPEND_LEASE_SHADOW_COLUMNS = (
     "event_id",
     "created_at",
@@ -175,7 +184,7 @@ SPEND_LEASE_SHADOW_COLUMNS = (
     "catalog_version",
     "divergence",
     "schema_version",
-)
+) + REGIONAL_SHADOW_COLUMNS
 
 CLIENT_REQUEST_COLUMNS = (
     "event_id",
@@ -803,7 +812,7 @@ def normalise_operational_event(
     elif row.event_kind == "spend_lease_shadow":
         allowed = SPEND_LEASE_SHADOW_COLUMNS
         required = tuple(
-            column for column in SPEND_LEASE_SHADOW_COLUMNS if column != "no_lease_reason"
+            column for column in SPEND_LEASE_SHADOW_COLUMNS if column != "no_lease_reason" and column not in REGIONAL_SHADOW_COLUMNS
         )
         if raw.get("schema_version") != 1:
             raise ValueError("spend_lease_shadow schema_version must be 1")
