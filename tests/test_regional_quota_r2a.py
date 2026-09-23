@@ -291,14 +291,15 @@ def test_failing_workspace_does_not_starve_another_workspace() -> None:
 
 
 @pytest.mark.parametrize("status", ["pending", "dead"])
-def test_terminal_zero_with_guarded_intent_retains_local_hold(
-    status: str, monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("actual", [0, 7500])
+def test_guarded_terminal_outcome_recovers_only_zero(
+    status: str, actual: int, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store, db, ledger, auth = _authorized()
     with monkeypatch.context() as patch:
         patch.setattr(type(store), "_finalize_regional_quota_hold", lambda *_a, **_kw: None)
         assert store.typed_finalize_gateway_authorization_result(
-            auth.id, success=False, actual_microdollars=0,
+            auth.id, success=actual > 0, actual_microdollars=actual,
             selected_usage_type=UsageType.CREDITS,
         ).finalized
     row = SettleOutboxRow(
@@ -309,8 +310,12 @@ def test_terminal_zero_with_guarded_intent_retains_local_hold(
     store.settle_outbox.enqueue(row)
     db.settle_outbox[(auth.id, "settle")]["status"] = status
     result = store.reconcile_regional_quota_leases(now=datetime.now(UTC) + timedelta(hours=3))
-    assert result["closed"] == 0 and result["errors"] == 0
-    assert ledger.get(auth.regional_lease_id, region=auth.region).holds[0].state == HoldState.RESERVED
+    assert result["closed"] == (0 if actual else 1) and result["errors"] == 0
+    local = ledger.get(auth.regional_lease_id, region=auth.region)
+    assert local.holds[0].state == (HoldState.RESERVED if actual else HoldState.REFUNDED)
+    if actual == 0:
+        assert sum(row["reserved"] for row in db.typed["tr_credit_balance"].values()) == 0
+        assert sum(row["total_usage"] for row in db.typed["tr_credit_balance"].values()) == 0
 
 
 def _grant(store: Any, workspace: str, shard: int = 0, amount: int = 5_000_000) -> Any:

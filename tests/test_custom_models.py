@@ -385,15 +385,15 @@ def test_custom_model_markup_is_frozen_charged_and_paid_exactly_once(
     assert matching[0].custom_model_id == marked["id"]
 
 
-def test_regional_lease_clamp_pays_only_collected_custom_markup(
+def test_spend_lease_clamp_pays_only_collected_custom_markup(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     owner = STORE.ensure_user("alice@example.com")
-    payer_key = _create_key(client, email="regional-payer@example.com")
+    payer_key = _create_key(client, email="spend-payer@example.com")
     custom = _create_custom_model(
         client,
-        slug="regional-markup",
+        slug="spend-markup",
         markup_basis_points=30_000,
     )
     authorize = client.post(
@@ -410,7 +410,10 @@ def test_regional_lease_clamp_pays_only_collected_custom_markup(
     authorization = STORE.get_gateway_authorization(authorization_id)
     assert authorization is not None
     authorization.estimated_microdollars = 400
-    authorization.settlement = "regional_lease"
+    # Regional settlement is exact and custom models remain excluded there.
+    # Preserve the payout-after-cap contract on the spend-lease path.
+    authorization.settlement = "spend_lease"
+    authorization.spend_lease_allocated_micro = 400
     before = STORE.credit_money_snapshot(authorization.workspace_id)
     assert before is not None
     monkeypatch.setattr(

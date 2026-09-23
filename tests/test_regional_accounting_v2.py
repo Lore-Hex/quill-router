@@ -60,7 +60,7 @@ def _finalize(store: Any, auth: Any, *, success: bool = True) -> Any:
     )
 
 
-def test_v2_reaped_then_settled_imports_workspace_and_key_once(
+def test_v2_reaped_then_settled_preserves_terminal_zero(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store, db, key, args = _setup()
@@ -109,7 +109,8 @@ def test_v2_reaped_then_settled_imports_workspace_and_key_once(
     assert not any(sql.startswith(("update tr_key_limit", "update tr_credit_balance"))
                    for _, sql in calls)
     settled = ledger.get(auth.regional_lease_id, region=auth.region)
-    assert settled.holds[0].actual_microdollars == 7500
+    assert settled.holds[0].actual_microdollars == 0
+    assert settled.spent_microdollars == 0
     assert _totals(db, key.workspace_id, key.hash) == (0,) * 5
 
     calls.clear()
@@ -119,11 +120,11 @@ def test_v2_reaped_then_settled_imports_workspace_and_key_once(
         "backlog": 1, "processed": 1, "remaining": 0,
     }
     assert any(sql.startswith("update tr_credit_balance") for _, sql in calls)
-    assert any(sql.startswith("update tr_key_limit") for _, sql in calls)
-    assert _totals(db, key.workspace_id, key.hash) == (7500,) * 5
+    assert not any(sql.startswith("update tr_key_limit") for _, sql in calls)
+    assert _totals(db, key.workspace_id, key.hash) == (0,) * 5
     assert not _finalize(store, loaded).finalized
     store.reconcile_regional_quota_leases(now=reap_now + timedelta(minutes=1))
-    assert _totals(db, key.workspace_id, key.hash) == (7500,) * 5
+    assert _totals(db, key.workspace_id, key.hash) == (0,) * 5
 
 
 @pytest.mark.parametrize("version", [1, 2])
