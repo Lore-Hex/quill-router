@@ -58,6 +58,7 @@ class QuotaLeaseHold:
     expires_at: datetime | None = None
     state: HoldState = HoldState.RESERVED
     actual_microdollars: int | None = None
+    settled_at: datetime | None = None
 
     def __post_init__(self) -> None:
         if not self.hold_id or not self.fingerprint:
@@ -68,6 +69,11 @@ class QuotaLeaseHold:
             raise RegionalQuotaLeaseError("key_shard must not be negative")
         if self.expires_at is not None and self.expires_at.tzinfo is None:
             raise RegionalQuotaLeaseError("hold expires_at must be timezone-aware")
+        if self.settled_at is not None:
+            if self.settled_at.utcoffset() != UTC.utcoffset(self.settled_at):
+                raise RegionalQuotaLeaseError("hold settled_at must be timezone-aware UTC")
+            if self.state != HoldState.SETTLED:
+                raise RegionalQuotaLeaseError("only a settled hold can have settled_at")
         if self.state == HoldState.RESERVED and self.actual_microdollars is not None:
             raise RegionalQuotaLeaseError("reserved hold cannot have an actual amount")
         if self.state == HoldState.SETTLED and not (
@@ -203,6 +209,7 @@ class RegionalQuotaLease:
             hold,
             state=HoldState.SETTLED,
             actual_microdollars=actual_microdollars,
+            settled_at=_utc_now(),
         )
         lease = self._replace_hold(settled)
         return LeaseTransition(lease, settled, False)
