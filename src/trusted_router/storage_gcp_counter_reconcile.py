@@ -44,7 +44,7 @@ _OPEN_REGIONAL_QUOTA_ESCROW = (
     "WHERE open_index.kind='regional_quota_lease_open' "
     "ORDER BY open_index.id"
 )
-_OPEN_REGIONAL_QUOTA_STATES = frozenset({"pending", "active", "draining", "quarantined"})
+_OPEN_REGIONAL_QUOTA_STATES = frozenset({"pending", "active", "draining", "retiring", "quarantined"})
 # ── Typed `total_usage` retained-ledger check ───────────────────────────────
 # `total_usage` is a lifetime counter, while terminal request rows are retained
 # for only 30 days. The retained ledger can therefore prove that a counter is

@@ -211,6 +211,8 @@ class SpendLeaseShadowEvent:
     regional_predicate_reason: str | None = None
     regional_predicate_mask: int | None = None
     regional_outcome: str = "not_attempted"
+    regional_selected_shard: int | None = None
+    regional_sibling_served: bool | None = None
     regional_unavailable_reason: str | None = None
     regional_requested_region: str | None = None
     regional_resolved_region: str | None = None
@@ -751,6 +753,8 @@ def build_spend_lease_shadow_event(
     regional_predicate_reason: str | None = None,
     regional_predicate_mask: int | None = None,
     regional_outcome: str = "not_attempted",
+    regional_selected_shard: int | None = None,
+    regional_sibling_served: bool | None = None,
     regional_unavailable_reason: str | None = None,
     regional_requested_region: str | None = None,
     regional_resolved_region: str | None = None,
@@ -787,6 +791,8 @@ def build_spend_lease_shadow_event(
         regional_predicate_reason=regional_predicate_reason,
         regional_predicate_mask=regional_predicate_mask,
         regional_outcome=regional_outcome,
+        regional_selected_shard=regional_selected_shard,
+        regional_sibling_served=regional_sibling_served,
         regional_unavailable_reason=regional_unavailable_reason,
         regional_requested_region=regional_requested_region,
         regional_resolved_region=regional_resolved_region,

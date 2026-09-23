@@ -885,6 +885,8 @@ class Settings(BaseSettings):
     regional_quota_lease_ttl_seconds: int = 60
     regional_quota_lease_max_microdollars: int = 10_000_000
     regional_quota_lease_max_available_basis_points: int = 1_000
+    # Aggregate global liquidity retained after regional grants (not per grant).
+    regional_quota_global_floor_basis_points: int = 5_000
     regional_quota_lease_shard_count: int = 16
     regional_quota_bigtable_table: str = "trustedrouter-regional-quota"
     spend_lease_bigtable_table: str = "trustedrouter-spend-lease"
@@ -1454,6 +1456,8 @@ class Settings(BaseSettings):
             raise ValueError(
                 "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS must be between 1 and 5000"
             )
+        if not 1 <= self.regional_quota_global_floor_basis_points <= 10_000:
+            raise ValueError("TR_REGIONAL_QUOTA_GLOBAL_FLOOR_BASIS_POINTS must be between 1 and 10000")
         if not 1.1 <= self.regional_quota_ledger_timeout_seconds <= 10.0:
             raise ValueError("TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS must be between 1.1 and 10")
         if not 1 <= self.regional_quota_lease_shard_count <= 64:

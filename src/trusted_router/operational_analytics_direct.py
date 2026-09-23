@@ -166,6 +166,8 @@ REGIONAL_SHADOW_COLUMNS = (
     "regional_predicate_mask",
     "regional_outcome",
     "regional_unavailable_reason",
+    "regional_selected_shard",
+    "regional_sibling_served",
     "regional_requested_region",
     "regional_resolved_region",
     "regional_actual_microdollars",
@@ -522,6 +524,7 @@ def normalise_operational_event(
         if row.event_kind == "spend_lease_shadow" and column in {
             "boot_verified",
             "would_admit",
+            "regional_sibling_served",
         }:
             if value is not None:
                 value = int(bool(value))

@@ -864,6 +864,8 @@ def _record_spend_lease_shadow(
             regional_predicate_reason=context.get("regional_predicate_reason"),
             regional_predicate_mask=context.get("regional_predicate_mask"),
             regional_outcome=context.get("regional_outcome", "not_attempted"),
+            regional_selected_shard=context.get("regional_selected_shard"),
+            regional_sibling_served=context.get("regional_sibling_served"),
             regional_unavailable_reason=context.get("regional_unavailable_reason"),
             regional_requested_region=context.get("regional_requested_region"),
             regional_resolved_region=context.get("regional_resolved_region"),
