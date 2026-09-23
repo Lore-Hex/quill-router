@@ -127,6 +127,10 @@
 .market-links{display:flex;flex-wrap:nowrap;align-items:center;gap:24px;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin}
 .market-links a{display:inline-flex;align-items:center;flex-shrink:0;min-height:40px;white-space:nowrap;text-decoration:none;font-size:13px;color:var(--muted);border-bottom:2px solid transparent}
 .market-links a[aria-current="page"]{color:var(--text);border-bottom-color:rgba(204,232,215,.4)}
+@media(min-width:601px){
+  .market-directory .market-links a:first-child{margin-inline-start:auto}
+  .market-directory .market-links a:last-child{margin-inline-end:auto}
+}
 .footer-markets{margin-block:40px}
 @media(max-width:600px){.market-links{gap:20px}.footer-markets{margin-block:28px}}
 .geo-scroll{position:relative}
