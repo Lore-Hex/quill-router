@@ -174,7 +174,7 @@ from trusted_router.partner_billing import (
     PARASAIL_LIBERTY_2_0_OUTPUT_MICRODOLLARS_PER_MILLION,
 )
 from trusted_router.polyphemus import MODEL_ID as POLYPHEMUS_MODEL_ID
-from trusted_router.polyphemus import SELECTOR_FEE_MICRODOLLARS
+from trusted_router.polyphemus import SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION
 from trusted_router.pricing import (  # noqa: F401 - re-exported for back-compat
     _CACHE_READ_PRICE_MULTIPLIER,
     _CACHE_WRITE_PRICE_MULTIPLIER,
@@ -1287,13 +1287,17 @@ MODELS[POLYPHEMUS_MODEL_ID] = Model(
     supports_messages=False,
     prepaid_available=True,
     byok_available=False,
-    request_price_microdollars=SELECTOR_FEE_MICRODOLLARS,
+    prompt_price_microdollars_per_million_tokens=SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION,
+    published_prompt_price_microdollars_per_million_tokens=SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION,
     documentation=ModelDocumentation(
         description=(
             "Telluvian selects a model for your task, then TrustedRouter runs it. "
             "Responses API only. Standard privacy, not ZDR or confidential. "
-            "One microdollar per successful selection plus the selected model's "
-            "normal token charges; generation is not free. "
+            "$0.05 per million selector prompt tokens plus the selected model's "
+            "normal token charges; generation is not free. Selector tokens are "
+            "estimated from the serialized conversation and tools (UTF-8 bytes / 4, "
+            "rounded down, minimum one token); Telluvian does not return usage. "
+            "Selector charges use normal microdollar rounding, minimum $0.000001. "
             "If selection fails, trustedrouter/auto handles the request without a selector fee."
         ),
         input_format="POST /v1/responses with text input and optional function tools.",

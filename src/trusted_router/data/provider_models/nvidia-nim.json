@@ -2,7 +2,7 @@
   "provider": "nvidia-nim",
   "source": "https://integrate.api.nvidia.com/v1/models",
   "pricing_source": "https://docs.api.nvidia.com/nim/docs/run-anywhere",
-  "generated_at": "2026-09-23T10:59:43Z",
+  "generated_at": "2026-09-23T15:26:23Z",
   "model_count": 123,
   "models": [
     {
@@ -1238,7 +1238,7 @@
       "upstream_id": "nvidia/nemotron-3.5-lightning-30b-a3b",
       "display_name": "nvidia/nemotron-3.5-lightning-30b-a3b",
       "model_type": "chat",
-      "routable": true,
+      "routable": false,
       "status": 1,
       "input_modalities": [
         "text"
@@ -1250,7 +1250,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "id": "nvidia/nemotron-4-340b-instruct",

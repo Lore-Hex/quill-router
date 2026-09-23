@@ -2,8 +2,8 @@
   "_about": "Provider-native supplement for Google AI Studio chat and image models that are available from the Gemini API before the OpenRouter snapshot catches up. Verified against Google Gemini /v1beta/models and direct countTokens/generateContent smoke.",
   "provider": "google-ai-studio",
   "source": "https://generativelanguage.googleapis.com/v1beta/models",
-  "generated_at": "2026-09-23T10:59:43Z",
-  "model_count": 39,
+  "generated_at": "2026-09-23T15:26:23Z",
+  "model_count": 41,
   "models": [
     {
       "id": "google/gemini-3.5-flash",
@@ -816,7 +816,7 @@
       "upstream_id": "gemini-3.7-flash",
       "context_length": 1048576,
       "max_output_tokens": 65536,
-      "routable": true,
+      "routable": false,
       "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 750000,
       "output_token_price_per_m": 3750000,
@@ -939,6 +939,52 @@
       "routable_reason": "delisted-upstream",
       "unresolved_since": "2026-09-02",
       "missing_since": "2026-09-06"
+    },
+    {
+      "display_name": "Gemini 3.8 Flash Lite TTS",
+      "title": "google/gemini-3.8-flash-lite-tts",
+      "model_type": "chat",
+      "features": [],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.8-flash-lite-tts",
+      "upstream_id": "gemini-3.8-flash-lite-tts",
+      "context_length": 8192,
+      "max_output_tokens": 16384,
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-09-23"
+    },
+    {
+      "display_name": "Gemini 3.8 Flash TTS",
+      "title": "google/gemini-3.8-flash-tts",
+      "model_type": "chat",
+      "features": [],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.8-flash-tts",
+      "upstream_id": "gemini-3.8-flash-tts",
+      "context_length": 8192,
+      "max_output_tokens": 16384,
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-09-23"
     }
   ],
   "pricing_source": "https://ai.google.dev/gemini-api/docs/pricing"
