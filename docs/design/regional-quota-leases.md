@@ -10,10 +10,67 @@ more credit than it owns.
 ## Safety model
 
 The global ledger grants a region a bounded amount of already-reserved credit.
-Each active grant also has a transactionally maintained
-`regional_quota_lease_open` index row ordered by expiry. Reconciliation reads a
-bounded prefix of that index instead of scanning historical closed leases; the
-same Spanner transaction removes the index row when it closes the grant.
+Each owned grant has an expiry-ordered `regional_quota_lease_open` index
+for the reconciler and a `regional_quota_lease_workspace_open` index keyed
+`{workspace_id}#{region}#{lease_id}` for grants. Both inserts and both close
+deletes commit with the canonical lease and credit reservation/release.
+Quarantine, expiry, and drain retain ownership and both pointers; partial
+reconciliation changes the canonical remaining amount, which grants point-read.
+
+A grant reads only its workspace's new index prefix **and** its
+`regional_quota_fence` prefix, then deduplicates their canonical lease pointers.
+Fences already existed before this deployment: one row per regional quota slot,
+with `active_lease_id` set by grant and cleared only by close in the same
+transaction as the money change. Thus a legacy lease missing the new index is
+still counted, including pending, expired, draining, and quarantined leases.
+The dual read is permanent for now: a one-time backfill marker would miss an
+older writer committing after the backfill. No migration-complete assumption
+or lease-history read is needed, and a missing canonical target fails closed.
+Older close writers can leave a stale new index pointer; canonical closed rows
+contribute zero and the grant transaction deletes their stale pointers. Thus
+old-writer closes cannot accumulate history across successive grants. Range locks, including empty ranges, cover only that workspace
+and serialize concurrent grants across credit shards/regions. Cost is bounded
+by workspace quota slots and indexed open grants, independent of fleet size
+and historical lease count.
+
+Authorization uses **option (a)**: no aggregate escrow read. It point-reads its
+canonical lease and checks state, issuance tier, tier cap, fencing token, and
+expiry as before. It additionally checks the recorded `issuance_pool_micro`
+against the current configured pool and rejects an individually oversized
+remaining grant. A missing issuance bound (pre-deploy lease) quarantines the
+lease and refunds the new local hold; existing settlements still reconcile.
+This is a conservative transition, not an assumption that legacy exposure is
+zero.
+
+Why the removed aggregate check is redundant for issuing revisions with this
+protocol:
+
+- Simultaneous grants cannot overfill a pool: the workspace ranges conflict,
+  and the retry includes the winning grant. Each grant records its enforced
+  pool bound. A later grant also honors the smallest recorded bound of all owned leases,
+  so raising configuration or promoting a tier cannot invalidate an earlier
+  lease's bound. Expansion waits for smaller-bound leases to close.
+- Reconciliation only increases imported spend; close releases the remainder.
+  Quarantine/drain/expiry release nothing. None increases total owned escrow.
+- Tier or tier-cap changes invalidate the issuance metadata. A reduction of the
+  independent regional maximum invalidates the recorded pool bound, even when
+  the tier cap stays unchanged. Fence/state/expiry changes retain their direct
+  rejection checks. These are the legitimate states the former aggregate
+  recheck could detect after an initially valid grant.
+- Unsupported direct edits inflating canonical money are not a grant
+  transition. The individual oversize guard still detects an inflated current
+  lease; arbitrary multi-row corruption requires reconciliation/audit rather
+  than a request-time fleet scan.
+
+For rollout, keep issuance off while replacing pre-protocol regional writers, using the
+existing issuance/capability split below; capability remains on for settlement
+and reconciliation. Re-enable issuance once every issuer and reconciler uses this protocol.
+In particular, do not mix old issuers with changing pool/tier policy: old code
+does not honor `issuance_pool_micro`. The **grant count itself remains correct
+throughout mixed-version operation** because it always reads legacy fences,
+including grants committed after an earlier read (which conflict and retry).
+Legacy owned leases need no backfill to be counted and can drain normally.
+
 Creating a lease and increasing the workspace's global `reserved` total happen
 in one exact Spanner transaction. A region can authorize only against its local
 durable lease. The maximum unreconciled exposure is therefore the sum of active
@@ -159,6 +216,64 @@ opening database clients; the admitted worker then takes the existing Spanner
 fencing lock before reconciliation. Clean runs publish the
 `job:regional-quota-reconcile` heartbeat; failures reach Cloud Logging and
 Sentry.
+
+`TR_REGIONAL_QUOTA_RECONCILE_LIMIT` defaults to 500 (maximum 1,000), covering
+400 open leases at five workspaces × five regions × 16 shards, versus 80
+closures/minute at a 300-second TTL. Each invocation reads the open-index
+metadata and processes a page round-robin across workspaces, then regions,
+then lease IDs. A durable cursor advances on attempts, including errors and
+live pending grants, so those entries cannot starve other groups. The existing
+single-worker lock remains authoritative. No new work starts after 45 seconds
+(including ledger verification); a shared 70-second Spanner RPC budget bounds
+transaction retries, with existing per-operation Bigtable timeouts. The lease
+count is a ceiling, not a throughput claim: monitor `backlog` (open rows at the
+scan), `processed` (attempted rows), `remaining` (unvisited rows), `reconciled`,
+`closed`, and `errors` to detect time-limited or failed progress. Each lease also
+persists the last attempted hold ID, including guarded/unresolved/error holds.
+Visits resume strictly after that ID and wrap, attempting at most eight expired
+holds and admitting lookups for at most ten seconds or half the remaining work
+budget, whichever is smaller. This reserves time for drain/import and other
+leases; an in-flight RPC can overrun its admission slice. Transient hold lookup
+failures are logged with lease/hold IDs and counted in `errors`; the reservation
+stays untouched and the visit continues to drain/import within the remaining budget.
+Non-transient lookup errors still fail the lease visit. Retired lease cursors
+are pruned against the open index. Admission to another lease also reserves
+the longest visit duration observed in this invocation. If that time no longer
+fits, its lease cursor stays untouched and the next invocation starts there,
+so a trailing slow lease cannot repeatedly receive only the leftover seconds.
+
+Expiry alone never authorizes refunding a local hold. Live typed reservations,
+including those with no outbox row yet, retain escrow so a settle intent arriving
+after the scan can still charge. The settlement worker owns pending/dead
+intents. Regional reconciliation repairs a local hold only from matching,
+terminal typed authorization and reservation records with no guarded outbox
+work: positive actuals settle the hold; a terminal zero outcome permits refund.
+An expired hold with neither typed record can instead be cancelled: one Spanner
+transaction reads the authorization PK, checks reservation absence through
+`tr_reservation_by_authorization`, checks the outbox guard count, and inserts
+`regional_quota_hold_cancellation` keyed by hold/authorization ID. The tombstone
+carries workspace, lease, region, fence and cancellation time. Only after commit
+does the worker refund locally. Every regional authorization writer reads that
+same tombstone key in its transaction; cancellation refuses the write, triggers
+idempotent local compensation (even after refund/close), and returns `unavailable`
+so the gateway uses typed global authorization. A committed cancellation remains
+authority to finish local compensation even if that global fallback now exists.
+Partial/inconsistent typed records and guarded intents retain escrow for repair.
+
+Cancellation tombstones are retained **indefinitely**, with no entity-retention
+expiry. They are exceptional crash-recovery records, not per-request history.
+There is no enforced maximum lifetime for a suspended in-memory writer holding
+an ID, so deleting these records after a guessed TTL would reopen the race.
+Any future TTL requires a writer-age fence first. Apply
+`scripts/deploy/migrate_typed_counters.sh` and wait for the new authorization
+index to be ready before releasing this reconciler. First-run DDL blocks
+`migrate-schema` until its online, low-priority backfill completes: minutes to
+hours for a roughly 1.2M-row table. Reruns also wait for `READ_WRITE`, since a
+present `WRITE_ONLY` index is not ready. The index is safe to land ahead of
+the code: the app starts without it; only orphan recovery needs it. Deploy
+tombstone-aware writers everywhere before enabling orphan cancellation;
+issuance remains off during this upgrade, and pre-upgrade in-flight writers
+must finish/terminate.
 
 Production activation requires all of the following:
 
