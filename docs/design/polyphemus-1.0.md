@@ -1,6 +1,7 @@
 # Polyphemus 1.0
 
-Status: September 23 selector tariff verified in all four GCP regions.
+Status: September 23 selector tariff verified for JSON in all four GCP regions;
+streaming verified in the three US regions, with the existing EU receipt gap.
 Standalone-cloud rollout gates remain in force. September 21 evidence below
 describes the historical launch tariff, not the current token-based fee.
 
@@ -111,11 +112,17 @@ keys cannot join one another's selector session by guessing a caller session
 label. Neither the original label nor the API key is sent as session metadata
 to Telluvian. API-key rotation starts a new selector session. IDs are stable
 across enclave restarts and regions; no new database or in-memory session map
-is used. A provider-returned session ID is not trusted as a caller identity.
+is used. No additional operator pepper is needed: this relies on the existing
+high-entropy API credential, and the derived ID is not an authentication token.
+A provider-returned session ID is not trusted as a caller identity.
 
 Without `session_id`, the selector request omits `sessionId` and remains an
-independent one-shot selection. Telluvian forgets sessions after an hour of
-inactivity. A session is not an idempotency key: each new turn still requires
+independent one-shot selection. According to [Telluvian's routing contract](https://telluvian.ai/docs/routing)
+(checked September 23), it forgets sessions after an hour of inactivity.
+Fresh caller-generated IDs were accepted in live tests; an expired ID has no
+warm-cache assumption. If upstream rejects any ID, the existing no-retry Auto
+fallback applies, without a selector fee. A session is not an idempotency key:
+each new turn still requires
 its own request identity, selection authorization, and normal billing. It does
 not store the conversation for the client; send the current history every turn.
 The session ID does not enter the metered `messages` payload.

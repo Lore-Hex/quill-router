@@ -58,9 +58,10 @@ def test_polyphemus_catalog_documents_optional_cache_aware_sessions() -> None:
     documentation = shape["trustedrouter"]["documentation"]
     example = json.loads(documentation["example_input"])
     assert example["model"] == MODEL_ID
-    assert example["session_id"] == "3f2b7c58-9d41-4e0a-9a7c-6f0b1c2d3e4f"
+    assert "session_id" not in example
     guidance = documentation["input_format"]
     assert "same session_id and API key" in guidance
+    assert "fresh UUID per conversation" in guidance
     assert "Omit session_id" in guidance
     assert "one hour of inactivity" in guidance
     assert "does not pin a provider or guarantee a cache hit" in guidance
