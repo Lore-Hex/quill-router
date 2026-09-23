@@ -126,6 +126,7 @@ from trusted_router.storage_errors import (
     StoreUnavailable,
     is_duplicate_key_error,
     is_transient_store_error,
+    transient_store_error_types,
 )
 from trusted_router.storage_gcp_analytics_outbox import SpannerAnalyticsOutbox
 from trusted_router.storage_gcp_attribution import SpannerAcquisitionAttribution
@@ -174,6 +175,7 @@ from trusted_router.storage_gcp_io import (
     SpannerIO,
     configure_spanner_rpc_deadlines,
     run_in_transaction_with_retry,
+    spanner_rpc_budget,
 )
 from trusted_router.storage_gcp_keys import SpannerApiKeys
 from trusted_router.storage_gcp_oauth_apps import SpannerOAuthApps
@@ -5281,6 +5283,8 @@ class SpannerBigtableStore:
             authorization.credit_reservation_id = str(result["reservation_id"])
             return "accepted", authorization
         self._refund_regional_quota_hold_safely(authorization)
+        if result["outcome"] == "cancelled":
+            return "unavailable", None  # gateway retries through typed authorization
         if result["outcome"] in {"billing_paused", "unpaid_workspace", "reconciliation_stale", "trust_gate_unarmed"}:
             with self._regional_quota_lease_cache_lock:
                 self._regional_quota_lease_cache.pop(cache_key, None)
@@ -5347,35 +5351,59 @@ class SpannerBigtableStore:
                 exc_info=True,
             )
 
+    @spanner_rpc_budget(70)
     def reconcile_regional_quota_leases(
         self,
         *,
-        limit: int = 100,
+        limit: int = 500,
+        max_seconds: float = 45.0,
         now: dt.datetime | None = None,
     ) -> dict[str, int]:
-        """Reconcile bounded local escrow; expired open holds refund first."""
+        """Process a fair page of open escrow within a 45-second work budget."""
 
         ledger = self._regional_quota_ledger
         if ledger is None:
-            return {"inspected": 0, "reconciled": 0, "closed": 0, "errors": 0}
+            return {"inspected": 0, "reconciled": 0, "closed": 0, "errors": 0,
+                    "backlog": 0, "processed": 0, "remaining": 0}
         from trusted_router.services.regional_quota_leases import HoldState
         from trusted_router.storage_gcp_regional_quota import (
             GlobalRegionalQuotaLease,
             OpenRegionalQuotaLease,
+            RegionalReconcileCursor,
             close_expired_uninitialized_regional_quota_lease,
             delete_closed_regional_quota_open_index,
             reconcile_regional_quota_lease,
+            terminal_regional_hold_amount,
         )
 
+        deadline = time.monotonic() + max(0.0, min(max_seconds, 45.0))
         now = dt.datetime.now(dt.UTC) if now is None else now
         bounded_limit = max(1, min(limit, 1000))
         open_leases = self._list_entities(
             "regional_quota_lease_open",
             cls=OpenRegionalQuotaLease,
-            limit=bounded_limit,
         )
-        result = {"inspected": 0, "reconciled": 0, "closed": 0, "errors": 0}
-        for open_lease in open_leases:
+        cursor = self._read_entity(
+            "regional_quota_reconciler_cursor", "singleton", RegionalReconcileCursor,
+        ) or RegionalReconcileCursor()
+        # Drop retired groups so the cursor grows with active leases, not history.
+        groups = {f"{lease.workspace_id}#{lease.region}" for lease in open_leases}
+        workspaces = {lease.workspace_id for lease in open_leases}
+        cursor.leases = {key: value for key, value in cursor.leases.items() if key in groups}
+        cursor.regions = {key: value for key, value in cursor.regions.items() if key in workspaces}
+        lease_ids = {lease.lease_entity_id for lease in open_leases}
+        cursor.holds = {key: value for key, value in cursor.holds.items() if key in lease_ids}
+        result = {"inspected": 0, "reconciled": 0, "closed": 0, "errors": 0,
+                  "backlog": len(open_leases), "processed": 0, "remaining": len(open_leases)}
+        longest_visit_seconds = 0.0
+        for open_lease in cursor.page(open_leases)[:bounded_limit]:
+            visit_started = time.monotonic()
+            # Do not repeatedly admit the last lease with less time than a
+            # preceding visit took. Leave its lease cursor untouched so the
+            # next invocation starts there with a fresh budget.
+            if visit_started + longest_visit_seconds >= deadline:
+                break
+            cursor.advance(open_lease)
             result["inspected"] += 1
             try:
                 record = self._read_entity(
@@ -5394,7 +5422,11 @@ class SpannerBigtableStore:
                         raise RuntimeError("closed regional lease index cleanup lost its fence")
                     result["closed"] += 1
                     continue
+                if time.monotonic() >= deadline:
+                    continue
                 local = ledger.get(record.lease_id, region=record.region)
+                if time.monotonic() >= deadline:
+                    continue
                 if local is None:
                     # Granting is intentionally two-phase: Spanner first
                     # reserves the bounded escrow and publishes a pending
@@ -5423,24 +5455,59 @@ class SpannerBigtableStore:
                             )
                         result["closed"] += 1
                     continue
-                for hold in local.holds:
-                    if (
-                        hold.state == HoldState.RESERVED
-                        and hold.expires_at is not None
-                        and hold.expires_at <= now
-                    ):
-                        local = ledger.refund(
-                            record.lease_id,
-                            region=record.region,
-                            hold_id=hold.hold_id,
-                            fencing_token=record.fencing_token,
+                # Bound each visit independently, leaving half the remaining
+                # budget for drain/import and other leases. Slow unresolved
+                # lookups advance just like terminal ones, including failures.
+                hold_start = time.monotonic()
+                hold_deadline = hold_start + min(10.0, (deadline - hold_start) / 2)
+                after = cursor.holds.get(record.entity_id, "")
+                holds = sorted(
+                    (hold for hold in local.holds if hold.state == HoldState.RESERVED
+                     and hold.expires_at is not None and hold.expires_at <= now),
+                    key=lambda hold: (hold.hold_id <= after, hold.hold_id),
+                )
+                for hold in holds[:8]:
+                    if time.monotonic() >= hold_deadline:
+                        break
+                    cursor.holds[record.entity_id] = hold.hold_id
+                    try:
+                        actual = terminal_regional_hold_amount(
+                            self, record, hold.hold_id, hold_expires_at=hold.expires_at, now=now,
                         )
+                    except transient_store_error_types():
+                        result["errors"] += 1
+                        log.warning(
+                            "regional quota hold lookup failed lease_id=%s hold_id=%s",
+                            record.lease_id, hold.hold_id, exc_info=True,
+                        )
+                        # Keep this reservation intact and use the remaining
+                        # budget for other holds and the lease's drain/import.
+                        continue
+                    if actual is None:
+                        continue
+                    if time.monotonic() >= deadline:
+                        break
+                    if actual == 0:
+                        local = ledger.refund(
+                            record.lease_id, region=record.region,
+                            hold_id=hold.hold_id, fencing_token=record.fencing_token,
+                        )
+                    else:
+                        local = ledger.settle(
+                            record.lease_id, region=record.region,
+                            hold_id=hold.hold_id, fencing_token=record.fencing_token,
+                            actual_microdollars=actual,
+                        )
+                if time.monotonic() >= deadline:
+                    continue
                 if local.expires_at <= now and local.state.value == "active":
                     local = ledger.begin_drain(
                         record.lease_id,
                         region=record.region,
                         fencing_token=record.fencing_token,
                     )
+                if time.monotonic() >= deadline:
+                    continue
                 should_close = local.state.value == "draining" and local.reserved_microdollars == 0
                 reconcile_regional_quota_lease(
                     self,
@@ -5474,6 +5541,13 @@ class SpannerBigtableStore:
                     open_lease.workspace_id,
                     exc_info=True,
                 )
+            finally:
+                longest_visit_seconds = max(
+                    longest_visit_seconds, time.monotonic() - visit_started,
+                )
+        self._write_entity("regional_quota_reconciler_cursor", "singleton", cursor)
+        result["processed"] = result["inspected"]
+        result["remaining"] = result["backlog"] - result["processed"]
         return result
 
     def acquire_regional_quota_reconciler_lock(

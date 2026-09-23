@@ -893,7 +893,8 @@ class Settings(BaseSettings):
     # traffic-issuance allowlist because the worker can only drain leases that
     # already exist.
     regional_quota_reconciler_worker: bool = False
-    regional_quota_reconcile_limit: int = 25
+    # 5 workspaces x 5 regions x 16 shards = 400 open leases / 80 closures per minute.
+    regional_quota_reconcile_limit: int = 500
     # Comma-separated region=single-cluster-app-profile pairs. A fixed profile
     # is required because one lease has exactly one regional writer authority.
     regional_quota_bigtable_app_profiles: str = ""

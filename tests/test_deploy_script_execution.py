@@ -275,6 +275,7 @@ def _run_regional_quota_reconciler(
     describe_stderr: str = "",
     versioned_job_exists: bool = False,
     stale_job_names: str = "",
+    reconcile_limit: str = "",
     extra_env: dict[str, str] | None = None,
 ) -> HarnessRun:
     monkeypatch.setitem(
@@ -290,6 +291,7 @@ def _run_regional_quota_reconciler(
                     "trusted-router-regional-quota-reconciler-existing"
                 ),
                 "HARNESS_STALE_JOB_NAMES": stale_job_names,
+                "TR_REGIONAL_QUOTA_RECONCILE_LIMIT": reconcile_limit,
                 "TR_REGIONAL_QUOTA_RECONCILER_JOB": (
                     "trusted-router-regional-quota-reconciler-existing"
                     if versioned_job_exists
@@ -3950,3 +3952,15 @@ def test_azure_deploy_masks_every_value_it_reads_when_running_in_github_actions(
     )
     for value in values:
         assert value not in unmasked_output
+
+
+@pytest.mark.parametrize("configured,expected", [("", "500"), ("157", "157")])
+def test_regional_reconciler_deploy_passes_capacity_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configured: str, expected: str,
+) -> None:
+    run = _run_regional_quota_reconciler(
+        tmp_path, monkeypatch, state="ENABLED", reconcile_limit=configured,
+    )
+    assert run.returncode == 0, summarise(run)
+    create = _gcloud_calls(run, "run", "jobs", "create")[0]
+    assert any(f"TR_REGIONAL_QUOTA_RECONCILE_LIMIT={expected}|" in arg for arg in create)

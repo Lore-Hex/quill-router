@@ -189,6 +189,7 @@ class FakeSpannerDatabase:
         # idempotency_scope. Modeled separately from the 2-col typed counters.
         self.reservations: dict[str, dict] = {}
         self.reservation_versions: dict[str, int] = {}
+        self.reservation_auth_versions: dict[str, int] = {}
         self.reservation_idemp: dict[str, str] = {}  # idempotency_scope -> reservation_id
         # tr_gateway_authorization: bounded per-request state keyed by
         # authorization_id. Kept separate from generic tr_entities so tests
@@ -289,11 +290,20 @@ class FakeSpannerDatabase:
 
     def _try_commit(self, txn: _FakeTransaction) -> bool:
         with self._commit_lock:
+            for (kind, prefix), observed_range in txn.entity_prefix_reads.items():
+                current_range = tuple(sorted(
+                    (eid, row.version) for (row_kind, eid), row in self.rows.items()
+                    if row_kind == kind and eid.startswith(prefix)
+                ))
+                if current_range != observed_range:
+                    return False
             for key, observed in txn.read_versions.items():
                 if isinstance(key, tuple) and len(key) == 3 and key[0] == "typed":
                     current_version = self.typed_versions.get((key[1], key[2]), 0)
                 elif isinstance(key, tuple) and len(key) == 2 and key[0] == "res":
                     current_version = self.reservation_versions.get(key[1], 0)
+                elif isinstance(key, tuple) and len(key) == 2 and key[0] == "res_auth":
+                    current_version = self.reservation_auth_versions.get(key[1], 0)
                 elif isinstance(key, tuple) and len(key) == 2 and key[0] == "idemp":
                     # presence-based: a same-scope insert committed since our read
                     # flips this, aborting the loser so its retry raises ALREADY_EXISTS
@@ -365,6 +375,7 @@ class FakeSpannerDatabase:
                     rid = record["reservation_id"]
                     self.reservations[rid] = record
                     self.reservation_versions[rid] = new_version
+                    self.reservation_auth_versions[record["authorization_id"]] = new_version
                     scope = record.get("idempotency_scope")
                     if scope is not None:
                         self.reservation_idemp[scope] = rid
@@ -464,6 +475,7 @@ class _FakeTransaction:
     def __init__(self, db: FakeSpannerDatabase) -> None:
         self.db = db
         self.read_versions: dict[tuple[str, str], int] = {}
+        self.entity_prefix_reads: dict[tuple[str, str], tuple[tuple[str, int], ...]] = {}
         self.read_snapshots: dict[tuple[str, str], str | None] = {}
         # Row values pinned at FIRST read, keyed like read_versions. Real
         # Spanner read-write transactions are serializable: every statement in
@@ -3526,6 +3538,23 @@ def _execute_sql(
         ]
         rows.sort(key=lambda rec: (rec["created_at"], rec["authorization_id"]))
         return [[str(rec["payload"])] for rec in rows]
+    if "FROM tr_reservation@{FORCE_INDEX=tr_reservation_by_authorization}" in sql:
+        _require_pred(sql, "WHERE authorization_id=@aid LIMIT 1", "orphan reservation guard")
+        aid = params["aid"]
+        if txn is not None:
+            txn.read_versions.setdefault(("res_auth", aid), db.reservation_auth_versions.get(aid, 0))
+        ids = set(db.reservations)
+        if txn is not None:
+            ids.update(op[1]["reservation_id"] for op in txn.pending_writes
+                       if op[0] == "insert_reservation")
+        for rid in ids:
+            committed = db.reservations.get(rid)
+            if committed is not None and committed.get("authorization_id") != aid:
+                continue
+            rec = txn._reservation_current(rid) if txn is not None else committed
+            if rec is not None and rec.get("authorization_id") == aid:
+                return [[rid]]
+        return []
     # Guarded legacy terminal_at backfill. These narrow handlers intentionally
     # assert every real predicate they model (MF6); a production SQL regression
     # must fail tests instead of being repaired by the fake's Python filtering.
@@ -4378,6 +4407,11 @@ def _execute_sql(
         return [[row.body]]
     if "STARTS_WITH" in sql:
         prefix = params.get("prefix", "")
+        if txn is not None:
+            txn.entity_prefix_reads.setdefault((kind, prefix), tuple(sorted(
+                (eid, row.version) for (row_kind, eid), row in db.rows.items()
+                if row_kind == kind and eid.startswith(prefix)
+            )))
         rows = [
             (eid, r.body) for (k, eid), r in db.rows.items() if k == kind and eid.startswith(prefix)
         ]
@@ -4401,9 +4435,16 @@ def _execute_sql(
             rows = rows[: int(params["limit"])]
         return [[body] for _, body in rows]
     if "SELECT id, body FROM tr_entities WHERE kind=@kind" in sql:
-        rows = [(eid, r.body) for (k, eid), r in db.rows.items() if k == kind]
+        if txn is not None and kind == "regional_quota_lease_open":
+            # Include the empty range: concurrent INSERTs must abort a mint.
+            txn.read_versions[("entity_kind", kind)] = db.entity_kind_versions.get(kind, 0)
+        rows = [(eid, r.body) for (k, eid), r in list(db.rows.items()) if k == kind]
         if "id IN UNNEST(@ids)" in sql:
             rows = [(eid, body) for eid, body in rows if eid in params["ids"]]
+            if txn is not None:
+                for entity_id in params["ids"]:
+                    row = db.rows.get((kind, entity_id))
+                    txn.read_versions[(kind, entity_id)] = row.version if row else 0
         rows.sort(key=lambda item: item[0])
         return [[entity_id, body] for entity_id, body in rows]
     if "WHERE kind=@kind" in sql:

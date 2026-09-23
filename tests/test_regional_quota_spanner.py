@@ -387,6 +387,9 @@ def test_store_regional_authorize_settle_replay_and_reconcile_end_to_end() -> No
     )
     assert reconciled == {
         "inspected": 1,
+        "backlog": 1,
+        "processed": 1,
+        "remaining": 0,
         "reconciled": 1,
         "closed": 1,
         "errors": 0,
@@ -519,6 +522,9 @@ def test_regional_settle_falls_back_when_stale_cas_erased_authorized_hold() -> N
     )
     assert reconciled == {
         "inspected": 1,
+        "backlog": 1,
+        "processed": 1,
+        "remaining": 0,
         "reconciled": 1,
         "closed": 1,
         "errors": 0,
@@ -817,6 +823,9 @@ def test_reconciler_closes_expired_quarantine_when_local_initialization_is_absen
 
     assert result == {
         "inspected": 1,
+        "backlog": 1,
+        "processed": 1,
+        "remaining": 0,
         "reconciled": 1,
         "closed": 1,
         "errors": 0,
@@ -853,6 +862,9 @@ def test_reconciler_defers_live_pending_lease_before_local_initialization() -> N
 
     assert result == {
         "inspected": 1,
+        "backlog": 1,
+        "processed": 1,
+        "remaining": 0,
         "reconciled": 0,
         "closed": 0,
         "errors": 0,
@@ -921,6 +933,9 @@ def test_reconciler_cleans_stale_open_index_for_already_closed_lease() -> None:
 
     assert result == {
         "inspected": 1,
+        "backlog": 1,
+        "processed": 1,
+        "remaining": 0,
         "reconciled": 0,
         "closed": 1,
         "errors": 0,

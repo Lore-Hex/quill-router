@@ -38,9 +38,22 @@ log = logging.getLogger(__name__)
 
 _LEASE_KIND = "regional_quota_lease"
 _OPEN_LEASE_KIND = "regional_quota_lease_open"
+_WORKSPACE_OPEN_LEASE_KIND = "regional_quota_lease_workspace_open"
 _FENCE_KIND = "regional_quota_fence"
 _RECONCILER_LOCK_KIND = "regional_quota_reconciler_lock"
 _RECONCILER_LOCK_ID = "singleton"
+_HOLD_CANCELLATION_KIND = "regional_quota_hold_cancellation"
+
+
+@dataclass(frozen=True)
+class RegionalHoldCancellation:
+    # Retained indefinitely: even a suspended writer must never resurrect an id.
+    authorization_id: str
+    workspace_id: str
+    lease_id: str
+    region: str
+    fencing_token: int
+    cancelled_at: str
 
 
 @dataclass
@@ -61,6 +74,7 @@ class GlobalRegionalQuotaLease:
     last_error: str | None = None
     issuance_tier: int | None = None
     tier_cap_micro: int | None = None
+    issuance_pool_micro: int | None = None
     # Missing fields on leases granted before R1 retain inline key accounting.
     accounting_version: int = 1
     # Bounded by this lease's holds; committed atomically with window counters.
@@ -300,6 +314,7 @@ def grant_regional_quota_lease(
         from trusted_router.trust_eligibility import lease_eligibility, tier_cap
         tier = None
         cap = None
+        pool = None
         tx_grant = grant
         if armed:
             tier, reason = lease_eligibility(store, settings, workspace_id, reader=transaction, global_verdict=global_verdict)
@@ -308,7 +323,11 @@ def grant_regional_quota_lease(
                 return None
             cap = tier_cap(settings, tier or 0)
             pool = min(settings.regional_quota_lease_max_microdollars, cap)
-            tx_grant = min(grant, max(0, pool - _active_regional_escrow(transaction, store._param_types, workspace_id)))
+            owned = _owned_regional_leases(transaction, store._param_types, workspace_id)
+            # Never expand exposure past an outstanding lease's certified
+            # bound, even when revisions have different pool configuration.
+            pool = min(pool, *(lease.issuance_pool_micro or pool for lease in owned)) if owned else pool
+            tx_grant = min(grant, max(0, pool - _regional_escrow_total(owned)))
             if tx_grant < minimum_grant_microdollars:
                 unavailable("pool_cap")
                 return None
@@ -338,6 +357,7 @@ def grant_regional_quota_lease(
             accounting_version=2,
             issuance_tier=tier,
             tier_cap_micro=cap,
+            issuance_pool_micro=pool,
             credit_shard=selected_shard,
             expires_at=_iso(expires_at),
             quota_shard=quota_shard,
@@ -375,6 +395,10 @@ def grant_regional_quota_lease(
             open_lease.entity_id,
             json_body(open_lease),
             now,
+        )
+        insert_entity_dml_at(
+            transaction, store._param_types, _WORKSPACE_OPEN_LEASE_KIND,
+            entity_id, json_body(open_lease), now,
         )
         return lease
 
@@ -524,6 +548,9 @@ def reconcile_regional_quota_lease(
                 _OPEN_LEASE_KIND,
                 _open_lease_entity_id(current),
             )
+            delete_entity_dml(
+                transaction, store._param_types, _WORKSPACE_OPEN_LEASE_KIND, current.entity_id,
+            )
             return RegionalReconcileResult(
                 lease_id=current.lease_id,
                 spent_delta_microdollars=0,
@@ -669,6 +696,9 @@ def reconcile_regional_quota_lease(
                 _OPEN_LEASE_KIND,
                 _open_lease_entity_id(current),
             )
+            delete_entity_dml(
+                transaction, store._param_types, _WORKSPACE_OPEN_LEASE_KIND, current.entity_id,
+            )
         updated = dataclasses.replace(
             current,
             state=next_state,
@@ -757,6 +787,9 @@ def delete_closed_regional_quota_open_index(
             _OPEN_LEASE_KIND,
             open_lease.entity_id,
         )
+        delete_entity_dml(
+            transaction, store._param_types, _WORKSPACE_OPEN_LEASE_KIND, current.entity_id,
+        )
         return True
 
     return bool(store._run_in_transaction(txn))
@@ -793,6 +826,10 @@ def record_regional_gateway_authorization(
     global_verdict = global_trust_verdict(store, settings) if armed else None
 
     def txn(transaction: Any) -> dict[str, Any]:
+        if store._read_entity_tx(
+            transaction, _HOLD_CANCELLATION_KIND, authorization.id, RegionalHoldCancellation,
+        ) is not None:
+            return {"outcome": "cancelled"}
         if idempotency_scope is not None:
             existing = read_reservation_by_idempotency(
                 transaction,
@@ -830,8 +867,10 @@ def record_regional_gateway_authorization(
                     or current.issuance_tier != tier or current.tier_cap_micro != cap
                     or current.fencing_token != authorization.regional_fencing_token
                     or current.expires_datetime <= utcnow()
-                    or _active_regional_escrow(transaction, store._param_types, authorization.workspace_id)
-                       > min(settings.regional_quota_lease_max_microdollars, cap)):
+                    or current.issuance_pool_micro is None
+                    or current.issuance_pool_micro > min(settings.regional_quota_lease_max_microdollars, cap)
+                    or current.granted_microdollars - current.reconciled_spent_microdollars
+                       > current.issuance_pool_micro):
                     reason = "unpaid_workspace"
         if reason:
             if current is not None and current.state != "closed":
@@ -1069,17 +1108,193 @@ def _parse_iso(value: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
-def _active_regional_escrow(transaction: Any, param_types: Any, workspace_id: str) -> int:
-    """Range read serializes all quota shards and regions against concurrent mint."""
-    rows = transaction.execute_sql(
-        "SELECT id, body FROM tr_entities WHERE kind='regional_quota_lease' "
+def _owned_regional_leases(
+    transaction: Any, param_types: Any, workspace_id: str,
+) -> list[GlobalRegionalQuotaLease]:
+    """Workspace-only ranges, including the empty range, serialize grants.
+
+    Fences predate this index and point to every owned lease, including legacy
+    grants. Always dual-read them during rolling upgrades: an old writer can
+    create a lease after a backfill. There is one fence per regional quota slot,
+    not per historical lease. Both ranges use the (kind, id) primary key.
+    """
+    params = {"prefix": f"{workspace_id}#"}
+    types = {"kind": param_types.STRING, "prefix": param_types.STRING}
+    indexes = transaction.execute_sql(
+        "SELECT id, body FROM tr_entities WHERE kind=@kind "
         "AND STARTS_WITH(id, @prefix) ORDER BY id",
-        params={"prefix": f"{workspace_id}#"}, param_types={"prefix": param_types.STRING},
+        params={**params, "kind": _WORKSPACE_OPEN_LEASE_KIND}, param_types=types,
     )
-    leases = [GlobalRegionalQuotaLease(**json.loads(str(row[1]))) for row in rows]
-    # Quarantined/expired grants still own escrow until the reconciler closes them.
+    lease_ids = set()
+    for index_id, body in indexes:
+        index = OpenRegionalQuotaLease(**json.loads(str(body)))
+        if index.workspace_id != workspace_id or index.lease_entity_id != index_id:
+            raise RuntimeError("regional escrow index binding mismatch")
+        lease_ids.add(index.lease_entity_id)
+    fences = transaction.execute_sql(
+        "SELECT id, body FROM tr_entities WHERE kind=@kind "
+        "AND STARTS_WITH(id, @prefix) ORDER BY id",
+        params={**params, "kind": _FENCE_KIND}, param_types=types,
+    )
+    for fence_id, body in fences:
+        fence = RegionalQuotaFence(**json.loads(str(body)))
+        if (fence.workspace_id != workspace_id
+            or fence_id != _fence_entity_id(workspace_id, fence.region, fence.quota_shard)):
+            raise RuntimeError("regional escrow fence binding mismatch")
+        if fence.active_lease_id is not None:
+            lease_ids.add(_lease_entity_id(workspace_id, fence.region, fence.active_lease_id))
+    if not lease_ids:
+        return []
+    rows = transaction.execute_sql(
+        "SELECT id, body FROM tr_entities WHERE kind=@kind AND id IN UNNEST(@ids)",
+        params={"kind": _LEASE_KIND, "ids": sorted(lease_ids)},
+        param_types={"kind": param_types.STRING, "ids": param_types.Array(param_types.STRING)},
+    )
+    owned = []
+    found = set()
+    for lease_id, body in rows:
+        lease = GlobalRegionalQuotaLease(**json.loads(str(body)))
+        if lease.workspace_id != workspace_id or lease.entity_id != lease_id:
+            raise RuntimeError("regional escrow index binding mismatch")
+        found.add(lease_id)
+        if lease.state != "closed":
+            owned.append(lease)
+        else:
+            # An older closer knows only the expiry index. Prune its leftover
+            # workspace pointer in this transaction so mixed-version closes
+            # cannot turn this open index into another lease-history scan.
+            delete_entity_dml(transaction, param_types, _WORKSPACE_OPEN_LEASE_KIND, lease_id)
+    if found != lease_ids:
+        raise RuntimeError("indexed regional escrow is missing")
+    return owned
+
+
+def _regional_escrow_total(leases: list[GlobalRegionalQuotaLease]) -> int:
     return sum(max(0, lease.granted_microdollars - lease.reconciled_spent_microdollars)
-               for lease in leases if lease.workspace_id == workspace_id and lease.state != "closed")
+               for lease in leases)
+
+
+def _active_regional_escrow(transaction: Any, param_types: Any, workspace_id: str) -> int:
+    return _regional_escrow_total(_owned_regional_leases(transaction, param_types, workspace_id))
+
+
+@dataclass
+class RegionalReconcileCursor:
+    # Round-robin across workspaces, then regions, then leases. Persisted even
+    # for pending/error leases so a poison row cannot monopolize the worker.
+    workspace: str = ""
+    regions: dict[str, str] = field(default_factory=dict)
+    leases: dict[str, str] = field(default_factory=dict)
+    holds: dict[str, str] = field(default_factory=dict)
+
+    def page(self, leases: list[OpenRegionalQuotaLease]) -> list[OpenRegionalQuotaLease]:
+        groups: dict[str, dict[str, list[OpenRegionalQuotaLease]]] = {}
+        for lease in leases:
+            groups.setdefault(lease.workspace_id, {}).setdefault(lease.region, []).append(lease)
+        for workspace, regions in groups.items():
+            for region, entries in regions.items():
+                after = self.leases.get(f"{workspace}#{region}", "")
+                entries.sort(key=lambda entry: (entry.entity_id <= after, entry.entity_id))
+        ordered = []
+        workspaces = sorted(groups, key=lambda ws: (ws <= self.workspace, ws))
+        # Use a copy: only actually attempted entries advance the durable cursor.
+        region_cursors = dict(self.regions)
+        while groups:
+            for workspace in workspaces:
+                regions = groups.get(workspace, {})
+                if not regions:
+                    continue
+                after = region_cursors.get(workspace, "")
+                region = min(regions, key=lambda candidate: (candidate <= after, candidate))
+                ordered.append(regions[region].pop(0))
+                region_cursors[workspace] = region
+                if not regions[region]:
+                    del regions[region]
+                if not regions:
+                    del groups[workspace]
+        return ordered
+
+    def advance(self, lease: OpenRegionalQuotaLease) -> None:
+        self.workspace = lease.workspace_id
+        self.regions[lease.workspace_id] = lease.region
+        self.leases[f"{lease.workspace_id}#{lease.region}"] = lease.entity_id
+
+
+def terminal_regional_hold_amount(
+    store: Any, lease: GlobalRegionalQuotaLease, hold_id: str,
+    *, hold_expires_at: datetime | None = None, now: datetime | None = None,
+) -> int | None:
+    """Recover a typed terminal outcome or durably cancel an expired orphan.
+
+    A live reservation can still receive an outbox intent AFTER this read, so
+    even a currently empty outbox must leave its local hold untouched. The
+    settlement path owns pending/dead intents and all live reservations.
+    Absence becomes refund authority only after cancellation commits. The
+    writer reads the same tombstone key, serializing record versus cancellation.
+    """
+    from trusted_router.storage_gcp_counter_dml import read_reservation
+    from trusted_router.storage_gcp_request_records import read_gateway_authorization
+    from trusted_router.storage_gcp_settle_outbox import GUARD_COUNT_SQL
+
+    now = utcnow() if now is None else now
+
+    def txn(transaction: Any) -> int | None:
+        cancelled = store._read_entity_tx(
+            transaction, _HOLD_CANCELLATION_KIND, hold_id, RegionalHoldCancellation,
+        )
+        if cancelled is not None:
+            if (cancelled.authorization_id != hold_id
+                or cancelled.workspace_id != lease.workspace_id
+                or cancelled.lease_id != lease.lease_id or cancelled.region != lease.region
+                or cancelled.fencing_token != lease.fencing_token):
+                raise RuntimeError("regional hold cancellation binding mismatch")
+            return 0
+        auth = read_gateway_authorization(transaction, store._param_types, hold_id)
+        if auth is None:
+            if hold_expires_at is None or hold_expires_at > now:
+                return None
+            # Reservations have random ids, including pre-upgrade writers.
+            # Use the authorization index, never a fleet-wide reservation scan.
+            reservations = list(transaction.execute_sql(
+                "SELECT reservation_id FROM "
+                "tr_reservation@{FORCE_INDEX=tr_reservation_by_authorization} "
+                "WHERE authorization_id=@aid LIMIT 1",
+                params={"aid": hold_id}, param_types={"aid": store._param_types.STRING},
+            ))
+            guarded = list(transaction.execute_sql(
+                GUARD_COUNT_SQL, params={"aid": hold_id},
+                param_types={"aid": store._param_types.STRING},
+            ))
+            if reservations or (guarded and int(guarded[0][0])):
+                return None
+            _insert_entity_dml(
+                transaction, store._param_types, _HOLD_CANCELLATION_KIND, hold_id,
+                RegionalHoldCancellation(
+                    hold_id, lease.workspace_id, lease.lease_id, lease.region,
+                    lease.fencing_token, _iso(now),
+                ),
+            )
+            return 0
+        if not auth.settled or not auth.credit_reservation_id:
+            return None
+        if (auth.settlement != "regional_lease" or auth.regional_lease_id != lease.lease_id
+            or auth.workspace_id != lease.workspace_id or auth.region != lease.region
+            or auth.regional_fencing_token != lease.fencing_token):
+            raise RuntimeError("regional hold authorization binding mismatch")
+        reservation = read_reservation(transaction, store._param_types, auth.credit_reservation_id)
+        if (reservation is None or not reservation["settled"]
+            or reservation["authorization_id"] != hold_id):
+            return None
+        guarded = list(transaction.execute_sql(
+            GUARD_COUNT_SQL, params={"aid": hold_id},
+            param_types={"aid": store._param_types.STRING},
+        ))
+        if guarded and int(guarded[0][0]):
+            return None
+        actual = reservation["actual_micro"]
+        return None if actual is None else int(actual)
+
+    return store._run_in_transaction(txn)
 
 
 def _regional_json_body(value: Any) -> str:
@@ -1087,6 +1302,7 @@ def _regional_json_body(value: Any) -> str:
         body = dataclasses.asdict(value)
         body.pop("issuance_tier")
         body.pop("tier_cap_micro")
+        body.pop("issuance_pool_micro")
         return json_body(body)
     return json_body(value)
 
