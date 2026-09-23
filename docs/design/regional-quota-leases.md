@@ -288,10 +288,10 @@ so a trailing slow lease cannot repeatedly receive only the leftover seconds.
 
 Expiry alone never authorizes refunding a local hold. Live typed reservations,
 including those with no outbox row yet, retain escrow so a settle intent arriving
-after the scan can still charge. The settlement worker owns pending/dead
-intents. Regional reconciliation repairs a local hold only from matching,
-terminal typed authorization and reservation records with no guarded outbox
-work: positive actuals settle the hold; a terminal zero outcome permits refund.
+after the scan can still charge. Regional reconciliation repairs a local hold
+only from matching, terminal typed authorization and reservation records.
+Positive actuals require no guarded outbox work; a terminal zero outcome permits
+refund even with pending/dead intents for that authorization.
 An expired hold with neither typed record can instead be cancelled: one Spanner
 transaction reads the authorization PK, checks reservation absence through
 `tr_reservation_by_authorization`, checks the outbox guard count, and inserts
@@ -384,8 +384,8 @@ these conditions, rather than inferring completion from elapsed time alone.
 With issuance off, the index cannot refill. Resume issuance only after every
 serving revision and the reconciler job run this code. Every regionally served
 request after resume is v2; reconciliation books both workspace and key usage
-once even if the reaper wins while a request settles its regional hold and loses
-Spanner finalization. V2 authorizations must never reach settlement workers or
+once. Settlement resolves the Spanner reservation claim before changing the local
+hold; a reaper-winning free release stays zero and refunds unused local escrow. V2 authorizations must never reach settlement workers or
 serving revisions that predate version support. Reverting to such a revision
 after v2 issuance is unsafe.
 
@@ -463,3 +463,141 @@ active and queued events. Abrupt process death and a disabled downstream sink ar
 not proven delivered by these dispatcher counters; use downstream outbox/sink
 health alongside them when interpreting coverage. Observation is evidence with
 bounded, reported queue loss, not an exact census.
+
+
+## Exact receipts and exceptional overruns (R3)
+
+Receipt requests pass the regional eligibility predicate. The retired
+`receipt_fee` telemetry bit stays at its original position and is always zero.
+The gateway reserves the receipt-adjusted estimate and persists the receipt rate
+on the authorization. Settlement uses the shared receipt pricing function:
+`ceil(model_charge * 11200 / 10550)`, since catalog prices already include 5.5%.
+The premium is workspace spend; it creates no beneficiary payout. App markup,
+key caps, custom/user/partner models, additional costs, and native batch remain
+excluded. No issuance, cohort, or region setting changes are part of R3.
+
+The regional settle intent freezes `regional_local_microdollars` as the smaller
+of the total charge and original estimate, and `regional_global_microdollars` as
+the remainder. Regional intents preserve their first payload across retry
+enqueues: local CAS may already have committed before a Spanner failure. Duplicate
+HTTP deliveries defer to that intent's drain. Older intents derive the same split
+from their frozen total and immutable authorization estimate; malformed explicit
+splits fail before either ledger is changed.
+
+Bigtable settles only the local component. The typed reservation claim commits
+the full terminal total and books only the excess to workspace usage. V2 books
+only excess key usage inline; reconciliation imports local workspace and key
+usage once. V1 books the entire key charge inline and reconciles workspace only.
+Missing-hold recovery drains the lease and books the entire charge under the typed
+claim, as before. No request is reauthorized to fund an overrun. Terminal hold
+recovery likewise restores only the local component to Bigtable.
+
+The local CAS runs only after the reservation claim succeeds in the finalize
+transaction. A reaper that won before enqueue therefore leaves **zero** usage,
+matching GLOBAL, including late overrun intents and their drain/replay paths.
+Reconciliation also refunds the bound terminal-zero hold when the process dies
+before inline compensation or that compensation fails. Pending/dead late intents
+cannot block this recovery: `settle_outbox_apply._apply_typed` skips finalization
+of terminal regional reservations and classifies a positive late intent as
+`ALREADY_RELEASED_FREE`; `typed_finalize_atomic` claims before local CAS; and
+`RegionalQuotaLease.settle` rejects `REFUNDED` holds. Draining the intent to dead
+therefore cannot revive a charge or strand the grant's unused escrow.
+If the finalize transaction fails after the local CAS, the frozen durable intent
+continues to block the reaper until replay finishes the global component.
+
+The first successful local CAS's persisted `settled_at` is authoritative for
+both components. Replays retain it. Inline excess (and the V1 full key charge)
+uses `release_key.window_amounts` against current window floors, exactly like
+R1's local reconciliation. A Sunday settlement replayed Monday contributes to
+neither Monday's daily nor weekly window; lifetime and applicable monthly usage
+still include the full charge. This matches a GLOBAL booking at that settlement
+time, observed after the boundary. Missing-hold recovery has no local booking
+and retains GLOBAL's inline timestamp for the whole charge.
+Inline timestamped bookings use R1's stored day/week/month floor guard on both
+the original key shard and shard-zero fallback. If another writer has advanced
+any floor, the whole transaction rolls back and retries with fresh clock floors
+while retaining the first local CAS's settlement timestamp.
+
+Apply migration **019** (replicated) or **020** (single node) before the updated
+telemetry writer/ingester. Settlement emits a best-effort R1 `spend_lease_shadow`
+event after the successful claim, with stable ID `regional-settle:<authorization>`;
+drained settlements emit the same event. `regional_outcome` is `settled` or
+`refunded`, distinguishing these from admission observations. The nullable fields
+`regional_actual_microdollars`, `regional_local_microdollars`,
+`regional_global_microdollars`, and `regional_overrun_microdollars` report the
+charge and split. Missing-hold recovery reports its full global booking but only
+the estimate excess as overrun. Filter settlement outcomes for the denominator,
+then use `countIf(regional_overrun_microdollars > 0)` and
+`sum(regional_overrun_microdollars)` by workspace, region, and bounded time window.
+As with R1 coverage, telemetry delivery is best effort and cannot block money.
+
+### R2b: traffic allocation, global liquidity, and handoff
+
+Issuance now sizes against a **workspace-wide** budget, across every region and
+quota shard. With trust armed, its absolute ceiling remains the minimum of the
+configured pool, the tier cap, and every outstanding generation's certified
+pool. The existing available-balance fraction still caps each individual grant;
+it does not shrink the workspace pool again. Neither a new region nor a
+successor creates another pool.
+
+At grant boundaries, the serializable transaction reads the bounded workspace
+ownership index and the workspace's credit balances. Let `A` be current global
+available balance (credits minus usage and all reservations), `E` unreconciled
+regional escrow, and `f` the global floor in basis points. A grant `g` must obey:
+
+```
+E + g <= min(certified trust pool, floor((A + E) * (10000 - f) / 10000))
+```
+
+`TR_REGIONAL_QUOTA_GLOBAL_FLOOR_BASIS_POINTS` defaults to 5000 and accepts 1–10000.
+Global reservations and debt on other credit shards reduce the denominator.
+Every grant, including a replacement, checks this floor in its reserve
+transaction; retries cannot use the earlier balance snapshot to bypass it.
+This guarantees the retained share at each grant boundary. Subsequent global
+spending may use that liquidity; it is not another reservation of global funds.
+No deployment flag, cohort, region mapping, TTL, or shard count changes in R2b.
+
+The router lazily starts a grant at up to four request estimates. The budget is
+divided by the number of distinct `(region, quota shard)` slots with an unexpired
+owned generation, including the requesting slot, and halved to leave overlap
+capacity. Retired generations consume escrow but do not duplicate a slot. The
+retiring shard's observed spent-plus-reserved amount seeds its next grant at
+twice that demand, subject to the same share and pool bounds. Expired idle slots
+stop diluting the share; their unreleased escrow still counts against the pool.
+
+An unfunded or unusable hash-selected slot tries funded siblings in the same
+region before global fallback. Search visits at most 64 slots, refreshes a stale
+cached generation at most once per slot, and attempts at most four funded
+siblings. The healthy cached path does not scan siblings. This adds no shared
+counter write to successful local admission.
+
+Before new admission, remaining quota below the larger of two request estimates
+and 10% of the grant, or expiry within `min(5 seconds, TTL / 10)`, triggers
+handoff. The writer first CAS-drains the regional row. A Spanner transaction
+then persists a `regional_quota_lease_retired` pointer, retains both open indexes,
+marks that separate canonical generation `retiring`, and clears only its own
+fence. Only then can a successor reserve escrow and acquire the next fence
+number. Settlement continues using the original lease ID and token; a hold
+reserved before draining may finish its typed authorization record afterward.
+
+Crashes after drain or retirement are retryable. A pending successor whose
+issuer died before initialization/activation is resumed idempotently using its
+already reserved escrow. Cached closed generations refresh to the current
+fence. Reconciliation imports retired generations normally and closes them only
+when no holds remain. Closing a retired generation requires its retirement
+pointer and never clears a successor's fence. Retirement does not release
+escrow, and insufficient overlap capacity falls back to the global path. No
+finite pool can guarantee local admission when outstanding holds fill it.
+
+Rollout requires the R2b reconciler to close retired generations. Older workers
+fail closed on a detached fence; keep the compatible worker running until all
+retired generations drain. The existing dual-read ownership index continues to
+include legacy fenced leases during mixed-version issuance.
+
+Regional shadow events add nullable `regional_selected_shard` and
+`regional_sibling_served` fields through both ClickHouse adapters and forward-only
+migrations 019/020. `pool_floor` identifies liquidity refusal; `pool_cap` also
+covers a traffic share too small for the request. `sibling_exhausted` is the final
+fallback classification when no more specific grant/lease reason is available.
+The selected shard is the serving shard on success, or the requested hash shard
+on failure. Existing charge calculation and settlement amounts are unchanged.

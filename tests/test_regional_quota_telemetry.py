@@ -45,14 +45,14 @@ CLAUSES = [
     ("key_monthly", "key_monthly", 0), ("custom_model", "custom_model", object()),
     ("user_model", "user_model", object()), ("partner_mode", "partner_mode", object()),
     ("additional_cost", "additional_cost", 1), ("native_batch", "native_batch", True),
-    ("app_markup", "app_markup", 1), ("receipt_fee", "receipt_fee", 1),
+    ("app_markup", "app_markup", 1),
 ]
 
 
 @pytest.mark.parametrize("index,clause", list(enumerate(CLAUSES)))
 def test_every_predicate_reason_bit_and_order(index: int, clause: tuple[str, str, Any]) -> None:
     reason, field, value = clause
-    assert REGIONAL_PREDICATE_REASONS == tuple(c[0] for c in CLAUSES)
+    assert REGIONAL_PREDICATE_REASONS == (*tuple(c[0] for c in CLAUSES), "receipt_fee")
     assert regional_predicate_reason(**PASSING) == (None, 0)
     assert regional_predicate_reason(**{**PASSING, field: value}) == (reason, 1 << index)
     # Each suffix has this first failure and every subsequent bit set.
@@ -147,6 +147,12 @@ def test_gateway_keeps_regional_outcome_before_global_fallback(
     assert event["regional_unavailable_reason"] == (
         "occupied_fence" if regional_outcome == "unavailable" else None
     )
+    if regional_outcome == "served":
+        assert isinstance(event["regional_selected_shard"], int)
+        assert event["regional_sibling_served"] is False
+    else:
+        assert event["regional_selected_shard"] is None
+        assert event["regional_sibling_served"] is None
     # Actual event -> outbox payload -> BOTH ClickHouse canonicalizers.
     from tests.test_operational_analytics_direct import _load_drainer
     outbox = [row for row in db.operational_analytics_outbox if row["event_kind"] == "spend_lease_shadow"]
@@ -160,6 +166,11 @@ def test_gateway_keeps_regional_outcome_before_global_fallback(
               "regional_outcome", "regional_unavailable_reason", "regional_requested_region",
               "regional_resolved_region")
     root = Path(__file__).resolve().parents[1]
+    for field in ("regional_selected_shard", "regional_sibling_served"):
+        assert field in SPEND_LEASE_SHADOW_COLUMNS
+        assert canonical[field] == event[field]
+        for migration in ("021_regional_allocation_replicated.sql", "022_regional_allocation_single_node.sql"):
+            assert f"ADD COLUMN IF NOT EXISTS {field} Nullable(" in (root / "clickhouse" / migration).read_text()
     assert "ALTER TABLE spend_lease_shadow\n" in (
         root / "clickhouse/018_regional_coverage_single_node.sql"
     ).read_text()
@@ -247,14 +258,20 @@ def test_unavailable_subreasons_from_real_storage_decisions(
             store._write_entity("regional_quota_lease", expired.entity_id, expired)
             for cache_key in store._regional_quota_lease_cache:
                 store._regional_quota_lease_cache[cache_key] = expired
+    args["idempotency_key"] = "unavailable-new-request"
     evidence: dict[str, Any] = {}
     outcome, auth = store.authorize_gateway_regional(
         authorization_id="unavailable", **args, lease_ttl_seconds=60,
         lease_max_microdollars=10_000_000, lease_max_available_basis_points=1000,
         lease_shard_count=16, observation=evidence,
     )
-    assert (outcome, auth) == ("unavailable", None)
-    assert evidence["regional_unavailable_reason"] == reason
+    if reason in {"exhausted_lease", "expired_lease"}:
+        assert outcome == "accepted" and auth is not None
+        assert auth.regional_lease_id != global_lease.lease_id
+        assert "regional_unavailable_reason" not in evidence
+    else:
+        assert (outcome, auth) == ("unavailable", None)
+        assert evidence["regional_unavailable_reason"] == reason
 
 
 def test_grant_pool_cap_observation_reuses_existing_trust_checks() -> None:
@@ -274,3 +291,7 @@ def test_grant_pool_cap_observation_reuses_existing_trust_checks() -> None:
     assert grant_regional_quota_lease(store, quota_shard=1, **common) is not None
     assert grant_regional_quota_lease(store, quota_shard=2, **common) is None
     assert evidence == {"regional_unavailable_reason": "pool_cap"}
+
+
+def test_receipts_are_regionally_eligible() -> None:
+    assert regional_predicate_reason(**{**PASSING, "receipt_fee": 1200}) == (None, 0)

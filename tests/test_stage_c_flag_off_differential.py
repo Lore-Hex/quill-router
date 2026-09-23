@@ -305,7 +305,9 @@ def test_flag_off_regional_pause_preserves_grant_and_authorization(
     leases = [json.loads(record.body) for (kind, _), record in db.rows.items() if kind == "regional_quota_lease"]
     assert len(leases) == 1
     assert leases[0]["state"] == "active"
-    assert leases[0]["granted_microdollars"] == 10_000_000 // 16
+    # Adaptive issuance starts at four estimates even with trust disarmed;
+    # the flag-off contract still skips all trust/pause reads.
+    assert leases[0]["granted_microdollars"] == 4 * authorization.estimated_microdollars
     assert "issuance_tier" not in leases[0] and "tier_cap_micro" not in leases[0]
     local = store._regional_quota_ledger.get(leases[0]["lease_id"], region="us-central1")
     assert local is not None and local.reserved_microdollars == 10000
