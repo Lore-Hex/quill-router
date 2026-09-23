@@ -13,6 +13,8 @@ from pathlib import Path
 from string import Template
 from urllib.parse import urlencode
 
+from evidence import render_evidence, sector_art
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 
@@ -61,6 +63,7 @@ def market_links(markets: list[dict], current: dict) -> str:
 
 
 def render(market: dict, markets: list[dict], version: str) -> str:
+    catalogue, health = render_evidence()
     values = {
         key: html.escape(value, quote=True)
         for key, value in market.items()
@@ -69,6 +72,8 @@ def render(market: dict, markets: list[dict], version: str) -> str:
     values.update(
         {
             "version": version,
+            "catalogue": catalogue,
+            "regional_health": health if market["slug"] == "new-york" else "",
             "buyer_url": html.escape(
                 tracked_url("https://calendly.com/joseph-perla/15min", market, "buyer"), quote=True
             ),
@@ -83,8 +88,8 @@ def render(market: dict, markets: list[dict], version: str) -> str:
                 quote=True,
             ),
             "sectors": "".join(
-                f"<article><h3>{html.escape(title)}</h3><p>{html.escape(body)}</p></article>"
-                for title, body in market["sectors"]
+                f"<article>{sector_art(index)}<h3>{html.escape(title)}</h3><p>{html.escape(body)}</p></article>"
+                for index, (title, body) in enumerate(market["sectors"])
             ),
             "markets": market_links(markets, market),
             "schema": json.dumps(

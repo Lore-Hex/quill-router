@@ -40,34 +40,34 @@
   window.matchMedia('(max-width: 600px)').addEventListener('change', () => setOpen(false));
 })();
 
-/* Keep the initial mobile composition when browser chrome expands/collapses.
-   Recalculate on width changes (including rotation), never on scroll/height alone. */
+/* Fill the first screen, but do not shift the document when mobile chrome
+   changes height while the reader is farther down the page. */
 (() => {
-  const hero = document.querySelector('.hero');
-  const copy = hero?.querySelector('.hero-copy');
-  const actions = hero?.querySelector('.actions');
-  if (!hero || !copy || !actions) return;
+  const header = document.querySelector('.masthead');
+  const directory = document.querySelector('.market-directory');
+  if (!header || !directory) return;
   let previousWidth;
-  const sizeHero = () => {
+  const measure = () => {
     const width = document.documentElement.clientWidth;
-    if (width === previousWidth) return;
+    if (previousWidth !== width || width > 900 || window.scrollY <= 1) {
+      document.documentElement.style.setProperty('--hero-viewport', `${window.innerHeight}px`);
+    }
     previousWidth = width;
-    hero.style.removeProperty('--mobile-hero-top');
-    hero.style.removeProperty('--mobile-hero-gap');
-    hero.classList.remove('hero-layout-locked', 'hero-compact');
-    if (width > 600) return;
-    const top = getComputedStyle(copy).paddingTop;
-    const gap = getComputedStyle(actions).marginTop;
-    hero.style.setProperty('--mobile-hero-top', top);
-    hero.style.setProperty('--mobile-hero-gap', gap);
-    hero.classList.toggle('hero-compact', window.matchMedia('(max-height: 650px)').matches);
-    hero.classList.add('hero-layout-locked');
+    document.documentElement.style.setProperty('--header-height',
+      `${header.getBoundingClientRect().height + directory.getBoundingClientRect().height}px`);
   };
-  sizeHero();
-  window.addEventListener('resize', sizeHero);
+  measure();
+  if ('ResizeObserver' in window) {
+    const observer = new ResizeObserver(measure);
+    observer.observe(header);
+    observer.observe(directory);
+  }
+  window.addEventListener('resize', measure);
+  window.addEventListener('scroll', () => { if (window.scrollY <= 1) measure(); }, {passive:true});
+  document.fonts.ready.then(measure);
 })();
 
-/* Initialize buyer highlights on entry; the underlying diagram stays visible. */
+/* Evidence reveals once on entry; content remains visible without JavaScript. */
 (() => {
   if (!('IntersectionObserver' in window)) return;
   const observer = new IntersectionObserver((entries) => {
@@ -78,7 +78,7 @@
       }
     });
   }, {threshold: 0.35});
-  document.querySelectorAll('.route-flow').forEach(element => observer.observe(element));
+  document.querySelectorAll('.evidence-reveal').forEach(element => observer.observe(element));
 })();
 
 /* Decorative loops run only while visible; static artwork remains without JS. */
