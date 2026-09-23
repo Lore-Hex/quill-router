@@ -191,3 +191,114 @@ verify the reconciler closes that lease and imports the exact usage without
 counter drift. A successful HTTP response on the global fallback path does not
 pass this check. Customer expansion and additional regional ledgers remain
 separate gated steps.
+
+## Accounting version and coverage evidence (R1)
+
+New global leases persist `accounting_version=2`; authorizations copy it into
+`regional_accounting_version` in their existing durable payload. Missing versions
+mean **v1**, including leases already open and authorizations already in flight.
+Do not rewrite existing leases to v2. V1 settlement books keys inline and the
+reconciler imports workspace spend only. V2 healthy settlement writes neither
+workspace nor key counters; reconciliation imports both once under its existing
+watermarks. Missing-hold recovery still books workspace and key usage under the
+typed reservation claim, because there is no Bigtable hold to reconcile.
+
+Readers, settlement workers, and reconcilers must retain both contracts while
+these records exist. For the mixed-version rollout, the operator must pause
+issuance **before this change deploys**: the preceding deploy-script change pins
+`REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED=false` in `scripts/deploy/rollout.sh` for push
+deploys, and the deploy workflow's `regional_quota_lease_issuance=false` input
+forces the same. Immediately before this change merges, verify all three
+preconditions: **(1) issuance is pinned off on every serving revision; (2) the
+open-lease index (kind `regional_quota_lease_open`) is EMPTY; (3) there is NO
+unsettled typed reservation with `hold_usage_type=RegionalCredits` and NO pending
+or parked settle-outbox intent for a regional reservation.** Every v1 lease must
+have been closed by the old reconciler; waiting for the lease TTL is insufficient.
+In practice, (3) is satisfied once the reservation TTL (two hours) has elapsed
+since the pause and every pre-pause reservation has either settled or been reaped,
+with no pending or parked regional settle intents remaining. A reaped typed
+reservation cannot finalize, so its retry cannot book the key inline. Verify
+these conditions, rather than inferring completion from elapsed time alone.
+
+With issuance off, the index cannot refill. Resume issuance only after every
+serving revision and the reconciler job run this code. Every regionally served
+request after resume is v2; reconciliation books both workspace and key usage
+once even if the reaper wins while a request settles its regional hold and loses
+Spanner finalization. V2 authorizations must never reach settlement workers or
+serving revisions that predate version support. Reverting to such a revision
+after v2 issuance is unsafe.
+
+Residual v1 case: a request whose hold the old reconciler imported and whose
+typed finalization then succeeds under R1 would book its key twice (the
+pre-existing double-import). For example, the Bigtable hold settles for 7,500,
+Spanner finalization fails, and the old reconciler closes the lease and imports
+7,500 into both workspace and key counters while the typed reservation remains
+unclaimed. A successful finalization retry under R1 then books another 7,500 to
+the key inline. Precondition (3) rules this out at deploy time. This change does
+not repair historical v1 key overcount already committed by old settlement and
+reconciliation.
+
+V2 holds record timezone-aware UTC `settled_at` when they transition to SETTLED;
+replays retain that timestamp and reserved/refunded holds carry none. Lifetime
+key usage retains the per-key total watermarks and the invariant that the sum
+of lifetime key deltas equals the workspace spend delta. Each day/week/month
+counter receives only spend settled at or after its own current UTC floor.
+A settled hold missing `settled_at` retains import-time attribution for backward
+compatibility (no such v2 holds are expected in production).
+
+Window idempotency uses `reconciled_window_hold_ids` in the global lease record,
+bounded by that lease's holds. The reconciler commits each newly visible settled
+hold's ID and all three window increments in the same Spanner transaction,
+including IDs whose amounts are zero or whose windows have expired. A retry
+cannot add that hold again, even after a window boundary; an expired amount is
+never carried into a newer window. This is an ID set, not a timestamp cursor,
+so a hold becoming visible after a later-settled hold is still imported once.
+Active leases retain the complete set; closing a lease clears it because closed
+replays return before importing counters. Window floors come from a fresh clock
+sample inside each transaction attempt, independently of the batch expiry cutoff.
+The transaction checks the target key row's stored day/week/month floors; if any
+is newer, it rolls back and retries with refreshed attribution.
+The existing lifetime watermarks remain independent. No additional Spanner
+reads are added to authorization or settlement, and reconciliation uses its
+existing lease read for the ID set. Inline key settlement is unchanged.
+
+Coverage uses the existing `spend_lease_shadow` event/outbox. Apply ClickHouse
+migration **017** on the replicated cluster or **018** on a single node before
+running the new event writer/ingester. The additions are nullable so historical
+outbox rows still ingest. Each authorization attempt has a fresh `event_id`;
+`authorization_id` joins accepted/replayed attempts to request records. Retries
+therefore remain separate observations.
+
+Observation runs when regional capability, regional observation, spend issuance,
+or spend observation is enabled. The independent observation settings are
+`TR_REGIONAL_QUOTA_OBSERVATION_ENABLED` and `TR_SPEND_LEASE_OBSERVATION_ENABLED`;
+they do not enable issuance, initialize ledgers, or change eligibility. No deploy
+settings are changed by R1.
+
+`regional_predicate_reason` is the first failure; `regional_predicate_mask` has
+one bit for every failure, starting at bit zero in this append-only order:
+
+```
+stage_c disabled issuance_disabled cohort backend estimate route_type
+candidate_not_credits exact_global key_lifetime key_daily key_weekly key_monthly
+custom_model user_model partner_mode additional_cost native_batch app_markup receipt_fee
+```
+
+A null mask means the request exited before predicate evaluation. A zero mask
+means eligible. `regional_outcome` preserves the regional result before global
+fallback; only an accepted authorization carrying `settlement="regional_lease"`
+is `served`. `regional_unavailable_reason` distinguishes mapping, grant, fence,
+exhaustion, expiry, pool cap, timeout and other failures using existing reads.
+Requested and resolved regions are recorded separately.
+
+The dispatcher exposes cumulative `attempted`, `enqueued`, `dropped`, `delivered`,
+`failures`, and current `pending` through `stats()` and periodic
+`spend_lease_shadow_dispatch_counts` logs. Logs carry a unique `dispatcher_id` so
+process restarts do not combine incompatible counter sequences. `enqueued` counts
+admission into the bounded queue, not durable delivery; an older queued event
+can subsequently be dropped. At idle, attempted = delivered + dropped. At runtime,
+include pending in that equation. Shutdown delivery failures count the discarded
+active and queued events. Abrupt process death and a disabled downstream sink are
+not proven delivered by these dispatcher counters; use downstream outbox/sink
+health alongside them when interpreting coverage. Observation is evidence with
+bounded, reported queue loss, not an exact census.

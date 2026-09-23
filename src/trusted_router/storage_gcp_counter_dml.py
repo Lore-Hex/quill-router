@@ -452,13 +452,13 @@ def reserve_key(
 # (Spanner can't ADD COLUMN NOT NULL on an existing table).
 _WINDOW_BUMP_SQL = (
     ", day_usage = IF(day_start IS NULL OR day_start < @day_floor,"
-    " @wamt, COALESCE(day_usage, 0) + @wamt)"
+    " @day_wamt, COALESCE(day_usage, 0) + @day_wamt)"
     ", day_start = IF(day_start IS NULL OR day_start < @day_floor, @day_floor, day_start)"
     ", week_usage = IF(week_start IS NULL OR week_start < @week_floor,"
-    " @wamt, COALESCE(week_usage, 0) + @wamt)"
+    " @week_wamt, COALESCE(week_usage, 0) + @week_wamt)"
     ", week_start = IF(week_start IS NULL OR week_start < @week_floor, @week_floor, week_start)"
     ", month_usage = IF(month_start IS NULL OR month_start < @month_floor,"
-    " @wamt, COALESCE(month_usage, 0) + @wamt)"
+    " @month_wamt, COALESCE(month_usage, 0) + @month_wamt)"
     ", month_start = IF(month_start IS NULL OR month_start < @month_floor, @month_floor, month_start)"
 )
 
@@ -467,9 +467,9 @@ _WINDOW_BUMP_SQL = (
 # locks on values that did not change. The guarded UPDATE below falls back to
 # _WINDOW_BUMP_SQL whenever any boundary needs its lazy roll.
 _CURRENT_WINDOW_BUMP_SQL = (
-    ", day_usage = COALESCE(day_usage, 0) + @wamt"
-    ", week_usage = COALESCE(week_usage, 0) + @wamt"
-    ", month_usage = COALESCE(month_usage, 0) + @wamt"
+    ", day_usage = COALESCE(day_usage, 0) + @day_wamt"
+    ", week_usage = COALESCE(week_usage, 0) + @week_wamt"
+    ", month_usage = COALESCE(month_usage, 0) + @month_wamt"
 )
 _CURRENT_WINDOW_PREDICATE_SQL = (
     " AND day_start IS NOT NULL AND day_start >= @day_floor"
@@ -487,6 +487,7 @@ def release_key(
     *,
     book_to_byok: bool,
     window_floors: dict[str, Any],
+    window_amounts: dict[str, int] | None = None,
     shard: int = UNSHARDED,
 ) -> int:
     """Release the EXACT recorded key hold and book `actual` to usage/byok_usage,
@@ -498,6 +499,8 @@ def release_key(
     lazily rolls the window forward, which is harmless). `window_floors` is
     spend_windows.window_floors(now). The `reserved >= @hold` guard makes a
     stale/double release a 0-row no-op rather than driving reserved negative.
+    Regional imports may supply separate daily/weekly/monthly `window_amounts`;
+    omitted amounts preserve inline settlement semantics exactly.
     Returns the modified-row count (caller asserts == 1).
     """
     usage_col = "byok_usage" if book_to_byok else "usage"
@@ -524,10 +527,21 @@ def release_key(
         "week_floor": param_types.TIMESTAMP,
         "month_floor": param_types.TIMESTAMP,
     }
+    current_window_sql = _CURRENT_WINDOW_BUMP_SQL
+    rolled_window_sql = _WINDOW_BUMP_SQL
+    for window, period in (("day", "daily"), ("week", "weekly"), ("month", "monthly")):
+        expression = wamt
+        if window_amounts is not None:
+            name = f"{window}_amount"
+            params[name] = int(window_amounts[period])
+            bound_param_types[name] = param_types.INT64
+            expression = f"IF(include_byok, @{name}, 0)" if book_to_byok else f"@{name}"
+        current_window_sql = current_window_sql.replace(f"@{window}_wamt", expression)
+        rolled_window_sql = rolled_window_sql.replace(f"@{window}_wamt", expression)
     fast_sql = (
         "UPDATE tr_key_limit "  # noqa: S608
         f"SET reserved = reserved - @hold, {usage_col} = {usage_col} + @actual"
-        + _CURRENT_WINDOW_BUMP_SQL.replace("@wamt", wamt)
+        + current_window_sql
         + " WHERE key_hash=@kh AND shard=@shard AND reserved >= @hold"
         + _CURRENT_WINDOW_PREDICATE_SQL
     )
@@ -543,7 +557,7 @@ def release_key(
     sql = (
         "UPDATE tr_key_limit "  # noqa: S608
         f"SET reserved = reserved - @hold, {usage_col} = {usage_col} + @actual"
-        + _WINDOW_BUMP_SQL.replace("@wamt", wamt)
+        + rolled_window_sql
         + " WHERE key_hash=@kh AND shard=@shard AND reserved >= @hold"
     )
     return transaction.execute_update(

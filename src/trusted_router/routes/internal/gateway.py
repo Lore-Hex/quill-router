@@ -118,6 +118,7 @@ from trusted_router.receipt_keys import (
     verify_gcp_attestation_chain,
 )
 from trusted_router.regional_quota_ledger import RegionalLeaseLedgerError
+from trusted_router.regional_quota_telemetry import regional_predicate_reason
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.request_attribution import (
     InvalidAttribution,
@@ -792,6 +793,9 @@ def _authorize_gateway_sync(
         else None
     )
     context: dict[str, Any] = {
+        "event_id": str(uuid.uuid4()),
+        "regional_outcome": "not_attempted",
+        "regional_requested_region": body.region,
         "raw_body": raw_body,
         "workspace_id": "",
         "key_hash": str(body.api_key_hash or body.api_key_lookup_hash or ""),
@@ -803,18 +807,24 @@ def _authorize_gateway_sync(
         "echo": echo,
         "server_estimate_micro": None,
     }
+    observe = (
+        settings.regional_quota_observation_enabled
+        or settings.regional_quota_leases_enabled
+        or settings.spend_lease_observation_enabled
+        or settings.spend_lease_issuance_enabled
+    )
     try:
         response = _authorize_gateway_sync_impl(request, body, settings, context)
     except Exception as exc:
-        if settings.spend_lease_issuance_enabled:
+        if observe:
             status = int(getattr(exc, "status_code", 500))
             verdict = "declined_funds" if status in {402, 429} else "declined_other"
             _record_spend_lease_shadow(context, verdict=verdict)
         raise
-    if settings.spend_lease_issuance_enabled:
+    if observe:
         data = response.get("data")
         if isinstance(data, dict):
-            context["event_id"] = str(data.get("authorization_id") or uuid.uuid4())
+            context["authorization_id"] = data.get("authorization_id")
         _record_spend_lease_shadow(context, verdict="accepted")
     return response
 
@@ -848,6 +858,13 @@ def _record_spend_lease_shadow(
             echo=cast(SpendLeaseEchoValue | None, context.get("echo")),
             server_estimate_micro=cast(int | None, context.get("server_estimate_micro")),
             server_verdict=cast(Any, verdict),
+            authorization_id=context.get("authorization_id"),
+            regional_predicate_reason=context.get("regional_predicate_reason"),
+            regional_predicate_mask=context.get("regional_predicate_mask"),
+            regional_outcome=context.get("regional_outcome", "not_attempted"),
+            regional_unavailable_reason=context.get("regional_unavailable_reason"),
+            regional_requested_region=context.get("regional_requested_region"),
+            regional_resolved_region=context.get("regional_resolved_region"),
         )
         _SPEND_LEASE_SHADOW_DISPATCHER.submit(event.event_id, event.payload())
     except Exception:
@@ -1086,6 +1103,7 @@ def _authorize_gateway_sync_impl(
             ErrorType.BAD_REQUEST,
         )
     region = choose_region(settings, body.region or None)
+    spend_context["regional_resolved_region"] = region
     normalized_routing = normalize_routing_inputs(
         body_dict,
         settings,
@@ -1422,37 +1440,39 @@ def _authorize_gateway_sync_impl(
     # request release the winner's slot.
     authorization_id = _new_gateway_authorization_id()
     regional_authorize = getattr(_typed_store, "authorize_gateway_regional", None)
-    regional_eligible = (
-        body.spend_lease_admission is None
-        and settings.regional_quota_leases_enabled
-        and settings.regional_quota_lease_issuance_enabled
-        and workspace.id in settings.regional_quota_lease_pilot_workspaces
-        and callable(regional_authorize)
-        and estimate > 0
-        and body.route_type in {None, "chat.completions", "responses"}
-        and all(
+    predicate_reason, predicate_mask = regional_predicate_reason(
+        stage_c=body.spend_lease_admission is not None,
+        enabled=settings.regional_quota_leases_enabled,
+        issuance_enabled=settings.regional_quota_lease_issuance_enabled,
+        in_cohort=workspace.id in settings.regional_quota_lease_pilot_workspaces,
+        backend_available=callable(regional_authorize),
+        estimate=estimate,
+        route_type=body.route_type,
+        all_candidates_credits=all(
             UsageType.for_endpoint(candidate_endpoint) == UsageType.CREDITS
             for _candidate_model, candidate_endpoint in endpoint_candidates
-        )
-        and not any(
+        ),
+        any_exact_global=any(
             provider_model_requires_exact_global_settlement(
-                candidate_endpoint.provider,
-                candidate_endpoint.model_id,
+                candidate_endpoint.provider, candidate_endpoint.model_id,
             )
             for _candidate_model, candidate_endpoint in endpoint_candidates
-        )
-        and api_key.limit_microdollars is None
-        and api_key.limit_daily_microdollars is None
-        and api_key.limit_weekly_microdollars is None
-        and api_key.limit_monthly_microdollars is None
-        and custom_model is None
-        and user_model is None
-        and partner_mode is None
-        and additional_cost_reservation == 0
-        and not native_batch_eligible
-        and app_markup_basis_points == 0
-        and receipt_fee_basis_points == 0
+        ),
+        key_lifetime=api_key.limit_microdollars,
+        key_daily=api_key.limit_daily_microdollars,
+        key_weekly=api_key.limit_weekly_microdollars,
+        key_monthly=api_key.limit_monthly_microdollars,
+        custom_model=custom_model,
+        user_model=user_model,
+        partner_mode=partner_mode,
+        additional_cost=additional_cost_reservation,
+        native_batch=native_batch_eligible,
+        app_markup=app_markup_basis_points,
+        receipt_fee=receipt_fee_basis_points,
     )
+    spend_context["regional_predicate_reason"] = predicate_reason
+    spend_context["regional_predicate_mask"] = predicate_mask
+    regional_eligible = predicate_reason is None
     standard_endpoint_pricing = (
         custom_model is None
         and user_model is None
@@ -1808,6 +1828,7 @@ def _authorize_gateway_sync_impl(
             authorization = None
             if regional_eligible:
                 assert callable(regional_authorize)
+                spend_context["regional_outcome"] = "error"
                 outcome, authorization = regional_authorize(
                     authorization_id=authorization_id,
                     workspace_id=workspace.id,
@@ -1833,7 +1854,17 @@ def _authorize_gateway_sync_impl(
                     ),
                     lease_shard_count=settings.regional_quota_lease_shard_count,
                     invocation_nonce=body.invocation_nonce,
+                    observation=spend_context,
                 )
+                spend_context["regional_outcome"] = (
+                    "served" if outcome == "accepted" and authorization is not None
+                    and authorization.settlement == "regional_lease"
+                    else "error" if outcome == "accepted" else str(outcome)
+                )
+                if outcome == "unavailable":
+                    spend_context.setdefault("regional_unavailable_reason", "other")
+                else:
+                    spend_context.pop("regional_unavailable_reason", None)
             if outcome in {"unpaid_workspace", "reconciliation_stale", "trust_gate_unarmed"}:
                 spend_context["no_lease_reason"] = outcome
             if outcome in {"unavailable", "unpaid_workspace", "reconciliation_stale", "trust_gate_unarmed"}:

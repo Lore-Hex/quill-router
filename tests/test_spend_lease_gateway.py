@@ -509,8 +509,10 @@ def test_authorize_shadow_records_reason_without_lease_and_null_when_minted(
 
     assert "spend_lease" not in rejected["data"]
     assert "spend_lease" in minted["data"]
-    rejected_event = STORE.spend_lease_shadow_events[rejected["data"]["authorization_id"]]
-    minted_event = STORE.spend_lease_shadow_events[minted["data"]["authorization_id"]]
+    rejected_event = next(event for event in STORE.spend_lease_shadow_events.values()
+                 if event["authorization_id"] == rejected["data"]["authorization_id"])
+    minted_event = next(event for event in STORE.spend_lease_shadow_events.values()
+                 if event["authorization_id"] == minted["data"]["authorization_id"])
     assert rejected_event["no_lease_reason"] == "route_type"
     assert minted_event["no_lease_reason"] is None
 
@@ -541,7 +543,8 @@ def test_authorize_shadow_names_current_boot_digest_approval_failure() -> None:
     _wait_for_shadow_delivery()
 
     assert "spend_lease" not in response["data"]
-    event = STORE.spend_lease_shadow_events[response["data"]["authorization_id"]]
+    event = next(event for event in STORE.spend_lease_shadow_events.values()
+                 if event["authorization_id"] == response["data"]["authorization_id"])
     assert event["boot_verified"] is False
     assert event["no_lease_reason"] == "boot_digest_not_accepted"
 
