@@ -100,15 +100,75 @@ BIGTABLE_CLUSTER_ID="${TR_BIGTABLE_CLUSTER_ID:-trusted-router-logs-c1}"
 BIGTABLE_APP_PROFILE_ID="${TR_BIGTABLE_APP_PROFILE_ID:-}"
 BIGTABLE_GENERATION_TABLE="${TR_BIGTABLE_GENERATION_TABLE:-trustedrouter-generations}"
 BIGTABLE_INSTANCE_TYPE="${TR_BIGTABLE_INSTANCE_TYPE:-PRODUCTION}"
-# The first canary has one transactional writer. Bigtable rejects a second
-# transactional profile on another cluster unless its split-brain warning is
-# forcibly bypassed. EU and other gateways therefore use exact Spanner until
-# they receive isolated regional ledgers.
-TR_REGIONAL_QUOTA_CLUSTER_MAP="${TR_REGIONAL_QUOTA_CLUSTER_MAP:-us-central1=trusted-router-logs-c1}"
-# Decision 33: Same regional single-cluster routing as the regional quota ledger; override only to split clusters.
-TR_SPEND_LEASE_CLUSTER_MAP="${TR_SPEND_LEASE_CLUSTER_MAP:-$TR_REGIONAL_QUOTA_CLUSTER_MAP}"
-TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES="${TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES:-us-central1=tr-quota-us-central1}"
-TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS="${TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS:-4}"
+# All regional profiles use c1: Bigtable refuses transactional writers on
+# different clusters without bypassing its split-brain guard. EU-local ledgers
+# require separate work; never bypass that guard here.
+REGIONAL_QUOTA_CLUSTER_MAP_PINNED="us-central1=trusted-router-logs-c1,us-east4=trusted-router-logs-c1,europe-west4=trusted-router-logs-c1,us-west1=trusted-router-logs-c1,southamerica-east1=trusted-router-logs-c1"
+TR_REGIONAL_QUOTA_CLUSTER_MAP="${TR_REGIONAL_QUOTA_CLUSTER_MAP-$REGIONAL_QUOTA_CLUSTER_MAP_PINNED}"
+# Decision 33: the spend ledger keeps one transactional writer independently
+# of the regional quota map. Unset or empty maps retain that writer.
+SPEND_LEASE_CLUSTER_MAP_PINNED="us-central1=trusted-router-logs-c1"
+TR_SPEND_LEASE_CLUSTER_MAP="${TR_SPEND_LEASE_CLUSTER_MAP:-$SPEND_LEASE_CLUSTER_MAP_PINNED}"
+REGIONAL_QUOTA_BIGTABLE_APP_PROFILES_PINNED="us-central1=tr-quota-us-central1,us-east4=tr-quota-us-east4,europe-west4=tr-quota-europe-west4,us-west1=tr-quota-us-west1,southamerica-east1=tr-quota-southamerica-east1"
+TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES="${TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES-$REGIONAL_QUOTA_BIGTABLE_APP_PROFILES_PINNED}"
+REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS_PINNED=4
+TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS="${TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS-$REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS_PINNED}"
+
+# R4: resolve code pins once; an explicit empty cohort means no cohort.
+REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS_PINNED="358d80a4-2c9a-4479-92ea-a681f187477d,f46bf618-4c7c-4a35-afa0-8d48891bf7a5,1fa994e7-15b1-4e36-9c1c-51ba072d3060,c4ba9257-d212-4d7e-a5a1-989bceb7a1d8,45819281-0ce9-4811-a0cd-c660ab3a116d"
+TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS="${TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS-$REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS_PINNED}"
+REGIONAL_QUOTA_BIGTABLE_TABLE_PINNED=trustedrouter-regional-quota
+TR_REGIONAL_QUOTA_BIGTABLE_TABLE="${TR_REGIONAL_QUOTA_BIGTABLE_TABLE-$REGIONAL_QUOTA_BIGTABLE_TABLE_PINNED}"
+REGIONAL_QUOTA_LEASE_TTL_SECONDS_PINNED=300
+TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS="${TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS-$REGIONAL_QUOTA_LEASE_TTL_SECONDS_PINNED}"
+REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS_PINNED=10000000
+TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS="${TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS-$REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS_PINNED}"
+REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS_PINNED=1000
+TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS="${TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS-$REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS_PINNED}"
+REGIONAL_QUOTA_LEASE_SHARD_COUNT_PINNED=16
+TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT="${TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT-$REGIONAL_QUOTA_LEASE_SHARD_COUNT_PINNED}"
+
+# Provisioning and rollout must agree exactly, including order, even with
+# explicit operator overrides. Validate before any ledger or revision writes.
+regional_quota_validate_profile_map() {
+  local entry region cluster expected=""
+  local entries=()
+  IFS=',' read -r -a entries <<< "$TR_REGIONAL_QUOTA_CLUSTER_MAP"
+  for entry in "${entries[@]}"; do
+    region="${entry%%=*}"
+    cluster="${entry#*=}"
+    if [ -z "$region" ] || [ -z "$cluster" ] || [ "$region" = "$cluster" ]; then
+      log "invalid cluster-map entry: $entry"
+      return 1
+    fi
+    expected="${expected:+${expected},}${region}=tr-quota-${region}"
+  done
+  if [ -z "$expected" ] || [ "$expected" != "$TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES" ]; then
+    log "refusing regional quota profile list mismatch: map produces $expected; configured $TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES"
+    return 1
+  fi
+}
+
+# Call immediately after sourcing, before mutex, provisioning, or revision writes.
+regional_quota_validate_settings() {
+  local name
+  for name in \
+    TR_REGIONAL_QUOTA_BIGTABLE_TABLE \
+    TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS \
+    TR_REGIONAL_QUOTA_CLUSTER_MAP \
+    TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES \
+    TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS \
+    TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS \
+    TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS \
+    TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT; do
+    if [ -z "${!name}" ]; then
+      log "refusing empty regional quota setting: $name"
+      return 1
+    fi
+  done
+  regional_quota_validate_profile_map
+}
+
 KMS_KEYRING_ID="${TR_KMS_KEYRING_ID:-trusted-router}"
 BYOK_KMS_KEY_ID="${TR_BYOK_KMS_KEY_ID:-byok-envelope}"
 BYOK_KMS_KEY_NAME="${TR_BYOK_KMS_KEY_NAME:-projects/${PROJECT_ID}/locations/${REGION}/keyRings/${KMS_KEYRING_ID}/cryptoKeys/${BYOK_KMS_KEY_ID}}"

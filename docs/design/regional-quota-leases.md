@@ -144,12 +144,46 @@ Routine workflow dispatches use `preserve` to keep the live issuance marker;
 explicit `true` and `false` also override the code pin. Push-triggered deploys
 (absent or empty input) use `REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED=false` in
 `scripts/deploy/rollout.sh` while the regional accounting version lands across
-every serving revision and the reconciler job. A later change flips the pin
-together with the cohort it enables, after all existing leases have drained and
-the new code is fleet-wide. Capability, pilot workspace IDs, Bigtable app profiles,
-TTL, caps, and shard count retain their existing live-primary preservation rules;
-enabling still requires pilot IDs, profiles, and the fleet compatibility preflight.
+every serving revision and the reconciler job. A later change flips issuance
+after existing leases have drained and the new code is fleet-wide. Enabling
+still requires pilot IDs, profiles, and the fleet compatibility preflight.
 The shell writes only a normalized boolean to the Cloud Run revision.
+
+R4 replaces the initial single-region configuration described above with these
+code pins. An absent environment variable resolves to the pin; an explicit
+value overrides it. All three scripts resolve these shared settings once in
+`scripts/deploy/_lib.sh` and consume them unchanged. An explicit empty
+pilot list means no cohort; empty table, timeout, cluster map, profiles, or
+numeric lease settings are refused before any cloud mutation or revision write.
+Capability retains its live-primary preservation rule.
+
+| Setting | Pin |
+|---|---|
+| `TR_REGIONAL_QUOTA_CLUSTER_MAP` | `us-central1=trusted-router-logs-c1,us-east4=trusted-router-logs-c1,europe-west4=trusted-router-logs-c1,us-west1=trusted-router-logs-c1,southamerica-east1=trusted-router-logs-c1` |
+| `TR_SPEND_LEASE_CLUSTER_MAP` | `us-central1=trusted-router-logs-c1` (independent of the regional map; decision 33) |
+| `TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES` | `us-central1=tr-quota-us-central1,us-east4=tr-quota-us-east4,europe-west4=tr-quota-europe-west4,us-west1=tr-quota-us-west1,southamerica-east1=tr-quota-southamerica-east1` |
+| `TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS` | `358d80a4-2c9a-4479-92ea-a681f187477d,f46bf618-4c7c-4a35-afa0-8d48891bf7a5,1fa994e7-15b1-4e36-9c1c-51ba072d3060,c4ba9257-d212-4d7e-a5a1-989bceb7a1d8,45819281-0ce9-4811-a0cd-c660ab3a116d` |
+| `TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS` | `300` |
+| `TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS` | `10000000` |
+| `TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS` | `1000` |
+| `TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT` | `16` |
+| `TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS` | `4` |
+| `TR_REGIONAL_QUOTA_BIGTABLE_TABLE` | `trustedrouter-regional-quota` |
+
+Issuance remains pinned **false**. `TR_REGIONAL_QUOTA_RECONCILE_LIMIT` is
+unchanged. Every region, including Europe, routes its ledger to c1 for now:
+Bigtable refuses a second transactional profile on a different cluster unless
+its split-brain warning is forcibly bypassed. We keep that protection; an
+EU-local ledger is separate, later work. The five keys cover enclave regions
+and the control-plane-only region; unused keys are harmless.
+
+The provisioner drift-checks existing profiles and creates missing profiles
+with single-cluster routing and transactional writes. Unknown or unreadable
+clusters fail closed. Its printed profile list must exactly match the configured
+list (the pin by default), including order; provisioning, rollout, and
+reconciliation refuse a mismatch. An operator changing the region set must override both maps of regions
+and profiles consistently. The reconciler receives the same table, timeout,
+profile list, and lease settings through the shared deploy configuration.
 
 Reconciliation is intentionally independent from traffic issuance. A
 versioned one-shot Cloud Run Job continues draining leases that were already
@@ -172,9 +206,10 @@ Production activation requires all of the following:
 Implemented gates include the transactional adapter, exact global grant and
 close transactions, a once-per-minute reconciler, integer-only property tests,
 ambiguous Bigtable commit replay, fencing, concurrent idempotency, exact key
-usage import, and 16-way local sharding. Production activation remains a
-one-workspace canary. Any local read, conditional write, missing profile, or
-initialization ambiguity falls back to exact Spanner authorization. Missing
+usage import, and 16-way local sharding. Production issuance remains off with
+the five-workspace cohort pinned above. Any local read, conditional write,
+missing profile, or initialization ambiguity falls back to exact Spanner
+authorization. Missing
 lease state is quarantined and its global escrow is not guessed back into the
 available balance.
 
@@ -187,10 +222,11 @@ counter drift, and successful failback when a Bigtable profile is disabled.
 The original synthetic monitoring workspace is funded administratively, not by
 a customer payment. It correctly fails the shared paid-workspace trust gate;
 configured issuance flags alone are therefore not evidence of an exercised
-regional lease. The rollout migrates only that exact legacy singleton allowlist
+regional lease. The earlier rollout migrated that exact legacy singleton allowlist
 to the already-paid first-party smoke workspace used by the spend-lease pilot.
-Empty lists, custom lists, explicit overrides and issuance-off state are
-preserved. No payment record or trust tier is fabricated.
+R4 supersedes live allowlist preservation with the five-workspace code pin
+above; explicit overrides remain supported and issuance stays off. No payment
+record or trust tier is fabricated.
 
 After rollout, verify an uncapped first-party request through the US Central
 gateway actually reports regional settlement in its authorization record, then

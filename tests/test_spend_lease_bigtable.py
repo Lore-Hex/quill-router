@@ -307,7 +307,7 @@ def test_deploy_lib_defaults_spend_lease_cluster_map_and_honours_override() -> N
         ["/bin/bash", "-c", command],
         cwd=ROOT,
         env={
-            **os.environ,
+            **{k: v for k, v in os.environ.items() if k != "TR_SPEND_LEASE_CLUSTER_MAP"},
             "TR_REGIONAL_QUOTA_CLUSTER_MAP": "us-test1=quota-cluster",
         },
         check=False,
@@ -330,7 +330,7 @@ def test_deploy_lib_defaults_spend_lease_cluster_map_and_honours_override() -> N
     assert defaulted.returncode == 0, defaulted.stderr
     assert defaulted.stdout.splitlines() == [
         "us-test1=quota-cluster",
-        "us-test1=quota-cluster",
+        "us-central1=trusted-router-logs-c1",
     ]
     assert overridden.returncode == 0, overridden.stderr
     assert overridden.stdout.splitlines() == [

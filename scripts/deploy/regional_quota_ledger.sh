@@ -11,10 +11,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/_lib.sh
 source "${SCRIPT_DIR}/_lib.sh"
+regional_quota_validate_settings
 
 PROJECT="${GCP_PROJECT_ID:-$PROJECT_ID}"
 INSTANCE="${TR_BIGTABLE_INSTANCE_ID:-$BIGTABLE_INSTANCE_ID}"
-TABLE="${TR_REGIONAL_QUOTA_BIGTABLE_TABLE:-trustedrouter-regional-quota}"
+TABLE="${TR_REGIONAL_QUOTA_BIGTABLE_TABLE}"
 CLUSTER_MAP="$TR_REGIONAL_QUOTA_CLUSTER_MAP"
 
 log() { printf '%s %s\n' '[regional_quota_ledger]' "$*"; }
@@ -38,6 +39,11 @@ for entry in "${entries[@]}"; do
   if [ -z "$region" ] || [ -z "$cluster" ] || [ "$region" = "$cluster" ]; then
     log "invalid cluster-map entry: $entry"
     exit 2
+  fi
+  if ! gcloud bigtable clusters describe "$cluster" \
+    --project="$PROJECT" --instance="$INSTANCE" >/dev/null 2>&1; then
+    log "refusing regional quota unknown or unreadable cluster: $cluster"
+    exit 1
   fi
   profile="tr-quota-${region}"
   profiles+=("${region}=${profile}")
@@ -67,4 +73,8 @@ for entry in "${entries[@]}"; do
 done
 
 profile_csv="$(IFS=','; printf '%s' "${profiles[*]}")"
+if [ "$profile_csv" != "$TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES" ]; then
+  log "refusing regional quota provisioned profile list mismatch"
+  exit 1
+fi
 log "set TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES=${profile_csv}"
