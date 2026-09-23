@@ -50,6 +50,7 @@ from trusted_router.catalog_data import (
     PROMETHEUS_1_0_MODEL_ID,
     PROMETHEUS_2_0_MODEL_ID,
     PROMETHEUS_3_0_MODEL_ID,
+    PROMETHEUS_4_0_MODEL_ID,
     PROMETHEUS_CODE_1_0_MODEL_ID,
     PROMETHEUS_CODE_MODEL_ID,
     PROMETHEUS_MODEL_ID,
@@ -75,11 +76,14 @@ from trusted_router.catalog_data import (
     SYNTH_PROMETHEUS_1_MODEL_ORDER,
     SYNTH_PROMETHEUS_2_MODEL_ORDER,
     SYNTH_PROMETHEUS_3_MODEL_ORDER,
+    SYNTH_PROMETHEUS_4_MODEL_ORDER,
     SYNTH_QUALITY_1M_MODEL_ORDER,
+    SYNTH_ZEUS_3_MODEL_ORDER,
     ZDR_MODEL_ID,
     ZEUS_1_0_MINI_MODEL_ID,
     ZEUS_1_0_MODEL_ID,
     ZEUS_2_0_MODEL_ID,
+    ZEUS_3_0_MODEL_ID,
     ZEUS_CODE_1_0_MODEL_ID,
     ZEUS_CODE_MODEL_ID,
     ZEUS_MODEL_ID,
@@ -407,7 +411,9 @@ def meta_candidate_models(model_id: str) -> list[Model]:
         return _models_for_ids(advisor_order)
     if model_id == PROMETHEUS_1_0_1M_MODEL_ID:
         return _models_for_ids(SYNTH_QUALITY_1M_MODEL_ORDER)
-    if model_id in (PROMETHEUS_MODEL_ID, PROMETHEUS_3_0_MODEL_ID):
+    if model_id in (PROMETHEUS_MODEL_ID, PROMETHEUS_4_0_MODEL_ID):
+        return _models_for_ids(SYNTH_PROMETHEUS_4_MODEL_ORDER)
+    if model_id == PROMETHEUS_3_0_MODEL_ID:
         return _models_for_ids(SYNTH_PROMETHEUS_3_MODEL_ORDER)
     if model_id == PROMETHEUS_2_0_MODEL_ID:
         return _models_for_ids(SYNTH_PROMETHEUS_2_MODEL_ORDER)
@@ -419,7 +425,9 @@ def meta_candidate_models(model_id: str) -> list[Model]:
         return _models_for_ids(SYNTH_IRIS_2_MODEL_ORDER)
     if model_id == IRIS_1_0_MODEL_ID:
         return _models_for_ids(SYNTH_IRIS_1_MODEL_ORDER)
-    if model_id in (ZEUS_MODEL_ID, ZEUS_2_0_MODEL_ID):
+    if model_id in (ZEUS_MODEL_ID, ZEUS_3_0_MODEL_ID):
+        return _models_for_ids(SYNTH_ZEUS_3_MODEL_ORDER)
+    if model_id == ZEUS_2_0_MODEL_ID:
         return _models_for_ids(SYNTH_FRONTIER_MODEL_ORDER)
     if model_id == ZEUS_1_0_MODEL_ID:
         return _models_for_ids(SYNTH_FRONTIER_1_MODEL_ORDER)
@@ -491,11 +499,13 @@ def _meta_route_kind(model_id: str) -> str:
         PROMETHEUS_1_0_1M_MODEL_ID,
         PROMETHEUS_2_0_MODEL_ID,
         PROMETHEUS_3_0_MODEL_ID,
+        PROMETHEUS_4_0_MODEL_ID,
         LIBERTY_1_0_MODEL_ID,
         LIBERTY_1_0_1M_MODEL_ID,
         ZEUS_1_0_MODEL_ID,
         ZEUS_1_0_MINI_MODEL_ID,
         ZEUS_2_0_MODEL_ID,
+        ZEUS_3_0_MODEL_ID,
         SYNTH_CODE_MODEL_ID,
         IRIS_CODE_MODEL_ID,
         PROMETHEUS_CODE_MODEL_ID,
