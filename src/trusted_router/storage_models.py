@@ -842,6 +842,8 @@ class GatewayAuthorization:
     regional_lease_id: str | None = None
     regional_fencing_token: int | None = None
     regional_hold_id: str | None = None
+    # Missing version is the pre-migration inline key-accounting contract.
+    regional_accounting_version: int = 1
     # Stage A spend-lease replay record. The compact token is immutable; the
     # status beside it is authoritative and may advance independently in later
     # stages. These fields live in the shared JSON payload used by Spanner's

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime, timedelta
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from hypothesis import given
@@ -36,7 +37,10 @@ def _lease(*, grant: int = 1_000, expires_in: int = 60) -> RegionalQuotaLease:
     )
 
 
-def test_reserve_settle_and_refund_preserve_exact_integer_accounting() -> None:
+def test_reserve_settle_and_refund_preserve_exact_integer_accounting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("trusted_router.services.regional_quota_leases._utc_now", lambda: NOW)
     first = (
         _lease()
         .reserve(
@@ -56,6 +60,7 @@ def test_reserve_settle_and_refund_preserve_exact_integer_accounting() -> None:
         now=NOW,
     ).lease
 
+    assert all(hold.settled_at is None for hold in second.holds)
     settled = second.settle(hold_id="a", actual_microdollars=275, fencing_token=7).lease
     refunded = settled.refund(hold_id="b", fencing_token=7).lease
 
@@ -64,6 +69,9 @@ def test_reserve_settle_and_refund_preserve_exact_integer_accounting() -> None:
     assert refunded.available_microdollars == 725
     assert refunded.holds[0].state == HoldState.SETTLED
     assert refunded.holds[1].state == HoldState.REFUNDED
+    assert refunded.holds[0].settled_at == NOW
+    assert refunded.holds[0].settled_at.tzinfo == UTC
+    assert refunded.holds[1].settled_at is None
 
 
 def test_reservation_and_terminal_transitions_are_idempotent() -> None:
@@ -405,3 +413,25 @@ def test_regional_profile_map_rejects_ambiguous_entries(value: str) -> None:
             environment="test",
             regional_quota_bigtable_app_profiles=value,
         ).regional_quota_bigtable_app_profile_map
+
+
+@pytest.mark.parametrize("at", [
+    datetime(2026, 7, 31),
+    datetime(2026, 7, 31, tzinfo=timezone(timedelta(hours=1))),
+])
+def test_settled_at_requires_aware_utc(at: datetime) -> None:
+    lease = _lease().reserve(
+        hold_id="a", fingerprint="a", amount_microdollars=100, fencing_token=7, now=NOW,
+    ).lease.settle(hold_id="a", actual_microdollars=50, fencing_token=7).lease
+    with pytest.raises(RegionalQuotaLeaseError, match="timezone-aware UTC"):
+        replace(lease.holds[0], settled_at=at)
+
+
+def test_non_settled_hold_cannot_carry_settled_at() -> None:
+    hold = _lease().reserve(
+        hold_id="a", fingerprint="a", amount_microdollars=100, fencing_token=7, now=NOW,
+    ).hold
+    with pytest.raises(RegionalQuotaLeaseError, match="only a settled hold"):
+        replace(hold, settled_at=NOW)
+    with pytest.raises(RegionalQuotaLeaseError, match="only a settled hold"):
+        replace(hold, state=HoldState.REFUNDED, actual_microdollars=0, settled_at=NOW)

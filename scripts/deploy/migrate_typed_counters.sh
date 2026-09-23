@@ -153,6 +153,13 @@ if index_exists tr_reservation_by_expiry; then log "tr_reservation_by_expiry exi
   apply_ddl "CREATE INDEX tr_reservation_by_expiry ON tr_reservation (settled, expires_at)"
 fi
 
+# Regional orphan cancellation must prove reservation absence by authorization
+# inside its transaction, including old writers with random reservation ids.
+if index_exists tr_reservation_by_authorization; then log "tr_reservation_by_authorization exists, skip"; else
+  apply_ddl "CREATE NULL_FILTERED INDEX tr_reservation_by_authorization
+    ON tr_reservation (authorization_id)"
+fi
+
 # ── Per-key window spend limits (daily/weekly/monthly) ──────────────────────
 # Config columns (*_limit_micro) are seeded from the api_key row on create; the
 # window usage/state columns are typed-DML-owned and bumped lazily by release_key.
@@ -212,6 +219,10 @@ wait_index_read_write() {
   log "timed out waiting for ${name} to become read-write"
   return 1
 }
+
+# Presence alone includes WRITE_ONLY indexes after an interrupted DDL client.
+# Both first runs and reruns must wait before orphan recovery can FORCE_INDEX.
+wait_index_read_write tr_reservation_by_authorization
 
 # Converged trust-tier facts. These additions are nullable/defaulted so the DDL
 # does not rewrite existing balance rows. The explicit backfill below is safe
