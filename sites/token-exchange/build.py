@@ -124,6 +124,9 @@ def build(output: Path) -> None:
         "fonts/spectral-300-latin.woff2": "spectral.woff2",
         "fonts/ibm-plex-mono-400-latin.woff2": "plex.woff2",
         "trustedrouter-mark-dark.svg": "mark.svg",
+        "provider-logos/openai.png": "provider-openai.png",
+        "provider-logos/anthropic.png": "provider-anthropic.png",
+        "provider-logos/mistral.png": "provider-mistral.png",
     }.items():
         shutil.copyfile(static / source, assets / target)
     for market in markets:

@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
   const markets = JSON.parse(fs.readFileSync(path.join(__dirname, 'markets.json')));
   const output = process.argv[2] || '/tmp/token-exchange-build';
   const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
+  const page = await browser.newPage({reducedMotion: 'reduce'});
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   for (const market of markets) {
@@ -16,9 +16,21 @@ const assert = require('node:assert/strict');
       await page.setViewportSize({width, height: 1000});
       await page.goto(`http://127.0.0.1:8089/${market.slug}/?utm_source=launch-test&utm_content=creative-a&secret=should-not-pass`);
       await page.evaluate(() => document.fonts.ready);
-      assert.equal(await page.locator('h1').textContent(), market.name + '.');
+      assert.equal(await page.locator('h1').textContent(), market.headline);
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${market.slug} overflows at ${width}`);
-      assert(await page.locator('.hero-art').evaluate(img => img.complete && img.naturalWidth > 0));
+      assert(await page.locator('img').evaluateAll(images => images.every(img => img.complete && img.naturalWidth > 0)));
+      const mainNav = page.getByRole('navigation', {name:'Main navigation', exact:true});
+      const menu = page.getByRole('button', {name:'Menu', exact:true});
+      assert(await menu.isVisible());
+      assert.equal(await mainNav.isVisible(), false);
+      await menu.focus();
+      await page.keyboard.press('Enter');
+      assert.equal(await menu.getAttribute('aria-expanded'), 'true');
+      assert(await mainNav.isVisible());
+      await page.keyboard.press('Escape');
+      assert.equal(await mainNav.isVisible(), false);
+      assert(await menu.evaluate(el => el === document.activeElement));
+      assert.equal(await page.locator('.hero').evaluate(el => getComputedStyle(el, '::before').animationName), 'none');
       const cityNav = page.getByRole('navigation', {name:'Exchange cities', exact:true});
       assert.equal(await cityNav.getByRole('link').count(), 8);
       const geometry = await page.evaluate(() => {
@@ -44,14 +56,25 @@ const assert = require('node:assert/strict');
       if (['global', 'new-york'].includes(market.slug)) {
         await page.screenshot({path: `/tmp/exchange-${market.slug}-${width}-first.png`});
       }
-      const href = await page.locator('[data-attribution]').first().getAttribute('href');
-      assert.equal(new URL(href).searchParams.get('utm_source'), 'launch-test');
-      assert.equal(new URL(href).searchParams.get('secret'), null);
+      for (const href of await page.locator('[data-attribution]').evaluateAll(links => links.map(link => link.href))) {
+        assert.equal(new URL(href).searchParams.get('utm_source'), 'launch-test');
+        assert.equal(new URL(href).searchParams.get('secret'), null);
+      }
+      assert.equal(await page.locator('.closing [data-attribution]').count(), 2);
+      const diagram = page.getByRole('figure', {name:'Compare eligible providers through TrustedRouter for your workload', exact:true});
+      await diagram.scrollIntoViewIfNeeded();
+      await page.waitForFunction(() => document.querySelector('.route-flow').classList.contains('is-visible'));
+      assert.equal(await diagram.locator('.route-node').count(), 3);
+      assert.equal(await diagram.locator('.route-connector').first().evaluate(el => getComputedStyle(el, '::after').animationName), 'none');
       await page.locator('summary').first().click();
       assert(await page.locator('details').first().evaluate(el => el.open));
       if (['global', 'new-york'].includes(market.slug)) {
         await page.screenshot({path: `/tmp/exchange-${market.slug}-${width}.png`, fullPage: true});
       }
+      await menu.click();
+      await mainNav.getByRole('link', {name:'Supply tokens', exact:true}).click();
+      assert.equal(new URL(page.url()).hash, '#sellers');
+      assert.equal(await menu.getAttribute('aria-expanded'), 'false');
     }
     // A separate share image preserves the page's brand and typography.
     await page.setViewportSize({width:1200,height:630});
@@ -60,7 +83,13 @@ const assert = require('node:assert/strict');
     await page.evaluate(() => document.fonts.ready);
     await page.screenshot({path:path.join(output,'assets',`og-${market.slug}.png`)});
   }
+  const fallback = await browser.newPage({javaScriptEnabled:false, viewport:{width:390,height:1000}});
+  await fallback.goto('http://127.0.0.1:8089/new-york/');
+  assert(await fallback.getByRole('navigation', {name:'Main navigation',exact:true}).isVisible());
+  assert.equal(await fallback.getByRole('button', {name:'Menu',exact:true}).isVisible(), false);
+  assert(await fallback.getByRole('figure', {name:'Compare eligible providers through TrustedRouter for your workload',exact:true}).isVisible());
+  await fallback.close();
   assert.deepEqual(errors, []);
   await browser.close();
-  console.log('PASS: 12 markets x 3 viewports; images, overflow, attribution, FAQ; 12 OG images generated.');
+  console.log('PASS: 12 markets x 3 viewports; images, overflow, attribution, FAQ, menu, reduced motion, no-JS navigation; 12 OG images generated.');
 })().catch(error => {console.error(error); process.exit(1);});

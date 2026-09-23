@@ -14,7 +14,7 @@
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="theme-color" content="#0a100e">
+  <meta name="theme-color" content="#0b0c0e">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <link rel="icon" href="/assets/mark.svg" type="image/svg+xml">
   <link rel="preload" href="/assets/archivo.woff2" as="font" type="font/woff2" crossorigin>
@@ -25,8 +25,9 @@
 <body data-market="$slug">
   <a class="skip" href="#main">Skip to content</a>
   <header class="shell masthead">
-    <a class="brand" href="/" aria-label="$name home"><img src="/assets/mark.svg" width="30" height="30" alt=""><span>$name<small>POWERED BY TRUSTEDROUTER</small></span></a>
-    <nav aria-label="Main navigation"><a href="#buyers">Buy tokens</a><a href="#sellers">Supply tokens</a><a href="https://trustedrouter.com/trust">Verify trust <span aria-hidden="true">↗</span></a></nav>
+    <a class="brand" href="/" aria-label="$name home"><img src="/assets/mark.svg" width="30" height="30" alt=""><span>$name</span></a>
+    <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="primary-navigation" aria-label="Menu" hidden><span aria-hidden="true" class="menu-icon"></span></button>
+    <nav id="primary-navigation" aria-label="Main navigation"><a href="#buyers">Buy tokens</a><a href="#sellers">Supply tokens</a><a href="https://trustedrouter.com/trust">Verify trust</a></nav>
   </header>
   <div class="market-directory">
     <div class="shell">
@@ -36,40 +37,52 @@
   </div>
   <main id="main">
     <section class="hero">
-      <img class="hero-art" src="/assets/exchange.webp" width="1536" height="1024" alt="Compute providers connected through a common AI gateway" fetchpriority="high">
       <div class="shell hero-copy">
-        <p class="eyebrow">$region / Enterprise inference</p>
-        <h1>$name<span class="period">.</span></h1>
-        <p class="hero-headline">$headline</p>
+        <h1>$headline</h1>
         <p class="lead">$lead</p>
-        <div class="actions"><a class="button primary" href="#buyers">I want to buy tokens <span aria-hidden="true">↓</span></a><a class="button secondary" href="#sellers">I supply inference <span aria-hidden="true">↓</span></a></div>
-        <p class="hero-note">Secure. Intelligent. Cheaper.</p>
+        <div class="actions"><a class="button primary" href="#buyers">I want to buy tokens</a><a class="button secondary" href="#sellers">I supply inference</a></div>
       </div>
     </section>
-    <div class="proof"><div class="shell"><a href="https://trustedrouter.com/models">Competing models &amp; providers</a><a href="https://trustedrouter.com/docs">One enterprise API</a><a href="https://trustedrouter.com/trust">Privacy with proof</a></div></div>
     <section class="shell section" id="buyers">
-      <div class="section-intro"><p class="eyebrow">01 / For buyers</p><h2>Make providers compete<br>for your workload.</h2><p>Buy the intelligence your business needs. Compare quality, price and performance. Choose the provider policies that fit your data.</p></div>
-      <div class="columns benefits">
-        <article><span class="index">01</span><h3>Secure.</h3><p>Requests pass through TrustedRouter's attested gateway. Choose provider retention and confidentiality requirements separately, with evidence your security team can review.</p><a href="https://trustedrouter.com/trust">Inspect the trust path <span aria-hidden="true">↗</span></a></article>
-        <article><span class="index">02</span><h3>Intelligent.</h3><p>Evaluate frontier and open models against your real tasks. Keep the combination of accuracy, capabilities and speed that works for your application.</p><a href="https://trustedrouter.com/leaderboard">Compare observed performance <span aria-hidden="true">↗</span></a></article>
-        <article><span class="index">03</span><h3>Cheaper.</h3><p>Compare the cost of a successful result. Match each job to an appropriate model and provider, and review volume requirements with our team.</p><a href="https://trustedrouter.com/models">Explore model pricing <span aria-hidden="true">↗</span></a></article>
+      <div class="section-intro"><p class="eyebrow">For buyers</p><h2>Make providers compete<br>for your workload.</h2><p>Buy the intelligence your business needs. Compare quality, price and performance. Choose the provider policies that fit your data.</p></div>
+      <div class="buyer-actions"><a class="button primary" data-attribution href="$buyer_url">Plan an enterprise pilot</a><a class="button secondary" data-attribution href="$brief_url">Get the enterprise brief</a></div>
+      <!-- Provider choices connect through TrustedRouter to the buyer's workload. -->
+      <figure class="route-flow" aria-label="Compare eligible providers through TrustedRouter for your workload">
+        <div class="route-node route-options">
+          <strong>Compare eligible providers</strong>
+          <svg class="provider-branches" viewBox="0 0 240 86" aria-hidden="true" focusable="false"><path d="M120 86V66M40 29V50Q40 66 56 66H184Q200 66 200 50V29M120 66V29"/><circle cx="40" cy="20" r="9"/><circle cx="120" cy="20" r="9"/><circle cx="200" cy="20" r="9"/></svg>
+        </div>
+        <div class="route-node route-router"><div class="route-mark"><img src="/assets/mark.svg" width="38" height="38" alt=""></div><strong>TrustedRouter</strong></div>
+        <div class="route-connector" aria-hidden="true"></div>
+        <div class="route-node"><strong>Your workload</strong></div>
+      </figure>
+      <div class="provider-strip">
+        <p>Selected providers in<br>TrustedRouter’s catalog</p>
+        <a href="https://trustedrouter.com/providers"><img src="/assets/provider-openai.png" width="32" height="32" alt=""><span>OpenAI</span></a>
+        <a href="https://trustedrouter.com/providers"><img src="/assets/provider-anthropic.png" width="32" height="32" alt=""><span>Anthropic</span></a>
+        <a href="https://trustedrouter.com/providers"><img src="/assets/provider-mistral.png" width="32" height="32" alt=""><span>Mistral</span></a>
       </div>
-      <div class="buyer-actions"><a class="button primary" data-attribution href="$buyer_url">Plan an enterprise pilot <span aria-hidden="true">↗</span></a><a data-attribution href="$brief_url">Get the enterprise brief <span aria-hidden="true">↓</span></a></div>
     </section>
     <section class="market-band"><div class="shell section"><p class="eyebrow">$region / Workload priorities</p><div class="market-intro"><h2>$focus</h2><p>$intro</p></div><div class="columns sectors">$sectors</div></div></section>
     <section class="shell section" id="sellers">
-      <div class="seller-intro"><div><p class="eyebrow">02 / For suppliers</p><h2>You run the inference.<br>Bring it to market.</h2></div><p>$seller</p></div>
-      <div class="supply-flow" aria-label="Supplier application process"><div><span class="index">01 / Apply</span><h3>Show your service.</h3><p>Models, pricing, capacity and service locations.</p></div><div><span class="index">02 / Qualify</span><h3>Make it verifiable.</h3><p>Integration tests, privacy policies and operational evidence.</p></div><div><span class="index">03 / Connect</span><h3>Serve real workloads.</h3><p>Approved endpoints become available through TrustedRouter.</p></div></div>
-      <a class="button primary" data-attribution href="$seller_url">Apply as an inference provider <span aria-hidden="true">↗</span></a><p class="fine">Applications are reviewed. Share API credentials only through the separate secure onboarding channel.</p>
+      <div class="supplier-art" aria-hidden="true"><svg viewBox="0 0 320 260" focusable="false"><defs><linearGradient id="supply-light" gradientUnits="userSpaceOnUse" x1="56" y1="0" x2="264" y2="0"><stop stop-color="#cce8d7"/><stop offset="1" stop-color="#6891cf"/></linearGradient></defs><g class="supply-lines"><path d="M56 130H104C164 130 146 58 210 58H264"/><path d="M56 130H264"/><path d="M56 130H104C164 130 146 202 210 202H264"/></g><circle class="supply-origin" cx="56" cy="130" r="22"/><circle cx="264" cy="58" r="7"/><circle cx="264" cy="130" r="7"/><circle cx="264" cy="202" r="7"/></svg></div>
+      <div class="seller-intro"><div><p class="eyebrow">For suppliers</p><h2>You run the inference.<br>Bring it to market.</h2></div><p>$seller</p></div>
+      <a class="button primary" data-attribution href="$seller_url">Apply as an inference provider</a>
     </section>
-    <section class="privacy-band"><div class="shell section"><p class="eyebrow">Built on TrustedRouter</p><h2>A market needs trust.</h2><div class="columns"><article><h3>Router verification</h3><p>Verify the attested gateway and its published build evidence. TrustedRouter does not keep prompt or output logs.</p><a href="https://trustedrouter.com/trust">Verify with your agent <span aria-hidden="true">↗</span></a></article><article><h3>Provider choice</h3><p>Zero data retention is a provider policy. Verified confidential inference is a separate property. Review both for the route you select.</p><a href="https://trustedrouter.com/providers">Review provider policies <span aria-hidden="true">↗</span></a></article><article><h3>Enterprise review</h3><p>Bring procurement and security into the pilot. Discuss processing terms, route requirements and the controls your team needs.</p><a href="https://trustedrouter.com/trust">Open the trust center <span aria-hidden="true">↗</span></a></article></div></div></section>
+    <section class="privacy-band"><div class="shell section"><p class="eyebrow">Built on TrustedRouter</p><h2>A market needs trust.</h2><p class="trust-copy">TrustedRouter does not keep prompt or output logs. Zero data retention is a provider policy; verified confidential inference is a separate property. Review provider retention policies and verification evidence for your route.</p><a href="https://trustedrouter.com/trust">Review the trust center</a></div></section>
     <section class="shell section questions"><div><p class="eyebrow">Before you begin</p><h2>Good questions.</h2></div><div class="faq">
       <details><summary>What exactly am I buying?</summary><p>Access to model inference through TrustedRouter. AI tokens measure model inputs and outputs. This is an inference service, not a securities or cryptocurrency exchange.</p></details>
       <details><summary>Does this market guarantee local processing?</summary><p>The regional name identifies the audience for this page. Processing location, residency and provider eligibility depend on the route and agreed terms. Confirm these requirements with us before sending sensitive data.</p></details>
       <details><summary>Can we start with one workload?</summary><p>Yes. Bring a representative, non-sensitive task set and expected volume. We can compare suitable models and providers, then define quality, cost and privacy requirements for a pilot.</p></details>
       <details><summary>Can I sell spare GPU capacity?</summary><p>We onboard inference providers with working model endpoints. Share your infrastructure and available capacity so we can discuss integration. Listing and purchase volumes are subject to review and demand.</p></details>
     </div></section>
-    <section class="closing"><div class="shell"><p class="eyebrow">A better way to buy intelligence</p><h2>Bring your demand.<br>Bring your capacity.</h2><div class="actions"><a class="button primary" data-attribution href="$buyer_url">Talk to the exchange <span aria-hidden="true">↗</span></a><a class="button secondary" data-attribution href="$brief_url">Get the enterprise brief <span aria-hidden="true">↓</span></a></div></div></section>
+    <div class="closing-gap" aria-hidden="true"></div>
+    <section class="closing" aria-labelledby="closing-title">
+      <div class="shell closing-panel">
+        <div class="closing-copy"><h2 id="closing-title">Bring your demand.<br>Bring your capacity.</h2><div class="actions"><a class="button primary" data-attribution href="$buyer_url">Talk to the exchange</a><a class="button secondary" data-attribution href="$brief_url">Get the enterprise brief</a></div></div>
+        <div class="closing-art" aria-hidden="true"><span class="closing-color"></span><span class="closing-grain"></span></div>
+      </div>
+    </section>
   </main>
   <footer class="shell"><div class="footer-top"><div class="brand"><img src="/assets/mark.svg" width="30" height="30" alt=""><span>$name<small>POWERED BY TRUSTEDROUTER</small></span></div><a href="mailto:help@trustedrouter.com">help@trustedrouter.com</a></div><nav class="markets" aria-label="Exchange markets">$markets</nav><div class="legal"><span>Operated by Lore Hex Corp, a Delaware corporation.</span><a href="https://trustedrouter.com/privacy">Privacy</a><a href="https://trustedrouter.com/terms">Terms</a><a href="https://trustedrouter.com/token-exchange">TrustedRouter Token Exchange</a></div></footer>
 </body>
