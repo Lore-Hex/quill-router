@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from tests.test_gateway_fallback_billing import _client_and_key
-from trusted_router.catalog import MODELS, endpoints_for_model, model_to_openrouter_shape
+from trusted_router.catalog import (
+    MODEL_ENDPOINTS,
+    MODELS,
+    endpoints_for_model,
+    model_to_openrouter_shape,
+)
 from trusted_router.polyphemus import MODEL_ID, SELECT_ROUTE_TYPE
 from trusted_router.storage import STORE
 
@@ -11,14 +18,17 @@ from trusted_router.storage import STORE
 def test_polyphemus_catalog_is_responses_only_standard_privacy() -> None:
     model = MODELS[MODEL_ID]
     shape = model_to_openrouter_shape(model)
-    assert shape["pricing"]["request"] == "0.000001"
+    assert "request" not in shape["pricing"]
     assert float(shape["pricing"]["prompt"]) > 0
     assert float(shape["pricing"]["completion"]) > 0
     assert float(shape["pricing"]["completion_max"]) >= float(shape["pricing"]["completion"])
     tr = shape["trustedrouter"]
     assert tr["supports_chat"] is False
     assert tr["supports_responses"] is True
-    assert tr["pricing_type"] == "selection_fee_plus_selected_model_tokens"
+    assert tr["pricing_type"] == "selector_tokens_plus_selected_model_tokens"
+    assert tr["selector_prompt_price_per_million"] == "0.05"
+    assert tr["selector_usage_estimated"] is True
+    assert tr["selector_token_basis"] == "serialized_context_utf8_bytes_div_4"  # noqa: S105 - meter label
     assert tr["provider_zero_data_retention"] is False
     assert tr["provider_e2ee"] is False
     assert tr["privacy_tier"] == 0
@@ -26,7 +36,9 @@ def test_polyphemus_catalog_is_responses_only_standard_privacy() -> None:
     endpoints = endpoints_for_model(MODEL_ID)
     assert len(endpoints) == 1
     assert endpoints[0].provider == "telluvian"
-    assert endpoints[0].request_price_microdollars == 1
+    assert endpoints[0].request_price_microdollars == 0
+    assert endpoints[0].prompt_price_microdollars_per_million_tokens == 50_000
+    assert endpoints[0].completion_price_microdollars_per_million_tokens == 0
 
 
 def _admission(key: dict, **extra: object) -> dict:
@@ -41,22 +53,27 @@ def _admission(key: dict, **extra: object) -> dict:
     }
 
 
-def test_polyphemus_reserves_and_settles_exactly_one_microdollar() -> None:
+@pytest.mark.parametrize("tokens,cost", [(1, 1), (20, 1), (29, 1), (30, 2), (1000, 50), (60_000, 3000)])
+def test_polyphemus_reserves_and_settles_selector_prompt_tokens_once(tokens: int, cost: int) -> None:
     client, key = _client_and_key()
     money = STORE.credit_money[key["workspace_id"]]
     before = money.total_usage_microdollars
-    response = client.post("/v1/internal/gateway/authorize", json=_admission(key))
+    reserved_before = money.reserved_microdollars
+    admission = _admission(key, estimated_input_tokens=tokens)
+    response = client.post("/v1/internal/gateway/authorize", json=admission)
     assert response.status_code == 200, response.text
     auth = response.json()["data"]
-    assert auth["estimated_cost_microdollars"] == 1
+    assert auth["estimated_cost_microdollars"] == cost
+    assert money.reserved_microdollars == reserved_before + cost
     assert auth["model"] == MODEL_ID
     assert auth["provider"] == "telluvian"
-    replay = client.post("/v1/internal/gateway/authorize", json=_admission(key))
+    replay = client.post("/v1/internal/gateway/authorize", json=admission)
     assert replay.status_code == 409, replay.text
     settlement = {
         "authorization_id": auth["authorization_id"],
-        "actual_input_tokens": 0,
+        "actual_input_tokens": tokens,
         "actual_output_tokens": 0,
+        "usage_estimated": True,
         "route_type": SELECT_ROUTE_TYPE,
         "request_id": "selector-result",
         "elapsed_seconds": 0.15,
@@ -64,16 +81,63 @@ def test_polyphemus_reserves_and_settles_exactly_one_microdollar() -> None:
     for _ in range(2):
         result = client.post("/v1/internal/gateway/settle", json=settlement)
         assert result.status_code == 200, result.text
+        assert result.json()["data"]["cost_microdollars"] == cost
+        assert money.total_usage_microdollars == before + cost
+        assert money.reserved_microdollars == reserved_before
+        generation = STORE.get_generation(result.json()["data"]["generation_id"])
+        assert generation is not None
+        assert generation.tokens_prompt == tokens
+        assert generation.tokens_completion == 0
+        assert generation.usage_estimated is True
+        assert generation.total_cost_microdollars == cost
+
+
+@pytest.mark.parametrize("old_admission", [True, False])
+def test_polyphemus_legacy_zero_token_settlement_survives_rollout(
+    monkeypatch: pytest.MonkeyPatch, old_admission: bool,
+) -> None:
+    client, key = _client_and_key()
+    endpoint = endpoints_for_model(MODEL_ID)[0]
+    with monkeypatch.context() as before_rollout:
+        if old_admission:
+            before_rollout.setitem(MODEL_ENDPOINTS, endpoint.id, replace(
+                endpoint, prompt_price_microdollars_per_million_tokens=0,
+                request_price_microdollars=1,
+            ))
+        response = client.post("/v1/internal/gateway/authorize", json=_admission(key))
+    assert response.status_code == 200, response.text
+    auth = response.json()["data"]
+    assert auth["estimated_cost_microdollars"] == (1 if old_admission else 50)
+    money = STORE.credit_money[key["workspace_id"]]
+    before = money.total_usage_microdollars
+    for _ in range(2):
+        result = client.post("/v1/internal/gateway/settle", json={
+            "authorization_id": auth["authorization_id"],
+            "actual_input_tokens": 0, "actual_output_tokens": 0,
+            "route_type": SELECT_ROUTE_TYPE, "request_id": "legacy-selector-result",
+        })
+        assert result.status_code == 200, result.text
         assert result.json()["data"]["cost_microdollars"] == 1
         assert money.total_usage_microdollars == before + 1
+        assert money.reserved_microdollars == 0
+
+
+def test_polyphemus_million_token_rate_uses_shared_integer_billing() -> None:
+    from trusted_router.routes.internal.gateway import _endpoint_cost_microdollars
+
+    endpoint = endpoints_for_model(MODEL_ID)[0]
+    assert _endpoint_cost_microdollars(endpoint, 1_000_000, 0) == 50_000
+    assert _endpoint_cost_microdollars(endpoint, 1_000_000, 1_000_000) == 50_000
 
 
 def test_polyphemus_failed_selection_refunds_hold() -> None:
     client, key = _client_and_key()
     money = STORE.credit_money[key["workspace_id"]]
     before = money.total_usage_microdollars
+    reserved_before = money.reserved_microdollars
     response = client.post("/v1/internal/gateway/authorize", json=_admission(key))
     assert response.status_code == 200, response.text
+    assert money.reserved_microdollars == reserved_before + 50
     result = client.post(
         "/v1/internal/gateway/refund",
         json={
@@ -88,6 +152,7 @@ def test_polyphemus_failed_selection_refunds_hold() -> None:
     )
     assert result.status_code == 200, result.text
     assert money.total_usage_microdollars == before
+    assert money.reserved_microdollars == reserved_before
 
 
 @pytest.mark.parametrize("provider", [

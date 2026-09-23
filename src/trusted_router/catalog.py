@@ -205,6 +205,7 @@ from trusted_router.money import (
     microdollars_to_decimal,
 )
 from trusted_router.polyphemus import MODEL_ID as POLYPHEMUS_MODEL_ID
+from trusted_router.polyphemus import SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION
 from trusted_router.pricing import (  # noqa: F401 - re-exported for back-compat
     _CACHE_READ_PRICE_MULTIPLIER,
     _CACHE_WRITE_PRICE_MULTIPLIER,
@@ -421,8 +422,8 @@ def _meta_price_range(
     surface the range so /v1/models doesn't show a misleading $0."""
     candidates = meta_candidate_models(model_id)
     if model_id == POLYPHEMUS_MODEL_ID:
-        # Selection has no token rate. Publish the price envelope of eligible
-        # paid generation routes, not the selector's zero-token meter.
+        # Generation is separate from the selector's prompt-token charge.
+        # Publish its price envelope, with the selector rate exposed below.
         values = [
             getattr(endpoint, attr)
             for candidate in MODELS.values()
@@ -652,7 +653,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         )
         pub_prompt_max = pub_prompt_min
         pub_completion_max = pub_completion_min
-    elif is_meta and prompt_min == 0 and completion_min == 0:
+    elif is_meta and ((prompt_min == 0 and completion_min == 0) or model.id == POLYPHEMUS_MODEL_ID):
         prompt_min, prompt_max = _meta_price_range(
             model.id, "prompt_price_microdollars_per_million_tokens"
         )
@@ -770,7 +771,14 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         # refused it.
         "supports_chat": offers_chat(model),
         "supports_responses": offers_chat(model) or model.id == POLYPHEMUS_MODEL_ID,
-        **({"pricing_type": "selection_fee_plus_selected_model_tokens"}
+        **({
+            "pricing_type": "selector_tokens_plus_selected_model_tokens",
+            "selector_prompt_price_per_million": microdollars_to_decimal(SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION),
+            "selector_prompt_price_microdollars_per_million": SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION,
+            "selector_usage_estimated": True,
+            "selector_token_basis": "serialized_context_utf8_bytes_div_4",
+            "selector_minimum_charge_microdollars": 1,
+        }
            if model.id == POLYPHEMUS_MODEL_ID else {}),
         "supports_embeddings": model.supports_embeddings,
         "supports_video": model.supports_video,

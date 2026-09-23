@@ -19,6 +19,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
+from dataclasses import replace
 from datetime import datetime
 from functools import lru_cache
 from time import perf_counter
@@ -94,6 +95,7 @@ from trusted_router.partner_billing import (
     partner_billing_mode,
     partner_cost_microdollars,
 )
+from trusted_router.polyphemus import LEGACY_SELECTOR_FEE_MICRODOLLARS
 from trusted_router.polyphemus import MODEL_ID as POLYPHEMUS_MODEL_ID
 from trusted_router.polyphemus import SELECT_ROUTE_TYPE as POLYPHEMUS_SELECT_ROUTE_TYPE
 from trusted_router.pricing import (
@@ -3698,6 +3700,22 @@ def _settle_gateway_authorization(
             400,
             "selected endpoint was not authorized for this gateway request",
             ErrorType.BAD_REQUEST,
+        )
+    if (
+        selected_endpoint.model_id == POLYPHEMUS_MODEL_ID
+        and body.input_count == 0
+        and body.output_count == 0
+    ):
+        # Pre-token-meter enclaves settle 0/0 usage with a fixed one-microdollar
+        # fee. Preserve their tariff through rolling deploys and durable retries.
+        # Keep the same authorization/idempotency key; never re-run selection.
+        selected_endpoint = replace(
+            selected_endpoint,
+            prompt_price_microdollars_per_million_tokens=0,
+            published_prompt_price_microdollars_per_million_tokens=0,
+            request_price_microdollars=LEGACY_SELECTOR_FEE_MICRODOLLARS,
+            price_tiers=(),
+            published_price_tiers=(),
         )
     model = (
         user_model_pair[0]
