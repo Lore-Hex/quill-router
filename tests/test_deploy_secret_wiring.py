@@ -403,7 +403,11 @@ def test_production_deploy_provisions_and_schedules_regional_quota_reconciliatio
     assert "--transactional-writes" in provisioner
     assert "trusted-router-logs-c1" in library
     assert "us-central1=tr-quota-us-central1" in library
-    assert "europe-west4=tr-quota-europe-west4" not in library
+    # R4: every region, EU included, has a regional profile routed to c1; a
+    # second transactional cluster (the EU cluster) stays forbidden until an
+    # isolated EU ledger exists.
+    assert "europe-west4=tr-quota-europe-west4" in library
+    assert "trusted-router-logs-eu" not in library
     assert 'SCHEDULE="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULE:-* * * * *}"' in reconciler
     assert 'JOB_REGION="${TR_REGIONAL_QUOTA_RECONCILER_JOB_REGION:-us-east4}"' in reconciler
     assert (

@@ -276,6 +276,7 @@ def _run_regional_quota_reconciler(
     versioned_job_exists: bool = False,
     stale_job_names: str = "",
     reconcile_limit: str = "",
+    extra_env: dict[str, str] | None = None,
 ) -> HarnessRun:
     monkeypatch.setitem(
         SCRIPT_FIXTURES,
@@ -303,7 +304,7 @@ def _run_regional_quota_reconciler(
     gcloud = isolated.bin / "gcloud"
     gcloud.write_text(_RECONCILER_GCLOUD_STUB)
     gcloud.chmod(0o755)
-    return isolated.run(_REGIONAL_QUOTA_RECONCILER)
+    return isolated.run(_REGIONAL_QUOTA_RECONCILER, extra_env=extra_env)
 
 
 def _gcloud_calls(run: HarnessRun, *command: str) -> list[list[str]]:
@@ -634,12 +635,35 @@ def test_gcp_no_traffic_warm_preprovisions_and_validates_private_candidate(
     )
 
 
+_QUOTA_REGIONS = ("us-central1", "us-east4", "europe-west4", "us-west1", "southamerica-east1")
+_QUOTA_CLUSTER_MAP = ",".join(f"{region}=trusted-router-logs-c1" for region in _QUOTA_REGIONS)
+_QUOTA_PROFILES = ",".join(f"{region}=tr-quota-{region}" for region in _QUOTA_REGIONS)
+_REGIONAL_QUOTA_PINS = {
+    "TR_REGIONAL_QUOTA_CLUSTER_MAP": _QUOTA_CLUSTER_MAP,
+    "TR_SPEND_LEASE_CLUSTER_MAP": "us-central1=trusted-router-logs-c1",
+    "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES": _QUOTA_PROFILES,
+    "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS": (
+        "358d80a4-2c9a-4479-92ea-a681f187477d,f46bf618-4c7c-4a35-afa0-8d48891bf7a5,"
+        "1fa994e7-15b1-4e36-9c1c-51ba072d3060,c4ba9257-d212-4d7e-a5a1-989bceb7a1d8,"
+        "45819281-0ce9-4811-a0cd-c660ab3a116d"
+    ),
+    "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS": "300",
+    "TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS": "10000000",
+    "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS": "1000",
+    "TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT": "16",
+    "TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS": "4",
+    "TR_REGIONAL_QUOTA_BIGTABLE_TABLE": "trustedrouter-regional-quota",
+}
+
+
 _LIVE_REGIONAL_QUOTA_ENV = {
     "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true",
     "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "true",
     "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS": "workspace-pilot,workspace-canary",
     "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES": "us-central1=tr-quota-us-central1",
-    "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS": "120",
+    "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS": "60",
+    "TR_REGIONAL_QUOTA_BIGTABLE_TABLE": "live-old-table",
+    "TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS": "2",
     "TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS": "5000000",
     "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS": "2000",
     "TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT": "8",
@@ -707,9 +731,9 @@ def test_rollout_regional_quota_issuance_control(
     )
     rendered_env = _cloud_run_job_env(deploy)
     assert rendered_env["TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED"] == expected
-    for name, value in live_env.items():
-        if name != "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED":
-            assert rendered_env[name] == value
+    assert rendered_env["TR_REGIONAL_QUOTA_LEASES_ENABLED"] == "true"
+    for name, value in _REGIONAL_QUOTA_PINS.items():
+        assert rendered_env[name] == value
     # Enabling (including preserve=true) must preflight every serving region
     # before it creates a candidate; pausing does not need that preflight.
     before_deploy = run.calls[:run.calls.index(deploy)]
@@ -738,24 +762,18 @@ def test_rollout_regional_quota_dispatch_true_requires_pilot_and_profiles(
     isolated = _regional_quota_rollout_harness(
         tmp_path, monkeypatch, {**_LIVE_REGIONAL_QUOTA_ENV, missing: ""},
     )
-    if missing == "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES":
-        # _lib.sh supplies the pilot's provisioning default even when live is
-        # empty. Remove it only in this test copy to exercise the rollout guard.
-        library = isolated.mirror / "scripts/deploy/_lib.sh"
-        original = library.read_text()
-        default = (
-            'TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES="'
-            '${TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES:-us-central1=tr-quota-us-central1}"'
-        )
-        assert default in original
-        library.write_text(original.replace(default, ""))
     run = isolated.run(
         "scripts/deploy/rollout.sh",
-        extra_env={"TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "true"},
+        extra_env={"TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "true", missing: ""},
     )
 
     assert run.returncode != 0, summarise(run)
-    assert "issuance requires pilot workspaces and fixed Bigtable app profiles" in run.stderr
+    expected = (
+        "refusing empty regional quota setting: TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES"
+        if missing == "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES"
+        else "issuance requires pilot workspaces and fixed Bigtable app profiles"
+    )
+    assert expected in run.stderr
     assert not any("run" in call and "deploy" in call for call in run.calls)
 
 
@@ -774,6 +792,286 @@ def test_rollout_regional_quota_dispatch_true_refuses_incompatible_fleet(
     assert run.returncode != 0, summarise(run)
     assert "lacks TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" in run.stderr
     assert not any("run" in call and "deploy" in call for call in run.calls)
+
+
+@pytest.mark.parametrize("live_env", [{}, _LIVE_REGIONAL_QUOTA_ENV], ids=["no-live-settings", "stale-live-settings"])
+def test_rollout_renders_every_regional_quota_pin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, live_env: dict[str, str],
+) -> None:
+    isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, live_env)
+    run = isolated.run("scripts/deploy/rollout.sh")
+    assert run.returncode == 0, summarise(run)
+    deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
+    rendered = _cloud_run_job_env(deploy)
+    for name, value in _REGIONAL_QUOTA_PINS.items():
+        assert rendered[name] == value, name
+    assert rendered["TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED"] == "false"
+
+
+@pytest.mark.parametrize("script", [
+    "scripts/deploy/rollout.sh",
+    "scripts/deploy/spend_lease_ledger.sh",
+    "scripts/deploy/spend_lease_reconciler.sh",
+])
+def test_empty_spend_lease_cluster_map_falls_back_to_independent_pin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script: str,
+) -> None:
+    if script.endswith("/spend_lease_ledger.sh"):
+        monkeypatch.setitem(SCRIPT_FIXTURES, script, ScriptFixture(
+            failures=(r"bigtable instances tables describe ", r"bigtable app-profiles describe "),
+        ))
+    elif script.endswith("/spend_lease_reconciler.sh"):
+        monkeypatch.setitem(SCRIPT_FIXTURES, script, ScriptFixture(
+            responses=((r"scheduler jobs describe ", "ENABLED"),),
+        ))
+    isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, _LIVE_REGIONAL_QUOTA_ENV)
+    run = isolated.run(script, extra_env={"TR_SPEND_LEASE_CLUSTER_MAP": ""})
+    assert run.returncode == 0, summarise(run)
+    expected_profiles = "us-central1=tr-spend-us-central1"
+    if script.endswith("/spend_lease_ledger.sh"):
+        creates = [call for call in run.calls if call[1:4] == ["bigtable", "app-profiles", "create"]]
+        assert len(creates) == 1
+        assert creates[0][4] == "tr-spend-us-central1"
+        assert "--route-to=trusted-router-logs-c1" in creates[0]
+        assert "--transactional-writes" in creates[0]
+        assert f"set TR_SPEND_LEASE_BIGTABLE_APP_PROFILES={expected_profiles}\n" in run.stdout
+    else:
+        mutations = [call for call in run.calls if "--set-env-vars" in call]
+        assert len(mutations) == 1
+        rendered = _cloud_run_job_env(mutations[0])
+        assert rendered["TR_SPEND_LEASE_BIGTABLE_APP_PROFILES"] == expected_profiles
+        if script.endswith("/rollout.sh"):
+            assert rendered["TR_SPEND_LEASE_CLUSTER_MAP"] == "us-central1=trusted-router-logs-c1"
+
+
+@pytest.mark.parametrize(("name", "value"), [
+    ("TR_REGIONAL_QUOTA_CLUSTER_MAP", "us-east4=trusted-router-logs-c1"),
+    ("TR_SPEND_LEASE_CLUSTER_MAP", "us-east4=trusted-router-logs-c1"),
+    ("TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES", "us-east4=tr-quota-us-east4"),
+    ("TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS", "workspace-override"),
+    ("TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS", "90"),
+    ("TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS", "7000000"),
+    ("TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS", "1500"),
+    ("TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT", "4"),
+    ("TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS", "3"),
+    ("TR_REGIONAL_QUOTA_BIGTABLE_TABLE", "override-quota-table"),
+])
+def test_rollout_explicit_env_overrides_each_regional_quota_pin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, value: str,
+) -> None:
+    isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, _LIVE_REGIONAL_QUOTA_ENV)
+    overrides = {name: value}
+    if name in {"TR_REGIONAL_QUOTA_CLUSTER_MAP", "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES"}:
+        overrides.update({
+            "TR_REGIONAL_QUOTA_CLUSTER_MAP": "us-east4=trusted-router-logs-c1",
+            "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES": "us-east4=tr-quota-us-east4",
+        })
+    run = isolated.run("scripts/deploy/rollout.sh", extra_env=overrides)
+    assert run.returncode == 0, summarise(run)
+    deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
+    rendered = _cloud_run_job_env(deploy)
+    for key, expected in {**_REGIONAL_QUOTA_PINS, **overrides}.items():
+        assert rendered[key] == expected, key
+
+
+@pytest.mark.parametrize("script", ["scripts/deploy/rollout.sh", "scripts/deploy/regional_quota_ledger.sh"])
+def test_regional_quota_profile_map_mismatch_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script: str,
+) -> None:
+    isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, _LIVE_REGIONAL_QUOTA_ENV)
+    run = isolated.run(script, extra_env={
+        "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES": "us-central1=tr-quota-us-central1",
+    })
+    assert run.returncode != 0, summarise(run)
+    assert "profile list mismatch" in run.stdout + run.stderr
+    assert not any("create" in call or "deploy" in call for call in run.calls)
+
+
+_QUOTA_LEDGER = "scripts/deploy/regional_quota_ledger.sh"
+
+
+@pytest.mark.parametrize("missing", [(), _QUOTA_REGIONS], ids=["idempotent", "create-missing"])
+def test_regional_quota_ledger_provisions_all_five_profiles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: tuple[str, ...],
+) -> None:
+    monkeypatch.setitem(SCRIPT_FIXTURES, _QUOTA_LEDGER, ScriptFixture(
+        responses=((r"bigtable app-profiles describe .*--format=", "trusted-router-logs-c1\tTrue"),),
+        failures=tuple(rf"bigtable app-profiles describe tr-quota-{region} " for region in missing),
+    ))
+    run = DeployScriptHarness(tmp_path / "ledger").run(_QUOTA_LEDGER)
+    assert run.returncode == 0, summarise(run)
+    assert f"set TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES={_QUOTA_PROFILES}\n" in run.stdout
+    creates = [call for call in run.calls if call[1:4] == ["bigtable", "app-profiles", "create"]]
+    assert len(creates) == len(missing)
+    assert {call[4] for call in creates} == {f"tr-quota-{region}" for region in missing}
+    for call in creates:
+        assert "--route-to=trusted-router-logs-c1" in call
+        assert "--transactional-writes" in call
+    for region in _QUOTA_REGIONS:
+        describes = [call for call in run.calls if call[1:5] == [
+            "bigtable", "app-profiles", "describe", f"tr-quota-{region}",
+        ]]
+        assert describes
+        if region not in missing:
+            assert any("--format=value(singleClusterRouting.clusterId,singleClusterRouting.allowTransactionalWrites)" in call for call in describes)
+
+
+@pytest.mark.parametrize("config", ["trusted-router-logs-eu\tTrue", "trusted-router-logs-c1\tFalse"])
+def test_regional_quota_ledger_refuses_profile_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, config: str,
+) -> None:
+    monkeypatch.setitem(SCRIPT_FIXTURES, _QUOTA_LEDGER, ScriptFixture(
+        responses=((r"bigtable app-profiles describe .*--format=", config),),
+    ))
+    run = DeployScriptHarness(tmp_path / "ledger").run(_QUOTA_LEDGER)
+    assert run.returncode != 0, summarise(run)
+    assert "refusing regional quota profile drift" in run.stdout
+    assert not any("create" in call for call in run.calls)
+
+
+def test_regional_quota_ledger_refuses_unknown_cluster(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(SCRIPT_FIXTURES, _QUOTA_LEDGER, ScriptFixture(
+        failures=(r"bigtable clusters describe unknown-cluster ",),
+    ))
+    run = DeployScriptHarness(tmp_path / "ledger").run(_QUOTA_LEDGER, extra_env={
+        "TR_REGIONAL_QUOTA_CLUSTER_MAP": _QUOTA_CLUSTER_MAP.replace("trusted-router-logs-c1", "unknown-cluster"),
+    })
+    assert run.returncode != 0, summarise(run)
+    assert "unknown or unreadable cluster: unknown-cluster" in run.stdout
+    assert not any("app-profiles" in call for call in run.calls)
+
+
+# These are shared inputs even when a phase (the provisioner, for example)
+# only consumes a subset. Resolve them once, and reject empty values uniformly.
+_SHARED_QUOTA_OVERRIDES = {
+    "TR_REGIONAL_QUOTA_CLUSTER_MAP": "us-east4=trusted-router-logs-c1",
+    "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES": "us-east4=tr-quota-us-east4",
+    "TR_REGIONAL_QUOTA_BIGTABLE_TABLE": "override-quota-table",
+    "TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS": "3",
+    "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS": "workspace-override",
+    "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS": "90",
+    "TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS": "7000000",
+    "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS": "1500",
+    "TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT": "4",
+}
+_QUOTA_SCRIPTS = (
+    "scripts/deploy/rollout.sh", _QUOTA_LEDGER, _REGIONAL_QUOTA_RECONCILER,
+)
+
+
+@pytest.mark.parametrize("script", _QUOTA_SCRIPTS)
+def test_regional_quota_consumers_do_not_resolve_shared_settings_again(script: str) -> None:
+    # Early rejection can mask a reintroduced local fallback at runtime (q6).
+    # Enforce the single-resolution contract as well as testing execution below.
+    source = (ROOT / script).read_text()
+    for name in _SHARED_QUOTA_OVERRIDES:
+        assert not re.search(r"\$\{" + name + r"(?::?[-+=?])", source), name
+        assert not re.search(r"^" + name + r"=", source, re.MULTILINE), name
+
+
+@pytest.mark.parametrize("script", _QUOTA_SCRIPTS)
+@pytest.mark.parametrize("mode", ["absent", "empty", "nonempty"])
+@pytest.mark.parametrize("name", _SHARED_QUOTA_OVERRIDES)
+def test_regional_quota_shared_settings_agree_across_scripts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script: str, mode: str, name: str,
+) -> None:
+    isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, _LIVE_REGIONAL_QUOTA_ENV)
+    monkeypatch.setitem(SCRIPT_FIXTURES, _QUOTA_LEDGER, ScriptFixture(
+        responses=((r"bigtable app-profiles describe .*--format=", "trusted-router-logs-c1\tTrue"),),
+    ))
+    monkeypatch.setitem(SCRIPT_FIXTURES, _REGIONAL_QUOTA_RECONCILER, ScriptFixture(
+        responses=((r"scheduler jobs describe .*--format=value\(state\)", "ENABLED"),),
+    ))
+    overrides = {} if mode == "absent" else {
+        name: "" if mode == "empty" else _SHARED_QUOTA_OVERRIDES[name],
+    }
+    if mode == "nonempty" and name in {
+        "TR_REGIONAL_QUOTA_CLUSTER_MAP", "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES",
+    }:
+        overrides.update({key: _SHARED_QUOTA_OVERRIDES[key] for key in (
+            "TR_REGIONAL_QUOTA_CLUSTER_MAP", "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES",
+        )})
+    expected = {**_REGIONAL_QUOTA_PINS, **overrides}
+    # The provisioner has no revision env. Observe its resolved inputs after
+    # successful execution, in addition to checking actual Bigtable argv below.
+    if script == _QUOTA_LEDGER:
+        ledger = isolated.mirror / script
+        with ledger.open("a") as out:
+            for key in _SHARED_QUOTA_OVERRIDES:
+                out.write(f'printf "RESOLVED_{key}=%s\\n" "${key}"\n')
+    run = isolated.run(script, extra_env=overrides)
+    if mode == "empty" and name != "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS":
+        assert run.returncode != 0, summarise(run)
+        assert f"refusing empty regional quota setting: {name}" in run.stdout + run.stderr
+        # Only _lib.sh's read-only project-number lookup may precede refusal.
+        # In particular, no mutex write, bucket update, table or revision write.
+        assert all(call[0] == "gcloud" and "projects" in call and "describe" in call
+                   for call in run.calls), run.calls
+        return
+    assert run.returncode == 0, summarise(run)
+    if script == _QUOTA_LEDGER:
+        resolved = dict(line.removeprefix("RESOLVED_").split("=", 1)
+                        for line in run.stdout.splitlines() if line.startswith("RESOLVED_"))
+        table_calls = [call for call in run.calls if call[1:5] == [
+            "bigtable", "instances", "tables", "describe",
+        ]]
+        assert len(table_calls) == 1
+        assert table_calls[0][5] == expected["TR_REGIONAL_QUOTA_BIGTABLE_TABLE"]
+        assert f"set TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES={expected['TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES']}\n" in run.stdout
+        cluster_calls = [call for call in run.calls if call[1:4] == [
+            "bigtable", "clusters", "describe",
+        ]]
+        assert [call[4] for call in cluster_calls] == [
+            entry.split("=")[1] for entry in expected["TR_REGIONAL_QUOTA_CLUSTER_MAP"].split(",")
+        ]
+    else:
+        command = ["run", "deploy"] if script.endswith("/rollout.sh") else ["run", "jobs", "create"]
+        deploy = next(call for call in run.calls if call[3:3 + len(command)] == command)
+        resolved = _cloud_run_job_env(deploy)
+    for key in _SHARED_QUOTA_OVERRIDES:
+        assert resolved[key] == expected[key], key
+
+
+def test_regional_quota_ledger_final_provisioned_list_guard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(SCRIPT_FIXTURES, _QUOTA_LEDGER, ScriptFixture(
+        responses=((r"bigtable app-profiles describe .*--format=", "trusted-router-logs-c1\tTrue"),),
+    ))
+    isolated = DeployScriptHarness(tmp_path / "ledger-final-guard")
+    ledger = isolated.mirror / _QUOTA_LEDGER
+    source = ledger.read_text()
+    # Fault injection after pre-validation and the complete provisioning loop:
+    # simulate a bug dropping one successfully provisioned profile from output.
+    marker = 'profile_csv="$(IFS=\',\'; printf \'%s\' "${profiles[*]}")"'
+    assert source.count(marker) == 1
+    ledger.write_text(source.replace(marker, 'unset \'profiles[4]\'\n' + marker))
+    run = isolated.run(_QUOTA_LEDGER)
+    assert run.returncode != 0, summarise(run)
+    assert "refusing regional quota provisioned profile list mismatch" in run.stdout
+    assert "set TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES=" not in run.stdout
+    for region in _QUOTA_REGIONS:
+        assert any(call[1:5] == [
+            "bigtable", "app-profiles", "describe", f"tr-quota-{region}",
+        ] for call in run.calls)
+
+
+@pytest.mark.parametrize("profiles", [None, "us-east4=tr-quota-us-east4"])
+def test_reconciler_receives_same_regional_quota_profiles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, profiles: str | None,
+) -> None:
+    run = _run_regional_quota_reconciler(
+        tmp_path, monkeypatch, state="ENABLED",
+        extra_env={} if profiles is None else {
+            "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES": profiles,
+            "TR_REGIONAL_QUOTA_CLUSTER_MAP": "us-east4=trusted-router-logs-c1",
+        },
+    )
+    assert run.returncode == 0, summarise(run)
+    deploy = next(call for call in run.calls if call[3:6] == ["run", "jobs", "create"])
+    assert _cloud_run_job_env(deploy)["TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES"] == (profiles or _QUOTA_PROFILES)
 
 
 def test_rollout_binding_unit_4_fence_passes_with_settle_clamp(
