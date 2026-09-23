@@ -45,6 +45,11 @@ class RetirementCase:
         "minimax/minimax-m3", "MiniMaxAI/MiniMax-M3",
         datetime(2026, 9, 10, tzinfo=UTC),
     ),
+    RetirementCase(
+        "xiaomi/mimo-v2.5", "XiaomiMiMo/MiMo-V2.5",
+        "xiaomi/mimo-v2.6-flash", "XiaomiMiMo/MiMo-V2.6-Flash",
+        datetime(2026, 9, 29, tzinfo=UTC),
+    ),
 ], ids=lambda case: case.model)
 def retirement(request: pytest.FixtureRequest) -> RetirementCase:
     return request.param
@@ -163,3 +168,18 @@ def test_deepinfra_retirement_does_not_include_unannounced_turbo_variant() -> No
         "deepinfra", "minimax/minimax-m2.7-turbo", "MiniMaxAI/MiniMax-M2.7-Turbo",
         at=datetime(2026, 9, 10, tzinfo=UTC),
     )
+
+
+def test_deepinfra_mimo_retirement_covers_legacy_id_but_not_pro() -> None:
+    cutoff = datetime(2026, 9, 29, tzinfo=UTC)
+    retired = provider_lifecycle.provider_model_retired
+    assert not retired(
+        "deepinfra", "xiaomimimo/mimo-v2.5", at=cutoff - timedelta(microseconds=1),
+    )
+    assert retired("deepinfra", "xiaomimimo/mimo-v2.5", at=cutoff)
+    assert not retired(
+        "deepinfra", "xiaomi/mimo-v2.5-pro", "XiaomiMiMo/MiMo-V2.5-Pro", at=cutoff,
+    )
+    rows = {row["id"]: row for row in json.loads(deepinfra.MANIFEST_PATH.read_text())["models"]}
+    assert rows["xiaomimimo/mimo-v2.5"]["retirement_at"] == "2026-09-29T00:00:00Z"
+    assert rows["xiaomimimo/mimo-v2.5"]["replacement_model_id"] == "xiaomi/mimo-v2.6-flash"
