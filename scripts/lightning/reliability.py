@@ -14,6 +14,8 @@ from scripts.lightning.activate_web import PROJECT, WEB, Operator
 
 HEARTBEAT_METRIC = "lightning_funding_worker_heartbeat"
 LIQUIDITY_METRIC = "lightning_funding_liquidity_heartbeat"
+RECEIVING_ALERT = "LightningRouter: payment receiving needs attention"
+LEGACY_RECEIVING_ALERT = "LightningRouter: inbound liquidity needs attention"
 SURFACE = f'resource.type="cloud_run_revision" AND resource.labels.service_name="{WEB}"'
 HEARTBEAT = (
     SURFACE
@@ -79,11 +81,11 @@ def policies(channel: str) -> list[dict[str, Any]]:
         }
     )
     result.append({
-        "displayName": "LightningRouter: inbound liquidity needs attention",
+        "displayName": RECEIVING_ALERT,
         "combiner": "OR", "enabled": True, "notificationChannels": [channel],
         "documentation": {"mimeType": "text/markdown", "content":
-            "Receiving capacity is below 300,000 sats or its check failed. Inspect LND sync, active channels, reserves and in-flight limits. Do not increase spending authority or reset Loop budgets. Replenishment requires the approved capped policy. Runbook: docs/lightning-liquidity.md."},
-        "conditions": [{"displayName": "Low or unknown inbound capacity", "conditionMatchedLog": {
+            "The active backend's receiving check failed, or an LND capacity check measured less than 300,000 sats. Check the latest lightning.liquidity_health backend and the deployed LR_INVOICE_BACKEND first. With Lexe, lightning.liquidity_check_failed is a receive-authority/readiness failure, NOT a measured low balance; inspect Lexe sidecar health, credentials, attestation and upstream availability. Do not fund or reopen the legacy LND/BTCPay node in response. Lexe supplies JIT liquidity, but a successful readiness check alone is not proof that a payment can settle. Only for an active LND backend, inspect sync, active channels, reserves and in-flight limits. Preserve all paid/unresolved invoices. Do not increase spending authority or reset Loop budgets. Runbooks: docs/lightning-lexe.md and docs/lightning-liquidity.md."},
+        "conditions": [{"displayName": "Receiving check failed or LND capacity low", "conditionMatchedLog": {
             "filter": SURFACE + ' AND (textPayload:"lightning.liquidity_low" OR textPayload:"lightning.liquidity_check_failed")'}}],
         "alertStrategy": {"notificationRateLimit": {"period": "3600s"}, "autoClose": "1800s"},
     })
@@ -114,7 +116,10 @@ def install(operator: Operator) -> None:
     configured = policies(channels[0]["name"])
 
     def write_policy(policy: dict[str, Any]) -> None:
-        matches = [p for p in current if p.get("displayName") == policy["displayName"]]
+        names = {policy["displayName"]}
+        if policy["displayName"] == RECEIVING_ALERT:
+            names.add(LEGACY_RECEIVING_ALERT)
+        matches = [p for p in current if p.get("displayName") in names]
         if len(matches) > 1:
             raise ValueError("Ambiguous funding alert policy")
         with tempfile.TemporaryDirectory(prefix="lightning-alert-") as directory:

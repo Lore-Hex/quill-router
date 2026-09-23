@@ -1,12 +1,30 @@
 # Lightning receiving liquidity
 
-BTCPay uses the existing LND node; it does not replenish a channel automatically.
+New production invoices use Lexe. BTCPay is stopped; the existing LND node is
+retained for legacy invoices and funds, not new receiving capacity. The LND
+capacity and replenishment guidance below applies only when LND is the active
+backend. Do not fund or restart the old node to address a Lexe readiness alert.
+
+When active, BTCPay uses the existing LND node; it does not replenish a channel automatically.
 Keep its invoice-only macaroon and Greg's Observer role unchanged. Do not replace
 the funded node, restore an old channel database, or add a second wallet daemon.
 
 ## Monitoring
 
-The funding worker checks LND once per minute, even with no customer activity.
+The funding worker checks the active backend once per minute, even with no
+customer activity. With Lexe it verifies receive-only authority and wallet
+identity through the attesting sidecar. Its successful heartbeat includes
+`backend=lexe`, `jit_liquidity=true` and `receive_authority_ready=true`, not a
+channel balance. A readiness failure does not establish insufficient liquidity;
+successful readiness does not prove end-to-end payment settlement either.
+
+The alert is named **LightningRouter: payment receiving needs attention**.
+The historical `lightning.liquidity_check_failed` event name remains for alert
+compatibility. Inspect the backend before following any LND instructions. The
+installer renames the old alert in place rather than creating a duplicate.
+Read [the Lexe runbook](lightning-lexe.md) for the current receive path.
+
+For an active LND backend, the funding worker checks LND once per minute.
 It uses only GetInfo and ListChannels, already available to its invoice-only
 credential. Internal logs contain sync, active channel count, inbound balance
 after reserves and pending HTLCs, and the largest individual channel's receiving
@@ -14,8 +32,8 @@ capacity. The latter also respects the receiving in-flight limit. Neither is a
 guarantee of a route from every payer, and channel capacities are not added
 together to promise a single payment will work.
 
-The existing on-call channel alerts below 300,000 sats of receiving capacity or
-on a failed check, limited to one notification per hour. A separate ten-minute
+The existing on-call channel alerts below 300,000 sats of LND receiving capacity
+or on a failed check of either backend, limited to one notification per hour. A separate ten-minute
 absence alert detects a stopped check. Liquidity failures do not prevent the
 worker from crediting already-paid invoices. New invoice capacity checks remain
 in place. Customer identities, invoices, preimages, peer IDs and wallet
