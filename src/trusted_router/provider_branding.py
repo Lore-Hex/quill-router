@@ -91,6 +91,16 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "scaledown": ProviderBrand("https://scaledown.ai/"),
     "near-ai": ProviderBrand("https://near.ai/"),
     "openai": ProviderBrand("https://openai.com/"),
+    "verda": ProviderBrand(
+        "https://verda.com/",
+        description="Verda, formerly DataCrunch, provides GPU cloud and inference services.",
+        resources=(
+            ("API documentation", "https://api.verda.com/v1/docs"),
+            ("Console", "https://console.verda.com/"),
+            ("Terms and conditions", "https://verda.com/terms-and-conditions"),
+            ("Privacy policy", "https://verda.com/privacy-policy"),
+        ),
+    ),
     "ovhcloud": ProviderBrand("https://www.ovhcloud.com/"),
     "parasail": ProviderBrand("https://www.parasail.io/"),
     "pearl": ProviderBrand("https://pearlresearch.ai/"),
