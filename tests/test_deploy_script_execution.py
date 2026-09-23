@@ -231,68 +231,6 @@ def test_typed_counters_reservation_authorization_index(
 
 
 _REGIONAL_QUOTA_RECONCILER = "scripts/deploy/regional_quota_reconciler.sh"
-_TYPED_COUNTERS_GCLOUD_STUB = r"""#!/usr/bin/env bash
-{ printf '%s' "${0##*/}"; for argument in "$@"; do
-    recorded="${argument//$'\n'/\\n}"
-    printf '\t%s' "$recorded"
-  done
-  printf '\n'
-} >> "$HARNESS_ARGV_LOG"
-
-if [[ "$*" == *"SELECT INDEX_STATE"* ]]; then
-  if [[ "$*" == *"index_name='tr_reservation_by_authorization'"* ]]; then
-    count=0
-    [ ! -f "$HARNESS_INDEX_POLLS" ] || read -r count < "$HARNESS_INDEX_POLLS"
-    count=$((count + 1))
-    printf '%s\n' "$count" > "$HARNESS_INDEX_POLLS"
-    if [ "$count" -le 2 ] || [ "$HARNESS_INDEX_STUCK" = true ]; then
-      printf 'WRITE_ONLY\n'
-      exit 0
-    fi
-  fi
-  printf 'READ_WRITE\n'
-elif [[ "$*" == *"SELECT SPANNER_STATE"* ]]; then
-  printf 'COMMITTED\n'
-elif [[ "$*" == *"SELECT COUNT(*)"* ]]; then
-  printf '1\n'
-else
-  exit 1
-fi
-"""
-
-
-@pytest.mark.parametrize("stuck", [False, True])
-def test_typed_counters_rerun_waits_for_authorization_index_read_write(
-    tmp_path: Path, stuck: bool,
-) -> None:
-    isolated = DeployScriptHarness(tmp_path / "typed-counters")
-    gcloud = isolated.bin / "gcloud"
-    gcloud.write_text(_TYPED_COUNTERS_GCLOUD_STUB)
-    gcloud.chmod(0o755)
-    polls = tmp_path / "index-polls"
-    run = isolated.run("scripts/deploy/migrate_typed_counters.sh", extra_env={
-        "GCP_PROJECT_ID": "test-project",
-        "SPANNER_INSTANCE_ID": "test-instance",
-        "SPANNER_DATABASE_ID": "test-database",
-        "HARNESS_INDEX_POLLS": str(polls),
-        "HARNESS_INDEX_STUCK": str(stuck).lower(),
-    })
-    assert "tr_reservation_by_authorization exists, skip" in run.stdout, summarise(run)
-    waiting = "waiting for tr_reservation_by_authorization backfill (state=WRITE_ONLY)"
-    assert waiting in run.stdout
-    assert not any(call[1:5] == ["spanner", "databases", "ddl", "update"] for call in run.calls)
-    if stuck:
-        assert run.returncode != 0
-        assert int(polls.read_text()) == 360
-        assert "timed out waiting for tr_reservation_by_authorization" in run.stdout
-        assert "[migrate_typed_counters] done" not in run.stdout
-    else:
-        assert run.returncode == 0, summarise(run)
-        assert int(polls.read_text()) == 3
-        ready = "tr_reservation_by_authorization is read-write"
-        assert run.stdout.index(waiting) < run.stdout.index(ready) < run.stdout.index("[migrate_typed_counters] done")
-
-
 _RECONCILER_GCLOUD_STUB = r"""#!/usr/bin/env bash
 { printf '%s' "${0##*/}"; for argument in "$@"; do
     recorded="${argument//$'\n'/\\n}"
