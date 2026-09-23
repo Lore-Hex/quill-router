@@ -3,7 +3,7 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-09-23T15:26:23Z",
+  "generated_at": "2026-09-23T19:33:32Z",
   "model_count": 159,
   "models": [
     {
@@ -4439,7 +4439,10 @@
       "context_length": 262144,
       "max_output_tokens": 32768,
       "routable": false,
-      "routable_reason": "zero-price-unbillable"
+      "routable_reason": "zero-price-unbillable",
+      "input_token_price_per_m": 750,
+      "output_token_price_per_m": 2200,
+      "cached_input_token_price_per_m": 150
     },
     {
       "id": "deepseek/deepseek-v4.1-flash-expires-on-0910",

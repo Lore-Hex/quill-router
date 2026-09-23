@@ -692,11 +692,57 @@
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 500000,
       "cached_input_token_price_per_m": 50000
+    },
+    {
+      "display_name": "DeepSeek V4.1-Flash",
+      "title": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4.1-flash",
+      "upstream_id": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "context_length": 1048576,
+      "routable": true,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 650000,
+      "cached_input_token_price_per_m": 30000
+    },
+    {
+      "display_name": "Google Gemma 4 26B A4B Instruct",
+      "title": "google/gemma-4-26B-A4B-it",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemma-4-26b-a4b-it",
+      "upstream_id": "google/gemma-4-26B-A4B-it",
+      "context_length": 262144,
+      "routable": true,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 300000,
+      "cached_input_token_price_per_m": 50000
     }
   ],
   "source": "https://api.inference.wandb.ai/v1/models",
   "pricing_source": "https://wandb.ai/site/pricing/inference/",
-  "generated_at": "2026-09-23T15:26:23Z",
+  "generated_at": "2026-09-23T19:33:32Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 31
+  "model_count": 33
 }

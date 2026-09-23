@@ -430,11 +430,34 @@
       "routable": true,
       "input_token_price_per_m": 1000000,
       "output_token_price_per_m": 4000000
+    },
+    {
+      "display_name": "XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B",
+      "title": "XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "xiaomi/mimo-v2.6-distill-qwen-9b",
+      "upstream_id": "XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B",
+      "context_length": 32768,
+      "max_output_tokens": 32768,
+      "routable": true,
+      "input_token_price_per_m": 107800,
+      "output_token_price_per_m": 280000,
+      "cached_input_token_price_per_m": 86200
     }
   ],
   "source": "https://api.featherless.ai/v1/models",
   "pricing_source": "https://featherless.ai/docs/request-pricing-and-credits",
-  "generated_at": "2026-09-23T15:26:23Z",
+  "generated_at": "2026-09-23T19:33:32Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 19
+  "model_count": 20
 }

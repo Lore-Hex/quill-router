@@ -181,10 +181,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 100,
+    "model_count": 101,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 194,
+    "route_count": 195,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -226,10 +226,10 @@
   },
   "featherless": {
     "card_version": 2,
-    "model_count": 19,
+    "model_count": 20,
     "name": "Featherless AI",
     "privacy": "Policy documented",
-    "route_count": 19,
+    "route_count": 20,
     "route_mode": "Prepaid",
     "slug": "featherless"
   },
@@ -505,10 +505,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 10,
+    "model_count": 11,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 10,
+    "route_count": 11,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
@@ -847,10 +847,10 @@
   },
   "wandb": {
     "card_version": 2,
-    "model_count": 26,
+    "model_count": 28,
     "name": "Weights & Biases",
     "privacy": "Policy documented",
-    "route_count": 26,
+    "route_count": 28,
     "route_mode": "Prepaid",
     "slug": "wandb"
   },
