@@ -150,8 +150,10 @@
   .footer-top .brand{grid-column:1;grid-row:1;min-width:0}
   .footer-top .brand img{flex-shrink:0}
   .footer-contact{grid-column:1 / -1;font-size:14px}
-  .back-to-top{display:flex;grid-column:2;grid-row:1;align-items:center;justify-content:center;width:44px;height:44px;border:1px solid var(--line);border-radius:50%;color:#b7c2bc;text-decoration:none}
-  .back-to-top svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+  /* A compact visible circle inside a generous target, centered on the brand's first line. */
+  .back-to-top{position:relative;display:flex;grid-column:2;grid-row:1;align-items:center;justify-content:center;width:44px;height:44px;font-size:17px;margin-top:calc((1.3em - 44px)/2);border-radius:50%;color:var(--muted);text-decoration:none}
+  .back-to-top::before{content:"";position:absolute;inset:6px;border:1px solid #82938a;border-radius:50%;pointer-events:none}
+  .back-to-top svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
   .back-to-top:hover{color:var(--text)}
   .footer-markets{margin-block:16px}
   .legal{padding-top:16px;gap:8px 16px}
