@@ -1441,7 +1441,10 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
             "TR_GENERATION_RECORDS_ENABLED": "false",
             "TR_BIGTABLE_MIRROR_WRITES_ENABLED": "true",
             "TR_ANALYTICS_READ_MODE": "bigtable",
-            "TR_REGIONAL_QUOTA_LEASES_ENABLED": "false",
+            # Production's fleet declares lease capability; with issuance pinned
+            # on (R5) a rollout without it must refuse, which
+            # test_rollout_regional_quota_dispatch_true_refuses_incompatible_fleet covers.
+            "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true",
             # No dispatch issuance input: exercise rollout.sh's code pin.
             # Reuse the stateful legacy-service tag behavior in the harness.
             "HARNESS_PUBLIC_SURFACE_SMOKE": "1",
@@ -1457,7 +1460,7 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
                                     "env": [
                                         {
                                             "name": "TR_REGIONAL_QUOTA_LEASES_ENABLED",
-                                            "value": "false",
+                                            "value": "true",
                                         },
                                         {
                                             "name": "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED",

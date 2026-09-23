@@ -148,10 +148,12 @@ rollout_issuance_marker() (
 )
 
 test_raw_issuance_input_is_normalized_in_shell() {
-  [ "$(rollout_issuance_marker true)" = "false" ] ||
-    fail "absent push input did not pin live true off"
-  [ "$(rollout_issuance_marker true "")" = "false" ] ||
-    fail "empty push input did not pin live true off"
+  [ "$(rollout_issuance_marker true)" = "true" ] ||
+    fail "absent push input did not resolve to the pin (true)"
+  [ "$(rollout_issuance_marker false)" = "true" ] ||
+    fail "absent push input did not pin live false on"
+  [ "$(rollout_issuance_marker true "")" = "true" ] ||
+    fail "empty push input did not resolve to the pin (true)"
   [ "$(rollout_issuance_marker true preserve)" = "true" ] ||
     fail "preserve input did not keep true"
   [ "$(rollout_issuance_marker false true)" = "true" ] ||

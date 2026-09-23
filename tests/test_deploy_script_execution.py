@@ -703,8 +703,9 @@ def _regional_quota_rollout_harness(
 @pytest.mark.parametrize(
     ("control", "live", "expected"),
     [
-        pytest.param(None, "true", "false", id="absent-pins-live-true-off"),
-        pytest.param("", "true", "false", id="empty-pins-live-true-off"),
+        pytest.param(None, "true", "true", id="absent-pins-on-live-true"),
+        pytest.param(None, "false", "true", id="absent-pins-on-live-false"),
+        pytest.param("", "true", "true", id="empty-pins-on-live-true"),
         pytest.param("preserve", "true", "true", id="dispatch-preserve-live-true"),
         pytest.param("true", "false", "true", id="dispatch-enables-live-false"),
         pytest.param("false", "true", "false", id="dispatch-disables-live-true"),
@@ -794,18 +795,30 @@ def test_rollout_regional_quota_dispatch_true_refuses_incompatible_fleet(
     assert not any("run" in call and "deploy" in call for call in run.calls)
 
 
-@pytest.mark.parametrize("live_env", [{}, _LIVE_REGIONAL_QUOTA_ENV], ids=["no-live-settings", "stale-live-settings"])
+@pytest.mark.parametrize(
+    ("live_env", "control", "expected_issuance"),
+    [
+        # A fresh environment declares no lease capability: with issuance pinned
+        # on, the operator must force it off for that first deploy.
+        pytest.param({}, "false", "false", id="no-live-settings-forced-off"),
+        pytest.param(_LIVE_REGIONAL_QUOTA_ENV, None, "true", id="stale-live-settings-pinned-on"),
+    ],
+)
 def test_rollout_renders_every_regional_quota_pin(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, live_env: dict[str, str],
+    control: str | None, expected_issuance: str,
 ) -> None:
     isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, live_env)
-    run = isolated.run("scripts/deploy/rollout.sh")
+    run = isolated.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={} if control is None else {"TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": control},
+    )
     assert run.returncode == 0, summarise(run)
     deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
     rendered = _cloud_run_job_env(deploy)
     for name, value in _REGIONAL_QUOTA_PINS.items():
         assert rendered[name] == value, name
-    assert rendered["TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED"] == "false"
+    assert rendered["TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED"] == expected_issuance
 
 
 @pytest.mark.parametrize("script", [
@@ -993,6 +1006,10 @@ def test_regional_quota_shared_settings_agree_across_scripts(
         overrides.update({key: _SHARED_QUOTA_OVERRIDES[key] for key in (
             "TR_REGIONAL_QUOTA_CLUSTER_MAP", "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES",
         )})
+    if (script == "scripts/deploy/rollout.sh" and mode == "empty"
+            and name == "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS"):
+        # Emptying the cohort is valid only while issuance is off.
+        overrides["TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED"] = "false"
     expected = {**_REGIONAL_QUOTA_PINS, **overrides}
     # The provisioner has no revision env. Observe its resolved inputs after
     # successful execution, in addition to checking actual Bigtable argv below.
@@ -1146,7 +1163,9 @@ def test_rollout_binding_refuses_empty_spend_lease_app_profiles(
     )
     isolated = DeployScriptHarness(tmp_path / "spend-lease-profiles-empty")
 
-    run = isolated.run(script)
+    # This fleet declares no lease capability; force issuance off so the
+    # binding guard, not the issuance preflight, is what refuses.
+    run = isolated.run(script, extra_env={"TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "false"})
 
     assert run.returncode != 0
     assert (
