@@ -68,3 +68,29 @@
     sync();
   }).observe(closing);
 })();
+
+/* Show directional controls only when more market links are out of view. */
+document.querySelectorAll('.geo-scroll').forEach(container => {
+  const nav = container.querySelector('nav, [data-geo-links]');
+  const previous = container.querySelector('.geo-prev');
+  const next = container.querySelector('.geo-next');
+  const update = () => {
+    const left = nav.scrollLeft > 2;
+    const right = nav.scrollLeft + nav.clientWidth < nav.scrollWidth - 2;
+    previous.hidden = !left;
+    next.hidden = !right;
+    container.classList.toggle('can-left', left);
+    container.classList.toggle('can-right', right);
+  };
+  const move = direction => nav.scrollBy({
+    left: direction * nav.clientWidth * .75,
+    behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth'
+  });
+  previous.addEventListener('click', () => move(-1));
+  next.addEventListener('click', () => move(1));
+  nav.addEventListener('scroll', update, {passive:true});
+  window.addEventListener('resize', update);
+  if ('ResizeObserver' in window) new ResizeObserver(update).observe(nav);
+  document.fonts.ready.then(update);
+  update();
+});

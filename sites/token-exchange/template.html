@@ -31,8 +31,7 @@
   </header>
   <div class="market-directory">
     <div class="shell">
-      <nav class="city-markets" aria-label="Exchange cities">$city_markets</nav>
-      <nav class="region-markets" aria-label="Exchange regions">$region_markets</nav>
+      <div class="geo-scroll"><nav class="market-links" aria-label="Market directory">$markets</nav><button class="geo-prev" type="button" aria-label="Scroll markets left" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m15 5-7 7 7 7"/></svg></button><button class="geo-next" type="button" aria-label="Scroll markets right" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 5 7 7-7 7"/></svg></button></div>
     </div>
   </div>
   <main id="main">
@@ -46,21 +45,24 @@
     <section class="shell section" id="buyers">
       <div class="section-intro"><p class="eyebrow">For buyers</p><h2>Make providers compete<br>for your workload.</h2><p>Buy the intelligence your business needs. Compare quality, price and performance. Choose the provider policies that fit your data.</p></div>
       <div class="buyer-actions"><a class="button primary" data-attribution href="$buyer_url">Plan an enterprise pilot</a><a class="button secondary" data-attribution href="$brief_url">Get the enterprise brief</a></div>
-      <!-- Provider choices connect through TrustedRouter to the buyer's workload. -->
+      <!-- A workload connects through TrustedRouter to eligible provider options. -->
       <figure class="route-flow" aria-label="Compare eligible providers through TrustedRouter for your workload">
-        <div class="route-node route-options">
-          <strong>Compare eligible providers</strong>
-          <svg class="provider-branches" viewBox="0 0 240 86" aria-hidden="true" focusable="false"><path d="M120 86V66M40 29V50Q40 66 56 66H184Q200 66 200 50V29M120 66V29"/><circle cx="40" cy="20" r="9"/><circle cx="120" cy="20" r="9"/><circle cx="200" cy="20" r="9"/></svg>
-        </div>
-        <div class="route-node route-router"><div class="route-mark"><img src="/assets/mark.svg" width="38" height="38" alt=""></div><strong>TrustedRouter</strong></div>
-        <div class="route-connector" aria-hidden="true"></div>
         <div class="route-node"><strong>Your workload</strong></div>
+        <div class="route-connector" aria-hidden="true"></div>
+        <div class="route-node route-router"><div class="route-mark"><img src="/assets/mark.svg" width="38" height="38" alt=""></div><strong>TrustedRouter</strong></div>
+        <div class="route-node route-options">
+          <svg class="provider-branches" viewBox="0 0 240 86" aria-hidden="true" focusable="false"><path d="M120 0V20M40 57V36Q40 20 56 20H184Q200 20 200 36V57M120 20V57"/><circle cx="40" cy="66" r="9"/><circle cx="120" cy="66" r="9"/><circle cx="200" cy="66" r="9"/></svg>
+          <strong>Compare eligible providers</strong>
+        </div>
       </figure>
       <div class="provider-strip">
-        <p>Selected providers in<br>TrustedRouter’s catalog</p>
+        <p>Providers on TrustedRouter</p>
         <a href="https://trustedrouter.com/providers"><img src="/assets/provider-openai.png" width="32" height="32" alt=""><span>OpenAI</span></a>
         <a href="https://trustedrouter.com/providers"><img src="/assets/provider-anthropic.png" width="32" height="32" alt=""><span>Anthropic</span></a>
         <a href="https://trustedrouter.com/providers"><img src="/assets/provider-mistral.png" width="32" height="32" alt=""><span>Mistral</span></a>
+        <a href="https://trustedrouter.com/providers"><img src="/assets/provider-google-vertex.png" width="32" height="32" alt=""><span>Google Vertex AI</span></a>
+        <a href="https://trustedrouter.com/providers"><img src="/assets/provider-deepseek.png" width="32" height="32" alt=""><span>DeepSeek</span></a>
+        <a href="https://trustedrouter.com/providers"><img src="/assets/provider-grok.png" width="32" height="32" alt=""><span>xAI</span></a>
       </div>
     </section>
     <section class="market-band"><div class="shell section"><p class="eyebrow">$region / Workload priorities</p><div class="market-intro"><h2>$focus</h2><p>$intro</p></div><div class="columns sectors">$sectors</div></div></section>
@@ -84,6 +86,6 @@
       </div>
     </section>
   </main>
-  <footer class="shell"><div class="footer-top"><div class="brand"><img src="/assets/mark.svg" width="30" height="30" alt=""><span>$name<small>POWERED BY TRUSTEDROUTER</small></span></div><a href="mailto:help@trustedrouter.com">help@trustedrouter.com</a></div><nav class="markets" aria-label="Exchange markets">$markets</nav><div class="legal"><span>Operated by Lore Hex Corp, a Delaware corporation.</span><a href="https://trustedrouter.com/privacy">Privacy</a><a href="https://trustedrouter.com/terms">Terms</a><a href="https://trustedrouter.com/token-exchange">TrustedRouter Token Exchange</a></div></footer>
+  <footer class="shell"><div class="footer-top"><div class="brand"><img src="/assets/mark.svg" width="30" height="30" alt=""><span>$name<small>POWERED BY TRUSTEDROUTER</small></span></div><a href="mailto:help@trustedrouter.com">help@trustedrouter.com</a></div><div class="geo-scroll footer-markets"><nav class="market-links" aria-label="Exchange markets">$markets</nav><button class="geo-prev" type="button" aria-label="Scroll footer markets left" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m15 5-7 7 7 7"/></svg></button><button class="geo-next" type="button" aria-label="Scroll footer markets right" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 5 7 7-7 7"/></svg></button></div><div class="legal"><span>Operated by Lore Hex Corp, a Delaware corporation.</span><a href="https://trustedrouter.com/privacy">Privacy</a><a href="https://trustedrouter.com/terms">Terms</a><a href="https://trustedrouter.com/token-exchange">TrustedRouter Token Exchange</a></div></footer>
 </body>
 </html>

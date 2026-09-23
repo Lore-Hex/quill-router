@@ -87,8 +87,6 @@ def render(market: dict, markets: list[dict], version: str) -> str:
                 for title, body in market["sectors"]
             ),
             "markets": market_links(markets, market),
-            "city_markets": market_links([m for m in markets if m["scope"] == "city"], market),
-            "region_markets": market_links([m for m in markets if m["scope"] != "city"], market),
             "schema": json.dumps(
                 {
                     "@context": "https://schema.org",
@@ -127,6 +125,9 @@ def build(output: Path) -> None:
         "provider-logos/openai.png": "provider-openai.png",
         "provider-logos/anthropic.png": "provider-anthropic.png",
         "provider-logos/mistral.png": "provider-mistral.png",
+        "provider-logos/google-vertex.png": "provider-google-vertex.png",
+        "provider-logos/deepseek.png": "provider-deepseek.png",
+        "provider-logos/grok.png": "provider-grok.png",
     }.items():
         shutil.copyfile(static / source, assets / target)
     for market in markets:

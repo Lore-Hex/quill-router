@@ -13,7 +13,7 @@
     "slug": "new-york", "name": "New York Token Exchange", "region": "New York", "domain": "nytokenexchange.com", "aliases": ["newyorktoken.exchange", "nytoken.exchange"],
     "scope": "city",
     "headline": "Intelligence, bought on your terms.",
-    "lead": "Compare AI models and providers for New York's financial, legal and enterprise teams.",
+    "lead": "Compare AI models and providers for New York's financial, legal and enterprise\u00a0teams.",
     "focus": "Built around the work that moves New York.",
     "intro": "Research, contracts and client communications deserve more than a single model choice. Start with a representative workload, compare quality and economics, and review the privacy of the entire route.",
     "sectors": [["Investment research", "Evaluate document analysis and research synthesis against your own acceptance criteria. Compare output quality, latency and total token cost."], ["Legal operations", "Review retention policies and provider eligibility before routing client material. Test document workflows with a controlled evaluation set."], ["Financial platforms", "Define approved routes, fallback choices and application spending limits before putting an AI feature into production."]],

@@ -31,8 +31,9 @@ const assert = require('node:assert/strict');
       assert.equal(await mainNav.isVisible(), false);
       assert(await menu.evaluate(el => el === document.activeElement));
       assert.equal(await page.locator('.hero').evaluate(el => getComputedStyle(el, '::before').animationName), 'none');
-      const cityNav = page.getByRole('navigation', {name:'Exchange cities', exact:true});
-      assert.equal(await cityNav.getByRole('link').count(), 8);
+      const marketNav = page.getByRole('navigation', {name:'Market directory', exact:true});
+      assert.equal(await marketNav.getByRole('link').count(), markets.length);
+      assert.equal(await page.locator('.provider-strip a').count(), 6);
       const geometry = await page.evaluate(() => {
         const nav = document.querySelector('.market-directory').getBoundingClientRect();
         const hero = document.querySelector('.hero').getBoundingClientRect();
@@ -46,13 +47,33 @@ const assert = require('node:assert/strict');
       assert(geometry.navBottom < 360, `${market.slug}: cities buried at ${width}`);
       for (const [index, link] of geometry.links.entries()) {
         assert(link.height >= 40, `${market.slug}: navigation hit target too small`);
-        assert(link.x >= 0 && link.x + link.width <= width, `${market.slug}: clipped city`);
+        assert(Math.abs(link.y - geometry.links[0].y) < 1, `${market.slug}: market directory wrapped`);
         for (const other of geometry.links.slice(index + 1)) {
           assert(!(link.x < other.x + other.width && link.x + link.width > other.x &&
             link.y < other.y + other.height && link.y + link.height > other.y),
           `${market.slug}: overlapping navigation links`);
         }
       }
+      for (const label of ['Market directory', 'Exchange markets']) {
+        const nav = page.getByRole('navigation', {name:label, exact:true});
+        assert.equal(await nav.getByRole('link').count(), markets.length);
+        assert.equal(await nav.locator('[aria-current="page"]').count(), 1);
+        assert(await nav.evaluate(el => new Set([...el.children].map(a => a.offsetTop)).size === 1));
+        if (await nav.evaluate(el => el.scrollWidth > el.clientWidth + 2)) {
+          const controls = nav.locator('..');
+          await controls.locator('.geo-next').click();
+          assert(await nav.evaluate(el => el.scrollLeft > 0), `${market.slug}: market arrow did not scroll`);
+          await controls.locator('.geo-prev').click();
+          assert(await nav.evaluate(el => el.scrollLeft < 2), `${market.slug}: market arrow did not return`);
+        }
+        for (const link of await nav.getByRole('link').all()) {
+          await link.scrollIntoViewIfNeeded();
+          const box = await link.boundingBox();
+          assert(box && box.x >= 0 && box.x + box.width <= width, `${market.slug}: market cannot be scrolled into view`);
+        }
+        await nav.evaluate(el => { el.scrollLeft = 0; });
+      }
+      await page.evaluate(() => window.scrollTo(0, 0));
       if (['global', 'new-york'].includes(market.slug)) {
         await page.screenshot({path: `/tmp/exchange-${market.slug}-${width}-first.png`});
       }

@@ -3,9 +3,10 @@
 Static enterprise acquisition sites for 12 markets and 29 owned domains.
 The global site is **thetokenexchange.com**; New York is **nytokenexchange.com**.
 `markets.json` is the source of truth for canonical hosts, aliases and local copy.
-Its `scope` field separates the prominent city navigation from global/regional
-links. Every page shows the city directory above its hero and the full market
-directory in its footer.
+Its `scope` field records whether a market is a city, region or global audience.
+Every page shows one unified market directory above its hero and in its footer,
+with the same destinations and ordering. Both remain on one line and scroll
+horizontally when needed, with directional controls when JavaScript is available.
 
 ## Architecture
 
@@ -30,6 +31,11 @@ site's apex and `www`. These isolate their availability from the larger regional
 certificate batches. Preserve them on future publishes. A hostname marked
 `ACTIVE` inside a batch is not sufficient: the certificate itself must be
 `ACTIVE`, and a normal public HTTPS request must pass without disabling validation.
+
+Featured provider logos reuse `src/trusted_router/static/provider-logos/` assets.
+Their inclusion was checked against the public [provider catalog](https://trustedrouter.com/providers):
+OpenAI, Anthropic, Mistral, Google Vertex AI, DeepSeek and xAI. These are catalog
+examples, not customer endorsements or claims of verified confidential inference.
 
 ## Build and Test
 
