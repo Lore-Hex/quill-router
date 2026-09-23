@@ -431,10 +431,14 @@ def test_cache_never_extends_evidence_max_age(armed: Any, evidence: str, reason:
     {"mutation_budget": 20001}, {"source_version": "wrong"}, {"environment": "wrong"},
     {"scan_complete": False}, {"max_observed_mutations": -1},
     {"max_observed_mutations": 21000},
-    {"computed_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat()},
+    {"computed_at": "future"},
 ])
 def test_owner_budget_contract_fails_closed(armed: Any, changes: Any) -> None:
     store, _, settings = armed
+    if changes.get("computed_at") == "future":
+        # Collection can precede execution by more than an hour in the full
+        # suite. Keep this a future-timestamp rejection, not a stale fixture.
+        changes = {**changes, "computed_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat()}
     _budget(store, **changes)
     assert gate.lease_eligibility(store, settings, "workspace") == (None, "trust_gate_unarmed")
 

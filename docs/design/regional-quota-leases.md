@@ -460,3 +460,74 @@ active and queued events. Abrupt process death and a disabled downstream sink ar
 not proven delivered by these dispatcher counters; use downstream outbox/sink
 health alongside them when interpreting coverage. Observation is evidence with
 bounded, reported queue loss, not an exact census.
+
+### R2b: traffic allocation, global liquidity, and handoff
+
+Issuance now sizes against a **workspace-wide** budget, across every region and
+quota shard. With trust armed, its absolute ceiling remains the minimum of the
+configured pool, the tier cap, and every outstanding generation's certified
+pool. The existing available-balance fraction still caps each individual grant;
+it does not shrink the workspace pool again. Neither a new region nor a
+successor creates another pool.
+
+At grant boundaries, the serializable transaction reads the bounded workspace
+ownership index and the workspace's credit balances. Let `A` be current global
+available balance (credits minus usage and all reservations), `E` unreconciled
+regional escrow, and `f` the global floor in basis points. A grant `g` must obey:
+
+```
+E + g <= min(certified trust pool, floor((A + E) * (10000 - f) / 10000))
+```
+
+`TR_REGIONAL_QUOTA_GLOBAL_FLOOR_BASIS_POINTS` defaults to 5000 and accepts 1–10000.
+Global reservations and debt on other credit shards reduce the denominator.
+Every grant, including a replacement, checks this floor in its reserve
+transaction; retries cannot use the earlier balance snapshot to bypass it.
+This guarantees the retained share at each grant boundary. Subsequent global
+spending may use that liquidity; it is not another reservation of global funds.
+No deployment flag, cohort, region mapping, TTL, or shard count changes in R2b.
+
+The router lazily starts a grant at up to four request estimates. The budget is
+divided by the number of distinct `(region, quota shard)` slots with an unexpired
+owned generation, including the requesting slot, and halved to leave overlap
+capacity. Retired generations consume escrow but do not duplicate a slot. The
+retiring shard's observed spent-plus-reserved amount seeds its next grant at
+twice that demand, subject to the same share and pool bounds. Expired idle slots
+stop diluting the share; their unreleased escrow still counts against the pool.
+
+An unfunded or unusable hash-selected slot tries funded siblings in the same
+region before global fallback. Search visits at most 64 slots, refreshes a stale
+cached generation at most once per slot, and attempts at most four funded
+siblings. The healthy cached path does not scan siblings. This adds no shared
+counter write to successful local admission.
+
+Before new admission, remaining quota below the larger of two request estimates
+and 10% of the grant, or expiry within `min(5 seconds, TTL / 10)`, triggers
+handoff. The writer first CAS-drains the regional row. A Spanner transaction
+then persists a `regional_quota_lease_retired` pointer, retains both open indexes,
+marks that separate canonical generation `retiring`, and clears only its own
+fence. Only then can a successor reserve escrow and acquire the next fence
+number. Settlement continues using the original lease ID and token; a hold
+reserved before draining may finish its typed authorization record afterward.
+
+Crashes after drain or retirement are retryable. A pending successor whose
+issuer died before initialization/activation is resumed idempotently using its
+already reserved escrow. Cached closed generations refresh to the current
+fence. Reconciliation imports retired generations normally and closes them only
+when no holds remain. Closing a retired generation requires its retirement
+pointer and never clears a successor's fence. Retirement does not release
+escrow, and insufficient overlap capacity falls back to the global path. No
+finite pool can guarantee local admission when outstanding holds fill it.
+
+Rollout requires the R2b reconciler to close retired generations. Older workers
+fail closed on a detached fence; keep the compatible worker running until all
+retired generations drain. The existing dual-read ownership index continues to
+include legacy fenced leases during mixed-version issuance.
+
+Regional shadow events add nullable `regional_selected_shard` and
+`regional_sibling_served` fields through both ClickHouse adapters and forward-only
+migrations 019/020. `pool_floor` identifies liquidity refusal; `pool_cap` also
+covers a traffic share too small for the request. `sibling_exhausted` is the final
+fallback classification when no more specific grant/lease reason is available.
+The selected shard is the serving shard on success, or the requested hash shard
+on failure. Existing charge calculation and settlement amounts are unchanged.

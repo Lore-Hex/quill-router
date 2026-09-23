@@ -104,6 +104,14 @@ class RegionalQuotaLedger(Protocol):
     ) -> RegionalQuotaLease: ...
 
 
+def _same_generation(existing: RegionalQuotaLease, requested: RegionalQuotaLease) -> bool:
+    # Initialization can race recovery and a live issuer. Mutable state/holds
+    # belong to the durable row and must never be replaced by the empty grant.
+    identity = ("lease_id", "workspace_id", "region", "fencing_token",
+                "granted_microdollars", "expires_at")
+    return all(getattr(existing, name) == getattr(requested, name) for name in identity)
+
+
 class InMemoryRegionalQuotaLedger:
     """Transactionally faithful test twin of the Bigtable row adapter."""
 
@@ -119,7 +127,7 @@ class InMemoryRegionalQuotaLedger:
         with self._lock:
             existing = self._leases.get(key)
             if existing is not None:
-                if existing != lease:
+                if not _same_generation(existing, lease):
                     raise RegionalLeaseLedgerError(
                         "lease ID already contains different durable state"
                     )
@@ -301,7 +309,7 @@ class BigtableRegionalQuotaLedger:
         existing = self.get(lease.lease_id, region=lease.region)
         if existing is None:
             raise RegionalLeaseLedgerError("lease initialization was ambiguous")
-        if existing != lease:
+        if not _same_generation(existing, lease):
             raise RegionalLeaseLedgerError("lease ID already contains different durable state")
         return existing
 

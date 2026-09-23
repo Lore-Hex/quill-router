@@ -504,8 +504,15 @@ def test_regional_settle_falls_back_when_stale_cas_erased_authorized_hold() -> N
         lease_max_available_basis_points=1_000,
         lease_shard_count=16,
     )
-    assert next_outcome == "unavailable"
-    assert next_authorization is None
+    assert next_outcome == "accepted"
+    assert next_authorization is not None
+    assert next_authorization.regional_lease_id != authorization.regional_lease_id
+    assert store.typed_finalize_gateway_authorization_result(
+        next_authorization.id, success=False, actual_microdollars=0,
+        selected_usage_type=UsageType.CREDITS,
+    ).finalized
+    after_successor = _credit_totals(database, workspace.id)
+    assert after_successor[:2] == after[:2]
     assert ledger.get(lease_key[1], region=lease_key[0]) == damaged
 
     replay = store.typed_finalize_gateway_authorization_result(
@@ -515,18 +522,18 @@ def test_regional_settle_falls_back_when_stale_cas_erased_authorized_hold() -> N
         selected_usage_type=UsageType.CREDITS,
     )
     assert replay.finalized is False
-    assert _credit_totals(database, workspace.id) == after
+    assert _credit_totals(database, workspace.id) == after_successor
 
     reconciled = store.reconcile_regional_quota_leases(
         now=datetime.now(UTC) + timedelta(minutes=2),
     )
     assert reconciled == {
-        "inspected": 1,
-        "backlog": 1,
-        "processed": 1,
+        "inspected": 2,
+        "backlog": 2,
+        "processed": 2,
         "remaining": 0,
-        "reconciled": 1,
-        "closed": 1,
+        "reconciled": 2,
+        "closed": 2,
         "errors": 0,
     }
     assert _credit_totals(database, workspace.id) == (100_000_000, 7_500, 0)
@@ -670,7 +677,11 @@ def test_regional_pool_spreads_hot_workspace_across_bounded_lease_shards() -> No
         "regional_quota_lease",
         cls=GlobalRegionalQuotaLease,
     )
-    assert {lease.quota_shard for lease in leases} == {0, 1, 2, 3}
+    # Unfunded hash slots reuse a funded sibling until measured demand
+    # retires it; no need to park escrow in every possible hash slot.
+    assert {lease.quota_shard for lease in leases} == {0, 3}
+    assert len({auth.regional_lease_id for auth in authorizations[:3]}) == 1
+    assert authorizations[3].regional_lease_id != authorizations[0].regional_lease_id
     _total, _usage, reserved = _credit_totals(database, workspace.id)
     assert 0 < reserved <= 10_000_000
 
@@ -685,7 +696,7 @@ def test_regional_pool_spreads_hot_workspace_across_bounded_lease_shards() -> No
     reconciled = store.reconcile_regional_quota_leases(
         now=datetime.now(UTC) + timedelta(minutes=2),
     )
-    assert reconciled["closed"] == 4
+    assert reconciled["closed"] == 2
     assert reconciled["errors"] == 0
     assert _credit_totals(database, workspace.id) == (100_000_000, 0, 0)
 
@@ -815,8 +826,9 @@ def test_reconciler_closes_expired_quarantine_when_local_initialization_is_absen
         GlobalRegionalQuotaLease,
     )
     assert quarantined is not None
-    with pytest.raises(RuntimeError, match="quarantined"):
-        activate_regional_quota_lease(store, quarantined, now=NOW + timedelta(seconds=1))
+    assert activate_regional_quota_lease(
+        store, quarantined, now=NOW + timedelta(seconds=1),
+    ).state == "quarantined"
     assert _credit_totals(database, workspace.id)[2] == lease.granted_microdollars
 
     result = store.reconcile_regional_quota_leases(now=NOW + timedelta(minutes=2))
