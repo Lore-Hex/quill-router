@@ -104,6 +104,32 @@ const assert = require('node:assert/strict');
     await page.evaluate(() => document.fonts.ready);
     await page.screenshot({path:path.join(output,'assets',`og-${market.slug}.png`)});
   }
+  // Address-bar height changes must not stretch the hero or move its actions.
+  const mobile = await browser.newPage({viewport:{width:390,height:700}, reducedMotion:'reduce'});
+  const heroGeometry = () => mobile.locator('.hero').evaluate(hero => {
+    const rect = hero.getBoundingClientRect();
+    const actions = hero.querySelector('.actions').getBoundingClientRect();
+    const art = getComputedStyle(hero, '::before');
+    return {height:rect.height, actionsTop:actions.top - rect.top,
+      artHeight:art.height, artLeft:art.left, mask:art.maskImage};
+  });
+  for (const [width, height] of [[390,700], [320,600]]) {
+    await mobile.setViewportSize({width,height});
+    await mobile.goto('http://127.0.0.1:8089/new-york/');
+    await mobile.evaluate(() => document.fonts.ready);
+    const initial = await heroGeometry();
+    await mobile.evaluate(() => window.scrollTo({top:120,behavior:'instant'}));
+    await mobile.setViewportSize({width,height:height + 100});
+    assert.deepEqual(await heroGeometry(), initial, 'mobile hero stretches when browser chrome hides');
+    await mobile.setViewportSize({width,height});
+    assert.deepEqual(await heroGeometry(), initial, 'mobile hero jumps when browser chrome returns');
+  }
+  await mobile.setViewportSize({width:844,height:390});
+  await mobile.waitForFunction(() => !document.querySelector('.hero').classList.contains('hero-layout-locked'));
+  await mobile.setViewportSize({width:390,height:700});
+  await mobile.waitForFunction(() => document.querySelector('.hero').classList.contains('hero-layout-locked'));
+  assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  await mobile.close();
   const fallback = await browser.newPage({javaScriptEnabled:false, viewport:{width:390,height:1000}});
   await fallback.goto('http://127.0.0.1:8089/new-york/');
   assert(await fallback.getByRole('navigation', {name:'Main navigation',exact:true}).isVisible());
@@ -112,5 +138,5 @@ const assert = require('node:assert/strict');
   await fallback.close();
   assert.deepEqual(errors, []);
   await browser.close();
-  console.log('PASS: 12 markets x 3 viewports; images, overflow, attribution, FAQ, menu, reduced motion, no-JS navigation; 12 OG images generated.');
+  console.log('PASS: 12 markets x 3 viewports; images, overflow, attribution, FAQ, menu, reduced motion, mobile hero resize, no-JS navigation; 12 OG images generated.');
 })().catch(error => {console.error(error); process.exit(1);});

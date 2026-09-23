@@ -2,6 +2,12 @@
 
 Applies to this directory. Read README.md for product and content requirements.
 
+For ongoing UI work, also read [DESIGN-HANDOFF.md](DESIGN-HANDOFF.md) for the
+design history, unresolved concerns, local changes, and preview setup. Inspect
+the current page and working diff before editing; the latest implementation is
+not automatically a user-approved design. Keep the handoff current as decisions
+are made.
+
 ## Design direction
 
 - Preserve a minimalist, production-facing landing page: clear hierarchy, restrained typography, one focal visual per section, and deliberate space.

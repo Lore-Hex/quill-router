@@ -40,7 +40,34 @@
   window.matchMedia('(max-width: 600px)').addEventListener('change', () => setOpen(false));
 })();
 
-/* Illustrative paths draw once on entry; all content remains visible without JS. */
+/* Keep the initial mobile composition when browser chrome expands/collapses.
+   Recalculate on width changes (including rotation), never on scroll/height alone. */
+(() => {
+  const hero = document.querySelector('.hero');
+  const copy = hero?.querySelector('.hero-copy');
+  const actions = hero?.querySelector('.actions');
+  if (!hero || !copy || !actions) return;
+  let previousWidth;
+  const sizeHero = () => {
+    const width = document.documentElement.clientWidth;
+    if (width === previousWidth) return;
+    previousWidth = width;
+    hero.style.removeProperty('--mobile-hero-top');
+    hero.style.removeProperty('--mobile-hero-gap');
+    hero.classList.remove('hero-layout-locked', 'hero-compact');
+    if (width > 600) return;
+    const top = getComputedStyle(copy).paddingTop;
+    const gap = getComputedStyle(actions).marginTop;
+    hero.style.setProperty('--mobile-hero-top', top);
+    hero.style.setProperty('--mobile-hero-gap', gap);
+    hero.classList.toggle('hero-compact', window.matchMedia('(max-height: 650px)').matches);
+    hero.classList.add('hero-layout-locked');
+  };
+  sizeHero();
+  window.addEventListener('resize', sizeHero);
+})();
+
+/* Initialize buyer highlights on entry; the underlying diagram stays visible. */
 (() => {
   if (!('IntersectionObserver' in window)) return;
   const observer = new IntersectionObserver((entries) => {
@@ -51,22 +78,24 @@
       }
     });
   }, {threshold: 0.35});
-  document.querySelectorAll('.route-flow, .supplier-art').forEach(element => observer.observe(element));
+  document.querySelectorAll('.route-flow').forEach(element => observer.observe(element));
 })();
 
-/* Decorative color motion stops outside the viewport and respects reduced motion. */
+/* Decorative loops run only while visible; static artwork remains without JS. */
 (() => {
-  const closing = document.querySelector('.closing');
-  if (!closing || !('IntersectionObserver' in window)) return;
+  if (!('IntersectionObserver' in window)) return;
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
-  let visible = false;
-  const sync = () => closing.classList.toggle('is-animating', visible && !reduced.matches && !document.hidden);
+  const visible = new Map();
+  const sync = () => visible.forEach((inView, element) => {
+    element.classList.toggle('is-animating', inView && !reduced.matches && !document.hidden);
+  });
   reduced.addEventListener('change', sync);
   document.addEventListener('visibilitychange', sync);
-  new IntersectionObserver(entries => {
-    visible = entries[0].isIntersecting;
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(entry => visible.set(entry.target, entry.isIntersecting));
     sync();
-  }).observe(closing);
+  });
+  document.querySelectorAll('.hero, .route-flow, .supplier-art, .closing').forEach(element => observer.observe(element));
 })();
 
 /* Show directional controls only when more market links are out of view. */
