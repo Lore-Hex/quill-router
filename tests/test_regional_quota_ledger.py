@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -13,6 +14,8 @@ from trusted_router.regional_quota_ledger import (
     BigtableRegionalQuotaLedger,
     InMemoryRegionalQuotaLedger,
     RegionalLeaseLedgerError,
+    _deserialize_lease,
+    _serialize_lease,
     settled_key_totals,
 )
 from trusted_router.services.regional_quota_leases import RegionalQuotaLease
@@ -84,7 +87,10 @@ def test_ledger_replays_ambiguous_commit_without_duplicate_hold() -> None:
     assert durable == current
 
 
-def test_bigtable_round_trip_preserves_key_shard_expiry_and_settlement() -> None:
+def test_bigtable_round_trip_preserves_key_shard_expiry_and_settlement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("trusted_router.services.regional_quota_leases._utc_now", lambda: NOW)
     table = _FakeBigtableTable()
     ledger = BigtableRegionalQuotaLedger({"us-central1": table})
     ledger.initialize(_lease())
@@ -109,6 +115,15 @@ def test_bigtable_round_trip_preserves_key_shard_expiry_and_settlement() -> None
     )
 
     assert settled.spent_microdollars == 275
+    assert settled.holds[0].settled_at == NOW
+    assert ledger.get("rql-test", region="us-central1") == settled
+    monkeypatch.setattr(
+        "trusted_router.services.regional_quota_leases._utc_now", lambda: NOW + timedelta(days=1),
+    )
+    assert ledger.settle(
+        "rql-test", region="us-central1", hold_id="hold-1", actual_microdollars=275,
+        fencing_token=9,
+    ) == settled
     assert settled.holds[0].expires_at == NOW + timedelta(hours=2)
     assert settled_key_totals(settled) == {("key-1", 7): 275}
 
@@ -329,3 +344,15 @@ class _FakeLegacyConditionalRow:
 
     def clear(self) -> None:
         self.cleared = True
+
+
+def test_legacy_ledger_hold_without_settled_at_deserializes() -> None:
+    lease = _lease().reserve(
+        hold_id="legacy", fingerprint="legacy", amount_microdollars=500,
+        fencing_token=9, now=NOW,
+    ).lease.settle(hold_id="legacy", actual_microdollars=275, fencing_token=9).lease
+    payload = json.loads(_serialize_lease(lease))
+    del payload["holds"][0]["settled_at"]
+    restored = _deserialize_lease(json.dumps(payload).encode())
+    assert restored.holds[0].settled_at is None
+    assert restored.spent_microdollars == 275

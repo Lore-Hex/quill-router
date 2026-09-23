@@ -1745,13 +1745,23 @@ def typed_finalize_atomic(
             if credit_count != 1:
                 raise _SettleError("regional fallback credit booking row-count != 1")
 
-        key_count, warning = _release_key_or_skip_deleted(
-            transaction, pt, res, book_actual, book_to_byok=book_to_byok
+        # Authorization is already loaded for finalization. No lease read belongs
+        # in this transaction. Missing versions retain the V1 inline contract;
+        # a missing Bigtable hold always uses the existing claimed recovery path.
+        regional_reconciler_owns_key = (
+            res.get("hold_usage_type") == "RegionalCredits"
+            and authorization is not None
+            and authorization.regional_accounting_version == 2
+            and not regional_hold_unknown
         )
-        if warning is not None:
-            missing_key_releases.append(warning)
-        if res["key_reserved_micro"] > 0 and key_count != 1:
-            raise _SettleError("key release row-count != 1")
+        if not regional_reconciler_owns_key:
+            key_count, warning = _release_key_or_skip_deleted(
+                transaction, pt, res, book_actual, book_to_byok=book_to_byok
+            )
+            if warning is not None:
+                missing_key_releases.append(warning)
+            if res["key_reserved_micro"] > 0 and key_count != 1:
+                raise _SettleError("key release row-count != 1")
 
         return {
             "outcome": SettleOutcome.SETTLED,
