@@ -1,7 +1,9 @@
 # Polyphemus 1.0
 
-Status: September 21 launch verified; September 23 selector tariff update
-pending deployment. Historical verification below does not verify the new tariff.
+Status: September 23 selector tariff verified for JSON in all four GCP regions;
+streaming verified in the three US regions, with the existing EU receipt gap.
+Standalone-cloud rollout gates remain in force. September 21 evidence below
+describes the historical launch tariff, not the current token-based fee.
 
 `trustedrouter/polyphemus-1.0` is a Responses-only named model. Telluvian
 recommends a concrete model, and TrustedRouter authorizes and executes that
@@ -13,8 +15,11 @@ Use `/v1/modelSelect` directly, not `telluvian/gallery-1`. Generation remains
 on TrustedRouter's independently authorized provider routes. No Telluvian
 generation or hallucination-verification charge is added.
 
-The selector costs **$0.05 per million prompt tokens**, confirmed by Joseph
-and [Telluvian's pricing documentation](https://telluvian.ai/docs/pricing).
+The TR selector costs **$0.05 per million prompt tokens**, explicitly approved
+by Joseph. This is the retail tariff, not an invoice-matched upstream cost.
+Telluvian's [routing documentation](https://telluvian.ai/docs/routing), checked
+September 23, now says its proposed $0.05/M routing charge is not yet enabled.
+Do not silently change the approved TR tariff or infer invoice charges from it.
 No selector output-token or fixed request fee is charged. Normal shared ledger
 rounding applies, with a one-microdollar minimum for a successful selection:
 1,000 tokens cost $0.00005; 100,000 tokens cost $0.005.
@@ -25,7 +30,7 @@ exact serialized conversation and tool definitions sent as `messages`:
 `max(1, floor(UTF-8 byte length / 4))`. This is not a claim that Telluvian uses
 the same tokenizer. Settlement stores `usage_estimated=true`; responses expose
 `selector_input_tokens`, `selector_usage_estimated`, and `selector_token_basis`.
-Actual upstream cost remains unknown even though the upstream rate is known.
+Actual per-request upstream cost remains unreported by the selector API.
 The selected model's own usage, cache accounting, and token prices are separate.
 Workspace token totals include both metered stages, each identified by its
 model/provider and route type. Public response input/output tokens still describe
@@ -65,7 +70,7 @@ Do not record the absent upstream cost as zero or claim a known margin.
 
 - Fixed endpoint: `https://api.telluvian.ai/v1/modelSelect`.
 - Server-side bearer key; never forwarded from the caller or logged.
-- Request: `messages` string and `xPerf: 0.9` for this named version.
+- Request: `messages` string, `xPerf: 0.9`, and optional scoped `sessionId`.
 - Observed response: `model`, `reasoning.effort`, and `sessionId`.
 - Shared, cloud-appropriate HTTP transport for connection reuse.
 - Five-second deadline, bounded request and response sizes, no redirects.
@@ -82,6 +87,67 @@ Do not record the absent upstream cost as zero or claim a known margin.
   Resolve it unambiguously against the current TrustedRouter catalog and
   reauthorize it under the caller's constraints. Never recurse into another
   orchestration or user-defined model from an upstream recommendation.
+
+## Cache-aware conversations
+
+Send the existing top-level `session_id` on Responses requests. Generate a UUID
+once per conversation, then reuse it with the same TR API key on every turn:
+
+```json
+{
+  "model": "trustedrouter/polyphemus-1.0",
+  "session_id": "3f2b7c58-9d41-4e0a-9a7c-6f0b1c2d3e4f",
+  "input": [
+    {"role": "user", "content": "What is the capital of France?"},
+    {"role": "assistant", "content": "Paris."},
+    {"role": "user", "content": "And Germany?"}
+  ]
+}
+```
+
+TR accepts session strings up to the existing 256-character attribution limit.
+The enclave derives a deterministic UUIDv8 from a domain-separated HMAC keyed
+by the caller's API key, and sends that as Telluvian's `sessionId`. Different
+keys cannot join one another's selector session by guessing a caller session
+label. Neither the original label nor the API key is sent as session metadata
+to Telluvian. API-key rotation starts a new selector session. IDs are stable
+across enclave restarts and regions; no new database or in-memory session map
+is used. No additional operator pepper is needed: this relies on the existing
+high-entropy API credential, and the derived ID is not an authentication token.
+A provider-returned session ID is not trusted as a caller identity.
+
+Without `session_id`, the selector request omits `sessionId` and remains an
+independent one-shot selection. According to [Telluvian's routing contract](https://telluvian.ai/docs/routing)
+(checked September 23), it forgets sessions after an hour of inactivity.
+Fresh caller-generated IDs were accepted in live tests; an expired ID has no
+warm-cache assumption. If upstream rejects any ID, the existing no-retry Auto
+fallback applies, without a selector fee. A session is not an idempotency key:
+each new turn still requires
+its own request identity, selection authorization, and normal billing. It does
+not store the conversation for the client; send the current history every turn.
+The session ID does not enter the metered `messages` payload.
+
+`usage.provider_usage.selector_session_supplied` reports whether the selector
+attempt included a session. It does not report a cache hit or claim savings.
+Telluvian can consider estimated warm-cache costs when recommending a model,
+but TR still chooses and authorizes the actual provider independently. A model
+can move providers or fail over, so this does not pin an endpoint or guarantee
+cache hits. Check actual generation cache-read usage and costs; keep stable
+prefixes and use provider routing constraints when provider continuity matters.
+Selector failure still falls back to Auto with the original caller session
+attribution preserved and no selector fee.
+
+## Selector tariff release evidence (2026-09-23)
+
+- [Control plane and public catalog](https://github.com/Lore-Hex/quill-router/actions/runs/35892796982).
+- [Four-region GCP enclave rollout](https://github.com/Lore-Hex/quill-cloud-proxy/actions/runs/35893275726).
+- [Sanitized verification summary](https://github.com/Lore-Hex/quill-cloud-proxy/pull/370#issuecomment-5801686459).
+
+Live probes verified 1,053 estimated selector tokens charged at 53 microdollars
+in each GCP region. JSON totals reconciled in all four regions; streaming
+totals reconciled in all three US regions and on the canonical hostname.
+Europe retained the existing streaming receipt limitation in issue #358.
+This evidence verifies the tariff, not the later cache-aware session change.
 
 ## Privacy
 

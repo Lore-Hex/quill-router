@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 
 import pytest
@@ -50,6 +51,20 @@ def test_polyphemus_standard_price_preview_includes_selector_fee() -> None:
     low, high = _meta_price_range(MODEL_ID, "prompt_price_microdollars_per_million_tokens")
     assert shape["pricing"]["prompt"] == microdollars_per_million_tokens_to_token_decimal(low + 50_000)
     assert shape["pricing"]["prompt_max"] == microdollars_per_million_tokens_to_token_decimal(high + 50_000)
+
+
+def test_polyphemus_catalog_documents_optional_cache_aware_sessions() -> None:
+    shape = model_to_openrouter_shape(MODELS[MODEL_ID])
+    documentation = shape["trustedrouter"]["documentation"]
+    example = json.loads(documentation["example_input"])
+    assert example["model"] == MODEL_ID
+    assert "session_id" not in example
+    guidance = documentation["input_format"]
+    assert "same session_id and API key" in guidance
+    assert "fresh UUID per conversation" in guidance
+    assert "Omit session_id" in guidance
+    assert "one hour of inactivity" in guidance
+    assert "does not pin a provider or guarantee a cache hit" in guidance
 
 
 def _admission(key: dict, **extra: object) -> dict:

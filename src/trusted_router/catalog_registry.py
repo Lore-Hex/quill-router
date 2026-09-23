@@ -1300,7 +1300,15 @@ MODELS[POLYPHEMUS_MODEL_ID] = Model(
             "Selector charges use normal microdollar rounding, minimum $0.000001. "
             "If selection fails, trustedrouter/auto handles the request without a selector fee."
         ),
-        input_format="POST /v1/responses with text input and optional function tools.",
+        input_format=(
+            "POST /v1/responses with text input and optional function tools. "
+            "Generate a fresh UUID per conversation, then reuse the same session_id "
+            "and API key across conversation turns for "
+            "cache-aware model selection; send the conversation history on each turn. "
+            "Omit session_id for independent one-shot requests. Sessions expire at "
+            "Telluvian after one hour of inactivity. This does not pin a provider "
+            "or guarantee a cache hit."
+        ),
         output_format="A standard Responses response or event stream with cost breakdown.",
         example_input='{"model":"trustedrouter/polyphemus-1.0","input":"What is the capital of France?"}',
         example_output='{"model":"trustedrouter/polyphemus-1.0","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Paris."}]}]}',
