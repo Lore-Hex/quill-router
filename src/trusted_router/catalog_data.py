@@ -1912,6 +1912,23 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy_url="https://jina.ai/embeddings/",
         provider_headquarters_country=PROVIDER_JURISDICTION_DE,
     ),
+    "verda": Provider(
+        slug="verda",
+        name="Verda",
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "Not routable: inference authentication succeeds, but the model "
+            "catalog currently returns only a no-default-models placeholder. "
+            "Verified model availability, billable token prices, and a successful "
+            "inference canary are required before activation. No ZDR, "
+            "confidential-compute, or provider-side E2EE claim is tracked."
+        ),
+        provider_policy_url="https://verda.com/privacy-policy",
+        # Verda (formerly DataCrunch Oy): Finnish operator identified in its
+        # published terms. This is not an inference data-residency guarantee.
+        provider_headquarters_country="FI",
+    ),
     "ovhcloud": Provider(
         slug="ovhcloud",
         name="OVHcloud",

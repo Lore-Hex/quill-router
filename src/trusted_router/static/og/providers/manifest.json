@@ -818,6 +818,15 @@
     "route_mode": "Prepaid",
     "slug": "vercel-ai-gateway"
   },
+  "verda": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "Verda",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "verda"
+  },
   "voyage": {
     "card_version": 2,
     "model_count": 1,
