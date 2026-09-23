@@ -92,9 +92,9 @@
         "top_logprobs",
         "top_p"
       ],
-      "input_token_price_per_m": 431500,
-      "output_token_price_per_m": 2376700,
-      "cached_input_token_price_per_m": 117200
+      "input_token_price_per_m": 497200,
+      "output_token_price_per_m": 2970000,
+      "cached_input_token_price_per_m": 128400
     },
     {
       "display_name": "Kimi K2.7 Code",
@@ -182,9 +182,9 @@
         "top_logprobs",
         "top_p"
       ],
-      "input_token_price_per_m": 1010500,
-      "output_token_price_per_m": 3175900,
-      "cached_input_token_price_per_m": 192900
+      "input_token_price_per_m": 1012500,
+      "output_token_price_per_m": 3240000,
+      "cached_input_token_price_per_m": 194300
     },
     {
       "display_name": "DeepSeek V4 Flash 0731",
@@ -270,9 +270,9 @@
         "top_p"
       ],
       "routable": true,
-      "input_token_price_per_m": 1013400,
-      "output_token_price_per_m": 3287700,
-      "cached_input_token_price_per_m": 255000
+      "input_token_price_per_m": 1028400,
+      "output_token_price_per_m": 3726900,
+      "cached_input_token_price_per_m": 251700
     },
     {
       "display_name": "GLM 5.3 Flash",
@@ -319,6 +319,6 @@
       "cached_input_token_price_per_m": 70000
     }
   ],
-  "generated_at": "2026-09-22T18:36:26Z",
+  "generated_at": "2026-09-23T05:37:23Z",
   "model_count": 7
 }

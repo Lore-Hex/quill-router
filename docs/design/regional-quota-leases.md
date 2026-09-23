@@ -140,9 +140,16 @@ gh workflow run deploy.yml --repo Lore-Hex/quill-router --ref main \
   -f regional_quota_lease_issuance=true
 ```
 
-Routine workflow dispatches use `preserve`; push-triggered deploys normalize an
-empty input to the same behavior. The shell writes only a normalized boolean to
-the Cloud Run revision.
+Routine workflow dispatches use `preserve` to keep the live issuance marker;
+explicit `true` and `false` also override the code pin. Push-triggered deploys
+(absent or empty input) use `REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED=false` in
+`scripts/deploy/rollout.sh` while the regional accounting version lands across
+every serving revision and the reconciler job. A later change flips the pin
+together with the cohort it enables, after all existing leases have drained and
+the new code is fleet-wide. Capability, pilot workspace IDs, Bigtable app profiles,
+TTL, caps, and shard count retain their existing live-primary preservation rules;
+enabling still requires pilot IDs, profiles, and the fleet compatibility preflight.
+The shell writes only a normalized boolean to the Cloud Run revision.
 
 Reconciliation is intentionally independent from traffic issuance. A
 versioned one-shot Cloud Run Job continues draining leases that were already

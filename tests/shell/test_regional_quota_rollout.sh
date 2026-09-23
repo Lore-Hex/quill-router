@@ -135,14 +135,28 @@ test_only_exact_service_not_found_is_a_fresh_environment() {
   [ "$status" -eq 3 ] || fail "exact service NOT_FOUND returned ${status}, expected 3"
 }
 
+rollout_issuance_marker() (
+  local live="$1"
+  unset TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED
+  if [ "$#" -gt 1 ]; then
+    TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED="$2"
+  fi
+  # Execute the rollout's actual pin and input resolution, not a copy of them.
+  eval "$(awk '/^REGIONAL_QUOTA_LEASE_ISSUANCE_(PINNED|CONTROL)=/' \
+    "${ROOT}/scripts/deploy/rollout.sh")"
+  regional_quota_normalize_issuance_control "$REGIONAL_QUOTA_LEASE_ISSUANCE_CONTROL" "$live"
+)
+
 test_raw_issuance_input_is_normalized_in_shell() {
-  [ "$(regional_quota_normalize_issuance_control "" false)" = "false" ] ||
-    fail "empty push input did not preserve false"
-  [ "$(regional_quota_normalize_issuance_control preserve true)" = "true" ] ||
+  [ "$(rollout_issuance_marker true)" = "false" ] ||
+    fail "absent push input did not pin live true off"
+  [ "$(rollout_issuance_marker true "")" = "false" ] ||
+    fail "empty push input did not pin live true off"
+  [ "$(rollout_issuance_marker true preserve)" = "true" ] ||
     fail "preserve input did not keep true"
-  [ "$(regional_quota_normalize_issuance_control true false)" = "true" ] ||
+  [ "$(rollout_issuance_marker false true)" = "true" ] ||
     fail "true input did not override false"
-  [ "$(regional_quota_normalize_issuance_control false true)" = "false" ] ||
+  [ "$(rollout_issuance_marker true false)" = "false" ] ||
     fail "false input did not override true"
   if regional_quota_normalize_issuance_control invalid false >/dev/null 2>&1; then
     fail "invalid issuance input was accepted"
