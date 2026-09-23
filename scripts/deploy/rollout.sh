@@ -440,10 +440,12 @@ esac
 # deploy shell, not GitHub's expression coercion, turns that raw operator intent
 # into the boolean written on the Cloud Run revision. A missing marker on the
 # first compatibility deploy defaults OFF.
-# R0: issuance is pinned off while the regional accounting version lands fleet-wide;
-# a later change flips this together with the cohort it enables. An explicit
-# workflow_dispatch input still overrides it for an operator.
-REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED=false
+# R5: issuance is pinned ON for the pinned cohort now that the accounting version,
+# bounded escrow, exact regional charging and the five-region ledger are live
+# fleet-wide. An explicit workflow_dispatch input still overrides it for an
+# operator (`false` is the emergency off switch; a later push deploy turns it
+# back on unless this pin changes).
+REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED=true
 LIVE_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED="$(
   read_primary_regional_quota_env \
     "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" \

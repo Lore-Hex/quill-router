@@ -199,11 +199,14 @@ gh workflow run deploy.yml --repo Lore-Hex/quill-router --ref main \
 
 Routine workflow dispatches use `preserve` to keep the live issuance marker;
 explicit `true` and `false` also override the code pin. Push-triggered deploys
-(absent or empty input) use `REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED=false` in
-`scripts/deploy/rollout.sh` while the regional accounting version lands across
-every serving revision and the reconciler job. A later change flips issuance
-after existing leases have drained and the new code is fleet-wide. Enabling
-still requires pilot IDs, profiles, and the fleet compatibility preflight.
+(absent or empty input) use `REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED` in
+`scripts/deploy/rollout.sh`. It was `false` while the regional accounting
+version, bounded escrow, exact regional charging and the five-region ledger
+landed fleet-wide; it is now `true`, so every push deploy enables issuance for
+the pinned cohort. Enabling still requires pilot IDs, profiles, and the fleet
+compatibility preflight. The emergency off switch is the dispatch input
+`regional_quota_lease_issuance=false` (or a Cloud Run env update); note that a
+later push deploy turns issuance back on unless the pin itself is changed.
 The shell writes only a normalized boolean to the Cloud Run revision.
 
 R4 replaces the initial single-region configuration described above with these
