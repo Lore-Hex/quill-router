@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Parasail models live ahead of the shared snapshot. Prices refreshed hourly from the public pricing page (www.parasail.io/pricing); model liveness gated on api.parasail.io/v1/models.",
   "provider": "parasail",
   "source": "https://www.parasail.io/pricing",
-  "generated_at": "2026-09-22T23:37:35Z",
+  "generated_at": "2026-09-23T00:49:02Z",
   "model_count": 6,
   "models": [
     {

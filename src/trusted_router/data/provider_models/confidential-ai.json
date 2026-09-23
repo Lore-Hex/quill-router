@@ -44,7 +44,7 @@
   ],
   "source": "https://api.confidential.ai/v1/models",
   "pricing_source": "https://confidential.ai/pricing",
-  "generated_at": "2026-09-22T23:37:35Z",
+  "generated_at": "2026-09-23T00:49:01Z",
   "price_scale": "microdollars_per_million",
   "model_count": 2
 }
