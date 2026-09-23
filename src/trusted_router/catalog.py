@@ -666,6 +666,13 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         pub_completion_min, pub_completion_max = _meta_price_range(
             model.id, "published_completion_price_microdollars_per_million_tokens"
         )
+    if model.id == POLYPHEMUS_MODEL_ID:
+        # Standard price previews need both stages. Actual selector and model
+        # token counts are separate; expose the selector basis/rate below too.
+        prompt_min += SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION
+        prompt_max += SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION
+        pub_prompt_min += SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION
+        pub_prompt_max += SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION
 
     pricing: dict[str, str] = {
         "prompt": microdollars_per_million_tokens_to_token_decimal(prompt_min),
@@ -772,7 +779,8 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "supports_chat": offers_chat(model),
         "supports_responses": offers_chat(model) or model.id == POLYPHEMUS_MODEL_ID,
         **({
-            "pricing_type": "selector_tokens_plus_selected_model_tokens",
+            "pricing_type": "selection_fee_plus_selected_model_tokens",
+            "selector_pricing_unit": "prompt_tokens",
             "selector_prompt_price_per_million": microdollars_to_decimal(SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION),
             "selector_prompt_price_microdollars_per_million": SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION,
             "selector_usage_estimated": True,

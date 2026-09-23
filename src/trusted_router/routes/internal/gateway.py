@@ -3897,6 +3897,10 @@ def _settle_gateway_authorization(
         actual_cost = authorization.estimated_microdollars
     if success and authorization.settlement == "spend_lease":
         actual_cost = clamp_spend_lease_charge(authorization, actual_cost)
+    if success and selected_endpoint.model_id == POLYPHEMUS_MODEL_ID:
+        # The new selector meter can settle against an old one-microdollar
+        # admission during a mixed rollout. Never exceed its frozen hold.
+        actual_cost = min(actual_cost, authorization.estimated_microdollars)
     if success and authorization.app_markup_basis_points > 0:
         # THE PAYOUT IS A FUNCTION OF THE FINAL CHARGE: authorization freezes
         # the rate, while every clamp/cap/adjustment above decides the base.

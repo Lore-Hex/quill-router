@@ -25,7 +25,8 @@ def test_polyphemus_catalog_is_responses_only_standard_privacy() -> None:
     tr = shape["trustedrouter"]
     assert tr["supports_chat"] is False
     assert tr["supports_responses"] is True
-    assert tr["pricing_type"] == "selector_tokens_plus_selected_model_tokens"
+    assert tr["pricing_type"] == "selection_fee_plus_selected_model_tokens"
+    assert tr["selector_pricing_unit"] == "prompt_tokens"
     assert tr["selector_prompt_price_per_million"] == "0.05"
     assert tr["selector_usage_estimated"] is True
     assert tr["selector_token_basis"] == "serialized_context_utf8_bytes_div_4"  # noqa: S105 - meter label
@@ -39,6 +40,16 @@ def test_polyphemus_catalog_is_responses_only_standard_privacy() -> None:
     assert endpoints[0].request_price_microdollars == 0
     assert endpoints[0].prompt_price_microdollars_per_million_tokens == 50_000
     assert endpoints[0].completion_price_microdollars_per_million_tokens == 0
+
+
+def test_polyphemus_standard_price_preview_includes_selector_fee() -> None:
+    from trusted_router.catalog import _meta_price_range
+    from trusted_router.money import microdollars_per_million_tokens_to_token_decimal
+
+    shape = model_to_openrouter_shape(MODELS[MODEL_ID])
+    low, high = _meta_price_range(MODEL_ID, "prompt_price_microdollars_per_million_tokens")
+    assert shape["pricing"]["prompt"] == microdollars_per_million_tokens_to_token_decimal(low + 50_000)
+    assert shape["pricing"]["prompt_max"] == microdollars_per_million_tokens_to_token_decimal(high + 50_000)
 
 
 def _admission(key: dict, **extra: object) -> dict:
@@ -93,8 +104,9 @@ def test_polyphemus_reserves_and_settles_selector_prompt_tokens_once(tokens: int
 
 
 @pytest.mark.parametrize("old_admission", [True, False])
-def test_polyphemus_legacy_zero_token_settlement_survives_rollout(
-    monkeypatch: pytest.MonkeyPatch, old_admission: bool,
+@pytest.mark.parametrize("actual_tokens", [0, 1000])
+def test_polyphemus_settlement_survives_mixed_rollout(
+    monkeypatch: pytest.MonkeyPatch, old_admission: bool, actual_tokens: int,
 ) -> None:
     client, key = _client_and_key()
     endpoint = endpoints_for_model(MODEL_ID)[0]
@@ -113,12 +125,14 @@ def test_polyphemus_legacy_zero_token_settlement_survives_rollout(
     for _ in range(2):
         result = client.post("/v1/internal/gateway/settle", json={
             "authorization_id": auth["authorization_id"],
-            "actual_input_tokens": 0, "actual_output_tokens": 0,
+            "actual_input_tokens": actual_tokens, "actual_output_tokens": 0,
+            "usage_estimated": actual_tokens > 0,
             "route_type": SELECT_ROUTE_TYPE, "request_id": "legacy-selector-result",
         })
         assert result.status_code == 200, result.text
-        assert result.json()["data"]["cost_microdollars"] == 1
-        assert money.total_usage_microdollars == before + 1
+        cost = 1 if old_admission or actual_tokens == 0 else 50
+        assert result.json()["data"]["cost_microdollars"] == cost
+        assert money.total_usage_microdollars == before + cost
         assert money.reserved_microdollars == 0
 
 

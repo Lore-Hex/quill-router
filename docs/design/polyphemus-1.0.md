@@ -1,6 +1,7 @@
 # Polyphemus 1.0
 
-Status: merged; production verification recorded below (2026-09-21).
+Status: September 21 launch verified; September 23 selector tariff update
+pending deployment. Historical verification below does not verify the new tariff.
 
 `trustedrouter/polyphemus-1.0` is a Responses-only named model. Telluvian
 recommends a concrete model, and TrustedRouter authorizes and executes that
@@ -26,13 +27,21 @@ the same tokenizer. Settlement stores `usage_estimated=true`; responses expose
 `selector_input_tokens`, `selector_usage_estimated`, and `selector_token_basis`.
 Actual upstream cost remains unknown even though the upstream rate is known.
 The selected model's own usage, cache accounting, and token prices are separate.
+Workspace token totals include both metered stages, each identified by its
+model/provider and route type. Public response input/output tokens still describe
+generation only; selector tokens appear in `provider_usage`.
+Standard catalog prompt-price previews include the selector rate on top of the
+generation price envelope. Their sum is an estimate, not a single shared tokenizer.
 
 Failed selection still refunds the entire selector hold and falls back to Auto
 without a selector charge. Existing idempotency keys and settlement/refund
 machinery are unchanged. Pre-meter enclaves report zero input and output tokens;
 their settlements retain the legacy one-microdollar fee during rolling deploys
 and durable retries. Deploy the control-plane tariff before the new enclave
-meter; the reverse order is compatible but temporarily retains the old fee.
+meter; a mixed-version selector settlement is capped at its frozen hold, so a
+one-microdollar admission cannot become a larger token charge. To roll back,
+restore the complete legacy tariff (zero prompt rate plus one-microdollar request
+fee), not an all-zero tariff: a successful selection must have a positive charge.
 
 ## Historical launch pricing (2026-09-21, superseded)
 
