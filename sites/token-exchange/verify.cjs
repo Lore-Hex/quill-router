@@ -20,7 +20,7 @@ const assert = require('node:assert/strict');
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${market.slug} overflows at ${width}`);
       assert(await page.locator('.hero-art').evaluate(img => img.complete && img.naturalWidth > 0));
       const cityNav = page.getByRole('navigation', {name:'Exchange cities', exact:true});
-      assert.equal(await cityNav.getByRole('link').count(), 8);
+      assert.equal(await cityNav.getByRole('link').count(), markets.filter(m => m.scope === 'city').length);
       const geometry = await page.evaluate(() => {
         const nav = document.querySelector('.market-directory').getBoundingClientRect();
         const hero = document.querySelector('.hero').getBoundingClientRect();
@@ -62,5 +62,5 @@ const assert = require('node:assert/strict');
   }
   assert.deepEqual(errors, []);
   await browser.close();
-  console.log('PASS: 12 markets x 3 viewports; images, overflow, attribution, FAQ; 12 OG images generated.');
+  console.log(`PASS: ${markets.length} markets x 3 viewports; images, overflow, attribution, FAQ; ${markets.length} OG images generated.`);
 })().catch(error => {console.error(error); process.exit(1);});

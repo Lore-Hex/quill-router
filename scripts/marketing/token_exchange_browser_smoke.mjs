@@ -30,26 +30,26 @@ try {
     await page.screenshot({ path: path.join(out, `${name}-hero.png`) });
     await page.locator('.tm-section[aria-labelledby="choice-title"]').screenshot({ path: path.join(out, `${name}-benefits.png`) });
     await page.locator('.tm-section[aria-labelledby="privacy-title"]').screenshot({ path: path.join(out, `${name}-privacy.png`) });
-    await page.getByRole("link", { name: "Get the enterprise brief" }).click();
+    await page.getByRole("link", { name: "Get the brochure" }).click();
     await page.locator("#brief-email").fill("not-an-email");
-    await page.getByRole("button", { name: "Download the brief" }).click();
+    await page.getByRole("button", { name: "Download the brochure" }).click();
     assert(!(await page.locator("#brief-email").evaluate(input => input.validity.valid)));
     if (name === "mobile") {
       await page.route("**/token-exchange/brief", route => route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"delivery_unavailable"}' }));
       await page.locator("#brief-email").fill("ada@example.com");
-      await page.getByRole("button", { name: "Download the brief" }).click();
+      await page.getByRole("button", { name: "Download the brochure" }).click();
       await page.locator('#brief-status[data-state="error"]').waitFor();
-      assert(await page.getByRole("button", { name: "Download the brief" }).isEnabled());
+      assert(await page.getByRole("button", { name: "Download the brochure" }).isEnabled());
       await page.screenshot({ path: path.join(out, "mobile-error.png") });
       await page.unroute("**/token-exchange/brief");
     }
     await page.locator("#brief-email").fill("ada@example.com");
     const downloadPromise = page.waitForEvent("download");
-    await page.getByRole("button", { name: "Download the brief" }).click();
+    await page.getByRole("button", { name: "Download the brochure" }).click();
     const download = await downloadPromise;
-    assert.equal(download.suggestedFilename(), "TrustedRouter-Enterprise-Brief.pdf");
+    assert.equal(download.suggestedFilename(), "TrustedRouter-Token-Exchange-Brochure.pdf");
     const downloaded = await readFile(await download.path());
-    const original = await readFile(path.join(root, "src/trusted_router/data/enterprise/TrustedRouter-Enterprise-Brief.pdf"));
+    const original = await readFile(path.join(root, "src/trusted_router/data/enterprise/TrustedRouter-Token-Exchange-Brochure.pdf"));
     const hash = bytes => createHash("sha256").update(bytes).digest("hex");
     assert.equal(hash(downloaded), hash(original));
     await page.locator('#brief-status[data-state="success"]').waitFor();

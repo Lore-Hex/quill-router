@@ -765,13 +765,13 @@ async def _handle_support_inquiry(settings: Settings, request: Request) -> JSONR
 
 
 _ENTERPRISE_BRIEF = (
-    Path(__file__).parents[1] / "data" / "enterprise" / "TrustedRouter-Enterprise-Brief.pdf"
+    Path(__file__).parents[1] / "data" / "enterprise" / "TrustedRouter-Token-Exchange-Brochure.pdf"
 )
 _BRIEF_HEADERS = {"Cache-Control": "private, no-store", "X-Robots-Tag": "noindex, nofollow"}
 
 
 async def _handle_enterprise_brief(settings: Settings, request: Request) -> Response:
-    """Deliver the original brief only after SES has accepted the sales inquiry."""
+    """Deliver the brochure only after SES has accepted the sales inquiry."""
     def error(code: str, status: int) -> JSONResponse:
         return JSONResponse({"ok": False, "error": code}, status_code=status, headers=_BRIEF_HEADERS)
 
@@ -826,9 +826,9 @@ async def _handle_enterprise_brief(settings: Settings, request: Request) -> Resp
     message = EmailMessage(
         to=settings.partner_inquiry_email or "enterprise@trustedrouter.com",
         reply_to=email,
-        subject="Enterprise brief requested | TrustedRouter token exchange",
+        subject="Token Exchange brochure requested | TrustedRouter token exchange",
         text_body=(
-            "An enterprise visitor requested the TrustedRouter Enterprise Brief.\n\n"
+            "An enterprise visitor requested the Token Exchange brochure.\n\n"
             f"Email: {email}\n"
             "Page: https://trustedrouter.com/token-exchange\n\n"
             "The form permits follow-up about enterprise AI. It does not subscribe "
@@ -847,7 +847,7 @@ async def _handle_enterprise_brief(settings: Settings, request: Request) -> Resp
     return FileResponse(
         _ENTERPRISE_BRIEF,
         media_type="application/pdf",
-        filename="TrustedRouter-Enterprise-Brief.pdf",
+        filename="TrustedRouter-Token-Exchange-Brochure.pdf",
         headers=_BRIEF_HEADERS,
     )
 
