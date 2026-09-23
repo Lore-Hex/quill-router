@@ -45,14 +45,14 @@ CLAUSES = [
     ("key_monthly", "key_monthly", 0), ("custom_model", "custom_model", object()),
     ("user_model", "user_model", object()), ("partner_mode", "partner_mode", object()),
     ("additional_cost", "additional_cost", 1), ("native_batch", "native_batch", True),
-    ("app_markup", "app_markup", 1), ("receipt_fee", "receipt_fee", 1),
+    ("app_markup", "app_markup", 1),
 ]
 
 
 @pytest.mark.parametrize("index,clause", list(enumerate(CLAUSES)))
 def test_every_predicate_reason_bit_and_order(index: int, clause: tuple[str, str, Any]) -> None:
     reason, field, value = clause
-    assert REGIONAL_PREDICATE_REASONS == tuple(c[0] for c in CLAUSES)
+    assert REGIONAL_PREDICATE_REASONS == (*tuple(c[0] for c in CLAUSES), "receipt_fee")
     assert regional_predicate_reason(**PASSING) == (None, 0)
     assert regional_predicate_reason(**{**PASSING, field: value}) == (reason, 1 << index)
     # Each suffix has this first failure and every subsequent bit set.
@@ -274,3 +274,7 @@ def test_grant_pool_cap_observation_reuses_existing_trust_checks() -> None:
     assert grant_regional_quota_lease(store, quota_shard=1, **common) is not None
     assert grant_regional_quota_lease(store, quota_shard=2, **common) is None
     assert evidence == {"regional_unavailable_reason": "pool_cap"}
+
+
+def test_receipts_are_regionally_eligible() -> None:
+    assert regional_predicate_reason(**{**PASSING, "receipt_fee": 1200}) == (None, 0)

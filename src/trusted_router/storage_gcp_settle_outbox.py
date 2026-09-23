@@ -370,7 +370,7 @@ class SpannerSettleOutbox:
         self._pt = param_types
 
     # ── enqueue (INSERT-as-claim, refresh-latest on a still-pending row) ──────
-    def enqueue(self, row: SettleOutboxRow, *, initial_delay_seconds: int = 0) -> str:
+    def enqueue(self, row: SettleOutboxRow, *, initial_delay_seconds: int = 0, preserve_existing: bool = False) -> str:
         """Record a settle intent. Idempotent by (authorization_id, intent_kind):
 
         - no row yet -> INSERT a pending row (ENQ_INSERTED)
@@ -465,6 +465,11 @@ class SpannerSettleOutbox:
         except Exception as exc:  # ALREADY_EXISTS -> the intent is already recorded
             if not _is_already_exists(exc):
                 raise
+
+        if preserve_existing:
+            # Regional local CAS can precede a failed Spanner commit. Its split
+            # must remain immutable across corrected deliveries and drain replay.
+            return "frozen"
 
         # Refresh the frozen inputs iff the existing row is still pending AND not
         # actively leased. A claimed row stays status='pending' while a drain
