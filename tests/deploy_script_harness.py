@@ -1442,7 +1442,7 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
             "TR_BIGTABLE_MIRROR_WRITES_ENABLED": "true",
             "TR_ANALYTICS_READ_MODE": "bigtable",
             "TR_REGIONAL_QUOTA_LEASES_ENABLED": "false",
-            "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "false",
+            # No dispatch issuance input: exercise rollout.sh's code pin.
             # Reuse the stateful legacy-service tag behavior in the harness.
             "HARNESS_PUBLIC_SURFACE_SMOKE": "1",
         },
