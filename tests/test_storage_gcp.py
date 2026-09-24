@@ -922,6 +922,76 @@ def test_gcp_reconcile_generation_activity_rewrites_existing_generations(monkeyp
     assert written == ["gen_existing", "gen_newer"]
 
 
+def test_gcp_exhausted_mirror_retry_logs_a_warning_without_a_traceback(
+    caplog, monkeypatch
+) -> None:
+    import logging
+
+    from trusted_router.storage_gcp_mirror import MirrorWriteIncomplete
+
+    store, db, _ = make_fake_store()
+    key = _api_key("key_1", "ws_1", "2026-05-02T10:00:00Z")
+    generation = _generation("gen_transient", "ws_1", "2026-05-02T12:00:00Z")
+    store._write_entity("api_key", key.hash, key)
+
+    def transient(_table: Any, _family: str, _generation: Generation) -> None:
+        raise MirrorWriteIncomplete(attempts=2, total=3, codes=[14])
+
+    monkeypatch.setattr(
+        "trusted_router.storage_gcp_generations._bt_write_generation",
+        transient,
+    )
+
+    with caplog.at_level(logging.INFO, logger="trusted_router.storage_gcp_generations"):
+        store.add_generation(generation)
+
+    assert ("generation", generation.id) in db.rows
+    records = [r for r in caplog.records if "bigtable.activity_index_write_failed" in r.getMessage()]
+    assert len(records) == 1
+    record = records[0]
+    # Bounded retries already ran: a warning with the codes, not an error traceback.
+    assert record.levelno == logging.WARNING
+    assert record.exc_info is None
+    message = record.getMessage()
+    assert "MirrorWriteIncomplete" in message
+    assert "status codes 14" in message
+    assert "after 2 attempt" in message
+    assert f"generation_id={generation.id}" in message
+    assert "workspace_id=ws_1" in message
+    assert "day=2026-05-02" in message
+    assert "activity_mirror_reconcile_cli --workspace-id" in message
+
+
+def test_gcp_exhausted_benchmark_mirror_retry_logs_a_warning_without_a_traceback(
+    caplog, monkeypatch
+) -> None:
+    import logging
+
+    from trusted_router.storage_gcp_mirror import MirrorWriteIncomplete
+    from trusted_router.storage_models import ProviderBenchmarkSample
+
+    store, _db, _ = make_fake_store()
+    generation = _generation("gen_bench", "ws_1", "2026-05-02T12:00:00Z")
+
+    def transient(_table: Any, _family: str, _sample: ProviderBenchmarkSample) -> None:
+        raise MirrorWriteIncomplete(attempts=2, total=6, codes=[14, 14])
+
+    monkeypatch.setattr(
+        "trusted_router.storage_gcp_generations._bt_write_provider_benchmark",
+        transient,
+    )
+
+    with caplog.at_level(logging.INFO, logger="trusted_router.storage_gcp_generations"):
+        store.generation_store.record_benchmark(ProviderBenchmarkSample.from_generation(generation))
+
+    records = [r for r in caplog.records if "bigtable.benchmark_mirror_write_failed" in r.getMessage()]
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+    assert records[0].exc_info is None
+    assert "status codes 14,14" in records[0].getMessage()
+    assert "2 of 6 rows failed" in records[0].getMessage()
+
+
 def test_gcp_bigtable_failure_after_spanner_commit_is_repairable(caplog, monkeypatch) -> None:
     store, db, _ = make_fake_store()
     key = _api_key("key_1", "ws_1", "2026-05-02T10:00:00Z")

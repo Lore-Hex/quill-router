@@ -58,6 +58,7 @@ from trusted_router.storage_gcp_generation_records import (
     upsert_generation_record,
 )
 from trusted_router.storage_gcp_io import SpannerIO
+from trusted_router.storage_gcp_mirror import MirrorWriteIncomplete
 from trusted_router.storage_models import (
     Generation,
     ProviderBenchmarkSample,
@@ -68,6 +69,10 @@ from trusted_router.storage_operational_analytics import (
 )
 
 log = logging.getLogger(__name__)
+
+_ACTIVITY_MIRROR_REPAIR = (
+    "python -m trusted_router.activity_mirror_reconcile_cli --workspace-id <id> --date <day>"
+)
 ACTIVITY_SCAN_LIMIT = 5000
 
 
@@ -210,23 +215,52 @@ class SpannerGenerations:
                 self._activity_family,
                 generation,
             )
+        except MirrorWriteIncomplete as exc:
+            # The mirror already made its bounded attempts. Spanner and the
+            # ClickHouse activity outbox hold the generation; only the
+            # Bigtable fallback/shadow index is missing rows, and the
+            # reconcile CLI re-mirrors them from Spanner. A warning with the
+            # status codes is the actionable record; a traceback is not.
+            log.warning(
+                "bigtable.activity_index_write_failed error_class=%s error=%s "
+                "generation_id=%s workspace_id=%s day=%s repairable_via=%s",
+                type(exc).__name__,
+                str(exc)[:500],
+                generation.id,
+                generation.workspace_id,
+                generation.created_at[:10],
+                _ACTIVITY_MIRROR_REPAIR,
+                extra=self._activity_write_extra(generation, exc),
+            )
+            return False
         except Exception as exc:
             log.exception(
-                "bigtable.activity_index_write_failed",
-                extra={
-                    "request_id": generation.request_id,
-                    "workspace_id": generation.workspace_id,
-                    "generation_id": generation.id,
-                    "model": generation.model,
-                    "provider_name": generation.provider_name,
-                    "provider": generation.provider,
-                    "error_class": type(exc).__name__,
-                    "error_message": str(exc)[:500],
-                    "repairable_via": "reconcile_activity()",
-                },
+                "bigtable.activity_index_write_failed error_class=%s error=%s "
+                "generation_id=%s workspace_id=%s day=%s repairable_via=%s",
+                type(exc).__name__,
+                str(exc)[:500],
+                generation.id,
+                generation.workspace_id,
+                generation.created_at[:10],
+                _ACTIVITY_MIRROR_REPAIR,
+                extra=self._activity_write_extra(generation, exc),
             )
             return False
         return True
+
+    @staticmethod
+    def _activity_write_extra(generation: Generation, exc: Exception) -> dict[str, Any]:
+        return {
+            "request_id": generation.request_id,
+            "workspace_id": generation.workspace_id,
+            "generation_id": generation.id,
+            "model": generation.model,
+            "provider_name": generation.provider_name,
+            "provider": generation.provider,
+            "error_class": type(exc).__name__,
+            "error_message": str(exc)[:500],
+            "repairable_via": _ACTIVITY_MIRROR_REPAIR,
+        }
 
     def get(self, generation_id: str) -> Generation | None:
         if self._generation_records_enabled:
@@ -279,18 +313,39 @@ class SpannerGenerations:
                 self._benchmark_family,
                 sample,
             )
+        except MirrorWriteIncomplete as exc:
+            # Bounded attempts already ran; the analytics outbox carries the
+            # sample, so the missing Bigtable rows only touch the legacy mirror.
+            log.warning(
+                "bigtable.benchmark_mirror_write_failed error_class=%s error=%s "
+                "model=%s provider=%s migration_mirror_only=true",
+                type(exc).__name__,
+                str(exc)[:500],
+                sample.model,
+                sample.provider,
+                extra=self._benchmark_write_extra(sample, exc),
+            )
         except Exception as exc:
             log.exception(
-                "bigtable.benchmark_mirror_write_failed",
-                extra={
-                    "model": sample.model,
-                    "provider": sample.provider,
-                    "status": sample.status,
-                    "error_class": type(exc).__name__,
-                    "error_message": str(exc)[:500],
-                    "migration_mirror_only": True,
-                },
+                "bigtable.benchmark_mirror_write_failed error_class=%s error=%s "
+                "model=%s provider=%s migration_mirror_only=true",
+                type(exc).__name__,
+                str(exc)[:500],
+                sample.model,
+                sample.provider,
+                extra=self._benchmark_write_extra(sample, exc),
             )
+
+    @staticmethod
+    def _benchmark_write_extra(sample: ProviderBenchmarkSample, exc: Exception) -> dict[str, Any]:
+        return {
+            "model": sample.model,
+            "provider": sample.provider,
+            "status": sample.status,
+            "error_class": type(exc).__name__,
+            "error_message": str(exc)[:500],
+            "migration_mirror_only": True,
+        }
 
     def benchmark_samples(
         self,
