@@ -120,27 +120,18 @@ class ExchangeTests(unittest.TestCase):
         self.assertEqual(len(set(parser.links)), len(markets))
         self.assertEqual(len(markets) - 1, 12)
 
-    def test_city_navigation_precedes_hero_on_every_market(self):
+    def test_unified_market_navigation_precedes_hero_and_matches_footer(self):
         markets = load_markets()
-        city_slugs = {
-            "new-york", "chicago", "san-francisco", "london",
-            "dubai", "riyadh", "hong-kong", "shanghai", "tokyo",
-        }
-        expected = [f'https://{m["domain"]}/' for m in markets if m["slug"] in city_slugs]
+        expected = [f'https://{m["domain"]}/' for m in markets]
         for market in markets:
             with self.subTest(market=market["slug"]):
                 page = render(market, markets, "test")
-                self.assertTrue('aria-label="Exchange cities"' in page, "City navigation missing")
-                self.assertLess(page.index('aria-label="Exchange cities"'), page.index('<main'))
-                cities = MarketLinkParser("Exchange cities")
-                cities.feed(page)
-                self.assertEqual(cities.links, expected)
-                regions = MarketLinkParser("Exchange regions")
-                regions.feed(page)
-                self.assertCountEqual(
-                    cities.links + regions.links, [f'https://{m["domain"]}/' for m in markets]
-                )
-                self.assertEqual(cities.current + regions.current, [f'https://{market["domain"]}/'])
+                self.assertLess(page.index('aria-label="Market directory"'), page.index('<main'))
+                for label in ("Market directory", "Exchange markets"):
+                    navigation = MarketLinkParser(label)
+                    navigation.feed(page)
+                    self.assertEqual(navigation.links, expected)
+                    self.assertEqual(navigation.current, [f'https://{market["domain"]}/'])
 
     def test_attribution(self):
         market = load_markets()[0]

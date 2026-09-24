@@ -13,6 +13,8 @@ from pathlib import Path
 from string import Template
 from urllib.parse import urlencode
 
+from evidence import render_evidence, sector_art
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 
@@ -61,6 +63,14 @@ def market_links(markets: list[dict], current: dict) -> str:
 
 
 def render(market: dict, markets: list[dict], version: str) -> str:
+    evidence_file = market.get("evidence_snapshot")
+    evidence_data = json.loads((HERE / evidence_file).read_text()) if evidence_file else None
+    combined_evidence = bool(evidence_file)
+    catalogue, health = render_evidence(evidence_data, compact=combined_evidence)
+    headline = html.escape(market["headline"])
+    accent = html.escape(market.get("headline_accent", ""))
+    if accent:
+        headline = headline.replace(accent, f'<span class="headline-accent">{accent}</span>', 1)
     values = {
         key: html.escape(value, quote=True)
         for key, value in market.items()
@@ -69,6 +79,11 @@ def render(market: dict, markets: list[dict], version: str) -> str:
     values.update(
         {
             "version": version,
+            "hero_headline": headline,
+            "buyer_heading": html.escape(market.get("buyer_heading", "Buy capacity. Set your requirements.")).replace("Choose how it is served.", '<br>Choose how it is <span class="headline-accent">served.</span>').replace("Spend it", "Spend<br>it").replace("jurisdiction.", '<span class="headline-accent">jurisdiction.</span>').replace("Set your requirements.", '<br>Set your <span class="headline-accent">requirements.</span>'),
+            "buyer_copy": html.escape(market.get("buyer_copy", "Compare model rates and provider privacy policies. Prioritize end-to-end encrypted routes where available, or review zero-retention options. Confirm processing locations and commercial terms for your workload.")),
+            "catalogue": "" if combined_evidence else catalogue,
+            "regional_health": health.replace('<div class="trust-evidence">', '<div class="trust-evidence">' + catalogue, 1) if combined_evidence else "",
             "buyer_url": html.escape(
                 tracked_url("https://calendly.com/joseph-perla/15min", market, "buyer"), quote=True
             ),
@@ -83,12 +98,10 @@ def render(market: dict, markets: list[dict], version: str) -> str:
                 quote=True,
             ),
             "sectors": "".join(
-                f"<article><h3>{html.escape(title)}</h3><p>{html.escape(body)}</p></article>"
-                for title, body in market["sectors"]
+                f"<article>{sector_art(index)}<h3>{html.escape(title)}</h3><p>{html.escape(body)}</p></article>"
+                for index, (title, body) in enumerate(market["sectors"])
             ),
             "markets": market_links(markets, market),
-            "city_markets": market_links([m for m in markets if m["scope"] == "city"], market),
-            "region_markets": market_links([m for m in markets if m["scope"] != "city"], market),
             "schema": json.dumps(
                 {
                     "@context": "https://schema.org",
@@ -124,9 +137,17 @@ def build(output: Path) -> None:
         "fonts/spectral-300-latin.woff2": "spectral.woff2",
         "fonts/ibm-plex-mono-400-latin.woff2": "plex.woff2",
         "trustedrouter-mark-dark.svg": "mark.svg",
+        "provider-logos/openai.png": "provider-openai.png",
+        "provider-logos/anthropic.png": "provider-anthropic.png",
+        "provider-logos/mistral.png": "provider-mistral.png",
+        "provider-logos/google-vertex.png": "provider-google-vertex.png",
+        "provider-logos/deepseek.png": "provider-deepseek.png",
+        "provider-logos/grok.png": "provider-grok.png",
     }.items():
         shutil.copyfile(static / source, assets / target)
     for market in markets:
+        image_name = f"og-{market['slug']}.png"
+        shutil.copyfile(HERE / "social-images" / image_name, assets / image_name)
         folder = output / market["slug"]
         folder.mkdir(exist_ok=True)
         (folder / "index.html").write_text(render(market, markets, version))

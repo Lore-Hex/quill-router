@@ -2,6 +2,11 @@
 
 Entry point for coding agents (codex-cli, Claude Code) working in `quill-router`.
 
+For Token Exchange city or region additions, read
+[`sites/token-exchange/ADDING-MARKETS.md`](sites/token-exchange/ADDING-MARKETS.md)
+before editing. Preserve its approved shared design, regional-copy process,
+evidence scope and social-image workflow.
+
 ## Read first
 
 **[`docs/storage-portability/HANDOFF.md`](docs/storage-portability/HANDOFF.md)** — current

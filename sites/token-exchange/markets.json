@@ -1,132 +1,356 @@
 [
   {
-    "slug": "global", "name": "The Token Exchange", "region": "Global", "domain": "thetokenexchange.com", "aliases": ["thetoken.exchange"],
+    "slug": "global",
+    "name": "The Token Exchange",
+    "region": "Global",
+    "domain": "thetokenexchange.com",
+    "aliases": [
+      "thetoken.exchange"
+    ],
     "scope": "global",
-    "headline": "A better market for AI.",
-    "lead": "Buy intelligence on your terms. Bring your AI workloads to competing model providers through one enterprise API. Or bring your inference capacity to the market.",
-    "focus": "Global ambition. One procurement conversation.",
-    "intro": "Your teams use different models, in different products, at different scales. The Token Exchange brings those purchasing decisions together through TrustedRouter, while keeping model choice and provider requirements in your hands.",
-    "sectors": [["Enterprise platforms", "Compare models against the tasks that matter to your business, then route production traffic through the providers you approve."], ["AI product teams", "Keep one integration as prices, models and capacity change. Evaluate the cost of a successful result alongside speed and quality."], ["Procurement and security", "Review the operating entity, provider policies and verification evidence together. Agree on route requirements before moving sensitive workloads."]],
-    "seller": "Bring your model endpoints, available capacity and service regions. We will review integration, pricing, performance and privacy evidence with you."
+    "headline": "Get secure, scalable frontier AI for your business.",
+    "lead": "Compare models, pricing and privacy for enterprise and product teams worldwide.",
+    "focus": "Verifiably secure compute for enterprise and product teams.",
+    "intro": "Evaluate models across teams, products and workloads. Compare quality, cost and provider requirements before choosing production routes.",
+    "sectors": [
+      [
+        "Enterprise platforms",
+        "Evaluate models on the tasks your business needs. Define approved routes, fallback choices and application spending limits before production."
+      ],
+      [
+        "AI product teams",
+        "Keep one integration as models and capacity change. Compare cost per completed task alongside output quality and latency."
+      ],
+      [
+        "Procurement and security",
+        "Review provider policies, operating terms and verification evidence together. Confirm route requirements before moving sensitive workloads."
+      ]
+    ],
+    "seller": "Offer inference capacity for enterprise applications and AI products. Share model support, service regions, throughput, pricing and privacy evidence so buyers can evaluate your service.",
+    "headline_accent": "for your business",
+    "buyer_heading": "Buy capacity. Choose how it is served.",
+    "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy.",
+    "evidence_snapshot": "evidence-shared-gcp.json"
   },
   {
-    "slug": "new-york", "name": "New York Token Exchange", "region": "New York", "domain": "nytokenexchange.com", "aliases": ["newyorktoken.exchange", "nytoken.exchange"],
+    "slug": "new-york",
+    "evidence_snapshot": "evidence.json", "headline_accent": "for New York",
+    "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy.",
+    "buyer_heading": "Buy capacity. Choose how it is served.", "name": "New York Token Exchange", "region": "New York", "domain": "nytokenexchange.com", "aliases": ["newyorktoken.exchange", "nytoken.exchange"],
     "scope": "city",
-    "headline": "Intelligence, bought on your terms.",
-    "lead": "For New York's financial, legal and enterprise teams: compare AI models, choose approved providers and put every token to work through TrustedRouter.",
-    "focus": "Built around the work that moves New York.",
-    "intro": "Research, contracts and client communications deserve more than a single model choice. Start with a representative workload, compare quality and economics, and review the privacy of the entire route.",
+    "headline": "Get secure, scalable frontier AI for New York.",
+    "lead": "Compare models, pricing and privacy for New York\u2019s financial, legal and enterprise teams.",
+    "focus": "Verifiably secure compute for New York\u2019s leading industries.",
+    "intro": "From investment research to client communications, choose models that fit the work and provider policies that fit your data. Start with one workload, then evaluate quality, cost and privacy together.",
     "sectors": [["Investment research", "Evaluate document analysis and research synthesis against your own acceptance criteria. Compare output quality, latency and total token cost."], ["Legal operations", "Review retention policies and provider eligibility before routing client material. Test document workflows with a controlled evaluation set."], ["Financial platforms", "Define approved routes, fallback choices and application spending limits before putting an AI feature into production."]],
     "seller": "Offer inference capacity for research, document and enterprise workloads. Share throughput, pricing and privacy evidence so buyers can evaluate your service."
   },
   {
-    "slug": "chicago", "name": "Chicago Token Exchange", "region": "Chicago", "domain": "chicagotokenexchange.com", "aliases": ["chicagotoken.exchange"],
+    "slug": "chicago",
+    "name": "Chicago Token Exchange",
+    "region": "Chicago",
+    "domain": "chicagotokenexchange.com",
+    "aliases": [
+      "chicagotoken.exchange"
+    ],
     "scope": "city",
-    "headline": "Put intelligence to work.",
-    "lead": "A market for Chicago's industrial, logistics and financial AI workloads. Compare models and providers through one TrustedRouter integration.",
-    "focus": "From the research desk to the supply chain.",
-    "intro": "Some jobs need fast answers. Others need careful reasoning over long documents. Buy the right inference for each workload, with cost and provider requirements defined up front.",
-    "sectors": [["Industrial operations", "Evaluate extraction, maintenance knowledge and internal assistants using representative documents and clear quality thresholds."], ["Logistics", "Measure the cost and response time of high volume classification and document workflows before expanding the rollout."], ["Financial research", "Compare models for research synthesis while keeping sensitive inputs on the provider routes your team approves."]],
-    "seller": "Bring reliable capacity for both interactive and batch workloads. Publish your model support and performance characteristics for enterprise evaluation."
+    "headline": "Get secure, scalable frontier AI for Chicago.",
+    "lead": "Compare models, pricing and privacy for Chicago’s industrial, logistics and financial teams.",
+    "focus": "Verifiably secure compute for Chicago’s leading industries.",
+    "intro": "Evaluate industrial documents, logistics workflows and financial research against your own quality, cost and privacy requirements.",
+    "sectors": [
+      [
+        "Industrial operations",
+        "Evaluate extraction and maintenance knowledge on representative documents. Set quality thresholds with the people who use the results."
+      ],
+      [
+        "Logistics",
+        "Test classification and document workflows at your expected volumes. Compare output quality, response time and total token cost."
+      ],
+      [
+        "Financial research",
+        "Compare research synthesis against your own acceptance criteria. Review retention policies and approved provider routes before using sensitive inputs."
+      ]
+    ],
+    "seller": "Offer inference capacity for industrial, logistics and research workloads. Share interactive and batch performance, pricing and privacy evidence so buyers can evaluate your service.",
+    "headline_accent": "for Chicago",
+    "buyer_heading": "Buy capacity. Choose how it is served.",
+    "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy.",
+    "evidence_snapshot": "evidence-shared-gcp.json"
   },
   {
-    "slug": "san-francisco", "name": "San Francisco Token Exchange", "region": "San Francisco", "domain": "sftokenexchange.com", "aliases": ["sftoken.exchange"],
+    "slug": "san-francisco",
+    "name": "San Francisco Token Exchange",
+    "region": "San Francisco",
+    "domain": "sftokenexchange.com",
+    "aliases": [
+      "sftoken.exchange"
+    ],
     "scope": "city",
-    "headline": "Ship the product. Choose the intelligence.",
-    "lead": "For the Bay Area teams building with AI: compare models, reduce inference spend and keep provider choice through a single API.",
-    "focus": "Model choice is a product decision.",
-    "intro": "The right model for a prototype may be different from the right model at scale. Evaluate alternatives on real tasks and keep your application connected to a competitive supply of inference.",
-    "sectors": [["Agent products", "Compare reasoning, tool support and cost per completed task. Select routes that support the capabilities your agent actually uses."], ["Developer platforms", "Give teams a consistent API while controlling provider selection and spending by application."], ["Growth stage companies", "Turn an expanding inference bill into a measured model evaluation, with clear quality thresholds and rollout criteria."]],
-    "seller": "Reach teams evaluating new models and production inference. Bring a working endpoint, documented capabilities and enough capacity for a measured pilot."
+    "headline": "Get secure, scalable frontier AI for San Francisco.",
+    "lead": "Compare models, pricing and privacy for San Francisco’s AI product, developer platform and software teams.",
+    "focus": "Verifiably secure compute for San Francisco’s product teams.",
+    "intro": "Evaluate the models your product needs today and at scale. Compare quality, latency and cost against real application tasks.",
+    "sectors": [
+      [
+        "Agent products",
+        "Evaluate reasoning and tool support on your agent’s tasks. Compare cost per completed task and confirm the capabilities available on each route."
+      ],
+      [
+        "Developer platforms",
+        "Keep one API integration as models and providers change. Define approved routes, fallback choices and application spending limits before production."
+      ],
+      [
+        "Growing software teams",
+        "Compare model quality and total inference cost as usage grows. Set acceptance criteria and rollout thresholds before changing production routes."
+      ]
+    ],
+    "seller": "Offer inference capacity for agent products, developer platforms and production software. Share model capabilities, throughput, pricing and privacy evidence so buyers can evaluate your service.",
+    "headline_accent": "for San Francisco",
+    "buyer_heading": "Buy capacity. Choose how it is served.",
+    "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy.",
+    "evidence_snapshot": "evidence-shared-gcp.json"
   },
   {
-    "slug": "texas", "name": "Texas Token Exchange", "region": "Texas", "domain": "texastokenexchange.com", "aliases": ["texastoken.exchange", "txtokenexchange.com", "txtoken.exchange"],
+    "slug": "texas",
+    "name": "Texas Token Exchange",
+    "region": "Texas",
+    "domain": "texastokenexchange.com",
+    "aliases": [
+      "texastoken.exchange",
+      "txtokenexchange.com",
+      "txtoken.exchange"
+    ],
     "scope": "region",
-    "headline": "Connect compute to demand.",
-    "lead": "For Texas enterprises and inference operators: put AI capacity to work, with competing providers and a common enterprise API.",
-    "focus": "Practical AI for energy, industry and software.",
-    "intro": "Texas brings together compute operators and businesses with substantial operational data. Start with a defined workload and an agreed provider policy, then measure what works.",
-    "sectors": [["Energy and engineering", "Evaluate technical document analysis and knowledge retrieval against expert reviewed examples."], ["Enterprise software", "Compare models for support, classification and agent workflows while tracking application costs."], ["Compute operators", "Turn an inference endpoint into an enterprise offering. Prepare model coverage, capacity, service regions and pricing for review."]],
-    "seller": "Run inference infrastructure? Apply with your available models, service locations, capacity and privacy controls. Hardware ownership alone does not establish a supported inference service."
+    "headline": "Get secure, scalable frontier AI for Texas.",
+    "lead": "Compare models, pricing and privacy for Texas’s energy, engineering and enterprise software teams.",
+    "focus": "Verifiably secure compute for Texas’s leading industries.",
+    "intro": "Evaluate technical knowledge, software and enterprise workloads against your own quality, cost and privacy requirements.",
+    "sectors": [
+      [
+        "Energy and engineering",
+        "Evaluate technical document analysis and knowledge retrieval against examples reviewed by your engineering team. Define accuracy criteria before using production material."
+      ],
+      [
+        "Enterprise software",
+        "Compare models for support, classification and agent workflows. Measure output quality, latency and total token cost on your application’s tasks."
+      ],
+      [
+        "Enterprise platforms",
+        "Review provider eligibility and retention policies before routing business data. Define approved routes, fallback choices and spending limits before production."
+      ]
+    ],
+    "seller": "Offer inference capacity for energy, engineering and software workloads. Share available models, service locations, throughput, pricing and privacy evidence so buyers can evaluate your service.",
+    "headline_accent": "for Texas",
+    "buyer_heading": "Buy capacity. Choose how it is served.",
+    "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy.",
+    "evidence_snapshot": "evidence-shared-gcp.json"
   },
   {
-    "slug": "united-states", "name": "US Token Exchange", "region": "United States", "domain": "usatokenexchange.com", "aliases": ["usatoken.exchange", "ustoken.exchange"],
+    "slug": "united-states",
+    "name": "US Token Exchange",
+    "region": "United States",
+    "domain": "usatokenexchange.com",
+    "aliases": [
+      "usatoken.exchange",
+      "ustoken.exchange"
+    ],
     "scope": "region",
-    "headline": "A purchasing advantage for enterprise AI.",
-    "lead": "Bring AI purchasing together across teams. Compare models, review providers and control inference spend with TrustedRouter.",
-    "focus": "One evaluation. A company wide opportunity.",
-    "intro": "Different business units often buy intelligence separately. Build a shared evaluation and approved provider policy, while preserving the model choice each application needs.",
-    "sectors": [["Enterprise procurement", "Inventory workloads, volumes and existing commitments. Compare the full cost of serving each application."], ["Security teams", "Review routing evidence, retention policies and contractual requirements before authorizing a provider."], ["Platform engineering", "Standardize integration and usage controls while evaluating model quality at the application level."]],
-    "seller": "Offer enterprise inference with clear capacity, model support and service terms. Buyers need verifiable provider information alongside competitive rates."
+    "headline": "Get secure, scalable frontier AI for the United States.",
+    "lead": "Compare models, pricing and privacy for enterprise teams across the United States.",
+    "focus": "Verifiably secure compute for enterprise teams across the United States.",
+    "intro": "Bring purchasing decisions together across business units while preserving the model choice each application needs. Evaluate quality, cost and provider requirements together.",
+    "sectors": [
+      [
+        "Enterprise procurement",
+        "Review workloads, expected volumes and existing commitments across teams. Compare the full cost of serving each application before you buy."
+      ],
+      [
+        "Security teams",
+        "Review processing locations, retention policies and contractual requirements for each intended route. Confirm provider eligibility before authorizing sensitive workloads."
+      ],
+      [
+        "Platform engineering",
+        "Standardize API integration and application spending controls across teams. Evaluate model quality and approved fallback choices for each application."
+      ]
+    ],
+    "seller": "Offer enterprise inference capacity with clear model support and service terms. Share throughput, pricing and privacy evidence so buyers can evaluate your service across teams.",
+    "headline_accent": "for the United States",
+    "buyer_heading": "Buy capacity. Choose how it is served.",
+    "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy.",
+    "evidence_snapshot": "evidence-shared-gcp.json"
   },
   {
-    "slug": "europe", "name": "European Token Exchange", "region": "Europe", "domain": "eutokenexchange.com", "aliases": ["eurotokenexchange.com", "eutoken.exchange"],
+    "slug": "europe",
+    "name": "European Token Exchange",
+    "region": "Europe",
+    "domain": "eutokenexchange.com",
+    "aliases": [
+      "eurotokenexchange.com",
+      "eutoken.exchange"
+    ],
     "scope": "region",
-    "headline": "Your intelligence. Your requirements.",
-    "lead": "A place for European teams to evaluate AI economics, provider policies and deployment requirements together. Powered by TrustedRouter.",
-    "focus": "Make procurement part of the architecture.",
-    "intro": "Provider location, processing terms and model quality belong in the same decision. Specify your residency and contractual requirements, then confirm which routes can meet them.",
-    "sectors": [["Privacy led procurement", "Review subprocessors, data processing terms and retention policies for every intended provider route."], ["Multilingual products", "Compare performance on the languages and document formats your customers use, rather than relying on a general ranking."], ["European inference operators", "Present service locations and processing evidence alongside supported models, throughput and commercial terms."]],
-    "seller": "Bring European inference capacity with documented processing locations and provider terms. Regional branding alone is not residency evidence."
+    "headline": "Get secure, scalable frontier AI for Europe.",
+    "lead": "Compare models, pricing and privacy for Europe’s procurement, product and enterprise teams.",
+    "focus": "Verifiably secure compute for Europe’s leading industries.",
+    "intro": "Evaluate multilingual documents and enterprise applications alongside provider terms. Confirm residency and contractual requirements for each intended route.",
+    "sectors": [
+      [
+        "Enterprise procurement",
+        "Review data processing agreements, subprocessors and retention policies. Confirm which provider routes can meet your residency and contractual requirements."
+      ],
+      [
+        "Multilingual products",
+        "Evaluate models on the languages, terminology and document formats your customers use. Compare results against your own acceptance criteria."
+      ],
+      [
+        "Enterprise platforms",
+        "Define approved routes, fallback choices and application spending limits before putting an AI feature into production."
+      ]
+    ],
+    "seller": "Offer inference capacity for multilingual documents and enterprise workloads. Share processing locations, throughput, pricing and privacy evidence so buyers can evaluate your service.",
+    "headline_accent": "for Europe",
+    "buyer_heading": "Buy capacity. Choose how it is served.",
+    "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy.",
+    "evidence_snapshot": "evidence-europe.json"
   },
   {
     "slug": "london", "name": "London Token Exchange", "region": "London", "domain": "londontoken.exchange", "aliases": ["ltokenexchange.com"],
     "scope": "city",
-    "headline": "Make intelligence a better buy.",
-    "lead": "For London's financial, insurance and professional services teams: evaluate AI quality, privacy and cost through one enterprise conversation.",
-    "focus": "A considered approach to AI purchasing.",
-    "intro": "Compare models using the documents and tasks your business understands. Review provider terms alongside the results, then choose a production route with a clear commercial case.",
-    "sectors": [["Financial services", "Evaluate research and document workflows with an approved dataset and explicit provider requirements."], ["Insurance operations", "Compare extraction and classification accuracy on representative forms, policies and supporting documents."], ["Professional services", "Set expectations for confidentiality, review and retention before expanding internal AI tools."]],
-    "seller": "Offer reliable inference for professional workloads. Include processing locations, retention policies and support arrangements in your application."
+    "headline": "Get secure, scalable frontier AI for London.",
+    "lead": "Compare models, pricing and privacy for London’s financial, insurance and professional services teams.",
+    "focus": "Verifiably secure compute for London’s leading industries.",
+    "intro": "Evaluate financial research, insurance documents and professional workflows against your own quality, cost and privacy requirements.",
+    "sectors": [["Financial services", "Evaluate document analysis and research synthesis with an approved dataset. Compare output quality, latency and total token cost."], ["Insurance operations", "Test extraction and classification on forms, policies and supporting documents. Compare results against answers reviewed by your insurance team."], ["Professional services", "Review retention policies and provider eligibility before routing client material. Define expert review and confidentiality requirements for your document workflows."]],
+    "seller": "Offer inference capacity for financial research, insurance documents and professional workloads. Share throughput, pricing, privacy evidence and support arrangements so buyers can evaluate your service.",
+    "headline_accent": "for London",
+    "evidence_snapshot": "evidence-london.json",
+    "buyer_heading": "Buy capacity. Choose how it is served.",
+    "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy."
   },
   {
-    "slug": "dubai", "name": "Dubai Token Exchange", "region": "Dubai", "domain": "dubaitokenexchange.com", "aliases": ["dubaitoken.exchange"],
+    "slug": "dubai",
+    "evidence_snapshot": "evidence-dubai.json", "headline_accent": "for Dubai",
+    "buyer_heading": "Buy capacity. Choose how it is served.",
+    "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy.", "name": "Dubai Token Exchange", "region": "Dubai", "domain": "dubaitokenexchange.com", "aliases": ["dubaitoken.exchange"],
     "scope": "city",
-    "headline": "A new connection for enterprise AI.",
-    "lead": "For Dubai's enterprises, digital businesses and compute operators: bring model choice, provider review and inference economics into one place.",
-    "focus": "Evaluate across languages and business lines.",
-    "intro": "A regional AI rollout needs more than a model benchmark. Test Arabic and English workloads, agree on processing requirements, and compare the economics of the complete task.",
-    "sectors": [["Multilingual services", "Evaluate Arabic and English quality on your own examples, including the terminology and formats your teams use."], ["Financial and business services", "Review confidentiality, processing locations and model capabilities together before choosing a provider."], ["Infrastructure operators", "Bring inference endpoints and regional capacity with clear commercial and operational specifications."]],
-    "seller": "Apply with your supported models, Arabic and English capabilities, capacity and service locations. Regional availability is reviewed per provider."
+    "headline": "Get secure, scalable frontier AI for Dubai.",
+    "lead": "Compare models, pricing and privacy for Dubai’s financial, professional services and enterprise teams.",
+    "focus": "Verifiably secure compute for Dubai’s leading industries.",
+    "intro": "From multilingual research to client communications, choose models that fit the work and provider policies that fit your data. Start with one workload, then evaluate quality, cost and privacy together.",
+    "sectors": [["Multilingual services", "Evaluate Arabic and English document analysis against your own acceptance criteria. Compare output quality, latency and total token cost."], ["Financial and professional services", "Review retention policies and provider eligibility before routing client material. Test document workflows with a controlled evaluation set."], ["Enterprise platforms", "Define approved routes, fallback choices and application spending limits before putting an AI feature into production."]],
+    "seller": "Offer inference capacity for Arabic and English research, document and enterprise workloads. Share throughput, pricing and privacy evidence so buyers can evaluate your service."
   },
   {
-    "slug": "riyadh", "name": "Riyadh Token Exchange", "region": "Riyadh", "domain": "riyadhtokenexchange.com", "aliases": [],
+    "slug": "riyadh",
+    "name": "Riyadh Token Exchange",
+    "region": "Riyadh",
+    "domain": "riyadhtokenexchange.com",
+    "aliases": [],
     "scope": "city",
-    "headline": "One market for the Kingdom's AI buyers and builders.",
-    "lead": "For Riyadh's enterprises, public-sector programmes and compute operators: bring model choice, provider review and inference economics into one place.",
-    "focus": "Plan Arabic workloads around your data requirements.",
-    "intro": "Large AI programmes need more than one model or one vendor. Test Arabic and English workloads on your own examples, agree where data may be processed, and compare the economics of the complete task.",
-    "sectors": [["Government and public services", "Review provider policies, processing locations and verification evidence together before a sensitive workload moves."], ["Energy and industry", "Evaluate models on technical documents and operational reports in Arabic and English, and compare the cost of a successful result."], ["Compute operators", "Bring inference endpoints and capacity in the Kingdom or the region, with clear commercial and operational specifications."]],
-    "seller": "Apply with your supported models, Arabic and English capabilities, capacity and service locations. Regional availability is reviewed per provider."
+    "headline": "Get secure, scalable frontier AI for Riyadh.",
+    "headline_accent": "for Riyadh",
+    "lead": "Compare models, pricing and privacy for Riyadh’s public-sector, energy and enterprise teams.",
+    "focus": "Verifiably secure compute for Riyadh’s leading industries.",
+    "intro": "Evaluate Arabic and English public-service documents, technical reports and enterprise workloads against your own quality, cost and privacy requirements.",
+    "sectors": [
+      [
+        "Government and public services",
+        "Evaluate Arabic and English document workflows on an approved dataset. Confirm processing locations and provider eligibility against your procurement requirements."
+      ],
+      [
+        "Energy and industry",
+        "Test technical reasoning on manuals and operational reports in Arabic and English. Set accuracy criteria with your engineering team before routing production material."
+      ],
+      [
+        "Enterprise platforms",
+        "Compare output quality, latency and total token cost on your application’s tasks. Define approved routes, fallback choices and spending limits before production."
+      ]
+    ],
+    "seller": "Offer inference capacity for Arabic and English public-service, energy and enterprise workloads. Share language evaluations, service locations, throughput, pricing and privacy evidence so buyers can evaluate your service.",
+    "evidence_snapshot": "evidence-shared-gcp.json",
+    "buyer_heading": "Buy capacity. Choose how it is served.",
+    "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy."
   },
   {
-    "slug": "hong-kong", "name": "Hong Kong Token Exchange", "region": "Hong Kong", "domain": "hktokenexchange.com", "aliases": ["hktoken.exchange", "hongkongtoken.exchange"],
+    "slug": "hong-kong",
+    "name": "Hong Kong Token Exchange",
+    "region": "Hong Kong",
+    "domain": "hktokenexchange.com",
+    "aliases": [
+      "hktoken.exchange",
+      "hongkongtoken.exchange"
+    ],
     "scope": "city",
-    "headline": "Connect your business to better intelligence.",
-    "lead": "For Hong Kong's financial, trade and enterprise teams: compare multilingual AI workloads and provider requirements through TrustedRouter.",
-    "focus": "Built around cross market workflows.",
-    "intro": "Research, client service and trade documentation cross languages and jurisdictions. Evaluate those actual tasks and confirm provider availability and processing terms before deployment.",
-    "sectors": [["Financial research", "Compare models on multilingual research and document synthesis, with task level quality checks."], ["Trade operations", "Test extraction and classification across the documents your counterparties actually exchange."], ["Enterprise platforms", "Review processing locations and access restrictions alongside latency, cost and supported model capabilities."]],
-    "seller": "Present multilingual model support, processing locations and capacity. Commercial availability and jurisdictional requirements are assessed before onboarding."
+    "headline": "Get secure, scalable frontier AI for Hong Kong.",
+    "lead": "Compare models, pricing and privacy for Hong Kong’s financial, trade and enterprise teams.",
+    "focus": "Verifiably secure compute for Hong Kong’s leading industries.",
+    "intro": "Evaluate multilingual financial research and trade documents against your own quality criteria. Confirm provider eligibility and processing terms across the jurisdictions your teams work in.",
+    "sectors": [
+      [
+        "Financial research",
+        "Evaluate multilingual research and document synthesis with an approved dataset. Compare output quality, latency and total token cost."
+      ],
+      [
+        "Trade operations",
+        "Test extraction and classification on the multilingual documents your counterparties exchange. Check results against examples reviewed by your team."
+      ],
+      [
+        "Enterprise platforms",
+        "Confirm provider eligibility, processing locations and access restrictions across jurisdictions. Define approved routes before putting an AI feature into production."
+      ]
+    ],
+    "seller": "Offer inference capacity for multilingual research, trade documents and enterprise workloads. Share language evaluations, processing locations, pricing and capacity so buyers can assess your service.",
+    "headline_accent": "for Hong Kong",
+    "buyer_heading": "Buy capacity. Choose how it is served.",
+    "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy.",
+    "evidence_snapshot": "evidence-shared-gcp.json"
   },
   {
-    "slug": "shanghai", "name": "Shanghai Token Exchange", "region": "Shanghai", "domain": "shanghaitokenexchange.com", "aliases": ["shanghaitoken.exchange"],
+    "slug": "shanghai",
+    "name": "Shanghai Token Exchange",
+    "region": "Shanghai",
+    "domain": "shanghaitokenexchange.com",
+    "aliases": [
+      "shanghaitoken.exchange"
+    ],
     "scope": "city",
-    "headline": "Evaluate the next generation of intelligence.",
-    "lead": "For teams with Shanghai focused operations: explore model quality, inference economics and provider eligibility with TrustedRouter.",
-    "focus": "Start with the workload and the requirements.",
-    "intro": "Chinese language quality, technical terminology and processing rules all matter. Begin with a non-sensitive evaluation and confirm service availability and applicable requirements before production use.",
-    "sectors": [["Manufacturing knowledge", "Compare technical document understanding against examples reviewed by your engineering team."], ["Chinese language workflows", "Evaluate extraction, classification and reasoning using the formats and vocabulary of your business."], ["International teams", "Confirm provider eligibility, data transfer requirements and commercial availability before routing production traffic."]],
-    "seller": "Submit model coverage, service locations and operating information for review. An application is subject to provider eligibility and applicable legal requirements."
+    "headline": "Evaluate secure, scalable frontier AI for Shanghai.",
+    "lead": "Compare model quality, pricing and provider eligibility for teams with Shanghai operations.",
+    "focus": "Evaluate AI for Shanghai’s industrial and enterprise workflows.",
+    "intro": "Start with non-sensitive evaluations of Chinese business and technical documents. Confirm service availability, provider eligibility and data-transfer requirements before production use.",
+    "sectors": [
+      [
+        "Manufacturing knowledge",
+        "Evaluate technical document understanding against examples reviewed by your engineering team. Compare output quality, latency and total token cost."
+      ],
+      [
+        "Chinese language workflows",
+        "Test extraction, classification and reasoning with non-sensitive examples. Use the Chinese terminology and document formats your business works with."
+      ],
+      [
+        "International teams",
+        "Confirm provider eligibility, data-transfer requirements and commercial availability before routing production traffic. Review processing locations and retention policies for each route."
+      ]
+    ],
+    "seller": "Submit model coverage, language evaluations, service locations and capacity for review. Provider eligibility and applicable requirements must be confirmed before onboarding.",
+    "headline_accent": "for Shanghai",
+    "buyer_heading": "Buy capacity. Choose how it is served.",
+    "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy.",
+    "evidence_snapshot": "evidence-shared-gcp.json"
   },
   {
     "slug": "tokyo", "name": "Tokyo Token Exchange", "region": "Tokyo", "domain": "tokyotokenexchange.com", "aliases": [],
     "scope": "city",
-    "headline": "Precision in every AI purchasing decision.",
-    "lead": "For Japan's enterprise, manufacturing and software teams: compare models on the work that matters, through TrustedRouter.",
-    "focus": "Japanese language quality meets enterprise economics.",
-    "intro": "General rankings can miss the details of Japanese business documents and technical language. Run a focused evaluation, review provider requirements and measure the cost of a useful result.",
-    "sectors": [["Enterprise documents", "Test Japanese extraction and summarization on representative documents and expert reviewed answers."], ["Manufacturing", "Evaluate technical reasoning and internal knowledge workflows with clear accuracy criteria."], ["Software platforms", "Compare response time, model capabilities and application costs while keeping provider choice flexible."]],
-    "seller": "Bring inference services with documented Japanese language support, capacity and processing locations. Start with a measured enterprise pilot."
+    "headline": "Get secure, scalable frontier AI for Tokyo.",
+    "lead": "Compare models, pricing and privacy for Tokyo’s enterprise, manufacturing and software teams.",
+    "focus": "Verifiably secure compute for Tokyo’s leading industries.",
+    "intro": "Evaluate Japanese business documents, technical reasoning and software workloads against your own quality, cost and privacy requirements.",
+    "sectors": [["Enterprise documents", "Evaluate extraction and summarization on Japanese business documents. Compare results against answers reviewed by your domain experts."], ["Manufacturing", "Test technical reasoning on Japanese manuals and internal knowledge. Set accuracy criteria with your engineering team before routing production material."], ["Software platforms", "Compare output quality, latency and total token cost on your application’s tasks. Define approved routes, fallback choices and spending limits before production."]],
+    "seller": "Offer inference capacity for Japanese document, manufacturing and software workloads. Share language evaluations, throughput, pricing and privacy evidence so buyers can evaluate your service.",
+    "headline_accent": "for Tokyo",
+    "evidence_snapshot": "evidence-tokyo.json",
+    "buyer_heading": "Buy capacity. Choose how it is served.",
+    "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy."
   }
 ]
