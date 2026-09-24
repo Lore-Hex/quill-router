@@ -27,7 +27,13 @@ PROFILES = {
     'london': dict(origin='https://trustedrouter.com', component=None,
                    release_url='https://trustedrouter.com/trust/gcp-release.json',
                    destination='evidence-london.json'),
-
+    # Reused by markets without an individually established serving binding.
+    'shared-gcp': dict(origin='https://trustedrouter.com', component=None,
+                      release_url='https://trustedrouter.com/trust/gcp-release.json',
+                      destination='evidence-shared-gcp.json'),
+    'europe': dict(origin='https://trustedrouter.com', component='eu_regional_api',
+                   release_url='https://trustedrouter.com/trust/gcp-release.json',
+                   destination='evidence-europe.json'),
 }
 
 
@@ -86,7 +92,8 @@ def project(endpoints, status, captured_at, release=None, *, market='new-york'):
             review_label='Review Azure attestation',
         )
     elif release is not None:
-        if profile['component'] is None and release.get('platform') != 'gcp-confidential-space':
+        if ((profile['component'] is None or market == 'europe')
+                and release.get('platform') != 'gcp-confidential-space'):
             raise ValueError('Shared GCP evidence requires a GCP release record')
         result['attestation'] = {key: release[key] for key in
             ('platform', 'source_commit', 'image_digest', 'attestation_issuer', 'attestation_audience')}
@@ -98,6 +105,12 @@ def project(endpoints, status, captured_at, release=None, *, market='new-york'):
             raise ValueError('Shared GCP evidence requires canonical API and inference history')
         result['uptime_label'] = 'Shared GCP uptime'
         result['status_source'] = f'{origin}/status.json'
+        result['attestation'].update(review_url=profile['release_url'],
+                                     review_label='Review GCP release')
+    elif market == 'europe':
+        if release is None:
+            raise ValueError('Europe evidence requires a GCP release record')
+        result['uptime_label'] = 'GCP uptime'
         result['attestation'].update(review_url=profile['release_url'],
                                      review_label='Review GCP release')
     return result

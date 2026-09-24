@@ -12,6 +12,126 @@ class EvidenceTests(unittest.TestCase):
     def setUp(self):
         self.data = json.loads(Path(__file__).with_name('evidence.json').read_text())
 
+    def regional_refresh_inputs(self):
+        endpoints = [{'data': [dict(
+            provider=provider, usage_type='Credits', provider_name='Tinfoil',
+            pricing=dict(prompt='0.000001', completion='0.000002'),
+            trustedrouter=dict(provider_e2ee=True, provider_confidential_compute=True,
+                               provider_zero_data_retention=True,
+                               privacy_tier_label='Confidential + E2EE'),
+        )]} for _, _, provider in ROUTES]
+        components = [dict(
+            id=key, name=name, description=name,
+            last_checked_at='2026-09-24T00:00:00Z', uptime_24h_percent=uptime,
+            sample_count_24h=10, history=[dict(
+                bucket_start='2026-09-24T00:00:00Z', status='degraded',
+                sample_count=10, uptime_percent=uptime)],
+        ) for key, name, uptime in (
+            ('canonical_api', 'Canonical API', 98),
+            ('model_inference', 'Model Inference', 97),
+            ('eu_regional_api', 'EU Regional API', 80),
+            ('us_east4_regional_api', 'US East Regional API', 99),
+            ('uaenorth_gateway', 'UAE North Gateway (Dubai)', 90),
+        )]
+        return endpoints, {'data': dict(
+            components=components, generated_at='2026-09-24T00:00:00Z')}
+
+    def test_europe_refresh_requires_its_regional_component_and_gcp_release(self):
+        endpoints, status = self.regional_refresh_inputs()
+        result = project(endpoints, status, '2026-09-24T00:00:00Z',
+                         self.data['attestation'], market='europe')
+        self.assertEqual(result['status']['name'], 'EU Regional API')
+        self.assertEqual(result['status']['uptime'], 80)
+        self.assertEqual(result['status']['history'][0]['uptime_percent'], 80)
+        self.assertEqual(result['status']['source'], 'https://trustedrouter.com/status.json')
+        self.assertEqual(result['uptime_label'], 'GCP uptime')
+        self.assertEqual([c['id'] for c in result['service_history']],
+                         ['canonical_api', 'model_inference'])
+        for release in (None, {'platform': 'azure-confidential-containers-sev-snp'},
+                        {'platform': 'aws-nitro-enclaves'}):
+            with self.subTest(release=release):
+                with self.assertRaisesRegex(ValueError, 'GCP release'):
+                    project(endpoints, status, '2026-09-24T00:00:00Z',
+                            release, market='europe')
+        status['data']['components'] = [c for c in status['data']['components']
+                                        if c['id'] != 'eu_regional_api']
+        with self.assertRaises(StopIteration):
+            project(endpoints, status, '2026-09-24T00:00:00Z',
+                    self.data['attestation'], market='europe')
+
+    def test_shared_profile_discards_all_regional_rows_and_requires_shared_history(self):
+        endpoints, status = self.regional_refresh_inputs()
+        result = project(endpoints, status, '2026-09-24T00:00:00Z',
+                         self.data['attestation'], market='shared-gcp')
+        self.assertNotIn('status', result)
+        self.assertEqual([c['id'] for c in result['service_history']],
+                         ['canonical_api', 'model_inference'])
+        self.assertEqual(result['uptime_label'], 'Shared GCP uptime')
+        for release in (None, {'platform': 'azure-confidential-containers-sev-snp'}):
+            with self.subTest(release=release):
+                with self.assertRaisesRegex(ValueError, 'GCP release'):
+                    project(endpoints, status, '2026-09-24T00:00:00Z',
+                            release, market='shared-gcp')
+        for missing in ('canonical_api', 'model_inference'):
+            incomplete = copy.deepcopy(status)
+            incomplete['data']['components'] = [c for c in status['data']['components']
+                                                if c['id'] != missing]
+            with self.subTest(missing=missing):
+                with self.assertRaisesRegex(ValueError, 'canonical API'):
+                    project(endpoints, incomplete, '2026-09-24T00:00:00Z',
+                            self.data['attestation'], market='shared-gcp')
+
+    def test_europe_snapshot_uses_only_gcp_eu_evidence_in_shared_layout(self):
+        markets = load_markets()
+        europe = next(m for m in markets if m['slug'] == 'europe')
+        page = render(europe, markets, 'test')
+        self.assertIn('EU Regional API', page)
+        self.assertIn('GCP uptime', page)
+        self.assertIn('https://trustedrouter.com/providers', page)
+        self.assertIn('https://trustedrouter.com/status', page)
+        self.assertIn('https://trustedrouter.com/trust/gcp-release.json', page)
+        self.assertIn('Review GCP release', page)
+        self.assertIn('Not proven by attestation', page)
+        self.assertNotIn('US East Regional API', page)
+        self.assertNotIn('UAE North', page)
+        self.assertNotIn('Gateway (Ireland)', page)
+        self.assertNotIn('Gateway (Paris)', page)
+        self.assertNotIn('Published policy measurement', page)
+        self.assertEqual(page.count('class="service-history"'), 3)
+        self.assertEqual(page.count('As of '), 1)
+        self.assertLess(page.index('class="trust-intro"'), page.index('class="catalogue'))
+        self.assertIn('exchange_market=europe', page)
+
+    def test_migrated_markets_share_gcp_sources_without_regional_claims(self):
+        markets = load_markets()
+        shared = {'global', 'chicago', 'san-francisco', 'texas', 'united-states',
+                  'hong-kong', 'shanghai'}
+        for market in markets:
+            if market['slug'] not in shared:
+                continue
+            with self.subTest(market=market['slug']):
+                snapshot = json.loads(Path(__file__).with_name(
+                    market['evidence_snapshot']).read_text())
+                self.assertNotIn('status', snapshot)
+                self.assertEqual(snapshot['attestation']['platform'], 'gcp-confidential-space')
+                self.assertEqual(snapshot['attestation']['source'],
+                                 'https://trustedrouter.com/trust/gcp-release.json')
+                for route in snapshot['routes']:
+                    self.assertTrue(route['source'].startswith('https://trustedrouter.com/v1/models/'))
+                page = render(market, markets, 'test')
+                self.assertIn('Shared GCP uptime', page)
+                self.assertIn('Canonical API', page)
+                self.assertIn('Model Inference', page)
+                self.assertIn('Review GCP release', page)
+                self.assertNotIn('Regional API', page)
+                self.assertNotIn('UAE North', page)
+                self.assertNotIn('aws.trustedrouter.com', page)
+                self.assertNotIn('azure.trustedrouter.com', page)
+                self.assertEqual(page.count('class="service-history"'), 2)
+                self.assertEqual(page.count('As of '), 1)
+                self.assertLess(page.index('class="trust-intro"'), page.index('class="catalogue'))
+                self.assertIn('exchange_market=' + market['slug'], page)
+
     def test_london_uses_shared_gcp_evidence_and_retains_insurance_workloads(self):
         markets = load_markets()
         london = next(m for m in markets if m['slug'] == 'london')

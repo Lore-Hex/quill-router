@@ -1,0 +1,515 @@
+{
+  "captured_at": "2026-09-24T18:30:55.012546+00:00",
+  "routes": [
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "label": "GLM 5.3 Flash",
+      "provider": "Tinfoil",
+      "pricing": {
+        "prompt": "0.000000422",
+        "completion": "0.00000131875",
+        "input_cache_read": "0.0000001055"
+      },
+      "privacy": "Confidential + E2EE",
+      "source": "https://trustedrouter.com/v1/models/z-ai/glm-5.3-flash/endpoints"
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "label": "DeepSeek V4.1 Flash",
+      "provider": "Tinfoil",
+      "pricing": {
+        "prompt": "0.00000068575",
+        "completion": "0.00000152975",
+        "input_cache_read": "0.00000013715"
+      },
+      "privacy": "Confidential + E2EE",
+      "source": "https://trustedrouter.com/v1/models/deepseek/deepseek-v4.1-flash/endpoints"
+    },
+    {
+      "model": "openai/gpt-oss-120b",
+      "label": "GPT OSS 120B",
+      "provider": "Tinfoil",
+      "pricing": {
+        "prompt": "0.00000015825",
+        "completion": "0.000000633"
+      },
+      "privacy": "Confidential + E2EE",
+      "source": "https://trustedrouter.com/v1/models/openai/gpt-oss-120b/endpoints"
+    }
+  ],
+  "status": {
+    "name": "EU Regional API",
+    "checked_at": "2026-09-24T18:29:17.000Z",
+    "uptime": 100.0,
+    "samples": 1912,
+    "history": [
+      {
+        "bucket_start": "2026-09-23T19:00:00+00:00",
+        "status": "up",
+        "sample_count": 84,
+        "uptime_percent": 100.0
+      },
+      {
+        "bucket_start": "2026-09-23T20:00:00+00:00",
+        "status": "up",
+        "sample_count": 88,
+        "uptime_percent": 100.0
+      },
+      {
+        "bucket_start": "2026-09-23T21:00:00+00:00",
+        "status": "up",
+        "sample_count": 88,
+        "uptime_percent": 100.0
+      },
+      {
+        "bucket_start": "2026-09-23T22:00:00+00:00",
+        "status": "up",
+        "sample_count": 80,
+        "uptime_percent": 100.0
+      },
+      {
+        "bucket_start": "2026-09-23T23:00:00+00:00",
+        "status": "up",
+        "sample_count": 82,
+        "uptime_percent": 100.0
+      },
+      {
+        "bucket_start": "2026-09-24T00:00:00+00:00",
+        "status": "up",
+        "sample_count": 86,
+        "uptime_percent": 100.0
+      },
+      {
+        "bucket_start": "2026-09-24T01:00:00+00:00",
+        "status": "up",
+        "sample_count": 88,
+        "uptime_percent": 100.0
+      },
+      {
+        "bucket_start": "2026-09-24T02:00:00+00:00",
+        "status": "up",
+        "sample_count": 80,
+        "uptime_percent": 100.0
+      },
+      {
+        "bucket_start": "2026-09-24T03:00:00+00:00",
+        "status": "up",
+        "sample_count": 78,
+        "uptime_percent": 100.0
+      },
+      {
+        "bucket_start": "2026-09-24T04:00:00+00:00",
+        "status": "up",
+        "sample_count": 82,
+        "uptime_percent": 100.0
+      },
+      {
+        "bucket_start": "2026-09-24T05:00:00+00:00",
+        "status": "up",
+        "sample_count": 80,
+        "uptime_percent": 100.0
+      },
+      {
+        "bucket_start": "2026-09-24T06:00:00+00:00",
+        "status": "up",
+        "sample_count": 80,
+        "uptime_percent": 100.0
+      },
+      {
+        "bucket_start": "2026-09-24T07:00:00+00:00",
+        "status": "up",
+        "sample_count": 80,
+        "uptime_percent": 100.0
+      },
+      {
+        "bucket_start": "2026-09-24T08:00:00+00:00",
+        "status": "up",
+        "sample_count": 80,
+        "uptime_percent": 100.0
+      },
+      {
+        "bucket_start": "2026-09-24T09:00:00+00:00",
+        "status": "up",
+        "sample_count": 80,
+        "uptime_percent": 100.0
+      },
+      {
+        "bucket_start": "2026-09-24T10:00:00+00:00",
+        "status": "up",
+        "sample_count": 80,
+        "uptime_percent": 100.0
+      },
+      {
+        "bucket_start": "2026-09-24T11:00:00+00:00",
+        "status": "up",
+        "sample_count": 80,
+        "uptime_percent": 100.0
+      },
+      {
+        "bucket_start": "2026-09-24T12:00:00+00:00",
+        "status": "up",
+        "sample_count": 80,
+        "uptime_percent": 100.0
+      },
+      {
+        "bucket_start": "2026-09-24T13:00:00+00:00",
+        "status": "up",
+        "sample_count": 80,
+        "uptime_percent": 100.0
+      },
+      {
+        "bucket_start": "2026-09-24T14:00:00+00:00",
+        "status": "up",
+        "sample_count": 80,
+        "uptime_percent": 100.0
+      },
+      {
+        "bucket_start": "2026-09-24T15:00:00+00:00",
+        "status": "up",
+        "sample_count": 80,
+        "uptime_percent": 100.0
+      },
+      {
+        "bucket_start": "2026-09-24T16:00:00+00:00",
+        "status": "up",
+        "sample_count": 80,
+        "uptime_percent": 100.0
+      },
+      {
+        "bucket_start": "2026-09-24T17:00:00+00:00",
+        "status": "up",
+        "sample_count": 80,
+        "uptime_percent": 100.0
+      },
+      {
+        "bucket_start": "2026-09-24T18:00:00+00:00",
+        "status": "up",
+        "sample_count": 36,
+        "uptime_percent": 100.0
+      }
+    ],
+    "source": "https://trustedrouter.com/status.json"
+  },
+  "catalog_url": "https://trustedrouter.com/providers",
+  "status_url": "https://trustedrouter.com/status",
+  "status_generated_at": "2026-09-24T18:30:00Z",
+  "service_history": [
+    {
+      "name": "Canonical API",
+      "id": "canonical_api",
+      "description": "api.trustedrouter.com attested TLS reachability and trust checks.",
+      "uptime": 99.9477,
+      "checked_at": "2026-09-24T18:29:16.000Z",
+      "history": [
+        {
+          "bucket_start": "2026-09-23T19:00:00+00:00",
+          "status": "up",
+          "sample_count": 84,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-23T20:00:00+00:00",
+          "status": "up",
+          "sample_count": 88,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-23T21:00:00+00:00",
+          "status": "up",
+          "sample_count": 88,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-23T22:00:00+00:00",
+          "status": "up",
+          "sample_count": 80,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-23T23:00:00+00:00",
+          "status": "up",
+          "sample_count": 82,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T00:00:00+00:00",
+          "status": "up",
+          "sample_count": 86,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T01:00:00+00:00",
+          "status": "up",
+          "sample_count": 88,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T02:00:00+00:00",
+          "status": "up",
+          "sample_count": 80,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T03:00:00+00:00",
+          "status": "up",
+          "sample_count": 78,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T04:00:00+00:00",
+          "status": "up",
+          "sample_count": 82,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T05:00:00+00:00",
+          "status": "up",
+          "sample_count": 80,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T06:00:00+00:00",
+          "status": "up",
+          "sample_count": 80,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T07:00:00+00:00",
+          "status": "up",
+          "sample_count": 80,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T08:00:00+00:00",
+          "status": "up",
+          "sample_count": 80,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T09:00:00+00:00",
+          "status": "up",
+          "sample_count": 80,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T10:00:00+00:00",
+          "status": "up",
+          "sample_count": 80,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T11:00:00+00:00",
+          "status": "up",
+          "sample_count": 80,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T12:00:00+00:00",
+          "status": "up",
+          "sample_count": 80,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T13:00:00+00:00",
+          "status": "up",
+          "sample_count": 80,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T14:00:00+00:00",
+          "status": "degraded",
+          "sample_count": 80,
+          "uptime_percent": 98.75
+        },
+        {
+          "bucket_start": "2026-09-24T15:00:00+00:00",
+          "status": "up",
+          "sample_count": 80,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T16:00:00+00:00",
+          "status": "up",
+          "sample_count": 80,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T17:00:00+00:00",
+          "status": "up",
+          "sample_count": 80,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T18:00:00+00:00",
+          "status": "up",
+          "sample_count": 36,
+          "uptime_percent": 100.0
+        }
+      ]
+    },
+    {
+      "name": "Model Inference",
+      "id": "model_inference",
+      "description": "End-to-end model calls through the attested gateway: OpenAI SDK and Responses round-trips with verified output.",
+      "uptime": 99.9268,
+      "checked_at": "2026-09-24T18:29:31.000Z",
+      "history": [
+        {
+          "bucket_start": "2026-09-23T19:00:00+00:00",
+          "status": "up",
+          "sample_count": 420,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-23T20:00:00+00:00",
+          "status": "up",
+          "sample_count": 440,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-23T21:00:00+00:00",
+          "status": "up",
+          "sample_count": 440,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-23T22:00:00+00:00",
+          "status": "up",
+          "sample_count": 400,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-23T23:00:00+00:00",
+          "status": "up",
+          "sample_count": 410,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T00:00:00+00:00",
+          "status": "up",
+          "sample_count": 430,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T01:00:00+00:00",
+          "status": "up",
+          "sample_count": 440,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T02:00:00+00:00",
+          "status": "degraded",
+          "sample_count": 400,
+          "uptime_percent": 98.25
+        },
+        {
+          "bucket_start": "2026-09-24T03:00:00+00:00",
+          "status": "up",
+          "sample_count": 390,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T04:00:00+00:00",
+          "status": "up",
+          "sample_count": 410,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T05:00:00+00:00",
+          "status": "up",
+          "sample_count": 400,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T06:00:00+00:00",
+          "status": "up",
+          "sample_count": 400,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T07:00:00+00:00",
+          "status": "up",
+          "sample_count": 400,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T08:00:00+00:00",
+          "status": "up",
+          "sample_count": 395,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T09:00:00+00:00",
+          "status": "up",
+          "sample_count": 405,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T10:00:00+00:00",
+          "status": "up",
+          "sample_count": 400,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T11:00:00+00:00",
+          "status": "up",
+          "sample_count": 400,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T12:00:00+00:00",
+          "status": "up",
+          "sample_count": 397,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T13:00:00+00:00",
+          "status": "up",
+          "sample_count": 398,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T14:00:00+00:00",
+          "status": "up",
+          "sample_count": 405,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T15:00:00+00:00",
+          "status": "up",
+          "sample_count": 400,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T16:00:00+00:00",
+          "status": "up",
+          "sample_count": 400,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T17:00:00+00:00",
+          "status": "up",
+          "sample_count": 400,
+          "uptime_percent": 100.0
+        },
+        {
+          "bucket_start": "2026-09-24T18:00:00+00:00",
+          "status": "up",
+          "sample_count": 180,
+          "uptime_percent": 100.0
+        }
+      ]
+    }
+  ],
+  "attestation": {
+    "platform": "gcp-confidential-space",
+    "source_commit": "370f35a6",
+    "image_digest": "sha256:008288257a6aa3a615006e43bc9df934efaf77bd762a7c6450cbc0f52dbdcbf6",
+    "attestation_issuer": "https://confidentialcomputing.googleapis.com",
+    "attestation_audience": "quill-cloud",
+    "source": "https://trustedrouter.com/trust/gcp-release.json",
+    "review_url": "https://trustedrouter.com/trust/gcp-release.json",
+    "review_label": "Review GCP release"
+  },
+  "uptime_label": "GCP uptime"
+}
