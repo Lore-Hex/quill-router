@@ -20,8 +20,8 @@
   </script>
   <link rel="preload" href="/static/fonts/archivo-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="/static/fonts/spectral-300-latin.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="/static/auth.css?v={{ static_version|default('local') }}">
-  <link rel="stylesheet" href="/static/charter.css?v={{ static_version|default('local') }}">
+  <link rel="stylesheet" href="/static/auth.css?v={{ auth_styles_version() }}">
+  <link rel="stylesheet" href="/static/charter.css?v={{ auth_styles_version() }}">
 </head>
 <body class="auth auth-shell">
   <main class="auth-card">

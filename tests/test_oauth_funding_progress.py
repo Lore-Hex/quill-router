@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -64,6 +65,19 @@ def test_unfunded_consent_opens_credit_step(consent_page: tuple[BeautifulSoup, s
     assert "Credits ready" not in page.get_text()
     assert _element(page, 'input[name="fund_amount"]:checked')["value"] == "20"
     assert _element(page, 'form[action="/auth/approve"] button').has_attr("type")
+
+
+def test_consent_styles_are_versioned_by_content(consent_page: tuple[BeautifulSoup, str]) -> None:
+    from trusted_router import views
+
+    page, _ = consent_page
+    static_dir = Path(views.__file__).parent / "static"
+    expected = hashlib.sha256(
+        (static_dir / "auth.css").read_bytes() + (static_dir / "charter.css").read_bytes()
+    ).hexdigest()[:16]
+    for stylesheet in ("auth.css", "charter.css"):
+        href = str(_element(page, f'link[href^="/static/{stylesheet}"]')["href"])
+        assert parse_qs(urlsplit(href).query) == {"v": [expected]}
 
 
 @pytest.mark.parametrize("checkout", ["", "success", "cancel", "mock"])
