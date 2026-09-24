@@ -84,18 +84,28 @@
   document.fonts.ready.then(measure);
 })();
 
-/* Evidence reveals once on entry; content remains visible without JavaScript. */
+/* Foreground reveals play once per visit; content stays visible without JS. */
 (() => {
   if (!('IntersectionObserver' in window)) return;
-  const observer = new IntersectionObserver((entries) => {
-    entries.forEach(entry => {
-      if (entry.isIntersecting) {
-        entry.target.classList.add('is-visible');
-        observer.unobserve(entry.target);
-      }
-    });
-  }, {threshold: 0.35});
-  document.querySelectorAll('.evidence-reveal, .privacy-column').forEach(element => observer.observe(element));
+  const reveal = (elements, threshold) => {
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('is-visible');
+          observer.unobserve(entry.target);
+        }
+      });
+    }, {threshold});
+    elements.forEach(element => observer.observe(element));
+  };
+  reveal(document.querySelectorAll('.evidence-reveal, .privacy-column'), 0.35);
+  const foreground = document.querySelectorAll(
+    '.hero-copy, .market-intro, .sectors > article, #buyers .section-intro, ' +
+    '.provider-strip, .trust-intro, .supplier-art, .seller-intro, ' +
+    '.supplier-cards > article, .closing-copy'
+  );
+  foreground.forEach(element => element.classList.add('scroll-reveal'));
+  reveal(foreground, 0.15);
 })();
 
 /* Decorative loops run only while visible; static artwork remains without JS. */
