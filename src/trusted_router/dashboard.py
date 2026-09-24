@@ -4846,8 +4846,16 @@ def docs_llms_full_txt(settings: Settings) -> str:
     return "\n".join(lines)
 
 
+def _model_publisher(model: Model) -> Provider:
+    # A TrustedRouter orchestration's publisher is not its internal selector host.
+    if model.id in META_MODEL_IDS and model.id.startswith("trustedrouter/"):
+        return PROVIDERS["trustedrouter"]
+    return PROVIDERS[model.provider]
+
+
 def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
+    publisher = _model_publisher(model)
     is_meta = model.id in META_MODEL_IDS
     endpoints = _credits_endpoints(endpoints_for_model(model.id)) if not is_meta else []
     route_endpoints = _credits_endpoints(_model_route_endpoints(model))
@@ -4920,8 +4928,8 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
     return {
         "id": model.id,
         "name": model.name,
-        "provider": provider.name,
-        "publisher_slug": model.provider,
+        "provider": publisher.name,
+        "publisher_slug": publisher.slug,
         "context_length": f"{model.context_length:,}",
         "context_length_compact": _compact_token_count(model.context_length),
         "context_length_int": model.context_length,
@@ -5277,7 +5285,7 @@ def _model_detail_view(
     test_mode: bool = False,
     include_section_links: bool = True,
 ) -> dict[str, object]:
-    provider = PROVIDERS[model.provider]
+    publisher = _model_publisher(model)
     is_meta = model.id in META_MODEL_IDS
     fixed_price = is_meta and (
         model.prompt_price_microdollars_per_million_tokens > 0
@@ -5342,8 +5350,8 @@ def _model_detail_view(
     return {
         "id": model.id,
         "name": model.name,
-        "provider": provider.name,
-        "publisher_slug": model.provider,
+        "provider": publisher.name,
+        "publisher_slug": publisher.slug,
         "context_length": f"{model.context_length:,}",
         "context_length_int": model.context_length,
         "fixed_price": fixed_price,
@@ -5792,6 +5800,9 @@ def _model_faq_items(
             fallback_provider=model.provider,
         )
     ] if credits_endpoints else []
+    publisher = _model_publisher(model)
+    if provider_names and publisher.slug != model.provider:
+        provider_names = [publisher.name]
     if not provider_names:
         provider_answer = "no Credits provider route"
     elif len(provider_names) == 1:
@@ -6165,6 +6176,7 @@ def _provider_model_rows(provider_slug: str, *, test_mode: bool = False) -> list
 
 
 _BRAND_DISPLAY_NAMES: dict[str, str] = {
+    "trustedrouter": "TrustedRouter",
     "anthropic": "Anthropic",
     "openai": "OpenAI",
     "google": "Google",
@@ -6224,7 +6236,7 @@ def _model_service_node(settings: Settings, model: Model, site_url: str) -> dict
     else:
         cheapest_micro_per_m = min(prompt_prices)
     cheapest_usd_per_m = cheapest_micro_per_m / MICRODOLLARS_PER_DOLLAR
-    brand_slug = model.provider
+    brand_slug = _model_publisher(model).slug
     brand_name = _BRAND_DISPLAY_NAMES.get(brand_slug, brand_slug.title())
     return {
         "@type": "Service",
@@ -6244,7 +6256,7 @@ def _model_service_node(settings: Settings, model: Model, site_url: str) -> dict
         "brand": {
             "@type": "Brand",
             "name": brand_name,
-            "logo": _absolute_url(settings, provider_logo_url(model.provider)),
+            "logo": _absolute_url(settings, provider_logo_url(brand_slug)),
         },
         "areaServed": "Worldwide",
         "offers": {

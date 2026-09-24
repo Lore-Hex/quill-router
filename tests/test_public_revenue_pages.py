@@ -6,6 +6,7 @@ from pathlib import Path
 
 from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
+from pytest import MonkeyPatch
 
 from tests.lifecycle_clock import catalog_predates
 from trusted_router.catalog import PROVIDERS, endpoints_for_model
@@ -759,6 +760,62 @@ def test_public_athena_model_detail_hides_orchestration_components(client: TestC
     assert "moonshotai/kimi-k2.7-code" not in response.text
     assert "trustedrouter/prometheus-1.0-1m" not in response.text
     assert "Model not found" not in response.text
+
+
+def test_polyphemus_page_uses_routing_neutral_publisher(client: TestClient) -> None:
+    from trusted_router.catalog import MODELS
+    from trusted_router.polyphemus import MODEL_ID
+
+    response = client.get(f"/models/{MODEL_ID}")
+
+    assert response.status_code == 200
+    assert "telluvian" not in response.text.lower()
+    assert 'href="/providers/trustedrouter"' in response.text
+    assert "TrustedRouter selects a model for your task" in response.text
+    assert "$0.05 per million selector prompt tokens" in response.text
+    assert "estimated from the serialized conversation and tools" in response.text
+    assert "Standard privacy, not ZDR or confidential" in response.text
+    assert "same session_id" in response.text
+    assert "one hour of inactivity" in response.text
+    assert "without a selector fee" in response.text
+    soup = BeautifulSoup(response.text, "html.parser")
+    structured_data = json.loads(soup.select_one('script[type="application/ld+json"]').string)
+    service = next(item for item in structured_data["@graph"] if item["@type"] == "Service")
+    assert service["brand"]["name"] == "TrustedRouter"
+    logo_path = "/static/provider-logos/trustedrouter.png"
+    assert service["brand"]["logo"].endswith(logo_path)
+    assert client.get(logo_path).status_code == 200
+    assert client.get("/providers/trustedrouter").status_code == 200
+    # Presentation must not change admission, provider credentials, or billing.
+    assert MODELS[MODEL_ID].provider == "telluvian"
+    endpoint = endpoints_for_model(MODEL_ID)[0]
+    assert endpoint.provider == "telluvian"
+    assert endpoint.prompt_price_microdollars_per_million_tokens == 50_000
+
+
+def test_model_publisher_keeps_host_privacy_and_partner_branding() -> None:
+    from trusted_router.catalog import MODELS
+    from trusted_router.dashboard import _model_view
+    from trusted_router.polyphemus import MODEL_ID
+
+    polyphemus = _model_view(MODELS[MODEL_ID], test_mode=True)
+    assert polyphemus["publisher_slug"] == "trustedrouter"
+    assert polyphemus["provider_zero_data_retention"] is False
+    assert polyphemus["provider_e2ee"] is False
+    partner = _model_view(MODELS["parasail/liberty-2.0"], test_mode=True)
+    assert partner["publisher_slug"] == "parasail"
+
+
+def test_polyphemus_publisher_does_not_invent_an_available_route(monkeypatch: MonkeyPatch) -> None:
+    from trusted_router import dashboard
+    from trusted_router.catalog import MODELS
+    from trusted_router.polyphemus import MODEL_ID
+
+    monkeypatch.setattr(dashboard, "endpoints_for_model", lambda _model_id: [])
+    model = MODELS[MODEL_ID]
+    evidence = dashboard._model_route_evidence(model, test_mode=True)
+    faq = dict(dashboard._model_faq_items(model, route_evidence=evidence))
+    assert "no Credits provider route" in faq[f"Which providers serve {model.name}?"]
 
 
 def test_public_model_detail_uses_service_structured_data(client: TestClient) -> None:
