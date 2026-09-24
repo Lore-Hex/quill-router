@@ -25,8 +25,10 @@ def render_evidence(data=None):
     catalogue = (
         '<div class="catalogue evidence-reveal">'
         '<div class="privacy-comparison">' + ''.join(columns) + '</div>'
-        '<p class="pricing-unit">USD / 1M tokens · input / output<br>As of '
-        + html.escape(date_label(data['captured_at'])) + '</p></div>'
+        '<p class="pricing-unit"><span>USD / 1M tokens · input / output</span><time datetime="'
+        + html.escape(data['captured_at'], quote=True) + '" title="'
+        + html.escape(date_label(data['captured_at']), quote=True) + '">As of '
+        + html.escape(date_label(data['captured_at']).split(' · ')[0]) + '</time></p></div>'
     )
     status = data['status']
     bars = []

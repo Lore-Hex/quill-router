@@ -78,7 +78,7 @@
       }
     });
   }, {threshold: 0.35});
-  document.querySelectorAll('.evidence-reveal').forEach(element => observer.observe(element));
+  document.querySelectorAll('.evidence-reveal, .privacy-column').forEach(element => observer.observe(element));
 })();
 
 /* Decorative loops run only while visible; static artwork remains without JS. */

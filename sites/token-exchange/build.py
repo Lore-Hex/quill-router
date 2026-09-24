@@ -72,6 +72,7 @@ def render(market: dict, markets: list[dict], version: str) -> str:
     values.update(
         {
             "version": version,
+            "hero_headline": html.escape(market["headline"]).replace("your terms", '<span class="headline-accent">your terms</span>') if market["slug"] == "new-york" else html.escape(market["headline"]),
             "catalogue": catalogue,
             "regional_health": health if market["slug"] == "new-york" else "",
             "buyer_url": html.escape(
