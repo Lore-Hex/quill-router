@@ -9,9 +9,11 @@ import pytest
 
 from clickhouse.rollup_reservation_overruns import (
     PROJECT,
+    RESERVATION_TERMINAL_INDEX,
     SPANNER_DATABASE,
     SPANNER_INSTANCE,
     OverrunAggregate,
+    SpannerReservationSource,
     _parse_args,
     aggregate_reservation_overruns,
     build_clickhouse_rows,
@@ -197,6 +199,79 @@ def test_rollup_reads_two_closed_utc_hours_and_dry_run_does_not_write() -> None:
     assert result.window_start == source.windows[0][0]
     assert result.window_end == source.windows[0][1]
     assert writer.rows == []
+
+
+def test_spanner_source_reads_settled_terminals_through_the_covering_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # tr_reservation keeps every reservation ever settled. Read the two-hour
+    # window through the (settled, terminal_at) covering index; a base-table
+    # scan of the whole table once an hour was the sole source of the Spanner
+    # high-priority CPU alert on 2026-09-24.
+    source = SpannerReservationSource.__new__(SpannerReservationSource)
+    source._database_url = (
+        "https://spanner.googleapis.com/v1/projects/p/instances/i/databases/d"
+    )
+    calls: list[tuple[str, str, Mapping[str, Any] | None]] = []
+
+    def fake_request_json(
+        url: str, *, method: str = "POST", body: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
+        calls.append((method, url, body))
+        if url.endswith("/sessions"):
+            return {"name": "projects/p/instances/i/databases/d/sessions/s1"}
+        if url.endswith(":executeSql"):
+            return {
+                "metadata": {
+                    "rowType": {
+                        "fields": [
+                            {"name": "terminal_at"},
+                            {"name": "hold_usage_type"},
+                            {"name": "actual_micro"},
+                            {"name": "credit_reserved_micro"},
+                            {"name": "settled"},
+                        ]
+                    }
+                },
+                "rows": [["2026-08-25T10:01:00Z", "Credits", "12", "10", True]],
+            }
+        return {}
+
+    monkeypatch.setattr(source, "_request_json", fake_request_json)
+
+    rows = source.fetch(
+        window_start=dt.datetime(2026, 8, 25, 10, tzinfo=dt.UTC),
+        window_end=dt.datetime(2026, 8, 25, 12, tzinfo=dt.UTC),
+    )
+
+    assert rows == [
+        {
+            "terminal_at": "2026-08-25T10:01:00Z",
+            "hold_usage_type": "Credits",
+            "actual_micro": "12",
+            "credit_reserved_micro": "10",
+            "settled": True,
+        }
+    ]
+    execute = next(body for _, url, body in calls if url.endswith(":executeSql"))
+    assert execute is not None
+    sql = " ".join(str(execute["sql"]).split())
+    assert RESERVATION_TERMINAL_INDEX == "tr_reservation_by_terminal"
+    assert f"FROM tr_reservation@{{FORCE_INDEX={RESERVATION_TERMINAL_INDEX}}} " in sql
+    assert (
+        "WHERE settled = true AND terminal_at >= @window_start "
+        "AND terminal_at < @window_end"
+    ) in sql
+    assert execute["params"] == {
+        "window_start": "2026-08-25T10:00:00.000000Z",
+        "window_end": "2026-08-25T12:00:00.000000Z",
+    }
+    assert execute["transaction"] == {"singleUse": {"readOnly": {"strong": True}}}
+    # The session is released even though the read went through the index.
+    assert calls[-1][:2] == (
+        "DELETE",
+        "https://spanner.googleapis.com/v1/projects/p/instances/i/databases/d/sessions/s1",
+    )
 
 
 def test_overrun_schemas_and_hourly_timer_are_installed() -> None:

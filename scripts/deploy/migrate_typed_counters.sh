@@ -224,6 +224,19 @@ wait_index_read_write() {
 # Both first runs and reruns must wait before orphan recovery can FORCE_INDEX.
 wait_index_read_write tr_reservation_by_authorization
 
+# The hourly reservation-overrun rollup (clickhouse/rollup_reservation_overruns.py)
+# reads two closed hours of settled reservations by terminal_at. Without a
+# covering index that read scanned the whole table (6.9M rows, ~8 CPU-s, ~12 s)
+# once an hour and was the only source of the Spanner high-priority CPU alert on
+# 2026-09-24 (docs/incidents/2026-09-24-spanner-overrun-rollup-scan.md). The
+# rollup FORCE_INDEXes this name, so the deploy waits for the backfill.
+if index_exists tr_reservation_by_terminal; then log "tr_reservation_by_terminal exists, skip"; else
+  apply_ddl "CREATE NULL_FILTERED INDEX tr_reservation_by_terminal
+    ON tr_reservation (settled, terminal_at)
+    STORING (hold_usage_type, actual_micro, credit_reserved_micro)"
+fi
+wait_index_read_write tr_reservation_by_terminal
+
 # Converged trust-tier facts. These additions are nullable/defaulted so the DDL
 # does not rewrite existing balance rows. The explicit backfill below is safe
 # to run separately after trust-unaware revisions have drained.

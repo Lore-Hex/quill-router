@@ -27,6 +27,11 @@ SPANNER_DATABASE = "trusted-router"
 CLICKHOUSE_URL = "http://localhost:8123/"
 OVERRUN_TABLE = "tr.reservation_overruns"
 SPANNER_SCOPE = "https://www.googleapis.com/auth/spanner.data"
+# Covering index created by scripts/deploy/migrate_typed_counters.sh. The read
+# below must never fall back to a base-table scan: tr_reservation holds every
+# reservation ever settled, and an hourly full scan alone trips the Spanner
+# high-priority CPU alert (docs/incidents/2026-09-24-spanner-overrun-rollup-scan.md).
+RESERVATION_TERMINAL_INDEX = "tr_reservation_by_terminal"
 
 
 class ReservationSource(Protocol):
@@ -210,7 +215,8 @@ class SpannerReservationSource:
                 body={
                     "sql": (
                         "SELECT terminal_at, hold_usage_type, actual_micro, "
-                        "credit_reserved_micro, settled FROM tr_reservation "
+                        "credit_reserved_micro, settled "
+                        "FROM tr_reservation@{FORCE_INDEX=tr_reservation_by_terminal} "
                         "WHERE settled = true AND terminal_at >= @window_start "
                         "AND terminal_at < @window_end"
                     ),

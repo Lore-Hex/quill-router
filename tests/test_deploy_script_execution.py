@@ -118,8 +118,20 @@ def _settings_kwargs_from_cloud_run_job(call: list[str]) -> dict[str, object]:
 
 
 _TYPED_COUNTERS = "scripts/deploy/migrate_typed_counters.sh"
-_RESERVATION_INDEX = "tr_reservation_by_authorization"
-_TYPED_COUNTERS_GCLOUD_STUB = r"""#!/usr/bin/env bash
+# Every tr_reservation index the migration creates and then waits on. The value
+# is the exact DDL the script must apply when the index is missing.
+_RESERVATION_INDEXES = {
+    "tr_reservation_by_authorization": (
+        "CREATE NULL_FILTERED INDEX tr_reservation_by_authorization "
+        "ON tr_reservation (authorization_id)"
+    ),
+    "tr_reservation_by_terminal": (
+        "CREATE NULL_FILTERED INDEX tr_reservation_by_terminal "
+        "ON tr_reservation (settled, terminal_at) "
+        "STORING (hold_usage_type, actual_micro, credit_reserved_micro)"
+    ),
+}
+_TYPED_COUNTERS_GCLOUD_STUB_TEMPLATE = r"""#!/usr/bin/env bash
 record=gcloud
 for argument in "$@"; do
   recorded="${argument//$'\n'/\\n}"
@@ -131,15 +143,15 @@ printf '%s\n' "$record" >> "$HARNESS_ARGV_LOG"
 state=$(cat "$HARNESS_INDEX_STATE")
 case "$*" in
   *"spanner databases ddl update"*)
-    if [[ "$*" == *"CREATE NULL_FILTERED INDEX tr_reservation_by_authorization"* ]]; then
+    if [[ "$*" == *"CREATE NULL_FILTERED INDEX __INDEX__"* ]]; then
       [ "$state" = MISSING ] || exit 1
       printf 'WRITE_ONLY\n' > "$HARNESS_INDEX_STATE"
     fi
     ;;
-  *"SELECT COUNT(*) FROM INFORMATION_SCHEMA.INDEXES"*"index_name='tr_reservation_by_authorization'"*)
+  *"SELECT COUNT(*) FROM INFORMATION_SCHEMA.INDEXES"*"index_name='__INDEX__'"*)
     if [ "$state" = MISSING ]; then echo 0; else echo 1; fi
     ;;
-  *"SELECT INDEX_STATE"*"index_name='tr_reservation_by_authorization'"*)
+  *"SELECT INDEX_STATE"*"index_name='__INDEX__'"*)
     polls=0
     [ ! -f "$HARNESS_INDEX_STATE.polls" ] || polls=$(cat "$HARNESS_INDEX_STATE.polls")
     if [ "$state" = WRITE_ONLY ] && [ "$polls" -ge 2 ] && \
@@ -159,6 +171,13 @@ esac
 """
 
 
+def _typed_counters_gcloud_stub(index: str) -> str:
+    # Only the index under test varies; every other schema object already
+    # exists and every other index is already read-write.
+    return _TYPED_COUNTERS_GCLOUD_STUB_TEMPLATE.replace("__INDEX__", index)
+
+
+@pytest.mark.parametrize("index", sorted(_RESERVATION_INDEXES))
 @pytest.mark.parametrize(
     ("initial_state", "finish_backfill"),
     [
@@ -168,14 +187,14 @@ esac
         pytest.param("WRITE_ONLY", False, id="unfinished-backfill"),
     ],
 )
-def test_typed_counters_reservation_authorization_index(
-    tmp_path: Path, initial_state: str, finish_backfill: bool
+def test_typed_counters_reservation_index(
+    tmp_path: Path, index: str, initial_state: str, finish_backfill: bool
 ) -> None:
     # Other schema objects already exist. Only this index's presence/readiness
     # varies; creating it starts a backfill, not an immediately usable index.
     isolated = DeployScriptHarness(tmp_path / "typed-counters")
     gcloud = isolated.bin / "gcloud"
-    gcloud.write_text(_TYPED_COUNTERS_GCLOUD_STUB)
+    gcloud.write_text(_typed_counters_gcloud_stub(index))
     state_file = tmp_path / "index-state"
     state_file.write_text(initial_state + "\n")
 
@@ -197,10 +216,7 @@ def test_typed_counters_reservation_authorization_index(
     if initial_state == "MISSING":
         assert len(ddl_calls) == 1, summarise(run)
         ddl = next(arg.removeprefix("--ddl=") for arg in ddl_calls[0] if arg.startswith("--ddl="))
-        assert " ".join(ddl.replace("\\n", " ").split()) == (
-            f"CREATE NULL_FILTERED INDEX {_RESERVATION_INDEX} "
-            "ON tr_reservation (authorization_id)"
-        )
+        assert " ".join(ddl.replace("\\n", " ").split()) == _RESERVATION_INDEXES[index]
         assert run.calls.index(ddl_calls[0]) < run.calls.index(["index-state", "WRITE_ONLY"])
     else:
         assert ddl_calls == [], summarise(run)
@@ -210,8 +226,8 @@ def test_typed_counters_reservation_authorization_index(
     if not finish_backfill:
         assert states and set(states) == {"WRITE_ONLY"}, summarise(run)
         assert run.returncode != 0, summarise(run)
-        assert f"timed out waiting for {_RESERVATION_INDEX}" in run.stdout
-        assert f"{_RESERVATION_INDEX} is read-write" not in run.stdout
+        assert f"timed out waiting for {index}" in run.stdout
+        assert f"{index} is read-write" not in run.stdout
         assert "[migrate_typed_counters] done" not in run.stdout
         return
 
@@ -221,11 +237,11 @@ def test_typed_counters_reservation_authorization_index(
     ]
     assert states == expected_states, summarise(run)
     assert sleeps == [["sleep", "5"]] * (len(expected_states) - 1)
-    ready = run.stdout.index(f"{_RESERVATION_INDEX} is read-write")
+    ready = run.stdout.index(f"{index} is read-write")
     done = run.stdout.index("[migrate_typed_counters] done")
     assert ready < done
     if initial_state != "READ_WRITE":
-        waiting = run.stdout.index(f"waiting for {_RESERVATION_INDEX} backfill (state=WRITE_ONLY)")
+        waiting = run.stdout.index(f"waiting for {index} backfill (state=WRITE_ONLY)")
         assert waiting < ready
     assert state_file.read_text().strip() == "READ_WRITE"
 

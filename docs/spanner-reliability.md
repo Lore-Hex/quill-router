@@ -76,6 +76,14 @@ the load is user traffic or system work before scaling. Scaling adds headroom
 but does not repair transaction contention. The alert intentionally uses the
 maximum observed CPU so short high-priority spikes remain actionable.
 
+Replay the policy with its own aligner before blaming traffic: the metric has
+ten-second samples, so a one-minute mean can read 3% while the policy's
+five-minute maximum reads 50%. Periodic jobs that read Spanner must go through
+a covering index. The hourly reservation-overrun rollup reads two hours of
+`tr_reservation` by `terminal_at` through `tr_reservation_by_terminal`; before
+that index existed its full-table scan was the only source of this alert on
+2026-09-24 (docs/incidents/2026-09-24-spanner-overrun-rollup-scan.md).
+
 Operational reports must read request, generation, token, provider, model,
 latency, and error analytics from ClickHouse. Do not aggregate or full-scan raw
 Spanner generation, entity, or analytics-outbox rows for reporting. Spanner is
