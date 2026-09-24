@@ -2225,8 +2225,8 @@ body.auth.auth-shell {
 }
 
 .auth-card .btn:not(.secondary) {
-  border-color: var(--ivory);
-  background: var(--ivory);
+  border-color: var(--text-display);
+  background: var(--text-display);
   color: var(--text-inverse);
 }
 

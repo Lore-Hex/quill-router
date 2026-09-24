@@ -178,6 +178,64 @@ body.auth {
   border-color: var(--auth-accent);
 }
 
+.funding-step {
+  padding: 0;
+}
+
+.funding-step summary {
+  padding: 16px 20px;
+  min-height: 44px;
+  cursor: pointer;
+  border-radius: inherit;
+}
+
+.funding-step summary:focus-visible {
+  outline: 2px solid var(--auth-accent);
+  outline-offset: 3px;
+}
+
+.funding-summary-content {
+  display: inline-grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  width: calc(100% - 20px);
+  vertical-align: middle;
+}
+
+.funding-title,
+.funding-summary-content .step-label {
+  display: block;
+}
+
+.funding-title {
+  margin-top: 4px;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.funding-summary-meta {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  text-align: right;
+  font-size: 14px;
+}
+
+.funding-expand-label {
+  color: var(--auth-muted);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.funding-step.complete .step-label {
+  color: var(--text-accent, var(--auth-ink));
+}
+
+.funding-content {
+  padding: 0 20px 16px;
+}
+
 .section-title-row {
   display: flex;
   align-items: flex-start;
