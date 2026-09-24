@@ -97,12 +97,12 @@ const assert = require('node:assert/strict');
       assert.equal(new URL(page.url()).hash, '#sellers');
       assert.equal(await menu.getAttribute('aria-expanded'), 'false');
     }
-    // A separate share image preserves the page's brand and typography.
-    await page.setViewportSize({width:1200,height:630});
-    await page.goto(`http://127.0.0.1:8089/${market.slug}/`);
-    await page.addStyleTag({content: '.masthead,.market-directory,.proof,main>section:not(.hero),footer{display:none!important}.hero{height:630px}.hero-copy{padding:60px 70px 0}.hero h1{font-size:66px}.hero .lead,.hero .actions{display:none}.hero-headline{font-size:26px}.hero-art{bottom:-335px;width:1200px;height:800px}.hero-note{margin-top:25px}.hero-copy:after{content:"Powered by TrustedRouter";position:absolute;left:45px;bottom:28px;font:16px Archivo;color:#cce8d7}'});
-    await page.evaluate(() => document.fonts.ready);
-    await page.screenshot({path:path.join(output,'assets',`og-${market.slug}.png`)});
+    // Reviewed social cards are prepared by social.py and copied by build.py.
+    // Do not overwrite them with the legacy hero screenshot treatment.
+    const socialImage = fs.readFileSync(path.join(output, 'assets', `og-${market.slug}.png`));
+    assert.equal(socialImage.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+    assert.equal(socialImage.readUInt32BE(16), 1200);
+    assert.equal(socialImage.readUInt32BE(20), 630);
   }
   // Address-bar height changes must not stretch the hero or move its actions.
   const mobile = await browser.newPage({viewport:{width:390,height:700}, reducedMotion:'reduce'});
@@ -138,5 +138,5 @@ const assert = require('node:assert/strict');
   await fallback.close();
   assert.deepEqual(errors, []);
   await browser.close();
-  console.log('PASS: 12 markets x 3 viewports; images, overflow, attribution, FAQ, menu, reduced motion, mobile hero resize, no-JS navigation; 12 OG images generated.');
+  console.log('PASS: 12 markets x 3 viewports; images, overflow, attribution, FAQ, menu, reduced motion, mobile hero resize, no-JS navigation; 12 reviewed OG images checked.');
 })().catch(error => {console.error(error); process.exit(1);});

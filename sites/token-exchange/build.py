@@ -146,6 +146,8 @@ def build(output: Path) -> None:
     }.items():
         shutil.copyfile(static / source, assets / target)
     for market in markets:
+        image_name = f"og-{market['slug']}.png"
+        shutil.copyfile(HERE / "social-images" / image_name, assets / image_name)
         folder = output / market["slug"]
         folder.mkdir(exist_ok=True)
         (folder / "index.html").write_text(render(market, markets, version))
