@@ -30,6 +30,47 @@ class EvidenceTests(unittest.TestCase):
         self.assertLess(page.index('class="trust-intro"'), page.index('class="catalogue'))
         self.assertIn('exchange_market=dubai', page)
 
+    def test_tokyo_uses_shared_evidence_without_a_regional_claim(self):
+        markets = load_markets()
+        tokyo = next(m for m in markets if m['slug'] == 'tokyo')
+        page = render(tokyo, markets, 'test')
+        self.assertIn('Shared GCP uptime', page)
+        self.assertIn('Canonical API', page)
+        self.assertIn('Model Inference', page)
+        self.assertNotIn('Regional API', page)
+        self.assertNotIn('UAE North', page)
+        self.assertNotIn('No Tokyo component', page)
+        self.assertIn('Review GCP release', page)
+        self.assertIn('Not proven by attestation', page)
+        self.assertEqual(page.count('As of '), 1)
+        self.assertLess(page.index('class="trust-intro"'), page.index('class="catalogue'))
+
+    def test_tokyo_refresh_omits_regional_history_and_rejects_wrong_scope(self):
+        endpoints = [{'data': [dict(
+            provider=provider, usage_type='Credits', provider_name='Tinfoil',
+            pricing=dict(prompt='0.000001', completion='0.000002'),
+            trustedrouter=dict(provider_e2ee=True, provider_confidential_compute=True,
+                               provider_zero_data_retention=True,
+                               privacy_tier_label='Confidential + E2EE'),
+        )]} for _, _, provider in ROUTES]
+        components = [dict(id=key, name=key, description=key,
+                           last_checked_at='2026-09-24T00:00:00Z',
+                           uptime_24h_percent=None, history=[])
+                      for key in ('canonical_api', 'model_inference', 'us_east4_regional_api')]
+        status = {'data': dict(components=components, generated_at='2026-09-24T00:00:00Z')}
+        result = project(endpoints, status, '2026-09-24T00:00:00Z',
+                         self.data['attestation'], market='tokyo')
+        self.assertNotIn('status', result)
+        self.assertEqual([c['id'] for c in result['service_history']],
+                         ['canonical_api', 'model_inference'])
+        with self.assertRaisesRegex(ValueError, 'GCP release'):
+            project(endpoints, status, '2026-09-24T00:00:00Z',
+                    {'platform': 'azure-confidential-containers-sev-snp'}, market='tokyo')
+        components.pop(0)
+        with self.assertRaisesRegex(ValueError, 'canonical API'):
+            project(endpoints, status, '2026-09-24T00:00:00Z',
+                    self.data['attestation'], market='tokyo')
+
     def test_dubai_refresh_rejects_wrong_platform_and_unaccepted_policy(self):
         endpoints = [{'data': [dict(
             provider=provider, usage_type='Credits', provider_name='Tinfoil',

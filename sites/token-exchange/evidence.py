@@ -30,7 +30,9 @@ def render_evidence(data=None, compact=False):
         '<p class="pricing-unit">USD / 1M tokens · input / output</p>'
         + ('' if compact else '<p class="pricing-unit">As of ' + html.escape(date_label(data['captured_at'])) + '</p>') + '</div>'
     )
-    services = [*data.get('service_history', []), data['status']]
+    services = list(data.get('service_history', []))
+    if data.get('status'):
+        services.append(data['status'])
     rows, present = [], set()
     for service in services:
         bars, counts = [], {'up': 0, 'degraded': 0, 'down': 0, 'unknown': 0}

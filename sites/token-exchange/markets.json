@@ -118,11 +118,15 @@
   {
     "slug": "tokyo", "name": "Tokyo Token Exchange", "region": "Tokyo", "domain": "tokyotokenexchange.com", "aliases": [],
     "scope": "city",
-    "headline": "Precision in every AI purchasing decision.",
-    "lead": "For Japan's enterprise, manufacturing and software teams: compare models on the work that matters, through TrustedRouter.",
-    "focus": "Japanese language quality meets enterprise economics.",
-    "intro": "General rankings can miss the details of Japanese business documents and technical language. Run a focused evaluation, review provider requirements and measure the cost of a useful result.",
-    "sectors": [["Enterprise documents", "Test Japanese extraction and summarization on representative documents and expert reviewed answers."], ["Manufacturing", "Evaluate technical reasoning and internal knowledge workflows with clear accuracy criteria."], ["Software platforms", "Compare response time, model capabilities and application costs while keeping provider choice flexible."]],
-    "seller": "Bring inference services with documented Japanese language support, capacity and processing locations. Start with a measured enterprise pilot."
+    "headline": "Get secure, scalable frontier AI for Tokyo.",
+    "lead": "Compare models, pricing and privacy for Tokyo’s enterprise, manufacturing and software teams.",
+    "focus": "Verifiably secure compute for Tokyo’s leading industries.",
+    "intro": "Evaluate Japanese business documents, technical reasoning and software workloads against your own quality, cost and privacy requirements.",
+    "sectors": [["Enterprise documents", "Evaluate extraction and summarization on Japanese business documents. Compare results against answers reviewed by your domain experts."], ["Manufacturing", "Test technical reasoning on Japanese manuals and internal knowledge. Set accuracy criteria with your engineering team before routing production material."], ["Software platforms", "Compare output quality, latency and total token cost on your application’s tasks. Define approved routes, fallback choices and spending limits before production."]],
+    "seller": "Offer inference capacity for Japanese document, manufacturing and software workloads. Share language evaluations, throughput, pricing and privacy evidence so buyers can evaluate your service.",
+    "headline_accent": "for Tokyo",
+    "evidence_snapshot": "evidence-tokyo.json",
+    "buyer_heading": "Buy capacity. Choose how it is served.",
+    "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy."
   }
 ]
