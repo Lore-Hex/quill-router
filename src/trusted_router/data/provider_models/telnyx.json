@@ -2,7 +2,7 @@
   "_about": "Provider-native Telnyx inference routes, context windows, capabilities, and reconciled account-billable prices refreshed hourly from Telnyx-owned sources.",
   "provider": "telnyx",
   "source": "https://api.telnyx.com/v2/ai/openai/models",
-  "generated_at": "2026-09-23T19:33:32Z",
+  "generated_at": "2026-09-23T23:57:15Z",
   "price_scale": "microdollars_per_million",
   "model_count": 17,
   "models": [
@@ -206,6 +206,7 @@
       "context_length": 256000,
       "provider_regions": [
         "AUS",
+        "UAE",
         "USA"
       ],
       "input_token_price_per_m": 600000,
@@ -238,6 +239,9 @@
       "upstream_id": "moonshotai/Kimi-K2.6",
       "context_length": 262144,
       "provider_regions": [
+        "AUS",
+        "EU",
+        "UAE",
         "USA"
       ],
       "input_token_price_per_m": 665000,
