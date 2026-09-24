@@ -742,7 +742,7 @@ def test_concurrent_regional_grants_share_workspace_cap() -> None:
     assert db.aborts >= 1
 
 
-@pytest.mark.parametrize("change", ["cap", "aggregate", "expired", "fence"])
+@pytest.mark.parametrize("change", ["tier", "cap", "aggregate", "expired", "fence", "pool", "legacy"])
 def test_regional_record_validates_lease_and_pool_after_local_hold(
     change: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -766,7 +766,13 @@ def test_regional_record_validates_lease_and_pool_after_local_hold(
             if kind != "regional_quota_lease":
                 continue
             payload = json.loads(record.body)
-            if change == "cap":
+            if change == "tier":
+                payload["issuance_tier"] = 2
+            elif change == "pool":
+                store.trust_settings.regional_quota_lease_max_microdollars = 1
+            elif change == "legacy":
+                payload.pop("issuance_pool_micro")
+            elif change == "cap":
                 payload["tier_cap_micro"] = 1
             elif change == "aggregate":
                 payload["granted_microdollars"] = 101_000_000
@@ -810,7 +816,7 @@ def test_flag_off_regional_payload_is_byte_identical() -> None:
         expires_at="2026-09-01T00:00:00Z",
     )
     before = dataclasses.asdict(lease)
-    del before["issuance_tier"], before["tier_cap_micro"]
+    del before["issuance_tier"], before["tier_cap_micro"], before["issuance_pool_micro"]
     assert _regional_json_body(lease).encode() == json_body(before).encode()
 
 

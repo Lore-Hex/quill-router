@@ -92,9 +92,9 @@
         "top_logprobs",
         "top_p"
       ],
-      "input_token_price_per_m": 431500,
-      "output_token_price_per_m": 2376700,
-      "cached_input_token_price_per_m": 117200
+      "input_token_price_per_m": 462700,
+      "output_token_price_per_m": 2970000,
+      "cached_input_token_price_per_m": 129800
     },
     {
       "display_name": "Kimi K2.7 Code",
@@ -137,7 +137,7 @@
         "top_logprobs",
         "top_p"
       ],
-      "input_token_price_per_m": 706200,
+      "input_token_price_per_m": 656200,
       "output_token_price_per_m": 3300000,
       "cached_input_token_price_per_m": 180000
     },
@@ -182,9 +182,9 @@
         "top_logprobs",
         "top_p"
       ],
-      "input_token_price_per_m": 1010500,
+      "input_token_price_per_m": 898200,
       "output_token_price_per_m": 3175900,
-      "cached_input_token_price_per_m": 192900
+      "cached_input_token_price_per_m": 187700
     },
     {
       "display_name": "DeepSeek V4 Flash 0731",
@@ -227,9 +227,9 @@
         "top_logprobs",
         "top_p"
       ],
-      "input_token_price_per_m": 120000,
-      "output_token_price_per_m": 500000,
-      "cached_input_token_price_per_m": 50000
+      "input_token_price_per_m": 82800,
+      "output_token_price_per_m": 413800,
+      "cached_input_token_price_per_m": 60000
     },
     {
       "display_name": "GLM 5.3",
@@ -270,9 +270,9 @@
         "top_p"
       ],
       "routable": true,
-      "input_token_price_per_m": 1013400,
-      "output_token_price_per_m": 3287700,
-      "cached_input_token_price_per_m": 255000
+      "input_token_price_per_m": 786000,
+      "output_token_price_per_m": 2646600,
+      "cached_input_token_price_per_m": 203300
     },
     {
       "display_name": "GLM 5.3 Flash",
@@ -314,11 +314,11 @@
         "top_logprobs"
       ],
       "routable": true,
-      "input_token_price_per_m": 150000,
+      "input_token_price_per_m": 130000,
       "output_token_price_per_m": 500000,
       "cached_input_token_price_per_m": 70000
     }
   ],
-  "generated_at": "2026-09-22T18:36:26Z",
+  "generated_at": "2026-09-24T13:22:08Z",
   "model_count": 7
 }

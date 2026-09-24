@@ -1,11 +1,14 @@
 # Regional Token Exchanges
 
-Static enterprise acquisition sites for 12 markets and 29 owned domains.
+**Adding a city or region? Start with [ADDING-MARKETS.md](ADDING-MARKETS.md).**
+Developers and coding agents should use that guide to preserve the approved
+shared design, regional copy, evidence scope and social-image process.
+
+Static enterprise acquisition sites for 13 markets and 30 owned domains.
 The global site is **thetokenexchange.com**; New York is **nytokenexchange.com**.
 `markets.json` is the source of truth for canonical hosts, aliases and local copy.
-Its `scope` field separates the prominent city navigation from global/regional
-links. Every page shows the city directory above its hero and the full market
-directory in its footer.
+Its `scope` field records a city, region or global audience. The header market
+picker and footer share one ordered directory and highlight the current market.
 
 ## Architecture
 
@@ -17,7 +20,7 @@ directory in its footer.
   unrelated matchers through `scripts/deploy/service_surface_url_map.py`.
 - One canonical root per market; alternate names and `www` redirect permanently,
   retaining query parameters. Canonical URLs, sitemaps and OG images are generated.
-- Buyers book an enterprise pilot or visit the existing email-gated brief flow.
+- Buyers book an enterprise pilot or visit the existing email-gated brochure flow.
   Suppliers use the existing provider marketplace application. Credentials are
   handled separately by that onboarding flow.
 - No application server, Spanner access, inference, cookies or third-party pixels
@@ -41,9 +44,10 @@ python3 -m http.server 8089 --bind 127.0.0.1 --directory /tmp/token-exchange-bui
 node sites/token-exchange/verify.cjs /tmp/token-exchange-build
 ```
 
-The browser check exercises all 12 markets at 390, 768 and 1440 pixels, tests
-overflow, loaded images, FAQ interaction and attribution, and generates 12 PNG
-social previews. Inspect `/tmp/exchange-global-390.png` and
+The browser check exercises every market at 320, 390 and 1440 pixels, tests
+overflow, loaded images, FAQ interaction and attribution, and verifies the saved
+PNG social previews. Complete the visual review described in the market guide.
+Inspect `/tmp/exchange-global-390.png` and
 `/tmp/exchange-new-york-1440.png` before publishing.
 
 ## Launch Runbook
@@ -63,7 +67,8 @@ authorized operator. Do not broaden service-account IAM as part of a site deploy
    records and active DNSSEC delegations fail closed. Add any additional
    registrar records to the target zone and verify them before delegation.
 4. Run `deploy.py publish --state /path/to/state --output /tmp/token-exchange-build`.
-   This uploads public assets, validates a merged URL map and requests certificates.
+   This uploads public assets, validates a merged URL map and requests Google-managed
+   certificates for every hostname that no managed certificate on the HTTPS proxy lists.
    The pre-deploy URL map is saved once for rollback; existing routing remains.
 5. Confirm all certificates were successfully requested and attached to the
    HTTPS proxy. Then change each domain's nameservers **in Firefox/Namecheap**

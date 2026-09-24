@@ -68,10 +68,52 @@ def test_funding_alerts_are_narrow_and_do_not_blend_revisions() -> None:
     assert 'resource.label.service_name="lightning-router-web"' in absence["filter"]
     assert "lightning.funding_stalled" in configured[0]["conditions"][0]["conditionMatchedLog"]["filter"]
     liquidity = configured[3]
+    assert liquidity["displayName"] == "LightningRouter: payment receiving needs attention"
+    assert "With Lexe" in liquidity["documentation"]["content"]
+    assert "NOT a measured low balance" in liquidity["documentation"]["content"]
     assert liquidity["alertStrategy"]["notificationRateLimit"]["period"] == "3600s"
     assert "lightning.liquidity_low" in str(liquidity)
     assert "lightning.liquidity_check_failed" in str(liquidity)
     assert "lightning_funding_liquidity_heartbeat" in str(configured[4])
+
+
+@pytest.mark.parametrize("legacy", [True, False])
+def test_receiving_alert_rename_updates_existing_policy_without_duplicate(monkeypatch, legacy) -> None:
+    import json
+    from pathlib import Path
+    from unittest.mock import Mock
+
+    from scripts.lightning.reliability import LEGACY_RECEIVING_ALERT, RECEIVING_ALERT, install
+
+    written = []
+
+    def gc(*args):
+        if args[:3] == ("beta", "monitoring", "channels"):
+            return json.dumps([{"name": "existing", "displayName": "TrustedRouter Spanner on-call", "enabled": True}])
+        if args[:3] == ("monitoring", "policies", "list"):
+            return json.dumps([{"name": "projects/test/alertPolicies/123", "displayName":
+                                LEGACY_RECEIVING_ALERT if legacy else RECEIVING_ALERT}])
+        if args[:2] == ("monitoring", "policies") and args[2] in {"update", "create"}:
+            path = next(value.removeprefix("--policy-from-file=") for value in args if value.startswith("--policy-from-file="))
+            written.append((args, json.loads(Path(path).read_text())))
+        if args[:2] == ("logging", "read"):
+            return "2026-09-23T20:03:53Z"
+        return ""
+
+    operator = Mock(spec=Operator)
+    operator.gc.side_effect = gc
+    monkeypatch.setattr("scripts.lightning.reliability.time.sleep", lambda _: None)
+    install(operator)
+    receiving = [(args, body) for args, body in written if body["displayName"] == RECEIVING_ALERT]
+    assert len(receiving) == 1
+    args, body = receiving[0]
+    assert args[:4] == ("monitoring", "policies", "update", "projects/test/alertPolicies/123")
+    assert body["enabled"] is True
+    assert body["notificationChannels"] == ["existing"]
+    assert body["conditions"][0]["conditionMatchedLog"]["filter"] == (
+        'resource.type="cloud_run_revision" AND resource.labels.service_name="lightning-router-web"'
+        ' AND (textPayload:"lightning.liquidity_low" OR textPayload:"lightning.liquidity_check_failed")'
+    )
 
 
 @pytest.mark.parametrize("live", [False, True])

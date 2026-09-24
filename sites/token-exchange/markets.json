@@ -242,6 +242,37 @@
     "seller": "Offer inference capacity for Arabic and English research, document and enterprise workloads. Share throughput, pricing and privacy evidence so buyers can evaluate your service."
   },
   {
+    "slug": "riyadh",
+    "name": "Riyadh Token Exchange",
+    "region": "Riyadh",
+    "domain": "riyadhtokenexchange.com",
+    "aliases": [],
+    "scope": "city",
+    "headline": "Get secure, scalable frontier AI for Riyadh.",
+    "headline_accent": "for Riyadh",
+    "lead": "Compare models, pricing and privacy for Riyadh’s public-sector, energy and enterprise teams.",
+    "focus": "Verifiably secure compute for Riyadh’s leading industries.",
+    "intro": "Evaluate Arabic and English public-service documents, technical reports and enterprise workloads against your own quality, cost and privacy requirements.",
+    "sectors": [
+      [
+        "Government and public services",
+        "Evaluate Arabic and English document workflows on an approved dataset. Confirm processing locations and provider eligibility against your procurement requirements."
+      ],
+      [
+        "Energy and industry",
+        "Test technical reasoning on manuals and operational reports in Arabic and English. Set accuracy criteria with your engineering team before routing production material."
+      ],
+      [
+        "Enterprise platforms",
+        "Compare output quality, latency and total token cost on your application’s tasks. Define approved routes, fallback choices and spending limits before production."
+      ]
+    ],
+    "seller": "Offer inference capacity for Arabic and English public-service, energy and enterprise workloads. Share language evaluations, service locations, throughput, pricing and privacy evidence so buyers can evaluate your service.",
+    "evidence_snapshot": "evidence-shared-gcp.json",
+    "buyer_heading": "Buy capacity. Choose how it is served.",
+    "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy."
+  },
+  {
     "slug": "hong-kong",
     "name": "Hong Kong Token Exchange",
     "region": "Hong Kong",

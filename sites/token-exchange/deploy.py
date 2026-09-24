@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import shutil
 import subprocess
@@ -38,6 +39,23 @@ def gcloud(*args: str, read: bool = False):
 
 def domains() -> list[str]:
     return [d for m in load_markets() for d in [m["domain"], *m["aliases"]]]
+
+
+def certificate_requests(attached: list[dict], hosts: list[str]) -> list[tuple[str, list[str]]]:
+    """Certificates to create so every host is in an attached certificate's managed domains.
+
+    Hosts in the managed domains of an attached certificate are skipped. The rest are
+    requested in certificates of at most 16 hosts. Each name is derived from its
+    host list, so the same missing hosts always map to the same names.
+    """
+    covered = {d for cert in attached for d in cert.get("managed", {}).get("domains", [])}
+    missing = [h for h in hosts if h not in covered]
+    requests = []
+    for i in range(0, len(missing), 16):
+        batch = missing[i : i + 16]
+        digest = hashlib.sha256(",".join(batch).encode()).hexdigest()[:12]
+        requests.append((f"token-exchange-{digest}", batch))
+    return requests
 
 
 def url_map(existing: dict) -> dict:
@@ -238,37 +256,65 @@ def publish(output: Path, state: Path) -> None:
     if fresh["fingerprint"] != current["fingerprint"]:
         raise RuntimeError("URL map changed concurrently. Rerun to merge against the latest map.")
     gcloud("compute", "url-maps", "import", MAP, f"--source={proposed}", "--global")
-    existing = gcloud("compute", "ssl-certificates", "list", "--global", read=True)
-    names = {c["name"] for c in existing}
+    publish_certificates()
+
+
+def attached_certificates() -> list[str]:
+    proxy = gcloud("compute", "target-https-proxies", "describe", PROXY, "--global", read=True)
+    return [c.rsplit("/", 1)[-1] for c in proxy.get("sslCertificates", [])]
+
+
+def certificate_inventory() -> dict[str, dict]:
+    listed = gcloud("compute", "ssl-certificates", "list", "--global", read=True)
+    return {c["name"]: c for c in listed}
+
+
+def publish_certificates() -> None:
+    """Create and attach the certificates that certificate_requests() names.
+
+    Planning reads the proxy's certificate list, then the certificate inventory.
+    Requested certificates that do not exist are created. Then both are read
+    again, whether or not anything was requested. The proxy is updated only if
+    its list is unchanged, planning on the fresh reads gives the same requests,
+    and every requested name exists with exactly that request's hosts as its
+    managed domains; otherwise publish raises without updating and must be rerun.
+    """
     hosts = [h for d in domains() for h in (d, "www." + d)]
-    certs = []
-    for i in range(0, len(hosts), 16):
-        name = f"token-exchange-20260919-{i // 16 + 1}"
-        certs.append(name)
-        if name not in names:
+    attached = attached_certificates()
+    existing = certificate_inventory()
+    requests = certificate_requests([existing[n] for n in attached if n in existing], hosts)
+    names = [name for name, _ in requests]
+    if len(dict.fromkeys(attached + names)) > 15:
+        raise RuntimeError("Certificate limit reached; existing certificates were not removed")
+    for name, batch in requests:
+        print(f"Requesting certificate {name} for {', '.join(batch)}")
+        if name not in existing:
             gcloud(
                 "compute",
                 "ssl-certificates",
                 "create",
                 name,
                 "--global",
-                "--domains=" + ",".join(hosts[i : i + 16]),
+                "--domains=" + ",".join(batch),
             )
-    proxy = gcloud("compute", "target-https-proxies", "describe", PROXY, "--global", read=True)
-    all_certs = list(
-        dict.fromkeys([c.rsplit("/", 1)[-1] for c in proxy.get("sslCertificates", [])] + certs)
-    )
-    if len(all_certs) > 15:
-        raise RuntimeError("Certificate limit reached; existing certificates were not removed")
-    gcloud(
-        "compute",
-        "target-https-proxies",
-        "update",
-        PROXY,
-        "--global",
-        "--ssl-certificates=" + ",".join(all_certs),
-    )
-
+    if attached_certificates() != attached:
+        raise RuntimeError("HTTPS proxy certificates changed during publish. Rerun to plan again.")
+    current = certificate_inventory()
+    if certificate_requests([current[n] for n in attached if n in current], hosts) != requests:
+        raise RuntimeError("Attached certificates changed during publish. Rerun to plan again.")
+    for name, batch in requests:
+        found = current.get(name, {}).get("managed", {}).get("domains")
+        if sorted(found or []) != sorted(batch):
+            raise RuntimeError(f"Certificate {name} exists for other domains: {found}")
+    if names:
+        gcloud(
+            "compute",
+            "target-https-proxies",
+            "update",
+            PROXY,
+            "--global",
+            "--ssl-certificates=" + ",".join(dict.fromkeys(attached + names)),
+        )
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

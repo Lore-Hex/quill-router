@@ -3384,7 +3384,8 @@
       "max_output_tokens": 128000,
       "input_token_price_per_m": 5000000,
       "output_token_price_per_m": 25000000,
-      "cached_input_token_price_per_m": 500000
+      "cached_input_token_price_per_m": 500000,
+      "missing_since": "2026-09-24"
     },
     {
       "display_name": "Claude Sonnet 5 CC Max",
@@ -3407,7 +3408,8 @@
       "max_output_tokens": 128000,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "cached_input_token_price_per_m": 200000
+      "cached_input_token_price_per_m": 200000,
+      "missing_since": "2026-09-24"
     },
     {
       "display_name": "Claude Opus 5 CC Max",
@@ -3430,7 +3432,8 @@
       "max_output_tokens": 128000,
       "input_token_price_per_m": 5000000,
       "output_token_price_per_m": 25000000,
-      "cached_input_token_price_per_m": 500000
+      "cached_input_token_price_per_m": 500000,
+      "missing_since": "2026-09-24"
     },
     {
       "display_name": "Doubao Seed Character",
@@ -4137,8 +4140,54 @@
       "input_token_price_per_m": 750000,
       "output_token_price_per_m": 3750000,
       "cached_input_token_price_per_m": 75000
+    },
+    {
+      "display_name": "Claude Opus 5.5",
+      "title": "anthropic/claude-opus-5.5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-5.5",
+      "upstream_id": "anthropic/claude-opus-5.5",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 4000000,
+      "output_token_price_per_m": 20000000,
+      "cached_input_token_price_per_m": 200000
+    },
+    {
+      "display_name": "GPT 6 Sol",
+      "title": "openai/gpt-6-sol-codex",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-6-sol-codex",
+      "upstream_id": "openai/gpt-6-sol-codex",
+      "context_length": 1050000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 500000,
+      "cached_input_token_price_per_m": 10000
     }
   ],
-  "generated_at": "2026-09-22T18:36:26Z",
-  "model_count": 148
+  "generated_at": "2026-09-24T13:22:08Z",
+  "model_count": 150
 }

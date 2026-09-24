@@ -44,7 +44,8 @@ class _Store:
         self.previous_fencing_token = previous_fencing_token
         self.released: list[tuple[str, int]] = []
 
-    def reconcile_regional_quota_leases(self, *, limit: int) -> dict[str, int]:
+    def reconcile_regional_quota_leases(self, *, limit: int, max_seconds: float) -> dict[str, int]:
+        assert 0 <= max_seconds <= 45
         self.limits.append(limit)
         if self.reconcile_error is not None:
             raise self.reconcile_error
@@ -100,7 +101,8 @@ def test_worker_reconciles_with_bounded_limit(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    store = _Store({"inspected": 2, "reconciled": 2, "closed": 1, "errors": 0})
+    store = _Store({"inspected": 2, "reconciled": 2, "closed": 1, "errors": 0,
+                    "backlog": 5, "processed": 2, "remaining": 3})
     monkeypatch.setattr(
         worker,
         "get_settings",
@@ -119,6 +121,7 @@ def test_worker_reconciles_with_bounded_limit(
     )
     assert worker.main() == 0
     assert store.limits == [1000]
+    assert "backlog=5 processed=2 remaining=3" in caplog.text
     assert len(store.released) == 1
     assert store.released[0][1] == 7
     assert heartbeats == ["job:regional-quota-reconcile"]

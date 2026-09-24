@@ -207,6 +207,15 @@ class SpendLeaseShadowEvent:
     server_verdict: ShadowVerdict
     catalog_version: str | None
     divergence: ShadowDivergence
+    authorization_id: str | None = None
+    regional_predicate_reason: str | None = None
+    regional_predicate_mask: int | None = None
+    regional_outcome: str = "not_attempted"
+    regional_selected_shard: int | None = None
+    regional_sibling_served: bool | None = None
+    regional_unavailable_reason: str | None = None
+    regional_requested_region: str | None = None
+    regional_resolved_region: str | None = None
 
     def payload(self) -> dict[str, Any]:
         return {"schema_version": 1, **asdict(self)}
@@ -740,6 +749,15 @@ def build_spend_lease_shadow_event(
     echo: SpendLeaseEchoValue | None,
     server_estimate_micro: int | None,
     server_verdict: ShadowVerdict,
+    authorization_id: str | None = None,
+    regional_predicate_reason: str | None = None,
+    regional_predicate_mask: int | None = None,
+    regional_outcome: str = "not_attempted",
+    regional_selected_shard: int | None = None,
+    regional_sibling_served: bool | None = None,
+    regional_unavailable_reason: str | None = None,
+    regional_requested_region: str | None = None,
+    regional_resolved_region: str | None = None,
 ) -> SpendLeaseShadowEvent:
     divergence: ShadowDivergence = "none"
     if not boot_verified or echo is None:
@@ -769,4 +787,13 @@ def build_spend_lease_shadow_event(
         server_verdict=server_verdict,
         catalog_version=echo.catalog_version if echo else None,
         divergence=divergence,
+        authorization_id=authorization_id,
+        regional_predicate_reason=regional_predicate_reason,
+        regional_predicate_mask=regional_predicate_mask,
+        regional_outcome=regional_outcome,
+        regional_selected_shard=regional_selected_shard,
+        regional_sibling_served=regional_sibling_served,
+        regional_unavailable_reason=regional_unavailable_reason,
+        regional_requested_region=regional_requested_region,
+        regional_resolved_region=regional_resolved_region,
     )

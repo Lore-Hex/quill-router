@@ -105,7 +105,7 @@ class EvidenceTests(unittest.TestCase):
     def test_migrated_markets_share_gcp_sources_without_regional_claims(self):
         markets = load_markets()
         shared = {'global', 'chicago', 'san-francisco', 'texas', 'united-states',
-                  'hong-kong', 'shanghai'}
+                  'hong-kong', 'shanghai', 'riyadh'}
         for market in markets:
             if market['slug'] not in shared:
                 continue
@@ -318,4 +318,4 @@ class EvidenceTests(unittest.TestCase):
         self.assertIn('market-picker', page)
         header = page.split('</header>')[0]
         self.assertNotIn('calendly.com', header)
-        self.assertIn('Explore the brief', header)
+        self.assertIn('Explore the brochure', header)

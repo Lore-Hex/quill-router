@@ -538,6 +538,12 @@ def _apply_typed(
         )
         if not callable(regional_finalize):
             return ApplyOutcome.PARK_TYPED_UNAVAILABLE
+        from trusted_router.regional_billing import frozen_regional_charge
+
+        try:
+            charge = frozen_regional_charge(auth, row.actual_cost_micro, success, _parse_settle_body(row.settle_body) or {})
+        except ValueError:
+            return ApplyOutcome.INVALID_ROW
         try:
             existing_reservation = typed_store.read_typed_reservation(auth.credit_reservation_id)
             if existing_reservation is not None and existing_reservation.get("settled"):
@@ -547,6 +553,7 @@ def _apply_typed(
                     auth.id,
                     success=success,
                     actual_microdollars=row.actual_cost_micro,
+                    regional_charge_parts=(charge.local, charge.global_),
                     selected_usage_type=usage_type,
                     generation=generation,
                     user_model_payout=user_model_payout,

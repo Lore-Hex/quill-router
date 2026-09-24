@@ -13,7 +13,7 @@
     if (busy || !form.reportValidity()) return;
     busy = true;
     button.disabled = true;
-    button.textContent = "Preparing your brief...";
+    button.textContent = "Preparing your brochure...";
     form.setAttribute("aria-busy", "true");
     status.textContent = "";
     status.dataset.state = "loading";
@@ -34,7 +34,7 @@
           429: "You've reached the download limit. Please try later or email enterprise@trustedrouter.com.",
         };
         if (response.status === 422) email.setAttribute("aria-invalid", "true");
-        throw new Error(errors[response.status] || "We couldn't prepare your brief. Please try again or email enterprise@trustedrouter.com.");
+        throw new Error(errors[response.status] || "We couldn't prepare your brochure. Please try again or email enterprise@trustedrouter.com.");
       }
       if (!response.headers.get("content-type")?.includes("application/pdf")) {
         throw new Error("Please refresh the page and try again, or email enterprise@trustedrouter.com.");
@@ -43,13 +43,13 @@
       const url = URL.createObjectURL(blob);
       const download = document.createElement("a");
       download.href = url;
-      download.download = "TrustedRouter-Enterprise-Brief.pdf";
+      download.download = "TrustedRouter-Token-Exchange-Brochure.pdf";
       document.body.appendChild(download);
       download.click();
       download.remove();
       setTimeout(() => URL.revokeObjectURL(url), 60000);
       status.dataset.state = "success";
-      status.textContent = "Your download has started. Share the brief with your team. We'd be happy to discuss your requirements.";
+      status.textContent = "Your download has started. Share the brochure with your team. We'd be happy to discuss your requirements.";
     } catch (error) {
       status.dataset.state = "error";
       status.textContent = error.name === "AbortError"

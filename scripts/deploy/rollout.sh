@@ -20,6 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_deploy_hold.sh"
 # shellcheck source=scripts/deploy/_lib.sh
 source "${SCRIPT_DIR}/_lib.sh"
+regional_quota_validate_settings
 # shellcheck source=scripts/deploy/deploy_mutex.sh
 source "${SCRIPT_DIR}/deploy_mutex.sh"
 # shellcheck source=scripts/deploy/_cloud_run_revision_probe.sh
@@ -439,12 +440,18 @@ esac
 # deploy shell, not GitHub's expression coercion, turns that raw operator intent
 # into the boolean written on the Cloud Run revision. A missing marker on the
 # first compatibility deploy defaults OFF.
+# R5: issuance is pinned ON for the pinned cohort now that the accounting version,
+# bounded escrow, exact regional charging and the five-region ledger are live
+# fleet-wide. An explicit workflow_dispatch input still overrides it for an
+# operator (`false` is the emergency off switch; a later push deploy turns it
+# back on unless this pin changes).
+REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED=true
 LIVE_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED="$(
   read_primary_regional_quota_env \
     "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" \
     "false"
 )"
-REGIONAL_QUOTA_LEASE_ISSUANCE_CONTROL="${TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED:-}"
+REGIONAL_QUOTA_LEASE_ISSUANCE_CONTROL="${TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED:-$REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED}"
 REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED="$(
   regional_quota_normalize_issuance_control \
     "$REGIONAL_QUOTA_LEASE_ISSUANCE_CONTROL" \
@@ -456,18 +463,12 @@ if [ "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" = "true" ] &&
   exit 1
 fi
 
-LIVE_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS="$(
-  read_primary_regional_quota_env "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS"
-)"
-REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS="${TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS:-$(
-  regional_quota_migrate_legacy_pilot "$LIVE_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS"
-)}"
-REGIONAL_QUOTA_BIGTABLE_TABLE="${TR_REGIONAL_QUOTA_BIGTABLE_TABLE:-$(
-  read_primary_regional_quota_env "TR_REGIONAL_QUOTA_BIGTABLE_TABLE" "trustedrouter-regional-quota"
-)}"
-REGIONAL_QUOTA_BIGTABLE_APP_PROFILES="${TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES:-$(
-  read_primary_regional_quota_env "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES"
-)}"
+# R4: cohort and ledger settings are code pins, never live-primary state.
+# Explicit environment values override the pins (including an empty cohort).
+# Shared with the provisioner and reconciler through _lib.sh.
+REGIONAL_QUOTA_BIGTABLE_APP_PROFILES="$TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES"
+REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS="$TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS"
+REGIONAL_QUOTA_BIGTABLE_TABLE="$TR_REGIONAL_QUOTA_BIGTABLE_TABLE"
 SPEND_LEASE_BIGTABLE_TABLE="${TR_SPEND_LEASE_BIGTABLE_TABLE:-$(
   read_primary_regional_quota_env "TR_SPEND_LEASE_BIGTABLE_TABLE" "trustedrouter-spend-lease"
 )}"
@@ -476,23 +477,12 @@ SPEND_LEASE_BIGTABLE_APP_PROFILES="${TR_SPEND_LEASE_BIGTABLE_APP_PROFILES:-$(
     "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES" \
     "us-central1=tr-spend-us-central1"
 )}"
-REGIONAL_QUOTA_LEASE_TTL_SECONDS="${TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS:-$(
-  read_primary_regional_quota_env "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS" "60"
-)}"
-REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS="${TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS:-$(
-  read_primary_regional_quota_env "TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS" "10000000"
-)}"
-REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS="${TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS:-$(
-  read_primary_regional_quota_env "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS" "1000"
-)}"
-REGIONAL_QUOTA_LEASE_SHARD_COUNT="${TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT:-$(
-  read_primary_regional_quota_env "TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT" "16"
-)}"
-# Bigtable budget per ledger read/CAS. Callbacks read the primary's cluster
-# from every region, so this must cover a cross-continent round trip.
-REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS="${TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS:-$(
-  read_primary_regional_quota_env "TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS" "4"
-)}"
+REGIONAL_QUOTA_LEASE_TTL_SECONDS="$TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS"
+REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS="$TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS"
+REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS="$TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS"
+REGIONAL_QUOTA_LEASE_SHARD_COUNT="$TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT"
+# Cross-continent callbacks need the same ledger budget as the reconciler.
+REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS="$TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS"
 if [ "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" = "true" ] && {
   [ -z "$REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS" ] ||
   [ -z "$REGIONAL_QUOTA_BIGTABLE_APP_PROFILES" ];
@@ -758,6 +748,8 @@ ENV_VARS=(
   "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS=${REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS}"
   "TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT=${REGIONAL_QUOTA_LEASE_SHARD_COUNT}"
   "TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS=${REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS}"
+  "TR_REGIONAL_QUOTA_CLUSTER_MAP=${TR_REGIONAL_QUOTA_CLUSTER_MAP}"
+  "TR_SPEND_LEASE_CLUSTER_MAP=${TR_SPEND_LEASE_CLUSTER_MAP}"
   "TR_REGIONAL_QUOTA_BIGTABLE_TABLE=${REGIONAL_QUOTA_BIGTABLE_TABLE}"
   "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES=${REGIONAL_QUOTA_BIGTABLE_APP_PROFILES}"
   "TR_SPEND_LEASE_BIGTABLE_TABLE=${SPEND_LEASE_BIGTABLE_TABLE}"

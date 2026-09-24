@@ -738,6 +738,7 @@ def _release_key_or_skip_deleted(
     actual_micro: int,
     *,
     book_to_byok: bool,
+    settled_at: datetime | None = None,
 ) -> tuple[int, dict[str, Any] | None]:
     """Shared key-release classification for settle, reaper, and drain paths.
 
@@ -749,10 +750,18 @@ def _release_key_or_skip_deleted(
     Held/deleted keys and zero-usage refunds retain their historical behavior.
     """
     from trusted_router.storage_gcp_counter_dml import key_limit_exists, release_key
+    from trusted_router.storage_gcp_regional_quota import _check_regional_key_windows
 
     key_hash = str(res["key_hash"])
     key_hold = int(res["key_reserved_micro"])
     key_shard = int(res.get("key_shard", 0) or 0)
+    floors = window_floors(utcnow())
+    amounts = (
+        {period: actual_micro if settled_at >= floor else 0 for period, floor in floors.items()}
+        if settled_at is not None else None
+    )
+    if settled_at is not None:
+        _check_regional_key_windows(transaction, param_types, key_hash, key_shard, floors)
     count = release_key(
         transaction,
         param_types,
@@ -760,7 +769,7 @@ def _release_key_or_skip_deleted(
         key_hold,
         int(actual_micro),
         book_to_byok=book_to_byok,
-        window_floors=window_floors(utcnow()),
+        window_floors=floors, window_amounts=amounts,
         shard=key_shard,
     )
     if count == 1:
@@ -768,9 +777,11 @@ def _release_key_or_skip_deleted(
     # Pre-migration credit-only reservations can legitimately have no key.
     if res["key_hash"] is not None and key_hold == 0 and actual_micro > 0:
         if key_shard != 0:
+            if settled_at is not None:
+                _check_regional_key_windows(transaction, param_types, key_hash, 0, floors)
             recovered = release_key(
                 transaction, param_types, key_hash, 0, int(actual_micro),
-                book_to_byok=book_to_byok, window_floors=window_floors(utcnow()),
+                book_to_byok=book_to_byok, window_floors=floors, window_amounts=amounts,
                 shard=0,
             )
             if recovered == 1:
@@ -1530,6 +1541,8 @@ def typed_finalize_atomic(
     app_markup_payout: AppMarkupPayout | None = None,
     custom_model_markup_payout: CustomModelMarkupPayout | None = None,
     regional_hold_unknown: bool = False,
+    regional_global_micro: int = 0,
+    finalize_regional_hold: Callable[[], tuple[bool, int, datetime | None]] | None = None,
     settle_outbox_done: tuple[str, str] | None = None,
     settle_outbox_rewrite: tuple[str, str, str, int, str] | None = None,
 ) -> dict:
@@ -1559,6 +1572,7 @@ def typed_finalize_atomic(
         release_credit,
         update_entity_body_dml,
     )
+    from trusted_router.storage_gcp_regional_quota import _RegionalWindowAdvanced
 
     pt = param_types
     book_actual = actual_micro if success else 0
@@ -1583,7 +1597,19 @@ def typed_finalize_atomic(
             outbox_available=resolved_outbox_available,
         )
         if not won:
-            return {"outcome": SettleOutcome.ALREADY_SETTLED}
+            return {
+                "outcome": SettleOutcome.ALREADY_SETTLED,
+                "regional_terminal_zero": (
+                    finalize_regional_hold is not None and res.get("actual_micro") == 0
+                ),
+            }
+
+        # Resolve the terminal winner BEFORE any external local CAS. The
+        # reservation claim serializes us with the reaper; a durable frozen
+        # intent protects a local commit if this transaction later aborts.
+        hold_unknown, global_micro, settled_at = regional_hold_unknown, regional_global_micro, None
+        if finalize_regional_hold is not None:
+            hold_unknown, global_micro, settled_at = finalize_regional_hold()
 
         if settle_outbox_rewrite is not None:
             rewrite_aid, rewrite_kind, lease_owner, rewrite_cost, rewrite_body = (
@@ -1726,14 +1752,12 @@ def typed_finalize_atomic(
             )
             if credit_count != 1:
                 raise _SettleError("credit release row-count != 1")
-        elif regional_hold_unknown and res.get("hold_usage_type") == "RegionalCredits":
-            # The regional grant already reserved this money, but a historical
-            # stale-CAS overwrite can leave no per-request Bigtable hold for the
-            # reconciler to import. Charge against the reservation's atomic
-            # claim without releasing the still-bounded lease grant. Closing
-            # reconciliation later releases that grant as unused, leaving this
-            # direct charge as the single durable booking.
-            credit_actual = book_actual if settled_usage_type == "Credits" else 0
+        elif (hold_unknown or global_micro > 0) and res.get("hold_usage_type") == "RegionalCredits":
+            # Healthy overruns book ONLY the unbacked excess here. The local
+            # component remains in escrow until reconciliation. If a stale CAS
+            # erased the hold, book the entire charge under this same claim;
+            # closing reconciliation releases the missing hold's unused escrow.
+            credit_actual = (book_actual if hold_unknown else global_micro) if settled_usage_type == "Credits" else 0
             credit_count = release_credit(
                 transaction,
                 pt,
@@ -1745,13 +1769,27 @@ def typed_finalize_atomic(
             if credit_count != 1:
                 raise _SettleError("regional fallback credit booking row-count != 1")
 
-        key_count, warning = _release_key_or_skip_deleted(
-            transaction, pt, res, book_actual, book_to_byok=book_to_byok
+        # Authorization is already loaded for finalization. No lease read belongs
+        # in this transaction. Missing versions retain the V1 inline contract;
+        # a missing Bigtable hold always uses the existing claimed recovery path.
+        regional_reconciler_owns_key = (
+            res.get("hold_usage_type") == "RegionalCredits"
+            and authorization is not None
+            and authorization.regional_accounting_version == 2
+            and not hold_unknown
         )
-        if warning is not None:
-            missing_key_releases.append(warning)
-        if res["key_reserved_micro"] > 0 and key_count != 1:
-            raise _SettleError("key release row-count != 1")
+        # V2 imports the local component with the lease; only its excess is
+        # inline. V1 and missing-hold recovery still own the entire key charge.
+        key_actual = global_micro if regional_reconciler_owns_key else book_actual
+        if not regional_reconciler_owns_key or key_actual > 0:
+            key_count, warning = _release_key_or_skip_deleted(
+                transaction, pt, res, key_actual, book_to_byok=book_to_byok,
+                settled_at=settled_at,
+            )
+            if warning is not None:
+                missing_key_releases.append(warning)
+            if res["key_reserved_micro"] > 0 and key_count != 1:
+                raise _SettleError("key release row-count != 1")
 
         return {
             "outcome": SettleOutcome.SETTLED,
@@ -1768,6 +1806,7 @@ def typed_finalize_atomic(
             txn,
             attempts_out=attempts_box,
             transaction_tag="tr_finalize" if success else "tr_refund_finalize",
+            also_retry=(_RegionalWindowAdvanced,),
         )
         result["attempts"] = attempts_box[0] if attempts_box else 1
         _log_missing_key_releases(result)

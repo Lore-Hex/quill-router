@@ -12,7 +12,7 @@ const assert = require('node:assert/strict');
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   for (const market of markets) {
-    for (const width of [390, 768, 1440]) {
+    for (const width of [320, 390, 1440]) {
       await page.setViewportSize({width, height: 1000});
       await page.goto(`http://127.0.0.1:8089/${market.slug}/?utm_source=launch-test&utm_content=creative-a&secret=should-not-pass`);
       await page.evaluate(() => document.fonts.ready);
@@ -21,59 +21,44 @@ const assert = require('node:assert/strict');
       assert(await page.locator('img').evaluateAll(images => images.every(img => img.complete && img.naturalWidth > 0)));
       const mainNav = page.getByRole('navigation', {name:'Main navigation', exact:true});
       const menu = page.getByRole('button', {name:'Menu', exact:true});
-      assert(await menu.isVisible());
-      assert.equal(await mainNav.isVisible(), false);
-      await menu.focus();
-      await page.keyboard.press('Enter');
-      assert.equal(await menu.getAttribute('aria-expanded'), 'true');
+      const mobileMenu = width <= 1100;
+      assert.equal(await menu.isVisible(), mobileMenu);
+      if (mobileMenu) {
+        assert.equal(await mainNav.isVisible(), false);
+        await menu.focus();
+        await page.keyboard.press('Enter');
+        assert.equal(await menu.getAttribute('aria-expanded'), 'true');
+      }
       assert(await mainNav.isVisible());
-      await page.keyboard.press('Escape');
-      assert.equal(await mainNav.isVisible(), false);
-      assert(await menu.evaluate(el => el === document.activeElement));
-      assert.equal(await page.locator('.hero').evaluate(el => getComputedStyle(el, '::before').animationName), 'none');
+      await page.locator('.market-picker > summary').click();
       const marketNav = page.getByRole('navigation', {name:'Market directory', exact:true});
       assert.equal(await marketNav.getByRole('link').count(), markets.length);
+      assert.equal(await marketNav.locator('[aria-current="page"]').textContent(), market.region);
+      assert.equal(await marketNav.getByRole('link', {name:'Riyadh', exact:true}).count(), 1);
+      await page.keyboard.press('Escape');
+      assert.equal(await page.locator('.market-picker').evaluate(el => el.open), false);
+      if (mobileMenu) {
+        await page.keyboard.press('Escape');
+        assert.equal(await mainNav.isVisible(), false);
+        assert(await menu.evaluate(el => el === document.activeElement));
+      }
+      assert.equal(await page.locator('.hero').evaluate(el => getComputedStyle(el, '::before').animationName), 'none');
       assert.equal(await page.locator('.provider-strip a').count(), 6);
-      const geometry = await page.evaluate(() => {
-        const nav = document.querySelector('.market-directory').getBoundingClientRect();
-        const hero = document.querySelector('.hero').getBoundingClientRect();
-        const links = [...document.querySelectorAll('.market-directory a')].map(a => {
-          const {x,y,width,height} = a.getBoundingClientRect();
-          return {x,y,width,height};
-        });
-        return {navBottom:nav.bottom, heroTop:hero.top, links};
-      });
-      assert(geometry.navBottom <= geometry.heroTop + 1, `${market.slug}: cities overlap hero`);
-      assert(geometry.navBottom < 360, `${market.slug}: cities buried at ${width}`);
-      for (const [index, link] of geometry.links.entries()) {
-        assert(link.height >= 40, `${market.slug}: navigation hit target too small`);
-        assert(Math.abs(link.y - geometry.links[0].y) < 1, `${market.slug}: market directory wrapped`);
-        for (const other of geometry.links.slice(index + 1)) {
-          assert(!(link.x < other.x + other.width && link.x + link.width > other.x &&
-            link.y < other.y + other.height && link.y + link.height > other.y),
-          `${market.slug}: overlapping navigation links`);
-        }
+      const footerNav = page.getByRole('navigation', {name:'Exchange markets', exact:true});
+      assert.equal(await footerNav.getByRole('link').count(), markets.length);
+      assert.equal(await footerNav.locator('[aria-current="page"]').textContent(), market.region);
+      await footerNav.scrollIntoViewIfNeeded();
+      if (await footerNav.evaluate(el => el.scrollWidth > el.clientWidth + 2)) {
+        await footerNav.evaluate(el => { el.scrollLeft = 0; });
+        await page.locator('.footer-markets .geo-next').click();
+        assert(await footerNav.evaluate(el => el.scrollLeft > 0));
       }
-      for (const label of ['Market directory', 'Exchange markets']) {
-        const nav = page.getByRole('navigation', {name:label, exact:true});
-        assert.equal(await nav.getByRole('link').count(), markets.length);
-        assert.equal(await nav.locator('[aria-current="page"]').count(), 1);
-        assert(await nav.evaluate(el => new Set([...el.children].map(a => a.offsetTop)).size === 1));
-        if (await nav.evaluate(el => el.scrollWidth > el.clientWidth + 2)) {
-          const controls = nav.locator('..');
-          await controls.locator('.geo-next').click();
-          assert(await nav.evaluate(el => el.scrollLeft > 0), `${market.slug}: market arrow did not scroll`);
-          await controls.locator('.geo-prev').click();
-          assert(await nav.evaluate(el => el.scrollLeft < 2), `${market.slug}: market arrow did not return`);
-        }
-        for (const link of await nav.getByRole('link').all()) {
-          await link.scrollIntoViewIfNeeded();
-          const box = await link.boundingBox();
-          assert(box && box.x >= 0 && box.x + box.width <= width, `${market.slug}: market cannot be scrolled into view`);
-        }
-        await nav.evaluate(el => { el.scrollLeft = 0; });
+      if (width <= 600) {
+        await page.getByRole('link', {name:'Back to top', exact:true}).click();
+        await page.waitForFunction(() => window.scrollY < 2);
+      } else {
+        await page.evaluate(() => window.scrollTo(0, 0));
       }
-      await page.evaluate(() => window.scrollTo(0, 0));
       if (['global', 'new-york'].includes(market.slug)) {
         await page.screenshot({path: `/tmp/exchange-${market.slug}-${width}-first.png`});
       }
@@ -82,18 +67,17 @@ const assert = require('node:assert/strict');
         assert.equal(new URL(href).searchParams.get('secret'), null);
       }
       assert.equal(await page.locator('.closing [data-attribution]').count(), 2);
-      const diagram = page.getByRole('figure', {name:'Compare eligible providers through TrustedRouter for your workload', exact:true});
-      await diagram.scrollIntoViewIfNeeded();
-      await page.waitForFunction(() => document.querySelector('.route-flow').classList.contains('is-visible'));
-      assert.equal(await diagram.locator('.route-node').count(), 3);
-      assert.equal(await diagram.locator('.route-connector').first().evaluate(el => getComputedStyle(el, '::after').animationName), 'none');
-      await page.locator('summary').first().click();
-      assert(await page.locator('details').first().evaluate(el => el.open));
+      assert.equal(await page.locator('.trust-evidence .catalogue').count(), 1);
+      const supplierArt = page.locator('.supplier-art');
+      await supplierArt.scrollIntoViewIfNeeded();
+      assert.equal(await supplierArt.locator('.supply-signals').evaluate(el => getComputedStyle(el).display), 'none');
+      await page.locator('.faq summary').first().click();
+      assert(await page.locator('.faq details').first().evaluate(el => el.open));
       if (['global', 'new-york'].includes(market.slug)) {
         await page.screenshot({path: `/tmp/exchange-${market.slug}-${width}.png`, fullPage: true});
       }
-      await menu.click();
-      await mainNav.getByRole('link', {name:'Supply tokens', exact:true}).click();
+      if (mobileMenu) await menu.click();
+      await mainNav.getByRole('link', {name:'For suppliers', exact:true}).click();
       assert.equal(new URL(page.url()).hash, '#sellers');
       assert.equal(await menu.getAttribute('aria-expanded'), 'false');
     }
@@ -125,18 +109,18 @@ const assert = require('node:assert/strict');
     assert.deepEqual(await heroGeometry(), initial, 'mobile hero jumps when browser chrome returns');
   }
   await mobile.setViewportSize({width:844,height:390});
-  await mobile.waitForFunction(() => !document.querySelector('.hero').classList.contains('hero-layout-locked'));
+  await mobile.evaluate(() => document.fonts.ready);
   await mobile.setViewportSize({width:390,height:700});
-  await mobile.waitForFunction(() => document.querySelector('.hero').classList.contains('hero-layout-locked'));
+  await mobile.evaluate(() => document.fonts.ready);
   assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   await mobile.close();
   const fallback = await browser.newPage({javaScriptEnabled:false, viewport:{width:390,height:1000}});
   await fallback.goto('http://127.0.0.1:8089/new-york/');
   assert(await fallback.getByRole('navigation', {name:'Main navigation',exact:true}).isVisible());
   assert.equal(await fallback.getByRole('button', {name:'Menu',exact:true}).isVisible(), false);
-  assert(await fallback.getByRole('figure', {name:'Compare eligible providers through TrustedRouter for your workload',exact:true}).isVisible());
+  assert(await fallback.locator('.supplier-art').isVisible());
   await fallback.close();
   assert.deepEqual(errors, []);
   await browser.close();
-  console.log('PASS: 12 markets x 3 viewports; images, overflow, attribution, FAQ, menu, reduced motion, mobile hero resize, no-JS navigation; 12 reviewed OG images checked.');
+  console.log(`PASS: ${markets.length} markets x 3 viewports; images, overflow, attribution, FAQ, menu, reduced motion, mobile hero resize, no-JS navigation; ${markets.length} reviewed OG images checked.`);
 })().catch(error => {console.error(error); process.exit(1);});

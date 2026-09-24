@@ -1170,11 +1170,17 @@ def _run_audit(
 
     for slug in sorted(GATEWAY_PREPAID_PROVIDER_SLUGS):
         if slug == "telluvian":
-            from trusted_router.polyphemus import MODEL_ID, SELECTOR_FEE_MICRODOLLARS
+            from trusted_router.polyphemus import MODEL_ID, SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION
 
             selector_models = [model for model in MODELS.values() if model.provider == slug]
-            if len(selector_models) == 1 and selector_models[0].id == MODEL_ID and selector_models[0].request_price_microdollars == SELECTOR_FEE_MICRODOLLARS:
-                info.append("telluvian: router-set fixed selector fee; upstream selector cost unknown, not a token-price source")
+            if (
+                len(selector_models) == 1
+                and selector_models[0].id == MODEL_ID
+                and selector_models[0].prompt_price_microdollars_per_million_tokens == SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION
+                and selector_models[0].completion_price_microdollars_per_million_tokens == 0
+                and selector_models[0].request_price_microdollars == 0
+            ):
+                info.append("telluvian: approved selector prompt tariff $0.05/M; https://telluvian.ai/docs/pricing; token usage estimated, not provider-reported")
                 continue
         if slug in VIDEO_PRICE_PROVIDER_SLUGS:
             if not check_model_discovery:

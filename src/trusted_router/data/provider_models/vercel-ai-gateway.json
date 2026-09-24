@@ -3,7 +3,7 @@
   "provider": "vercel-ai-gateway",
   "source": "https://vercel.com/docs/ai-gateway/modalities/evaluation",
   "pricing_source": "https://ai-gateway.vercel.sh/v1/models",
-  "generated_at": "2026-09-22T18:36:27Z",
+  "generated_at": "2026-09-24T13:22:08Z",
   "price_scale": "microdollars_per_million",
   "model_count": 1,
   "models": [

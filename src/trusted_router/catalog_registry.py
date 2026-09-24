@@ -79,6 +79,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     PARASAIL_LIBERTY_2_0_MODEL_ID,
     PLATO_1_0_MODEL_ID,
     PLATO_3_0_MODEL_ID,
+    PLATO_4_0_MODEL_ID,
     PLATO_MODEL_ID,
     PLATO_PRO_1_0_MODEL_ID,
     PLATO_PRO_2_0_MODEL_ID,
@@ -94,6 +95,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     PROMETHEUS_1_0_MODEL_ID,
     PROMETHEUS_2_0_MODEL_ID,
     PROMETHEUS_3_0_MODEL_ID,
+    PROMETHEUS_4_0_MODEL_ID,
     PROMETHEUS_CODE_1_0_MODEL_ID,
     PROMETHEUS_CODE_MODEL_ID,
     PROMETHEUS_MODEL_ID,
@@ -104,6 +106,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     SOCRATES_1_0_MODEL_ID,
     SOCRATES_1_1_MODEL_ID,
     SOCRATES_2_0_MODEL_ID,
+    SOCRATES_3_0_MODEL_ID,
     SOCRATES_ADVISOR_MODEL_ORDER,
     SOCRATES_CATALOG_MODEL_ORDER,
     SOCRATES_MODEL_ID,
@@ -137,6 +140,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     ZEUS_1_0_MINI_MODEL_ID,
     ZEUS_1_0_MODEL_ID,
     ZEUS_2_0_MODEL_ID,
+    ZEUS_3_0_MODEL_ID,
     ZEUS_CODE_1_0_MODEL_ID,
     ZEUS_CODE_MODEL_ID,
     ZEUS_MODEL_ID,
@@ -170,7 +174,7 @@ from trusted_router.partner_billing import (
     PARASAIL_LIBERTY_2_0_OUTPUT_MICRODOLLARS_PER_MILLION,
 )
 from trusted_router.polyphemus import MODEL_ID as POLYPHEMUS_MODEL_ID
-from trusted_router.polyphemus import SELECTOR_FEE_MICRODOLLARS
+from trusted_router.polyphemus import SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION
 from trusted_router.pricing import (  # noqa: F401 - re-exported for back-compat
     _CACHE_READ_PRICE_MULTIPLIER,
     _CACHE_WRITE_PRICE_MULTIPLIER,
@@ -326,10 +330,10 @@ MODELS: dict[str, Model] = {
         id=SOCRATES_MODEL_ID,
         name="TrustedRouter Socrates",
         provider="trustedrouter",
-        context_length=200_000,
+        context_length=1_000_000,
         supports_messages=False,
         prepaid_available=True,
-        byok_available=True,
+        byok_available=False,
     ),
     ADVISOR_MODEL_ID: Model(
         id=ADVISOR_MODEL_ID,
@@ -407,10 +411,10 @@ MODELS: dict[str, Model] = {
         id=PLATO_MODEL_ID,
         name="TrustedRouter Plato",
         provider="trustedrouter",
-        context_length=1_048_576,
+        context_length=1_000_000,
         supports_messages=False,
         prepaid_available=True,
-        byok_available=True,
+        byok_available=False,
     ),
     PLATO_PRO_1_0_MODEL_ID: Model(
         id=PLATO_PRO_1_0_MODEL_ID,
@@ -657,19 +661,19 @@ MODELS: dict[str, Model] = {
         id=PROMETHEUS_MODEL_ID,
         name="TrustedRouter Prometheus",
         provider="trustedrouter",
-        context_length=1_048_576,
+        context_length=1_000_000,
         supports_messages=False,
         prepaid_available=True,
-        byok_available=True,
+        byok_available=False,
     ),
     ZEUS_MODEL_ID: Model(
         id=ZEUS_MODEL_ID,
         name="TrustedRouter Zeus",
         provider="trustedrouter",
-        context_length=1_048_576,
+        context_length=1_000_000,
         supports_messages=False,
         prepaid_available=True,
-        byok_available=True,
+        byok_available=False,
     ),
     IRIS_1_0_MODEL_ID: Model(
         id=IRIS_1_0_MODEL_ID,
@@ -757,6 +761,42 @@ MODELS: dict[str, Model] = {
         name="TrustedRouter Zeus 2.0",
         provider="trustedrouter",
         context_length=1_048_576,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=False,
+    ),
+    PROMETHEUS_4_0_MODEL_ID: Model(
+        id=PROMETHEUS_4_0_MODEL_ID,
+        name="TrustedRouter Prometheus 4.0",
+        provider="trustedrouter",
+        context_length=1_000_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=False,
+    ),
+    ZEUS_3_0_MODEL_ID: Model(
+        id=ZEUS_3_0_MODEL_ID,
+        name="TrustedRouter Zeus 3.0",
+        provider="trustedrouter",
+        context_length=1_000_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=False,
+    ),
+    PLATO_4_0_MODEL_ID: Model(
+        id=PLATO_4_0_MODEL_ID,
+        name="TrustedRouter Plato 4.0",
+        provider="trustedrouter",
+        context_length=1_000_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=False,
+    ),
+    SOCRATES_3_0_MODEL_ID: Model(
+        id=SOCRATES_3_0_MODEL_ID,
+        name="TrustedRouter Socrates 3.0",
+        provider="trustedrouter",
+        context_length=1_000_000,
         supports_messages=False,
         prepaid_available=True,
         byok_available=False,
@@ -1247,16 +1287,28 @@ MODELS[POLYPHEMUS_MODEL_ID] = Model(
     supports_messages=False,
     prepaid_available=True,
     byok_available=False,
-    request_price_microdollars=SELECTOR_FEE_MICRODOLLARS,
+    prompt_price_microdollars_per_million_tokens=SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION,
+    published_prompt_price_microdollars_per_million_tokens=SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION,
     documentation=ModelDocumentation(
         description=(
             "Telluvian selects a model for your task, then TrustedRouter runs it. "
             "Responses API only. Standard privacy, not ZDR or confidential. "
-            "One microdollar per successful selection plus the selected model's "
-            "normal token charges; generation is not free. "
+            "$0.05 per million selector prompt tokens plus the selected model's "
+            "normal token charges; generation is not free. Selector tokens are "
+            "estimated from the serialized conversation and tools (UTF-8 bytes / 4, "
+            "rounded down, minimum one token); Telluvian does not return usage. "
+            "Selector charges use normal microdollar rounding, minimum $0.000001. "
             "If selection fails, trustedrouter/auto handles the request without a selector fee."
         ),
-        input_format="POST /v1/responses with text input and optional function tools.",
+        input_format=(
+            "POST /v1/responses with text input and optional function tools. "
+            "Generate a fresh UUID per conversation, then reuse the same session_id "
+            "and API key across conversation turns for "
+            "cache-aware model selection; send the conversation history on each turn. "
+            "Omit session_id for independent one-shot requests. Sessions expire at "
+            "Telluvian after one hour of inactivity. This does not pin a provider "
+            "or guarantee a cache hit."
+        ),
         output_format="A standard Responses response or event stream with cost breakdown.",
         example_input='{"model":"trustedrouter/polyphemus-1.0","input":"What is the capital of France?"}',
         example_output='{"model":"trustedrouter/polyphemus-1.0","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Paris."}]}]}',

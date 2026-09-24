@@ -876,6 +876,8 @@ class Settings(BaseSettings):
     # Fleet capability: initialize and retain the regional ledger so any
     # revision can settle/refund/reconcile leases created elsewhere.
     regional_quota_leases_enabled: bool = False
+    # Observation never authorizes leases or initializes a ledger.
+    regional_quota_observation_enabled: bool = False
     # Traffic mutation: authorize new requests from bounded regional escrow.
     # This is deliberately independent and default-off for two-phase rollouts.
     regional_quota_lease_issuance_enabled: bool = False
@@ -883,6 +885,8 @@ class Settings(BaseSettings):
     regional_quota_lease_ttl_seconds: int = 60
     regional_quota_lease_max_microdollars: int = 10_000_000
     regional_quota_lease_max_available_basis_points: int = 1_000
+    # Aggregate global liquidity retained after regional grants (not per grant).
+    regional_quota_global_floor_basis_points: int = 5_000
     regional_quota_lease_shard_count: int = 16
     regional_quota_bigtable_table: str = "trustedrouter-regional-quota"
     spend_lease_bigtable_table: str = "trustedrouter-spend-lease"
@@ -891,7 +895,8 @@ class Settings(BaseSettings):
     # traffic-issuance allowlist because the worker can only drain leases that
     # already exist.
     regional_quota_reconciler_worker: bool = False
-    regional_quota_reconcile_limit: int = 25
+    # 5 workspaces x 5 regions x 16 shards = 400 open leases / 80 closures per minute.
+    regional_quota_reconcile_limit: int = 500
     # Comma-separated region=single-cluster-app-profile pairs. A fixed profile
     # is required because one lease has exactly one regional writer authority.
     regional_quota_bigtable_app_profiles: str = ""
@@ -910,10 +915,11 @@ class Settings(BaseSettings):
     spend_lease_reconcile_limit: int = 25
     spend_lease_reconcile_max_attempts: int = 12
     # Stage A spend leases are signed advisory artifacts only. This one flag
-    # gates both minting and shadow evidence; default-off deploys never touch
+    # gates minting; observation is independent. Default-off deploys never touch
     # Secret Manager. Runtime boot acceptance comes from the separately signed
     # Stage D policy; the CSV below is only an explicit break-glass addition.
     spend_lease_issuance_enabled: bool = False
+    spend_lease_observation_enabled: bool = False
     # Stage B traffic mutation.  Keep independent from Stage A issuance so a
     # deployed revision can continue shadowing while binding remains inert.
     spend_lease_binding_enabled: bool = False
@@ -1450,6 +1456,8 @@ class Settings(BaseSettings):
             raise ValueError(
                 "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS must be between 1 and 5000"
             )
+        if not 1 <= self.regional_quota_global_floor_basis_points <= 10_000:
+            raise ValueError("TR_REGIONAL_QUOTA_GLOBAL_FLOOR_BASIS_POINTS must be between 1 and 10000")
         if not 1.1 <= self.regional_quota_ledger_timeout_seconds <= 10.0:
             raise ValueError("TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS must be between 1.1 and 10")
         if not 1 <= self.regional_quota_lease_shard_count <= 64:

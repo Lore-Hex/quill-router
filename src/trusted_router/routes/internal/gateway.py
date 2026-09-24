@@ -19,6 +19,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
+from dataclasses import replace
 from datetime import datetime
 from functools import lru_cache
 from time import perf_counter
@@ -94,6 +95,7 @@ from trusted_router.partner_billing import (
     partner_billing_mode,
     partner_cost_microdollars,
 )
+from trusted_router.polyphemus import LEGACY_SELECTOR_FEE_MICRODOLLARS
 from trusted_router.polyphemus import MODEL_ID as POLYPHEMUS_MODEL_ID
 from trusted_router.polyphemus import SELECT_ROUTE_TYPE as POLYPHEMUS_SELECT_ROUTE_TYPE
 from trusted_router.pricing import (
@@ -118,6 +120,7 @@ from trusted_router.receipt_keys import (
     verify_gcp_attestation_chain,
 )
 from trusted_router.regional_quota_ledger import RegionalLeaseLedgerError
+from trusted_router.regional_quota_telemetry import regional_predicate_reason
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.request_attribution import (
     InvalidAttribution,
@@ -792,6 +795,9 @@ def _authorize_gateway_sync(
         else None
     )
     context: dict[str, Any] = {
+        "event_id": str(uuid.uuid4()),
+        "regional_outcome": "not_attempted",
+        "regional_requested_region": body.region,
         "raw_body": raw_body,
         "workspace_id": "",
         "key_hash": str(body.api_key_hash or body.api_key_lookup_hash or ""),
@@ -803,18 +809,24 @@ def _authorize_gateway_sync(
         "echo": echo,
         "server_estimate_micro": None,
     }
+    observe = (
+        settings.regional_quota_observation_enabled
+        or settings.regional_quota_leases_enabled
+        or settings.spend_lease_observation_enabled
+        or settings.spend_lease_issuance_enabled
+    )
     try:
         response = _authorize_gateway_sync_impl(request, body, settings, context)
     except Exception as exc:
-        if settings.spend_lease_issuance_enabled:
+        if observe:
             status = int(getattr(exc, "status_code", 500))
             verdict = "declined_funds" if status in {402, 429} else "declined_other"
             _record_spend_lease_shadow(context, verdict=verdict)
         raise
-    if settings.spend_lease_issuance_enabled:
+    if observe:
         data = response.get("data")
         if isinstance(data, dict):
-            context["event_id"] = str(data.get("authorization_id") or uuid.uuid4())
+            context["authorization_id"] = data.get("authorization_id")
         _record_spend_lease_shadow(context, verdict="accepted")
     return response
 
@@ -848,6 +860,15 @@ def _record_spend_lease_shadow(
             echo=cast(SpendLeaseEchoValue | None, context.get("echo")),
             server_estimate_micro=cast(int | None, context.get("server_estimate_micro")),
             server_verdict=cast(Any, verdict),
+            authorization_id=context.get("authorization_id"),
+            regional_predicate_reason=context.get("regional_predicate_reason"),
+            regional_predicate_mask=context.get("regional_predicate_mask"),
+            regional_outcome=context.get("regional_outcome", "not_attempted"),
+            regional_selected_shard=context.get("regional_selected_shard"),
+            regional_sibling_served=context.get("regional_sibling_served"),
+            regional_unavailable_reason=context.get("regional_unavailable_reason"),
+            regional_requested_region=context.get("regional_requested_region"),
+            regional_resolved_region=context.get("regional_resolved_region"),
         )
         _SPEND_LEASE_SHADOW_DISPATCHER.submit(event.event_id, event.payload())
     except Exception:
@@ -1086,6 +1107,7 @@ def _authorize_gateway_sync_impl(
             ErrorType.BAD_REQUEST,
         )
     region = choose_region(settings, body.region or None)
+    spend_context["regional_resolved_region"] = region
     normalized_routing = normalize_routing_inputs(
         body_dict,
         settings,
@@ -1422,37 +1444,39 @@ def _authorize_gateway_sync_impl(
     # request release the winner's slot.
     authorization_id = _new_gateway_authorization_id()
     regional_authorize = getattr(_typed_store, "authorize_gateway_regional", None)
-    regional_eligible = (
-        body.spend_lease_admission is None
-        and settings.regional_quota_leases_enabled
-        and settings.regional_quota_lease_issuance_enabled
-        and workspace.id in settings.regional_quota_lease_pilot_workspaces
-        and callable(regional_authorize)
-        and estimate > 0
-        and body.route_type in {None, "chat.completions", "responses"}
-        and all(
+    predicate_reason, predicate_mask = regional_predicate_reason(
+        stage_c=body.spend_lease_admission is not None,
+        enabled=settings.regional_quota_leases_enabled,
+        issuance_enabled=settings.regional_quota_lease_issuance_enabled,
+        in_cohort=workspace.id in settings.regional_quota_lease_pilot_workspaces,
+        backend_available=callable(regional_authorize),
+        estimate=estimate,
+        route_type=body.route_type,
+        all_candidates_credits=all(
             UsageType.for_endpoint(candidate_endpoint) == UsageType.CREDITS
             for _candidate_model, candidate_endpoint in endpoint_candidates
-        )
-        and not any(
+        ),
+        any_exact_global=any(
             provider_model_requires_exact_global_settlement(
-                candidate_endpoint.provider,
-                candidate_endpoint.model_id,
+                candidate_endpoint.provider, candidate_endpoint.model_id,
             )
             for _candidate_model, candidate_endpoint in endpoint_candidates
-        )
-        and api_key.limit_microdollars is None
-        and api_key.limit_daily_microdollars is None
-        and api_key.limit_weekly_microdollars is None
-        and api_key.limit_monthly_microdollars is None
-        and custom_model is None
-        and user_model is None
-        and partner_mode is None
-        and additional_cost_reservation == 0
-        and not native_batch_eligible
-        and app_markup_basis_points == 0
-        and receipt_fee_basis_points == 0
+        ),
+        key_lifetime=api_key.limit_microdollars,
+        key_daily=api_key.limit_daily_microdollars,
+        key_weekly=api_key.limit_weekly_microdollars,
+        key_monthly=api_key.limit_monthly_microdollars,
+        custom_model=custom_model,
+        user_model=user_model,
+        partner_mode=partner_mode,
+        additional_cost=additional_cost_reservation,
+        native_batch=native_batch_eligible,
+        app_markup=app_markup_basis_points,
+        receipt_fee=receipt_fee_basis_points,
     )
+    spend_context["regional_predicate_reason"] = predicate_reason
+    spend_context["regional_predicate_mask"] = predicate_mask
+    regional_eligible = predicate_reason is None
     standard_endpoint_pricing = (
         custom_model is None
         and user_model is None
@@ -1808,6 +1832,7 @@ def _authorize_gateway_sync_impl(
             authorization = None
             if regional_eligible:
                 assert callable(regional_authorize)
+                spend_context["regional_outcome"] = "error"
                 outcome, authorization = regional_authorize(
                     authorization_id=authorization_id,
                     workspace_id=workspace.id,
@@ -1824,6 +1849,7 @@ def _authorize_gateway_sync_impl(
                     idempotency_key=request_idempotency_key,
                     idempotency_fingerprint=request_fingerprint,
                     app_id=api_key.app_id,
+                    receipt_fee_basis_points=receipt_fee_basis_points,
                     tags=effective_tags,
                     expires_at=expires_at,
                     lease_ttl_seconds=settings.regional_quota_lease_ttl_seconds,
@@ -1833,7 +1859,17 @@ def _authorize_gateway_sync_impl(
                     ),
                     lease_shard_count=settings.regional_quota_lease_shard_count,
                     invocation_nonce=body.invocation_nonce,
+                    observation=spend_context,
                 )
+                spend_context["regional_outcome"] = (
+                    "served" if outcome == "accepted" and authorization is not None
+                    and authorization.settlement == "regional_lease"
+                    else "error" if outcome == "accepted" else str(outcome)
+                )
+                if outcome == "unavailable":
+                    spend_context.setdefault("regional_unavailable_reason", "other")
+                else:
+                    spend_context.pop("regional_unavailable_reason", None)
             if outcome in {"unpaid_workspace", "reconciliation_stale", "trust_gate_unarmed"}:
                 spend_context["no_lease_reason"] = outcome
             if outcome in {"unavailable", "unpaid_workspace", "reconciliation_stale", "trust_gate_unarmed"}:
@@ -3668,6 +3704,22 @@ def _settle_gateway_authorization(
             "selected endpoint was not authorized for this gateway request",
             ErrorType.BAD_REQUEST,
         )
+    if (
+        selected_endpoint.model_id == POLYPHEMUS_MODEL_ID
+        and body.input_count == 0
+        and body.output_count == 0
+    ):
+        # Pre-token-meter enclaves settle 0/0 usage with a fixed one-microdollar
+        # fee. Preserve their tariff through rolling deploys and durable retries.
+        # Keep the same authorization/idempotency key; never re-run selection.
+        selected_endpoint = replace(
+            selected_endpoint,
+            prompt_price_microdollars_per_million_tokens=0,
+            published_prompt_price_microdollars_per_million_tokens=0,
+            request_price_microdollars=LEGACY_SELECTOR_FEE_MICRODOLLARS,
+            price_tiers=(),
+            published_price_tiers=(),
+        )
     model = (
         user_model_pair[0]
         if user_model_pair is not None
@@ -3830,24 +3882,12 @@ def _settle_gateway_authorization(
         actual_cost += proposed_app_markup_micro
     input_tokens = total_input
     selected_usage_type = UsageType.for_endpoint(selected_endpoint)
-    if (
-        success
-        and authorization.settlement == "regional_lease"
-        and actual_cost > authorization.estimated_microdollars
-    ):
-        logger.warning(
-            "billing.regional_settle_capped_to_escrow",
-            extra={
-                "authorization_id": authorization.id,
-                "workspace_id": authorization.workspace_id,
-                "estimated_microdollars": authorization.estimated_microdollars,
-                "actual_microdollars": actual_cost,
-                "overrun_microdollars": (actual_cost - authorization.estimated_microdollars),
-            },
-        )
-        actual_cost = authorization.estimated_microdollars
     if success and authorization.settlement == "spend_lease":
         actual_cost = clamp_spend_lease_charge(authorization, actual_cost)
+    if success and selected_endpoint.model_id == POLYPHEMUS_MODEL_ID:
+        # The new selector meter can settle against an old one-microdollar
+        # admission during a mixed rollout. Never exceed its frozen hold.
+        actual_cost = min(actual_cost, authorization.estimated_microdollars)
     if success and authorization.app_markup_basis_points > 0:
         # THE PAYOUT IS A FUNCTION OF THE FINAL CHARGE: authorization freezes
         # the rate, while every clamp/cap/adjustment above decides the base.
@@ -3855,7 +3895,7 @@ def _settle_gateway_authorization(
             actual_cost, authorization.app_markup_basis_points
         )
     if success and authorization.custom_model_markup_basis_points > 0:
-        # Regional and spend-lease caps can truncate the proposed charge. The
+        # Spend-lease caps can truncate the proposed charge. The
         # payout is based only on the prompt-wrapper markup that survived the
         # final cap, after the outer app markup and hosted costs are removed.
         collected_custom_markup = collected_custom_model_markup_microdollars(
@@ -3999,6 +4039,10 @@ def _settle_gateway_authorization(
         enqueue_start = perf_counter()
         try:
             frozen_settle_body = _settle_repair_metadata(settle_body)
+            if authorization.settlement == "regional_lease":
+                from trusted_router.regional_billing import regional_charge
+
+                frozen_settle_body.update(regional_charge(authorization, actual_cost, success).payload())
             if operator_cost is not None:
                 frozen_settle_body[PARTNER_OPERATOR_COST_SETTLE_FIELD] = operator_cost
             if user_model_payout is not None:
@@ -4030,7 +4074,7 @@ def _settle_gateway_authorization(
             # crashes before it still rely on enclave redelivery. MF4/MF5 freeze
             # the finalize path and exact resolved cost used by the inline attempt.
             settle_outbox = spanner_settle_outbox()
-            settle_outbox.enqueue(
+            enqueue_outcome = settle_outbox.enqueue(
                 SettleOutboxRow(
                     authorization_id=authorization.id,
                     intent_kind=intent_kind,
@@ -4048,12 +4092,17 @@ def _settle_gateway_authorization(
                 # Grace so inline finalize wins the benign race; the drain only
                 # sees rows whose inline attempt is dead >=60s, avoiding replays.
                 initial_delay_seconds=60,
+                **({"preserve_existing": True} if authorization.settlement == "regional_lease" else {}),
             )
             # The intent is durable at this exact point. Any later attachment,
             # inline-finalize, or response-side failure must report
             # intent_durable rather than inviting the enclave to infer that no
             # settlement record exists.
             outbox_enqueued = True
+            if authorization.settlement == "regional_lease" and enqueue_outcome != "inserted":
+                # Bigtable may already hold the first intent's local charge.
+                # Let the drain apply that immutable intent, including its excess.
+                return {"data": _intent_durable_gateway_data(authorization)}
             if refill_required:
                 # Pre-cutover combined rows have no refill columns. Attaching is
                 # an independent NULL -> pending transition, so it is safe even

@@ -11,6 +11,7 @@ from typing import Any, cast
 from trusted_router.config import get_settings
 from trusted_router.sentry_config import init_sentry
 from trusted_router.storage import configure_store, create_store
+from trusted_router.storage_gcp_io import spanner_rpc_budget
 from trusted_router.synthetic.fleet import record_heartbeat
 
 logger = logging.getLogger(__name__)
@@ -120,7 +121,9 @@ def _elapsed_ms(started_at: float) -> float:
     return (time.monotonic() - started_at) * 1_000.0
 
 
+@spanner_rpc_budget(70)
 def _run_reconcile(settings: Any, store: Any) -> int:
+    started_at = time.monotonic()
     verify = cast(
         Callable[[], tuple[str, ...]] | None,
         getattr(store, "verify_regional_quota_ledger", None),
@@ -141,13 +144,20 @@ def _run_reconcile(settings: Any, store: Any) -> int:
         logger.error("regional_quota.reconciler_store_unsupported")
         return 1
 
-    result: dict[str, Any] = reconcile(limit=settings.regional_quota_reconcile_limit)
+    result: dict[str, Any] = reconcile(
+        limit=settings.regional_quota_reconcile_limit,
+        max_seconds=max(0.0, 45.0 - (time.monotonic() - started_at)),
+    )
     logger.info(
-        "regional_quota.reconcile_complete inspected=%d reconciled=%d closed=%d errors=%d",
+        "regional_quota.reconcile_complete inspected=%d reconciled=%d closed=%d errors=%d "
+        "backlog=%d processed=%d remaining=%d",
         int(result.get("inspected", 0)),
         int(result.get("reconciled", 0)),
         int(result.get("closed", 0)),
         int(result.get("errors", 0)),
+        int(result.get("backlog", 0)),
+        int(result.get("processed", 0)),
+        int(result.get("remaining", 0)),
     )
     if int(result.get("errors", 0)):
         return 1
