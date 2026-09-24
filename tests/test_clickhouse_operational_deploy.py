@@ -495,3 +495,112 @@ def test_live_ingestion_restarts_every_daemon_whose_code_it_ships() -> None:
     # The restart must come AFTER the tree extraction that replaces the code,
     # or it restarts the daemons into the same stale module.
     assert script.index("tar -xzf - -C /opt/tr-clickhouse") < script.index("for unit in")
+
+
+def test_operational_deploy_verifies_table_presence_before_replica_sync() -> None:
+    # spend_lease_shadow existed only on node 1 until 2026-09-24: SYSTEM SYNC
+    # REPLICA on the other replicas failed obscurely and ON CLUSTER migrations
+    # half-applied. The deploy must name the missing replica before syncing.
+    script = (ROOT / "scripts/deploy/clickhouse_operational_analytics.sh").read_text()
+    presence = script.index('EXISTS TABLE tr.${table} FORMAT TSVRaw')
+    sync = script.index("SYSTEM SYNC REPLICA ${table}")
+    assert presence < sync
+    assert "is missing on ${NAMES[$index]}" in script
+    assert script.count("for table in $PARITY_TABLES") == 2
+    parity_tables = re.search(r'^PARITY_TABLES="([^"]+)"', script, re.M)
+    assert parity_tables is not None
+    assert "spend_lease_shadow" in parity_tables.group(1).split()
+    assert "activity_generations" in parity_tables.group(1).split()
+
+
+def test_replicated_migrate_only_accepts_on_cluster_alter_files() -> None:
+    script = (ROOT / "scripts/deploy/clickhouse_replicated_migrate.sh").read_text()
+    assert "clusterAllReplicas('$1', system.one)" in script
+    assert "clusterAllReplicas('$1', system.tables)" in script
+    assert "no 'ALTER TABLE ... ON CLUSTER' statement found" in script
+    assert "failed on a replica" in script
+    # Every replicated regional migration is one this applier can check.
+    for name in (
+        "017_regional_coverage_replicated.sql",
+        "019_regional_settlement_replicated.sql",
+        "021_regional_allocation_replicated.sql",
+    ):
+        text = (ROOT / "clickhouse" / name).read_text()
+        assert re.search(r"ALTER TABLE +tr\.spend_lease_shadow +ON CLUSTER +trustedrouter", text), name
+
+
+def _run_replicated_migrate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    present_on: str,
+    apply: bool,
+    statuses: str = "10.128.15.214\t9000\t0\t\t2\t0\n10.128.0.28\t9000\t0\t\t1\t0\n10.128.0.34\t9000\t0\t\t0\t0",
+):
+    from tests.deploy_script_harness import SCRIPT_FIXTURES, DeployScriptHarness, ScriptFixture
+
+    script = "scripts/deploy/clickhouse_replicated_migrate.sh"
+    monkeypatch.setitem(SCRIPT_FIXTURES, script, ScriptFixture(
+        responses=(
+            (r"projects describe.*projectNumber", "44325983244"),
+            (r"compute ssh .*clusterAllReplicas.*system\.one", "tr-clickhouse-1\ntr-clickhouse-2\ntr-clickhouse-3"),
+            (r"compute ssh .*clusterAllReplicas.*system\.tables", present_on),
+            # printf %q escapes the space in the shipped SQL ("ADD\ COLUMN").
+            (r"compute ssh .*ADD.COLUMN", statuses),
+        ),
+    ))
+    isolated = DeployScriptHarness(tmp_path / "replicated-migrate")
+    args = ["clickhouse/017_regional_coverage_replicated.sql"]
+    if apply:
+        args.insert(0, "--apply")
+    return isolated.run(script, args=tuple(args))
+
+
+def test_replicated_migrate_refuses_when_a_target_table_is_missing_on_a_replica(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = _run_replicated_migrate(
+        tmp_path, monkeypatch, present_on="tr-clickhouse-1", apply=True,
+    )
+    assert run.returncode != 0
+    assert "tr.spend_lease_shadow is missing on tr-clickhouse-2 tr-clickhouse-3" in run.stderr
+    assert "CREATE TABLE IF NOT EXISTS tr.spend_lease_shadow ON CLUSTER trustedrouter" in run.stderr
+    assert not any(re.search(r"ADD.COLUMN", " ".join(call)) for call in run.calls)
+
+
+def test_replicated_migrate_applies_when_every_replica_has_the_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = _run_replicated_migrate(
+        tmp_path, monkeypatch,
+        present_on="tr-clickhouse-1\ntr-clickhouse-2\ntr-clickhouse-3", apply=True,
+    )
+    assert run.returncode == 0, run.stderr
+    assert "present on all 3 replicas of trustedrouter" in run.stdout
+    assert any(re.search(r"ADD.COLUMN", " ".join(call)) for call in run.calls)
+    assert "applied clickhouse/017_regional_coverage_replicated.sql on every replica" in run.stdout
+
+
+def test_replicated_migrate_fails_on_a_non_zero_replica_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = _run_replicated_migrate(
+        tmp_path, monkeypatch,
+        present_on="tr-clickhouse-1\ntr-clickhouse-2\ntr-clickhouse-3", apply=True,
+        statuses="10.128.15.214\t9000\t0\t\t2\t0\n10.128.0.28\t9000\t60\tCode: 60. DB::Exception: Could not find table\t1\t0",
+    )
+    assert run.returncode != 0
+    assert "failed on a replica" in run.stderr
+    assert "10.128.0.28: Code: 60" in run.stderr
+
+
+def test_replicated_migrate_dry_run_checks_without_applying(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = _run_replicated_migrate(
+        tmp_path, monkeypatch,
+        present_on="tr-clickhouse-1\ntr-clickhouse-2\ntr-clickhouse-3", apply=False,
+    )
+    assert run.returncode == 0, run.stderr
+    assert "dry-run" in run.stdout
+    assert not any(re.search(r"ADD.COLUMN", " ".join(call)) for call in run.calls)

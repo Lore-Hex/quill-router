@@ -424,7 +424,11 @@ reads are added to authorization or settlement, and reconciliation uses its
 existing lease read for the ID set. Inline key settlement is unchanged.
 
 Coverage uses the existing `spend_lease_shadow` event/outbox. Apply ClickHouse
-migration **017** on the replicated cluster or **018** on a single node before
+migration **017** on the replicated cluster (with
+`scripts/deploy/clickhouse_replicated_migrate.sh --apply clickhouse/017_regional_coverage_replicated.sql`,
+which refuses to run while the table is missing on any replica and fails on a
+non-zero per-replica status — `spend_lease_shadow` existed only on node 1 until
+2026-09-24) or **018** on a single node before
 running the new event writer/ingester. The additions are nullable so historical
 outbox rows still ingest. Each authorization attempt has a fresh `event_id`;
 `authorization_id` joins accepted/replayed attempts to request records. Retries
