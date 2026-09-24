@@ -466,6 +466,12 @@ html{scroll-padding-top:108px}
  .trust-evidence{margin-top:56px}
 }
 
+/* Compact footer attribution and a recognizable, labeled contact action. */
+footer .brand small{font-size:12px}
+.footer-contact a{display:inline-flex;align-items:center;gap:9px;min-height:44px;text-decoration:none}
+.footer-contact svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.footer-contact a:hover span{text-decoration:underline}
+
 /* Quiet the page behind collapsed navigation; keep desktop dropdowns lightweight. */
 .navigation-backdrop{display:none}
 @media(max-width:1100px){
