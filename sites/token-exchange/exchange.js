@@ -18,11 +18,23 @@
   const toggle = document.querySelector('.menu-toggle');
   const nav = document.querySelector('#primary-navigation');
   if (!header || !toggle || !nav) return;
+  const backdrop = document.createElement('div');
+  backdrop.className = 'navigation-backdrop';
+  backdrop.hidden = true;
+  backdrop.setAttribute('aria-hidden', 'true');
+  header.after(backdrop);
   const setOpen = (open) => {
     toggle.setAttribute('aria-expanded', String(open));
     header.classList.toggle('menu-open', open);
+    backdrop.hidden = !open;
+    if (!open) nav.querySelectorAll('details[open]').forEach(details => { details.open = false; });
   };
   toggle.hidden = false;
+  backdrop.addEventListener('click', (event) => {
+    event.preventDefault();
+    setOpen(false);
+    toggle.focus({preventScroll: true});
+  });
   header.classList.add('nav-ready');
   toggle.addEventListener('click', () => setOpen(toggle.getAttribute('aria-expanded') !== 'true'));
   nav.addEventListener('click', (event) => {
@@ -34,10 +46,13 @@
       toggle.focus();
     }
   });
-  document.addEventListener('click', (event) => {
+  document.addEventListener('pointerdown', (event) => {
+    if (event.target !== backdrop && !header.contains(event.target)) setOpen(false);
+  }, {capture: true});
+  document.addEventListener('focusin', (event) => {
     if (!header.contains(event.target)) setOpen(false);
   });
-  window.matchMedia('(max-width: 600px)').addEventListener('change', () => setOpen(false));
+  window.matchMedia('(max-width: 1100px)').addEventListener('change', () => setOpen(false));
 })();
 
 /* Fill the first screen, but do not shift the document when mobile chrome
@@ -147,7 +162,15 @@ document.querySelectorAll('.geo-scroll').forEach(container => {
   nav.addEventListener('scroll', update, {passive:true});
   window.addEventListener('resize', update);
   if ('ResizeObserver' in window) new ResizeObserver(update).observe(nav);
-  document.fonts.ready.then(update);
+  document.fonts.ready.then(() => {
+    const current = nav.querySelector('[aria-current="page"]');
+    if (current && nav.scrollWidth > nav.clientWidth) {
+      const link = current.getBoundingClientRect();
+      const viewport = nav.getBoundingClientRect();
+      nav.scrollLeft += link.left - viewport.left - (nav.clientWidth - link.width) / 2;
+    }
+    update();
+  });
   update();
 });
 

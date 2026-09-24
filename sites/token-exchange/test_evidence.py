@@ -12,6 +12,50 @@ class EvidenceTests(unittest.TestCase):
     def setUp(self):
         self.data = json.loads(Path(__file__).with_name('evidence.json').read_text())
 
+    def test_dubai_keeps_evidence_in_one_azure_scope(self):
+        markets = load_markets()
+        dubai = next(m for m in markets if m['slug'] == 'dubai')
+        page = render(dubai, markets, 'test')
+        self.assertIn('UAE North Gateway (Dubai)', page)
+        self.assertIn('Azure uptime', page)
+        self.assertIn('https://azure.trustedrouter.com/status', page)
+        self.assertIn('https://azure.trustedrouter.com/providers', page)
+        self.assertIn('https://trust.trustedrouter.com/trust/azure-release.json', page)
+        self.assertIn('Published policy measurement', page)
+        self.assertIn('Microsoft Azure Attestation', page)
+        self.assertNotIn('GCP Confidential Space', page)
+        self.assertNotIn('Published build digest', page)
+        self.assertNotIn(self.data['attestation']['image_digest'], page)
+        self.assertEqual(page.count('As of '), 1)
+        self.assertLess(page.index('class="trust-intro"'), page.index('class="catalogue'))
+        self.assertIn('exchange_market=dubai', page)
+
+    def test_dubai_refresh_rejects_wrong_platform_and_unaccepted_policy(self):
+        endpoints = [{'data': [dict(
+            provider=provider, usage_type='Credits', provider_name='Tinfoil',
+            pricing=dict(prompt='0.000001', completion='0.000002'),
+            trustedrouter=dict(provider_e2ee=True, provider_confidential_compute=True,
+                               provider_zero_data_retention=True,
+                               privacy_tier_label='Confidential + E2EE'),
+        )]} for _, _, provider in ROUTES]
+        component = dict(id='uaenorth_gateway', name='UAE North Gateway (Dubai)',
+                         last_checked_at='2026-09-24T00:00:00Z',
+                         uptime_24h_percent=None, sample_count_24h=0, history=[])
+        status = {'data': dict(components=[component], generated_at='2026-09-24T00:00:00Z')}
+        with self.assertRaisesRegex(ValueError, 'Azure release'):
+            project(endpoints, status, '2026-09-24T00:00:00Z',
+                    self.data['attestation'], market='dubai')
+        release = dict(platform='azure-confidential-containers-sev-snp',
+                       accepted_hostdata=[], regions=[dict(
+                           attestation_url='https://api-azure.trustedrouter.com/attestation',
+                           origin_hostname='quill-enclave-uaenorth.uaenorth.azurecontainer.io',
+                           hostdata='a' * 64)])
+        with self.assertRaisesRegex(ValueError, 'not accepted'):
+            project(endpoints, status, '2026-09-24T00:00:00Z', release, market='dubai')
+        status['data']['components'][0]['id'] = 'us_east4_regional_api'
+        with self.assertRaises(StopIteration):
+            project(endpoints, status, '2026-09-24T00:00:00Z', release, market='dubai')
+
     def test_history_keeps_failures_and_missing_evidence(self):
         data = copy.deepcopy(self.data)
         data['status']['uptime'] = None

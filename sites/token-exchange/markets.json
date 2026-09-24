@@ -11,6 +11,7 @@
   },
   {
     "slug": "new-york",
+    "evidence_snapshot": "evidence.json", "headline_accent": "for New York",
     "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy.",
     "buyer_heading": "Buy capacity. Choose how it is served.", "name": "New York Token Exchange", "region": "New York", "domain": "nytokenexchange.com", "aliases": ["newyorktoken.exchange", "nytoken.exchange"],
     "scope": "city",
@@ -82,14 +83,17 @@
     "seller": "Offer reliable inference for professional workloads. Include processing locations, retention policies and support arrangements in your application."
   },
   {
-    "slug": "dubai", "name": "Dubai Token Exchange", "region": "Dubai", "domain": "dubaitokenexchange.com", "aliases": ["dubaitoken.exchange"],
+    "slug": "dubai",
+    "evidence_snapshot": "evidence-dubai.json", "headline_accent": "for Dubai",
+    "buyer_heading": "Buy capacity. Choose how it is served.",
+    "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy.", "name": "Dubai Token Exchange", "region": "Dubai", "domain": "dubaitokenexchange.com", "aliases": ["dubaitoken.exchange"],
     "scope": "city",
-    "headline": "A new connection for enterprise AI.",
-    "lead": "For Dubai's enterprises, digital businesses and compute operators: bring model choice, provider review and inference economics into one place.",
-    "focus": "Evaluate across languages and business lines.",
-    "intro": "A regional AI rollout needs more than a model benchmark. Test Arabic and English workloads, agree on processing requirements, and compare the economics of the complete task.",
-    "sectors": [["Multilingual services", "Evaluate Arabic and English quality on your own examples, including the terminology and formats your teams use."], ["Financial and business services", "Review confidentiality, processing locations and model capabilities together before choosing a provider."], ["Infrastructure operators", "Bring inference endpoints and regional capacity with clear commercial and operational specifications."]],
-    "seller": "Apply with your supported models, Arabic and English capabilities, capacity and service locations. Regional availability is reviewed per provider."
+    "headline": "Get secure, scalable frontier AI for Dubai.",
+    "lead": "Compare models, pricing and privacy for Dubai’s financial, professional services and enterprise teams.",
+    "focus": "Verifiably secure compute for Dubai’s leading industries.",
+    "intro": "From multilingual research to client communications, choose models that fit the work and provider policies that fit your data. Start with one workload, then evaluate quality, cost and privacy together.",
+    "sectors": [["Multilingual services", "Evaluate Arabic and English document analysis against your own acceptance criteria. Compare output quality, latency and total token cost."], ["Financial and professional services", "Review retention policies and provider eligibility before routing client material. Test document workflows with a controlled evaluation set."], ["Enterprise platforms", "Define approved routes, fallback choices and application spending limits before putting an AI feature into production."]],
+    "seller": "Offer inference capacity for Arabic and English research, document and enterprise workloads. Share throughput, pricing and privacy evidence so buyers can evaluate your service."
   },
   {
     "slug": "hong-kong", "name": "Hong Kong Token Exchange", "region": "Hong Kong", "domain": "hktokenexchange.com", "aliases": ["hktoken.exchange", "hongkongtoken.exchange"],

@@ -134,8 +134,8 @@
 
 /* One market directory in both locations; all destinations remain reachable. */
 .market-links{display:flex;flex-wrap:nowrap;align-items:center;gap:24px;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin}
-.market-links a{display:inline-flex;align-items:center;flex-shrink:0;min-height:40px;white-space:nowrap;text-decoration:none;font-size:13px;color:var(--muted);border-bottom:2px solid transparent}
-.market-links a[aria-current="page"]{color:var(--text);border-bottom-color:rgba(204,232,215,.4)}
+.market-links a{display:inline-flex;align-items:center;flex-shrink:0;min-height:40px;padding-inline:8px;white-space:nowrap;text-decoration:none;font-size:13px;color:var(--muted);border-bottom:2px solid transparent}
+.market-links a[aria-current="page"]{color:var(--mint);background:#cce8d71a;border-bottom-color:var(--mint);font-weight:600}
 @media(min-width:601px){
   .market-directory .market-links a:first-child{margin-inline-start:auto}
   .market-directory .market-links a:last-child{margin-inline-end:auto}
@@ -406,9 +406,10 @@ html{scroll-padding-top:108px}
 .masthead #primary-navigation{position:relative}
 .market-picker summary{font-size:15px;gap:8px}
 .masthead #primary-navigation .market-picker nav{position:absolute;left:auto;right:0;top:calc(100% + 20px);width:360px;display:grid;grid-template-columns:1fr 1fr;gap:0 16px;padding:16px 20px;align-items:stretch;border-radius:0;background:#101513}
-.masthead #primary-navigation .market-picker nav a{font-size:14px;padding:12px 0;min-height:46px;border-radius:0;border-bottom:1px solid var(--line)}
-.masthead #primary-navigation .market-picker nav a[aria-current="page"]{background:none;color:var(--mint);text-decoration:underline;text-underline-offset:6px}
+.masthead #primary-navigation .market-picker nav a{font-size:14px;padding:12px 8px;min-height:46px;border-radius:0;border-bottom:1px solid var(--line)}
+.masthead #primary-navigation .market-picker nav a[aria-current="page"]{background:#cce8d71a;color:var(--mint);border-bottom-color:var(--mint);font-weight:600;text-decoration:none}
 .masthead #primary-navigation .market-picker nav a:hover{background:none;color:#fff}
+.masthead #primary-navigation .market-picker nav a[aria-current="page"]:hover{background:#cce8d726;color:var(--mint)}
 #buyers .section-intro>p:not(.eyebrow){font-size:19px;max-width:660px;margin:28px 0 0;line-height:1.7;color:var(--muted)}
 .pilot-action{margin-top:28px}
 .exchange-steps{max-width:660px}
@@ -463,6 +464,13 @@ html{scroll-padding-top:108px}
  .privacy-band .trust-intro h2{font-size:38px}
  .privacy-band .trust-copy{font-size:17px;line-height:1.8}
  .trust-evidence{margin-top:56px}
+}
+
+/* Quiet the page behind collapsed navigation; keep desktop dropdowns lightweight. */
+.navigation-backdrop{display:none}
+@media(max-width:1100px){
+ .navigation-backdrop:not([hidden]){display:block;position:fixed;inset:0;z-index:19;background:rgba(0,0,0,.64)}
+ .masthead.nav-ready #primary-navigation{overscroll-behavior:contain}
 }
 
 /* Lower the phone hero's visual center while keeping actions in normal flow. */
