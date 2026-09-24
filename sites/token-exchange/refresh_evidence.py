@@ -20,10 +20,14 @@ PROFILES = {
     'dubai': dict(origin='https://azure.trustedrouter.com', component='uaenorth_gateway',
                   release_url='https://trust.trustedrouter.com/trust/azure-release.json',
                   destination='evidence-dubai.json'),
-    # Shared GCP evidence only: no published Tokyo serving component is bound.
+    # Shared GCP evidence only: no city-specific serving component is bound.
     'tokyo': dict(origin='https://trustedrouter.com', component=None,
                   release_url='https://trustedrouter.com/trust/gcp-release.json',
                   destination='evidence-tokyo.json'),
+    'london': dict(origin='https://trustedrouter.com', component=None,
+                   release_url='https://trustedrouter.com/trust/gcp-release.json',
+                   destination='evidence-london.json'),
+
 }
 
 
@@ -82,16 +86,16 @@ def project(endpoints, status, captured_at, release=None, *, market='new-york'):
             review_label='Review Azure attestation',
         )
     elif release is not None:
-        if market == 'tokyo' and release.get('platform') != 'gcp-confidential-space':
-            raise ValueError('Tokyo shared evidence requires a GCP release record')
+        if profile['component'] is None and release.get('platform') != 'gcp-confidential-space':
+            raise ValueError('Shared GCP evidence requires a GCP release record')
         result['attestation'] = {key: release[key] for key in
             ('platform', 'source_commit', 'image_digest', 'attestation_issuer', 'attestation_audience')}
         result['attestation']['source'] = profile['release_url']
-    if market == 'tokyo':
+    if profile['component'] is None:
         if release is None:
-            raise ValueError('Tokyo shared evidence requires a GCP release record')
+            raise ValueError('Shared GCP evidence requires a GCP release record')
         if {c['id'] for c in result['service_history']} != {'canonical_api', 'model_inference'}:
-            raise ValueError('Tokyo shared evidence requires canonical API and inference history')
+            raise ValueError('Shared GCP evidence requires canonical API and inference history')
         result['uptime_label'] = 'Shared GCP uptime'
         result['status_source'] = f'{origin}/status.json'
         result['attestation'].update(review_url=profile['release_url'],

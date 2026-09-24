@@ -12,6 +12,21 @@ class EvidenceTests(unittest.TestCase):
     def setUp(self):
         self.data = json.loads(Path(__file__).with_name('evidence.json').read_text())
 
+    def test_london_uses_shared_gcp_evidence_and_retains_insurance_workloads(self):
+        markets = load_markets()
+        london = next(m for m in markets if m['slug'] == 'london')
+        page = render(london, markets, 'test')
+        self.assertIn('Shared GCP uptime', page)
+        self.assertIn('Canonical API', page)
+        self.assertIn('Model Inference', page)
+        self.assertNotIn('Regional API', page)
+        self.assertNotIn('UAE North', page)
+        self.assertIn('forms, policies and supporting documents', page)
+        self.assertIn('Review GCP release', page)
+        self.assertIn('exchange_market=london', page)
+        self.assertEqual(page.count('As of '), 1)
+        self.assertLess(page.index('class="trust-intro"'), page.index('class="catalogue'))
+
     def test_dubai_keeps_evidence_in_one_azure_scope(self):
         markets = load_markets()
         dubai = next(m for m in markets if m['slug'] == 'dubai')
@@ -63,6 +78,9 @@ class EvidenceTests(unittest.TestCase):
         self.assertNotIn('status', result)
         self.assertEqual([c['id'] for c in result['service_history']],
                          ['canonical_api', 'model_inference'])
+        london = project(endpoints, status, '2026-09-24T00:00:00Z',
+                         self.data['attestation'], market='london')
+        self.assertEqual(london, result)
         with self.assertRaisesRegex(ValueError, 'GCP release'):
             project(endpoints, status, '2026-09-24T00:00:00Z',
                     {'platform': 'azure-confidential-containers-sev-snp'}, market='tokyo')

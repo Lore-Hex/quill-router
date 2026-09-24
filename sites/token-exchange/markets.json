@@ -75,12 +75,16 @@
   {
     "slug": "london", "name": "London Token Exchange", "region": "London", "domain": "londontoken.exchange", "aliases": ["ltokenexchange.com"],
     "scope": "city",
-    "headline": "Make intelligence a better buy.",
-    "lead": "For London's financial, insurance and professional services teams: evaluate AI quality, privacy and cost through one enterprise conversation.",
-    "focus": "A considered approach to AI purchasing.",
-    "intro": "Compare models using the documents and tasks your business understands. Review provider terms alongside the results, then choose a production route with a clear commercial case.",
-    "sectors": [["Financial services", "Evaluate research and document workflows with an approved dataset and explicit provider requirements."], ["Insurance operations", "Compare extraction and classification accuracy on representative forms, policies and supporting documents."], ["Professional services", "Set expectations for confidentiality, review and retention before expanding internal AI tools."]],
-    "seller": "Offer reliable inference for professional workloads. Include processing locations, retention policies and support arrangements in your application."
+    "headline": "Get secure, scalable frontier AI for London.",
+    "lead": "Compare models, pricing and privacy for London’s financial, insurance and professional services teams.",
+    "focus": "Verifiably secure compute for London’s leading industries.",
+    "intro": "Evaluate financial research, insurance documents and professional workflows against your own quality, cost and privacy requirements.",
+    "sectors": [["Financial services", "Evaluate document analysis and research synthesis with an approved dataset. Compare output quality, latency and total token cost."], ["Insurance operations", "Test extraction and classification on forms, policies and supporting documents. Compare results against answers reviewed by your insurance team."], ["Professional services", "Review retention policies and provider eligibility before routing client material. Define expert review and confidentiality requirements for your document workflows."]],
+    "seller": "Offer inference capacity for financial research, insurance documents and professional workloads. Share throughput, pricing, privacy evidence and support arrangements so buyers can evaluate your service.",
+    "headline_accent": "for London",
+    "evidence_snapshot": "evidence-london.json",
+    "buyer_heading": "Buy capacity. Choose how it is served.",
+    "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy."
   },
   {
     "slug": "dubai",
