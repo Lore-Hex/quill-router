@@ -60,6 +60,7 @@
 (() => {
   const header = document.querySelector('.masthead');
   if (!header) return;
+  const hero = document.querySelector('.hero');
   let previousWidth;
   const lockedStyles = [
     ['.hero-copy', ['paddingTop', 'paddingBottom']],
@@ -74,6 +75,18 @@
       document.documentElement.style.setProperty('--hero-viewport', `${window.innerHeight}px`);
     }
     if (previousWidth !== width) {
+      // Lock the artwork too: height-based media queries change as mobile chrome hides.
+      if (hero) {
+        hero.removeAttribute('data-art-locked');
+        if (width <= 600) {
+          const art = getComputedStyle(hero, '::before');
+          const values = [art.left, art.right, art.maskImage];
+          ['left', 'right', 'mask'].forEach((property, index) => {
+            hero.style.setProperty(`--hero-art-${property}`, values[index]);
+          });
+          hero.setAttribute('data-art-locked', '');
+        }
+      }
       lockedStyles.forEach(([selector, properties]) => {
         const element = document.querySelector(selector);
         if (!element) return;

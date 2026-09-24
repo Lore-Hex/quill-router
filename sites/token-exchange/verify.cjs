@@ -20,7 +20,7 @@ const assert = require('node:assert/strict');
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${market.slug} overflows at ${width}`);
       assert(await page.locator('img').evaluateAll(images => images.every(img => img.complete && img.naturalWidth > 0)));
       const mainNav = page.getByRole('navigation', {name:'Main navigation', exact:true});
-      const menu = page.getByRole('button', {name:'Menu', exact:true});
+      const menu = page.getByRole('button', {name:'Menu', exact:true, includeHidden:true});
       const mobileMenu = width <= 1100;
       assert.equal(await menu.isVisible(), mobileMenu);
       if (mobileMenu) {

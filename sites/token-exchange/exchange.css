@@ -488,3 +488,4 @@ footer .brand small{font-size:12px}
  .hero-copy{padding-top:72px;padding-bottom:max(20px,env(safe-area-inset-bottom))}
  .hero-copy .actions{margin-top:36px}
 }
+.hero[data-art-locked]::before{left:var(--hero-art-left);right:var(--hero-art-right);mask-image:var(--hero-art-mask)}
