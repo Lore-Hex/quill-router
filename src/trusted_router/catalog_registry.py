@@ -1291,12 +1291,12 @@ MODELS[POLYPHEMUS_MODEL_ID] = Model(
     published_prompt_price_microdollars_per_million_tokens=SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION,
     documentation=ModelDocumentation(
         description=(
-            "Telluvian selects a model for your task, then TrustedRouter runs it. "
+            "TrustedRouter selects a model for your task, then runs it. "
             "Responses API only. Standard privacy, not ZDR or confidential. "
             "$0.05 per million selector prompt tokens plus the selected model's "
             "normal token charges; generation is not free. Selector tokens are "
             "estimated from the serialized conversation and tools (UTF-8 bytes / 4, "
-            "rounded down, minimum one token); Telluvian does not return usage. "
+            "rounded down, minimum one token), not measured selector usage. "
             "Selector charges use normal microdollar rounding, minimum $0.000001. "
             "If selection fails, trustedrouter/auto handles the request without a selector fee."
         ),
@@ -1305,8 +1305,8 @@ MODELS[POLYPHEMUS_MODEL_ID] = Model(
             "Generate a fresh UUID per conversation, then reuse the same session_id "
             "and API key across conversation turns for "
             "cache-aware model selection; send the conversation history on each turn. "
-            "Omit session_id for independent one-shot requests. Sessions expire at "
-            "Telluvian after one hour of inactivity. This does not pin a provider "
+            "Omit session_id for independent one-shot requests. Routing sessions "
+            "expire after one hour of inactivity. This does not pin a provider "
             "or guarantee a cache hit."
         ),
         output_format="A standard Responses response or event stream with cost breakdown.",
