@@ -3,8 +3,9 @@
 import argparse
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 from urllib.request import urlopen
 
 HERE = Path(__file__).resolve().parent
@@ -117,7 +118,9 @@ def project(endpoints, status, captured_at, release=None, *, market='new-york'):
 
 
 def get(url):
-    with urlopen(url, timeout=20) as response:
+    if urlsplit(url).scheme != 'https':
+        raise ValueError('Evidence sources must use HTTPS')
+    with urlopen(url, timeout=20) as response:  # noqa: S310 — HTTPS scheme validated above.
         return json.load(response)
 
 
@@ -129,7 +132,7 @@ if __name__ == '__main__':
     origin = profile['origin']
     data = project([get(f'{origin}/v1/models/{m}/endpoints')
                     for m, _, _ in ROUTES], get(f'{origin}/status.json'),
-                   datetime.now(timezone.utc).isoformat(),
+                   datetime.now(UTC).isoformat(),
                    get(profile['release_url']), market=args.market)
     destination = HERE / profile['destination']
     temporary = destination.with_suffix('.tmp')
