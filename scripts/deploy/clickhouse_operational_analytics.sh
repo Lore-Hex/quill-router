@@ -221,7 +221,20 @@ node_ssh 0 --command="sudo sh -c '
 node_ssh 0 --command="sudo systemctl enable tr-clickhouse-operational-ingest.service tr-clickhouse-synthetic-rollup.timer tr-clickhouse-synthetic-reconcile.timer tr-clickhouse-client-rollup.timer tr-clickhouse-operational-parity.timer tr-clickhouse-public-snapshots.timer tr-clickhouse-archive-restore.timer tr-clickhouse-spanner-delivery.timer"
 
 log "verifying exact replica identity after synchronization"
-for table in activity_generations synthetic_probe_samples spend_lease_shadow synthetic_status_rollups public_analytics_snapshots client_request_events client_minute_counters client_availability_rollups operational_outbox_quarantine; do
+PARITY_TABLES="activity_generations synthetic_probe_samples spend_lease_shadow synthetic_status_rollups public_analytics_snapshots client_request_events client_minute_counters client_availability_rollups operational_outbox_quarantine"
+# A replicated table that exists on only some replicas makes SYSTEM SYNC REPLICA
+# fail with an unrelated-looking error and lets ON CLUSTER migrations half-apply
+# (spend_lease_shadow lived only on node 1 until 2026-09-24). Say so plainly.
+log "verifying every replicated table exists on every replica"
+for table in $PARITY_TABLES; do
+  for index in 0 1 2; do
+    if [ "$(node_scalar "$index" "EXISTS TABLE tr.${table} FORMAT TSVRaw")" != "1" ]; then
+      echo "table tr.${table} is missing on ${NAMES[$index]}; create it with CREATE TABLE IF NOT EXISTS tr.${table} ON CLUSTER trustedrouter from SHOW CREATE TABLE on a replica that has it, then rerun" >&2
+      exit 1
+    fi
+  done
+done
+for table in $PARITY_TABLES; do
   expected=""
   id_column="id"
   if [ "$table" = "activity_generations" ]; then
