@@ -253,19 +253,19 @@
   },
   "gmi": {
     "card_version": 2,
-    "model_count": 68,
+    "model_count": 70,
     "name": "GMI Cloud",
     "privacy": "Policy documented",
-    "route_count": 74,
+    "route_count": 76,
     "route_mode": "Prepaid + BYOK",
     "slug": "gmi"
   },
   "google-ai-studio": {
     "card_version": 2,
-    "model_count": 14,
+    "model_count": 13,
     "name": "Google AI Studio",
     "privacy": "Policy documented",
-    "route_count": 26,
+    "route_count": 24,
     "route_mode": "Prepaid + BYOK",
     "slug": "google-ai-studio"
   },
@@ -874,10 +874,10 @@
   },
   "zero-g": {
     "card_version": 2,
-    "model_count": 2,
+    "model_count": 3,
     "name": "0G Private Computer",
     "privacy": "Confidential compute",
-    "route_count": 2,
+    "route_count": 3,
     "route_mode": "Prepaid",
     "slug": "zero-g"
   }

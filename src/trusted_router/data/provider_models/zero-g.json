@@ -209,7 +209,7 @@
         "top_k",
         "top_p"
       ],
-      "routable": false,
+      "routable": true,
       "trust_mode": "private",
       "verifiability": "TeeML",
       "tee_attested": true,
@@ -219,11 +219,9 @@
       "pricing_policy": "maximum-active-private-route",
       "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000,
-      "cached_input_token_price_per_m": 350000,
-      "missing_since": "2026-09-23",
-      "routable_reason": "delisted-upstream"
+      "cached_input_token_price_per_m": 350000
     }
   ],
   "model_count": 4,
-  "generated_at": "2026-09-23T23:57:15Z"
+  "generated_at": "2026-09-24T01:12:43Z"
 }
