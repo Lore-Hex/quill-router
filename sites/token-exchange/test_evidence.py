@@ -78,7 +78,7 @@ class EvidenceTests(unittest.TestCase):
         ny = next(m for m in markets if m['slug'] == 'new-york')
         page = render(ny, markets, 'test')
         self.assertLess(page.index('class="market-band"'), page.index('id="buyers"'))
-        self.assertLess(page.index('security-resources'), page.index('id="sellers"'))
+        self.assertLess(page.index('class="privacy-band"'), page.index('id="sellers"'))
         self.assertIn('Show your service', page)
         self.assertIn('Make it verifiable', page)
         self.assertIn('Serve real workloads', page)
