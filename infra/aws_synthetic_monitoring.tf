@@ -77,16 +77,18 @@ resource "aws_cloudwatch_event_target" "tr_eu_synthetic" {
   # refuses scheduled passes too, and an ECS release clones the live task
   # definition, so it survives deploys.
   #
-  # `run_remediator` is absent on purpose. Measured 2026-09-21 on the build
-  # then deployed (a31daa4, which predates the batched route-health reads of
-  # #1000): one scheduled pass read a flat ~309 MB from the Paris cluster, every
-  # 2 minutes (about 287 ReadDPU/min against a baseline of 6). Put the key back
-  # only after the AWS observers run a build with #1000, and then check DSQL
-  # BytesRead per minute before leaving it on.
+  # `run_remediator = true` asks for a remediator pass on every tick. Whether a
+  # pass runs is decided by TR_REMEDIATOR_MODE on the observer: `off` refuses
+  # it. Move the mode away from `off` only while the observers run a build with
+  # #1000 (batched route-health reads), and check DSQL BytesRead per minute
+  # right after. Measured 2026-09-21 on a31daa4, which predates #1000: one
+  # scheduled pass read a flat ~309 MB from the Paris cluster every 2 minutes
+  # (about 287 ReadDPU/min against a baseline of 6).
   input = jsonencode({
     monitor_region = "eu-west-3"
     rotation_count = 8
     detach         = true
+    run_remediator = true
   })
 }
 
