@@ -90,6 +90,16 @@
     "seller": "Apply with your supported models, Arabic and English capabilities, capacity and service locations. Regional availability is reviewed per provider."
   },
   {
+    "slug": "riyadh", "name": "Riyadh Token Exchange", "region": "Riyadh", "domain": "riyadhtokenexchange.com", "aliases": [],
+    "scope": "city",
+    "headline": "One market for the Kingdom's AI buyers and builders.",
+    "lead": "For Riyadh's enterprises, public-sector programmes and compute operators: bring model choice, provider review and inference economics into one place.",
+    "focus": "Plan Arabic workloads around your data requirements.",
+    "intro": "Large AI programmes need more than one model or one vendor. Test Arabic and English workloads on your own examples, agree where data may be processed, and compare the economics of the complete task.",
+    "sectors": [["Government and public services", "Review provider policies, processing locations and verification evidence together before a sensitive workload moves."], ["Energy and industry", "Evaluate models on technical documents and operational reports in Arabic and English, and compare the cost of a successful result."], ["Compute operators", "Bring inference endpoints and capacity in the Kingdom or the region, with clear commercial and operational specifications."]],
+    "seller": "Apply with your supported models, Arabic and English capabilities, capacity and service locations. Regional availability is reviewed per provider."
+  },
+  {
     "slug": "hong-kong", "name": "Hong Kong Token Exchange", "region": "Hong Kong", "domain": "hktokenexchange.com", "aliases": ["hktoken.exchange", "hongkongtoken.exchange"],
     "scope": "city",
     "headline": "Connect your business to better intelligence.",

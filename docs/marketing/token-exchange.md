@@ -2,8 +2,8 @@
 
 Public page: https://trustedrouter.com/token-exchange
 
-The primary conversion is a request for the original, two-page enterprise
-brief. Secondary calls to action open Joseph's existing sales calendar and
+The primary conversion is a request for the nine-page Token Exchange
+brochure. Secondary calls to action open Joseph's existing sales calendar and
 `enterprise@trustedrouter.com`. The page is in the core sitemap, resource hub
 and shared footer.
 
@@ -16,8 +16,8 @@ and shared footer.
   checks syntax, not mailbox ownership. The body is limited to 4 KiB.
 - The existing SES service sends one inquiry to `TR_PARTNER_INQUIRY_EMAIL`
   (already `joseph@jperla.com` in production), with the visitor as Reply-To.
-  Unconfigured environments fall back to the brief's published contact,
-  `enterprise@trustedrouter.com`. The default SES sender/configuration set is used.
+  Unconfigured environments fall back to `enterprise@trustedrouter.com`. The
+  default SES sender/configuration set is used.
 - The download is returned only after SES accepts that inquiry. A failed send
   returns a retryable error and never silently loses the lead. SES acceptance
   alone does not prove inbox delivery; verify forwarding in a production smoke.
@@ -28,7 +28,7 @@ and shared footer.
   organization-wide cap.
 - The PDF is under `data/enterprise`, outside `/static`, and returned as an
   attachment with `private, no-store`. This is a marketing lead gate, not DRM or
-  a claim that a publicly distributed brief cannot be shared or found in source.
+  a claim that a publicly distributed brochure cannot be shared or found in source.
 - The submitted address goes to the company inbox, not application logs or
   marketing event properties. `acquisition.enterprise_brief_delivered` records
   the existing consent-aware, pseudonymous first-party attribution context.
@@ -36,11 +36,12 @@ and shared footer.
 
 ## Assets and copy
 
-`data/enterprise/TrustedRouter-Enterprise-Brief.pdf` is the owner-supplied
-September 14, 2026 revision, published byte-for-byte. SHA-256:
-`2af678f4675278dedea94b75f210bfb670c242fe5294f5c5ac6269d02dae00af`.
+`data/enterprise/TrustedRouter-Token-Exchange-Brochure.pdf` is the owner-supplied
+nine-page brochure (footer dated September 2026, supplied 2026-09-23),
+published byte-for-byte. SHA-256:
+`1d005ae234da1a68782e333023569b4f23653c78d081e05e4d2c2587ee54bbc7`.
 Its content is not rewritten by the download endpoint.
-The page uses the same Secure / Intelligent / Cheaper positioning and
+The page uses Secure / Intelligent / Cheaper positioning and
 distinguishes attested gateway protection, contractual provider ZDR and verified
 downstream confidential inference. Following the owner's confirmation, the
 page and linked SOC 2 HTML/JSON packet state that the Type II observation

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from pathlib import Path
 
 import pytest
@@ -58,7 +59,7 @@ def test_page_internal_links_resolve(client: TestClient) -> None:
         assert client.get(link).status_code == 200, link
 
 
-def test_enterprise_positioning_matches_the_brief(client: TestClient) -> None:
+def test_page_positioning_and_soc2_observation_status(client: TestClient) -> None:
     soup = BeautifulSoup(client.get("/token-exchange").text, "html.parser")
     assert [item.get_text(strip=True) for item in soup.select(".tm-benefits .tm-index")] == [
         "01 / SECURE", "02 / INTELLIGENT", "03 / CHEAPER",
@@ -84,8 +85,18 @@ def test_soc2_observation_status_does_not_claim_an_issued_report(client: TestCli
 
 def test_enterprise_brief_is_the_approved_september_revision() -> None:
     assert hashlib.sha256(public_routes._ENTERPRISE_BRIEF.read_bytes()).hexdigest() == (
-        "2af678f4675278dedea94b75f210bfb670c242fe5294f5c5ac6269d02dae00af"
+        "1d005ae234da1a68782e333023569b4f23653c78d081e05e4d2c2587ee54bbc7"
     )
+
+
+def test_brochure_copy_states_the_pdf_page_count(client: TestClient) -> None:
+    pdf = public_routes._ENTERPRISE_BRIEF.read_bytes()
+    pages = len(re.findall(rb"/Type\s*/Page(?![a-zA-Z])", pdf))
+    assert pages == 9
+    soup = BeautifulSoup(client.get("/token-exchange").text, "html.parser")
+    text = soup.select_one("#enterprise-brief").get_text(" ", strip=True)
+    assert f"Brochure · {pages} pages" in text
+    assert "nine-page Token Exchange brochure" in text
 
 
 def test_original_brief_delivered_after_lead_acceptance(
@@ -107,7 +118,7 @@ def test_original_brief_delivered_after_lead_acceptance(
     assert response.headers["content-type"] == "application/pdf"
     assert response.headers["cache-control"] == "private, no-store"
     assert "attachment" in response.headers["content-disposition"]
-    assert "TrustedRouter-Enterprise-Brief.pdf" in response.headers["content-disposition"]
+    assert "TrustedRouter-Token-Exchange-Brochure.pdf" in response.headers["content-disposition"]
     assert response.headers["x-robots-tag"] == "noindex, nofollow"
     assert response.content.startswith(b"%PDF-")
     assert hashlib.sha256(response.content).digest() == hashlib.sha256(public_routes._ENTERPRISE_BRIEF.read_bytes()).digest()
@@ -204,5 +215,6 @@ def test_missing_asset_never_captures_lead(client: TestClient, sent_messages: li
 
 def test_no_ungated_http_download(client: TestClient) -> None:
     assert client.get("/token-exchange/brief").status_code == 405
-    assert client.get("/static/enterprise/TrustedRouter-Enterprise-Brief.pdf").status_code == 404
-    assert client.get("/data/enterprise/TrustedRouter-Enterprise-Brief.pdf").status_code == 404
+    for name in ("TrustedRouter-Token-Exchange-Brochure.pdf", "TrustedRouter-Enterprise-Brief.pdf"):
+        assert client.get(f"/static/enterprise/{name}").status_code == 404
+        assert client.get(f"/data/enterprise/{name}").status_code == 404
