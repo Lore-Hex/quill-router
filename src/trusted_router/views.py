@@ -9,6 +9,7 @@ dropping a `.html` under templates/ — no per-module Jinja boilerplate.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,15 @@ from trusted_router.provider_branding import provider_logo_url
 from trusted_router.seo_meta import seo_meta_description, seo_title
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
+
+
+@lru_cache(maxsize=1)
+def _auth_styles_version() -> str:
+    # Auth routes do not receive the dashboard's release context. Fingerprint
+    # both files once per process so immutable CSS URLs change with their bytes.
+    static_dir = Path(__file__).parent / "static"
+    content = (static_dir / "auth.css").read_bytes() + (static_dir / "charter.css").read_bytes()
+    return hashlib.sha256(content).hexdigest()[:16]
 
 
 def _format_uptime(value: float | None, decimals: int = 4) -> str:
@@ -76,6 +86,7 @@ def _env() -> Environment:
     # Callable, not a value: this env is lru_cached and shared across
     # requests, so it must read the per-request ContextVar at render time.
     env.globals["csp_nonce"] = current_csp_nonce
+    env.globals["auth_styles_version"] = _auth_styles_version
     return env
 
 
