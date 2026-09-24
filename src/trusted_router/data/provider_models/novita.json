@@ -3,8 +3,8 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-09-24T07:22:41Z",
-  "model_count": 161,
+  "generated_at": "2026-09-24T13:22:08Z",
+  "model_count": 162,
   "models": [
     {
       "id": "Sao10K/L3-8B-Stheno-v3.2",
@@ -4634,7 +4634,8 @@
       "context_length": 1048576,
       "max_output_tokens": 393216,
       "routable": false,
-      "routable_reason": "zero-price-unbillable"
+      "routable_reason": "zero-price-unbillable",
+      "missing_since": "2026-09-24"
     },
     {
       "id": "tencent/hy4-preview",
@@ -4689,7 +4690,9 @@
         "text"
       ],
       "endpoints": [
-        "chat/completions"
+        "chat/completions",
+        "anthropic",
+        "responses"
       ],
       "status": 1,
       "created": 1790230295,
@@ -4720,7 +4723,9 @@
         "text"
       ],
       "endpoints": [
-        "chat/completions"
+        "chat/completions",
+        "anthropic",
+        "responses"
       ],
       "status": 1,
       "created": 1790230183,
@@ -4728,6 +4733,38 @@
       "max_output_tokens": 131072,
       "routable": false,
       "routable_reason": "zero-price-unbillable"
+    },
+    {
+      "id": "deepseek/deepseek-v4.1-flash-p",
+      "upstream_id": "deepseek/deepseek-v4.1-flash-p",
+      "display_name": "DeepSeek V4.1 Flash",
+      "title": "deepseek/deepseek-v4.1-flash-p",
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions",
+        "anthropic",
+        "responses"
+      ],
+      "status": 1,
+      "created": 1790240765,
+      "context_length": 1048576,
+      "max_output_tokens": 393216,
+      "input_token_price_per_m": 3000,
+      "output_token_price_per_m": 12000,
+      "cached_input_token_price_per_m": 60
     }
   ]
 }

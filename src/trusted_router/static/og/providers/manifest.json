@@ -46,10 +46,10 @@
   },
   "atlas-cloud": {
     "card_version": 2,
-    "model_count": 80,
+    "model_count": 81,
     "name": "Atlas Cloud",
     "privacy": "Policy documented",
-    "route_count": 80,
+    "route_count": 81,
     "route_mode": "Prepaid",
     "slug": "atlas-cloud"
   },
@@ -361,10 +361,10 @@
   },
   "lightning": {
     "card_version": 2,
-    "model_count": 34,
+    "model_count": 35,
     "name": "Lightning AI",
     "privacy": "Policy documented",
-    "route_count": 58,
+    "route_count": 60,
     "route_mode": "Prepaid + BYOK",
     "slug": "lightning"
   },
@@ -487,10 +487,10 @@
   },
   "novita": {
     "card_version": 2,
-    "model_count": 99,
+    "model_count": 100,
     "name": "Novita AI",
     "privacy": "Policy documented",
-    "route_count": 193,
+    "route_count": 195,
     "route_mode": "Prepaid + BYOK",
     "slug": "novita"
   },
@@ -505,10 +505,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 13,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 12,
+    "route_count": 13,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
