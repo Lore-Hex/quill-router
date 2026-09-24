@@ -10,12 +10,14 @@
     "seller": "Bring your model endpoints, available capacity and service regions. We will review integration, pricing, performance and privacy evidence with you."
   },
   {
-    "slug": "new-york", "name": "New York Token Exchange", "region": "New York", "domain": "nytokenexchange.com", "aliases": ["newyorktoken.exchange", "nytoken.exchange"],
+    "slug": "new-york",
+    "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy.",
+    "buyer_heading": "Buy capacity. Choose how it is served.", "name": "New York Token Exchange", "region": "New York", "domain": "nytokenexchange.com", "aliases": ["newyorktoken.exchange", "nytoken.exchange"],
     "scope": "city",
-    "headline": "Intelligence, bought on your terms.",
-    "lead": "Compare AI models and providers for New York's financial, legal and enterprise\u00a0teams.",
-    "focus": "Built around the work that moves New York.",
-    "intro": "Research, contracts and client communications deserve more than a single model choice. Start with a representative workload, compare quality and economics, and review the privacy of the entire route.",
+    "headline": "Get secure, scalable frontier AI for New York.",
+    "lead": "Compare models, pricing and privacy for New York\u2019s financial, legal and enterprise teams.",
+    "focus": "Verifiably secure compute for New York\u2019s leading industries.",
+    "intro": "From investment research to client communications, choose models that fit the work and provider policies that fit your data. Start with one workload, then evaluate quality, cost and privacy together.",
     "sectors": [["Investment research", "Evaluate document analysis and research synthesis against your own acceptance criteria. Compare output quality, latency and total token cost."], ["Legal operations", "Review retention policies and provider eligibility before routing client material. Test document workflows with a controlled evaluation set."], ["Financial platforms", "Define approved routes, fallback choices and application spending limits before putting an AI feature into production."]],
     "seller": "Offer inference capacity for research, document and enterprise workloads. Share throughput, pricing and privacy evidence so buyers can evaluate your service."
   },

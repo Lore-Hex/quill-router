@@ -44,23 +44,40 @@
    changes height while the reader is farther down the page. */
 (() => {
   const header = document.querySelector('.masthead');
-  const directory = document.querySelector('.market-directory');
-  if (!header || !directory) return;
+  if (!header) return;
   let previousWidth;
+  const lockedStyles = [
+    ['.hero-copy', ['paddingTop', 'paddingBottom']],
+    ['.hero-copy .actions', ['marginTop']],
+    ['.hero h1', ['fontSize']],
+    ['.hero .lead', ['fontSize', 'lineHeight', 'marginTop']],
+    ['.hero-values', ['marginBottom']],
+  ];
   const measure = () => {
     const width = document.documentElement.clientWidth;
     if (previousWidth !== width || width > 900 || window.scrollY <= 1) {
       document.documentElement.style.setProperty('--hero-viewport', `${window.innerHeight}px`);
     }
+    if (previousWidth !== width) {
+      lockedStyles.forEach(([selector, properties]) => {
+        const element = document.querySelector(selector);
+        if (!element) return;
+        properties.forEach(property => { element.style[property] = ''; });
+        if (width <= 600) {
+          const computed = getComputedStyle(element);
+          const values = properties.map(property => computed[property]);
+          properties.forEach((property, index) => { element.style[property] = values[index]; });
+        }
+      });
+    }
     previousWidth = width;
     document.documentElement.style.setProperty('--header-height',
-      `${header.getBoundingClientRect().height + directory.getBoundingClientRect().height}px`);
+      `${header.getBoundingClientRect().height}px`);
   };
   measure();
   if ('ResizeObserver' in window) {
     const observer = new ResizeObserver(measure);
     observer.observe(header);
-    observer.observe(directory);
   }
   window.addEventListener('resize', measure);
   window.addEventListener('scroll', () => { if (window.scrollY <= 1) measure(); }, {passive:true});
@@ -123,3 +140,19 @@ document.querySelectorAll('.geo-scroll').forEach(container => {
   document.fonts.ready.then(update);
   update();
 });
+
+/* Market navigation lives inside the primary menu, with its own dismissal. */
+(() => {
+  const picker = document.querySelector('.market-picker');
+  if (!picker) return;
+  document.addEventListener('click', event => {
+    if (!picker.contains(event.target)) picker.open = false;
+  });
+  picker.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && picker.open) {
+      event.stopPropagation();
+      picker.open = false;
+      picker.querySelector('summary').focus();
+    }
+  });
+})();

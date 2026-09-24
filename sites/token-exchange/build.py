@@ -63,7 +63,7 @@ def market_links(markets: list[dict], current: dict) -> str:
 
 
 def render(market: dict, markets: list[dict], version: str) -> str:
-    catalogue, health = render_evidence()
+    catalogue, health = render_evidence(compact=market["slug"] == "new-york")
     values = {
         key: html.escape(value, quote=True)
         for key, value in market.items()
@@ -72,9 +72,11 @@ def render(market: dict, markets: list[dict], version: str) -> str:
     values.update(
         {
             "version": version,
-            "hero_headline": html.escape(market["headline"]).replace("your terms", '<span class="headline-accent">your terms</span>') if market["slug"] == "new-york" else html.escape(market["headline"]),
-            "catalogue": catalogue,
-            "regional_health": health if market["slug"] == "new-york" else "",
+            "hero_headline": html.escape(market["headline"]).replace("for New York", '<span class="headline-accent">for New York</span>') if market["slug"] == "new-york" else html.escape(market["headline"]),
+            "buyer_heading": html.escape(market.get("buyer_heading", "Buy capacity. Set your requirements.")).replace("Choose how it is served.", '<br>Choose how it is <span class="headline-accent">served.</span>').replace("Spend it", "Spend<br>it").replace("jurisdiction.", '<span class="headline-accent">jurisdiction.</span>').replace("Set your requirements.", '<br>Set your <span class="headline-accent">requirements.</span>'),
+            "buyer_copy": html.escape(market.get("buyer_copy", "Compare model rates and provider privacy policies. Prioritize end-to-end encrypted routes where available, or review zero-retention options. Confirm processing locations and commercial terms for your workload.")),
+            "catalogue": catalogue if market["slug"] != "new-york" else "",
+            "regional_health": health.replace('<div class="trust-evidence">', '<div class="trust-evidence">' + catalogue, 1) if market["slug"] == "new-york" else "",
             "buyer_url": html.escape(
                 tracked_url("https://calendly.com/joseph-perla/15min", market, "buyer"), quote=True
             ),
