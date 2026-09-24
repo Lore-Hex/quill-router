@@ -1,4 +1,5 @@
 import copy
+import json
 import tempfile
 import unittest
 from html.parser import HTMLParser
@@ -90,6 +91,14 @@ class ExchangeTests(unittest.TestCase):
         self.assertEqual(len(domains()), 30)
         self.assertIn("thetokenexchange.com", domains())
         self.assertIn("nytokenexchange.com", domains())
+
+    def test_every_market_domain_has_a_control_certificate(self):
+        # Rule: every market domain is listed for infra/control_lb_certificates.tf.
+        listed = json.loads(
+            (Path(__file__).parents[2] / "infra" / "token_exchange_certificate_domains.json").read_text()
+        )
+        self.assertEqual(len(listed), len(set(listed)))
+        self.assertEqual(sorted(set(domains()) - set(listed)), [])
 
     def test_pages(self):
         markets = load_markets()
