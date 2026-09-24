@@ -227,8 +227,8 @@
         "top_logprobs",
         "top_p"
       ],
-      "input_token_price_per_m": 90800,
-      "output_token_price_per_m": 612800,
+      "input_token_price_per_m": 82800,
+      "output_token_price_per_m": 413800,
       "cached_input_token_price_per_m": 60000
     },
     {
@@ -270,9 +270,9 @@
         "top_p"
       ],
       "routable": true,
-      "input_token_price_per_m": 890200,
-      "output_token_price_per_m": 3729800,
-      "cached_input_token_price_per_m": 257000
+      "input_token_price_per_m": 906700,
+      "output_token_price_per_m": 3419200,
+      "cached_input_token_price_per_m": 228700
     },
     {
       "display_name": "GLM 5.3 Flash",
@@ -314,11 +314,11 @@
         "top_logprobs"
       ],
       "routable": true,
-      "input_token_price_per_m": 150000,
-      "output_token_price_per_m": 500000,
+      "input_token_price_per_m": 90000,
+      "output_token_price_per_m": 280000,
       "cached_input_token_price_per_m": 70000
     }
   ],
-  "generated_at": "2026-09-24T01:12:43Z",
+  "generated_at": "2026-09-24T07:22:41Z",
   "model_count": 7
 }

@@ -3,8 +3,8 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-09-24T01:12:43Z",
-  "model_count": 159,
+  "generated_at": "2026-09-24T07:22:41Z",
+  "model_count": 161,
   "models": [
     {
       "id": "Sao10K/L3-8B-Stheno-v3.2",
@@ -4666,6 +4666,68 @@
       "input_token_price_per_m": 8340,
       "output_token_price_per_m": 25010,
       "cached_input_token_price_per_m": 420
+    },
+    {
+      "id": "xiaomi/mimo-v2.6-flash",
+      "upstream_id": "xiaomimimo/mimo-v2.6-flash",
+      "display_name": "MiMo V2.6 Flash",
+      "title": "xiaomimimo/mimo-v2.6-flash",
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "input_modalities": [
+        "text",
+        "image",
+        "video",
+        "audio"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "created": 1790230295,
+      "context_length": 1048576,
+      "max_output_tokens": 131072,
+      "routable": false,
+      "routable_reason": "zero-price-unbillable"
+    },
+    {
+      "id": "xiaomi/mimo-v2.6-pro",
+      "upstream_id": "xiaomimimo/mimo-v2.6-pro",
+      "display_name": "MiMo V2.6 Pro",
+      "title": "xiaomimimo/mimo-v2.6-pro",
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "input_modalities": [
+        "text",
+        "image",
+        "video",
+        "audio"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "created": 1790230183,
+      "context_length": 1048576,
+      "max_output_tokens": 131072,
+      "routable": false,
+      "routable_reason": "zero-price-unbillable"
     }
   ]
 }
