@@ -5801,7 +5801,7 @@ def _model_faq_items(
         )
     ] if credits_endpoints else []
     publisher = _model_publisher(model)
-    if publisher.slug != model.provider:
+    if provider_names and publisher.slug != model.provider:
         provider_names = [publisher.name]
     if not provider_names:
         provider_answer = "no Credits provider route"
@@ -6176,6 +6176,7 @@ def _provider_model_rows(provider_slug: str, *, test_mode: bool = False) -> list
 
 
 _BRAND_DISPLAY_NAMES: dict[str, str] = {
+    "trustedrouter": "TrustedRouter",
     "anthropic": "Anthropic",
     "openai": "OpenAI",
     "google": "Google",
