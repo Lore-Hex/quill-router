@@ -128,7 +128,8 @@ Adding a Token Exchange domain:
    request. `sites/token-exchange/test_exchange.py`, which runs when either
    that list or `sites/token-exchange/` changes, fails while a domain in
    `markets.json` is missing from the list.
-4. After the merge, check that the certificate reaches `ACTIVE`.
+4. After the merge, check that the certificate reaches `ACTIVE`. The same
+   change adds the domain's two entries to the certificate map below.
 
 Retiring a domain is a deliberate edit to that list, not a side effect of
 removing a market from `markets.json`. The certificate is destroyed before its
@@ -137,3 +138,17 @@ The deploy account's `roles/certificatemanager.editor` does not include
 deleting certificates or DNS authorizations, so an owner performs that
 deletion. A certificate that a certificate map entry still references cannot
 be deleted.
+
+`control_lb_certificate_map.tf` puts those certificates in the certificate map
+`control`: one entry for each domain, one for `*.<domain>`, and a `PRIMARY`
+entry that serves `trustedrouter.com`'s certificate to clients that send no
+hostname. The production proxy does not use the map yet. The same role does not
+include deleting maps or map entries either, so an owner removes the entries of
+a retired domain before its certificate.
+
+`control_lb_certificate_map_test.tf` is temporary: a second frontend for the
+control URL map that serves only the certificate map, on an address no DNS name
+points to (the `control_certificate_map_test_address` output). Every hostname
+the URL map routes is checked against it with
+`curl --resolve <host>:443:<address> https://<host>/`, and the file is then
+removed.
