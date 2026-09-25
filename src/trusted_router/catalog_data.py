@@ -810,11 +810,12 @@ PROVIDERS: dict[str, Provider] = {
         supports_prepaid=True,
         supports_byok=False,
         provider_confidential_compute=True,
-        provider_e2ee=False,  # Enabled only after the pinned enclave rollout is verified.
+        provider_e2ee=True,
         provider_policy=(
-            "Edgeless Systems publishes an attestation-backed encrypted inference "
-            "API. TrustedRouter integration is pending its pinned enclave rollout. "
-            "Routes remain unavailable until verification completes. No separate "
+            "Requests and responses are encrypted between TrustedRouter's enclave "
+            "and release-pinned Privatemode workloads after attestation verification. "
+            "Verification failures reject the request; there is no plaintext fallback. "
+            "Cache-routing metadata is visible to the provider edge. No separate "
             "ZDR commitment is inferred from encryption."
         ),
         provider_policy_url="https://docs.privatemode.ai/security/attestation/overview/",

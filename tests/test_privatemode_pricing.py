@@ -1,3 +1,4 @@
+import json
 from decimal import Decimal
 
 import pytest
@@ -22,7 +23,8 @@ def test_prices_include_cached_rate_and_currency_reserve():
 
 
 @pytest.mark.parametrize("html", [PRICES.replace("EUR", "$"), PRICES+PRICES,
-                                  PRICES.replace("EUR 0.05", "EUR 5"), "<html>unavailable</html>"])
+                                  PRICES.replace("EUR 0.05", "EUR 5"),
+                                  PRICES.replace("EUR 0.05", "EUR 0"), "<html>unavailable</html>"])
 def test_prices_fail_closed(html):
     with pytest.raises(RuntimeError):
         privatemode.parse_prices(html, Decimal("1.2"))
@@ -54,6 +56,8 @@ def test_discovery_never_sends_plaintext_inference(monkeypatch, httpx_mock, tmp_
     assert len(requests) == 1 and requests[0].method == "GET"
     assert requests[0].headers["Authorization"] == "Bearer synthetic-key"
     assert privatemode._DISCOVERED["z-ai/glm-5.3"]["routable"] is False
+    assert privatemode._DISCOVERED["openai/gpt-oss-120b"]["routable"] is True
+    assert set(privatemode._DISCOVERED) == set(privatemode.UPSTREAM_ID_MAP)
     assert "glm-latest" not in privatemode.UPSTREAM_ID_MAP.values()
     monkeypatch.setattr(privatemode, "MANIFEST_PATH", tmp_path / "provider.json")
     privatemode.write_provider_manifest(result)
@@ -67,3 +71,54 @@ def test_discovery_rejects_credential_redirect(monkeypatch, httpx_mock):
     with pytest.raises(Exception, match="307"):
         privatemode.fetch()
     assert len(httpx_mock.get_requests()) == 1
+
+
+def test_confidential_privatemode_has_only_reviewed_priced_credits_routes():
+    from trusted_router import catalog
+
+    assert catalog.PROVIDERS["privatemode"].provider_e2ee is True
+    assert catalog.PROVIDERS["privatemode"].supports_byok is False
+    for model_id, upstream_id in privatemode.UPSTREAM_ID_MAP.items():
+        routes = [e for e in catalog.endpoints_for_model(model_id) if e.provider == "privatemode"]
+        assert len(routes) == 1
+        route = routes[0]
+        assert route.usage_type == "Credits"
+        assert route.upstream_id == upstream_id
+        assert catalog.endpoint_privacy_tier(route) == catalog.PRIVACY_TIER_CONFIDENTIAL
+        assert route.prompt_price_microdollars_per_million_tokens > 0
+        assert route.completion_price_microdollars_per_million_tokens > 0
+
+
+@pytest.mark.parametrize("reason", ["provider-canary-failed", "operator-review", "attested-enclave-rollout-pending"])
+def test_metadata_refresh_preserves_safety_holds(monkeypatch, tmp_path, reason):
+    path = tmp_path / "provider.json"
+    row = {"id": "z-ai/glm-5.3", "routable": False, "routable_reason": reason}
+    path.write_text(json.dumps({"provider": "privatemode", "models": [row]}))
+    monkeypatch.setattr(privatemode, "MANIFEST_PATH", path)
+    monkeypatch.setattr(privatemode, "_DISCOVERED", {row["id"]: {"id": row["id"], "routable": True}})
+    result = privatemode.ProviderPricingResult(slug="privatemode", source="api",
+                                              prices=privatemode.parse_prices(PRICES, Decimal("1.2")))
+    privatemode.write_provider_manifest(result)
+    saved = json.loads(path.read_text())["models"][0]
+    assert saved["routable"] is False
+    assert saved["routable_reason"] == reason
+
+
+@pytest.mark.parametrize("missing", ["listing", "price"])
+def test_unavailable_model_recovers_after_metadata_returns(monkeypatch, tmp_path, httpx_mock, missing):
+    monkeypatch.setenv("PRIVATEMODE_API_KEY", "synthetic-key")
+    path = tmp_path / "provider.json"
+    monkeypatch.setattr(privatemode, "MANIFEST_PATH", path)
+    for unavailable in (True, False):
+        httpx_mock.add_response(url=privatemode.CATALOG_URL, json={"data": [
+            {"id": native} for native in privatemode.MODELS
+            if not (unavailable and missing == "listing" and native == "glm-5.3")
+        ]})
+        prices = PRICES.replace("<td>GLM-5.3</td>", "<td>Not available</td>") if unavailable and missing == "price" else PRICES
+        monkeypatch.setattr(privatemode, "fetch_html", lambda url, prices=prices: prices if url == privatemode.PRICING_URL
+                            else "<Cube currency='USD' rate='1.2'/>")
+        privatemode.write_provider_manifest(privatemode.fetch())
+        row = next(row for row in json.loads(path.read_text())["models"] if row["id"] == "z-ai/glm-5.3")
+        assert row["routable"] is (not unavailable)
+        if not unavailable:
+            assert "routable_reason" not in row

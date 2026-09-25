@@ -595,11 +595,11 @@
   },
   "privatemode": {
     "card_version": 2,
-    "model_count": 0,
+    "model_count": 3,
     "name": "Privatemode",
-    "privacy": "Confidential compute",
-    "route_count": 0,
-    "route_mode": "Catalog profile",
+    "privacy": "E2EE + confidential",
+    "route_count": 3,
+    "route_mode": "Prepaid",
     "slug": "privatemode"
   },
   "recraft": {

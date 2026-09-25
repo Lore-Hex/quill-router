@@ -20,8 +20,7 @@
       "context_length": 128000,
       "supports_tools": true,
       "supports_reasoning": true,
-      "routable": false,
-      "routable_reason": "attested-enclave-rollout-pending",
+      "routable": true,
       "input_token_price_per_m": 514846,
       "output_token_price_per_m": 2035436,
       "cached_input_token_price_per_m": 47893
@@ -45,8 +44,7 @@
       "context_length": 1000000,
       "supports_tools": true,
       "supports_reasoning": true,
-      "routable": false,
-      "routable_reason": "attested-enclave-rollout-pending",
+      "routable": true,
       "input_token_price_per_m": 1855839,
       "output_token_price_per_m": 9267219,
       "cached_input_token_price_per_m": 179598
@@ -71,8 +69,7 @@
       "context_length": 1000000,
       "supports_tools": true,
       "supports_reasoning": true,
-      "routable": false,
-      "routable_reason": "attested-enclave-rollout-pending",
+      "routable": true,
       "input_token_price_per_m": 239463,
       "output_token_price_per_m": 778255,
       "cached_input_token_price_per_m": 59866
@@ -80,7 +77,7 @@
   ],
   "source": "https://docs.privatemode.ai/models/overview/",
   "pricing_source": "https://docs.privatemode.ai/pricing/",
-  "generated_at": "2026-09-25T17:13:38Z",
+  "generated_at": "2026-09-25T19:13:21Z",
   "price_scale": "microdollars_per_million",
   "model_count": 3
 }

@@ -6,6 +6,7 @@ prompt: live inference probes must use the attested enclave adapter.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from decimal import Decimal
@@ -23,7 +24,6 @@ from scripts.pricing.base import (
 )
 from scripts.pricing.currency import ECB_FX_URL, eur_microdollars_per_million, usd_per_eur
 from scripts.pricing.manifest import write_discovered_chat_manifest
-from scripts.pricing.model_ids import remember_upstream_id
 
 SLUG = "privatemode"
 CATALOG_URL = "https://api.privatemode.ai/v1/models"
@@ -42,8 +42,6 @@ MODELS = {
 }
 UPSTREAM_ID_MAP = {row[0]: native for native, row in MODELS.items()}
 _DISCOVERED: dict[str, dict[str, Any]] = {}
-# Removed only after all enclave deployments pass the pinned live probes.
-ROLLOUT_HOLD = "attested-enclave-rollout-pending"
 
 
 def canonical_model_id(native_id: str) -> str | None:
@@ -79,7 +77,7 @@ def parse_prices(html: str, rate: Decimal) -> dict[str, ModelPrice]:
             price = ModelPrice(_price(row["input"], rate), _price(row["output"], rate),
                                prompt_cached_micro_per_m=cached)
             if price.prompt_micro_per_m <= 0 or price.completion_micro_per_m <= 0 or (
-                cached > price.prompt_micro_per_m
+                not 0 < cached <= price.prompt_micro_per_m
             ):
                 raise RuntimeError("privatemode: invalid token prices")
             if model_id in prices:
@@ -113,15 +111,12 @@ def fetch() -> ProviderPricingResult:
             "id": model_id, "upstream_id": native, "display_name": name,
             "context_length": context, "input_modalities": ["text", "image"] if vision else ["text"],
             "supports_tools": True, "supports_reasoning": True,
-            "routable": available and not ROLLOUT_HOLD,
+            "routable": available,
         }
         if not available:
-            row["routable_reason"] = "model-or-price-unavailable"
-        elif ROLLOUT_HOLD:
-            row["routable_reason"] = ROLLOUT_HOLD
+            row["routable_reason"] = "delisted-upstream" if native not in native_ids else "price-unavailable"
         if available:
             prices[model_id] = published[model_id]
-            remember_upstream_id(UPSTREAM_ID_MAP, model_id, native)
         _DISCOVERED[model_id] = row
     if not prices:
         raise RuntimeError("privatemode: no priced release-pinned models")
@@ -130,9 +125,16 @@ def fetch() -> ProviderPricingResult:
 
 
 def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
+    holds = {key: row["routable_reason"] for key, row in _DISCOVERED.items()
+             if row.get("routable") is False}
+    if MANIFEST_PATH.exists():
+        # Listing/pricing cannot prove recovery from failed encrypted inference.
+        # Only a successful enclave canary or an explicit operator release may.
+        for row in json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))["models"]:
+            if row.get("routable") is False and row.get("routable_reason") == "provider-canary-failed":
+                holds[row["id"]] = "provider-canary-failed"
     return write_discovered_chat_manifest(
         result, manifest_path=MANIFEST_PATH, discovered_rows=_DISCOVERED,
         source_url=MODEL_DOCS_URL, pricing_source_url=PRICING_URL,
-        operator_hold_reasons={key: row["routable_reason"] for key, row in _DISCOVERED.items()
-                               if row.get("routable") is False},
+        operator_hold_reasons=holds,
     )
