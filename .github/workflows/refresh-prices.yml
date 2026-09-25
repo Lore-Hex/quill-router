@@ -178,6 +178,7 @@ jobs:
                       IONET_API_KEY:trustedrouter-io-net-api-key \
                       SCALEWAY_SECRET_KEY:trustedrouter-scaleway-api-key \
                       REGOLO_API_KEY:trustedrouter-regolo-api-key \
+                      PRIVATEMODE_API_KEY:trustedrouter-privatemode-api-key \
                       FEATHERLESS_API_KEY:trustedrouter-featherless-api-key \
                       JINA_API_KEY:trustedrouter-jina-api-key \
                       SAKANA_API_KEY:trustedrouter-sakana-api-key \
