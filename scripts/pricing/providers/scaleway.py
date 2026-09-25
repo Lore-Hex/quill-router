@@ -3,12 +3,22 @@
 from __future__ import annotations
 
 import re
-from decimal import ROUND_CEILING, Decimal, InvalidOperation
+from decimal import Decimal
 from pathlib import Path
 
 from bs4 import BeautifulSoup
 
 from scripts.pricing.base import ModelPrice, fetch_html
+from scripts.pricing.currency import (
+    ECB_FX_URL,
+    FX_RESERVE,  # noqa: F401 - retained for callers auditing the conversion reserve
+)
+from scripts.pricing.currency import (
+    eur_microdollars_per_million as _microdollars_per_million,
+)
+from scripts.pricing.currency import (
+    usd_per_eur as _usd_per_eur,
+)
 from scripts.pricing.providers._direct_openai import (
     DirectOpenAIProvider,
     DirectOpenAIProviderSpec,
@@ -18,8 +28,6 @@ SLUG = "scaleway"
 BASE_URL = "https://api.scaleway.ai/v1"
 URL = f"{BASE_URL}/models"
 PRICING_URL = "https://www.scaleway.com/en/pricing/model-as-a-service/"
-ECB_FX_URL = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml"
-FX_RESERVE = Decimal("1.05")
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
     / "src/trusted_router/data/provider_models/scaleway.json"
@@ -42,28 +50,6 @@ MODEL_MAP = {
 }
 
 _EURO_RE = re.compile(r"€\s*([0-9]+(?:\.[0-9]+)?)")
-_USD_RATE_RE = re.compile(r"currency=['\"]USD['\"]\s+rate=['\"]([0-9.]+)['\"]")
-
-
-def _usd_per_eur(xml: str) -> Decimal:
-    match = _USD_RATE_RE.search(xml)
-    if match is None:
-        raise RuntimeError("scaleway: ECB feed has no USD/EUR rate")
-    try:
-        rate = Decimal(match.group(1))
-    except InvalidOperation as exc:
-        raise RuntimeError("scaleway: ECB USD/EUR rate is invalid") from exc
-    if not rate.is_finite() or rate <= 0:
-        raise RuntimeError("scaleway: ECB USD/EUR rate must be positive")
-    return rate
-
-
-def _microdollars_per_million(eur: Decimal, usd_per_eur: Decimal) -> int:
-    return int(
-        (eur * usd_per_eur * FX_RESERVE * Decimal("1000000")).to_integral_value(
-            ROUND_CEILING
-        )
-    )
 
 
 def _parse_prices(html: str, *, usd_per_eur: Decimal) -> dict[str, ModelPrice]:
