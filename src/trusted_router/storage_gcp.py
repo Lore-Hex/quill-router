@@ -2720,6 +2720,28 @@ class SpannerBigtableStore:
     def get_key_by_raw(self, raw_key: str) -> ApiKey | None:
         return self.api_keys.get_by_raw(raw_key)
 
+    def gateway_api_key_auth_context(self, lookup_hash: str) -> ApiKeyAuthContext | None:
+        """Resolve enclave metadata in one strong, primary-key-bounded query.
+
+        Every join constrains both (kind, id), the existing tr_entities primary
+        key. The workspace belongs to the canonical key, never to the lookup
+        pointer's optional metadata. LEFT JOIN preserves unavailable-workspace
+        errors independently of invalid-key errors. No positive state is cached.
+        """
+        with self._database.snapshot() as snapshot:
+            rows = list(snapshot.execute_sql(
+                _API_KEY_AUTH_CONTEXT_SQL,
+                params={"lookup_hash": lookup_hash},
+                param_types={"lookup_hash": self._param_types.STRING},
+            ))
+        if not rows:
+            return None
+        api_key = _auth_record(str(rows[0][0]), ApiKey)
+        workspace = _auth_record(str(rows[0][1]), Workspace) if rows[0][1] is not None else None
+        if workspace is not None and workspace.deleted:
+            workspace = None
+        return ApiKeyAuthContext(api_key=api_key, workspace=workspace)
+
     def api_key_auth_context(self, raw_key: str) -> ApiKeyAuthContext | None:
         """Resolve and verify an API key with its workspace in one strong RPC."""
         lookup_hash = lookup_hash_api_key(raw_key)
@@ -2799,6 +2821,25 @@ class SpannerBigtableStore:
 
     def get_byok_provider(self, workspace_id: str, provider: str) -> ByokProviderConfig | None:
         return self.byok_store.get(workspace_id, provider)
+
+    def get_byok_providers(
+        self, workspace_id: str, providers: list[str],
+    ) -> dict[str, ByokProviderConfig | None]:
+        """Read all candidate credentials once, strongly, including missing keys."""
+        ids = {f"{workspace_id}#{provider}": provider for provider in providers}
+        configs: dict[str, ByokProviderConfig | None] = dict.fromkeys(providers)
+        if not ids:
+            return configs
+        with self._database.snapshot() as snapshot:
+            rows = snapshot.execute_sql(
+                "SELECT id, body FROM tr_entities WHERE kind=@kind AND id IN UNNEST(@ids)",
+                params={"kind": "byok", "ids": list(ids)},
+                param_types={"kind": self._param_types.STRING,
+                             "ids": self._param_types.Array(self._param_types.STRING)},
+            )
+            for entity_id, body in rows:
+                configs[ids[str(entity_id)]] = _auth_record(str(body), ByokProviderConfig)
+        return configs
 
     def delete_byok_provider(self, workspace_id: str, provider: str) -> bool:
         return self.byok_store.delete(workspace_id, provider)
