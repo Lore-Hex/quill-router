@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -12,14 +16,17 @@ from scripts import generate_provider_og
 from scripts.generate_provider_og import CARD_VERSION, generate
 from tests.lifecycle_clock import LIFECYCLE_CLOCK_OVERRIDDEN
 from trusted_router.catalog import PROVIDERS
+from trusted_router.config import Settings
 from trusted_router.provider_branding import (
     PROVIDER_BRANDS,
     provider_homepage_url,
     provider_logo_url,
     provider_og_image_url,
 )
+from trusted_router.provider_lifecycle import LIFECYCLE_CLOCK_OVERRIDE_ENV
 from trusted_router.provider_og import all_provider_og_facts
 from trusted_router.storage import STORE, ProviderBenchmarkSample
+from trusted_router.types import UsageType
 
 STATIC_DIR = Path(__file__).parents[1] / "src" / "trusted_router" / "static"
 
@@ -49,7 +56,7 @@ def test_unknown_provider_logo_falls_back_locally() -> None:
     assert provider_homepage_url("future-provider") is None
 
 
-def test_telnyx_profile_keeps_application_contacts_private(test_settings) -> None:  # noqa: ANN001
+def test_telnyx_profile_keeps_application_contacts_private(test_settings: Settings) -> None:
     from trusted_router.dashboard import public_provider_detail_html
 
     html = public_provider_detail_html(test_settings, "telnyx")
@@ -75,8 +82,8 @@ def test_telnyx_profile_keeps_application_contacts_private(test_settings) -> Non
 
 
 def test_telnyx_privacy_evidence_preserves_endpoint_scope_and_training_exceptions(
-    test_settings,
-) -> None:  # noqa: ANN001
+    test_settings: Settings,
+) -> None:
     from trusted_router.dashboard import public_provider_detail_html
 
     provider = PROVIDERS["telnyx"]
@@ -121,6 +128,41 @@ def test_provider_social_card_counts_match_current_catalog() -> None:
         for facts in all_provider_og_facts()
     }
     assert manifest == expected
+
+
+@pytest.mark.parametrize("override", [None, "2031-01-02T03:04:05Z"])
+def test_provider_count_monitor_skips_only_caller_supplied_overrides(
+    override: str | None,
+) -> None:
+    environ = dict(os.environ)
+    environ.pop(LIFECYCLE_CLOCK_OVERRIDE_ENV, None)
+    if override is not None:
+        environ[LIFECYCLE_CLOCK_OVERRIDE_ENV] = override
+    result = subprocess.run(  # noqa: S603 - fixed Python regression script
+        [sys.executable, "-c", textwrap.dedent("""
+            import os
+            import pytest
+            from trusted_router.provider_lifecycle import LIFECYCLE_CLOCK_OVERRIDE_ENV
+
+            explicit = bool(os.environ.get(LIFECYCLE_CLOCK_OVERRIDE_ENV))
+            from tests import lifecycle_freeze, lifecycle_clock
+            from tests.test_provider_branding import (
+                test_provider_social_card_counts_match_current_catalog as monitor,
+            )
+
+            assert os.environ[LIFECYCLE_CLOCK_OVERRIDE_ENV]
+            assert lifecycle_freeze.OVERRIDE_WAS_EXPLICIT is explicit
+            assert lifecycle_clock.LIFECYCLE_CLOCK_OVERRIDDEN is explicit
+            skips = [mark for mark in monitor.pytestmark if mark.name == "skipif"]
+            assert len(skips) == 1
+            assert skips[0].args == (explicit,)
+        """)],
+        env=environ,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_every_provider_has_current_social_card() -> None:
@@ -243,7 +285,7 @@ def test_leaderboard_rows_render_provider_logo(client: TestClient) -> None:
             provider="openai",
             provider_name="OpenAI",
             status="success",
-            usage_type="Credits",
+            usage_type=UsageType.CREDITS,
             streamed=True,
             first_token_milliseconds=120,
             source="synthetic",

@@ -931,17 +931,20 @@ MODELS: dict[str, Model] = {
 # is what `/embeddings/models` and the embeddings route filter on.
 
 
+# Resolve every import-time lifecycle check against one instant, even when
+# construction crosses a retirement. Request-time lookups keep their live clock.
+CATALOG_RESOLVED_AT: datetime = provider_lifecycle._utc_now()
+
 _EMBEDDING_MODELS = _embedding_models()
 _DECISION_MODELS = _decision_models()
 
 
-# The instant this catalog resolved every scheduled retirement against. Tests
-# read it through tests/lifecycle_clock.py instead of taking a second clock
-# reading of their own, so "was the catalog built before cutover X" always
-# answers about this build.
-CATALOG_RESOLVED_AT: datetime = provider_lifecycle._utc_now()
-_INGESTED_MODELS, _INGESTED_ENDPOINTS = _ingested_models_and_endpoints()
-_SUPPLEMENTAL_MODELS, _SUPPLEMENTAL_ENDPOINTS = _supplemental_provider_models_and_endpoints()
+_INGESTED_MODELS, _INGESTED_ENDPOINTS = _ingested_models_and_endpoints(
+    at=CATALOG_RESOLVED_AT,
+)
+_SUPPLEMENTAL_MODELS, _SUPPLEMENTAL_ENDPOINTS = _supplemental_provider_models_and_endpoints(
+    at=CATALOG_RESOLVED_AT,
+)
 # The OpenRouter ingest snapshot is the primary catalog. Provider-native
 # supplements add exact routes from providers whose live model API is
 # ahead of OpenRouter's endpoint feed. Pricing across both paths goes
@@ -1555,6 +1558,7 @@ MODEL_ENDPOINTS = _apply_provider_manifest_expiry(MODEL_ENDPOINTS)
 MODEL_ENDPOINTS = _filter_unserved_provider_endpoints(
     MODEL_ENDPOINTS,
     explicit_model_ids=frozenset(_VIDEO_MODELS),
+    at=CATALOG_RESOLVED_AT,
 )
 
 
