@@ -129,7 +129,7 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
              if row.get("routable") is False}
     if MANIFEST_PATH.exists():
         # Listing/pricing cannot prove recovery from failed encrypted inference.
-        # Only a successful enclave canary or an explicit operator release may.
+        # An operator must release this hold after a successful enclave canary.
         for row in json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))["models"]:
             if row.get("routable") is False and row.get("routable_reason") == "provider-canary-failed":
                 holds[row["id"]] = "provider-canary-failed"

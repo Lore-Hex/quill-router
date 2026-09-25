@@ -24,6 +24,8 @@ def test_prices_include_cached_rate_and_currency_reserve():
 
 @pytest.mark.parametrize("html", [PRICES.replace("EUR", "$"), PRICES+PRICES,
                                   PRICES.replace("EUR 0.05", "EUR 5"),
+                                  PRICES.replace("EUR 0.20", "EUR 0"),
+                                  PRICES.replace("EUR 0.65", "EUR 0"),
                                   PRICES.replace("EUR 0.05", "EUR 0"), "<html>unavailable</html>"])
 def test_prices_fail_closed(html):
     with pytest.raises(RuntimeError):
@@ -122,3 +124,25 @@ def test_unavailable_model_recovers_after_metadata_returns(monkeypatch, tmp_path
         assert row["routable"] is (not unavailable)
         if not unavailable:
             assert "routable_reason" not in row
+
+
+def test_relisted_model_without_price_stays_unroutable(monkeypatch, tmp_path, httpx_mock):
+    monkeypatch.setenv("PRIVATEMODE_API_KEY", "synthetic-key")
+    path = tmp_path / "provider.json"
+    path.write_text(json.dumps({"provider": "privatemode", "models": [
+        {"id": "z-ai/glm-5.3", "routable": False, "routable_reason": "delisted-upstream",
+         "input_token_price_per_m": 1, "output_token_price_per_m": 1},
+    ]}))
+    monkeypatch.setattr(privatemode, "MANIFEST_PATH", path)
+    httpx_mock.add_response(url=privatemode.CATALOG_URL, json={"data": [
+        {"id": native} for native in privatemode.MODELS
+    ]})
+    prices = PRICES.replace("<td>GLM-5.3</td>", "<td>Not available</td>")
+    monkeypatch.setattr(privatemode, "fetch_html", lambda url: prices if url == privatemode.PRICING_URL
+                        else "<Cube currency='USD' rate='1.2'/>")
+    privatemode.write_provider_manifest(privatemode.fetch())
+    row = next(row for row in json.loads(path.read_text())["models"] if row["id"] == "z-ai/glm-5.3")
+    assert row["routable"] is False
+    assert row["routable_reason"] == "price-unavailable"
+    assert "input_token_price_per_m" not in row
+    assert "output_token_price_per_m" not in row
