@@ -37,7 +37,11 @@ DEFAULT_DRAIN_SECONDS = 3.0
 # shutdown that follows the drain.
 MAX_DRAIN_SECONDS = 8.0
 
-logger = logging.getLogger(__name__)
+# Named explicitly: the container runs this module as `python -m`, where
+# `__name__` is "__main__" and a `__name__`-based logger would sit outside the
+# "trusted_router" package logger that carries the console handler, so the
+# drain lines would never reach Cloud Logging (they did not, on 2026-09-25).
+logger = logging.getLogger("trusted_router.serve")
 
 
 def drain_seconds_from_env(environ: dict[str, str] | None = None) -> float:
