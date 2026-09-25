@@ -128,8 +128,9 @@ Adding a Token Exchange domain:
    request. `sites/token-exchange/test_exchange.py`, which runs when either
    that list or `sites/token-exchange/` changes, fails while a domain in
    `markets.json` is missing from the list.
-4. After the merge, check that the certificate reaches `ACTIVE`. The same
-   change adds the domain's two entries to the certificate map below.
+4. After the merge, check that the certificate and the domain's two entries in
+   the certificate map below reach `ACTIVE`. An entry is `PENDING` while it
+   propagates to the load balancer's frontends.
 
 Retiring a domain is a deliberate edit to that list, not a side effect of
 removing a market from `markets.json`. The certificate is destroyed before its
@@ -142,6 +143,25 @@ be deleted.
 `control_lb_certificate_map.tf` puts those certificates in the certificate map
 `control`: one entry for each domain, one for `*.<domain>`, and a `PRIMARY`
 entry that serves `trustedrouter.com`'s certificate to clients that send no
-hostname. The production proxy does not use the map yet. The same role does not
-include deleting maps or map entries either, so an owner removes the entries of
-a retired domain before its certificate.
+hostname. The same role does not include deleting maps or map entries either,
+so an owner removes the entries of a retired domain before its certificate.
+
+`control_lb_proxy.tf` imports the production proxy,
+`trusted-router-control-https-proxy`, and attaches the map. A proxy with a
+certificate map ignores its classic certificates. Those stay attached, and
+Terraform ignores that list. While the proxy has a map, the scripts that used to
+add classic certificates (`sites/token-exchange/deploy.py publish`,
+`scripts/deploy/ensure_allyrouter_alias.sh` and quill-cloud-proxy's
+`tools/ensure-trustedrouter-control-host-cert.sh`) create and attach none. Each
+instead requires every hostname it serves to have an `ACTIVE` map entry with an
+`ACTIVE` certificate, and fails otherwise.
+
+To roll back, remove `certificate_map` from the proxy in a pull request and
+keep the resource block, whose removal would plan the proxy's deletion. The
+proxy then serves its classic certificates, so first check that `ACTIVE` classic
+certificates cover every hostname it routes. A domain added after the switch
+has only its Certificate Manager certificate. Google's troubleshooting guide
+lists an attached certificate map as a cause of `FAILED_NOT_VISIBLE` for classic
+managed certificates, so they may stop renewing; the earliest attached one,
+`trusted-router-eu-trustedrouter-com-cert`, expires on 2 November 2026. A map
+detached by hand is attached again by the next apply of this root.
