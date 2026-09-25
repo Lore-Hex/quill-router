@@ -145,10 +145,3 @@ entry that serves `trustedrouter.com`'s certificate to clients that send no
 hostname. The production proxy does not use the map yet. The same role does not
 include deleting maps or map entries either, so an owner removes the entries of
 a retired domain before its certificate.
-
-`control_lb_certificate_map_test.tf` is temporary: a second frontend for the
-control URL map that serves only the certificate map, on an address no DNS name
-points to (the `control_certificate_map_test_address` output). Every hostname
-the URL map routes is checked against it with
-`curl --resolve <host>:443:<address> https://<host>/`, and the file is then
-removed.
