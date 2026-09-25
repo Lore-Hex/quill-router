@@ -544,7 +544,73 @@ def test_postgres_route_health_batch_read_uses_one_partitioned_query() -> None:
     assert "PARTITION BY body ->> 'provider', body ->> 'model'" in sql
     assert "body ->> 'source' = 'synthetic'" in sql
     assert "route_rank <= %s" in sql
+    # Rule: the window is the indexed column, and no JSON timestamp is parsed.
+    assert "AND indexed_at >= %s::timestamptz" in sql
+    assert "body ->> 'created_at'" not in sql
     assert params == ("2026-08-29T00:00:00Z", 48, 47_088)
+
+
+def test_postgres_benchmark_write_indexes_created_at() -> None:
+    statements: list[tuple[str, tuple[object, ...]]] = []
+
+    class Connection:
+        def execute(self, sql: str, params: tuple[object, ...]) -> None:
+            statements.append((sql, params))
+
+    store = PostgresStore.__new__(PostgresStore)
+    store._run_transaction = lambda operation: operation(Connection())  # type: ignore[method-assign]
+    store.record_provider_benchmark(
+        ProviderBenchmarkSample(
+            id="bench-postgres-write-1",
+            model="openai/gpt-5.5",
+            provider="openai",
+            provider_name="OpenAI",
+            status="success",
+            usage_type="Credits",
+            streamed=True,
+            created_at="2026-09-25T01:02:03.456Z",
+            source="synthetic",
+        )
+    )
+
+    [(sql, params)] = statements
+    assert "INSERT INTO tr_entities" in sql and "indexed_at" in sql
+    assert params[:2] == ("provider_benchmark", "bench-postgres-write-1")
+    assert params[3] == dt.datetime(2026, 9, 25, 1, 2, 3, 456000, tzinfo=dt.UTC)
+
+
+def test_postgres_benchmark_backfill_page_parses_like_the_writer() -> None:
+    statements: list[tuple[str, tuple[object, ...]]] = []
+    page = [
+        ("bench-a", "2026-09-25T01:00:00Z"),
+        ("bench-b", "not-a-timestamp"),
+        ("bench-c", "2026-09-25T02:00:00"),
+        ("bench-d", "0001-01-01T00:00:00+01:00"),
+    ]
+
+    class Cursor:
+        def fetchall(self) -> list[tuple[str, str]]:
+            return page
+
+    class Connection:
+        def execute(self, sql: str, params: tuple[object, ...]) -> Cursor:
+            statements.append((sql, params))
+            return Cursor()
+
+    store = PostgresStore.__new__(PostgresStore)
+    store._run_transaction = lambda operation: operation(Connection())  # type: ignore[method-assign]
+
+    examined = store.backfill_provider_benchmark_indexed_at_page(after="bench-0", limit=5_000)
+
+    assert examined == ["bench-a", "bench-b", "bench-c", "bench-d"]
+    (select_sql, select_params), *updates = statements
+    assert "indexed_at IS NULL" in select_sql and "FOR UPDATE" in select_sql
+    assert select_params == ("bench-0", 1_000)
+    assert [params for _, params in updates] == [
+        (dt.datetime(2026, 9, 25, 1, 0, tzinfo=dt.UTC), "bench-a"),
+        (dt.datetime(2026, 9, 25, 2, 0, tzinfo=dt.UTC), "bench-c"),
+    ]
+    assert all("indexed_at IS NULL" in sql for sql, _ in updates)
 
 
 @pytest.mark.parametrize(

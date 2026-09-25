@@ -4,6 +4,7 @@ import asyncio
 import datetime as dt
 import logging
 import random
+import re
 import threading
 import time
 from collections.abc import Awaitable
@@ -733,6 +734,15 @@ def _sample_from_body(body: Any) -> SyntheticProbeSample:
     return SyntheticProbeSample(**kwargs)
 
 
+# A subset of RFC 3339: YYYY-MM-DDTHH:MM:SS, up to six fractional digits, then
+# Z or +HH:MM/-HH:MM with minutes 00-59. fromisoformat checks the date, the
+# time and the offset's hours.
+_BENCHMARK_CREATED_AT = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?"
+    r"(Z|[+-][0-9]{2}:[0-5][0-9])"
+)
+
+
 def _benchmark_from_body(body: Any) -> ProviderBenchmarkSample:
     if not isinstance(body, dict):
         raise api_error(400, "sample must be an object", ErrorType.BAD_REQUEST)
@@ -765,8 +775,24 @@ def _benchmark_from_body(body: Any) -> ProviderBenchmarkSample:
         # synthetic (the probe also sets it explicitly).
         "source": str(body.get("source") or "synthetic"),
     }
-    if body.get("created_at"):
-        kwargs["created_at"] = str(body["created_at"])
+    if body.get("created_at") is not None:
+        created_at = str(body["created_at"])
+        # PostgresStore indexes created_at as a UTC instant, so a supplied value
+        # must be in this grammar and name an instant that has a UTC
+        # representation. Absent or null means now (the dataclass default).
+        try:
+            if not _BENCHMARK_CREATED_AT.fullmatch(created_at):
+                raise ValueError(created_at)
+            dt.datetime.fromisoformat(created_at.replace("Z", "+00:00")).astimezone(dt.UTC)
+        except (ValueError, OverflowError):
+            raise api_error(
+                400,
+                "created_at must be YYYY-MM-DDTHH:MM:SS, optionally with up to six "
+                "fractional digits, followed by Z or +HH:MM/-HH:MM, "
+                "within years 0001-9999 in UTC",
+                ErrorType.BAD_REQUEST,
+            ) from None
+        kwargs["created_at"] = created_at
     for field in ("id", "model", "provider", "provider_name", "status"):
         if not kwargs[field]:
             raise api_error(400, f"{field} is required", ErrorType.BAD_REQUEST)

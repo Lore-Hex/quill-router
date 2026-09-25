@@ -4422,6 +4422,58 @@ def test_internal_benchmark_ingest_requires_token() -> None:
     assert resp.status_code in (401, 403)
 
 
+def test_internal_benchmark_ingest_accepts_only_the_created_at_grammar() -> None:
+    client = TestClient(create_app(_benchmark_ingest_settings(), init_observability=False))
+    absent = object()
+
+    def post(created_at: Any) -> Any:
+        sample: dict[str, Any] = {
+            "id": f"bench-created-at-{created_at!r}",
+            "model": "openai/gpt-5.4-nano",
+            "provider": "openai",
+            "provider_name": "OpenAI",
+            "status": "success",
+        }
+        if created_at is not absent:
+            sample["created_at"] = created_at
+        return client.post(
+            "/v1/internal/synthetic/benchmark",
+            headers={"x-trustedrouter-internal-token": "test-observer-secret"},
+            json={"samples": [sample]},
+        )
+
+    message = (
+        "created_at must be YYYY-MM-DDTHH:MM:SS, optionally with up to six "
+        "fractional digits, followed by Z or +HH:MM/-HH:MM, "
+        "within years 0001-9999 in UTC"
+    )
+    for bad in (
+        "not-a-timestamp",
+        "2026-09-25T01:02:03",  # no offset
+        "2026-09-25T01:02:03.1234567Z",  # finer than a microsecond
+        "2026-09-25T01:02:03,123Z",  # comma fraction
+        "2026-09-25T01:02.5Z",  # fractional minutes
+        "2026-09-25 01:02:03Z",  # space separator
+        "20260925T010203Z",  # basic format
+        "2026-09-25T01:02:03+0530",  # offset without a colon
+        "2026-09-25T01:02:03+01:99",  # offset minutes above 59
+        "2026-09-25T01:02:03+24:00",  # offset hours above 23
+        "0000-01-01T00:00:00Z",  # year zero
+        "0001-01-01T00:00:00+01:00",  # no UTC representation
+        "9999-12-31T23:59:59-01:00",
+        "",  # supplied values are checked whatever their truthiness
+        False,
+        0,
+        [],
+        {},
+    ):
+        rejected = post(bad)
+        assert rejected.status_code == 400, bad
+        assert rejected.json()["error"]["message"] == message, bad
+    for good in ("2026-09-25T01:02:03Z", "2026-09-25T01:02:03.123456+05:30", None, absent):
+        assert post(good).status_code == 200, good
+
+
 class _RouteHealthStore:
     def __init__(self, samples: list[ProviderBenchmarkSample]) -> None:
         self.samples = samples
