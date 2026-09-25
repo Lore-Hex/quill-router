@@ -1,0 +1,60 @@
+{
+  "affinityCookieTtlSec": 0,
+  "backends": [
+    {
+      "balancingMode": "UTILIZATION",
+      "capacityScaler": 1.0,
+      "group": "https://www.googleapis.com/compute/v1/projects/quill-cloud-proxy/regions/us-central1/networkEndpointGroups/trusted-router-control-neg"
+    },
+    {
+      "balancingMode": "UTILIZATION",
+      "capacityScaler": 1.0,
+      "group": "https://www.googleapis.com/compute/v1/projects/quill-cloud-proxy/regions/europe-west4/networkEndpointGroups/trusted-router-control-neg"
+    },
+    {
+      "balancingMode": "UTILIZATION",
+      "capacityScaler": 1.0,
+      "group": "https://www.googleapis.com/compute/v1/projects/quill-cloud-proxy/regions/us-east4/networkEndpointGroups/trusted-router-control-neg"
+    },
+    {
+      "balancingMode": "UTILIZATION",
+      "capacityScaler": 1.0,
+      "group": "https://www.googleapis.com/compute/v1/projects/quill-cloud-proxy/regions/southamerica-east1/networkEndpointGroups/trusted-router-control-neg"
+    }
+  ],
+  "cdnPolicy": {
+    "cacheKeyPolicy": {
+      "includeHost": true,
+      "includeProtocol": true,
+      "includeQueryString": true
+    },
+    "cacheMode": "USE_ORIGIN_HEADERS",
+    "negativeCaching": false,
+    "requestCoalescing": true,
+    "serveWhileStale": 86400
+  },
+  "compressionMode": "AUTOMATIC",
+  "connectionDraining": {
+    "drainingTimeoutSec": 0
+  },
+  "customRequestHeaders": [
+    "X-TrustedRouter-Client-IP:{client_ip_address}"
+  ],
+  "description": "",
+  "enableCDN": true,
+  "kind": "compute#backendService",
+  "loadBalancingScheme": "EXTERNAL_MANAGED",
+  "logConfig": {
+    "enable": true,
+    "optionalMode": "EXCLUDE_ALL_OPTIONAL",
+    "sampleRate": 0.1
+  },
+  "name": "trusted-router-control-backend",
+  "port": 80,
+  "portName": "http",
+  "protocol": "HTTP",
+  "securityPolicy": "https://www.googleapis.com/compute/v1/projects/quill-cloud-proxy/global/securityPolicies/trusted-router-legacy-edge",
+  "selfLink": "https://www.googleapis.com/compute/v1/projects/quill-cloud-proxy/global/backendServices/trusted-router-control-backend",
+  "sessionAffinity": "NONE",
+  "timeoutSec": 30
+}

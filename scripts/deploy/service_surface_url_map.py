@@ -160,6 +160,13 @@ CONTROL_PATH_PATTERNS = (
     "/v1/internal/broadcast/drain",
 )
 
+GATEWAY_PATH_PATTERNS = (
+    "/internal/gateway",
+    "/internal/gateway/*",
+    "/v1/internal/gateway",
+    "/v1/internal/gateway/*",
+)
+
 INTERNAL_PATH_PATTERNS = (
     "/internal",
     "/internal/*",
@@ -211,6 +218,27 @@ def route_surface(path: str) -> Surface:
     return winners[0][0]
 
 
+def is_gateway_path(path: str) -> bool:
+    return any(_match_specificity(path, pattern) is not None for pattern in GATEWAY_PATH_PATTERNS)
+
+
+def existing_gateway_backend(existing: dict[str, Any]) -> str | None:
+    """Preserve an installed override; refuse partial/ambiguous gateway rules."""
+    rules = [
+        rule
+        for matcher in existing.get("pathMatchers", [])
+        if matcher.get("name") == _MATCHER_NAME
+        for rule in matcher.get("pathRules", [])
+        if any(is_gateway_path(path.removesuffix("*")) for path in rule.get("paths", []))
+    ]
+    if not rules:
+        return None
+    if (len(rules) != 1 or set(rules[0].get("paths", [])) != set(GATEWAY_PATH_PATTERNS)
+            or not rules[0].get("service")):
+        raise ValueError("ambiguous gateway backend; refusing to drop or replace live rules")
+    return str(rules[0]["service"])
+
+
 def first_party_hosts(domains: list[str] | tuple[str, ...]) -> list[str]:
     normalized = sorted({domain.strip().lower().rstrip(".") for domain in domains if domain.strip()})
     hosts = {
@@ -253,8 +281,14 @@ def rewrite_url_map(
     control_backend: str,
     internal_backend: str,
     domains: list[str] | tuple[str, ...],
+    gateway_backend: str | None = None,
 ) -> dict[str, Any]:
-    """Return an importable URL map with a first-party four-way bulkhead."""
+    """Render four surfaces, optionally overriding gateway backend placement.
+
+    Omitting gateway_backend retains the original four-surface output. CLI
+    callers that rewrite a live map can explicitly preserve an installed
+    override with --preserve-gateway-backend.
+    """
     if existing.get("defaultUrlRedirect") is not None:
         raise ValueError("cannot convert a redirect-only URL map into the HTTPS service map")
     if not existing.get("defaultService"):
@@ -315,6 +349,10 @@ def rewrite_url_map(
             ],
         }
     )
+    if gateway_backend:
+        path_matchers[-1]["pathRules"].append(
+            {"paths": list(GATEWAY_PATH_PATTERNS), "service": gateway_backend}
+        )
     host_rules.append(
         {
             "hosts": first_party_hosts(tuple(domain_set)),
@@ -334,7 +372,11 @@ def rewrite_url_map(
     for test in result.get("tests", []):
         host = str(test.get("host") or "")
         if _is_first_party_host(host, managed_hosts):
-            test["service"] = backend_for[route_surface(str(test.get("path") or "/"))]
+            path = str(test.get("path") or "/")
+            test["service"] = (
+                gateway_backend if gateway_backend and is_gateway_path(path)
+                else backend_for[route_surface(path)]
+            )
     return result
 
 
@@ -347,6 +389,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--control-backend", required=True)
     parser.add_argument("--internal-backend", required=True)
     parser.add_argument("--domains", required=True)
+    parser.add_argument("--gateway-backend")
+    parser.add_argument("--preserve-gateway-backend", action="store_true")
     return parser
 
 
@@ -360,6 +404,9 @@ def main() -> None:
         args.control_backend,
         args.internal_backend,
         args.domains.split(","),
+        args.gateway_backend or (
+            existing_gateway_backend(existing) if args.preserve_gateway_backend else None
+        ),
     )
     args.output.write_text(json.dumps(rewritten, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 

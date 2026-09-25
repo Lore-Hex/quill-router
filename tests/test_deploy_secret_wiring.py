@@ -310,8 +310,15 @@ def test_all_attested_control_plane_regions_remain_warm() -> None:
     # And nothing is kept warm that we no longer serve.
     for region in warm:
         assert region in attested, f"{region} is warmed but is not an attested region"
+    # São Paulo has no enclave, but is the explicitly warm gateway billing
+    # failover. Other non-attested entries still need an inventory decision.
+    billing_failover = "southamerica-east1"
+    assert billing_failover in control_plane
+    assert int(minimums[billing_failover]) >= 2
     for region in minimums:
-        assert region in attested, f"{region} has a min-instances entry but is not attested"
+        assert region in {*attested, billing_failover}, (
+            f"{region} has a min-instances entry but serves neither an enclave nor billing failover"
+        )
     assert 'TR_CLOUD_RUN_CONCURRENCY="${TR_CLOUD_RUN_CONCURRENCY:-8}"' in library
     assert 'TR_SPANNER_POOL_SIZE="${TR_SPANNER_POOL_SIZE:-8}"' in library
     assert '--concurrency "$TR_CLOUD_RUN_CONCURRENCY"' in rollout

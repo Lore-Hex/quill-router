@@ -227,6 +227,7 @@ PY
   fi
   python3 "${SCRIPT_DIR}/service_surface_url_map.py" \
     --input "$live_map" --output "$candidate" \
+    --preserve-gateway-backend \
     --public-backend "$public_link" \
     --actions-backend "$actions_link" \
     --control-backend "$control_link" \

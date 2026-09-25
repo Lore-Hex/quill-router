@@ -23,8 +23,8 @@ REGION="${REGION:-us-central1}"
 TR_REGIONS="${TR_REGIONS:-$(python3 "$(dirname "${BASH_SOURCE[0]}")/../../src/trusted_router/enclave_regions.py")}"
 TR_PRIMARY_REGION="${TR_PRIMARY_REGION:-us-central1}"
 # Cloud Run control-plane regions behind trustedrouter.com. Neither this list
-# nor TR_REGIONS contains the other: a cold control-plane region
-# (southamerica-east1) serves cached public pages without advertising a
+# nor TR_REGIONS contains the other: the gateway billing failover region
+# (southamerica-east1) stays warm without advertising a
 # non-existent regional attested gateway hostname, and a gateway-only region
 # (us-west1) has no Cloud Run service.
 TR_CONTROL_PLANE_REGIONS="${TR_CONTROL_PLANE_REGIONS:-us-central1,us-east4,europe-west4,southamerica-east1}"
@@ -38,7 +38,9 @@ TR_WARM_REGIONS="${TR_WARM_REGIONS:-us-central1,europe-west4,us-east4}"
 # Service-level minimums stay allocated across staged revision traffic shifts.
 # Both US Cloud Run regions need burst headroom before autoscaling catches up.
 # Keep concurrency and billing admission bounded, but prewarm capacity.
-TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION="${TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION:-us-central1=8,us-east4=8,europe-west4=2}"
+# São Paulo is the gateway billing failover: keep two instances even without
+# a local attested enclave. gateway_edge.sh requires two warm failover instances (16 slots at concurrency 8).
+TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION="${TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION:-us-central1=8,us-east4=8,europe-west4=2,southamerica-east1=2}"
 # Billing handlers are small, synchronous Spanner operations dispatched to a
 # worker thread. Eight concurrent requests fit comfortably in 2 GiB and avoid
 # cold-starting dozens of instances for a short burst.
