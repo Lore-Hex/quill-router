@@ -15,9 +15,11 @@ User-facing reads prefer bounded families and fall back to legacy cells."""
 from __future__ import annotations
 
 import datetime as dt
+import json
 import logging
 from collections.abc import Iterator
-from typing import Any, Protocol
+from dataclasses import dataclass, field
+from typing import Any, Literal, Protocol, overload
 
 import trusted_router.storage_activity as storage_activity
 from trusted_router.storage_activity import (
@@ -71,9 +73,22 @@ from trusted_router.storage_operational_analytics import (
 log = logging.getLogger(__name__)
 
 _ACTIVITY_MIRROR_REPAIR = (
-    "python -m trusted_router.activity_mirror_reconcile_cli --workspace-id <id> --date <day>"
+    "python -m trusted_router.activity_mirror_reconcile_cli --generation-id <generation_id>"
 )
 ACTIVITY_SCAN_LIMIT = 5000
+
+
+@dataclass
+class ActivityReconcileResult:
+    mirror_repaired: int = 0
+    durable_repaired: int = 0
+    mirror_failed: list[str] = field(default_factory=list)
+    durable_failed: list[str] = field(default_factory=list)
+    missing: list[str] = field(default_factory=list)
+    mirror_skipped: int = 0
+    scanned: int = 0
+    truncated: bool = False
+    next_after_id: str | None = None
 
 
 class _AddUsageCallback(Protocol):
@@ -578,50 +593,99 @@ class SpannerGenerations:
             min_created_at=min_created_at,
         )
 
+    @overload
+    def reconcile_activity(
+        self, workspace_id: str, *, date: str | None = None, limit: int = 1000,
+        detailed: Literal[False] = False,
+    ) -> int: ...
+
+    @overload
+    def reconcile_activity(
+        self, workspace_id: str | None = None, *, date: str | None = None,
+        limit: int = 1000, generation_id: str | None = None,
+        detailed: Literal[True], after_id: str | None = None,
+    ) -> ActivityReconcileResult: ...
+
     def reconcile_activity(
         self,
-        workspace_id: str,
+        workspace_id: str | None = None,
         *,
         date: str | None = None,
         limit: int = 1000,
-    ) -> int:
-        prefix = f"{workspace_id}#{date}#" if date is not None else f"{workspace_id}#"
-        refs = self._io.list_entities("generation_by_workspace", prefix=prefix, cls=dict)[:limit]
-        repaired = 0
+        generation_id: str | None = None,
+        detailed: bool = False,
+        after_id: str | None = None,
+    ) -> int | ActivityReconcileResult:
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        result = ActivityReconcileResult()
+        if generation_id is not None:
+            refs = [{"generation_id": generation_id}]
+        else:
+            if workspace_id is None:
+                raise ValueError("workspace_id or generation_id is required")
+            prefix = f"{workspace_id}#{date}#" if date is not None else f"{workspace_id}#"
+            if detailed:
+                # Include the index key so even dangling references can advance
+                # the cursor. The generic entity reader returns bodies only.
+                refs = self._reconcile_page(prefix, after_id=after_id, limit=limit + 1)
+            else:
+                refs = self._io.list_entities(
+                    "generation_by_workspace", prefix=prefix, cls=dict, limit=limit + 1,
+                )
+            result.truncated = len(refs) > limit
+            refs = refs[:limit]
+            if detailed and result.truncated:
+                result.next_after_id = refs[-1]["index_id"]
         for ref in refs:
+            result.scanned += 1
             generation = self.get(str(ref["generation_id"]))
             if generation is None:
+                result.missing.append(str(ref["generation_id"]))
                 continue
             if self._operational_analytics_outbox is not None:
-                if not self._repair_durable_delivery(generation):
-                    continue
-                if self._bigtable_writes_enabled:
-                    self._write_bigtable_activity(generation)
-                repaired += 1
-                continue
-            try:
-                _bt_write_generation(
-                    self._bt_table,
-                    self._activity_family,
-                    generation,
-                )
-                repaired += 1
-            except Exception as exc:
-                log.exception(
-                    "bigtable.activity_index_reconcile_write_failed",
-                    extra={
-                        "request_id": generation.request_id,
-                        "workspace_id": generation.workspace_id,
-                        "generation_id": generation.id,
-                        "model": generation.model,
-                        "provider_name": generation.provider_name,
-                        "provider": generation.provider,
-                        "error_class": type(exc).__name__,
-                        "error_message": str(exc)[:500],
-                        "context": "reconcile_activity",
-                    },
-                )
-        return repaired
+                if self._repair_durable_delivery(generation):
+                    result.durable_repaired += 1
+                else:
+                    result.durable_failed.append(generation.id)
+            if not self._bigtable_writes_enabled:
+                result.mirror_skipped += 1
+            elif self._write_bigtable_activity(generation):
+                result.mirror_repaired += 1
+            else:
+                result.mirror_failed.append(generation.id)
+        if detailed:
+            return result
+        # Preserve the public store's historical integer contract. The CLI
+        # requests the detailed result so delivery never masquerades as a mirror.
+        return (
+            result.durable_repaired if self._operational_analytics_outbox is not None
+            else result.mirror_repaired
+        )
+
+    def _reconcile_page(
+        self, prefix: str, *, after_id: str | None, limit: int,
+    ) -> list[dict[str, str]]:
+        if self._param_types is None:
+            raise RuntimeError("Spanner param types are not configured")
+        if after_id is not None and not after_id.startswith(prefix):
+            raise ValueError("after_id must belong to the requested workspace/day")
+        with self._io.database.snapshot() as snapshot:
+            rows = snapshot.execute_sql(
+                "SELECT id, body FROM tr_entities "
+                "WHERE kind=@kind AND STARTS_WITH(id, @prefix) AND id > @after_id "
+                "ORDER BY id LIMIT @limit",
+                params={"kind": "generation_by_workspace", "prefix": prefix,
+                        "after_id": after_id or "", "limit": limit},
+                param_types={"kind": self._param_types.STRING,
+                             "prefix": self._param_types.STRING,
+                             "after_id": self._param_types.STRING,
+                             "limit": self._param_types.INT64},
+            )
+            return [
+                {"index_id": row[0], "generation_id": json.loads(row[1])["generation_id"]}
+                for row in rows
+            ]
 
     def _activity_generations(
         self,

@@ -593,6 +593,15 @@
     "route_mode": "Catalog profile",
     "slug": "poolside"
   },
+  "privatemode": {
+    "card_version": 2,
+    "model_count": 3,
+    "name": "Privatemode",
+    "privacy": "E2EE + confidential",
+    "route_count": 3,
+    "route_mode": "Prepaid",
+    "slug": "privatemode"
+  },
   "recraft": {
     "card_version": 2,
     "model_count": 8,

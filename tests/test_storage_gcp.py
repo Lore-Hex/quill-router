@@ -868,7 +868,8 @@ def test_gcp_reconcile_generation_activity_rewrites_existing_generations(monkeyp
     store.generation_family = "m"
     written: list[str] = []
 
-    def list_entities(kind: str, *, cls: type[Any], prefix: str | None = None, suffix: str | None = None):
+    def list_entities(kind: str, *, cls: type[Any], prefix: str | None = None, suffix: str | None = None, limit: int | None = None):
+        assert limit == 1001
         assert kind == "generation_by_workspace"
         assert cls is dict
         assert prefix == "ws_1#"
@@ -911,7 +912,7 @@ def test_gcp_reconcile_generation_activity_rewrites_existing_generations(monkeyp
     store.api_keys = SpannerApiKeys(io)
     store.generation_store = SpannerGenerations(
         io,
-        bt_table=None,
+        bt_table=object(),
         generation_family="m",
         add_usage_to_key=store.api_keys.add_usage,
     )
@@ -959,7 +960,8 @@ def test_gcp_exhausted_mirror_retry_logs_a_warning_without_a_traceback(
     assert f"generation_id={generation.id}" in message
     assert "workspace_id=ws_1" in message
     assert "day=2026-05-02" in message
-    assert "activity_mirror_reconcile_cli --workspace-id" in message
+    assert "activity_mirror_reconcile_cli --generation-id" in message
+    assert record.repairable_via.endswith("--generation-id <generation_id>")
 
 
 def test_gcp_exhausted_benchmark_mirror_retry_logs_a_warning_without_a_traceback(
@@ -1108,3 +1110,92 @@ def test_reverse_time_key_sorts_newer_generations_first() -> None:
 
     assert newer < older
     assert len(newer) == len(older) == 13
+
+
+def test_reconcile_reports_actual_mirror_outcomes_and_disabled_writes(monkeypatch) -> None:
+    from trusted_router.storage_gcp_mirror import MirrorWriteIncomplete
+
+    store, _, table = make_fake_store(
+        operational_analytics_outbox_enabled=True, generation_records_enabled=True,
+    )
+    generation = _generation("gen_outcomes", "ws_outcomes", "2026-09-24T00:00:00Z")
+    store._write_entity("generation", generation.id, generation)
+
+    def unavailable(*args: Any, **kwargs: Any) -> None:
+        raise MirrorWriteIncomplete(attempts=2, total=3, codes=[14])
+
+    with monkeypatch.context() as patch:
+        patch.setattr("trusted_router.storage_gcp_generations._bt_write_generation", unavailable)
+        failed = store.generation_store.reconcile_activity(
+            generation_id=generation.id, detailed=True,
+        )
+    assert failed.mirror_repaired == 0
+    assert failed.durable_repaired == 1
+    assert failed.mirror_failed == [generation.id]
+    assert not table.committed
+
+    store.generation_store._bigtable_writes_enabled = False
+    skipped = store.generation_store.reconcile_activity(generation_id=generation.id, detailed=True)
+    assert skipped.mirror_repaired == 0
+    assert skipped.durable_repaired == 1
+    assert skipped.mirror_skipped == 1
+    assert skipped.mirror_failed == []
+    assert not table.committed
+
+    store.generation_store._bigtable_writes_enabled = True
+    repaired = store.generation_store.reconcile_activity(generation_id=generation.id, detailed=True)
+    assert repaired.mirror_repaired == 1
+    assert repaired.durable_repaired == 1
+    assert repaired.mirror_failed == []
+    assert len(table.committed) == 3
+
+
+def test_reconcile_pages_bound_spanner_reads_and_continue_past_missing_records(monkeypatch) -> None:
+    from trusted_router.storage_gcp_codec import generation_workspace_id
+
+    store, db, table = make_fake_store()
+    generations = [_generation(f"gen_{i}", "ws_page", f"2026-09-2{i}T00:00:00Z") for i in range(3)]
+    refs = [(generation_workspace_id(g), json.dumps({"generation_id": g.id})) for g in generations]
+    for generation in generations[1:]:
+        store._write_entity("generation", generation.id, generation)
+    snapshot_type = type(db.snapshot())
+    original = snapshot_type.execute_sql
+    calls = []
+
+    def execute_sql(self, sql, *, params, param_types, **kwargs):
+        if params.get("kind") != "generation_by_workspace":
+            return original(self, sql, params=params, param_types=param_types, **kwargs)
+        # The fake's generic reader does not implement keyset SQL. Assert the
+        # server predicates, then model them before applying the server limit.
+        assert "SELECT id, body" in sql
+        assert "kind=@kind" in sql
+        assert "STARTS_WITH(id, @prefix)" in sql
+        assert "id > @after_id" in sql
+        assert "ORDER BY id LIMIT @limit" in sql
+        assert params["limit"] == 2  # one processed row plus a truncation sentinel
+        assert params["prefix"] == "ws_page#"
+        assert param_types["limit"] == store._param_types.INT64
+        calls.append(params.copy())
+        return [row for row in refs if row[0].startswith(params["prefix"]) and row[0] > params["after_id"]][:params["limit"]]
+
+    monkeypatch.setattr(snapshot_type, "execute_sql", execute_sql)
+    first = store.generation_store.reconcile_activity("ws_page", limit=1, detailed=True)
+    assert first.scanned == 1
+    assert first.mirror_repaired == 0
+    assert first.missing == [generations[0].id]
+    assert first.truncated is True
+    assert first.next_after_id == refs[0][0]
+    second = store.generation_store.reconcile_activity(
+        "ws_page", limit=1, detailed=True, after_id=first.next_after_id,
+    )
+    assert second.mirror_repaired == 1
+    assert second.truncated is True
+    assert second.next_after_id == refs[1][0]
+    last = store.generation_store.reconcile_activity(
+        "ws_page", limit=1, detailed=True, after_id=second.next_after_id,
+    )
+    assert last.mirror_repaired == 1
+    assert last.truncated is False
+    assert last.next_after_id is None
+    assert [call["after_id"] for call in calls] == ["", refs[0][0], refs[1][0]]
+    assert len(table.committed) == 6
