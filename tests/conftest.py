@@ -18,6 +18,25 @@ from trusted_router.storage import STORE, InMemoryStore, configure_store
 
 
 @pytest.fixture(autouse=True)
+def lock_order_guard(request: pytest.FixtureRequest):
+    """Check read-write transactions reaching the two instrumented funnels.
+
+    These funnels are not the only way to reach the database; paths listed in
+    tests.fakes.lock_order.KNOWN_UNCOVERED_PATHS are not covered. The window is
+    after this fixture's reset and before its teardown check. Broader-scoped
+    fixture setup is erased by reset; broader-scoped teardown happens after
+    check. Neither window is protected. Spanner's eager fake also cannot
+    establish the execution order of the real SDK's lazy streams.
+    """
+    from tests.fakes import lock_order
+
+    lock_order.install()
+    lock_order.recorder.reset()
+    yield
+    lock_order.recorder.check(request.node.nodeid)
+
+
+@pytest.fixture(autouse=True)
 def reset_store() -> None:
     if not isinstance(STORE.target, InMemoryStore):
         configure_store(InMemoryStore())
