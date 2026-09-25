@@ -9,8 +9,15 @@ under `scripts/deploy/`; Terraform must not absorb those procedures.
 
 Terraform manages only the resources declared in this directory: the GitHub
 AWS deploy role and policies, the AWS EU synthetic-monitoring rule/target,
-DLQ/policies/alarms/topic, and the existing GCP GitHub workload identity pool
-provider allowlist.
+DLQ/policies/alarms/topic, the existing GCP GitHub workload identity pool
+provider allowlist, and the control load balancer's Certificate Manager
+certificates with their DNS authorizations and `_acme-challenge` records
+(`control_lb_certificates.tf`), plus the deploy account's Certificate Manager
+role that lets this root manage them.
+
+The Token Exchange certificate domains are listed in
+`token_exchange_certificate_domains.json`; see "Control load balancer
+certificates" below.
 
 The following remain outside Terraform:
 
@@ -77,9 +84,13 @@ terraform -chdir=infra init -backend=false
 terraform -chdir=infra validate
 ```
 
-## Existing-resource imports
+## Existing-resource imports (the 2026 adoption apply)
 
-Every declared resource already exists. `imports.tf` uses Terraform's
+This section describes the first apply, which adopted resources that predated
+this root. It does not describe later changes, such as the certificates below,
+which create new resources.
+
+At adoption, every declared resource already existed. `imports.tf` uses Terraform's
 declarative import blocks, so the first state-writing apply adopts those live
 objects instead of creating them. No separate `terraform import` commands are
 required. Keep the import blocks until the first apply has completed and the
@@ -94,3 +105,35 @@ configuration; do not change the cloud to fit it.
 The apply workflow itself needs GCP WIF before it can update the WIF allowlist.
 That chicken-and-egg bootstrap is resolved by an operator adding
 `infra-apply.yml` once by hand (the operator command is already scripted).
+
+## Control load balancer certificates
+
+`control_lb_certificates.tf` issues one Certificate Manager certificate per
+domain for `trusted-router-control-https-proxy`: `trustedrouter.com`,
+`allyrouter.com`, `uptimerouter.com`, and every domain in
+`token_exchange_certificate_domains.json`. Each certificate covers the domain
+and its wildcard and is authorized by a CNAME at `_acme-challenge.<domain>`,
+in the domain's Cloud DNS zone or, for the two alias brands, in Route 53. The
+CNAME must stay for every renewal.
+
+Adding a Token Exchange domain:
+
+1. Create its Cloud DNS zone with `sites/token-exchange/deploy.py inventory`
+   and `dns`. These commands do not change the registrar.
+2. At the registrar, set the domain's name servers to the zone's, listed in
+   `dns-manifest.json`, and check that a public resolver returns them
+   (`dig +short NS <domain> @8.8.8.8`). Certificate Manager only issues once
+   the `_acme-challenge` CNAME resolves publicly.
+3. Add the domain to `token_exchange_certificate_domains.json` in a pull
+   request. `sites/token-exchange/test_exchange.py`, which runs when either
+   that list or `sites/token-exchange/` changes, fails while a domain in
+   `markets.json` is missing from the list.
+4. After the merge, check that the certificate reaches `ACTIVE`.
+
+Retiring a domain is a deliberate edit to that list, not a side effect of
+removing a market from `markets.json`. The certificate is destroyed before its
+CNAME, and the CNAME is left in place if the certificate cannot be destroyed.
+The deploy account's `roles/certificatemanager.editor` does not include
+deleting certificates or DNS authorizations, so an owner performs that
+deletion. A certificate that a certificate map entry still references cannot
+be deleted.

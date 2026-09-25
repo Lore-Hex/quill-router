@@ -3,11 +3,13 @@ on:
   pull_request:
     paths:
       - 'sites/token-exchange/**'
+      - 'infra/token_exchange_certificate_domains.json'
       - '.github/workflows/token-exchange-sites.yml'
   push:
     branches: [main]
     paths:
       - 'sites/token-exchange/**'
+      - 'infra/token_exchange_certificate_domains.json'
       - '.github/workflows/token-exchange-sites.yml'
 permissions:
   contents: read
