@@ -688,6 +688,7 @@ class _FakeTransaction:
         and serialize via abort-retry), evaluates the WHERE predicate, and
         conditionally buffers the SET. Returns the modified-row count.
         """
+        _validate_json_arguments(sql)
         self.db.transaction_execute_update_calls += 1
         if (
             self._spend_open_pending_commit_timestamp_written
@@ -1657,44 +1658,11 @@ class _FakeTransaction:
             if rec is None or rec.get("settled"):
                 return 0
             settled_payload = p["payload"]
-            if "payload=TO_JSON_STRING(JSON_SET(PARSE_JSON(@payload), " in sql:
-                # Interpret only the supported SQL merge expressions. Do not
-                # import the production field list: missing/replaced SQL must
-                # change the result and be visible to the interleaving tests.
-                merged_payload = json.loads(settled_payload)
-                current_payload = json.loads(rec.get("payload") or "{}")
-                assignments = sql.split("JSON_SET(PARSE_JSON(@payload), ", 1)[1].split(
-                    ")), finalization_outcome=", 1,
+            if "payload=TO_JSON_STRING(" in sql:
+                expression = sql.split("payload=", 1)[1].split(
+                    ", finalization_outcome=", 1,
                 )[0]
-                arguments = _split_spanner_sql_list(assignments)
-                assert len(arguments) % 2 == 0
-                for path, expression in zip(arguments[::2], arguments[1::2], strict=True):
-                    target = re.fullmatch(r"'\$\.(\w+)'", path)
-                    merge = re.fullmatch(
-                        r"IF\((\w+) IS NULL,JSON_QUERY\(PARSE_JSON\((payload|@payload)\),"
-                        r"'\$\.(\w+)'\),TO_JSON\((.*)\)\)", expression,
-                    )
-                    assert target is not None and merge is not None, expression
-                    column, source, fallback, typed_expression = merge.groups()
-                    if rec.get(column) is None:
-                        fallback_payload = current_payload if source == "payload" else json.loads(p["payload"])
-                        value = fallback_payload.get(fallback)
-                    elif re.fullmatch(r"\w+", typed_expression):
-                        value = rec.get(typed_expression)
-                    else:
-                        timestamp = re.fullmatch(
-                            r"FORMAT_TIMESTAMP\(IF\(MOD\(UNIX_MICROS\((\w+)\),1000000\)=0,"
-                            r"'%Y-%m-%dT%H:%M:%SZ','%Y-%m-%dT%H:%M:%E6SZ'\),(\w+),'UTC'\)",
-                            typed_expression,
-                        )
-                        assert timestamp is not None, typed_expression
-                        precision_column, timestamp_column = timestamp.groups()
-                        value = rec[timestamp_column]
-                        if value is not None:
-                            precision = "microseconds" if rec[precision_column].microsecond else "seconds"
-                            value = value.astimezone(dt.UTC).isoformat(timespec=precision).replace("+00:00", "Z")
-                    merged_payload[target[1]] = value
-                settled_payload = json.dumps(merged_payload)
+                settled_payload = _evaluate_authorization_json(expression, rec, p)
             new = dict(
                 rec,
                 settled=True,
@@ -2243,6 +2211,153 @@ _SPEND_LEASE_PRIMARY_KEYS = {
     "spend_lease_scope_arbitration": ("scope_salt", "idempotency_scope"),
     "spend_lease_open": ("lease_id",),
 }
+
+
+def _unquote_sql(source: str) -> str:
+    # Preserve offsets while hiding string contents from the syntax checks.
+    return re.sub(r"'(?:[^']|'')*'", lambda match: " " * len(match[0]), source)
+
+
+def _validate_json_arguments(sql: str) -> None:
+    """Validate even unevaluated branches, as Spanner does before reading rows."""
+    masked = _unquote_sql(sql)
+    for match in re.finditer(r"\b(JSON_SET|JSON_REMOVE|JSON_QUERY|JSON_STRIP_NULLS)\s*\(",
+                             masked, re.IGNORECASE):
+        depth = 1
+        end = match.end()
+        while depth and end < len(masked):
+            depth += (masked[end] == "(") - (masked[end] == ")")
+            end += 1
+        assert depth == 0, sql
+        arguments = _split_spanner_sql_list(sql[match.end():end - 1])
+        name = match[1].upper()
+        positional = []
+        for argument in arguments:
+            option = re.fullmatch(r"create_if_missing\s*=>\s*(.*)", argument, re.IGNORECASE)
+            if option and not re.fullmatch(r"true|false|null|@\w+", option[1], re.IGNORECASE):
+                raise ValueError(
+                    "INVALID_ARGUMENT: Argument 'create_if_missing' to JSON_SET "
+                    "must be a literal or query parameter"
+                )
+            if not re.match(r"\w+\s*=>", argument):
+                positional.append(argument)
+        paths = range(1, len(positional), 2) if name == "JSON_SET" else range(1, len(positional))
+        for index in paths:
+            path = _unquote_sql(positional[index])
+            path = re.sub(r"@\w+|\b\w+\s*(?=\()", "", path)
+            identifiers = re.findall(r"\b[A-Za-z_]\w*\b", path)
+            if any(word.upper() not in {"NULL", "TRUE", "FALSE", "IS", "NOT", "AND", "OR"}
+                   for word in identifiers):
+                raise ValueError(
+                    f"INVALID_ARGUMENT: Argument {index + 1} to {name} "
+                    "must be a constant expression"
+                )
+
+
+@dataclass(frozen=True)
+class _JsonValue:
+    # Python None alone represents SQL NULL; this wrapper preserves JSON null.
+    value: Any
+
+
+def _evaluate_authorization_json(
+    expression: str, rec: dict[str, Any], params: dict[str, Any],
+) -> Any:
+    """Interpret the emitted expression, independently of the heartbeat list."""
+    _validate_json_arguments(expression)
+    return _evaluate_authorization_expression(expression, rec, params)
+
+
+def _evaluate_authorization_expression(
+    expression: str, rec: dict[str, Any], params: dict[str, Any],
+) -> Any:
+    expression = expression.strip()
+
+    def evaluate(source: str) -> Any:
+        return _evaluate_authorization_expression(source, rec, params)
+
+    if re.fullmatch(r"'(?:[^']|'')*'", expression):
+        return expression[1:-1].replace("''", "'")
+    if expression.upper() in {"NULL", "TRUE", "FALSE"}:
+        return {"NULL": None, "TRUE": True, "FALSE": False}[expression.upper()]
+    if re.fullmatch(r"@\w+", expression):
+        return params[expression[1:]]
+    if re.fullmatch(r"-?\d+", expression):
+        return int(expression)
+    if re.fullmatch(r"\w+", expression):
+        return rec.get(expression)
+    # Only top-level operators split expressions; quoted JSON and nested calls
+    # can contain the same characters.
+    masked = _unquote_sql(expression)
+    depth = 0
+    for index, char in enumerate(masked):
+        depth += (char == "(") - (char == ")")
+        if depth == 0 and char in "=-":
+            left, right = evaluate(expression[:index]), evaluate(expression[index + 1:])
+            if left is None or right is None:
+                return None
+            return left == right if char == "=" else left - right
+    null_test = re.fullmatch(r"(.*) IS (NOT )?NULL", expression, re.IGNORECASE)
+    if null_test:
+        is_null = evaluate(null_test[1]) is None
+        return not is_null if null_test[2] else is_null
+    call = re.fullmatch(r"(\w+)\((.*)\)", expression, re.DOTALL)
+    assert call is not None, expression
+    name = call[1].upper()
+    arguments = _split_spanner_sql_list(call[2])
+    if name == "IF":
+        condition, yes, no = arguments
+        return evaluate(yes if evaluate(condition) else no)
+    if name == "COALESCE":
+        for argument in arguments:
+            value = evaluate(argument)
+            if value is not None:
+                return value
+        return None
+    values = [evaluate(argument) for argument in arguments]
+    value = values[0]
+    if name == "PARSE_JSON":
+        return None if value is None else _JsonValue(json.loads(value))
+    if name == "TO_JSON":
+        return _JsonValue(value)
+    if name == "TO_JSON_STRING":
+        return json.dumps(value.value if isinstance(value, _JsonValue) else value,
+                          sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    if name == "JSON_TYPE":
+        if value is None:
+            return None
+        assert isinstance(value, _JsonValue), value
+        return {type(None): "null", bool: "boolean", int: "number", float: "number",
+                str: "string", dict: "object", list: "array"}[type(value.value)]
+    if name == "JSON_QUERY":
+        if value is None or values[1] is None:
+            return None
+        assert isinstance(value, _JsonValue), value
+        path = re.fullmatch(r"\$\.(\w+)", values[1])
+        assert path is not None, values[1]
+        if not isinstance(value.value, dict) or path[1] not in value.value:
+            return None
+        return _JsonValue(value.value[path[1]])
+    if any(item is None for item in values):
+        return None
+    if name == "CONCAT":
+        return "".join(values)
+    if name == "SUBSTR":
+        start = values[1]
+        offset = max(len(value) + start, 0) if start < 0 else max(start - 1, 0)
+        return value[offset:offset + values[2]] if len(values) == 3 else value[offset:]
+    if name == "LENGTH":
+        return len(value)
+    if name == "UNIX_MICROS":
+        delta = _utc_datetime(value) - dt.datetime(1970, 1, 1, tzinfo=dt.UTC)
+        return (delta.days * 86400 + delta.seconds) * 1_000_000 + delta.microseconds
+    if name == "MOD":
+        return value % values[1]
+    if name == "FORMAT_TIMESTAMP":
+        assert values[2] == "UTC", values
+        timestamp = _utc_datetime(values[1]).astimezone(dt.UTC)
+        return timestamp.strftime(value.replace("%E6S", "%S.%f"))
+    raise AssertionError(f"unknown authorization SQL expression: {expression}")
 
 
 def _split_spanner_sql_list(source: str) -> list[str]:
@@ -3001,6 +3116,7 @@ def _execute_sql(
     sql: str,
     params: dict[str, Any],
 ) -> list[list[str]]:
+    _validate_json_arguments(sql)
     kind = params.get("kind", "")
 
     def _typed_rows(table: str) -> list[dict[str, Any]]:

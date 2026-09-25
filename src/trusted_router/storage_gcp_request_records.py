@@ -276,16 +276,31 @@ def _current_heartbeat_json_sql(column: str) -> str:
             f"'%Y-%m-%dT%H:%M:%SZ','%Y-%m-%dT%H:%M:%E6SZ'),{column},'UTC')"
         )
     return (
-        f"'$.{column}', IF({column} IS NULL,"
+        f"IF({column} IS NULL,"
         f"JSON_QUERY(PARSE_JSON(payload),'$.{column}'),TO_JSON({value}))"
     )
 
 
 # Read the live heartbeat facts in the UPDATE itself: no extra RPC, and a
 # concurrent heartbeat conflicts with this write and is re-evaluated on retry.
-_SETTLED_PAYLOAD_SQL = "TO_JSON_STRING(JSON_SET(PARSE_JSON(@payload), " + ", ".join(
-    _current_heartbeat_json_sql(column) for column in _AUTHORIZATION_HEARTBEAT_FIELDS
-) + "))"
+def _settled_payload_sql() -> str:
+    # Spanner requires constant JSON paths and literal/parameter create_if_missing,
+    # so JSON_SET/JSON_REMOVE cannot express per-row key presence. Append only
+    # non-null members as strings, then re-validate and canonicalize with PARSE_JSON.
+    members = []
+    for column in _AUTHORIZATION_HEARTBEAT_FIELDS:
+        value = _current_heartbeat_json_sql(column)
+        members.append(
+            f"IF(COALESCE(JSON_TYPE({value}),'null')='null','',"
+            f"CONCAT(',\"{column}\":',TO_JSON_STRING({value})))"
+        )
+    return (
+        "TO_JSON_STRING(PARSE_JSON(CONCAT(SUBSTR(@payload,1,LENGTH(@payload)-1),"
+        + ",".join(members) + ",'}')))"
+    )
+
+
+_SETTLED_PAYLOAD_SQL = _settled_payload_sql()
 
 
 def mark_gateway_authorization_settled(
@@ -298,6 +313,20 @@ def mark_gateway_authorization_settled(
     payload = json.loads(json_body(authorization))
     for column in _AUTHORIZATION_HEARTBEAT_FIELDS:
         payload.pop(column, None)
+    serialized_payload = json_body(payload)
+    payload_error = "settled @payload must be a nonempty JSON object without heartbeat keys"
+    try:
+        payload_object = json.loads(serialized_payload)
+    except json.JSONDecodeError as exc:
+        raise ValueError(payload_error) from exc
+    if (
+        not serialized_payload.startswith("{")
+        or not serialized_payload.endswith("}")
+        or not isinstance(payload_object, dict)
+        or not payload_object
+        or any(column in payload_object for column in _AUTHORIZATION_HEARTBEAT_FIELDS)
+    ):
+        raise ValueError(payload_error)
     return transaction.execute_update(
         f"UPDATE tr_gateway_authorization SET settled=true, payload={_SETTLED_PAYLOAD_SQL}, "  # noqa: S608
         "finalization_outcome=@finalization_outcome, "
@@ -306,7 +335,7 @@ def mark_gateway_authorization_settled(
         "WHERE authorization_id=@authorization_id AND settled=false",
         params={
             "authorization_id": authorization.id,
-            "payload": json_body(payload),
+            "payload": serialized_payload,
             "finalization_outcome": typed["finalization_outcome"],
             "finalized_cost_microdollars": typed["finalized_cost_microdollars"],
             "gateway_request_id": typed["gateway_request_id"],
