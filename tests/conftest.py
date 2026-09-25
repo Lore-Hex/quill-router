@@ -18,6 +18,22 @@ from trusted_router.storage import STORE, InMemoryStore, configure_store
 
 
 @pytest.fixture(autouse=True)
+def lock_order_guard(request: pytest.FixtureRequest):
+    """Fail any test whose transactions lock a credit row after the key row.
+
+    Universal on purpose: the order is what keeps the billing plane out of the
+    deadlock that started this project, and an opt-in helper only protects the
+    transactions someone remembered to write an assertion for.
+    """
+    from tests.fakes import lock_order
+
+    lock_order.install()
+    lock_order.recorder.reset()
+    yield
+    lock_order.recorder.check(request.node.nodeid)
+
+
+@pytest.fixture(autouse=True)
 def reset_store() -> None:
     if not isinstance(STORE.target, InMemoryStore):
         configure_store(InMemoryStore())
