@@ -106,3 +106,34 @@ def test_image_runs_the_draining_server() -> None:
     assert 'CMD ["/app/.venv/bin/python", "-m", "trusted_router.serve"]' in dockerfile
     assert "uvicorn trusted_router.main:app" not in dockerfile.replace("\n", " ")
     assert (ROOT / "src/trusted_router/serve.py").is_file()
+
+
+def test_drain_lines_reach_the_package_logger_when_run_as_main(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The image runs `python -m trusted_router.serve`, so the module executes
+    # as "__main__". Its records must still carry the package logger name or
+    # the console handler installed on "trusted_router" never sees them.
+    import runpy
+
+    import uvicorn
+
+    clock = [500.0]
+    monkeypatch.setattr("time.monotonic", lambda: clock[0])
+
+    def fake_run(self: uvicorn.Server, sockets: object = None) -> None:
+        self.handle_exit(signal.SIGTERM, None)
+        clock[0] += 60.0
+        asyncio.run(self.on_tick(1))
+
+    monkeypatch.setattr(uvicorn.Server, "run", fake_run)
+    monkeypatch.setenv("PORT", "18099")
+    with caplog.at_level(logging.INFO), pytest.raises(SystemExit) as exit_info:
+        runpy.run_module("trusted_router.serve", run_name="__main__", alter_sys=True)
+    assert exit_info.value.code == 0
+    names = {r.name for r in caplog.records if "serve.sigterm_drain" in r.getMessage()}
+    assert names == {"trusted_router.serve"}, names
+    messages = [r.getMessage() for r in caplog.records if r.name == "trusted_router.serve"]
+    assert any("serve.sigterm_drain_started" in m for m in messages)
+    assert any("serve.sigterm_drain_complete" in m for m in messages)
+
