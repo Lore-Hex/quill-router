@@ -9,6 +9,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+import anyio
 import pytest
 
 from clickhouse.ingest_operational_outbox import OperationalOutboxRow, drain_once
@@ -19,7 +20,9 @@ from tests.test_settle_outbox_drain import (
     _seed_credit,
     _settle_json,
     _typed_authorization,
+    _typed_credit,
 )
+from trusted_router import post_commit
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.routes.internal import gateway
@@ -27,6 +30,15 @@ from trusted_router.storage import configure_store
 from trusted_router.storage_gcp_analytics_outbox import SpannerAnalyticsOutbox
 from trusted_router.storage_gcp_codec import json_body
 from trusted_router.storage_models import ProviderBenchmarkSample
+
+
+@pytest.fixture(autouse=True)
+def optional_executor(monkeypatch: pytest.MonkeyPatch) -> Any:
+    executor = post_commit.PostCommitExecutor()
+    monkeypatch.setattr(post_commit, "POST_COMMIT", executor)
+    yield executor
+    executor.executor.shutdown(wait=True)
+    assert executor.in_flight == 0
 
 
 @pytest.fixture
@@ -100,7 +112,7 @@ def _counts(db: Any) -> tuple[int, int, int, int]:
 
 
 def test_reply_operation_count_and_exact_background_payloads(
-    scenario: Any, monkeypatch: pytest.MonkeyPatch,
+    scenario: Any, monkeypatch: pytest.MonkeyPatch, optional_executor: Any,
 ) -> None:
     store, db, bt, auth, app = scenario
     start = _counts(db)
@@ -124,6 +136,7 @@ def test_reply_operation_count_and_exact_background_payloads(
 
     response = asyncio.run(_request(app, _settle_json(auth.id), on_reply))
     assert response["data"]["disposition"] == "finalized"
+    optional_executor.executor.shutdown(wait=True)
     # S1-S24 (S9's re-read is reused since #1331) plus S27; no T4 or
     # Bigtable calls before the response body.
     assert reply_counts == [(3, 4, 13, 2)]
@@ -157,6 +170,7 @@ def test_reply_operation_count_and_exact_background_payloads(
 @pytest.mark.parametrize("fail", [False, True])
 def test_stalled_or_failing_writes_do_not_hold_the_reply(
     scenario: Any, monkeypatch: pytest.MonkeyPatch, target: str, fail: bool,
+    optional_executor: Any,
 ) -> None:
     store, db, bt, auth, app = scenario
     # Exercise the full HTTP middleware stack for the latency guarantee.
@@ -186,11 +200,13 @@ def test_stalled_or_failing_writes_do_not_hold_the_reply(
         try:
             assert replied.wait(10), "settle reply waited for optional write"
             assert entered.wait(10)
-            assert not future.done(), "background write must still be stalled"
+            assert optional_executor.in_flight == 1, "optional write must still be stalled"
+            assert future.result(timeout=10)["data"]["disposition"] == "finalized"
             assert len(db.operational_analytics_outbox) == (0 if target.startswith("refund") else 1)
         finally:
             release.set()
         response = future.result(timeout=10)
+    optional_executor.executor.shutdown(wait=True)
     assert response["data"]["disposition"] == "finalized"
     assert db.reservations[auth.credit_reservation_id]["settled"] is True
 
@@ -238,6 +254,7 @@ def test_restart_after_reply_repairs_activity_and_preserves_durable_broadcast(sc
 
 def test_unexpected_background_error_does_not_abort_later_tasks(
     scenario: Any, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+    optional_executor: Any,
 ) -> None:
     store, db, bt, auth, app = scenario
     later: list[str] = []
@@ -249,5 +266,170 @@ def test_unexpected_background_error_does_not_abort_later_tasks(
     monkeypatch.setattr(gateway, "record_successful_api_call_safely", lambda *a, **kw: later.append("ran"))
     response = asyncio.run(_request(app, _settle_json(auth.id), lambda: None))
     assert response["data"]["disposition"] == "finalized"
+    optional_executor.executor.shutdown(wait=True)
     assert later == ["ran"]
     assert "settle_post_commit_mirrors_failed" in caplog.text
+
+
+@pytest.mark.parametrize("refund", [False, True])
+def test_saturation_is_bounded_and_does_not_borrow_authorize_tokens(
+    scenario: Any, monkeypatch: pytest.MonkeyPatch, optional_executor: Any, refund: bool,
+) -> None:
+    store, db, bt, auth, app = scenario
+    release = threading.Event()
+    entered = threading.Barrier(post_commit.WORKERS + 1)
+    write_lock = threading.Lock()
+    started: list[str] = []
+    # Block each of the optional RPC stages. The first four chains remain
+    # stalled throughout admission; every queued stage also sees the gate.
+    from trusted_router import storage_gcp_generations
+
+    def stall(original: Any) -> Any:
+        def blocked(*args: Any, **kwargs: Any) -> Any:
+            with write_lock:
+                started.append(threading.current_thread().name)
+                first_workers = len(started) <= post_commit.WORKERS
+            if first_workers:
+                entered.wait(timeout=30)
+            assert release.wait(30)
+            # The in-memory transaction fake isn't a concurrent database.
+            with write_lock:
+                return original(*args, **kwargs)
+        return blocked
+
+    for name in ("_bt_write_generation", "_bt_write_provider_benchmark"):
+        monkeypatch.setattr(storage_gcp_generations, name, stall(getattr(storage_gcp_generations, name)))
+    monkeypatch.setattr(SpannerAnalyticsOutbox, "enqueue", stall(SpannerAnalyticsOutbox.enqueue))
+    count = post_commit.MAX_IN_FLIGHT + 16
+    _typed_credit(db, auth.workspace_id)["total_credits"] = 10**12
+    key = _make_key(store, auth.workspace_id, limit=None)
+    authorizations = [auth] + [
+        _typed_authorization(store, workspace_id=auth.workspace_id, key_hash=key.hash)
+        for _ in range(count - 1)
+    ]
+    replies: list[str] = []
+    submitted_payloads: list[Any] = []
+    original_submit = optional_executor.submit
+
+    def spy(task: Any, *args: Any, **kwargs: Any) -> None:
+        submitted_payloads.append(args[0])
+        original_submit(task, *args, **kwargs)
+
+    monkeypatch.setattr(optional_executor, "submit", spy)
+
+    async def drive() -> None:
+        limiter = anyio.to_thread.current_default_thread_limiter()
+        assert limiter.borrowed_tokens == 0
+        tasks = []
+        try:
+            # Replies, rather than ASGI completion, pace the next request:
+            # this reproduces Cloud Run releasing its concurrency slots.
+            for authorization in authorizations:
+                replied = asyncio.Event()
+
+                def on_reply(
+                    authorization_id: str = authorization.id, event: asyncio.Event = replied,
+                ) -> None:
+                    replies.append(authorization_id)
+                    event.set()
+
+                body = _settle_json(authorization.id)
+                if refund:
+                    body.update(status="error", error_status=503, error_type="provider_error")
+                tasks.append(asyncio.create_task(_request(app, body, on_reply, refund=refund)))
+                await asyncio.wait_for(replied.wait(), timeout=5)
+                await asyncio.sleep(0)
+                assert optional_executor.in_flight <= post_commit.MAX_IN_FLIGHT
+            assert len(replies) == count
+            # Let unrelated, unchanged response tasks finish before measuring
+            # the shared limiter. Optional RPCs remain blocked by release.
+            responses = await asyncio.wait_for(asyncio.gather(*tasks), timeout=5)
+            assert all(r["data"]["disposition"] == "finalized" for r in responses)
+            assert limiter.borrowed_tokens == 0
+            # Even if optional work consumes all 40 AnyIO tokens, the
+            # authorize probe must start BEFORE we release the stalled RPCs.
+            authorize_started = threading.Event()
+            probe = asyncio.create_task(anyio.to_thread.run_sync(authorize_started.set))
+            tasks.append(probe)
+            await asyncio.wait_for(asyncio.shield(probe), timeout=1)
+            assert authorize_started.is_set()
+            assert limiter.borrowed_tokens == 0
+            assert optional_executor.in_flight == post_commit.MAX_IN_FLIGHT
+            assert sum(optional_executor.drops.values()) == 16
+        finally:
+            # Also clean up mutations that deliberately use the shared pool.
+            release.set()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Main test thread participates in the barrier without using AnyIO.
+    with ThreadPoolExecutor(max_workers=1) as driver:
+        future = driver.submit(asyncio.run, drive())
+        try:
+            entered.wait(timeout=30)
+            future.result(timeout=30)
+        finally:
+            release.set()
+    optional_executor.executor.shutdown(wait=True)
+    assert optional_executor.in_flight == 0
+    assert len(started) == post_commit.MAX_IN_FLIGHT * (2 if refund else 3)
+    assert all(name.startswith("settle-post-commit") for name in started)
+    admitted = submitted_payloads[:post_commit.MAX_IN_FLIGHT]
+    expected = [
+        payload if refund else ProviderBenchmarkSample.from_generation(payload)
+        for payload in admitted
+    ]
+    assert len(db.analytics_outbox) == len(expected) == post_commit.MAX_IN_FLIGHT
+    assert {row["event_id"]: json.loads(row["payload"]) for row in db.analytics_outbox} == {
+        sample.id: json.loads(json_body(sample)) for sample in expected
+    }
+    assert len(bt.committed) == post_commit.MAX_IN_FLIGHT * (6 if refund else 9)
+    expected_payloads = {sample.id: json.loads(json_body(sample)) for sample in expected}
+    if not refund:
+        expected_payloads.update({g.id: json.loads(json_body(g)) for g in admitted})
+    for row in bt.rows.values():
+        for columns in row.values():
+            payload = json.loads(columns[b"body"][0].value)
+            assert payload == expected_payloads[payload["id"]]
+
+
+def test_full_executor_submission_does_not_wait_for_a_slot(
+    optional_executor: Any, caplog: pytest.LogCaptureFixture,
+) -> None:
+    release = threading.Event()
+
+    def stalled() -> None:
+        assert release.wait(30)
+
+    try:
+        for _ in range(post_commit.MAX_IN_FLIGHT):
+            optional_executor.submit(stalled)
+        with ThreadPoolExecutor(max_workers=1) as reply_thread:
+            future = reply_thread.submit(optional_executor.submit, stalled)
+            try:
+                future.result(timeout=1)
+                for _ in range(10):
+                    optional_executor.submit(stalled)
+                assert optional_executor.drops == {"stalled": 11}
+                assert caplog.text.count("post_commit_dropped kind=stalled") == 1
+            finally:
+                release.set()
+    finally:
+        release.set()
+
+
+def test_executor_releases_slots_on_task_and_submission_failure(
+    optional_executor: Any, caplog: pytest.LogCaptureFixture,
+) -> None:
+    def fail() -> None:
+        raise RuntimeError("unexpected task failure")
+
+    optional_executor.submit(fail)
+    optional_executor.executor.shutdown(wait=True)
+    assert optional_executor.in_flight == 0
+    # A submission rejected during shutdown must also return its reserved slot.
+    optional_executor.submit(fail)
+    assert optional_executor.in_flight == 0
+    assert optional_executor.drops == {"fail": 1}
+    assert "post_commit_submission_failed kind=fail" in caplog.text
+    assert all(optional_executor._slots.acquire(blocking=False) for _ in range(post_commit.MAX_IN_FLIGHT))
+    assert not optional_executor._slots.acquire(blocking=False)

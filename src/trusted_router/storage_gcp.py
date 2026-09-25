@@ -4907,8 +4907,8 @@ class SpannerBigtableStore:
         The billing transaction atomically commits the bounded generation row
         and ClickHouse delivery intent. A false ``activity_indexed`` leaves the
         durable settle outbox pending for a no-double-charge repair replay.
-        ``defer_post_commit`` registers optional mirrors with the HTTP response's
-        BackgroundTasks after that commit; it must not execute the task inline.
+        ``defer_post_commit`` registers optional mirrors for bounded executor
+        submission after the HTTP reply; it must not execute the task inline.
         Without it, direct callers and repair workers retain synchronous writes.
         """
         from trusted_router.storage_gcp_authorize import SettleOutcome, typed_finalize_atomic
@@ -5061,7 +5061,7 @@ class SpannerBigtableStore:
                     activity_indexed = self.generation_store.index_after_commit(generation)
                 elif defer_post_commit is not None:
                     # S24 has committed generation + S20. The HTTP route passes
-                    # BackgroundTasks.add_task; workers/direct callers retain
+                    # a bounded post-response submitter; workers/direct callers retain
                     # synchronous behavior. Freeze the payload for deferred use.
                     defer_post_commit(
                         self.generation_store.mirror_after_commit_safely,

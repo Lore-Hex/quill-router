@@ -100,6 +100,7 @@ from trusted_router.partner_billing import (
 from trusted_router.polyphemus import LEGACY_SELECTOR_FEE_MICRODOLLARS
 from trusted_router.polyphemus import MODEL_ID as POLYPHEMUS_MODEL_ID
 from trusted_router.polyphemus import SELECT_ROUTE_TYPE as POLYPHEMUS_SELECT_ROUTE_TYPE
+from trusted_router.post_commit import defer_post_commit
 from trusted_router.pricing import (
     SIGNED_RECEIPT_TOTAL_FEE_BASIS_POINTS,
     signed_receipt_price_microdollars,
@@ -2488,11 +2489,14 @@ def register(router: APIRouter) -> None:
     #
     # These share AnyIO's default worker pool (40 tokens) with FastAPI's other
     # sync dependencies — deliberately, NOT a dedicated CapacityLimiter. Cloud
-    # Run runs this service at --concurrency=2 (rollout.sh), so at most ~2
+    # Run defaults to concurrency 8 (scripts/deploy/_lib.sh; also explicitly
+    # set in scripts/deploy/internal_surface.sh), so at most ~8 request
     # offloads are ever in flight per instance (far under 40); load scales out
     # across instances, not up per-instance, and prod inference never touches
     # this service (it goes through the enclave). Give gateway storage its own
     # limiter only if TR_CLOUD_RUN_CONCURRENCY is raised toward the pool size.
+    # Optional post-reply mirrors use their own bounded executor because
+    # completed replies no longer consume Cloud Run request slots.
     @router.post("/internal/gateway/validate")
     async def gateway_validate(
         request: Request,
@@ -4273,7 +4277,8 @@ def _settle_gateway_authorization(
                         app_markup_payout=app_markup_payout,
                         custom_model_markup_payout=custom_model_markup_payout,
                         defer_post_commit=(
-                            background_tasks.add_task if background_tasks is not None else None
+                            functools.partial(defer_post_commit, background_tasks)
+                            if background_tasks is not None else None
                         ),
                         # Resolve the durable intent in the finalize commit
                         # itself (docs/design/durable-settle-outbox.md §7).
@@ -4557,8 +4562,8 @@ def _settle_gateway_authorization(
                 workspace_id=authorization.workspace_id,
             )
             if background_tasks is not None:
-                background_tasks.add_task(
-                    _record_refund_benchmark_safely, benchmark, authorization.id,
+                defer_post_commit(
+                    background_tasks, _record_refund_benchmark_safely, benchmark, authorization.id,
                 )
             else:
                 _record_refund_benchmark_safely(benchmark, authorization.id)
