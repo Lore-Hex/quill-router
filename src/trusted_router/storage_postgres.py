@@ -7169,14 +7169,60 @@ class PostgresStore:
         outbox.enqueue_spend_lease_shadow(event_id, payload)
 
     def record_provider_benchmark(self, sample: ProviderBenchmarkSample) -> None:
+        # indexed_at = created_at lets provider_route_benchmark_samples bound
+        # its read with tr_entities_recent (kind, indexed_at, id). Rows written
+        # before this column was set are filled by
+        # backfill_provider_benchmark_indexed_at_page.
         self._run_transaction(
-            lambda conn: self._write_entity_tx(
+            lambda conn: self._write_indexed_entity_tx(
                 conn,
                 "provider_benchmark",
                 sample.id,
                 sample,
+                indexed_at=sample.created_at,
             )
         )
+
+    def backfill_provider_benchmark_indexed_at_page(
+        self,
+        *,
+        after: str | None = None,
+        limit: int = 500,
+    ) -> list[str]:
+        """Set indexed_at on one bounded page of legacy provider_benchmark rows.
+
+        Returns the ids examined in this page, in id order; the last one is
+        the cursor for the next page. indexed_at is set to created_at parsed by
+        _parse_timestamp, the parser record_provider_benchmark uses: no offset
+        is read as UTC, and digits beyond microseconds are dropped. A row whose
+        created_at does not parse or has no UTC representation keeps a NULL
+        indexed_at and is still returned, so the cursor moves past it.
+        """
+
+        bounded = max(1, min(limit, 1_000))
+
+        def operation(conn: Any) -> list[str]:
+            rows = conn.execute(
+                "SELECT id, body ->> 'created_at' FROM tr_entities "
+                "WHERE kind = 'provider_benchmark' AND id > %s AND indexed_at IS NULL "
+                "ORDER BY id LIMIT %s FOR UPDATE",
+                (after or "", bounded),
+            ).fetchall()
+            examined: list[str] = []
+            for entity_id, created_at in rows:
+                examined.append(str(entity_id))
+                try:
+                    stamp = _parse_timestamp(str(created_at))
+                except (ValueError, OverflowError):
+                    continue
+                conn.execute(
+                    "UPDATE tr_entities SET indexed_at = %s "
+                    "WHERE kind = 'provider_benchmark' AND id = %s AND indexed_at IS NULL",
+                    (stamp, str(entity_id)),
+                )
+            return examined
+
+        return self._run_transaction(operation)
 
     def provider_benchmark_samples(
         self,
@@ -7229,17 +7275,22 @@ class PostgresStore:
         limit: int,
     ) -> list[ProviderBenchmarkSample]:
         def list_samples(conn: Any) -> list[ProviderBenchmarkSample]:
+            # The window is kind plus a range on indexed_at (= created_at), the
+            # leading columns of tr_entities_recent (kind, indexed_at, id); no
+            # JSON timestamp is parsed. Rows whose indexed_at is NULL (written
+            # before record_provider_benchmark set it) are outside the window
+            # until provider_benchmark_backfill_cli fills them.
             rows = conn.execute(
                 "WITH ranked AS ("
-                "SELECT body, id, ROW_NUMBER() OVER ("
+                "SELECT body, id, indexed_at, ROW_NUMBER() OVER ("
                 "PARTITION BY body ->> 'provider', body ->> 'model' "
-                "ORDER BY (body ->> 'created_at')::timestamptz DESC, id DESC"
+                "ORDER BY indexed_at DESC, id DESC"
                 ") AS route_rank FROM tr_entities "
                 "WHERE kind = 'provider_benchmark' "
-                "AND body ->> 'source' = 'synthetic' "
-                "AND (body ->> 'created_at')::timestamptz >= %s::timestamptz"
+                "AND indexed_at >= %s::timestamptz "
+                "AND body ->> 'source' = 'synthetic'"
                 ") SELECT body FROM ranked WHERE route_rank <= %s "
-                "ORDER BY (body ->> 'created_at')::timestamptz DESC, id DESC "
+                "ORDER BY indexed_at DESC, id DESC "
                 "LIMIT %s",
                 (cutoff, max(1, per_route_limit), max(1, limit)),
             ).fetchall()

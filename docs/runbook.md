@@ -1580,3 +1580,29 @@ python -m trusted_router.spend_lease_reconcile_cli requeue-dead LEASE_ID
 Omit `LEASE_ID` to requeue all dead rows. A quarantine alert requires comparing
 the local allocation proof with the strong typed authorization before any
 operator action; quarantined allocations remain open and can retain escrow.
+
+## <a id="route-health-postgres"></a>Route-health reads on Postgres (AWS, Azure)
+
+The remediator's route-quarantine detector reads recent synthetic benchmark
+samples through `PostgresStore.provider_route_benchmark_samples`. Its window is
+`kind` plus a range on `indexed_at`, the leading columns of `tr_entities_recent`
+(kind, indexed_at, id); `record_provider_benchmark` sets `indexed_at` to the
+sample's `created_at`. Before that,
+benchmark rows carried no `indexed_at` and the read filtered on JSON fields
+alone, so every pass read every benchmark row ever written; on AWS DSQL that
+measured about 320 MB per pass (2026-09-25).
+
+Rows written before that change have a NULL `indexed_at` and stay outside the
+window until they are backfilled. After the first release that contains the
+bounded read, run once per Postgres deployment, with that deployment's store
+settings:
+
+```
+python -m trusted_router.provider_benchmark_backfill_cli
+```
+
+It works in pages of at most 1,000 rows, one transaction each, and logs a
+checkpoint after every page. Rerunning it is safe, and `--after <id>` resumes
+from a checkpoint. A row whose `created_at` does not parse, or names no instant
+representable in UTC, keeps a NULL `indexed_at` and is skipped.
+
