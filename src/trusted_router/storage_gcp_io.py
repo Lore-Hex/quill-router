@@ -73,6 +73,17 @@ def spanner_rpc_budget(max_seconds: float) -> Callable[[Callable[P, T]], Callabl
     return decorate
 
 
+def remaining_rpc_budget(max_seconds: float) -> float:
+    """Cap an operation (including regional Bigtable) to the caller's deadline."""
+    from google.api_core.exceptions import DeadlineExceeded
+
+    deadline = _SPANNER_RPC_DEADLINE.get()
+    remaining = max_seconds if deadline is None else min(max_seconds, deadline - time.monotonic())
+    if remaining <= 0:
+        raise DeadlineExceeded("TrustedRouter shared RPC deadline exceeded")
+    return remaining
+
+
 def configure_spanner_rpc_deadlines(
     database: Any,
     *,
@@ -175,7 +186,7 @@ def configure_spanner_rpc_deadlines(
             if requested_budget is None
             else min(float(requested_budget), max_seconds)
         )
-        budget = max(budget, _MIN_INNER_TIMEOUT_SECONDS)
+        budget = remaining_rpc_budget(max(budget, _MIN_INNER_TIMEOUT_SECONDS))
         kwargs["timeout_secs"] = budget
         deadline = time.monotonic() + budget
         existing_deadline = _SPANNER_RPC_DEADLINE.get()
@@ -243,6 +254,9 @@ def run_in_transaction_with_retry(
     retryable_errors = (Aborted,) + also_retry
     rolled_back_func = _rollback_on_api_error(func)
     deadline = time.monotonic() + max(total_budget_seconds, _MIN_INNER_TIMEOUT_SECONDS)
+    shared_deadline = _SPANNER_RPC_DEADLINE.get()
+    if shared_deadline is not None:
+        deadline = min(deadline, shared_deadline)
     delay = 0.05
     last_retryable: BaseException | None = None
     for attempt in range(1, attempts + 1):
@@ -251,9 +265,9 @@ def run_in_transaction_with_retry(
             # Budget spent between the last abort's backoff and here.
             raise last_retryable
         # Cap the client's internal retry to what's left of our wall-clock so a
-        # single attempt cannot outlive the caller's budget (min floor keeps a
-        # valid positive deadline for the final sliver).
-        inner_timeout = max(remaining, _MIN_INNER_TIMEOUT_SECONDS)
+        # single attempt cannot outlive the caller's budget. A shared caller
+        # deadline takes precedence over the normal per-transaction floor.
+        inner_timeout = remaining_rpc_budget(max(remaining, _MIN_INNER_TIMEOUT_SECONDS))
         try:
             transaction_kwargs: dict[str, Any] = {"timeout_secs": inner_timeout}
             if transaction_tag is not None:
