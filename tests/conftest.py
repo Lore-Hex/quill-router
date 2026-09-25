@@ -19,11 +19,14 @@ from trusted_router.storage import STORE, InMemoryStore, configure_store
 
 @pytest.fixture(autouse=True)
 def lock_order_guard(request: pytest.FixtureRequest):
-    """Fail any test whose transactions lock a credit row after the key row.
+    """Check read-write transactions reaching the two instrumented funnels.
 
-    Universal on purpose: the order is what keeps the billing plane out of the
-    deadlock that started this project, and an opt-in helper only protects the
-    transactions someone remembered to write an assertion for.
+    These funnels are not the only way to reach the database; paths listed in
+    tests.fakes.lock_order.KNOWN_UNCOVERED_PATHS are not covered. The window is
+    after this fixture's reset and before its teardown check. Broader-scoped
+    fixture setup is erased by reset; broader-scoped teardown happens after
+    check. Neither window is protected. Spanner's eager fake also cannot
+    establish the execution order of the real SDK's lazy streams.
     """
     from tests.fakes import lock_order
 
