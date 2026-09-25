@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -41,9 +41,12 @@ from trusted_router.storage_gcp_authorize import (
 from trusted_router.storage_gcp_codec import json_body
 from trusted_router.storage_gcp_counter_dml import insert_reservation
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
-from trusted_router.storage_gcp_request_records import insert_gateway_authorization
+from trusted_router.storage_gcp_request_records import (
+    insert_gateway_authorization,
+    read_gateway_authorization,
+)
 from trusted_router.storage_gcp_stage_d import HeartbeatResult, heartbeat_gateway_atomic
-from trusted_router.storage_models import GatewayAuthorization
+from trusted_router.storage_models import GatewayAuthorization, Generation
 from trusted_router.types import UsageType
 
 FIXTURES = Path(__file__).parent / "fixtures" / "stage_d"
@@ -1160,3 +1163,70 @@ def test_reaper_flag_defaults_off_and_rollout_pins_it_on() -> None:
     rollout = (Path(__file__).parents[1] / "scripts" / "deploy" / "rollout.sh").read_text()
     assert '"TR_REAP_SNAPSHOT_BOOKING_ENABLED=true"' in rollout
     assert '"TR_REAP_SNAPSHOT_BOOKING_ENABLED=false"' not in rollout
+
+
+@pytest.mark.parametrize("storage", ["typed", "payload_only", "mixed", "null"])
+@pytest.mark.parametrize("microseconds", [0, 123456])
+def test_finalize_preserves_heartbeat_committed_after_s1(
+    storage: str, microseconds: int,
+) -> None:
+    # Independent list: dropping any one field from the SQL must fail this test.
+    fields = ("heartbeat_seq", "heartbeat_at", "heartbeat_hash", "started_at",
+              "selected_endpoint_id", "delivered_usage")
+    results = []
+    for use_snapshot in (True, False):
+        store, db, _table = make_fake_store(request_record_write_mode="typed")
+        _db, initial = _seed(database=db)
+        _seed_reaper_counters(db)
+        snapshot = store.get_gateway_authorization(initial.id)  # S1
+        assert snapshot is not None and snapshot.heartbeat_seq == 0
+        started_at = NOW.replace(microsecond=microseconds)
+        if storage != "null":
+            assert _heartbeat(db, started_at=started_at).accepted  # commits before T3
+        current = store.get_gateway_authorization(initial.id)
+        assert current is not None
+        expected = {field: getattr(current, field) for field in fields}
+        assert expected["heartbeat_seq"] == (0 if storage == "null" else 1)
+        if storage in {"payload_only", "mixed"}:
+            # Rolling revisions may have NULL typed columns. Their CURRENT
+            # payload, not S1's payload, supplies those values to a strong read.
+            row = db.gateway_authorizations[initial.id]
+            payload = json.loads(row["payload"])
+            for index, field in enumerate(fields):
+                if storage == "payload_only" or index % 2 == 0:
+                    payload[field] = expected[field]
+                    row[field] = None
+            row["payload"] = json.dumps(payload)
+        generation = Generation(
+            id="gen-heartbeat-race", request_id="req-heartbeat-race",
+            gateway_request_id="trace-heartbeat-race", workspace_id="workspace",
+            key_hash="key", model="model", provider_name="anthropic", app="",
+            tokens_prompt=100, tokens_completion=10, total_cost_microdollars=100,
+            usage_type=UsageType.CREDITS, speed_tokens_per_second=1,
+            finish_reason="stop", status="success", streamed=True,
+            created_at=NOW.isoformat(),
+        )
+        result = store.typed_finalize_gateway_authorization_result(
+            initial.id, success=True, actual_microdollars=100,
+            selected_usage_type=UsageType.CREDITS, generation=generation,
+            **({"authorization_snapshot": snapshot} if use_snapshot else {}),
+        )
+        assert result.finalized
+        finalized_payload = json.loads(db.gateway_authorizations[initial.id]["payload"])
+        assert {field: finalized_payload.get(field) for field in fields} == expected
+        with db.snapshot() as reader:
+            direct = read_gateway_authorization(reader, _ParamTypes, initial.id)
+        # Both strong merged store APIs (authorization and indexed evidence)
+        # must expose the same facts as the raw payload and direct typed reader.
+        reads = (direct, store.get_gateway_authorization(initial.id),
+                 store.get_gateway_authorization_by_gateway_request_id("trace-heartbeat-race"))
+        for read in reads:
+            assert read is not None
+            assert {field: getattr(read, field) for field in fields} == expected
+            assert read.settled and read.finalized_cost_microdollars == 100
+        assert snapshot.heartbeat_seq == 0 and not snapshot.settled
+        # Compare EVERY authorization field, including immutable configuration
+        # and all terminal outputs, against finalize with its ordinary reread.
+        assert direct is not None
+        results.append((finalized_payload, asdict(direct)))
+    assert results[0] == results[1]

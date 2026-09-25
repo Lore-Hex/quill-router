@@ -688,6 +688,11 @@ def _assert_refill_repair(
     reads = [(sql, params) for reader, sql, params in calls[index + 2:]
              if isinstance(reader, _FakeSnapshot) and "auto_refill_workspace_id" in sql]
     assert len(reads) == int(reread)
+    confirmation_index = index + 2 if reread else index + 1
+    claims = [i for i, (_, statement, _) in enumerate(calls)
+              if statement.startswith("UPDATE tr_reservation SET settled=true")]
+    if claims:
+        assert confirmation_index < claims[0], "refill confirmation must precede reservation claim"
     if reread:
         assert calls[index + 2][1] == reads[0][0]
         assert reads[0][1] == {"aid": auth.id}

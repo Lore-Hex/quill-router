@@ -1646,7 +1646,7 @@ class _FakeTransaction:
                 ("insert_operational_analytics_outbox", dict(p))
             )
             return 1
-        if sql.startswith("UPDATE tr_gateway_authorization SET settled=true, payload=@payload"):
+        if sql.startswith("UPDATE tr_gateway_authorization SET settled=true, payload="):
             _require_pred(
                 sql,
                 "WHERE authorization_id=@authorization_id AND settled=false",
@@ -1656,10 +1656,49 @@ class _FakeTransaction:
             rec = self._gateway_authorization_current(authorization_id)
             if rec is None or rec.get("settled"):
                 return 0
+            settled_payload = p["payload"]
+            if "payload=TO_JSON_STRING(JSON_SET(PARSE_JSON(@payload), " in sql:
+                # Interpret only the supported SQL merge expressions. Do not
+                # import the production field list: missing/replaced SQL must
+                # change the result and be visible to the interleaving tests.
+                merged_payload = json.loads(settled_payload)
+                current_payload = json.loads(rec.get("payload") or "{}")
+                assignments = sql.split("JSON_SET(PARSE_JSON(@payload), ", 1)[1].split(
+                    ")), finalization_outcome=", 1,
+                )[0]
+                arguments = _split_spanner_sql_list(assignments)
+                assert len(arguments) % 2 == 0
+                for path, expression in zip(arguments[::2], arguments[1::2], strict=True):
+                    target = re.fullmatch(r"'\$\.(\w+)'", path)
+                    merge = re.fullmatch(
+                        r"IF\((\w+) IS NULL,JSON_QUERY\(PARSE_JSON\((payload|@payload)\),"
+                        r"'\$\.(\w+)'\),TO_JSON\((.*)\)\)", expression,
+                    )
+                    assert target is not None and merge is not None, expression
+                    column, source, fallback, typed_expression = merge.groups()
+                    if rec.get(column) is None:
+                        fallback_payload = current_payload if source == "payload" else json.loads(p["payload"])
+                        value = fallback_payload.get(fallback)
+                    elif re.fullmatch(r"\w+", typed_expression):
+                        value = rec.get(typed_expression)
+                    else:
+                        timestamp = re.fullmatch(
+                            r"FORMAT_TIMESTAMP\(IF\(MOD\(UNIX_MICROS\((\w+)\),1000000\)=0,"
+                            r"'%Y-%m-%dT%H:%M:%SZ','%Y-%m-%dT%H:%M:%E6SZ'\),(\w+),'UTC'\)",
+                            typed_expression,
+                        )
+                        assert timestamp is not None, typed_expression
+                        precision_column, timestamp_column = timestamp.groups()
+                        value = rec[timestamp_column]
+                        if value is not None:
+                            precision = "microseconds" if rec[precision_column].microsecond else "seconds"
+                            value = value.astimezone(dt.UTC).isoformat(timespec=precision).replace("+00:00", "Z")
+                    merged_payload[target[1]] = value
+                settled_payload = json.dumps(merged_payload)
             new = dict(
                 rec,
                 settled=True,
-                payload=p["payload"],
+                payload=settled_payload,
                 finalization_outcome=p.get("finalization_outcome"),
                 finalized_cost_microdollars=p.get("finalized_cost_microdollars"),
                 gateway_request_id=p.get("gateway_request_id"),

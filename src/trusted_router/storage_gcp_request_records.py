@@ -254,6 +254,40 @@ def read_gateway_authorization(
     )
 
 
+# All nonterminal post-authorize mutations of the typed authorization row are
+# in storage_gcp_stage_d. Keep these facts out of request-local serialization.
+# Terminal outputs are replaced below under settled=false; terminal_at is a
+# separate retention column, never part of the payload. Lease/admission/Stage D
+# configuration and identity are fixed by authorize (including legacy creation).
+_AUTHORIZATION_HEARTBEAT_FIELDS = (
+    "heartbeat_seq", "heartbeat_at", "heartbeat_hash", "started_at",
+    "selected_endpoint_id", "delivered_usage",
+)
+
+
+def _current_heartbeat_json_sql(column: str) -> str:
+    # Match merge_authorization_typed_columns: non-NULL typed values win,
+    # otherwise retain the CURRENT payload value (rolling payload-only rows).
+    # Timestamp spelling matches _payload_timestamp, including optional micros.
+    value = column
+    if column in {"started_at", "heartbeat_at"}:
+        value = (
+            f"FORMAT_TIMESTAMP(IF(MOD(UNIX_MICROS({column}),1000000)=0,"
+            f"'%Y-%m-%dT%H:%M:%SZ','%Y-%m-%dT%H:%M:%E6SZ'),{column},'UTC')"
+        )
+    return (
+        f"'$.{column}', IF({column} IS NULL,"
+        f"JSON_QUERY(PARSE_JSON(payload),'$.{column}'),TO_JSON({value}))"
+    )
+
+
+# Read the live heartbeat facts in the UPDATE itself: no extra RPC, and a
+# concurrent heartbeat conflicts with this write and is re-evaluated on retry.
+_SETTLED_PAYLOAD_SQL = "TO_JSON_STRING(JSON_SET(PARSE_JSON(@payload), " + ", ".join(
+    _current_heartbeat_json_sql(column) for column in _AUTHORIZATION_HEARTBEAT_FIELDS
+) + "))"
+
+
 def mark_gateway_authorization_settled(
     transaction: Any,
     param_types: Any,
@@ -261,15 +295,18 @@ def mark_gateway_authorization_settled(
 ) -> int:
     """Mark billing settled while keeping repair metadata and TTL disabled."""
     typed = authorization_typed_columns(dataclasses.asdict(authorization))
+    payload = json.loads(json_body(authorization))
+    for column in _AUTHORIZATION_HEARTBEAT_FIELDS:
+        payload.pop(column, None)
     return transaction.execute_update(
-        "UPDATE tr_gateway_authorization SET settled=true, payload=@payload, "
+        f"UPDATE tr_gateway_authorization SET settled=true, payload={_SETTLED_PAYLOAD_SQL}, "  # noqa: S608
         "finalization_outcome=@finalization_outcome, "
         "finalized_cost_microdollars=@finalized_cost_microdollars, "
         "gateway_request_id=@gateway_request_id "
         "WHERE authorization_id=@authorization_id AND settled=false",
         params={
             "authorization_id": authorization.id,
-            "payload": json_body(authorization),
+            "payload": json_body(payload),
             "finalization_outcome": typed["finalization_outcome"],
             "finalized_cost_microdollars": typed["finalized_cost_microdollars"],
             "gateway_request_id": typed["gateway_request_id"],
