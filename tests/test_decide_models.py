@@ -9,6 +9,7 @@ chat, pinned to one provider.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -125,13 +126,18 @@ def test_every_native_decision_model_has_a_prepaid_route_on_its_unretired_chain(
     for model_id, provider in NATIVE_DECISION_MODEL_PROVIDERS.items():
         assert MODELS[model_id].supports_chat, model_id
         backing = PRIVATE_PROXY_MODEL_TARGETS.get(model_id, model_id)
-        providers = {e.provider for e in endpoints_for_model(backing) if not e.is_byok}
+        providers = {
+            e.provider for e in endpoints_for_model(backing)
+            if not e.is_byok and e.usage_type == "Credits"
+        }
         named_id = next((
             named.id for named in NAMED_DECISION_MODELS
             if model_id in (named.id, named.backing_model_id)
         ), None)
-        expected = _expected_active_chain(named_id)[0] if named_id is not None else provider
-        assert expected in providers, f"{model_id} lost its {expected} route: {sorted(providers)}"
+        expected = _expected_active_chain(named_id) if named_id is not None else (provider,)
+        assert set(expected) <= providers, (
+            f"{model_id} lost credits routes: {set(expected) - providers}"
+        )
 
 
 def test_the_named_models_are_the_eight_people_were_promised() -> None:
@@ -153,6 +159,7 @@ def test_the_named_models_are_the_eight_people_were_promised() -> None:
         "trustedrouter/trev-1.0": ("cerebras", "sambanova", "fireworks", "together"),
         "trustedrouter/zev-1.0": ("fireworks", "baseten"),
         "trustedrouter/lev-1.0": ("sambanova", "parasail", "together"),
+        "trustedrouter/dev-1.0": ("wafer", "deepinfra", "wandb"),
     }
     trev_chain = NAMED_DECISION_MODEL_PROVIDERS[TREV_1_0_MODEL_ID]
     assert trev_chain[0] == "cerebras"
@@ -165,6 +172,8 @@ def test_a_named_decision_model_is_priced_from_its_host_chain(model_id: str) -> 
     backing = MODELS[PRIVATE_PROXY_MODEL_TARGETS[model_id]]
     chain = NAMED_DECISION_MODEL_PROVIDERS[model_id]
     assert chain[0] == NATIVE_DECISION_MODEL_PROVIDERS[model_id]
+    if backing.id in NATIVE_DECISION_MODEL_PROVIDERS:
+        assert chain[0] == NATIVE_DECISION_MODEL_PROVIDERS[backing.id]
     assert named.supports_decide and named.provider == "trustedrouter" and not named.byok_available
 
     # Each request bills at the serving host's rate, so the honest public price
@@ -187,6 +196,10 @@ def test_a_named_decision_model_is_priced_from_its_host_chain(model_id: str) -> 
     )
 
     shape = model_to_openrouter_shape(named)
+    # Public pricing is dollars per token; endpoint prices are microdollars
+    # per million tokens. Compare live registry values, not a stale price pin.
+    assert Decimal(shape["pricing"]["prompt"]) == Decimal(dearest_prompt) / 10**12
+    assert Decimal(shape["pricing"]["completion"]) == Decimal(dearest_completion) / 10**12
     assert shape["architecture"]["modality"] == "text->decision"
     assert shape["trustedrouter"]["supports_decide"] is True
     public = str(shape).lower()

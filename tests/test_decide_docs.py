@@ -51,6 +51,15 @@ def test_decide_docs_state_the_guarantee_and_its_cost_honestly(client: TestClien
     assert "x-should-retry: false" in text
 
 
+def test_decide_docs_publish_devs_ordered_host_chain(client: TestClient) -> None:
+    text = client.get("/docs/decide").text
+    rows = text.split("<tr>")
+    named_row = next(row for row in rows if ">trustedrouter/dev-1.0</span>" in row)
+    assert "Fails over from Wafer to DeepInfra to W&amp;B." in named_row.split("</tr>")[0]
+    backing_row = next(row for row in rows if ">deepseek/deepseek-v4.1-flash</span>" in row)
+    assert "<td>Wafer, then DeepInfra, then W&amp;B</td>" in backing_row.split("</tr>")[0]
+
+
 def test_decide_docs_are_discoverable(client: TestClient) -> None:
     assert 'href="/docs/decide"' in client.get("/docs").text
     assert 'href="/docs/decide"' in client.get("/").text

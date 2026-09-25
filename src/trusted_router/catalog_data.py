@@ -2317,9 +2317,16 @@ class NamedDecisionModel(NamedTuple):
     # order: 353, 522, 941, 1125 ms). A host joins a chain only after it has been
     # measured there, and only if it is fast enough to be the same product:
     # zev is Fireworks 340-468 ms then Baseten 616 ms; lev is SambaNova 371-450
-    # ms, Parasail 927 ms, Together 1576 ms. The rest are pinned to the single
-    # host they were measured on. The attested gateway asks for exactly this
-    # chain and authorize enforces it, so neither side can widen it alone.
+    # ms, Parasail 927 ms, Together 1576 ms. dev is Wafer 1371 ms, DeepInfra
+    # 1858 ms, W&B 1987 ms: measured end to end through TrustedRouter's
+    # /api/alpha/decide on 2026-09-25, each provider pinned with fallbacks off.
+    # enclave-go/internal/llm/decide_live_test.go: 8 tickets, 29 checks, 3 passes;
+    # each host passed 87/87 checks with 24/24 valid calls. Telnyx passed
+    # at 1516 ms but would double the advertised output price; slower perfect
+    # hosts and hosts with errors or missed checks were excluded.
+    # The rest are pinned to the single host they were measured on. The
+    # attested gateway asks for exactly this chain and authorize enforces it,
+    # so neither side can widen it alone.
     chain: tuple[str, ...]
 
 
@@ -2354,7 +2361,7 @@ NAMED_DECISION_MODELS: tuple[NamedDecisionModel, ...] = (
         DEV_1_0_MODEL_ID,
         "TrustedRouter Dev 1.0",
         "deepseek/deepseek-v4.1-flash",
-        ("deepinfra",),
+        ("wafer", "deepinfra", "wandb"),
     ),
     NamedDecisionModel(
         OEV_1_0_MODEL_ID, "TrustedRouter Oev 1.0", "openai/gpt-oss-20b", ("deepinfra",)
@@ -3210,7 +3217,7 @@ NATIVE_DECISION_MODEL_PROVIDERS: dict[str, str] = {
     "google/gemini-3.1-flash-lite": "google-ai-studio",
     "openai/gpt-oss-20b": "deepinfra",
     "google/gemma-4-e4b-it": "deepinfra",
-    "deepseek/deepseek-v4.1-flash": "deepinfra",
+    "deepseek/deepseek-v4.1-flash": "wafer",
 }
 
 
