@@ -257,13 +257,15 @@ class _Recorder:
                 credit = [i for i, (kinds, _) in enumerate(steps) if "credit" in kinds]
                 keys = [i for i, (kinds, _) in enumerate(steps) if "key" in kinds]
                 if any("buffered" in kinds for kinds, _ in steps):
-                    # Buffered counter writes are applied atomically at commit, so
-                    # their call order takes no locks and this guard cannot order
-                    # them. Such a transaction is UNPROVED, not violating. The hot
-                    # billing paths are required to use DML instead, and that rule
-                    # is enforced by spanner_order.no_counter_mutations.
+                    # A buffered counter write is applied atomically at commit, so
+                    # its call order takes no lock and this guard cannot order it:
+                    # the transaction is UNPROVED. That is recorded, but it does NOT
+                    # excuse the transaction -- an unorderable write cannot erase an
+                    # inversion the recorded SQL accesses already establish, so the
+                    # order rule below still runs. Presence of a buffered write
+                    # alone is not a violation; the hot paths' separate requirement
+                    # to use DML stays with spanner_order.no_counter_mutations.
                     self._unproved.add(key)
-                    continue
                 if credit and keys and max(credit) >= min(keys):
                     found.append((key, list(steps)))
             return found

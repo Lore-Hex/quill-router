@@ -399,3 +399,24 @@ def test_window():
     with pytest.raises(lock_order.LockOrderError):
         lock_order.recorder.check("outside-window")
     lock_order.recorder.reset()
+
+@pytest.mark.parametrize("order", ["kcb", "kbc", "bkc"])
+def test_buffered_write_does_not_excuse_an_inversion_in_recorded_sql(order):
+    """An unorderable write must not erase evidence the SQL accesses established.
+
+    Review reproduction: marking a transaction UNPROVED used to `continue` past
+    the order check, so a recorded key -> credit inversion passed as long as the
+    transaction also buffered a counter write. Presence of a buffered write is
+    still not itself a violation -- test_buffered_counter_mutations_are_recorded
+    _as_unproved covers that direction.
+    """
+    record = lock_order._Recorder()
+    for kind in order:
+        if kind == "b":
+            record.mutation("t", "tr_credit_balance", "insert_or_update")
+        else:
+            record.record("t", CREDIT if kind == "c" else KEY)
+    assert len(record.violations()) == 1, "the recorded SQL inversion must still be seen"
+    assert record.unproved == {"t"}, "the buffered write must still be reported as unproved"
+    with pytest.raises(lock_order.LockOrderError, match="deadlock shape"):
+        record.check("unproved-must-not-excuse")
