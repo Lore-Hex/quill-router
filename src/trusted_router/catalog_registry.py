@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from datetime import datetime
 
+from trusted_router import provider_lifecycle
 from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-compat
     _EMBEDDING_SPECS,
     _MODEL_PROVIDER_PRIVACY_OVERRIDES,
@@ -933,6 +935,11 @@ _EMBEDDING_MODELS = _embedding_models()
 _DECISION_MODELS = _decision_models()
 
 
+# The instant this catalog resolved every scheduled retirement against. Tests
+# read it through tests/lifecycle_clock.py instead of taking a second clock
+# reading of their own, so "was the catalog built before cutover X" always
+# answers about this build.
+CATALOG_RESOLVED_AT: datetime = provider_lifecycle._utc_now()
 _INGESTED_MODELS, _INGESTED_ENDPOINTS = _ingested_models_and_endpoints()
 _SUPPLEMENTAL_MODELS, _SUPPLEMENTAL_ENDPOINTS = _supplemental_provider_models_and_endpoints()
 # The OpenRouter ingest snapshot is the primary catalog. Provider-native
@@ -1366,7 +1373,9 @@ def _install_deepseek_v4_pro_release_routes() -> None:
         or baseten_current is None
         or (
             fireworks_current is None
-            and not provider_model_retired("fireworks", DEEPSEEK_V4_PRO_0813_MODEL_ID)
+            and not provider_model_retired(
+                "fireworks", DEEPSEEK_V4_PRO_0813_MODEL_ID, at=CATALOG_RESOLVED_AT
+            )
         )
     ):
         raise RuntimeError("DeepSeek V4 Pro release routes are incomplete")

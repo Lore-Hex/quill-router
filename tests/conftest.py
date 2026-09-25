@@ -11,6 +11,13 @@ from fastapi.testclient import TestClient
 # object with configure_store_arg=False or a fake store.
 os.environ["TR_STORAGE_BACKEND"] = "memory"
 
+# One lifecycle clock for the whole process: the catalog build, the
+# lifecycle_clock helper and every request-time retirement filter must read
+# the same instant, or a run that crosses a scheduled cutover disagrees with
+# itself. Importing the module pins TR_LIFECYCLE_CLOCK_OVERRIDE before the
+# trusted_router imports below resolve the catalog; an override CI already
+# exported is kept (see tests/lifecycle_freeze.py).
+import tests.lifecycle_freeze  # noqa: F401 - import-time side effect, see above
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR
