@@ -184,6 +184,25 @@ class SpannerGenerations:
         if generation.app != "TrustedRouter Synthetic":
             self.record_benchmark(ProviderBenchmarkSample.from_generation(generation))
 
+    def mirror_after_commit_safely(self, generation: Generation) -> None:
+        """BackgroundTasks boundary for optional post-settle writes.
+
+        Bigtable batches each have a five-second budget; the benchmark outbox
+        uses the store's twenty-second Spanner transaction/RPC budget. Normal
+        failures retain their individual logs and existing repair paths below.
+        Catch unexpected errors too so later response background tasks can run.
+        """
+        try:
+            self.mirror_after_commit(generation)
+        except Exception:
+            log.exception(
+                "settle_post_commit_mirrors_failed generation_id=%s workspace_id=%s "
+                "repairable_via=%s",
+                generation.id,
+                generation.workspace_id,
+                _ACTIVITY_MIRROR_REPAIR,
+            )
+
     def _repair_durable_delivery(self, generation: Generation) -> bool:
         outbox = self._operational_analytics_outbox
         if outbox is None:

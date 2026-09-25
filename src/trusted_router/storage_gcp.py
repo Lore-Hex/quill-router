@@ -4899,6 +4899,7 @@ class SpannerBigtableStore:
         settle_outbox_done: tuple[str, str] | None = None,
         authorization_snapshot: GatewayAuthorization | None = None,
         regional_charge_parts: tuple[int, int] | None = None,
+        defer_post_commit: Callable[..., None] | None = None,
     ) -> TypedFinalizeResult:
         """Route-facing typed settle: same contract as
         finalize_gateway_authorization, with explicit activity-index status.
@@ -4906,6 +4907,9 @@ class SpannerBigtableStore:
         The billing transaction atomically commits the bounded generation row
         and ClickHouse delivery intent. A false ``activity_indexed`` leaves the
         durable settle outbox pending for a no-double-charge repair replay.
+        ``defer_post_commit`` registers optional mirrors with the HTTP response's
+        BackgroundTasks after that commit; it must not execute the task inline.
+        Without it, direct callers and repair workers retain synchronous writes.
         """
         from trusted_router.storage_gcp_authorize import SettleOutcome, typed_finalize_atomic
 
@@ -5052,7 +5056,17 @@ class SpannerBigtableStore:
             if success and generation is not None:
                 mirror_start = time.perf_counter()
                 if getattr(self, "_operational_analytics_outbox", None) is None:
+                    # Without S20, this is delivery durability, not a migration
+                    # mirror. Keep the legacy repair/result contract synchronous.
                     activity_indexed = self.generation_store.index_after_commit(generation)
+                elif defer_post_commit is not None:
+                    # S24 has committed generation + S20. The HTTP route passes
+                    # BackgroundTasks.add_task; workers/direct callers retain
+                    # synchronous behavior. Freeze the payload for deferred use.
+                    defer_post_commit(
+                        self.generation_store.mirror_after_commit_safely,
+                        copy.deepcopy(generation),
+                    )
                 else:
                     self.generation_store.mirror_after_commit(generation)
                 mirror_ms = (time.perf_counter() - mirror_start) * 1000
@@ -5064,7 +5078,7 @@ class SpannerBigtableStore:
             # contention while attempts==1 does not rule out absorbed contention.
             log.info(
                 # Keep index_ms for log-query compatibility. It now measures
-                # optional post-commit mirrors rather than durable delivery.
+                # optional mirrors (or their scheduling), not durable delivery.
                 "typed finalize timing authorization_id=%s spanner_ms=%.1f "
                 "index_ms=%.1f attempts=%d",
                 authorization_id,
