@@ -44,7 +44,16 @@ These policies deliberately trigger before the broad Spanner contention
 policy:
 
 - Any `5xx` from `/internal/gateway/authorize`, `settle`, or `refund` opens an
-  incident immediately.
+  incident immediately. A single `500` with zero latency, no instance id and
+  no container output, logged against the revision being retired at the
+  second its instances print "Shutting down", is the rollout race: stock
+  uvicorn closed its listener the instant SIGTERM arrived and refused a
+  request the front end had already dispatched (five such incidents in the
+  week to 2026-09-25, all at rollouts). The image now runs
+  `python -m trusted_router.serve`, which keeps accepting for
+  `TR_SHUTDOWN_DRAIN_SECONDS` (default 3, at most 8) after the first SIGTERM
+  before uvicorn's normal graceful shutdown. If one recurs, check the
+  serving revision's entry point before anything else.
 - Successful billing calls taking at least 10 seconds are counted. More than
   two per minute for three consecutive minutes opens one incident.
 - The general Spanner contention policy has three independent gates: more than

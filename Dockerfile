@@ -33,4 +33,7 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 EXPOSE 8080
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["/app/.venv/bin/uvicorn", "trusted_router.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# trusted_router.serve runs uvicorn with a listener that stays open for a few
+# seconds after SIGTERM, so a request Cloud Run already dispatched to a
+# retiring instance is served instead of refused as a zero-latency 500.
+CMD ["/app/.venv/bin/python", "-m", "trusted_router.serve"]

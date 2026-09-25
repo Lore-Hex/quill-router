@@ -716,9 +716,10 @@ also remove `run_remediator` from the scheduler's request.
 Where the variable lives, and whether a deploy keeps your change:
 
 - **AWS** (`tr-cp-euw3`, `tr-cp-euw1`): the ECS task definition. It STAYS: an
-  ECS release clones the live task definition and changes only the image and
-  the release marker (`scripts/deploy/prepare_ecs_release.py`). Both services
-  had it set to `off` when this was written (checked 2026-09-21).
+  ECS release clones the live task definition and changes only the image, the
+  release marker and the in-process pin below
+  (`scripts/deploy/prepare_ecs_release.py`). Both services had it set to `off`
+  when this was written (checked 2026-09-21).
 - **GCP**: the Cloud Run service environment. It does NOT stay:
   `scripts/deploy/rollout.sh` deploys with `--set-env-vars`, which replaces the
   whole environment with the script's list, and the mode is not in that list,
@@ -728,6 +729,22 @@ Where the variable lives, and whether a deploy keeps your change:
   purpose: `scripts/deploy/azure_control_plane.sh` re-asserts `observe` and
   refuses `off`, because the in-process loop is Azure's only remediation owner.
   Set it live in an emergency; keeping it off means changing that script.
+
+Each cloud has exactly one remediator scheduler:
+
+- **AWS**: the EventBridge tick, every 2 minutes. Every ECS release pins
+  `TR_REMEDIATOR_IN_PROCESS_ENABLED=false`, adding it when the live task
+  definition lacks it and refusing any other value, so the in-process loop does
+  not run. The pin reaches a service with the first AWS release that contains
+  it. Until a service's task definition shows
+  `TR_REMEDIATOR_IN_PROCESS_ENABLED=false`, keep its mode `off`: the setting
+  defaults to on (every 120 s), and on 2026-09-25 `observe` on `tr-cp-euw3`
+  measured two passes per 2 minutes, the loop's and the tick's.
+- **GCP**: the synthetic job's `POST /internal/synthetic/remediate`.
+  `scripts/deploy/rollout.sh` and `scripts/deploy/internal_surface.sh` set
+  `TR_REMEDIATOR_IN_PROCESS_ENABLED=false`.
+- **Azure**: the in-process loop only; Azure has no external scheduler, and
+  `scripts/deploy/azure_control_plane.sh` refuses to disable it.
 
 Do not stop it by editing the EventBridge target by hand. That target's `input`
 is owned by `infra/aws_synthetic_monitoring.tf`, and the next merge that touches
