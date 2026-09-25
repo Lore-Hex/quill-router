@@ -115,7 +115,7 @@
             <tr><td><span class="mono">trustedrouter/lev-1.0</span></td><td>The steadiest tail. Llama 3.3 70B does not deliberate, so its slowest answer in the eval took 565 ms. Fails over across three hosts.</td><td>about 390 ms</td><td>29 / 29</td><td>$0.00036</td></tr>
             <tr><td><span class="mono">trustedrouter/zev-1.0</span></td><td>A larger fast model. GLM 5.2 Fast, with failover to a second host. About four times the price of the others here.</td><td>about 0.5 s (0.35 to 0.7 s)</td><td>29 / 29</td><td>$0.0014</td></tr>
             <tr><td><span class="mono">trustedrouter/gev-1.0</span></td><td>A Google model. Small, from the Gemini family, with the format enforced by the host.</td><td>about 0.8 s</td><td>29 / 29</td><td>$0.00023</td></tr>
-            <tr><td><span class="mono">trustedrouter/dev-1.0</span></td><td>Harder judgments on a budget. A DeepSeek flash model: strong judgment, cheap input.</td><td>about 1 s (0.7 to 2.4 s)</td><td>29 / 29</td><td>$0.00013</td></tr>
+            <tr><td><span class="mono">trustedrouter/dev-1.0</span></td><td>Harder judgments on a budget. A DeepSeek flash model: strong judgment, cheap input. Fails over from Wafer to DeepInfra to W&amp;B.</td><td>about 1 s (0.7 to 2.4 s)</td><td>29 / 29</td><td>$0.00013</td></tr>
             <tr><td><span class="mono">trustedrouter/oev-1.0</span></td><td>A cheap all-rounder. An open-weight 20B model that reasons briefly.</td><td>about 1.6 s</td><td>29 / 29</td><td>$0.00004</td></tr>
             <tr><td><span class="mono">trustedrouter/gemmev-1.0</span></td><td>The lowest price. A small open Gemma model.</td><td>about 2 s</td><td>29 / 29</td><td>$0.00002</td></tr>
           </tbody>
@@ -131,7 +131,7 @@
             <tr><td><span class="mono">meta-llama/llama-3.3-70b-instruct</span></td><td>SambaNova, then Parasail, then Together</td></tr>
             <tr><td><span class="mono">z-ai/glm-5.2-fast</span></td><td>Fireworks, then Baseten</td></tr>
             <tr><td><span class="mono">google/gemini-3.1-flash-lite</span></td><td>Google AI Studio</td></tr>
-            <tr><td><span class="mono">deepseek/deepseek-v4.1-flash</span></td><td>DeepInfra</td></tr>
+            <tr><td><span class="mono">deepseek/deepseek-v4.1-flash</span></td><td>Wafer, then DeepInfra, then W&amp;B</td></tr>
             <tr><td><span class="mono">openai/gpt-oss-20b</span></td><td>DeepInfra</td></tr>
             <tr><td><span class="mono">google/gemma-4-e4b-it</span></td><td>DeepInfra</td></tr>
           </tbody>
