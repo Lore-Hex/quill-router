@@ -888,7 +888,7 @@ def _authorize_gateway_sync_impl(
     named, directly unit-testable function (#40). The registered route handler is
     a thin wrapper; behavior is byte-identical to the prior inline handler."""
     require_internal_gateway(request, settings)
-    api_key = _api_key_for_gateway_authorization(body)
+    api_key, metadata = _gateway_authorize_metadata(body)
     if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
         raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
     _assert_gateway_key_scope(api_key)
@@ -919,7 +919,7 @@ def _authorize_gateway_sync_impl(
             accepted_image_digests=accepted_image_digests,
         ):
             spend_context["boot_failure_reason"] = "boot_digest_not_accepted"
-    workspace = STORE.get_workspace(api_key.workspace_id)
+    workspace = metadata.workspace if metadata is not None else STORE.get_workspace(api_key.workspace_id)
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
     if workspace_billing_paused(workspace):
@@ -1210,7 +1210,10 @@ def _authorize_gateway_sync_impl(
             region,
         )
     ]
-    endpoint_candidates = _eligible_gateway_endpoint_candidates(endpoint_candidates, workspace.id)
+    byok_configs = _byok_configs_for_candidates(endpoint_candidates, workspace.id)
+    endpoint_candidates = _eligible_gateway_endpoint_candidates(
+        endpoint_candidates, workspace.id, byok_configs,
+    )
     if named_decision_chain is not None:
         # The chain is part of what the name means (and of its advertised
         # price), so it is enforced HERE, not merely requested by the gateway:
@@ -1417,7 +1420,7 @@ def _authorize_gateway_sync_impl(
         existing_model, existing_endpoint = existing_candidates[0]
         existing_usage_type = UsageType.for_endpoint(existing_endpoint)
         byok_config = (
-            _get_byok_provider(workspace.id, existing_endpoint.provider)
+            _get_byok_provider(workspace.id, existing_endpoint.provider, byok_configs)
             if existing_usage_type.is_byok()
             else None
         )
@@ -1433,6 +1436,7 @@ def _authorize_gateway_sync_impl(
             estimate=existing_authorization.estimated_microdollars,
             credit_reservation_id=existing_authorization.credit_reservation_id,
             byok_config=byok_config,
+            byok_configs=byok_configs,
             region=existing_authorization.region or region,
             settings=settings,
             broadcast_destinations=broadcast_destinations,
@@ -2302,7 +2306,7 @@ def _authorize_gateway_sync_impl(
             release_user_model_slot_after_error()
             raise
     byok_config = (
-        _get_byok_provider(workspace.id, endpoint.provider) if model_usage_type.is_byok() else None
+        _get_byok_provider(workspace.id, endpoint.provider, byok_configs) if model_usage_type.is_byok() else None
     )
     return _gateway_authorize_response(
         authorization=authorization,
@@ -2316,6 +2320,7 @@ def _authorize_gateway_sync_impl(
         estimate=estimate,
         credit_reservation_id=credit_reservation_id,
         byok_config=byok_config,
+        byok_configs=byok_configs,
         region=region,
         settings=settings,
         broadcast_destinations=broadcast_destinations,
@@ -2713,6 +2718,23 @@ def register(router: APIRouter) -> None:
         return {"data": await run_in_threadpool(lambda: reap(limit=limit))}
 
 
+def _gateway_authorize_metadata(body: GatewayAuthorizeRequest) -> tuple[Any, Any]:
+    # Hash-based callers retain their existing precedence/fallback semantics.
+    # Enclaves send lookup hashes; Spanner can hydrate that entire chain at once.
+    resolve = getattr(STORE, "gateway_api_key_auth_context", None)
+    if not body.api_key_hash and body.api_key_lookup_hash and callable(resolve):
+        context = resolve(body.api_key_lookup_hash)
+        api_key = context.api_key if context is not None else None
+        if api_key is not None and not getattr(api_key, "federated_home", ""):
+            return api_key, context
+        # Home revalidation may replace the key AND the shadow workspace.
+        # Read the workspace after that refresh, exactly as the old path did.
+        api_key = _federated_key_still_valid(api_key, body.api_key_lookup_hash)
+    else:
+        api_key = _api_key_for_gateway_authorization(body)
+    return api_key, None
+
+
 def _api_key_for_gateway_authorization(body: GatewayAuthorizeRequest) -> Any | None:
     return _api_key_for_gateway_lookup(
         api_key_hash=body.api_key_hash,
@@ -3016,6 +3038,7 @@ def _gateway_authorize_response(
     estimate: int,
     credit_reservation_id: str | None,
     byok_config: Any | None,
+    byok_configs: dict[str, Any] | None = None,
     region: str,
     settings: Settings,
     broadcast_destinations: list[dict[str, Any]],
@@ -3118,6 +3141,7 @@ def _gateway_authorize_response(
                         raw,
                         workspace_id,
                         region,
+                        byok_configs=byok_configs,
                     )
                     for (candidate_model, candidate_endpoint), raw in zip(
                         endpoint_candidates,
@@ -3132,6 +3156,7 @@ def _gateway_authorize_response(
                         candidate_endpoint,
                         workspace_id,
                         region,
+                        byok_configs=byok_configs,
                     )
                     for candidate_model, candidate_endpoint in endpoint_candidates
                 ]
@@ -4883,10 +4908,12 @@ def _gateway_candidate_payload(
     endpoint: ModelEndpoint,
     workspace_id: str,
     region: str,
+    *,
+    byok_configs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     usage_type = UsageType.for_endpoint(endpoint)
     byok_config = (
-        _get_byok_provider(workspace_id, endpoint.provider) if usage_type.is_byok() else None
+        _get_byok_provider(workspace_id, endpoint.provider, byok_configs) if usage_type.is_byok() else None
     )
     return {
         "endpoint_id": endpoint.id,
@@ -4907,10 +4934,14 @@ def _gateway_snapshot_candidate_payload(
     snapshot: dict[str, Any],
     workspace_id: str,
     region: str,
+    *,
+    byok_configs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Render Stage C dispatch fields from the lease, never the live catalog."""
 
-    payload = _gateway_candidate_payload(model, endpoint, workspace_id, region)
+    payload = _gateway_candidate_payload(
+        model, endpoint, workspace_id, region, byok_configs=byok_configs,
+    )
     payload["upstream_model"] = str(snapshot["upstream_model"])
     payload["usage_type"] = str(snapshot["usage_type"])
     payload.pop("wafer_zdr_required", None)
@@ -5012,22 +5043,45 @@ def _authorized_user_model_pair(
         return None
 
 
+def _byok_configs_for_candidates(
+    candidates: list[tuple[Model, ModelEndpoint]], workspace_id: str,
+) -> dict[str, Any]:
+    # Preserve alias preference in _get_byok_provider, deduplicate only the IO.
+    providers = sorted({
+        slug
+        for _, endpoint in candidates
+        if UsageType.for_endpoint(endpoint).is_byok()
+        for slug in byok_storage_provider_candidates(endpoint.provider)
+    })
+    batch = getattr(STORE, "get_byok_providers", None)
+    if callable(batch):
+        return cast(dict[str, Any], batch(workspace_id, providers))
+    return {provider: STORE.get_byok_provider(workspace_id, provider) for provider in providers}
+
+
 def _eligible_gateway_endpoint_candidates(
     candidates: list[tuple[Model, ModelEndpoint]],
     workspace_id: str,
+    byok_configs: dict[str, Any] | None = None,
 ) -> list[tuple[Model, ModelEndpoint]]:
     out: list[tuple[Model, ModelEndpoint]] = []
     for model, endpoint in candidates:
         usage_type = UsageType.for_endpoint(endpoint)
-        if usage_type.is_byok() and _get_byok_provider(workspace_id, endpoint.provider) is None:
+        if usage_type.is_byok() and _get_byok_provider(workspace_id, endpoint.provider, byok_configs) is None:
             continue
         out.append((model, endpoint))
     return out
 
 
-def _get_byok_provider(workspace_id: str, provider: str) -> Any | None:
+def _get_byok_provider(
+    workspace_id: str, provider: str, byok_configs: dict[str, Any] | None = None,
+) -> Any | None:
     for storage_slug in byok_storage_provider_candidates(provider):
-        config = STORE.get_byok_provider(workspace_id, storage_slug)
+        config = (
+            byok_configs[storage_slug]
+            if byok_configs is not None and storage_slug in byok_configs
+            else STORE.get_byok_provider(workspace_id, storage_slug)
+        )
         if config is not None:
             return config
     return None
