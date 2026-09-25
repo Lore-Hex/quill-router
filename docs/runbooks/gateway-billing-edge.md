@@ -42,9 +42,17 @@ behavioral differences are deliberate: disable CDN/drop its policy (billing must
 never be cached), add outlier detection, and replace membership with exactly the
 two NEGs. `verify` compares against a **fresh** control describe; later changes
 report `parity drifted`. Known API defaults are normalized, unexpected fields or
-values are checked. Re-run prepare after reviewing drift; on an already-routed
+values are checked. Before import, prepare validates the rendered payload with
+the same parity/prohibition rules: no enabled IAP or CDN, health checks, or
+non-DEFAULT backend preference in the gateway payload. Control backends are
+refused only for enabled IAP or health checks, which the clone carries unchanged.
+Control CDN/policy and backend preference are allowed because the renderer
+overrides or replaces them. Read-back verification remains a second gate.
+Re-run prepare after reviewing drift; on an already-routed
 backend, prepare itself changes production behavior. Prepare/verify never change
 the URL map; their errors require investigating backend/fleet state, not map restore.
+Enabling IAP or adding health checks on the control backend requires human review
+of the gateway backend; prepare and verify will refuse those changes.
 
 Cutover captures the exact prior map before import, validates it and the candidate,
 and verifies read-back. An uncertain import/read-back attempts automatic restore.

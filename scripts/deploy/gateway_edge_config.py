@@ -149,8 +149,31 @@ def verify_backend(actual: dict[str, Any], expected: dict[str, Any]) -> None:
         if observed.get(key) != desired.get(key):
             raise ValueError(f"gateway backend parity drifted: {key} differs from live control "
                              "backend plus deliberate gateway overrides")
-    if actual.get("healthChecks") or actual.get("iap", {}).get("enabled"):
-        raise ValueError("serverless billing backend must not have health checks or IAP")
+    verify_prohibitions(actual)
+
+
+def verify_control_prohibitions(value: dict[str, Any]) -> None:
+    """Reject unsafe settings carried from control without a gateway override."""
+    prohibited = {
+        "healthChecks": bool(value.get("healthChecks")),
+        "iap.enabled": bool(value.get("iap", {}).get("enabled")),
+    }
+    for field, forbidden in prohibited.items():
+        if forbidden:
+            raise ValueError(f"serverless billing backend prohibits {field}; review gateway backend settings")
+
+
+def verify_prohibitions(value: dict[str, Any]) -> None:
+    """Restrictions on the rendered desired payload and read-back, independent of parity."""
+    verify_control_prohibitions(value)
+    prohibited = {
+        "enableCDN": bool(value.get("enableCDN")),
+    }
+    for index, entry in enumerate(value.get("backends", [])):
+        prohibited[f"backends[{index}].preference"] = entry.get("preference", "DEFAULT") != "DEFAULT"
+    for field, forbidden in prohibited.items():
+        if forbidden:
+            raise ValueError(f"serverless billing backend prohibits {field}; review gateway backend settings")
 
 
 def active_revision(service: dict[str, Any]) -> str:
@@ -261,6 +284,9 @@ def main() -> None:
     elif args.command == "backend":
         print(json.dumps(desired, indent=2))
     elif args.command == "verify-backend":
+        # IAP and health checks carry through and require human review. Control
+        # CDN and backend preference are deliberately replaced by the renderer.
+        verify_control_prohibitions(json.loads(args.control.read_text()))
         verify_backend(json.loads(args.input.read_text()), desired)
     elif args.command == "revision":
         print(active_revision(json.loads(args.input.read_text())))

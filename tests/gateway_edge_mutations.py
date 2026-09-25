@@ -15,7 +15,20 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = "tests/test_gateway_edge.py::test_"
+PRE_IMPORT_VALIDATION = ('  config verify-backend --input "$desired" \\\n'
+                         '    --control "${STATE_DIR}/control-backend.live.json"\n')
+BACKEND_IMPORT = '  gc compute backend-services import "$GATEWAY_BACKEND" --global --source="$desired" --quiet\n'
 MUTATIONS = [
+    ("gateway prohibitions applied to control CDN", "scripts/deploy/gateway_edge_config.py",
+     '        verify_control_prohibitions(json.loads(args.control.read_text()))',
+     '        verify_prohibitions(json.loads(args.control.read_text()))',
+     "prepare_and_verify_literal_live_control"),
+    ("pre-import validation removed", "scripts/deploy/gateway_edge.sh",
+     PRE_IMPORT_VALIDATION, "",
+     "prepare_rejects_unsafe_backend_before_mutations"),
+    ("desired backend validated only after import", "scripts/deploy/gateway_edge.sh",
+     PRE_IMPORT_VALIDATION, "",  # Move the validation below import in the driver.
+     "prepare_rejects_unsafe_backend_before_mutations"),
     ("generator override removed", "scripts/deploy/service_surface_url_map.py",
      "    if gateway_backend:\n", "    if False:\n",
      "gateway_generator_contract_and_all_registered_routes"),
@@ -125,7 +138,12 @@ def main() -> None:
             original = path.read_text()
             if old not in original:
                 raise RuntimeError(f"mutation target changed: {label}")
-            path.write_text(original.replace(old, new))
+            mutated = original.replace(old, new)
+            if label == "desired backend validated only after import":
+                if BACKEND_IMPORT not in mutated:
+                    raise RuntimeError("backend import mutation target changed")
+                mutated = mutated.replace(BACKEND_IMPORT, BACKEND_IMPORT + PRE_IMPORT_VALIDATION)
+            path.write_text(mutated)
             xml_path = Path(temporary) / f"{index}.xml"
             try:
                 result = subprocess.run(  # noqa: S603

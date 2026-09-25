@@ -82,6 +82,9 @@ prepare() {
   local desired="${STATE_DIR}/gateway-backend.desired.json"
   describe_control
   config backend --control "${STATE_DIR}/control-backend.live.json" >"$desired"
+  # Validate the exact import payload before any cloud mutation, even after cutover.
+  config verify-backend --input "$desired" \
+    --control "${STATE_DIR}/control-backend.live.json"
   # Capture before backend import too. URL-map rollback never deletes a backend.
   if gc compute backend-services describe "$GATEWAY_BACKEND" --global --format=json \
       >"${STATE_DIR}/gateway-backend.pre-prepare.json"; then

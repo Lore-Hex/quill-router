@@ -179,6 +179,97 @@ def test_prepare_imports_complete_backend_without_routing(tmp_path):
     assert (harness.root / "state/gateway-backend.pre-prepare.json").is_file()
 
 
+def test_prepare_and_verify_literal_live_control(tmp_path, monkeypatch):
+    control = json.loads((Path(__file__).parent / "fixtures/gateway-edge/control-backend.fixture.json").read_text())
+    assert control["enableCDN"] is True and control["cdnPolicy"]
+    replace_response(monkeypatch, r"backend-services describe trusted-router-control-backend", control)
+    harness = DeployScriptHarness(tmp_path / "live-control")
+    prepared = run(harness, "prepare")
+    assert prepared.returncode == 0, summarise(prepared)
+    imports = mutations(prepared.calls)
+    assert len(imports) == 1 and "backend-services" in imports[0] and "import" in imports[0]
+    source = next(a.split("=", 1)[1] for a in imports[0] if a.startswith("--source="))
+    desired = json.loads(Path(source).read_text())
+    assert desired["enableCDN"] is False
+    assert "cdnPolicy" not in desired
+    assert desired["backends"] == [{"group": f"{BASE}/regions/{r}/networkEndpointGroups/"
+                                    "trusted-router-control-neg"} for r in TARGETS]
+    assert desired["outlierDetection"] == {
+        "consecutiveErrors": 12, "enforcingConsecutiveErrors": 100,
+        "consecutiveGatewayFailure": 12, "enforcingConsecutiveGatewayFailure": 100,
+        "interval": {"seconds": 1, "nanos": 0},
+        "baseEjectionTime": {"seconds": 30, "nanos": 0}, "maxEjectionPercent": 50,
+    }
+    verified = run(harness, "verify")
+    assert verified.returncode == 0, summarise(verified)
+    assert not mutations(verified.calls)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("enableCDN", True), ("backends", [{"group": "neg", "preference": "PREFERRED"}]),
+])
+def test_prepare_overrides_control_cdn_and_preference(tmp_path, monkeypatch, field, value):
+    control = deepcopy(CONTROL)
+    control[field] = value
+    replace_response(monkeypatch, r"backend-services describe trusted-router-control-backend", control)
+    harness = DeployScriptHarness(tmp_path / "overrides")
+    result = run(harness, "prepare")
+    assert result.returncode == 0, summarise(result)
+    imports = mutations(result.calls)
+    assert len(imports) == 1 and "backend-services" in imports[0] and "import" in imports[0]
+    source = next(a.split("=", 1)[1] for a in imports[0] if a.startswith("--source="))
+    desired = json.loads(Path(source).read_text())
+    assert desired["enableCDN"] is False
+    assert "cdnPolicy" not in desired
+    assert desired["backends"] == [{"group": f"{BASE}/regions/{r}/networkEndpointGroups/"
+                                    "trusted-router-control-neg"} for r in TARGETS]
+
+
+@pytest.mark.parametrize("source,field,value", [
+    (source, field, value)
+    for source in ("control", "rendered")
+    for field, value in (
+        ("iap", {"enabled": True}), ("healthChecks", ["health-check"]),
+    )
+] + [
+    ("rendered", "enableCDN", True),
+    ("rendered", "backends", [{"group": "neg", "preference": "PREFERRED"}]),
+    ("rendered", "timeoutSec", 31), ("rendered", "cdnPolicy", {}),
+])
+def test_prepare_rejects_unsafe_backend_before_mutations(tmp_path, monkeypatch, source, field, value):
+    harness = DeployScriptHarness(tmp_path / "unsafe")
+    if source == "control":
+        control = deepcopy(CONTROL)
+        control[field] = value
+        replace_response(monkeypatch, r"backend-services describe trusted-router-control-backend", control)
+    else:
+        # Corrupt only the serialized import payload, not the verifier's
+        # independent expected configuration. This tests parity as well as bans.
+        path = harness.mirror / "scripts/deploy/gateway_edge_config.py"
+        path.write_text(path.read_text().replace(
+            '        print(json.dumps(desired, indent=2))',
+            f'        desired[{field!r}] = {value!r}\n        print(json.dumps(desired, indent=2))'))
+    result = run(harness, "prepare")
+    assert result.returncode != 0, summarise(result)
+    assert field in result.stderr
+    # Exact read-only call inventory: catches ANY mutation, not just known verbs.
+    expected = [["gcloud", "projects", "describe", "quill-cloud-proxy", "--format=value(projectNumber)"]]
+    for region in TARGETS:
+        expected.extend([
+            ["gcloud", "run", "services", "describe", "trusted-router", "--region", region, "--format=json"],
+            ["gcloud", "run", "revisions", "describe", f"trusted-router-{region}", "--region", region, "--format=json"],
+            ["gcloud", "compute", "network-endpoint-groups", "describe", "trusted-router-control-neg",
+             "--region", region, "--format=json"],
+        ])
+    expected.append(["gcloud", "compute", "backend-services", "describe", "trusted-router-control-backend",
+                     "--global", "--format=json"])
+    expected = [[call[0], "--project", "quill-cloud-proxy", *call[1:]] for call in expected]
+    gc_calls = [call for call in result.calls if call[0] in {"gc", "gcloud"}]
+    assert len(gc_calls) == len(expected), gc_calls
+    assert gc_calls == expected
+    assert mutations(result.calls) == []
+
+
 @pytest.mark.parametrize("field,value", [
     ("enableCDN", True), ("timeoutSec", 31), ("loadBalancingScheme", "EXTERNAL"),
     ("protocol", "HTTPS"), ("securityPolicy", "wrong"), ("customRequestHeaders", []),
