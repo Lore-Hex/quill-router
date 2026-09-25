@@ -58,6 +58,7 @@ from scripts.pricing.providers import (
     nvidia_nim,
     perplexity,
     phala,
+    privatemode,
     recraft,
     regolo,
     reka,
@@ -459,6 +460,12 @@ _DISCOVERABLE_MANIFEST_PROVIDERS_BASE: tuple[
         near_ai.canonical_model_id,
     ),
     (
+        "privatemode",
+        privatemode.CATALOG_URL,
+        ("PRIVATEMODE_API_KEY",),
+        privatemode.canonical_model_id,
+    ),
+    (
         "engy",
         "https://api.engy.ai/v1/models",
         ("ENGY_API_KEY",),
@@ -518,6 +525,7 @@ _STALE_MANIFEST_PROVIDER_MODULES = (
     jina,
     krea,
     near_ai,
+    privatemode,
     bfl,
     decart,
     fal,

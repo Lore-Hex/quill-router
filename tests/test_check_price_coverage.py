@@ -43,6 +43,8 @@ _NEW_AUTOMATIC_FEED_ROWS = _NEW_AUTOMATIC_FEED_MODELS | _NEW_AUTOMATIC_FEED_ALIA
 
 
 def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict:
+    if "api.privatemode.ai" in url:
+        return {"data": [{"id": "gpt-oss-120b"}]}
     if "api.regolo.ai" in url:
         return {"data": [{"model_group": "glm5.2", "mode": "chat"}]}
     if "api.openai.com" in url:
