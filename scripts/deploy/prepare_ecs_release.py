@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Clone a live ECS task definition, changing only its image and release marker."""
+"""Clone a live ECS task definition, changing only its image and release marker.
+
+It also pins TR_REMEDIATOR_IN_PROCESS_ENABLED=false: on AWS the EventBridge tick
+(infra/aws_synthetic_monitoring.tf) is the only remediator scheduler.
+"""
 
 from __future__ import annotations
 
@@ -54,10 +58,17 @@ def prepare(payload: dict, image: str, release: str, required_outbox: str = "tru
     )
     if (values.get("TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED") == "true") != has_clickhouse_secret:
         raise ValueError("TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED conflicts with TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD")
+    # The in-process remediator loop defaults on. A live definition without the
+    # setting gets it added as false; any value other than false is refused.
+    in_process = values.get("TR_REMEDIATOR_IN_PROCESS_ENABLED")
+    if in_process not in (None, "false"):
+        raise ValueError("TR_REMEDIATOR_IN_PROCESS_ENABLED must be false on the AWS observer")
     container["image"] = image
     for entry in env:
         if entry["name"] in {"TR_RELEASE", "RELEASE_COMMIT"}:
             entry["value"] = release
+    if in_process is None:
+        env.append({"name": "TR_REMEDIATOR_IN_PROCESS_ENABLED", "value": "false"})
     return result
 
 

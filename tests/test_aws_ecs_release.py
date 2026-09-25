@@ -72,6 +72,9 @@ def expected_registration(original: dict, image: str) -> dict:
     for entry in expected["containerDefinitions"][0]["environment"]:
         if entry["name"] in {"TR_RELEASE", "RELEASE_COMMIT"}:
             entry["value"] = "c" * 40
+    expected["containerDefinitions"][0]["environment"].append(
+        {"name": "TR_REMEDIATOR_IN_PROCESS_ENABLED", "value": "false"}
+    )
     return expected
 
 
@@ -124,6 +127,40 @@ def test_task_builder_fails_closed(fault: str) -> None:
         release = "main"
     with pytest.raises(ValueError):
         load_builder()(payload, image, release)
+
+
+def _in_process_values(result: dict) -> list[str]:
+    env = result["containerDefinitions"][0]["environment"]
+    return [e["value"] for e in env if e["name"] == "TR_REMEDIATOR_IN_PROCESS_ENABLED"]
+
+
+def test_release_adds_the_in_process_remediator_pin_when_absent() -> None:
+    # The live AWS observer definitions carry no TR_REMEDIATOR_IN_PROCESS_ENABLED.
+    payload = task_definition("eu-west-3")
+    assert _in_process_values(payload["taskDefinition"]) == []
+    result = load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, "true")
+    assert _in_process_values(result) == ["false"]
+
+
+def test_release_keeps_an_existing_false_pin_without_duplicating_it() -> None:
+    payload = task_definition("eu-west-1")
+    payload["taskDefinition"]["containerDefinitions"][0]["environment"].append(
+        {"name": "TR_REMEDIATOR_IN_PROCESS_ENABLED", "value": "false"}
+    )
+    result = load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, "false")
+    assert _in_process_values(result) == ["false"]
+
+
+@pytest.mark.parametrize("value", ["true", "True", "1", ""])
+def test_release_refuses_an_in_process_remediator_on_aws(value: str) -> None:
+    payload = task_definition("eu-west-3")
+    payload["taskDefinition"]["containerDefinitions"][0]["environment"].append(
+        {"name": "TR_REMEDIATOR_IN_PROCESS_ENABLED", "value": value}
+    )
+    before = copy.deepcopy(payload)
+    with pytest.raises(ValueError, match="TR_REMEDIATOR_IN_PROCESS_ENABLED must be false"):
+        load_builder()(payload, "registry@sha256:" + "b" * 64, "c" * 40, "true")
+    assert payload == before
 
 
 @pytest.mark.parametrize(("region", "required_outbox"), [("eu-west-1", "true"), ("eu-west-3", "false")])
