@@ -10,6 +10,7 @@ returns already_settled=True without double-charging.
 
 from __future__ import annotations
 
+import copy
 import datetime as dt
 import functools
 import hashlib
@@ -242,6 +243,7 @@ from trusted_router.storage_errors import (
 )
 from trusted_router.storage_gcp_io import spanner_rpc_budget
 from trusted_router.storage_gcp_secrets import secret_manager_seed_loader
+from trusted_router.storage_gcp_settle_outbox import ENQ_INSERTED
 from trusted_router.storage_models import (
     SYNTHETIC_APP_NAME,
     AmbiguousGatewayRequestId,
@@ -3676,6 +3678,13 @@ def _settle_gateway_authorization(
         # the latency dataset with noise.
         return {"data": _already_settled_gateway_data(authorization)}
 
+    # Detached request-local inputs only. Finalize builds its own mutable copy;
+    # reservation and authorization claims still read/guard state inside T3.
+    # Lease settlement keeps its existing read path.
+    authorization_snapshot = (
+        copy.deepcopy(authorization) if authorization.settlement == "local" else None
+    )
+
     if body.tags is not None:
         try:
             if not tags_match(body.tags, authorization.tags):
@@ -4112,21 +4121,22 @@ def _settle_gateway_authorization(
             # crashes before it still rely on enclave redelivery. MF4/MF5 freeze
             # the finalize path and exact resolved cost used by the inline attempt.
             settle_outbox = spanner_settle_outbox()
-            enqueue_outcome = settle_outbox.enqueue(
-                SettleOutboxRow(
-                    authorization_id=authorization.id,
-                    intent_kind=intent_kind,
-                    settle_origin="typed" if is_typed else "legacy",
-                    actual_cost_micro=actual_cost,
-                    reservation_id=authorization.credit_reservation_id,
-                    selected_endpoint_id=selected_endpoint.id,
-                    model_id=generation_model_id,
-                    selected_usage_type=str(selected_usage_type),
-                    settle_body=json.dumps(frozen_settle_body, separators=(",", ":")),
-                    auto_refill_workspace_id=(
-                        authorization.workspace_id if refill_required else None
-                    ),
+            settle_intent = SettleOutboxRow(
+                authorization_id=authorization.id,
+                intent_kind=intent_kind,
+                settle_origin="typed" if is_typed else "legacy",
+                actual_cost_micro=actual_cost,
+                reservation_id=authorization.credit_reservation_id,
+                selected_endpoint_id=selected_endpoint.id,
+                model_id=generation_model_id,
+                selected_usage_type=str(selected_usage_type),
+                settle_body=json.dumps(frozen_settle_body, separators=(",", ":")),
+                auto_refill_workspace_id=(
+                    authorization.workspace_id if refill_required else None
                 ),
+            )
+            enqueue_outcome = settle_outbox.enqueue(
+                settle_intent,
                 # Grace so inline finalize wins the benign race; the drain only
                 # sees rows whose inline attempt is dead >=60s, avoiding replays.
                 initial_delay_seconds=60,
@@ -4142,14 +4152,20 @@ def _settle_gateway_authorization(
                 # Let the drain apply that immutable intent, including its excess.
                 return {"data": _intent_durable_gateway_data(authorization)}
             if refill_required:
+                # A matching fresh INSERT already committed the attachment.
                 # Pre-cutover combined rows have no refill columns. Attaching is
                 # an independent NULL -> pending transition, so it is safe even
                 # when the settlement row is actively leased or terminal.
-                refill_attached = settle_outbox.attach_auto_refill(
-                    authorization.id,
-                    authorization.workspace_id,
-                    initial_delay_seconds=60,
+                refill_attached = (
+                    enqueue_outcome == ENQ_INSERTED
+                    and settle_intent.auto_refill_workspace_id == authorization.workspace_id
                 )
+                if not refill_attached:
+                    refill_attached = settle_outbox.attach_auto_refill(
+                        authorization.id,
+                        authorization.workspace_id,
+                        initial_delay_seconds=60,
+                    )
                 if not refill_attached:
                     raise RuntimeError("settlement auto-refill attachment was not confirmed")
         except Exception:
@@ -4207,6 +4223,7 @@ def _settle_gateway_authorization(
                     TypedFinalizeResult,
                     result_method(
                         authorization.id,
+                        authorization_snapshot=authorization_snapshot,
                         success=success,
                         actual_microdollars=actual_cost,
                         selected_usage_type=selected_usage_type,

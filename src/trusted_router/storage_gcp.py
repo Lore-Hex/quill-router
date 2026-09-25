@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import dataclasses
 import datetime as dt
 import hashlib
@@ -4855,6 +4856,7 @@ class SpannerBigtableStore:
         app_markup_payout: AppMarkupPayout | None = None,
         custom_model_markup_payout: CustomModelMarkupPayout | None = None,
         settle_outbox_done: tuple[str, str] | None = None,
+        authorization_snapshot: GatewayAuthorization | None = None,
         regional_charge_parts: tuple[int, int] | None = None,
     ) -> TypedFinalizeResult:
         """Route-facing typed settle: same contract as
@@ -4866,7 +4868,16 @@ class SpannerBigtableStore:
         """
         from trusted_router.storage_gcp_authorize import SettleOutcome, typed_finalize_atomic
 
-        authorization = self.get_gateway_authorization(authorization_id)
+        # Only trusted, request-local inputs may replace this point read. Never
+        # use this snapshot as a terminal-state/claim guard: typed_finalize_atomic
+        # must still arbitrate reservation and authorization writes in T3.
+        authorization = (
+            copy.deepcopy(authorization_snapshot)
+            if authorization_snapshot is not None
+            else self.get_gateway_authorization(authorization_id)
+        )
+        if authorization is not None and authorization.id != authorization_id:
+            raise ValueError("authorization inputs do not match authorization_id")
         if authorization is None or authorization.credit_reservation_id is None:
             return TypedFinalizeResult(finalized=False, activity_indexed=False)
         regional_hold_unknown = False
