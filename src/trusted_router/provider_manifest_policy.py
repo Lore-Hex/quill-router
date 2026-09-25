@@ -37,6 +37,7 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS | frozen
         "perplexity",
         "scaleway",
         "regolo",
+        "privatemode",
         "featherless",
         "sakana",
         "jina",

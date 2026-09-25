@@ -1,0 +1,86 @@
+{
+  "provider": "privatemode",
+  "models": [
+    {
+      "display_name": "gpt-oss-120b",
+      "title": "gpt-oss-120b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-oss-120b",
+      "upstream_id": "gpt-oss-120b",
+      "context_length": 128000,
+      "supports_tools": true,
+      "supports_reasoning": true,
+      "routable": false,
+      "routable_reason": "attested-enclave-rollout-pending",
+      "input_token_price_per_m": 514846,
+      "output_token_price_per_m": 2035436,
+      "cached_input_token_price_per_m": 47893
+    },
+    {
+      "display_name": "GLM-5.3",
+      "title": "glm-5.3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3",
+      "upstream_id": "glm-5.3",
+      "context_length": 1000000,
+      "supports_tools": true,
+      "supports_reasoning": true,
+      "routable": false,
+      "routable_reason": "attested-enclave-rollout-pending",
+      "input_token_price_per_m": 1855839,
+      "output_token_price_per_m": 9267219,
+      "cached_input_token_price_per_m": 179598
+    },
+    {
+      "display_name": "GLM-5.3-Flash",
+      "title": "glm-5.3-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3-flash",
+      "upstream_id": "glm-5.3-flash",
+      "context_length": 1000000,
+      "supports_tools": true,
+      "supports_reasoning": true,
+      "routable": false,
+      "routable_reason": "attested-enclave-rollout-pending",
+      "input_token_price_per_m": 239463,
+      "output_token_price_per_m": 778255,
+      "cached_input_token_price_per_m": 59866
+    }
+  ],
+  "source": "https://docs.privatemode.ai/models/overview/",
+  "pricing_source": "https://docs.privatemode.ai/pricing/",
+  "generated_at": "2026-09-25T17:13:38Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 3
+}
