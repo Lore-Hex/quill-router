@@ -9,6 +9,7 @@ chat, pinned to one provider.
 
 from __future__ import annotations
 
+import logging
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,7 @@ from trusted_router.catalog_data import (
     NAMED_DECISION_MODEL_PROVIDERS,
     NAMED_DECISION_MODELS,
     NATIVE_DECISION_MODEL_PROVIDERS,
+    OEV_1_0_MODEL_ID,
     PRIVATE_PROXY_MODEL_TARGETS,
     TREV_1_0_MODEL_ID,
     ZEV_1_0_MODEL_ID,
@@ -530,6 +532,73 @@ async def test_excluding_every_named_host_is_not_a_retryable_outage(
     assert not STORE.api_keys.reservations
     assert not STORE.api_keys.gateway_authorizations
     assert PRIVATE_PROXY_MODEL_TARGETS[model_id] not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model_id", NAMED_IDS)
+async def test_byok_billing_without_a_key_is_never_a_retryable_outage(
+    model_id: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Orchestration-backed names reject BYOK routes up front; every other
+    # name reaches the chain and finds its Credits-only hosts stripped by the
+    # request. Both are the caller's contract conflict: a 400 with no
+    # Retry-After, and never the outage log line that pages.
+    with caplog.at_level(logging.INFO, logger="trusted_router.routes.internal.gateway"):
+        response = await _authorize(
+            {
+                "model": model_id,
+                "route_type": "decide",
+                "provider": {"usage": "byok"},
+                "estimated_input_tokens": 480,
+                "max_output_tokens": 700,
+            }
+        )
+    assert response.status_code == 400, response.text
+    assert "retry-after" not in response.headers
+    assert not STORE.api_keys.reservations
+    assert not STORE.api_keys.gateway_authorizations
+    assert PRIVATE_PROXY_MODEL_TARGETS[model_id] not in response.text
+    assert "billing.authorize_named_chain_unavailable" not in caplog.text
+    if response.json()["error"]["type"] == "bad_request":
+        assert "billing.authorize_named_chain_filtered_by_request" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "preferences",
+    [
+        pytest.param({"usage": "byok"}, id="byok-billing-without-a-key"),
+        pytest.param({"zdr": True}, id="zero-data-retention-posture"),
+        pytest.param({"data_collection": "deny", "zdr": True}, id="deny-plus-zdr"),
+    ],
+)
+async def test_a_request_filter_that_strips_every_pinned_host_is_a_client_error(
+    preferences: dict[str, Any], caplog: pytest.LogCaptureFixture
+) -> None:
+    # oev-1.0 is pinned to a single Credits host that offers no zero-data-
+    # retention posture. The host exists and is reachable; only this
+    # request's own filters removed it, so a retry cannot change the answer.
+    # On 2026-09-25 one new workspace's eighteen such requests were answered
+    # 503 and opened "TR Gateway: billing path 5xx".
+    with caplog.at_level(logging.INFO, logger="trusted_router.routes.internal.gateway"):
+        response = await _authorize(
+            {
+                "model": OEV_1_0_MODEL_ID,
+                "route_type": "decide",
+                "provider": preferences,
+                "estimated_input_tokens": 480,
+                "max_output_tokens": 700,
+            }
+        )
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["type"] == "bad_request"
+    assert "chain" in response.json()["error"]["message"]
+    assert "retry-after" not in response.headers
+    assert not STORE.api_keys.reservations
+    assert not STORE.api_keys.gateway_authorizations
+    assert PRIVATE_PROXY_MODEL_TARGETS[OEV_1_0_MODEL_ID] not in response.text
+    assert "billing.authorize_named_chain_filtered_by_request" in caplog.text
+    assert "billing.authorize_named_chain_unavailable" not in caplog.text
 
 
 @pytest.mark.asyncio

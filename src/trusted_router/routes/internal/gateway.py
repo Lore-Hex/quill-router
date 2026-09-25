@@ -58,6 +58,7 @@ from trusted_router.catalog import (
     effective_endpoint,
     endpoint_for_id,
     endpoint_zero_data_retention,
+    endpoints_for_model,
 )
 from trusted_router.client_context import parse_client_context, parse_gateway_request_id
 from trusted_router.config import Settings, get_settings
@@ -1223,6 +1224,43 @@ def _authorize_gateway_sync_impl(
             key=lambda candidate: chain_rank[candidate[1].provider],
         )
         if not endpoint_candidates:
+            # Two different situations end here. If a pinned host is in the
+            # catalog and reachable from this region but the REQUEST's own
+            # routing filters (BYOK-only billing without a key, a privacy
+            # posture the host cannot meet, a jurisdiction, ...) removed it,
+            # the chain's fixed hosts cannot satisfy the request and a retry
+            # cannot change that: answer 400 like every other filter
+            # conflict, and log it as a client conflict. Only when no pinned
+            # host is available at all is this a retryable outage. Answering
+            # 503 for the first case made one new workspace's eighteen
+            # requests page "TR Gateway: billing path 5xx" on 2026-09-25.
+            pinned_hosts_available = any(
+                candidate_endpoint.provider in chain_rank
+                and not candidate_endpoint.is_byok
+                and provider_model_available_from_gateway_region(
+                    candidate_endpoint.provider,
+                    candidate_endpoint.model_id,
+                    region,
+                )
+                for model_id in normalized_routing.model_ids
+                for candidate_endpoint in endpoints_for_model(model_id)
+            )
+            if pinned_hosts_available:
+                logger.info(
+                    "billing.authorize_named_chain_filtered_by_request workspace_id=%s "
+                    "request_id=%s model=%s region=%s",
+                    workspace.id,
+                    getattr(request.state, "request_id", None),
+                    _log_value(route_model_id),
+                    _log_value(region),
+                )
+                raise api_error(
+                    400,
+                    f"No host in the {route_model_id} chain matches the request's routing "
+                    "filters; the chain's hosts are fixed, so relax the usage, privacy, "
+                    "jurisdiction or provider filters",
+                    ErrorType.BAD_REQUEST,
+                )
             logger.warning(
                 "billing.authorize_named_chain_unavailable workspace_id=%s request_id=%s "
                 "model=%s region=%s",
