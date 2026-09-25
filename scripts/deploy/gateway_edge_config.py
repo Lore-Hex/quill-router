@@ -6,6 +6,7 @@ import argparse
 import json
 import math
 import re
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -35,10 +36,19 @@ GEO = {
     "us-east1": (33.836, -81.163),
 }
 ENCLAVES = ("us-central1", "us-west1", "us-east4", "europe-west4")
+# 2026-09-25 evidence: 4 app 503s in 1.42s; authorize retries up to 3 times
+# on the same keep-alive/GFE. Two hot-row callers can produce 6 consecutive
+# failures; choose 12 (2x margin), for BOTH counters since 503 increments both.
+# At ~9,500 authorizes + ~9,500 settles/hour = 5.28 calls/s across P proxies,
+# a fast-failing outage needs ~12/(5.28/P) = 2.27P seconds, plus observation
+# delay (interval 1s). P=4/10/20 => ~9/23/45s, NOT a measured proxy count or SLA.
+# Sparse proxies and hung requests take longer; the enclave has 25s header /
+# 30s total timeouts. Lower thresholds falsely eject on ordinary contention;
+# >=12 app errors can still eject for >=30s, longer after repeated ejections.
 OUTLIER = {
-    "consecutiveErrors": 5,
+    "consecutiveErrors": 12,
     "enforcingConsecutiveErrors": 100,
-    "consecutiveGatewayFailure": 3,
+    "consecutiveGatewayFailure": 12,
     "enforcingConsecutiveGatewayFailure": 100,
     "interval": {"seconds": 1, "nanos": 0},
     "baseEjectionTime": {"seconds": 30, "nanos": 0},
@@ -59,8 +69,8 @@ def distance(a: str, b: str) -> float:
 def regions(primary: str, failovers: str, enclaves: str) -> list[str]:
     targets = [primary, *failovers.split(",")]
     origins = set(ENCLAVES) | set(enclaves.split(","))
-    if len(targets) < 2 or len(set(targets)) != len(targets) or "" in targets:
-        raise ValueError("at least two distinct gateway regions are required")
+    if len(targets) != 2 or len(set(targets)) != len(targets) or "" in targets:
+        raise ValueError("exactly two distinct gateway regions are required")
     if (set(targets) | origins) - GEO.keys():
         raise ValueError("unknown gateway/enclave geography; review GEO before proceeding")
     for origin in sorted(origins):
@@ -70,43 +80,75 @@ def regions(primary: str, failovers: str, enclaves: str) -> list[str]:
     return targets
 
 
-def backend(project: str, name: str, targets: list[str]) -> dict[str, Any]:
+# Describe metadata is not importable configuration or edge parity.
+OUTPUT_ONLY = {"id", "creationTimestamp", "selfLink", "kind", "fingerprint", "usedBy"}
+# API defaults can be absent from imports and present on read-back. Normalize
+# only known defaults, never discard unknown fields: additions must be reviewed.
+BACKEND_DEFAULTS = {
+    "description": "", "affinityCookieTtlSec": 0, "port": 80, "portName": "http",
+    "timeoutSec": 30, "protocol": "HTTP", "sessionAffinity": "NONE",
+    "compressionMode": "DISABLED", "connectionDraining": {"drainingTimeoutSec": 0},
+    "customRequestHeaders": [], "customResponseHeaders": [], "healthChecks": [],
+    "iap": {"enabled": False}, "enableCDN": False,
+}
+OUTLIER_DEFAULTS = {
+    "consecutiveErrors": 5, "consecutiveGatewayFailure": 3,
+    "enforcingConsecutiveErrors": 0, "enforcingConsecutiveGatewayFailure": 100,
+    "interval": {"seconds": 1, "nanos": 0},
+    "baseEjectionTime": {"seconds": 30, "nanos": 0}, "maxEjectionPercent": 50,
+    # Success-rate settings are unsupported for serverless NEGs. The API can
+    # still fill their defaults; accept those, reject unexpected configurations.
+    "enforcingSuccessRate": 100, "successRateMinimumHosts": 5,
+    "successRateRequestVolume": 100, "successRateStdevFactor": 1900,
+}
+
+
+def backend(project: str, name: str, targets: list[str],
+            control: dict[str, Any]) -> dict[str, Any]:
     base = f"https://www.googleapis.com/compute/v1/projects/{project}"
-    return {
-        "name": name,
-        "loadBalancingScheme": "EXTERNAL_MANAGED",
-        "protocol": "HTTP",
-        "enableCDN": False,
-        "timeoutSec": 30,
-        "customRequestHeaders": ["X-TrustedRouter-Client-IP:{client_ip_address}"],
-        "logConfig": {"enable": True, "sampleRate": 0.1},
-        "securityPolicy": f"{base}/global/securityPolicies/trusted-router-legacy-edge",
-        "backends": [{"group": f"{base}/regions/{region}/networkEndpointGroups/"
-                     "trusted-router-control-neg"} for region in targets],
-        "outlierDetection": OUTLIER,
-    }
+    result = {key: deepcopy(value) for key, value in control.items() if key not in OUTPUT_ONLY}
+    result["name"] = name  # Separate backend identity; retain all other edge settings.
+    # Billing responses must never be cached, regardless of the control policy.
+    result["enableCDN"] = False
+    result.pop("cdnPolicy", None)
+    # Passive per-proxy regional failure detection; no serverless health checks.
+    result["outlierDetection"] = deepcopy(OUTLIER)
+    # Exactly Iowa + São Paulo: closest-region selection keeps billing near the
+    # Spanner leader for approved enclaves, with a distant warm recovery target.
+    result["backends"] = [{"group": f"{base}/regions/{region}/networkEndpointGroups/"
+                           "trusted-router-control-neg"} for region in targets]
+    return result
+
+
+def normalized_backend(value: dict[str, Any]) -> dict[str, Any]:
+    result = deepcopy(BACKEND_DEFAULTS)
+    result.update({key: deepcopy(item) for key, item in value.items() if key not in OUTPUT_ONLY})
+    result["logConfig"] = {"enable": False, "sampleRate": 1.0,
+                           "optionalMode": "EXCLUDE_ALL_OPTIONAL", "optionalFields": [],
+                           **result.get("logConfig", {})}
+    if "outlierDetection" in result:
+        outlier = {**deepcopy(OUTLIER_DEFAULTS), **result["outlierDetection"]}
+        for field in ("interval", "baseEjectionTime"):
+            duration = outlier[field]
+            outlier[field] = {**duration, "seconds": int(duration.get("seconds", 0)),
+                              "nanos": int(duration.get("nanos", 0))}
+        result["outlierDetection"] = outlier
+    # Serverless balancing mode has no effect. These read-back defaults are
+    # accepted, but extra entry fields, preference, and capacity drift are not.
+    result["backends"] = sorted(
+        [{"balancingMode": "UTILIZATION", "capacityScaler": 1.0,
+          "preference": "DEFAULT", **entry} for entry in result.get("backends", [])],
+        key=lambda entry: entry["group"],
+    )
+    return result
 
 
 def verify_backend(actual: dict[str, Any], expected: dict[str, Any]) -> None:
-    for key, value in expected.items():
-        if key == "backends":
-            groups = [item.get("group") for item in actual.get(key, [])]
-            if sorted(groups) != sorted(item["group"] for item in value):
-                raise ValueError("gateway backend NEG membership differs")
-            if any(item.get("preference", "DEFAULT") != "DEFAULT"
-                   for item in actual.get(key, [])):
-                raise ValueError("serverless backend preference is forbidden")
-        elif key == "outlierDetection":
-            observed = actual.get(key, {})
-            for field, wanted in value.items():
-                got = observed.get(field)
-                if isinstance(wanted, dict):
-                    got = {"seconds": int((got or {}).get("seconds", 0)),
-                           "nanos": int((got or {}).get("nanos", 0))}
-                if got != wanted:
-                    raise ValueError(f"gateway outlierDetection.{field} differs")
-        elif actual.get(key) != value:
-            raise ValueError(f"gateway backend {key} differs")
+    observed, desired = normalized_backend(actual), normalized_backend(expected)
+    for key in sorted(observed.keys() | desired.keys()):
+        if observed.get(key) != desired.get(key):
+            raise ValueError(f"gateway backend parity drifted: {key} differs from live control "
+                             "backend plus deliberate gateway overrides")
     if actual.get("healthChecks") or actual.get("iap", {}).get("enabled"):
         raise ValueError("serverless billing backend must not have health checks or IAP")
 
@@ -155,6 +197,12 @@ def verify_fleet(state: Path, targets: list[str], project: str) -> None:
     for region in targets:
         service = json.loads((state / f"{region}.service.json").read_text())
         name = active_revision(service)
+        # Two warm instances at concurrency 8 give 16 slots / 2-4s = 4-8 calls/s.
+        # One gives 2-4 calls/s, below the current 5.28/s aggregate arrival rate.
+        # Two buffer the first seconds while autoscaling; not a full capacity SLA.
+        if region != targets[0] and int(service["metadata"]["annotations"].get(
+                "run.googleapis.com/minScale", 0)) < 2:
+            raise ValueError("gateway failover requires service-level min instances >= 2; run rollout")
         revision = json.loads((state / f"{region}.revision.json").read_text())
         if revision.get("metadata", {}).get("name") != name:
             raise ValueError("revision evidence does not match serving traffic")
@@ -199,10 +247,15 @@ def main() -> None:
     parser.add_argument("--backend", default="trusted-router-gateway-backend")
     parser.add_argument("--state", type=Path)
     parser.add_argument("--input", type=Path)
+    parser.add_argument("--control", type=Path)
     parser.add_argument("--domains", default="trustedrouter.com,allyrouter.com,uptimerouter.com")
     args = parser.parse_args()
     targets = regions(args.primary, args.failovers, args.enclaves)
-    desired = backend(args.project, args.backend, targets)
+    if args.command in {"backend", "verify-backend"}:
+        if args.control is None:
+            parser.error("--control live describe is required for backend parity")
+        desired = backend(args.project, args.backend, targets,
+                          json.loads(args.control.read_text()))
     if args.command == "regions":
         print(",".join(targets))
     elif args.command == "backend":

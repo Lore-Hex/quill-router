@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 
@@ -21,6 +22,26 @@ BACKEND = "trusted-router-gateway-backend"
 BASE = "https://www.googleapis.com/compute/v1/projects/quill-cloud-proxy"
 GATEWAY = f"{BASE}/global/backendServices/{BACKEND}"
 TARGETS = ["us-central1", "southamerica-east1"]
+CONTROL = json.loads((Path(__file__).parent / "fixtures/gateway-edge/control-backend.fixture.json").read_text())
+
+
+def gateway_fixture():
+    # Independent literal live evidence plus reviewed differences, NOT the renderer.
+    value = deepcopy(CONTROL)
+    for key in ("kind", "selfLink", "cdnPolicy"):
+        value.pop(key)
+    value.update(name=BACKEND, enableCDN=False)
+    value["backends"] = [entry for entry in value["backends"] if any(
+        f"/regions/{region}/" in entry["group"] for region in TARGETS)]
+    value["outlierDetection"] = {
+        "consecutiveErrors": 12, "consecutiveGatewayFailure": 12,
+        "enforcingConsecutiveErrors": 100, "enforcingConsecutiveGatewayFailure": 100,
+        "interval": {"seconds": "1"}, "baseEjectionTime": {"seconds": "30"},
+        "maxEjectionPercent": 50, "enforcingSuccessRate": 100,
+        "successRateMinimumHosts": 5, "successRateRequestVolume": 100,
+        "successRateStdevFactor": 1900,
+    }
+    return value
 
 
 def live_map(internal="trusted-router-control-backend"):
@@ -37,7 +58,7 @@ def live_map(internal="trusted-router-control-backend"):
 
 def service(region):
     return {
-        "metadata": {"annotations": {"run.googleapis.com/minScale": "1",
+        "metadata": {"annotations": {"run.googleapis.com/minScale": "2",
                      "run.googleapis.com/ingress": "internal-and-cloud-load-balancing"}},
         "status": {"conditions": [{"type": "Ready", "status": "True"}],
                    "traffic": [{"revisionName": f"trusted-router-{region}", "percent": 100}]},
@@ -56,7 +77,9 @@ def cloud_fixture(monkeypatch):
     responses = [
         (r"projects describe.*projectNumber", "44325983244"),
         (r"backend-services describe trusted-router-gateway-backend .*--format=json",
-         json.dumps(CONFIG.backend("quill-cloud-proxy", BACKEND, TARGETS))),
+         json.dumps(gateway_fixture())),
+        (r"backend-services describe trusted-router-control-backend .*--format=json",
+         json.dumps(CONTROL)),
         (r"url-maps describe trusted-router-control-map .*--format=json", json.dumps(live_map())),
     ]
     for region in TARGETS:
@@ -136,20 +159,23 @@ def test_prepare_imports_complete_backend_without_routing(tmp_path):
     assert len(imports) == 1 and "backend-services" in imports[0] and "import" in imports[0]
     source = next(a.split("=", 1)[1] for a in imports[0] if a.startswith("--source="))
     desired = json.loads(Path(source).read_text())
-    assert desired == {
-        "name": BACKEND, "loadBalancingScheme": "EXTERNAL_MANAGED", "protocol": "HTTP",
-        "enableCDN": False, "timeoutSec": 30,
-        "customRequestHeaders": ["X-TrustedRouter-Client-IP:{client_ip_address}"],
-        "logConfig": {"enable": True, "sampleRate": 0.1},
-        "securityPolicy": f"{BASE}/global/securityPolicies/trusted-router-legacy-edge",
-        "backends": [{"group": f"{BASE}/regions/{r}/networkEndpointGroups/"
-                      "trusted-router-control-neg"} for r in TARGETS],
-        "outlierDetection": {"consecutiveErrors": 5, "enforcingConsecutiveErrors": 100,
-                             "consecutiveGatewayFailure": 3, "enforcingConsecutiveGatewayFailure": 100,
-                             "interval": {"seconds": 1, "nanos": 0},
-                             "baseEjectionTime": {"seconds": 30, "nanos": 0},
-                             "maxEjectionPercent": 50},
+    parity = deepcopy(CONTROL)
+    for key in ("kind", "selfLink", "name", "backends", "enableCDN", "cdnPolicy"):
+        parity.pop(key)
+    assert {key: value for key, value in desired.items() if key not in {
+        "name", "backends", "enableCDN", "outlierDetection"}} == parity
+    assert desired["name"] == BACKEND and desired["enableCDN"] is False
+    assert desired["backends"] == [{"group": f"{BASE}/regions/{r}/networkEndpointGroups/"
+                                    "trusted-router-control-neg"} for r in TARGETS]
+    assert desired["outlierDetection"] == {
+        "consecutiveErrors": 12, "enforcingConsecutiveErrors": 100,
+        "consecutiveGatewayFailure": 12, "enforcingConsecutiveGatewayFailure": 100,
+        "interval": {"seconds": 1, "nanos": 0},
+        "baseEjectionTime": {"seconds": 30, "nanos": 0}, "maxEjectionPercent": 50,
     }
+    describes = [c for c in result.calls if "backend-services" in c and "describe" in c
+                 and "trusted-router-control-backend" in c]
+    assert len(describes) == 2  # Prepare snapshot, then fresh verification evidence.
     assert (harness.root / "state/gateway-backend.pre-prepare.json").is_file()
 
 
@@ -164,13 +190,13 @@ def test_prepare_imports_complete_backend_without_routing(tmp_path):
     ("outlierDetection.baseEjectionTime", {"seconds": 1}),
 ])
 def test_verify_rejects_backend_drift(tmp_path, monkeypatch, field, value):
-    actual = CONFIG.backend("quill-cloud-proxy", BACKEND, TARGETS)
+    actual = gateway_fixture()
     if "." in field:
         parent, child = field.split(".", 1)
         actual[parent] = {**actual[parent], child: value}
     else:
         actual[field] = value
-    replace_response(monkeypatch, r"backend-services describe .*--format=json", actual)
+    replace_response(monkeypatch, r"backend-services describe trusted-router-gateway-backend .*--format=json", actual)
     result = run(DeployScriptHarness(tmp_path / "drift"), "verify")
     assert result.returncode != 0 and "gateway" in result.stderr
     assert not mutations(result.calls)
@@ -184,17 +210,17 @@ def test_unsafe_geography_refused(tmp_path, failovers):
     assert not any("run" in call or "compute" in call for call in result.calls)
 
 
-@pytest.mark.parametrize("fault", ["missing", "cold", "split", "release", "digest", "not-ready", "wrong-neg"])
+@pytest.mark.parametrize("fault", ["missing", "cold", "one-warm", "split", "release", "digest", "not-ready", "wrong-neg"])
 def test_fleet_preflight_refuses_unsafe_failover(tmp_path, monkeypatch, fault):
     region = TARGETS[1]
     if fault == "missing":
         fixture = SCRIPT_FIXTURES[SCRIPT]
         monkeypatch.setitem(SCRIPT_FIXTURES, SCRIPT, replace(
             fixture, failures=(rf"run services describe trusted-router --region {region}",)))
-    elif fault in {"cold", "split"}:
+    elif fault in {"cold", "one-warm", "split"}:
         value = service(region)
-        if fault == "cold":
-            value["metadata"]["annotations"]["run.googleapis.com/minScale"] = "0"
+        if fault in {"cold", "one-warm"}:
+            value["metadata"]["annotations"]["run.googleapis.com/minScale"] = "0" if fault == "cold" else "1"
         else:
             value["status"]["traffic"][0]["percent"] = 50
         replace_response(monkeypatch, rf"run services describe trusted-router --region {region}", value)
@@ -274,4 +300,136 @@ printf '%s\\n' "$TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION"
     result = harness.run("scripts/deploy/read_gateway_min.sh")
     assert result.returncode == 0, summarise(result)
     minimums = dict(item.split("=") for item in result.stdout.strip().split(","))
-    assert int(minimums["southamerica-east1"]) >= 1
+    assert int(minimums["southamerica-east1"]) >= 2
+
+
+# Every parity field from the live describe, plus response headers and a future
+# setting: copying a fixed allowlist must not silently lose new edge behavior.
+PARITY_CHANGES = [
+    ("timeoutSec", 45), ("customRequestHeaders", ["X-Test:request"]),
+    ("customResponseHeaders", ["X-Test:response"]),
+    ("logConfig", {"enable": True, "sampleRate": 0.25,
+                   "optionalMode": "CUSTOM", "optionalFields": ["tls.protocol"]}),
+    ("securityPolicy", f"{BASE}/global/securityPolicies/replacement"),
+    ("compressionMode", "DISABLED"), ("sessionAffinity", "CLIENT_IP"),
+    ("connectionDraining", {"drainingTimeoutSec": 10}), ("portName", "other"),
+    ("port", 81), ("affinityCookieTtlSec", 60), ("description", "new description"),
+    ("futureParitySetting", {"enabled": True}),
+]
+
+
+@pytest.mark.parametrize("field,value", PARITY_CHANGES)
+def test_prepare_copies_live_parity(tmp_path, monkeypatch, field, value):
+    control, actual = deepcopy(CONTROL), gateway_fixture()
+    control[field] = actual[field] = value
+    replace_response(monkeypatch, r"backend-services describe trusted-router-control-backend", control)
+    replace_response(monkeypatch, r"backend-services describe trusted-router-gateway-backend", actual)
+    harness = DeployScriptHarness(tmp_path / "parity")
+    result = run(harness, "prepare")
+    assert result.returncode == 0, summarise(result)
+    desired = json.loads((harness.root / "state/gateway-backend.desired.json").read_text())
+    assert desired[field] == value
+
+
+@pytest.mark.parametrize("field,value", PARITY_CHANGES)
+def test_verify_detects_later_control_drift(tmp_path, monkeypatch, field, value):
+    control = deepcopy(CONTROL)
+    control[field] = value
+    replace_response(monkeypatch, r"backend-services describe trusted-router-control-backend", control)
+    result = run(DeployScriptHarness(tmp_path / "later-drift"), "verify")
+    assert result.returncode != 0 and "parity drifted" in result.stderr
+    assert field in result.stderr
+    assert not mutations(result.calls)
+
+
+@pytest.mark.parametrize("field", ["logConfig", "outlierDetection", "backends", "top-level"])
+def test_verify_accepts_only_known_api_defaults(field):
+    expected = CONFIG.backend("quill-cloud-proxy", BACKEND, TARGETS, CONTROL)
+    actual = deepcopy(expected)
+    if field == "logConfig":
+        expected[field].pop("optionalMode")
+        actual[field]["optionalFields"] = []
+    elif field == "outlierDetection":
+        actual[field] = gateway_fixture()[field]
+    elif field == "backends":
+        actual[field] = gateway_fixture()[field][::-1]
+        for entry in actual[field]:
+            entry["preference"] = "DEFAULT"
+    else:
+        for key in ("port", "portName", "sessionAffinity", "connectionDraining", "affinityCookieTtlSec"):
+            expected.pop(key)
+        actual.update(customResponseHeaders=[], healthChecks=[], iap={"enabled": False},
+                      fingerprint="server-only", id="123", creationTimestamp="now", usedBy=[])
+    CONFIG.verify_backend(actual, expected)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("logConfig.optionalMode", "INCLUDE_ALL_OPTIONAL"),
+    ("logConfig.optionalFields", ["tls.protocol"]),
+    ("outlierDetection.successRateRequestVolume", 1),
+    ("outlierDetection.futureSetting", 1),
+    ("backends.capacityScaler", 0.5), ("backends.preference", "PREFERRED"),
+    ("backends.failover", True), ("cdnPolicy", {}),
+    ("customResponseHeaders", ["X-Unexpected:yes"]),
+])
+def test_verify_rejects_unexpected_readback(field, value):
+    expected = CONFIG.backend("quill-cloud-proxy", BACKEND, TARGETS, CONTROL)
+    actual = gateway_fixture()
+    if "." in field:
+        parent, child = field.split(".")
+        target = actual[parent][0] if parent == "backends" else actual[parent]
+        target[child] = value
+    else:
+        actual[field] = value
+    with pytest.raises(ValueError, match="parity drifted"):
+        CONFIG.verify_backend(actual, expected)
+
+
+@pytest.mark.parametrize("field", ["consecutiveErrors", "consecutiveGatewayFailure"])
+def test_outlier_threshold_clears_app_retry_runs(field):
+    threshold = CONFIG.OUTLIER[field]
+    # One three-attempt cycle, two concurrent callers, observed four-burst.
+    for app_run in (3, 6, 4):
+        assert threshold >= 2 * app_run
+    assert threshold <= 12  # Bound the chosen outage-detection tradeoff too.
+    total_rate = (9500 + 9500) / 3600
+    assert 45 < threshold / (total_rate / 20) < 46
+
+
+@pytest.mark.parametrize("command", ["prepare", "verify"])
+def test_readonly_routing_failure_guidance(tmp_path, monkeypatch, command):
+    fixture = SCRIPT_FIXTURES[SCRIPT]
+    monkeypatch.setitem(SCRIPT_FIXTURES, SCRIPT, replace(
+        fixture, failures=(r"backend-services describe trusted-router-control-backend",)))
+    result = run(DeployScriptHarness(tmp_path / command), command)
+    assert result.returncode != 0
+    assert "Restore the captured URL map" not in result.stderr
+    assert "gateway_edge.sh rollback" not in result.stderr
+    assert ("URL map unchanged" if command == "prepare" else "read-only checks") in result.stderr
+    assert not mutations(result.calls)
+
+
+def test_neg_sharing_failure_is_actionable_and_does_not_cutover(tmp_path, monkeypatch):
+    fixture = SCRIPT_FIXTURES[SCRIPT]
+    monkeypatch.setitem(SCRIPT_FIXTURES, SCRIPT, replace(
+        fixture, failures=(r"backend-services import trusted-router-gateway-backend",)))
+    result = run(DeployScriptHarness(tmp_path / "sharing"), "prepare")
+    assert result.returncode != 0
+    assert "serverless NEG cannot be shared by two backend services" in result.stderr
+    assert "dedicated trusted-router-gateway-neg NEGs pointing at the same service" in result.stderr
+    assert "docs/runbooks/gateway-billing-edge.md" in result.stderr
+    assert "URL map unchanged" in result.stderr
+    assert not any("url-maps" in call for call in result.calls)
+
+
+def test_operator_runbook_is_durable():
+    root = Path(__file__).resolve().parents[1]
+    script = (root / SCRIPT).read_text()
+    assert "CODEX-REPORT-A1.md" not in script
+    assert "docs/runbooks/gateway-billing-edge.md" in script.splitlines()[1]
+    doc = (root / "docs/runbooks/gateway-billing-edge.md").read_text()
+    for command in ("prepare", "verify", "cutover", "rollback"):
+        assert f"bash scripts/deploy/gateway_edge.sh {command}" in doc
+    for evidence in ("Prerequisites", "Failure drill", "Latency", "Cost", "25 s",
+                     "9,500", "2.27P", "trusted-router-gateway-neg", "60 minutes"):
+        assert evidence in doc

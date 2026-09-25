@@ -5,6 +5,7 @@ No git operations, cloud CLIs, or network; deploy scripts use the recording harn
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -25,11 +26,11 @@ MUTATIONS = [
      "    --preserve-gateway-backend \\\n", "",
      "other_edge_cutovers_preserve_gateway[internal]"),
     ("wrong backend timeout", "scripts/deploy/gateway_edge_config.py",
-     '"timeoutSec": 30', '"timeoutSec": 31',
+     '    result["name"] = name', '    result["timeoutSec"] = 31\n    result["name"] = name',
      "prepare_imports_complete_backend_without_routing"),
     ("backend drift ignored", "scripts/deploy/gateway_edge_config.py",
-     '    for key, value in expected.items():',
-     '    return\n    for key, value in expected.items():',
+     '    observed, desired = normalized_backend(actual), normalized_backend(expected)',
+     '    return\n    observed, desired = normalized_backend(actual), normalized_backend(expected)',
      "verify_rejects_backend_drift"),
     ("geography guard bypassed", "scripts/deploy/gateway_edge_config.py",
      '    targets = [primary, *failovers.split(",")]',
@@ -51,12 +52,62 @@ MUTATIONS = [
     ("malformed gateway rule discarded", "scripts/deploy/service_surface_url_map.py",
      '    if not rules:\n', '    if rules or not rules:\n',
      "generator_refuses_partial_gateway_rule"),
-    ("failover cold again", "scripts/deploy/_lib.sh",
-     'southamerica-east1=1}', 'southamerica-east1=0}',
+    ("failover minimum reduced to one", "scripts/deploy/_lib.sh",
+     'southamerica-east1=2}', 'southamerica-east1=1}',
      "failover_minimum_is_in_rollout_config"),
-    ("updated warm inventory rejects cold failover", "scripts/deploy/_lib.sh",
-     'southamerica-east1=1}', 'southamerica-east1=0}',
+    ("updated warm inventory rejects one-instance failover", "scripts/deploy/_lib.sh",
+     'southamerica-east1=2}', 'southamerica-east1=1}',
      "tests/test_deploy_secret_wiring.py::test_all_attested_control_plane_regions_remain_warm"),
+    ("log optional defaults compared strictly", "scripts/deploy/gateway_edge_config.py",
+     '    if "outlierDetection" in result:',
+     '    result["logConfig"] = value.get("logConfig", {})\n    if "outlierDetection" in result:',
+     "verify_accepts_only_known_api_defaults[logConfig]"),
+    ("outlier defaults compared strictly", "scripts/deploy/gateway_edge_config.py",
+     '        result["outlierDetection"] = outlier',
+     '        result["outlierDetection"] = value["outlierDetection"]',
+     "verify_accepts_only_known_api_defaults[outlierDetection]"),
+    ("NEG defaults compared strictly", "scripts/deploy/gateway_edge_config.py",
+     '    return result\n\n\ndef verify_backend',
+     '    result["backends"] = value["backends"]\n    return result\n\n\ndef verify_backend',
+     "verify_accepts_only_known_api_defaults[backends]"),
+    ("top-level defaults compared strictly", "scripts/deploy/gateway_edge_config.py",
+     '    result = deepcopy(BACKEND_DEFAULTS)', '    result = {}',
+     "verify_accepts_only_known_api_defaults[top-level]"),
+    ("live parity source discarded", "scripts/deploy/gateway_edge_config.py",
+     'for key, value in control.items() if key not in OUTPUT_ONLY',
+     'for key, value in {}.items() if key not in OUTPUT_ONLY',
+     "prepare_copies_live_parity"),
+    ("later parity drift ignored", "scripts/deploy/gateway_edge_config.py",
+     '    observed, desired = normalized_backend(actual), normalized_backend(expected)',
+     '    return\n    observed, desired = normalized_backend(actual), normalized_backend(expected)',
+     "verify_detects_later_control_drift"),
+    ("unknown read-back fields ignored", "scripts/deploy/gateway_edge_config.py",
+     '    observed, desired = normalized_backend(actual), normalized_backend(expected)',
+     '    return\n    observed, desired = normalized_backend(actual), normalized_backend(expected)',
+     "verify_rejects_unexpected_readback"),
+    ("three gateway failures eject again", "scripts/deploy/gateway_edge_config.py",
+     '"consecutiveGatewayFailure": 12', '"consecutiveGatewayFailure": 3',
+     "outlier_threshold_clears_app_retry_runs[consecutiveGatewayFailure]"),
+    ("five general errors eject again", "scripts/deploy/gateway_edge_config.py",
+     '"consecutiveErrors": 12', '"consecutiveErrors": 5',
+     "outlier_threshold_clears_app_retry_runs[consecutiveErrors]"),
+    ("one warm standby passes preflight", "scripts/deploy/gateway_edge_config.py",
+     '"run.googleapis.com/minScale", 0)) < 2:', '"run.googleapis.com/minScale", 0)) < 1:',
+     "fleet_preflight_refuses_unsafe_failover[one-warm]"),
+    ("prepare tells operator to restore map", "scripts/deploy/gateway_edge.sh",
+     'URL map unchanged. Inspect backend', 'Restore the captured URL map. Inspect backend',
+     "readonly_routing_failure_guidance[prepare]"),
+    ("verify tells operator to restore map", "scripts/deploy/gateway_edge.sh",
+     'read-only checks changed no routing.', 'Restore the captured URL map.',
+     "readonly_routing_failure_guidance[verify]"),
+    ("NEG sharing fallback guidance removed", "scripts/deploy/gateway_edge.sh",
+     'serverless NEG cannot be shared by two backend services', 'backend failed',
+     "neg_sharing_failure_is_actionable_and_does_not_cutover"),
+    ("operator header points to uncommitted report", "scripts/deploy/gateway_edge.sh",
+     '# Leader-local gateway billing with a warm regional failover. See docs/runbooks/gateway-billing-edge.md.',
+     '# Leader-local gateway billing with a warm regional failover. See CODEX-REPORT-A1.md.',
+     "operator_runbook_is_durable"),
+
 ]
 
 
@@ -65,7 +116,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="gateway-edge-mutations-") as temporary:
         copy_root = Path(temporary) / "repo"
         copy_root.mkdir()
-        for name in ("src", "scripts", "tests", "clickhouse"):
+        for name in ("src", "scripts", "tests", "clickhouse", "docs"):
             shutil.copytree(ROOT / name, copy_root / name,
                             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"), symlinks=True)
         shutil.copy(ROOT / "pyproject.toml", copy_root / "pyproject.toml")
@@ -81,6 +132,8 @@ def main() -> None:
                     [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
                      (selection if "::" in selection else PREFIX + selection), "--tb=short", f"--junitxml={xml_path}"],
                     cwd=copy_root, capture_output=True, text=True, check=False,
+                    env={**os.environ, "PYTHONPATH": str(copy_root / "src") + os.pathsep
+                         + os.environ.get("PYTHONPATH", "")},
                 )
                 cases = ET.parse(xml_path).findall(".//testcase")  # noqa: S314 - own pytest output
                 # A collection error, timeout, or skipped test is not a kill.

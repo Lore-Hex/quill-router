@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Leader-local gateway billing with a warm regional failover. See CODEX-REPORT-A1.md.
+# Leader-local gateway billing with a warm regional failover. See docs/runbooks/gateway-billing-edge.md.
 set -Eeuo pipefail
 COMMAND="${1:-}"
 case "$COMMAND" in
@@ -24,8 +24,19 @@ rollback_command() {
     "$PROJECT_ID" "$URL_MAP" "$STATE_DIR" "${SCRIPT_DIR}/gateway_edge.sh" >&2
 }
 on_error() {
-  echo "ERROR: gateway edge ${COMMAND} failed. Restore the captured URL map with:" >&2
-  rollback_command
+  case "$COMMAND" in
+    prepare)
+      echo "ERROR: gateway edge prepare failed; URL map unchanged. Inspect backend import/read-back and retry prepare." >&2
+      echo "If a serverless NEG cannot be shared by two backend services, stop: use dedicated trusted-router-gateway-neg NEGs pointing at the same service; see docs/runbooks/gateway-billing-edge.md." >&2
+      ;;
+    verify)
+      echo "ERROR: gateway edge verify failed; read-only checks changed no routing. Inspect parity/fleet drift before proceeding." >&2
+      ;;
+    cutover|rollback)
+      echo "ERROR: gateway edge ${COMMAND} failed. Check live routing and capture; restore the captured URL map with:" >&2
+      rollback_command
+      ;;
+  esac
 }
 trap on_error ERR
 
@@ -37,7 +48,6 @@ config() {
 preflight() {
   local targets target revision
   targets="$(config regions)"
-  gc compute security-policies describe trusted-router-legacy-edge --global >/dev/null
   local target_regions=()
   IFS=',' read -r -a target_regions <<<"$targets"
   for target in "${target_regions[@]}"; do
@@ -51,10 +61,16 @@ preflight() {
   done
   config fleet --state "$STATE_DIR"
 }
+describe_control() {
+  gc compute backend-services describe trusted-router-control-backend --global --format=json \
+    >"${STATE_DIR}/control-backend.live.json"
+}
 verify_backend() {
+  describe_control
   gc compute backend-services describe "$GATEWAY_BACKEND" --global --format=json \
     >"${STATE_DIR}/gateway-backend.live.json"
-  config verify-backend --input "${STATE_DIR}/gateway-backend.live.json"
+  config verify-backend --input "${STATE_DIR}/gateway-backend.live.json" \
+    --control "${STATE_DIR}/control-backend.live.json"
 }
 verify() {
   preflight
@@ -64,7 +80,8 @@ verify() {
 prepare() {
   preflight
   local desired="${STATE_DIR}/gateway-backend.desired.json"
-  config backend >"$desired"
+  describe_control
+  config backend --control "${STATE_DIR}/control-backend.live.json" >"$desired"
   # Capture before backend import too. URL-map rollback never deletes a backend.
   if gc compute backend-services describe "$GATEWAY_BACKEND" --global --format=json \
       >"${STATE_DIR}/gateway-backend.pre-prepare.json"; then

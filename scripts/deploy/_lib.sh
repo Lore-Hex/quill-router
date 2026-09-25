@@ -38,9 +38,9 @@ TR_WARM_REGIONS="${TR_WARM_REGIONS:-us-central1,europe-west4,us-east4}"
 # Service-level minimums stay allocated across staged revision traffic shifts.
 # Both US Cloud Run regions need burst headroom before autoscaling catches up.
 # Keep concurrency and billing admission bounded, but prewarm capacity.
-# São Paulo is the gateway billing failover: keep one instance even without
-# a local attested enclave. gateway_edge.sh refuses scale-to-zero failovers.
-TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION="${TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION:-us-central1=8,us-east4=8,europe-west4=2,southamerica-east1=1}"
+# São Paulo is the gateway billing failover: keep two instances even without
+# a local attested enclave. gateway_edge.sh requires two warm failover instances (16 slots at concurrency 8).
+TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION="${TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION:-us-central1=8,us-east4=8,europe-west4=2,southamerica-east1=2}"
 # Billing handlers are small, synchronous Spanner operations dispatched to a
 # worker thread. Eight concurrent requests fit comfortably in 2 GiB and avoid
 # cold-starting dozens of instances for a short burst.

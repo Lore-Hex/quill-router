@@ -314,7 +314,7 @@ def test_all_attested_control_plane_regions_remain_warm() -> None:
     # failover. Other non-attested entries still need an inventory decision.
     billing_failover = "southamerica-east1"
     assert billing_failover in control_plane
-    assert int(minimums[billing_failover]) >= 1
+    assert int(minimums[billing_failover]) >= 2
     for region in minimums:
         assert region in {*attested, billing_failover}, (
             f"{region} has a min-instances entry but serves neither an enclave nor billing failover"
