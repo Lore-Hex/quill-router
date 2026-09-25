@@ -1,5 +1,5 @@
-"""Freeze the lifecycle clock for the whole test process, once, before any
-catalog import.
+"""Freeze the lifecycle clock for the whole test process, reusing an early
+catalog import's timestamp if necessary.
 
 `provider_lifecycle._utc_now()` is consulted at three different moments that
 must agree: when `catalog_registry` resolves retirements at import, when
@@ -17,6 +17,7 @@ reading the same instant. An override that is already present (the
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import MutableMapping
 from datetime import UTC, datetime
 
@@ -28,17 +29,23 @@ STAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 def freeze_lifecycle_clock(
     environ: MutableMapping[str, str], now: datetime | None = None
 ) -> datetime:
-    """Pin the override to ``now`` unless one is already set; return the clock in force."""
+    """Keep an override, or pin to an existing catalog's timestamp or session start."""
     existing = environ.get(LIFECYCLE_CLOCK_OVERRIDE_ENV)
     if existing:
         return _effective_time(existing)
-    instant = (now or datetime.now(UTC)).astimezone(UTC).replace(microsecond=0)
-    environ[LIFECYCLE_CLOCK_OVERRIDE_ENV] = instant.strftime(STAMP_FORMAT)
+    registry = sys.modules.get("trusted_router.catalog_registry")
+    if registry is not None:
+        instant = registry.CATALOG_RESOLVED_AT
+    else:
+        instant = (now or datetime.now(UTC)).astimezone(UTC).replace(microsecond=0)
+    environ[LIFECYCLE_CLOCK_OVERRIDE_ENV] = instant.isoformat().replace("+00:00", "Z")
     return instant
 
 
-# Pin on first import. tests/conftest.py imports this module before anything
-# that imports the catalog, so the registry resolves against the same instant
-# every later reader sees. Importing it again is harmless: an override that is
-# already set is kept.
+# Capture caller intent before the automatic pin so live provider-health
+# monitors only skip for explicit overrides, not ordinary test sessions.
+OVERRIDE_WAS_EXPLICIT: bool = bool(os.environ.get(LIFECYCLE_CLOCK_OVERRIDE_ENV))
+
+# conftest normally imports this before the catalog. Earlier plugin/application
+# imports instead supply the already-built catalog's exact timestamp.
 FROZEN_AT: datetime = freeze_lifecycle_clock(os.environ)

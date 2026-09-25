@@ -21,16 +21,14 @@ the pull request that introduces it instead of at midnight.
 
 from __future__ import annotations
 
-import os
 from datetime import datetime
 
-from trusted_router import catalog_registry, provider_lifecycle
+from tests.lifecycle_freeze import OVERRIDE_WAS_EXPLICIT
+from trusted_router import catalog_registry
 
 # The clock the catalog was resolved with: not a fresh reading.
 CATALOG_CLOCK: datetime = catalog_registry.CATALOG_RESOLVED_AT
-LIFECYCLE_CLOCK_OVERRIDDEN: bool = bool(
-    os.environ.get(provider_lifecycle.LIFECYCLE_CLOCK_OVERRIDE_ENV)
-)
+LIFECYCLE_CLOCK_OVERRIDDEN: bool = OVERRIDE_WAS_EXPLICIT
 
 
 def catalog_predates(cutover: datetime) -> bool:
