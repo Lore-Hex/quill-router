@@ -613,6 +613,35 @@ def test_ledger_cooldown_success_clears_inflight_probe_and_resets_backoff(
     authorize(store, args, "reset-window-elapsed")
 
 
+def test_ledger_cooldown_success_preserves_other_cooled_region(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, _db, _key, args = setup()
+    clock = [1000.0]
+    monkeypatch.setattr("trusted_router.storage_gcp.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr("trusted_router.storage_gcp.random.uniform", lambda _a, _b: 1.0)
+    key = (args["workspace_id"], args["region"])
+    other_args = {**args, "region": "us-east4"}
+    other_key = (other_args["workspace_id"], other_args["region"])
+    store._arm_regional_ledger_cooldown(*key)
+    clock[0] = 1005.0
+    store._arm_regional_ledger_cooldown(*other_key)
+    other_entry = store._regional_ledger_cooldowns[other_key]
+    clock[0] = 1010.0
+    record = quota.record_regional_gateway_authorization
+
+    def record_with_claim(*a: Any, **kw: Any) -> Any:
+        assert store._regional_ledger_cooldowns[key][:2] == (1015.0, 10.0)
+        return record(*a, **kw)
+
+    monkeypatch.setattr(quota, "record_regional_gateway_authorization", record_with_claim)
+    authorize(store, args, "recovered")
+    assert key not in store._regional_ledger_cooldowns
+    assert store._regional_ledger_cooldowns.get(other_key) == other_entry
+    assert _cooldown_failure(store, other_args, "other-still-blocked") == "ledger_cooldown"
+    assert store._regional_ledger_cooldowns[other_key] == other_entry
+
+
 @pytest.mark.parametrize("success", [True, False])
 def test_ledger_cooldown_does_not_block_finalize_or_reconcile(
     monkeypatch: pytest.MonkeyPatch, success: bool,
@@ -798,6 +827,39 @@ def test_ledger_cooldown_delayed_recording_preserves_newer_failure(
     assert failures == [1015.1]
     window = 20.0 if initial_cooldown else 10.0
     assert store._regional_ledger_cooldowns[key][:2] == (1015.1 + window, window)
+
+
+def test_ledger_cooldown_delayed_success_preserves_replacement_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, _db, _key, args = setup()
+    clock = [1000.0]
+    monkeypatch.setattr("trusted_router.storage_gcp.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr("trusted_router.storage_gcp.random.uniform", lambda _a, _b: 1.0)
+    key = (args["workspace_id"], args["region"])
+    store._arm_regional_ledger_cooldown(*key)
+    clock[0] = 1010.0
+    record = quota.record_regional_gateway_authorization
+    replacement_entries: list[tuple[float, float, int]] = []
+
+    def delayed_record(*a: Any, **kw: Any) -> Any:
+        assert store._regional_ledger_cooldowns[key][:2] == (1015.0, 10.0)
+        # A's recording outlives its claim. B replaces it without failing
+        # or completing before A's successful admission clears its own token.
+        clock[0] = 1015.1
+        token = store._claim_regional_ledger_probe(*key)
+        assert token is not None
+        entry = store._regional_ledger_cooldowns[key]
+        assert entry == (1020.1, 10.0, token)
+        replacement_entries.append(entry)
+        return record(*a, **kw)
+
+    monkeypatch.setattr(quota, "record_regional_gateway_authorization", delayed_record)
+    authorize(store, args, "probe-a")
+    assert len(replacement_entries) == 1
+    assert store._regional_ledger_cooldowns.get(key) == replacement_entries[0]
+    assert _cooldown_failure(store, args, "after-a") == "ledger_cooldown"
+    assert store._regional_ledger_cooldowns[key] == replacement_entries[0]
 
 
 def test_ledger_cooldown_generation_survives_clear(monkeypatch: pytest.MonkeyPatch) -> None:
