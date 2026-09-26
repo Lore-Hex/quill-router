@@ -111,6 +111,7 @@ def test_rebalance_moves_only_idle_budget_and_preserves_global_totals() -> None:
 
     assert result == {
         "outcome": RebalanceOutcome.MOVED,
+        "mode": "topped_up",
         "moved_micro": 20,
         "target_shard": 0,
     }
@@ -122,7 +123,7 @@ def test_rebalance_moves_only_idle_budget_and_preserves_global_totals() -> None:
     assert all(row["reserved"] == 0 for row in rows.values())
 
 
-def test_rebalance_can_consolidate_from_multiple_donors() -> None:
+def test_rebalance_tops_up_from_multiple_donors() -> None:
     store, database, _key = _seed([100, 100, 100, 100], usage=[80, 80, 80, 80])
 
     result = _rebalance(store, shard_count=4, target_shard=0, estimate=70)
@@ -193,7 +194,7 @@ def test_overage_settle_negative_shard_rebalance_returns_402_not_500() -> None:
     assert authorization is None
 
 
-def test_rebalance_fills_negative_target_to_exact_estimate_and_preserves_total() -> None:
+def test_rebalance_fills_negative_target_only_to_estimate_and_preserves_total() -> None:
     store, database, _key = _seed([100, 100, 100], usage=[120, 50, 50])
     rows = database.typed[CREDIT_BALANCE_TABLE]
     before_sum = sum(row["total_credits"] for row in rows.values())
@@ -202,6 +203,7 @@ def test_rebalance_fills_negative_target_to_exact_estimate_and_preserves_total()
 
     assert result == {
         "outcome": RebalanceOutcome.MOVED,
+        "mode": "topped_up",
         "moved_micro": 60,
         "target_shard": 0,
     }

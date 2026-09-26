@@ -6431,10 +6431,11 @@ class SpannerBigtableStore:
                 rebalance_result = rebalance(credit_shard_candidates)
                 log.info(
                     "credit rebalance workspace=%s outcome=%s moved_micro=%s "
-                    "estimate=%s attempt=%d",
+                    "mode=%s estimate=%s attempt=%d",
                     workspace_id,
                     rebalance_result["outcome"],
                     rebalance_result.get("moved_micro", 0),
+                    rebalance_result.get("mode", "none"),
                     estimate,
                     _attempt + 1,
                 )
