@@ -535,6 +535,18 @@ class _FakeTransaction:
                 "spend_lease_open cannot be read after PENDING_COMMIT_TIMESTAMP()"
             )
         self.db.transaction_execute_sql_calls += 1
+        if sql.startswith("UPDATE tr_settle_outbox SET status=@status"):
+            if not sql.endswith(" THEN RETURN reservation_id"):
+                raise ValueError("DML rows require THEN RETURN")
+            self._in_returning = True
+            try:
+                count = self.execute_update(sql, params=params, param_types=param_types)
+            finally:
+                self._in_returning = False
+            if not count:
+                return []
+            rec = self._settle_outbox_current((params["aid"], params["kind"]))
+            return [[rec.get("reservation_id")]]
         return _execute_sql(self.db, self, sql, params or {})
 
     def _pinned_read(
@@ -725,6 +737,8 @@ class _FakeTransaction:
             for statement in statements:
                 sql, params, types = (statement, None, None) if isinstance(statement, str) else statement
                 try:
+                    if "THEN RETURN" in sql.upper():
+                        raise ValueError("Batch DML cannot return rows")
                     count = self.execute_update(sql, params=params, param_types=types)
                 except GoogleAPICallError as exc:
                     return Status(code=exc.grpc_status_code.value[0], message=exc.message), row_counts
@@ -743,7 +757,7 @@ class _FakeTransaction:
         conditionally buffers the SET. Returns the modified-row count.
         """
         _validate_json_arguments(sql)
-        if not self._in_batch:
+        if not self._in_batch and not getattr(self, "_in_returning", False):
             self.db.transaction_execute_update_calls += 1
         if (
             self._spend_open_pending_commit_timestamp_written
@@ -1547,6 +1561,38 @@ class _FakeTransaction:
             )
             self.pending_writes.append(("update_reservation", p["rid"], new))
             return 1
+        if re.match(r"UPDATE tr_(gateway_authorization|reservation) SET terminal_at=IF\(EXISTS", sql):
+            table = sql.split()[1]
+            key = "reservation_id" if table == "tr_reservation" else "authorization_id"
+            sibling = (
+                "EXISTS (SELECT 1 FROM tr_settle_outbox s WHERE s.authorization_id=@aid "  # noqa: S608
+                f"AND s.intent_kind != @kind AND s.status IN ({_GUARD_STATUS_SQL}))"
+            )
+            _require_pred(sql, f"SET terminal_at=IF({sibling}, NULL, @now)", "done-retention")
+            _require_pred(sql, f"WHERE {key}=@record_id AND IF({sibling}, terminal_at IS NOT NULL, "  # noqa: S608
+                          "settled=true AND terminal_at IS NULL AND NOT EXISTS "
+                          "(SELECT 1 FROM tr_settle_outbox o "
+                          f"WHERE o.authorization_id = {table}.authorization_id "
+                          f"AND o.status IN ({_GUARD_STATUS_SQL})))", "done-retention")
+            siblings = _execute_sql(self.db, self,
+                "SELECT COUNT(*) FROM tr_settle_outbox WHERE authorization_id=@aid "  # noqa: S608
+                f"AND intent_kind != @kind AND status IN ({_GUARD_STATUS_SQL})", p)[0][0]
+            rec = (self._reservation_current(p["record_id"]) if table == "tr_reservation"
+                   else self._gateway_authorization_current(p["record_id"]))
+            if rec is None:
+                return 0
+            if siblings:
+                if rec.get("terminal_at") is None:
+                    return 0
+                terminal_at = None
+            else:
+                if (not rec.get("settled") or rec.get("terminal_at") is not None
+                    or self._has_guarded_outbox_intent(str(rec["authorization_id"]))):
+                    return 0
+                terminal_at = p["now"]
+            operation = "update_reservation" if table == "tr_reservation" else "update_gateway_authorization"
+            self.pending_writes.append((operation, p["record_id"], dict(rec, terminal_at=terminal_at)))
+            return 1
         if sql.startswith("UPDATE tr_reservation SET terminal_at=@terminal_at"):
             _require_pred(
                 sql,
@@ -2078,6 +2124,13 @@ class _FakeTransaction:
             owner = rec.get("lease_owner")
             if owner != p.get("lease_owner"):
                 return 0
+            if "THEN RETURN" in sql:
+                _require_pred(sql, "attempts=COALESCE(attempts, 0)+1", "done-attempts")
+                _require_pred(sql, "last_error=NULL, next_attempt_at=NULL, lease_owner=NULL, "
+                              "leased_until=NULL, updated_at=@now, terminal_at=@now, settle_body=NULL",
+                              "done-fields")
+                p = dict(p, attempts=int(rec.get("attempts") or 0) + 1, err=None,
+                         next_at=None, terminal_at=p["now"], done=True)
             new = dict(
                 rec,
                 status=p["status"],
@@ -2284,6 +2337,9 @@ def _unquote_sql(source: str) -> str:
 def _validate_json_arguments(sql: str) -> None:
     """Validate even unevaluated branches, as Spanner does before reading rows."""
     masked = _unquote_sql(sql)
+    functions = re.findall(r"\b([A-Za-z_]\w*)\s*\(", masked)
+    if sum(name.upper() not in {"IN", "VALUES", "EXISTS"} for name in functions) > 1000:
+        raise ValueError("INVALID_ARGUMENT: statement exceeds 1000 functions")
     for match in re.finditer(r"\b(JSON_SET|JSON_REMOVE|JSON_QUERY|JSON_STRIP_NULLS)\s*\(",
                              masked, re.IGNORECASE):
         depth = 1
@@ -3051,6 +3107,11 @@ def _execute_settle_outbox_sql(
         if rec is None or rec.get("auto_refill_status") is None:
             return []
         return [[rec.get(column) for column in AUTO_REFILL_COLUMNS]]
+    if sql.startswith("SELECT status, lease_owner FROM tr_settle_outbox"):
+        _require_pred(sql, "WHERE authorization_id=@aid AND intent_kind=@kind", "done-miss")
+        pk = (p["aid"], p["kind"])
+        rec = txn._settle_outbox_current(pk) if txn else db.settle_outbox.get(pk)
+        return [] if rec is None else [[rec["status"], rec.get("lease_owner")]]
     if sql.startswith("SELECT attempts, lease_owner FROM tr_settle_outbox") or sql.startswith(
         "SELECT attempts, lease_owner, reservation_id FROM tr_settle_outbox"
     ):

@@ -13,6 +13,7 @@ import datetime as dt
 import json
 from typing import Any
 
+from trusted_router.storage_gcp_batch_dml import DmlStatement
 from trusted_router.storage_models import Generation
 
 GENERATION_TABLE = "tr_generation"
@@ -32,13 +33,20 @@ def insert_generation_record(
     *,
     terminal_at: Any,
 ) -> None:
-    transaction.execute_update(
+    sql, params, types = generation_insert_statement(param_types, generation, terminal_at=terminal_at)
+    transaction.execute_update(sql, params=params, param_types=types)
+
+
+def generation_insert_statement(
+    param_types: Any, generation: Generation, *, terminal_at: Any,
+) -> DmlStatement:
+    return (
         "INSERT INTO tr_generation ("
         "generation_id, workspace_id, key_hash, created_at, terminal_at, payload"
         ") VALUES ("
         "@generation_id, @workspace_id, @key_hash, @created_at, @terminal_at, @payload"
         ")",
-        params={
+        {
             "generation_id": generation.id,
             "workspace_id": generation.workspace_id,
             "key_hash": generation.key_hash,
@@ -46,7 +54,7 @@ def insert_generation_record(
             "terminal_at": terminal_at,
             "payload": generation_record_body(generation),
         },
-        param_types={
+        {
             "generation_id": param_types.STRING,
             "workspace_id": param_types.STRING,
             "key_hash": param_types.STRING,

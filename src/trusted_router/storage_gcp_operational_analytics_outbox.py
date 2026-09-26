@@ -18,6 +18,7 @@ import datetime as dt
 from collections.abc import Mapping
 from typing import Any
 
+from trusted_router.storage_gcp_batch_dml import DmlStatement
 from trusted_router.storage_gcp_codec import json_body
 from trusted_router.storage_models import Generation, SyntheticProbeSample
 from trusted_router.storage_operational_analytics import (
@@ -81,6 +82,12 @@ class SpannerOperationalAnalyticsOutbox:
             transaction,
             event_kind=ACTIVITY_EVENT_KIND,
             event_id=generation.id,
+            payload=activity_payload(generation),
+        )
+
+    def activity_insert_statement(self, generation: Generation) -> DmlStatement:
+        return self._insert_statement(
+            event_kind=ACTIVITY_EVENT_KIND, event_id=generation.id,
             payload=activity_payload(generation),
         )
 
@@ -231,22 +238,30 @@ class SpannerOperationalAnalyticsOutbox:
         event_id: str,
         payload: dict[str, Any],
     ) -> None:
+        sql, params, types = self._insert_statement(
+            event_kind=event_kind, event_id=event_id, payload=payload,
+        )
+        transaction.execute_update(sql, params=params, param_types=types)
+
+    def _insert_statement(
+        self, *, event_kind: str, event_id: str, payload: dict[str, Any],
+    ) -> DmlStatement:
         shard = operational_analytics_shard(
             f"{event_kind}:{event_id}",
             shard_count=self._shard_count,
         )
-        transaction.execute_update(
+        return (
             "INSERT INTO tr_operational_analytics_outbox "
             "(shard, commit_ts, event_kind, event_id, payload) "
             "VALUES (@shard, PENDING_COMMIT_TIMESTAMP(), @event_kind, "
             "@event_id, @payload)",
-            params={
+            {
                 "shard": shard,
                 "event_kind": event_kind,
                 "event_id": event_id,
                 "payload": json_body(payload),
             },
-            param_types={
+            {
                 "shard": self._pt.INT64,
                 "event_kind": self._pt.STRING,
                 "event_id": self._pt.STRING,

@@ -20,6 +20,7 @@ from tests.fakes.spanner_order import (
     transaction_statements,
 )
 from tests.test_credit_row_sharding_increment3 import _seed as _seed_fragmented_credit
+from tests.test_spanner_batch_dml import _finalize_fixture
 from tests.test_spend_lease_authorize import _atomic_harness
 from tests.test_stage_d_heartbeat import NOW, _seed, _seed_reaper_counters
 from trusted_router import storage_gcp_authorize as billing
@@ -176,6 +177,47 @@ def test_release_credit_before_key_and_rollback(
             amount = 0 if path == "reaper" else 70
             assert db.typed[CREDIT_BALANCE_TABLE][("workspace", 0)]["total_usage"] == amount
             assert db.typed[KEY_LIMIT_TABLE][("key", 0)]["usage"] == amount
+
+
+def test_finalize_enabled_outbox_retention_and_evidence_before_credit_and_key(
+    calls: list[tuple[Any, str]], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, finalize = _finalize_fixture()
+    calls.clear()
+    batches: list[list[str]] = []
+    execute_batch = billing.execute_batch_dml
+
+    def batch(tx: Any, statements: Any, counts: Any) -> None:
+        batches.append([" ".join(sql.split()).lower() for sql, _, _ in statements])
+        execute_batch(tx, statements, counts)
+
+    monkeypatch.setattr(billing, "execute_batch_dml", batch)
+    result = finalize()
+    assert result["outcome"] == billing.SettleOutcome.SETTLED
+    assert result["outbox_marked"] is True
+    statements = transaction_statements(calls)
+    [batch_sql] = batches
+    assert len(batch_sql) == 4
+    auth_retention, reservation_retention, generation, activity = batch_sql
+    assert auth_retention.startswith("update tr_gateway_authorization set terminal_at=if(exists")
+    assert reservation_retention.startswith("update tr_reservation set terminal_at=if(exists")
+    assert all("from tr_settle_outbox" in sql and "not exists" in sql
+               for sql in batch_sql[:2])
+    assert generation.startswith("insert into tr_generation ")
+    assert activity.startswith("insert into tr_operational_analytics_outbox ")
+    done = [i for i, sql in enumerate(statements)
+            if sql.startswith("update tr_settle_outbox set status=@status")]
+    assert done and all("then return reservation_id" in statements[i] for i in done)
+    first_retention = statements.index(auth_retention)
+    # The fake records THEN RETURN at both execute_sql and execute_update.
+    assert max(done) < first_retention
+    assert statements[first_retention:first_retention + 4] == batch_sql
+    first_credit = next(i for i, sql in enumerate(statements) if "tr_credit_balance" in sql)
+    assert first_retention + 3 < first_credit
+    # This proves statement order; physical lock acquisition inside a Spanner
+    # UPDATE is not provable in the fake (including its outbox EXISTS reads).
+    credit_before_key(statements, key_last=True)
+    assert all(row["status"] == "done" for row in db.settle_outbox.values())
 
 
 @pytest.mark.parametrize("has_credit_candidate", [False, True], ids=["byok", "credits"])
