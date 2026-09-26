@@ -1,6 +1,6 @@
 (function () {
   "use strict";
-  const defaults = Object.freeze({ spend: 3350000, share: 40, discount: 80, enabled: true });
+  const defaults = Object.freeze({ spend: 3350000, share: 40, discount: 90, enabled: true });
   const limits = { spend: 100000000, share: 100, discount: 95 };
 
   function validNumber(value, maximum, integer = false) {
@@ -63,7 +63,7 @@
     setText("annual-label", cost.saved < 0 ? "Annualized increase" : "Annualized savings");
     setText("percent", `${Math.abs(cost.percent).toFixed(1)}% ${cost.saved < 0 ? "more" : "less"} on tokens`);
     setText("share-label", `${state.share}%`);
-    setText("discount-label", `${state.discount}%`);
+    setText("price-label", `${100 - state.discount}%`);
     setText("premium-share", `${100 - share}% stays`);
     setText("exchange-share", share ? `${share}% moves` : "No spend routed");
     setText("toggle-label", state.enabled ? "On" : "Off");
@@ -74,12 +74,15 @@
     document.querySelector(".tx-full").style.width = `${cost.baseline / scale * 100}%`;
     el("kept-bar").style.width = `${cost.kept / scale * 100}%`;
     el("moved-bar").style.width = `${(cost.provider + cost.fee) / scale * 100}%`;
-    for (const row of root.querySelectorAll("[data-tx-example]")) row.textContent = state.enabled && share > 0 ? "Token Exchange" : "Google Cloud";
     el("exchange-route").dataset.active = String(share > 0);
+    el("current-route").dataset.active = String(share < 100);
+    root.dispatchEvent(new CustomEvent("tx:change", { detail: { ...state } }));
   }
 
   function applyState() {
-    for (const key of Object.keys(limits)) el(key).value = String(state[key]);
+    for (const key of ["spend", "share"]) el(key).value = String(state[key]);
+    // Keep discount in shared links so previously shared estimates still work.
+    el("price").value = String(100 - state.discount);
     el("enabled").checked = state.enabled;
     el("spend").removeAttribute("aria-invalid");
     setText("validation", "");
@@ -95,10 +98,10 @@
     setText("copy-status", "");
     el("copy-fallback").hidden = true;
     if (!valid) return;
-    state = { spend, share: Number(el("share").value), discount: Number(el("discount").value), enabled: el("enabled").checked };
+    state = { spend, share: Number(el("share").value), discount: 100 - Number(el("price").value), enabled: el("enabled").checked };
     render();
   }
-  for (const key of [...Object.keys(limits), "enabled"]) el(key).addEventListener("input", update);
+  for (const key of ["spend", "share", "price", "enabled"]) el(key).addEventListener("input", update);
   el("reset").addEventListener("click", () => {
     state = { ...defaults };
     applyState();
@@ -120,6 +123,6 @@
       setText("copy-status", "Copy this link to share your assumptions.");
     }
   });
-  applyState();
   root.hidden = false;
+  applyState();
 })();
