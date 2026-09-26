@@ -19,15 +19,20 @@ def test_savings_page_is_public_indexable_and_accessible(client: TestClient, pat
     assert soup.select_one('link[rel="canonical"]')["href"] == "https://trustedrouter.com/token-exchange/savings"
     assert soup.select_one('meta[property="og:image"]')["content"].endswith("/og/token-exchange.png")
     assert soup.select_one("noscript") is not None
-    for name in ("spend", "share", "discount"):
+    for name in ("spend", "share", "price"):
         assert soup.select_one(f'label[for="tx-{name}"]')
+    assert soup.select_one("#tx-share")["value"] == "40"
+    assert soup.select_one("#tx-price")["value"] == "10"
+    assert soup.select_one("#tx-saved").text == "$1,198,630"
+    assert soup.select_one('#tx-flow-canvas[aria-hidden="true"]')
+    assert soup.select_one("#tx-motion")
     assert soup.select_one('#tx-enabled[role="switch"]')
     assert soup.select_one('#tx-validation[role="status"]')
     assert "not a quote" in response.text
     assert "5.5%" in response.text
     assert "not live traffic" in response.text
     assert "per token price floor" in response.text
-    for asset in ("token-exchange-savings.js", "token-exchange-savings.css", "favicon.svg"):
+    for asset in ("token-exchange-savings.js", "token-exchange-flow.js", "token-exchange-savings.css", "favicon.svg", "icons/lucide-pause.svg", "icons/lucide-play.svg"):
         assert client.get(f"/static/{asset}").status_code == 200
 
 

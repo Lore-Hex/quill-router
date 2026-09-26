@@ -1,12 +1,15 @@
 const assert = require("node:assert/strict");
 const { test } = require("node:test");
 const { calculate, defaults, encode, decode } = require("../../src/trusted_router/static/token-exchange-savings.js");
+const { exampleFor, point } = require("../../src/trusted_router/static/token-exchange-flow.js");
 
 test("reference example includes markup only on moved provider spend", () => {
   assert.deepEqual(calculate(defaults), {
-    baseline: 335000000, eligible: 134000000, kept: 201000000, provider: 26800000,
-    fee: 1474000, total: 229274000, saved: 105726000, annual: 1268712000, percent: 31.56,
+    baseline: 335000000, eligible: 134000000, kept: 201000000, provider: 13400000,
+    fee: 737000, total: 215137000, saved: 119863000, annual: 1438356000, percent: 35.78,
   });
+  assert.equal(defaults.share, 40);
+  assert.equal(calculate(defaults).provider, calculate(defaults).eligible * 0.1);
 });
 
 test("off and zero eligible spend leave the bill unchanged with no fee", () => {
@@ -32,7 +35,7 @@ test("no price advantage honestly shows increased cost, not fake savings", () =>
 test("cent rounding balances every displayed line item across boundary scenarios", () => {
   for (const spend of [0, 0.01, 0.03, 1.15, 9.99, 100, 3350000, 99999999.99, 100000000]) {
     for (const share of [0, 1, 33, 40, 99, 100]) {
-      for (const discount of [0, 1, 80, 95]) {
+      for (const discount of [0, 1, 80, 90, 95]) {
         const cost = calculate({ spend, share, discount, enabled: true });
         for (const field of ["baseline", "kept", "eligible", "provider", "fee", "total", "saved", "annual"]) assert(Number.isSafeInteger(cost[field]));
         assert.equal(cost.total, cost.kept + cost.provider + cost.fee);
@@ -42,6 +45,25 @@ test("cent rounding balances every displayed line item across boundary scenarios
       }
     }
   }
+});
+
+test("illustrative routes keep strategic work in place and honor off and share boundaries", () => {
+  for (const share of [0, 1, 40, 99, 100]) {
+    for (const enabled of [false, true]) {
+      const requests = Array.from({ length: 100 }, (_, i) => exampleFor({ ...defaults, share, enabled }, i));
+      assert.equal(requests.filter(r => r.kind === "eligible").length, share);
+      assert.equal(requests.filter(r => r.exchange).length, enabled ? share : 0);
+      assert(requests.filter(r => r.kind === "strategic").every(r => !r.exchange));
+    }
+  }
+});
+
+test("request animation curves reach both endpoints without overshooting", () => {
+  const curve = [[0, 0], [50, 0], [50, 100], [100, 100]];
+  assert.deepEqual(point(curve, 0), curve[0]);
+  assert.deepEqual(point(curve, 1), curve[3]);
+  assert.deepEqual(point(curve, 0.5), [50, 50]);
+  for (let i = 0; i <= 100; i++) assert(point(curve, i / 100).every(v => v >= 0 && v <= 100));
 });
 
 test("untrusted or impossible assumptions fail closed", () => {
