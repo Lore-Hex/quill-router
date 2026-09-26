@@ -105,7 +105,11 @@ from trusted_router.provider_contract import (
 )
 from trusted_router.provider_contracts import INPUT_ONLY_PROVIDER_MODELS
 from trusted_router.provider_lifecycle import provider_pricing_schedule
-from trusted_router.provider_locations import provider_inference_locations, provider_model_locations
+from trusted_router.provider_locations import (
+    provider_geography,
+    provider_inference_locations,
+    provider_model_locations,
+)
 from trusted_router.seo_catalog import seo_catalog_evidence
 from trusted_router.seo_meta import (
     SEO_TITLE_MAX_LENGTH,
@@ -5196,6 +5200,7 @@ def _provider_detail_view(
     view["credits_model_count"] = len(served_models)
     view["profile"] = PROVIDER_BRANDS.get(provider.slug)
     view["inference_locations"] = provider_inference_locations(provider.slug)
+    view["geography"] = provider_geography(provider.slug)
     location_snapshot = provider_model_locations(provider.slug)
     view["location_snapshot_at"] = location_snapshot.generated_at
     view["model_locations"] = [

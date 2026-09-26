@@ -111,6 +111,7 @@ from trusted_router.provider_contracts import (
     provider_model_available_from_gateway_region,
     provider_model_requires_exact_global_settlement,
 )
+from trusted_router.provider_locations import inference_location_metadata
 from trusted_router.provider_types import estimate_tokens_from_text
 from trusted_router.receipt_keys import (
     AWS_ATTESTATION_KIND,
@@ -3094,6 +3095,7 @@ def _gateway_authorize_response(
             "endpoint_id": endpoint.id,
             "provider": endpoint.provider,
             "provider_name": PROVIDERS[endpoint.provider].name,
+            "inference_location": inference_location_metadata(endpoint.provider, model.id),
             **provider_payload,
             "requested_model": requested_model_id,
             "response_model": response_model,
@@ -4960,6 +4962,7 @@ def _gateway_candidate_payload(
         "upstream_model": endpoint.upstream_id or model.id,
         "provider": endpoint.provider,
         "provider_name": PROVIDERS[endpoint.provider].name,
+        "inference_location": inference_location_metadata(endpoint.provider, model.id),
         **_gateway_provider_route_payload(endpoint),
         "usage_type": usage_type.value,
         **_gateway_byok_payload(byok_config, workspace_id),

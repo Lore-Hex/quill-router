@@ -20,6 +20,10 @@
     <table>
       <tbody>
         <tr><th>Provider</th><td>{{ provider.name }}</td></tr>
+        {% if provider.geography %}
+        <tr><th>API operator country</th><td>{{ provider.geography.operator_country or 'Not verified' }}<br><small>{{ provider.geography.operator_country_scope }}</small></td></tr>
+        <tr><th>Headquarters</th><td>{{ provider.geography.headquarters.location or 'Not verified' }}{% if provider.geography.headquarters.source_url %}<br><small>{{ provider.geography.headquarters.evidence }}. <a href="{{ provider.geography.headquarters.source_url }}" rel="nofollow noopener">Source</a>; reviewed {{ provider.geography.headquarters.reviewed_on }}.</small>{% endif %}</td></tr>
+        {% endif %}
         {% if provider.profile %}
         {% for label, value in provider.profile.company_details %}
         <tr><th>{{ label }}</th><td>{{ value }}</td></tr>
@@ -53,6 +57,7 @@
 {% set locations = provider.inference_locations %}
 <section class="provider-locations" id="inference-locations" aria-labelledby="inference-locations-heading">
   <h2 id="inference-locations-heading">Inference locations</h2>
+  <p><a href="/v1/providers">Provider API</a> declarations are also available on each model's endpoint API. Direct chat and Responses replies separate advertised availability from serving location in <code>usage.inference_location</code>; the actual serving region remains unknown when not reported.</p>
   <p>Where the upstream GPUs execute the model, not the provider's headquarters, API ingress, or data storage. ZDR and confidential inference do not by themselves restrict geography.</p>
   <dl class="provider-location-facts">
     <dt>Declared countries or regions</dt>

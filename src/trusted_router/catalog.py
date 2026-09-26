@@ -232,6 +232,7 @@ from trusted_router.provider_lifecycle import (
     provider_model_retired,
     provider_price_microdollars,
 )
+from trusted_router.provider_locations import inference_location_metadata, provider_geography
 from trusted_router.routing_candidates import (  # noqa: F401 - re-exported for back-compat
     FAST_MODEL_ORDER,
     InvalidAutoModelOrder,
@@ -816,6 +817,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
                 "provider_us_based": PROVIDERS[endpoint.provider].provider_headquarters_country
                 == PROVIDER_JURISDICTION_US,
                 "provider_eu_focused": endpoint.provider in EU_FOCUSED_PROVIDER_ORDER,
+                "inference_location": inference_location_metadata(endpoint.provider, endpoint.model_id),
                 "renewable_energy_inference": PROVIDERS[endpoint.provider].renewable_energy_inference,
                 "energy_policy_url": PROVIDERS[endpoint.provider].energy_policy_url,
                 "supported_parameters": list(
@@ -933,6 +935,7 @@ def provider_to_openrouter_shape(provider: Provider) -> dict[str, object]:
         "provider_policy_url": provider.provider_policy_url,
         "provider_headquarters_country": provider.provider_headquarters_country,
         "provider_us_based": provider.provider_headquarters_country == PROVIDER_JURISDICTION_US,
+        "geography": provider_geography(provider.slug),
     }
 
 

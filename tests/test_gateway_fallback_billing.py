@@ -1629,6 +1629,7 @@ def test_gateway_can_prefer_byok_endpoint_for_dual_mode_model() -> None:
             "upstream_model": "kimi-k2.6",
             "provider": "kimi",
             "provider_name": "Kimi",
+            "inference_location": data["inference_location"],
             "usage_type": "BYOK",
             "byok_secret_ref": "env://KIMI_API_KEY",
             "byok_encrypted_secret": None,
