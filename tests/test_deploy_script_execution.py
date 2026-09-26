@@ -165,6 +165,9 @@ case "$*" in
     ;;
   *"SELECT INDEX_STATE"*) echo READ_WRITE ;;
   *"SELECT SPANNER_STATE"*) echo COMMITTED ;;
+  *"SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS"*"table_name='tr_reservation' AND column_name='terminal_at'"*)
+    if [ "${HARNESS_TERMINAL_AT_MISSING:-false}" = true ]; then echo 0; else echo 1; fi
+    ;;
   *"SELECT COUNT(*) FROM INFORMATION_SCHEMA."*) echo 1 ;;
   *) exit 1 ;;
 esac
@@ -172,8 +175,8 @@ esac
 
 
 def _typed_counters_gcloud_stub(index: str) -> str:
-    # Only the index under test varies; every other schema object already
-    # exists and every other index is already read-write.
+    # Other schema objects exist unless explicitly marked missing, and every
+    # other index is already read-write.
     return _TYPED_COUNTERS_GCLOUD_STUB_TEMPLATE.replace("__INDEX__", index)
 
 
@@ -244,6 +247,41 @@ def test_typed_counters_reservation_index(
         waiting = run.stdout.index(f"waiting for {index} backfill (state=WRITE_ONLY)")
         assert waiting < ready
     assert state_file.read_text().strip() == "READ_WRITE"
+
+
+def test_typed_counters_adds_terminal_at_before_index(tmp_path: Path) -> None:
+    # A reservation table predating the retention migration lacks terminal_at.
+    isolated = DeployScriptHarness(tmp_path / "typed-counters")
+    (isolated.bin / "gcloud").write_text(
+        _typed_counters_gcloud_stub("tr_reservation_by_terminal")
+    )
+    state_file = tmp_path / "index-state"
+    state_file.write_text("MISSING\n")
+    run = isolated.run(
+        _TYPED_COUNTERS,
+        extra_env={
+            "SPANNER_INSTANCE_ID": "harness-instance",
+            "SPANNER_DATABASE_ID": "harness-database",
+            "GCP_PROJECT_ID": "harness-project",
+            "HARNESS_INDEX_STATE": str(state_file),
+            "HARNESS_FINISH_BACKFILL": "true",
+            "HARNESS_TERMINAL_AT_MISSING": "true",
+        },
+    )
+
+    assert run.returncode == 0, summarise(run)
+    assert "tr_reservation exists, skip" in run.stdout
+    ddl = [
+        " ".join(arg.removeprefix("--ddl=").replace("\\n", " ").split())
+        for call in run.calls
+        if call[:5] == ["gcloud", "spanner", "databases", "ddl", "update"]
+        for arg in call
+        if arg.startswith("--ddl=")
+    ]
+    assert ddl == [
+        "ALTER TABLE tr_reservation ADD COLUMN terminal_at TIMESTAMP",
+        _RESERVATION_INDEXES["tr_reservation_by_terminal"],
+    ], summarise(run)
 
 
 _REGIONAL_QUOTA_RECONCILER = "scripts/deploy/regional_quota_reconciler.sh"

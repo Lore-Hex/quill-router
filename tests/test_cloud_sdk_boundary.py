@@ -37,8 +37,11 @@ ALLOWED = {
     # what these exist to do.
     "storage_gcp.py",
     "storage_gcp_authorize.py",
+    "storage_gcp_batch_dml.py",
     "storage_gcp_google_ads.py",
     "storage_gcp_io.py",
+    # Drives SDK MutateRows worker directly to preserve sparse per-row statuses; durable path stays in Spanner.
+    "storage_gcp_mirror.py",
     "storage_gcp_regional_quota.py",
     # GCP Secret Manager adapter for the lazy spend-lease issuer seed.
     "storage_gcp_secrets.py",

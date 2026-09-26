@@ -255,6 +255,7 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "azure",
         "scaleway",
         "regolo",
+        "privatemode",
         "featherless",
         "sakana",
         "jina",
@@ -263,7 +264,9 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
 )
 
 
-def _authoritative_provider_model_ids(provider_slug: str) -> frozenset[str]:
+def _authoritative_provider_model_ids(
+    provider_slug: str, *, at: datetime | None = None,
+) -> frozenset[str]:
     """Return fail-closed route model IDs for an authoritative manifest.
 
     Explicit embedding specs remain eligible alongside dynamically discovered
@@ -275,7 +278,7 @@ def _authoritative_provider_model_ids(provider_slug: str) -> frozenset[str]:
         for spec in _EMBEDDING_SPECS
         if spec.get("provider") == provider_slug
         and not provider_model_retired(
-            provider_slug, str(spec["id"]), str(spec.get("upstream_id") or spec["id"]),
+            provider_slug, str(spec["id"]), str(spec.get("upstream_id") or spec["id"]), at=at,
         )
     }
     path = _PROVIDER_MODELS_DIR / f"{provider_slug}.json"
@@ -300,7 +303,7 @@ def _authoritative_provider_model_ids(provider_slug: str) -> frozenset[str]:
         if provider_model_operator_held(provider_slug, model_id):
             continue
         upstream_id = str(row.get("upstream_id") or model_id)
-        if provider_model_retired(provider_slug, model_id, upstream_id):
+        if provider_model_retired(provider_slug, model_id, upstream_id, at=at):
             continue
         allowed.add(model_id)
     return frozenset(allowed)
@@ -682,8 +685,10 @@ def _is_provider_deprecated_model(
     provider_slug: str,
     model_id: str,
     upstream_id: str | None,
+    *,
+    at: datetime | None = None,
 ) -> bool:
-    if provider_model_retired(provider_slug, model_id, upstream_id):
+    if provider_model_retired(provider_slug, model_id, upstream_id, at=at):
         return True
     deprecated = _PROVIDER_DEPRECATED_UPSTREAM_MODELS.get(provider_slug)
     if not deprecated:
@@ -737,7 +742,9 @@ def _native_endpoint_capabilities() -> dict[tuple[str, str], tuple[str, ...]]:
     return capabilities
 
 
-def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelEndpoint]]:
+def _ingested_models_and_endpoints(
+    *, at: datetime | None = None,
+) -> tuple[dict[str, Model], dict[str, ModelEndpoint]]:
     """Read the OpenRouter snapshot and return (models, endpoints) dicts.
     Pricing is run through `_customer_price_from_dollars_per_token` so the
     catalog uniformly applies the cost+5.5% / $0.01/M-floor formula."""
@@ -773,7 +780,7 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
             if not isinstance(slug, str) or slug not in PROVIDERS:
                 continue
             upstream_id = str(raw_ep.get("model_id") or model_id)
-            if _is_provider_deprecated_model(slug, model_id, upstream_id):
+            if _is_provider_deprecated_model(slug, model_id, upstream_id, at=at):
                 continue
             pricing = raw_ep.get("pricing") or {}
             prompt_price, _, _ = _customer_price_from_dollars_per_token(
@@ -924,7 +931,9 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
     return models, endpoints
 
 
-def _supplemental_provider_models_and_endpoints() -> tuple[
+def _supplemental_provider_models_and_endpoints(
+    *, at: datetime | None = None,
+) -> tuple[
     dict[str, Model], dict[str, ModelEndpoint]
 ]:
     """Read provider-native model manifests for providers whose live API
@@ -1014,6 +1023,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "io-net",
         "scaleway",
         "regolo",
+        "privatemode",
         "featherless",
         "sakana",
         "perplexity",
@@ -1046,7 +1056,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
             upstream_id = raw_model.get("upstream_id")
             if not isinstance(upstream_id, str) or not upstream_id:
                 upstream_id = model_id
-            if _is_provider_deprecated_model(provider_slug, model_id, upstream_id):
+            if _is_provider_deprecated_model(provider_slug, model_id, upstream_id, at=at):
                 continue
             if raw_model.get("model_type") not in (None, "chat", "image"):
                 continue
@@ -1498,6 +1508,7 @@ def _filter_unserved_provider_endpoints(
     endpoints: dict[str, ModelEndpoint],
     *,
     explicit_model_ids: frozenset[str] = frozenset(),
+    at: datetime | None = None,
 ) -> dict[str, ModelEndpoint]:
     """Drop a provider's prepaid (Credits) endpoints for models it doesn't
     serve on our account. Only Credits routes use OUR provider key, so only
@@ -1519,7 +1530,7 @@ def _filter_unserved_provider_endpoints(
     allow = dict(_PROVIDER_SERVED_MODEL_ALLOWLIST)
     dark = _provider_manifest_dark_model_ids()
     for provider_slug in _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS:
-        allow[provider_slug] = _authoritative_provider_model_ids(provider_slug)
+        allow[provider_slug] = _authoritative_provider_model_ids(provider_slug, at=at)
 
     def _keep(endpoint: ModelEndpoint) -> bool:
         # Async media routes are registered only after their provider-native
@@ -1531,7 +1542,7 @@ def _filter_unserved_provider_endpoints(
         if endpoint.model_id in explicit_model_ids:
             return True
         if _is_provider_deprecated_model(
-            endpoint.provider, endpoint.model_id, endpoint.upstream_id
+            endpoint.provider, endpoint.model_id, endpoint.upstream_id, at=at,
         ):
             return False
         if endpoint.usage_type == "Credits" and endpoint.model_id in dark.get(

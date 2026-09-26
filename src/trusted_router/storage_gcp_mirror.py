@@ -29,8 +29,8 @@ class MirrorWriteIncomplete(RuntimeError):
 
     The durable copies (Spanner, and the ClickHouse activity outbox) are
     unaffected; only the Bigtable fallback/shadow index is missing rows.
-    ``reconcile_generation_activity(workspace_id, date=...)`` re-mirrors them
-    from Spanner (``python -m trusted_router.activity_mirror_reconcile_cli``).
+    Repair typed or legacy generations from Spanner with
+    ``python -m trusted_router.activity_mirror_reconcile_cli --generation-id <id>``.
     """
 
     def __init__(self, *, attempts: int, total: int, codes: Sequence[int | None]) -> None:
@@ -42,7 +42,7 @@ class MirrorWriteIncomplete(RuntimeError):
             "Bigtable mirror mutation incomplete after "
             f"{attempts} attempt(s): {len(self.codes)} of {total} rows failed "
             f"(status codes {rendered}); durable copies are intact, re-mirror via "
-            "reconcile_generation_activity(workspace_id, date)"
+            "python -m trusted_router.activity_mirror_reconcile_cli --generation-id <id>"
         )
 
 
@@ -56,6 +56,36 @@ def _failed_indexes(statuses: Sequence[Any], expected: int) -> list[tuple[int, i
     return failed
 
 
+def _mutate_rows(table: Any, rows: list[Any], timeout: float) -> Sequence[Any]:
+    from google.cloud.bigtable.table import Table, _RetryableMutateRowsWorker
+
+    if not isinstance(table, Table):
+        return table.mutate_rows(rows, retry=None, timeout=timeout)
+    # Table.mutate_rows discards its worker when an incomplete stream raises.
+    # Keep the SDK's indexed statuses, including permanent failures, and let
+    # the SDK clear only successful mutations. No extra SDK retries are enabled.
+    worker = _RetryableMutateRowsWorker(
+        table._instance._client,
+        table.name,
+        rows,
+        app_profile_id=table._app_profile_id,
+        timeout=timeout,
+    )
+    try:
+        return worker(retry=None)
+    except RuntimeError as exc:
+        if (
+            len(exc.args) != 4
+            or exc.args[0] != "Unexpected number of responses"
+            or exc.args[2] != "Expected"
+            or exc.args[3] != len(rows)
+            or not isinstance(exc.args[1], int)
+            or not 0 <= exc.args[1] < len(rows)
+        ):
+            raise
+        return worker.responses_statuses
+
+
 def commit_mirror_rows(table: Any, rows: list[Any]) -> None:
     # DirectRow.commit uses the client's two-minute retry policy and may hide
     # per-row failures. Durable metadata is already in Spanner; never spend
@@ -63,7 +93,7 @@ def commit_mirror_rows(table: Any, rows: list[Any]) -> None:
     # Instead: one attempt for every row, then at most one more attempt for
     # the rows that failed transiently, inside the same wall-clock budget.
     started = time.monotonic()
-    statuses = table.mutate_rows(rows, retry=None, timeout=MIRROR_WRITE_TIMEOUT_SECONDS)
+    statuses = _mutate_rows(table, rows, MIRROR_WRITE_TIMEOUT_SECONDS)
     failed = _failed_indexes(statuses, len(rows))
     if not failed:
         return
@@ -74,14 +104,12 @@ def commit_mirror_rows(table: Any, rows: list[Any]) -> None:
     if retryable and remaining - MIRROR_RETRY_BACKOFF_SECONDS >= MIRROR_RETRY_MIN_BUDGET_SECONDS:
         time.sleep(MIRROR_RETRY_BACKOFF_SECONDS)
         remaining = MIRROR_WRITE_TIMEOUT_SECONDS - (time.monotonic() - started)
+        if remaining < MIRROR_RETRY_MIN_BUDGET_SECONDS:
+            raise MirrorWriteIncomplete(attempts=attempts, total=len(rows), codes=codes)
         # Successful rows had their mutations cleared by the SDK; resend only
         # the rows that failed, each still carrying its mutations.
         retry_rows = [rows[index] for index, _code in failed]
-        statuses = table.mutate_rows(
-            retry_rows,
-            retry=None,
-            timeout=max(remaining, MIRROR_RETRY_MIN_BUDGET_SECONDS),
-        )
+        statuses = _mutate_rows(table, retry_rows, remaining)
         attempts = 2
         failed = _failed_indexes(statuses, len(retry_rows))
         if not failed:

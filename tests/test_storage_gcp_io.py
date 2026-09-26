@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 import pytest
 from google.api_core.exceptions import (
@@ -315,14 +316,32 @@ def test_rollback_gets_a_deadline_floor_after_the_budget_is_spent(
     """The failing statement usually exhausted the shared RPC budget; the
     bounded rollback RPC must still get a positive deadline or the locks stay
     held for Spanner's idle reap."""
+    from types import SimpleNamespace
+
     clock = _Clock()
     _install_clock(monkeypatch, clock)
 
     def failing(_transaction: object) -> str:
+        clock.now += 5.0  # the statement consumes the caller's budget
         raise FakeAlreadyExists("duplicate")
 
     database = _CallbackDatabase()
-    spent = clock.now - 1.0
+    rpc_timeouts: list[float] = []
+
+    def rollback_rpc(*args: Any, **kwargs: Any) -> None:
+        rpc_timeouts.append(kwargs["timeout"])
+
+    api = SimpleNamespace(rollback=rollback_rpc)
+    configured = SimpleNamespace(spanner_api=api, run_in_transaction=database.run_in_transaction)
+    configure_spanner_rpc_deadlines(configured)
+    original_rollback = _RollbackTrackingTransaction.rollback
+
+    def rollback(transaction: _RollbackTrackingTransaction) -> None:
+        original_rollback(transaction)
+        api.rollback(request="rollback")
+
+    monkeypatch.setattr(_RollbackTrackingTransaction, "rollback", rollback)
+    spent = clock.now + 4.0
     token = io_mod._SPANNER_RPC_DEADLINE.set(spent)
     try:
         with pytest.raises(AlreadyExists):
@@ -334,7 +353,9 @@ def test_rollback_gets_a_deadline_floor_after_the_budget_is_spent(
     [txn] = database.transactions
     [deadline] = txn.rollback_deadlines
     assert deadline is not None
-    assert deadline >= clock.now + io_mod._ROLLBACK_FLOOR_SECONDS - 1e-9
+    assert deadline - clock.now >= 1.0
+    assert len(rpc_timeouts) == 1
+    assert 1.0 <= rpc_timeouts[0] <= 2.0
 
 
 def test_aborted_retries_then_succeeds_within_budget(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -466,3 +487,27 @@ def test_hot_path_budget_is_shared_across_multiple_transactions(
     assert len(api.calls) == 2
     assert api.calls[0]["timeout"] == pytest.approx(10.0)
     assert api.calls[1]["timeout"] == pytest.approx(4.0)
+
+
+@pytest.mark.parametrize("method", ["execute_sql", "execute_batch_dml"])
+def test_statement_rpc_shares_total_transaction_deadline(
+    monkeypatch: pytest.MonkeyPatch, method: str,
+) -> None:
+    clock = _Clock()
+    _install_clock(monkeypatch, clock)
+    api = _CommitApi(clock)
+    # execute_update uses execute_sql; batch_update uses execute_batch_dml.
+    setattr(api, method, api.commit)
+    setattr(api._transport, method, api._transport.commit)
+    database = _CommitDatabase(api)
+    configure_spanner_rpc_deadlines(database)
+
+    def transaction(_tx: object) -> str:
+        for _ in range(5):
+            getattr(api, method)(request=method)
+        return "unreachable"
+
+    with pytest.raises(DeadlineExceeded, match="transaction deadline exceeded"):
+        database.run_in_transaction(transaction)
+    assert [call['timeout'] for call in api.calls] == [20.0, 14.0, 8.0, 2.0]
+    assert [call['retry']._timeout for call in api.calls] == [20.0, 14.0, 8.0, 2.0]

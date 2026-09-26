@@ -198,6 +198,22 @@ def publish(output: Path, state: Path) -> None:
     required += [output / "assets" / f"og-{m['slug']}.png" for m in load_markets()]
     if not all(p.is_file() for p in required):
         raise ValueError("Build and verify all market pages and OG images before publishing")
+    # A proxy with a certificate map serves the map's certificates
+    # (infra/control_lb_certificate_map.tf) and ignores its classic ones. Then
+    # publish creates and attaches none, and changes nothing until every host
+    # has an ACTIVE map entry with an ACTIVE certificate.
+    certificate_map = gcloud(
+        "compute", "target-https-proxies", "describe", PROXY, "--global", read=True
+    ).get("certificateMap")
+    if certificate_map:
+        gaps = certificate_map_gaps(certificate_map, served_hosts())
+        if gaps:
+            raise RuntimeError(
+                "No ACTIVE entry with an ACTIVE certificate in the HTTPS proxy's certificate map for "
+                + ", ".join(gaps)
+                + ". Add the domain to infra/token_exchange_certificate_domains.json "
+                "and apply infra first."
+            )
     buckets = gcloud("storage", "buckets", "list", read=True)
     if not any(b.get("name") == BUCKET for b in buckets):
         gcloud(
@@ -256,7 +272,50 @@ def publish(output: Path, state: Path) -> None:
     if fresh["fingerprint"] != current["fingerprint"]:
         raise RuntimeError("URL map changed concurrently. Rerun to merge against the latest map.")
     gcloud("compute", "url-maps", "import", MAP, f"--source={proposed}", "--global")
-    publish_certificates()
+    if not certificate_map:
+        publish_certificates()
+
+
+def served_hosts() -> list[str]:
+    return [h for d in domains() for h in (d, "www." + d)]
+
+
+def certificate_map_gaps(certificate_map: str, hosts: list[str]) -> list[str]:
+    """Hosts the certificate map does not serve with an ACTIVE entry and certificate.
+
+    Certificate Manager serves a host from the entry for that exact name, or
+    else from the entry for *.<its parent domain>. An entry is PENDING while it
+    propagates to the load balancer's frontends.
+    """
+    entries = {
+        entry["hostname"]: entry
+        for entry in gcloud(
+            "certificate-manager",
+            "maps",
+            "entries",
+            "list",
+            "--map=" + certificate_map.rsplit("/", 1)[-1],
+            "--location=global",
+            read=True,
+        )
+        if entry.get("hostname")
+    }
+    active = {
+        certificate["name"]
+        for certificate in gcloud(
+            "certificate-manager", "certificates", "list", "--location=global", read=True
+        )
+        if certificate.get("managed", {}).get("state") == "ACTIVE"
+    }
+    gaps = []
+    for host in hosts:
+        wildcard = "*." + host.split(".", 1)[1]
+        entry = entries[host] if host in entries else entries.get(wildcard, {})
+        if entry.get("state") != "ACTIVE" or not any(
+            c in active for c in entry.get("certificates", [])
+        ):
+            gaps.append(host)
+    return gaps
 
 
 def attached_certificates() -> list[str]:
@@ -279,7 +338,7 @@ def publish_certificates() -> None:
     and every requested name exists with exactly that request's hosts as its
     managed domains; otherwise publish raises without updating and must be rerun.
     """
-    hosts = [h for d in domains() for h in (d, "www." + d)]
+    hosts = served_hosts()
     attached = attached_certificates()
     existing = certificate_inventory()
     requests = certificate_requests([existing[n] for n in attached if n in existing], hosts)

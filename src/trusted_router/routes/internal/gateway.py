@@ -10,6 +10,7 @@ returns already_settled=True without double-charging.
 
 from __future__ import annotations
 
+import copy
 import datetime as dt
 import functools
 import hashlib
@@ -30,6 +31,7 @@ from fastapi import APIRouter, BackgroundTasks, Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
+from trusted_router import catalog as model_catalog
 from trusted_router.acquisition import (
     record_free_credit_exhausted_safely,
     record_successful_api_call_safely,
@@ -58,7 +60,6 @@ from trusted_router.catalog import (
     effective_endpoint,
     endpoint_for_id,
     endpoint_zero_data_retention,
-    endpoints_for_model,
 )
 from trusted_router.client_context import parse_client_context, parse_gateway_request_id
 from trusted_router.config import Settings, get_settings
@@ -99,6 +100,7 @@ from trusted_router.partner_billing import (
 from trusted_router.polyphemus import LEGACY_SELECTOR_FEE_MICRODOLLARS
 from trusted_router.polyphemus import MODEL_ID as POLYPHEMUS_MODEL_ID
 from trusted_router.polyphemus import SELECT_ROUTE_TYPE as POLYPHEMUS_SELECT_ROUTE_TYPE
+from trusted_router.post_commit import defer_post_commit
 from trusted_router.pricing import (
     SIGNED_RECEIPT_TOTAL_FEE_BASIS_POINTS,
     signed_receipt_price_microdollars,
@@ -131,6 +133,7 @@ from trusted_router.request_tags import InvalidTags, merge_tags, tags_match, val
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.routing import (
     NormalizedRoutingInputs,
+    _apply_endpoint_provider_filters,
     canonical_model_id,
     chat_route_endpoint_candidates,
     decide_route_endpoint_candidates,
@@ -242,6 +245,7 @@ from trusted_router.storage_errors import (
 )
 from trusted_router.storage_gcp_io import spanner_rpc_budget
 from trusted_router.storage_gcp_secrets import secret_manager_seed_loader
+from trusted_router.storage_gcp_settle_outbox import ENQ_INSERTED
 from trusted_router.storage_models import (
     SYNTHETIC_APP_NAME,
     AmbiguousGatewayRequestId,
@@ -886,7 +890,7 @@ def _authorize_gateway_sync_impl(
     named, directly unit-testable function (#40). The registered route handler is
     a thin wrapper; behavior is byte-identical to the prior inline handler."""
     require_internal_gateway(request, settings)
-    api_key = _api_key_for_gateway_authorization(body)
+    api_key, metadata = _gateway_authorize_metadata(body)
     if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
         raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
     _assert_gateway_key_scope(api_key)
@@ -917,7 +921,7 @@ def _authorize_gateway_sync_impl(
             accepted_image_digests=accepted_image_digests,
         ):
             spend_context["boot_failure_reason"] = "boot_digest_not_accepted"
-    workspace = STORE.get_workspace(api_key.workspace_id)
+    workspace = metadata.workspace if metadata is not None else STORE.get_workspace(api_key.workspace_id)
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
     if workspace_billing_paused(workspace):
@@ -1154,6 +1158,7 @@ def _authorize_gateway_sync_impl(
                 f"Provider filters exclude every supported host for {route_model_id}",
                 ErrorType.BAD_REQUEST,
             )
+    effective_route_preferences = route_preferences
     if user_model is not None:
         if is_image_request:
             raise api_error(
@@ -1179,10 +1184,12 @@ def _authorize_gateway_sync_impl(
             defer_no_fallback_selection=True,
         )
     elif is_decide_request:
-        endpoint_candidates = decide_route_endpoint_candidates(
+        resolved_candidates = decide_route_endpoint_candidates(
             normalized_routing,
             defer_no_fallback_selection=True,
         )
+        effective_route_preferences = resolved_candidates.effective_preferences
+        endpoint_candidates = resolved_candidates
     elif is_embeddings_request:
         endpoint_candidates = embeddings_route_endpoint_candidates(
             normalized_routing,
@@ -1191,10 +1198,12 @@ def _authorize_gateway_sync_impl(
         if not endpoint_candidates:
             raise api_error(400, "Model does not support embeddings", ErrorType.MODEL_NOT_SUPPORTED)
     else:
-        endpoint_candidates = chat_route_endpoint_candidates(
+        resolved_candidates = chat_route_endpoint_candidates(
             normalized_routing,
             defer_no_fallback_selection=True,
         )
+        effective_route_preferences = resolved_candidates.effective_preferences
+        endpoint_candidates = resolved_candidates
         if not endpoint_candidates:
             raise api_error(
                 400, "Model does not support chat completions", ErrorType.MODEL_NOT_SUPPORTED
@@ -1208,7 +1217,10 @@ def _authorize_gateway_sync_impl(
             region,
         )
     ]
-    endpoint_candidates = _eligible_gateway_endpoint_candidates(endpoint_candidates, workspace.id)
+    byok_configs = _byok_configs_for_candidates(endpoint_candidates, workspace.id)
+    endpoint_candidates = _eligible_gateway_endpoint_candidates(
+        endpoint_candidates, workspace.id, byok_configs,
+    )
     if named_decision_chain is not None:
         # The chain is part of what the name means (and of its advertised
         # price), so it is enforced HERE, not merely requested by the gateway:
@@ -1224,28 +1236,23 @@ def _authorize_gateway_sync_impl(
             key=lambda candidate: chain_rank[candidate[1].provider],
         )
         if not endpoint_candidates:
-            # Two different situations end here. If a pinned host is in the
-            # catalog and reachable from this region but the REQUEST's own
-            # routing filters (BYOK-only billing without a key, a privacy
-            # posture the host cannot meet, a jurisdiction, ...) removed it,
-            # the chain's fixed hosts cannot satisfy the request and a retry
-            # cannot change that: answer 400 like every other filter
-            # conflict, and log it as a client conflict. Only when no pinned
-            # host is available at all is this a retryable outage. Answering
-            # 503 for the first case made one new workspace's eighteen
-            # requests page "TR Gateway: billing path 5xx" on 2026-09-25.
-            pinned_hosts_available = any(
-                candidate_endpoint.provider in chain_rank
+            # Establish request compatibility independently of availability.
+            # endpoints_for_model drops expired/retired routes, so use the
+            # catalog entries (at effective prices) before those exclusions.
+            # An available but request-excluded host says nothing about a
+            # compatible host's outage. BYOK is never part of a named chain.
+            pinned_credit_candidates = [
+                (MODELS[candidate_endpoint.model_id], effective_endpoint(candidate_endpoint))
+                for candidate_endpoint in model_catalog.MODEL_ENDPOINTS.values()
+                if candidate_endpoint.model_id in normalized_routing.model_ids
+                and candidate_endpoint.provider in chain_rank
                 and not candidate_endpoint.is_byok
-                and provider_model_available_from_gateway_region(
-                    candidate_endpoint.provider,
-                    candidate_endpoint.model_id,
-                    region,
-                )
-                for model_id in normalized_routing.model_ids
-                for candidate_endpoint in endpoints_for_model(model_id)
-            )
-            if pinned_hosts_available:
+            ]
+            # Reuse relaxation over the resolver's full backing candidates;
+            # recomputing it over just pinned hosts would broaden the policy.
+            if pinned_credit_candidates and not _apply_endpoint_provider_filters(
+                pinned_credit_candidates, effective_route_preferences
+            ):
                 logger.info(
                     "billing.authorize_named_chain_filtered_by_request workspace_id=%s "
                     "request_id=%s model=%s region=%s",
@@ -1415,7 +1422,7 @@ def _authorize_gateway_sync_impl(
         existing_model, existing_endpoint = existing_candidates[0]
         existing_usage_type = UsageType.for_endpoint(existing_endpoint)
         byok_config = (
-            _get_byok_provider(workspace.id, existing_endpoint.provider)
+            _get_byok_provider(workspace.id, existing_endpoint.provider, byok_configs)
             if existing_usage_type.is_byok()
             else None
         )
@@ -1431,6 +1438,7 @@ def _authorize_gateway_sync_impl(
             estimate=existing_authorization.estimated_microdollars,
             credit_reservation_id=existing_authorization.credit_reservation_id,
             byok_config=byok_config,
+            byok_configs=byok_configs,
             region=existing_authorization.region or region,
             settings=settings,
             broadcast_destinations=broadcast_destinations,
@@ -2300,7 +2308,7 @@ def _authorize_gateway_sync_impl(
             release_user_model_slot_after_error()
             raise
     byok_config = (
-        _get_byok_provider(workspace.id, endpoint.provider) if model_usage_type.is_byok() else None
+        _get_byok_provider(workspace.id, endpoint.provider, byok_configs) if model_usage_type.is_byok() else None
     )
     return _gateway_authorize_response(
         authorization=authorization,
@@ -2314,6 +2322,7 @@ def _authorize_gateway_sync_impl(
         estimate=estimate,
         credit_reservation_id=credit_reservation_id,
         byok_config=byok_config,
+        byok_configs=byok_configs,
         region=region,
         settings=settings,
         broadcast_destinations=broadcast_destinations,
@@ -2480,11 +2489,14 @@ def register(router: APIRouter) -> None:
     #
     # These share AnyIO's default worker pool (40 tokens) with FastAPI's other
     # sync dependencies — deliberately, NOT a dedicated CapacityLimiter. Cloud
-    # Run runs this service at --concurrency=2 (rollout.sh), so at most ~2
+    # Run defaults to concurrency 8 (scripts/deploy/_lib.sh; also explicitly
+    # set in scripts/deploy/internal_surface.sh), so at most ~8 request
     # offloads are ever in flight per instance (far under 40); load scales out
     # across instances, not up per-instance, and prod inference never touches
     # this service (it goes through the enclave). Give gateway storage its own
     # limiter only if TR_CLOUD_RUN_CONCURRENCY is raised toward the pool size.
+    # Optional post-reply mirrors use their own bounded executor because
+    # completed replies no longer consume Cloud Run request slots.
     @router.post("/internal/gateway/validate")
     async def gateway_validate(
         request: Request,
@@ -2709,6 +2721,23 @@ def register(router: APIRouter) -> None:
                 ErrorType.ENDPOINT_NOT_SUPPORTED,
             )
         return {"data": await run_in_threadpool(lambda: reap(limit=limit))}
+
+
+def _gateway_authorize_metadata(body: GatewayAuthorizeRequest) -> tuple[Any, Any]:
+    # Hash-based callers retain their existing precedence/fallback semantics.
+    # Enclaves send lookup hashes; Spanner can hydrate that entire chain at once.
+    resolve = getattr(STORE, "gateway_api_key_auth_context", None)
+    if not body.api_key_hash and body.api_key_lookup_hash and callable(resolve):
+        context = resolve(body.api_key_lookup_hash)
+        api_key = context.api_key if context is not None else None
+        if api_key is not None and not getattr(api_key, "federated_home", ""):
+            return api_key, context
+        # Home revalidation may replace the key AND the shadow workspace.
+        # Read the workspace after that refresh, exactly as the old path did.
+        api_key = _federated_key_still_valid(api_key, body.api_key_lookup_hash)
+    else:
+        api_key = _api_key_for_gateway_authorization(body)
+    return api_key, None
 
 
 def _api_key_for_gateway_authorization(body: GatewayAuthorizeRequest) -> Any | None:
@@ -3014,6 +3043,7 @@ def _gateway_authorize_response(
     estimate: int,
     credit_reservation_id: str | None,
     byok_config: Any | None,
+    byok_configs: dict[str, Any] | None = None,
     region: str,
     settings: Settings,
     broadcast_destinations: list[dict[str, Any]],
@@ -3116,6 +3146,7 @@ def _gateway_authorize_response(
                         raw,
                         workspace_id,
                         region,
+                        byok_configs=byok_configs,
                     )
                     for (candidate_model, candidate_endpoint), raw in zip(
                         endpoint_candidates,
@@ -3130,6 +3161,7 @@ def _gateway_authorize_response(
                         candidate_endpoint,
                         workspace_id,
                         region,
+                        byok_configs=byok_configs,
                     )
                     for candidate_model, candidate_endpoint in endpoint_candidates
                 ]
@@ -3613,6 +3645,21 @@ def _report_route_fallbacks(body: GatewaySettleRequest) -> None:
         logger.warning("route fallback sentry report failed", exc_info=True)
 
 
+def _record_refund_benchmark_safely(
+    sample: ProviderBenchmarkSample, authorization_id: str,
+) -> None:
+    try:
+        STORE.record_provider_benchmark(sample)
+    except Exception:
+        # Money is already committed. Observability cannot change the response
+        # or stop later background tasks. Storage retains its RPC deadlines.
+        logger.warning(
+            "provider benchmark write failed after refund finalize authorization_id=%s",
+            authorization_id,
+            exc_info=True,
+        )
+
+
 @spanner_rpc_budget(_BILLING_PATH_SPANNER_BUDGET_SECONDS)
 def _settle_gateway_with_admission_sync(
     body: GatewaySettleRequest,
@@ -3675,6 +3722,17 @@ def _settle_gateway_authorization(
         # No timing line for replays: they are ~one point-read and would dominate
         # the latency dataset with noise.
         return {"data": _already_settled_gateway_data(authorization)}
+
+    # Detached request-local inputs only. Finalize builds its own mutable copy;
+    # reservation and authorization claims still read/guard state inside T3.
+    # Regional/spend lease bindings and charge inputs are fixed at authorize.
+    # Regional hold state is checked live by the ledger after the T3 claim;
+    # heartbeat fields are merged from the live row by the settled UPDATE.
+    authorization_snapshot = (
+        copy.deepcopy(authorization)
+        if authorization.settlement in {"local", "regional_lease", "spend_lease"}
+        else None
+    )
 
     if body.tags is not None:
         try:
@@ -4112,21 +4170,22 @@ def _settle_gateway_authorization(
             # crashes before it still rely on enclave redelivery. MF4/MF5 freeze
             # the finalize path and exact resolved cost used by the inline attempt.
             settle_outbox = spanner_settle_outbox()
-            enqueue_outcome = settle_outbox.enqueue(
-                SettleOutboxRow(
-                    authorization_id=authorization.id,
-                    intent_kind=intent_kind,
-                    settle_origin="typed" if is_typed else "legacy",
-                    actual_cost_micro=actual_cost,
-                    reservation_id=authorization.credit_reservation_id,
-                    selected_endpoint_id=selected_endpoint.id,
-                    model_id=generation_model_id,
-                    selected_usage_type=str(selected_usage_type),
-                    settle_body=json.dumps(frozen_settle_body, separators=(",", ":")),
-                    auto_refill_workspace_id=(
-                        authorization.workspace_id if refill_required else None
-                    ),
+            settle_intent = SettleOutboxRow(
+                authorization_id=authorization.id,
+                intent_kind=intent_kind,
+                settle_origin="typed" if is_typed else "legacy",
+                actual_cost_micro=actual_cost,
+                reservation_id=authorization.credit_reservation_id,
+                selected_endpoint_id=selected_endpoint.id,
+                model_id=generation_model_id,
+                selected_usage_type=str(selected_usage_type),
+                settle_body=json.dumps(frozen_settle_body, separators=(",", ":")),
+                auto_refill_workspace_id=(
+                    authorization.workspace_id if refill_required else None
                 ),
+            )
+            enqueue_outcome = settle_outbox.enqueue(
+                settle_intent,
                 # Grace so inline finalize wins the benign race; the drain only
                 # sees rows whose inline attempt is dead >=60s, avoiding replays.
                 initial_delay_seconds=60,
@@ -4142,14 +4201,20 @@ def _settle_gateway_authorization(
                 # Let the drain apply that immutable intent, including its excess.
                 return {"data": _intent_durable_gateway_data(authorization)}
             if refill_required:
+                # A matching fresh INSERT already committed the attachment.
                 # Pre-cutover combined rows have no refill columns. Attaching is
                 # an independent NULL -> pending transition, so it is safe even
                 # when the settlement row is actively leased or terminal.
-                refill_attached = settle_outbox.attach_auto_refill(
-                    authorization.id,
-                    authorization.workspace_id,
-                    initial_delay_seconds=60,
+                refill_attached = (
+                    enqueue_outcome == ENQ_INSERTED
+                    and settle_intent.auto_refill_workspace_id == authorization.workspace_id
                 )
+                if not refill_attached:
+                    refill_attached = settle_outbox.attach_auto_refill(
+                        authorization.id,
+                        authorization.workspace_id,
+                        initial_delay_seconds=60,
+                    )
                 if not refill_attached:
                     raise RuntimeError("settlement auto-refill attachment was not confirmed")
         except Exception:
@@ -4207,6 +4272,7 @@ def _settle_gateway_authorization(
                     TypedFinalizeResult,
                     result_method(
                         authorization.id,
+                        authorization_snapshot=authorization_snapshot,
                         success=success,
                         actual_microdollars=actual_cost,
                         selected_usage_type=selected_usage_type,
@@ -4214,6 +4280,10 @@ def _settle_gateway_authorization(
                         user_model_payout=user_model_payout,
                         app_markup_payout=app_markup_payout,
                         custom_model_markup_payout=custom_model_markup_payout,
+                        defer_post_commit=(
+                            functools.partial(defer_post_commit, background_tasks)
+                            if background_tasks is not None else None
+                        ),
                         # Resolve the durable intent in the finalize commit
                         # itself (docs/design/durable-settle-outbox.md §7).
                         settle_outbox_done=(
@@ -4448,6 +4518,9 @@ def _settle_gateway_authorization(
                 settings=settings,
             )
     if success and generation is not None:
+        # Keep S27 before the reply: successful enqueue is durable today and
+        # there is no durable replay intent for a skipped broadcast enqueue.
+        # Moving this to BackgroundTasks would lose jobs on process restart.
         # Customers' webhooks must not gain a new object silently: the
         # correlation id is useful to them, the client telemetry object is not.
         broadcast_settle_body = dict(settle_body)
@@ -4479,24 +4552,26 @@ def _settle_gateway_authorization(
             drain_broadcast_queue(settings=settings)
     if not success and not _is_synthetic_settlement(body, authorization):
         try:
-            STORE.record_provider_benchmark(
-                ProviderBenchmarkSample.from_provider_error(
-                    model=model,
-                    provider_name=PROVIDERS[selected_endpoint.provider].name,
-                    input_tokens=input_tokens,
-                    elapsed_seconds=float(body.elapsed_seconds or 0.001),
-                    streamed=body.streamed,
-                    usage_type=selected_usage_type,
-                    error_status=body.error_status or 502,
-                    error_type=body.error_type or "provider_error",
-                    region=authorization.region,
-                    provider=selected_endpoint.provider,
-                    workspace_id=authorization.workspace_id,
-                )
+            benchmark = ProviderBenchmarkSample.from_provider_error(
+                model=model,
+                provider_name=PROVIDERS[selected_endpoint.provider].name,
+                input_tokens=input_tokens,
+                elapsed_seconds=float(body.elapsed_seconds or 0.001),
+                streamed=body.streamed,
+                usage_type=selected_usage_type,
+                error_status=body.error_status or 502,
+                error_type=body.error_type or "provider_error",
+                region=authorization.region,
+                provider=selected_endpoint.provider,
+                workspace_id=authorization.workspace_id,
             )
+            if background_tasks is not None:
+                defer_post_commit(
+                    background_tasks, _record_refund_benchmark_safely, benchmark, authorization.id,
+                )
+            else:
+                _record_refund_benchmark_safely(benchmark, authorization.id)
         except Exception:
-            # Money is already committed. Observability must not turn the
-            # finalized disposition into a retryable transport failure.
             logger.warning(
                 "provider benchmark write failed after refund finalize "
                 "authorization_id=%s",
@@ -4866,10 +4941,12 @@ def _gateway_candidate_payload(
     endpoint: ModelEndpoint,
     workspace_id: str,
     region: str,
+    *,
+    byok_configs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     usage_type = UsageType.for_endpoint(endpoint)
     byok_config = (
-        _get_byok_provider(workspace_id, endpoint.provider) if usage_type.is_byok() else None
+        _get_byok_provider(workspace_id, endpoint.provider, byok_configs) if usage_type.is_byok() else None
     )
     return {
         "endpoint_id": endpoint.id,
@@ -4890,10 +4967,14 @@ def _gateway_snapshot_candidate_payload(
     snapshot: dict[str, Any],
     workspace_id: str,
     region: str,
+    *,
+    byok_configs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Render Stage C dispatch fields from the lease, never the live catalog."""
 
-    payload = _gateway_candidate_payload(model, endpoint, workspace_id, region)
+    payload = _gateway_candidate_payload(
+        model, endpoint, workspace_id, region, byok_configs=byok_configs,
+    )
     payload["upstream_model"] = str(snapshot["upstream_model"])
     payload["usage_type"] = str(snapshot["usage_type"])
     payload.pop("wafer_zdr_required", None)
@@ -4995,22 +5076,45 @@ def _authorized_user_model_pair(
         return None
 
 
+def _byok_configs_for_candidates(
+    candidates: list[tuple[Model, ModelEndpoint]], workspace_id: str,
+) -> dict[str, Any]:
+    # Preserve alias preference in _get_byok_provider, deduplicate only the IO.
+    providers = sorted({
+        slug
+        for _, endpoint in candidates
+        if UsageType.for_endpoint(endpoint).is_byok()
+        for slug in byok_storage_provider_candidates(endpoint.provider)
+    })
+    batch = getattr(STORE, "get_byok_providers", None)
+    if callable(batch):
+        return cast(dict[str, Any], batch(workspace_id, providers))
+    return {provider: STORE.get_byok_provider(workspace_id, provider) for provider in providers}
+
+
 def _eligible_gateway_endpoint_candidates(
     candidates: list[tuple[Model, ModelEndpoint]],
     workspace_id: str,
+    byok_configs: dict[str, Any] | None = None,
 ) -> list[tuple[Model, ModelEndpoint]]:
     out: list[tuple[Model, ModelEndpoint]] = []
     for model, endpoint in candidates:
         usage_type = UsageType.for_endpoint(endpoint)
-        if usage_type.is_byok() and _get_byok_provider(workspace_id, endpoint.provider) is None:
+        if usage_type.is_byok() and _get_byok_provider(workspace_id, endpoint.provider, byok_configs) is None:
             continue
         out.append((model, endpoint))
     return out
 
 
-def _get_byok_provider(workspace_id: str, provider: str) -> Any | None:
+def _get_byok_provider(
+    workspace_id: str, provider: str, byok_configs: dict[str, Any] | None = None,
+) -> Any | None:
     for storage_slug in byok_storage_provider_candidates(provider):
-        config = STORE.get_byok_provider(workspace_id, storage_slug)
+        config = (
+            byok_configs[storage_slug]
+            if byok_configs is not None and storage_slug in byok_configs
+            else STORE.get_byok_provider(workspace_id, storage_slug)
+        )
         if config is not None:
             return config
     return None

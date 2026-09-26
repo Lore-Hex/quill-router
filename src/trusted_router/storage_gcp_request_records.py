@@ -22,6 +22,7 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
+from trusted_router.storage_gcp_batch_dml import DmlStatement
 from trusted_router.storage_gcp_codec import json_body
 from trusted_router.storage_gcp_spend_lease import (
     AUTHORIZATION_ADMISSION_TYPED_COLUMNS,
@@ -103,12 +104,17 @@ _INSERT_GATEWAY_AUTHORIZATION_ADMISSION_SQL = (
 
 
 def insert_gateway_authorization(
-    transaction: Any,
-    param_types: Any,
-    authorization: GatewayAuthorization,
-    *,
-    created_at: Any,
+    transaction: Any, param_types: Any, authorization: GatewayAuthorization, *, created_at: Any,
 ) -> None:
+    sql, params, types = gateway_authorization_insert_statement(
+        param_types, authorization, created_at=created_at
+    )
+    transaction.execute_update(sql, params=params, param_types=types)
+
+
+def gateway_authorization_insert_statement(
+    param_types: Any, authorization: GatewayAuthorization, *, created_at: Any,
+) -> DmlStatement:
     """Insert active authorization state in the caller's billing transaction."""
     payload = dataclasses.asdict(authorization)
     typed = authorization_typed_columns(payload)
@@ -119,9 +125,9 @@ def insert_gateway_authorization(
         if has_admission
         else _INSERT_GATEWAY_AUTHORIZATION_SQL
     )
-    transaction.execute_update(
+    return (
         insert_sql,
-        params={
+        {
             "authorization_id": authorization.id,
             "workspace_id": authorization.workspace_id,
             "key_hash": authorization.key_hash,
@@ -135,7 +141,7 @@ def insert_gateway_authorization(
             **typed,
             **(admission_typed if has_admission else {}),
         },
-        param_types={
+        {
             "authorization_id": param_types.STRING,
             "workspace_id": param_types.STRING,
             "key_hash": param_types.STRING,
@@ -254,6 +260,55 @@ def read_gateway_authorization(
     )
 
 
+# All nonterminal post-authorize mutations of the typed authorization row are
+# in storage_gcp_stage_d. Keep these facts out of request-local serialization.
+# Terminal outputs are replaced below under settled=false; terminal_at is a
+# separate retention column, never part of the payload. Lease/admission/Stage D
+# configuration and identity are fixed by authorize (including legacy creation).
+_AUTHORIZATION_HEARTBEAT_FIELDS = (
+    "heartbeat_seq", "heartbeat_at", "heartbeat_hash", "started_at",
+    "selected_endpoint_id", "delivered_usage",
+)
+
+
+def _current_heartbeat_json_sql(column: str) -> str:
+    # Match merge_authorization_typed_columns: non-NULL typed values win,
+    # otherwise retain the CURRENT payload value (rolling payload-only rows).
+    # Timestamp spelling matches _payload_timestamp, including optional micros.
+    value = column
+    if column in {"started_at", "heartbeat_at"}:
+        value = (
+            f"FORMAT_TIMESTAMP(IF(MOD(UNIX_MICROS({column}),1000000)=0,"
+            f"'%Y-%m-%dT%H:%M:%SZ','%Y-%m-%dT%H:%M:%E6SZ'),{column},'UTC')"
+        )
+    return (
+        f"IF({column} IS NULL,"
+        f"JSON_QUERY(PARSE_JSON(payload),'$.{column}'),TO_JSON({value}))"
+    )
+
+
+# Read the live heartbeat facts in the UPDATE itself: no extra RPC, and a
+# concurrent heartbeat conflicts with this write and is re-evaluated on retry.
+def _settled_payload_sql() -> str:
+    # Spanner requires constant JSON paths and literal/parameter create_if_missing,
+    # so JSON_SET/JSON_REMOVE cannot express per-row key presence. Append only
+    # non-null members as strings, then re-validate and canonicalize with PARSE_JSON.
+    members = []
+    for column in _AUTHORIZATION_HEARTBEAT_FIELDS:
+        value = _current_heartbeat_json_sql(column)
+        members.append(
+            f"IF(COALESCE(JSON_TYPE({value}),'null')='null','',"
+            f"CONCAT(',\"{column}\":',TO_JSON_STRING({value})))"
+        )
+    return (
+        "TO_JSON_STRING(PARSE_JSON(CONCAT(SUBSTR(@payload,1,LENGTH(@payload)-1),"
+        + ",".join(members) + ",'}')))"
+    )
+
+
+_SETTLED_PAYLOAD_SQL = _settled_payload_sql()
+
+
 def mark_gateway_authorization_settled(
     transaction: Any,
     param_types: Any,
@@ -261,15 +316,32 @@ def mark_gateway_authorization_settled(
 ) -> int:
     """Mark billing settled while keeping repair metadata and TTL disabled."""
     typed = authorization_typed_columns(dataclasses.asdict(authorization))
+    payload = json.loads(json_body(authorization))
+    for column in _AUTHORIZATION_HEARTBEAT_FIELDS:
+        payload.pop(column, None)
+    serialized_payload = json_body(payload)
+    payload_error = "settled @payload must be a nonempty JSON object without heartbeat keys"
+    try:
+        payload_object = json.loads(serialized_payload)
+    except json.JSONDecodeError as exc:
+        raise ValueError(payload_error) from exc
+    if (
+        not serialized_payload.startswith("{")
+        or not serialized_payload.endswith("}")
+        or not isinstance(payload_object, dict)
+        or not payload_object
+        or any(column in payload_object for column in _AUTHORIZATION_HEARTBEAT_FIELDS)
+    ):
+        raise ValueError(payload_error)
     return transaction.execute_update(
-        "UPDATE tr_gateway_authorization SET settled=true, payload=@payload, "
+        f"UPDATE tr_gateway_authorization SET settled=true, payload={_SETTLED_PAYLOAD_SQL}, "  # noqa: S608
         "finalization_outcome=@finalization_outcome, "
         "finalized_cost_microdollars=@finalized_cost_microdollars, "
         "gateway_request_id=@gateway_request_id "
         "WHERE authorization_id=@authorization_id AND settled=false",
         params={
             "authorization_id": authorization.id,
-            "payload": json_body(authorization),
+            "payload": serialized_payload,
             "finalization_outcome": typed["finalization_outcome"],
             "finalized_cost_microdollars": typed["finalized_cost_microdollars"],
             "gateway_request_id": typed["gateway_request_id"],
@@ -337,16 +409,21 @@ def complete_gateway_authorization_retention(
 
 
 def clear_gateway_authorization_retention(
-    transaction: Any,
-    param_types: Any,
-    authorization_id: str,
+    transaction: Any, param_types: Any, authorization_id: str,
 ) -> int:
+    sql, params, types = gateway_authorization_retention_clear_statement(param_types, authorization_id)
+    return transaction.execute_update(sql, params=params, param_types=types)
+
+
+def gateway_authorization_retention_clear_statement(
+    param_types: Any, authorization_id: str,
+) -> DmlStatement:
     """Make an authorization TTL-ineligible while durable repair is outstanding."""
-    return transaction.execute_update(
+    return (
         "UPDATE tr_gateway_authorization SET terminal_at=NULL "
         "WHERE authorization_id=@authorization_id AND terminal_at IS NOT NULL",
-        params={"authorization_id": authorization_id},
-        param_types={"authorization_id": param_types.STRING},
+        {"authorization_id": authorization_id},
+        {"authorization_id": param_types.STRING},
     )
 
 

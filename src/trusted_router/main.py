@@ -35,6 +35,7 @@ from trusted_router.markdown_negotiation import (
     prefers_markdown,
 )
 from trusted_router.middleware import register_http_middleware
+from trusted_router.post_commit import close_post_commit
 from trusted_router.public_openapi import (
     load_public_openapi_payload,
     public_openapi_response,
@@ -261,6 +262,11 @@ def create_app(
         # expose no local schema endpoint.
         openapi_url="/openapi.json" if surface == "combined" else None,
     )
+    # Optional mirrors must be discarded before interpreter / log shutdown.
+    @app.on_event("shutdown")
+    async def _close_post_commit() -> None:
+        close_post_commit()
+
     app.state.settings = settings
     stage_d_policy_resolver = StageDPolicyResolver(
         settings,

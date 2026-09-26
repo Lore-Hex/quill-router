@@ -527,6 +527,23 @@ def quarantine_regional_quota_lease(
     )
 
 
+def regional_quota_fences(
+    store: Any, *, workspace_id: str, region: str, quota_shards: list[int],
+) -> dict[int, RegionalQuotaFence]:
+    """Discover bounded sibling slots in one complete-primary-key read."""
+    if not quota_shards or len(quota_shards) > 64:
+        raise ValueError("regional fence discovery requires 1 to 64 shards")
+    ids = {_fence_entity_id(workspace_id, region, shard): shard for shard in quota_shards}
+    with store._database.snapshot() as snapshot:
+        rows = snapshot.execute_sql(
+            "SELECT id, body FROM tr_entities WHERE kind=@kind AND id IN UNNEST(@ids)",
+            params={"kind": _FENCE_KIND, "ids": list(ids)},
+            param_types={"kind": store._param_types.STRING,
+                         "ids": store._param_types.Array(store._param_types.STRING)},
+        )
+        return {ids[entity_id]: RegionalQuotaFence(**json.loads(body)) for entity_id, body in rows}
+
+
 def active_regional_quota_leases(
     store: Any,
     *,
@@ -536,11 +553,12 @@ def active_regional_quota_leases(
     include_expired: bool = False,
     include_pending: bool = False,
     now: datetime | None = None,
+    fences: dict[int, RegionalQuotaFence] | None = None,
 ) -> list[GlobalRegionalQuotaLease]:
     now = utcnow() if now is None else now
     if quota_shard is None:
         raise ValueError("quota_shard is required for fenced regional lease lookup")
-    fence = store._read_entity(
+    fence = fences.get(quota_shard) if fences is not None else store._read_entity(
         _FENCE_KIND,
         _fence_entity_id(workspace_id, region, quota_shard),
         RegionalQuotaFence,

@@ -8,6 +8,9 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from google.api_core.exceptions import Aborted, GoogleAPICallError
+from google.rpc.status_pb2 import Status
+
 from trusted_router.storage_gcp_settle_outbox import (
     _GUARD_STATUS_SQL,
     AUTO_REFILL_COLUMNS,
@@ -210,6 +213,7 @@ class FakeSpannerDatabase:
         # Metadata-only typed generation records and durable ClickHouse handoff.
         self.generation_records: dict[str, dict] = {}
         self.operational_analytics_outbox: list[dict] = []
+        self.analytics_outbox: list[dict] = []
         # tr_settle_outbox: PK (authorization_id, intent_kind) -> {column: value}.
         self.settle_outbox: dict[tuple, dict] = {}
         self.settle_outbox_versions: dict[tuple, int] = {}
@@ -252,6 +256,8 @@ class FakeSpannerDatabase:
         self.snapshot_sql_params: list[dict[str, Any]] = []
         self.transaction_execute_sql_calls = 0
         self.transaction_execute_update_calls = 0
+        self.transaction_batch_update_calls = 0
+        self.rollback_calls = 0
         self.now = now
 
     def current_timestamp(self) -> dt.datetime:
@@ -274,9 +280,23 @@ class FakeSpannerDatabase:
             txn = _FakeTransaction(self)
             try:
                 result = fn(txn)
+            except Aborted as exc:
+                # Match the SDK's retry payload contract (_delay_until_retry)
+                # instead of silently accepting bare Aborted() and masking
+                # broken status adapters: errors[0] must exist, while
+                # trailing_metadata is optional (absent means default backoff).
+                cause = exc.errors[0]
+                if hasattr(cause, "trailing_metadata"):
+                    dict(cause.trailing_metadata())
+                self.aborts += 1
+                continue
             except FakeAborted:
                 self.aborts += 1
                 continue
+            except Exception:
+                if not txn.rolled_back:
+                    txn.rollback()
+                raise
             if attempt == 0 and self._ready_barrier is not None:
                 try:
                     self._ready_barrier.wait(timeout=10)
@@ -442,6 +462,8 @@ class FakeSpannerDatabase:
                     self.generation_records[generation_id] = record
                 elif op[0] == "insert_operational_analytics_outbox":
                     self.operational_analytics_outbox.append(dict(op[1]))
+                elif op[0] == "insert_analytics_outbox":
+                    self.analytics_outbox.append(dict(op[1]))
                 elif op[0] == "insert_entity_dml":  # DML INSERT into tr_entities
                     _, kind, entity_id, body = op
                     self.rows[(kind, entity_id)] = _Row(body=body, version=new_version)
@@ -494,6 +516,8 @@ class _FakeTransaction:
         # buffers mutations after DML and DML can't see them); fail fast if both.
         self._did_mutation = False
         self._did_dml = False
+        self._in_batch = False
+        self.rolled_back = False
         self._spend_open_pending_commit_timestamp_written = False
 
     def execute_sql(
@@ -679,6 +703,36 @@ class _FakeTransaction:
         )
         return pinned
 
+    def rollback(self) -> None:
+        self.pending_writes.clear()
+        self.rolled_back = True
+        self.db.rollback_calls += 1
+
+    def batch_update(
+        self, statements: Any, request_options: Any = None, last_statement: bool = False,
+        *, retry: Any = None, timeout: Any = None,
+    ) -> tuple[Status, list[int]]:
+        """One RPC, ordered DML, with only the successful prefix in row_counts.
+
+        Leave the successful prefix staged on error, just like the SDK: callers
+        must raise/roll back to prevent a partial commit. Programming errors in
+        the fake still raise rather than masquerading as server statuses.
+        """
+        self.db.transaction_batch_update_calls += 1
+        row_counts: list[int] = []
+        self._in_batch = True
+        try:
+            for statement in statements:
+                sql, params, types = (statement, None, None) if isinstance(statement, str) else statement
+                try:
+                    count = self.execute_update(sql, params=params, param_types=types)
+                except GoogleAPICallError as exc:
+                    return Status(code=exc.grpc_status_code.value[0], message=exc.message), row_counts
+                row_counts.append(count)
+        finally:
+            self._in_batch = False
+        return Status(), row_counts
+
     def execute_update(
         self, sql: str, *, params: dict[str, Any] | None = None, param_types: Any = None
     ) -> int:
@@ -688,7 +742,9 @@ class _FakeTransaction:
         and serialize via abort-retry), evaluates the WHERE predicate, and
         conditionally buffers the SET. Returns the modified-row count.
         """
-        self.db.transaction_execute_update_calls += 1
+        _validate_json_arguments(sql)
+        if not self._in_batch:
+            self.db.transaction_execute_update_calls += 1
         if (
             self._spend_open_pending_commit_timestamp_written
             and "spend_lease_open" in sql
@@ -1641,12 +1697,15 @@ class _FakeTransaction:
             generation_id = str(p["generation_id"])
             self.pending_writes.append(("upsert_generation", generation_id, dict(p)))
             return 1
+        if sql.startswith("INSERT INTO tr_analytics_outbox"):
+            self.pending_writes.append(("insert_analytics_outbox", dict(p)))
+            return 1
         if sql.startswith("INSERT INTO tr_operational_analytics_outbox"):
             self.pending_writes.append(
                 ("insert_operational_analytics_outbox", dict(p))
             )
             return 1
-        if sql.startswith("UPDATE tr_gateway_authorization SET settled=true, payload=@payload"):
+        if sql.startswith("UPDATE tr_gateway_authorization SET settled=true, payload="):
             _require_pred(
                 sql,
                 "WHERE authorization_id=@authorization_id AND settled=false",
@@ -1656,10 +1715,16 @@ class _FakeTransaction:
             rec = self._gateway_authorization_current(authorization_id)
             if rec is None or rec.get("settled"):
                 return 0
+            settled_payload = p["payload"]
+            if "payload=TO_JSON_STRING(" in sql:
+                expression = sql.split("payload=", 1)[1].split(
+                    ", finalization_outcome=", 1,
+                )[0]
+                settled_payload = _evaluate_authorization_json(expression, rec, p)
             new = dict(
                 rec,
                 settled=True,
-                payload=p["payload"],
+                payload=settled_payload,
                 finalization_outcome=p.get("finalization_outcome"),
                 finalized_cost_microdollars=p.get("finalized_cost_microdollars"),
                 gateway_request_id=p.get("gateway_request_id"),
@@ -1734,6 +1799,11 @@ class _FakeTransaction:
             return _execute_spend_lease_entity_update(self, sql, p)
         if sql.startswith("INSERT INTO tr_entities"):
             entity_key = (p["kind"], p["id"])
+            if any(
+                op[0] == "insert_entity_dml" and (op[1], op[2]) == entity_key
+                for op in self.pending_writes
+            ):
+                raise FakeAlreadyExists(f"{p['kind']}/{p['id']}")
             if entity_key in self.db.rows:
                 if entity_key in self.read_versions and self.read_versions[entity_key] != self.db.rows[entity_key].version:
                     # A row appeared after a missing-row read in this txn.
@@ -2204,6 +2274,153 @@ _SPEND_LEASE_PRIMARY_KEYS = {
     "spend_lease_scope_arbitration": ("scope_salt", "idempotency_scope"),
     "spend_lease_open": ("lease_id",),
 }
+
+
+def _unquote_sql(source: str) -> str:
+    # Preserve offsets while hiding string contents from the syntax checks.
+    return re.sub(r"'(?:[^']|'')*'", lambda match: " " * len(match[0]), source)
+
+
+def _validate_json_arguments(sql: str) -> None:
+    """Validate even unevaluated branches, as Spanner does before reading rows."""
+    masked = _unquote_sql(sql)
+    for match in re.finditer(r"\b(JSON_SET|JSON_REMOVE|JSON_QUERY|JSON_STRIP_NULLS)\s*\(",
+                             masked, re.IGNORECASE):
+        depth = 1
+        end = match.end()
+        while depth and end < len(masked):
+            depth += (masked[end] == "(") - (masked[end] == ")")
+            end += 1
+        assert depth == 0, sql
+        arguments = _split_spanner_sql_list(sql[match.end():end - 1])
+        name = match[1].upper()
+        positional = []
+        for argument in arguments:
+            option = re.fullmatch(r"create_if_missing\s*=>\s*(.*)", argument, re.IGNORECASE)
+            if option and not re.fullmatch(r"true|false|null|@\w+", option[1], re.IGNORECASE):
+                raise ValueError(
+                    "INVALID_ARGUMENT: Argument 'create_if_missing' to JSON_SET "
+                    "must be a literal or query parameter"
+                )
+            if not re.match(r"\w+\s*=>", argument):
+                positional.append(argument)
+        paths = range(1, len(positional), 2) if name == "JSON_SET" else range(1, len(positional))
+        for index in paths:
+            path = _unquote_sql(positional[index])
+            path = re.sub(r"@\w+|\b\w+\s*(?=\()", "", path)
+            identifiers = re.findall(r"\b[A-Za-z_]\w*\b", path)
+            if any(word.upper() not in {"NULL", "TRUE", "FALSE", "IS", "NOT", "AND", "OR"}
+                   for word in identifiers):
+                raise ValueError(
+                    f"INVALID_ARGUMENT: Argument {index + 1} to {name} "
+                    "must be a constant expression"
+                )
+
+
+@dataclass(frozen=True)
+class _JsonValue:
+    # Python None alone represents SQL NULL; this wrapper preserves JSON null.
+    value: Any
+
+
+def _evaluate_authorization_json(
+    expression: str, rec: dict[str, Any], params: dict[str, Any],
+) -> Any:
+    """Interpret the emitted expression, independently of the heartbeat list."""
+    _validate_json_arguments(expression)
+    return _evaluate_authorization_expression(expression, rec, params)
+
+
+def _evaluate_authorization_expression(
+    expression: str, rec: dict[str, Any], params: dict[str, Any],
+) -> Any:
+    expression = expression.strip()
+
+    def evaluate(source: str) -> Any:
+        return _evaluate_authorization_expression(source, rec, params)
+
+    if re.fullmatch(r"'(?:[^']|'')*'", expression):
+        return expression[1:-1].replace("''", "'")
+    if expression.upper() in {"NULL", "TRUE", "FALSE"}:
+        return {"NULL": None, "TRUE": True, "FALSE": False}[expression.upper()]
+    if re.fullmatch(r"@\w+", expression):
+        return params[expression[1:]]
+    if re.fullmatch(r"-?\d+", expression):
+        return int(expression)
+    if re.fullmatch(r"\w+", expression):
+        return rec.get(expression)
+    # Only top-level operators split expressions; quoted JSON and nested calls
+    # can contain the same characters.
+    masked = _unquote_sql(expression)
+    depth = 0
+    for index, char in enumerate(masked):
+        depth += (char == "(") - (char == ")")
+        if depth == 0 and char in "=-":
+            left, right = evaluate(expression[:index]), evaluate(expression[index + 1:])
+            if left is None or right is None:
+                return None
+            return left == right if char == "=" else left - right
+    null_test = re.fullmatch(r"(.*) IS (NOT )?NULL", expression, re.IGNORECASE)
+    if null_test:
+        is_null = evaluate(null_test[1]) is None
+        return not is_null if null_test[2] else is_null
+    call = re.fullmatch(r"(\w+)\((.*)\)", expression, re.DOTALL)
+    assert call is not None, expression
+    name = call[1].upper()
+    arguments = _split_spanner_sql_list(call[2])
+    if name == "IF":
+        condition, yes, no = arguments
+        return evaluate(yes if evaluate(condition) else no)
+    if name == "COALESCE":
+        for argument in arguments:
+            value = evaluate(argument)
+            if value is not None:
+                return value
+        return None
+    values = [evaluate(argument) for argument in arguments]
+    value = values[0]
+    if name == "PARSE_JSON":
+        return None if value is None else _JsonValue(json.loads(value))
+    if name == "TO_JSON":
+        return _JsonValue(value)
+    if name == "TO_JSON_STRING":
+        return json.dumps(value.value if isinstance(value, _JsonValue) else value,
+                          sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    if name == "JSON_TYPE":
+        if value is None:
+            return None
+        assert isinstance(value, _JsonValue), value
+        return {type(None): "null", bool: "boolean", int: "number", float: "number",
+                str: "string", dict: "object", list: "array"}[type(value.value)]
+    if name == "JSON_QUERY":
+        if value is None or values[1] is None:
+            return None
+        assert isinstance(value, _JsonValue), value
+        path = re.fullmatch(r"\$\.(\w+)", values[1])
+        assert path is not None, values[1]
+        if not isinstance(value.value, dict) or path[1] not in value.value:
+            return None
+        return _JsonValue(value.value[path[1]])
+    if any(item is None for item in values):
+        return None
+    if name == "CONCAT":
+        return "".join(values)
+    if name == "SUBSTR":
+        start = values[1]
+        offset = max(len(value) + start, 0) if start < 0 else max(start - 1, 0)
+        return value[offset:offset + values[2]] if len(values) == 3 else value[offset:]
+    if name == "LENGTH":
+        return len(value)
+    if name == "UNIX_MICROS":
+        delta = _utc_datetime(value) - dt.datetime(1970, 1, 1, tzinfo=dt.UTC)
+        return (delta.days * 86400 + delta.seconds) * 1_000_000 + delta.microseconds
+    if name == "MOD":
+        return value % values[1]
+    if name == "FORMAT_TIMESTAMP":
+        assert values[2] == "UTC", values
+        timestamp = _utc_datetime(values[1]).astimezone(dt.UTC)
+        return timestamp.strftime(value.replace("%E6S", "%S.%f"))
+    raise AssertionError(f"unknown authorization SQL expression: {expression}")
 
 
 def _split_spanner_sql_list(source: str) -> list[str]:
@@ -2962,6 +3179,7 @@ def _execute_sql(
     sql: str,
     params: dict[str, Any],
 ) -> list[list[str]]:
+    _validate_json_arguments(sql)
     kind = params.get("kind", "")
 
     def _typed_rows(table: str) -> list[dict[str, Any]]:

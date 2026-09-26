@@ -19,14 +19,17 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from trusted_router.storage_gcp_batch_dml import execute_batch_dml
 from trusted_router.storage_gcp_counter_dml import (
     clear_reservation_retention,
     complete_reservation_retention,
+    reservation_retention_clear_statement,
 )
 from trusted_router.storage_gcp_io import run_in_transaction_with_retry
 from trusted_router.storage_gcp_request_records import (
     clear_gateway_authorization_retention,
     complete_gateway_authorization_retention,
+    gateway_authorization_retention_clear_statement,
 )
 from trusted_router.storage_models import AutoRefillOutboxRow, SettleOutboxRow
 
@@ -449,15 +452,19 @@ class SpannerSettleOutbox:
                 "auto_refill_updated_at": pt.TIMESTAMP,
                 "auto_refill_terminal_at": pt.TIMESTAMP,
             }
-            transaction.execute_update(
-                f"INSERT INTO tr_settle_outbox ({cols}) VALUES ({binds})",  # noqa: S608 - fixed column list
-                params=values,
-                param_types=types,
-            )
-            # An outbox intent is durable repair work: keep both referenced
-            # records TTL-ineligible. This also re-disarms retention if a reaper
-            # armed it immediately before this enqueue committed.
-            self._defer_retention(transaction, row.authorization_id, row.reservation_id)
+            statements = [
+                (
+                    f"INSERT INTO tr_settle_outbox ({cols}) VALUES ({binds})",  # noqa: S608 - fixed columns
+                    values,
+                    types,
+                ),
+                gateway_authorization_retention_clear_statement(pt, row.authorization_id),
+            ]
+            if row.reservation_id:
+                statements.append(reservation_retention_clear_statement(pt, str(row.reservation_id)))
+            # INSERT-as-claim and its retention clears are independent. A failed
+            # INSERT stops the batch; the caller's existing replay path is unchanged.
+            execute_batch_dml(transaction, statements, [(1,), *[(0, 1)] * (len(statements) - 1)])
 
         try:
             run_in_transaction_with_retry(self._database, insert_txn)
