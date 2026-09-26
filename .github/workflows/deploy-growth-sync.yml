@@ -39,7 +39,7 @@ jobs:
       GATEWAY_ENABLED: ${{ inputs.gateway_attempts }}
       OWNERS_ENABLED: ${{ inputs.billing_owners }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Require confirmation and green CI for this exact commit
         run: |
           set -euo pipefail
