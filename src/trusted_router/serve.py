@@ -9,11 +9,11 @@ authorize calls hit that window at every rollout (five "billing path 5xx"
 alerts in the week to 2026-09-25, all at rollouts).
 
 This runner keeps accepting for ``TR_SHUTDOWN_DRAIN_SECONDS`` after the first
-SIGTERM (default 3 s, never more than 8 s so the normal graceful shutdown
-still fits before SIGKILL) and only then hands over to uvicorn's own
-shutdown, which closes the socket and waits for in-flight requests. A second
-SIGTERM, or any SIGINT, exits immediately so local runs and forced stops
-behave as before.
+SIGTERM (default and maximum 3 s) and only then hands over to uvicorn's own
+shutdown, which closes the socket and waits for in-flight requests without a
+request timeout. Cloud Run's SIGKILL is the only hard deadline; neither request
+completion nor process exit before it is guaranteed. A second SIGTERM, or any
+SIGINT, starts ordinary graceful shutdown without waiting for the drain window.
 
 Usage: ``python -m trusted_router.serve`` (host 0.0.0.0, port from ``PORT``).
 """
@@ -21,6 +21,7 @@ Usage: ``python -m trusted_router.serve`` (host 0.0.0.0, port from ``PORT``).
 from __future__ import annotations
 
 import logging
+import math
 import os
 import signal
 import sys
@@ -35,7 +36,7 @@ DRAIN_SECONDS_ENV = "TR_SHUTDOWN_DRAIN_SECONDS"
 DEFAULT_DRAIN_SECONDS = 3.0
 # Cloud Run sends SIGKILL 10 s after SIGTERM; leave room for the graceful
 # shutdown that follows the drain.
-MAX_DRAIN_SECONDS = 8.0
+MAX_DRAIN_SECONDS = 3.0
 
 # Named explicitly: the container runs this module as `python -m`, where
 # `__name__` is "__main__" and a `__name__`-based logger would sit outside the
@@ -51,6 +52,8 @@ def drain_seconds_from_env(environ: dict[str, str] | None = None) -> float:
         return DEFAULT_DRAIN_SECONDS
     try:
         value = float(raw)
+        if not math.isfinite(value):
+            raise ValueError("drain seconds must be finite")
     except ValueError:
         logger.warning("serve.invalid_drain_seconds value=%r using default", raw)
         return DEFAULT_DRAIN_SECONDS
@@ -89,9 +92,26 @@ class DrainingServer(uvicorn.Server):
 
 def build_config(environ: dict[str, str] | None = None) -> uvicorn.Config:
     env = os.environ if environ is None else environ
+    for name in ("WEB_CONCURRENCY", "UVICORN_WORKERS"):
+        raw_workers = env.get(name, "").strip()
+        if raw_workers and raw_workers != "1":
+            raise ValueError(f"{name}={raw_workers!r}: drain runner requires one worker (no supervisor)")
+    raw_proxy_headers = env.get("UVICORN_PROXY_HEADERS", "true").strip().lower()
+    if raw_proxy_headers not in {"1", "true", "t", "yes", "y", "on", "0", "false", "f", "no", "n", "off"}:
+        raise ValueError(f"Invalid UVICORN_PROXY_HEADERS={raw_proxy_headers!r}: expected a boolean")
     raw_port = env.get("PORT", "").strip()
     port = int(raw_port) if raw_port.isdigit() else DEFAULT_PORT
-    return uvicorn.Config(APP, host="0.0.0.0", port=port)  # noqa: S104 - container listener
+    return uvicorn.Config(
+        APP,
+        host="0.0.0.0",  # noqa: S104 - container listener
+        port=port,
+        workers=1,
+        timeout_keep_alive=int(env.get("UVICORN_TIMEOUT_KEEP_ALIVE", "5")),
+        proxy_headers=raw_proxy_headers in {"1", "true", "t", "yes", "y", "on"},
+        forwarded_allow_ips=env.get(
+            "UVICORN_FORWARDED_ALLOW_IPS", env.get("FORWARDED_ALLOW_IPS", "127.0.0.1")
+        ),
+    )
 
 
 def main() -> int:

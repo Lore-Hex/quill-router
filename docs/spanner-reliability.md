@@ -51,9 +51,13 @@ policy:
   request the front end had already dispatched (five such incidents in the
   week to 2026-09-25, all at rollouts). The image now runs
   `python -m trusted_router.serve`, which keeps accepting for
-  `TR_SHUTDOWN_DRAIN_SECONDS` (default 3, at most 8) after the first SIGTERM
-  before uvicorn's normal graceful shutdown. If one recurs, check the
-  serving revision's entry point before anything else.
+  `TR_SHUTDOWN_DRAIN_SECONDS` (default and maximum 3 seconds) after the first
+  SIGTERM before uvicorn's graceful shutdown, which waits for in-flight requests
+  without a request timeout. Cloud Run's 10-second SIGKILL is the only hard
+  deadline; request completion and process exit before it are not guaranteed.
+  A second SIGTERM or any SIGINT starts ordinary graceful shutdown without
+  waiting for the drain window. If one recurs, check the serving revision's
+  entry point before anything else.
 - Successful billing calls taking at least 10 seconds are counted. More than
   two per minute for three consecutive minutes opens one incident.
 - The general Spanner contention policy has three independent gates: more than
