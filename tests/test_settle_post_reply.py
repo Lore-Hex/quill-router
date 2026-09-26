@@ -4,9 +4,14 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import json
+import os
+import select
+import subprocess
+import sys
 import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 
 import anyio
@@ -33,11 +38,16 @@ from trusted_router.storage_models import ProviderBenchmarkSample
 
 
 @pytest.fixture(autouse=True)
-def optional_executor(monkeypatch: pytest.MonkeyPatch) -> Any:
+def optional_executor(monkeypatch: pytest.MonkeyPatch, reset_store: None) -> Any:
+    # Override conftest's inline executor. Drain before monkeypatch/store cleanup;
+    # production shutdown intentionally drops work instead.
     executor = post_commit.PostCommitExecutor()
     monkeypatch.setattr(post_commit, "POST_COMMIT", executor)
     yield executor
-    executor.executor.shutdown(wait=True)
+    try:
+        assert executor.wait_idle(timeout=None)
+    finally:
+        executor.close()
     assert executor.in_flight == 0
 
 
@@ -136,7 +146,7 @@ def test_reply_operation_count_and_exact_background_payloads(
 
     response = asyncio.run(_request(app, _settle_json(auth.id), on_reply))
     assert response["data"]["disposition"] == "finalized"
-    optional_executor.executor.shutdown(wait=True)
+    assert optional_executor.wait_idle()
     # S1-S24 (S9's re-read is reused since #1331) plus S27; no T4 or
     # Bigtable calls before the response body.
     assert reply_counts == [(3, 4, 13, 2)]
@@ -206,7 +216,7 @@ def test_stalled_or_failing_writes_do_not_hold_the_reply(
         finally:
             release.set()
         response = future.result(timeout=10)
-    optional_executor.executor.shutdown(wait=True)
+    assert optional_executor.wait_idle()
     assert response["data"]["disposition"] == "finalized"
     assert db.reservations[auth.credit_reservation_id]["settled"] is True
 
@@ -266,7 +276,7 @@ def test_unexpected_background_error_does_not_abort_later_tasks(
     monkeypatch.setattr(gateway, "record_successful_api_call_safely", lambda *a, **kw: later.append("ran"))
     response = asyncio.run(_request(app, _settle_json(auth.id), lambda: None))
     assert response["data"]["disposition"] == "finalized"
-    optional_executor.executor.shutdown(wait=True)
+    assert optional_executor.wait_idle()
     assert later == ["ran"]
     assert "settle_post_commit_mirrors_failed" in caplog.text
 
@@ -369,7 +379,7 @@ def test_saturation_is_bounded_and_does_not_borrow_authorize_tokens(
             future.result(timeout=30)
         finally:
             release.set()
-    optional_executor.executor.shutdown(wait=True)
+    assert optional_executor.wait_idle()
     assert optional_executor.in_flight == 0
     assert len(started) == post_commit.MAX_IN_FLIGHT * (2 if refund else 3)
     assert all(name.startswith("settle-post-commit") for name in started)
@@ -418,18 +428,123 @@ def test_full_executor_submission_does_not_wait_for_a_slot(
 
 
 def test_executor_releases_slots_on_task_and_submission_failure(
-    optional_executor: Any, caplog: pytest.LogCaptureFixture,
+    optional_executor: Any, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def fail() -> None:
         raise RuntimeError("unexpected task failure")
 
     optional_executor.submit(fail)
-    optional_executor.executor.shutdown(wait=True)
+    assert optional_executor.wait_idle()
     assert optional_executor.in_flight == 0
-    # A submission rejected during shutdown must also return its reserved slot.
+    assert "post_commit_task_failed kind=fail" in caplog.text
+    # Unexpected dispatch failures must return the admission slot too.
+    def reject(*args: Any) -> None:
+        raise RuntimeError("dispatch failed")
+
+    monkeypatch.setattr(optional_executor, "_dispatch", reject)
     optional_executor.submit(fail)
     assert optional_executor.in_flight == 0
     assert optional_executor.drops == {"fail": 1}
     assert "post_commit_submission_failed kind=fail" in caplog.text
-    assert all(optional_executor._slots.acquire(blocking=False) for _ in range(post_commit.MAX_IN_FLIGHT))
-    assert not optional_executor._slots.acquire(blocking=False)
+
+
+@pytest.mark.parametrize("close", [False, True])
+def test_saturated_executor_does_not_delay_exit_or_atexit(close: bool) -> None:
+    # A normal interpreter exit, not os._exit or a signal. Never release the
+    # running chains: daemon workers must not precede ordinary atexit flushes.
+    code = """
+import atexit
+import threading
+from trusted_router.post_commit import PostCommitExecutor, WORKERS, MAX_IN_FLIGHT
+pool = PostCommitExecutor()
+entered = threading.Barrier(WORKERS + 1)
+release = threading.Event()
+def blocked():
+    entered.wait(timeout=5)
+    release.wait()
+for _ in range(WORKERS):
+    pool.submit(blocked)
+entered.wait(timeout=5)
+for _ in range(MAX_IN_FLIGHT - WORKERS):
+    pool.submit(release.wait)
+assert pool.in_flight == MAX_IN_FLIGHT
+atexit.register(lambda: print("ATEXIT_FLUSHED", flush=True))
+print("READY", flush=True)
+input()
+"""
+    if close:
+        code += "pool.close()\n"
+    env = {**os.environ, "PYTHONPATH": str(Path(post_commit.__file__).resolve().parents[1])}
+    with subprocess.Popen(  # noqa: S603 - fixed local interpreter and script
+        [sys.executable, "-c", code], env=env, stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    ) as process:
+        try:
+            assert process.stdout is not None
+            assert select.select([process.stdout], [], [], 20)[0], "child never became ready"
+            assert process.stdout.readline().strip() == "READY"
+            # Startup/import time is unrelated to exit latency. Only now let
+            # the saturated child reach close and ordinary finalization.
+            stdout, stderr = process.communicate(input="\n", timeout=0.5)
+            assert process.returncode == 0, stderr
+            assert "ATEXIT_FLUSHED" in stdout
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.communicate()
+
+
+def test_app_shutdown_drops_queue_and_rejects_later_submissions(
+    optional_executor: Any, caplog: pytest.LogCaptureFixture,
+) -> None:
+    app = create_app(Settings(environment="test"), init_observability=False)
+    entered = threading.Barrier(post_commit.WORKERS + 1)
+    release = threading.Event()
+    ran: list[str] = []
+
+    def blocked() -> None:
+        entered.wait(timeout=5)
+        assert release.wait(10)
+
+    def queued() -> None:
+        ran.append("queued")
+
+    def after_close() -> None:
+        ran.append("after_close")
+
+    async def shutdown() -> None:
+        async with app.router.lifespan_context(app):
+            pass
+
+    try:
+        for _ in range(post_commit.WORKERS):
+            optional_executor.submit(blocked)
+        entered.wait(timeout=5)
+        for _ in range(post_commit.MAX_IN_FLIGHT - post_commit.WORKERS):
+            optional_executor.submit(queued)
+        asyncio.run(shutdown())
+        assert optional_executor.in_flight == post_commit.WORKERS
+        assert optional_executor.drops == {"queued": 60}
+        optional_executor.submit(after_close)
+        optional_executor.submit(after_close)
+        assert optional_executor.drops == {"queued": 60, "after_close": 2}
+        asyncio.run(shutdown())
+        assert caplog.text.count("post_commit_closed") == 1
+        assert "queued_dropped=60 active_abandoned=4 dropped_total=60" in caplog.text
+    finally:
+        release.set()
+        assert optional_executor.wait_idle()
+    assert ran == []
+
+
+def test_task_failure_keeps_worker_available(optional_executor: Any) -> None:
+    def fail() -> None:
+        raise RuntimeError("unexpected")
+
+    # More failures than workers: losing a worker on exception would wedge.
+    for _ in range(post_commit.WORKERS * 2):
+        optional_executor.submit(fail)
+    assert optional_executor.wait_idle()
+    completed = threading.Event()
+    optional_executor.submit(completed.set)
+    assert completed.wait(1)
