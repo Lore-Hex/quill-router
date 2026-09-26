@@ -8,6 +8,7 @@ import hmac
 import json
 import logging
 import os
+import random
 import threading
 import time
 import uuid
@@ -636,6 +637,9 @@ class SpannerBigtableStore:
             ttl_seconds=float(os.environ.get("TR_CREDIT_SHARD_COUNT_CACHE_SECONDS", "60")),
             max_entries=int(os.environ.get("TR_CREDIT_SHARD_COUNT_CACHE_ENTRIES", "10000")),
         )
+        # Protected by the regional lease cache lock; (deadline, unjittered window, generation).
+        self._regional_ledger_cooldowns: dict[tuple[str, str], tuple[float, float, int]] = {}
+        self._regional_ledger_generation = 0
         self._rebalance_last_attempt: dict[str, float] = {}
         self._rebalance_last_attempt_lock = threading.Lock()
         io = SpannerIO(
@@ -5097,6 +5101,63 @@ class SpannerBigtableStore:
             activity_indexed=False,
         )  # already_settled / not_found
 
+    def _regional_ledger_cooldown_active(self, workspace_id: str, region: str) -> bool:
+        with self._regional_quota_lease_cache_lock:
+            cooldowns = getattr(self, "_regional_ledger_cooldowns", {})
+            deadline, _, _ = cooldowns.get((workspace_id, region), (0.0, 0.0, 0))
+            return time.monotonic() < deadline
+
+    def _claim_regional_ledger_probe(self, workspace_id: str, region: str) -> int | None:
+        """Atomically admit one half-open probe; healthy keys stay concurrent."""
+        with self._regional_quota_lease_cache_lock:
+            cooldowns = getattr(self, "_regional_ledger_cooldowns", {})
+            key = (workspace_id, region)
+            if key not in cooldowns:
+                return getattr(self, "_regional_ledger_generation", 0)
+            deadline, window, _ = cooldowns[key]
+            now = time.monotonic()
+            if now < deadline:
+                return None
+            # The deadline doubles as a probe-in-flight marker. The regional
+            # attempt has a shared four-second budget; allow one second of
+            # margin, then permit recovery even if its caller never returns.
+            self._regional_ledger_generation = getattr(self, "_regional_ledger_generation", 0) + 1
+            cooldowns[key] = (now + 5.0, window, self._regional_ledger_generation)
+            return self._regional_ledger_generation
+
+    def _arm_regional_ledger_cooldown(self, workspace_id: str, region: str) -> None:
+        settings = self.trust_settings
+        base = settings.regional_quota_ledger_cooldown_seconds if settings is not None else 10.0
+        with self._regional_quota_lease_cache_lock:
+            # Some store adapters construct without __init__, like the rebalance helper.
+            if not hasattr(self, "_regional_ledger_cooldowns"):
+                self._regional_ledger_cooldowns = {}
+            cooldowns = self._regional_ledger_cooldowns
+            key = (workspace_id, region)
+            _, previous, _ = cooldowns.get(key, (0.0, 0.0, 0))
+            window = min(60.0, max(base, previous * 2.0))
+            now = time.monotonic()
+            delay = min(60.0, window * random.uniform(0.75, 1.25))  # noqa: S311
+            # Never reuse a token, even after clearing or pruning an entry.
+            self._regional_ledger_generation = getattr(self, "_regional_ledger_generation", 0) + 1
+            cooldowns[key] = (now + delay, window, self._regional_ledger_generation)
+            # Preserve consecutive-failure history across expiry. As with the
+            # rebalance map, prune cold entries only when the map grows large.
+            if len(cooldowns) > 10_000:
+                stale = [key for key, (deadline, _, _) in cooldowns.items() if deadline < now - 60.0]
+                for key in stale:
+                    cooldowns.pop(key, None)
+
+    def _clear_regional_ledger_cooldown(
+        self, workspace_id: str, region: str, generation: int,
+    ) -> None:
+        with self._regional_quota_lease_cache_lock:
+            cooldowns = getattr(self, "_regional_ledger_cooldowns", {})
+            key = (workspace_id, region)
+            # Recording can outlive the claim; only its current owner may reset backoff.
+            if key in cooldowns and cooldowns[key][2] == generation:
+                cooldowns.pop(key)
+
     def authorize_gateway_regional(
         self,
         *,
@@ -5145,6 +5206,9 @@ class SpannerBigtableStore:
         # the exact Spanner path without creating a lease to quarantine later.
         if ledger is None or not ledger.supports_region(region):
             return unavailable("unmapped_region")
+        probe_generation = self._claim_regional_ledger_probe(workspace_id, region)
+        if probe_generation is None:
+            return unavailable("ledger_cooldown")
         from trusted_router.regional_quota_ledger import (
             RegionalLeaseLedgerError,
             RegionalLeaseNotFound,
@@ -5308,6 +5372,7 @@ class SpannerBigtableStore:
                             from trusted_router.storage_gcp_regional_quota import (
                                 ledger_unavailable_reason,
                             )
+                            self._arm_regional_ledger_cooldown(workspace_id, region)
                             return unavailable(ledger_unavailable_reason(exc))
                         if candidate.state != "active":
                             with self._regional_quota_lease_cache_lock:
@@ -5389,6 +5454,7 @@ class SpannerBigtableStore:
                         type(exc.__cause__).__name__ if exc.__cause__ else "-",
                     )
                     from trusted_router.storage_gcp_regional_quota import ledger_unavailable_reason
+                    self._arm_regional_ledger_cooldown(workspace_id, region)
                     return unavailable(ledger_unavailable_reason(exc))
 
             if selected_global is None:
@@ -5408,6 +5474,7 @@ class SpannerBigtableStore:
             failure = select_candidate()
         except (GoogleAPICallError, RetryError) as exc:
             from trusted_router.storage_gcp_regional_quota import ledger_unavailable_reason
+            self._arm_regional_ledger_cooldown(workspace_id, region)
             return unavailable(ledger_unavailable_reason(exc))
         if failure is not None:
             return failure
@@ -5456,6 +5523,7 @@ class SpannerBigtableStore:
             self._refund_regional_quota_hold_safely(authorization)
             raise
         if result["outcome"] == "accepted":
+            self._clear_regional_ledger_cooldown(workspace_id, region, probe_generation)
             evidence["regional_sibling_served"] = selected_global.quota_shard != quota_shard
             authorization.credit_reservation_id = str(result["reservation_id"])
             return "accepted", authorization
@@ -5651,7 +5719,7 @@ class SpannerBigtableStore:
                     cursor.holds[record.entity_id] = hold.hold_id
                     try:
                         actual = terminal_regional_hold_amount(
-                            self, record, hold.hold_id, hold_expires_at=hold.expires_at, now=now,
+                            self, record, hold.hold_id, hold_expires_at=hold.expires_at, now=now, hold=hold,
                         )
                     except transient_store_error_types():
                         result["errors"] += 1
