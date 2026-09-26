@@ -199,6 +199,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/eu",
     "/trustedos",
     "/token-exchange",
+    "/token-exchange/savings",
     "/legal",
     "/privacy",
     "/terms",
@@ -2040,6 +2041,16 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         ),
         og_card="token-exchange.png",
         og_alt="TrustedRouter: the AI token exchange for enterprise",
+    ),
+    "token-exchange/savings": PublicPage(
+        template="public/token_exchange_savings.html",
+        title="Token Exchange Savings Calculator",
+        description=(
+            "Estimate your enterprise AI savings. Keep strategic workloads on your current "
+            "provider and compare the cost of routing eligible work through the Token Exchange."
+        ),
+        og_card="token-exchange.png",
+        og_alt="Token Exchange by TrustedRouter: compare your enterprise AI costs",
     ),
     "resources": PublicPage(
         template="public/resources.html",
