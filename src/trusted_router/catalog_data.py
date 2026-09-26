@@ -804,6 +804,23 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy_url="https://tinfoil.sh/security-and-privacy-faq",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
+    "privatemode": Provider(
+        slug="privatemode",
+        name="Privatemode",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_confidential_compute=True,
+        provider_e2ee=True,
+        provider_policy=(
+            "Requests and responses are encrypted between TrustedRouter's enclave "
+            "and release-pinned Privatemode workloads after attestation verification. "
+            "Verification failures reject the request; there is no plaintext fallback. "
+            "Cache-routing metadata is visible to the provider edge. No separate "
+            "ZDR commitment is inferred from encryption."
+        ),
+        provider_policy_url="https://docs.privatemode.ai/security/attestation/overview/",
+        provider_headquarters_country=PROVIDER_JURISDICTION_DE,
+    ),
     # NEAR AI direct endpoints terminate TLS inside the measured model TEE.
     # TrustedRouter verifies the live TLS SPKI, fresh nonce, Intel TDX quote,
     # NVIDIA GPU evidence, compose-manager action log, and release-pinned
@@ -2112,6 +2129,7 @@ PROVIDERS: dict[str, Provider] = {
 
 GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
     {
+        "privatemode",
         "telluvian",
         "vercel-ai-gateway",
         "typesafe",

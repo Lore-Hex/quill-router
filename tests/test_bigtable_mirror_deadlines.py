@@ -109,7 +109,7 @@ def test_transient_failure_that_survives_the_retry_reports_codes_and_attempts(
     message = str(failure.value)
     assert f"status codes {code}" in message
     assert f"1 of {count} rows failed" in message
-    assert "reconcile_generation_activity" in message
+    assert "activity_mirror_reconcile_cli --generation-id" in message
 
 
 @pytest.mark.parametrize("kind", ["activity", "benchmark"])
@@ -315,5 +315,136 @@ def test_real_sdk_unresolved_status_reports_repairable_failure(
         commit_mirror_rows(table, [row])
     assert calls == 2
     assert "status codes missing" in str(failure.value)
-    assert "reconcile_generation_activity" in str(failure.value)
+    assert "activity_mirror_reconcile_cli --generation-id" in str(failure.value)
     assert row._get_mutations()
+
+
+@pytest.mark.parametrize("sleep_elapsed,attempts", [(1.7, 1), (0.25, 2)])
+def test_retry_rechecks_budget_after_backoff(
+    monkeypatch: pytest.MonkeyPatch, sleep_elapsed: float, attempts: int
+) -> None:
+    from trusted_router import storage_gcp_mirror as mirror
+
+    clock = [0.0]
+    monkeypatch.setattr(mirror, "MIRROR_RETRY_BACKOFF_SECONDS", 0.2)
+    monkeypatch.setattr(mirror.time, "monotonic", lambda: clock[0])
+
+    def sleep(seconds: float) -> None:
+        assert seconds == 0.2
+        clock[0] += sleep_elapsed
+
+    class SlowTable(MirrorTable):
+        def mutate_rows(self, rows: list[Any], *, retry: Any, timeout: float) -> list[Any]:
+            if not self.calls:
+                clock[0] += 2.7
+            else:
+                assert timeout == pytest.approx(5.0 - clock[0])
+            return super().mutate_rows(rows, retry=retry, timeout=timeout)
+
+    monkeypatch.setattr(mirror.time, "sleep", sleep)
+    table = SlowTable([14, 14, 14])
+    with pytest.raises(mirror.MirrorWriteIncomplete) as failure:
+        write(table, "activity")
+    assert failure.value.attempts == attempts
+    assert len(table.calls) == attempts
+
+
+@pytest.mark.parametrize("second_sparse", [False, True])
+def test_real_sdk_sparse_response_retries_only_unresolved_mutations(
+    monkeypatch: pytest.MonkeyPatch, second_sparse: bool
+) -> None:
+    from google.auth.credentials import AnonymousCredentials
+    from google.cloud import bigtable
+    from google.cloud.bigtable_v2.types import MutateRowsResponse
+    from google.rpc.status_pb2 import Status
+
+    from trusted_router.storage_gcp_mirror import MirrorWriteIncomplete, commit_mirror_rows
+
+    client = bigtable.Client(project="local-test", credentials=AnonymousCredentials())
+    table = client.instance("local").table("local")
+    calls: list[list[Any]] = []
+
+    def mutate_rows(*, entries: Any, retry: Any, timeout: Any, **kwargs: Any) -> Any:
+        assert retry is None
+        calls.append(list(entries))
+        assert all(entry.mutations for entry in entries)
+        indexes = [2] if len(calls) == 1 else ([1] if second_sparse else [1, 0])
+        return [MutateRowsResponse(entries=[
+            MutateRowsResponse.Entry(index=i, status=Status(code=0)) for i in indexes
+        ])]
+
+    monkeypatch.setattr(client.table_data_client, "mutate_rows", mutate_rows)
+    rows = [table.direct_row(f"local-{i}".encode()) for i in range(3)]
+    for row in rows:
+        row.set_cell("activity", b"metadata", b"test")
+    if second_sparse:
+        with pytest.raises(MirrorWriteIncomplete) as failure:
+            commit_mirror_rows(table, rows)
+        assert failure.value.attempts == 2
+        assert failure.value.codes == (None,)
+    else:
+        commit_mirror_rows(table, rows)
+    assert [[entry.row_key for entry in entries] for entries in calls] == [
+        [b"local-0", b"local-1", b"local-2"], [b"local-0", b"local-1"]
+    ]
+    assert bool(rows[0]._get_mutations()) is second_sparse
+    assert all(not row._get_mutations() for row in rows[1:])
+
+
+@pytest.mark.parametrize("error", [RuntimeError("unrelated"), RuntimeError("Unexpected number of responses", 4, "Expected", 3)])
+def test_real_sdk_unrelated_runtime_error_is_not_retried(
+    monkeypatch: pytest.MonkeyPatch, error: RuntimeError
+) -> None:
+    from google.auth.credentials import AnonymousCredentials
+    from google.cloud import bigtable
+
+    from trusted_router.storage_gcp_mirror import commit_mirror_rows
+
+    client = bigtable.Client(project="local-test", credentials=AnonymousCredentials())
+    table = client.instance("local").table("local")
+    calls = []
+
+    def mutate_rows(**kwargs: Any) -> Any:
+        calls.append(kwargs)
+        raise error
+
+    monkeypatch.setattr(client.table_data_client, "mutate_rows", mutate_rows)
+    rows = [table.direct_row(f"local-{i}".encode()) for i in range(3)]
+    for row in rows:
+        row.set_cell("activity", b"metadata", b"test")
+    with pytest.raises(RuntimeError) as failure:
+        commit_mirror_rows(table, rows)
+    assert failure.value is error
+    assert len(calls) == 1
+
+
+def test_real_sdk_sparse_response_preserves_permanent_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    from google.auth.credentials import AnonymousCredentials
+    from google.cloud import bigtable
+    from google.cloud.bigtable_v2.types import MutateRowsResponse
+    from google.rpc.status_pb2 import Status
+
+    from trusted_router.storage_gcp_mirror import MirrorWriteIncomplete, commit_mirror_rows
+
+    client = bigtable.Client(project="local-test", credentials=AnonymousCredentials())
+    table = client.instance("local").table("local")
+    calls = []
+
+    def mutate_rows(**kwargs: Any) -> Any:
+        calls.append(kwargs)
+        return [MutateRowsResponse(entries=[
+            MutateRowsResponse.Entry(index=2, status=Status(code=0)),
+            MutateRowsResponse.Entry(index=1, status=Status(code=7)),
+        ])]
+
+    monkeypatch.setattr(client.table_data_client, "mutate_rows", mutate_rows)
+    rows = [table.direct_row(f"local-{i}".encode()) for i in range(3)]
+    for row in rows:
+        row.set_cell("activity", b"metadata", b"test")
+    with pytest.raises(MirrorWriteIncomplete) as failure:
+        commit_mirror_rows(table, rows)
+    assert failure.value.codes == (None, 7)
+    assert failure.value.attempts == 1
+    assert len(calls) == 1
+    assert rows[0]._get_mutations() and rows[1]._get_mutations()
+    assert not rows[2]._get_mutations()

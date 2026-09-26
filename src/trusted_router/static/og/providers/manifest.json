@@ -235,10 +235,10 @@
   },
   "fireworks": {
     "card_version": 2,
-    "model_count": 19,
+    "model_count": 11,
     "name": "Fireworks AI",
     "privacy": "Policy documented",
-    "route_count": 37,
+    "route_count": 22,
     "route_mode": "Prepaid + BYOK",
     "slug": "fireworks"
   },
@@ -592,6 +592,15 @@
     "route_count": 0,
     "route_mode": "Catalog profile",
     "slug": "poolside"
+  },
+  "privatemode": {
+    "card_version": 2,
+    "model_count": 3,
+    "name": "Privatemode",
+    "privacy": "E2EE + confidential",
+    "route_count": 3,
+    "route_mode": "Prepaid",
+    "slug": "privatemode"
   },
   "recraft": {
     "card_version": 2,

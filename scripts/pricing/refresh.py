@@ -150,6 +150,7 @@ PROVIDER_SLUGS = [
     "io_net",
     "scaleway",
     "regolo",
+    "privatemode",
     "featherless",
     "sakana",
     "jina",
