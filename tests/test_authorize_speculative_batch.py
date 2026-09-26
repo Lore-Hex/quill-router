@@ -51,13 +51,16 @@ SCENARIOS = [
 @pytest.mark.parametrize('scenario', SCENARIOS)
 @pytest.mark.parametrize('armed', [False, True])
 @pytest.mark.parametrize('mode', ['typed', 'legacy'])
+@pytest.mark.parametrize('hint', [True, False], ids=['speculate', 'sequential-hint'])
 def test_frozen_sequential_equivalence(
-    stable_ids: None, scenario: str, armed: bool, mode: str,
+    stable_ids: None, scenario: str, armed: bool, mode: str, hint: bool,
 ) -> None:
     def run(module: Any) -> tuple[Any, Any]:
         db = _database()
         db.now = NOW
         opts = _options(mode)
+        if module is current:
+            opts['speculate_key_limit'] = hint
         opts['trust_settings'] = SimpleNamespace(spend_lease_trust_eligibility_enabled=armed)
         key = db.typed['tr_key_limit'][('key', 0)]
         if scenario == 'insufficient':
@@ -302,3 +305,304 @@ def test_fallback_rechecks_concurrent_state_change(
     assert len(db.reservations) == int(expected == 'accepted')
     if change == 'resharded':
         assert result['key_shard'] == 1
+
+
+@pytest.fixture(params=[False, True], ids=['regular', 'multiplexed'])
+def configured_sdk(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch,
+) -> Any:
+    """Real SDK Session/Transaction methods; only RPCs and telemetry are mocked."""
+    from contextlib import nullcontext
+    from unittest.mock import Mock
+
+    from google.cloud.spanner_v1 import session, snapshot, transaction
+    from google.cloud.spanner_v1.types import (
+        CommitResponse,
+        ExecuteBatchDmlResponse,
+        PartialResultSet,
+        ResultSet,
+        ResultSetStats,
+    )
+
+    from trusted_router import storage_gcp_io as io
+
+    clock = [100.0]
+    monkeypatch.setattr(io.time, 'monotonic', lambda: clock[0])
+    for module in (session, snapshot, transaction):
+        monkeypatch.setattr(module, 'trace_call', lambda *a, **kw: nullcontext(Mock()))
+        monkeypatch.setattr(module, 'MetricsCapture', lambda *a, **kw: nullcontext())
+    api = SimpleNamespace(
+        execute_sql=Mock(return_value=ResultSet(stats=ResultSetStats(row_count_exact=1))),
+        execute_batch_dml=Mock(),
+        execute_streaming_sql=Mock(),
+        rollback=Mock(),
+        commit=Mock(return_value=CommitResponse(commit_timestamp=NOW)),
+    )
+    db = SimpleNamespace(
+        spanner_api=api, log_commit_stats=False, database_id='database',
+        name='projects/project/instances/instance/databases/database',
+        _instance=SimpleNamespace(instance_id='instance', _client=SimpleNamespace(
+            project='project', _query_options=None, _client_context=None,
+        )),
+        _route_to_leader_enabled=False,
+        default_transaction_options=transaction.DefaultTransactionOptions(),
+        _next_nth_request=1,
+        with_error_augmentation=lambda n, a, m, *rest: (m, nullcontext()),
+        metadata_with_request_id=lambda n, a, m, *rest: m,
+        metadata_and_request_id=lambda n, a, m, *rest: (m, None),
+    )
+    sdk_session = session.Session(db, is_multiplexed=request.param)
+    sdk_session._session_id = 'session'
+    transactions = []
+    factory = sdk_session.transaction
+
+    def new_transaction(**kwargs: Any) -> Any:
+        tx = factory(**kwargs)
+        transactions.append(tx)
+        return tx
+
+    monkeypatch.setattr(sdk_session, 'transaction', new_transaction)
+    db.run_in_transaction = sdk_session.run_in_transaction
+
+    def read(**kwargs: Any) -> Any:
+        # Every attempt begins with the authoritative idempotency read.
+        assert 'tr_reservation' in kwargs['request'].sql
+        return iter([PartialResultSet(metadata={
+            'transaction': {'id': f'tx-{len(transactions)}'.encode()},
+            'row_type': {'fields': []},
+        })])
+
+    def batch(**kwargs: Any) -> Any:
+        size = len(kwargs['request'].statements)
+        return ExecuteBatchDmlResponse(
+            status=Status(),
+            result_sets=[ResultSet(stats=ResultSetStats(row_count_exact=n))
+                         for n in ([0, 1, 1] if size == 3 else [1, 1])],
+        )
+
+    api.execute_streaming_sql.side_effect = read
+    api.execute_batch_dml.side_effect = batch
+    # Retain the underlying mocks: assertions count RPCs actually sent, not
+    # wrapper invocations that can fail before reaching the RPC.
+    rpcs = SimpleNamespace(**vars(api))
+    io.configure_spanner_rpc_deadlines(db)
+    return SimpleNamespace(db=db, rpcs=rpcs, clock=clock, transactions=transactions,
+                           multiplexed=request.param)
+
+
+@pytest.mark.parametrize('elapsed', [6, 21], ids=['remaining-budget', 'exhausted-budget'])
+@pytest.mark.parametrize('cleanup', ['ok', 'failed', 'expired'])
+def test_speculation_miss_configured_rollback_floor(
+    configured_sdk: Any, elapsed: int, cleanup: str,
+) -> None:
+    from google.api_core.exceptions import DeadlineExceeded, ServiceUnavailable
+
+    from trusted_router import storage_gcp_io as io
+
+    sdk = configured_sdk
+    batch = sdk.rpcs.execute_batch_dml.side_effect
+
+    def spend_budget(**kwargs: Any) -> Any:
+        response = batch(**kwargs)
+        if len(kwargs['request'].statements) == 3:
+            sdk.clock[0] += elapsed
+        return response
+
+    def rollback(**kwargs: Any) -> None:
+        if cleanup == 'failed':
+            raise ServiceUnavailable('rollback failed')
+        if cleanup == 'expired':
+            sdk.clock[0] += kwargs['timeout'] + 0.01
+            raise DeadlineExceeded('rollback expired')
+
+    sdk.rpcs.execute_batch_dml.side_effect = spend_budget
+    sdk.rpcs.rollback.side_effect = rollback
+    if elapsed > 20 or cleanup == 'expired':
+        with pytest.raises(DeadlineExceeded) as caught:
+            current.authorize_atomic(sdk.db, param_types, **_options())
+        # Even at exhaustion, count an actual RPC below the deadline wrapper.
+        sdk.rpcs.rollback.assert_called_once()
+        # Same failure as the parent entering a transaction with no shared
+        # budget. Cleanup must not turn this into a rollback error or renew T1.
+        token = io._SPANNER_RPC_DEADLINE.set(sdk.clock[0] - 1)
+        try:
+            with pytest.raises(DeadlineExceeded) as parent_error:
+                frozen.authorize_atomic(sdk.db, param_types, **_options())
+        finally:
+            io._SPANNER_RPC_DEADLINE.reset(token)
+        assert caught.value.message == parent_error.value.message
+        assert len(sdk.transactions) == 1
+        sdk.rpcs.commit.assert_not_called()
+    else:
+        assert current.authorize_atomic(sdk.db, param_types, **_options())['outcome'] == 'accepted'
+        assert len(sdk.transactions) == 2
+        sdk.rpcs.commit.assert_called_once()
+        # The fallback reruns both authoritative checks before inserting.
+        assert sdk.rpcs.execute_streaming_sql.call_count == 2
+        assert ['tr_credit_balance' in call.kwargs['request'].sql
+                for call in sdk.rpcs.execute_sql.call_args_list] == [True, True, False]
+        assert [len(call.kwargs['request'].statements)
+                for call in sdk.rpcs.execute_batch_dml.call_args_list] == [3, 2]
+    sdk.rpcs.rollback.assert_called_once()
+    call = sdk.rpcs.rollback.call_args.kwargs
+    assert call['transaction_id'] == b'tx-1'
+    assert call['timeout'] == (io._ROLLBACK_FLOOR_SECONDS if elapsed > 20 else 20 - elapsed)
+    assert sdk.transactions[0].committed is None
+    assert io._SPANNER_RPC_DEADLINE.get() is None
+
+
+def test_aborted_during_sequential_fallback(configured_sdk: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import Mock
+
+    from google.cloud.spanner_v1 import _helpers
+    from google.cloud.spanner_v1.types import ExecuteBatchDmlResponse, ResultSet, ResultSetStats
+    from google.protobuf.any_pb2 import Any as AnyProto
+    from google.rpc.error_details_pb2 import RetryInfo
+
+    sdk = configured_sdk
+    sleep = Mock()
+    monkeypatch.setattr(_helpers.time, 'sleep', sleep)
+    retry_info = AnyProto()
+    retry_info.Pack(RetryInfo(retry_delay={'seconds': 1}))
+    sdk.rpcs.execute_batch_dml.side_effect = [
+        ExecuteBatchDmlResponse(status=Status(), result_sets=[
+            ResultSet(stats=ResultSetStats(row_count_exact=n)) for n in [0, 1, 1]
+        ]),
+        ExecuteBatchDmlResponse(status=Status(code=code_pb2.ABORTED, details=[retry_info])),
+        ExecuteBatchDmlResponse(status=Status(), result_sets=[
+            ResultSet(stats=ResultSetStats(row_count_exact=1)) for _ in range(2)
+        ]),
+    ]
+    result = current.authorize_atomic(sdk.db, param_types, **_options())
+    assert result['outcome'] == 'accepted'
+    assert len(sdk.transactions) == 3
+    assert [len(c.kwargs['request'].statements)
+            for c in sdk.rpcs.execute_batch_dml.call_args_list] == [3, 2, 2]
+    # ABORTED stays with the SDK; the retry retains sequential shape and IDs.
+    batches = sdk.rpcs.execute_batch_dml.call_args_list
+    assert batches[1].kwargs['request'].statements == batches[2].kwargs['request'].statements
+    assert sdk.transactions[2]._multiplexed_session_previous_transaction_id == (
+        b'tx-2' if sdk.multiplexed else None
+    )
+    sdk.rpcs.rollback.assert_called_once()
+    assert sdk.rpcs.rollback.call_args.kwargs['transaction_id'] == b'tx-1'
+    sdk.rpcs.commit.assert_called_once()
+    assert sdk.rpcs.commit.call_args.kwargs['request'].transaction_id == b'tx-3'
+    sleep.assert_called_once_with(1.0)
+
+
+def _operation_count(db: Any) -> int:
+    # T1 RPCs, excluding transaction/session acquisition, including cleanup.
+    return (db.transaction_execute_sql_calls + db.transaction_execute_update_calls
+            + db.transaction_batch_update_calls + db.rollback_calls + db.commits)
+
+
+@pytest.mark.parametrize(('scenario', 'parent_count', 'round2_count'), [
+    ('accepted', 5, 4), ('byok_excluded', 5, 5), ('uncapped_direct', 6, 6),
+    ('key_rejection', 5, 9), ('credit_rejection', 3, 3), ('skip', 4, 4),
+])
+def test_operation_counts_with_metadata_hint(
+    stable_ids: None, scenario: str, parent_count: int, round2_count: int,
+) -> None:
+    results = []
+    for module, expected_count in ((frozen, parent_count), (current, round2_count)):
+        db = _database()
+        opts = _options()
+        key = db.typed['tr_key_limit'][('key', 0)]
+        if scenario == 'byok_excluded':
+            opts.update(has_credit_candidate=False, reservation_usage_type='BYOK')
+            key['include_byok'] = False
+        elif scenario == 'uncapped_direct':
+            key['limit_micro'] = None
+        elif scenario == 'key_rejection':
+            key['limit_micro'] = 0
+        elif scenario == 'credit_rejection':
+            db.typed['tr_credit_balance'][('workspace', 0)]['total_credits'] = 0
+        elif scenario == 'skip':
+            opts['skip_key_limit'] = True
+        if module is current:
+            opts['speculate_key_limit'] = scenario not in ('byok_excluded', 'uncapped_direct')
+        result = module.authorize_atomic(db, param_types, **opts)
+        assert _operation_count(db) == expected_count
+        results.append((result, _state(db)))
+    assert results[0] == results[1]
+
+
+@pytest.mark.parametrize('stale_metadata', ['uncapped', 'byok_excluded'])
+@pytest.mark.parametrize('authoritative', ['funded', 'exhausted', 'missing', 'later_shard'])
+def test_stale_no_hold_hint_retains_authoritative_enforcement(
+    stable_ids: None, stale_metadata: str, authoritative: str,
+) -> None:
+    results = []
+    for module in (frozen, current):
+        db = _database()
+        opts = _options()
+        opts['has_credit_candidate'] = stale_metadata != 'byok_excluded'
+        opts['reservation_usage_type'] = 'BYOK' if stale_metadata == 'byok_excluded' else 'Credits'
+        key = db.typed['tr_key_limit'][('key', 0)]
+        key['include_byok'] = True
+        if authoritative == 'missing':
+            db.typed['tr_key_limit'].clear()
+        elif authoritative == 'exhausted':
+            key['limit_micro'] = 0
+        elif authoritative == 'later_shard':
+            opts['key_shard_candidates'] = (0, 1)
+            db.typed['tr_key_limit'][('key', 1)] = {**key, 'shard': 1}
+            key['limit_micro'] = 0
+        if module is current:
+            # Authenticated entity metadata says no hold; counter state differs.
+            opts['speculate_key_limit'] = False
+        result = module.authorize_atomic(db, param_types, **opts)
+        if authoritative in ('funded', 'later_shard'):
+            assert result['outcome'] == 'accepted'
+            assert next(iter(db.reservations.values()))['key_reserved_micro'] == 100
+        else:
+            assert result['outcome'] == ('key_missing' if authoritative == 'missing'
+                                         else 'key_limit_exceeded')
+            assert not db.reservations and not db.gateway_authorizations
+            assert db.typed['tr_credit_balance'][('workspace', 0)]['reserved'] == 0
+        results.append((result, _state(db), _operation_count(db)))
+    assert results[0] == results[1]
+
+
+@pytest.mark.parametrize('winner_change', ['same', 'fingerprint'])
+def test_idempotency_winner_commits_between_speculation_and_fallback(
+    monkeypatch: pytest.MonkeyPatch, winner_change: str,
+) -> None:
+    db = _database()
+    db.typed['tr_key_limit'][('key', 0)]['limit_micro'] = None
+    rollback = _FakeTransaction.rollback
+    winner = None
+    winner_state = None
+    operations_after_winner = None
+
+    def commit_winner(tx: Any) -> None:
+        nonlocal winner, winner_state, operations_after_winner
+        rollback(tx)
+        # Called before the loser starts its sequential fallback. The rolled
+        # back speculative INSERTs no longer own the unique idempotency scope.
+        if winner is not None:
+            return
+        assert not db.reservations and not db.gateway_authorizations
+        winner_options = _options()
+        if winner_change == 'fingerprint':
+            winner_options['idempotency_fingerprint'] = 'other'
+        winner = frozen.authorize_atomic(db, param_types, **winner_options)
+        assert winner['outcome'] == 'accepted'
+        winner_state = _state(db)
+        operations_after_winner = (db.transaction_execute_update_calls,
+                                   db.transaction_batch_update_calls)
+
+    monkeypatch.setattr(_FakeTransaction, 'rollback', commit_winner)
+    loser = current.authorize_atomic(db, param_types, **_options())
+    assert winner is not None
+    assert loser['outcome'] == ('replay' if winner_change == 'same' else 'idempotency_mismatch')
+    if winner_change == 'same':
+        assert loser['authorization_id'] == winner['authorization_id']
+        assert loser['reservation_id'] == winner['reservation_id']
+    assert _state(db) == winner_state
+    assert (db.transaction_execute_update_calls,
+            db.transaction_batch_update_calls) == operations_after_winner
+    assert db.typed['tr_credit_balance'][('workspace', 0)]['reserved'] == 100
+    assert len(db.reservations) == len(db.gateway_authorizations) == 1
+    assert db.rollback_calls == (1 if winner_change == 'same' else 2)

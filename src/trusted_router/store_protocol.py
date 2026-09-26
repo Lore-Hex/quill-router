@@ -1157,6 +1157,7 @@ class TypedBillingStore(Protocol):
         app_owner_user_id: str = ...,
         key_usage_shards: int = ...,
         skip_key_limit: bool = ...,
+        speculate_key_limit: bool = ...,
         tags: dict[str, str] | None = ...,
         custom_model_id: str | None = ...,
         custom_model_revision: int | None = ...,

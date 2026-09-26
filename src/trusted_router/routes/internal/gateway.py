@@ -1945,6 +1945,12 @@ def _authorize_gateway_sync_impl(
                     # UPDATE would still lock uncapped usage counter rows.
                     # Window caps are enforced separately on a snapshot.
                     skip_key_limit=api_key.limit_microdollars is None,
+                    # Metadata only selects the path; sequential reserve still
+                    # checks the authoritative row for BYOK exclusions.
+                    speculate_key_limit=(
+                        api_key.limit_microdollars is not None
+                        and (has_credit_candidate or api_key.include_byok_in_limit)
+                    ),
                     custom_model_id=custom_model.id if custom_model else None,
                     custom_model_revision=custom_model.revision if custom_model else None,
                     custom_model_markup_basis_points=(

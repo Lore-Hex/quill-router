@@ -753,3 +753,38 @@ def test_joined_federated_metadata_still_revalidates_home(
     assert raised.value.detail["error"]["message"] == (
         "Workspace billing is paused" if verdict == "paused" else "Invalid API key"
     )
+
+
+@pytest.mark.parametrize('metadata', ['byok_excluded', 'byok_included', 'uncapped'])
+def test_gateway_selects_speculation_from_authenticated_key(
+    metadata: str, fixed_operation_catalog: None, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, database, key = _seed_typed_gateway_store()
+    if metadata == 'uncapped':
+        store.update_key(key.hash, {'limit_microdollars': None})
+    else:
+        store.update_key(key.hash, {'include_byok_in_limit': metadata == 'byok_included'})
+    store.upsert_byok_provider(workspace_id=key.workspace_id, provider='anthropic',
+                               secret_ref='test-byok-secret', key_hint='test')  # noqa: S106 - fixture
+    # Only BYOK routes: having any Credits candidate must retain Credits holds.
+    for endpoint_id, endpoint in tuple(MODEL_ENDPOINTS.items()):
+        if endpoint.model_id == 'anthropic/claude-haiku-4.5' and endpoint.usage_type == 'Credits':
+            monkeypatch.delitem(MODEL_ENDPOINTS, endpoint_id)
+    options = []
+    original = storage_gcp_authorize.authorize_atomic
+
+    def record(db: Any, pt: Any, **kwargs: Any) -> Any:
+        options.append(kwargs)
+        return original(db, pt, **kwargs)
+
+    monkeypatch.setattr(storage_gcp_authorize, 'authorize_atomic', record)
+    database.transaction_execute_sql_calls = 0
+    gateway._authorize_gateway_sync(_request(), _lookup_body(key), Settings(environment='test'))
+    assert len(options) == 1
+    assert options[0]['speculate_key_limit'] == (metadata == 'byok_included')
+    assert options[0]['skip_key_limit'] == (metadata == 'uncapped')
+    assert database.rollback_calls == 0
+    assert database.transaction_batch_update_calls == 1
+    # The exclusion hint keeps the parent's conditional UPDATE and point-read.
+    assert database.transaction_execute_update_calls == int(metadata == 'byok_excluded')
+    assert database.transaction_execute_sql_calls == (2 if metadata == 'byok_excluded' else 1)

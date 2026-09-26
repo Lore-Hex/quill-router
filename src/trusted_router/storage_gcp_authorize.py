@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from google.api_core.exceptions import AlreadyExists
+from google.api_core.exceptions import AlreadyExists, GoogleAPICallError
 
 from trusted_router.app_markup_billing import (
     app_markup_microdollars_from_charge,
@@ -160,8 +160,14 @@ class _Reject(Exception):
         self.outcome = outcome
 
 
-class _RetrySequentialKeyReserve(Exception):
-    """Discard speculative rows before classifying a zero-row key hold."""
+class _RetrySequentialKeyReserve(GoogleAPICallError):
+    """Discard speculative rows before classifying a zero-row key hold.
+
+    Use the API-error lifecycle deliberately: storage_gcp_io rolls back with an
+    independent deadline floor, and the SDK then discards the transaction without
+    sending another rollback (even if cleanup failed). A generic exception would
+    let the SDK roll back inside the spent request budget and mask this signal.
+    """
 
 
 EXHAUSTED = "exhausted"
@@ -385,6 +391,7 @@ def authorize_atomic(
     credit_shard_candidates: tuple[int, ...] | None = None,
     key_shard_candidates: tuple[int, ...] = (UNSHARDED,),
     skip_key_limit: bool = False,
+    speculate_key_limit: bool = True,
     authorization_id: str | None = None,
     spend_lease_hook: Callable[[Any, int], dict[str, Any]] | None = None,
     build_authorization_for_lease: (
@@ -415,6 +422,11 @@ def authorize_atomic(
     by older callers, it preserves the existing reserve SQL. The first candidate
     still receives settlement usage, with zero held, without an authorize read
     or write of tr_key_limit.
+
+    `speculate_key_limit` only selects the transaction shape. Callers with
+    already-loaded metadata can set it False for uncapped or BYOK-excluded keys.
+    Unlike `skip_key_limit`, it retains every authoritative sequential check,
+    including when that metadata is stale. Omission preserves speculation.
 
     Per-window key caps are checked by the CALLER via check_key_window_limits on
     a lock-free snapshot BEFORE this transaction — deliberately NOT in here: a
@@ -505,14 +517,14 @@ def authorize_atomic(
             "key_shard": int(existing.get("key_shard", UNSHARDED)),
         }
 
-    speculative = not skip_key_limit
+    speculative = not skip_key_limit and speculate_key_limit
 
     def check_key_prefix(counts: Sequence[int]) -> None:
         # Zero is ambiguous (missing, exhausted, uncapped, BYOK-excluded).
         # Even a later INSERT error must not override the key business decision.
         # ABORTED is handled first by execute_batch_dml and retries this callback.
         if counts and counts[0] == 0:
-            raise _RetrySequentialKeyReserve()
+            raise _RetrySequentialKeyReserve("speculative key hold missed")
 
     def txn(transaction: Any) -> dict:
         if idempotency_scope is not None:
@@ -677,7 +689,8 @@ def authorize_atomic(
                 database, txn, transaction_tag="tr_authorize", also_retry=also_retry,
             )
         except _RetrySequentialKeyReserve:
-            # Generic callback exception makes the SDK roll back ALL T1 writes.
+            # Protected API-error cleanup attempted rollback before the SDK
+            # discarded the handle. Cleanup never renews the shared T1 budget.
             # Retry the original decision path once; it handles no-hold success,
             # all shard candidates, and terminal rejection without speculation.
             # IDs, created_at, and candidate order remain stable across attempts.
