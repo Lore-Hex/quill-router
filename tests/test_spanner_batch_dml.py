@@ -2,15 +2,22 @@
 from __future__ import annotations
 
 import copy
+from contextlib import nullcontext
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
-from google.api_core.exceptions import FailedPrecondition
-from google.cloud.spanner_v1 import param_types
+from google.api_core.exceptions import Aborted, FailedPrecondition, from_grpc_status
+from google.cloud.spanner_v1 import _helpers, param_types
+from google.cloud.spanner_v1 import session as session_module
+from google.cloud.spanner_v1.session import Session
 from google.cloud.spanner_v1.types import ExecuteBatchDmlResponse, ResultSet, ResultSetStats
+from google.protobuf.any_pb2 import Any as AnyProto
 from google.rpc import code_pb2
+from google.rpc.error_details_pb2 import ErrorInfo, RetryInfo
 from google.rpc.status_pb2 import Status
 
 from tests.fakes.spanner import FakeSpannerDatabase, _FakeTransaction
@@ -18,6 +25,7 @@ from trusted_router.storage_gcp_authorize import AuthorizeOutcome, authorize_ato
 from trusted_router.storage_gcp_batch_dml import execute_batch_dml
 from trusted_router.storage_gcp_codec import json_body
 from trusted_router.storage_gcp_counter_dml import entity_insert_statement
+from trusted_router.storage_gcp_io import run_in_transaction_with_retry
 from trusted_router.storage_gcp_settle_outbox import (
     ENQ_EXISTS_TERMINAL,
     ENQ_INSERTED,
@@ -28,6 +36,100 @@ from trusted_router.storage_gcp_settle_outbox import (
 from trusted_router.storage_models import GatewayAuthorization, SettleOutboxRow
 
 NOW = datetime(2026, 9, 25, tzinfo=UTC)
+
+
+@pytest.fixture
+def sdk_runner(monkeypatch: pytest.MonkeyPatch) -> tuple[Session, Mock, Mock]:
+    """Real Session runner; only transaction I/O and telemetry are stubbed."""
+    database = SimpleNamespace(
+        log_commit_stats=False,
+        database_id='database',
+        _instance=SimpleNamespace(instance_id='instance', _client=SimpleNamespace(project='project')),
+    )
+    session = Session(database)
+    transactions = [Mock(_transaction_id=None), Mock(_transaction_id=b'retried')]
+    monkeypatch.setattr(session, 'transaction', Mock(side_effect=transactions))
+    monkeypatch.setattr(session_module, 'trace_call', lambda *a, **kw: nullcontext(Mock()))
+    monkeypatch.setattr(session_module, 'MetricsCapture', lambda *a, **kw: nullcontext())
+    return session, transactions[0], transactions[1]
+
+
+@pytest.mark.parametrize('detail_kind', ['retry_info', 'zero_delay', 'none', 'unrelated'])
+def test_real_sdk_runner_retries_in_status_aborted(
+    monkeypatch: pytest.MonkeyPatch, sdk_runner: tuple[Session, Mock, Mock], detail_kind: str,
+) -> None:
+    session, aborted_tx, committed_tx = sdk_runner
+    status = Status(code=code_pb2.ABORTED, message='batch contention')
+    if detail_kind != 'none':
+        unrelated = AnyProto()
+        unrelated.Pack(ErrorInfo(reason='contention'))
+        status.details.append(unrelated)
+    if detail_kind in ('retry_info', 'zero_delay'):
+        retry_info = RetryInfo()
+        if detail_kind == 'retry_info':
+            retry_info.retry_delay.seconds = 1
+            retry_info.retry_delay.nanos = 375_000_000
+        packed = AnyProto()
+        packed.Pack(retry_info)
+        status.details.append(packed)
+    aborted_tx.batch_update.return_value = (status, [])
+    committed_tx.batch_update.return_value = (Status(), [1])
+    sleep = Mock()
+    monkeypatch.setattr(_helpers.time, 'sleep', sleep)
+    monkeypatch.setattr(_helpers.random, 'random', lambda: 0.25)
+    statements = [entity_insert_statement(param_types, 'test', 'a', '{}')]
+    callbacks = []
+
+    def callback(tx: Any) -> str:
+        callbacks.append(tx)
+        execute_batch_dml(tx, statements, [(1,)])
+        return 'committed'
+
+    outer_attempts: list[int] = []
+    assert run_in_transaction_with_retry(session, callback, attempts_out=outer_attempts) == 'committed'
+    assert callbacks == [aborted_tx, committed_tx]
+    assert outer_attempts == [1]  # Retry belongs to the SDK, not the outer wrapper.
+    aborted_tx.commit.assert_not_called()
+    committed_tx.commit.assert_called_once()
+    for tx in callbacks:
+        tx.batch_update.assert_called_once_with(statements)
+        tx.rollback.assert_not_called()
+    expected_delay = {'retry_info': 1.375, 'zero_delay': 0.0}.get(detail_kind, 2.25)
+    sleep.assert_called_once_with(expected_delay)
+
+
+@pytest.mark.parametrize('code', [
+    code for code in code_pb2.Code.values() if code not in (code_pb2.OK, code_pb2.ABORTED)
+])
+def test_real_sdk_runner_preserves_other_status_mappings(
+    sdk_runner: tuple[Session, Mock, Mock], code: int,
+) -> None:
+    session, tx, unused_tx = sdk_runner
+    status = Status(code=code, message='batch failure')
+    tx.batch_update.return_value = (status, [])
+    statements = [entity_insert_statement(param_types, 'test', 'a', '{}')]
+    with pytest.raises(type(from_grpc_status(code, status.message))) as caught:
+        run_in_transaction_with_retry(
+            session, lambda transaction: execute_batch_dml(transaction, statements, [(1,)]),
+        )
+    assert caught.value.message == status.message
+    assert caught.value.errors == []
+    tx.batch_update.assert_called_once_with(statements)
+    tx.commit.assert_not_called()
+    tx.rollback.assert_called_once()
+    unused_tx.batch_update.assert_not_called()
+
+
+@pytest.mark.parametrize('errors', [(), (object(),)])
+def test_fake_rejects_aborted_without_sdk_retry_metadata(errors: tuple[Any, ...]) -> None:
+    db = _database()
+
+    def callback(tx: Any) -> None:
+        raise Aborted('invalid retry payload', errors=errors)
+
+    with pytest.raises(IndexError if not errors else AttributeError):
+        db.run_in_transaction(callback)
+    assert db.commits == 0 and db.aborts == 0
 
 
 def _database() -> FakeSpannerDatabase:

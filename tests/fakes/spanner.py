@@ -279,7 +279,13 @@ class FakeSpannerDatabase:
             txn = _FakeTransaction(self)
             try:
                 result = fn(txn)
-            except (Aborted, FakeAborted):
+            except Aborted as exc:
+                # Match the SDK's retry payload contract instead of silently
+                # accepting bare Aborted() and masking broken status adapters.
+                dict(exc.errors[0].trailing_metadata())
+                self.aborts += 1
+                continue
+            except FakeAborted:
                 self.aborts += 1
                 continue
             except Exception:
