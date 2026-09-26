@@ -116,9 +116,10 @@ async def _request(
     return json.loads(b"".join(m.get("body", b"") for m in messages))
 
 
-def _counts(db: Any) -> tuple[int, int, int, int]:
+def _counts(db: Any) -> tuple[int, int, int, int, int]:
     return (db.snapshot_execute_sql_calls, db.transaction_execute_sql_calls,
-            db.transaction_execute_update_calls, db.commits)
+            db.transaction_execute_update_calls, db.transaction_batch_update_calls,
+            db.commits)
 
 
 def test_reply_operation_count_and_exact_background_payloads(
@@ -147,10 +148,10 @@ def test_reply_operation_count_and_exact_background_payloads(
     response = asyncio.run(_request(app, _settle_json(auth.id), on_reply))
     assert response["data"]["disposition"] == "finalized"
     assert optional_executor.wait_idle()
-    # S1-S24 (S9's re-read is reused since #1331) plus S27; no T4 or
-    # Bigtable calls before the response body.
-    assert reply_counts == [(3, 4, 13, 2)]
-    assert tuple(a - b for a, b in zip(_counts(db), start, strict=True)) == (4, 4, 14, 3)
+    # S1-S24 (S9's re-read is reused since #1331; S2-S4 are one batch since
+    # #1340) plus S27; no T4 or Bigtable calls before the response body.
+    assert reply_counts == [(3, 4, 10, 1, 2)]
+    assert tuple(a - b for a, b in zip(_counts(db), start, strict=True)) == (4, 4, 11, 1, 3)
     [activity_tx] = [tx for tx, sql in transactions if sql.startswith("INSERT INTO tr_operational_analytics_outbox")]
     [generation_tx] = [tx for tx, sql in transactions if sql.startswith("INSERT INTO tr_generation")]
     credit_tx = [tx for tx, sql in transactions if sql.startswith("UPDATE tr_credit_balance")]
