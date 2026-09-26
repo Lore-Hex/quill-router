@@ -611,7 +611,7 @@ def test_fresh_settle_round_trip_order(
     data = _internal_settle(auth)
     assert data["disposition"] != "intent_durable", data
     assert db.gateway_authorizations[auth.id]["settled"] is True
-    assert len(settle_operations) == 14
+    assert len(settle_operations) == 11
     reader, label, batch_params = settle_operations[1]
     assert label == "BATCH"
     batch = batch_params["statements"]
@@ -643,7 +643,7 @@ def test_fresh_settle_round_trip_order(
     # The done UPDATE returns the stored reservation; its dependent retention
     # and evidence writes share the next RPC. Expand batches to pin SQL order.
     final_batches = [params["statements"] for _, sql, params in settle_operations if sql == "BATCH"]
-    assert [len(group) for group in final_batches] == [3, 4]
+    assert [len(group) for group in final_batches] == [3, 7]
     settle_operations = [
         (reader, " ".join(statement.split()), values)
         for reader, sql, params in settle_operations
@@ -3405,9 +3405,12 @@ def test_inline_settle_leaves_a_leased_outbox_row_to_its_drain_worker(
     row = db.settle_outbox[(auth.id, "settle")]
     assert row["status"] == "pending"
     assert row["lease_owner"] == "drain-w1"
-    [guarded] = [sql for _txn, sql in calls
-                 if sql.startswith("UPDATE tr_settle_outbox SET status=@status")]
-    assert "lease_owner IS NULL" in guarded and "THEN RETURN" in guarded
+    guarded = [sql for _txn, sql in calls
+               if sql.startswith("UPDATE tr_settle_outbox SET status=@status")]
+    assert len(guarded) == 2
+    assert all("lease_owner IS NULL" in sql for sql in guarded)
+    assert "AND reservation_id=@rid" in guarded[0]
+    assert "THEN RETURN" in guarded[1]
     assert row["attempts"] == 0 and row["settle_body"] is not None
     assert "settle outbox done mark skipped" in caplog.text
 
@@ -3517,8 +3520,6 @@ def test_fresh_regional_settle_round_trip_order(
         ("ro", "SELECT", "tr_settle_outbox"),
         ("t3", "SELECT", "tr_reservation"),
         ("t3", "UPDATE", "tr_reservation"),
-        ("t3", "UPDATE", "tr_gateway_authorization"),
-        ("t3", "UPDATE", "tr_settle_outbox"),
         ("t3", "BATCH", ""),
         ("t3", "COMMIT", ""),
         ("t4", "INSERT", "tr_operational_analytics_outbox"),
@@ -3536,8 +3537,8 @@ def test_fresh_regional_settle_round_trip_order(
         table = re.search(r"(?:FROM|INTO|UPDATE) (tr_\w+)", sql)
         observed.append((phase, sql.split()[0], table[1] if table else ""))
     assert observed == expected
-    # 18 -> 13 with the snapshot; the legacy re-read adds one.
-    assert len(observed) == 13 + int(reread)
+    # 13 -> 11 with the snapshot; the legacy re-read adds one.
+    assert len(observed) == 11 + int(reread)
     local = store._regional_quota_ledger.get(auth.regional_lease_id, region=auth.region)
     assert local.spent_microdollars == data["cost_microdollars"]
     assert db.reservations[auth.credit_reservation_id]["actual_micro"] == data["cost_microdollars"]
@@ -3696,6 +3697,7 @@ def test_finalize_guarded_sql_matches_sequential_money(
     from concurrent.futures import ThreadPoolExecutor
 
     from tests.fakes import settle_done_sequential as reference
+    from tests.fakes import settle_finalize_sequential as frozen_finalize
     from tests.test_spanner_batch_dml import NOW, _authorize, _database, _state
     from trusted_router import storage_gcp_authorize as finalize
     from trusted_router import storage_gcp_settle_outbox as outbox
@@ -3761,14 +3763,15 @@ def test_finalize_guarded_sql_matches_sequential_money(
 
         with monkeypatch.context() as patch:
             if sequential:
+                patch.setattr(finalize, "typed_finalize_atomic", frozen_finalize.typed_finalize_atomic)
                 def old_mark(tx: Any, pt: Any, **kw: Any) -> bool:
                     kw.pop("retention_statements", None)
                     return reference.mark_done_unleased_tx(tx, pt, **kw)
-                patch.setattr(finalize, "mark_done_unleased_tx", old_mark)
+                patch.setattr(frozen_finalize, "mark_done_unleased_tx", old_mark)
                 def old_batch(tx: Any, statements: Any, counts: Any) -> None:
                     for (sql, params, types), allowed in zip(statements, counts, strict=True):
                         assert tx.execute_update(sql, params=params, param_types=types) in allowed
-                patch.setattr(finalize, "execute_batch_dml", old_batch)
+                patch.setattr(frozen_finalize, "execute_batch_dml", old_batch)
             if scenario == "refund":
                 assert settle(False)["outcome"] == "settled"
             if scenario == "concurrent":
@@ -3796,6 +3799,7 @@ def test_regional_guarded_sql_matches_sequential_finalize(
     monkeypatch: pytest.MonkeyPatch, scenario: str,
 ) -> None:
     from tests.fakes import settle_done_sequential as reference
+    from tests.fakes import settle_finalize_sequential as frozen_finalize
     from trusted_router import storage_gcp_authorize as finalize
 
     observations = []
@@ -3814,14 +3818,15 @@ def test_regional_guarded_sql_matches_sequential_finalize(
             db.settle_outbox[(auth.id, "refund")]["status"] = scenario.split("_")[0]
         with monkeypatch.context() as patch:
             if sequential:
+                patch.setattr(finalize, "typed_finalize_atomic", frozen_finalize.typed_finalize_atomic)
                 def old_mark(tx: Any, pt: Any, **kw: Any) -> bool:
                     kw.pop("retention_statements", None)
                     return reference.mark_done_unleased_tx(tx, pt, **kw)
-                patch.setattr(finalize, "mark_done_unleased_tx", old_mark)
+                patch.setattr(frozen_finalize, "mark_done_unleased_tx", old_mark)
                 def old_batch(tx: Any, statements: Any, counts: Any) -> None:
                     for (sql, params, types), allowed in zip(statements, counts, strict=True):
                         assert tx.execute_update(sql, params=params, param_types=types) in allowed
-                patch.setattr(finalize, "execute_batch_dml", old_batch)
+                patch.setattr(frozen_finalize, "execute_batch_dml", old_batch)
             if scenario == "refund":
                 assert store.typed_finalize_gateway_authorization_result(
                     auth.id, success=False, actual_microdollars=0, selected_usage_type="Credits",

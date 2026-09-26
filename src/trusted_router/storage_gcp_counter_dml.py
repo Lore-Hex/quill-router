@@ -724,6 +724,22 @@ def claim_reservation(
     Persists `actual_micro` + `settled_usage_type` so the durable reservation
     records the exact settled amount for audit / reaper reconciliation.
     """
+    sql, params, types = claim_reservation_statement(
+        param_types, reservation_id, actual_micro=actual_micro,
+        settled_usage_type=settled_usage_type, terminal_at=terminal_at,
+        defer_retention=defer_retention, outbox_available=outbox_available,
+        expires_before=expires_before,
+    )
+    return transaction.execute_update(sql, params=params, param_types=types) == 1
+
+
+def claim_reservation_statement(
+    param_types: Any, reservation_id: str, *, actual_micro: int,
+    settled_usage_type: str, terminal_at: Any | None = None,
+    defer_retention: bool = False, outbox_available: bool = True,
+    expires_before: Any | None = None,
+) -> DmlStatement:
+    """Build the same conditional claim for standalone or batch execution."""
     resolved_terminal_at = (
         None if defer_retention else (terminal_at or datetime.now(UTC))
     )
@@ -747,8 +763,7 @@ def claim_reservation(
         sql += " AND expires_at < @reap_now"
         params["reap_now"] = expires_before
         types["reap_now"] = param_types.TIMESTAMP
-    count = transaction.execute_update(sql, params=params, param_types=types)
-    return count == 1
+    return sql, params, types
 
 
 def complete_reservation_retention(

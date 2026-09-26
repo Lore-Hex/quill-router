@@ -194,11 +194,14 @@ def test_overrun_differential_claims_excess_once_even_after_local_commit_failure
         def fail(*a: Any, **kw: Any) -> Any:
             raise RuntimeError("crash after regional CAS before global commit")
         crash.setattr(finalize, "mark_gateway_authorization_settled", fail)
+        crash.setattr(finalize, "gateway_authorization_settled_statement", fail)
         with pytest.raises(RuntimeError, match="crash after regional CAS"):
             store.typed_finalize_gateway_authorization_result(
                 auth.id, success=True, actual_microdollars=total, selected_usage_type="Credits",
             )
     assert _totals(db, key.workspace_id, key.hash) == (0,) * 5
+    local_after_failure = store._regional_quota_ledger.get(auth.regional_lease_id, region=auth.region)
+    assert local_after_failure.spent_microdollars == (0 if missing_hold else 10_000)
     # A retry with corrected actuals cannot change the excess after local CAS.
     changed = replace(row, actual_cost_micro=total + 1)
     assert outbox.enqueue(changed, preserve_existing=True) == "frozen"
@@ -456,6 +459,7 @@ def test_overrun_cross_boundary_crash_replay_uses_one_settlement_time(
         def fail(*a: Any, **kw: Any) -> Any:
             raise RuntimeError("crash after CAS before Spanner commit")
         crash.setattr(finalize, "mark_gateway_authorization_settled", fail)
+        crash.setattr(finalize, "gateway_authorization_settled_statement", fail)
         with pytest.raises(RuntimeError, match="crash after CAS"):
             store.typed_finalize_gateway_authorization_result(
                 auth.id, success=True, actual_microdollars=15_001, selected_usage_type="Credits",

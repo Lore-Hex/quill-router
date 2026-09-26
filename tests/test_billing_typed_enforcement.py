@@ -1543,10 +1543,13 @@ def test_store_typed_finalize_wrapper_and_reaper_wrapper() -> None:
     assert store.reap_expired_reservations(now=_NOW) == 0
 
 
+@pytest.mark.parametrize("record_mode,expected_attempts", [("typed", 1), ("legacy", 2)])
 def test_typed_finalize_gateway_authorization_logs_split_timing(
     caplog: pytest.LogCaptureFixture,
+    record_mode: str,
+    expected_attempts: int,
 ) -> None:
-    store, _db, _ = make_fake_store()
+    store, _db, _ = make_fake_store(request_record_write_mode=record_mode)
     ws = "ws_wrap_timing"
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
@@ -1614,13 +1617,13 @@ def test_typed_finalize_gateway_authorization_logs_split_timing(
     assert f"authorization_id={auth.id}" in message
     assert " spanner_ms=" in message
     assert " index_ms=" in message
-    assert " attempts=1" in message
+    assert f" attempts={expected_attempts}" in message
     assert isinstance(record.args, tuple)
     assert len(record.args) == 4
     assert record.args[0] == auth.id
     assert isinstance(record.args[1], float)
     assert isinstance(record.args[2], float)
-    assert record.args[3] == 1
+    assert record.args[3] == expected_attempts
 
 
 def test_typed_idempotency_lookup_survives_gate_changes() -> None:

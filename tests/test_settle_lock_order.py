@@ -187,9 +187,9 @@ def test_finalize_enabled_outbox_retention_and_evidence_before_credit_and_key(
     batches: list[list[str]] = []
     execute_batch = billing.execute_batch_dml
 
-    def batch(tx: Any, statements: Any, counts: Any) -> None:
+    def batch(tx: Any, statements: Any, counts: Any, **kwargs: Any) -> None:
         batches.append([" ".join(sql.split()).lower() for sql, _, _ in statements])
-        execute_batch(tx, statements, counts)
+        execute_batch(tx, statements, counts, **kwargs)
 
     monkeypatch.setattr(billing, "execute_batch_dml", batch)
     result = finalize()
@@ -197,21 +197,24 @@ def test_finalize_enabled_outbox_retention_and_evidence_before_credit_and_key(
     assert result["outbox_marked"] is True
     statements = transaction_statements(calls)
     [batch_sql] = batches
-    assert len(batch_sql) == 4
-    auth_retention, reservation_retention, generation, activity = batch_sql
+    assert len(batch_sql) == 7
+    claim, typed, done_sql, auth_retention, reservation_retention, generation, activity = batch_sql
+    assert claim.startswith("update tr_reservation set settled=true")
+    assert typed.startswith("update tr_gateway_authorization set settled=true")
+    assert "and reservation_id=@rid" in done_sql
     assert auth_retention.startswith("update tr_gateway_authorization set terminal_at=if(exists")
     assert reservation_retention.startswith("update tr_reservation set terminal_at=if(exists")
     assert all("from tr_settle_outbox" in sql and "not exists" in sql
-               for sql in batch_sql[:2])
+               for sql in batch_sql[3:5])
     assert generation.startswith("insert into tr_generation ")
     assert activity.startswith("insert into tr_operational_analytics_outbox ")
     done = [i for i, sql in enumerate(statements)
             if sql.startswith("update tr_settle_outbox set status=@status")]
-    assert done and all("then return reservation_id" in statements[i] for i in done)
+    assert done and all("then return" not in statements[i] for i in done)
     first_retention = statements.index(auth_retention)
-    # The fake records THEN RETURN at both execute_sql and execute_update.
+    # Done must precede retention within the same batch.
     assert max(done) < first_retention
-    assert statements[first_retention:first_retention + 4] == batch_sql
+    assert statements[first_retention:first_retention + 4] == batch_sql[3:]
     first_credit = next(i for i, sql in enumerate(statements) if "tr_credit_balance" in sql)
     assert first_retention + 3 < first_credit
     # This proves statement order; physical lock acquisition inside a Spanner

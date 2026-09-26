@@ -57,6 +57,7 @@ from trusted_router.storage_gcp_counter_dml import (
     KEY_INSUFFICIENT,
     KEY_MISSING,
     KEY_NO_HOLD,
+    claim_reservation_statement,
     complete_reservation_retention,
     entity_insert_statement,
     read_reservation_by_idempotency,
@@ -72,12 +73,14 @@ from trusted_router.storage_gcp_generation_records import (
 )
 from trusted_router.storage_gcp_io import (
     TXN_BUDGET_SECONDS,
+    remaining_rpc_budget,
     run_in_transaction_with_retry,
     spanner_rpc_budget,
 )
 from trusted_router.storage_gcp_request_records import (
     complete_gateway_authorization_retention,
     gateway_authorization_insert_statement,
+    gateway_authorization_settled_statement,
     mark_gateway_authorization_settled,
     read_gateway_authorization,
     read_gateway_authorization_admission_columns,
@@ -87,6 +90,7 @@ from trusted_router.storage_gcp_settle_outbox import (
     GUARD_COUNT_SQL,
     mark_done_unleased_tx,
     rewrite_frozen_settlement_tx,
+    speculative_done_statements,
 )
 from trusted_router.storage_gcp_stage_d import (
     delivered_usage_charge_microdollars,
@@ -171,6 +175,15 @@ class _RetrySequentialKeyReserve(GoogleAPICallError):
     sending another rollback (even if cleanup failed). A generic exception would
     let the SDK roll back inside the spent request budget and mask this signal.
     """
+
+
+class _RetrySequentialFinalize(GoogleAPICallError):
+    """Discard speculative T3 through protected rollback before rereading S11."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.fallback_reason = reason
+        self.rollback_started = time.monotonic()
 
 
 EXHAUSTED = "exhausted"
@@ -1578,6 +1591,7 @@ def _reap_datetime(value: Any) -> datetime:
     return parsed.astimezone(UTC)
 
 
+@spanner_rpc_budget(TXN_BUDGET_SECONDS)
 def typed_finalize_atomic(
     database: Any,
     param_types: Any,
@@ -1640,27 +1654,95 @@ def typed_finalize_atomic(
         _outbox_table_available(database, pt) if outbox_available is None else outbox_available
     )
 
+    # Corrective lease rewrites retain their original ordering/fence. Known
+    # legacy inputs and custom outbox callbacks also keep the sequential path.
+    speculate = (
+        authorization is not None
+        and settle_outbox_rewrite is None
+        and (operational_analytics_outbox is None or callable(
+            getattr(operational_analytics_outbox, "activity_insert_statement", None)
+        ))
+    )
+    activity_durable = generation is None or operational_analytics_outbox is not None
+    mark_done = (
+        settle_outbox_done is not None and resolved_outbox_available and activity_durable
+    )
+    attempts = 0
+    eligible_attempts = 0
+    fallback_reason = "none"
+    rollback_ms = 0.0
+    fallback_outcome = "not_attempted"
+
+    def speculative_batch(transaction: Any, *, include_claim: bool) -> None:
+        nonlocal eligible_attempts
+        eligible_attempts += 1
+        assert authorization is not None
+        statements = []
+        reasons = []
+        if include_claim:
+            statements.append(claim_reservation_statement(
+                pt, reservation_id, actual_micro=book_actual,
+                settled_usage_type=settled_usage_type, terminal_at=now,
+                defer_retention=True, outbox_available=resolved_outbox_available,
+            ))
+            reasons.append("claim_zero")
+        statements.append(gateway_authorization_settled_statement(pt, authorization))
+        reasons.append("typed_zero")
+        counts: list[tuple[int, ...]] = [(1,)] * len(statements)
+        if mark_done:
+            assert settle_outbox_done is not None
+            done = speculative_done_statements(
+                pt, authorization_id=settle_outbox_done[0], intent_kind=settle_outbox_done[1],
+                reservation_id=reservation_id,
+            )
+            statements.extend(done)
+            counts.extend([(1,), *[(0, 1)] * (len(done) - 1)])
+            reasons.append("done_zero")
+        if success and generation is not None:
+            if persist_generation_record:
+                statements.append(generation_insert_statement(pt, generation, terminal_at=now))
+                counts.append((1,))
+            if operational_analytics_outbox is not None:
+                # PENDING_COMMIT_TIMESTAMP is the last analytics access.
+                statements.append(operational_analytics_outbox.activity_insert_statement(generation))
+                counts.append((1,))
+
+        def check_prefix(row_counts: Sequence[int]) -> None:
+            for count, reason in zip(row_counts, reasons, strict=False):
+                if count == 0:
+                    raise _RetrySequentialFinalize(reason)
+                if count != 1:
+                    # A malformed earlier count cannot authorize a later fallback.
+                    break
+
+        execute_batch_dml(transaction, statements, counts, check_prefix=check_prefix)
+
     def txn(transaction: Any) -> dict:
+        nonlocal attempts
+        attempts += 1
         res = read_reservation(transaction, pt, reservation_id)
         if res is None:
             return {"outcome": SettleOutcome.NOT_FOUND}
-        won = claim_reservation(
-            transaction,
-            pt,
-            reservation_id,
-            actual_micro=book_actual,
-            settled_usage_type=settled_usage_type,
-            terminal_at=now,
-            defer_retention=True,
-            outbox_available=resolved_outbox_available,
-        )
-        if not won:
-            return {
-                "outcome": SettleOutcome.ALREADY_SETTLED,
-                "regional_terminal_zero": (
-                    finalize_regional_hold is not None and res.get("actual_micro") == 0
-                ),
-            }
+        if speculate and finalize_regional_hold is None:
+            speculative_batch(transaction, include_claim=True)
+        else:
+            won = claim_reservation(
+                transaction,
+                pt,
+                reservation_id,
+                actual_micro=book_actual,
+                settled_usage_type=settled_usage_type,
+                terminal_at=now,
+                defer_retention=True,
+                outbox_available=resolved_outbox_available,
+            )
+            if not won:
+                return {
+                    "outcome": SettleOutcome.ALREADY_SETTLED,
+                    "regional_terminal_zero": (
+                        finalize_regional_hold is not None and res.get("actual_micro") == 0
+                    ),
+                }
 
         # Resolve the terminal winner BEFORE any external local CAS. The
         # reservation claim serializes us with the reaper; a durable frozen
@@ -1724,76 +1806,81 @@ def typed_finalize_atomic(
                 now=now,
             )
 
-        marked = 0
-        request_record_typed = False
-        if authorization is not None:
-            marked = mark_gateway_authorization_settled(
-                transaction,
-                pt,
-                authorization,
-            )
-            request_record_typed = marked == 1
-        if not request_record_typed:
-            if success:
-                for kind, entity_id, body_json in writes:
-                    insert_entity_dml_at(
-                        transaction,
-                        pt,
-                        kind,
-                        entity_id,
-                        body_json,
-                        now,
-                    )
-            marked = update_entity_body_dml(
-                transaction,
-                pt,
-                "gateway_authorization",
-                authorization_id,
-                auth_body_settled,
-                now,
-            )
-            complete_reservation_retention(
-                transaction,
-                pt,
-                reservation_id,
-                terminal_at=now,
-                outbox_available=resolved_outbox_available,
-            )
-        activity_durable = generation is None or operational_analytics_outbox is not None
-        outbox_marked: bool | None = None
-        final_writes: list[DmlStatement] = []
-        final_counts: list[tuple[int, ...]] = []
-        if settle_outbox_done is not None and resolved_outbox_available and activity_durable:
-            # Same commit as the charge: no post-finalize window in which a
-            # crash leaves an already-charged authorization pending, and one
-            # fewer multi-region round trip per settle. A leased row is left
-            # to its drain worker (False), exactly as the standalone mark did.
-            outbox_marked = mark_done_unleased_tx(
-                transaction, pt, authorization_id=settle_outbox_done[0],
-                intent_kind=settle_outbox_done[1], retention_statements=final_writes,
-            )
-            final_counts.extend([(0, 1)] * len(final_writes))
-        if success and generation is not None:
-            if persist_generation_record:
-                final_writes.append(generation_insert_statement(pt, generation, terminal_at=now))
-                final_counts.append((1,))
-            if operational_analytics_outbox is not None:
-                # Preserve rolling/custom outbox implementations without the
-                # statement-building API. Flush in the original write order.
-                builder = getattr(operational_analytics_outbox, "activity_insert_statement", None)
-                if builder is not None:
-                    final_writes.append(builder(generation))
+        if speculate:
+            if finalize_regional_hold is not None:
+                speculative_batch(transaction, include_claim=False)
+            request_record_typed = True
+            outbox_marked: bool | None = True if mark_done else None
+        else:
+            marked = 0
+            request_record_typed = False
+            if authorization is not None:
+                marked = mark_gateway_authorization_settled(
+                    transaction,
+                    pt,
+                    authorization,
+                )
+                request_record_typed = marked == 1
+            if not request_record_typed:
+                if success:
+                    for kind, entity_id, body_json in writes:
+                        insert_entity_dml_at(
+                            transaction,
+                            pt,
+                            kind,
+                            entity_id,
+                            body_json,
+                            now,
+                        )
+                marked = update_entity_body_dml(
+                    transaction,
+                    pt,
+                    "gateway_authorization",
+                    authorization_id,
+                    auth_body_settled,
+                    now,
+                )
+                complete_reservation_retention(
+                    transaction,
+                    pt,
+                    reservation_id,
+                    terminal_at=now,
+                    outbox_available=resolved_outbox_available,
+                )
+            outbox_marked = None
+            final_writes: list[DmlStatement] = []
+            final_counts: list[tuple[int, ...]] = []
+            if settle_outbox_done is not None and resolved_outbox_available and activity_durable:
+                # Same commit as the charge: no post-finalize window in which a
+                # crash leaves an already-charged authorization pending, and one
+                # fewer multi-region round trip per settle. A leased row is left
+                # to its drain worker (False), exactly as the standalone mark did.
+                outbox_marked = mark_done_unleased_tx(
+                    transaction, pt, authorization_id=settle_outbox_done[0],
+                    intent_kind=settle_outbox_done[1], retention_statements=final_writes,
+                )
+                final_counts.extend([(0, 1)] * len(final_writes))
+            if success and generation is not None:
+                if persist_generation_record:
+                    final_writes.append(generation_insert_statement(pt, generation, terminal_at=now))
                     final_counts.append((1,))
-                else:
-                    if final_writes:
-                        execute_batch_dml(transaction, final_writes, final_counts)
-                        final_writes.clear()
-                        final_counts.clear()
-                    operational_analytics_outbox.enqueue_activity_tx(transaction, generation)
-        if final_writes:
-            execute_batch_dml(transaction, final_writes, final_counts)
-        if marked != 1:
-            raise _SettleError("gateway_authorization update row-count != 1")
+                if operational_analytics_outbox is not None:
+                    # Preserve rolling/custom outbox implementations without the
+                    # statement-building API. Flush in the original write order.
+                    builder = getattr(operational_analytics_outbox, "activity_insert_statement", None)
+                    if builder is not None:
+                        final_writes.append(builder(generation))
+                        final_counts.append((1,))
+                    else:
+                        if final_writes:
+                            execute_batch_dml(transaction, final_writes, final_counts)
+                            final_writes.clear()
+                            final_counts.clear()
+                        operational_analytics_outbox.enqueue_activity_tx(transaction, generation)
+            if final_writes:
+                execute_batch_dml(transaction, final_writes, final_counts)
+            if marked != 1:
+                raise _SettleError("gateway_authorization update row-count != 1")
 
         # Hot-row releases LAST, in the SAME transaction (never split: separating
         # claim_reservation(settled=true) from these releases opens a crash
@@ -1864,20 +1951,47 @@ def typed_finalize_atomic(
             "outbox_marked": outbox_marked,
         }
 
-    try:
-        attempts_box: list[int] = []
-        result = run_in_transaction_with_retry(
-            database,
-            txn,
-            attempts_out=attempts_box,
+    def run() -> dict:
+        return run_in_transaction_with_retry(
+            database, txn,
             transaction_tag="tr_finalize" if success else "tr_refund_finalize",
             also_retry=(_RegionalWindowAdvanced,),
         )
-        result["attempts"] = attempts_box[0] if attempts_box else 1
+
+    try:
+        try:
+            result = run()
+        except _RetrySequentialFinalize as exc:
+            # The runner has completed protected rollback and discarded T3.
+            # Never carry S11 across this boundary: deletion can legitimately
+            # change ALREADY_SETTLED into NOT_FOUND on the fresh observation.
+            rollback_ms = (time.monotonic() - exc.rollback_started) * 1000
+            fallback_reason = exc.fallback_reason
+            speculate = False
+            fallback_outcome = "exception"
+            result = run()
+            fallback_outcome = result["outcome"]
+        result["attempts"] = attempts
         _log_missing_key_releases(result)
         return result
     except _SettleError:
+        if fallback_reason != "none":
+            fallback_outcome = SettleOutcome.ERROR
         return {"outcome": SettleOutcome.ERROR}
+    finally:
+        if eligible_attempts:
+            from google.api_core.exceptions import DeadlineExceeded
+
+            try:
+                remaining_ms = remaining_rpc_budget(TXN_BUDGET_SECONDS) * 1000
+            except DeadlineExceeded:
+                remaining_ms = 0.0
+            log.info(
+                "typed finalize speculation timing eligible_attempts=%d attempts=%d "
+                "fallback_reason=%s rollback_ms=%.1f remaining_ms=%.1f fallback_outcome=%s",
+                eligible_attempts, attempts, fallback_reason, rollback_ms,
+                remaining_ms, fallback_outcome,
+            )
 
 
 def _apply_user_model_payout_tx(
