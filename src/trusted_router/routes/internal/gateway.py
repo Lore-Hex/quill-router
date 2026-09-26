@@ -30,6 +30,7 @@ from fastapi import APIRouter, BackgroundTasks, Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
+from trusted_router import catalog as model_catalog
 from trusted_router.acquisition import (
     record_free_credit_exhausted_safely,
     record_successful_api_call_safely,
@@ -58,7 +59,6 @@ from trusted_router.catalog import (
     effective_endpoint,
     endpoint_for_id,
     endpoint_zero_data_retention,
-    endpoints_for_model,
 )
 from trusted_router.client_context import parse_client_context, parse_gateway_request_id
 from trusted_router.config import Settings, get_settings
@@ -131,6 +131,7 @@ from trusted_router.request_tags import InvalidTags, merge_tags, tags_match, val
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.routing import (
     NormalizedRoutingInputs,
+    _apply_endpoint_provider_filters,
     canonical_model_id,
     chat_route_endpoint_candidates,
     decide_route_endpoint_candidates,
@@ -1154,6 +1155,7 @@ def _authorize_gateway_sync_impl(
                 f"Provider filters exclude every supported host for {route_model_id}",
                 ErrorType.BAD_REQUEST,
             )
+    effective_route_preferences = route_preferences
     if user_model is not None:
         if is_image_request:
             raise api_error(
@@ -1179,10 +1181,12 @@ def _authorize_gateway_sync_impl(
             defer_no_fallback_selection=True,
         )
     elif is_decide_request:
-        endpoint_candidates = decide_route_endpoint_candidates(
+        resolved_candidates = decide_route_endpoint_candidates(
             normalized_routing,
             defer_no_fallback_selection=True,
         )
+        effective_route_preferences = resolved_candidates.effective_preferences
+        endpoint_candidates = resolved_candidates
     elif is_embeddings_request:
         endpoint_candidates = embeddings_route_endpoint_candidates(
             normalized_routing,
@@ -1191,10 +1195,12 @@ def _authorize_gateway_sync_impl(
         if not endpoint_candidates:
             raise api_error(400, "Model does not support embeddings", ErrorType.MODEL_NOT_SUPPORTED)
     else:
-        endpoint_candidates = chat_route_endpoint_candidates(
+        resolved_candidates = chat_route_endpoint_candidates(
             normalized_routing,
             defer_no_fallback_selection=True,
         )
+        effective_route_preferences = resolved_candidates.effective_preferences
+        endpoint_candidates = resolved_candidates
         if not endpoint_candidates:
             raise api_error(
                 400, "Model does not support chat completions", ErrorType.MODEL_NOT_SUPPORTED
@@ -1224,28 +1230,23 @@ def _authorize_gateway_sync_impl(
             key=lambda candidate: chain_rank[candidate[1].provider],
         )
         if not endpoint_candidates:
-            # Two different situations end here. If a pinned host is in the
-            # catalog and reachable from this region but the REQUEST's own
-            # routing filters (BYOK-only billing without a key, a privacy
-            # posture the host cannot meet, a jurisdiction, ...) removed it,
-            # the chain's fixed hosts cannot satisfy the request and a retry
-            # cannot change that: answer 400 like every other filter
-            # conflict, and log it as a client conflict. Only when no pinned
-            # host is available at all is this a retryable outage. Answering
-            # 503 for the first case made one new workspace's eighteen
-            # requests page "TR Gateway: billing path 5xx" on 2026-09-25.
-            pinned_hosts_available = any(
-                candidate_endpoint.provider in chain_rank
+            # Establish request compatibility independently of availability.
+            # endpoints_for_model drops expired/retired routes, so use the
+            # catalog entries (at effective prices) before those exclusions.
+            # An available but request-excluded host says nothing about a
+            # compatible host's outage. BYOK is never part of a named chain.
+            pinned_credit_candidates = [
+                (MODELS[candidate_endpoint.model_id], effective_endpoint(candidate_endpoint))
+                for candidate_endpoint in model_catalog.MODEL_ENDPOINTS.values()
+                if candidate_endpoint.model_id in normalized_routing.model_ids
+                and candidate_endpoint.provider in chain_rank
                 and not candidate_endpoint.is_byok
-                and provider_model_available_from_gateway_region(
-                    candidate_endpoint.provider,
-                    candidate_endpoint.model_id,
-                    region,
-                )
-                for model_id in normalized_routing.model_ids
-                for candidate_endpoint in endpoints_for_model(model_id)
-            )
-            if pinned_hosts_available:
+            ]
+            # Reuse relaxation over the resolver's full backing candidates;
+            # recomputing it over just pinned hosts would broaden the policy.
+            if pinned_credit_candidates and not _apply_endpoint_provider_filters(
+                pinned_credit_candidates, effective_route_preferences
+            ):
                 logger.info(
                     "billing.authorize_named_chain_filtered_by_request workspace_id=%s "
                     "request_id=%s model=%s region=%s",
