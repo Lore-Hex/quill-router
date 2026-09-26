@@ -1,8 +1,8 @@
-"""Checked batch DML for independent statements in a read-write transaction."""
+"""Checked, ordered batch DML in a read-write transaction."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from google.api_core.exceptions import Aborted, FailedPrecondition, from_grpc_status
@@ -32,12 +32,17 @@ def execute_batch_dml(
     transaction: Any,
     statements: Sequence[DmlStatement],
     expected_counts: Sequence[tuple[int, ...]],
+    *,
+    check_prefix: Callable[[Sequence[int]], None] | None = None,
 ) -> None:
     """Raise before commit on a failed statement or unexpected affected-row count.
 
     Batch DML returns errors in its status, unlike execute_update. Convert these
     to the same API exceptions so ABORTED retries and ALREADY_EXISTS replay work.
     Retention clears allow 0 (absent/already clear) or 1; INSERTs require 1.
+    check_prefix may raise a business fallback on a successfully executed prefix,
+    even if a later speculative statement failed. ABORTED always takes precedence;
+    otherwise status and exact counts must still pass before this helper returns.
     """
     if len(statements) != len(expected_counts):
         raise ValueError("Each batch statement requires a row-count contract")
@@ -48,6 +53,8 @@ def execute_batch_dml(
         raise Aborted(
             status.message, errors=(_BatchDmlAbortCause(status),), details=tuple(status.details),
         )
+    if check_prefix is not None:
+        check_prefix(row_counts)
     if status.code != 0:
         raise from_grpc_status(status.code, status.message, details=tuple(status.details))
     if len(row_counts) != len(statements) or any(

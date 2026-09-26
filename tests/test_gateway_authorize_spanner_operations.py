@@ -349,9 +349,9 @@ def test_fresh_typed_gateway_authorize_has_exact_sequential_spanner_operation_co
     assert response["data"]["authorization_id"]
     # Representative steady-state fresh request: the workspace's observed-empty
     # broadcast cache is warm, while this idempotency key and authorization are new.
-    # Eight operations for the fixed single-provider prepaid/BYOK catalog.
+    # Seven SQL/batch calls (previously eight) for this fixed prepaid/BYOK catalog.
     # Armed authorization adds one selected-shard pause/epoch read.
-    assert operation_count == 8 + int(armed)
+    assert operation_count == 7 + int(armed)
 
 
 def test_broadcast_empty_results_are_cached_until_ttl(
@@ -486,11 +486,12 @@ def test_warm_lookup_authorize_exact_sequence_and_contents(
     database.snapshot_calls.clear()
     response = gateway._authorize_gateway_sync(_request(), _lookup_body(key), settings)["data"]
     operations = spanner_operations
-    # Previously: 3 metadata + 4 BYOK candidate/alias reads + 5/6 T1 SQL + commit = 13/14.
-    assert len(operations) == 7 + int(armed)
+    # Warm lookup: 2 metadata reads + idempotency + credit + batch + commit.
+    # Trust adds its selected-shard read; pre-6a had one extra key RPC.
+    assert len(operations) == 6 + int(armed)
     assert operations[-2][0] == "T1 BATCH"
     batch = operations[-2][2]["statements"]
-    assert len(batch) == 2
+    assert len(batch) == 3
     assert all(set(params) == set(types) for _, params, types in batch)
     # Expand only for the existing statement/parameter assertions below.
     operations = [*operations[:-2], *[
