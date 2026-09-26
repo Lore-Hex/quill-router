@@ -3504,9 +3504,8 @@ def test_fresh_regional_settle_round_trip_order(
     assert data["disposition"] == "finalized"
     expected = [
         ("ro", "SELECT", "tr_gateway_authorization"),
-        ("t1", "INSERT", "tr_settle_outbox"),
-        ("t1", "UPDATE", "tr_gateway_authorization"),
-        ("t1", "UPDATE", "tr_reservation"),
+        # S2-S4 (intent INSERT and both retention clears) are one batch (#1340).
+        ("t1", "BATCH", ""),
         ("t1", "COMMIT", ""),
         *([("ro", "SELECT", "tr_gateway_authorization")] if reread else []),
         ("ro", "SELECT", "tr_settle_outbox"),
@@ -3536,7 +3535,8 @@ def test_fresh_regional_settle_round_trip_order(
         table = re.search(r"(?:FROM|INTO|UPDATE) (tr_\w+)", sql)
         observed.append((phase, sql.split()[0], table[1] if table else ""))
     assert observed == expected
-    assert len(observed) == 20 + int(reread)
+    # 18 with the snapshot: S2-S4 are one batch since #1340; the re-read adds one.
+    assert len(observed) == 18 + int(reread)
     local = store._regional_quota_ledger.get(auth.regional_lease_id, region=auth.region)
     assert local.spent_microdollars == data["cost_microdollars"]
     assert db.reservations[auth.credit_reservation_id]["actual_micro"] == data["cost_microdollars"]
