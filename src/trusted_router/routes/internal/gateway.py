@@ -100,6 +100,7 @@ from trusted_router.partner_billing import (
 from trusted_router.polyphemus import LEGACY_SELECTOR_FEE_MICRODOLLARS
 from trusted_router.polyphemus import MODEL_ID as POLYPHEMUS_MODEL_ID
 from trusted_router.polyphemus import SELECT_ROUTE_TYPE as POLYPHEMUS_SELECT_ROUTE_TYPE
+from trusted_router.post_commit import defer_post_commit
 from trusted_router.pricing import (
     SIGNED_RECEIPT_TOTAL_FEE_BASIS_POINTS,
     signed_receipt_price_microdollars,
@@ -2488,11 +2489,14 @@ def register(router: APIRouter) -> None:
     #
     # These share AnyIO's default worker pool (40 tokens) with FastAPI's other
     # sync dependencies — deliberately, NOT a dedicated CapacityLimiter. Cloud
-    # Run runs this service at --concurrency=2 (rollout.sh), so at most ~2
+    # Run defaults to concurrency 8 (scripts/deploy/_lib.sh; also explicitly
+    # set in scripts/deploy/internal_surface.sh), so at most ~8 request
     # offloads are ever in flight per instance (far under 40); load scales out
     # across instances, not up per-instance, and prod inference never touches
     # this service (it goes through the enclave). Give gateway storage its own
     # limiter only if TR_CLOUD_RUN_CONCURRENCY is raised toward the pool size.
+    # Optional post-reply mirrors use their own bounded executor because
+    # completed replies no longer consume Cloud Run request slots.
     @router.post("/internal/gateway/validate")
     async def gateway_validate(
         request: Request,
@@ -3641,6 +3645,21 @@ def _report_route_fallbacks(body: GatewaySettleRequest) -> None:
         logger.warning("route fallback sentry report failed", exc_info=True)
 
 
+def _record_refund_benchmark_safely(
+    sample: ProviderBenchmarkSample, authorization_id: str,
+) -> None:
+    try:
+        STORE.record_provider_benchmark(sample)
+    except Exception:
+        # Money is already committed. Observability cannot change the response
+        # or stop later background tasks. Storage retains its RPC deadlines.
+        logger.warning(
+            "provider benchmark write failed after refund finalize authorization_id=%s",
+            authorization_id,
+            exc_info=True,
+        )
+
+
 @spanner_rpc_budget(_BILLING_PATH_SPANNER_BUDGET_SECONDS)
 def _settle_gateway_with_admission_sync(
     body: GatewaySettleRequest,
@@ -4257,6 +4276,10 @@ def _settle_gateway_authorization(
                         user_model_payout=user_model_payout,
                         app_markup_payout=app_markup_payout,
                         custom_model_markup_payout=custom_model_markup_payout,
+                        defer_post_commit=(
+                            functools.partial(defer_post_commit, background_tasks)
+                            if background_tasks is not None else None
+                        ),
                         # Resolve the durable intent in the finalize commit
                         # itself (docs/design/durable-settle-outbox.md §7).
                         settle_outbox_done=(
@@ -4491,6 +4514,9 @@ def _settle_gateway_authorization(
                 settings=settings,
             )
     if success and generation is not None:
+        # Keep S27 before the reply: successful enqueue is durable today and
+        # there is no durable replay intent for a skipped broadcast enqueue.
+        # Moving this to BackgroundTasks would lose jobs on process restart.
         # Customers' webhooks must not gain a new object silently: the
         # correlation id is useful to them, the client telemetry object is not.
         broadcast_settle_body = dict(settle_body)
@@ -4522,24 +4548,26 @@ def _settle_gateway_authorization(
             drain_broadcast_queue(settings=settings)
     if not success and not _is_synthetic_settlement(body, authorization):
         try:
-            STORE.record_provider_benchmark(
-                ProviderBenchmarkSample.from_provider_error(
-                    model=model,
-                    provider_name=PROVIDERS[selected_endpoint.provider].name,
-                    input_tokens=input_tokens,
-                    elapsed_seconds=float(body.elapsed_seconds or 0.001),
-                    streamed=body.streamed,
-                    usage_type=selected_usage_type,
-                    error_status=body.error_status or 502,
-                    error_type=body.error_type or "provider_error",
-                    region=authorization.region,
-                    provider=selected_endpoint.provider,
-                    workspace_id=authorization.workspace_id,
-                )
+            benchmark = ProviderBenchmarkSample.from_provider_error(
+                model=model,
+                provider_name=PROVIDERS[selected_endpoint.provider].name,
+                input_tokens=input_tokens,
+                elapsed_seconds=float(body.elapsed_seconds or 0.001),
+                streamed=body.streamed,
+                usage_type=selected_usage_type,
+                error_status=body.error_status or 502,
+                error_type=body.error_type or "provider_error",
+                region=authorization.region,
+                provider=selected_endpoint.provider,
+                workspace_id=authorization.workspace_id,
             )
+            if background_tasks is not None:
+                defer_post_commit(
+                    background_tasks, _record_refund_benchmark_safely, benchmark, authorization.id,
+                )
+            else:
+                _record_refund_benchmark_safely(benchmark, authorization.id)
         except Exception:
-            # Money is already committed. Observability must not turn the
-            # finalized disposition into a retryable transport failure.
             logger.warning(
                 "provider benchmark write failed after refund finalize "
                 "authorization_id=%s",

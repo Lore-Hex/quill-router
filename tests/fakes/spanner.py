@@ -213,6 +213,7 @@ class FakeSpannerDatabase:
         # Metadata-only typed generation records and durable ClickHouse handoff.
         self.generation_records: dict[str, dict] = {}
         self.operational_analytics_outbox: list[dict] = []
+        self.analytics_outbox: list[dict] = []
         # tr_settle_outbox: PK (authorization_id, intent_kind) -> {column: value}.
         self.settle_outbox: dict[tuple, dict] = {}
         self.settle_outbox_versions: dict[tuple, int] = {}
@@ -461,6 +462,8 @@ class FakeSpannerDatabase:
                     self.generation_records[generation_id] = record
                 elif op[0] == "insert_operational_analytics_outbox":
                     self.operational_analytics_outbox.append(dict(op[1]))
+                elif op[0] == "insert_analytics_outbox":
+                    self.analytics_outbox.append(dict(op[1]))
                 elif op[0] == "insert_entity_dml":  # DML INSERT into tr_entities
                     _, kind, entity_id, body = op
                     self.rows[(kind, entity_id)] = _Row(body=body, version=new_version)
@@ -1693,6 +1696,9 @@ class _FakeTransaction:
         if sql.startswith("INSERT OR UPDATE INTO tr_generation"):
             generation_id = str(p["generation_id"])
             self.pending_writes.append(("upsert_generation", generation_id, dict(p)))
+            return 1
+        if sql.startswith("INSERT INTO tr_analytics_outbox"):
+            self.pending_writes.append(("insert_analytics_outbox", dict(p)))
             return 1
         if sql.startswith("INSERT INTO tr_operational_analytics_outbox"):
             self.pending_writes.append(
