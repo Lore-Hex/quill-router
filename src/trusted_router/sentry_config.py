@@ -66,6 +66,7 @@ SENSITIVE_STRING_FRAGMENTS: tuple[str, ...] = (
     "wandb_api_key",
     "nscale_api_key",
     "regolo_api_key",
+    "privatemode_api_key",
     "confidential_ai_api_key",
     "cohere_api_key",
 )

@@ -15,7 +15,7 @@ import threading
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
-from time import monotonic
+from time import monotonic, sleep
 from typing import Any, Protocol
 
 from trusted_router.services.regional_quota_leases import (
@@ -24,6 +24,7 @@ from trusted_router.services.regional_quota_leases import (
     QuotaLeaseHold,
     RegionalQuotaLease,
 )
+from trusted_router.storage_gcp_io import remaining_rpc_budget
 
 _FAMILY = "lease"
 _STATE_COLUMN = b"state"
@@ -466,7 +467,7 @@ class BigtableRegionalQuotaLedger:
         table = self._table(region)
         row_key = _row_key_for(region, lease_id)
         last_error: Exception | None = None
-        deadline = monotonic() + self._operation_timeout_seconds
+        deadline = monotonic() + remaining_rpc_budget(self._operation_timeout_seconds)
         for _attempt in range(_MAX_CAS_ATTEMPTS):
             remaining = deadline - monotonic()
             if remaining <= 0:
@@ -518,24 +519,31 @@ class BigtableRegionalQuotaLedger:
         filter_: Any,
         timeout_seconds: float | None = None,
     ) -> Any:
-        # PartialRowsData adds one second to the Retry deadline when creating
-        # the streaming RPC. Subtract that padding so a transient Bigtable
-        # failure cannot consume the gateway's 25-second request budget.
-        operation_budget = min(
+        operation_budget = remaining_rpc_budget(min(
             self._operation_timeout_seconds,
             timeout_seconds if timeout_seconds is not None else self._operation_timeout_seconds,
-        )
-        if operation_budget < _MIN_BIGTABLE_READ_BUDGET_SECONDS:
-            raise TimeoutError("regional ledger read budget exhausted")
-        retry_deadline = max(
-            0.05,
-            operation_budget - _BIGTABLE_READ_TIMEOUT_PADDING_SECONDS,
-        )
-        return table.read_row(
-            row_key,
-            filter_=filter_,
-            retry=self._default_read_retry.with_deadline(retry_deadline),
-        )
+        ))
+        deadline = monotonic() + operation_budget
+        delay = 0.05
+        while True:
+            remaining = remaining_rpc_budget(deadline - monotonic())
+            if remaining < _MIN_BIGTABLE_READ_BUDGET_SECONDS:
+                raise TimeoutError("regional ledger read budget exhausted")
+            # PartialRowsData pads the first RPC timeout by one second, but
+            # restarts streams without any timeout. Disable both its retries
+            # and GAPIC retries; retry the complete single-row read here so
+            # every new stream and backoff shares this absolute deadline.
+            retry = self._default_read_retry.with_deadline(
+                remaining - _BIGTABLE_READ_TIMEOUT_PADDING_SECONDS,
+            ).with_predicate(lambda exc: False)
+            try:
+                return table.read_row(row_key, filter_=filter_, retry=retry)
+            except Exception as exc:
+                if not self._default_read_retry._predicate(exc):
+                    raise
+                remaining = remaining_rpc_budget(deadline - monotonic())
+                sleep(min(delay, remaining))
+                delay = min(delay * 2, 1.0)
 
     @staticmethod
     def _commit_conditional_row(row: Any, *, timeout_seconds: float) -> bool:
@@ -548,6 +556,7 @@ class BigtableRegionalQuotaLedger:
         keep using their ordinary commit implementation.
         """
 
+        timeout_seconds = remaining_rpc_budget(timeout_seconds)
         table = getattr(row, "_table", None)
         if table is None:
             return bool(row.commit())
@@ -561,7 +570,7 @@ class BigtableRegionalQuotaLedger:
             app_profile_id=table._app_profile_id,
             true_mutations=true_mutations,
             false_mutations=false_mutations,
-            timeout=max(0.05, timeout_seconds),
+            timeout=timeout_seconds,
         )
         row.clear()
         return bool(response.predicate_matched)

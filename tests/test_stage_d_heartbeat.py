@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import replace
+import re
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -12,9 +13,17 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import HTTPException
 from starlette.requests import Request
 
-from tests.fakes.spanner import FakeSpannerDatabase, _ParamTypes, make_fake_store
+from tests.fakes.spanner import (
+    FakeSpannerDatabase,
+    _evaluate_authorization_json,
+    _ParamTypes,
+    _validate_json_arguments,
+    make_fake_store,
+)
+from tests.fixtures.stage_d.storage_codec_5832dd29 import json_body as parent_json_body
 from trusted_router import storage_gcp_authorize as authorize_mod
 from trusted_router import storage_gcp_counter_dml as counter_dml
+from trusted_router import storage_gcp_request_records as request_records
 from trusted_router.app_markup_billing import (
     app_markup_microdollars,
     app_markup_microdollars_from_charge,
@@ -41,9 +50,13 @@ from trusted_router.storage_gcp_authorize import (
 from trusted_router.storage_gcp_codec import json_body
 from trusted_router.storage_gcp_counter_dml import insert_reservation
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
-from trusted_router.storage_gcp_request_records import insert_gateway_authorization
+from trusted_router.storage_gcp_request_records import (
+    insert_gateway_authorization,
+    mark_gateway_authorization_settled,
+    read_gateway_authorization,
+)
 from trusted_router.storage_gcp_stage_d import HeartbeatResult, heartbeat_gateway_atomic
-from trusted_router.storage_models import GatewayAuthorization
+from trusted_router.storage_models import GatewayAuthorization, Generation
 from trusted_router.types import UsageType
 
 FIXTURES = Path(__file__).parent / "fixtures" / "stage_d"
@@ -1160,3 +1173,318 @@ def test_reaper_flag_defaults_off_and_rollout_pins_it_on() -> None:
     rollout = (Path(__file__).parents[1] / "scripts" / "deploy" / "rollout.sh").read_text()
     assert '"TR_REAP_SNAPSHOT_BOOKING_ENABLED=true"' in rollout
     assert '"TR_REAP_SNAPSHOT_BOOKING_ENABLED=false"' not in rollout
+
+
+@pytest.mark.parametrize("storage", ["typed", "payload_only", "mixed", "null", "partial"])
+@pytest.mark.parametrize("use_snapshot", [True, False])
+@pytest.mark.parametrize("microseconds", [0, 123456])
+def test_finalize_preserves_heartbeat_committed_after_s1(
+    storage: str, microseconds: int, use_snapshot: bool,
+) -> None:
+    # Independent list: dropping any one field from the SQL must fail this test.
+    fields = ("heartbeat_seq", "heartbeat_at", "heartbeat_hash", "started_at",
+              "selected_endpoint_id", "delivered_usage")
+    store, db, _table = make_fake_store(request_record_write_mode="typed")
+    _db, initial = _seed(database=db)
+    _seed_reaper_counters(db)
+    snapshot = store.get_gateway_authorization(initial.id)  # S1
+    assert snapshot is not None and snapshot.heartbeat_seq == 0
+    started_at = NOW.replace(microsecond=microseconds)
+    if storage != "null":
+        assert _heartbeat(db, started_at=started_at).accepted  # commits before T3
+    if storage == "partial":
+        # A rolling row with only some heartbeat facts populated.
+        row = db.gateway_authorizations[initial.id]
+        payload = json.loads(row["payload"])
+        for field in ("heartbeat_at", "heartbeat_hash", "delivered_usage"):
+            row[field] = None
+            payload.pop(field, None)
+        row["payload"] = json.dumps(payload)
+    current = store.get_gateway_authorization(initial.id)
+    assert current is not None
+    expected = {field: getattr(current, field) for field in fields}
+    assert expected["heartbeat_seq"] == (0 if storage == "null" else 1)
+    if storage in {"payload_only", "mixed"}:
+        # Rolling revisions may have NULL typed columns. Their CURRENT
+        # payload, not S1's payload, supplies those values to a strong read.
+        row = db.gateway_authorizations[initial.id]
+        payload = json.loads(row["payload"])
+        for index, field in enumerate(fields):
+            if storage == "payload_only" or index % 2 == 0:
+                payload[field] = expected[field]
+                row[field] = None
+        row["payload"] = json.dumps(payload)
+    generation = Generation(
+        id="gen-heartbeat-race", request_id="req-heartbeat-race",
+        gateway_request_id="trace-heartbeat-race", workspace_id="workspace",
+        key_hash="key", model="model", provider_name="anthropic", app="",
+        tokens_prompt=100, tokens_completion=10, total_cost_microdollars=100,
+        usage_type=UsageType.CREDITS, speed_tokens_per_second=1,
+        finish_reason="stop", status="success", streamed=True,
+        created_at=NOW.isoformat(),
+    )
+    # The old finalize serialized the strong-read dataclass with json_body.
+    # Freeze that serializer, and compute the oracle BEFORE running new SQL.
+    expected_authorization = replace(current)
+    expected_authorization.record_finalization(
+        success=True, actual_microdollars=100,
+        selected_usage_type=UsageType.CREDITS, generation=generation,
+    )
+    expected_payload = json.loads(parent_json_body(expected_authorization))
+    result = store.typed_finalize_gateway_authorization_result(
+        initial.id, success=True, actual_microdollars=100,
+        selected_usage_type=UsageType.CREDITS, generation=generation,
+        **({"authorization_snapshot": snapshot} if use_snapshot else {}),
+    )
+    assert result.finalized
+    finalized_payload = json.loads(db.gateway_authorizations[initial.id]["payload"])
+    assert finalized_payload.keys() == expected_payload.keys()
+    assert finalized_payload == expected_payload
+    assert db.gateway_authorizations[initial.id]["payload"] == parent_json_body(expected_authorization)
+    with db.snapshot() as reader:
+        direct = read_gateway_authorization(reader, _ParamTypes, initial.id)
+    # Both strong merged store APIs (authorization and indexed evidence)
+    # must expose the same facts as the raw payload and direct typed reader.
+    reads = (direct, store.get_gateway_authorization(initial.id),
+             store.get_gateway_authorization_by_gateway_request_id("trace-heartbeat-race"))
+    for read in reads:
+        assert read is not None
+        assert {field: getattr(read, field) for field in fields} == expected
+        assert read.settled and read.finalized_cost_microdollars == 100
+    assert snapshot.heartbeat_seq == 0 and not snapshot.settled
+    # Both entry paths must match the old contract, not each other's new merge.
+    assert direct is not None
+    assert asdict(direct) == asdict(expected_authorization)
+
+
+def _sql_function_count(expression: str) -> int:
+    # Ignore SQL string literals (paths and timestamp formats). Count all call
+    # names, not a whitelist that could miss a newly introduced SQL function.
+    unquoted = re.sub(r"'(?:[^']|'')*'", "''", expression)
+    return len(re.findall(r"\b[A-Za-z_]\w*\s*\(", unquoted))
+
+
+def test_finalize_payload_sql_function_budget() -> None:
+    # Spanner rejects statements above 1000 functions. Leave headroom for the
+    # rest of the UPDATE and future fields; the old 2**6 expansion fails here.
+    assert _sql_function_count(request_records._SETTLED_PAYLOAD_SQL) <= 400
+
+
+def test_finalize_payload_sql_growth_is_linear(monkeypatch: pytest.MonkeyPatch) -> None:
+    fields = request_records._AUTHORIZATION_HEARTBEAT_FIELDS
+    counts = []
+    sizes = []
+    for extra in range(7):
+        monkeypatch.setattr(
+            request_records, "_AUTHORIZATION_HEARTBEAT_FIELDS",
+            fields + tuple(f"future_heartbeat_{index}" for index in range(extra)),
+        )
+        expression = request_records._settled_payload_sql()
+        counts.append(_sql_function_count(expression))
+        sizes.append(len(expression.encode()))
+    assert counts[1] > counts[0]
+    assert len({right - left for left, right in zip(counts[:-1], counts[1:], strict=True)}) == 1
+    assert len({right - left for left, right in zip(sizes[:-1], sizes[1:], strict=True)}) == 1
+    assert counts[-1] <= 400
+
+
+@pytest.mark.parametrize("presence_mask", range(64))
+@pytest.mark.parametrize("storage", ["typed", "payload_only", "mixed", "explicit_null"])
+def test_finalize_payload_presence_matches_parent_serializer(
+    presence_mask: int, storage: str,
+) -> None:
+    fields = ("heartbeat_seq", "heartbeat_at", "heartbeat_hash", "started_at",
+              "selected_endpoint_id", "delivered_usage")
+    db, initial = _seed()
+    assert _heartbeat(db).accepted
+    with db.snapshot() as reader:
+        snapshot = read_gateway_authorization(reader, _ParamTypes, initial.id)
+    assert snapshot is not None
+    row = db.gateway_authorizations[initial.id]
+    payload = json.loads(row["payload"])
+    for index, field in enumerate(fields):
+        payload.pop(field, None)
+        if not presence_mask & (1 << index):
+            row[field] = None
+        elif storage == "explicit_null":
+            payload[field] = None
+            row[field] = None
+        elif storage == "payload_only" or (storage == "mixed" and index % 2 == 0):
+            payload[field] = getattr(snapshot, field)
+            row[field] = None
+        else:
+            # Conflicting stale payload value must lose to the typed column.
+            payload[field] = "stale"
+    row["payload"] = json.dumps(payload)
+    with db.snapshot() as reader:
+        expected = read_gateway_authorization(reader, _ParamTypes, initial.id)
+    assert expected is not None
+    for authorization in (snapshot, expected):
+        authorization.record_finalization(
+            success=False, actual_microdollars=0,
+            selected_usage_type=UsageType.CREDITS, generation=None,
+        )
+    expected_payload = json.loads(parent_json_body(expected))
+    assert {field for field in fields if field in expected_payload} == {
+        field for index, field in enumerate(fields)
+        if storage != "explicit_null" and presence_mask & (1 << index)
+    }
+    assert db.run_in_transaction(
+        lambda transaction: mark_gateway_authorization_settled(transaction, _ParamTypes, snapshot)
+    ) == 1
+    finalized_payload = json.loads(db.gateway_authorizations[initial.id]["payload"])
+    assert finalized_payload.keys() == expected_payload.keys()
+    assert finalized_payload == expected_payload
+    assert db.gateway_authorizations[initial.id]["payload"] == parent_json_body(expected)
+
+
+@pytest.mark.parametrize("field", [
+    "heartbeat_seq", "heartbeat_at", "heartbeat_hash", "started_at",
+    "selected_endpoint_id", "delivered_usage",
+])
+def test_finalize_omits_explicit_payload_json_null(field: str) -> None:
+    db, authorization = _seed()
+    row = db.gateway_authorizations[authorization.id]
+    payload = json.loads(row["payload"])
+    payload[field] = None
+    row[field] = None
+    row["payload"] = json.dumps(payload)
+    with db.snapshot() as reader:
+        reread = read_gateway_authorization(reader, _ParamTypes, authorization.id)
+    assert reread is not None
+    authorization = reread
+    authorization.record_finalization(
+        success=False, actual_microdollars=0,
+        selected_usage_type=UsageType.CREDITS, generation=None,
+    )
+    expected_payload = json.loads(parent_json_body(authorization))
+    assert field not in expected_payload
+    assert db.run_in_transaction(
+        lambda transaction: mark_gateway_authorization_settled(transaction, _ParamTypes, authorization)
+    ) == 1
+    finalized_payload = json.loads(db.gateway_authorizations[authorization.id]["payload"])
+    assert finalized_payload.keys() == expected_payload.keys()
+    assert finalized_payload == expected_payload
+    assert db.gateway_authorizations[authorization.id]["payload"] == parent_json_body(authorization)
+
+
+def _round4_payload_sql() -> str:
+    # Frozen rejected construction: keep independent of the production builder.
+    merged = "PARSE_JSON(@payload)"
+    for column in ("heartbeat_seq", "heartbeat_at", "heartbeat_hash", "started_at",
+                   "selected_endpoint_id", "delivered_usage"):
+        value = column
+        if column in {"started_at", "heartbeat_at"}:
+            value = (
+                f"FORMAT_TIMESTAMP(IF(MOD(UNIX_MICROS({column}),1000000)=0,"
+                f"'%Y-%m-%dT%H:%M:%SZ','%Y-%m-%dT%H:%M:%E6SZ'),{column},'UTC')"
+            )
+        merged = (
+            f"JSON_SET({merged},'$.{column}', IF({column} IS NULL,"
+            f"JSON_QUERY(PARSE_JSON(payload),'$.{column}'),TO_JSON({value})),"
+            f"create_if_missing=>{column} IS NOT NULL OR "
+            f"JSON_QUERY(PARSE_JSON(payload),'$.{column}') IS NOT NULL)"
+        )
+    return f"TO_JSON_STRING({merged})"
+
+
+def test_fake_rejects_round4_payload_sql(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(request_records, "_SETTLED_PAYLOAD_SQL", _round4_payload_sql())
+    db, authorization = _seed()
+    with pytest.raises(ValueError, match=(
+        "INVALID_ARGUMENT: Argument 'create_if_missing' to JSON_SET "
+        "must be a literal or query parameter"
+    )):
+        db.run_in_transaction(
+            lambda transaction: mark_gateway_authorization_settled(
+                transaction, _ParamTypes, authorization,
+            )
+        )
+
+
+@pytest.mark.parametrize("expression,argument,function", [
+    ("JSON_REMOVE(JSON_SET(x,'$.f',v), IF(col IS NULL, '$.f', NULL))", 2, "JSON_REMOVE"),
+    ("JSON_SET(x, IF(col IS NULL, '$.f', '$.g'), v)", 2, "JSON_SET"),
+    ("JSON_SET(x, '$.f', v, path_column, v)", 4, "JSON_SET"),
+    ("JSON_SET(JSON_SET(x,'$.f',v,create_if_missing=>TRUE),path_column,v)", 2, "JSON_SET"),
+    ("JSON_QUERY(x, IF(col IS NULL, '$.f', NULL))", 2, "JSON_QUERY"),
+    ("JSON_STRIP_NULLS(x, IF(col IS NULL, '$.f', NULL))", 2, "JSON_STRIP_NULLS"),
+])
+@pytest.mark.parametrize("operation", ["select", "update"])
+def test_fake_rejects_row_dependent_json_paths(
+    expression: str, argument: int, function: str, operation: str,
+) -> None:
+    db = FakeSpannerDatabase()
+    with pytest.raises(ValueError, match=(
+        f"INVALID_ARGUMENT: Argument {argument} to {function} must be a constant expression"
+    )):
+        if operation == "select":
+            with db.snapshot() as reader:
+                reader.execute_sql(f"SELECT IF(FALSE, {expression}, NULL) FROM t")  # noqa: S608
+        else:
+            db.run_in_transaction(
+                lambda transaction: transaction.execute_update(f"UPDATE t SET x={expression}")  # noqa: S608
+            )
+
+
+@pytest.mark.parametrize("option", ["TRUE", "FALSE", "NULL", "@create"])
+def test_fake_accepts_literal_or_parameter_json_option(option: str) -> None:
+    _validate_json_arguments(f"JSON_SET(x, '$.f', v, create_if_missing=>{option})")
+
+
+@pytest.mark.parametrize("option", ["col IS NULL", "IF(col IS NULL, TRUE, FALSE)"])
+def test_fake_rejects_row_dependent_json_option(option: str) -> None:
+    with pytest.raises(ValueError, match="must be a literal or query parameter"):
+        _validate_json_arguments(f"JSON_SET(x, '$.f', v, create_if_missing=>{option})")
+
+
+@pytest.mark.parametrize("function,tail", [
+    ("JSON_SET", ", v"), ("JSON_REMOVE", ""), ("JSON_QUERY", ""), ("JSON_STRIP_NULLS", ""),
+])
+def test_fake_accepts_constant_json_path(function: str, tail: str) -> None:
+    _validate_json_arguments(f"{function}(x, IF(1=1, '$.f', NULL){tail})")
+
+
+@pytest.mark.parametrize("expression,expected", [
+    ("JSON_TYPE(JSON_QUERY(PARSE_JSON(@payload),'$.null_value'))", "null"),
+    ("JSON_TYPE(JSON_QUERY(PARSE_JSON(@payload),'$.missing'))", None),
+    ("COALESCE(JSON_TYPE(JSON_QUERY(PARSE_JSON(@payload),'$.missing')),'null')", "null"),
+    ("TO_JSON_STRING(PARSE_JSON(@payload))", '{"a":"quote\\\"slash\\\\","null_value":null,"z":0}'),
+    ("CONCAT(SUBSTR('abc',1,LENGTH('abc')-1),'}')", "ab}"),
+    ("JSON_TYPE(TO_JSON(0))", "number"),
+    ("JSON_TYPE(TO_JSON(FALSE))", "boolean"),
+    ("JSON_TYPE(TO_JSON(''))", "string"),
+    ("TO_JSON_STRING(JSON_QUERY(PARSE_JSON(@payload),IF(1=1,'$.z',NULL)))", "0"),
+])
+def test_fake_evaluates_settle_json_primitives(expression: str, expected: Any) -> None:
+    payload = json.dumps({"z": 0, "null_value": None, "a": 'quote"slash\\'})
+    assert _evaluate_authorization_json(expression, {}, {"payload": payload}) == expected
+
+
+def test_fake_parse_json_rejects_invalid_json() -> None:
+    with pytest.raises(json.JSONDecodeError):
+        _evaluate_authorization_json("PARSE_JSON(@payload)", {}, {"payload": '{,"f":1}'})
+
+
+@pytest.mark.parametrize("serialized", [
+    "{}", "{ }", "[]", "null", ' {"id":"x"}', '{"id":"x"} ', '{,"f":1}',
+    *[json.dumps({"id": "x", field: None}) for field in (
+        "heartbeat_seq", "heartbeat_at", "heartbeat_hash", "started_at",
+        "selected_endpoint_id", "delivered_usage",
+    )],
+])
+def test_finalize_rejects_invalid_payload_parameter(
+    serialized: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, authorization = _seed()
+    original = request_records.json_body
+    monkeypatch.setattr(
+        request_records, "json_body",
+        lambda value: serialized if isinstance(value, dict) else original(value),
+    )
+    before = db.transaction_execute_update_calls
+    with pytest.raises(ValueError, match="nonempty JSON object without heartbeat keys"):
+        db.run_in_transaction(
+            lambda transaction: mark_gateway_authorization_settled(transaction, _ParamTypes, authorization)
+        )
+    assert db.transaction_execute_update_calls == before

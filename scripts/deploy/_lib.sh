@@ -96,7 +96,11 @@ SPANNER_INSTANCE_ID="${TR_SPANNER_INSTANCE_ID:-trusted-router-nam6}"
 SPANNER_DATABASE_ID="${TR_SPANNER_DATABASE_ID:-trusted-router}"
 SPANNER_CONFIG="${TR_SPANNER_CONFIG:-nam6}"
 SPANNER_EDITION="${TR_SPANNER_EDITION:-ENTERPRISE_PLUS}"
-SPANNER_PROCESSING_UNITS="${TR_SPANNER_PROCESSING_UNITS:-400}"
+# 600 since 2026-09-25: at 400 PU a single customer burst of ~15 requests/s
+# sustained 25-34% high-priority CPU (60-second peaks to 47%) and opened the
+# high-priority CPU policy; the regional lease path still pays per-request
+# entity reads, finalize updates and outbox writes on Spanner.
+SPANNER_PROCESSING_UNITS="${TR_SPANNER_PROCESSING_UNITS:-600}"
 BIGTABLE_INSTANCE_ID="${TR_BIGTABLE_INSTANCE_ID:-trusted-router-logs}"
 BIGTABLE_CLUSTER_ID="${TR_BIGTABLE_CLUSTER_ID:-trusted-router-logs-c1}"
 BIGTABLE_APP_PROFILE_ID="${TR_BIGTABLE_APP_PROFILE_ID:-}"
