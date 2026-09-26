@@ -64,7 +64,7 @@ def test_every_predicate_reason_bit_and_order(index: int, clause: tuple[str, str
 
 @pytest.mark.parametrize("regional_outcome", [
     "unavailable", "unpaid_workspace", "reconciliation_stale", "trust_gate_unarmed",
-    "billing_paused", "idempotency_mismatch", "error", "served", "replay",
+    "billing_paused", "idempotency_mismatch", "error", "served", "replay", "ledger_cooldown",
 ])
 def test_gateway_keeps_regional_outcome_before_global_fallback(
     monkeypatch: pytest.MonkeyPatch, regional_outcome: str,
@@ -94,6 +94,9 @@ def test_gateway_keeps_regional_outcome_before_global_fallback(
     def regional_authorize(self: Any, **kwargs: Any) -> Any:
         if regional_outcome == "error":
             raise RuntimeError("regional error")
+        if regional_outcome == "ledger_cooldown":
+            self._arm_regional_ledger_cooldown(kwargs["workspace_id"], kwargs["region"])
+            return real_regional(self, **kwargs)
         if regional_outcome == "served":
             return real_regional(self, **kwargs)
         if regional_outcome == "replay":
@@ -130,11 +133,11 @@ def test_gateway_keeps_regional_outcome_before_global_fallback(
     event = evidence[0]
     assert event["regional_predicate_reason"] is None
     assert event["regional_predicate_mask"] == 0
-    assert event["regional_outcome"] == regional_outcome
+    assert event["regional_outcome"] == ("unavailable" if regional_outcome == "ledger_cooldown" else regional_outcome)
     assert event["regional_requested_region"] == "us-central1"
     assert event["regional_resolved_region"] == "us-central1"
     fallback = regional_outcome in {
-        "unavailable", "unpaid_workspace", "reconciliation_stale", "trust_gate_unarmed",
+        "unavailable", "unpaid_workspace", "reconciliation_stale", "trust_gate_unarmed", "ledger_cooldown",
     }
     assert bool(global_calls) == fallback
     if fallback or regional_outcome in {"served", "replay"}:
@@ -145,7 +148,8 @@ def test_gateway_keeps_regional_outcome_before_global_fallback(
     else:
         assert response.status_code in {403, 409, 500}
     assert event["regional_unavailable_reason"] == (
-        "occupied_fence" if regional_outcome == "unavailable" else None
+        "occupied_fence" if regional_outcome == "unavailable" else
+        "ledger_cooldown" if regional_outcome == "ledger_cooldown" else None
     )
     if regional_outcome == "served":
         assert isinstance(event["regional_selected_shard"], int)
@@ -191,7 +195,8 @@ def test_observation_without_any_issuance_records_early_rejections_and_retries(
     evidence: list[dict[str, Any]] = []
     dispatcher = SpendLeaseShadowDispatcher(lambda _id, payload: evidence.append(payload))
     monkeypatch.setattr(gateway, "_SPEND_LEASE_SHADOW_DISPATCHER", dispatcher)
-    settings = Settings(environment="test", **{observation: True})
+    flags: dict[str, Any] = {observation: True}
+    settings = Settings(environment="test", **flags)
     client = TestClient(create_app(settings, init_observability=False))
     for _ in range(2):
         response = client.post("/v1/internal/gateway/authorize", json={
@@ -218,7 +223,7 @@ def test_ledger_timeout_classification_uses_existing_exception_chain() -> None:
 
 @pytest.mark.parametrize("reason", [
     "unmapped_region", "insufficient_grant", "occupied_fence", "exhausted_lease",
-    "expired_lease", "ledger_timeout", "other",
+    "expired_lease", "ledger_timeout", "ledger_cooldown", "other",
 ])
 def test_unavailable_subreasons_from_real_storage_decisions(
     monkeypatch: pytest.MonkeyPatch, reason: str,
@@ -233,6 +238,8 @@ def test_unavailable_subreasons_from_real_storage_decisions(
     ledger = store._regional_quota_ledger
     if reason == "unmapped_region":
         monkeypatch.setattr(type(ledger), "supports_region", lambda _self, _region: False)
+    elif reason == "ledger_cooldown":
+        store._arm_regional_ledger_cooldown(args["workspace_id"], args["region"])
     elif reason == "insufficient_grant":
         args["estimate"] = 100_000_001
     elif reason in {"ledger_timeout", "other"}:
@@ -266,6 +273,7 @@ def test_unavailable_subreasons_from_real_storage_decisions(
         lease_shard_count=16, observation=evidence,
     )
     if reason in {"exhausted_lease", "expired_lease"}:
+        assert global_lease is not None
         assert outcome == "accepted" and auth is not None
         assert auth.regional_lease_id != global_lease.lease_id
         assert "regional_unavailable_reason" not in evidence
@@ -282,7 +290,7 @@ def test_grant_pool_cap_observation_reuses_existing_trust_checks() -> None:
     arm_store(store, db)
     workspace_state(db, 1)
     evidence: dict[str, Any] = {}
-    common = dict(
+    common: dict[str, Any] = dict(
         workspace_id="workspace", region="us-central1", requested_microdollars=4_000_000,
         per_lease_cap_microdollars=10_000_000, max_available_basis_points=1000,
         ttl_seconds=60, minimum_grant_microdollars=1, observation=evidence,

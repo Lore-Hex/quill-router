@@ -908,6 +908,10 @@ class Settings(BaseSettings):
     # busy; each miss degraded to the exact Spanner path but logged a full
     # traceback. The gateway's own request budget is 25 s.
     regional_quota_ledger_timeout_seconds: float = 4.0
+    # Process-local admission cooldown per (workspace, region) after ledger failure.
+    # Consecutive failures double this base up to 60 s; +/-25% jitter, hard cap 60 s.
+    # Success resets the backoff. Settlement and reconciliation always use the ledger.
+    regional_quota_ledger_cooldown_seconds: float = 10.0
     spend_lease_bigtable_app_profiles: str = ""
     # Reconciliation is deployed before binding and remains active when the
     # traffic flag is off. Only the one-shot Cloud Run Job sets worker=True.
@@ -1460,6 +1464,8 @@ class Settings(BaseSettings):
             raise ValueError("TR_REGIONAL_QUOTA_GLOBAL_FLOOR_BASIS_POINTS must be between 1 and 10000")
         if not 1.1 <= self.regional_quota_ledger_timeout_seconds <= 10.0:
             raise ValueError("TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS must be between 1.1 and 10")
+        if not 1 <= self.regional_quota_ledger_cooldown_seconds <= 60:
+            raise ValueError("TR_REGIONAL_QUOTA_LEDGER_COOLDOWN_SECONDS must be between 1 and 60")
         if not 1 <= self.regional_quota_lease_shard_count <= 64:
             raise ValueError("TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT must be between 1 and 64")
         if not 1 <= self.regional_quota_reconcile_limit <= 1_000:
