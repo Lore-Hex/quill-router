@@ -17,8 +17,8 @@ try {
     await page.goto(`${base}/token-exchange/savings`, { waitUntil: "networkidle" });
     await page.evaluate(() => document.fonts.ready);
     const text = id => page.locator(`#tx-${id}`).innerText();
-    assert.equal(await text("saved"), "$1,057,260");
-    assert.equal(await text("annual"), "$12,687,120");
+    assert.equal(await text("saved"), "$1,198,630");
+    assert.equal(await text("annual"), "$14,383,560");
     assert(await page.locator(".tx-gateway img").evaluate(img => img.complete && img.naturalWidth > 0));
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${name}: horizontal overflow`);
     const overflow = await page.locator("main h1, main h2, main p, main button, main strong, main label").evaluateAll(elements => elements.filter(el => el.scrollWidth > el.clientWidth + 1).map(el => el.textContent));
@@ -29,11 +29,11 @@ try {
     assert.equal(await text("total"), "$3,350,000");
     assert.equal(await text("saved"), "$0");
     assert.equal(await text("fee"), "$0");
-    assert.deepEqual(await page.locator("[data-tx-example]").allTextContents(), ["Google Cloud", "Google Cloud"]);
+    assert.equal(await page.locator('#tx-request-log [data-route="exchange"]').count(), 0);
     await page.getByRole("switch").check();
     await page.locator("#tx-spend").fill("100");
     await page.locator("#tx-share").fill("100");
-    await page.locator("#tx-discount").fill("0");
+    await page.locator("#tx-price").fill("100");
     assert.equal(await text("total"), "$105.50");
     assert.equal(await text("savings-label"), "Estimated monthly increase");
     assert.equal(await text("percent"), "5.5% more on tokens");
@@ -41,7 +41,7 @@ try {
     assert.equal(await page.locator("#tx-spend").getAttribute("aria-invalid"), "true");
     assert(await page.locator("#tx-copy").isDisabled());
     await page.getByRole("button", { name: "Reset example" }).click();
-    assert.equal(await text("saved"), "$1,057,260");
+    assert.equal(await text("saved"), "$1,198,630");
     assert(await page.locator("#tx-copy").isEnabled());
     await page.locator("#tx-share").focus();
     await page.keyboard.press("ArrowRight");
