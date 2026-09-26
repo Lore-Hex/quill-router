@@ -21,7 +21,7 @@ the unconfirmed entries below need a model-specific statement from the provider.
 | GLM-5.3-Flash | Engy | Countries not disclosed in the reviewed API catalog or public documentation. | Worker/failover geography unconfirmed; no supported regional pin. |
 | DeepSeek-V4.1-Flash | Pearl Research Labs | Same provider-wide US Central, Taiwan and Australia declaration; this model's location set is unconfirmed. | Model placement/failover unconfirmed; no supported regional pin. |
 | DeepSeek-V4.1-Flash | SiliconFlow | No verified country list for the integrated api.siliconflow.com route. Singapore corporate jurisdiction does not establish GPU location. | Placement/failover unconfirmed; no supported regional pin. |
-| DeepSeek-V4.1-Flash | DeepInfra | DeepInfra publicly states that its own inference infrastructure uses United States data centers. This is provider-declared, not per-request attestation. | Individual US site unspecified; no supported per-request regional pin. |
+| DeepSeek-V4.1-Flash | DeepInfra | Correction September 27: DeepInfra describes US infrastructure but also announced Toronto capacity on July 8. This model's placement and exhaustive failover set are not confirmed. | Do not declare this route US-only; no supported per-request regional pin. |
 
 Telnyx itself documents strict region selection using `region` plus
 `mode: "strict"` and a matching regional ingress domain. It fails rather than
@@ -31,7 +31,7 @@ TrustedRouter regional hostname as an inference-region guarantee.
 
 For your infrastructure register, use:
 
-- DeepInfra: "United States, provider-declared inference hosting; individual site unspecified."
+- DeepInfra: "US infrastructure plus announced Canadian capacity; model-specific residency unconfirmed."
 - Telnyx Qwen: "USA currently advertised; dynamic availability, not region-pinned."
 - Telnyx GLM: "Multi-region: US, Europe (EU region), Australia, UAE; dynamically routed, not region-pinned."
 - Pearl: "Provider declares US Central, Taiwan and Australia; model-specific and exhaustive failover scope unconfirmed."
@@ -47,6 +47,7 @@ confirmed processing-location commitment and fail-closed enforcement.
 - [Telnyx processing versus storage](https://developers.telnyx.com/docs/inference/data-residency)
 - [Telnyx native catalog](https://api.telnyx.com/v2/ai/openai/models), authenticated read on September 26: `Qwen/Qwen3.8-27B` default `USA`; `zai-org/GLM-5.3-Flash` default `AUS, EU, UAE, USA`.
 - [DeepInfra infrastructure declaration](https://deepinfra.com/)
+- [DeepInfra's Toronto announcement](https://www.globenewswire.com/news-release/2026/7/8/3324125/0/en/deepinfra-expands-ai-inference-capacity-with-first-international-data-center-in-toronto.html), added September 27 to correct the incomplete US-only declaration above.
 - [Engy API documentation](https://engy.ai/docs) and [processing policy](https://engy.ai/privacy). Its reviewed live catalog carries no location fields for the requested models.
 - [Novita GPU rental regions](https://blogs.novita.ai/gpu-regions-zones/) describe a different product. Its reviewed [model catalog](https://api.novita.ai/openai/v1/models) carries no location fields for Qwen3.8-27B.
 - Pearl's marketplace submission supplied US Central, Taiwan and Australia. The reviewed [native catalog](https://inference.pearlresearch.ai/v1/models) carries no location fields for the requested models. Its [privacy policy](https://pearlresearch.ai/legal/privacy) is not a model-location declaration.

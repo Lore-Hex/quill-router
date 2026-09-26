@@ -49,6 +49,7 @@ from trusted_router.openai_service_tiers import (
     openai_priority_pricing,
 )
 from trusted_router.provider_lifecycle import provider_catalog_revision, provider_pricing_schedule
+from trusted_router.provider_locations import inference_location_metadata
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.routing import catalog_endpoint_candidates, provider_route_preferences
 
@@ -559,6 +560,7 @@ def register_catalog_routes(router: APIRouter) -> None:
                             == PROVIDER_JURISDICTION_US
                         ),
                         "provider_eu_focused": endpoint.provider in EU_FOCUSED_PROVIDER_ORDER,
+                        "inference_location": inference_location_metadata(endpoint.provider, endpoint.model_id),
                         "provider_policy": endpoint_provider_policy(endpoint),
                         "provider_policy_url": endpoint_provider_policy_url(endpoint),
                         "usage_type": endpoint.usage_type,
