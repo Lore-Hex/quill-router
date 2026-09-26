@@ -427,7 +427,7 @@ def test_real_sdk_authorize_aborted_prefix_retries_before_business_fallback(
     committed.commit.assert_called_once()
 
 
-def _finalize_fixture() -> tuple[FakeSpannerDatabase, Any]:
+def _finalize_fixture(*, activity_outbox: Any = None) -> tuple[FakeSpannerDatabase, Any]:
     from trusted_router.storage_gcp_authorize import typed_finalize_atomic
     from trusted_router.storage_gcp_operational_analytics_outbox import (
         SpannerOperationalAnalyticsOutbox,
@@ -457,10 +457,88 @@ def _finalize_fixture() -> tuple[FakeSpannerDatabase, Any]:
             success=True, actual_micro=70, settled_usage_type='Credits', now=NOW,
             outbox_available=True, authorization=auth, auth_body_settled=json_body(auth),
             generation=gen, persist_generation_record=True,
-            operational_analytics_outbox=SpannerOperationalAnalyticsOutbox(db, param_types),
+            operational_analytics_outbox=(
+                activity_outbox if activity_outbox is not None
+                else SpannerOperationalAnalyticsOutbox(db, param_types)
+            ),
             settle_outbox_done=(aid, 'settle'),
         )
     return db, finalize
+
+
+@pytest.mark.parametrize('table', ['tr_generation', 'tr_operational_analytics_outbox'])
+def test_finalize_zero_insert_count_rolls_back(
+    monkeypatch: pytest.MonkeyPatch, table: str,
+) -> None:
+    db, finalize = _finalize_fixture()
+    before, commits = _state(db), db.commits
+    original = _FakeTransaction.execute_update
+    omitted: list[str] = []
+
+    def update(tx: Any, sql: str, **kwargs: Any) -> int:
+        if tx._in_batch and sql.startswith(f'INSERT INTO {table} '):
+            omitted.append(sql)
+            return 0  # Omit the write, rather than stage it with a false count.
+        return original(tx, sql, **kwargs)
+
+    monkeypatch.setattr(_FakeTransaction, 'execute_update', update)
+    with pytest.raises(FailedPrecondition, match='Unexpected batch DML row counts'):
+        finalize()
+    assert len(omitted) == 1
+    assert _state(db) == before  # Includes authorization, claim, intent, TTLs and holds.
+    assert all(not row['settled'] and row['terminal_at'] is None
+               for row in db.gateway_authorizations.values())
+    assert all(not row['settled'] and row['terminal_at'] is None
+               for row in db.reservations.values())
+    assert all(row['status'] == 'pending' for row in db.settle_outbox.values())
+    assert not db.generation_records and not db.operational_analytics_outbox
+    assert db.commits == commits and db.rollback_calls == 1
+
+
+def test_finalize_custom_outbox_observes_flushed_writes_and_cleared_batches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import storage_gcp_authorize as billing
+    from trusted_router.storage_gcp_generation_records import generation_record_body
+    from trusted_router.storage_gcp_operational_analytics_outbox import (
+        SpannerOperationalAnalyticsOutbox,
+    )
+
+    batches: list[tuple[Any, Any]] = []
+    enqueues: list[Any] = []
+
+    def batch(tx: Any, statements: Any, counts: Any) -> None:
+        assert len(statements) == 3
+        assert counts == [(0, 1), (0, 1), (1,)]
+        batches.append((statements, counts))  # Retain references to check both clears.
+        execute_batch_dml(tx, statements, counts)
+
+    class CustomOutbox:
+        def enqueue_activity_tx(self, tx: Any, generation: Any) -> None:
+            enqueues.append(tx)
+            [intent] = db.settle_outbox.values()
+            aid, rid = intent['authorization_id'], intent['reservation_id']
+            done = tx._settle_outbox_current((aid, 'settle'))
+            assert done['status'] == 'done' and done['terminal_at'] is not None
+            assert tx._gateway_authorization_current(aid)['terminal_at'] == done['terminal_at']
+            assert tx._reservation_current(rid)['terminal_at'] == done['terminal_at']
+            # The fake's generation SELECT only reads committed rows; inspect
+            # the staged DML record to observe the transaction's own INSERT.
+            [record] = [op[2] for op in tx.pending_writes
+                        if op[0] == 'insert_generation' and op[1] == generation.id]
+            assert record['payload'] == generation_record_body(generation)
+            assert record['terminal_at'] == NOW
+            assert batches == [([], [])]
+            SpannerOperationalAnalyticsOutbox(db, param_types).enqueue_activity_tx(tx, generation)
+
+    custom = CustomOutbox()
+    assert not hasattr(custom, 'activity_insert_statement')
+    db, finalize = _finalize_fixture(activity_outbox=custom)
+    monkeypatch.setattr(billing, 'execute_batch_dml', batch)
+    result = finalize()
+    assert result['outcome'] == 'settled' and result['outbox_marked'] is True
+    assert len(enqueues) == 1 and batches == [([], [])]
+    assert len(db.generation_records) == len(db.operational_analytics_outbox) == 1
 
 
 @pytest.mark.parametrize('index', range(4))
