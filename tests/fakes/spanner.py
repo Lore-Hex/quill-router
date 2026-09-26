@@ -8,6 +8,9 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from google.api_core.exceptions import Aborted, GoogleAPICallError
+from google.rpc.status_pb2 import Status
+
 from trusted_router.storage_gcp_settle_outbox import (
     _GUARD_STATUS_SQL,
     AUTO_REFILL_COLUMNS,
@@ -252,6 +255,8 @@ class FakeSpannerDatabase:
         self.snapshot_sql_params: list[dict[str, Any]] = []
         self.transaction_execute_sql_calls = 0
         self.transaction_execute_update_calls = 0
+        self.transaction_batch_update_calls = 0
+        self.rollback_calls = 0
         self.now = now
 
     def current_timestamp(self) -> dt.datetime:
@@ -274,9 +279,23 @@ class FakeSpannerDatabase:
             txn = _FakeTransaction(self)
             try:
                 result = fn(txn)
+            except Aborted as exc:
+                # Match the SDK's retry payload contract (_delay_until_retry)
+                # instead of silently accepting bare Aborted() and masking
+                # broken status adapters: errors[0] must exist, while
+                # trailing_metadata is optional (absent means default backoff).
+                cause = exc.errors[0]
+                if hasattr(cause, "trailing_metadata"):
+                    dict(cause.trailing_metadata())
+                self.aborts += 1
+                continue
             except FakeAborted:
                 self.aborts += 1
                 continue
+            except Exception:
+                if not txn.rolled_back:
+                    txn.rollback()
+                raise
             if attempt == 0 and self._ready_barrier is not None:
                 try:
                     self._ready_barrier.wait(timeout=10)
@@ -494,6 +513,8 @@ class _FakeTransaction:
         # buffers mutations after DML and DML can't see them); fail fast if both.
         self._did_mutation = False
         self._did_dml = False
+        self._in_batch = False
+        self.rolled_back = False
         self._spend_open_pending_commit_timestamp_written = False
 
     def execute_sql(
@@ -679,6 +700,36 @@ class _FakeTransaction:
         )
         return pinned
 
+    def rollback(self) -> None:
+        self.pending_writes.clear()
+        self.rolled_back = True
+        self.db.rollback_calls += 1
+
+    def batch_update(
+        self, statements: Any, request_options: Any = None, last_statement: bool = False,
+        *, retry: Any = None, timeout: Any = None,
+    ) -> tuple[Status, list[int]]:
+        """One RPC, ordered DML, with only the successful prefix in row_counts.
+
+        Leave the successful prefix staged on error, just like the SDK: callers
+        must raise/roll back to prevent a partial commit. Programming errors in
+        the fake still raise rather than masquerading as server statuses.
+        """
+        self.db.transaction_batch_update_calls += 1
+        row_counts: list[int] = []
+        self._in_batch = True
+        try:
+            for statement in statements:
+                sql, params, types = (statement, None, None) if isinstance(statement, str) else statement
+                try:
+                    count = self.execute_update(sql, params=params, param_types=types)
+                except GoogleAPICallError as exc:
+                    return Status(code=exc.grpc_status_code.value[0], message=exc.message), row_counts
+                row_counts.append(count)
+        finally:
+            self._in_batch = False
+        return Status(), row_counts
+
     def execute_update(
         self, sql: str, *, params: dict[str, Any] | None = None, param_types: Any = None
     ) -> int:
@@ -689,7 +740,8 @@ class _FakeTransaction:
         conditionally buffers the SET. Returns the modified-row count.
         """
         _validate_json_arguments(sql)
-        self.db.transaction_execute_update_calls += 1
+        if not self._in_batch:
+            self.db.transaction_execute_update_calls += 1
         if (
             self._spend_open_pending_commit_timestamp_written
             and "spend_lease_open" in sql
@@ -1741,6 +1793,11 @@ class _FakeTransaction:
             return _execute_spend_lease_entity_update(self, sql, p)
         if sql.startswith("INSERT INTO tr_entities"):
             entity_key = (p["kind"], p["id"])
+            if any(
+                op[0] == "insert_entity_dml" and (op[1], op[2]) == entity_key
+                for op in self.pending_writes
+            ):
+                raise FakeAlreadyExists(f"{p['kind']}/{p['id']}")
             if entity_key in self.db.rows:
                 if entity_key in self.read_versions and self.read_versions[entity_key] != self.db.rows[entity_key].version:
                     # A row appeared after a missing-row read in this txn.

@@ -25,6 +25,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from trusted_router.storage_gcp_batch_dml import DmlStatement
 from trusted_router.storage_gcp_counters import UNSHARDED
 
 # Importing GUARD_STATUSES would cycle because storage_gcp_settle_outbox imports
@@ -664,6 +665,11 @@ def read_reservation(transaction: Any, param_types: Any, reservation_id: str) ->
 
 
 def insert_reservation(transaction: Any, param_types: Any, **fields: Any) -> None:
+    sql, params, types = reservation_insert_statement(param_types, **fields)
+    transaction.execute_update(sql, params=params, param_types=types)
+
+
+def reservation_insert_statement(param_types: Any, **fields: Any) -> DmlStatement:
     """INSERT a reservation row. Raises ALREADY_EXISTS (NOT retried) on a scoped
     idempotency-key conflict — the caller converts that to the replay path."""
     pt = param_types
@@ -681,10 +687,10 @@ def insert_reservation(transaction: Any, param_types: Any, **fields: Any) -> Non
     values["credit_shard"] = fields.get(
         "credit_shard", fields.get("ws_shard", UNSHARDED)
     )
-    transaction.execute_update(
+    return (
         f"INSERT INTO tr_reservation ({cols}) VALUES ({binds})",  # noqa: S608 - fixed column list
-        params=values,
-        param_types={c: types[c] for c in RESERVATION_COLUMNS},
+        values,
+        {c: types[c] for c in RESERVATION_COLUMNS},
     )
 
 
@@ -758,32 +764,38 @@ def complete_reservation_retention(
     )
 
 
-def clear_reservation_retention(
-    transaction: Any,
-    param_types: Any,
-    reservation_id: str,
-) -> int:
+def clear_reservation_retention(transaction: Any, param_types: Any, reservation_id: str) -> int:
+    sql, params, types = reservation_retention_clear_statement(param_types, reservation_id)
+    return transaction.execute_update(sql, params=params, param_types=types)
+
+
+def reservation_retention_clear_statement(param_types: Any, reservation_id: str) -> DmlStatement:
     """Make a reservation TTL-ineligible while durable repair is outstanding."""
-    return transaction.execute_update(
+    return (
         "UPDATE tr_reservation SET terminal_at=NULL "
         "WHERE reservation_id=@rid AND terminal_at IS NOT NULL",
-        params={"rid": reservation_id},
-        param_types={"rid": param_types.STRING},
+        {"rid": reservation_id},
+        {"rid": param_types.STRING},
     )
 
 
 def insert_entity_dml(
-    transaction: Any, param_types: Any, kind: str, entity_id: str, body_json: str
+    transaction: Any, param_types: Any, kind: str, entity_id: str, body_json: str,
 ) -> None:
+    sql, params, types = entity_insert_statement(param_types, kind, entity_id, body_json)
+    transaction.execute_update(sql, params=params, param_types=types)
+
+
+def entity_insert_statement(param_types: Any, kind: str, entity_id: str, body_json: str) -> DmlStatement:
     """DML INSERT of a tr_entities JSON row (e.g. gateway_authorization), so it
     composes into the DML-only authorize transaction instead of a mutation.
     PENDING_COMMIT_TIMESTAMP() is the last touch of the row; raises ALREADY_EXISTS
     on a duplicate (kind,id)."""
-    transaction.execute_update(
+    return (
         "INSERT INTO tr_entities (kind, id, body, updated_at) "
         "VALUES (@kind, @id, @body, PENDING_COMMIT_TIMESTAMP())",
-        params={"kind": kind, "id": entity_id, "body": body_json},
-        param_types={
+        {"kind": kind, "id": entity_id, "body": body_json},
+        {
             "kind": param_types.STRING,
             "id": param_types.STRING,
             "body": param_types.STRING,

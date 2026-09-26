@@ -22,6 +22,7 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
+from trusted_router.storage_gcp_batch_dml import DmlStatement
 from trusted_router.storage_gcp_codec import json_body
 from trusted_router.storage_gcp_spend_lease import (
     AUTHORIZATION_ADMISSION_TYPED_COLUMNS,
@@ -103,12 +104,17 @@ _INSERT_GATEWAY_AUTHORIZATION_ADMISSION_SQL = (
 
 
 def insert_gateway_authorization(
-    transaction: Any,
-    param_types: Any,
-    authorization: GatewayAuthorization,
-    *,
-    created_at: Any,
+    transaction: Any, param_types: Any, authorization: GatewayAuthorization, *, created_at: Any,
 ) -> None:
+    sql, params, types = gateway_authorization_insert_statement(
+        param_types, authorization, created_at=created_at
+    )
+    transaction.execute_update(sql, params=params, param_types=types)
+
+
+def gateway_authorization_insert_statement(
+    param_types: Any, authorization: GatewayAuthorization, *, created_at: Any,
+) -> DmlStatement:
     """Insert active authorization state in the caller's billing transaction."""
     payload = dataclasses.asdict(authorization)
     typed = authorization_typed_columns(payload)
@@ -119,9 +125,9 @@ def insert_gateway_authorization(
         if has_admission
         else _INSERT_GATEWAY_AUTHORIZATION_SQL
     )
-    transaction.execute_update(
+    return (
         insert_sql,
-        params={
+        {
             "authorization_id": authorization.id,
             "workspace_id": authorization.workspace_id,
             "key_hash": authorization.key_hash,
@@ -135,7 +141,7 @@ def insert_gateway_authorization(
             **typed,
             **(admission_typed if has_admission else {}),
         },
-        param_types={
+        {
             "authorization_id": param_types.STRING,
             "workspace_id": param_types.STRING,
             "key_hash": param_types.STRING,
@@ -403,16 +409,21 @@ def complete_gateway_authorization_retention(
 
 
 def clear_gateway_authorization_retention(
-    transaction: Any,
-    param_types: Any,
-    authorization_id: str,
+    transaction: Any, param_types: Any, authorization_id: str,
 ) -> int:
+    sql, params, types = gateway_authorization_retention_clear_statement(param_types, authorization_id)
+    return transaction.execute_update(sql, params=params, param_types=types)
+
+
+def gateway_authorization_retention_clear_statement(
+    param_types: Any, authorization_id: str,
+) -> DmlStatement:
     """Make an authorization TTL-ineligible while durable repair is outstanding."""
-    return transaction.execute_update(
+    return (
         "UPDATE tr_gateway_authorization SET terminal_at=NULL "
         "WHERE authorization_id=@authorization_id AND terminal_at IS NOT NULL",
-        params={"authorization_id": authorization_id},
-        param_types={"authorization_id": param_types.STRING},
+        {"authorization_id": authorization_id},
+        {"authorization_id": param_types.STRING},
     )
 
 

@@ -241,6 +241,7 @@ def test_typed_replay_has_exact_sequential_spanner_operation_count(
         database.snapshot_execute_sql_calls,
         database.transaction_execute_sql_calls,
         database.transaction_execute_update_calls,
+        database.transaction_batch_update_calls,
     )
 
     replay = gateway._authorize_gateway_sync(
@@ -251,6 +252,7 @@ def test_typed_replay_has_exact_sequential_spanner_operation_count(
         database.snapshot_execute_sql_calls,
         database.transaction_execute_sql_calls,
         database.transaction_execute_update_calls,
+        database.transaction_batch_update_calls,
     )
     operation_count = sum(end - start for start, end in zip(before, after, strict=True))
     assert replay["data"]["idempotent_replay"] is True
@@ -330,6 +332,7 @@ def test_fresh_typed_gateway_authorize_has_exact_sequential_spanner_operation_co
         database.snapshot_execute_sql_calls,
         database.transaction_execute_sql_calls,
         database.transaction_execute_update_calls,
+        database.transaction_batch_update_calls,
     )
 
     response = gateway._authorize_gateway_sync(
@@ -340,14 +343,15 @@ def test_fresh_typed_gateway_authorize_has_exact_sequential_spanner_operation_co
         database.snapshot_execute_sql_calls,
         database.transaction_execute_sql_calls,
         database.transaction_execute_update_calls,
+        database.transaction_batch_update_calls,
     )
     operation_count = sum(end - start for start, end in zip(before, after, strict=True))
     assert response["data"]["authorization_id"]
     # Representative steady-state fresh request: the workspace's observed-empty
     # broadcast cache is warm, while this idempotency key and authorization are new.
-    # Nine operations for the fixed single-provider prepaid/BYOK catalog.
+    # Eight operations for the fixed single-provider prepaid/BYOK catalog.
     # Armed authorization adds one selected-shard pause/epoch read.
-    assert operation_count == 9 + int(armed)
+    assert operation_count == 8 + int(armed)
 
 
 def test_broadcast_empty_results_are_cached_until_ttl(
@@ -441,6 +445,8 @@ def spanner_operations(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, 
         original = getattr(cls, method)
 
         def recorded(self: object, sql: str, **kwargs: Any) -> Any:
+            if getattr(self, "_in_batch", False):
+                return original(self, sql, **kwargs)
             operations.append((label, " ".join(sql.split()), copy.deepcopy(kwargs.get("params", {}))))
             return original(self, sql, **kwargs)
 
@@ -449,6 +455,13 @@ def spanner_operations(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, 
     wrap(_FakeSnapshot, "execute_sql", "RO")
     wrap(_FakeTransaction, "execute_sql", "T1 SELECT")
     wrap(_FakeTransaction, "execute_update", "T1 DML")
+    original_batch = _FakeTransaction.batch_update
+
+    def batched(self: Any, statements: Any, **kwargs: Any) -> Any:
+        operations.append(("T1 BATCH", "", {"statements": copy.deepcopy(statements)}))
+        return original_batch(self, statements, **kwargs)
+
+    monkeypatch.setattr(_FakeTransaction, "batch_update", batched)
     original = FakeSpannerDatabase.run_in_transaction
 
     def committed(self: FakeSpannerDatabase, *args: Any, **kwargs: Any) -> Any:
@@ -474,7 +487,15 @@ def test_warm_lookup_authorize_exact_sequence_and_contents(
     response = gateway._authorize_gateway_sync(_request(), _lookup_body(key), settings)["data"]
     operations = spanner_operations
     # Previously: 3 metadata + 4 BYOK candidate/alias reads + 5/6 T1 SQL + commit = 13/14.
-    assert len(operations) == 8 + int(armed)
+    assert len(operations) == 7 + int(armed)
+    assert operations[-2][0] == "T1 BATCH"
+    batch = operations[-2][2]["statements"]
+    assert len(batch) == 2
+    assert all(set(params) == set(types) for _, params, types in batch)
+    # Expand only for the existing statement/parameter assertions below.
+    operations = [*operations[:-2], *[
+        ("T1 DML", " ".join(sql.split()), params) for sql, params, _ in batch
+    ], operations[-1]]
     assert operations[:2] == [
         ("RO", " ".join("""
             /* api_key_auth_context */

@@ -51,15 +51,16 @@ from trusted_router.spend_windows import (
     window_floors,
 )
 from trusted_router.stage_d import parse_pricing_snapshot
+from trusted_router.storage_gcp_batch_dml import execute_batch_dml
 from trusted_router.storage_gcp_counter_dml import (
     KEY_ACCEPTED,
     KEY_INSUFFICIENT,
     KEY_MISSING,
     KEY_NO_HOLD,
     complete_reservation_retention,
-    insert_entity_dml,
-    insert_reservation,
+    entity_insert_statement,
     read_reservation_by_idempotency,
+    reservation_insert_statement,
     reserve_credit,
     reserve_key,
 )
@@ -68,7 +69,7 @@ from trusted_router.storage_gcp_generation_records import insert_generation_reco
 from trusted_router.storage_gcp_io import run_in_transaction_with_retry
 from trusted_router.storage_gcp_request_records import (
     complete_gateway_authorization_retention,
-    insert_gateway_authorization,
+    gateway_authorization_insert_statement,
     mark_gateway_authorization_settled,
     read_gateway_authorization,
     read_gateway_authorization_admission_columns,
@@ -582,8 +583,7 @@ def authorize_atomic(
                 )
         key_hold = estimate if key_result == KEY_ACCEPTED else 0
 
-        insert_reservation(
-            transaction,
+        reservation_statement = reservation_insert_statement(
             pt,
             reservation_id=reservation_id,
             workspace_id=workspace_id,
@@ -612,21 +612,23 @@ def authorize_atomic(
                     "+00:00", "Z"
                 )
             assert selected_authorization is not None
-            insert_gateway_authorization(
-                transaction,
+            authorization_statement = gateway_authorization_insert_statement(
                 pt,
                 selected_authorization,
                 created_at=created_at,
             )
         else:
             assert legacy_auth_body is not None
-            insert_entity_dml(
-                transaction,
+            authorization_statement = entity_insert_statement(
                 pt,
                 "gateway_authorization",
                 authorization_id,
                 legacy_auth_body,
             )
+        # Key reserve's row count is a business decision above, never speculative.
+        execute_batch_dml(
+            transaction, [reservation_statement, authorization_statement], [(1,), (1,)]
+        )
         return {
             "outcome": AuthorizeOutcome.ACCEPTED,
             "reservation_id": reservation_id,

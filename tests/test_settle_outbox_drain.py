@@ -48,7 +48,7 @@ from trusted_router.storage_gcp_authorize import (
     settle_atomic,
 )
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
-from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
+from trusted_router.storage_gcp_settle_outbox import INSERT_COLUMNS, SpannerSettleOutbox
 from trusted_router.storage_models import (
     CreditAccount,
     GatewayAuthorization,
@@ -548,6 +548,8 @@ def settle_operations(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Any, str, d
         original = getattr(cls, method)
 
         def execute(reader: Any, sql: str, **kwargs: Any) -> Any:
+            if getattr(reader, "_in_batch", False):
+                return original(reader, sql, **kwargs)
             calls.append((reader, " ".join(sql.split()), dict(kwargs.get("params", {}))))
             return original(reader, sql, **kwargs)
 
@@ -556,6 +558,13 @@ def settle_operations(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Any, str, d
     spy(_FakeSnapshot, "execute_sql")
     spy(_FakeTransaction, "execute_sql")
     spy(_FakeTransaction, "execute_update")
+    original_batch = _FakeTransaction.batch_update
+
+    def batched(reader: Any, statements: Any, **kwargs: Any) -> Any:
+        calls.append((reader, "BATCH", {"statements": statements}))
+        return original_batch(reader, statements, **kwargs)
+
+    monkeypatch.setattr(_FakeTransaction, "batch_update", batched)
     original_commit = FakeSpannerDatabase._try_commit
 
     def commit(database: Any, transaction: Any) -> bool:
@@ -601,7 +610,40 @@ def test_fresh_settle_round_trip_order(
     data = _internal_settle(auth)
     assert data["disposition"] != "intent_durable", data
     assert db.gateway_authorizations[auth.id]["settled"] is True
-    # S1, S2-S5, S10-S24, S27: 21 versus the old 25 operations.
+    assert len(settle_operations) == 19
+    reader, label, batch_params = settle_operations[1]
+    assert label == "BATCH"
+    batch = batch_params["statements"]
+    assert len(batch) == 3
+    assert batch[0][0] == (
+        f"INSERT INTO tr_settle_outbox ({', '.join(INSERT_COLUMNS)}) "  # noqa: S608
+        f"VALUES ({', '.join('@' + c for c in INSERT_COLUMNS)})"  # noqa: S608
+    )
+    assert batch[1][0] == (
+        "UPDATE tr_gateway_authorization SET terminal_at=NULL "
+        "WHERE authorization_id=@authorization_id AND terminal_at IS NOT NULL"
+    )
+    assert batch[2][0] == (
+        "UPDATE tr_reservation SET terminal_at=NULL "
+        "WHERE reservation_id=@rid AND terminal_at IS NOT NULL"
+    )
+    inserted = batch[0][1]
+    assert {name: value for name, value in inserted.items() if name.startswith("auto_refill_")} == {
+        "auto_refill_workspace_id": ws, "auto_refill_status": "pending",
+        "auto_refill_attempts": 0, "auto_refill_last_error": None,
+        "auto_refill_next_attempt_at": inserted["next_attempt_at"],
+        "auto_refill_lease_owner": None, "auto_refill_leased_until": None,
+        "auto_refill_enqueued_at": inserted["created_at"],
+        "auto_refill_updated_at": inserted["created_at"], "auto_refill_terminal_at": None,
+    }
+    assert all(set(params) == set(types) for _, params, types in batch)
+    assert batch[1][1] == {"authorization_id": auth.id}
+    assert batch[2][1] == {"rid": auth.credit_reservation_id}
+    # Expand only for the existing statement/parameter assertions below.
+    settle_operations = [settle_operations[0], *[
+        (reader, " ".join(sql.split()), params) for sql, params, _ in batch
+    ], *settle_operations[2:]]
+    # S2-S4 now share one RPC: 19 versus 21 operations.
     # This fixture disables the benchmark outbox (S25-S26); no other work moves.
     expected = [
         ("ro", "SELECT", "tr_gateway_authorization"),
