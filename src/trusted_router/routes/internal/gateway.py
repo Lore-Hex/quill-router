@@ -3725,9 +3725,13 @@ def _settle_gateway_authorization(
 
     # Detached request-local inputs only. Finalize builds its own mutable copy;
     # reservation and authorization claims still read/guard state inside T3.
-    # Lease settlement keeps its existing read path.
+    # Regional/spend lease bindings and charge inputs are fixed at authorize.
+    # Regional hold state is checked live by the ledger after the T3 claim;
+    # heartbeat fields are merged from the live row by the settled UPDATE.
     authorization_snapshot = (
-        copy.deepcopy(authorization) if authorization.settlement == "local" else None
+        copy.deepcopy(authorization)
+        if authorization.settlement in {"local", "regional_lease", "spend_lease"}
+        else None
     )
 
     if body.tags is not None:
