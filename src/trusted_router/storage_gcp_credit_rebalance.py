@@ -66,11 +66,11 @@ def credit_headroom_precheck(
         available = int(total_credits) - int(total_usage) - int(reserved)
         headroom[int(shard)] = available
 
+    if sum(headroom.values()) < estimate:
+        return CreditHeadroomPrecheck(RebalanceOutcome.INSUFFICIENT)
     for candidate in candidates:
         if headroom[candidate] >= estimate:
             return CreditHeadroomPrecheck(RebalanceOutcome.NOT_NEEDED, candidate)
-    if sum(headroom.values()) < estimate:
-        return CreditHeadroomPrecheck(RebalanceOutcome.INSUFFICIENT)
     return CreditHeadroomPrecheck(RebalanceOutcome.MOVED)
 
 
@@ -114,6 +114,10 @@ def rebalance_credit_for_estimate(
     This is a cold path after a bounded reserve scan rejected every shard. The
     transaction moves only ``total_credits - total_usage - reserved`` and keeps
     the global ``SUM(total_credits)`` byte-for-byte unchanged.
+
+    Move only the estimate's shortfall, using the largest donors first. Check
+    signed affordability before checking the target, including a peer's
+    repair after our precheck. Nonpositive estimates return without reading.
     """
     count = credit_shard_count({"shard_count": shard_count})
     if target_shard < 0 or target_shard >= count:
@@ -149,23 +153,25 @@ def rebalance_credit_for_estimate(
             available = int(total_credits) - int(total_usage) - int(reserved)
             headroom[int(shard)] = available
 
-        target_available = headroom[target_shard]
-        if target_available >= estimate:
-            return {
-                "outcome": RebalanceOutcome.NOT_NEEDED,
-                "moved_micro": 0,
-                "target_shard": target_shard,
-            }
         # Feasibility is the SIGNED global available — sum over every shard of
         # (credits - usage - reserved), negatives included. An over-spent shard's
-        # debt must count against affordability, otherwise we would consolidate
+        # debt must count against affordability, otherwise we would transfer
         # enough onto the target for reserve to succeed while the workspace is
         # globally overdrawn (free spend). Donors below still pull only from
         # POSITIVE headroom; when this passes, positive donor headroom is
         # provably >= `needed`, so the plan always completes.
-        if sum(headroom.values()) < estimate:
+        signed_headroom = sum(headroom.values())
+        if signed_headroom < estimate:
             return {
                 "outcome": RebalanceOutcome.INSUFFICIENT,
+                "moved_micro": 0,
+                "target_shard": target_shard,
+            }
+
+        target_available = headroom[target_shard]
+        if target_available >= estimate:
+            return {
+                "outcome": RebalanceOutcome.NOT_NEEDED,
                 "moved_micro": 0,
                 "target_shard": target_shard,
             }
@@ -201,6 +207,7 @@ def rebalance_credit_for_estimate(
             raise _RebalanceInvariantError("rebalance plan did not satisfy estimate")
         return {
             "outcome": RebalanceOutcome.MOVED,
+            "mode": "topped_up",
             "moved_micro": moved,
             "target_shard": target_shard,
         }
