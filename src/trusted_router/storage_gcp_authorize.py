@@ -51,7 +51,7 @@ from trusted_router.spend_windows import (
     window_floors,
 )
 from trusted_router.stage_d import parse_pricing_snapshot
-from trusted_router.storage_gcp_batch_dml import execute_batch_dml
+from trusted_router.storage_gcp_batch_dml import DmlStatement, execute_batch_dml
 from trusted_router.storage_gcp_counter_dml import (
     KEY_ACCEPTED,
     KEY_INSUFFICIENT,
@@ -66,7 +66,10 @@ from trusted_router.storage_gcp_counter_dml import (
     reserve_key_statement,
 )
 from trusted_router.storage_gcp_counters import UNSHARDED
-from trusted_router.storage_gcp_generation_records import insert_generation_record
+from trusted_router.storage_gcp_generation_records import (
+    generation_insert_statement,
+    insert_generation_record,
+)
 from trusted_router.storage_gcp_io import (
     TXN_BUDGET_SECONDS,
     run_in_transaction_with_retry,
@@ -1758,30 +1761,37 @@ def typed_finalize_atomic(
             )
         activity_durable = generation is None or operational_analytics_outbox is not None
         outbox_marked: bool | None = None
+        final_writes: list[DmlStatement] = []
+        final_counts: list[tuple[int, ...]] = []
         if settle_outbox_done is not None and resolved_outbox_available and activity_durable:
             # Same commit as the charge: no post-finalize window in which a
             # crash leaves an already-charged authorization pending, and one
             # fewer multi-region round trip per settle. A leased row is left
             # to its drain worker (False), exactly as the standalone mark did.
             outbox_marked = mark_done_unleased_tx(
-                transaction,
-                pt,
-                authorization_id=settle_outbox_done[0],
-                intent_kind=settle_outbox_done[1],
+                transaction, pt, authorization_id=settle_outbox_done[0],
+                intent_kind=settle_outbox_done[1], retention_statements=final_writes,
             )
+            final_counts.extend([(0, 1)] * len(final_writes))
         if success and generation is not None:
             if persist_generation_record:
-                insert_generation_record(
-                    transaction,
-                    pt,
-                    generation,
-                    terminal_at=now,
-                )
+                final_writes.append(generation_insert_statement(pt, generation, terminal_at=now))
+                final_counts.append((1,))
             if operational_analytics_outbox is not None:
-                operational_analytics_outbox.enqueue_activity_tx(
-                    transaction,
-                    generation,
-                )
+                # Preserve rolling/custom outbox implementations without the
+                # statement-building API. Flush in the original write order.
+                builder = getattr(operational_analytics_outbox, "activity_insert_statement", None)
+                if builder is not None:
+                    final_writes.append(builder(generation))
+                    final_counts.append((1,))
+                else:
+                    if final_writes:
+                        execute_batch_dml(transaction, final_writes, final_counts)
+                        final_writes.clear()
+                        final_counts.clear()
+                    operational_analytics_outbox.enqueue_activity_tx(transaction, generation)
+        if final_writes:
+            execute_batch_dml(transaction, final_writes, final_counts)
         if marked != 1:
             raise _SettleError("gateway_authorization update row-count != 1")
 

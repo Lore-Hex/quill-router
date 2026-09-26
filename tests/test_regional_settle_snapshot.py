@@ -257,3 +257,84 @@ def test_spend_snapshot_matches_reread(case: str) -> None:
                              committed.finalized_cost_microdollars,
                              _totals(db, auth.workspace_id, key.hash)))
     assert observations[0] == observations[1]
+
+
+def test_spend_charged_reaped_snapshot_wins_before_stale_inline_finalize() -> None:
+    from tests.test_spend_lease_authorize import _authorize_store, _store_binding_harness
+    from tests.test_stage_d_heartbeat import _literal
+    from trusted_router.routes.internal.gateway import _current_disposition
+    from trusted_router.spend_lease_state import (
+        AllocationState,
+        AuthorizationDurability,
+        AuthorizationObservation,
+        AuthorizationOutcome,
+        FinalizationOutcome,
+    )
+
+    observations = []
+    for use_snapshot in (False, True):
+        store, db, key, plan, ledger = _store_binding_harness()
+        outcome, auth = _authorize_store(store, key.hash, plan)
+        assert outcome == "accepted" and auth is not None
+        snapshot = copy.deepcopy(store.get_gateway_authorization(auth.id))  # S1
+        now = datetime.now(UTC)
+        live = db.gateway_authorizations[auth.id]
+        payload = json.loads(live["payload"])
+        fields = dict(
+            started_at=now.isoformat(), heartbeat_at=now.isoformat(), heartbeat_seq=1,
+            pricing_snapshot=_literal("pricing_document.json").decode().strip(),
+            selected_endpoint_id="anthropic/test",
+            delivered_usage=json.dumps({"input_tokens": 100, "output_tokens": 10}),
+        )
+        payload.update(fields)
+        live.update(fields, payload=json.dumps(payload))
+        winner = finalize._finalize_reaped_reservation_atomic(
+            db, store._param_types, reservation_id=auth.credit_reservation_id,
+            reap_now=now + timedelta(hours=3), guard_outbox=True,
+            snapshot_booking_enabled=True, operational_analytics_outbox=None,
+        )
+        assert winner.snapshot_booked and winner.outcome == finalize.SettleOutcome.SETTLED
+        committed = store.get_gateway_authorization(auth.id)
+        assert committed.finalization_outcome == "reaped_snapshot"
+        assert FinalizationOutcome(committed.finalization_outcome).charged
+        assert committed.finalized_cost_microdollars == 120
+        local = ledger.leases[auth.spend_lease_id]
+        allocation = next(item for item in local.allocations if item.authorization_id == auth.id)
+        mirrored = local.mirror(AuthorizationObservation(
+            idempotency_scope=allocation.idempotency_scope, authorization_id=auth.id,
+            request_fingerprint=allocation.request_fingerprint,
+            lease_id=auth.spend_lease_id, gen=auth.spend_lease_gen,
+            allocated_micro=auth.spend_lease_allocated_micro, key_hash=auth.key_hash,
+            workspace_id=auth.workspace_id, durability=AuthorizationDurability.TERMINAL,
+            finalization_outcome=FinalizationOutcome.REAPED_SNAPSHOT,
+            finalized_cost_microdollars=120,
+        ))
+        assert mirrored.allocation.state == AllocationState.SETTLED
+        assert mirrored.allocation.authorization_outcome == AuthorizationOutcome.SETTLED
+        assert mirrored.allocation.actual_micro == 120
+        ledger.leases[auth.spend_lease_id] = mirrored.lease
+        winner_generation = committed.finalized_generation_id
+        assert winner_generation is not None
+        before = copy.deepcopy((db.gateway_authorizations, db.reservations, db.generation_records))
+        losing_generation = Generation.from_settle_body(
+            authorization=snapshot, provider_name="provider", model_id="model",
+            usage_type="Credits", provider="provider", body={}, input_tokens=5,
+            output_tokens=7, actual_cost_microdollars=500,
+        )
+        losing_generation.id = "losing-inline-generation"
+        result = store.typed_finalize_gateway_authorization_result(
+            auth.id, success=True, actual_microdollars=500, selected_usage_type="Credits",
+            generation=losing_generation, authorization_snapshot=snapshot if use_snapshot else None,
+        )
+        assert not result.finalized
+        assert ledger.leases[auth.spend_lease_id] == mirrored.lease
+        assert (db.gateway_authorizations, db.reservations, db.generation_records) == before
+        reread = store.get_gateway_authorization(auth.id)
+        assert reread.finalized_generation_id == winner_generation
+        assert reread.finalized_generation_id != losing_generation.id
+        assert _current_disposition(reread) == "reaped_snapshot"
+        assert asdict(snapshot) == asdict(auth)
+        assert _totals(db, auth.workspace_id, key.hash) == (120,) * 5
+        observations.append((result.finalized, reread.finalized_cost_microdollars,
+                             _current_disposition(reread), len(db.generation_records)))
+    assert observations[0] == observations[1]

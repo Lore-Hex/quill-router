@@ -20,6 +20,7 @@ from tests.fakes.spanner import (
     FakeSpannerDatabase,
     _FakeSnapshot,
     _FakeTransaction,
+    _ParamTypes,
     make_fake_store,
 )
 from trusted_router.app_markup_billing import (
@@ -548,7 +549,7 @@ def settle_operations(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Any, str, d
         original = getattr(cls, method)
 
         def execute(reader: Any, sql: str, **kwargs: Any) -> Any:
-            if getattr(reader, "_in_batch", False):
+            if getattr(reader, "_in_batch", False) or getattr(reader, "_in_returning", False):
                 return original(reader, sql, **kwargs)
             calls.append((reader, " ".join(sql.split()), dict(kwargs.get("params", {}))))
             return original(reader, sql, **kwargs)
@@ -610,7 +611,7 @@ def test_fresh_settle_round_trip_order(
     data = _internal_settle(auth)
     assert data["disposition"] != "intent_durable", data
     assert db.gateway_authorizations[auth.id]["settled"] is True
-    assert len(settle_operations) == 19
+    assert len(settle_operations) == 14
     reader, label, batch_params = settle_operations[1]
     assert label == "BATCH"
     batch = batch_params["statements"]
@@ -639,12 +640,18 @@ def test_fresh_settle_round_trip_order(
     assert all(set(params) == set(types) for _, params, types in batch)
     assert batch[1][1] == {"authorization_id": auth.id}
     assert batch[2][1] == {"rid": auth.credit_reservation_id}
-    # Expand only for the existing statement/parameter assertions below.
-    settle_operations = [settle_operations[0], *[
-        (reader, " ".join(sql.split()), params) for sql, params, _ in batch
-    ], *settle_operations[2:]]
-    # S2-S4 now share one RPC: 19 versus 21 operations.
-    # This fixture disables the benchmark outbox (S25-S26); no other work moves.
+    # The done UPDATE returns the stored reservation; its dependent retention
+    # and evidence writes share the next RPC. Expand batches to pin SQL order.
+    final_batches = [params["statements"] for _, sql, params in settle_operations if sql == "BATCH"]
+    assert [len(group) for group in final_batches] == [3, 4]
+    settle_operations = [
+        (reader, " ".join(statement.split()), values)
+        for reader, sql, params in settle_operations
+        for statement, values in (
+            [(statement, values) for statement, values, _ in params["statements"]]
+            if sql == "BATCH" else [(sql, params)]
+        )
+    ]
     expected = [
         ("ro", "SELECT", "tr_gateway_authorization"),
         ("t1", "INSERT", "tr_settle_outbox"),
@@ -655,9 +662,7 @@ def test_fresh_settle_round_trip_order(
         ("t3", "SELECT", "tr_reservation"),
         ("t3", "UPDATE", "tr_reservation"),
         ("t3", "UPDATE", "tr_gateway_authorization"),
-        ("t3", "SELECT", "tr_settle_outbox"),
         ("t3", "UPDATE", "tr_settle_outbox"),
-        ("t3", "SELECT", "tr_settle_outbox"),
         ("t3", "UPDATE", "tr_gateway_authorization"),
         ("t3", "UPDATE", "tr_reservation"),
         ("t3", "INSERT", "tr_generation"),
@@ -678,7 +683,7 @@ def test_fresh_settle_round_trip_order(
             phase = transactions[reader]
         table = re.search(r"(?:FROM|INTO|UPDATE) (tr_\w+)", sql)
         observed.append((phase, sql.split()[0], table[1] if table else ""))
-    assert len(settle_operations) == 21
+    assert len(settle_operations) == 19
     assert observed == expected
     params = [params for _, _, params in settle_operations]
     statements = [sql for _, sql, _ in settle_operations]
@@ -706,14 +711,14 @@ def test_fresh_settle_round_trip_order(
     assert payload["workspace_id"] == ws and payload["key_hash"] == key.hash
     assert payload["credit_reservation_id"] == auth.credit_reservation_id
     assert payload["finalized_cost_microdollars"] == cost
-    assert params[10]["aid"] == auth.id and params[10]["kind"] == "settle"
-    assert params[10]["lease_owner"] is None and params[10]["done"] is True
-    assert "lease_owner IS NULL" in statements[10]
-    assert params[16] == {"hold": ESTIMATE, "actual": cost, "ws": ws, "shard": 0}
-    assert params[17] == {"pk": ws}
-    assert params[18]["kh"] == key.hash and params[18]["hold"] == ESTIMATE
-    assert params[18]["actual"] == cost
-    assert params[20] == {"kind": "broadcast_destination_by_workspace", "prefix": ws + "#"}
+    assert params[9]["aid"] == auth.id and params[9]["kind"] == "settle"
+    assert params[9]["lease_owner"] is None and params[9]["status"] == "done"
+    assert "lease_owner IS NULL" in statements[9]
+    assert params[14] == {"hold": ESTIMATE, "actual": cost, "ws": ws, "shard": 0}
+    assert params[15] == {"pk": ws}
+    assert params[16]["kh"] == key.hash and params[16]["hold"] == ESTIMATE
+    assert params[16]["actual"] == cost
+    assert params[18] == {"kind": "broadcast_destination_by_workspace", "prefix": ws + "#"}
     assert _typed_credit(db, ws)["total_usage"] == cost
 
 
@@ -3400,9 +3405,10 @@ def test_inline_settle_leaves_a_leased_outbox_row_to_its_drain_worker(
     row = db.settle_outbox[(auth.id, "settle")]
     assert row["status"] == "pending"
     assert row["lease_owner"] == "drain-w1"
-    assert not any(
-        sql.startswith("UPDATE tr_settle_outbox SET status=@status") for _txn, sql in calls
-    ), "a leased row must not be rewritten by the inline path"
+    [guarded] = [sql for _txn, sql in calls
+                 if sql.startswith("UPDATE tr_settle_outbox SET status=@status")]
+    assert "lease_owner IS NULL" in guarded and "THEN RETURN" in guarded
+    assert row["attempts"] == 0 and row["settle_body"] is not None
     assert "settle outbox done mark skipped" in caplog.text
 
 
@@ -3512,13 +3518,8 @@ def test_fresh_regional_settle_round_trip_order(
         ("t3", "SELECT", "tr_reservation"),
         ("t3", "UPDATE", "tr_reservation"),
         ("t3", "UPDATE", "tr_gateway_authorization"),
-        ("t3", "SELECT", "tr_settle_outbox"),
         ("t3", "UPDATE", "tr_settle_outbox"),
-        ("t3", "SELECT", "tr_settle_outbox"),
-        ("t3", "UPDATE", "tr_gateway_authorization"),
-        ("t3", "UPDATE", "tr_reservation"),
-        ("t3", "INSERT", "tr_generation"),
-        ("t3", "INSERT", "tr_operational_analytics_outbox"),
+        ("t3", "BATCH", ""),
         ("t3", "COMMIT", ""),
         ("t4", "INSERT", "tr_operational_analytics_outbox"),
         ("t4", "COMMIT", ""),
@@ -3535,8 +3536,8 @@ def test_fresh_regional_settle_round_trip_order(
         table = re.search(r"(?:FROM|INTO|UPDATE) (tr_\w+)", sql)
         observed.append((phase, sql.split()[0], table[1] if table else ""))
     assert observed == expected
-    # 18 with the snapshot: S2-S4 are one batch since #1340; the re-read adds one.
-    assert len(observed) == 18 + int(reread)
+    # 18 -> 13 with the snapshot; the legacy re-read adds one.
+    assert len(observed) == 13 + int(reread)
     local = store._regional_quota_ledger.get(auth.regional_lease_id, region=auth.region)
     assert local.spent_microdollars == data["cost_microdollars"]
     assert db.reservations[auth.credit_reservation_id]["actual_micro"] == data["cost_microdollars"]
@@ -3626,3 +3627,248 @@ def test_spend_route_passes_snapshot_and_rereads_committed_mirror(
     assert data["cost_microdollars"] == 500
     assert len(received) == len(mirrored) == 1
     assert db.reservations[auth.credit_reservation_id]["actual_micro"] == 500
+
+
+@pytest.mark.parametrize("sibling", ["pending", "dead", "done", "missing", "release_approved"])
+@pytest.mark.parametrize("ttl", [None, "2026-09-01T00:00:00+00:00"])
+@pytest.mark.parametrize("row_state", ["pending", "dead", "done", "missing", "other_fence", "this_fence"])
+@pytest.mark.parametrize("worker", [False, True])
+@pytest.mark.parametrize("settled", [False, True])
+def test_guarded_done_matches_sequential_retention(
+    monkeypatch: pytest.MonkeyPatch, sibling: str, ttl: str | None,
+    row_state: str, worker: bool, settled: bool,
+) -> None:
+    from tests.fakes import settle_done_sequential as reference
+    from trusted_router import storage_gcp_settle_outbox as current
+
+    now = "2026-09-26T12:00:00+00:00"
+    monkeypatch.setattr(current, "_iso_now", lambda: now)
+    monkeypatch.setattr(reference, "_iso_now", lambda: now)
+    results = []
+    for sequential in (True, False):
+        db = FakeSpannerDatabase()
+        pt = _ParamTypes
+        db.gateway_authorizations["auth"] = {
+            "authorization_id": "auth", "settled": settled, "terminal_at": ttl,
+        }
+        db.reservations["reservation"] = {
+            "authorization_id": "auth", "settled": settled, "terminal_at": ttl,
+        }
+        intent = dict(
+            authorization_id="auth", intent_kind="settle", reservation_id="reservation",
+            status=row_state if row_state in {"pending", "dead", "done"} else "pending",
+            attempts=None, lease_owner=("worker" if row_state == "this_fence" else
+                                        "other" if row_state == "other_fence" else None),
+            leased_until=now, settle_body="frozen evidence", last_error="old error",
+            next_attempt_at=now, terminal_at=ttl, updated_at=ttl,
+        )
+        if row_state != "missing":
+            db.settle_outbox[("auth", "settle")] = intent
+        if sibling != "missing":
+            db.settle_outbox[("auth", "refund")] = dict(
+                intent, intent_kind="refund", status=sibling, lease_owner=None,
+            )
+        if worker:
+            cls = reference.SequentialSpannerSettleOutbox if sequential else current.SpannerSettleOutbox
+            result = cls(db, pt).mark("auth", "settle", lease_owner="worker", done=True)
+        else:
+            mark = reference.mark_done_unleased_tx if sequential else current.mark_done_unleased_tx
+            result = db.run_in_transaction(lambda tx, mark=mark, pt=pt: mark(
+                tx, pt, authorization_id="auth", intent_kind="settle",
+            ))
+        results.append((result, copy.deepcopy(db.settle_outbox),
+                        copy.deepcopy(db.gateway_authorizations), copy.deepcopy(db.reservations)))
+        if not sequential:
+            eligible = row_state == ("this_fence" if worker else "pending")
+            assert result == (("done" if worker else True) if eligible else (None if worker else False))
+            # UPDATE THEN RETURN is one RPC. Only a zero-row result gets a read.
+            assert db.transaction_execute_sql_calls == (1 if eligible else 2)
+            assert db.transaction_batch_update_calls == int(eligible)
+    assert results[0] == results[1]
+
+
+@pytest.mark.parametrize("mode", ["typed", "legacy"])
+@pytest.mark.parametrize("scenario", ["fresh", "replay", "refund", "concurrent"])
+def test_finalize_guarded_sql_matches_sequential_money(
+    monkeypatch: pytest.MonkeyPatch, mode: str, scenario: str,
+) -> None:
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from tests.fakes import settle_done_sequential as reference
+    from tests.test_spanner_batch_dml import NOW, _authorize, _database, _state
+    from trusted_router import storage_gcp_authorize as finalize
+    from trusted_router import storage_gcp_settle_outbox as outbox
+    from trusted_router.storage_gcp_codec import json_body
+    from trusted_router.storage_gcp_generation_records import generation_record_body
+    from trusted_router.storage_gcp_operational_analytics_outbox import (
+        SpannerOperationalAnalyticsOutbox,
+    )
+    from trusted_router.storage_gcp_request_records import read_gateway_authorization
+    from trusted_router.storage_models import Generation
+
+    initial = _database()
+    accepted = _authorize(initial, mode)
+    aid, rid = accepted["authorization_id"], accepted["reservation_id"]
+    states = []
+    monkeypatch.setattr(outbox, "_iso_now", lambda: NOW.isoformat())
+    monkeypatch.setattr(reference, "_iso_now", lambda: NOW.isoformat())
+    for sequential in (True, False):
+        db = _database()
+        db.now = NOW
+        for name in ("typed", "rows", "reservations", "gateway_authorizations"):
+            setattr(db, name, copy.deepcopy(getattr(initial, name)))
+        pt = _ParamTypes
+        if mode == "typed":
+            auth = read_gateway_authorization(db.snapshot(), pt, aid)
+        else:
+            auth = GatewayAuthorization(**json.loads(db.rows[("gateway_authorization", aid)].body))
+        assert auth is not None
+        gen = Generation.from_settle_body(
+            authorization=auth, provider_name="provider", model_id="model",
+            usage_type="Credits", provider="provider", body={}, input_tokens=5,
+            output_tokens=7, actual_cost_microdollars=70,
+        )
+        gen.id = "generation"
+        gen.created_at = NOW.isoformat()
+        frozen = copy.deepcopy(auth)
+        frozen.record_finalization(success=True, actual_microdollars=70,
+                                   selected_usage_type="Credits", generation=gen)
+        outbox.SpannerSettleOutbox(db, pt).enqueue(SettleOutboxRow(
+            authorization_id=aid, reservation_id=rid, intent_kind="settle",
+            settle_origin=mode, actual_cost_micro=70,
+        ))
+
+        def settle(
+            success: bool = True, *, db: Any = db, pt: Any = pt,
+            frozen: Any = frozen, gen: Any = gen,
+        ) -> dict[str, Any]:
+            terminal = copy.deepcopy(frozen)
+            if not success:
+                terminal.record_finalization(
+                    success=False, actual_microdollars=0, selected_usage_type="Credits", generation=None,
+                )
+            return finalize.typed_finalize_atomic(
+                db, pt, reservation_id=rid, authorization_id=aid, success=success,
+                actual_micro=70 if success else 0, settled_usage_type="Credits", now=NOW,
+                outbox_available=True, authorization=terminal if mode == "typed" else None,
+                auth_body_settled=json_body(terminal), generation=gen if success else None,
+                generation_writes=[("generation", gen.id, generation_record_body(gen))],
+                persist_generation_record=True,
+                operational_analytics_outbox=SpannerOperationalAnalyticsOutbox(db, pt),
+                settle_outbox_done=(aid, "settle"),
+            )
+
+        with monkeypatch.context() as patch:
+            if sequential:
+                def old_mark(tx: Any, pt: Any, **kw: Any) -> bool:
+                    kw.pop("retention_statements", None)
+                    return reference.mark_done_unleased_tx(tx, pt, **kw)
+                patch.setattr(finalize, "mark_done_unleased_tx", old_mark)
+                def old_batch(tx: Any, statements: Any, counts: Any) -> None:
+                    for (sql, params, types), allowed in zip(statements, counts, strict=True):
+                        assert tx.execute_update(sql, params=params, param_types=types) in allowed
+                patch.setattr(finalize, "execute_batch_dml", old_batch)
+            if scenario == "refund":
+                assert settle(False)["outcome"] == "settled"
+            if scenario == "concurrent":
+                db._ready_barrier = threading.Barrier(2)
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    outcomes = sorted(pool.map(lambda _: settle()["outcome"], range(2)))
+                db._ready_barrier = None
+                assert db.aborts > 0
+            else:
+                outcomes = [settle()["outcome"]]
+            if scenario == "replay":
+                assert settle()["outcome"] == "already_settled"
+        expected_cost = 0 if scenario == "refund" else 70
+        assert db.reservations[rid]["actual_micro"] == expected_cost
+        assert db.typed[CREDIT_BALANCE_TABLE][("workspace", 0)]["total_usage"] == expected_cost
+        assert len(db.generation_records) == int(scenario != "refund")
+        # Commit timestamps are deliberately assigned by the fake clock.
+        states.append((outcomes, _state(db), copy.deepcopy(db.generation_records),
+                       copy.deepcopy(db.operational_analytics_outbox)))
+    assert states[0] == states[1]
+
+
+@pytest.mark.parametrize("scenario", ["fresh", "replay", "refund", "pending_sibling", "dead_sibling"])
+def test_regional_guarded_sql_matches_sequential_finalize(
+    monkeypatch: pytest.MonkeyPatch, scenario: str,
+) -> None:
+    from tests.fakes import settle_done_sequential as reference
+    from trusted_router import storage_gcp_authorize as finalize
+
+    observations = []
+    for sequential in (True, False):
+        store, db, _ = make_fake_store(
+            operational_analytics_outbox_enabled=True, request_record_write_mode="typed",
+            generation_records_enabled=True,
+        )
+        configure_store(store)
+        ws = "ws-regional-done-differential"
+        _seed_credit(store, ws)
+        key = _make_key(store, ws, limit=None)
+        auth = _regional_snapshot_authorization(store, ws, key)
+        if scenario.endswith("sibling"):
+            _outbox(store).enqueue(_row(auth, intent="refund"))
+            db.settle_outbox[(auth.id, "refund")]["status"] = scenario.split("_")[0]
+        with monkeypatch.context() as patch:
+            if sequential:
+                def old_mark(tx: Any, pt: Any, **kw: Any) -> bool:
+                    kw.pop("retention_statements", None)
+                    return reference.mark_done_unleased_tx(tx, pt, **kw)
+                patch.setattr(finalize, "mark_done_unleased_tx", old_mark)
+                def old_batch(tx: Any, statements: Any, counts: Any) -> None:
+                    for (sql, params, types), allowed in zip(statements, counts, strict=True):
+                        assert tx.execute_update(sql, params=params, param_types=types) in allowed
+                patch.setattr(finalize, "execute_batch_dml", old_batch)
+            if scenario == "refund":
+                assert store.typed_finalize_gateway_authorization_result(
+                    auth.id, success=False, actual_microdollars=0, selected_usage_type="Credits",
+                ).finalized
+            data = _internal_settle(auth)
+            if scenario == "replay":
+                replay = _internal_settle(auth)
+                assert replay["cost_microdollars"] == data["cost_microdollars"]
+        local = store._regional_quota_ledger.get(auth.regional_lease_id, region=auth.region)
+        row = db.reservations[auth.credit_reservation_id]
+        intent = db.settle_outbox.get((auth.id, "settle"))
+        observations.append((
+            data, local.spent_microdollars, row["actual_micro"], row.get("terminal_at") is None,
+            db.gateway_authorizations[auth.id].get("terminal_at") is None,
+            None if intent is None else (intent["status"], intent["attempts"]),
+            len(db.generation_records), len(db.operational_analytics_outbox),
+        ))
+    assert observations[0] == observations[1]
+
+
+@pytest.mark.parametrize("reservation", [None, "", "absent", "foreign"])
+@pytest.mark.parametrize("sibling", [False, True])
+def test_done_uses_stored_reservation_and_preserves_foreign_authorization_guard(
+    monkeypatch: pytest.MonkeyPatch, reservation: str | None, sibling: bool,
+) -> None:
+    from tests.fakes import settle_done_sequential as reference
+    from trusted_router import storage_gcp_settle_outbox as current
+
+    now = "2026-09-26T12:00:00+00:00"
+    monkeypatch.setattr(reference, "_iso_now", lambda: now)
+    monkeypatch.setattr(current, "_iso_now", lambda: now)
+    outcomes = []
+    for mark in (reference.mark_done_unleased_tx, current.mark_done_unleased_tx):
+        db = FakeSpannerDatabase()
+        db.gateway_authorizations["auth"] = dict(authorization_id="auth", settled=True, terminal_at=None)
+        db.reservations["foreign"] = dict(authorization_id="other", settled=True, terminal_at=None)
+        intent = dict(authorization_id="auth", intent_kind="settle", status="pending",
+                      attempts=7, lease_owner=None, reservation_id=reservation)
+        db.settle_outbox[("auth", "settle")] = intent
+        db.settle_outbox[("other", "settle")] = dict(intent, authorization_id="other")
+        if sibling:
+            db.settle_outbox[("auth", "refund")] = dict(intent, intent_kind="refund")
+        assert db.run_in_transaction(lambda tx, mark=mark: mark(
+            tx, _ParamTypes, authorization_id="auth", intent_kind="settle",
+        ))
+        assert db.reservations["foreign"]["terminal_at"] is None
+        assert db.gateway_authorizations["auth"]["terminal_at"] == (None if sibling else now)
+        assert db.settle_outbox[("auth", "settle")]["attempts"] == 8
+        outcomes.append((db.gateway_authorizations, db.reservations, db.settle_outbox))
+    assert outcomes[0] == outcomes[1]

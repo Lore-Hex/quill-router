@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from clickhouse.backfill_generation_records import _iter_recent
-from tests.fakes.spanner import make_fake_store
+from tests.fakes.spanner import _FakeTransaction, make_fake_store
 from trusted_router.storage import CreditAccount, create_store
 from trusted_router.storage_gcp_authorize import AuthorizeOutcome
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
@@ -172,14 +172,17 @@ def test_outbox_failure_rolls_back_charge_and_generation(
     authorization, key = _authorize(store, "ws-outbox-rollback")
     generation = _generation(authorization, key.hash)
 
-    def fail_enqueue(*_args: Any, **_kwargs: Any) -> None:
-        raise RuntimeError("Spanner outbox unavailable")
+    original_update = _FakeTransaction.execute_update
 
-    monkeypatch.setattr(
-        store._operational_analytics_outbox,
-        "enqueue_activity_tx",
-        fail_enqueue,
-    )
+    def fail_activity_insert(transaction: Any, sql: str, **kwargs: Any) -> int:
+        # Fail the actual write, whether issued individually or inside a batch.
+        # The generation INSERT has already been staged in this transaction.
+        if sql.startswith("INSERT INTO tr_operational_analytics_outbox"):
+            assert any(op[0] == "insert_generation" for op in transaction.pending_writes)
+            raise RuntimeError("Spanner outbox unavailable")
+        return original_update(transaction, sql, **kwargs)
+
+    monkeypatch.setattr(_FakeTransaction, "execute_update", fail_activity_insert)
 
     with pytest.raises(RuntimeError, match="outbox unavailable"):
         store.typed_finalize_gateway_authorization_result(

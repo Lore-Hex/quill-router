@@ -19,16 +19,16 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from trusted_router.storage_gcp_batch_dml import execute_batch_dml
+from google.api_core.exceptions import FailedPrecondition
+
+from trusted_router.storage_gcp_batch_dml import DmlStatement, execute_batch_dml
 from trusted_router.storage_gcp_counter_dml import (
     clear_reservation_retention,
-    complete_reservation_retention,
     reservation_retention_clear_statement,
 )
 from trusted_router.storage_gcp_io import run_in_transaction_with_retry
 from trusted_router.storage_gcp_request_records import (
     clear_gateway_authorization_retention,
-    complete_gateway_authorization_retention,
     gateway_authorization_retention_clear_statement,
 )
 from trusted_router.storage_models import AutoRefillOutboxRow, SettleOutboxRow
@@ -88,12 +88,6 @@ GUARD_COUNT_SQL = (
     "SELECT COUNT(*) FROM tr_settle_outbox WHERE authorization_id=@aid "  # noqa: S608
     f"AND status IN ({_GUARD_STATUS_SQL})"
 )
-_SIBLING_GUARD_COUNT_SQL = (
-    "SELECT COUNT(*) FROM tr_settle_outbox WHERE authorization_id=@aid "  # noqa: S608
-    "AND intent_kind != @kind "
-    f"AND status IN ({_GUARD_STATUS_SQL})"
-)
-
 # Enqueue outcomes.
 ENQ_INSERTED = "inserted"  # new pending row
 ENQ_REFRESHED = "refreshed"  # existing pending row's frozen inputs updated
@@ -133,51 +127,64 @@ def _resolve_done_retention_tx(
     ``mark_done_unleased_tx`` (inside the finalize commit) so the two cannot
     drift: the fold moved the mark, it must not move the retention contract.
     """
-    sibling_rows = list(
-        transaction.execute_sql(
-            _SIBLING_GUARD_COUNT_SQL,
-            params={"aid": authorization_id, "kind": intent_kind},
-            param_types={"aid": param_types.STRING, "kind": param_types.STRING},
-        )
+    statements = done_retention_statements(
+        param_types, authorization_id=authorization_id, intent_kind=intent_kind,
+        reservation_id=reservation_id, now=now,
     )
-    outstanding_siblings = int(sibling_rows[0][0]) if sibling_rows else 0
-    if outstanding_siblings == 0:
-        complete_gateway_authorization_retention(
-            transaction,
-            param_types,
-            authorization_id,
-            terminal_at=now,
-            outbox_available=True,
+    execute_batch_dml(transaction, statements, [(0, 1)] * len(statements))
+
+
+def done_retention_statements(
+    param_types: Any, *, authorization_id: str, intent_kind: str,
+    reservation_id: Any, now: str,
+) -> list[DmlStatement]:
+    """Resolve TTL in SQL against this transaction's current outbox range.
+
+    Clear even an active record when a sibling is pending/dead. Otherwise arm
+    only settled, unarmed records with no outstanding intent for THEIR auth;
+    the reservation can reference a different auth in rolling/repair data.
+    Never extend an already armed deadline.
+    """
+    sibling = (
+        "EXISTS (SELECT 1 FROM tr_settle_outbox s WHERE s.authorization_id=@aid "  # noqa: S608
+        f"AND s.intent_kind != @kind AND s.status IN ({_GUARD_STATUS_SQL}))"
+    )
+    statements = []
+    targets = [("tr_gateway_authorization", "authorization_id", authorization_id)]
+    if reservation_id:
+        targets.append(("tr_reservation", "reservation_id", str(reservation_id)))
+    for table, key, value in targets:
+        sql = (
+            f"UPDATE {table} SET terminal_at=IF({sibling}, NULL, @now) "  # noqa: S608
+            f"WHERE {key}=@record_id AND IF({sibling}, terminal_at IS NOT NULL, "
+            "settled=true AND terminal_at IS NULL AND NOT EXISTS "
+            "(SELECT 1 FROM tr_settle_outbox o "
+            f"WHERE o.authorization_id = {table}.authorization_id "
+            f"AND o.status IN ({_GUARD_STATUS_SQL})))"
         )
-        if reservation_id:
-            complete_reservation_retention(
-                transaction,
-                param_types,
-                str(reservation_id),
-                terminal_at=now,
-                outbox_available=True,
-            )
-    else:
-        _defer_retention_tx(transaction, param_types, authorization_id, reservation_id)
+        statements.append((
+            sql,
+            {"aid": authorization_id, "kind": intent_kind, "record_id": value, "now": now},
+            {"aid": param_types.STRING, "kind": param_types.STRING,
+             "record_id": param_types.STRING, "now": param_types.TIMESTAMP},
+        ))
+    return statements
 
 
-# The two statements mark() issues, spelled once more here for the inline
-# finalize transaction. They are deliberately byte-identical to mark()'s: the
-# test fake is SQL-sensitive by design (it asserts each predicate), so a drift
-# between the two would fail one of them against the single modeled shape.
-_PENDING_ROW_SQL = (
-    "SELECT attempts, lease_owner, reservation_id FROM tr_settle_outbox "
-    "WHERE authorization_id=@aid AND intent_kind=@kind AND status='pending'"
-)
-_RESOLVE_ROW_SQL = (
-    "UPDATE tr_settle_outbox SET status=@status, attempts=@attempts, "
-    "last_error=@err, next_attempt_at=@next_at, lease_owner=NULL, "
-    "leased_until=NULL, updated_at=@now, terminal_at=@terminal_at, "
-    "settle_body=IF(@done, CAST(NULL AS STRING), settle_body) "
-    "WHERE authorization_id=@aid "
-    "AND intent_kind=@kind AND status='pending' "
+# Batch DML cannot return reservation_id. Consume this statement first, then
+# batch the retention/evidence writes that depend on its successful fence.
+_DONE_ROW_SQL = (
+    "UPDATE tr_settle_outbox SET status=@status, attempts=COALESCE(attempts, 0)+1, "
+    "last_error=NULL, next_attempt_at=NULL, lease_owner=NULL, leased_until=NULL, "
+    "updated_at=@now, terminal_at=@now, settle_body=NULL "
+    "WHERE authorization_id=@aid AND intent_kind=@kind AND status='pending' "
     "AND ((@lease_owner IS NULL AND lease_owner IS NULL) OR "
-    "(@lease_owner IS NOT NULL AND lease_owner=@lease_owner))"
+    "(@lease_owner IS NOT NULL AND lease_owner=@lease_owner)) "
+    "THEN RETURN reservation_id"
+)
+_DONE_MISS_SQL = (
+    "SELECT status, lease_owner FROM tr_settle_outbox "
+    "WHERE authorization_id=@aid AND intent_kind=@kind"
 )
 
 
@@ -187,74 +194,59 @@ def mark_done_unleased_tx(
     *,
     authorization_id: str,
     intent_kind: str,
+    retention_statements: list[DmlStatement] | None = None,
 ) -> bool:
-    """Resolve the pending intent row to ``done`` INSIDE a caller's transaction.
+    """Resolve only an unleased intent in the finalize commit.
 
-    Same lease fence as the inline path's ``mark(done=True)``: only an UNLEASED
-    ``pending`` row is touched. A row a drain worker currently owns is left
-    alone (returns False) and the drain re-derives ``done`` from the finalize
-    outcome, exactly as when the standalone mark was skipped.
-
-    Called from ``typed_finalize_atomic`` so the charge and the done-mark
-    commit together. Before this the mark was a separate commit after
-    finalize: one more multi-region round trip per settle, and a window in
-    which a crash left an already-charged authorization ``pending`` -- the
-    residual that docs/design/durable-settle-outbox.md §7 accepted and said
-    to close this way once the outbox shared the Spanner instance.
+    A caller may collect retention statements to batch with its evidence writes.
+    The returned reservation belongs to the outbox row, not the caller's snapshot.
     """
-    rows = list(
-        transaction.execute_sql(
-            _PENDING_ROW_SQL,
+    return _mark_done_tx(
+        transaction, param_types, authorization_id=authorization_id,
+        intent_kind=intent_kind, lease_owner=None,
+        retention_statements=retention_statements,
+    )
+
+
+def _mark_done_tx(
+    transaction: Any, param_types: Any, *, authorization_id: str,
+    intent_kind: str, lease_owner: str | None, now: str | None = None,
+    retention_statements: list[DmlStatement] | None = None,
+) -> bool:
+    now = now if now is not None else _iso_now()
+    rows = list(transaction.execute_sql(
+        _DONE_ROW_SQL,
+        params={"aid": authorization_id, "kind": intent_kind, "lease_owner": lease_owner,
+                "now": now, "status": "done"},
+        param_types={"aid": param_types.STRING, "kind": param_types.STRING,
+                     "lease_owner": param_types.STRING, "now": param_types.TIMESTAMP,
+                     "status": param_types.STRING},
+    ))
+    if not rows:
+        # Rare-path classification stays in the transaction. Missing/terminal
+        # and leased-by-another-worker all retain the old False/None outcome.
+        current = list(transaction.execute_sql(
+            _DONE_MISS_SQL,
             params={"aid": authorization_id, "kind": intent_kind},
             param_types={"aid": param_types.STRING, "kind": param_types.STRING},
+        ))
+        if not current or current[0][0] != "pending":
+            return False
+        if current[0][1] != lease_owner:
+            return False
+        raise FailedPrecondition("Done UPDATE missed an eligible outbox row")
+    if len(rows) != 1:
+        raise FailedPrecondition("Done UPDATE returned more than one outbox row")
+    if retention_statements is None:
+        _resolve_done_retention_tx(
+            transaction, param_types, authorization_id=authorization_id,
+            intent_kind=intent_kind, reservation_id=rows[0][0], now=now,
         )
-    )
-    if not rows:
-        return False
-    attempts, cur_owner, reservation_id = int(rows[0][0] or 0), rows[0][1], rows[0][2]
-    if cur_owner is not None:
-        return False
-    now = _iso_now()
-    updated = transaction.execute_update(
-        _RESOLVE_ROW_SQL,
-        params={
-            "status": "done",
-            "attempts": attempts + 1,
-            "err": None,
-            "next_at": None,
-            "now": now,
-            "terminal_at": now,
-            "done": True,
-            "aid": authorization_id,
-            "kind": intent_kind,
-            "lease_owner": None,
-        },
-        param_types={
-            "status": param_types.STRING,
-            "attempts": param_types.INT64,
-            "err": param_types.STRING,
-            "next_at": param_types.TIMESTAMP,
-            "now": param_types.TIMESTAMP,
-            "aid": param_types.STRING,
-            "kind": param_types.STRING,
-            "lease_owner": param_types.STRING,
-            "terminal_at": param_types.TIMESTAMP,
-            "done": param_types.BOOL,
-        },
-    )
-    if int(updated) != 1:
-        return False
-    # The mark moved into the finalize commit; the retention contract that
-    # rode along with it (arm terminal_at on the shared records, or defer it
-    # while a sibling intent is outstanding) moves with it.
-    _resolve_done_retention_tx(
-        transaction,
-        param_types,
-        authorization_id=authorization_id,
-        intent_kind=intent_kind,
-        reservation_id=reservation_id,
-        now=now,
-    )
+    else:
+        retention_statements.extend(done_retention_statements(
+            param_types, authorization_id=authorization_id, intent_kind=intent_kind,
+            reservation_id=rows[0][0], now=now,
+        ))
     return True
 
 
@@ -634,6 +626,11 @@ class SpannerSettleOutbox:
         now = _iso_now()
 
         def txn(transaction: Any) -> str | None:
+            if done:
+                return "done" if _mark_done_tx(
+                    transaction, self._pt, authorization_id=authorization_id,
+                    intent_kind=intent_kind, lease_owner=lease_owner, now=now,
+                ) else None
             rows = list(
                 transaction.execute_sql(
                     "SELECT attempts, lease_owner, reservation_id FROM tr_settle_outbox "
@@ -654,9 +651,7 @@ class SpannerSettleOutbox:
             if cur_owner != lease_owner:
                 return None
             next_attempts = attempts + 1
-            if done:
-                new_status, next_at, err, terminal_at = "done", None, None, now
-            elif force_dead:
+            if force_dead:
                 new_status, next_at, err, terminal_at = (
                     "dead",
                     None,
@@ -711,24 +706,8 @@ class SpannerSettleOutbox:
             )
             if updated != 1:
                 return None
-            if done:
-                _resolve_done_retention_tx(
-                    transaction,
-                    self._pt,
-                    authorization_id=authorization_id,
-                    intent_kind=intent_kind,
-                    reservation_id=reservation_id,
-                    now=now,
-                )
-            else:
-                # Non-terminal outcome (backoff to pending, or dead awaiting a
-                # human): repair work is still outstanding, so the referenced
-                # records must stay TTL-ineligible. This also disarms retention
-                # that a WINNING claim armed earlier — settle_atomic sets
-                # terminal_at on the reservation at claim time, so a row that
-                # later goes dead would otherwise keep a 30-day fuse on the very
-                # records its freeze exists to preserve.
-                self._defer_retention(transaction, authorization_id, reservation_id)
+            # Failed/backoff intents must disarm even an already armed TTL.
+            self._defer_retention(transaction, authorization_id, reservation_id)
             return new_status
 
         return run_in_transaction_with_retry(self._database, txn)
