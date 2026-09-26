@@ -478,3 +478,84 @@ def test_no_candidate_trust_reread_shares_regional_deadline(
 
     admission()
     assert audit_typed_invariants(store).clean
+
+
+def test_regional_fence_read_deadline_falls_back_through_gateway(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fastapi.testclient import TestClient
+    from google.api_core.exceptions import DeadlineExceeded
+
+    from tests.fakes.spanner import make_fake_store
+    from trusted_router.config import Settings
+    from trusted_router.main import create_app
+    from trusted_router.storage import configure_store
+
+    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
+    workspace = store.create_workspace(
+        "owner",
+        "regional-fallback",
+        trial_credit_microdollars=100_000_000,
+    )
+    _raw, api_key = store.create_api_key(
+        workspace_id=workspace.id,
+        name="regional-fallback",
+        creator_user_id="owner",
+    )
+    configure_store(store)
+    client = TestClient(
+        create_app(
+            Settings(
+                environment="test",
+                regional_quota_leases_enabled=True,
+                regional_quota_lease_issuance_enabled=True,
+                regional_quota_lease_pilot_workspace_ids=workspace.id,
+            ),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+
+    backend = type(store)
+    read_entity = backend._read_entity
+    regional_authorize = backend.authorize_gateway_regional
+    fence_reads = []
+    outcomes = []
+
+    def read_with_deadline(self: Any, kind: str, entity_id: str, cls: Any) -> Any:
+        if kind == "regional_quota_fence":
+            fence_reads.append(entity_id)
+            raise DeadlineExceeded("regional fence read deadline")
+        return read_entity(self, kind, entity_id, cls)
+
+    def observe_regional(self: Any, **kwargs: Any) -> Any:
+        result = regional_authorize(self, **kwargs)
+        outcomes.append(result)
+        assert kwargs["observation"]["regional_unavailable_reason"] == "ledger_timeout"
+        return result
+
+    monkeypatch.setattr(backend, "_read_entity", read_with_deadline)
+    monkeypatch.setattr(backend, "authorize_gateway_regional", observe_regional)
+
+    response = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": api_key.hash,
+            "model": "anthropic/claude-opus-4.7",
+            "estimated_input_tokens": 1_000,
+            "max_output_tokens": 100,
+            "route_type": "chat.completions",
+            "idempotency_key": "regional-ledger-global-fallback",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    authorization = store.get_gateway_authorization(response.json()["data"]["authorization_id"])
+    assert authorization is not None
+    assert authorization.settlement == "local"
+    reservation = db.reservations[str(authorization.credit_reservation_id)]
+    assert reservation["credit_reserved_micro"] > 0
+
+    assert len(fence_reads) == 1
+    assert outcomes == [("unavailable", None)]
+    assert reservation["hold_usage_type"] == "Credits"
+    assert not any(kind == "regional_quota_lease" for kind, _ in db.rows)

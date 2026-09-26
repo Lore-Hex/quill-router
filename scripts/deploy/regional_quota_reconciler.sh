@@ -141,7 +141,7 @@ while IFS= read -r deployed_job; do
 done < <(
   gc run jobs list \
     --region "$JOB_REGION" \
-    --filter="metadata.name:${JOB_PREFIX}" \
+    --filter="metadata.name=${JOB_NAME}" \
     --format='value(metadata.name)'
 )
 

@@ -342,7 +342,7 @@ regional_quota_preflight_reconciler() {
   local scheduler="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULER:-trusted-router-regional-quota-reconcile}"
   local scheduler_region="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULER_REGION:-${TR_PRIMARY_REGION}}"
   local job_region="${TR_REGIONAL_QUOTA_RECONCILER_JOB_REGION:-us-east4}"
-  local scheduler_json job_name job_json revision_json execution_name execution_json evidence
+  local scheduler_json job_name job_json revision_json execution_name evidence
   if ! scheduler_json="$(gc scheduler jobs describe "$scheduler" --location="$scheduler_region" --format=json 2>&1)"; then
     log "refusing regional quota issuance: cannot read reconciler schedule: ${scheduler_json}"
     return 1
@@ -385,77 +385,82 @@ if str(s.get("observedGeneration")) != str(j["metadata"]["generation"]):
 if not any(c.get("type") == "Ready" and c.get("status") == "True" for c in s.get("conditions", [])):
     raise SystemExit("refusing regional quota issuance: worker not ready")
 e = s.get("latestCreatedExecution", {})
-if e.get("completionStatus") not in ("EXECUTION_SUCCEEDED", "EXECUTION_RUNNING", "EXECUTION_PENDING"):
-    raise SystemExit("refusing regional quota issuance: latest worker execution did not succeed")
+if e.get("completionStatus") not in ("EXECUTION_SUCCEEDED", "EXECUTION_FAILED", "EXECUTION_CANCELLED",
+                                      "EXECUTION_RUNNING", "EXECUTION_PENDING"):
+    raise SystemExit("refusing regional quota issuance: unknown latest worker execution status")
 print(e["name"])
 ' <<<"$job_json")" || return 1
-  local in_flight executions attempt candidate deadline remaining pause_seconds
+  local in_flight executions attempt candidates candidate deadline remaining pause_seconds
   in_flight="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["status"]["latestCreatedExecution"]["completionStatus"])' <<<"$job_json")"
-  if [ "$in_flight" != EXECUTION_SUCCEEDED ]; then
-    # At one run/minute, ten records cover the five-minute evidence window.
-    # Wait at most 90 seconds only when no recent completed run is available.
-    attempt=0
-    deadline=$((SECONDS + 90))
-    while :; do
-      remaining=$((deadline - SECONDS))
-      if [ "$remaining" -le 0 ]; then
-        log "refusing regional quota issuance: no recent completed worker execution after bounded wait"
-        return 1
-      fi
-      executions="$(REGIONAL_QUOTA_READ_TIMEOUT="$remaining" regional_quota_gc_read run jobs executions list --job="$job_name" --region="$job_region" --limit=10 --sort-by=~metadata.creationTimestamp --format=json)" || return 1
-      candidate="$(python3 -c '
+  # At one run/minute, ten records cover the five-minute evidence window.
+  # Classify terminal failures by task configuration in the scan, just like
+  # successful single-flight skips. Only in-flight work gets bounded polling
+  # (at most 90 seconds) for qualifying evidence.
+  attempt=0
+  deadline=$((SECONDS + 90))
+  while :; do
+    remaining=$((deadline - SECONDS))
+    if [ "$remaining" -le 0 ]; then
+      log "refusing regional quota issuance: no qualifying worker execution after bounded wait"
+      return 1
+    fi
+    executions="$(REGIONAL_QUOTA_READ_TIMEOUT="$remaining" regional_quota_gc_read run jobs executions list --job="$job_name" --region="$job_region" --limit=10 --sort-by=~metadata.creationTimestamp --format=json)" || return 1
+    candidates="$(python3 -c '
 import json, sys
 from datetime import datetime, timezone
 runs = json.load(sys.stdin)
+job_spec = json.loads(sys.argv[1])["spec"]["template"]["spec"]["template"]["spec"]
 completed = [e for e in runs if e.get("status", {}).get("completionTime")]
-completed.sort(key=lambda e: e["status"]["completionTime"], reverse=True)
-if completed:
-    e = completed[0]
-    age = (datetime.now(timezone.utc) - datetime.fromisoformat(e["status"]["completionTime"].replace("Z", "+00:00"))).total_seconds()
-    if 0 <= age <= 300:
+def completion(e):
+    return datetime.fromisoformat(e["status"]["completionTime"].replace("Z", "+00:00"))
+completed.sort(key=completion, reverse=True)
+current = [e for e in completed if e["spec"]["template"]["spec"] == job_spec]
+latest_failure = max((completion(e) for e in current if any(
+    c.get("type") == "Completed" and c.get("status") == "False"
+    for c in e["status"].get("conditions", []))), default=None)
+for e in current:
+    status = e["status"]
+    age = (datetime.now(timezone.utc) - completion(e)).total_seconds()
+    if not 0 <= age <= 300:
+        continue
+    # A successful skip cannot clear a failure, including equal-time ties.
+    if latest_failure is not None and completion(e) <= latest_failure:
+        continue
+    if any(c.get("type") == "Completed" and c.get("status") == "True"
+           for c in status.get("conditions", [])):
         print(e["metadata"]["name"])
-' <<<"$executions")" || return 1
-      if [ -n "$candidate" ]; then
-        execution_name="$candidate"
-        break
-      fi
+' "$job_json" <<<"$executions")" || return 1
+    while IFS= read -r candidate; do
+      [ -n "$candidate" ] || continue
       remaining=$((deadline - SECONDS))
-      if [ "$attempt" -ge 9 ] || [ "$remaining" -le 0 ]; then
-        log "refusing regional quota issuance: no recent completed worker execution after bounded wait"
+      if [ "$remaining" -le 0 ]; then
+        log "refusing regional quota issuance: no qualifying worker execution after bounded wait"
         return 1
       fi
-      pause_seconds=10
-      if [ "$remaining" -lt "$pause_seconds" ]; then pause_seconds="$remaining"; fi
-      sleep "$pause_seconds"
-      attempt=$((attempt + 1))
-    done
-  fi
-  if ! execution_json="$(gc run jobs executions describe "$execution_name" --region="$job_region" --format=json 2>&1)"; then
-    log "refusing regional quota issuance: cannot read reconciler execution: ${execution_json}"
-    return 1
-  fi
-  python3 -c '
+      # Successful single-flight skips have no completion log. Keep scanning
+      # the window rather than letting a skip hide an earlier real run.
+      evidence="$(REGIONAL_QUOTA_READ_TIMEOUT="$remaining" regional_quota_gc_read logging read \
+        "resource.type=cloud_run_job AND resource.labels.job_name=\"${job_name}\" AND resource.labels.location=\"${job_region}\" AND labels.\"run.googleapis.com/execution_name\"=\"${candidate}\" AND textPayload:\"regional_quota.reconciler_complete elapsed_ms=\"" \
+        --freshness=5m --limit=1 --format=json)" || return 1
+      evidence="$(python3 -c '
 import json, sys
-from datetime import datetime, timezone
-j, e = map(json.loads, sys.argv[1:])
-s = e.get("status", {})
-completed = datetime.fromisoformat(s.get("completionTime", "").replace("Z", "+00:00"))
-age = (datetime.now(timezone.utc) - completed).total_seconds()
-if not 0 <= age <= 300:
-    raise SystemExit("refusing regional quota issuance: worker success is not recent")
-if not any(c.get("type") == "Completed" and c.get("status") == "True" for c in s.get("conditions", [])):
-    raise SystemExit("refusing regional quota issuance: worker execution failed")
-if e["spec"]["template"]["spec"] != j["spec"]["template"]["spec"]["template"]["spec"]:
-    raise SystemExit("refusing regional quota issuance: successful execution used a different worker configuration")
-' "$job_json" "$execution_json" || return 1
-  # A single-flight skip also exits zero. Require the actual reconciliation
-  # completion log from this execution, not merely a successful jobs:run RPC.
-  evidence="$(gc logging read \
-    "resource.type=cloud_run_job AND resource.labels.job_name=\"${job_name}\" AND resource.labels.location=\"${job_region}\" AND labels.\"run.googleapis.com/execution_name\"=\"${execution_name}\" AND textPayload:\"regional_quota.reconciler_complete elapsed_ms=\"" \
-    --freshness=5m --limit=1 --format=json)" || return 1
-  python3 -c '
-import json, sys
-if not json.load(sys.stdin):
-    raise SystemExit("refusing regional quota issuance: no recent successful reconciliation evidence")
-' <<<"$evidence"
+entries = json.load(sys.stdin)
+if not isinstance(entries, list):
+    raise SystemExit("refusing regional quota issuance: invalid reconciliation evidence")
+print("true" if entries else "false")
+' <<<"$evidence")" || return 1
+      if [ "$evidence" = true ]; then
+        return 0
+      fi
+    done <<<"$candidates"
+    remaining=$((deadline - SECONDS))
+    if { [ "$in_flight" != EXECUTION_RUNNING ] && [ "$in_flight" != EXECUTION_PENDING ]; } || [ "$attempt" -ge 9 ] || [ "$remaining" -le 0 ]; then
+      log "refusing regional quota issuance: no qualifying worker execution after bounded wait"
+      return 1
+    fi
+    pause_seconds=10
+    if [ "$remaining" -lt "$pause_seconds" ]; then pause_seconds="$remaining"; fi
+    sleep "$pause_seconds"
+    attempt=$((attempt + 1))
+  done
 }

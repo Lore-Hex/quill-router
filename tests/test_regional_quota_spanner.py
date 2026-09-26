@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from tests.fakes.spanner import make_fake_store
+from tests.fakes.spanner import FakeSpannerDatabase, make_fake_store
 from tests.fakes.spanner_order import credit_before_key, record_statements, transaction_statements
 from trusted_router.regional_quota_ledger import (
     InMemoryRegionalQuotaLedger,
@@ -34,7 +34,7 @@ from trusted_router.types import UsageType
 NOW = datetime(2026, 8, 21, tzinfo=UTC)
 
 
-def _credit_totals(database: object, workspace_id: str) -> tuple[int, int, int]:
+def _credit_totals(database: FakeSpannerDatabase, workspace_id: str) -> tuple[int, int, int]:
     rows = [
         row
         for (candidate, _shard), row in database.typed[CREDIT_BALANCE_TABLE].items()
@@ -393,6 +393,9 @@ def test_store_regional_authorize_settle_replay_and_reconcile_end_to_end() -> No
         "reconciled": 1,
         "closed": 1,
         "errors": 0,
+        "completed": 1,
+        "abandoned": 0,
+        "budget_exhausted": 0,
     }
     assert _credit_totals(database, workspace.id) == (
         100_000_000,
@@ -535,6 +538,9 @@ def test_regional_settle_falls_back_when_stale_cas_erased_authorized_hold() -> N
         "reconciled": 2,
         "closed": 2,
         "errors": 0,
+        "completed": 2,
+        "abandoned": 0,
+        "budget_exhausted": 0,
     }
     assert _credit_totals(database, workspace.id) == (100_000_000, 7_500, 0)
 
@@ -841,6 +847,9 @@ def test_reconciler_closes_expired_quarantine_when_local_initialization_is_absen
         "reconciled": 1,
         "closed": 1,
         "errors": 0,
+        "completed": 1,
+        "abandoned": 0,
+        "budget_exhausted": 0,
     }
     assert _credit_totals(database, workspace.id) == (10_000_000, 0, 0)
     closed = store._read_entity("regional_quota_lease", lease.entity_id, GlobalRegionalQuotaLease)
@@ -880,6 +889,9 @@ def test_reconciler_defers_live_pending_lease_before_local_initialization() -> N
         "reconciled": 0,
         "closed": 0,
         "errors": 0,
+        "completed": 0,
+        "abandoned": 0,
+        "budget_exhausted": 0,
     }
     assert _credit_totals(database, workspace.id)[2] == lease.granted_microdollars
     pending = store._read_entity(
@@ -951,6 +963,9 @@ def test_reconciler_cleans_stale_open_index_for_already_closed_lease() -> None:
         "reconciled": 0,
         "closed": 1,
         "errors": 0,
+        "completed": 1,
+        "abandoned": 0,
+        "budget_exhausted": 0,
     }
     assert _credit_totals(database, workspace.id) == (10_000_000, 0, 0)
     assert store._list_entities("regional_quota_lease_open", cls=OpenRegionalQuotaLease) == []

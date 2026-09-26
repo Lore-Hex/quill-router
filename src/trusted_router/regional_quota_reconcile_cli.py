@@ -84,8 +84,9 @@ def main() -> int:
         )
 
     exit_code = 1
+    qualifying = False
     try:
-        exit_code = _run_reconcile(settings, store)
+        exit_code, qualifying = _run_reconcile(settings, store)
     except Exception:
         logger.exception("regional_quota.reconciler_failed")
         exit_code = 1
@@ -111,7 +112,8 @@ def main() -> int:
     if exit_code == 0:
         record_heartbeat("job:regional-quota-reconcile", settings=settings)
         logger.info(
-            "regional_quota.reconciler_complete elapsed_ms=%.1f",
+            ("regional_quota.reconciler_complete elapsed_ms=%.1f" if qualifying else
+             "regional_quota.reconciler_budget_exhausted elapsed_ms=%.1f"),
             _elapsed_ms(started_at),
         )
     return exit_code
@@ -122,7 +124,8 @@ def _elapsed_ms(started_at: float) -> float:
 
 
 @spanner_rpc_budget(70)
-def _run_reconcile(settings: Any, store: Any) -> int:
+def _run_reconcile(settings: Any, store: Any) -> tuple[int, bool]:
+    """Return exit status and whether the run qualifies as completion evidence."""
     started_at = time.monotonic()
     verify = cast(
         Callable[[], tuple[str, ...]] | None,
@@ -130,11 +133,11 @@ def _run_reconcile(settings: Any, store: Any) -> int:
     )
     if verify is None:
         logger.error("regional_quota.reconciler_health_check_unsupported")
-        return 1
+        return 1, False
     verified_regions = verify()
     if not verified_regions:
         logger.error("regional_quota.reconciler_has_no_regions")
-        return 1
+        return 1, False
 
     reconcile = cast(
         Callable[..., dict[str, int]] | None,
@@ -142,7 +145,7 @@ def _run_reconcile(settings: Any, store: Any) -> int:
     )
     if reconcile is None:
         logger.error("regional_quota.reconciler_store_unsupported")
-        return 1
+        return 1, False
 
     result: dict[str, Any] = reconcile(
         limit=settings.regional_quota_reconcile_limit,
@@ -150,7 +153,7 @@ def _run_reconcile(settings: Any, store: Any) -> int:
     )
     logger.info(
         "regional_quota.reconcile_complete inspected=%d reconciled=%d closed=%d errors=%d "
-        "backlog=%d processed=%d remaining=%d",
+        "backlog=%d processed=%d remaining=%d completed=%d abandoned=%d budget_exhausted=%d",
         int(result.get("inspected", 0)),
         int(result.get("reconciled", 0)),
         int(result.get("closed", 0)),
@@ -158,10 +161,19 @@ def _run_reconcile(settings: Any, store: Any) -> int:
         int(result.get("backlog", 0)),
         int(result.get("processed", 0)),
         int(result.get("remaining", 0)),
+        int(result.get("completed", 0)),
+        int(result.get("abandoned", 0)),
+        int(result.get("budget_exhausted", 0)),
     )
     if int(result.get("errors", 0)):
-        return 1
-    return 0
+        return 1, False
+    # Attempts and unvisited-row counts do not prove useful completion: a
+    # visit can consume the deadline before it reaches reconciliation.
+    if (int(result.get("budget_exhausted", 0))
+            and int(result.get("completed", 0)) == 0
+            and int(result.get("backlog", 0)) > 0):
+        return 0, False
+    return 0, True
 
 
 if __name__ == "__main__":

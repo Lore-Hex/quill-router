@@ -306,6 +306,14 @@ fi
 
 if [[ " $* " == *" run jobs list "* ]] && \
    [ "${HARNESS_VERSIONED_JOB_EXISTS:-false}" = "true" ]; then
+  for argument in "$@"; do
+    case "$argument" in
+      --filter=metadata.name=*)
+        [ "$HARNESS_VERSIONED_JOB_NAME" = "${argument#--filter=metadata.name=}" ] || exit 0 ;;
+      --filter=metadata.name:*)
+        [[ "$HARNESS_VERSIONED_JOB_NAME" == *"${argument#--filter=metadata.name:}"* ]] || exit 0 ;;
+    esac
+  done
   printf '%s\n' "$HARNESS_VERSIONED_JOB_NAME"
 fi
 

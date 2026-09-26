@@ -5,7 +5,7 @@ import copy
 import json
 import os
 import subprocess
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +30,9 @@ WORKFLOW = ROOT / ".github/workflows/deploy.yml"
 def _run(tmp_path: Path, body: str, *, replies: dict[str, Any] | None = None) -> subprocess.CompletedProcess[str]:
     for name, value in (replies or {}).items():
         (tmp_path / f"{name}.json").write_text(json.dumps(value))
+    if replies is not None:
+        replies.setdefault("executions", [replies["execution"]] if "execution" in replies else [])
+        (tmp_path / "executions.json").write_text(json.dumps(replies["executions"]))
     script = r'''
 set -euo pipefail
 source "$HELPER"
@@ -159,6 +162,7 @@ def test_issuance_rejects_unhealthy_reconciler(tmp_path: Path, fault: str) -> No
         replies["worker"]["status"]["conditions"][0]["status"] = "False"
     elif fault == "failed":
         replies["worker"]["status"]["latestCreatedExecution"]["completionStatus"] = "EXECUTION_FAILED"
+        replies["execution"]["status"]["conditions"][0]["status"] = "False"
     elif fault == "stale":
         replies["execution"]["status"]["completionTime"] = "2020-01-01T00:00:00Z"
     elif fault == "old-execution":
@@ -567,3 +571,167 @@ def test_image_label_read_failure_aborts(tmp_path: Path, failure: str) -> None:
     assert "unsafe-success" not in run.stdout
     if failure == "unreadable":
         assert "cannot read selected image protocol label" in run.stderr
+
+
+def test_overlap_skips_successful_single_flight_skip(tmp_path: Path) -> None:
+    replies = _replies()
+    replies["worker"]["status"]["latestCreatedExecution"]["completionStatus"] = "EXECUTION_RUNNING"
+    real = copy.deepcopy(replies["execution"])
+    real["metadata"] = {"name": "real-reconciliation"}
+    real["status"]["completionTime"] = (datetime.now(UTC) - timedelta(seconds=100)).isoformat()
+    skipped = copy.deepcopy(replies["execution"])
+    skipped["metadata"] = {"name": "single-flight-skip"}
+    replies["executions"] = [skipped, real]
+    replies["execution"] = skipped
+    # Evidence is execution-specific: a zero exit from the skip cannot qualify.
+    body = '''eval "$(declare -f gc | sed '1s/gc/recorded_gc/')"
+    export -f recorded_gc
+    gc() {
+      if [ "$1 $2" = "logging read" ] && [[ "$*" == *single-flight-skip* ]]; then
+        echo "$*" >> "$FIXTURES/calls"
+        echo '[]'
+      else recorded_gc "$@"; fi
+    }
+''' + _activation_body()
+    run = _run(tmp_path, body, replies=replies)
+    assert run.returncode == 0, run.stderr
+    calls = (tmp_path / "calls").read_text().splitlines()
+    assert any("logging read" in c and "real-reconciliation" in c for c in calls)
+    assert any("executions list" in c and "--limit=10" in c for c in calls)
+
+
+@pytest.mark.parametrize("eventually_succeeds", [True, False])
+def test_overlap_waits_past_previous_configuration(tmp_path: Path, eventually_succeeds: bool) -> None:
+    replies = _replies()
+    replies["worker"]["status"]["latestCreatedExecution"]["completionStatus"] = "EXECUTION_PENDING"
+    replies["execution"]["metadata"] = {"name": "qualifying-run"}
+    old = copy.deepcopy(replies["execution"])
+    old["metadata"] = {"name": "previous-configuration"}
+    old["spec"]["template"]["spec"]["containers"][0]["image"] = "previous-image"
+    replies["executions"] = [old]
+    replies["after"] = [replies["execution"], old] if eventually_succeeds else [old]
+    body = '''sleep() {
+      echo "$*" >> "$FIXTURES/sleeps"
+      cp "$FIXTURES/after.json" "$FIXTURES/executions.json"
+    }
+''' + _activation_body()
+    run = _run(tmp_path, body, replies=replies)
+    assert (run.returncode == 0) is eventually_succeeds, run.stderr
+    assert (tmp_path / "sleeps").read_text().splitlines() == ["10"] * (1 if eventually_succeeds else 9)
+    calls = (tmp_path / "calls").read_text().splitlines()
+    assert sum("executions list" in c for c in calls) == (2 if eventually_succeeds else 10)
+    assert not any("logging read" in c and "previous-configuration" in c for c in calls)
+    if not eventually_succeeds:
+        assert "after bounded wait" in run.stderr
+
+
+def test_existing_explicit_worker_outside_prefix_is_updated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    run = _run_regional_quota_reconciler(
+        tmp_path, monkeypatch, state="PAUSED", versioned_job_exists=True,
+        extra_env={"TR_REGIONAL_QUOTA_RECONCILER_JOB": "custom-worker",
+                   "HARNESS_VERSIONED_JOB_NAME": "custom-worker"},
+    )
+    assert run.returncode == 0, summarise(run)
+    mutations = [c for c in run.calls if "run" in c and "jobs" in c and ("create" in c or "update" in c)]
+    assert len(mutations) == 1
+    assert "update" in mutations[0], summarise(run)
+    assert mutations[0][mutations[0].index("update") + 1] == "custom-worker"
+    assert any("--filter=metadata.name=custom-worker" in c for c in run.calls)
+
+
+@pytest.mark.parametrize("success_age,accepted", [(100, False), (10, True), (20, False)])
+def test_skip_cannot_clear_newer_failure(tmp_path: Path, success_age: int, accepted: bool) -> None:
+    replies = _replies()
+    replies["worker"]["status"]["latestCreatedExecution"]["completionStatus"] = "EXECUTION_RUNNING"
+    now = datetime.now(UTC)
+    runs = []
+    for name, age, status in [
+        ("single-flight-skip", 5, "True"),
+        ("failed-reconciliation", 20, "False"),
+        ("real-reconciliation", success_age, "True"),
+    ]:
+        run = copy.deepcopy(replies["execution"])
+        run["metadata"]["name"] = name
+        run["status"]["completionTime"] = (now - timedelta(seconds=age)).isoformat()
+        run["status"]["conditions"][0]["status"] = status
+        runs.append(run)
+    running = copy.deepcopy(replies["execution"])
+    running["status"] = {"conditions": [{"type": "Completed", "status": "Unknown"}]}
+    # Deliberately unordered: selection must use completion time, not list order.
+    replies["executions"] = [runs[2], running, runs[0], runs[1]]
+    body = '''sleep() { echo "$*" >> "$FIXTURES/sleeps"; }
+    eval "$(declare -f gc | sed '1s/gc/recorded_gc/')"
+    export -f recorded_gc
+    gc() {
+      if [ "$1 $2" = "logging read" ] && [[ "$*" == *single-flight-skip* ]]; then
+        echo "$*" >> "$FIXTURES/calls"
+        echo '[]'
+      else recorded_gc "$@"; fi
+    }
+''' + _activation_body()
+    result = _run(tmp_path, body, replies=replies)
+    assert (result.returncode == 0) is accepted, result.stderr
+    calls = (tmp_path / "calls").read_text().splitlines()
+    assert sum("executions list" in c for c in calls) == (1 if accepted else 10)
+    assert any("logging read" in c and "real-reconciliation" in c for c in calls) is accepted
+    if not accepted:
+        assert (tmp_path / "sleeps").read_text().splitlines() == ["10"] * 9
+
+
+@pytest.mark.parametrize("real_age", [100, 400, None])
+def test_latest_succeeded_skip_scans_without_waiting(tmp_path: Path, real_age: int | None) -> None:
+    replies = _replies()
+    replies["execution"]["metadata"]["name"] = "single-flight-skip"
+    replies["worker"]["status"]["latestCreatedExecution"]["name"] = "single-flight-skip"
+    replies["executions"] = [replies["execution"]]
+    if real_age is not None:
+        real = copy.deepcopy(replies["execution"])
+        real["metadata"]["name"] = "real-reconciliation"
+        real["status"]["completionTime"] = (datetime.now(UTC) - timedelta(seconds=real_age)).isoformat()
+        replies["executions"].append(real)
+    body = '''sleep() { echo unexpected-sleep >&2; exit 99; }
+    eval "$(declare -f gc | sed '1s/gc/recorded_gc/')"
+    export -f recorded_gc
+    gc() {
+      if [ "$1 $2" = "logging read" ] && [[ "$*" == *single-flight-skip* ]]; then
+        echo "$*" >> "$FIXTURES/calls"
+        echo '[]'
+      else recorded_gc "$@"; fi
+    }
+''' + _activation_body()
+    result = _run(tmp_path, body, replies=replies)
+    assert (result.returncode == 0) is (real_age == 100), result.stderr
+    calls = (tmp_path / "calls").read_text().splitlines()
+    assert sum("executions list" in c for c in calls) == 1
+    assert "unexpected-sleep" not in result.stderr
+
+
+@pytest.mark.parametrize("latest_status", ["EXECUTION_FAILED", "EXECUTION_CANCELLED"])
+@pytest.mark.parametrize("same_configuration", [False, True])
+def test_latest_terminal_failure_is_classified_by_configuration(
+    tmp_path: Path, latest_status: str, same_configuration: bool,
+) -> None:
+    replies = _replies()
+    now = datetime.now(UTC)
+    success = replies["execution"]
+    success["metadata"]["name"] = "real-current-reconciliation"
+    success["status"]["completionTime"] = (now - timedelta(seconds=100)).isoformat()
+    failure = copy.deepcopy(success)
+    failure["metadata"]["name"] = "latest-failure"
+    failure["status"]["completionTime"] = (now - timedelta(seconds=20)).isoformat()
+    failure["status"]["conditions"] = [{
+        "type": "Completed", "status": "False",
+        "reason": "Cancelled" if latest_status == "EXECUTION_CANCELLED" else "NonZeroExitCode",
+    }]
+    if not same_configuration:
+        failure["spec"]["template"]["spec"]["containers"][0]["image"] = "old-image"
+    replies["worker"]["status"]["latestCreatedExecution"] = {
+        "name": "latest-failure", "completionStatus": latest_status,
+    }
+    replies["executions"] = [failure, success]
+    result = _run(tmp_path, 'sleep() { echo unexpected-sleep >&2; exit 99; }\n' + _activation_body(), replies=replies)
+    assert (result.returncode == 0) is not same_configuration, result.stderr
+    calls = (tmp_path / "calls").read_text().splitlines()
+    assert sum("executions list" in c for c in calls) == 1
+    assert any("logging read" in c and "real-current-reconciliation" in c for c in calls) is not same_configuration
+    assert "unexpected-sleep" not in result.stderr

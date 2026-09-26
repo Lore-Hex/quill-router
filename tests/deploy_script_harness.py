@@ -1451,6 +1451,7 @@ QUOTA_WORKER: dict[str, Any] = {
     },
 }
 QUOTA_EXECUTION: dict[str, Any] = {
+    "metadata": {"name": "quota-execution"},
     "spec": {"template": {"spec": _QUOTA_WORKER_SPEC}},
     "status": {
         "completionTime": "HARNESS_QUOTA_COMPLETION_TIME",
@@ -1464,7 +1465,7 @@ QUOTA_READINESS_RESPONSES = (
     (r"storage cat .*controls/regional-quota-issuance.txt", "allow"),
     (r"scheduler jobs describe .*regional-quota.*--format=json", json.dumps(QUOTA_SCHEDULER)),
     (r"run jobs describe .*regional-quota.*--format=json", json.dumps(QUOTA_WORKER)),
-    (r"run jobs executions describe quota-execution .*--format=json", json.dumps(QUOTA_EXECUTION)),
+    (r"run jobs executions list .*--format=json", json.dumps([QUOTA_EXECUTION])),
     (r"logging read .*regional_quota.reconciler_complete", '[{"textPayload":"regional_quota.reconciler_complete elapsed_ms=10"}]'),
 )
 
