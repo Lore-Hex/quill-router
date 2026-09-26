@@ -100,11 +100,15 @@ def test_authorize_rejection_order_and_rollback(
             "missing_key": billing.AuthorizeOutcome.KEY_MISSING,
         }[failure]
     )
-    statements = transaction_statements(calls)
-    if failure == "credit":
-        assert statements and all(sql.startswith("update tr_credit_balance") for sql in statements)
-    else:
-        authorize_credit_before_key(statements)
+    transactions = list(dict.fromkeys(tx for tx, _ in calls))
+    assert len(transactions) == (1 if failure == "credit" else 2)
+    for transaction in transactions:
+        statements = transaction_statements([(tx, sql) for tx, sql in calls if tx is transaction])
+        if failure == "credit":
+            assert statements and all(sql.startswith("update tr_credit_balance") for sql in statements)
+        else:
+            authorize_credit_before_key(statements)
+        assert transaction.rolled_back
     assert (db.typed, db.reservations, db.gateway_authorizations) == before
 
 
@@ -1209,7 +1213,13 @@ def test_spend_lease_credit_before_key_and_rollback(
         ),
         credit_escrowed_by_spend_lease=escrowed,
     )
-    authorize_credit_before_key(transaction_statements(calls))
+    transactions = list(dict.fromkeys(tx for tx, _ in calls))
+    assert len(transactions) == (2 if key_exhausted else 1)
+    for transaction in transactions:
+        authorize_credit_before_key(transaction_statements([
+            (tx, sql) for tx, sql in calls if tx is transaction
+        ]))
+        assert transaction.rolled_back is key_exhausted
     assert ledger.binds == 0
     if key_exhausted:
         assert result["outcome"] == billing.AuthorizeOutcome.KEY_LIMIT_EXCEEDED

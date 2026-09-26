@@ -164,7 +164,7 @@ def _authorization(aid: str, rid: str) -> GatewayAuthorization:
     return GatewayAuthorization(
         id=aid, workspace_id='workspace', key_hash='key', model_id='model',
         provider='anthropic', usage_type='Credits', estimated_microdollars=100,
-        credit_reservation_id=rid,
+        credit_reservation_id=rid, created_at=NOW.isoformat().replace('+00:00', 'Z'),
     )
 
 
@@ -233,7 +233,7 @@ def _inject(
 
 
 @pytest.mark.parametrize('mode', ['typed', 'legacy'])
-@pytest.mark.parametrize('index', [0, 1])
+@pytest.mark.parametrize('index', [0, 1, 2])
 @pytest.mark.parametrize('failure', ['status', 'count'])
 def test_authorize_partial_batch_rolls_back(
     monkeypatch: pytest.MonkeyPatch, mode: str, index: int, failure: str,
@@ -263,14 +263,15 @@ def test_settle_partial_batch_rolls_back(
 
 
 @pytest.mark.parametrize('path', ['authorize', 'legacy', 'settle'])
+@pytest.mark.parametrize('index', [0, 1, 2])
 def test_aborted_batch_retries_whole_transaction_with_stable_inputs(
-    monkeypatch: pytest.MonkeyPatch, path: str,
+    monkeypatch: pytest.MonkeyPatch, path: str, index: int,
 ) -> None:
     db = _database()
     if path == 'settle':
         outbox, row = _settle(db)
     before_commits = db.commits
-    batches = _inject(monkeypatch, 1, 'aborted', once=True)
+    batches = _inject(monkeypatch, index, 'aborted', once=True)
     if path == 'settle':
         assert outbox.enqueue(row) == ENQ_INSERTED
         assert len(db.settle_outbox) == 1
@@ -346,17 +347,15 @@ def test_sdk_response_status_and_every_row_count_are_checked(code: int, counts: 
             execute_batch_dml(Transaction(), statements, [(1,), (1,)])
 
 
-def test_key_rejection_never_reaches_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_key_rejection_rolls_back_speculative_batch() -> None:
     db = _database()
     db.typed['tr_key_limit'][('key', 0)]['limit_micro'] = 0
     before = _state(db)
-
-    def forbidden(*args: Any, **kwargs: Any) -> Any:
-        pytest.fail('key reserve rejection must precede any batch')
-
-    monkeypatch.setattr(_FakeTransaction, 'batch_update', forbidden)
     assert _authorize(db)['outcome'] == AuthorizeOutcome.KEY_LIMIT_EXCEEDED
     assert _state(db) == before
+    assert db.transaction_batch_update_calls == 1
+    assert db.rollback_calls == 2
+    assert db.commits == 0
 
 
 @pytest.mark.parametrize('path', ['typed', 'legacy', 'settle'])
@@ -384,10 +383,45 @@ def test_batch_matches_original_sequential_dml(
 
     batched = run()
 
-    def sequential(tx: Any, statements: Any, expected_counts: Any) -> None:
+    def sequential(tx: Any, statements: Any, expected_counts: Any, **kwargs: Any) -> None:
         for sql, params, types in statements:
             tx.execute_update(sql, params=params, param_types=types)
 
     monkeypatch.setattr(authorize_module, 'execute_batch_dml', sequential)
     monkeypatch.setattr(outbox_module, 'execute_batch_dml', sequential)
     assert run() == batched
+
+
+def test_real_sdk_rolls_back_speculative_zero_before_sequential_rejection(
+    sdk_runner: tuple[Session, Mock, Mock],
+) -> None:
+    session, speculative, sequential = sdk_runner
+    speculative.execute_sql.return_value = []
+    speculative.execute_update.return_value = 1
+    speculative.batch_update.return_value = (Status(), [0, 1, 1])
+    sequential.execute_sql.side_effect = [[], [[0, True]]]
+    sequential.execute_update.side_effect = [1, 0]
+    result = _authorize(session)
+    assert result == {'outcome': AuthorizeOutcome.KEY_LIMIT_EXCEEDED}
+    speculative.rollback.assert_called_once()
+    sequential.rollback.assert_called_once()
+    speculative.commit.assert_not_called()
+    sequential.commit.assert_not_called()
+    sequential.batch_update.assert_not_called()
+
+
+def test_real_sdk_authorize_aborted_prefix_retries_before_business_fallback(
+    monkeypatch: pytest.MonkeyPatch, sdk_runner: tuple[Session, Mock, Mock],
+) -> None:
+    session, aborted, committed = sdk_runner
+    monkeypatch.setattr(_helpers.time, 'sleep', Mock())
+    for tx in (aborted, committed):
+        tx.execute_sql.return_value = []
+        tx.execute_update.return_value = 1
+    aborted.batch_update.return_value = (Status(code=code_pb2.ABORTED), [0, 1])
+    committed.batch_update.return_value = (Status(), [1, 1, 1])
+    assert _authorize(session)['outcome'] == AuthorizeOutcome.ACCEPTED
+    assert aborted.batch_update.call_args == committed.batch_update.call_args
+    aborted.commit.assert_not_called()
+    aborted.rollback.assert_not_called()
+    committed.commit.assert_called_once()

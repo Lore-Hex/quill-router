@@ -389,6 +389,29 @@ def _credit_shard_count_from_rows(
     return len(observed)
 
 
+def reserve_key_statement(
+    param_types: Any, key_hash: str, amount: int, *, is_byok: bool,
+    shard: int = UNSHARDED,
+) -> DmlStatement:
+    """The capped-key hold statement, shared by sequential and speculative DML."""
+    sql = (
+        "UPDATE tr_key_limit SET reserved = reserved + @est "
+        "WHERE key_hash=@kh AND shard=@shard AND limit_micro IS NOT NULL "
+        "AND (@is_byok = FALSE OR include_byok = TRUE) "
+        "AND (limit_micro - usage - IF(include_byok, byok_usage, 0) - reserved) >= @est"
+    )
+    return (
+        sql,
+        {"est": int(amount), "kh": key_hash, "shard": shard, "is_byok": bool(is_byok)},
+        {
+            "est": param_types.INT64,
+            "kh": param_types.STRING,
+            "shard": param_types.INT64,
+            "is_byok": param_types.BOOL,
+        },
+    )
+
+
 def reserve_key(
     transaction: Any,
     param_types: Any,
@@ -408,22 +431,10 @@ def reserve_key(
 
     Returns one of KEY_ACCEPTED / KEY_NO_HOLD / KEY_INSUFFICIENT / KEY_MISSING.
     """
-    sql = (
-        "UPDATE tr_key_limit SET reserved = reserved + @est "
-        "WHERE key_hash=@kh AND shard=@shard AND limit_micro IS NOT NULL "
-        "AND (@is_byok = FALSE OR include_byok = TRUE) "
-        "AND (limit_micro - usage - IF(include_byok, byok_usage, 0) - reserved) >= @est"
+    sql, params, types = reserve_key_statement(
+        param_types, key_hash, amount, is_byok=is_byok, shard=shard,
     )
-    count = transaction.execute_update(
-        sql,
-        params={"est": int(amount), "kh": key_hash, "shard": shard, "is_byok": bool(is_byok)},
-        param_types={
-            "est": param_types.INT64,
-            "kh": param_types.STRING,
-            "shard": param_types.INT64,
-            "is_byok": param_types.BOOL,
-        },
-    )
+    count = transaction.execute_update(sql, params=params, param_types=types)
     if count == 1:
         return KEY_ACCEPTED
     rows = list(

@@ -124,13 +124,15 @@ def test_capped_and_window_paths_keep_exact_reserve_sql_and_parameters(
         assert bool(key_ops(operations)) == (not byok or include_byok)
         assert res["key_reserved_micro"] == 0
         return
-    assert len(updates) == 1
-    assert updates[0] == ("execute_update", RESERVE_SQL, {
+    # Metadata preselects the sequential classifier for BYOK-excluded caps.
+    # It still checks the authoritative row, with exactly one reserve UPDATE.
+    expected_update = ("execute_update", RESERVE_SQL, {
         "params": {"est": estimate,
                    "kh": key.hash, "shard": 3, "is_byok": byok},
         "param_types": {"est": store._param_types.INT64, "kh": store._param_types.STRING,
                         "shard": store._param_types.INT64, "is_byok": store._param_types.BOOL},
     })
+    assert updates == [expected_update]
     assert res["key_reserved_micro"] == (
         estimate if cap is not None and (not byok or include_byok) else 0
     )

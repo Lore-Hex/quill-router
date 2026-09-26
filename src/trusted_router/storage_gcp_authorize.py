@@ -25,12 +25,12 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from google.api_core.exceptions import AlreadyExists
+from google.api_core.exceptions import AlreadyExists, GoogleAPICallError
 
 from trusted_router.app_markup_billing import (
     app_markup_microdollars_from_charge,
@@ -63,10 +63,15 @@ from trusted_router.storage_gcp_counter_dml import (
     reservation_insert_statement,
     reserve_credit,
     reserve_key,
+    reserve_key_statement,
 )
 from trusted_router.storage_gcp_counters import UNSHARDED
 from trusted_router.storage_gcp_generation_records import insert_generation_record
-from trusted_router.storage_gcp_io import run_in_transaction_with_retry
+from trusted_router.storage_gcp_io import (
+    TXN_BUDGET_SECONDS,
+    run_in_transaction_with_retry,
+    spanner_rpc_budget,
+)
 from trusted_router.storage_gcp_request_records import (
     complete_gateway_authorization_retention,
     gateway_authorization_insert_statement,
@@ -153,6 +158,16 @@ class _Reject(Exception):
 
     def __init__(self, outcome: str) -> None:
         self.outcome = outcome
+
+
+class _RetrySequentialKeyReserve(GoogleAPICallError):
+    """Discard speculative rows before classifying a zero-row key hold.
+
+    Use the API-error lifecycle deliberately: storage_gcp_io rolls back with an
+    independent deadline floor, and the SDK then discards the transaction without
+    sending another rollback (even if cleanup failed). A generic exception would
+    let the SDK roll back inside the spent request budget and mask this signal.
+    """
 
 
 EXHAUSTED = "exhausted"
@@ -356,6 +371,7 @@ def check_key_window_limits(
     return decision.window
 
 
+@spanner_rpc_budget(TXN_BUDGET_SECONDS)
 def authorize_atomic(
     database: Any,
     param_types: Any,
@@ -375,6 +391,7 @@ def authorize_atomic(
     credit_shard_candidates: tuple[int, ...] | None = None,
     key_shard_candidates: tuple[int, ...] = (UNSHARDED,),
     skip_key_limit: bool = False,
+    speculate_key_limit: bool = True,
     authorization_id: str | None = None,
     spend_lease_hook: Callable[[Any, int], dict[str, Any]] | None = None,
     build_authorization_for_lease: (
@@ -405,6 +422,11 @@ def authorize_atomic(
     by older callers, it preserves the existing reserve SQL. The first candidate
     still receives settlement usage, with zero held, without an authorize read
     or write of tr_key_limit.
+
+    `speculate_key_limit` only selects the transaction shape. Callers with
+    already-loaded metadata can set it False for uncapped or BYOK-excluded keys.
+    Unlike `skip_key_limit`, it retains every authoritative sequential check,
+    including when that metadata is stale. Omission preserves speculation.
 
     Per-window key caps are checked by the CALLER via check_key_window_limits on
     a lock-free snapshot BEFORE this transaction — deliberately NOT in here: a
@@ -495,6 +517,15 @@ def authorize_atomic(
             "key_shard": int(existing.get("key_shard", UNSHARDED)),
         }
 
+    speculative = not skip_key_limit and speculate_key_limit
+
+    def check_key_prefix(counts: Sequence[int]) -> None:
+        # Zero is ambiguous (missing, exhausted, uncapped, BYOK-excluded).
+        # Even a later INSERT error must not override the key business decision.
+        # ABORTED is handled first by execute_batch_dml and retries this callback.
+        if counts and counts[0] == 0:
+            raise _RetrySequentialKeyReserve("speculative key hold missed")
+
     def txn(transaction: Any) -> dict:
         if idempotency_scope is not None:
             existing = read_reservation_by_idempotency(transaction, pt, idempotency_scope)
@@ -553,7 +584,10 @@ def authorize_atomic(
         # each admitted for its own estimate (aggregate: sum of those estimates).
         # The next fresh entity read enforces the cap; removal likewise takes
         # effect on the next request. Do not add a hot api_key/counter read here.
-        if skip_key_limit:
+        if speculative:
+            key_result = KEY_ACCEPTED
+            selected_key_shard = key_candidates[0]
+        elif skip_key_limit:
             key_result = KEY_NO_HOLD
             selected_key_shard = key_candidates[0]
         else:
@@ -625,10 +659,21 @@ def authorize_atomic(
                 authorization_id,
                 legacy_auth_body,
             )
-        # Key reserve's row count is a business decision above, never speculative.
-        execute_batch_dml(
-            transaction, [reservation_statement, authorization_statement], [(1,), (1,)]
-        )
+        if speculative:
+            # Ordered server execution: credit (and lease work) precedes key,
+            # and key precedes these new rows. A zero does NOT stop Batch DML.
+            execute_batch_dml(
+                transaction,
+                [reserve_key_statement(
+                    pt, key_hash, estimate, is_byok=is_byok, shard=selected_key_shard,
+                ), reservation_statement, authorization_statement],
+                [(1,), (1,), (1,)],
+                check_prefix=check_key_prefix,
+            )
+        else:
+            execute_batch_dml(
+                transaction, [reservation_statement, authorization_statement], [(1,), (1,)]
+            )
         return {
             "outcome": AuthorizeOutcome.ACCEPTED,
             "reservation_id": reservation_id,
@@ -639,12 +684,20 @@ def authorize_atomic(
         }
 
     try:
-        return run_in_transaction_with_retry(
-            database,
-            txn,
-            transaction_tag="tr_authorize",
-            also_retry=also_retry,
-        )
+        try:
+            return run_in_transaction_with_retry(
+                database, txn, transaction_tag="tr_authorize", also_retry=also_retry,
+            )
+        except _RetrySequentialKeyReserve:
+            # Protected API-error cleanup attempted rollback before the SDK
+            # discarded the handle. Cleanup never renews the shared T1 budget.
+            # Retry the original decision path once; it handles no-hold success,
+            # all shard candidates, and terminal rejection without speculation.
+            # IDs, created_at, and candidate order remain stable across attempts.
+            speculative = False
+            return run_in_transaction_with_retry(
+                database, txn, transaction_tag="tr_authorize", also_retry=also_retry,
+            )
     except _Reject as reject:
         return {"outcome": reject.outcome}
     except AlreadyExists:
