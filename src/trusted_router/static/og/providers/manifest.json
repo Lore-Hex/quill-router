@@ -73,10 +73,10 @@
   },
   "baseten": {
     "card_version": 2,
-    "model_count": 17,
+    "model_count": 11,
     "name": "Baseten",
     "privacy": "Zero retention",
-    "route_count": 33,
+    "route_count": 21,
     "route_mode": "Prepaid + BYOK",
     "slug": "baseten"
   },
