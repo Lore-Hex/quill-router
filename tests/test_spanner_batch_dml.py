@@ -120,16 +120,31 @@ def test_real_sdk_runner_preserves_other_status_mappings(
     unused_tx.batch_update.assert_not_called()
 
 
-@pytest.mark.parametrize('errors', [(), (object(),)])
-def test_fake_rejects_aborted_without_sdk_retry_metadata(errors: tuple[Any, ...]) -> None:
+def test_fake_rejects_aborted_without_sdk_retry_cause() -> None:
     db = _database()
 
     def callback(tx: Any) -> None:
-        raise Aborted('invalid retry payload', errors=errors)
+        raise Aborted('invalid retry payload', errors=())
 
-    with pytest.raises(IndexError if not errors else AttributeError):
+    with pytest.raises(IndexError):
         db.run_in_transaction(callback)
     assert db.commits == 0 and db.aborts == 0
+
+
+def test_fake_retries_a_cause_without_trailing_metadata_like_the_sdk() -> None:
+    # The SDK's _get_retry_delay treats missing trailing_metadata as default
+    # backoff, so the fake must retry rather than fail on it.
+    db = _database()
+    attempts: list[Any] = []
+
+    def callback(tx: Any) -> None:
+        attempts.append(tx)
+        if len(attempts) == 1:
+            raise Aborted('no retry metadata', errors=(object(),))
+
+    db.run_in_transaction(callback)
+    assert len(attempts) == 2
+    assert db.aborts == 1
 
 
 def _database() -> FakeSpannerDatabase:

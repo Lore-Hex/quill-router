@@ -280,9 +280,13 @@ class FakeSpannerDatabase:
             try:
                 result = fn(txn)
             except Aborted as exc:
-                # Match the SDK's retry payload contract instead of silently
-                # accepting bare Aborted() and masking broken status adapters.
-                dict(exc.errors[0].trailing_metadata())
+                # Match the SDK's retry payload contract (_delay_until_retry)
+                # instead of silently accepting bare Aborted() and masking
+                # broken status adapters: errors[0] must exist, while
+                # trailing_metadata is optional (absent means default backoff).
+                cause = exc.errors[0]
+                if hasattr(cause, "trailing_metadata"):
+                    dict(cause.trailing_metadata())
                 self.aborts += 1
                 continue
             except FakeAborted:
