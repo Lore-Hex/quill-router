@@ -543,8 +543,8 @@ def test_remote_unshard_after_proactive_reload_keeps_incomplete_reload_budget(
                 billing_paused=True,
             )
             peer._write_entity("workspace", workspace.id, workspace)
-            result = reshard_credit_account(peer, workspace.id, 1, apply=True)
-            assert result.applied and result.ready, result.reasons
+            reshard_result = reshard_credit_account(peer, workspace.id, 1, apply=True)
+            assert reshard_result.applied and reshard_result.ready, reshard_result.reasons
             workspace.billing_paused = False
             peer._write_entity("workspace", workspace.id, workspace)
             assert store._credit_shard_count(workspace.id) == 6

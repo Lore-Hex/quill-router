@@ -80,6 +80,43 @@ Existing workspaces retain their current shard count until the pause, drain,
 verify, reshard workflow completes; changing the default never rewrites a live
 ledger in place.
 
+This PR ships only aggregate-first credit checks and transfer telemetry.
+Credit-shard rebalance uses signed headroom, `SUM(total_credits - total_usage -
+reserved)`. For positive estimates, the read-only precheck checks aggregate
+affordability before its candidate loop; the locked rebalance checks it before
+its target check. Insufficient aggregate headroom returns `INSUFFICIENT`.
+Rebalance returns `NOT_NEEDED` only if the original target is already funded.
+Authorize reruns its own candidates after repair; guarded debit repairs and
+retries shard zero. The precheck's existing funded-candidate retry is unchanged.
+Nonpositive estimates are an exception: rebalance returns `NOT_NEEDED` without
+reading; precheck still checks signed affordability (`[-1, 0, 0]`, estimate `0`,
+returns `INSUFFICIENT`). Initial bounded reserve/debit fast paths are unchanged.
+
+Repairs retain the original `estimate - target_available` transfer, filling any
+negative target first and taking from the largest positive donors. Usage and
+reservations never move; total credits remain unchanged. Successful transfers
+return `mode=topped_up`; authorize logs that mode or `mode=none` for no transfer.
+Cooldown, attempt cap, and 402/503 mapping are unchanged.
+
+Every consolidation and non-target reuse variant was withdrawn. Astra's round-3
+sequence was: “Start with four shards holding **$0.50 each**, without reservations
+or debt.” Authorize $0.60, grant $2, authorize $0.50 on a donor, settle it for $2,
+then authorize $1.50: consolidation accepted at net −$0.10; needed-only rejected
+with $1.40 left. Round 4: “Start with three shards holding $1.50 each”; authorize
+$1, settle $3.50, debit $1, then authorize $1.50: non-target reuse accepted at net
+−$1.50; target repair rejected at net $0. Her debt-free counterexample starts with
+“credits `[40,150]`”: authorize 50 on shard 1, debit 60, settle 150, authorize 40;
+reuse accepted, needed-only rejected. Eligibility guards cannot prevent later
+settlements from exposing debt-backed capacity. Returned-shard debit also falsely
+rejected an affordable 80-unit debit after a peer reserved on the returned shard.
+
+This change does **not** remove the convoy class. Needed-only repairs can require
+another all-shard transaction for each request, and the cooldown can still cause
+HTTP 503 despite sufficient net headroom. `DEFAULT_NEW_BILLING_SHARDS=16`
+fragments a $25 starter workspace too finely. Starting on one shard and splitting
+on growth needs a separate design. See the review sequences and strict xfail in
+[the convoy incident](incidents/2026-09-25-credit-rebalance-convoy.md).
+
 ## Alert response
 
 ### High CPU

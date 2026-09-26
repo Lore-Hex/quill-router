@@ -225,7 +225,9 @@ def test_typed_direct_grant_distributes_delta_and_is_idempotent() -> None:
 
     rows = database.typed[CREDIT_BALANCE_TABLE]
     assert [rows[(workspace_id, shard)]["total_credits"] for shard in range(3)] == [44, 33, 33]
-    assert live_credit_summary(workspace_id, store=store)["total_credits"] == 110
+    summary = live_credit_summary(workspace_id, store=store)
+    assert summary is not None
+    assert summary["total_credits"] == 110
     assert store.get_credit_account(workspace_id).shard_count == 3
 
 
@@ -245,10 +247,15 @@ def test_typed_direct_grant_rolls_back_when_active_shard_is_missing() -> None:
     assert ("stripe_event", "evt-missing") not in database.rows
 
 
-def test_guarded_debit_rebalances_to_shard_zero_once_before_retry() -> None:
+@pytest.mark.parametrize(
+    ("totals", "remaining"), [([10, 90], [0, 20]), ([40, 60], [0, 20])],
+)
+def test_guarded_debit_rebalances_to_shard_zero_once_before_retry(
+    totals: list[int], remaining: list[int],
+) -> None:
     store, database, _ = make_fake_store()
     workspace_id = "ws-debit-rebalance"
-    _seed_sharded_credit(store, database, workspace_id, [10, 90])
+    _seed_sharded_credit(store, database, workspace_id, totals)
 
     assert (
         store.debit_workspace_guarded(
@@ -261,8 +268,12 @@ def test_guarded_debit_rebalances_to_shard_zero_once_before_retry() -> None:
     )
 
     rows = database.typed[CREDIT_BALANCE_TABLE]
-    assert rows[(workspace_id, 0)]["total_credits"] == 0
-    assert rows[(workspace_id, 1)]["total_credits"] == 20
+    assert [rows[(workspace_id, shard)]["total_credits"] for shard in range(2)] == remaining
+    assert store.debit_workspace_guarded(
+        workspace_id, 80, "evt-debit-rebalance", kind="verification_fee",
+    ) == "duplicate"
+    assert [rows[(workspace_id, shard)]["total_credits"] for shard in range(2)] == remaining
+    assert len(store.list_credit_movements(workspace_id)) == 1
     movement = store.list_credit_movements(workspace_id)[0]
     assert movement.amount_microdollars == -80
 
