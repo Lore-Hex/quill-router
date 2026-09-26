@@ -59,7 +59,7 @@ jobs:
       # unrelated AI Studio key. Production Gemini inference uses global.
       VERTEX_PROJECT_ID: quill-cloud-proxy
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Need full history so the auto-commit can push.
           fetch-depth: 0
