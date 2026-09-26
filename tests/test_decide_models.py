@@ -1060,8 +1060,8 @@ def test_the_control_plane_starts_without_a_named_models_backing_model(model_id:
         removed_from = []
 
         def without_backing(source, build):
-            def filtered():
-                models, endpoints = build()
+            def filtered(**kwargs):
+                models, endpoints = build(**kwargs)
                 if BACKING in models:
                     removed_from.append(source)
                 return (

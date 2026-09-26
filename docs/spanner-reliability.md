@@ -9,7 +9,7 @@ application bugs, quota exhaustion, or hot-row retries.
 
 - Source project: `quill-cloud-proxy`
 - Source instance/database: `trusted-router-nam6` / `trusted-router`
-- Configuration: `nam6`, Enterprise Plus, 400 processing units
+- Configuration: `nam6`, Enterprise Plus, 600 processing units (400 until 2026-09-25; see the High CPU section)
 - Replica topology: two read-write locations (`us-central1`, `us-east1`), two
   read-only locations (`us-west1`, `us-west2`), and one witness
   (`us-central2`). This is five replica locations, not four application
@@ -51,9 +51,13 @@ policy:
   request the front end had already dispatched (five such incidents in the
   week to 2026-09-25, all at rollouts). The image now runs
   `python -m trusted_router.serve`, which keeps accepting for
-  `TR_SHUTDOWN_DRAIN_SECONDS` (default 3, at most 8) after the first SIGTERM
-  before uvicorn's normal graceful shutdown. If one recurs, check the
-  serving revision's entry point before anything else.
+  `TR_SHUTDOWN_DRAIN_SECONDS` (default and maximum 3 seconds) after the first
+  SIGTERM before uvicorn's graceful shutdown, which waits for in-flight requests
+  without a request timeout. Cloud Run's 10-second SIGKILL is the only hard
+  deadline; request completion and process exit before it are not guaranteed.
+  A second SIGTERM or any SIGINT starts ordinary graceful shutdown without
+  waiting for the drain window. If one recurs, check the serving revision's
+  entry point before anything else.
 - Successful billing calls taking at least 10 seconds are counted. More than
   two per minute for three consecutive minutes opens one incident.
 - The general Spanner contention policy has three independent gates: more than
@@ -87,7 +91,10 @@ maximum observed CPU so short high-priority spikes remain actionable.
 
 Replay the policy with its own aligner before blaming traffic: the metric has
 ten-second samples, so a one-minute mean can read 3% while the policy's
-five-minute maximum reads 50%. Periodic jobs that read Spanner must go through
+five-minute maximum reads 50%. Sizing note: on 2026-09-25 a single customer
+burst of about 15 requests per second sustained 25-34% high-priority CPU as a
+five-minute mean (60-second peaks to 47%) at 400 processing units and opened
+this policy; the instance was raised to 600. Periodic jobs that read Spanner must go through
 a covering index. The hourly reservation-overrun rollup reads two hours of
 `tr_reservation` by `terminal_at` through `tr_reservation_by_terminal`; before
 that index existed its full-table scan was the only source of this alert on

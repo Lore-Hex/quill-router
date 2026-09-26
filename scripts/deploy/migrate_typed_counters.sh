@@ -201,6 +201,8 @@ wait_generated_column_committed() {
   return 1
 }
 
+# At most 360 polls with 5-second sleeps, plus RPC time; this is not an overall
+# 30-minute deadline. Initial synchronous index creation finishes before polling.
 wait_index_read_write() {
   local name="$1" state=""
   for _ in $(seq 1 360); do
@@ -230,6 +232,7 @@ wait_index_read_write tr_reservation_by_authorization
 # once an hour and was the only source of the Spanner high-priority CPU alert on
 # 2026-09-24 (docs/incidents/2026-09-24-spanner-overrun-rollup-scan.md). The
 # rollup FORCE_INDEXes this name, so the deploy waits for the backfill.
+ensure_column tr_reservation terminal_at "TIMESTAMP"
 if index_exists tr_reservation_by_terminal; then log "tr_reservation_by_terminal exists, skip"; else
   apply_ddl "CREATE NULL_FILTERED INDEX tr_reservation_by_terminal
     ON tr_reservation (settled, terminal_at)
