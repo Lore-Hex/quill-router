@@ -13,6 +13,7 @@ from tests.fakes.spanner import _FakeTransaction, _ParamTypes, make_fake_store
 from trusted_router import spend_leases, storage_gcp_authorize
 from trusted_router.catalog import MODELS, endpoints_for_model
 from trusted_router.config import Settings
+from trusted_router.provider_locations import inference_location_metadata
 from trusted_router.receipt_keys import b64url_decode
 from trusted_router.routes.internal import gateway
 from trusted_router.schemas import GatewayAuthorizeRequest
@@ -122,7 +123,13 @@ def test_flag_off_authorize_response_is_byte_exact_origin_main(
     else:
         response = authorize()
         response["data"]["api_key_hash"] = "<api-key-hash>"
-        assert _canonical(response) == (GOLDENS / "authorize_response.json").read_bytes()
+        # Geography is an intentional additive display extension. Preserve
+        # the historical fixture and compare every original byte/field, plus
+        # exactly this extension; lease claims and database writes stay exact.
+        expected = json.loads((GOLDENS / "authorize_response.json").read_bytes())
+        for route in [expected["data"], *expected["data"]["route_candidates"]]:
+            route["inference_location"] = inference_location_metadata(route["provider"], route["model"])
+        assert _canonical(response) == _canonical(expected)
         assert pause_reads == []
         assert database.typed[CREDIT_BALANCE_TABLE][(workspace.id, shard)]["reserved"] > 0
 
