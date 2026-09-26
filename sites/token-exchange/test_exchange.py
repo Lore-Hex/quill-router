@@ -23,18 +23,34 @@ class FakeCloud:
         self.created = []
         self.updates = 0
         self.hooks = {}  # command -> function run once, right after that command
+        self.certificate_map = None
+        self.map_entries = {}  # hostname -> certificate names
+        self.map_entry_states = {}  # hostname -> entry state; ACTIVE when absent
+        self.map_states = {}  # certificate name -> managed.state
+        self.calls = []
 
     def attach(self, name, domains):
         self.certs[name] = {"name": name, "managed": {"domains": domains}}
         self.attached.append(name)
 
     def __call__(self, *args, read=False):
+        self.calls.append(args)
         command = args[:3]
         result = None
         if command == ("compute", "ssl-certificates", "list"):
             result = copy.deepcopy(list(self.certs.values()))
         elif command == ("compute", "target-https-proxies", "describe"):
             result = {"sslCertificates": [f"https://x/sslCertificates/{n}" for n in self.attached]}
+            if self.certificate_map:
+                result["certificateMap"] = self.certificate_map
+        elif command == ("certificate-manager", "maps", "entries"):
+            result = [{"matcher": "PRIMARY", "certificates": ["primary"]}]
+            result += [
+                {"hostname": h, "certificates": list(c), "state": self.map_entry_states.get(h, "ACTIVE")}
+                for h, c in self.map_entries.items()
+            ]
+        elif command == ("certificate-manager", "certificates", "list"):
+            result = [{"name": n, "managed": {"state": s}} for n, s in self.map_states.items()]
         elif command == ("compute", "ssl-certificates", "create"):
             hosts = next(a for a in args if a.startswith("--domains=")).split("=", 1)[1]
             self.certs[args[3]] = {"name": args[3], "managed": {"domains": hosts.split(",")}}
@@ -51,7 +67,54 @@ class FakeCloud:
         return result
 
 
-def production_before_riyadh():
+class PublishCloud(FakeCloud):
+    """FakeCloud plus the storage, backend-bucket and URL-map calls publish() makes."""
+
+    def __call__(self, *args, read=False):
+        replies = {
+            ("storage", "buckets", "list"): [{"name": deploy.BUCKET}],
+            ("compute", "backend-buckets", "list"): [{"name": deploy.BACKEND}],
+            ("compute", "url-maps", "describe"): {
+                "name": deploy.MAP,
+                "fingerprint": "abc",
+                "hostRules": [],
+                "pathMatchers": [],
+            },
+        }
+        writes = {
+            ("compute", "backend-buckets", "update"),
+            ("compute", "url-maps", "validate"),
+            ("compute", "url-maps", "import"),
+        }
+        if args[:3] in replies or args[:3] in writes or args[:2] == ("storage", "rsync"):
+            self.calls.append(args)
+            return copy.deepcopy(replies.get(args[:3]))
+        return super().__call__(*args, read=read)
+
+
+def with_certificate_map(cloud, states=None):
+    """Give the proxy the certificate map infra defines: <d> and *.<d> per domain."""
+    cloud.certificate_map = (
+        "//certificatemanager.googleapis.com/projects/p/locations/global/certificateMaps/control"
+    )
+    for d in domains():
+        certificate = f"projects/p/locations/global/certificates/control-{d.replace('.', '-')}"
+        cloud.map_entries[d] = cloud.map_entries[f"*.{d}"] = [certificate]
+        cloud.map_states[certificate] = (states or {}).get(d, "ACTIVE")
+    return cloud
+
+
+def built_output(root):
+    """The files publish() requires before it changes anything."""
+    for market in load_markets():
+        (root / market["slug"]).mkdir(parents=True, exist_ok=True)
+        (root / market["slug"] / "index.html").write_text("page")
+        (root / "assets").mkdir(parents=True, exist_ok=True)
+        (root / "assets" / f"og-{market['slug']}.png").write_bytes(b"image")
+    return root
+
+
+def production_before_riyadh(cloud_class=None):
     """13 attached certificates, as in production before Riyadh: 7 unrelated,
     4 positional 16-host groups over the other 29 domains, 2 single-site."""
     hosts = [h for d in domains() for h in (d, "www." + d) if "riyadh" not in h]
@@ -60,7 +123,7 @@ def production_before_riyadh():
         certs[f"token-exchange-20260919-{i // 16 + 1}"] = hosts[i : i + 16]
     certs["token-exchange-global-20260920"] = ["thetokenexchange.com", "www.thetokenexchange.com"]
     certs["token-exchange-new-york-20260920"] = ["nytokenexchange.com", "www.nytokenexchange.com"]
-    return FakeCloud(certs, list(certs))
+    return (cloud_class or FakeCloud)(certs, list(certs))
 
 
 class MarketLinkParser(HTMLParser):
@@ -205,6 +268,69 @@ class ExchangeTests(unittest.TestCase):
             self.assertEqual(cloud.attached, before + cloud.created)
             publish_certificates()
         self.assertEqual((len(cloud.created), cloud.updates), (1, 1))
+
+    def test_publish_with_a_certificate_map_uses_no_classic_certificate(self):
+        # Rule: with a certificate map on the proxy, publish uploads and routes,
+        # and creates and attaches no classic certificate.
+        cloud = with_certificate_map(production_before_riyadh(PublishCloud))
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(deploy, "gcloud", cloud):
+            deploy.publish(built_output(Path(directory) / "out"), Path(directory) / "state")
+        commands = [c[:3] for c in cloud.calls]
+        self.assertIn(("compute", "url-maps", "import"), commands)
+        self.assertEqual(
+            cloud.calls[:3],
+            [
+                ("compute", "target-https-proxies", "describe", deploy.PROXY, "--global"),
+                ("certificate-manager", "maps", "entries", "list", "--map=control", "--location=global"),
+                ("certificate-manager", "certificates", "list", "--location=global"),
+            ],
+        )
+        self.assertNotIn(("compute", "ssl-certificates", "create"), commands)
+        self.assertNotIn(("compute", "target-https-proxies", "update"), commands)
+        self.assertEqual((cloud.created, cloud.updates), ([], 0))
+
+    def test_publish_with_a_certificate_map_changes_nothing_while_a_host_lacks_one(self):
+        # Rule: publish changes nothing until every host has an ACTIVE
+        # certificate through the map.
+        cloud = with_certificate_map(
+            production_before_riyadh(PublishCloud), states={"riyadhtokenexchange.com": "PROVISIONING"}
+        )
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(deploy, "gcloud", cloud):
+            with self.assertRaisesRegex(RuntimeError, "map for riyadhtokenexchange.com, www.riyadhtokenexchange.com[.]"):
+                deploy.publish(built_output(Path(directory) / "out"), Path(directory) / "state")
+        self.assertEqual(
+            [c[:3] for c in cloud.calls],
+            [
+                ("compute", "target-https-proxies", "describe"),
+                ("certificate-manager", "maps", "entries"),
+                ("certificate-manager", "certificates", "list"),
+            ],
+        )
+
+    def test_certificate_map_gaps_follow_certificate_manager_selection(self):
+        # An exact entry is used when present, even if the wildcard would serve;
+        # otherwise the *.<parent> entry; a host with neither is a gap. The
+        # selected entry and its certificate must both be ACTIVE, so a PENDING
+        # exact entry is a gap even beside an ACTIVE wildcard.
+        cloud = FakeCloud({}, [])
+        cloud.map_entries = {
+            "a.com": ["ok"],
+            "*.a.com": ["ok"],
+            "www.b.com": ["pending"],
+            "*.b.com": ["ok"],
+            "d.com": ["ok"],
+            "*.d.com": ["ok"],
+            "www.e.com": ["ok"],
+            "*.e.com": ["ok"],
+        }
+        cloud.map_states = {"ok": "ACTIVE", "pending": "PROVISIONING"}
+        cloud.map_entry_states = {"d.com": "PENDING", "www.e.com": "PENDING"}
+        with mock.patch.object(deploy, "gcloud", cloud):
+            gaps = deploy.certificate_map_gaps(
+                "maps/control",
+                ["a.com", "www.a.com", "www.b.com", "c.b.com", "c.com", "d.com", "www.d.com", "www.e.com"],
+            )
+        self.assertEqual(gaps, ["www.b.com", "c.com", "d.com", "www.e.com"])
 
     def test_publish_certificates_attaches_an_existing_matching_certificate(self):
         cloud = production_before_riyadh()
