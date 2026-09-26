@@ -33,8 +33,12 @@ def test_regional_snapshot_matches_reread(
     monkeypatch: pytest.MonkeyPatch, version: int, case: str,
 ) -> None:
     observations = []
-    for use_snapshot in (False, True):
+    from tests.fakes import settle_finalize_sequential as frozen
+
+    for sequential, use_snapshot in ((True, False), (True, True), (False, False), (False, True)):
         with monkeypatch.context() as patch:
+            if sequential:
+                patch.setattr(finalize, "typed_finalize_atomic", frozen.typed_finalize_atomic)
             store, db, key, args = _setup()
             if version == 1:
                 from trusted_router import storage_gcp_regional_quota as quota
@@ -106,7 +110,9 @@ def test_regional_snapshot_matches_reread(
                     with patch.context() as crash:
                         def fail(*a: Any, **kw: Any) -> Any:
                             raise RuntimeError("after local CAS")
+                        crash.setattr(frozen, "mark_gateway_authorization_settled", fail)
                         crash.setattr(finalize, "mark_gateway_authorization_settled", fail)
+                        crash.setattr(finalize, "gateway_authorization_settled_statement", fail)
                         with pytest.raises(RuntimeError, match="after local CAS"):
                             settle()
                     assert not store.read_typed_reservation(auth.credit_reservation_id)["settled"]
@@ -144,7 +150,7 @@ def test_regional_snapshot_matches_reread(
                 committed.finalized_generation_id, local.state,
                 [(h.state, h.actual_microdollars) for h in local.holds],
             ))
-    assert observations[0] == observations[1]
+    assert all(observation == observations[0] for observation in observations)
 
 
 @pytest.mark.parametrize("field,value", [

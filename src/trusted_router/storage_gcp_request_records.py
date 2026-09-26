@@ -315,6 +315,14 @@ def mark_gateway_authorization_settled(
     authorization: GatewayAuthorization,
 ) -> int:
     """Mark billing settled while keeping repair metadata and TTL disabled."""
+    sql, params, types = gateway_authorization_settled_statement(param_types, authorization)
+    return transaction.execute_update(sql, params=params, param_types=types)
+
+
+def gateway_authorization_settled_statement(
+    param_types: Any, authorization: GatewayAuthorization,
+) -> DmlStatement:
+    """Build typed finalization, preserving live heartbeat facts in SQL."""
     typed = authorization_typed_columns(dataclasses.asdict(authorization))
     payload = json.loads(json_body(authorization))
     for column in _AUTHORIZATION_HEARTBEAT_FIELDS:
@@ -333,20 +341,20 @@ def mark_gateway_authorization_settled(
         or any(column in payload_object for column in _AUTHORIZATION_HEARTBEAT_FIELDS)
     ):
         raise ValueError(payload_error)
-    return transaction.execute_update(
+    return (
         f"UPDATE tr_gateway_authorization SET settled=true, payload={_SETTLED_PAYLOAD_SQL}, "  # noqa: S608
         "finalization_outcome=@finalization_outcome, "
         "finalized_cost_microdollars=@finalized_cost_microdollars, "
         "gateway_request_id=@gateway_request_id "
         "WHERE authorization_id=@authorization_id AND settled=false",
-        params={
+        {
             "authorization_id": authorization.id,
             "payload": serialized_payload,
             "finalization_outcome": typed["finalization_outcome"],
             "finalized_cost_microdollars": typed["finalized_cost_microdollars"],
             "gateway_request_id": typed["gateway_request_id"],
         },
-        param_types={
+        {
             "authorization_id": param_types.STRING,
             "payload": param_types.STRING,
             "finalization_outcome": param_types.STRING,

@@ -1652,11 +1652,15 @@ def _statement_spy(monkeypatch: pytest.MonkeyPatch) -> list[tuple[int, str]]:
     return calls
 
 
+@pytest.mark.parametrize("record_mode,expected_attempts", [("typed", 1), ("legacy", 2)])
 def test_typed_finalize_releases_hot_rows_last_in_the_same_transaction(
     fake_store: tuple[Any, Any, Any],
     monkeypatch: pytest.MonkeyPatch,
+    record_mode: str,
+    expected_attempts: int,
 ) -> None:
     store, db, _bt = fake_store
+    store.request_record_write_mode = record_mode
     ws = "ws_finalize_lock_order"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1668,8 +1672,12 @@ def test_typed_finalize_releases_hot_rows_last_in_the_same_transaction(
     finalize_txns = {
         txn for txn, sql in calls if sql.startswith("UPDATE tr_reservation SET settled=true")
     }
-    assert len(finalize_txns) == 1, "exactly one finalize transaction claimed the reservation"
-    [finalize_txn] = finalize_txns
+    assert len(finalize_txns) == expected_attempts
+    finalize_txn = max(finalize_txns)
+    # A typed miss rolls back before the fresh sequential attempt. Rejected
+    # speculation must never acquire a credit or key counter lock.
+    rejected = [sql for txn, sql in calls if txn in finalize_txns and txn != finalize_txn]
+    assert not any("tr_key_limit" in sql or "tr_credit_balance" in sql for sql in rejected)
     statements = [sql for txn, sql in calls if txn == finalize_txn]
     key_release = next(
         i for i, sql in enumerate(statements) if sql.startswith("UPDATE tr_key_limit")

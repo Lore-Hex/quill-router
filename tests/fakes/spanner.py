@@ -2124,7 +2124,11 @@ class _FakeTransaction:
             owner = rec.get("lease_owner")
             if owner != p.get("lease_owner"):
                 return 0
-            if "THEN RETURN" in sql:
+            if "AND reservation_id=@rid" in sql and (
+                rec.get("reservation_id") is None or rec.get("reservation_id") != p["rid"]
+            ):
+                return 0
+            if "attempts=COALESCE(attempts, 0)+1" in sql:
                 _require_pred(sql, "attempts=COALESCE(attempts, 0)+1", "done-attempts")
                 _require_pred(sql, "last_error=NULL, next_attempt_at=NULL, lease_owner=NULL, "
                               "leased_until=NULL, updated_at=@now, terminal_at=@now, settle_body=NULL",

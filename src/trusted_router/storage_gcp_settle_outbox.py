@@ -171,8 +171,8 @@ def done_retention_statements(
     return statements
 
 
-# Batch DML cannot return reservation_id. Consume this statement first, then
-# batch the retention/evidence writes that depend on its successful fence.
+# Sequential callers consume the authoritative reservation ID before retention.
+# Speculative callers below guard their candidate ID and discard on a miss.
 _DONE_ROW_SQL = (
     "UPDATE tr_settle_outbox SET status=@status, attempts=COALESCE(attempts, 0)+1, "
     "last_error=NULL, next_attempt_at=NULL, lease_owner=NULL, leased_until=NULL, "
@@ -186,6 +186,29 @@ _DONE_MISS_SQL = (
     "SELECT status, lease_owner FROM tr_settle_outbox "
     "WHERE authorization_id=@aid AND intent_kind=@kind"
 )
+
+
+def speculative_done_statements(
+    param_types: Any, *, authorization_id: str, intent_kind: str,
+    reservation_id: str,
+) -> list[DmlStatement]:
+    """Use the caller's retention target only after checking the stored identity.
+
+    A miss must discard the transaction and rerun the returning sequential path.
+    NULL, empty and foreign stored IDs cannot authorize speculative retention.
+    """
+    now = _iso_now()
+    return [(
+        _DONE_ROW_SQL.removesuffix("THEN RETURN reservation_id") + "AND reservation_id=@rid",
+        {"aid": authorization_id, "kind": intent_kind, "lease_owner": None,
+         "now": now, "status": "done", "rid": reservation_id},
+        {"aid": param_types.STRING, "kind": param_types.STRING,
+         "lease_owner": param_types.STRING, "now": param_types.TIMESTAMP,
+         "status": param_types.STRING, "rid": param_types.STRING},
+    ), *done_retention_statements(
+        param_types, authorization_id=authorization_id, intent_kind=intent_kind,
+        reservation_id=reservation_id, now=now,
+    )]
 
 
 def mark_done_unleased_tx(

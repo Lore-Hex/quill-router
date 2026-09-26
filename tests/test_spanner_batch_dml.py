@@ -541,7 +541,7 @@ def test_finalize_custom_outbox_observes_flushed_writes_and_cleared_batches(
     assert len(db.generation_records) == len(db.operational_analytics_outbox) == 1
 
 
-@pytest.mark.parametrize('index', range(4))
+@pytest.mark.parametrize('index', range(7))
 @pytest.mark.parametrize('failure', ['status', 'count'])
 def test_finalize_partial_batch_rolls_back_done_claim_and_evidence(
     monkeypatch: pytest.MonkeyPatch, index: int, failure: str,
@@ -556,7 +556,7 @@ def test_finalize_partial_batch_rolls_back_done_claim_and_evidence(
     assert db.commits == commits and db.rollback_calls == 1
 
 
-@pytest.mark.parametrize('index', range(4))
+@pytest.mark.parametrize('index', range(7))
 def test_finalize_batch_abort_retries_claim_done_and_all_evidence(
     monkeypatch: pytest.MonkeyPatch, index: int,
 ) -> None:
@@ -566,7 +566,7 @@ def test_finalize_batch_abort_retries_claim_done_and_all_evidence(
     result = finalize()
     assert result['outcome'] == 'settled' and result['outbox_marked'] is True
     assert db.aborts == 1 and db.commits == commits + 1
-    assert len(batches) == 2 and all(len(batch) == 4 for batch in batches)
+    assert len(batches) == 2 and all(len(batch) == 7 for batch in batches)
     assert all(row['status'] == 'done' and row['attempts'] == 1 for row in db.settle_outbox.values())
     assert all(row['settled'] and row['actual_micro'] == 70 for row in db.reservations.values())
     assert db.typed['tr_credit_balance'][('workspace', 0)]['total_usage'] == 70
@@ -634,8 +634,15 @@ def test_done_returning_failure_rolls_back_or_retries_the_whole_finalize(
     monkeypatch: pytest.MonkeyPatch, abort: bool,
 ) -> None:
     from tests.fakes.spanner import FakeAborted
+    from trusted_router.storage_gcp_operational_analytics_outbox import (
+        SpannerOperationalAnalyticsOutbox,
+    )
 
-    db, finalize = _finalize_fixture()
+    class CustomOutbox:
+        def enqueue_activity_tx(self, tx: Any, generation: Any) -> None:
+            SpannerOperationalAnalyticsOutbox(db, param_types).enqueue_activity_tx(tx, generation)
+
+    db, finalize = _finalize_fixture(activity_outbox=CustomOutbox())
     before = _state(db)
     commits = db.commits
     original = _FakeTransaction.execute_sql
