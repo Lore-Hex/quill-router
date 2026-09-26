@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/_lib.sh
 source "${SCRIPT_DIR}/_lib.sh"
 regional_quota_validate_settings
+source "${SCRIPT_DIR}/regional_quota_rollout.sh"
 
 SCHEDULER_NAME="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULER:-trusted-router-regional-quota-reconcile}"
 # Reconciliation is region-independent: Spanner is authoritative and the
@@ -19,8 +20,8 @@ JOB_REGION="${TR_REGIONAL_QUOTA_RECONCILER_JOB_REGION:-us-east4}"
 SCHEDULER_REGION="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULER_REGION:-${TR_PRIMARY_REGION}}"
 SCHEDULE="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULE:-* * * * *}"
 RELEASE="$(git rev-parse --short HEAD 2>/dev/null || echo local)"
-JOB_PREFIX="${TR_REGIONAL_QUOTA_RECONCILER_JOB_PREFIX:-trusted-router-regional-quota-reconciler}"
-JOB_NAME="${TR_REGIONAL_QUOTA_RECONCILER_JOB:-${JOB_PREFIX}-${RELEASE}}"
+JOB_PREFIX="$(regional_quota_reconciler_prefix)"
+JOB_NAME="$(regional_quota_reconciler_name "$RELEASE")"
 RECONCILE_LIMIT="${TR_REGIONAL_QUOTA_RECONCILE_LIMIT:-500}"
 LOCK_BUCKET="${TR_REGIONAL_QUOTA_RECONCILER_LOCK_BUCKET:-${PROJECT_ID}-regional-quota-reconciler-state}"
 LOCK_OBJECT="${TR_REGIONAL_QUOTA_RECONCILER_LOCK_OBJECT:-regional-quota-reconciler/singleflight.json}"
@@ -58,6 +59,9 @@ if ! gc artifacts docker images describe "$IMAGE" >/dev/null 2>&1; then
   exit 1
 fi
 
+regional_quota_resolve_image
+regional_quota_require_image_protocol
+
 # Cloud Scheduler considers jobs:run complete once Cloud Run accepts an
 # execution, not when that execution exits. A slow minute can therefore overlap
 # the next minute. The Spanner fencing lock is intentionally authoritative for
@@ -93,6 +97,7 @@ env_vars=(
   # control credentials such as Stripe and the attribution-cookie secret.
   "TR_SERVICE_SURFACE=control"
   "TR_RELEASE=${RELEASE}"
+  "REGIONAL_QUOTA_ACCOUNTING_PROTOCOL=${IMAGE_ACCOUNTING_PROTOCOL}"
   "TR_STORAGE_BACKEND=spanner-bigtable"
   "TR_GCP_PROJECT_ID=${PROJECT_ID}"
   "TR_SPANNER_INSTANCE_ID=${SPANNER_INSTANCE_ID}"

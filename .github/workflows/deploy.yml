@@ -49,10 +49,12 @@ on:
           - "false"
           - "true"
 
-# Only one deploy at a time. Two pushes within seconds of each other
-# serialize instead of racing to be the running revision.
+# Ordinary deploys share one running and one replaceable pending slot. OFF
+# persistence bypasses that queue; the GCS mutex still serializes traffic.
 concurrency:
-  group: deploy-trusted-router
+  # OFF requests must persist even when an ordinary deploy is running/pending.
+  # OFF runs only persist the latch and enqueue a normal serialized deploy.
+  group: ${{ inputs.regional_quota_lease_issuance == 'false' && format('regional-quota-off-{0}', github.run_id) || 'deploy-trusted-router' }}
   cancel-in-progress: false
 
 permissions:
@@ -61,8 +63,43 @@ permissions:
   actions: read     # for the CI-green gate (gh run list)
 
 jobs:
-  gate-on-ci:
+  persist-regional-quota-stop:
     if: github.repository == 'Lore-Hex/quill-router'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      actions: write  # enqueue the ordinary deployment after persisting OFF
+    steps:
+      - uses: actions/checkout@v4
+      - name: Authenticate OFF request to GCP
+        if: github.event_name == 'workflow_dispatch' && inputs.regional_quota_lease_issuance == 'false'
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v3
+        if: github.event_name == 'workflow_dispatch' && inputs.regional_quota_lease_issuance == 'false'
+      - name: Persist regional quota OFF before any deploy queue or gate
+        if: github.event_name == 'workflow_dispatch' && inputs.regional_quota_lease_issuance == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HOTFIX: ${{ inputs.hotfix }}
+        run: |
+          source scripts/deploy/_lib.sh
+          source scripts/deploy/regional_quota_rollout.sh
+          regional_quota_persist_stop
+          # The child can be replaced by a newer push: both read the durable
+          # latch. Never run deployment jobs in this queue-bypassing parent.
+          # GITHUB_TOKEN permits workflow_dispatch/repository_dispatch to start runs:
+          # https://docs.github.com/en/actions/concepts/security/github_token#when-github_token-triggers-workflow-runs
+          gh workflow run deploy.yml --repo "$GITHUB_REPOSITORY" \
+            --ref "$GITHUB_REF_NAME" \
+            -f regional_quota_lease_issuance=preserve -f hotfix="$HOTFIX"
+
+  gate-on-ci:
+    needs: [persist-regional-quota-stop]
+    if: github.repository == 'Lore-Hex/quill-router' && inputs.regional_quota_lease_issuance != 'false'
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -114,7 +151,8 @@ jobs:
           done
 
   build-image:
-    if: github.repository == 'Lore-Hex/quill-router'
+    needs: [persist-regional-quota-stop]
+    if: github.repository == 'Lore-Hex/quill-router' && inputs.regional_quota_lease_issuance != 'false'
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.set-vars.outputs.sha }}
@@ -160,6 +198,7 @@ jobs:
         # which we then watch via `gcloud builds describe`.
         run: |
           set -euo pipefail
+          source scripts/deploy/_lib.sh
           CACHE_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${SERVICE}:buildcache"
           cat > /tmp/cloudbuild-control-plane.yaml <<'EOF'
           steps:
@@ -172,6 +211,7 @@ jobs:
                   docker pull "${_CACHE_IMAGE}" || true
                   docker build \
                     --network=cloudbuild \
+                    --build-arg "REGIONAL_QUOTA_ACCOUNTING_PROTOCOL=${_ACCOUNTING_PROTOCOL}" \
                     --cache-from "${_CACHE_IMAGE}" \
                     --tag "${_IMAGE}" \
                     --tag "${_CACHE_IMAGE}" \
@@ -187,7 +227,7 @@ jobs:
           EOF
           BUILD_ID=$(gcloud builds submit \
             --config=/tmp/cloudbuild-control-plane.yaml \
-            --substitutions="_IMAGE=${IMAGE},_CACHE_IMAGE=${CACHE_IMAGE}" \
+            --substitutions="_IMAGE=${IMAGE},_CACHE_IMAGE=${CACHE_IMAGE},_ACCOUNTING_PROTOCOL=${REGIONAL_QUOTA_ACCOUNTING_PROTOCOL}" \
             --project="${PROJECT_ID}" \
             --region="${REGION}" \
             --async \

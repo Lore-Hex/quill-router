@@ -18,4 +18,4 @@ log "configuring Docker auth"
 gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet >/dev/null
 
 log "building and pushing ${IMAGE}"
-docker buildx build --platform linux/amd64 --tag "$IMAGE" --push .
+docker buildx build --platform linux/amd64 --build-arg "REGIONAL_QUOTA_ACCOUNTING_PROTOCOL=${REGIONAL_QUOTA_ACCOUNTING_PROTOCOL}" --tag "$IMAGE" --push .

@@ -170,18 +170,33 @@ The rollout reads preserved quota state from the revision receiving exactly
 created revision, or latest ready revision, because all three can name a failed
 candidate after traffic has rolled back. An ambiguous traffic split or any
 control-plane read error aborts. Only an exact missing-service response is
-treated as a fresh environment, with issuance off.
+treated as a fresh environment. With the normal ON pin, a fresh fleet must
+explicitly request issuance=false for its first compatibility deployment.
 
-Activation is intentionally two separate full-fleet deployments:
+Issuance requires accounting compatibility, independently of the git release:
 
-1. Compatibility phase — deploy every region with issuance explicitly false.
-   Wait for the normal staged traffic, billing-path, and production smoke gates
-   to complete everywhere.
-2. Issuance phase — dispatch the same workflow with issuance true. Before
-   creating any issuance-enabled revision, the rollout checks every active
-   control-plane region for `TR_REGIONAL_QUOTA_LEASES_ENABLED=true` and an
-   explicit boolean `TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED` marker. Missing,
-   split, unreadable, or incapable regions fail closed.
+1. `REGIONAL_QUOTA_ACCOUNTING_PROTOCOL=2` is a constant in
+   `scripts/deploy/_lib.sh`, identifying R1/v2 tombstone-aware writers and
+   reconciliation. `rollout.sh` sets this environment variable on every new
+   serving revision; `regional_quota_reconciler.sh` sets it on the worker job.
+   Bump the constant only for an incompatible accounting protocol change.
+2. Before creating any issuance-enabled revision, every serving region must
+   carry capability=true, a boolean issuance marker, and the protocol marker
+   equal to that constant. The scheduled reconciler must declare it too.
+   A missing/pre-R1 or incompatible marker refuses rollout with a non-zero
+   exit, as do ambiguous traffic and read errors. These failures never silently
+   choose issuance OFF. An older git release with protocol 2 passes the first
+   rollout of a newer release with protocol 2. Only a fleet missing the protocol
+   needs an explicit OFF compatibility rollout before re-arming, including all
+   held regions and the worker; ordinary pushes do not require two deployments.
+3. The stable Scheduler must be ENABLED and target the expected regional Cloud
+   Run worker using POST and the worker OAuth identity. The worker must be ready,
+   with its latest execution successful within five minutes, using its current
+   configuration. Its actual reconciliation-complete log must also be present
+   within five minutes (a single-flight skip exits zero but is not evidence).
+   Missing, paused, failing, stale, or unverified workers refuse activation.
+   The preflight is read-only and never resumes an operator pause. After an
+   intentional pause, explicitly resume and verify reconciliation before enabling.
 
 Operator commands (run only from the reviewed `main` commit) are:
 
@@ -190,24 +205,113 @@ gh workflow run deploy.yml --repo Lore-Hex/quill-router --ref main \
   -f regional_quota_lease_issuance=false
 ```
 
-After that run is fully green in every region:
+After the queued deployment is fully green in every region, reconciliation is healthy, and
+the durable stop latch has been explicitly re-armed as described below:
 
 ```bash
 gh workflow run deploy.yml --repo Lore-Hex/quill-router --ref main \
   -f regional_quota_lease_issuance=true
 ```
 
-Routine workflow dispatches use `preserve` to keep the live issuance marker;
-explicit `true` and `false` also override the code pin. Push-triggered deploys
-(absent or empty input) use `REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED` in
-`scripts/deploy/rollout.sh`. It was `false` while the regional accounting
-version, bounded escrow, exact regional charging and the five-region ledger
-landed fleet-wide; it is now `true`, so every push deploy enables issuance for
-the pinned cohort. Enabling still requires pilot IDs, profiles, and the fleet
-compatibility preflight. The emergency off switch is the dispatch input
-`regional_quota_lease_issuance=false` (or a Cloud Run env update); note that a
-later push deploy turns issuance back on unless the pin itself is changed.
-The shell writes only a normalized boolean to the Cloud Run revision.
+Routine workflow dispatches use `preserve` to copy the primary live issuance
+marker; this is not per-region preservation. Push-triggered deploys (absent or
+empty input) use `REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED=true` in
+`scripts/deploy/rollout.sh`. During an incident, the emergency containment recipe
+is to change that literal to `false` and commit it through review so successor
+pushes inherit OFF. Keep the incident pin off until compatibility and reconciler
+readiness are verified, then restore `true` through review. The normal pin stays
+true. A code change in an uncommitted checkout alone does not change production.
+
+The dispatch kill switch `regional_quota_lease_issuance=false` now persists
+`off` to `gs://tr-deploy-mutex-quill-cloud-proxy/controls/regional-quota-issuance.txt`
+before CI/build/deployment gates. OFF dispatches use a unique workflow concurrency
+group, so an ordinary pending deploy's replacement by a newer push cannot erase
+the stop request. That parent only persists OFF and enqueues a normal `preserve`
+deployment (forwarding the hotfix choice); all deployment jobs remain in the
+ordinary serialized queue, including the public companion that does not hold the
+GCS traffic mutex. If a newer push replaces the queued child, it still reads OFF.
+The latch/dispatch job must succeed; a failed authentication or object write is
+not a persisted stop, and a failed enqueue needs a normal deploy retried. No later
+dispatch or push automatically clears it. Every rollout reads it afresh, and OFF overrides even explicit true or
+preserve. The object is absent until the first OFF request; absence means no
+containment and leaves the requested value unchanged. `allow` also leaves it
+unchanged. `off` forces false; any other content (including empty) forces false
+and logs malformed state. A successful structured listing establishes absence;
+transport, permission, missing-bucket, malformed-listing and object-read errors
+abort rollout loudly with a non-zero exit and never silently choose OFF. A push event cannot
+enter the OFF persistence step; it requires workflow_dispatch and explicit false.
+The deploy identity needs read/write access to this control object in the existing
+mutex bucket; the preflight also needs Scheduler/Jobs and Cloud Logging reads.
+
+Before the first OFF is persisted, apply the mutex bucket lifecycle migration:
+replace the unconditional age-1 Delete rule with
+`{"action":{"type":"Delete"},"condition":{"age":1,"matchesPrefix":["locks/"]}}`
+(the policy emitted by `infra.sh`). Wait at least 24 hours after that update
+before relying on a persisted OFF: Cloud Storage can continue applying the old
+policy during propagation. Re-read the effective lifecycle and persist/verify OFF
+only after this window. Do not treat the policy read alone as proof of propagation.
+The deploy identity also needs `storage.buckets.get` for lifecycle inspection;
+`infra.sh` grants bucket-scoped `roles/storage.legacyBucketReader` alongside
+the existing object-admin role. Both persistence and rollout now refuse any Delete rule that could cover
+`controls/`, including broad or overlapping prefixes. This migration has not been
+applied by this code change. See [Cloud Storage lifecycle propagation](https://docs.cloud.google.com/storage/docs/lifecycle).
+
+Latch reads use one bounded `controls/*` listing with
+`gcloud storage objects list --raw --format=json`, then read the exact object only
+if present. SDK 575 explicitly does not support `storage ls --format=json` and
+its `ls --json` errors for an absent prefix; `objects list` provides a structural
+JSON array (including `[]`). No stderr wording is classified as absence.
+Nonzero listing status, malformed metadata, and read failures abort.
+
+The build binds `com.trustedrouter.accounting_protocol` to the artifact with a
+Dockerfile ARG/LABEL, supplied from `_lib.sh` by local and Cloud Build paths.
+Deploy resolves the selected image to a digest and reads its config through
+`docker buildx imagetools inspect IMAGE@DIGEST --format '{{json .Image}}'`.
+Serving revisions and worker jobs receive that label value. Missing/unreadable
+labels abort; issuance ON and worker deployment reject a label below the current
+minimum. Docker Buildx is supplied by the Ubuntu deploy runner; registry auth is
+configured before inspection. Existing unlabelled images cannot be redeployed
+through these paths, even for OFF; use a labelled compatible build.
+
+A running/pending scheduled execution permits a recent completed execution of
+the current configuration, with reconciliation completion evidence. If there is
+no recent completion, preflight polls for at most 90 seconds; explicit failed
+completion still refuses issuance. Custom worker name/prefix configuration is
+shared with worker deployment.
+
+This remains a staged stop, not an immediate runtime revocation: a deploy that
+already resolved its issuance state and held regions can still serve ON. Verify
+OFF on **every serving revision**, complete the subsequent OFF rollout, and keep
+capability and reconciliation enabled to drain existing work. Do not use a manual
+Cloud Run env update as durable containment: config-as-code overwrites it.
+
+To re-arm, resolve the incident and verify protocol compatibility on all serving
+regions and the scheduled worker, plus healthy reconciliation. Restore the code
+pin to true if incident containment changed it. An operator then deletes the
+stop object or writes `allow` (choose one), and dispatches issuance=true:
+
+```bash
+# Option 1: remove containment.
+gcloud storage rm \
+  gs://tr-deploy-mutex-quill-cloud-proxy/controls/regional-quota-issuance.txt
+
+# Option 2: explicitly allow the requested issuance setting.
+printf 'allow\n' > /tmp/regional-quota-issuance.txt
+gcloud storage cp /tmp/regional-quota-issuance.txt \
+  gs://tr-deploy-mutex-quill-cloud-proxy/controls/regional-quota-issuance.txt
+```
+
+Then dispatch:
+
+```bash
+gh workflow run deploy.yml --repo Lore-Hex/quill-router --ref main \
+  -f regional_quota_lease_issuance=true
+```
+
+No object initialization is required. Re-arming and OFF requests must not be
+issued concurrently. The shell writes only a normalized boolean to each new Cloud Run revision. Direct
+rollout.sh still requires the separate five-profile provisioning gate; this
+preflight does not provision Bigtable or prove lease drainage.
 
 R4 replaces the initial single-region configuration described above with these
 code pins. An absent environment variable resolves to the pin; an explicit
@@ -230,7 +334,7 @@ Capability retains its live-primary preservation rule.
 | `TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS` | `4` |
 | `TR_REGIONAL_QUOTA_BIGTABLE_TABLE` | `trustedrouter-regional-quota` |
 
-Issuance remains pinned **false**. `TR_REGIONAL_QUOTA_RECONCILE_LIMIT` is
+Issuance remains pinned **true**. `TR_REGIONAL_QUOTA_RECONCILE_LIMIT` is
 unchanged. Every region, including Europe, routes its ledger to c1 for now:
 Bigtable refuses a second transactional profile on a different cluster unless
 its split-brain warning is forcibly bypassed. We keep that protection; an
@@ -324,7 +428,7 @@ Production activation requires all of the following:
 Implemented gates include the transactional adapter, exact global grant and
 close transactions, a once-per-minute reconciler, integer-only property tests,
 ambiguous Bigtable commit replay, fencing, concurrent idempotency, exact key
-usage import, and 16-way local sharding. Production issuance remains off with
+usage import, and 16-way local sharding. Production issuance is pinned on with
 the five-workspace cohort pinned above. Any local read, conditional write,
 missing profile, or initialization ambiguity falls back to exact Spanner
 authorization. Missing
@@ -343,8 +447,8 @@ configured issuance flags alone are therefore not evidence of an exercised
 regional lease. The earlier rollout migrated that exact legacy singleton allowlist
 to the already-paid first-party smoke workspace used by the spend-lease pilot.
 R4 supersedes live allowlist preservation with the five-workspace code pin
-above; explicit overrides remain supported and issuance stays off. No payment
-record or trust tier is fabricated.
+above; explicit overrides remain supported and issuance follows the control above.
+No payment record or trust tier is fabricated.
 
 After rollout, verify an uncapped first-party request through the US Central
 gateway actually reports regional settlement in its authorization record, then

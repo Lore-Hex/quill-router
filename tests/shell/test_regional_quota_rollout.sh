@@ -8,6 +8,7 @@ source "${ROOT}/scripts/deploy/regional_quota_rollout.sh"
 SERVICE="trusted-router"
 TR_CONTROL_PLANE_REGIONS="us-central1,us-east4,europe-west4,southamerica-east1"
 SCENARIO=""
+REGIONAL_QUOTA_ACCOUNTING_PROTOCOL=2
 CALL_LOG="$(mktemp "${TMPDIR:-/tmp}/tr-regional-quota-rollout.XXXXXX")"
 trap 'rm -f "$CALL_LOG"' EXIT
 
@@ -31,10 +32,10 @@ revision_json() {
   local capability="$1"
   local marker="$2"
   if [ "$marker" = "missing" ]; then
-    printf '{"spec":{"containers":[{"env":[{"name":"TR_REGIONAL_QUOTA_LEASES_ENABLED","value":"%s"}]}]}}\n' \
+    printf '{"spec":{"containers":[{"env":[{"name":"TR_RELEASE","value":"older-release"},{"name":"REGIONAL_QUOTA_ACCOUNTING_PROTOCOL","value":"2"},{"name":"TR_REGIONAL_QUOTA_LEASES_ENABLED","value":"%s"}]}]}}\n' \
       "$capability"
   else
-    printf '{"spec":{"containers":[{"env":[{"name":"TR_REGIONAL_QUOTA_LEASES_ENABLED","value":"%s"},{"name":"TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED","value":"%s"}]}]}}\n' \
+    printf '{"spec":{"containers":[{"env":[{"name":"TR_RELEASE","value":"older-release"},{"name":"REGIONAL_QUOTA_ACCOUNTING_PROTOCOL","value":"2"},{"name":"TR_REGIONAL_QUOTA_LEASES_ENABLED","value":"%s"},{"name":"TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED","value":"%s"}]}]}}\n' \
       "$capability" "$marker"
   fi
 }
@@ -151,7 +152,7 @@ test_raw_issuance_input_is_normalized_in_shell() {
   [ "$(rollout_issuance_marker true)" = "true" ] ||
     fail "absent push input did not resolve to the pin (true)"
   [ "$(rollout_issuance_marker false)" = "true" ] ||
-    fail "absent push input did not pin live false on"
+    fail "absent push input did not resolve to the pin (true)"
   [ "$(rollout_issuance_marker true "")" = "true" ] ||
     fail "empty push input did not resolve to the pin (true)"
   [ "$(rollout_issuance_marker true preserve)" = "true" ] ||
