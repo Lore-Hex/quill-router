@@ -566,7 +566,8 @@ def test_infra_provisions_a_private_short_lived_mutex_bucket() -> None:
     assert "tr-deploy-mutex-quill-cloud-proxy" in infra
     assert "--uniform-bucket-level-access" in infra
     assert "--public-access-prevention" in infra
-    assert '{"rule":[{"action":{"type":"Delete"},"condition":{"age":1}}]}' in infra
+    # Controls share this bucket and must never inherit the lock expiration.
+    assert '{"rule":[{"action":{"type":"Delete"},"condition":{"age":1,"matchesPrefix":["locks/"]}}]}' in infra
     assert '--member="serviceAccount:${DEPLOY_SERVICE_ACCOUNT}"' in infra
     assert '--role="roles/storage.objectAdmin"' in infra
 

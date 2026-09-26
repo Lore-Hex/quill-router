@@ -438,13 +438,11 @@ esac
 
 # workflow_dispatch passes one of preserve/false/true through unchanged. The
 # deploy shell, not GitHub's expression coercion, turns that raw operator intent
-# into the boolean written on the Cloud Run revision. A missing marker on the
-# first compatibility deploy defaults OFF.
-# R5: issuance is pinned ON for the pinned cohort now that the accounting version,
-# bounded escrow, exact regional charging and the five-region ledger are live
-# fleet-wide. An explicit workflow_dispatch input still overrides it for an
-# operator (`false` is the emergency off switch; a later push deploy turns it
-# back on unless this pin changes).
+# into the boolean written on the Cloud Run revision. A fresh fleet must
+# explicitly request false for its first compatibility deploy.
+# Emergency containment: commit the pin below to false so successor pushes
+# inherit OFF (docs/design/regional-quota-leases.md). Keep it true normally.
+# The durable stop latch overrides explicit true/preserve inputs.
 REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED=true
 LIVE_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED="$(
   read_primary_regional_quota_env \
@@ -456,6 +454,9 @@ REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED="$(
   regional_quota_normalize_issuance_control \
     "$REGIONAL_QUOTA_LEASE_ISSUANCE_CONTROL" \
     "$LIVE_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED"
+)"
+REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED="$(
+  regional_quota_apply_stop_latch "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED"
 )"
 if [ "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" = "true" ] &&
    [ "$REGIONAL_QUOTA_LEASES_ENABLED" != "true" ]; then
@@ -492,11 +493,14 @@ if [ "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" = "true" ] && {
 fi
 
 # This executes before gcloud run deploy can create any issuance-enabled
-# revision. Every currently active fleet member must already be settlement-
-# capable and must explicitly carry the new boolean marker. That creates a
-# compatibility phase between landing the code and enabling issuance.
+# revision. Every currently active fleet member and the scheduled worker must
+# declare the accounting protocol, and reconciliation must be healthy.
+# Compatible older releases pass; missing or incompatible markers refuse rollout.
+regional_quota_resolve_image
 if [ "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" = "true" ]; then
+  regional_quota_require_image_protocol
   regional_quota_preflight_issuance_fleet
+  regional_quota_preflight_reconciler
 fi
 
 # Binding makes the unit-4 settlement clamp and repair/mirror path load-bearing.
@@ -558,6 +562,7 @@ ENV_VARS=(
   # split service's edge identity and independent capacity policy.
   "TR_RATE_LIMIT_ENABLED=false"
   "TR_SETTLE_PER_KEY_INFLIGHT_LIMIT=16"
+  "REGIONAL_QUOTA_ACCOUNTING_PROTOCOL=${IMAGE_ACCOUNTING_PROTOCOL}"
   "TR_RELEASE=${TR_DEPLOY_RELEASE_ID:-$(git rev-parse --short HEAD 2>/dev/null || echo local)}"
   # Request-based Cloud Run CPU can pause background coroutines. The scheduled
   # synthetic job invokes /internal/synthetic/remediate instead.

@@ -98,7 +98,9 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from scripts.deploy.service_surface_url_map import rewrite_url_map
 
@@ -748,6 +750,20 @@ if [ -n "${HARNESS_FAILURES:-}" ] && [ -f "$HARNESS_FAILURES" ]; then
       exit 1
     fi
   done < "$HARNESS_FAILURES"
+fi
+
+# Immutable artifact metadata used by regional quota deployment interlocks.
+if [[ "$joined" == *"artifacts docker images describe"*"image_summary.digest"* ]]; then
+  printf 'sha256:%064d\n' 0
+  exit 0
+fi
+if [[ "$joined" == *"docker buildx imagetools inspect"* ]]; then
+  if [ -n "${HARNESS_IMAGE_CONFIG:-}" ]; then
+    printf '%s\n' "$HARNESS_IMAGE_CONFIG"
+  else
+    printf '%s\n' '{"config":{"Labels":{"com.trustedrouter.accounting_protocol":"2"}}}'
+  fi
+  exit 0
 fi
 
 # URL-map validation is part of the safety gate under test. Do not let the
@@ -1408,6 +1424,52 @@ class ScriptFixture:
     cleanup_after_gate: tuple[str, ...] = ()
 
 
+# Real Cloud Run v1 shapes for the issuance readiness read-only preflight.
+_QUOTA_WORKER_SPEC: dict[str, Any] = {
+    "containers": [{"image": "reviewed-image", "env": [
+        {"name": "TR_RELEASE", "value": "abc12345"},
+        {"name": "REGIONAL_QUOTA_ACCOUNTING_PROTOCOL", "value": "2"},
+    ]}],
+}
+QUOTA_SCHEDULER: dict[str, Any] = {
+    "state": "ENABLED",
+    "httpTarget": {
+        "uri": "https://us-east4-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/quill-cloud-proxy/jobs/trusted-router-regional-quota-reconciler-abc12345:run",
+        "httpMethod": "POST",
+        "oauthToken": {"serviceAccountEmail": "44325983244-compute@developer.gserviceaccount.com"},
+    },
+}
+QUOTA_WORKER: dict[str, Any] = {
+    "metadata": {"generation": 1},
+    "spec": {"template": {"spec": {"template": {"spec": _QUOTA_WORKER_SPEC}}}},
+    "status": {
+        "observedGeneration": 1,
+        "conditions": [{"type": "Ready", "status": "True"}],
+        "latestCreatedExecution": {
+            "name": "quota-execution", "completionStatus": "EXECUTION_SUCCEEDED",
+        },
+    },
+}
+QUOTA_EXECUTION: dict[str, Any] = {
+    "metadata": {"name": "quota-execution"},
+    "spec": {"template": {"spec": _QUOTA_WORKER_SPEC}},
+    "status": {
+        "completionTime": "HARNESS_QUOTA_COMPLETION_TIME",
+        "conditions": [{"type": "Completed", "status": "True"}],
+    },
+}
+QUOTA_READINESS_RESPONSES = (
+    (r"projects describe.*projectNumber", "44325983244"),
+    (r"storage buckets describe .*tr-deploy-mutex.*--format=json", '{"lifecycle_config":{"rule":[{"action":{"type":"Delete"},"condition":{"age":1,"matchesPrefix":["locks/"]}}]}}'),
+    (r"storage objects list --raw --format=json .*controls/", '[{"bucket":"tr-deploy-mutex-quill-cloud-proxy","name":"controls/regional-quota-issuance.txt"}]'),
+    (r"storage cat .*controls/regional-quota-issuance.txt", "allow"),
+    (r"scheduler jobs describe .*regional-quota.*--format=json", json.dumps(QUOTA_SCHEDULER)),
+    (r"run jobs describe .*regional-quota.*--format=json", json.dumps(QUOTA_WORKER)),
+    (r"run jobs executions list .*--format=json", json.dumps([QUOTA_EXECUTION])),
+    (r"logging read .*regional_quota.reconciler_complete", '[{"textPayload":"regional_quota.reconciler_complete elapsed_ms=10"}]'),
+)
+
+
 SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
     "scripts/deploy/ramp_secondaries.sh": ScriptFixture(
         env={
@@ -1441,15 +1503,15 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
             "TR_GENERATION_RECORDS_ENABLED": "false",
             "TR_BIGTABLE_MIRROR_WRITES_ENABLED": "true",
             "TR_ANALYTICS_READ_MODE": "bigtable",
-            # Production's fleet declares lease capability; with issuance pinned
-            # on (R5) a rollout without it must refuse, which
-            # test_rollout_regional_quota_dispatch_true_refuses_incompatible_fleet covers.
+            # Generic rollout safeguards exercise the default issuance-ON path.
+            "TR_DEPLOY_RELEASE_ID": "abc12345",
             "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true",
             # No dispatch issuance input: exercise rollout.sh's code pin.
             # Reuse the stateful legacy-service tag behavior in the harness.
             "HARNESS_PUBLIC_SURFACE_SMOKE": "1",
         },
         responses=(
+            *QUOTA_READINESS_RESPONSES,
             (
                 r"run revisions describe trusted-router-active .*--format=json",
                 json.dumps(
@@ -1458,6 +1520,7 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
                             "containers": [
                                 {
                                     "env": [
+                                        {"name": "REGIONAL_QUOTA_ACCOUNTING_PROTOCOL", "value": "2"},
                                         {
                                             "name": "TR_REGIONAL_QUOTA_LEASES_ENABLED",
                                             "value": "true",
@@ -1954,7 +2017,7 @@ class DeployScriptHarness:
         fixtures_file = run_dir / "fixtures.tsv"
         fixtures_file.write_text(
             "".join(
-                f"{pattern}\t{base64.b64encode(reply.encode()).decode('ascii')}\n"
+                f"{pattern}\t{base64.b64encode(reply.replace('HARNESS_QUOTA_COMPLETION_TIME', datetime.now(UTC).isoformat()).encode()).decode('ascii')}\n"
                 for pattern, reply in fixture.responses
             )
         )

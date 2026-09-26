@@ -118,6 +118,7 @@ def test_v2_reaped_then_settled_preserves_terminal_zero(
     assert summary == {
         "inspected": 1, "reconciled": 1, "closed": 1, "errors": 0,
         "backlog": 1, "processed": 1, "remaining": 0,
+        "completed": 1, "abandoned": 0, "budget_exhausted": 0,
     }
     assert any(sql.startswith("update tr_credit_balance") for _, sql in calls)
     assert not any(sql.startswith("update tr_key_limit") for _, sql in calls)
@@ -216,6 +217,7 @@ def test_regional_accounting_matches_global_once(
     assert summary == {
         "inspected": 1, "reconciled": 1, "closed": 1, "errors": 0,
         "backlog": 1, "processed": 1, "remaining": 0,
+        "completed": 1, "abandoned": 0, "budget_exhausted": 0,
     }
     if version == 1:
         assert not any(sql.startswith("update tr_key_limit") for _, sql in calls)

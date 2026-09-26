@@ -5611,7 +5611,8 @@ class SpannerBigtableStore:
         ledger = self._regional_quota_ledger
         if ledger is None:
             return {"inspected": 0, "reconciled": 0, "closed": 0, "errors": 0,
-                    "backlog": 0, "processed": 0, "remaining": 0}
+                    "backlog": 0, "processed": 0, "remaining": 0,
+                    "completed": 0, "abandoned": 0, "budget_exhausted": 0}
         from trusted_router.services.regional_quota_leases import HoldState
         from trusted_router.storage_gcp_regional_quota import (
             GlobalRegionalQuotaLease,
@@ -5641,7 +5642,8 @@ class SpannerBigtableStore:
         lease_ids = {lease.lease_entity_id for lease in open_leases}
         cursor.holds = {key: value for key, value in cursor.holds.items() if key in lease_ids}
         result = {"inspected": 0, "reconciled": 0, "closed": 0, "errors": 0,
-                  "backlog": len(open_leases), "processed": 0, "remaining": len(open_leases)}
+                  "backlog": len(open_leases), "processed": 0, "remaining": len(open_leases),
+                  "completed": 0, "abandoned": 0, "budget_exhausted": 0}
         longest_visit_seconds = 0.0
         for open_lease in cursor.page(open_leases)[:bounded_limit]:
             visit_started = time.monotonic()
@@ -5649,6 +5651,7 @@ class SpannerBigtableStore:
             # preceding visit took. Leave its lease cursor untouched so the
             # next invocation starts there with a fresh budget.
             if visit_started + longest_visit_seconds >= deadline:
+                result["budget_exhausted"] = 1
                 break
             cursor.advance(open_lease)
             result["inspected"] += 1
@@ -5668,11 +5671,16 @@ class SpannerBigtableStore:
                     ):
                         raise RuntimeError("closed regional lease index cleanup lost its fence")
                     result["closed"] += 1
+                    result["completed"] += 1
                     continue
                 if time.monotonic() >= deadline:
+                    result["abandoned"] += 1
+                    result["budget_exhausted"] = 1
                     continue
                 local = ledger.get(record.lease_id, region=record.region)
                 if time.monotonic() >= deadline:
+                    result["abandoned"] += 1
+                    result["budget_exhausted"] = 1
                     continue
                 if local is None:
                     # Granting is intentionally two-phase: Spanner first
@@ -5701,6 +5709,7 @@ class SpannerBigtableStore:
                                 None,
                             )
                         result["closed"] += 1
+                    result["completed"] += 1
                     continue
                 # Bound each visit independently, leaving half the remaining
                 # budget for drain/import and other leases. Slow unresolved
@@ -5746,6 +5755,8 @@ class SpannerBigtableStore:
                             actual_microdollars=actual,
                         )
                 if time.monotonic() >= deadline:
+                    result["abandoned"] += 1
+                    result["budget_exhausted"] = 1
                     continue
                 if (local.expires_at <= now or record.state == "retiring") and local.state.value == "active":
                     local = ledger.begin_drain(
@@ -5754,6 +5765,8 @@ class SpannerBigtableStore:
                         fencing_token=record.fencing_token,
                     )
                 if time.monotonic() >= deadline:
+                    result["abandoned"] += 1
+                    result["budget_exhausted"] = 1
                     continue
                 should_close = local.state.value == "draining" and local.reserved_microdollars == 0
                 reconcile_regional_quota_lease(
@@ -5764,6 +5777,7 @@ class SpannerBigtableStore:
                     now=now,
                 )
                 result["reconciled"] += 1
+                result["completed"] += 1
                 if should_close:
                     ledger.close(
                         record.lease_id,

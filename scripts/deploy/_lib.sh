@@ -120,6 +120,48 @@ TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES="${TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFIL
 REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS_PINNED=4
 TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS="${TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS-$REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS_PINNED}"
 
+# Accounting compatibility contract (R1 tombstone-aware writers/reconciler).
+# Bump only for incompatible accounting changes, independently of git releases.
+REGIONAL_QUOTA_ACCOUNTING_PROTOCOL=2
+
+# Resolve mutable tags once and inspect only that immutable artifact. The
+# emitted marker describes its code, never the deployment checkout.
+regional_quota_resolve_image() {
+  local digest config
+  digest="$(gc artifacts docker images describe "$IMAGE" --format='value(image_summary.digest)')" || return 1
+  if ! [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+    log "refusing regional quota deploy: selected image has no immutable digest"
+    return 1
+  fi
+  local repository="${IMAGE%%@*}"
+  # Strip a tag only from the final path component (registry ports are valid).
+  local basename="${repository##*/}"
+  IMAGE="${repository%/*}/${basename%%:*}@${digest}"
+  gcloud auth configure-docker "${IMAGE%%/*}" --quiet >/dev/null || return 1
+  config="$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Image}}')" || {
+    log "refusing regional quota deploy: cannot read selected image protocol label"
+    return 1
+  }
+  IMAGE_ACCOUNTING_PROTOCOL="$(python3 -c '
+import json, re, sys
+image = json.load(sys.stdin)
+# Multi-platform indexes expose configs keyed by platform.
+if "config" not in image:
+    image = image.get("linux/amd64", {})
+value = image.get("config", {}).get("Labels", {}).get("com.trustedrouter.accounting_protocol")
+if not isinstance(value, str) or not re.fullmatch(r"[1-9][0-9]*", value):
+    raise SystemExit("refusing regional quota deploy: missing or invalid selected image protocol label")
+print(value)
+' <<<"$config")" || return 1
+}
+
+regional_quota_require_image_protocol() {
+  if [ "$IMAGE_ACCOUNTING_PROTOCOL" -lt "$REGIONAL_QUOTA_ACCOUNTING_PROTOCOL" ]; then
+    log "refusing regional quota issuance: selected image accounting protocol ${IMAGE_ACCOUNTING_PROTOCOL} is below ${REGIONAL_QUOTA_ACCOUNTING_PROTOCOL}"
+    return 1
+  fi
+}
+
 # R4: resolve code pins once; an explicit empty cohort means no cohort.
 REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS_PINNED="358d80a4-2c9a-4479-92ea-a681f187477d,f46bf618-4c7c-4a35-afa0-8d48891bf7a5,1fa994e7-15b1-4e36-9c1c-51ba072d3060,c4ba9257-d212-4d7e-a5a1-989bceb7a1d8,45819281-0ce9-4811-a0cd-c660ab3a116d"
 TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS="${TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS-$REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS_PINNED}"

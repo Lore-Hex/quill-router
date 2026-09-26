@@ -44,11 +44,12 @@ import subprocess
 import time
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
-from trusted_router import cloud_rollout_completeness as crc
+import trusted_router.cloud_rollout_completeness as crc
 from trusted_router.config import Settings
 
 from .deploy_script_harness import (
@@ -85,7 +86,7 @@ def _settings_from_containerapp_mutation(call: list[str]) -> Settings:
         for argument in call[start:end]
         if argument.startswith("TR_") and "=" in argument
     }
-    kwargs = {env_name.removeprefix("TR_").lower(): value for env_name, value in raw_env.items()}
+    kwargs: dict[str, Any] = {env_name.removeprefix("TR_").lower(): value for env_name, value in raw_env.items()}
     # Container Apps resolves these references before starting the process.
     kwargs["attribution_cookie_secret"] = "a" * 64
     kwargs["postgres_dsn"] = "postgresql://canary.invalid/trustedrouter"
@@ -101,8 +102,9 @@ def _cloud_run_job_env(call: list[str]) -> dict[str, str]:
     }
 
 
-def _settings_kwargs_from_cloud_run_job(call: list[str]) -> dict[str, object]:
-    kwargs: dict[str, object] = {
+def _settings_kwargs_from_cloud_run_job(call: list[str]) -> dict[str, Any]:
+    # Settings validates/coerces serialized environment values at runtime.
+    kwargs: dict[str, Any] = {
         name.removeprefix("TR_").lower(): value
         for name, value in _cloud_run_job_env(call).items()
         if name.startswith("TR_")
@@ -304,6 +306,14 @@ fi
 
 if [[ " $* " == *" run jobs list "* ]] && \
    [ "${HARNESS_VERSIONED_JOB_EXISTS:-false}" = "true" ]; then
+  for argument in "$@"; do
+    case "$argument" in
+      --filter=metadata.name=*)
+        [ "$HARNESS_VERSIONED_JOB_NAME" = "${argument#--filter=metadata.name=}" ] || exit 0 ;;
+      --filter=metadata.name:*)
+        [[ "$HARNESS_VERSIONED_JOB_NAME" == *"${argument#--filter=metadata.name:}"* ]] || exit 0 ;;
+    esac
+  done
   printf '%s\n' "$HARNESS_VERSIONED_JOB_NAME"
 fi
 
@@ -313,6 +323,9 @@ if [[ " $* " == *" run jobs list "* ]] && \
   printf '%s\n' "$HARNESS_STALE_JOB_NAMES"
 fi
 
+if [[ " $* " == *" image_summary.digest"* ]] || [[ " $* " == *"value(image_summary.digest)"* ]]; then
+  printf 'sha256:%064d\n' 0
+fi
 if [[ " $* " == *" projects describe "* ]]; then
   printf '%s\n' '123456789'
 fi
@@ -693,6 +706,7 @@ _QUOTA_REGIONS = ("us-central1", "us-east4", "europe-west4", "us-west1", "southa
 _QUOTA_CLUSTER_MAP = ",".join(f"{region}=trusted-router-logs-c1" for region in _QUOTA_REGIONS)
 _QUOTA_PROFILES = ",".join(f"{region}=tr-quota-{region}" for region in _QUOTA_REGIONS)
 _REGIONAL_QUOTA_PINS = {
+    "REGIONAL_QUOTA_ACCOUNTING_PROTOCOL": "2",
     "TR_REGIONAL_QUOTA_CLUSTER_MAP": _QUOTA_CLUSTER_MAP,
     "TR_SPEND_LEASE_CLUSTER_MAP": "us-central1=trusted-router-logs-c1",
     "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES": _QUOTA_PROFILES,
@@ -711,6 +725,8 @@ _REGIONAL_QUOTA_PINS = {
 
 
 _LIVE_REGIONAL_QUOTA_ENV = {
+    "REGIONAL_QUOTA_ACCOUNTING_PROTOCOL": "2",
+    "TR_RELEASE": "abc12345",
     "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true",
     "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "true",
     "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS": "workspace-pilot,workspace-canary",
@@ -852,8 +868,7 @@ def test_rollout_regional_quota_dispatch_true_refuses_incompatible_fleet(
 @pytest.mark.parametrize(
     ("live_env", "control", "expected_issuance"),
     [
-        # A fresh environment declares no lease capability: with issuance pinned
-        # on, the operator must force it off for that first deploy.
+        # A fresh fleet must first deploy protocol-capable revisions with issuance off.
         pytest.param({}, "false", "false", id="no-live-settings-forced-off"),
         pytest.param(_LIVE_REGIONAL_QUOTA_ENV, None, "true", id="stale-live-settings-pinned-on"),
     ],

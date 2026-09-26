@@ -89,7 +89,7 @@ DEPLOY_MUTEX_BUCKET="${TR_DEPLOY_MUTEX_BUCKET:-tr-deploy-mutex-quill-cloud-proxy
 DEPLOY_MUTEX_LOCATION="${TR_DEPLOY_MUTEX_LOCATION:-us-central1}"
 DEPLOY_MUTEX_LIFECYCLE_FILE="$(mktemp "${TMPDIR:-/tmp}/tr-deploy-mutex-lifecycle-XXXXXX.json")"
 printf '%s\n' \
-  '{"rule":[{"action":{"type":"Delete"},"condition":{"age":1}}]}' \
+  '{"rule":[{"action":{"type":"Delete"},"condition":{"age":1,"matchesPrefix":["locks/"]}}]}' \
   >"$DEPLOY_MUTEX_LIFECYCLE_FILE"
 if ! gc storage buckets describe "gs://${DEPLOY_MUTEX_BUCKET}" >/dev/null 2>&1; then
   gc storage buckets create "gs://${DEPLOY_MUTEX_BUCKET}" \
@@ -110,6 +110,12 @@ rm -f "$DEPLOY_MUTEX_LIFECYCLE_FILE"
 gc storage buckets add-iam-policy-binding "gs://${DEPLOY_MUTEX_BUCKET}" \
   --member="serviceAccount:${DEPLOY_SERVICE_ACCOUNT}" \
   --role="roles/storage.objectAdmin" \
+  --quiet >/dev/null
+
+# ObjectAdmin permits latch reads/writes, but not lifecycle inspection.
+gc storage buckets add-iam-policy-binding "gs://${DEPLOY_MUTEX_BUCKET}" \
+  --member="serviceAccount:${DEPLOY_SERVICE_ACCOUNT}" \
+  --role="roles/storage.legacyBucketReader" \
   --quiet >/dev/null
 
 log "ensuring BYOK envelope KMS key"

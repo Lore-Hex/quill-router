@@ -1,5 +1,8 @@
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
+ARG REGIONAL_QUOTA_ACCOUNTING_PROTOCOL
+LABEL com.trustedrouter.accounting_protocol=${REGIONAL_QUOTA_ACCOUNTING_PROTOCOL}
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_LINK_MODE=copy
