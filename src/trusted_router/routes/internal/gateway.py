@@ -145,6 +145,7 @@ from trusted_router.routing import (
     resolved_route_preferences,
     video_route_endpoint_candidates,
 )
+from trusted_router.routing_state import ROUTING_STATE
 from trusted_router.schemas import (
     GatewayAuthorizeRequest,
     GatewayHeartbeatRequest,
@@ -1307,6 +1308,12 @@ def _authorize_gateway_sync_impl(
             for candidate_model, candidate_endpoint in endpoint_candidates
             if UsageType.for_endpoint(candidate_endpoint) == UsageType.CREDITS
         ]
+    if named_decision_chain is None and not (is_image_request or is_video_request or is_embeddings_request or is_decide_request):
+        endpoint_candidates = ROUTING_STATE.rank(
+            endpoint_candidates, effective_route_preferences, region=region,
+            session=(api_key.hash, requested_model_id, region, body.cache_affinity_key)
+            if body.cache_affinity_key else None,
+        )
     # ``allow_fallbacks=false`` removes alternate models in the resolver, but
     # provider selection must happen after regional, workspace/BYOK, and
     # service-tier eligibility. Truncating the raw catalog first can pin an
@@ -1496,7 +1503,7 @@ def _authorize_gateway_sync_impl(
         enabled=settings.regional_quota_leases_enabled,
         issuance_enabled=settings.regional_quota_lease_issuance_enabled,
         in_cohort=workspace.id in settings.regional_quota_lease_pilot_workspaces,
-        backend_available=callable(regional_authorize),
+        backend_available=callable(regional_authorize) and not api_key.budget_strict,
         estimate=estimate,
         route_type=body.route_type,
         all_candidates_credits=all(
@@ -1532,7 +1539,7 @@ def _authorize_gateway_sync_impl(
         and not native_batch_eligible
     )
     stage_d_reason = _stage_d_eligibility_reason(
-        eligibility_enabled=settings.stage_d_eligibility_enabled,
+        eligibility_enabled=settings.stage_d_eligibility_enabled and not api_key.budget_strict,
         workspace_id=workspace.id,
         pilot_workspace_ids=settings.stage_d_pilot_workspaces,
         heartbeat_enabled=settings.stage_d_heartbeat_enabled,
@@ -1573,6 +1580,7 @@ def _authorize_gateway_sync_impl(
             and api_key.limit_daily_microdollars is None
             and api_key.limit_weekly_microdollars is None
             and api_key.limit_monthly_microdollars is None
+            and not api_key.budget_strict
         )
         (
             spend_lease,
@@ -1945,7 +1953,8 @@ def _authorize_gateway_sync_impl(
                     # The entity is already authenticated; a no-op reserve
                     # UPDATE would still lock uncapped usage counter rows.
                     # Window caps are enforced separately on a snapshot.
-                    skip_key_limit=api_key.limit_microdollars is None,
+                    skip_key_limit=api_key.limit_microdollars is None and not api_key.budget_strict,
+                    strict_budget=api_key.budget_strict,
                     # Metadata only selects the path; sequential reserve still
                     # checks the authoritative row for BYOK exclusions.
                     speculate_key_limit=(
@@ -4444,6 +4453,28 @@ def _settle_gateway_authorization(
         error_status=body.error_status,
         error_type=body.error_type,
     )
+    if success and body.route_type in {"chat.completions", "responses", "messages"}:
+        if (body.streamed and not body.usage_estimated and body.first_token_seconds
+                and body.elapsed_seconds and body.elapsed_seconds > body.first_token_seconds
+                and body.output_count > 1):
+            ROUTING_STATE.observe(
+                selected_endpoint.id, authorization.region or "",
+                latency=body.first_token_seconds,
+                throughput=(body.output_count - 1) / (body.elapsed_seconds - body.first_token_seconds),
+            )
+        # Only a successful, committed selected route can refresh affinity.
+        # Implicit sessions need an observed, discounted cache hit.
+        discounted_cache = any(
+            tier.prompt_cached_price_microdollars_per_million_tokens is not None
+            and tier.prompt_cached_price_microdollars_per_million_tokens < tier.prompt_price_microdollars_per_million_tokens
+            for tier in selected_endpoint.price_tiers
+        )
+        if body.cache_affinity_key and (body.cache_affinity_explicit or (cache_read > 0 and discounted_cache)):
+            ROUTING_STATE.remember(
+                (authorization.key_hash, authorization.requested_model_id or authorization.model_id,
+                 authorization.region or "", body.cache_affinity_key),
+                selected_endpoint.id,
+            )
     mark_ms = 0.0
     if settings.settle_outbox_enabled and outbox_enqueued and finalize_result.activity_indexed:
         if finalize_result.outbox_marked is not None:

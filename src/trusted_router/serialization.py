@@ -95,6 +95,7 @@ def key_shape(key: ApiKey, *, window_usage: dict[str, int] | None = None) -> dic
         "tags": dict(key.tags),
         # False (default) = hard-limit; True explicitly opts into email-only alerts.
         "budget_alert_only": key.budget_alert_only,
+        "budget_strict": key.budget_strict,
         **usage_breakdown,
         **byok_breakdown,
         **window_fields,

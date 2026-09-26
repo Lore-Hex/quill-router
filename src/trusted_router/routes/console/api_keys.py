@@ -83,6 +83,7 @@ def register(app: FastAPI) -> None:
         limit_weekly: str = Form(""),
         limit_monthly: str = Form(""),
         budget_alert_only: str = Form(""),
+        budget_strict: str = Form(""),
     ) -> Response:
         try:
             limit_microdollars = _parse_limit(limit)
@@ -104,6 +105,7 @@ def register(app: FastAPI) -> None:
             # Omitted checkbox = the shared hard-limit default. Alert-only must be
             # selected explicitly.
             budget_alert_only=_checkbox(budget_alert_only),
+            budget_strict=_checkbox(budget_strict),
         )
         return _render_page(ctx, settings, created_key=raw)
 
@@ -220,5 +222,6 @@ def _key_view(snapshot: ApiKeyUsageSnapshot) -> dict[str, Any]:
         "usage_display": money(snapshot.usage_microdollars),
         "windows": window_views,
         "budget_alert_only": key.budget_alert_only,
+        "budget_strict": key.budget_strict,
         "disabled": key.disabled,
     }

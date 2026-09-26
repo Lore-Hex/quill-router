@@ -93,6 +93,8 @@ def key_usage_shard_count(value: Any) -> int:
     if isinstance(raw, bool):
         raise ValueError("key usage_shard_count must be a positive integer")
     count = int(raw)
+    if _field(value, "budget_strict", False) and count != 1:
+        raise ValueError("strict window budgets require one key counter shard")
     if count < 1:
         raise ValueError("key usage_shard_count must be a positive integer")
     if count > MAX_KEY_USAGE_SHARDS:

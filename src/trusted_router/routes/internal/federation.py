@@ -196,6 +196,7 @@ def register(router: APIRouter) -> None:
                 getattr(api_key, "include_byok_in_limit", True)
             ),
             "budget_alert_only": bool(getattr(api_key, "budget_alert_only", False)),
+            "budget_strict": bool(getattr(api_key, "budget_strict", False)),
             "workspace_billing_paused": workspace_billing_paused(workspace),
             # Lets the peer detect a changed record without diffing every
             # field, and lets a future revocation feed say "anything older

@@ -1174,6 +1174,28 @@ class _FakeTransaction:
             self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))
             return 1
         if "UPDATE tr_key_limit SET reserved = reserved + @est" in sql:
+            if "limit_micro IS NULL" in sql:
+                _require_pred(sql, "key_hash=@kh AND shard=0", "strict-budget")
+                pk = (p["kh"], 0)
+                rec = self._typed_current("tr_key_limit", pk)
+                if rec is None or (p["is_byok"] and not rec["include_byok"]):
+                    return 0
+                held = rec["reserved"]
+                used = rec["usage"] + (rec["byok_usage"] if rec["include_byok"] else 0)
+                if rec["limit_micro"] is not None and used + held + p["est"] > rec["limit_micro"]:
+                    return 0
+                for prefix in ("day", "week", "month"):
+                    if f"{prefix}_floor" not in p:
+                        continue
+                    _require_pred(sql, "- reserved >= @est)", "strict-window-hold")
+                    _require_pred(sql, f"{prefix}_limit_micro", "strict-window-limit")
+                    limit = rec.get(f"{prefix}_limit_micro")
+                    started = rec.get(f"{prefix}_start")
+                    used = int(rec.get(f"{prefix}_usage", 0)) if started is not None and started >= p[f"{prefix}_floor"] else 0
+                    if limit is not None and used + held + p["est"] > limit:
+                        return 0
+                self.pending_writes.append(("update_typed", "tr_key_limit", pk, dict(rec, reserved=held + p["est"])))
+                return 1
             pk = (p["kh"], p["shard"])
             rec = self._typed_current("tr_key_limit", pk)
             if rec is None or rec["limit_micro"] is None:
