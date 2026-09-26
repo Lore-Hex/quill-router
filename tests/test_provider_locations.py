@@ -50,7 +50,7 @@ def test_catalog_regions_are_availability_not_storage_country_inferences() -> No
     snapshot = telnyx_model_locations(_snapshot(["USA", "EU", "USA", "AUS", "UAE"]))
     assert snapshot.generated_at == "2026-09-26T12:00:00Z"
     assert snapshot.model_regions["z-ai/glm-5.3-flash"] == (
-        "United States", "European Union (country unspecified)", "Australia", "United Arab Emirates",
+        "United States", "Europe (Telnyx EU region; countries unspecified)", "Australia", "United Arab Emirates",
     )
     assert "Germany" not in str(snapshot.model_regions)
 

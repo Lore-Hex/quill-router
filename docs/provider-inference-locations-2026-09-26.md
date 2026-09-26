@@ -16,7 +16,7 @@ the unconfirmed entries below need a model-specific statement from the provider.
 | Qwen3.8-27B | Engy | Countries not disclosed in the reviewed API catalog or public documentation. | Worker/failover geography unconfirmed; no supported regional pin. |
 | Qwen3.8-27B | Novita | Serverless model countries not declared in the reviewed catalog. Worldwide GPU rental locations are not evidence for this route. | Placement/failover unconfirmed; no supported regional pin. |
 | Qwen3.8-27B | Telnyx | Live native catalog advertises USA only for the default tier. | Availability can change. Current route is not strictly region-pinned. |
-| GLM-5.3-Flash | Telnyx | Live native catalog advertises USA, EU, Australia and UAE for the default tier. EU inference country is not specified. | Latency/capacity-based routing can change regions. Current route is not strictly region-pinned. |
+| GLM-5.3-Flash | Telnyx | Live native catalog advertises USA, Europe (EU region), Australia and UAE for the default tier. European inference countries are not specified. | Latency/capacity-based routing can change regions. Current route is not strictly region-pinned. |
 | GLM-5.3-Flash | Pearl Research Labs | Provider supplied US Central, Taiwan and Australia during onboarding. This is provider-wide, not a confirmed exhaustive list for this model. | Model placement/failover unconfirmed; no supported regional pin. |
 | GLM-5.3-Flash | Engy | Countries not disclosed in the reviewed API catalog or public documentation. | Worker/failover geography unconfirmed; no supported regional pin. |
 | DeepSeek-V4.1-Flash | Pearl Research Labs | Same provider-wide US Central, Taiwan and Australia declaration; this model's location set is unconfirmed. | Model placement/failover unconfirmed; no supported regional pin. |
@@ -33,7 +33,7 @@ For your infrastructure register, use:
 
 - DeepInfra: "United States, provider-declared inference hosting; individual site unspecified."
 - Telnyx Qwen: "USA currently advertised; dynamic availability, not region-pinned."
-- Telnyx GLM: "Multi-region: US, EU, Australia, UAE; dynamically routed, not region-pinned."
+- Telnyx GLM: "Multi-region: US, Europe (EU region), Australia, UAE; dynamically routed, not region-pinned."
 - Pearl: "Provider declares US Central, Taiwan and Australia; model-specific and exhaustive failover scope unconfirmed."
 - Engy, Novita and SiliconFlow: "Inference countries unconfirmed; no verified country-specific residency commitment."
 

@@ -45,7 +45,7 @@ PROVIDER_INFERENCE_LOCATIONS = {
         sources=(("DeepInfra infrastructure statement", "https://deepinfra.com/"),),
     ),
     "telnyx": InferenceLocations(
-        locations=("United States", "European Union (country not specified for inference)",
+        locations=("United States", "Europe (Telnyx EU region; countries unspecified)",
                    "Australia", "United Arab Emirates"),
         scope=("Provider-wide GPU region set. Model availability is narrower; see the "
                "catalog snapshot below. Germany in the storage-locality documentation "
@@ -146,7 +146,7 @@ class ModelLocationSnapshot:
 
 _TELNYX_REGION_LABELS = {
     "USA": "United States",
-    "EU": "European Union (country unspecified)",
+    "EU": "Europe (Telnyx EU region; countries unspecified)",
     "AUS": "Australia",
     "UAE": "United Arab Emirates",
 }
