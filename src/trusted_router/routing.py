@@ -294,6 +294,14 @@ _MODEL_PROVIDER_PREFERENCE: dict[str, dict[str, int]] = {
 _CandidateT = TypeVar("_CandidateT")
 
 
+class RoutingCandidates(list[_CandidateT]):
+    """List-compatible resolver result carrying the policy actually applied."""
+
+    def __init__(self, candidates: list[_CandidateT], preferences: RoutePreferences) -> None:
+        super().__init__(candidates)
+        self.effective_preferences = preferences
+
+
 def _coerce_routing_inputs(
     value: NormalizedRoutingInputs | dict[str, Any],
     settings: Settings | None,
@@ -343,7 +351,7 @@ def chat_route_endpoint_candidates(
     settings: Settings | None = None,
     *,
     defer_no_fallback_selection: bool = False,
-) -> list[tuple[Model, ModelEndpoint]]:
+) -> RoutingCandidates[tuple[Model, ModelEndpoint]]:
     inputs = _coerce_routing_inputs(inputs, settings)
     raw_ids, prefs = list(inputs.model_ids), inputs.preferences
     candidates: list[tuple[Model, ModelEndpoint]] = []
@@ -362,19 +370,19 @@ def chat_route_endpoint_candidates(
             candidates.append((model, endpoint))
             seen.add(endpoint.id)
 
-    candidates = _filter_candidates_soft_data_collection(
+    filtered = _filter_candidates_soft_data_collection(
         candidates, prefs, _apply_endpoint_provider_filters
     )
-    if not candidates:
+    if not filtered:
         raise api_error(
             400,
             "No route candidates match the requested provider filters",
             ErrorType.MODEL_NOT_SUPPORTED,
         )
-    candidates = _sort_endpoint_candidates(candidates, prefs)
+    candidates = _sort_endpoint_candidates(filtered, prefs)
     if not prefs.allow_fallbacks and not defer_no_fallback_selection:
-        return candidates[:1]
-    return candidates
+        candidates = candidates[:1]
+    return RoutingCandidates(candidates, filtered.effective_preferences)
 
 
 def image_route_endpoint_candidates(
@@ -443,7 +451,7 @@ def decide_route_endpoint_candidates(
     settings: Settings | None = None,
     *,
     defer_no_fallback_selection: bool = False,
-) -> list[tuple[Model, ModelEndpoint]]:
+) -> RoutingCandidates[tuple[Model, ModelEndpoint]]:
     """Endpoint candidates for a HOSTED decision model on POST /v1/decide.
 
     Only `supports_decide` models resolve here. A native decision request (an
@@ -468,19 +476,19 @@ def decide_route_endpoint_candidates(
                 continue
             candidates.append((model, endpoint))
             seen.add(endpoint.id)
-    candidates = _filter_candidates_soft_data_collection(
+    filtered = _filter_candidates_soft_data_collection(
         candidates, prefs, _apply_endpoint_provider_filters
     )
-    if not candidates:
+    if not filtered:
         raise api_error(
             400,
             "No route candidates match the requested provider filters",
             ErrorType.MODEL_NOT_SUPPORTED,
         )
-    candidates = _sort_endpoint_candidates(candidates, prefs)
+    candidates = _sort_endpoint_candidates(filtered, prefs)
     if not prefs.allow_fallbacks and not defer_no_fallback_selection:
-        return candidates[:1]
-    return candidates
+        candidates = candidates[:1]
+    return RoutingCandidates(candidates, filtered.effective_preferences)
 
 
 def embeddings_route_endpoint_candidates(
@@ -1002,7 +1010,7 @@ def _filter_candidates_soft_data_collection(
     candidates: list[_CandidateT],
     prefs: RoutePreferences,
     apply_fn: Callable[[list[_CandidateT], RoutePreferences], list[_CandidateT]],
-) -> list[_CandidateT]:
+) -> RoutingCandidates[_CandidateT]:
     """Apply provider filters with data_collection='deny' as a soft preference.
 
     Some OpenRouter-migrated clients send this compatibility flag on every request
@@ -1019,8 +1027,11 @@ def _filter_candidates_soft_data_collection(
         and prefs.data_collection == "deny"
         and not _required_privacy_postures(prefs)
     ):
-        filtered = apply_fn(candidates, dataclasses.replace(prefs, data_collection=None))
-    return filtered
+        relaxed = dataclasses.replace(prefs, data_collection=None)
+        filtered = apply_fn(candidates, relaxed)
+        if filtered:
+            prefs = relaxed
+    return RoutingCandidates(filtered, prefs)
 
 
 def _required_privacy_postures(prefs: RoutePreferences) -> frozenset[int]:

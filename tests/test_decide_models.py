@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -27,6 +27,8 @@ from trusted_router.catalog import (
 )
 from trusted_router.catalog_data import (
     DECIDE_PATH,
+    GEV_1_0_MODEL_ID,
+    MEV_1_0_MODEL_ID,
     NAMED_DECISION_MODEL_PROVIDERS,
     NAMED_DECISION_MODELS,
     NATIVE_DECISION_MODEL_PROVIDERS,
@@ -39,7 +41,7 @@ from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.provider_lifecycle import FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT
 from trusted_router.routing import decide_route_endpoint_candidates
-from trusted_router.storage import STORE
+from trusted_router.storage import STORE, InMemoryStore
 
 JEV = "typesafe-ai/jev"
 NAMED_IDS = [named.id for named in NAMED_DECISION_MODELS]
@@ -104,12 +106,12 @@ def test_every_decision_fallback_route_became_an_endpoint() -> None:
 
 
 def test_public_shape_marks_hosted_and_native_decision_models() -> None:
-    shape = model_to_openrouter_shape(MODELS[JEV])
+    shape: dict[str, Any] = model_to_openrouter_shape(MODELS[JEV])
     assert shape["architecture"]["modality"] == "text->decision"
     assert shape["trustedrouter"]["supports_decide"] is True
     assert shape["pricing"]["completion"] == "0"
     for model_id in NATIVE_DECISION_MODEL_IDS:
-        native = model_to_openrouter_shape(MODELS[model_id])
+        native: dict[str, Any] = model_to_openrouter_shape(MODELS[model_id])
         assert native["trustedrouter"]["supports_decide"] is True, model_id
         # A NAME answers /v1/decide only, so that is what it advertises; the
         # chat model behind it is still a chat model under its own id.
@@ -117,7 +119,8 @@ def test_public_shape_marks_hosted_and_native_decision_models() -> None:
     ordinary = next(
         m for m in MODELS.values() if m.supports_chat and m.id not in NATIVE_DECISION_MODEL_IDS
     )
-    assert model_to_openrouter_shape(ordinary)["trustedrouter"]["supports_decide"] is False
+    ordinary_shape: dict[str, Any] = model_to_openrouter_shape(ordinary)
+    assert ordinary_shape["trustedrouter"]["supports_decide"] is False
 
 
 def test_every_native_decision_model_has_a_prepaid_route_on_its_unretired_chain() -> None:
@@ -197,7 +200,7 @@ def test_a_named_decision_model_is_priced_from_its_host_chain(model_id: str) -> 
         "a name has one price: its chain's, not the backing model's tiers"
     )
 
-    shape = model_to_openrouter_shape(named)
+    shape: dict[str, Any] = model_to_openrouter_shape(named)
     # Public pricing is dollars per token; endpoint prices are microdollars
     # per million tokens. Compare live registry values, not a stale price pin.
     assert Decimal(shape["pricing"]["prompt"]) == Decimal(dearest_prompt) / 10**12
@@ -222,6 +225,39 @@ def test_decide_resolver_accepts_only_decision_models() -> None:
             {"model": "openai/gpt-5.4-nano"}, Settings(environment="test")
         )
     assert getattr(raised.value, "status_code", None) == 400
+
+
+@pytest.mark.parametrize("hosted", [False, True])
+@pytest.mark.parametrize("defer_selection", [False, True])
+def test_resolvers_expose_relaxed_policy_without_changing_normalized_inputs(
+    hosted: bool, defer_selection: bool,
+) -> None:
+    from dataclasses import replace
+
+    from trusted_router.routing import chat_route_endpoint_candidates, normalize_routing_inputs
+
+    inputs = normalize_routing_inputs({
+        "model": JEV if hosted else PRIVATE_PROXY_MODEL_TARGETS[MEV_1_0_MODEL_ID],
+        "provider": {
+            "only": ["typesafe" if hosted else "inception"],
+            "data_collection": "deny",
+            "allow_fallbacks": False,
+        },
+    }, Settings(environment="test"))
+    original_hash = inputs.routing_policy_hash
+    resolver = decide_route_endpoint_candidates if hosted else chat_route_endpoint_candidates
+    candidates = resolver(inputs, defer_no_fallback_selection=defer_selection)
+    assert isinstance(candidates, list)
+    assert len(candidates) == 1
+    assert candidates.effective_preferences == replace(inputs.preferences, data_collection=None)
+    assert inputs.preferences.data_collection == "deny"
+    assert inputs.routing_policy_hash == original_hash
+
+
+def _assert_no_financial_side_effects() -> None:
+    store = cast(InMemoryStore, STORE)
+    assert not store.api_keys.reservations
+    assert not store.api_keys.gateway_authorizations
 
 
 def _seed_key() -> Any:
@@ -501,8 +537,7 @@ async def test_a_named_model_refuses_a_request_pinned_outside_its_chain(
     assert response.status_code == 400, response.text
     assert response.json()["error"]["type"] == "bad_request"
     assert "retry-after" not in response.headers
-    assert not STORE.api_keys.reservations
-    assert not STORE.api_keys.gateway_authorizations
+    _assert_no_financial_side_effects()
     assert outsider not in response.text
     assert PRIVATE_PROXY_MODEL_TARGETS[model_id] not in response.text
 
@@ -529,8 +564,7 @@ async def test_excluding_every_named_host_is_not_a_retryable_outage(
     assert response.status_code == 400, response.text
     assert response.json()["error"]["type"] == "bad_request"
     assert "retry-after" not in response.headers
-    assert not STORE.api_keys.reservations
-    assert not STORE.api_keys.gateway_authorizations
+    _assert_no_financial_side_effects()
     assert PRIVATE_PROXY_MODEL_TARGETS[model_id] not in response.text
 
 
@@ -539,9 +573,9 @@ async def test_excluding_every_named_host_is_not_a_retryable_outage(
 async def test_byok_billing_without_a_key_is_never_a_retryable_outage(
     model_id: str, caplog: pytest.LogCaptureFixture
 ) -> None:
-    # Orchestration-backed names reject BYOK routes up front; every other
-    # name reaches the chain and finds its Credits-only hosts stripped by the
-    # request. Both are the caller's contract conflict: a 400 with no
+    # mev-1.0 has no backing BYOK endpoint, so routing returns its generic
+    # model_not_supported before the named-chain check. Every other name
+    # reaches the chain and rejects BYOK as a request conflict: a 400 with no
     # Retry-After, and never the outage log line that pages.
     with caplog.at_level(logging.INFO, logger="trusted_router.routes.internal.gateway"):
         response = await _authorize(
@@ -555,11 +589,14 @@ async def test_byok_billing_without_a_key_is_never_a_retryable_outage(
         )
     assert response.status_code == 400, response.text
     assert "retry-after" not in response.headers
-    assert not STORE.api_keys.reservations
-    assert not STORE.api_keys.gateway_authorizations
+    _assert_no_financial_side_effects()
     assert PRIVATE_PROXY_MODEL_TARGETS[model_id] not in response.text
     assert "billing.authorize_named_chain_unavailable" not in caplog.text
-    if response.json()["error"]["type"] == "bad_request":
+    if model_id == MEV_1_0_MODEL_ID:
+        assert response.json()["error"]["type"] == "model_not_supported"
+        assert "billing.authorize_named_chain_filtered_by_request" not in caplog.text
+    else:
+        assert response.json()["error"]["type"] == "bad_request"
         assert "billing.authorize_named_chain_filtered_by_request" in caplog.text
 
 
@@ -572,14 +609,21 @@ async def test_byok_billing_without_a_key_is_never_a_retryable_outage(
         pytest.param({"data_collection": "deny", "zdr": True}, id="deny-plus-zdr"),
     ],
 )
+@pytest.mark.parametrize("region_available", [True, False])
 async def test_a_request_filter_that_strips_every_pinned_host_is_a_client_error(
-    preferences: dict[str, Any], caplog: pytest.LogCaptureFixture
+    preferences: dict[str, Any], region_available: bool,
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     # oev-1.0 is pinned to a single Credits host that offers no zero-data-
-    # retention posture. The host exists and is reachable; only this
-    # request's own filters removed it, so a retry cannot change the answer.
+    # retention posture. The request is incompatible even during a regional
+    # outage, so a retry cannot change the answer.
     # On 2026-09-25 one new workspace's eighteen such requests were answered
     # 503 and opened "TR Gateway: billing path 5xx".
+    from trusted_router.routes.internal import gateway
+
+    monkeypatch.setattr(
+        gateway, "provider_model_available_from_gateway_region", lambda *_: region_available
+    )
     with caplog.at_level(logging.INFO, logger="trusted_router.routes.internal.gateway"):
         response = await _authorize(
             {
@@ -594,11 +638,173 @@ async def test_a_request_filter_that_strips_every_pinned_host_is_a_client_error(
     assert response.json()["error"]["type"] == "bad_request"
     assert "chain" in response.json()["error"]["message"]
     assert "retry-after" not in response.headers
-    assert not STORE.api_keys.reservations
-    assert not STORE.api_keys.gateway_authorizations
+    _assert_no_financial_side_effects()
     assert PRIVATE_PROXY_MODEL_TARGETS[OEV_1_0_MODEL_ID] not in response.text
     assert "billing.authorize_named_chain_filtered_by_request" in caplog.text
     assert "billing.authorize_named_chain_unavailable" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("filter_kind", "outage"),
+    [
+        (filter_kind, outage)
+        for filter_kind in ("only", "ignore", "parameters", "price", "zdr")
+        for outage in ("region", "manifest")
+        # These manifest cases empty the backing resolver, which returns 400 before the chain.
+        if not (outage == "manifest" and filter_kind in {"parameters", "price"})
+    ],
+)
+async def test_an_unavailable_compatible_named_host_stays_retryable(
+    outage: str, filter_kind: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+    from datetime import UTC, datetime
+
+    from trusted_router import catalog
+    from trusted_router.routes.internal import gateway
+
+    backing = PRIVATE_PROXY_MODEL_TARGETS[TREV_1_0_MODEL_ID]
+    chain = NAMED_DECISION_MODEL_PROVIDERS[TREV_1_0_MODEL_ID]
+    # SambaNova is compatible but unavailable; every other pinned host is
+    # excluded, including hosts added to the chain after this test was written.
+    preferences: dict[str, Any] = {"usage": "credits"}
+    body: dict[str, Any] = {
+        "model": TREV_1_0_MODEL_ID, "route_type": "decide",
+        "region": "europe-west4", "provider": preferences,
+        "estimated_input_tokens": 480, "max_output_tokens": 700,
+    }
+    if filter_kind == "only":
+        # Without an outsider, manifest expiry empties the backing resolver
+        # and returns model_not_supported (400) before the named-chain check.
+        assert "deepinfra" not in chain
+        preferences["only"] = ["sambanova", "deepinfra"]
+    elif filter_kind == "ignore":
+        preferences["ignore"] = [slug for slug in chain if slug != "sambanova"]
+    elif filter_kind == "parameters":
+        preferences["require_parameters"] = True
+        body["requested_parameters"] = ["tools"]
+    elif filter_kind == "price":
+        preferences["max_price"] = {"prompt": 1}
+    else:
+        preferences["zdr"] = True
+        for slug in chain:
+            monkeypatch.setitem(PROVIDERS, slug, replace(
+                PROVIDERS[slug], provider_zero_data_retention=slug == "sambanova",
+                prepaid_zero_data_retention=slug == "sambanova",
+            ))
+    for endpoint in list(catalog.MODEL_ENDPOINTS.values()):
+        if endpoint.model_id != backing:
+            continue
+        monkeypatch.setitem(catalog.MODEL_ENDPOINTS, endpoint.id, replace(
+            endpoint,
+            supported_parameters=("tools",) if endpoint.provider == "sambanova" else (),
+            prompt_price_microdollars_per_million_tokens=(
+                500_000 if endpoint.provider == "sambanova" else 2_000_000
+            ),
+        ))
+    response = await _authorize(body)
+    assert response.status_code == 200, response.text
+    assert response.json().get("data", response.json())["provider"] == "sambanova"
+
+    with monkeypatch.context() as unavailable:
+        if outage == "region":
+            unavailable.setattr(
+                gateway, "provider_model_available_from_gateway_region",
+                lambda provider, _model, region: not (
+                    provider == "sambanova" and region == "europe-west4"
+                ),
+            )
+        else:
+            for endpoint in list(catalog.MODEL_ENDPOINTS.values()):
+                if endpoint.model_id == backing and endpoint.provider == "sambanova":
+                    unavailable.setitem(catalog.MODEL_ENDPOINTS, endpoint.id, replace(
+                        endpoint, catalog_valid_until=datetime(2000, 1, 1, tzinfo=UTC),
+                    ))
+        response = await _authorize(body)
+        assert response.status_code == 503, response.text
+        assert response.json()["error"]["type"] == "service_unavailable"
+        assert response.headers["retry-after"] == "2"
+        _assert_no_financial_side_effects()
+
+    response = await _authorize(body)
+    assert response.status_code == 200, response.text
+    assert response.json().get("data", response.json())["provider"] == "sambanova"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model_id", [MEV_1_0_MODEL_ID, GEV_1_0_MODEL_ID])
+async def test_relaxed_deny_named_chain_recovers_from_a_retryable_outage(
+    model_id: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from trusted_router.routes.internal import gateway
+
+    body = {
+        "model": model_id,
+        "route_type": "decide",
+        "region": "europe-west4",
+        "provider": {
+            "data_collection": "deny",
+            # Gev's backing model also has non-pinned ZDR hosts, so deny
+            # alone stays strict there. Limit backing scope to trigger the
+            # resolver's existing relaxation, rather than widening it here.
+            **({"only": ["google-ai-studio"]} if model_id == GEV_1_0_MODEL_ID else {}),
+        },
+        "estimated_input_tokens": 480,
+        "max_output_tokens": 700,
+    }
+    response = await _authorize(body)
+    assert response.status_code == 200, response.text
+    provider = response.json().get("data", response.json())["provider"]
+    assert provider in NAMED_DECISION_MODEL_PROVIDERS[model_id]
+
+    caplog.clear()
+    with monkeypatch.context() as unavailable, caplog.at_level(
+        logging.INFO, logger="trusted_router.routes.internal.gateway"
+    ):
+        unavailable.setattr(
+            gateway, "provider_model_available_from_gateway_region", lambda *_: False
+        )
+        response = await _authorize(body)
+    assert response.status_code == 503, response.text
+    assert response.json()["error"]["type"] == "service_unavailable"
+    assert response.headers["retry-after"] == "2"
+    assert "billing.authorize_named_chain_unavailable" in caplog.text
+    assert "billing.authorize_named_chain_filtered_by_request" not in caplog.text
+    _assert_no_financial_side_effects()
+
+    response = await _authorize(body)
+    assert response.status_code == 200, response.text
+    assert response.json().get("data", response.json())["provider"] == provider
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("region_available", [True, False])
+async def test_deny_satisfied_outside_named_chain_is_not_relaxed_again(
+    region_available: bool, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from trusted_router.routes.internal import gateway
+
+    # Gev's backing resolver can satisfy deny on non-pinned hosts. Its pinned
+    # host cannot; a diagnostic must not independently soften that policy.
+    monkeypatch.setattr(
+        gateway, "provider_model_available_from_gateway_region", lambda *_: region_available
+    )
+    with caplog.at_level(logging.INFO, logger="trusted_router.routes.internal.gateway"):
+        response = await _authorize({
+            "model": GEV_1_0_MODEL_ID,
+            "route_type": "decide",
+            "region": "europe-west4",
+            "provider": {"data_collection": "deny"},
+            "estimated_input_tokens": 480,
+            "max_output_tokens": 700,
+        })
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["type"] == "bad_request"
+    assert "retry-after" not in response.headers
+    assert "billing.authorize_named_chain_filtered_by_request" in caplog.text
+    assert "billing.authorize_named_chain_unavailable" not in caplog.text
+    _assert_no_financial_side_effects()
 
 
 @pytest.mark.asyncio
@@ -621,8 +827,7 @@ async def test_a_genuine_named_host_outage_stays_retryable_and_attributable(
     assert response.status_code == 503, response.text
     assert response.json()["error"]["type"] == "service_unavailable"
     assert response.headers["retry-after"] == "2"
-    assert not STORE.api_keys.reservations
-    assert not STORE.api_keys.gateway_authorizations
+    _assert_no_financial_side_effects()
     assert PRIVATE_PROXY_MODEL_TARGETS[model_id] not in response.text
     assert "billing.authorize_named_chain_unavailable" in caplog.text
     assert "workspace_id=" in caplog.text
@@ -929,7 +1134,7 @@ def test_a_named_model_is_never_drawn_as_a_chat_candidate() -> None:
 def test_a_named_model_reads_as_a_decision_model_everywhere_it_is_shown(
     model_id: str, client: Any
 ) -> None:
-    shape = model_to_openrouter_shape(MODELS[model_id])
+    shape: dict[str, Any] = model_to_openrouter_shape(MODELS[model_id])
     assert shape["architecture"]["modality"] == "text->decision"
     page = client.get(f"/models/{model_id}")
     assert page.status_code == 200, page.text[:200]
