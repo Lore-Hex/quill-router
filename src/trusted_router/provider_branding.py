@@ -119,7 +119,6 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
             ("DUNS", "966115342"),
             ("EIN", "27-0273220"),
             ("CEO", "David Casem"),
-            ("Serving regions", "USA, EU, Australia and UAE; availability varies by model. Region availability alone is not a residency guarantee."),
             ("API", "OpenAI-compatible chat completions, streaming, tools, structured output and reasoning content on supported models."),
             ("Catalog", "Authenticated native OpenAI catalog; not yet a Provider Reliability Contract v2 declaration."),
             ("Pricing", "Input, output and cached-input rates refresh hourly from Telnyx's authenticated APIs. Listed routes use default service-tier prices; priority and flex tiers are not enabled through TrustedRouter."),

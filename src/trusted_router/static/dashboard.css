@@ -269,6 +269,17 @@ blockquote { margin:0 0 12px; padding-left:14px; border-left:3px solid var(--gre
 .provider-chip span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .provider-detail-title { display:flex; align-items:center; gap:12px; min-width:0; }
 .provider-detail-title code { overflow:hidden; text-overflow:ellipsis; }
+.provider-locations { margin:28px 0; overflow-wrap:anywhere; scroll-margin-top:96px; }
+.provider-location-facts { display:grid; grid-template-columns:minmax(150px, 1fr) minmax(0, 3fr); gap:12px 24px; }
+.provider-location-facts dt { font-weight:600; }
+.provider-location-facts dd { margin:0; min-width:0; }
+.provider-location-models { margin:20px 0; }
+.provider-location-models summary { cursor:pointer; padding:10px 0; }
+
+@media (max-width:640px) {
+  .provider-location-facts { grid-template-columns:minmax(0, 1fr); gap:6px; }
+  .provider-location-facts dd { margin-bottom:14px; }
+}
 
 .seo-evidence { margin:52px 0; padding:32px 0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
 .seo-evidence-head { display:grid; grid-template-columns:minmax(0,1fr) minmax(280px,.65fr); gap:30px; align-items:end; }
