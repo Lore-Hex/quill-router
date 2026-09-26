@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
+from typing import Any
 
 import pytest
 from hypothesis import given
@@ -372,7 +373,7 @@ def test_regional_ledger_timeout_defaults_to_a_cross_region_budget_and_is_bounde
 
 
 def test_regional_lease_production_config_requires_fixed_profiles_and_outbox() -> None:
-    common = {
+    common: dict[str, Any] = {
         "environment": "staging",
         "service_surface": "internal",
         "internal_gateway_token": "staging-gateway-" + "g" * 32,
@@ -435,3 +436,15 @@ def test_non_settled_hold_cannot_carry_settled_at() -> None:
         replace(hold, settled_at=NOW)
     with pytest.raises(RegionalQuotaLeaseError, match="only a settled hold"):
         replace(hold, state=HoldState.REFUNDED, actual_microdollars=0, settled_at=NOW)
+
+
+@pytest.mark.parametrize("base", [1.0, 10.0, 60.0])
+def test_regional_ledger_cooldown_config(base: float) -> None:
+    assert Settings(environment="test").regional_quota_ledger_cooldown_seconds == 10.0
+    assert Settings(environment="test", regional_quota_ledger_cooldown_seconds=base).regional_quota_ledger_cooldown_seconds == base
+
+
+@pytest.mark.parametrize("base", [0.0, 0.99, 60.01, float("inf"), float("nan")])
+def test_regional_ledger_cooldown_config_rejects_out_of_bounds(base: float) -> None:
+    with pytest.raises(ValueError, match="TR_REGIONAL_QUOTA_LEDGER_COOLDOWN_SECONDS"):
+        Settings(environment="test", regional_quota_ledger_cooldown_seconds=base)

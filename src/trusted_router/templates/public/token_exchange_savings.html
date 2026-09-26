@@ -1,0 +1,66 @@
+{% extends "public/_base.html" %}
+{% block body_attributes %}class="exchange-savings"{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/token-exchange-savings.css?v={{ static_version }}">{% endblock %}
+{% block hero %}
+<header class="tx-heading">
+  <a class="tx-eyebrow" href="/token-exchange">Token Exchange by TrustedRouter</a>
+  <h1>Keep strategic work.<br>Move the rest.</h1>
+  <p>Not every task needs your most expensive model. Keep critical work on Google Cloud and compare what you could save by moving eligible work to the exchange.</p>
+</header>
+{% endblock %}
+{% block body %}
+<noscript><p class="tx-notice">JavaScript is needed for the calculator. No inference requests are made. <a href="mailto:enterprise@trustedrouter.com">Contact us for a workload estimate.</a></p></noscript>
+<div id="tx-calculator" hidden>
+  <section class="tx-controls" aria-labelledby="tx-assumptions-title">
+    <div class="tx-section-title"><h2 id="tx-assumptions-title">Your assumptions</h2><button type="button" id="tx-reset" class="tx-text-button">Reset example</button></div>
+    <div class="tx-inputs">
+      <div><label for="tx-spend">Monthly token spend <span>USD</span></label><input id="tx-spend" type="number" min="0" max="100000000" step="0.01" value="3350000" inputmode="decimal" aria-describedby="tx-spend-note"><p id="tx-spend-note">Your current provider bill, after discounts.</p></div>
+      <div><label for="tx-share">Spend eligible to move <output for="tx-share" id="tx-share-label">40%</output></label><input id="tx-share" type="range" min="0" max="100" step="1" value="40"><p>Marketing, summaries and other qualified work.</p></div>
+      <div><label for="tx-discount">Lower provider price <output for="tx-discount" id="tx-discount-label">80%</output></label><input id="tx-discount" type="range" min="0" max="95" step="1" value="80"><p>Compared with your current price, before our fee.</p></div>
+    </div>
+    <p id="tx-validation" class="tx-validation" role="status" aria-live="polite"></p>
+  </section>
+
+  <section class="tx-routing" aria-labelledby="tx-routing-title">
+    <div class="tx-section-title tx-switch-row">
+      <div><h2 id="tx-routing-title">Route eligible work through the exchange</h2><p id="tx-mode">Illustrative routing. Your production settings are unchanged.</p></div>
+      <label class="tx-toggle"><input id="tx-enabled" type="checkbox" role="switch" checked aria-label="Route eligible work through the Token Exchange"><span class="tx-toggle-track" aria-hidden="true"></span><span id="tx-toggle-label">On</span></label>
+    </div>
+  </section>
+
+  <section class="tx-results" aria-labelledby="tx-results-title">
+    <div class="tx-bill">
+      <h2 id="tx-results-title">Your monthly token bill</h2>
+      <div class="tx-bar-heading"><span>Current provider</span><strong id="tx-baseline">$3,350,000</strong></div><div class="tx-bar" aria-hidden="true"><span class="tx-premium tx-full"></span></div>
+      <div class="tx-bar-heading"><span id="tx-comparison-label">With Token Exchange</span><strong id="tx-total">$2,292,740</strong></div><div class="tx-bar" id="tx-new-bar" aria-hidden="true"><span class="tx-premium" id="tx-kept-bar"></span><span class="tx-exchange" id="tx-moved-bar"></span></div>
+      <dl class="tx-costs"><div><dt><span class="tx-dot tx-premium"></span>Unchanged provider spend</dt><dd id="tx-kept">$2,010,000</dd></div><div><dt><span class="tx-dot tx-exchange"></span>Exchange provider cost</dt><dd id="tx-provider">$268,000</dd></div><div><dt>TrustedRouter markup <span>(5.5%)</span></dt><dd id="tx-fee">$14,740</dd></div></dl>
+      <p class="tx-caption">Markup applies only to the work moved to prepaid text routes. Your existing provider contract stays separate.</p>
+    </div>
+    <div class="tx-savings" aria-live="polite" aria-atomic="true">
+      <span id="tx-savings-label">Estimated monthly savings</span><strong id="tx-saved">$1,057,260</strong><span id="tx-percent">31.6% less on tokens</span>
+      <div class="tx-annual"><span id="tx-annual-label">Annualized savings</span><strong id="tx-annual">$12,687,120</strong></div>
+      <p>Same workload volume. Different buying decision.</p>
+    </div>
+  </section>
+
+  <section class="tx-flow" aria-label="Example workload routing">
+    <div class="tx-workloads"><div><span class="tx-dot tx-premium"></span><strong>Strategic work</strong><p>Core product. Regulated data. Critical workflows.</p></div><div><span class="tx-dot tx-exchange"></span><strong>Eligible work</strong><p>Campaign copy. Social posts. Summaries.</p></div></div>
+    <div class="tx-connector" aria-hidden="true"><span></span><span></span></div>
+    <div class="tx-gateway"><img src="/static/favicon.svg" width="32" height="32" alt="TrustedRouter gateway"><strong>TrustedRouter</strong><p id="tx-policy">Your models. Your requirements.</p><a href="/trust">Verify the gateway</a></div>
+    <div class="tx-connector tx-outbound" aria-hidden="true"><span></span><span></span></div>
+    <div class="tx-destinations"><div><span class="tx-dot tx-premium"></span><strong>Google Cloud</strong><span class="tx-route-share" id="tx-premium-share">60% stays</span><p>Vertex AI or your current provider</p></div><div id="tx-exchange-route"><span class="tx-dot tx-exchange"></span><strong>Token Exchange</strong><span class="tx-route-share" id="tx-exchange-share">40% moves</span><p>Only routes that pass your evaluation</p></div></div>
+  </section>
+
+  <section class="tx-examples" aria-labelledby="tx-examples-title">
+    <div class="tx-section-title"><h2 id="tx-examples-title">Where the work goes</h2><span class="tx-caption">Example requests, not live traffic</span></div>
+    <ul><li><span>Account summary for a regulated client</span><span class="tx-request-type">Strategic</span><strong>Google Cloud</strong></li><li><span>Campaign email draft</span><span class="tx-request-type">Eligible</span><strong data-tx-example>Token Exchange</strong></li><li><span>Product search ranking</span><span class="tx-request-type">Strategic</span><strong>Google Cloud</strong></li><li><span>Webinar recap</span><span class="tx-request-type">Eligible</span><strong data-tx-example>Token Exchange</strong></li></ul>
+  </section>
+
+  <section class="tx-bottom" aria-label="Share or discuss your estimate">
+    <div><h2>Start with one workload.</h2><p>Bring your quality, latency, privacy and region requirements. Test the alternatives before moving production traffic.</p></div>
+    <div class="tx-actions"><a class="tx-button" href="https://calendly.com/joseph-perla/15min">Discuss your estimate</a><button type="button" class="tx-button tx-secondary" id="tx-copy">Copy estimate link</button><p id="tx-copy-status" role="status"></p><input id="tx-copy-fallback" type="text" readonly hidden aria-label="Estimate link to copy"></div>
+  </section>
+  <details class="tx-methodology"><summary>How this estimate works</summary><p>Eligible spend = monthly spend × eligible share. Exchange provider cost = eligible spend × (1 − price reduction). Add 5.5% to that provider cost, then add the spend that stays with your current provider. Annual savings are monthly savings × 12.</p><p>This is an illustration, not a quote or a measured customer result. The example assumes 40% of spend can move to providers priced 80% lower at the same token volume. Lower prices do not imply equal model quality. Evaluate your own workload first.</p><p>USD estimates exclude tax, payment fees, the per token price floor, commitments, migration costs and changes in input, output or cache mix. No inference calls are made. Spend values stay in your browser; copying the estimate link includes these assumptions in the link for its recipient. <a href="/pricing">Current pricing</a> · <a href="/providers">Provider policies</a> · <a href="/token-exchange#enterprise-brief">Enterprise brochure</a></p></details>
+</div>
+{% endblock %}
+{% block body_scripts %}<script src="/static/token-exchange-savings.js?v={{ static_version }}" defer></script>{% endblock %}

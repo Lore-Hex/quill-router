@@ -16,6 +16,7 @@ from google.api_core.exceptions import AlreadyExists
 from trusted_router.regional_quota_ledger import settled_key_totals
 from trusted_router.services.regional_quota_leases import (
     HoldState,
+    QuotaLeaseHold,
     RegionalQuotaLease,
     bounded_lease_grant_microdollars,
 )
@@ -846,12 +847,33 @@ def close_expired_uninitialized_regional_quota_lease(
 ) -> RegionalReconcileResult:
     """Release escrow after a failed Bigtable initialization left no row.
 
-    A missing row is recoverable only for an expired quarantined lease with no
-    previously imported spend. Bigtable reads through a single-cluster profile
-    are strongly consistent, so absence proves the grant was never usable.
+    Expired pending generations first block activation and persist a drained
+    ledger row. Quarantined missing rows require no previously imported spend.
+    Bigtable reads through a single-cluster profile are strongly consistent.
     """
 
     now = utcnow() if now is None else now
+    if global_lease.state == "pending" and global_lease.expires_datetime <= now:
+        # Serialize against activation before manufacturing an empty snapshot.
+        # A resumed issuer sees quarantine and cannot reserve this generation.
+        global_lease = _transition_global_lease(
+            store, global_lease, expected_states={"pending"}, state="quarantined",
+            last_error="expired pending initialization", now=now,
+        )
+        ledger = store._regional_quota_ledger
+        # Persist a drained row as well: a delayed initializer must observe the
+        # terminal generation rather than recreate an active row after closure.
+        ledger.initialize(regional_lease_from_global(global_lease))
+        local = ledger.begin_drain(
+            global_lease.lease_id, region=global_lease.region,
+            fencing_token=global_lease.fencing_token,
+        )
+        result = reconcile_regional_quota_lease(
+            store, global_lease, local, close=True, now=now,
+        )
+        ledger.close(global_lease.lease_id, region=global_lease.region,
+                     fencing_token=global_lease.fencing_token)
+        return result
     if global_lease.state != "quarantined":
         raise RuntimeError("regional lease row is missing")
     if global_lease.expires_datetime > now:
@@ -1339,6 +1361,7 @@ class RegionalReconcileCursor:
 def terminal_regional_hold_amount(
     store: Any, lease: GlobalRegionalQuotaLease, hold_id: str,
     *, hold_expires_at: datetime | None = None, now: datetime | None = None,
+    hold: QuotaLeaseHold | None = None,
 ) -> int | None:
     """Recover a typed terminal outcome or durably cancel an expired orphan.
 
@@ -1394,6 +1417,28 @@ def terminal_regional_hold_amount(
             return 0
         if not auth.settled or not auth.credit_reservation_id:
             return None
+        if auth.settlement == "local":
+            # A reserve may have committed before its timeout sent the SAME
+            # authorization through global admission. Its typed terminal charge
+            # owns all billing; the unused regional hold must only be refunded.
+            # Bind to the actual ledger hold, not just an attacker-chosen ID.
+            if (hold is None or hold.hold_id != hold_id or auth.id != hold_id
+                or auth.workspace_id != lease.workspace_id or auth.region != lease.region
+                or auth.key_hash != hold.key_hash
+                or (auth.idempotency_fingerprint or auth.id) != hold.fingerprint
+                or auth.estimated_microdollars != hold.reserved_microdollars
+                or auth.regional_lease_id or auth.regional_hold_id
+                or auth.regional_fencing_token):
+                raise RuntimeError("regional hold authorization binding mismatch")
+            fallback = read_reservation(transaction, store._param_types, auth.credit_reservation_id)
+            if fallback is None or not fallback["settled"]:
+                return None
+            if (fallback["authorization_id"] != hold_id
+                or fallback["workspace_id"] != lease.workspace_id
+                or fallback["key_hash"] != hold.key_hash
+                or fallback["hold_usage_type"] != "Credits"):
+                raise RuntimeError("regional hold reservation binding mismatch")
+            return 0
         if (auth.settlement != "regional_lease" or auth.regional_lease_id != lease.lease_id
             or auth.workspace_id != lease.workspace_id or auth.region != lease.region
             or auth.regional_fencing_token != lease.fencing_token):

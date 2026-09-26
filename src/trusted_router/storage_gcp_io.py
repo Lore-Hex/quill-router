@@ -130,6 +130,7 @@ def configure_spanner_rpc_deadlines(
         "begin_transaction",
         "commit",
         "execute_sql",
+        "execute_batch_dml",
         "execute_streaming_sql",
         "read",
         "streaming_read",

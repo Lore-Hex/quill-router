@@ -557,7 +557,8 @@ A null mask means the request exited before predicate evaluation. A zero mask
 means eligible. `regional_outcome` preserves the regional result before global
 fallback; only an accepted authorization carrying `settlement="regional_lease"`
 is `served`. `regional_unavailable_reason` distinguishes mapping, grant, fence,
-exhaustion, expiry, pool cap, timeout and other failures using existing reads.
+exhaustion, expiry, pool cap, timeout, admission cooldown (`ledger_cooldown`)
+and other failures using existing reads or process-local cooldown state.
 Requested and resolved regions are recorded separately.
 
 The dispatcher exposes cumulative `attempted`, `enqueued`, `dropped`, `delivered`,
@@ -709,3 +710,61 @@ covers a traffic share too small for the request. `sibling_exhausted` is the fin
 fallback classification when no more specific grant/lease reason is available.
 The selected shard is the serving shard on success, or the requested hash shard
 on failure. Existing charge calculation and settlement amounts are unchanged.
+
+### Admission ledger cooldown (2026-09-26)
+
+A process-local cooldown keyed by `(workspace_id, region)` reduces repeated
+Spanner grant → initialize → quarantine transactions on the same lease/fence
+rows after regional ledger/RPC failures. Fleet-scale alert prevention is unproven.
+After region mapping validation,
+`authorize_gateway_regional` checks this cooldown before discovery or any ledger
+I/O. An active window returns `unavailable` with
+`regional_unavailable_reason=ledger_cooldown`; the gateway uses the unchanged
+exact global authorization path. The shadow outbox and both ClickHouse appliers
+preserve this string (the column is not an enum).
+
+The cooldown arms at the existing `ledger_unavailable_reason` exception exits:
+ledger read/reserve/drain failures, initialization ambiguity after quarantine,
+and the enclosing regional RPC exception/deadline handler. The latter also
+covers a Spanner failure or exhausted shared regional budget; it avoids starting
+another regional transaction chain when that attempt cannot complete. Ordinary
+capacity, expiry, fence, mapping, trust and missing-row decisions do not arm it.
+
+`TR_REGIONAL_QUOTA_LEDGER_COOLDOWN_SECONDS` sets the base (default 10 s,
+validated 1–60 s), next to `TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS`. Consecutive
+failed attempts use nominal windows of 10, 20, 40, 60, 60… seconds by default.
+Each window is multiplied by uniform jitter in [0.75, 1.25], then capped at 60 s
+(the default ranges are 7.5–12.5, 15–25, 30–50, 45–60 s). Deadlines use the
+monotonic clock. Expiry atomically admits one recovery probe under the map lock,
+without resetting its history. Overlapping requests return `ledger_cooldown`.
+The claim expires after five seconds (the four-second shared regional budget
+plus one second of margin) so an abandoned probe cannot wedge admission;
+a successfully recorded regional admission removes the entry and resets the
+backoff only while it still owns the entry’s generation. Claims and failures
+advance a process-local monotonic generation counter, which survives entry
+removal. A delayed completion cannot clear a newer claim or failure’s cooldown;
+authorization recording runs outside the four-second regional budget.
+
+The map shares the regional lease-cache lock. Like the rebalance cooldown map,
+when it exceeds 10,000 keys it evicts cold history (deadlines more than 60 s in
+the past); active and recently expired windows remain. This is opportunistic
+pruning, not a strict cardinality bound. State is per serving store/process,
+not shared across replicas. Healthy admission and attempts already running
+before the first failure remain concurrent. The recovery rate is approximately
+one probe per instance per window under repeated classified failures and stable
+processes, so its fleet bound depends on instance count. Process replacement
+discards cooldown history. Measure fleet amplification before adding shared
+breaker coordination. Different workspaces and regions remain independent.
+
+Settlement, refunds, `finalize_regional_hold`, and reconciliation never consult
+this admission cooldown: already-issued holds must always be finalized. This
+limits amplification into Spanner; it does not repair Bigtable p99 under a
+16-shard CAS burst or the EU authorize path's 20 s Spanner streaming deadline.
+See [the incident report](../incidents/2026-09-26-regional-ledger-grant-storm.md).
+
+Expired pending grants recover by transactionally blocking activation, then
+initializing/draining a durable ledger generation before releasing escrow and
+closing it. A same-ID global fallback with matching workspace, region, key,
+fingerprint and amount supplies refund authority for an unused regional hold
+only after its matching global credit reservation is terminal. Reconciliation
+imports no regional spend for that hold; retries cannot release escrow twice.

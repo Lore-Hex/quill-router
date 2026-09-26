@@ -487,3 +487,27 @@ def test_hot_path_budget_is_shared_across_multiple_transactions(
     assert len(api.calls) == 2
     assert api.calls[0]["timeout"] == pytest.approx(10.0)
     assert api.calls[1]["timeout"] == pytest.approx(4.0)
+
+
+@pytest.mark.parametrize("method", ["execute_sql", "execute_batch_dml"])
+def test_statement_rpc_shares_total_transaction_deadline(
+    monkeypatch: pytest.MonkeyPatch, method: str,
+) -> None:
+    clock = _Clock()
+    _install_clock(monkeypatch, clock)
+    api = _CommitApi(clock)
+    # execute_update uses execute_sql; batch_update uses execute_batch_dml.
+    setattr(api, method, api.commit)
+    setattr(api._transport, method, api._transport.commit)
+    database = _CommitDatabase(api)
+    configure_spanner_rpc_deadlines(database)
+
+    def transaction(_tx: object) -> str:
+        for _ in range(5):
+            getattr(api, method)(request=method)
+        return "unreachable"
+
+    with pytest.raises(DeadlineExceeded, match="transaction deadline exceeded"):
+        database.run_in_transaction(transaction)
+    assert [call['timeout'] for call in api.calls] == [20.0, 14.0, 8.0, 2.0]
+    assert [call['retry']._timeout for call in api.calls] == [20.0, 14.0, 8.0, 2.0]

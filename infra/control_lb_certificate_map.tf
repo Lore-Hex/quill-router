@@ -2,8 +2,7 @@
 # Manager certificates in control_lb_certificates.tf by hostname: one entry for
 # each domain and one for its wildcard, which covers www and the brand
 # subdomains. Clients that send no hostname get trustedrouter.com's
-# certificate. Nothing here attaches the map to the production proxy
-# (trusted-router-control-https-proxy); that switch is a later change.
+# certificate. control_lb_proxy.tf attaches the map to the production proxy.
 
 resource "google_certificate_manager_certificate_map" "control" {
   name        = "control"

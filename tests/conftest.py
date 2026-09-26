@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import os
+from collections.abc import Callable
 
 import pytest
 from fastapi.testclient import TestClient
@@ -18,10 +19,29 @@ os.environ["TR_STORAGE_BACKEND"] = "memory"
 # trusted_router imports below resolve the catalog; an override CI already
 # exported is kept (see tests/lifecycle_freeze.py).
 import tests.lifecycle_freeze  # noqa: F401 - import-time side effect, see above
+from trusted_router import post_commit
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR
 from trusted_router.storage import STORE, InMemoryStore, configure_store
+
+
+class InlinePostCommitExecutor(post_commit.PostCommitExecutor):
+    """Same admission, exception and drop accounting, with no deferred writes."""
+
+    def _dispatch(self, kind: str, task: Callable[[], None]) -> None:
+        self._run(kind, task)
+
+
+@pytest.fixture(autouse=True)
+def optional_executor(monkeypatch: pytest.MonkeyPatch, reset_store: None):
+    # TestClient waits for submission, not threaded mirror completion. Complete
+    # each admitted task here before assertions or a later test replaces STORE.
+    executor = InlinePostCommitExecutor()
+    monkeypatch.setattr(post_commit, "POST_COMMIT", executor)
+    yield executor
+    executor.close()
+    assert executor.in_flight == 0
 
 
 @pytest.fixture(autouse=True)

@@ -37,6 +37,7 @@ ALLOWED = {
     # what these exist to do.
     "storage_gcp.py",
     "storage_gcp_authorize.py",
+    "storage_gcp_batch_dml.py",
     "storage_gcp_google_ads.py",
     "storage_gcp_io.py",
     # Drives SDK MutateRows worker directly to preserve sparse per-row statuses; durable path stays in Spanner.

@@ -8,6 +8,7 @@ import hmac
 import json
 import logging
 import os
+import random
 import threading
 import time
 import uuid
@@ -636,6 +637,9 @@ class SpannerBigtableStore:
             ttl_seconds=float(os.environ.get("TR_CREDIT_SHARD_COUNT_CACHE_SECONDS", "60")),
             max_entries=int(os.environ.get("TR_CREDIT_SHARD_COUNT_CACHE_ENTRIES", "10000")),
         )
+        # Protected by the regional lease cache lock; (deadline, unjittered window, generation).
+        self._regional_ledger_cooldowns: dict[tuple[str, str], tuple[float, float, int]] = {}
+        self._regional_ledger_generation = 0
         self._rebalance_last_attempt: dict[str, float] = {}
         self._rebalance_last_attempt_lock = threading.Lock()
         io = SpannerIO(
@@ -4899,6 +4903,7 @@ class SpannerBigtableStore:
         settle_outbox_done: tuple[str, str] | None = None,
         authorization_snapshot: GatewayAuthorization | None = None,
         regional_charge_parts: tuple[int, int] | None = None,
+        defer_post_commit: Callable[..., None] | None = None,
     ) -> TypedFinalizeResult:
         """Route-facing typed settle: same contract as
         finalize_gateway_authorization, with explicit activity-index status.
@@ -4906,6 +4911,9 @@ class SpannerBigtableStore:
         The billing transaction atomically commits the bounded generation row
         and ClickHouse delivery intent. A false ``activity_indexed`` leaves the
         durable settle outbox pending for a no-double-charge repair replay.
+        ``defer_post_commit`` registers optional mirrors for bounded executor
+        submission after the HTTP reply; it must not execute the task inline.
+        Without it, direct callers and repair workers retain synchronous writes.
         """
         from trusted_router.storage_gcp_authorize import SettleOutcome, typed_finalize_atomic
 
@@ -5052,7 +5060,17 @@ class SpannerBigtableStore:
             if success and generation is not None:
                 mirror_start = time.perf_counter()
                 if getattr(self, "_operational_analytics_outbox", None) is None:
+                    # Without S20, this is delivery durability, not a migration
+                    # mirror. Keep the legacy repair/result contract synchronous.
                     activity_indexed = self.generation_store.index_after_commit(generation)
+                elif defer_post_commit is not None:
+                    # S24 has committed generation + S20. The HTTP route passes
+                    # a bounded post-response submitter; workers/direct callers retain
+                    # synchronous behavior. Freeze the payload for deferred use.
+                    defer_post_commit(
+                        self.generation_store.mirror_after_commit_safely,
+                        copy.deepcopy(generation),
+                    )
                 else:
                     self.generation_store.mirror_after_commit(generation)
                 mirror_ms = (time.perf_counter() - mirror_start) * 1000
@@ -5064,7 +5082,7 @@ class SpannerBigtableStore:
             # contention while attempts==1 does not rule out absorbed contention.
             log.info(
                 # Keep index_ms for log-query compatibility. It now measures
-                # optional post-commit mirrors rather than durable delivery.
+                # optional mirrors (or their scheduling), not durable delivery.
                 "typed finalize timing authorization_id=%s spanner_ms=%.1f "
                 "index_ms=%.1f attempts=%d",
                 authorization_id,
@@ -5082,6 +5100,63 @@ class SpannerBigtableStore:
             finalized=False,
             activity_indexed=False,
         )  # already_settled / not_found
+
+    def _regional_ledger_cooldown_active(self, workspace_id: str, region: str) -> bool:
+        with self._regional_quota_lease_cache_lock:
+            cooldowns = getattr(self, "_regional_ledger_cooldowns", {})
+            deadline, _, _ = cooldowns.get((workspace_id, region), (0.0, 0.0, 0))
+            return time.monotonic() < deadline
+
+    def _claim_regional_ledger_probe(self, workspace_id: str, region: str) -> int | None:
+        """Atomically admit one half-open probe; healthy keys stay concurrent."""
+        with self._regional_quota_lease_cache_lock:
+            cooldowns = getattr(self, "_regional_ledger_cooldowns", {})
+            key = (workspace_id, region)
+            if key not in cooldowns:
+                return getattr(self, "_regional_ledger_generation", 0)
+            deadline, window, _ = cooldowns[key]
+            now = time.monotonic()
+            if now < deadline:
+                return None
+            # The deadline doubles as a probe-in-flight marker. The regional
+            # attempt has a shared four-second budget; allow one second of
+            # margin, then permit recovery even if its caller never returns.
+            self._regional_ledger_generation = getattr(self, "_regional_ledger_generation", 0) + 1
+            cooldowns[key] = (now + 5.0, window, self._regional_ledger_generation)
+            return self._regional_ledger_generation
+
+    def _arm_regional_ledger_cooldown(self, workspace_id: str, region: str) -> None:
+        settings = self.trust_settings
+        base = settings.regional_quota_ledger_cooldown_seconds if settings is not None else 10.0
+        with self._regional_quota_lease_cache_lock:
+            # Some store adapters construct without __init__, like the rebalance helper.
+            if not hasattr(self, "_regional_ledger_cooldowns"):
+                self._regional_ledger_cooldowns = {}
+            cooldowns = self._regional_ledger_cooldowns
+            key = (workspace_id, region)
+            _, previous, _ = cooldowns.get(key, (0.0, 0.0, 0))
+            window = min(60.0, max(base, previous * 2.0))
+            now = time.monotonic()
+            delay = min(60.0, window * random.uniform(0.75, 1.25))  # noqa: S311
+            # Never reuse a token, even after clearing or pruning an entry.
+            self._regional_ledger_generation = getattr(self, "_regional_ledger_generation", 0) + 1
+            cooldowns[key] = (now + delay, window, self._regional_ledger_generation)
+            # Preserve consecutive-failure history across expiry. As with the
+            # rebalance map, prune cold entries only when the map grows large.
+            if len(cooldowns) > 10_000:
+                stale = [key for key, (deadline, _, _) in cooldowns.items() if deadline < now - 60.0]
+                for key in stale:
+                    cooldowns.pop(key, None)
+
+    def _clear_regional_ledger_cooldown(
+        self, workspace_id: str, region: str, generation: int,
+    ) -> None:
+        with self._regional_quota_lease_cache_lock:
+            cooldowns = getattr(self, "_regional_ledger_cooldowns", {})
+            key = (workspace_id, region)
+            # Recording can outlive the claim; only its current owner may reset backoff.
+            if key in cooldowns and cooldowns[key][2] == generation:
+                cooldowns.pop(key)
 
     def authorize_gateway_regional(
         self,
@@ -5131,6 +5206,9 @@ class SpannerBigtableStore:
         # the exact Spanner path without creating a lease to quarantine later.
         if ledger is None or not ledger.supports_region(region):
             return unavailable("unmapped_region")
+        probe_generation = self._claim_regional_ledger_probe(workspace_id, region)
+        if probe_generation is None:
+            return unavailable("ledger_cooldown")
         from trusted_router.regional_quota_ledger import (
             RegionalLeaseLedgerError,
             RegionalLeaseNotFound,
@@ -5294,6 +5372,7 @@ class SpannerBigtableStore:
                             from trusted_router.storage_gcp_regional_quota import (
                                 ledger_unavailable_reason,
                             )
+                            self._arm_regional_ledger_cooldown(workspace_id, region)
                             return unavailable(ledger_unavailable_reason(exc))
                         if candidate.state != "active":
                             with self._regional_quota_lease_cache_lock:
@@ -5375,6 +5454,7 @@ class SpannerBigtableStore:
                         type(exc.__cause__).__name__ if exc.__cause__ else "-",
                     )
                     from trusted_router.storage_gcp_regional_quota import ledger_unavailable_reason
+                    self._arm_regional_ledger_cooldown(workspace_id, region)
                     return unavailable(ledger_unavailable_reason(exc))
 
             if selected_global is None:
@@ -5394,6 +5474,7 @@ class SpannerBigtableStore:
             failure = select_candidate()
         except (GoogleAPICallError, RetryError) as exc:
             from trusted_router.storage_gcp_regional_quota import ledger_unavailable_reason
+            self._arm_regional_ledger_cooldown(workspace_id, region)
             return unavailable(ledger_unavailable_reason(exc))
         if failure is not None:
             return failure
@@ -5442,6 +5523,7 @@ class SpannerBigtableStore:
             self._refund_regional_quota_hold_safely(authorization)
             raise
         if result["outcome"] == "accepted":
+            self._clear_regional_ledger_cooldown(workspace_id, region, probe_generation)
             evidence["regional_sibling_served"] = selected_global.quota_shard != quota_shard
             authorization.credit_reservation_id = str(result["reservation_id"])
             return "accepted", authorization
@@ -5646,7 +5728,7 @@ class SpannerBigtableStore:
                     cursor.holds[record.entity_id] = hold.hold_id
                     try:
                         actual = terminal_regional_hold_amount(
-                            self, record, hold.hold_id, hold_expires_at=hold.expires_at, now=now,
+                            self, record, hold.hold_id, hold_expires_at=hold.expires_at, now=now, hold=hold,
                         )
                     except transient_store_error_types():
                         result["errors"] += 1
@@ -6363,10 +6445,11 @@ class SpannerBigtableStore:
                 rebalance_result = rebalance(credit_shard_candidates)
                 log.info(
                     "credit rebalance workspace=%s outcome=%s moved_micro=%s "
-                    "estimate=%s attempt=%d",
+                    "mode=%s estimate=%s attempt=%d",
                     workspace_id,
                     rebalance_result["outcome"],
                     rebalance_result.get("moved_micro", 0),
+                    rebalance_result.get("mode", "none"),
                     estimate,
                     _attempt + 1,
                 )

@@ -70,10 +70,20 @@ authorized operator. Do not broaden service-account IAM as part of a site deploy
    This uploads public assets, validates a merged URL map and requests Google-managed
    certificates for every hostname that no managed certificate on the HTTPS proxy lists.
    The pre-deploy URL map is saved once for rollback; existing routing remains.
-5. Confirm all certificates were successfully requested and attached to the
-   HTTPS proxy. Then change each domain's nameservers **in Firefox/Namecheap**
+   When the HTTPS proxy has a certificate map (`infra/control_lb_certificate_map.tf`),
+   the proxy serves that map's certificates and ignores its classic ones. Then
+   publish requests and attaches no certificate, and it refuses before any change
+   unless every hostname has an `ACTIVE` map entry with an `ACTIVE` certificate.
+   The order for a new domain is then: its nameserver change (step 5) first, then
+   "Adding a Token Exchange domain" in `infra/README.md` until its certificate and
+   its two map entries are `ACTIVE`, and only then publish. Certificate Manager validates through a CNAME in the
+   domain's Cloud DNS zone, which resolves publicly only after delegation.
+5. Without a certificate map, confirm all certificates were successfully
+   requested and attached to the HTTPS proxy. Then change each domain's
+   nameservers **in Firefox/Namecheap**
    to its exact four servers in `dns-manifest.json`. Do not assume all zones
    share the same server set. Certificate activation requires the new DNS.
+   With a certificate map, this nameserver change comes before step 4's publish.
 6. Verify delegation, apex A, www CNAME, unchanged mail records, HTTPS validity,
    canonical content, alias redirects, assets and intake links. Check the
    main TrustedRouter, trust and status sites still serve normally.
