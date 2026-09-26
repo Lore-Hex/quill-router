@@ -3454,3 +3454,175 @@ def test_folded_mark_defers_retention_while_a_sibling_intent_is_outstanding(
     assert db.settle_outbox[(auth.id, "refund")]["status"] == "pending"
     assert db.gateway_authorizations[auth.id]["terminal_at"] is None
     assert db.reservations[auth.credit_reservation_id].get("terminal_at") is None
+
+
+def _regional_snapshot_authorization(store: Any, ws: str, key: Any) -> GatewayAuthorization:
+    from trusted_router.regional_quota_ledger import InMemoryRegionalQuotaLedger
+
+    store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
+    outcome, auth = store.authorize_gateway_regional(
+        authorization_id="gwa-regional-snapshot", workspace_id=ws, key_hash=key.hash,
+        key_usage_shards=key.usage_shard_count, estimate=10_000,
+        model_id=MODEL_ID, provider=PROVIDER, requested_model_id=MODEL_ID,
+        candidate_model_ids=[MODEL_ID], region="us-central1", endpoint_id=ENDPOINT_ID,
+        candidate_endpoint_ids=[ENDPOINT_ID], idempotency_key="snapshot",
+        idempotency_fingerprint="f" * 64, tags={"snapshot": "regional"},
+        expires_at=dt.datetime.now(dt.UTC) + dt.timedelta(hours=2),
+        lease_ttl_seconds=60, lease_max_microdollars=100_000,
+        lease_max_available_basis_points=1000, lease_shard_count=1,
+    )
+    assert outcome == "accepted" and auth is not None
+    return auth
+
+
+@pytest.mark.parametrize("reread", [True, False])
+def test_fresh_regional_settle_round_trip_order(
+    prod_shaped_store: tuple[Any, Any, Any],
+    settle_operations: list[tuple[Any, str, dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch, reread: bool,
+) -> None:
+    from trusted_router import storage_gcp_authorize
+
+    store, db, _bt = prod_shaped_store
+    ws = "ws-regional-snapshot-rtt"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws, limit=None)
+    auth = _regional_snapshot_authorization(store, ws, key)
+    original = type(store).typed_finalize_gateway_authorization_result
+
+    def finalize(self: Any, aid: str, **kwargs: Any) -> TypedFinalizeResult:
+        assert kwargs["authorization_snapshot"] == auth
+        assert kwargs["authorization_snapshot"] is not auth
+        if reread:
+            kwargs["authorization_snapshot"] = None
+        return original(self, aid, **kwargs)
+
+    monkeypatch.setattr(type(store), "typed_finalize_gateway_authorization_result", finalize)
+    monkeypatch.setattr(storage_gcp_authorize, "_OUTBOX_AVAILABILITY_CACHE", {})
+    settle_operations.clear()
+    data = _internal_settle(auth)
+    assert data["disposition"] == "finalized"
+    expected = [
+        ("ro", "SELECT", "tr_gateway_authorization"),
+        ("t1", "INSERT", "tr_settle_outbox"),
+        ("t1", "UPDATE", "tr_gateway_authorization"),
+        ("t1", "UPDATE", "tr_reservation"),
+        ("t1", "COMMIT", ""),
+        *([("ro", "SELECT", "tr_gateway_authorization")] if reread else []),
+        ("ro", "SELECT", "tr_settle_outbox"),
+        ("t3", "SELECT", "tr_reservation"),
+        ("t3", "UPDATE", "tr_reservation"),
+        ("t3", "UPDATE", "tr_gateway_authorization"),
+        ("t3", "SELECT", "tr_settle_outbox"),
+        ("t3", "UPDATE", "tr_settle_outbox"),
+        ("t3", "SELECT", "tr_settle_outbox"),
+        ("t3", "UPDATE", "tr_gateway_authorization"),
+        ("t3", "UPDATE", "tr_reservation"),
+        ("t3", "INSERT", "tr_generation"),
+        ("t3", "INSERT", "tr_operational_analytics_outbox"),
+        ("t3", "COMMIT", ""),
+        ("t4", "INSERT", "tr_operational_analytics_outbox"),
+        ("t4", "COMMIT", ""),
+        ("ro", "SELECT", "tr_entities"),
+    ]
+    transactions: dict[Any, str] = {}
+    observed = []
+    for reader, sql, _params in settle_operations:
+        phase = "ro"
+        if isinstance(reader, _FakeTransaction):
+            if reader not in transactions:
+                transactions[reader] = ["t1", "t3", "t4"][len(transactions)]
+            phase = transactions[reader]
+        table = re.search(r"(?:FROM|INTO|UPDATE) (tr_\w+)", sql)
+        observed.append((phase, sql.split()[0], table[1] if table else ""))
+    assert observed == expected
+    assert len(observed) == 20 + int(reread)
+    local = store._regional_quota_ledger.get(auth.regional_lease_id, region=auth.region)
+    assert local.spent_microdollars == data["cost_microdollars"]
+    assert db.reservations[auth.credit_reservation_id]["actual_micro"] == data["cost_microdollars"]
+    assert db.settle_outbox[(auth.id, "settle")]["status"] == "done"
+
+
+@pytest.mark.parametrize("reread", [False, True])
+@pytest.mark.parametrize("case", ["ledger_unavailable", "existing_intent"])
+def test_regional_snapshot_deferral_preserves_frozen_intent(
+    prod_shaped_store: tuple[Any, Any, Any], monkeypatch: pytest.MonkeyPatch,
+    reread: bool, case: str,
+) -> None:
+    store, db, _bt = prod_shaped_store
+    ws = "ws-snapshot-deferral"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws, limit=None)
+    auth = _regional_snapshot_authorization(store, ws, key)
+    outbox = _outbox(store)
+    original = type(store).typed_finalize_gateway_authorization_result
+
+    def finalize(self: Any, aid: str, **kwargs: Any) -> TypedFinalizeResult:
+        if reread:
+            kwargs["authorization_snapshot"] = None
+        return original(self, aid, **kwargs)
+
+    monkeypatch.setattr(type(store), "typed_finalize_gateway_authorization_result", finalize)
+    if case == "existing_intent":
+        assert outbox.enqueue(_row(auth, origin="typed", cost=123), preserve_existing=True) == "inserted"
+        before = outbox.get(auth.id, "settle")
+    with monkeypatch.context() as unavailable:
+        if case == "ledger_unavailable":
+            def fail(*args: Any, **kwargs: Any) -> Any:
+                raise RegionalLeaseLedgerError("ledger temporarily unavailable")
+            unavailable.setattr(type(store._regional_quota_ledger), "settle", fail)
+        data = _internal_settle(auth)
+    assert data["disposition"] == "intent_durable"
+    assert not db.reservations[auth.credit_reservation_id]["settled"]
+    assert store.get_gateway_authorization(auth.id).settlement == "regional_lease"
+    row = outbox.get(auth.id, "settle")
+    assert row is not None and row.status == "pending"
+    if case == "existing_intent":
+        assert row.actual_cost_micro == before.actual_cost_micro == 123
+        assert row.settle_body == before.settle_body
+    assert apply_mod.apply_frozen_settle(row) == ApplyOutcome.SETTLED_NOW
+    assert apply_mod.apply_frozen_settle(row) == ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
+    assert db.reservations[auth.credit_reservation_id]["actual_micro"] == row.actual_cost_micro
+
+
+def test_spend_route_passes_snapshot_and_rereads_committed_mirror(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.test_spend_lease_authorize import _store_binding_harness
+    from trusted_router.routes.internal import gateway
+
+    store, db, key, plan, _ledger = _store_binding_harness()
+    configure_store(store)
+    outcome, auth = store.authorize_gateway_typed(
+        workspace_id="workspace-1", key_hash=key.hash, authorization_id="authorization-bound",
+        estimate=500, has_credit_candidate=True, reservation_usage_type="Credits",
+        model_id=MODEL_ID, provider=PROVIDER, requested_model_id=MODEL_ID,
+        candidate_model_ids=[MODEL_ID], region="us-central1", endpoint_id=ENDPOINT_ID,
+        candidate_endpoint_ids=[ENDPOINT_ID], idempotency_key="idem-bound",
+        idempotency_fingerprint="fingerprint-bound",
+        expires_at=dt.datetime.now(dt.UTC) + dt.timedelta(hours=2),
+        spend_lease_binding_plan=plan,
+    )
+    assert outcome == "accepted" and auth.settlement == "spend_lease"
+    original = type(store).typed_finalize_gateway_authorization_result
+    received = []
+    mirrored = []
+
+    def finalize(self: Any, aid: str, **kwargs: Any) -> TypedFinalizeResult:
+        snapshot = kwargs["authorization_snapshot"]
+        assert snapshot == auth and snapshot is not auth
+        received.append(snapshot)
+        return original(self, aid, **kwargs)
+
+    def mirror(_store: Any, committed: GatewayAuthorization) -> None:
+        assert committed.settled and committed.finalized_cost_microdollars == 500
+        assert committed is not received[0]
+        mirrored.append(committed)
+
+    monkeypatch.setattr(type(store), "typed_finalize_gateway_authorization_result", finalize)
+    monkeypatch.setattr(gateway, "mirror_finalized_spend_lease_best_effort", mirror)
+    monkeypatch.setattr(gateway, "_endpoint_cost_microdollars", lambda *a, **kw: 15_001)
+    data = _internal_settle(auth)
+    assert data["cost_microdollars"] == 500
+    assert len(received) == len(mirrored) == 1
+    assert db.reservations[auth.credit_reservation_id]["actual_micro"] == 500
