@@ -49,6 +49,42 @@
   </div>
 </section>
 
+{% if provider.id != 'trustedrouter' %}
+{% set locations = provider.inference_locations %}
+<section class="provider-locations" id="inference-locations" aria-labelledby="inference-locations-heading">
+  <h2 id="inference-locations-heading">Inference locations</h2>
+  <p>Where the upstream GPUs execute the model, not the provider's headquarters, API ingress, or data storage. ZDR and confidential inference do not by themselves restrict geography.</p>
+  <dl class="provider-location-facts">
+    <dt>Declared countries or regions</dt>
+    <dd>{{ locations.locations|join('; ') if locations.locations else 'Not verified' }}<br>{{ locations.scope }}</dd>
+    <dt>Can locations change?</dt><dd>{{ locations.routing }}</dd>
+    <dt>Provider region pinning</dt><dd>{{ locations.provider_pinning }}</dd>
+    <dt>Pinning through TrustedRouter</dt><dd>{{ locations.trustedrouter_pinning }}</dd>
+    <dt>Infrastructure declaration</dt><dd>{{ locations.declaration }}</dd>
+    <dt>Evidence</dt><dd>{{ locations.evidence }}{% if locations.reviewed_on %}. Reviewed <time datetime="{{ locations.reviewed_on }}">{{ locations.reviewed_on }}</time>{% endif %}.</dd>
+  </dl>
+  {% if provider.model_locations %}
+  <details class="provider-location-models">
+    <summary>Advertised regions by model ({{ provider.model_locations|length }})</summary>
+    <p>Catalog snapshot: <time>{{ provider.location_snapshot_at }}</time>. Refreshed by the catalog pipeline. Availability can change; these are not per-request receipts or enforced residency guarantees. Only models with a region declaration are shown.</p>
+    <dl class="provider-location-facts">
+      {% for model in provider.model_locations %}
+      <dt><a href="/models/{{ model.id }}">{{ model.id }}</a></dt><dd>{{ model.regions|join('; ') }}</dd>
+      {% endfor %}
+    </dl>
+  </details>
+  {% endif %}
+  {% if locations.sources %}
+  <ul>
+    {% for label, url in locations.sources %}
+    <li><a href="{{ url }}" rel="nofollow noopener">{{ label }}</a></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <p class="muted-copy">Provider selection alone is not a region pin. TrustedRouter's US provider filter selects company jurisdiction, not GPU location. A regional gateway hostname does not pin a downstream GPU. For a binding residency requirement, confirm the model, region, failover scope and enforced controls before sending sensitive data.</p>
+</section>
+{% endif %}
+
 {% if measured.provider_row %}
 <section class="panel">
   <div class="panel-head">

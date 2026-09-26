@@ -362,6 +362,27 @@ def test_telnyx_manifest_keeps_context_vision_and_exact_native_ids(
     assert rows["moonshotai/kimi-k3"]["max_output_tokens"] is None
 
 
+def test_telnyx_regions_follow_default_tier_and_clear_removed_declarations(
+    tmp_path: Path, monkeypatch,
+) -> None:  # noqa: ANN001
+    manifest_path = tmp_path / "telnyx.json"
+    manifest_path.write_text(json.dumps({"provider": "telnyx", "models": []}))
+    monkeypatch.setattr(telnyx, "MANIFEST_PATH", manifest_path)
+    monkeypatch.setenv("TELNYX_API_KEY", "test-key")
+    payload = _live_payload()
+    for row in payload["data"]:
+        row["pricing"].update(input="0.5", output="1", cached_prompt="0.1")
+        row["regions"] = ["USA", "EU"]
+        row["regions_by_service_tier"] = {"default": ["USA"], "priority": ["EU"]}
+    monkeypatch.setattr(telnyx, "fetch_json", lambda url, **kwargs: payload)
+    telnyx.write_provider_manifest(telnyx.fetch())
+    assert all(row["provider_regions"] == ["USA"] for row in json.loads(manifest_path.read_text())["models"])
+    for row in payload["data"]:
+        row["regions_by_service_tier"] = {"priority": ["EU"]}
+    telnyx.write_provider_manifest(telnyx.fetch())
+    assert all(row["provider_regions"] == [] for row in json.loads(manifest_path.read_text())["models"])
+
+
 def test_telnyx_manifest_is_loaded_as_prepaid_and_byok_catalog_routes() -> None:
     from trusted_router.catalog import MODEL_ENDPOINTS
 

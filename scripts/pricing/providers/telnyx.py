@@ -166,10 +166,16 @@ def _live_catalog(
         if "max_completion_tokens" in source:
             row["max_output_tokens"] = max_output_tokens
         regions = source.get("regions")
-        if isinstance(regions, list):
-            row["provider_regions"] = [
-                str(region) for region in regions if isinstance(region, str) and region
-            ]
+        # TR serves the default tier. A union across tiers can overstate that
+        # route's geography; missing declarations must also clear old metadata.
+        if "regions_by_service_tier" in source:
+            tier_regions = source["regions_by_service_tier"]
+            regions = tier_regions.get("default") if isinstance(tier_regions, dict) else None
+        row["provider_regions"] = (
+            list(dict.fromkeys(regions))
+            if isinstance(regions, list) and all(isinstance(r, str) and r for r in regions)
+            else []
+        )
         if model_id in discovered:
             raise RuntimeError(f"telnyx: duplicate canonical model {model_id}")
         discovered[model_id] = row
