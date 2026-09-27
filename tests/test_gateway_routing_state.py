@@ -91,3 +91,14 @@ def test_failed_request_does_not_seed_affinity(monkeypatch):
     )
     assert response.status_code == 200, response.text
     assert state.session_count == 0
+
+
+def test_performance_preferences_fail_explicitly_for_unmeasured_endpoints():
+    client, key = _client_and_key()
+    for route_type in ("images", "videos", "embeddings", "decide", "batch"):
+        response = client.post("/v1/internal/gateway/authorize", json={
+            "api_key_hash": key["hash"], "model": "google/gemma-4-31b-it",
+            "route_type": route_type, "provider": {"preferred_max_latency": 2},
+        })
+        assert response.status_code == 501, response.text
+        assert response.json()["error"]["type"] == "not_supported_in_alpha"

@@ -1137,6 +1137,19 @@ def _authorize_gateway_sync_impl(
         and not requested_model.supports_chat
     )
     named_decision_chain = NAMED_DECISION_MODEL_PROVIDERS.get(route_model_id or "")
+    supports_live_routing = (
+        body.route_type in {"chat.completions", "responses", "messages"}
+        and named_decision_chain is None
+        and not (is_image_request or is_video_request or is_embeddings_request or is_decide_request)
+    )
+    if not supports_live_routing and (
+        route_preferences.preferred_max_latency or route_preferences.preferred_min_throughput
+    ):
+        raise api_error(
+            501,
+            "Performance preferences currently require a synchronous text-generation endpoint",
+            "not_supported_in_alpha",
+        )
     if (is_decide_request or named_decision_chain is not None) and body.route_type != "decide":
         # A decision model has no chat surface. Jev would fail at the provider,
         # and a named model like trev-1.0 would silently become a plain chat
@@ -1308,7 +1321,7 @@ def _authorize_gateway_sync_impl(
             for candidate_model, candidate_endpoint in endpoint_candidates
             if UsageType.for_endpoint(candidate_endpoint) == UsageType.CREDITS
         ]
-    if named_decision_chain is None and not (is_image_request or is_video_request or is_embeddings_request or is_decide_request):
+    if supports_live_routing:
         endpoint_candidates = ROUTING_STATE.rank(
             endpoint_candidates, effective_route_preferences, region=region,
             session=(api_key.hash, requested_model_id, region, body.cache_affinity_key)
