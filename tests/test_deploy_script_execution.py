@@ -674,10 +674,24 @@ def _initialize_bake_harness_repo(harness: DeployScriptHarness) -> str:
     ).stdout.strip()
 
 
+@pytest.mark.parametrize(
+    ("region", "service_min"),
+    [
+        ("us-central1", "8"),
+        ("us-east4", "8"),
+        ("europe-west4", "8"),
+        ("southamerica-east1", "2"),
+    ],
+)
 def test_gcp_no_traffic_warm_preprovisions_and_validates_private_candidate(
     harness: DeployScriptHarness,
+    region: str,
+    service_min: str,
 ) -> None:
-    run = harness.run("scripts/deploy/rollout.sh")
+    run = harness.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={"TR_DEPLOY_TARGET_REGIONS": region},
+    )
     assert run.returncode == 0, summarise(run)
 
     deploy = next(
@@ -686,10 +700,12 @@ def test_gcp_no_traffic_warm_preprovisions_and_validates_private_candidate(
         if call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
         and call[4:7] == ["deploy", "trusted-router", "--region"]
     )
-    # The primary must absorb a burst without waiting for new instances.
+    # Each primary serving region needs burst capacity; the failover stays small.
     # Keep the staged revision primer small while retaining the service floor.
-    assert deploy[deploy.index("--min") + 1] == "8"
+    assert deploy[deploy.index("--region") + 1] == region
+    assert deploy[deploy.index("--min") + 1] == service_min
     assert deploy[deploy.index("--min-instances") + 1] == "2"
+    assert deploy[deploy.index("--concurrency") + 1] == "8"
     assert "--no-traffic" in deploy
     assert any(
         call[0:4] == ["gcloud", "run", "revisions", "describe"]
