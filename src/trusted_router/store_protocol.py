@@ -1160,6 +1160,7 @@ class TypedBillingStore(Protocol):
         skip_key_limit: bool = ...,
         speculate_key_limit: bool = ...,
         strict_budget: bool = ...,
+        strict_budget_alert_only: bool = ...,
         tags: dict[str, str] | None = ...,
         custom_model_id: str | None = ...,
         custom_model_revision: int | None = ...,

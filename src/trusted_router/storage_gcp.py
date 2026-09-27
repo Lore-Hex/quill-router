@@ -5948,6 +5948,7 @@ class SpannerBigtableStore:
         skip_key_limit: bool = False,
         speculate_key_limit: bool = True,
         strict_budget: bool = False,
+        strict_budget_alert_only: bool = False,
         tags: dict[str, str] | None = None,
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
@@ -6227,7 +6228,7 @@ class SpannerBigtableStore:
                     skip_key_limit=skip_key_limit,
                     speculate_key_limit=speculate_key_limit,
                     strict_budget=strict_budget,
-                    enforce_strict_windows=bool(window_limits),
+                    enforce_strict_windows=not strict_budget_alert_only,
                     authorization_id=authorization_id,
                     spend_lease_hook=spend_hook,
                     build_authorization_for_lease=(

@@ -107,3 +107,34 @@ def test_strict_old_windows_reset_but_inflight_holds_still_count():
     row.update(day_usage=100, day_start=utcnow() - timedelta(days=2), reserved=60)
     assert authorize(store, key, amount=41)["outcome"] == "key_window_limit_exceeded:daily"
     assert authorize(store, key, amount=40)["outcome"] == "accepted"
+
+
+def test_strict_typed_wrapper_uses_current_limits_even_without_snapshot():
+    store, db, key = setup()
+    kwargs = dict(
+        workspace_id="strict-ws",
+        key_hash=key.hash,
+        estimate=60,
+        has_credit_candidate=True,
+        reservation_usage_type="Credits",
+        model_id="m",
+        provider="openai",
+        requested_model_id=None,
+        candidate_model_ids=["m"],
+        region="us",
+        endpoint_id="e",
+        candidate_endpoint_ids=["e"],
+        idempotency_key=None,
+        idempotency_fingerprint=None,
+        expires_at=utcnow(),
+        strict_budget=True,
+        window_limits=None,
+    )
+    first, _ = store.authorize_gateway_typed(**kwargs)
+    assert first == "accepted"
+    second, _ = store.authorize_gateway_typed(**kwargs)
+    assert second == "key_window_limit_exceeded:daily"
+    assert second.rate_limit.remaining == 40
+    assert db.typed["tr_key_limit"][(key.hash, 0)]["reserved"] == 60
+    alerted, _ = store.authorize_gateway_typed(**kwargs, strict_budget_alert_only=True)
+    assert alerted == "accepted"

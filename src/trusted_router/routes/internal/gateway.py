@@ -1968,6 +1968,7 @@ def _authorize_gateway_sync_impl(
                     # Window caps are enforced separately on a snapshot.
                     skip_key_limit=api_key.limit_microdollars is None and not api_key.budget_strict,
                     strict_budget=api_key.budget_strict,
+                    strict_budget_alert_only=api_key.budget_alert_only,
                     # Metadata only selects the path; sequential reserve still
                     # checks the authoritative row for BYOK exclusions.
                     speculate_key_limit=(
