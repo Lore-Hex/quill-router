@@ -140,13 +140,16 @@ def test_deploy_pins_stage_c_admission_acceptance_off() -> None:
     assert '"TR_SPEND_LEASE_ADMISSION_ACCEPT=false"' in rollout
 
 
-def test_deploy_enables_spend_lease_binding_with_emergency_override() -> None:
+def test_deploy_pins_spend_lease_issuance_and_binding_off() -> None:
+    # Bigtable ledger retirement (2026-09-27): no new spend leases are minted,
+    # so binding cannot become load-bearing; an explicit operator true still
+    # has to pass the unit-4 fence.
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
 
-    assert '"TR_SPEND_LEASE_ISSUANCE_ENABLED=true"' in rollout
+    assert '"TR_SPEND_LEASE_ISSUANCE_ENABLED=false"' in rollout
     assert (
         '"TR_SPEND_LEASE_BINDING_ENABLED='
-        '${TR_SPEND_LEASE_BINDING_ENABLED:-true}"' in rollout
+        '${TR_SPEND_LEASE_BINDING_ENABLED:-false}"' in rollout
     )
     assert (
         '"TR_SPEND_LEASE_PILOT_WORKSPACE_IDS='

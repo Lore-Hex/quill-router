@@ -440,10 +440,13 @@ esac
 # deploy shell, not GitHub's expression coercion, turns that raw operator intent
 # into the boolean written on the Cloud Run revision. A fresh fleet must
 # explicitly request false for its first compatibility deploy.
-# Emergency containment: commit the pin below to false so successor pushes
-# inherit OFF (docs/design/regional-quota-leases.md). Keep it true normally.
+# Pinned OFF 2026-09-27: the Bigtable ledger is being retired (Joseph's call:
+# switch the pilot off rather than port the ledger). Capability stays on so
+# already-issued holds settle, refund, and drain; the next change removes the
+# ledger itself once the reconciler reports an empty backlog. Re-arming is the
+# reverse edit through review (docs/design/regional-quota-leases.md).
 # The durable stop latch overrides explicit true/preserve inputs.
-REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED=true
+REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED=false
 LIVE_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED="$(
   read_primary_regional_quota_env \
     "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" \
@@ -505,9 +508,9 @@ fi
 
 # Binding makes the unit-4 settlement clamp and repair/mirror path load-bearing.
 # Refuse a source rollback that would build a binding-enabled image without
-# those rules. The emergency rollback path is explicit: deploy with binding
-# disabled, then investigate or roll forward from there.
-SPEND_LEASE_BINDING_TARGET="${TR_SPEND_LEASE_BINDING_ENABLED:-true}"
+# those rules. Binding defaults OFF since 2026-09-27 (Bigtable ledger
+# retirement); an explicit true still has to pass the unit-4 fence below.
+SPEND_LEASE_BINDING_TARGET="${TR_SPEND_LEASE_BINDING_ENABLED:-false}"
 if [ "$SPEND_LEASE_BINDING_TARGET" = "true" ] &&
    [ -z "$SPEND_LEASE_BIGTABLE_APP_PROFILES" ]; then
   log "refusing rollout: TR_SPEND_LEASE_BINDING_ENABLED=true requires non-empty TR_SPEND_LEASE_BIGTABLE_APP_PROFILES"
@@ -769,8 +772,12 @@ ENV_VARS=(
   # Deliberately non-sticky: pilot state is source-controlled; the sticky idiom
   # is for operator-set values, and a source default cannot override an existing
   # deployed marker.
-  "TR_SPEND_LEASE_ISSUANCE_ENABLED=true"
-  "TR_SPEND_LEASE_BINDING_ENABLED=${TR_SPEND_LEASE_BINDING_ENABLED:-true}"
+  # OFF since 2026-09-27: the spend-lease Bigtable ledger is being retired.
+  # The one pilot workspace minted a handful of leases a week (about a dozen
+  # non-empty reconciler passes in the seven days before this flip); issuance
+  # off also disables binding, which config.py requires in that order.
+  "TR_SPEND_LEASE_ISSUANCE_ENABLED=false"
+  "TR_SPEND_LEASE_BINDING_ENABLED=${TR_SPEND_LEASE_BINDING_ENABLED:-false}"
   # Stage C ships inert. This literal source-controlled default is the router
   # kill switch; verification stays deployed so in-flight receipts fail closed.
   "TR_SPEND_LEASE_ADMISSION_ACCEPT=false"

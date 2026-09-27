@@ -236,8 +236,10 @@ def _resolution_body(requested: str) -> str:
             + '\nprintf "%s\\n" "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED"\n')
 
 
-def test_issuance_pin_is_true() -> None:
-    assert "\nREGIONAL_QUOTA_LEASE_ISSUANCE_PINNED=true\n" in ROLLOUT.read_text()
+def test_issuance_pin_is_false() -> None:
+    # Pinned off for the Bigtable ledger retirement (2026-09-27). Successor
+    # pushes inherit OFF; capability stays on so open holds drain first.
+    assert "\nREGIONAL_QUOTA_LEASE_ISSUANCE_PINNED=false\n" in ROLLOUT.read_text()
 
 
 @pytest.mark.parametrize("requested", ["true", "false"])
@@ -422,7 +424,12 @@ def test_overridden_incompatible_image_refused(
     env = {"IMAGE": "us-central1-docker.pkg.dev/project/repo/old:pre-r1",
            "HARNESS_IMAGE_CONFIG": json.dumps(config)}
     if script == "rollout.sh":
-        run = DeployScriptHarness(tmp_path / "serving").run("scripts/deploy/rollout.sh", extra_env=env)
+        # The protocol floor guards issuance ON; the push pin is OFF since the
+        # 2026-09-27 ledger retirement, so request issuance explicitly here.
+        run = DeployScriptHarness(tmp_path / "serving").run(
+            "scripts/deploy/rollout.sh",
+            extra_env={**env, "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "true"},
+        )
     else:
         run = _run_regional_quota_reconciler(tmp_path, monkeypatch, state="PAUSED", extra_env=env)
     assert run.returncode != 0

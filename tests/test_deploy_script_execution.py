@@ -773,9 +773,11 @@ def _regional_quota_rollout_harness(
 @pytest.mark.parametrize(
     ("control", "live", "expected"),
     [
-        pytest.param(None, "true", "true", id="absent-pins-on-live-true"),
-        pytest.param(None, "false", "true", id="absent-pins-on-live-false"),
-        pytest.param("", "true", "true", id="empty-pins-on-live-true"),
+        # Absent/empty control resolves to REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED,
+        # which is OFF since the 2026-09-27 Bigtable ledger retirement.
+        pytest.param(None, "true", "false", id="absent-pins-off-live-true"),
+        pytest.param(None, "false", "false", id="absent-pins-off-live-false"),
+        pytest.param("", "true", "false", id="empty-pins-off-live-true"),
         pytest.param("preserve", "true", "true", id="dispatch-preserve-live-true"),
         pytest.param("true", "false", "true", id="dispatch-enables-live-false"),
         pytest.param("false", "true", "false", id="dispatch-disables-live-true"),
@@ -870,7 +872,7 @@ def test_rollout_regional_quota_dispatch_true_refuses_incompatible_fleet(
     [
         # A fresh fleet must first deploy protocol-capable revisions with issuance off.
         pytest.param({}, "false", "false", id="no-live-settings-forced-off"),
-        pytest.param(_LIVE_REGIONAL_QUOTA_ENV, None, "true", id="stale-live-settings-pinned-on"),
+        pytest.param(_LIVE_REGIONAL_QUOTA_ENV, None, "false", id="stale-live-settings-pinned-off"),
     ],
 )
 def test_rollout_renders_every_regional_quota_pin(
@@ -1163,7 +1165,10 @@ def test_reconciler_receives_same_regional_quota_profiles(
 def test_rollout_binding_unit_4_fence_passes_with_settle_clamp(
     harness: DeployScriptHarness,
 ) -> None:
-    run = harness.run("scripts/deploy/rollout.sh")
+    run = harness.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={"TR_SPEND_LEASE_BINDING_ENABLED": "true"},
+    )
     assert run.returncode == 0, summarise(run)
 
     deploy = next(
@@ -1181,6 +1186,26 @@ def test_rollout_binding_unit_4_fence_passes_with_settle_clamp(
         "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES=us-central1=tr-spend-us-central1"
         in serialized_env.split("|")
     )
+
+
+def test_rollout_defaults_spend_lease_issuance_and_binding_off(
+    harness: DeployScriptHarness,
+) -> None:
+    # Bigtable ledger retirement (2026-09-27): without an explicit operator
+    # override the revision mints no spend leases and binds none.
+    run = harness.run("scripts/deploy/rollout.sh")
+    assert run.returncode == 0, summarise(run)
+
+    deploy = next(
+        call
+        for call in run.calls
+        if call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
+        and call[4:6] == ["deploy", "trusted-router"]
+    )
+    serialized_env = deploy[deploy.index("--set-env-vars") + 1].split("|")
+    assert "TR_SPEND_LEASE_ISSUANCE_ENABLED=false" in serialized_env
+    assert "TR_SPEND_LEASE_BINDING_ENABLED=false" in serialized_env
+    assert "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED=false" in serialized_env
 
 
 def test_rollout_binding_refuses_empty_spend_lease_app_profiles(
@@ -1233,8 +1258,15 @@ def test_rollout_binding_refuses_empty_spend_lease_app_profiles(
     isolated = DeployScriptHarness(tmp_path / "spend-lease-profiles-empty")
 
     # This fleet declares no lease capability; force issuance off so the
-    # binding guard, not the issuance preflight, is what refuses.
-    run = isolated.run(script, extra_env={"TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "false"})
+    # binding guard, not the issuance preflight, is what refuses. Binding
+    # defaults off since the 2026-09-27 ledger retirement, so request it.
+    run = isolated.run(
+        script,
+        extra_env={
+            "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "false",
+            "TR_SPEND_LEASE_BINDING_ENABLED": "true",
+        },
+    )
 
     assert run.returncode != 0
     assert (
@@ -1265,7 +1297,12 @@ def test_rollout_binding_unit_4_fence_refuses_missing_settle_clamp(
         )
     )
 
-    run = isolated.run("scripts/deploy/rollout.sh")
+    # Binding defaults off since the 2026-09-27 ledger retirement; the fence
+    # guards an explicit binding request.
+    run = isolated.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={"TR_SPEND_LEASE_BINDING_ENABLED": "true"},
+    )
 
     assert run.returncode != 0
     assert (

@@ -149,12 +149,18 @@ rollout_issuance_marker() (
 )
 
 test_raw_issuance_input_is_normalized_in_shell() {
-  [ "$(rollout_issuance_marker true)" = "true" ] ||
-    fail "absent push input did not resolve to the pin (true)"
-  [ "$(rollout_issuance_marker false)" = "true" ] ||
-    fail "absent push input did not resolve to the pin (true)"
-  [ "$(rollout_issuance_marker true "")" = "true" ] ||
-    fail "empty push input did not resolve to the pin (true)"
+  # The pin is source-controlled policy (false since the 2026-09-27 Bigtable
+  # ledger retirement); the resolution rule is what this test owns.
+  local pin
+  pin="$(awk -F= '/^REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED=/ {print $2}' \
+    "${ROOT}/scripts/deploy/rollout.sh")"
+  case "$pin" in true|false) ;; *) fail "pin is not a boolean: ${pin}" ;; esac
+  [ "$(rollout_issuance_marker true)" = "$pin" ] ||
+    fail "absent push input did not resolve to the pin (${pin})"
+  [ "$(rollout_issuance_marker false)" = "$pin" ] ||
+    fail "absent push input did not resolve to the pin (${pin})"
+  [ "$(rollout_issuance_marker true "")" = "$pin" ] ||
+    fail "empty push input did not resolve to the pin (${pin})"
   [ "$(rollout_issuance_marker true preserve)" = "true" ] ||
     fail "preserve input did not keep true"
   [ "$(rollout_issuance_marker false true)" = "true" ] ||

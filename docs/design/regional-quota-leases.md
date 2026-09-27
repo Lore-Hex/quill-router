@@ -215,12 +215,13 @@ gh workflow run deploy.yml --repo Lore-Hex/quill-router --ref main \
 
 Routine workflow dispatches use `preserve` to copy the primary live issuance
 marker; this is not per-region preservation. Push-triggered deploys (absent or
-empty input) use `REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED=true` in
-`scripts/deploy/rollout.sh`. During an incident, the emergency containment recipe
-is to change that literal to `false` and commit it through review so successor
-pushes inherit OFF. Keep the incident pin off until compatibility and reconciler
-readiness are verified, then restore `true` through review. The normal pin stays
-true. A code change in an uncommitted checkout alone does not change production.
+empty input) use `REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED` in
+`scripts/deploy/rollout.sh`. **Since 2026-09-27 that pin is `false`**: the
+Bigtable ledger is being retired rather than ported, so no new regional holds
+are issued; capability and reconciliation stay on until the open-lease backlog
+is empty, then the ledger itself is removed. The same literal is the incident
+containment recipe: change it through review so successor pushes inherit OFF.
+A code change in an uncommitted checkout alone does not change production.
 
 The dispatch kill switch `regional_quota_lease_issuance=false` now persists
 `off` to `gs://tr-deploy-mutex-quill-cloud-proxy/controls/regional-quota-issuance.txt`
