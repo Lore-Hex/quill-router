@@ -725,3 +725,28 @@ def test_a_checkout_missing_a_tracked_file_is_refused(tmp_path_factory):
     (checkout / "migrate.sh").unlink()
     with pytest.raises(AssertionError, match="tracked but missing from the checkout"):
         schema.repository_files(checkout)
+
+
+def test_a_checkout_git_cannot_enumerate_is_refused_not_walked(tmp_path_factory):
+    checkout = tmp_path_factory.mktemp("broken")
+    (checkout / ".git").write_text("gitdir: /nonexistent\n")
+    (checkout / "gha-creds-untracked.json").write_text('{"note": "update_ddl"}\n')
+
+    with pytest.raises(subprocess.CalledProcessError):
+        schema.repository_files(checkout)
+
+
+def test_tracked_paths_that_differ_only_by_case_are_refused(tmp_path_factory):
+    checkout = tmp_path_factory.mktemp("cases")
+    git = ["git", "-C", str(checkout)]
+    subprocess.run(["git", "init", "-q", str(checkout)], check=True)  # noqa: S603, S607 - fixed git setup
+    blob = subprocess.run(  # noqa: S603 - fixed git setup
+        [*git, "hash-object", "-w", "--stdin"], input=b"pass\n", capture_output=True, check=True
+    ).stdout.decode().strip()
+    for name in ("scripts/DDL.py", "scripts/ddl.py"):
+        subprocess.run(  # noqa: S603 - fixed git setup
+            [*git, "update-index", "--add", "--cacheinfo", f"100644,{blob},{name}"], check=True
+        )
+
+    with pytest.raises(AssertionError, match="differ only by case"):
+        schema.repository_files(checkout)

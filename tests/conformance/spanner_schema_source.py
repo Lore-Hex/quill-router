@@ -367,20 +367,23 @@ EXCLUDED_DIRECTORIES = {
 
 
 def _tracked_files(root: Path) -> list[tuple[Path, bytes]] | None:
-    """The tracked files and their git modes when root is the top of a git checkout, else None.
+    """The tracked files and their git modes when root is a git checkout, else None.
 
-    A submodule is one gitlink entry whose files git lists only in some
-    configurations, so a checkout containing one is refused outright.
+    A checkout is a directory with .git at its root. Its files come from git or
+    the scan fails; falling back to a walk would read untracked workspace files.
+    A submodule (git lists its files only in some configurations) or tracked
+    paths that differ only by case (one file on a case-insensitive filesystem)
+    are refused.
     """
-    try:
-        top = subprocess.run(["git", "-C", str(root), "rev-parse", "--show-toplevel"],  # noqa: S603, S607 - fixed git query
-                             capture_output=True, check=True).stdout.removesuffix(b"\n")
-        if not top or Path(os.fsdecode(top)).resolve() != root.resolve():
-            return None
-        listed = subprocess.run(["git", "-C", str(root), "ls-files", "--stage", "-z"],  # noqa: S603, S607 - fixed git query
-                                capture_output=True, check=True).stdout
-    except (OSError, subprocess.CalledProcessError):
+    if not (root / ".git").exists():
         return None
+    git = ["git", "-C", str(root)]
+    top = subprocess.run([*git, "rev-parse", "--show-toplevel"],  # noqa: S603 - fixed git query
+                         capture_output=True, check=True).stdout.removesuffix(b"\n")
+    if Path(os.fsdecode(top)).resolve() != root.resolve():
+        raise AssertionError(f"{root}: has .git, but git places the checkout at {os.fsdecode(top)}")
+    listed = subprocess.run([*git, "ls-files", "--stage", "-z"],  # noqa: S603 - fixed git query
+                            capture_output=True, check=True).stdout
     paths: dict[Path, bytes] = {}
     for entry in listed.split(b"\0"):
         info, _, name = entry.partition(b"\t")
@@ -391,6 +394,11 @@ def _tracked_files(root: Path) -> list[tuple[Path, bytes]] | None:
             raise AssertionError(f"{path}: submodules are outside the schema scan; "
                                  "extend repository_files() before adding one")
         paths[path] = info.split(b" ", 1)[0]
+    folded = Counter(str(path).casefold() for path in paths)
+    collisions = sorted(str(path) for path in paths if folded[str(path).casefold()] > 1)
+    if collisions:
+        raise AssertionError(f"tracked paths differ only by case: {collisions[:6]}; "
+                             "one of them cannot be read on a case-insensitive filesystem")
     return list(paths.items())
 
 
