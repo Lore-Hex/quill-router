@@ -536,6 +536,14 @@ APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
             Decimal("0.00000003"),
             Decimal("0.00000024"),
         ),
+        # Wafer's feed moved this cache read to 17 cents per million by
+        # 2026-09-27 17:43Z, inside the same accepted repricing.
+        (
+            "deepseek/deepseek-v4-pro [wafer:wafer:DeepSeek-V4-Pro] cached-input",
+            "prompt",
+            Decimal("0.00000003"),
+            Decimal("0.00000017"),
+        ),
     }
 )
 
