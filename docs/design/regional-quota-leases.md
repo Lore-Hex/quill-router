@@ -191,8 +191,10 @@ provisioners and the background reconciler deploys:
   without a retirement marker is a partial teardown: Spanner still decides,
   with a warning. The release workflow warms the four regions in parallel
   processes that share one deployment mutex operation; the gate runs once
-  before that fan-out and records its pass in the observation under that
-  operation, and the siblings' own gates stand on it while the production
+  before that fan-out and records its pass in `controls/ledger-gate-pass.json`
+  under that operation (only a gate under an operation writes that record,
+  so an unlocked gate's observation write cannot erase it), and the
+  siblings' own gates stand on it while the production
   lock is still held by that operation and unexpired - while the lock is
   held, the fleet changes only through this release's revisions. A
   standalone rollout takes its own lock and always runs the full gate; the

@@ -49,8 +49,10 @@
 # The release workflow warms the four regions in parallel processes that
 # share one deployment mutex operation. Each of them runs this gate, and each
 # would otherwise see the others' new revisions as fleet changes. So a pass
-# is recorded in the observation under the mutex operation it ran under, and
-# a later gate under the same operation stands on it - provided the live
+# is recorded (controls/ledger-gate-pass.json, written only by a gate that
+# runs under a mutex operation, so no observation rewrite by an unlocked gate
+# can erase it) under the mutex operation it ran under, and a later gate
+# under the same operation stands on it - provided the live
 # production lock is still held by that operation and unexpired, since the
 # premise is that while the lock is held, the fleet changes only through
 # this release's own revisions, which render every marker off. A standalone
@@ -294,11 +296,17 @@ ledger_drain_observation_uri() {
   printf 'gs://%s/controls/ledger-drain-observation.json\n' "$(ledger_retirement_bucket)"
 }
 
+ledger_gate_pass_uri() {
+  printf 'gs://%s/controls/ledger-gate-pass.json\n' "$(ledger_retirement_bucket)"
+}
+
 # Merge the fleet state just verified into the durable observation and print
 # the time the current state of the region that changed most recently was
 # first seen. A region keeps its off_since only while its service generation
-# and reachable revision set are unchanged; otherwise it starts over now. A
-# gate pass recorded in the observation is kept as it is.
+# and reachable revision set are unchanged; otherwise it starts over now.
+# Two gates may write this concurrently (an unlocked one never holds the
+# mutex); a lost update can only make an off_since later, never earlier,
+# because every write derives from the live state and the record it read.
 _ledger_observe_fleet() {
   local record merged
   record="$(_ledger_read_control "$(ledger_drain_observation_uri)")" || return 1
@@ -317,7 +325,6 @@ except ValueError:
 regions = old.get("regions") if isinstance(old, dict) else None
 if not isinstance(regions, dict):
     regions = {}
-gate = old.get("gate") if isinstance(old, dict) and isinstance(old.get("gate"), dict) else None
 now = dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 new = {}
 for line in state.splitlines():
@@ -333,11 +340,8 @@ for line in state.splitlines():
         "revisions": names,
         "off_since": previous["off_since"] if unchanged else now,
     }
-observation = {"regions": new, "updated_at": now}
-if gate:
-    observation["gate"] = gate
 with open(out, "w") as handle:
-    json.dump(observation, handle)
+    json.dump({"regions": new, "updated_at": now}, handle)
 print(max(entry["off_since"] for entry in new.values()))
 PY
 )" || {
@@ -565,10 +569,12 @@ raise SystemExit(0 if expires > dt.datetime.now(dt.UTC) else 1)
 ' "$operation" <<<"$record"
 }
 
-# 0 = the observation records a gate pass under this mutex operation.
+# 0 = the gate-pass record names this mutex operation. Only a gate that runs
+# under an operation writes that record, so nothing an unlocked gate writes
+# (the observation) can erase it.
 _ledger_gate_passed_under() {
   local operation="$1" record
-  record="$(_ledger_read_control "$(ledger_drain_observation_uri)")" || return 1
+  record="$(_ledger_read_control "$(ledger_gate_pass_uri)")" || return 1
   [ -n "$record" ] || return 1
   python3 -c '
 import json, sys
@@ -576,36 +582,23 @@ try:
     record = json.load(sys.stdin)
 except ValueError:
     raise SystemExit(1)
-gate = record.get("gate") if isinstance(record, dict) else None
-raise SystemExit(0 if isinstance(gate, dict) and gate.get("operation") == sys.argv[1] else 1)
+raise SystemExit(0 if isinstance(record, dict) and record.get("operation") == sys.argv[1] else 1)
 ' "$operation" <<<"$record"
 }
 
 _ledger_record_gate_pass() {
-  local operation="$1" record updated
-  record="$(_ledger_read_control "$(ledger_drain_observation_uri)")" || return 1
-  updated="$(mktemp "${TMPDIR:-/tmp}/ledger-gate.XXXXXX")" || return 1
-  if ! python3 -c '
+  local operation="$1" record
+  record="$(mktemp "${TMPDIR:-/tmp}/ledger-gate.XXXXXX")" || return 1
+  python3 -c '
 import datetime as dt, json, sys
-try:
-    record = json.loads(sys.argv[2] or "{}")
-except ValueError:
-    record = {}
-if not isinstance(record, dict):
-    record = {}
-record["gate"] = {"operation": sys.argv[1], "passed_at": dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")}
-print(json.dumps(record))
-' "$operation" "$record" >"$updated"; then
-    rm -f "$updated"
-    log "refusing ledger retirement: cannot record the gate pass"
-    return 1
-  fi
-  _ledger_write_control "$updated" "$(ledger_drain_observation_uri)" || {
-    rm -f "$updated"
+print(json.dumps({"operation": sys.argv[1], "passed_at": dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")}))
+' "$operation" >"$record"
+  _ledger_write_control "$record" "$(ledger_gate_pass_uri)" || {
+    rm -f "$record"
     log "refusing ledger retirement: cannot record the gate pass"
     return 1
   }
-  rm -f "$updated"
+  rm -f "$record"
 }
 
 # The release gate. Changes nothing but the drain observation. Exit 0 = the

@@ -66,7 +66,7 @@ gc() {
     'storage objects list')
       if [ -f "$FIXTURES/list-error" ]; then cat "$FIXTURES/list-error" >&2; return 1; fi
       objects='{"bucket":"tr-deploy-mutex-quill-cloud-proxy","name":"controls/regional-quota-issuance.txt"}'
-      for control in marker:ledger-retirement.json targets:ledger-retirement-targets.json observation:ledger-drain-observation.json; do
+      for control in marker:ledger-retirement.json targets:ledger-retirement-targets.json observation:ledger-drain-observation.json gate-pass:ledger-gate-pass.json; do
         if [ -f "$FIXTURES/${control%%:*}" ]; then
           objects="$objects,{\"bucket\":\"tr-deploy-mutex-quill-cloud-proxy\",\"name\":\"controls/${control#*:}\"}"
         fi
@@ -76,6 +76,7 @@ gc() {
       case "$3" in
         *ledger-retirement-targets.json) file="$FIXTURES/targets" ;;
         *ledger-drain-observation.json) file="$FIXTURES/observation" ;;
+        *ledger-gate-pass.json) file="$FIXTURES/gate-pass" ;;
         *locks/trusted-router-production.json) file="$FIXTURES/lock" ;;
         *) file="$FIXTURES/marker" ;;
       esac
@@ -85,6 +86,7 @@ gc() {
       case "$4" in
         *ledger-retirement-targets.json) cp "$3" "$FIXTURES/targets" ;;
         *ledger-drain-observation.json) cp "$3" "$FIXTURES/observation" ;;
+        *ledger-gate-pass.json) cp "$3" "$FIXTURES/gate-pass" ;;
         *) cp "$3" "$FIXTURES/marker" ;;
       esac ;;
     'spanner databases execute-sql')
@@ -272,7 +274,8 @@ def _observation(tmp_path: Path) -> dict[str, dict[str, str]]:
 
 
 def _recorded_gate(tmp_path: Path) -> dict[str, str] | None:
-    return json.loads((tmp_path / "observation").read_text()).get("gate")
+    path = tmp_path / "gate-pass"
+    return json.loads(path.read_text()) if path.exists() else None
 
 
 def _lock(tmp_path: Path, operation: str, *, expires_in: int = 3600) -> None:
@@ -532,11 +535,21 @@ def test_gate_pass_is_shared_by_the_siblings_of_one_mutex_operation(tmp_path: Pa
     run = _run(tmp_path, GATE)
     assert run.returncode == 0, run.stderr
     assert any(call.startswith("run services describe") for call in _calls(tmp_path))
-    assert _recorded_gate(tmp_path) is None
+    assert _recorded_gate(tmp_path) == recorded
+
+    # The pass lives in its own record: an unlocked gate that overwrites
+    # the observation with an older copy (it holds no mutex, so it can
+    # overlap a release) cannot erase it, and the sibling still stands on it.
+    _serving(tmp_path, {region: _STEP_TWO for region in REGIONS}, generation=9)
+    _observed(tmp_path, generation=8)
+    run = _run(tmp_path, GATE, extra="TR_DEPLOY_MUTEX_OPERATION=op-1\n")
+    assert run.returncode == 0, run.stderr
+    assert "already passed under deployment operation op-1" in run.stderr
 
     # A teardown under an inherited operation needs that live lock too; it
     # fails (never defers) without it, and its observation rewrites keep a
     # recorded pass.
+    _observed(tmp_path, generation=9)
     _lock(tmp_path, "op-3")
     run = _run(tmp_path, GATE, extra="TR_DEPLOY_MUTEX_OPERATION=op-3\n")
     assert run.returncode == 0, run.stderr
@@ -551,6 +564,7 @@ def test_gate_pass_is_shared_by_the_siblings_of_one_mutex_operation(tmp_path: Pa
     assert run.returncode == 0, run.stderr
     assert (tmp_path / "marker").exists()
     assert (_recorded_gate(tmp_path) or {}).get("operation") == "op-3"
+    assert "gate" not in json.loads((tmp_path / "observation").read_text())
     run = _run(tmp_path, GATE, extra="TR_DEPLOY_MUTEX_OPERATION=op-3\n")
     assert run.returncode == 0, run.stderr
     assert "already passed under deployment operation op-3" in run.stderr
