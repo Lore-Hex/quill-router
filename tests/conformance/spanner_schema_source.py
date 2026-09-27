@@ -2,6 +2,11 @@
 
 This deliberately parses a narrow shell vocabulary, never executes shell or gcloud.
 New migration idioms must extend the parser and regenerate spanner_ddl.py.
+
+Threat model: a developer adds a migration using a new shell idiom. Every
+literal DDL carrier, including quoted text, must belong to a consumed dispatch.
+Deliberate obfuscation of the carrier words themselves (e.g. "--d""dl" or
+building the flag from variables) is out of scope. Literal carriers fail closed.
 """
 from __future__ import annotations
 
@@ -40,7 +45,7 @@ REVIEWED_DDL_STATEMENTS["migrate_typed_counters.sh"][
 ] = "expanded ensure_commit_ts_col helper"
 
 
-def shell_tokens(source: str) -> list[re.Match[str]]:
+def shell_tokens(source: str, comments: list[tuple[int, int]] | None = None) -> list[re.Match[str]]:
     """Offset-preserving shell words, including executable substitutions.
 
     Nested command substitutions have their own quote scope. Returning their
@@ -59,6 +64,8 @@ def shell_tokens(source: str) -> list[re.Match[str]]:
                 continue
             if source[pos] == "#":
                 end = source.find("\n", pos)
+                if comments is not None:
+                    comments.append((pos, len(source) if end < 0 else end))
                 pos = len(source) if end < 0 else end
                 continue
             if source[pos] in "\n;|&()":
@@ -119,7 +126,7 @@ def normalized_statement(text: str) -> str:
 
 
 def ddl_dispatch_arguments(source: str, path: Path, physical_lines: list[int], root: Path,
-                           *, reviewed_library: bool = False) -> list[tuple[int, int]]:
+                           *, reviewed_library: bool = False) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
     """Discover dispatchers from sinks, then account for every call by span.
 
     This is a conservative shell vocabulary, not a shell interpreter. Reject
@@ -130,6 +137,8 @@ def ddl_dispatch_arguments(source: str, path: Path, physical_lines: list[int], r
         tokens = shell_tokens(source)
     except AssertionError as exc:
         raise AssertionError(f"{path}:1: {exc}") from exc
+    if reviewed_library:
+        assert_ddl_carriers_consumed(path, [])
     words = ["".join(shlex.split(token[0])) if token[0] != "\n" else "\n" for token in tokens]
 
     def fail(index: int, reason: str) -> None:
@@ -194,8 +203,8 @@ def ddl_dispatch_arguments(source: str, path: Path, physical_lines: list[int], r
             fail(i, "reviewed gc forwarding changed")
 
     spans = []
+    dispatch_spans = []
     dispatchers: set[str] = set()
-    ddl_options: set[int] = set()
     bootstrap_seen = False
     for i, word in enumerate(words):
         if word.lower() not in ({"gcloud", "gc"} if has_gc else {"gcloud"}):
@@ -226,7 +235,6 @@ def ddl_dispatch_arguments(source: str, path: Path, physical_lines: list[int], r
         if len(options) != 1:
             fail(i, "DDL sink requires exactly one understood --ddl argument")
         j = options[0]
-        ddl_options.add(j)
         token = tokens[j]
         if "=" in token[0]:
             span = (token.start() + token[0].index("=") + 1, token.end())
@@ -234,6 +242,7 @@ def ddl_dispatch_arguments(source: str, path: Path, physical_lines: list[int], r
             span = tokens[j + 1].span()
         else:
             fail(i, "DDL sink missing argument")
+        dispatch_spans.append((tokens[i].start(), tokens[end - 1].end()))
         enclosing = [(name, opening, closing) for name, opening, closing in functions if opening < i < closing]
         if not enclosing:
             spans.append(span)
@@ -255,9 +264,6 @@ def ddl_dispatch_arguments(source: str, path: Path, physical_lines: list[int], r
         dispatchers.add(name.lower())
 
     for i, token in enumerate(tokens):
-        # Unknown --ddl carriers must be explicitly taught to this extractor.
-        if re.fullmatch(r"--ddl(?:=.*)?", token[0], re.I | re.S) and i not in ddl_options:
-            fail(i, "unconsumed DDL dispatch: unknown sink")
         if words[i].lower() not in dispatchers or i in definitions:
             continue
         # 'ddl' in the gcloud command words is not a call to a shell function.
@@ -268,7 +274,8 @@ def ddl_dispatch_arguments(source: str, path: Path, physical_lines: list[int], r
             spans.append((token.end(), token.end()))
         else:
             spans.append(following.span())
-    return spans
+        dispatch_spans.append((token.start(), spans[-1][1]))
+    return spans, dispatch_spans
 
 
 def shell_argument(text: str) -> str:
@@ -300,33 +307,65 @@ def assert_schema_matches(ddl: tuple[str, ...], digests: dict[str, str], root: P
     assert ddl == migration_ddl(root), "GoogleSQL DDL drift from deployment migrations"
 
 
+def uncommented_source(path: Path) -> str:
+    """Raw text with only shell comments blanked; preserve quotes and offsets."""
+    source = path.read_text()
+    comments: list[tuple[int, int]] = []
+    try:
+        shell_tokens(source, comments)
+    except AssertionError as exc:
+        raise AssertionError(f"{path}:1: {exc}") from exc
+    for start, end in reversed(comments):
+        source = source[:start] + " " * (end - start) + source[end:]
+    return source
+
+
+DDL_CARRIER = re.compile(r"--ddl(?:-file)?|ddl-file|ddl\s+update|databases\s+create", re.I)
+
+
+def assert_ddl_carriers_consumed(path: Path, dispatch_spans: list[tuple[int, int]] | None) -> None:
+    """Account for literal carriers independently of the recognized shell idioms."""
+    source = uncommented_source(path)
+    matches = list(DDL_CARRIER.finditer(source))
+    for match in matches:
+        location = f"{path}:{source.count(chr(10), 0, match.start()) + 1}"
+        carrier = match[0]
+        assert carrier.lower() not in {"--ddl-file", "ddl-file"}, f"{location}: unsupported DDL carrier: {carrier}"
+    if dispatch_spans is None:
+        return  # Early forbidden-carrier check, before structural extraction.
+    for match in matches:
+        location = f"{path}:{source.count(chr(10), 0, match.start()) + 1}"
+        assert any(start <= match.start() and match.end() <= end for start, end in dispatch_spans), (
+            f"{location}: unconsumed DDL carrier: {match[0]}"
+        )
+
+
 def shell_source(path: Path) -> tuple[str, list[int]]:
-    logical_lines = []
-    physical_lines = []
-    pending = ""
-    start = 1
-    for number, line in enumerate(path.read_text().splitlines(), 1):
-        if not pending:
-            start = number
-        if line.endswith("\\"):
-            pending += line[:-1] + " "
-        else:
-            logical_lines.append(pending + line)
-            physical_lines.append(start)
-            pending = ""
-    assert not pending, f"{path}:{start}: unfinished shell continuation"
-    source = re.sub(r"(?m)^[ \t]*#.*$", "", "\n".join(logical_lines))
+    raw = uncommented_source(path)
+    assert not raw.endswith("\\\n"), f"{path}:{raw.count(chr(10))}: unfinished shell continuation"
+    # Keep offsets identical to the raw file for the independent carrier scan.
+    source = raw.replace("\\\n", "  ")
+    physical_lines = [1]
+    number = 1
+    for offset, char in enumerate(raw):
+        if char == "\n":
+            number += 1
+            if source[offset] == "\n":
+                physical_lines.append(number)
     return source, physical_lines
 
 
 def migration_ddl(root: Path = ROOT) -> tuple[str, ...]:
     sources = schema_sources(root)
+    # The library must stay carrier-free even if no script sources it anymore.
+    assert_ddl_carriers_consumed(root / "scripts/deploy/_lib.sh", [])
     creates: dict[str, str] = {}
     indexes: dict[str, str] = {}
     additions: dict[tuple[str, str], str] = {}
     policies: dict[str, str] = {}
     commit_columns: set[tuple[str, str]] = set()
     for path in sources:
+        assert_ddl_carriers_consumed(path, None)
         source, physical_lines = shell_source(path)
 
         def location(match, path=path, physical_lines=physical_lines, source=source):
@@ -395,7 +434,8 @@ def migration_ddl(root: Path = ROOT) -> tuple[str, ...]:
         for assignment in re.finditer(r"(?m)^[ \t]*([A-Z_]+)=", source):
             literal = next((span for span in consumed if span[0] == assignment.end()), None)
             assignments.setdefault(assignment[1], []).append(literal or (-1, -1))
-        for start, end in ddl_dispatch_arguments(source, path, physical_lines, root):
+        arguments, dispatch_spans = ddl_dispatch_arguments(source, path, physical_lines, root)
+        for start, end in arguments:
             argument = shell_argument(source[start:end])
             if (start, end) in consumed:
                 continue
@@ -408,6 +448,9 @@ def migration_ddl(root: Path = ROOT) -> tuple[str, ...]:
             number = physical_lines[source.count("\n", 0, start)]
             assert normalized in reviewed, f"{path}:{number}: unconsumed DDL dispatch: {argument}"
             reviewed.pop(normalized)  # a second unparsed dispatch needs review
+        # Recognizing a sink is insufficient: all its dispatch arguments above
+        # must be consumed (or individually reviewed) before these spans count.
+        assert_ddl_carriers_consumed(path, dispatch_spans)
     result = list(creates.values())
     for (table, column), definition in additions.items():
         assert table in creates, f"missing base table {table}"

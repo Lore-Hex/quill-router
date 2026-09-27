@@ -230,6 +230,110 @@ def test_lowercase_split_create_index_is_extracted(tmp_path):
     assert len(ddl) == len(spanner_ddl.DDL) + 1
 
 
+@pytest.mark.parametrize("addition, carrier", [
+    ('''args=(spanner databases ddl update "$DATABASE"
+      "--instance=$INSTANCE"
+      "--ddl=ALTER TABLE tr_entities ADD COLUMN review_lost STRING(64)")
+gcloud "${args[@]}"
+''', "ddl update"),
+    ('''$GCLOUD spanner databases ddl update "$DATABASE" --ddl-file=/dev/stdin <<'SQL'
+ALTER TABLE tr_entities ADD COLUMN review_lost STRING(64)
+SQL
+''', "--ddl-file"),
+    ('''gcp "spanner" "databases" "ddl" "update" "$DATABASE" "--ddl=ALTER TABLE tr_entities ADD COLUMN review_lost STRING(64)"
+''', "--ddl"),
+    ('''args=("spanner" "databases" "ddl" "update" "$DATABASE"
+      "--DDL=alter table tr_entities add column review_lost STRING(64)")
+gcloud "${args[@]}"
+''', "--DDL"),
+    ('"$GCLOUD" spanner databases create "$DATABASE"\n', "databases create"),
+    ('args=(spanner databases ddl\n update "$DATABASE")\n', "ddl\n update"),
+], ids=["reviewer-array", "variable-gcloud-ddl-file-heredoc", "library-gcp-wrapper",
+        "uppercase-flag-lowercase-sql", "unknown-create", "multiline-command-words"])
+def test_literal_ddl_carriers_fail_closed_in_copies(tmp_path, addition, carrier):
+    scripts = tmp_path / "scripts/deploy"
+    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    library = scripts / "_lib.sh"
+    library.write_text(library.read_text() + '\ngcp() { gcloud --project "$PROJECT_ID" "$@"; }\n')
+    path = scripts / "migrate_review_hole.sh"
+    prefix = ""
+    if addition.startswith("gcp "):
+        # Exercise a script that actually sources the library defining gcp.
+        path = scripts / "migrate_generation_records.sh"
+        prefix = path.read_text() + "\n"
+    path.write_text(prefix + addition)
+    line = prefix.count("\n") + addition[:addition.index(carrier)].count("\n") + 1
+    with pytest.raises(AssertionError) as error:
+        migration_ddl(tmp_path)
+    assert f"{path}:{line}:" in str(error.value)
+    assert f"DDL carrier: {carrier}" in str(error.value)
+
+
+def test_quoted_array_ddl_carrier_fails_closed(tmp_path):
+    # All command words are quoted too: only the literal quoted flag exposes
+    # this array to the carrier scan. Removing quoted text must kill this test.
+    scripts = tmp_path / "scripts/deploy"
+    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    path = scripts / "migrate_review_hole.sh"
+    path.write_text('''args=("spanner" "databases" "ddl" "update" "$DATABASE"
+      "--instance=$INSTANCE"
+      "--ddl=ALTER TABLE tr_entities ADD COLUMN review_lost STRING(64)")
+gcloud "${args[@]}"
+''')
+    with pytest.raises(AssertionError, match=r"migrate_review_hole.sh:3: unconsumed DDL carrier: --ddl"):
+        migration_ddl(tmp_path)
+
+
+@pytest.mark.parametrize("addition, carrier", [
+    ('''args=(spanner databases ddl update "$DATABASE"
+      "--ddl=ALTER TABLE tr_entities ADD COLUMN review_lost STRING(64)")
+gcloud "${args[@]}"
+''', "ddl update"),
+    ('''gcp() { gcloud --project "$PROJECT_ID" "$@"; }
+gcp "spanner" "databases" "ddl" "update" db "--ddl=ALTER TABLE tr_entities ADD COLUMN review_lost STRING(64)"
+''', "--ddl"),
+    ('''gcp() { gcloud --project "$PROJECT_ID" "$@"; }
+gcp spanner databases ddl update db --ddl-file=/dev/stdin <<'SQL'
+ALTER TABLE tr_entities ADD COLUMN review_lost STRING(64)
+SQL
+''', "--ddl-file"),
+], ids=["library-only-array", "library-only-wrapper", "library-only-ddl-file"])
+def test_library_carriers_fail_with_original_digest_guard(tmp_path, addition, carrier):
+    scripts = tmp_path / "scripts/deploy"
+    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    path = scripts / "_lib.sh"
+    text = path.read_text() + "\n" + addition
+    path.write_text(text)
+    line = text[:text.index(carrier)].count("\n") + 1
+    with pytest.raises(AssertionError) as error:
+        assert_schema_matches(spanner_ddl.DDL, spanner_ddl.SOURCE_DIGESTS, tmp_path)
+    assert f"{path}:{line}:" in str(error.value)
+    assert f"DDL carrier: {carrier}" in str(error.value)
+
+
+@pytest.mark.parametrize("carrier", ["--ddl-file", "--DDL-FILE", "ddl-file"])
+def test_ddl_file_rejected_even_inside_consumed_dispatch(tmp_path, carrier):
+    scripts = tmp_path / "scripts/deploy"
+    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    path = scripts / "migrate_review_hole.sh"
+    path.write_text('gcloud spanner databases ddl update db '
+                    '--ddl="CREATE INDEX review_added ON tr_entities (kind)" '
+                    f'"{carrier}=/dev/stdin"\n')
+    with pytest.raises(AssertionError) as error:
+        migration_ddl(tmp_path)
+    assert f"{path}:1: unsupported DDL carrier: {carrier}" in str(error.value)
+
+
+def test_carrier_comments_are_excluded_in_copies(tmp_path):
+    scripts = tmp_path / "scripts/deploy"
+    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    for name in ("infra.sh", "migrate_money_primitives.sh", "_lib.sh"):
+        path = scripts / name
+        path.write_text(path.read_text() + '\n# --ddl --ddl-file ddl-file ddl update databases create\n'
+                        + 'echo done # "--DDL=" --ddl-file databases create\n')
+    assert migration_ddl(tmp_path) == spanner_ddl.DDL
+
+
 @pytest.mark.parametrize("expression", [
     '"INSERT OR IGNORE INTO tr_entities (kind, id) VALUES (@kind, @id)"',
     '"/* comment */ SELECT id FROM tr_entities"',
@@ -450,6 +554,9 @@ def test_reviewed_library_rejects_ddl_and_indirection(tmp_path, addition):
     original = path.read_text()
     path.write_text(original + "\n" + addition + "\n")
     line = len(original.splitlines()) + 2
+    # Raw carriers report their physical line, including after a continuation.
+    if addition.startswith("gc spanner databases \\\n"):
+        line += 1
     with pytest.raises(AssertionError, match=rf"_lib\.sh:{line}:"):
         migration_ddl(tmp_path)
 
