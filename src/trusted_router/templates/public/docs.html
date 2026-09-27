@@ -167,7 +167,12 @@ const r = await client.chat.completions.create({
         <li><code>RateLimit-Reset</code> — whole seconds until the fixed UTC window resets</li>
         <li><code>Retry-After</code> — also present on <code>429</code>; the reset delay rounded up, with a minimum of one second</li>
       </ul>
-      <p>Window checks are approximate by design: in-flight holds are not included. Use <code>RateLimit-Remaining</code> to slow down before rejection, and treat <code>Retry-After</code> as authoritative after a <code>429</code>.</p>
+      <p>By default, window checks are approximate: in-flight holds are not included. Use <code>RateLimit-Remaining</code> to slow down before rejection, and treat <code>Retry-After</code> as authoritative after a <code>429</code>.</p>
+      <h3 id="strict-budgets">Strict budget admission</h3>
+      <p>Set <code>budget_strict: true</code> when creating an API key to count outstanding reservations against daily, weekly, and monthly limits atomically. This mode is fixed at creation; create a new key to switch. It can be much slower because authorization uses a shared database counter instead of approximate snapshots or local spend leases.</p>
+      <pre><code>{"name":"Strict project budget","limit_daily":5,"limit_monthly":100,"budget_strict":true}</code></pre>
+      <p>Strict mode bounds admission using estimated cost, not final provider usage. Actual charges can exceed estimates. Outstanding holds continue to count across UTC window resets until settlement or refund. <code>budget_alert_only: true</code> still means notify without blocking; use its default <code>false</code> for enforced limits.</p>
+      <p>Strict authorization has a five-second database-work budget and bounded concurrency without an in-memory waiting queue. Busy requests return a retryable <code>503</code>; use exponential backoff with jitter. Window exhaustion returns <code>429</code> with <code>Retry-After</code>. Successful authorizations release the admission slot before generation, so long model responses do not hold it.</p>
     </div>
     <div class="copy-terminal">
       <div class="code-head"><span>Agent backoff loop</span><span>Python</span></div>

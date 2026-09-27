@@ -3104,6 +3104,7 @@ class PostgresStore:
         limit_weekly_microdollars: int | None = None,
         limit_monthly_microdollars: int | None = None,
         budget_alert_only: bool = False,
+        budget_strict: bool = False,
         tags: dict[str, str] | None = None,
         scopes: list[str] | None = None,
         app_id: str = "",
@@ -3130,6 +3131,7 @@ class PostgresStore:
             limit_weekly_microdollars=limit_weekly_microdollars,
             limit_monthly_microdollars=limit_monthly_microdollars,
             budget_alert_only=budget_alert_only,
+            budget_strict=budget_strict,
             tags=dict(tags or {}),
         )
         key.secret_hash = hash_api_key(raw, key.salt)
@@ -3370,8 +3372,15 @@ class PostgresStore:
         """
         decision_now = utcnow()
         window_floor_map = window_floors(decision_now)
+        from contextlib import ExitStack
+
+        from trusted_router.strict_budget import StrictBudgetBusy, strict_budget_slot
+
+        strict_slots = ExitStack()
+        strict_deadline: float | None = None
 
         def reserve(conn: Any) -> KeyLimitReserveResult:
+            nonlocal strict_deadline
             row = conn.execute(
                 "SELECT key_limit.limit_micro, key_limit.usage,"
                 " key_limit.byok_usage, key_limit.reserved, key_limit.include_byok,"
@@ -3379,7 +3388,8 @@ class PostgresStore:
                 " key_limit.month_limit_micro, key_limit.day_usage,"
                 " key_limit.day_start, key_limit.week_usage, key_limit.week_start,"
                 " key_limit.month_usage, key_limit.month_start,"
-                " key_record.body ->> 'budget_alert_only'"
+                " key_record.body ->> 'budget_alert_only',"
+                " key_record.body ->> 'budget_strict'"
                 " FROM tr_key_limit AS key_limit"
                 " LEFT JOIN tr_entities AS key_record"
                 "   ON key_record.kind = 'api_key'"
@@ -3408,10 +3418,22 @@ class PostgresStore:
                 month_usage,
                 month_start,
                 budget_alert_only_raw,
+                budget_strict_raw,
             ) = row
 
             if _is_byok(usage_type) and not include_byok:
                 return KeyLimitReserveResult(None, 0)
+
+            strict = str(budget_strict_raw).lower() in {"1", "true"}
+            if strict:
+                if strict_deadline is None:
+                    strict_deadline = strict_slots.enter_context(strict_budget_slot(key_hash))
+                remaining = strict_deadline - time.monotonic()
+                if remaining <= 0:
+                    raise StrictBudgetBusy("Strict budget authorization timed out; retry")
+                if self._supports_statement_timeout:
+                    # Integer milliseconds work on both Postgres and PGAdapter.
+                    conn.execute(f"SET LOCAL statement_timeout = {max(1, int(remaining * 1000))}")
 
             decision: KeyWindowLimitDecision | None = None
             budget_alert_only = str(budget_alert_only_raw).lower() in {"1", "true"}
@@ -3437,7 +3459,7 @@ class PostgresStore:
                         else int(used or 0)
                     )
                     window_limits[name] = int(limit)
-                    used_by_window[name] = current
+                    used_by_window[name] = current + (int(_reserved or 0) if strict else 0)
                 decision = decide_key_window_limits(
                     window_limits,
                     used_by_window,
@@ -3447,8 +3469,33 @@ class PostgresStore:
                 if decision is not None and not decision.allowed:
                     raise KeyWindowLimitExceeded(decision)
 
-            if limit_micro is None:
+            if limit_micro is None and not strict:
                 return KeyLimitReserveResult(decision, 0)
+
+            if strict:
+                consumed = int(_usage or 0) + (int(_byok_usage or 0) if include_byok else 0)
+                if limit_micro is not None and consumed + int(_reserved or 0) + amount_microdollars > int(limit_micro):
+                    raise KeyLimitExceeded(decision)
+                sql = (
+                    "UPDATE tr_key_limit SET reserved = reserved + %s, updated_at = CURRENT_TIMESTAMP"
+                    " WHERE key_hash = %s AND shard = 0"
+                    " AND (limit_micro IS NULL OR limit_micro - usage"
+                    " - CASE WHEN include_byok THEN byok_usage ELSE 0 END - reserved >= %s)"
+                )
+                params: list[Any] = [_int8_param(amount_microdollars), key_hash, _int8_param(amount_microdollars)]
+                if not budget_alert_only:
+                    for window, prefix in (("daily", "day"), ("weekly", "week"), ("monthly", "month")):
+                        sql += (
+                            f" AND ({prefix}_limit_micro IS NULL OR {prefix}_limit_micro"
+                            f" - CASE WHEN {prefix}_start IS NULL OR {prefix}_start < %s"
+                            f" THEN 0 ELSE {prefix}_usage END - reserved >= %s)"
+                        )
+                        params.extend((window_floor_map[window], _int8_param(amount_microdollars)))
+                if conn.execute(sql, params, prepare=False).rowcount != 1:
+                    # The statement lost a concurrent headroom race. Retry the
+                    # whole transaction to produce a fresh authoritative verdict.
+                    raise psycopg.errors.SerializationFailure("strict budget headroom changed")
+                return KeyLimitReserveResult(decision, amount_microdollars)
 
             updated = conn.execute(
                 "UPDATE tr_key_limit"
@@ -3469,7 +3516,10 @@ class PostgresStore:
                 raise KeyLimitExceeded(decision)
             return KeyLimitReserveResult(decision, amount_microdollars)
 
-        return self._run_transaction(reserve)
+        try:
+            return self._run_transaction(reserve)
+        finally:
+            strict_slots.close()
 
     def settle_key_limit(
         self,

@@ -61,6 +61,8 @@
         <tr><td><code>sort</code></td><td><code>price</code>, <code>latency</code>, <code>throughput</code>, or <code>{"by":"price","partition":"model|none"}</code></td><td>Orders endpoints by tracked metrics. The default <code>model</code> partition preserves the primary and fallback model order; <code>none</code> sorts every endpoint together.</td></tr>
         <tr><td><code>require_parameters</code></td><td><code>true</code> / <code>false</code> (default)</td><td><code>true</code> removes endpoints that do not publish support for every model parameter present in the request.</td></tr>
         <tr><td><code>max_price</code></td><td><code>{"prompt":"0.15","completion":"0.40"}</code></td><td>Hard maximum USD price per million prompt or completion tokens. Compared as integer microdollars.</td></tr>
+        <tr><td><code>preferred_max_latency</code></td><td>Seconds, or a percentile object</td><td>Prefers routes meeting the requested time to first token. A soft preference, not a timeout.</td></tr>
+        <tr><td><code>preferred_min_throughput</code></td><td>Tokens per second, or a percentile object</td><td>Prefers routes meeting the requested output speed. Other eligible routes remain available for fallback.</td></tr>
         <tr><td><code>zdr</code></td><td><code>true</code> / <code>false</code></td><td><code>true</code> restricts routing to endpoints with a tracked zero-data-retention guarantee.</td></tr>
         <tr><td><code>min_privacy</code></td><td><code>any</code>, <code>no_store</code>, <code>zdr</code>, <code>confidential</code> (aliases <code>e2e</code>, <code>e2ee</code>)</td><td>A hard privacy floor: no endpoint with the required tracked guarantee means a <code>400</code>, never a downgrade.</td></tr>
         <tr><td><code>data_collection</code></td><td><code>allow</code>, <code>deny</code></td><td>OpenRouter-compatible preference against providers that retain data; use <code>min_privacy</code> when the floor must be unrelaxable.</td></tr>
@@ -69,7 +71,23 @@
       </tbody>
     </table>
   </div>
-  <p style="margin-top:12px"><code>quantizations</code>, <code>preferred_max_latency</code>, <code>preferred_min_throughput</code>, <code>enforce_distillable_text</code>, non-token <code>max_price</code> units, and <code>sort: "exacto"</code> are recognized OpenRouter controls but are not implemented yet. They return <code>501 not_supported_in_alpha</code> rather than routing as if unset.</p>
+  <p style="margin-top:12px"><code>quantizations</code>, <code>enforce_distillable_text</code>, non-token <code>max_price</code> units, and <code>sort: "exacto"</code> return <code>501 not_supported_in_alpha</code>. Quantization metadata is available for reviewed endpoints; filtering by it is not implemented.</p>
+</section>
+
+<section class="status-section" style="margin-top:48px" id="precision-metadata">
+  <h2>Published weight formats</h2>
+  <p>Model pages and endpoint JSON include reviewed weight formats for Tinfoil, Privatemode, NEAR AI, and Chutes deployments. The same model can have different formats at different providers. Unreviewed endpoints return <code>null</code> and display Unknown.</p>
+  <p><code>GET /v1/models/{author}/{slug}/endpoints</code> returns <code>quantization</code> and <code>trustedrouter.precision</code>. The full catalog includes these under <code>trustedrouter.endpoints[].quantization</code> and <code>trustedrouter.endpoints[].precision</code>.</p>
+  <p>The precision object links the published serving code and pinned model configuration, with a review date and model revision. <code>quantization</code> names the primary format; <code>weight_formats</code>, <code>label</code>, and <code>notes</code> describe mixed formats and higher-precision exclusions. <code>kv_cache_dtype</code> is separate: an FP8 cache does not imply FP8 weights.</p>
+  <p>This is a reviewed configuration snapshot, not per-request proof of the loaded weights. <code>evidence_type</code> is <code>published_serving_config</code> and <code>runtime_verified</code> is false. Provider changes require a new review; workload attestation alone does not establish serving precision.</p>
+</section>
+
+<section class="status-section" style="margin-top:48px" id="performance-preferences">
+  <h2>Performance preferences</h2>
+  <p>Following <a href="https://openrouter.ai/docs/guides/routing/provider-selection">OpenRouter's provider-selection interface</a>, use a number for p50 or an object with <code>p50</code>, <code>p75</code>, <code>p90</code>, and <code>p99</code>. All supplied thresholds must be met to receive priority. Throughput p90 means a rate achieved by at least 90% of measured requests.</p>
+  <pre><code>{"provider": {"preferred_max_latency": {"p90": 3}, "preferred_min_throughput": 40}}</code></pre>
+  <p>Measurements use successful streaming requests with reported token counts from the last five minutes, scoped to the gateway region and control-plane instance. Storage is bounded and routing adds no analytics query. Cold instances and routes without recent measurements retain normal fallback ordering. These are best-effort preferences, not performance guarantees. Explicit provider order, model fallback order, privacy requirements, and allowlists still apply.</p>
+  <p>Performance preferences apply to synchronous Chat Completions, Responses, and Messages. Other endpoint types return <code>501</code> rather than accepting preferences they cannot measure.</p>
 </section>
 
 <section class="status-section" style="margin-top:48px" id="parameter-contract">

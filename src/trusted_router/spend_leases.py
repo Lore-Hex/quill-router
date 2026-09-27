@@ -222,7 +222,7 @@ class SpendLeaseShadowEvent:
 
 
 def _has_window_limit(api_key: Any) -> bool:
-    return any(
+    return bool(getattr(api_key, "budget_strict", False)) or any(
         getattr(api_key, field, None) is not None
         for field in (
             "limit_microdollars",

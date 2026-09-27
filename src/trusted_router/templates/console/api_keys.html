@@ -13,7 +13,9 @@
     <label>Monthly limit (USD, optional)<input name="limit_monthly" type="text" inputmode="decimal" placeholder="e.g. {{ suggested.monthly }}"></label>
   </div>
   <label class="budget-action-check"><input type="checkbox" name="budget_alert_only"> <span>Email alert only — notify me when a budget is crossed, but don’t block requests</span></label>
-  <p class="key-window-note">Optional — left blank, a key has no window limit. A balanced starting point is <strong>${{ suggested.daily }} / day</strong>, <strong>${{ suggested.weekly }} / week</strong>, <strong>${{ suggested.monthly }} / month</strong> (weekly ≈ half the monthly, daily ≈ a fifth of the weekly). Budgets hard-stop requests with 429 by default. Select “Email alert only” to notify without blocking. Windows reset at UTC midnight / Monday / the 1st; enforcement is approximate. Agents can read their remaining budget from <code>GET /v1/key</code>.</p>
+  <label class="budget-action-check"><input type="checkbox" name="budget_strict"> <span>Strict budget admission</span></label>
+  <p class="key-window-note">Strict admission includes in-flight reservations and can be much slower under concurrent use. Busy requests receive a retryable error. This choice is fixed for the key's lifetime. Final charges use actual provider usage, which can exceed an estimate.</p>
+  <p class="key-window-note">Optional — left blank, a key has no window limit. A balanced starting point is <strong>${{ suggested.daily }} / day</strong>, <strong>${{ suggested.weekly }} / week</strong>, <strong>${{ suggested.monthly }} / month</strong> (weekly ≈ half the monthly, daily ≈ a fifth of the weekly). Budgets hard-stop requests with 429 by default. Select “Email alert only” to notify without blocking, including with strict admission selected. Windows reset at UTC midnight / Monday / the 1st. Default enforcement excludes in-flight holds; strict admission includes them. Agents can read their remaining budget from <code>GET /v1/key</code>.</p>
   <button class="btn primary" type="submit">Create key</button>
 </form>
 {% endmacro %}
@@ -67,6 +69,7 @@
                 {% endfor %}
               </div>
               <label class="budget-action-check"><input type="checkbox" name="budget_alert_only" {% if k.budget_alert_only %}checked{% endif %} aria-label="Email alert only for {{ k.name }}"> <span>Email alert only (don’t block)</span></label>
+              {% if k.budget_strict %}<p class="key-window-note">Strict admission includes in-flight reservations.</p>{% endif %}
               <button class="btn" type="submit">Save</button>
             </form>
             <div class="key-budget-current">

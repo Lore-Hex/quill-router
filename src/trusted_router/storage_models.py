@@ -312,6 +312,9 @@ class ApiKey:
     # owner but does not block requests. `budget_alerted` dedups the email as
     # {window: window_start_iso} (JSON-owned alert state, not a counter).
     budget_alert_only: bool = False
+    # Creation-time admission policy. Strict keys keep one counter shard and
+    # count every in-flight hold against each configured UTC window.
+    budget_strict: bool = False
     budget_alerted: dict[str, str] = field(default_factory=dict)
     include_byok_in_limit: bool = True
     usage_microdollars: int = 0
@@ -2164,6 +2167,7 @@ def federated_api_key_from_record(record: dict[str, Any]) -> ApiKey:
         limit_weekly_microdollars=record.get("limit_weekly_microdollars"),
         limit_monthly_microdollars=record.get("limit_monthly_microdollars"),
         budget_alert_only=bool(record.get("budget_alert_only", False)),
+        budget_strict=bool(record.get("budget_strict", False)),
         include_byok_in_limit=bool(record.get("include_byok_in_limit", True)),
         expires_at=record.get("expires_at"),
         federated_home=str(record.get("revision") or "") or "federated",

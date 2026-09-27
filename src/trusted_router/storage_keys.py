@@ -114,6 +114,7 @@ class InMemoryApiKeys:
         limit_weekly_microdollars: int | None = None,
         limit_monthly_microdollars: int | None = None,
         budget_alert_only: bool = False,
+        budget_strict: bool = False,
         tags: dict[str, str] | None = None,
         scopes: list[str] | None = None,
         app_id: str = "",
@@ -145,6 +146,7 @@ class InMemoryApiKeys:
                 limit_weekly_microdollars=limit_weekly_microdollars,
                 limit_monthly_microdollars=limit_monthly_microdollars,
                 budget_alert_only=budget_alert_only,
+                budget_strict=budget_strict,
                 tags=dict(tags or {}),
             )
             self.keys[key_id] = api_key
@@ -279,19 +281,20 @@ class InMemoryApiKeys:
                 now = utcnow()
                 decision = decide_key_window_limits(
                     window_limits,
-                    self.window_usage_snapshot(key_hash, now=now),
+                    {window: used + (key.reserved_microdollars if key.budget_strict else 0)
+                     for window, used in self.window_usage_snapshot(key_hash, now=now).items()},
                     amount_microdollars,
                     now=now,
                 )
                 if decision is not None and not decision.allowed:
                     raise KeyWindowLimitExceeded(decision)
-            if key.limit_microdollars is None:
+            if key.limit_microdollars is None and not key.budget_strict:
                 return KeyLimitReserveResult(decision, 0)
             used = key.usage_microdollars
             if key.include_byok_in_limit:
                 used += key.byok_usage_microdollars
-            available = key.limit_microdollars - used - key.reserved_microdollars
-            if amount_microdollars > available:
+            if (key.limit_microdollars is not None
+                    and amount_microdollars > key.limit_microdollars - used - key.reserved_microdollars):
                 raise KeyLimitExceeded(decision)
             key.reserved_microdollars += amount_microdollars
             return KeyLimitReserveResult(decision, amount_microdollars)

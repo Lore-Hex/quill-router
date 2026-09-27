@@ -138,6 +138,7 @@ class CreateKeyRequest(_Lenient):
     limit_monthly: Decimal | None = None
     # False = hard-limit (429, default); True = alert by email without blocking.
     budget_alert_only: bool = False
+    budget_strict: bool = False
     include_byok_in_limit: bool = True
     expires_at: str | None = None
     workspace_id: str | None = None
@@ -152,6 +153,7 @@ class CreateKeyRequest(_Lenient):
 
 
 class PatchKeyRequest(_Lenient):
+    budget_strict: None = None  # Immutable; create a new key to change admission mode.
     name: str | None = Field(default=None, max_length=120)
     disabled: bool | None = None
     limit: Decimal | None = None
@@ -329,6 +331,9 @@ class SpendLeaseAdmissionRejected(_Strict):
 
 
 class GatewayAuthorizeRequest(_Lenient):
+    # Enclave-derived opaque routing hints; never persist them with activity.
+    cache_affinity_key: str | None = Field(default=None, pattern="^[0-9a-f]{64}$", exclude=True)
+    cache_affinity_explicit: bool = Field(default=False, exclude=True)
     api_key_hash: str | None = Field(default=None, min_length=1)
     api_key_lookup_hash: str | None = Field(default=None, min_length=1)
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=256)
@@ -504,6 +509,8 @@ class GatewayClientContext(_Strict):
 
 
 class GatewaySettleRequest(_Lenient):
+    cache_affinity_key: str | None = Field(default=None, pattern="^[0-9a-f]{64}$", exclude=True)
+    cache_affinity_explicit: bool = Field(default=False, exclude=True)
     authorization_id: str = Field(min_length=1)
     actual_input_tokens: int | None = Field(default=None, ge=0)
     actual_output_tokens: int | None = Field(default=None, ge=0)

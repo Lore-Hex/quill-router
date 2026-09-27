@@ -117,9 +117,11 @@ print(response.usage.cache_read_input_tokens)</code></pre>
 <section class="marketing-split" style="margin-top:48px">
   <div class="marketing-copy">
     <span class="eyebrow">Routing choice</span>
-    <h2>Choose cache locality or broad rollover.</h2>
+    <h2>Keep a session near its provider cache.</h2>
     <p>Provider caches are generally scoped to a provider, account, model, and prompt prefix. A fallback to another provider can be a cache miss even when it serves the same model.</p>
     <p>For a repeated, cache sensitive workload, use <code>provider.only</code> and optionally disable fallbacks. For higher availability, keep fallbacks enabled and accept that the first request on a new route may rebuild the cache.</p>
+    <p>For best-effort affinity with fallback, send <code>session_id</code> in the request body or <code>X-Session-ID</code> in the headers. The body takes precedence; <code>prompt_cache_key</code> is the next choice. A successful explicit session prefers its last successful endpoint for ten minutes of inactivity. Explicit <code>provider.order</code> overrides affinity.</p>
+    <p>Without an explicit session, text conversations can gain affinity after an actual discounted cache hit. The enclave derives an opaque, key-scoped digest from the opening messages using an enclave-only secret. Prompts and outputs stay out of the routing cache. The cache is bounded, process-local, and scoped by API key, model, and gateway region; enclave or control-plane restarts, another instance, or locally admitted lease requests may miss it. Privacy filters always apply, and fallback remains available.</p>
   </div>
   <div class="copy-terminal">
     <div class="code-head"><span>Prefer one provider, retain fallback</span><span>JSON</span></div>

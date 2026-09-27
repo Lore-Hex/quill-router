@@ -46,6 +46,7 @@ from trusted_router.services.spend_lease_settlement import clamp_spend_lease_cha
 from trusted_router.spend_lease_admission import classify_receipt_replay
 from trusted_router.spend_windows import (
     KeyWindowLimitDecision,
+    KeyWindowLimitExceeded,
     decide_key_window_limits,
     utcnow,
     window_floors,
@@ -408,6 +409,8 @@ def authorize_atomic(
     key_shard_candidates: tuple[int, ...] = (UNSHARDED,),
     skip_key_limit: bool = False,
     speculate_key_limit: bool = True,
+    strict_budget: bool = False,
+    enforce_strict_windows: bool = True,
     authorization_id: str | None = None,
     spend_lease_hook: Callable[[Any, int], dict[str, Any]] | None = None,
     build_authorization_for_lease: (
@@ -533,7 +536,9 @@ def authorize_atomic(
             "key_shard": int(existing.get("key_shard", UNSHARDED)),
         }
 
-    speculative = not skip_key_limit and speculate_key_limit
+    if strict_budget and key_candidates != (UNSHARDED,):
+        raise ValueError("strict budgets require exactly one key shard")
+    speculative = not strict_budget and not skip_key_limit and speculate_key_limit
 
     def check_key_prefix(counts: Sequence[int]) -> None:
         # Zero is ambiguous (missing, exhausted, uncapped, BYOK-excluded).
@@ -600,7 +605,21 @@ def authorize_atomic(
         # each admitted for its own estimate (aggregate: sum of those estimates).
         # The next fresh entity read enforces the cap; removal likewise takes
         # effect on the next request. Do not add a hot api_key/counter read here.
-        if speculative:
+        strict_decision = None
+        if strict_budget:
+            from trusted_router.storage_gcp_strict_budget import reserve_strict_key
+
+            key_result, strict_decision = reserve_strict_key(
+                transaction, pt, key_hash, estimate, is_byok=is_byok,
+                enforce_windows=enforce_strict_windows,
+            )
+            selected_key_shard = UNSHARDED
+            if key_result in {KEY_MISSING, KEY_INSUFFICIENT}:
+                raise _Reject(AuthorizeVerdict(
+                    AuthorizeOutcome.KEY_MISSING if key_result == KEY_MISSING else AuthorizeOutcome.KEY_LIMIT_EXCEEDED,
+                    rate_limit=strict_decision,
+                ))
+        elif speculative:
             key_result = KEY_ACCEPTED
             selected_key_shard = key_candidates[0]
         elif skip_key_limit:
@@ -691,7 +710,7 @@ def authorize_atomic(
                 transaction, [reservation_statement, authorization_statement], [(1,), (1,)]
             )
         return {
-            "outcome": AuthorizeOutcome.ACCEPTED,
+            "outcome": AuthorizeVerdict(AuthorizeOutcome.ACCEPTED, rate_limit=strict_decision),
             "reservation_id": reservation_id,
             "authorization_id": authorization_id,
             "credit_shard": selected_credit_shard,
@@ -714,6 +733,10 @@ def authorize_atomic(
             return run_in_transaction_with_retry(
                 database, txn, transaction_tag="tr_authorize", also_retry=also_retry,
             )
+    except KeyWindowLimitExceeded as exceeded:
+        return {"outcome": AuthorizeVerdict(
+            f"{AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED}:{exceeded.window}", rate_limit=exceeded.decision,
+        )}
     except _Reject as reject:
         return {"outcome": reject.outcome}
     except AlreadyExists:

@@ -110,6 +110,7 @@ from trusted_router.provider_locations import (
     provider_inference_locations,
     provider_model_locations,
 )
+from trusted_router.provider_precision import endpoint_precision_metadata
 from trusted_router.seo_catalog import seo_catalog_evidence
 from trusted_router.seo_meta import (
     SEO_TITLE_MAX_LENGTH,
@@ -4815,7 +4816,8 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "- Requests governed by a hard per-key daily, weekly, or monthly spend window return RateLimit-Limit, RateLimit-Remaining, and RateLimit-Reset.",
         "- Limit and remaining are integer microdollars. Reset is the number of whole seconds until the fixed UTC window resets.",
         "- A 429 also returns Retry-After. Wait at least that many seconds before retrying; the value is at least 1.",
-        "- The headers come from the same verdict that admitted or rejected the request. In-flight holds are intentionally not counted.",
+        "- The headers come from the same verdict that admitted or rejected the request. Default approximate mode excludes in-flight holds.",
+        "- Create a key with budget_strict=true for atomic window admission including in-flight reservations. The mode is immutable, can be much slower, and disables local spend leases. Busy authorization returns retryable 503; back off with jitter. Final provider cost can exceed the estimate.",
         "- Keys without a hard spend window do not receive fabricated rate-limit headers.",
         f"- Worked agent backoff loop: https://{domain}/docs#rate-limit-headers",
         "",
@@ -5354,6 +5356,7 @@ def _model_detail_view(
                 "provider_e2ee": endpoint_e2ee(endpoint) if ep_provider else None,
                 "provider_policy": endpoint_provider_policy(endpoint) if ep_provider else "",
                 "endpoint_id": endpoint.id,
+                "precision": endpoint_precision_metadata(endpoint),
             }
         )
     # Sort cheapest-first by total prompt+completion price; ties broken by

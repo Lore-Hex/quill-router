@@ -454,6 +454,7 @@ def test_scoped_and_legacy_self_key_shapes(client: TestClient) -> None:
         "include_byok_in_limit",
         "tags",
         "budget_alert_only",
+        "budget_strict",
         "usage",
         "usage_microdollars",
         "usage_daily",

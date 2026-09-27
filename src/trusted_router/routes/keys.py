@@ -65,6 +65,7 @@ def self_key_shape(key: ApiKey) -> dict[str, Any]:
             "reserved_microdollars",
             "include_byok_in_limit",
             "budget_alert_only",
+            "budget_strict",
         }
     )
     if SCOPE_PROFILE in key.scopes:
@@ -123,6 +124,7 @@ def register_key_routes(router: APIRouter) -> None:
                 None if body.limit_monthly is None else dollars_to_microdollars(body.limit_monthly)
             ),
             budget_alert_only=body.budget_alert_only,
+            budget_strict=body.budget_strict,
             tags=tags,
             scopes=scopes,
         )

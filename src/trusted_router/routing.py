@@ -43,6 +43,7 @@ from trusted_router.config import Settings
 from trusted_router.errors import api_error
 from trusted_router.image_generation import IMAGE_MODEL_ID_SET
 from trusted_router.openai_service_tiers import OPENAI_PRIORITY_MAX_PROMPT_TOKENS
+from trusted_router.routing_state import Thresholds, parse_thresholds
 from trusted_router.types import ErrorType
 
 
@@ -68,6 +69,8 @@ class RoutePreferences:
     requested_parameters: frozenset[str] = frozenset()
     max_prompt_price_microdollars_per_million_tokens: int | None = None
     max_completion_price_microdollars_per_million_tokens: int | None = None
+    preferred_max_latency: Thresholds = ()
+    preferred_min_throughput: Thresholds = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +89,10 @@ class NormalizedRoutingInputs:
 
     def canonical_document(self) -> dict[str, Any]:
         value = dataclasses.asdict(self)
+        # Preserve existing Stage C policy hashes during rolling deploys.
+        for field in ("preferred_max_latency", "preferred_min_throughput"):
+            if not value["preferences"][field]:
+                del value["preferences"][field]
 
         def normalize(item: Any) -> Any:
             if isinstance(item, dict):
@@ -114,6 +121,8 @@ class NormalizedRoutingInputs:
             len(self.model_ids) == 1
             and not self.models_fallback_present
             and self.preferences.sort is None
+            and not self.preferences.preferred_max_latency
+            and not self.preferences.preferred_min_throughput
             and self.priority_eligibility_bucket == "eligible"
         )
 
@@ -139,7 +148,7 @@ NORMALIZED_PROVIDER_FIELD_MAP = {
     "usage_type": "usage_type",
     "zdr": "privacy_requirements",
 }
-LOCAL_ADMISSION_INELIGIBLE_PROVIDER_FIELDS = frozenset({"sort"})
+LOCAL_ADMISSION_INELIGIBLE_PROVIDER_FIELDS = frozenset({"sort", "preferred_max_latency", "preferred_min_throughput"})
 
 
 _PROVIDER_ALIASES = {
@@ -181,6 +190,8 @@ _ROUTER_PROVIDER_SLUGS = frozenset(
 
 _PROVIDER_ROUTING_FIELDS = frozenset(
     {
+        "preferred_max_latency",
+        "preferred_min_throughput",
         "allow_fallbacks",
         "billing",
         "country",
@@ -685,6 +696,8 @@ def provider_route_preferences(body: dict[str, Any]) -> RoutePreferences:
         requested_parameters=requested_parameters,
         max_prompt_price_microdollars_per_million_tokens=max_prompt_price,
         max_completion_price_microdollars_per_million_tokens=max_completion_price,
+        preferred_max_latency=parse_thresholds(raw.get("preferred_max_latency"), "preferred_max_latency"),
+        preferred_min_throughput=parse_thresholds(raw.get("preferred_min_throughput"), "preferred_min_throughput"),
     )
 
 

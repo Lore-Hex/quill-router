@@ -2573,6 +2573,7 @@ class SpannerBigtableStore:
         limit_weekly_microdollars: int | None = None,
         limit_monthly_microdollars: int | None = None,
         budget_alert_only: bool = False,
+        budget_strict: bool = False,
         tags: dict[str, str] | None = None,
         scopes: list[str] | None = None,
         app_id: str = "",
@@ -2580,7 +2581,7 @@ class SpannerBigtableStore:
         # Keep every new key at the workspace's established write scale.
         # Lifetime limits use escrowed per-shard sub-budgets, so retaining an
         # exact cap no longer requires recreating a single hot key-limit row.
-        usage_shard_count = self._credit_shard_count(workspace_id)
+        usage_shard_count = 1 if budget_strict else self._credit_shard_count(workspace_id)
         return self.api_keys.create(
             workspace_id=workspace_id,
             name=name,
@@ -2595,6 +2596,7 @@ class SpannerBigtableStore:
             limit_weekly_microdollars=limit_weekly_microdollars,
             limit_monthly_microdollars=limit_monthly_microdollars,
             budget_alert_only=budget_alert_only,
+            budget_strict=budget_strict,
             tags=tags,
             scopes=scopes,
             app_id=app_id,
@@ -5945,6 +5947,8 @@ class SpannerBigtableStore:
         key_usage_shards: int = 1,
         skip_key_limit: bool = False,
         speculate_key_limit: bool = True,
+        strict_budget: bool = False,
+        strict_budget_alert_only: bool = False,
         tags: dict[str, str] | None = None,
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
@@ -6126,7 +6130,7 @@ class SpannerBigtableStore:
             return _json_body(build_authorization(authorization_id, reservation_id))
 
         window_decision = None
-        if window_limits:
+        if window_limits and not strict_budget:
             # Lock-free snapshot check BEFORE the DML-only transaction (keeps
             # the authorize txn free of shared reads on the hot row — the
             # deadlock shape the typed migration removed). Replay-safe: an
@@ -6223,6 +6227,8 @@ class SpannerBigtableStore:
                     key_shard_candidates=key_shard_candidates,
                     skip_key_limit=skip_key_limit,
                     speculate_key_limit=speculate_key_limit,
+                    strict_budget=strict_budget,
+                    enforce_strict_windows=not strict_budget_alert_only,
                     authorization_id=authorization_id,
                     spend_lease_hook=spend_hook,
                     build_authorization_for_lease=(
@@ -6474,7 +6480,18 @@ class SpannerBigtableStore:
                 break
             return result
 
-        result = recover_credit(run_tracked(credit_shard_candidates))
+        if strict_budget:
+            from trusted_router.storage_gcp_io import spanner_rpc_budget
+            from trusted_router.strict_budget import STRICT_BUDGET_SECONDS, strict_budget_slot
+
+            @spanner_rpc_budget(STRICT_BUDGET_SECONDS)
+            def strict_authorize() -> dict[str, Any]:
+                with strict_budget_slot(key_hash):
+                    return recover_credit(run_tracked(credit_shard_candidates))
+
+            result = strict_authorize()
+        else:
+            result = recover_credit(run_tracked(credit_shard_candidates))
 
         # Match authorize's credit-before-key precedence when both escrows fragment.
         if result["outcome"] == AuthorizeOutcome.KEY_LIMIT_EXCEEDED and key_counter_shards > 1:
@@ -6520,7 +6537,7 @@ class SpannerBigtableStore:
 
         verdict = AuthorizeVerdict(
             outcome,
-            rate_limit=window_decision,
+            rate_limit=getattr(outcome, "rate_limit", None) or window_decision,
             spend_lease_bound=bool(result.get("bound")),
             no_lease_reason=result.get("no_lease_reason"),
             spend_lease_outcome=result.get("spend_lease_outcome"),

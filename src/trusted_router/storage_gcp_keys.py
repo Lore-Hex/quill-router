@@ -100,6 +100,7 @@ class SpannerApiKeys:
         limit_weekly_microdollars: int | None = None,
         limit_monthly_microdollars: int | None = None,
         budget_alert_only: bool = False,
+        budget_strict: bool = False,
         tags: dict[str, str] | None = None,
         scopes: list[str] | None = None,
         app_id: str = "",
@@ -130,6 +131,7 @@ class SpannerApiKeys:
             limit_weekly_microdollars=limit_weekly_microdollars,
             limit_monthly_microdollars=limit_monthly_microdollars,
             budget_alert_only=budget_alert_only,
+            budget_strict=budget_strict,
             tags=dict(tags or {}),
             usage_shard_count=usage_shard_count,
         )
@@ -294,6 +296,8 @@ class SpannerApiKeys:
     ) -> KeyLimitReserveResult:
         def txn(transaction: Any) -> int:
             key = self._io.read_entity_tx(transaction, "api_key", key_hash, ApiKey)
+            if key is not None and key.budget_strict:
+                raise ValueError("strict budgets require typed gateway authorization")
             if key is None or key.limit_microdollars is None:
                 return 0
             if _is_byok(usage_type) and not key.include_byok_in_limit:

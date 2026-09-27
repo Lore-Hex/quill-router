@@ -233,6 +233,7 @@ from trusted_router.provider_lifecycle import (
     provider_price_microdollars,
 )
 from trusted_router.provider_locations import inference_location_metadata, provider_geography
+from trusted_router.provider_precision import endpoint_precision_metadata, endpoint_quantization
 from trusted_router.routing_candidates import (  # noqa: F401 - re-exported for back-compat
     FAST_MODEL_ORDER,
     InvalidAutoModelOrder,
@@ -801,6 +802,8 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
                 "provider_name": PROVIDERS[endpoint.provider].name,
                 "usage_type": endpoint.usage_type,
                 "upstream_id": endpoint.upstream_id,
+                "quantization": endpoint_quantization(endpoint),
+                "precision": endpoint_precision_metadata(endpoint),
                 "attested_gateway": PROVIDERS[endpoint.provider].attested_gateway,
                 "stores_content": endpoint_stores_content(endpoint),
                 "provider_zero_data_retention": endpoint_zero_data_retention(endpoint),
