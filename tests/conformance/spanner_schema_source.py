@@ -366,8 +366,8 @@ EXCLUDED_DIRECTORIES = {
 }
 
 
-def _tracked_files(root: Path) -> list[Path] | None:
-    """The tracked files when root is the top of a git checkout, else None.
+def _tracked_files(root: Path) -> list[tuple[Path, bytes]] | None:
+    """The tracked files and their git modes when root is the top of a git checkout, else None.
 
     A submodule is one gitlink entry whose files git lists only in some
     configurations, so a checkout containing one is refused outright.
@@ -381,7 +381,7 @@ def _tracked_files(root: Path) -> list[Path] | None:
                                 capture_output=True, check=True).stdout
     except (OSError, subprocess.CalledProcessError):
         return None
-    paths: dict[Path, None] = {}
+    paths: dict[Path, bytes] = {}
     for entry in listed.split(b"\0"):
         info, _, name = entry.partition(b"\t")
         if not name:
@@ -390,8 +390,8 @@ def _tracked_files(root: Path) -> list[Path] | None:
         if info.startswith(b"160000 "):
             raise AssertionError(f"{path}: submodules are outside the schema scan; "
                                  "extend repository_files() before adding one")
-        paths[path] = None
-    return list(paths)
+        paths[path] = info.split(b" ", 1)[0]
+    return list(paths.items())
 
 
 def repository_files(root: Path) -> list[Path]:
@@ -411,7 +411,7 @@ def repository_files(root: Path) -> list[Path]:
             paths.extend(Path(directory) / name for name in files)
         return sorted(paths)
     kept = []
-    for path in tracked:
+    for path, mode in tracked:
         parts = path.relative_to(root).parts
         if any(part in EXCLUDED_DIRECTORIES for part in parts[:-1]):
             continue
@@ -419,6 +419,11 @@ def repository_files(root: Path) -> list[Path]:
             continue
         if path.is_file():
             kept.append(path)
+        elif mode != b"120000":
+            # A symlink is scanned when it resolves to a file, as the walk did;
+            # a tracked file missing from disk would escape the scan.
+            raise AssertionError(f"{path}: tracked but missing from the checkout (sparse or "
+                                 "deleted); the schema scan needs every tracked file")
     return sorted(kept)
 
 

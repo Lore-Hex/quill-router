@@ -708,3 +708,20 @@ def test_a_git_checkout_with_a_submodule_is_refused(tmp_path_factory, active):
     # Git lists a submodule's files only when it is active; refuse either way.
     with pytest.raises(AssertionError, match="submodules are outside the schema scan"):
         schema.repository_files(checkout)
+
+
+def test_a_checkout_missing_a_tracked_file_is_refused(tmp_path_factory):
+    checkout = tmp_path_factory.mktemp("sparse")
+    subprocess.run(["git", "init", "-q", str(checkout)], check=True)  # noqa: S603, S607 - fixed git setup
+    (checkout / "migrate.sh").write_text('{"note": "update_ddl"}\n')
+    (checkout / "scripts").mkdir()
+    (checkout / "linked").symlink_to("scripts", target_is_directory=True)
+    subprocess.run(["git", "-C", str(checkout), "add", "migrate.sh", "linked"], check=True)  # noqa: S603, S607 - fixed git setup
+
+    # A tracked symlink to a directory is not a file to scan, as before.
+    assert schema.repository_files(checkout) == [checkout / "migrate.sh"]
+
+    # As in a sparse checkout, the tracked file is absent from disk.
+    (checkout / "migrate.sh").unlink()
+    with pytest.raises(AssertionError, match="tracked but missing from the checkout"):
+        schema.repository_files(checkout)
