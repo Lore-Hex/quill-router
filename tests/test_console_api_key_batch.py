@@ -367,6 +367,7 @@ def test_console_key_projection_keeps_the_existing_template_shape() -> None:
             },
         ],
         "budget_alert_only": True,
+        "budget_strict": False,
         "disabled": True,
     }
 
