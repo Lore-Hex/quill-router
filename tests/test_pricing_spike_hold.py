@@ -178,11 +178,13 @@ def test_the_spike_is_real_without_the_hold(
     assert set(spiking_providers(before, refresh.SNAPSHOT_PATH)) == {name}
 
 
+@pytest.mark.parametrize("restore", [True, False], ids=["restored", "restore-skipped"])
 def test_a_held_manifest_only_provider_is_restored_exactly_and_is_not_a_failure(
     published: dict[str, Any],
     provider: tuple[str, str],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    restore: bool,
 ) -> None:
     # beta has no snapshot route, so the stale fallback recovers nothing for
     # it; its routes live only in the manifest, which is restored as published.
@@ -223,6 +225,12 @@ def test_a_held_manifest_only_provider_is_restored_exactly_and_is_not_a_failure(
     results["beta"] = ProviderPricingResult(
         slug="beta", source="api", prices={"beta/model": ModelPrice(3_000_000, 2_000_000)}
     )
+
+    if not restore:
+        # The exactness guard must refuse a held manifest left as refreshed.
+        monkeypatch.setattr(refresh, "_restore_published_files", lambda *_args: None)
+        assert refresh.main([]) == 1
+        return
 
     assert refresh.main([]) == 0  # MAX_TOLERATED_FAILURES is 0 in this fixture
 
