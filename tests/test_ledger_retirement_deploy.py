@@ -93,11 +93,24 @@ gc() {
     'storage objects describe')
       fixture="$(control_fixture "$4")"
       if [ -f "$FIXTURES/$fixture" ]; then control_generation "$fixture"
-      else echo 'ERROR: (gcloud.storage.objects.describe) NOT_FOUND' >&2; return 1; fi ;;
+      else echo 'ERROR: (gcloud.storage.objects.describe) NOT_FOUND' >&2; return 1; fi
+      # "takeover-lock-after" N: the production lock changes hands on the
+      # Nth read of the pass record, i.e. between an earlier ownership
+      # check and this read
+      if [ "$fixture" = gate-pass ] && [ -f "$FIXTURES/takeover-lock-after" ]; then
+        left=$(( $(cat "$FIXTURES/takeover-lock-after") - 1 ))
+        if [ "$left" -le 0 ]; then rm -f "$FIXTURES/takeover-lock-after"; mv "$FIXTURES/takeover-lock" "$FIXTURES/lock"
+        else echo "$left" > "$FIXTURES/takeover-lock-after"; fi
+      fi ;;
     'storage cat '*)
       fixture="$(control_fixture "$3")"
       if [ -f "$FIXTURES/$fixture" ]; then cat "$FIXTURES/$fixture"
-      else echo 'ERROR: (gcloud.storage.cat) No URLs matched' >&2; return 1; fi ;;
+      else echo 'ERROR: (gcloud.storage.cat) No URLs matched' >&2; return 1; fi
+      # "inject-<fixture>": someone else's record lands right after this read
+      if [ -f "$FIXTURES/inject-$fixture" ]; then
+        bumped=$(( $(control_generation "$fixture") + 1 ))
+        mv "$FIXTURES/inject-$fixture" "$FIXTURES/$fixture"; echo "$bumped" > "$FIXTURES/gen-$fixture"
+      fi ;;
     'storage cp '*)
       fixture="$(control_fixture "$4")"
       expected=""
@@ -958,6 +971,45 @@ def test_control_records_are_never_overwritten_by_a_concurrent_write(tmp_path: P
     assert run.returncode != 0
     assert "cannot write the marker" in run.stderr
     assert json.loads((tmp_path / "marker").read_text()) == {"written_by": "someone else"}
+
+
+def test_late_lock_loss_and_late_target_records_are_honoured(tmp_path: Path) -> None:
+    # The lock changes hands after the gate's checks but before the
+    # publisher reads the pass record's generation: ownership is re-checked
+    # after that read, so nothing is published over the new holder's pass.
+    _step_two_fleet(tmp_path)
+    _schedules(tmp_path)
+    _evidence(tmp_path, [_regional_line()] * 5, [_spend_line()] * 5)
+    (tmp_path / "gate-pass").write_text(json.dumps({"operation": "op-7", "passed_at": OBSERVED_AT}))
+    _lock(tmp_path, "op-1")
+    _lock(tmp_path, "op-9")
+    (tmp_path / "lock").rename(tmp_path / "takeover-lock")
+    _lock(tmp_path, "op-1")
+    (tmp_path / "takeover-lock-after").write_text("2")
+    run = _run(tmp_path, GATE, extra="TR_DEPLOY_MUTEX_OPERATION=op-1\n")
+    assert run.returncode == 0, run.stderr
+    assert "not recording the gate pass: deployment operation op-1 does not hold the production lock" in run.stderr
+    assert (_recorded_gate(tmp_path) or {}).get("operation") == "op-7"
+    assert not (tmp_path / "takeover-lock-after").exists()
+
+    # A target another run records between the teardown's first read and
+    # its own write ends up in the durable union AND in this teardown's
+    # deletions and absence proof.
+    _lock(tmp_path, "op-1")
+    _workers(tmp_path, extra="us-west1\tquota-custom-worker\n")
+    (tmp_path / "targets").write_text(json.dumps({"targets": []}))
+    (tmp_path / "inject-targets").write_text(json.dumps({"targets": ["us-west1/quota-custom-worker"]}))
+    run = _run(tmp_path, RETIRE, extra="TR_DEPLOY_MUTEX_OPERATION=op-1\n")
+    assert run.returncode == 0, run.stderr
+    assert "deleted worker quota-custom-worker in us-west1" in run.stderr
+    assert json.loads((tmp_path / "targets").read_text()) == {
+        "targets": sorted(["us-west1/quota-custom-worker", f"us-east4/{REGIONAL_JOB}", f"us-east4/{SPEND_JOB}"]),
+    }
+    assert json.loads((tmp_path / "marker").read_text())["workers_deleted"] == 5
+    assert (tmp_path / "jobs").read_text() == (
+        "us-central1\ttrusted-router-synthetic-us-central1\n"
+        "us-east4\ttrusted-router-trust-reconciler\n"
+    )
 
 
 def test_gate_requires_evidence_after_the_fleet_state_was_seen_plus_the_interval(tmp_path: Path) -> None:

@@ -652,6 +652,11 @@ raise SystemExit(0 if isinstance(record, dict) and record.get("operation") == sy
   return "$status"
 }
 
+# Publishes the pass for OPERATION, or records nothing (exit 0) when that
+# operation no longer holds the production lock. Ownership is checked AFTER
+# the generation read: a lease that runs out between the two would hand
+# the fence to the new holder, whose record a generation read afterwards
+# would overwrite.
 _ledger_record_gate_pass() {
   local operation="$1" record generation
   record="$(mktemp "${TMPDIR:-/tmp}/ledger-gate.XXXXXX")" || return 1
@@ -660,6 +665,11 @@ _ledger_record_gate_pass() {
     return 1
   fi
   generation="$LEDGER_CONTROL_GENERATION"
+  if ! _ledger_mutex_held_by "$operation"; then
+    rm -f "$record"
+    log "not recording the gate pass: deployment operation ${operation} does not hold the production lock"
+    return 0
+  fi
   python3 -c '
 import datetime as dt, json, sys
 print(json.dumps({"operation": sys.argv[1], "passed_at": dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")}))
@@ -691,11 +701,7 @@ ledger_retirement_gate() {
   # stale one whose checks happen to succeed must not overwrite the current
   # release's record.
   if [ -n "$operation" ]; then
-    if _ledger_mutex_held_by "$operation"; then
-      _ledger_record_gate_pass "$operation" || return 1
-    else
-      log "not recording the gate pass: deployment operation ${operation} does not hold the production lock"
-    fi
+    _ledger_record_gate_pass "$operation" || return 1
   fi
 }
 
@@ -1011,6 +1017,13 @@ ledger_retire_workers() {
   done
   if [ "${#live_schedules[@]}" -gt 0 ]; then
     _ledger_record_targets "${targets[@]+"${targets[@]}"}" || return 1
+    # The record is a union with whatever another run added since the
+    # first read; every inventory below works from that union.
+    targets=()
+    recorded="$(_ledger_recorded_targets)" || return 1
+    while IFS= read -r job; do
+      [ -n "$job" ] && targets+=("$job")
+    done <<<"$recorded"
   fi
   local entry
   for entry in "${live_schedules[@]+"${live_schedules[@]}"}"; do
