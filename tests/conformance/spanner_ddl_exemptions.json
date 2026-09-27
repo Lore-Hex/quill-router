@@ -1,32 +1,4 @@
 {
-  "directories": {
-    "clickhouse": {
-      "reason": "ClickHouse analytics SQL migrations and Python query builders; statement text belongs to the ClickHouse dialect."
-    },
-    "experiments": {
-      "reason": "Standalone experiments and their local schemas, fixtures and UI data; not native Spanner deployment schema."
-    }
-  },
-  "statement_files": {
-    ".test_durations": {
-      "reason": "Test timing data containing test names, not schema operations."
-    },
-    ".codex-review-*.md": {
-      "reason": "Root review notes quote SQL as inert review evidence."
-    },
-    "scripts/lightning/postgres_provenance.sql": {
-      "reason": "PostgreSQL-only constraint migration, including VALIDATE CONSTRAINT."
-    },
-    "src/trusted_router/storage_postgres_schema.sql": {
-      "reason": "PostgreSQL-dialect backend schema, not native Spanner GoogleSQL."
-    },
-    "src/trusted_router/storage_postgres.py": {
-      "reason": "PostgreSQL/Aurora DSQL adapter SQL and schema explanations."
-    },
-    "src/trusted_router/static/openapi-public.json": {
-      "reason": "Generated OpenAPI schema and endpoint descriptions; statement phrases are API documentation data, not SQL operations."
-    }
-  },
   "files": {
     "scripts/lightning/spanner_provenance.sql": {
       "sha256": "39e3b2dd79b042c790aaf715ded82e6ec73196b669814ddeaf7c874fad674351",
@@ -34,42 +6,10 @@
     }
   },
   "lines": {
-    ".codex-review-1.md": {
-      "- **P2 \u2014 [docs/client-receipts.md:47]:** The documentation says the migration is safe after the compatible router, but the new writer immediately names physical `kid` and `att_sha256` columns and fails if they do not exist. Reproduce by starting this revision before applying DDL and collecting a key. Fix: state expli": {
-        "count": 1,
-        "reason": "Historical review prose quoting schema operations; not executable."
-      }
-    },
     ".github/workflows/ci.yml": {
       "# order-independent; grouping is what serializes the DDL.": {
         "count": 1,
         "reason": "Schema rollout/retention explanation only; this line dispatches no DDL."
-      }
-    },
-    ".test_durations": {
-      "\"tests/test_clickhouse_client_events.py::test_ingester_column_tuples_match_the_ddl_in_order\": 0.0018132800000216776,": {
-        "count": 1,
-        "reason": "Recorded pytest timing key, not executable schema."
-      },
-      "\"tests/test_heavy_spanner_ddl_safety.py::test_entity_ttl_migration_applies_only_after_both_gates\": 0.015751379999983328,": {
-        "count": 1,
-        "reason": "Recorded pytest timing key, not executable schema."
-      },
-      "\"tests/test_heavy_spanner_ddl_safety.py::test_entity_ttl_migration_defaults_to_verification_only\": 0.008207185000003392,": {
-        "count": 1,
-        "reason": "Recorded pytest timing key, not executable schema."
-      },
-      "\"tests/test_heavy_spanner_ddl_safety.py::test_entity_ttl_migration_requires_specific_acknowledgement\": 0.006903426999997464,": {
-        "count": 1,
-        "reason": "Recorded pytest timing key, not executable schema."
-      },
-      "\"tests/test_heavy_spanner_ddl_safety.py::test_heavy_entity_ttl_migration_is_not_part_of_routine_deploy\": 0.0012724389999902996,": {
-        "count": 1,
-        "reason": "Recorded pytest timing key, not executable schema."
-      },
-      "\"tests/test_operational_analytics_outbox_postgres.py::test_the_outbox_ddl_is_actually_in_the_schema_file\": 0.00117800499998566,": {
-        "count": 1,
-        "reason": "Recorded pytest timing key, not executable schema."
       }
     },
     "clickhouse/ingest_operational_outbox.py": {
@@ -100,12 +40,6 @@
         "reason": "Schema rollout/retention explanation only; this line dispatches no DDL."
       }
     },
-    "scripts/deploy/aws_eu_clickhouse.sh": {
-      "# boot, and so this script cannot create a node it has no schema for.": {
-        "count": 1,
-        "reason": "ClickHouse schema provisioning, parsing or operator explanation, not Spanner schema."
-      }
-    },
     "scripts/deploy/aws_eu_clickhouse_drain_install.sh": {
       "every table plus DDL, on a cluster that also holds wallets, keys and the": {
         "count": 1,
@@ -120,110 +54,6 @@
       "EXPECTED=\"$(grep -oiE 'CREATE TABLE IF NOT EXISTS [a-z0-9_]+' \"$WORK/schema.sql\" \\": {
         "count": 1,
         "reason": "Parses ClickHouse schema table names for post-apply verification."
-      }
-    },
-    "scripts/deploy/azure_clickhouse.sh": {
-      "This script does not create role assignments on purpose. Run:": {
-        "count": 1,
-        "reason": "Azure IAM role-assignment instructions, not database schema."
-      }
-    },
-    "scripts/deploy/azure_github_deploy_identity.sh": {
-      "# create role assignments;": {
-        "count": 1,
-        "reason": "Application/UI/catalog prose matching a statement phrase; not a database schema operation."
-      }
-    },
-    "scripts/deploy/clickhouse_capacity_smoke.sh": {
-      "node_query \"$index\" \"DROP TABLE IF EXISTS ${table} SYNC\" >/dev/null 2>&1 || true": {
-        "count": 1,
-        "reason": "Disposable ClickHouse capacity-smoke table, not Spanner schema."
-      },
-      "schema=\"CREATE TABLE IF NOT EXISTS ${table} (": {
-        "count": 1,
-        "reason": "Disposable ClickHouse capacity-smoke table, not Spanner schema."
-      }
-    },
-    "scripts/deploy/clickhouse_cluster.sh": {
-      "node_query \"$index\" \"CREATE DATABASE IF NOT EXISTS tr; ${schema}\"": {
-        "count": 1,
-        "reason": "ClickHouse schema provisioning, parsing or operator explanation, not Spanner schema."
-      }
-    },
-    "scripts/deploy/clickhouse_operational_analytics.sh": {
-      "node_query \"$index\" \"CREATE DATABASE IF NOT EXISTS tr; ${schema} ${client_schema}\"": {
-        "count": 1,
-        "reason": "ClickHouse schema provisioning, parsing or operator explanation, not Spanner schema."
-      },
-      "echo \"table tr.${table} is missing on ${NAMES[$index]}; create it with CREATE TABLE IF NOT EXISTS tr.${table} ON CLUSTER trustedrouter from SHOW CREATE TABLE on a replica that has it, then rerun\" >&2": {
-        "count": 1,
-        "reason": "Operator instructions for repairing ClickHouse cluster tables."
-      }
-    },
-    "scripts/deploy/clickhouse_replicated_migrate.sh": {
-      "# Every `ALTER TABLE tr.<table> ON CLUSTER <cluster>` in a migration is executed": {
-        "count": 1,
-        "reason": "ClickHouse schema provisioning, parsing or operator explanation, not Spanner schema."
-      },
-      "# SHOW CREATE TABLE tr.<table> (on that replica)": {
-        "count": 1,
-        "reason": "ClickHouse schema provisioning, parsing or operator explanation, not Spanner schema."
-      },
-      "# CREATE TABLE IF NOT EXISTS tr.<table> ON CLUSTER <cluster> (...) ENGINE = ...": {
-        "count": 1,
-        "reason": "ClickHouse schema provisioning, parsing or operator explanation, not Spanner schema."
-      },
-      "# ALTER TABLE tr.<table> ON CLUSTER <cluster> -> \"<table> <cluster>\"": {
-        "count": 1,
-        "reason": "ClickHouse schema provisioning, parsing or operator explanation, not Spanner schema."
-      },
-      "targets=\"$(grep -oiE 'ALTER TABLE +(tr\\.)?[A-Za-z0-9_]+ +ON CLUSTER +[A-Za-z0-9_]+' \"$path\" \\": {
-        "count": 1,
-        "reason": "ClickHouse ON CLUSTER migration parsing or operator diagnostics."
-      },
-      "| sed -E 's/^ALTER TABLE +(tr\\.)?//I; s/ +ON CLUSTER +/ /I' | sort -u || true)\"": {
-        "count": 1,
-        "reason": "ClickHouse ON CLUSTER migration parsing or operator diagnostics."
-      },
-      "echo \"refusing ${file}: no 'ALTER TABLE ... ON CLUSTER' statement found; this applier only handles replicated migrations\" >&2": {
-        "count": 1,
-        "reason": "ClickHouse ON CLUSTER migration parsing or operator diagnostics."
-      },
-      "echo \"refusing ${file}: tr.${table} is missing on $(printf '%s' \"$missing\" | tr '\\n' ' ')of cluster ${cluster}; an ON CLUSTER ALTER would succeed on the other replicas and leave mixed schemas. Create it first with CREATE TABLE IF NOT EXISTS tr.${table} ON CLUSTER ${cluster} using SHOW CREATE TABLE from a replica that has it.\" >&2": {
-        "count": 1,
-        "reason": "ClickHouse ON CLUSTER migration parsing or operator diagnostics."
-      }
-    },
-    "scripts/deploy/clickhouse_startup.sh": {
-      "clickhouse-client --user tr --password \"${PASSWORD}\" --query 'CREATE DATABASE IF NOT EXISTS tr'": {
-        "count": 1,
-        "reason": "ClickHouse schema provisioning, parsing or operator explanation, not Spanner schema."
-      }
-    },
-    "scripts/deploy/infra-stage0.sh": {
-      "log \" creating database $NEW_SPANNER_DATABASE on $NEW_SPANNER_INSTANCE (mirrored DDL)\"": {
-        "count": 1,
-        "reason": "Standalone bootstrap/cutover explanation outside rolling deployment; base schema duplicates infra.sh."
-      },
-      "gc_or_dry spanner databases create \"$NEW_SPANNER_DATABASE\" \\": {
-        "count": 1,
-        "reason": "Standalone stage-zero bootstrap/retention operation outside rolling deploy; base table duplicates infra.sh."
-      },
-      "--ddl='CREATE TABLE tr_entities (kind STRING(64) NOT NULL, id STRING(512) NOT NULL, body STRING(MAX) NOT NULL, updated_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true)) PRIMARY KEY (kind, id)'": {
-        "count": 1,
-        "reason": "Standalone stage-zero bootstrap/retention operation outside rolling deploy; base table duplicates infra.sh."
-      },
-      "dry_log \"gcloud spanner databases ddl update $NEW_SPANNER_DATABASE --instance=$NEW_SPANNER_INSTANCE --ddl=ALTER_DATABASE_PITR_7D\"": {
-        "count": 1,
-        "reason": "Standalone stage-zero bootstrap/retention operation outside rolling deploy; base table duplicates infra.sh."
-      },
-      "gc spanner databases ddl update \"$NEW_SPANNER_DATABASE\" \\": {
-        "count": 1,
-        "reason": "Standalone stage-zero bootstrap/retention operation outside rolling deploy; base table duplicates infra.sh."
-      },
-      "--ddl=\"ALTER DATABASE \\`${NEW_SPANNER_DATABASE}\\` SET OPTIONS (version_retention_period = '7d')\"": {
-        "count": 1,
-        "reason": "Standalone stage-zero bootstrap/retention operation outside rolling deploy; base table duplicates infra.sh."
       }
     },
     "scripts/deploy/migrate_analytics_outbox.sh": {
@@ -436,78 +266,6 @@
         "reason": "Schema rollout/retention explanation only; this line dispatches no DDL."
       }
     },
-    "scripts/deploy/spanner_reliability.sh": {
-      "run source_gc spanner databases ddl update \"$SPANNER_DATABASE_ID\" \\": {
-        "count": 1,
-        "reason": "Operational PITR retention setting; does not change the fresh-install table/index schema."
-      },
-      "--ddl=\"ALTER DATABASE \\`${SPANNER_DATABASE_ID}\\` SET OPTIONS (version_retention_period = '7d')\"": {
-        "count": 1,
-        "reason": "Operational PITR retention setting; does not change the fresh-install table/index schema."
-      }
-    },
-    "scripts/deploy/spanner_zero_downtime_cutover.sh": {
-      "# expects a database that ALREADY exists with matching DDL \u2014 it": {
-        "count": 1,
-        "reason": "Standalone bootstrap/cutover explanation outside rolling deployment; base schema duplicates infra.sh."
-      },
-      "# stub from Stage 0 (and re-create with the same DDL) only when": {
-        "count": 1,
-        "reason": "Standalone bootstrap/cutover explanation outside rolling deployment; base schema duplicates infra.sh."
-      },
-      "log \" creating target database $DATABASE on $NEW_INSTANCE with mirrored DDL\"": {
-        "count": 1,
-        "reason": "Standalone bootstrap/cutover explanation outside rolling deployment; base schema duplicates infra.sh."
-      },
-      "gc_or_dry spanner databases create \"$DATABASE\" \\": {
-        "count": 1,
-        "reason": "Standalone cutover bootstrap outside rolling deploy; base table duplicates infra.sh."
-      },
-      "--ddl='CREATE TABLE tr_entities (kind STRING(64) NOT NULL, id STRING(512) NOT NULL, body STRING(MAX) NOT NULL, updated_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true)) PRIMARY KEY (kind, id)'": {
-        "count": 1,
-        "reason": "Standalone cutover bootstrap outside rolling deploy; base table duplicates infra.sh."
-      },
-      "# The error from a real run: \"Cannot create database ... because the": {
-        "count": 1,
-        "reason": "Standalone bootstrap/cutover explanation outside rolling deployment; base schema duplicates infra.sh."
-      },
-      "# populates rows but doesn't create the database. Drop the empty": {
-        "count": 1,
-        "reason": "Standalone bootstrap/cutover explanation outside rolling deployment; base schema duplicates infra.sh."
-      }
-    },
-    "scripts/lightning/btcpay/explorer.py": {
-      "sql(\"CREATE ROLE nbxplorer LOGIN PASSWORD '\"+password+\"' NOSUPERUSER NOCREATEDB NOCREATEROLE;\\n\"": {
-        "count": 1,
-        "reason": "PostgreSQL service-role/database provisioning, not native Spanner schema."
-      },
-      "+\"CREATE DATABASE nbxplorer OWNER nbxplorer;\\nREVOKE ALL ON DATABASE nbxplorer FROM PUBLIC;\")": {
-        "count": 1,
-        "reason": "PostgreSQL service-role/database provisioning, not native Spanner schema."
-      }
-    },
-    "scripts/pricing/providers/nebius.py": {
-      "# only for upstream requests so refreshes cannot create a duplicate model.": {
-        "count": 1,
-        "reason": "Application/UI/catalog prose matching a statement phrase; not a database schema operation."
-      }
-    },
-    "src/trusted_router/catalog_ingest.py": {
-      "* provider denylist \u2014 drop a Credits model on ONE provider only (gmi closed models).": {
-        "count": 1,
-        "reason": "Application/UI/catalog prose matching a statement phrase; not a database schema operation."
-      }
-    },
-    "src/trusted_router/content/blog.py": {
-      "<p><strong>But you cannot strip the panel.</strong> That would be a mistake \u2014 and we have the experiment to prove it. When we actually built a three-member panel, dropping the two \"free\" role-players, the score fell <strong>3.4 points</strong> \u2014 nearly as much as removing the single most important model. The drop looks marginal in an unpaired view, but the panels are 0.80-correlated per task, so the right test is paired: per-task, the three-member panel loses <strong>\u22123.4 \u00b1 0.95</strong> against the full committee (t = \u22123.6; a 20,000-sample bootstrap 95% CI of [\u22125.3, \u22121.6] that excludes zero). Each member is individually droppable; the panel is not. Removing one is free because the others cover the gap \u2014 remove two and the gaps open. The breadth is doing work that no single leave-one-out can see. Call it a <em>redundancy floor</em>.</p>": {
-        "count": 1,
-        "reason": "Application/UI/catalog prose matching a statement phrase; not a database schema operation."
-      },
-      "<p>The honest picture is subtler and, we think, more useful: <strong>diversity is real but diffuse.</strong> Roughly half of each pair's score variance is shared and half is independent \u2014 synth lives on that independent half \u2014 but no single model owns it. That is exactly why leave-one-out finds almost nothing (drop any one model and the others still cover its blind spots) while dropping two opens real gaps: the useful disagreement is spread thin across the whole panel, not banked in a hero. What sets the workhorses, M3 and DeepSeek, apart is not extra independence \u2014 it is that they pair that shared diversity with enough competence to put a correct answer on the table, where the weaker members supply uncorrelated error but rarely the right answer to keep.</p>": {
-        "count": 1,
-        "reason": "Application/UI/catalog prose matching a statement phrase; not a database schema operation."
-      }
-    },
     "src/trusted_router/operational_analytics_freshness.py": {
       "#: needs no DDL: ``(kind, id)`` is the primary key and ``body`` the JSON below.": {
         "count": 1,
@@ -540,10 +298,6 @@
     },
     "src/trusted_router/storage_gcp_rate_limits.py": {
       "# by accident; extending TTL to a new kind means changing that DDL.": {
-        "count": 1,
-        "reason": "Schema rollout/retention explanation only; this line dispatches no DDL."
-      },
-      "# ROW DELETION POLICY deletes the row one day later (issue #334;": {
         "count": 1,
         "reason": "Schema rollout/retention explanation only; this line dispatches no DDL."
       }
@@ -588,56 +342,10 @@
         "reason": "PostgreSQL/Aurora DSQL adapter operation or explanation, not native GoogleSQL."
       }
     },
-    "src/trusted_router/templates/console/custom_models.html": {
-      "<h2>Create custom model</h2>": {
-        "count": 1,
-        "reason": "Application/UI/catalog prose matching a statement phrase; not a database schema operation."
-      },
-      "<button class=\"btn primary\" type=\"submit\">Create model</button>": {
-        "count": 1,
-        "reason": "Application/UI/catalog prose matching a statement phrase; not a database schema operation."
-      }
-    },
-    "src/trusted_router/templates/public/provider_marketplace.html": {
-      "<p>The marketplace application is non-secret business and technical information. Once accepted, create a dedicated production credential restricted to model discovery and inference.</p>": {
-        "count": 1,
-        "reason": "Application/UI/catalog prose matching a statement phrase; not a database schema operation."
-      }
-    },
-    "src/trusted_router/templates/public/seo_latest_model_apis.html": {
-      "<p><button class=\"btn primary\" type=\"button\" data-action=\"open-signin\">Create key and run a model</button> <a class=\"btn\" href=\"/choose\">Compare the catalog</a></p>": {
-        "count": 1,
-        "reason": "Application/UI/catalog prose matching a statement phrase; not a database schema operation."
-      }
-    },
-    "src/trusted_router/data/enterprise/TrustedRouter-Token-Exchange-Brochure.pdf": {
-      "\ufffd\ufffd a\ufffd\ufffd]\ufffd\ufffd\ufffd'(\ufffd@\\\ufffd\ufffdU{\ufffd\ufffdy \ufffd\u0017\ufffdx\ufffd\ufffd?\ufffd\ufffd\u0005\ufffd\ufffd\u001b\u0497`\ufffd\ufffd\u00008\ufffd\ufffd\u0116\ufffd\u0007o\ufffdi#\u0001t\ufffdoH\u001am\ufffd\ufffd_\ufffdI >\ufffd\ufffd?\ufffd\b =\ufffd\u0001A\ufffd\ufffd a\ufffd\u91fdj\u0007j=\u0001\u07b5\ufffdkZ\u0434\ufffd)\ufffd\u000eO0\u06c7\ufffd\ufffd5\ufffd_\"\u05b5\ufffdkeU\ufffdVUY_\u0014i\ufffdF\ufffd\ud8f3\uddaa\ufffd D\ufffd\ufffd\ufffd\u000eQ\ufffd\u07be\ufffd\ufffd\ufffd\ufffd\u000f\ufffd\ufffd}-\ufffd\ub246o_Kz\ufffd\ufffdg\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\u0017\ufffd\ufffd\ufffd\ufffd\ufffdw\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd}\u0007;\u000e\u000f\ufffd\u0012(1\ufffd\ufffdK\ufffd\u007f,\ufffd_\ufffd\ufffd_\ufffd\ufffd_\ufffd>\ufffd\ufffd>\ufffd\u0f97\ufffd>\ufffd\u2f97\ufffd>\ufffd\u2f97\u2f97\ufffd>\ufffd\ufffd\u0433\ufffd Kt>\ufffd\u007fC\ufffdgt>\ufffdwC\ufffdwJ\u0687\ufffdz>\ufffd\ufffd\ufffd7c%\ufffd K?\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd?c%\ufffd\ufffd,\ufffd\u0316~\ufffdK?\ufffd\u8dfe\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd},\ufffd\ufffd\ufffd\ufffd\ufffd\u0016~\ufffdKp\ufffd\u0016v\ufffdK;c%\ufffd S\ufffd\u0002\u00106+\ufffd|\ufffd\u00ed\ufffd\ufffd[\ufffd\ufffd\ufffd\ufffd_K;\ufffd\ufffd\ufffd\ufffd2[\ufffd\ufffd\ufffd\ufffd K?s%\ufffd~\ufffd?c/\"\ufffd!\bB\u0016\u0716;%{<\u0013\ufffd\ufffd\ufffd\ufffd\u0000\ufffd\ufffdg\ufffd\ufffd\ufffdU\b\ufffd\ufffd\ufffd\ufffd\u0007\ufffd\ufffd\ufffd\ufffd\ufffd\ufffdKo\ufffdm\ufffd-\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffdCmxf\ufffd\ufffd\ufffdg\ufffd>\ufffd\ufffd\u0000F\ufffdN\ufffd\u0331\u0019\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffdZ\b]\u021c\ufffd\u0655\ufffd+fV\u012d\ufffd[2\ufffdel\ufffd\u065fKj\ufffd\ufffd\ufffd?G\u0004\u0000B\ufffd\ufffd\ufffd\ufffd\u0000\b\u0013\ufffdDL\ufffdDDL\ufffd\ufffdDN\ufffd\ufffd\u0018\ufffd6\ufffd-\ufffd[\ufffd\u0001o\ufffd\ufffd\u000f\u0003\ufffdl\ufffd\ufffd\u0005\ufffd l\u0016\ufffd-\ufffd\ufffd[l\ufffd\ufffdm2\ufffde\ufffd\ufffd\u0014\ufffd:\ufffd\ufffd\ufffdm\ufffd\ufffd\ufffd\ufffd\u07afW\ufffd\ufffd\ufffd+\ufffdw\ufffd\ufffd\ufffdUW\ufffd\ufffdz\ufffd_\u00ff\ufffd\ufffd\ufffdY< \ufffd\u0003\ufffd+'\ufffd\ufffd\ufffd ~\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd]_\ufffd\ufffd\u0000\ufffd\ufffdxU\ufffd\ufffd\u0000\ufffd\ufffd\ufffdj\ufffd\u0000\ufffdI\\\u0016\ufffdz\ufffd\ufffd\ufffd\u0000o_\ufffd\ufffd\u0000T\ufffd\u007f\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\u0000 <\ufffd\ufffd\ufffd\ufffdf}\ufffd\ufffd\ufffd\u0000\ufffd\ufffd]\ufffd\ufffd\ufffd\ufffdo\ufffd|\ufffd\ufffd\ufffdMY0 \u000f\ufffdp\ufffd\u000e*\ufffd\ufffd\u017d\u001bOe\ufffd\ufffd\ufffd\u0004\ufffd\ufffd\ufffd\ufffddy\u007f\ufffd\ufffd\u0000\ufffd\ufffd\u0000\ufffd\ufffd\ufffd\ufffdW\ufffd\ufffdH\u0014;\ufffd]\ufffd\u0015 95P~tg\ufffd\ufffdA \ufffd\ufffd\u0000..%\u001a\u00023\ufffdH\ufffdD \ufffd?\ufffdOn": {
-        "count": 1,
-        "reason": "Binary publication asset; incidental transport token in this exact byte-decoded line, not executable schema."
-      }
-    },
-    "src/trusted_router/static/og/providers/lightning.png": {
-      "6 z\ufffd\ufffd \ufffdT~XYY\ufffddg\ufffd\u06b1\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffdLLM\ufffdcu\ufffd\ufffd\ufffd\ufffd\ufffd! \ufffdm\ufffd\u000es \ufffd\u0013\ufffd\ufffd-uM\ufffd\u0017;t\ufffd0\ufffd\ufffd\ufffdX\ufffdD\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\u0017 \ufffd\ufffd\ufffd\ufffd\ufffd\ufffdL\\\\\ufffd\ufffd\ufffd\ufffda\ufffd:HFV\ufffd\ufffd\u0253O ?\ufffd\ufffd\ufffd|\ufffd0i\ufffd\u0014\u0017\ufffd\u0001\u0017\u039fkzj\ufffd\ufffd0J8t\ufffdc\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd-,\u001a\u0012\ufffdF\u000f \ufffd\ufffd\ufffd\ufffd\ufffd\ufffdrs \ufffd3\ufffdO\ufffd\ufffd\ufffd\u0012B,\ufffdz\u0011B\ufffdBBZYCO\ufffd:\ufffdz\ufffd\ufffdq\ufffd\u01ef]\ufffdZDDd\ufffd!YYY~~~\ufffd\ufffd\u0000:(<CH\ufffd\ufffd\ufffd>}\ufffdddlL\b\u0011\u0016\u0016\ufffd\ufffd\ufffd\ufffd\u00c7h\ufffd\u0019\ufffd-,+**n\\\ufffd\ufffd\ufffdTUV\ufffdz{\u0013B\ufffd--y-\ufffd\ufffd\ufffdu_B\ufffd\ufffd\ufffdE\ufffd\ufffd<\ufffd\ufffd\ufffdOM\ufffd\ufffd\ufffd\ufffd!\ufffd\ufffd0q\ufffddmmm\u0006\ufffdQTT\ufffdd\ufffd\ufffd_~^\ufffd \ufffd\u0013\ufffd\ufffd\ufffd-))a2Y-+u\ufffd\ufffdX\ufffdD\ufffd\ufffd\ufffdekg\ufffd`0\ufffd_\ufffd\b\u007f\ufffd\ufffdd\ufffd\ufffd\ufffd\ufffd'\ufffd\ufffd\ufffd\u0014\u0017\u0017\u0007=\ufffdr\ufffd\ufffdip\ufffd\ufffd\u05ef\ufffd6oMOmq\u0019F \ufffd\u000e}\ufffd(.*b\ufffdX_=|\ufffd 5^\ufffd|)!!\ufffdo`@\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffdz\ufffd2\ufffd\ufffd5455\ufffd\ufffd\ufffd[\ufffd\ufffd*\ufffd\u0003\u0006 1BLL\ufffd\ufffd\ufffdU\ufffd\ufffd\ufffd\ufffd\u0000:(\ufffd!$\ufffd\ufffd\ufffd\ufffd\ufffd\u0007yz\ufffd\ufffd\ufffd)**": {
-        "count": 1,
-        "reason": "Binary publication asset; incidental transport token in this exact byte-decoded line, not executable schema."
-      }
-    },
-    "src/trusted_router/static/og/providers/telluvian.png": {
-      "\ufffd\ufffd3\ufffdcPy\ufffd\ufffd<\ufffd\ufffdx\ufffd\ufffd#\ufffd\ufffdy\ufffd\ufffd\ufffd\ufffd\ufffd\u001a\u000f\ufffdc\ufffd(%\ufffdT?&\ufffd\ufffd\u0004\ufffd\ufffd\u0004G\ufffdm}\ufffd-\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd^_\ufffd\u0099\ufffdQ\ufffd\u0016%!\ufffd\u045ey\ufffdo\ufffd+\ufffd\ufffd\ufffd\ufffd\ufffd\u0004\u0006\u0004\u050f\ufffd+\"~\ufffd\ufffd_\u007f\ufffdV\ufffd\ufffdS\ufffd\u0012\ufffdQP\ufffd\ufffd\u0001\ufffd\ufffd\u0006\ufffd\ufffd\ufffd\u0371#\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd%\ufffd\ufffd\ufffd\u038e\ufffd[',4DDL&\ufffd\ufffd\ub9f6o\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd]\ufffd\ufffdj\u046c\ufffd\u0015W>\ufffd\ufffd\ufffd\u07b5v\ufffd\ufffd\ufffd?\ufffd~\ufffd\ufffdg_W\ufffd#\ufffd\ufffd1 \ufffd<c\ufffdc\u03fe\ufffd\ufffd>\ufffd\u06e8\ufffd*.\ufffd\\Ll\ufffd\ufffd\ufffdwM\ufffd\u001bF\ufffd\u0004\u0007\ufffdHpP\ufffd\u0017\ufffd>d\ufffd\ufffdg\ufffdc*\ufffds9\ufffd5\u0295\ufffd-": {
-        "count": 1,
-        "reason": "Binary publication asset; incidental transport token in this exact byte-decoded line, not executable schema."
-      }
-    },
     "scripts/lightning/activate_web.py": {
       "operator.gc(\"sql\", \"databases\", \"create\", \"funding\", \"--instance=\" + INSTANCE)": {
         "count": 1,
         "reason": "Creates the standalone Lightning PostgreSQL database via gcloud sql, not a Spanner database."
-      }
-    },
-    "src/trusted_router/storage_postgres_schema.sql": {
-      "-- storage_postgres.py::_execute_ddl rather than here, so this file stays": {
-        "count": 1,
-        "reason": "PostgreSQL schema comment naming the adapter DDL helper; this line does not dispatch native Spanner SQL."
       }
     }
   }

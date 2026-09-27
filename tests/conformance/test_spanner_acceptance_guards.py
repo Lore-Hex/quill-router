@@ -14,6 +14,15 @@ from tests.conformance.spanner_schema_source import ROOT, assert_schema_matches,
 from tests.conformance.spanner_sql_inventory import SRC, assert_complete
 
 
+def copy_schema_repository(root):
+    shutil.copytree(ROOT / "scripts/deploy", root / "scripts/deploy")
+    # The library executes this module; the migration surface follows that edge.
+    package = root / "src/trusted_router"
+    package.mkdir(parents=True)
+    for name in ("enclave_regions.py", "__init__.py"):
+        shutil.copyfile(ROOT / "src/trusted_router" / name, package / name)
+
+
 def test_unregistered_sql_fails_in_a_copy(tmp_path):
     source = tmp_path / "src"
     shutil.copytree(SRC, source)
@@ -46,7 +55,7 @@ def test_changed_column_type_fails_in_a_copy(tmp_path):
 
 def test_new_schema_source_cannot_silently_escape_parser(tmp_path):
     scripts = tmp_path / "scripts/deploy"
-    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    copy_schema_repository(tmp_path)
     (scripts / "migrate_new.sh").write_text('ensure_table future_table "unknown new idiom"\n')
     with pytest.raises(AssertionError, match="Schema source changed"):
         assert_schema_matches(spanner_ddl.DDL, spanner_ddl.SOURCE_DIGESTS, tmp_path)
@@ -187,7 +196,7 @@ def test_transaction_cleanup_preserves_original_failure(phase):
 ], ids=["heredoc", "single-quoted-alter", "variable-definition"])
 def test_schema_blind_spots_fail_closed_in_copies(tmp_path, addition):
     scripts = tmp_path / "scripts/deploy"
-    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    copy_schema_repository(tmp_path)
     path = scripts / "migrate_review_hole.sh"
     path.write_text(addition)
     with pytest.raises(AssertionError, match=r"migrate_review_hole.sh:\d+:"):
@@ -211,7 +220,7 @@ def test_every_ddl_dispatch_is_consumed_in_copies(tmp_path, addition):
     from tests.conformance.spanner_schema_source import source_digests
 
     scripts = tmp_path / "scripts/deploy"
-    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    copy_schema_repository(tmp_path)
     path = scripts / "migrate_money_primitives.sh"
     original = path.read_text() + '\nddl() { gcloud spanner databases ddl update db --ddl="$1"; }\n'
     path.write_text(original + addition)
@@ -223,7 +232,7 @@ def test_every_ddl_dispatch_is_consumed_in_copies(tmp_path, addition):
 
 def test_lowercase_split_create_index_is_extracted(tmp_path):
     scripts = tmp_path / "scripts/deploy"
-    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    copy_schema_repository(tmp_path)
     path = scripts / "migrate_money_primitives.sh"
     path.write_text(path.read_text() + '\napply_ddl "create\nindex review_added ON tr_entities (kind)"\n')
     ddl = migration_ddl(tmp_path)
@@ -253,7 +262,7 @@ gcloud "${args[@]}"
         "uppercase-flag-lowercase-sql", "unknown-create", "multiline-command-words"])
 def test_literal_ddl_carriers_fail_closed_in_copies(tmp_path, addition, carrier):
     scripts = tmp_path / "scripts/deploy"
-    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    copy_schema_repository(tmp_path)
     library = scripts / "_lib.sh"
     library.write_text(library.read_text() + '\ngcp() { gcloud --project "$PROJECT_ID" "$@"; }\n')
     path = scripts / "migrate_review_hole.sh"
@@ -274,7 +283,7 @@ def test_quoted_array_ddl_carrier_fails_closed(tmp_path):
     # All command words are quoted too: only the literal quoted flag exposes
     # this array to the carrier scan. Removing quoted text must kill this test.
     scripts = tmp_path / "scripts/deploy"
-    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    copy_schema_repository(tmp_path)
     path = scripts / "migrate_review_hole.sh"
     path.write_text('''args=("spanner" "databases" "ddl" "update" "$DATABASE"
       "--instance=$INSTANCE"
@@ -301,7 +310,7 @@ SQL
 ], ids=["library-only-array", "library-only-wrapper", "library-only-ddl-file"])
 def test_library_carriers_fail_with_original_digest_guard(tmp_path, addition, carrier):
     scripts = tmp_path / "scripts/deploy"
-    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    copy_schema_repository(tmp_path)
     path = scripts / "_lib.sh"
     text = path.read_text() + "\n" + addition
     path.write_text(text)
@@ -315,7 +324,7 @@ def test_library_carriers_fail_with_original_digest_guard(tmp_path, addition, ca
 @pytest.mark.parametrize("carrier", ["--ddl-file", "--DDL-FILE", "ddl-file"])
 def test_ddl_file_rejected_even_inside_consumed_dispatch(tmp_path, carrier):
     scripts = tmp_path / "scripts/deploy"
-    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    copy_schema_repository(tmp_path)
     path = scripts / "migrate_review_hole.sh"
     path.write_text('gcloud spanner databases ddl update db '
                     '--ddl="CREATE INDEX review_added ON tr_entities (kind)" '
@@ -328,7 +337,7 @@ def test_ddl_file_rejected_even_inside_consumed_dispatch(tmp_path, carrier):
 @pytest.mark.parametrize("name", ["infra.sh", "migrate_money_primitives.sh", "_lib.sh"])
 def test_carrier_comments_require_exemptions_in_copies(tmp_path, name):
     scripts = tmp_path / "scripts/deploy"
-    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    copy_schema_repository(tmp_path)
     path = scripts / name
     path.write_text(path.read_text() + '\n# --ddl --ddl-file ddl-file ddl update databases create\n'
                     + 'echo done # "--DDL=" --ddl-file databases create\n')
@@ -467,7 +476,7 @@ def test_all_gap_registrations_match_collected_items_for_every_backend(tmp_path)
 @pytest.mark.parametrize("escape", ["renamed-helper", "eval", "printf-eval", "sourced-file"])
 def test_sink_discovery_rejects_review_round_three_escapes(tmp_path, monkeypatch, escape):
     scripts = tmp_path / "scripts/deploy"
-    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    copy_schema_repository(tmp_path)
     path = scripts / "migrate_money_primitives.sh"
     # Review the removed declaration exemption so the escape still reaches extraction.
     monkeypatch.delitem(schema.DDL_EXEMPTIONS["lines"]["scripts/deploy/migrate_money_primitives.sh"], "apply_ddl() {")
@@ -488,7 +497,7 @@ eval "run_schema '$SQL'"
 
 def test_renamed_dispatcher_supported_call_is_extracted(tmp_path, monkeypatch):
     scripts = tmp_path / "scripts/deploy"
-    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    copy_schema_repository(tmp_path)
     path = scripts / "migrate_money_primitives.sh"
     # The renamed declaration no longer needs its count-bound carrier exemption.
     monkeypatch.delitem(schema.DDL_EXEMPTIONS["lines"]["scripts/deploy/migrate_money_primitives.sh"], "apply_ddl() {")
@@ -509,7 +518,7 @@ def test_renamed_dispatcher_supported_call_is_extracted(tmp_path, monkeypatch):
 ], ids=["bash-c", "sh-c", "dot-source", "here-string", "leading-here-string", "transformed-parameter", "wrong-parameter", "reassigned-parameter"])
 def test_unsupported_shell_dispatch_forms_fail_closed(tmp_path, addition):
     scripts = tmp_path / "scripts/deploy"
-    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    copy_schema_repository(tmp_path)
     (scripts / "migrate_review_hole.sh").write_text(addition)
     with pytest.raises(AssertionError, match=r"migrate_review_hole.sh:\d+:"):
         migration_ddl(tmp_path)
@@ -517,7 +526,7 @@ def test_unsupported_shell_dispatch_forms_fail_closed(tmp_path, addition):
 
 def test_allowlist_preserves_shell_variable_case(tmp_path):
     scripts = tmp_path / "scripts/deploy"
-    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    copy_schema_repository(tmp_path)
     path = scripts / "migrate_gateway_request_index.sh"
     path.write_text(path.read_text().replace('ddl "DROP INDEX $OLD"',
                                             'old=tr_receipt_key_versions; ddl "DROP INDEX $old"'))
@@ -527,7 +536,7 @@ def test_allowlist_preserves_shell_variable_case(tmp_path):
 
 def test_unrelated_library_edit_needs_no_schema_regeneration(tmp_path):
     scripts = tmp_path / "scripts/deploy"
-    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    copy_schema_repository(tmp_path)
     path = scripts / "_lib.sh"
     path.write_text(path.read_text() + '\n# Unrelated deploy helper.\nreview_status() { gc run services list; }\n')
     assert migration_ddl(tmp_path) == spanner_ddl.DDL
@@ -554,7 +563,7 @@ def test_unrelated_library_edit_needs_no_schema_regeneration(tmp_path):
         "dot-source", "substitution", "continuation"])
 def test_reviewed_library_rejects_ddl_and_indirection(tmp_path, addition):
     scripts = tmp_path / "scripts/deploy"
-    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    copy_schema_repository(tmp_path)
     (scripts / "nested.sh").write_text('gc spanner databases create db\n')
     path = scripts / "_lib.sh"
     original = path.read_text()
@@ -577,7 +586,7 @@ def test_reviewed_library_requires_unique_gc_wrapper(tmp_path, replacement):
     from tests.conformance.spanner_schema_source import REVIEWED_GC_WRAPPER
 
     scripts = tmp_path / "scripts/deploy"
-    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    copy_schema_repository(tmp_path)
     path = scripts / "_lib.sh"
     path.write_text(path.read_text().replace(REVIEWED_GC_WRAPPER, replacement))
     with pytest.raises(AssertionError, match=r"_lib\.sh:\d+: .*gc"):
@@ -588,7 +597,7 @@ def test_reviewed_library_wrapper_allows_normalized_whitespace(tmp_path):
     from tests.conformance.spanner_schema_source import REVIEWED_GC_WRAPPER
 
     scripts = tmp_path / "scripts/deploy"
-    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    copy_schema_repository(tmp_path)
     path = scripts / "_lib.sh"
     path.write_text(path.read_text().replace(REVIEWED_GC_WRAPPER,
                                             'gc() {\n\tgcloud  --project "$PROJECT_ID" "$@";\n}\n'))
@@ -630,7 +639,7 @@ def test_dead_gap_registration_fails_collection_check():
 ], ids=["function-keyword", "function-parentheses", "unsupported-function-body", "nested-eval", "quoted-eval", "nested-sink"])
 def test_sink_discovery_handles_shell_structure(tmp_path, body):
     scripts = tmp_path / "scripts/deploy"
-    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    copy_schema_repository(tmp_path)
     (scripts / "migrate_review_hole.sh").write_text(body)
     with pytest.raises(AssertionError, match=r"migrate_review_hole.sh:\d+:"):
         migration_ddl(tmp_path)

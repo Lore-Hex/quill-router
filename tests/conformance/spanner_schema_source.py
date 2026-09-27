@@ -3,22 +3,24 @@
 This deliberately parses a narrow shell vocabulary, never executes shell or gcloud.
 New migration idioms must extend the parser and regenerate spanner_ddl.py.
 
-The carrier guard scans leniently decoded raw bytes across the repository, including
-comments, without language lexers. Tests, docs, dependencies and build caches are
-excluded. The transport is the security boundary: statement text is inert without
-a transport, including when read from another file. Transport identifiers split on
-non-alphanumerics and camelCase boundaries; a part must equal ddl, or adjacent
-parts extra/statements or databases/create. Middleware, middle and paddle do not
-match. Every transport requires extraction or a normalized, occurrence-bound line
-exemption. Statement scanning is defence in depth outside reasoned file/directory
-exemptions for other dialects and data/review files. Only manual native Spanner SQL
-file exemptions bind SHA-256. File/directory exemptions never cover transports.
-Runtime-assembled carriers and changes made outside the repository are out of scope.
+Every recognized DDL carrier in the migration surface and every recognized DDL
+transport in the runtime surface must be consumed or reviewed. Migration roots
+include schema sources, the deployment library, workflows, infra Terraform,
+Cloud Build and Dockerfiles, plus their transitive repository execution targets.
+Runtime Python packages are scanned for transports only. Raw carrier scanning
+includes comments; line reviews bind normalized text and occurrence count, and
+the manual native SQL review binds its digest.
+
+These are tripwires, not a complete inventory of ways to change Spanner schema.
+Non-goals: generic SQL execution outside the migration surface, tools reading SQL
+files outside it, IaC outside infra/, changes applied outside this repository,
+and carrier words assembled at runtime. String-literal concatenation is not
+interpreted. Lore-Hex/quill-router#1372 tracks the scheduled production
+INFORMATION_SCHEMA comparison that provides the real backstop (out of this PR).
 """
 from __future__ import annotations
 
 import difflib
-import fnmatch
 import hashlib
 import json
 import os
@@ -348,18 +350,65 @@ EXCLUDED_DIRECTORIES = {
 }
 
 
-def carrier_sources(root: Path) -> list[Path]:
-    """Walk every location/extension, pruning only tests, docs and generated directories."""
+def repository_files(root: Path) -> list[Path]:
     paths = []
     for directory, names, files in os.walk(root):
-        names[:] = sorted(name for name in names if name not in EXCLUDED_DIRECTORIES
-                          and not (Path(directory) == root and name in {"tests", "docs"}))
+        names[:] = sorted(name for name in names if name not in EXCLUDED_DIRECTORIES)
         paths.extend(Path(directory) / name for name in files)
     return sorted(paths)
 
 
+def migration_sources(root: Path) -> list[Path]:
+    from tests.conformance.spanner_execution_surface import execution_targets
+
+    seeds = set(schema_sources(root)) | {root / "scripts/deploy/_lib.sh"}
+    for path in repository_files(root):
+        relative = path.relative_to(root)
+        if (relative.parts[:2] == (".github", "workflows")
+                or (relative.parts[0] == "infra" and path.suffix == ".tf")
+                or path.name.startswith("Dockerfile")
+                or (path.name.startswith("cloudbuild") and path.suffix in {".yaml", ".yml"})):
+            seeds.add(path)
+    pending = sorted(seeds)
+    reached: set[Path] = set()
+    while pending:
+        path = pending.pop()
+        if path in reached or not path.is_file():
+            continue
+        reached.add(path)
+        pending.extend(execution_targets(path, root))
+    return sorted(reached)
+
+
+def runtime_sources(root: Path, migrations: list[Path]) -> list[Path]:
+    # An executed/imported repository package makes all its Python modules runtime
+    # surface, including self-migrating modules not currently imported by the entrypoint.
+    from tests.conformance.spanner_execution_surface import imported_modules, package_directory
+
+    packages = {root / "src/trusted_router"}
+    pending = list(migrations)
+    visited: set[Path] = set()
+    while pending:
+        path = pending.pop()
+        if path in visited or path.suffix != ".py":
+            continue
+        visited.add(path)
+        pending.extend(imported_modules(path, root))
+        own = package_directory(path, root)
+        if own is not None:
+            packages.add(own)
+        # Package membership expands transport coverage, not execution/import reachability.
+    return sorted({path for package in packages for path in package.rglob("*.py")
+                   if not set(path.relative_to(root).parts) & EXCLUDED_DIRECTORIES})
+
+
+def carrier_sources(root: Path) -> list[Path]:
+    migrations = migration_sources(root)
+    return sorted(set(migrations) | set(runtime_sources(root, migrations)))
+
+
 # Prefilter only; whole-part checks below decide whether a candidate is a carrier.
-IDENTIFIER_TOKEN = re.compile(r"(?<![\w-])[\w-]*(?:ddl|extra|statements|databases|create)[\w-]*", re.I)
+IDENTIFIER_TOKEN = re.compile(r"(?<![\w-])[\w-]*(?:ddls?|extra|statements|databases|create|spanner|cli)[\w-]*", re.I)
 IDENTIFIER_PART = re.compile(r"[^\W_]+", re.UNICODE)
 CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 
@@ -375,12 +424,17 @@ def ddl_transport_matches(source: str) -> Iterator[re.Match[str]]:
         for word in IDENTIFIER_PART.finditer(token[0]):
             for part in CAMEL_BOUNDARY.split(word[0]):
                 part = part.lower()
-                if part == "ddl":
+                if part in {"ddl", "ddls"}:
                     spans.add(token.span())
-                if (previous, part) in {("extra", "statements"), ("databases", "create")}:
+                if (previous, part) in {("extra", "statements"), ("databases", "create"), ("spanner", "cli")}:
                     assert previous_token is not None
                     spans.add((previous_token.start(), token.end()))
                 previous, previous_token = part, token
+    for match in re.finditer(
+        r"\b(?:spanner_dbapi|updateSchema|sqlalchemy_spanner|liquibase|flyway)\b|"
+        r"\bspanner(?:\s+|-)cli\b|jdbc:cloudspanner\b|spanner\+spanner:", source, re.I,
+    ):
+        spans.add(match.span())
     for start, end in sorted(spans):
         match = re.compile(r"[\s\S]+").match(source, start, end)
         assert match is not None
@@ -388,10 +442,10 @@ def ddl_transport_matches(source: str) -> Iterator[re.Match[str]]:
 
 
 DDL_STATEMENT = re.compile(
-    r"\b(?:CREATE|ALTER|DROP)\b(?:[ \t]+\w+)*?[ \t]+"
-    r"(?:TABLE|INDEX|VIEW|SEQUENCE|CHANGE[ \t]+STREAM|SCHEMA|MODEL|PROPERTY[ \t]+GRAPH|"
-    r"DATABASE|ROLE|PROTO[ \t]+BUNDLE|LOCALITY[ \t]+GROUP|PLACEMENT)\b|"
-    r"\bROW[ \t]+DELETION[ \t]+POLICY\b", re.I,
+    r"\b(?:CREATE|ALTER|DROP)\b(?:\s+\w+)*?\s+"
+    r"(?:TABLE|INDEX|VIEW|SEQUENCE|CHANGE\s+STREAM|SCHEMA|MODEL|PROPERTY\s+GRAPH|"
+    r"DATABASE|ROLE|PROTO\s+BUNDLE|LOCALITY\s+GROUP|PLACEMENT)\b|"
+    r"\bROW\s+DELETION\s+POLICY\b", re.I,
 )
 
 
@@ -400,19 +454,20 @@ def exemption_remedy() -> str:
         "make the schema extractor consume it (a real schema change), or add a reviewed "
         f"exemption entry in {EXEMPTION_REGISTRY} with a reason "
         "(line: path + whitespace-normalized text + expected occurrence count; "
-        "native SQL file: path + SHA-256; statement file/pattern or directory: reason, statements only)"
+        "native SQL file: path + SHA-256)"
     )
 
 
 def assert_ddl_carriers_consumed(path: Path, dispatch_spans: list[tuple[int, int]] | None,
-                                 root: Path = ROOT) -> None:
-    """Fail closed on every literal carrier, regardless of transport or syntax."""
+                                 root: Path = ROOT, *, statements: bool = True) -> None:
+    """Require consumption or review of the selected surface's literal carriers."""
     relative = path.relative_to(root).as_posix()
     raw = path.read_bytes()
     source = raw.decode("utf-8", errors="replace")
     raw_lines = source.split("\n")
     matches = [(match, True) for match in ddl_transport_matches(source)]
-    matches.extend((match, False) for match in DDL_STATEMENT.finditer(source))
+    if statements:
+        matches.extend((match, False) for match in DDL_STATEMENT.finditer(source))
     matches.sort(key=lambda item: (item[0][0].lower() not in {"--ddl-file", "ddl-file"}, item[0].start()))
     file_exemption = DDL_EXEMPTIONS["files"].get(relative)
     if file_exemption is not None:
@@ -434,18 +489,6 @@ def assert_ddl_carriers_consumed(path: Path, dispatch_spans: list[tuple[int, int
                                  f"changed: expected {entry['count']}, found {counts[text]}; "
                                  f"re-review the line; {exemption_remedy()}")
     statement_exempt = file_exemption is not None
-    for pattern, entry in DDL_EXEMPTIONS.get("statement_files", {}).items():
-        assert entry["reason"].strip()
-        assert not Path(pattern).is_absolute() and ".." not in Path(pattern).parts
-        if fnmatch.fnmatchcase(relative, pattern):
-            statement_exempt = True
-    for directory, entry in DDL_EXEMPTIONS.get("directories", {}).items():
-        assert entry["reason"].strip()
-        directory_path = Path(directory)
-        assert not directory_path.is_absolute() and ".." not in directory_path.parts
-        assert directory_path.parts
-        if directory_path in Path(relative).parents:
-            statement_exempt = True
     for match, transport in matches:
         line = source.count("\n", 0, match.start()) + 1
         last_line = source.count("\n", 0, match.end() - 1) + 1
@@ -590,8 +633,16 @@ def migration_ddl(root: Path = ROOT) -> tuple[str, ...]:
         # must be consumed (or individually reviewed) before these spans count.
         accounted[path] = [*dispatch_spans, *used_literals]
         assert_ddl_carriers_consumed(path, accounted[path], root)
-    for path in carrier_sources(root):
+    migrations = migration_sources(root)
+    for path in migrations:
         if path not in accounted:
+            assert_ddl_carriers_consumed(path, [], root)
+    for path in set(runtime_sources(root, migrations)) - set(migrations):
+        assert_ddl_carriers_consumed(path, [], root, statements=False)
+    # Explicit retained manual-native-SQL review, outside the automatic surfaces.
+    for relative in DDL_EXEMPTIONS["files"]:
+        path = root / relative
+        if path.is_file():
             assert_ddl_carriers_consumed(path, [], root)
     for name in retired_indexes:
         indexes.pop(name, None)  # Historical indexes may already be absent on fresh installs.
