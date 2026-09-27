@@ -352,7 +352,11 @@ print(json.dumps({
     "metadata": {"generation": 1, "annotations": {
         "run.googleapis.com/ingress": "internal-and-cloud-load-balancing"
     }},
-    "status": {"traffic": traffic},
+    "status": {
+        "observedGeneration": 1,
+        "conditions": [{"type": "Ready", "status": "True"}],
+        "traffic": traffic,
+    },
 }, separators=(",", ":")))
 PY
     exit 0
@@ -517,7 +521,11 @@ print(json.dumps({
     "metadata": {"generation": 1, "annotations": {
         "run.googleapis.com/ingress": "internal-and-cloud-load-balancing"
     }},
-    "status": {"traffic": traffic},
+    "status": {
+        "observedGeneration": 1,
+        "conditions": [{"type": "Ready", "status": "True"}],
+        "traffic": traffic,
+    },
 }, separators=(",", ":")))
 PY
     exit 0

@@ -41,9 +41,19 @@
 # generation and reachable revision set, with the time this fleet state was
 # first seen; any change - a deploy, a rollback, a tag - resets that time,
 # because Cloud Run offers no traffic history and keeps a predecessor's
-# in-flight requests alive across a move. The interval only has to outlast
-# the authorize phase of such a request (the gateway's 25 s budget), so it
-# defaults to 120 s.
+# in-flight requests alive across a move. A service is read only once its
+# status is reconciled (observedGeneration == generation, no Ready=Unknown):
+# status.traffic describes the last reconciled spec, not a pending one. The
+# interval only has to outlast the authorize phase of such a request (the
+# gateway's 25 s budget), so it defaults to 120 s.
+# The release workflow warms the four regions in parallel processes that
+# share one deployment mutex operation. Each of them runs this gate, and each
+# would otherwise see the others' new revisions as fleet changes. So a pass
+# is recorded in the observation under the mutex operation it ran under, and
+# a later gate under the same operation stands on it: while that lock is
+# held, the fleet changes only through this release's own revisions, which
+# render every marker off. A standalone rollout takes its own lock and its
+# own operation, so it always runs the full gate.
 # Once the workers are gone, the durable marker written by ledger_retire_workers
 # waives only the worker evidence (there is no worker left to report), and only
 # while every serving revision still satisfies the retirement invariants
@@ -60,14 +70,14 @@ ledger_retirement_marker_uri() {
   printf 'gs://%s/controls/ledger-retirement.json\n' "$(ledger_retirement_bucket)"
 }
 
-# 0 = a completed retirement marker for this project and database exists;
-# 1 = no such marker; 2 = cannot tell.
-ledger_retirement_completed() {
-  regional_quota_verify_control_lifecycle || return 2
-  local listing present marker
+# Prints a control object's content, nothing when it does not exist (the
+# prefix listing decides that, never a failed read), and fails when that
+# cannot be told. Every control object here is JSON, so present is non-empty.
+_ledger_read_control() {
+  local uri="$1" listing present
   listing="$(regional_quota_gc_read storage objects list --raw --format=json "gs://$(ledger_retirement_bucket)/controls/*")" || {
-    log "refusing ledger retirement check: cannot list the control prefix"
-    return 2
+    log "refusing ledger retirement: cannot list the control prefix"
+    return 1
   }
   present="$(python3 -c '
 import json, sys
@@ -81,15 +91,32 @@ for item in items:
     if not item.get("timeDeleted"):
         urls.append("gs://" + item["bucket"] + "/" + item["name"])
 print("true" if sys.argv[1] in urls else "false")
-' "$(ledger_retirement_marker_uri)" <<<"$listing")" || {
-    log "refusing ledger retirement check: cannot parse the control listing"
-    return 2
+' "$uri" <<<"$listing")" || {
+    log "refusing ledger retirement: cannot parse the control listing"
+    return 1
   }
-  [ "$present" = true ] || return 1
-  marker="$(regional_quota_gc_read storage cat "$(ledger_retirement_marker_uri)")" || {
-    log "refusing ledger retirement check: cannot read the retirement marker"
-    return 2
+  [ "$present" = true ] || return 0
+  regional_quota_gc_read storage cat "$uri" || {
+    log "refusing ledger retirement: cannot read ${uri}"
+    return 1
   }
+}
+
+# Uploads a control object; the upload's own output never reaches a caller
+# that captures this function's result.
+_ledger_write_control() {
+  local file="$1" uri="$2"
+  regional_quota_verify_control_lifecycle || return 1
+  gc storage cp "$file" "$uri" --quiet >/dev/null
+}
+
+# 0 = a completed retirement marker for this project and database exists;
+# 1 = no such marker; 2 = cannot tell.
+ledger_retirement_completed() {
+  regional_quota_verify_control_lifecycle || return 2
+  local marker
+  marker="$(_ledger_read_control "$(ledger_retirement_marker_uri)")" || return 2
+  [ -n "$marker" ] || return 1
   if python3 -c '
 import json, sys
 try:
@@ -182,27 +209,46 @@ _ledger_serving_markers() {
     }
     # Two lines: the service generation, then the reachable revision names.
     # (A tab-separated pair would lose an empty first field to `read`.)
+    # status.traffic describes the last RECONCILED spec, so the status must
+    # have caught up with the generation and no reconciliation may be in
+    # progress; a reachable entry without a resolved revision is unreadable.
+    parse_stderr="$(mktemp "${TMPDIR:-/tmp}/ledger-service.XXXXXX")"
     reachable="$(python3 -c '
 import json, sys
 service = json.load(sys.stdin)
+metadata = service.get("metadata") or {}
+status = service.get("status") or {}
+generation = metadata.get("generation")
+if not isinstance(generation, int) or isinstance(generation, bool) or generation <= 0:
+    raise SystemExit("the service has no generation")
+if status.get("observedGeneration") != generation:
+    raise SystemExit("generation %s is not reconciled yet (observed %r)" % (generation, status.get("observedGeneration")))
+for condition in status.get("conditions") or []:
+    if isinstance(condition, dict) and condition.get("type") == "Ready" and condition.get("status") not in ("True", "False"):
+        raise SystemExit("the service is still reconciling (Ready=%s)" % condition.get("status"))
 names = set()
-for item in service.get("status", {}).get("traffic", []) or []:
+for item in status.get("traffic") or []:
     if not isinstance(item, dict):
+        raise SystemExit("a traffic entry is not an object")
+    percent = item.get("percent") or 0
+    if not isinstance(percent, int) or isinstance(percent, bool) or percent < 0:
+        raise SystemExit("a traffic entry has an unreadable percent")
+    if percent == 0 and not item.get("tag"):
         continue
     name = item.get("revisionName")
-    if isinstance(name, str) and name and (int(item.get("percent") or 0) > 0 or item.get("tag")):
-        names.add(name)
+    if not isinstance(name, str) or not name:
+        raise SystemExit("a reachable traffic entry has no revisionName")
+    names.add(name)
 if not names:
     raise SystemExit("no reachable revision")
-generation = service.get("metadata", {}).get("generation")
-if not isinstance(generation, int) or isinstance(generation, bool) or generation <= 0:
-    raise SystemExit("no service generation")
 print(generation)
 print(",".join(sorted(names)))
-' <<<"$service_json")" || {
-      log "refusing ${purpose}: ${region} has no reachable revision or no service generation"
+' <<<"$service_json" 2>"$parse_stderr")" || {
+      log "refusing ${purpose}: ${region}: $(<"$parse_stderr")"
+      rm -f "$parse_stderr"
       return 1
     }
+    rm -f "$parse_stderr"
     { IFS= read -r generation; IFS= read -r names; } <<<"$reachable"
     if [ -z "$generation" ] || [ -z "$names" ]; then
       log "refusing ${purpose}: cannot read the fleet state of ${region}"
@@ -241,26 +287,11 @@ ledger_drain_observation_uri() {
 # Merge the fleet state just verified into the durable observation and print
 # the time the current state of the region that changed most recently was
 # first seen. A region keeps its off_since only while its service generation
-# and reachable revision set are unchanged; otherwise it starts over now.
+# and reachable revision set are unchanged; otherwise it starts over now. A
+# gate pass recorded in the observation is kept as it is.
 _ledger_observe_fleet() {
-  regional_quota_verify_control_lifecycle || return 1
-  local listing present record="{}" merged
-  listing="$(regional_quota_gc_read storage objects list --raw --format=json "gs://$(ledger_retirement_bucket)/controls/*")" || {
-    log "refusing ledger retirement: cannot list the control prefix"
-    return 1
-  }
-  present="$(python3 -c '
-import json, sys
-items = json.load(sys.stdin)
-urls = ["gs://" + i["bucket"] + "/" + i["name"] for i in items if isinstance(i, dict) and not i.get("timeDeleted")]
-print("true" if sys.argv[1] in urls else "false")
-' "$(ledger_drain_observation_uri)" <<<"$listing")" || return 1
-  if [ "$present" = true ]; then
-    record="$(regional_quota_gc_read storage cat "$(ledger_drain_observation_uri)")" || {
-      log "refusing ledger retirement: cannot read the drain observation"
-      return 1
-    }
-  fi
+  local record merged
+  record="$(_ledger_read_control "$(ledger_drain_observation_uri)")" || return 1
   local merged_file
   merged_file="$(mktemp "${TMPDIR:-/tmp}/ledger-observation.XXXXXX")" || return 1
   merged="$(python3 - "$record" "$LEDGER_FLEET_STATE" "$merged_file" <<'PY'
@@ -276,6 +307,7 @@ except ValueError:
 regions = old.get("regions") if isinstance(old, dict) else None
 if not isinstance(regions, dict):
     regions = {}
+gate = old.get("gate") if isinstance(old, dict) and isinstance(old.get("gate"), dict) else None
 now = dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 new = {}
 for line in state.splitlines():
@@ -291,8 +323,11 @@ for line in state.splitlines():
         "revisions": names,
         "off_since": previous["off_since"] if unchanged else now,
     }
+observation = {"regions": new, "updated_at": now}
+if gate:
+    observation["gate"] = gate
 with open(out, "w") as handle:
-    json.dump({"regions": new, "updated_at": now}, handle)
+    json.dump(observation, handle)
 print(max(entry["off_since"] for entry in new.values()))
 PY
 )" || {
@@ -300,8 +335,7 @@ PY
     log "refusing ledger retirement: cannot merge the drain observation"
     return 1
   }
-  # stdout is this function's result; the upload's output is not part of it
-  gc storage cp "$merged_file" "$(ledger_drain_observation_uri)" --quiet >/dev/null || {
+  _ledger_write_control "$merged_file" "$(ledger_drain_observation_uri)" || {
     rm -f "$merged_file"
     log "refusing ledger retirement: cannot record the drain observation"
     return 1
@@ -357,10 +391,15 @@ ledger_issuance_off_everywhere() {
     TR_SPEND_LEASE_ADMISSION_ACCEPT=false
 }
 
+# Everything the gate requires, plus no capability and no profile map (spend
+# shadow issuance needs no profile map, so its switches are checked here too).
 ledger_capability_off_everywhere() {
   _ledger_serving_markers "worker retirement" \
     TR_REGIONAL_QUOTA_LEASES_ENABLED=false \
     TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED=false \
+    TR_SPEND_LEASE_ISSUANCE_ENABLED=false \
+    TR_SPEND_LEASE_BINDING_ENABLED=false \
+    TR_SPEND_LEASE_ADMISSION_ACCEPT=false \
     TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES=__absent__ \
     TR_SPEND_LEASE_BIGTABLE_APP_PROFILES=__absent__
 }
@@ -490,9 +529,67 @@ _ledger_spend_scheduler_region() { printf '%s\n' "${TR_SPEND_LEASE_RECONCILER_SC
 _ledger_regional_job_prefix() { printf '%s\n' "${TR_REGIONAL_QUOTA_RECONCILER_JOB_PREFIX:-trusted-router-regional-quota-reconciler}"; }
 _ledger_spend_job_prefix() { printf '%s\n' "${TR_SPEND_LEASE_RECONCILER_JOB_PREFIX:-trusted-router-spend-lease-reconciler}"; }
 
-# The release gate. Read-only. Exit 0 = the ledgers may be absent from the
-# revisions this run creates.
+# 0 = the observation records a gate pass under this mutex operation.
+_ledger_gate_passed_under() {
+  local operation="$1" record
+  record="$(_ledger_read_control "$(ledger_drain_observation_uri)")" || return 1
+  [ -n "$record" ] || return 1
+  python3 -c '
+import json, sys
+try:
+    record = json.load(sys.stdin)
+except ValueError:
+    raise SystemExit(1)
+gate = record.get("gate") if isinstance(record, dict) else None
+raise SystemExit(0 if isinstance(gate, dict) and gate.get("operation") == sys.argv[1] else 1)
+' "$operation" <<<"$record"
+}
+
+_ledger_record_gate_pass() {
+  local operation="$1" record updated
+  record="$(_ledger_read_control "$(ledger_drain_observation_uri)")" || return 1
+  updated="$(mktemp "${TMPDIR:-/tmp}/ledger-gate.XXXXXX")" || return 1
+  if ! python3 -c '
+import datetime as dt, json, sys
+try:
+    record = json.loads(sys.argv[2] or "{}")
+except ValueError:
+    record = {}
+if not isinstance(record, dict):
+    record = {}
+record["gate"] = {"operation": sys.argv[1], "passed_at": dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")}
+print(json.dumps(record))
+' "$operation" "$record" >"$updated"; then
+    rm -f "$updated"
+    log "refusing ledger retirement: cannot record the gate pass"
+    return 1
+  fi
+  _ledger_write_control "$updated" "$(ledger_drain_observation_uri)" || {
+    rm -f "$updated"
+    log "refusing ledger retirement: cannot record the gate pass"
+    return 1
+  }
+  rm -f "$updated"
+}
+
+# The release gate. Changes nothing but the drain observation. Exit 0 = the
+# ledgers may be absent from the revisions this run creates. Under a
+# deployment mutex operation the pass is recorded, and the parallel siblings
+# of the release workflow stand on it instead of reading a fleet the others
+# are already changing.
 ledger_retirement_gate() {
+  local operation="${TR_DEPLOY_MUTEX_OPERATION:-}"
+  if [ -n "$operation" ] && _ledger_gate_passed_under "$operation"; then
+    log "ledger retirement gate already passed under deployment operation ${operation}; while that lock is held the fleet changes only through this release's own revisions"
+    return 0
+  fi
+  _ledger_retirement_gate_checks || return 1
+  if [ -n "$operation" ]; then
+    _ledger_record_gate_pass "$operation" || return 1
+  fi
+}
+
+_ledger_retirement_gate_checks() {
   local status=0
   ledger_retirement_completed || status=$?
   case "$status" in
@@ -563,26 +660,17 @@ ledger_retirement_targets_uri() {
   printf 'gs://%s/controls/ledger-retirement-targets.json\n' "$(ledger_retirement_bucket)"
 }
 
-# The job names the schedules targeted, recorded durably before any schedule
+# A worker's identity is "location/name": a job name alone would match an
+# unrelated job of the same name in another region.
+_LEDGER_TARGET_PATTERN='[a-z][a-z0-9-]{0,62}/[a-z][a-z0-9-]{0,62}'
+
+# The targets the schedules pointed at, recorded durably before any schedule
 # is deleted, so a retry after an interrupted teardown still knows a custom
 # target that matches neither prefix nor override. Absent = nothing recorded.
 _ledger_recorded_targets() {
-  local listing present record
-  listing="$(regional_quota_gc_read storage objects list --raw --format=json "gs://$(ledger_retirement_bucket)/controls/*")" || {
-    log "refusing worker retirement: cannot list the control prefix"
-    return 1
-  }
-  present="$(python3 -c '
-import json, sys
-items = json.load(sys.stdin)
-urls = ["gs://" + i["bucket"] + "/" + i["name"] for i in items if isinstance(i, dict) and not i.get("timeDeleted")]
-print("true" if sys.argv[1] in urls else "false")
-' "$(ledger_retirement_targets_uri)" <<<"$listing")" || return 1
-  [ "$present" = true ] || return 0
-  record="$(regional_quota_gc_read storage cat "$(ledger_retirement_targets_uri)")" || {
-    log "refusing worker retirement: cannot read the recorded worker targets"
-    return 1
-  }
+  local record
+  record="$(_ledger_read_control "$(ledger_retirement_targets_uri)")" || return 1
+  [ -n "$record" ] || return 0
   python3 -c '
 import json, re, sys
 try:
@@ -592,33 +680,32 @@ except ValueError:
 targets = record.get("targets") if isinstance(record, dict) else None
 if not isinstance(targets, list):
     raise SystemExit("no targets list")
-for name in targets:
-    if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,62}", name):
-        raise SystemExit(f"invalid target name {name!r}")
-    print(name)
-' <<<"$record" || {
+for target in targets:
+    if not isinstance(target, str) or not re.fullmatch(sys.argv[1], target):
+        raise SystemExit("invalid target %r" % (target,))
+    print(target)
+' "$_LEDGER_TARGET_PATTERN" <<<"$record" || {
     log "refusing worker retirement: the recorded worker targets are unreadable"
     return 1
   }
 }
 
 _ledger_record_targets() {
-  regional_quota_verify_control_lifecycle || return 1
   local record
   record="$(mktemp "${TMPDIR:-/tmp}/ledger-targets.XXXXXX")" || return 1
   if ! python3 -c '
 import json, re, sys
-names = sorted(set(name for name in sys.argv[1:] if name))
-for name in names:
-    if not re.fullmatch(r"[a-z][a-z0-9-]{0,62}", name):
-        raise SystemExit(f"invalid target name {name!r}")
-print(json.dumps({"targets": names}))
-' "$@" >"$record"; then
+targets = sorted(set(target for target in sys.argv[2:] if target))
+for target in targets:
+    if not re.fullmatch(sys.argv[1], target):
+        raise SystemExit("invalid target %r" % (target,))
+print(json.dumps({"targets": targets}))
+' "$_LEDGER_TARGET_PATTERN" "$@" >"$record"; then
     rm -f "$record"
     log "refusing worker retirement: cannot serialize the worker targets"
     return 1
   fi
-  gc storage cp "$record" "$(ledger_retirement_targets_uri)" --quiet || {
+  _ledger_write_control "$record" "$(ledger_retirement_targets_uri)" || {
     rm -f "$record"
     log "refusing worker retirement: cannot record the worker targets"
     return 1
@@ -627,16 +714,18 @@ print(json.dumps({"targets": names}))
 }
 
 # Project-wide worker inventory as "region<TAB>name" lines: every job under
-# either historical prefix, the exact names the deployers accept as
-# overrides, and the recorded schedule targets. Project-wide so a retry
-# after an interrupted teardown - schedules already gone - still finds a
-# worker in a region only a schedule used to point at. A listing that warns
-# (unreachable regions come back as a warning with exit 0) is incomplete and
-# proves nothing, so it refuses.
+# either historical prefix (a configured prefix must not hide the workers
+# earlier releases created under the defaults), the exact "location/name"
+# identities the deployers accept as overrides, and the recorded schedule
+# targets. Project-wide so a retry after an interrupted teardown - schedules
+# already gone - still finds a worker in a region only a schedule used to
+# point at. A listing that warns (unreachable regions come back as a warning
+# with exit 0) is incomplete and proves nothing, and so is a job whose name
+# or location cannot be read; both refuse.
 _ledger_worker_inventory() {
   local listing listing_stderr
   listing_stderr="$(mktemp "${TMPDIR:-/tmp}/ledger-jobs.XXXXXX")"
-  listing="$(gc run jobs list --verbosity=warning --format='value(metadata.labels."cloud.googleapis.com/location",metadata.name)' 2>"$listing_stderr")" || {
+  listing="$(gc run jobs list --verbosity=warning --format=json 2>"$listing_stderr")" || {
     log "refusing worker retirement: cannot list Cloud Run jobs: $(<"$listing_stderr")"
     rm -f "$listing_stderr"
     return 1
@@ -647,21 +736,32 @@ _ledger_worker_inventory() {
     return 1
   fi
   rm -f "$listing_stderr"
-  local exact=" ${TR_REGIONAL_QUOTA_RECONCILER_JOB:-} ${TR_SPEND_LEASE_RECONCILER_JOB:-} $* "
-  # Historical default prefixes are always matched: a configured prefix must
-  # not hide the workers earlier releases created under the defaults.
-  printf '%s\n' "$listing" | while IFS=$'\t' read -r region job; do
-    [ -n "$job" ] && [ -n "$region" ] || continue
-    case "$job" in
-      trusted-router-regional-quota-reconciler-*|trusted-router-spend-lease-reconciler-*|\
-      "$(_ledger_regional_job_prefix)-"*|"$(_ledger_spend_job_prefix)-"*) printf '%s\t%s\n' "$region" "$job" ;;
-      *)
-        case "$exact" in
-          *" ${job} "*) printf '%s\t%s\n' "$region" "$job" ;;
-        esac
-        ;;
-    esac
-  done
+  python3 -c '
+import json, re, sys
+pattern, regional_prefix, spend_prefix = sys.argv[1], sys.argv[2], sys.argv[3]
+exact = set(target for target in sys.argv[4:] if re.fullmatch(pattern, target))
+prefixes = tuple(prefix + "-" for prefix in (
+    "trusted-router-regional-quota-reconciler", "trusted-router-spend-lease-reconciler", regional_prefix, spend_prefix))
+jobs = json.load(sys.stdin)
+if not isinstance(jobs, list):
+    raise SystemExit("expected a job list")
+for job in jobs:
+    metadata = job.get("metadata") if isinstance(job, dict) else None
+    if not isinstance(metadata, dict):
+        raise SystemExit("a listed job has no metadata")
+    name = metadata.get("name")
+    location = (metadata.get("labels") or {}).get("cloud.googleapis.com/location")
+    if not isinstance(name, str) or not isinstance(location, str) or not re.fullmatch(pattern, location + "/" + name):
+        raise SystemExit("a listed job has no usable name or location: %r in %r" % (name, location))
+    if name.startswith(prefixes) or location + "/" + name in exact:
+        print("%s\t%s" % (location, name))
+' "$_LEDGER_TARGET_PATTERN" "$(_ledger_regional_job_prefix)" "$(_ledger_spend_job_prefix)" \
+    "${TR_REGIONAL_QUOTA_RECONCILER_JOB_REGION:-us-east4}/${TR_REGIONAL_QUOTA_RECONCILER_JOB:-}" \
+    "${TR_SPEND_LEASE_RECONCILER_JOB_REGION:-us-east4}/${TR_SPEND_LEASE_RECONCILER_JOB:-}" \
+    "$@" <<<"$listing" || {
+    log "refusing worker retirement: the Cloud Run job listing is unreadable"
+    return 1
+  }
 }
 
 ledger_retire_workers() {
@@ -680,18 +780,23 @@ ledger_retire_workers() {
     log "deferring worker retirement; the ledgers stay provisioned until every region serves a capability-off revision"
     return 0
   fi
-  # The last secondary may have moved traffic moments ago: wait out the drain
-  # interval under the mutex, re-reading the fleet each time, rather than
-  # failing the release step.
-  local waited=0 pause="${TR_LEDGER_RETIRE_RETRY_SLEEP_SECONDS:-10}"
-  local budget="${TR_LEDGER_DRAIN_INTERVAL_SECONDS:-120}"
+  # The last secondary may have moved traffic moments ago: wait for the fleet
+  # state found here to age out, under the mutex, re-reading the fleet each
+  # time, rather than failing the release step. A fleet that changes again
+  # during that wait would move the goal; that fails instead.
+  local pause="${TR_LEDGER_RETIRE_RETRY_SLEEP_SECONDS:-10}" first_off_since="" nap
   until ledger_fleet_quiescent; do
-    if [ "$waited" -ge "$budget" ] || [ "$LEDGER_FLEET_QUIESCENT_IN" = "0" ]; then
+    [ "$LEDGER_FLEET_QUIESCENT_IN" != "0" ] || return 1
+    if [ -z "$first_off_since" ]; then
+      first_off_since="$LEDGER_FLEET_OFF_SINCE"
+    elif [ "$LEDGER_FLEET_OFF_SINCE" != "$first_off_since" ]; then
+      log "refusing worker retirement: the fleet changed again while waiting for it to become quiescent"
       return 1
     fi
+    nap="$LEDGER_FLEET_QUIESCENT_IN"
+    [ "$nap" -le "$pause" ] || nap="$pause"
     log "waiting ${LEDGER_FLEET_QUIESCENT_IN}s for the fleet to become quiescent"
-    sleep "$pause"
-    waited=$((waited + pause))
+    sleep "$nap"
     ledger_capability_off_everywhere || return 1
   done
   ledger_spanner_open_work || return 1
@@ -738,7 +843,7 @@ ledger_retire_workers() {
       continue
     fi
     IFS=$'\t' read -r _ job_region job <<<"$target"
-    targets+=("$job")
+    targets+=("${job_region}/${job}")
     live_schedules+=("${scheduler}|${region}|${job}|${job_region}")
   done
   if [ "${#live_schedules[@]}" -gt 0 ]; then
@@ -757,7 +862,11 @@ ledger_retire_workers() {
   local inventory deleted=0
   inventory="$(_ledger_worker_inventory "${targets[@]+"${targets[@]}"}")" || return 1
   while IFS=$'\t' read -r region job; do
-    [ -n "$job" ] || continue
+    [ -n "${region}${job}" ] || continue
+    if [ -z "$region" ] || [ -z "$job" ]; then
+      log "refusing worker retirement: an inventory line is incomplete: '${region}' '${job}'"
+      return 1
+    fi
     _ledger_wait_for_executions "$job" "$region" || return 1
     gc run jobs delete "$job" --region="$region" --quiet || {
       log "refusing worker retirement: cannot delete ${job} in ${region}"
@@ -784,7 +893,6 @@ ledger_retire_workers() {
     fi
   done
 
-  regional_quota_verify_control_lifecycle || return 1
   local record
   record="$(mktemp "${TMPDIR:-/tmp}/ledger-retirement.XXXXXX")" || return 1
   python3 -c '
@@ -799,7 +907,7 @@ print(json.dumps({
     "workers_deleted": int(sys.argv[5]),
 }))
 ' "$PROJECT_ID" "$SPANNER_INSTANCE_ID" "$SPANNER_DATABASE_ID" "${RELEASE:-unknown}" "$deleted" >"$record"
-  gc storage cp "$record" "$(ledger_retirement_marker_uri)" --quiet || {
+  _ledger_write_control "$record" "$(ledger_retirement_marker_uri)" || {
     rm -f "$record"
     log "refusing to record retirement: cannot write the marker"
     return 1
