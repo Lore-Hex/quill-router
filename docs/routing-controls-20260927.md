@@ -57,6 +57,12 @@ Generation itself does not retain an admission slot. Window exhaustion returns
 There is no schema migration. Never reshard a strict key: validation rejects it.
 Keep the flag immutable so in-flight requests cannot cross accounting modes.
 
+Native GoogleSQL checks can run locally with
+`TR_STRICT_SPANNER_EMULATOR_HOST=127.0.0.1:19010 uv run pytest -q tests/test_strict_budget_spanner_emulator.py`.
+The fixture requires a loopback emulator, uses anonymous credentials, and
+creates and drops its own temporary database. It tests each UTC window,
+concurrent reservations and BYOK exclusion using the exact production DML.
+
 ## Precision evidence
 
 No currently integrated attestation has been established to bind model weights,
