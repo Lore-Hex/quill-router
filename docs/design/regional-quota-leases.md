@@ -196,7 +196,8 @@ provisioners and the background reconciler deploys:
   lock is still held by that operation and unexpired - while the lock is
   held, the fleet changes only through this release's revisions. A
   standalone rollout takes its own lock and always runs the full gate; the
-  teardown under an inherited operation requires the same live lock.
+  teardown re-reads that lock before every destructive step and the marker,
+  since its waits can outlast a lease, and fails once it is not held.
 - `scripts/deploy/retire_ledger_workers.sh` runs after the secondary ramp,
   under the deployment mutex (the workflow's, or its own when invoked
   directly). It defers (with a workflow warning) while any reachable

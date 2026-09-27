@@ -56,7 +56,8 @@
 # this release's own revisions, which render every marker off. A standalone
 # rollout takes its own lock and its own operation, so it always runs the
 # full gate; a teardown under an inherited operation requires the same live
-# lock and fails otherwise (a re-run acquires afresh).
+# lock before every destructive step and the marker - its waits can outlast
+# a lease - and fails otherwise (a re-run acquires afresh).
 # Once the workers are gone, the durable marker written by ledger_retire_workers
 # waives only the worker evidence (there is no worker left to report), and only
 # while every serving revision still satisfies the retirement invariants
@@ -807,12 +808,20 @@ for job in jobs:
   }
 }
 
+# Under a deployment mutex operation (inherited from the workflow, or the
+# one this process acquired), the production lock must still be held by it.
+# Checked on entry and again before every destructive step and the marker:
+# the quiescence and execution waits can outlast a lease.
+_ledger_require_lock() {
+  [ -n "${TR_DEPLOY_MUTEX_OPERATION:-}" ] || return 0
+  _ledger_mutex_held_by "$TR_DEPLOY_MUTEX_OPERATION" && return 0
+  log "refusing worker retirement: the deployment operation ${TR_DEPLOY_MUTEX_OPERATION} does not hold the production lock (expired or replaced); a re-run acquires its own"
+  return 1
+}
+
 ledger_retire_workers() {
   local status=0 recorded_complete=false
-  if [ -n "${TR_DEPLOY_MUTEX_OPERATION:-}" ] && ! _ledger_mutex_held_by "$TR_DEPLOY_MUTEX_OPERATION"; then
-    log "refusing worker retirement: the inherited deployment operation ${TR_DEPLOY_MUTEX_OPERATION} does not hold the production lock (expired or replaced); a re-run acquires its own"
-    return 1
-  fi
+  _ledger_require_lock || return 1
   ledger_retirement_completed || status=$?
   case "$status" in
     0) recorded_complete=true ;;
@@ -856,6 +865,7 @@ ledger_retire_workers() {
     sleep "$nap"
     ledger_capability_off_everywhere || return 1
   done
+  _ledger_require_lock || return 1
   ledger_spanner_open_work || return 1
   # The names an interrupted earlier run recorded participate in every
   # inventory, the recorded-retirement re-check included.
@@ -909,6 +919,7 @@ ledger_retire_workers() {
   local entry
   for entry in "${live_schedules[@]+"${live_schedules[@]}"}"; do
     IFS='|' read -r scheduler region job job_region <<<"$entry"
+    _ledger_require_lock || return 1
     gc scheduler jobs delete "$scheduler" --location="$region" --quiet || {
       log "refusing worker retirement: cannot delete schedule ${scheduler} in ${region}"
       return 1
@@ -925,6 +936,7 @@ ledger_retire_workers() {
       return 1
     fi
     _ledger_wait_for_executions "$job" "$region" || return 1
+    _ledger_require_lock || return 1
     gc run jobs delete "$job" --region="$region" --quiet || {
       log "refusing worker retirement: cannot delete ${job} in ${region}"
       return 1
@@ -950,6 +962,7 @@ ledger_retire_workers() {
     fi
   done
 
+  _ledger_require_lock || return 1
   local record
   record="$(mktemp "${TMPDIR:-/tmp}/ledger-retirement.XXXXXX")" || return 1
   python3 -c '

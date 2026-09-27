@@ -544,7 +544,7 @@ def test_gate_pass_is_shared_by_the_siblings_of_one_mutex_operation(tmp_path: Pa
     _lock(tmp_path, "op-3", expires_in=-1)
     run = _run(tmp_path, RETIRE, extra="TR_DEPLOY_MUTEX_OPERATION=op-3\n")
     assert run.returncode != 0
-    assert "inherited deployment operation op-3 does not hold the production lock" in run.stderr
+    assert "deployment operation op-3 does not hold the production lock" in run.stderr
     assert not any("delete" in call for call in _calls(tmp_path))
     _lock(tmp_path, "op-3")
     run = _run(tmp_path, RETIRE, extra="TR_DEPLOY_MUTEX_OPERATION=op-3\n")
@@ -938,21 +938,37 @@ def test_retire_deletes_schedules_then_workers_and_records_the_retirement(tmp_pa
 def test_retire_waits_for_the_fleet_state_it_finds_to_age_out(tmp_path: Path) -> None:
     # The last secondary moved traffic moments before this step: wait under
     # the mutex, re-reading the fleet, instead of failing the release. The
-    # observation is stamped a little ahead of the clock so that no amount
-    # of setup time makes the fleet quiescent before the first check.
+    # observation is stamped well ahead of the clock (the fleet cannot be
+    # quiescent for another 12 s) so that setup time cannot make the first
+    # check pass without a wait.
     _serving(tmp_path, {region: _STEP_TWO for region in REGIONS})
-    _observed(tmp_path, since=_ago(-3))
+    _observed(tmp_path, since=_ago(-10))
     _schedules(tmp_path)
     _workers(tmp_path)
-    run = _run(tmp_path, RETIRE, extra="TR_LEDGER_DRAIN_INTERVAL_SECONDS=4\nTR_LEDGER_RETIRE_RETRY_SLEEP_SECONDS=1\n")
+    run = _run(tmp_path, RETIRE, extra="TR_LEDGER_DRAIN_INTERVAL_SECONDS=2\nTR_LEDGER_RETIRE_RETRY_SLEEP_SECONDS=1\n")
     assert run.returncode == 0, run.stderr
     assert "for the fleet to become quiescent" in run.stderr
     assert "ledger reconciler workers retired (4 job(s) deleted)" in run.stderr
     assert sum(call.startswith("run services describe") for call in _calls(tmp_path)) > len(REGIONS)
 
+    # A lease that runs out during that wait stops the teardown before its
+    # first deletion: the lock is re-read before every destructive step.
+    (tmp_path / "marker").unlink()
+    _schedules(tmp_path)
+    _workers(tmp_path)
+    _observed(tmp_path, since=_ago(-4))
+    _lock(tmp_path, "op-5", expires_in=2)
+    run = _run(tmp_path, RETIRE, extra="TR_DEPLOY_MUTEX_OPERATION=op-5\nTR_LEDGER_DRAIN_INTERVAL_SECONDS=2\nTR_LEDGER_RETIRE_RETRY_SLEEP_SECONDS=1\n")
+    assert run.returncode != 0
+    assert "deployment operation op-5 does not hold the production lock" in run.stderr
+    assert not any("delete" in call for call in _calls(tmp_path))
+    assert not (tmp_path / "marker").exists()
+    # an inherited lock is never acquired or released here
+    assert not any(call.startswith("mutex") for call in _calls(tmp_path))
+
     # A fleet that changes again moves the goal: the step fails at once
     # rather than chasing it, and nothing is torn down.
-    (tmp_path / "marker").unlink()
+    (tmp_path / "marker").unlink(missing_ok=True)
     _schedules(tmp_path)
     _workers(tmp_path)
     (tmp_path / "service-churn").write_text("100")
