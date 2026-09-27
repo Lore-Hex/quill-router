@@ -367,17 +367,17 @@ EXCLUDED_DIRECTORIES = {
 
 
 def _tracked_files(root: Path) -> list[Path] | None:
-    """The tracked files when root is the top of a git checkout, else None."""
+    """The tracked files, submodules included, when root is the top of a git checkout."""
     try:
         top = subprocess.run(["git", "-C", str(root), "rev-parse", "--show-toplevel"],  # noqa: S603, S607 - fixed git query
-                             capture_output=True, text=True, check=True).stdout.strip()
-        if not top or Path(top).resolve() != root.resolve():
+                             capture_output=True, check=True).stdout.removesuffix(b"\n")
+        if not top or Path(os.fsdecode(top)).resolve() != root.resolve():
             return None
-        listed = subprocess.run(["git", "-C", str(root), "ls-files", "-z"],  # noqa: S603, S607 - fixed git query
+        listed = subprocess.run(["git", "-C", str(root), "ls-files", "--recurse-submodules", "-z"],  # noqa: S603, S607 - fixed git query
                                 capture_output=True, check=True).stdout
     except (OSError, subprocess.CalledProcessError):
         return None
-    return [root / name for name in listed.decode("utf-8", "surrogateescape").split("\0") if name]
+    return [root / os.fsdecode(name) for name in listed.split(b"\0") if name]
 
 
 def repository_files(root: Path) -> list[Path]:

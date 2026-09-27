@@ -659,20 +659,44 @@ def test_explicitly_registered_extra_gap_variant_is_marked(monkeypatch):
     assert len(marks) == 1 and marks[0].kwargs == {"strict": True, "reason": "explicitly reviewed variant"}
 
 
-def test_a_git_checkout_scans_tracked_files_and_a_plain_directory_scans_all(tmp_path_factory):
+@pytest.mark.parametrize("name", ["checkout", "checkout ending in a space "])
+def test_a_git_checkout_scans_tracked_files_and_a_plain_directory_scans_all(tmp_path_factory, name):
     # google-github-actions/auth writes gha-creds-*.json into the workspace; the
     # hourly price refresh's validation run failed on it as a "DDL carrier".
     carrier = '{"note": "update_ddl"}\n'
-    checkout = tmp_path_factory.mktemp("checkout")
+    checkout = tmp_path_factory.mktemp("repo") / name
+    checkout.mkdir()
     subprocess.run(["git", "init", "-q", str(checkout)], check=True)  # noqa: S603, S607 - fixed git setup
-    (checkout / "migrate.sh").write_text(carrier)
-    (checkout / "gha-creds-untracked.json").write_text(carrier)
-    subprocess.run(["git", "-C", str(checkout), "add", "migrate.sh"], check=True)  # noqa: S603, S607 - fixed git setup
+    tracked = ["migrate.sh", "gha-creds-tracked.json", "build/generated.sh", "tests/fixture.sh", "nested/tests/tool.sh"]
+    for relative in [*tracked, "gha-creds-untracked.json", "anything.txt"]:
+        (checkout / relative).parent.mkdir(parents=True, exist_ok=True)
+        (checkout / relative).write_text(carrier)
+    subprocess.run(["git", "-C", str(checkout), "add", *tracked], check=True)  # noqa: S603, S607 - fixed git setup
 
-    assert schema.repository_files(checkout) == [checkout / "migrate.sh"]
+    # Tracked files are scanned whatever their name; excluded directories
+    # (at any depth) and the root tests/ stay out; untracked files never count.
+    assert schema.repository_files(checkout) == sorted(
+        checkout / relative for relative in ("gha-creds-tracked.json", "migrate.sh", "nested/tests/tool.sh")
+    )
 
     plain = tmp_path_factory.mktemp("plain")
     (plain / "migrate.sh").write_text(carrier)
     (plain / "gha-creds-untracked.json").write_text(carrier)
 
     assert schema.repository_files(plain) == [plain / "gha-creds-untracked.json", plain / "migrate.sh"]
+
+
+def test_a_git_checkout_scans_its_submodules_files(tmp_path_factory):
+    git = ["git", "-c", "user.email=t@example.invalid", "-c", "user.name=t", "-c", "protocol.file.allow=always"]
+    sub = tmp_path_factory.mktemp("sub")
+    subprocess.run([*git, "init", "-q", str(sub)], check=True)  # noqa: S603 - fixed git setup
+    (sub / "migrate.sh").write_text('{"note": "update_ddl"}\n')
+    subprocess.run([*git, "-C", str(sub), "add", "migrate.sh"], check=True)  # noqa: S603 - fixed git setup
+    subprocess.run([*git, "-C", str(sub), "commit", "-q", "-m", "sub"], check=True)  # noqa: S603 - fixed git setup
+    checkout = tmp_path_factory.mktemp("super")
+    subprocess.run([*git, "init", "-q", str(checkout)], check=True)  # noqa: S603 - fixed git setup
+    subprocess.run(  # noqa: S603 - fixed git setup
+        [*git, "-C", str(checkout), "submodule", "add", "-q", str(sub), "vendored"], check=True
+    )
+
+    assert checkout / "vendored/migrate.sh" in schema.repository_files(checkout)
