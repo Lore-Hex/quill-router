@@ -287,3 +287,48 @@ def test_hint_option_in_comment_is_not_rewritten():
     comment = "/* spanner_emulator.disable_query_null_filtered_index_check=false */"
     sql = "SELECT * FROM t@{FORCE_INDEX=tr_receipt_key_versions " + comment + "}"  # noqa: S608
     assert emulator_sql(sql) == sql[:-1] + ", " + NULL_FILTERED_HINT + "}"
+
+
+@pytest.mark.parametrize("bound", ["exact_staleness", "max_staleness"])
+def test_sdk_snapshot_invalid_duration_serialization_still_raises(bound):
+    from unittest.mock import Mock
+
+    from google.cloud.spanner_v1.snapshot import Snapshot
+
+    # 3.69.1 accepts ints at construction, then rejects them at use time.
+    original = Snapshot(session=None, **{bound: 5})
+    with pytest.raises(AttributeError):
+        original._build_transaction_selector_pb()
+    with emulator_sdk_shim(), pytest.raises(AttributeError):
+        with Database.snapshot(Mock(), **{bound: 5}) as snapshot:
+            snapshot._build_transaction_selector_pb()
+
+
+@pytest.mark.parametrize("sql", ["SELECT 'unclosed", 'SELECT "unclosed',
+                                 "SELECT '''unclosed", "SELECT `unclosed", "SELECT /* unclosed"],
+                         ids=["single-quote", "double-quote", "triple-quote", "backtick", "block-comment"])
+def test_unterminated_sql_regions_fail_closed(sql):
+    from tests.conformance.spanner_emulator import names_null_filtered_index, sql_code
+
+    for check in (sql_code, names_null_filtered_index, emulator_sql):
+        with pytest.raises(ValueError, match="unterminated SQL"):
+            check(sql)
+
+
+@pytest.mark.parametrize("option", ["", ", spanner_emulator.disable_query_null_filtered_index_check=false"])
+def test_backtick_force_index_detection_rewrite_and_guard(monkeypatch, option):
+    from tests.conformance import test_spanner_sql_acceptance as acceptance
+    from tests.conformance.spanner_emulator import names_null_filtered_index
+
+    sql = "SELECT * FROM t@{FORCE_INDEX=`tr_receipt_key_versions`" + option + "}"  # noqa: S608
+    assert names_null_filtered_index(sql)
+    rewritten = emulator_sql(sql)
+    assert "FORCE_INDEX=`tr_receipt_key_versions`" in rewritten
+    assert NULL_FILTERED_HINT in rewritten
+    assert emulator_sql(rewritten) == rewritten
+    monkeypatch.setattr(acceptance, "all_cases", lambda: [acceptance.SQLCase("backtick", [(sql, {}, {})])])
+    acceptance.test_null_filtered_hint_set_matches_registered_statements()
+    # Prove that the independent acceptance guard rejects a missing adaptation.
+    monkeypatch.setattr(acceptance, "emulator_sql", lambda statement: statement)
+    with pytest.raises(AssertionError):
+        acceptance.test_null_filtered_hint_set_matches_registered_statements()

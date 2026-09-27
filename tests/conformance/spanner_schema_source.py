@@ -8,24 +8,22 @@ from __future__ import annotations
 import difflib
 import hashlib
 import re
+import shlex
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
-# Reviewed dispatch ARGUMENTS, normalized for whitespace and case. Helper
-# bodies are expanded by their recognized callers below. No wildcard variables.
+# Reviewed dispatch ARGUMENTS, normalized for whitespace ONLY. Shell variable names are case-sensitive.
+# Helper bodies are expanded by their recognized callers below. No wildcard variables.
 REVIEWED_DDL_STATEMENTS = {
     "infra.sh": {
         r"ALTER DATABASE \`${SPANNER_DATABASE_ID}\` SET OPTIONS (version_retention_period = '7d')": "database retention option",
     },
-    "migrate_entity_ttl.sh": {"$ddl": "apply_ddl forwards parsed callers"},
     "migrate_gateway_request_index.sh": {
-        "$1": "ddl forwards parsed callers",
         "DROP INDEX $OLD": "retire historical unique index",
     },
     "migrate_request_retention.sh": {
-        "$1": "ddl forwards parsed callers",
         "ALTER TABLE $1 ADD COLUMN $2 TIMESTAMP": "expanded ensure_column helper",
         "ALTER TABLE $table ADD ROW DELETION POLICY (OLDER_THAN(terminal_at, INTERVAL 30 DAY))": "expanded ensure_policy helper",
     },
@@ -33,56 +31,243 @@ REVIEWED_DDL_STATEMENTS = {
         "DROP TABLE tr_trust_backfill": "recreate empty legacy marker; retain current CREATE",
     },
 }
-for _file in (
-    "migrate_receipt_key_versions.sh", "migrate_money_primitives.sh",
-    "migrate_spend_lease.sh", "migrate_trust_reconciliation.sh", "migrate_typed_counters.sh",
-):
-    REVIEWED_DDL_STATEMENTS.setdefault(_file, {})["$1"] = "apply_ddl forwards parsed callers"
 for _file in ("migrate_spend_lease.sh", "migrate_typed_counters.sh"):
-    REVIEWED_DDL_STATEMENTS[_file][
+    REVIEWED_DDL_STATEMENTS.setdefault(_file, {})[
         "ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}"
     ] = "expanded ensure_column helper"
 REVIEWED_DDL_STATEMENTS["migrate_typed_counters.sh"][
     "ALTER TABLE ${table} ALTER COLUMN ${col} SET OPTIONS (allow_commit_timestamp=true)"
 ] = "expanded ensure_commit_ts_col helper"
 
-# Shell words retain their offsets and quoted segments, including embedded
-# newlines. Comments/quoted strings cannot masquerade as helper invocations.
-_SHELL_TOKEN = re.compile(
-    r"\#[^\n]*|(?:\\.|\"(?:\\.|[^\"\\])*\"|'[^']*'|[^\s;|&()\"'\\#])+|[^\s]",
-    re.S,
-)
-_DDL_DISPATCH = re.compile(r"apply_ddl|ddl|--ddl(?:=.*)?", re.I | re.S)
+
+def shell_tokens(source: str) -> list[re.Match[str]]:
+    """Offset-preserving shell words, including executable substitutions.
+
+    Nested command substitutions have their own quote scope. Returning their
+    tokens too prevents a quoted assignment from hiding a sink or an eval.
+    This lexer does not expand or execute any shell text.
+    """
+    spans: set[tuple[int, int]] = set()
+
+    def scan(pos: int, terminator: str = "") -> int:
+        while pos < len(source):
+            if terminator and source[pos] == terminator:
+                spans.add((pos, pos + 1))
+                return pos + 1
+            if source[pos] in " \t\r":
+                pos += 1
+                continue
+            if source[pos] == "#":
+                end = source.find("\n", pos)
+                pos = len(source) if end < 0 else end
+                continue
+            if source[pos] in "\n;|&()":
+                start = pos
+                pos += 1
+                spans.add((start, pos))
+                if source[start] == "(" and terminator == ")":
+                    pos = scan(pos, ")")
+                continue
+            start = pos
+            quote = ""
+            while pos < len(source):
+                char = source[pos]
+                if char == "\\" and quote != "'":
+                    pos += 2
+                elif char == "'" and quote != '"':
+                    quote = "" if quote else "'"
+                    pos += 1
+                elif char == '"' and quote != "'":
+                    quote = "" if quote else '"'
+                    pos += 1
+                elif quote != "'" and source.startswith("$(", pos):
+                    pos = scan(pos + 2, ")")
+                elif not quote and char == terminator:
+                    break
+                elif quote != "'" and char == "`":
+                    pos = scan(pos + 1, "`")
+                elif not quote and (char in " \t\r\n;|&()" or char == terminator):
+                    break
+                else:
+                    pos += 1
+            assert not quote, f"unterminated shell quote at offset {start}"
+            assert pos <= len(source), f"unfinished shell escape at offset {start}"
+            spans.add((start, pos))
+        assert not terminator, f"unterminated shell substitution at offset {pos}"
+        return pos
+
+    scan(0)
+    pattern = re.compile(r".+", re.S)
+    return [match for start, end in sorted(spans)
+            if (match := pattern.match(source, start, end)) is not None]
+
+
+# Only these exact source arguments have been reviewed. The imported library's
+# gc wrapper and absence of DDL sinks are checked even during regeneration.
+REVIEWED_SOURCES = {
+    name: {"${SCRIPT_DIR}/_lib.sh": "scripts/deploy/_lib.sh"}
+    for name in ("infra.sh", "migrate_generation_records.sh", "migrate_request_retention.sh")
+}
+REVIEWED_GC_WRAPPER = 'gc() { gcloud --project "$PROJECT_ID" "$@"; }'
+# The unchanged infra script also supplies DDL when bootstrapping the database.
+# This exact command is a reviewed exception to the ddl-update-only sink rule.
+REVIEWED_BOOTSTRAP_COMMAND = ("gc", "spanner", "databases", "create")
 
 
 def normalized_statement(text: str) -> str:
-    return " ".join(text.split()).casefold()
+    return " ".join(text.split())
 
 
-def ddl_dispatch_arguments(source: str) -> list[tuple[int, int]]:
-    """Every helper call / --ddl argument, not merely lines with SQL keywords.
+def ddl_dispatch_arguments(source: str, path: Path, physical_lines: list[int], root: Path,
+                           *, reviewed_library: bool = False) -> list[tuple[int, int]]:
+    """Discover dispatchers from sinks, then account for every call by span.
 
-    Checking --ddl everywhere also covers gc (infra.sh's gcloud alias) and
-    database-create commands. Unknown/dynamic arguments must fail closed.
+    This is a conservative shell vocabulary, not a shell interpreter. Reject
+    indirection rather than evaluating it. Quotes retain their statement spans;
+    newline/control tokens delimit commands, and braces delimit function bodies.
     """
-    tokens = [token for token in _SHELL_TOKEN.finditer(source) if not token[0].startswith("#")]
+    try:
+        tokens = shell_tokens(source)
+    except AssertionError as exc:
+        raise AssertionError(f"{path}:1: {exc}") from exc
+    words = ["".join(shlex.split(token[0])) if token[0] != "\n" else "\n" for token in tokens]
+
+    def fail(index: int, reason: str) -> None:
+        line = physical_lines[source.count("\n", 0, tokens[index].start())]
+        raise AssertionError(f"{path}:{line}: {reason}")
+
+    sources = dict(REVIEWED_SOURCES.get(path.name, {}))
+    has_gc = reviewed_library
+    for i, word in enumerate(words):
+        if word == "eval":
+            fail(i, "unsupported shell execution: eval")
+        if word in {"source", "."}:
+            argument = words[i + 1] if i + 1 < len(words) else ""
+            imported = sources.pop(argument, None)
+            if imported is None:
+                fail(i, "unreviewed sourced file")
+            imported_path = root / imported
+            imported_source, imported_lines = shell_source(imported_path)
+            ddl_dispatch_arguments(imported_source, imported_path, imported_lines, root, reviewed_library=True)
+            has_gc = True
+        if word in {"bash", "sh"}:
+            tail = words[i + 1:]
+            for option in tail:
+                if option in {"\n", ";", "|", "&", ")"}:
+                    break
+                if option.startswith("-") and "c" in option[1:]:
+                    fail(i, "unsupported shell execution: shell -c")
+
+    # Discover function extents without assuming their names or line layout.
+    functions: list[tuple[str, int, int]] = []
+    definitions: set[int] = set()
+    for i in range(len(words) - 3):
+        parentheses = words[i + 1:i + 3] == ["(", ")"]
+        keyword = i > 0 and words[i - 1] == "function"
+        if re.fullmatch(r"[A-Za-z_]\w*", words[i]) and (parentheses or keyword):
+            opening = i + 3 if parentheses else i + 1
+            while opening < len(words) and words[opening] == "\n":
+                opening += 1
+            if opening >= len(words) or words[opening] != "{":
+                fail(i, "unsupported function body")
+            depth = 1
+            closing = opening + 1
+            while closing < len(words) and depth:
+                depth += (words[closing] == "{") - (words[closing] == "}")
+                closing += 1
+            if depth:
+                fail(i, "unterminated function body")
+            functions.append((words[i], opening, closing - 1))
+            definitions.add(i)
+
+    if reviewed_library:
+        gc_definitions = sorted(i for i in definitions if words[i] == "gc")
+        if not gc_definitions:
+            raise AssertionError(f"{path}:1: missing reviewed gc wrapper")
+        if len(gc_definitions) != 1:
+            fail(gc_definitions[1], "duplicate gc definition")
+        i = gc_definitions[0]
+        _, _, closing = next(function for function in functions if function[0] == "gc")
+        beginning = i - 1 if i and words[i - 1] == "function" else i
+        wrapper = source[tokens[beginning].start():tokens[closing].end()]
+        if normalized_statement(wrapper) != REVIEWED_GC_WRAPPER:
+            fail(i, "reviewed gc forwarding changed")
+
     spans = []
+    dispatchers: set[str] = set()
+    ddl_options: set[int] = set()
+    bootstrap_seen = False
+    for i, word in enumerate(words):
+        if word.lower() not in ({"gcloud", "gc"} if has_gc else {"gcloud"}):
+            continue
+        end = i + 1
+        while end < len(words) and words[end] not in {"\n", ";", "|", "&", ")", "}"}:
+            end += 1
+        command = [value.lower() for value in words[i:end]]
+        sink = any(command[j:j + 4] == ["spanner", "databases", "ddl", "update"]
+                   for j in range(1, len(command) - 3))
+        create = any(command[j:j + 3] == ["spanner", "databases", "create"]
+                     for j in range(1, len(command) - 2))
+        if reviewed_library and (sink or create):
+            fail(i, "DDL sink or dispatcher in reviewed library")
+        bootstrap = (path.name == "infra.sh" and tuple(words[i:i + 4]) == REVIEWED_BOOTSTRAP_COMMAND)
+        if not sink and not bootstrap:
+            continue
+        if bootstrap:
+            if bootstrap_seen:
+                fail(i, "duplicate reviewed bootstrap command")
+            bootstrap_seen = True
+        beginning = i
+        while beginning and words[beginning - 1] not in {"\n", ";", "|", "&", "(", "{"}:
+            beginning -= 1
+        if any("<<<" in token[0] for token in tokens[beginning:end]):
+            fail(i, "here-string feeding DDL sink")
+        options = [j for j in range(i, end) if re.fullmatch(r"--ddl(?:=.*)?", tokens[j][0], re.I | re.S)]
+        if len(options) != 1:
+            fail(i, "DDL sink requires exactly one understood --ddl argument")
+        j = options[0]
+        ddl_options.add(j)
+        token = tokens[j]
+        if "=" in token[0]:
+            span = (token.start() + token[0].index("=") + 1, token.end())
+        elif j + 1 < end:
+            span = tokens[j + 1].span()
+        else:
+            fail(i, "DDL sink missing argument")
+        enclosing = [(name, opening, closing) for name, opening, closing in functions if opening < i < closing]
+        if not enclosing:
+            spans.append(span)
+            continue
+        if len(enclosing) != 1:
+            fail(i, "nested dispatcher function")
+        name, opening, closing = enclosing[0]
+        argument = source[span[0]:span[1]]
+        if argument not in {'"$1"', '"${1}"'}:
+            variable = re.fullmatch(r'"\$(?:([A-Za-z_]\w*)|\{([A-Za-z_]\w*)\})"', argument)
+            if variable is None:
+                fail(i, "unsupported dispatcher DDL parameter")
+            parameter = variable[1] or variable[2]
+            assignments = [k for k in range(opening + 1, closing)
+                           if re.match(rf"{re.escape(parameter)}=", tokens[k][0])]
+            if (len(assignments) != 1 or assignments[0] >= i
+                    or tokens[assignments[0]][0] not in {f'{parameter}="$1"', f'{parameter}="${{1}}"'}):
+                fail(i, "unsupported dispatcher DDL parameter assignment")
+        dispatchers.add(name.lower())
+
     for i, token in enumerate(tokens):
-        if not _DDL_DISPATCH.fullmatch(token[0]):
+        # Unknown --ddl carriers must be explicitly taught to this extractor.
+        if re.fullmatch(r"--ddl(?:=.*)?", token[0], re.I | re.S) and i not in ddl_options:
+            fail(i, "unconsumed DDL dispatch: unknown sink")
+        if words[i].lower() not in dispatchers or i in definitions:
+            continue
+        # 'ddl' in the gcloud command words is not a call to a shell function.
+        if i and words[i - 1].lower() == "databases":
             continue
         following = tokens[i + 1] if i + 1 < len(tokens) else None
-        if token[0].lower() == "ddl":
-            # The gcloud subcommand, not the shell helper.
-            if i and tokens[i - 1][0].lower() == "databases":
-                continue
-        if following is not None and following[0] == "(":
-            continue  # helper definition
-        if "=" in token[0]:
-            spans.append((token.start() + token[0].index("=") + 1, token.end()))
-        elif following is not None and following[0] not in {";", "|", "&", ")", "}"}:
-            spans.append(following.span())
+        if following is None or following[0] in {"\n", ";", "|", "&", ")", "}"}:
+            spans.append((token.end(), token.end()))
         else:
-            spans.append((token.end(), token.end()))  # missing argument fails
+            spans.append(following.span())
     return spans
 
 
@@ -115,6 +300,25 @@ def assert_schema_matches(ddl: tuple[str, ...], digests: dict[str, str], root: P
     assert ddl == migration_ddl(root), "GoogleSQL DDL drift from deployment migrations"
 
 
+def shell_source(path: Path) -> tuple[str, list[int]]:
+    logical_lines = []
+    physical_lines = []
+    pending = ""
+    start = 1
+    for number, line in enumerate(path.read_text().splitlines(), 1):
+        if not pending:
+            start = number
+        if line.endswith("\\"):
+            pending += line[:-1] + " "
+        else:
+            logical_lines.append(pending + line)
+            physical_lines.append(start)
+            pending = ""
+    assert not pending, f"{path}:{start}: unfinished shell continuation"
+    source = re.sub(r"(?m)^[ \t]*#.*$", "", "\n".join(logical_lines))
+    return source, physical_lines
+
+
 def migration_ddl(root: Path = ROOT) -> tuple[str, ...]:
     sources = schema_sources(root)
     creates: dict[str, str] = {}
@@ -123,21 +327,7 @@ def migration_ddl(root: Path = ROOT) -> tuple[str, ...]:
     policies: dict[str, str] = {}
     commit_columns: set[tuple[str, str]] = set()
     for path in sources:
-        logical_lines = []
-        physical_lines = []
-        pending = ""
-        start = 1
-        for number, line in enumerate(path.read_text().splitlines(), 1):
-            if not pending:
-                start = number
-            if line.endswith("\\"):
-                pending += line[:-1] + " "
-            else:
-                logical_lines.append(pending + line)
-                physical_lines.append(start)
-                pending = ""
-        assert not pending, f"{path}:{start}: unfinished shell continuation"
-        source = re.sub(r"(?m)^[ \t]*#.*$", "", "\n".join(logical_lines))
+        source, physical_lines = shell_source(path)
 
         def location(match, path=path, physical_lines=physical_lines, source=source):
             return f"{path}:{physical_lines[source.count(chr(10), 0, match.start())]}"
@@ -205,7 +395,7 @@ def migration_ddl(root: Path = ROOT) -> tuple[str, ...]:
         for assignment in re.finditer(r"(?m)^[ \t]*([A-Z_]+)=", source):
             literal = next((span for span in consumed if span[0] == assignment.end()), None)
             assignments.setdefault(assignment[1], []).append(literal or (-1, -1))
-        for start, end in ddl_dispatch_arguments(source):
+        for start, end in ddl_dispatch_arguments(source, path, physical_lines, root):
             argument = shell_argument(source[start:end])
             if (start, end) in consumed:
                 continue

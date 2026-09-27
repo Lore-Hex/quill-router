@@ -271,18 +271,50 @@ _NATIVE_STORE_KNOWN_GAPS: dict[tuple[str, str], str] = {
 _FAKE_ONLY_GAPS: dict[tuple[str, str], str] = {}
 
 
+# These tests currently have exactly ONE parameter: the backend. Enumerate
+# those full IDs explicitly. Additional parameters/IDs require registry review;
+# never derive the registered variants from collected items.
 _BACKEND_KNOWN_GAPS = {
-    "spanner-fake": {**_NATIVE_STORE_KNOWN_GAPS, **_FAKE_ONLY_GAPS},
-    "spanner-emulator": dict(_NATIVE_STORE_KNOWN_GAPS),
+    backend: {(fixture, f"{test_id}[backend={backend}]"): reason
+              for (fixture, test_id), reason in gaps.items()}
+    for backend, gaps in (
+        ("spanner-fake", {**_NATIVE_STORE_KNOWN_GAPS, **_FAKE_ONLY_GAPS}),
+        ("spanner-emulator", _NATIVE_STORE_KNOWN_GAPS),
+    )
 }
 
 
 def gap_test_id(item):
-    # Preserve the module path (and any class), remove only parametrization.
-    return item.nodeid.removeprefix("tests/conformance/").split("[", 1)[0]
+    return item.nodeid.removeprefix("tests/conformance/")
+
+
+def validate_gap_registrations(items, *, require_all=True):
+    """Check exact variants, and optionally every registration in a full collection.
+
+    Partial invocations still reject new variants of registered tests. The
+    offline full-collection guard additionally rejects dead registrations.
+    """
+    matched = set()
+    for item in items:
+        params = getattr(getattr(item, "callspec", None), "params", {})
+        test_id = gap_test_id(item)
+        for backend, registrations in _BACKEND_KNOWN_GAPS.items():
+            for fixture, registered_id in registrations:
+                if params.get(fixture) != backend:
+                    continue
+                if test_id.split("[", 1)[0] == registered_id.split("[", 1)[0]:
+                    assert (fixture, test_id) in registrations, f"Unregistered gap variant: {item.nodeid}"
+                if test_id == registered_id:
+                    matched.add((backend, fixture, registered_id))
+    if require_all:
+        expected = {(backend, fixture, test_id)
+                    for backend, registrations in _BACKEND_KNOWN_GAPS.items()
+                    for fixture, test_id in registrations}
+        assert matched == expected, f"Dead gap registration: {sorted(expected - matched)}"
 
 
 def pytest_collection_modifyitems(items):
+    validate_gap_registrations(items, require_all=False)
     for item in items:
         params = getattr(getattr(item, "callspec", None), "params", {})
         for fixture in ("store", "user_credit_transfer_store"):

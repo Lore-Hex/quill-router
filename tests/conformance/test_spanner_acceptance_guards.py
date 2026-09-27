@@ -212,7 +212,7 @@ def test_every_ddl_dispatch_is_consumed_in_copies(tmp_path, addition):
     scripts = tmp_path / "scripts/deploy"
     shutil.copytree(ROOT / "scripts/deploy", scripts)
     path = scripts / "migrate_money_primitives.sh"
-    original = path.read_text() + "\n"
+    original = path.read_text() + '\nddl() { gcloud spanner databases ddl update db --ddl="$1"; }\n'
     path.write_text(original + addition)
     line = original.count("\n") + 1
     # Joined continuations report the physical start of the logical command.
@@ -256,10 +256,10 @@ def test_native_legacy_gaps_are_strict_at_collection():
         pytest_collection_modifyitems,
     )
 
-    legacy = {name for name, reason in _BACKEND_KNOWN_GAPS["spanner-fake"].items()
+    legacy = {name for name, reason in _NATIVE_STORE_KNOWN_GAPS.items()
               if reason == _C1_LEGACY_MONEY}
     assert len(legacy) == 10
-    assert _BACKEND_KNOWN_GAPS["spanner-emulator"] == _NATIVE_STORE_KNOWN_GAPS
+    assert len(_BACKEND_KNOWN_GAPS["spanner-emulator"]) == len(_NATIVE_STORE_KNOWN_GAPS)
     for fixture, name in legacy | _FAKE_ONLY_GAPS.keys():
         marks = []
         item = SimpleNamespace(callspec=SimpleNamespace(params={fixture: "spanner-emulator"}),
@@ -317,7 +317,7 @@ def test_all_gap_registrations_match_collected_items_for_every_backend(tmp_path)
 
     from tests.conformance.conftest import _BACKEND_KNOWN_GAPS
 
-    names = {test_id.split("::")[-1] for gaps in _BACKEND_KNOWN_GAPS.values()
+    names = {test_id.split("::")[-1].split("[", 1)[0] for gaps in _BACKEND_KNOWN_GAPS.values()
              for _, test_id in gaps}
     unrelated = tmp_path / "test_unrelated.py"
     unrelated.write_text("import pytest\n" + "\n".join(
@@ -331,10 +331,11 @@ def test_all_gap_registrations_match_collected_items_for_every_backend(tmp_path)
     probe = textwrap.dedent('''
         import sys
         import pytest
-        from tests.conformance.conftest import _BACKEND_KNOWN_GAPS, gap_test_id
+        from tests.conformance.conftest import _BACKEND_KNOWN_GAPS, gap_test_id, validate_gap_registrations
 
         class VerifyGaps:
             def pytest_collection_finish(self, session):
+                validate_gap_registrations(session.items)
                 for backend, registrations in _BACKEND_KNOWN_GAPS.items():
                     for (fixture, test_id), reason in registrations.items():
                         matches = [item for item in session.items
@@ -355,3 +356,186 @@ def test_all_gap_registrations_match_collected_items_for_every_backend(tmp_path)
     ''')
     result = subprocess.run([sys.executable, "-c", probe, str(unrelated)], cwd=ROOT, capture_output=True, text=True, timeout=60)  # noqa: S603
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("escape", ["renamed-helper", "eval", "printf-eval", "sourced-file"])
+def test_sink_discovery_rejects_review_round_three_escapes(tmp_path, escape):
+    scripts = tmp_path / "scripts/deploy"
+    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    path = scripts / "migrate_money_primitives.sh"
+    source = path.read_text().replace("apply_ddl", "run_schema")
+    additions = {
+        "renamed-helper": "run_schema 'alter table tr_entities add column review_lost STRING(64)'\n",
+        "eval": '''eval "run_schema 'alter table tr_entities add column review_lost STRING(64)'"\n''',
+        "printf-eval": '''SQL=$(printf '%s %s' 'alter table tr_entities' 'add column review_lost STRING(64)')
+eval "run_schema '$SQL'"
+''',
+        "sourced-file": 'source "../../external-schema.sh"\n',
+    }
+    (tmp_path / "external-schema.sh").write_text(additions["renamed-helper"])
+    path.write_text(source + "\n" + additions[escape])
+    with pytest.raises(AssertionError, match=r"migrate_money_primitives.sh:\d+:"):
+        migration_ddl(tmp_path)
+
+
+def test_renamed_dispatcher_supported_call_is_extracted(tmp_path):
+    scripts = tmp_path / "scripts/deploy"
+    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    path = scripts / "migrate_money_primitives.sh"
+    path.write_text(path.read_text().replace("apply_ddl", "run_schema")
+                    + '\nrun_schema "ALTER TABLE tr_entities ADD COLUMN review_added STRING(64)"\n')
+    assert "ALTER TABLE tr_entities ADD COLUMN review_added STRING(64)" in migration_ddl(tmp_path)
+
+
+@pytest.mark.parametrize("addition", [
+    '''bash -c 'gcloud spanner databases ddl update db --ddl="ALTER TABLE tr_entities ADD COLUMN lost INT64"'\n''',
+    '''sh -c 'gcloud spanner databases ddl update db --ddl="ALTER TABLE tr_entities ADD COLUMN lost INT64"'\n''',
+    '. "../../external-schema.sh"\n',
+    'gcloud spanner databases ddl update db --ddl="$SQL" <<< "$SQL"\n',
+    '<<< "unused" gcloud spanner databases ddl update db --ddl="CREATE INDEX review_added ON tr_entities (kind)"\n',
+    'run_schema() { gcloud spanner databases ddl update db --ddl="${1,,}"; }\n',
+    'run_schema() { local ddl="$2"; gcloud spanner databases ddl update db --ddl="$ddl"; }\n',
+    'run_schema() { local ddl="$1"; ddl="$2"; gcloud spanner databases ddl update db --ddl="$ddl"; }\n',
+], ids=["bash-c", "sh-c", "dot-source", "here-string", "leading-here-string", "transformed-parameter", "wrong-parameter", "reassigned-parameter"])
+def test_unsupported_shell_dispatch_forms_fail_closed(tmp_path, addition):
+    scripts = tmp_path / "scripts/deploy"
+    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    (scripts / "migrate_review_hole.sh").write_text(addition)
+    with pytest.raises(AssertionError, match=r"migrate_review_hole.sh:\d+:"):
+        migration_ddl(tmp_path)
+
+
+def test_allowlist_preserves_shell_variable_case(tmp_path):
+    scripts = tmp_path / "scripts/deploy"
+    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    path = scripts / "migrate_gateway_request_index.sh"
+    path.write_text(path.read_text().replace('ddl "DROP INDEX $OLD"',
+                                            'old=tr_receipt_key_versions; ddl "DROP INDEX $old"'))
+    with pytest.raises(AssertionError, match=r"migrate_gateway_request_index.sh:\d+: unconsumed DDL dispatch"):
+        migration_ddl(tmp_path)
+
+
+def test_unrelated_library_edit_needs_no_schema_regeneration(tmp_path):
+    scripts = tmp_path / "scripts/deploy"
+    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    path = scripts / "_lib.sh"
+    path.write_text(path.read_text() + '\n# Unrelated deploy helper.\nreview_status() { gc run services list; }\n')
+    assert migration_ddl(tmp_path) == spanner_ddl.DDL
+    assert_schema_matches(spanner_ddl.DDL, spanner_ddl.SOURCE_DIGESTS, tmp_path)
+
+
+@pytest.mark.parametrize("addition", [
+    'gc spanner databases ddl update --ddl="ALTER TABLE tr_entities ADD COLUMN x STRING(1)"',
+    'gcloud spanner databases ddl update --ddl="ALTER TABLE tr_entities ADD COLUMN x STRING(1)"',
+    'gc spanner databases create db',
+    'gcloud --project "$PROJECT_ID" spanner databases create db',
+    'run_schema() { gc spanner databases ddl update db --ddl="$1"; }',
+    'function run_schema { gcloud spanner databases ddl update db --ddl="$1"; }',
+    'run_schema() { gc spanner databases create db; }',
+    '''eval 'gc spanner databases ddl update db --ddl="ALTER TABLE tr_entities ADD COLUMN x STRING(1)"' ''',
+    '''bash -c 'gc spanner databases create db' ''',
+    '''sh -c 'gcloud spanner databases create db' ''',
+    'source "${SCRIPT_DIR}/nested.sh"',
+    '. "${SCRIPT_DIR}/nested.sh"',
+    'result="$(gc spanner databases create db)"',
+    'gc spanner databases \\\n  ddl update db --ddl="$SQL"',
+], ids=["gc-update", "gcloud-update", "gc-create", "gcloud-create", "gc-dispatcher",
+        "gcloud-dispatcher", "create-dispatcher", "eval", "bash-c", "sh-c", "source",
+        "dot-source", "substitution", "continuation"])
+def test_reviewed_library_rejects_ddl_and_indirection(tmp_path, addition):
+    scripts = tmp_path / "scripts/deploy"
+    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    (scripts / "nested.sh").write_text('gc spanner databases create db\n')
+    path = scripts / "_lib.sh"
+    original = path.read_text()
+    path.write_text(original + "\n" + addition + "\n")
+    line = len(original.splitlines()) + 2
+    with pytest.raises(AssertionError, match=rf"_lib\.sh:{line}:"):
+        migration_ddl(tmp_path)
+
+
+@pytest.mark.parametrize("replacement", [
+    'gc() { gcloud --project "$PROJECT_ID"; }',
+    'gc() { gcloud --project "$PROJECT_ID" "$@"; }\ngc() { gcloud "$@"; }',
+    'gc() { gcloud --project "$PROJECT_ID" "$@"; }\nfunction gc { gcloud "$@"; }',
+    '# gc() { gcloud --project "$PROJECT_ID" "$@"; }',
+], ids=["missing-forwarding", "duplicate", "duplicate-keyword", "missing-definition"])
+def test_reviewed_library_requires_unique_gc_wrapper(tmp_path, replacement):
+    from tests.conformance.spanner_schema_source import REVIEWED_GC_WRAPPER
+
+    scripts = tmp_path / "scripts/deploy"
+    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    path = scripts / "_lib.sh"
+    path.write_text(path.read_text().replace(REVIEWED_GC_WRAPPER, replacement))
+    with pytest.raises(AssertionError, match=r"_lib\.sh:\d+: .*gc"):
+        migration_ddl(tmp_path)
+
+
+def test_reviewed_library_wrapper_allows_normalized_whitespace(tmp_path):
+    from tests.conformance.spanner_schema_source import REVIEWED_GC_WRAPPER
+
+    scripts = tmp_path / "scripts/deploy"
+    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    path = scripts / "_lib.sh"
+    path.write_text(path.read_text().replace(REVIEWED_GC_WRAPPER,
+                                            'gc() {\n\tgcloud  --project "$PROJECT_ID" "$@";\n}\n'))
+    assert_schema_matches(spanner_ddl.DDL, spanner_ddl.SOURCE_DIGESTS, tmp_path)
+
+
+@pytest.mark.parametrize("backend", ["spanner-fake", "spanner-emulator"])
+def test_new_gap_parameter_variant_fails_collection(backend):
+    from types import SimpleNamespace
+
+    from tests.conformance.conftest import pytest_collection_modifyitems
+
+    name = "test_finalize_unknown_authorization_is_false_not_error"
+    marks = []
+    item = SimpleNamespace(callspec=SimpleNamespace(params={"store": backend, "mode": "new-supported-mode"}),
+                           nodeid=f"tests/conformance/test_store_semantics.py::{name}[backend={backend}-mode=new-supported-mode]",
+                           originalname=name, add_marker=marks.append)
+    with pytest.raises(AssertionError, match="Unregistered gap variant"):
+        pytest_collection_modifyitems([item])
+    assert not marks
+
+
+def test_dead_gap_registration_fails_collection_check():
+    from tests.conformance.conftest import validate_gap_registrations
+
+    with pytest.raises(AssertionError, match="Dead gap registration"):
+        validate_gap_registrations([])
+
+
+@pytest.mark.parametrize("body", [
+    "function run_schema { gcloud spanner databases ddl update db --ddl=\"$1\"; }\n"
+    "run_schema 'alter table tr_entities add column lost INT64'\n",
+    "function run_schema() { gcloud spanner databases ddl update db --ddl=\"$1\"; }\n"
+    "run_schema 'alter table tr_entities add column lost INT64'\n",
+    "run_schema() ( gcloud spanner databases ddl update db --ddl=\"$1\"; )\n",
+    '''result="$(eval "run_schema '$SQL'")"\n''',
+    '''e""val "run_schema '$SQL'"\n''',
+    '''result="$(gcloud spanner databases ddl update db --ddl='alter table tr_entities add column lost INT64')"\n''',
+], ids=["function-keyword", "function-parentheses", "unsupported-function-body", "nested-eval", "quoted-eval", "nested-sink"])
+def test_sink_discovery_handles_shell_structure(tmp_path, body):
+    scripts = tmp_path / "scripts/deploy"
+    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    (scripts / "migrate_review_hole.sh").write_text(body)
+    with pytest.raises(AssertionError, match=r"migrate_review_hole.sh:\d+:"):
+        migration_ddl(tmp_path)
+
+
+def test_explicitly_registered_extra_gap_variant_is_marked(monkeypatch):
+    from types import SimpleNamespace
+
+    from tests.conformance import conftest
+
+    backend = "spanner-emulator"
+    name = "test_finalize_unknown_authorization_is_false_not_error"
+    test_id = f"test_store_semantics.py::{name}[backend={backend}-mode=reviewed-mode]"
+    registrations = {key: dict(value) for key, value in conftest._BACKEND_KNOWN_GAPS.items()}
+    registrations[backend][("store", test_id)] = "explicitly reviewed variant"
+    monkeypatch.setattr(conftest, "_BACKEND_KNOWN_GAPS", registrations)
+    marks = []
+    item = SimpleNamespace(callspec=SimpleNamespace(params={"store": backend, "mode": "reviewed-mode"}),
+                           nodeid="tests/conformance/" + test_id, originalname=name, add_marker=marks.append)
+    conftest.pytest_collection_modifyitems([item])
+    assert len(marks) == 1 and marks[0].kwargs == {"strict": True, "reason": "explicitly reviewed variant"}

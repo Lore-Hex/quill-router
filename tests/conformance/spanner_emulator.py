@@ -41,7 +41,9 @@ def sql_code(sql: str) -> str:
             pos = len(sql) if end < 0 else end
         elif sql.startswith("/*", pos):
             end = sql.find("*/", pos + 2)
-            pos = len(sql) if end < 0 else end + 2
+            if end < 0:
+                raise ValueError("unterminated SQL block comment")
+            pos = end + 2
         elif sql[pos] in "\"'`":
             quote = sql[pos]
             delimiter = quote * 3 if quote != "`" and sql.startswith(quote * 3, pos) else quote
@@ -54,7 +56,16 @@ def sql_code(sql: str) -> str:
                     break
                 else:
                     pos += 1
-            pos = min(pos, len(sql))
+            else:
+                raise ValueError("unterminated SQL quote")
+            # Backticks are identifiers. Expose only a simple FORCE_INDEX
+            # value in a real hint block; keep all other identifiers masked.
+            prefix = "".join(masked[:start])
+            if quote == "`" and re.search(r"@\{[^{}]*\bFORCE_INDEX\s*=\s*$", prefix, re.I):
+                identifier = sql[start + 1:pos - 1]
+                if re.fullmatch(r"\w+", identifier):
+                    masked[start] = masked[pos - 1] = " "
+                    continue
         else:
             pos += 1
             continue
@@ -89,9 +100,9 @@ def _snapshot_wrapper(original: Callable[..., Any]) -> Callable[..., Any]:
     def wrapped(self: Any, **kwargs: Any) -> Any:
         from google.cloud.spanner_v1.snapshot import Snapshot
 
-        # The SDK constructor validates the ORIGINAL combination without RPCs
+        # Validate construction AND use-time serialization of ORIGINAL options without RPCs
         # or session acquisition. Do not hide errors by dropping bounds first.
-        Snapshot(session=None, **kwargs)
+        Snapshot(session=None, **kwargs)._build_transaction_selector_pb()
         # Fresh emulator schemas and read-your-writes conformance need strong reads.
         kwargs.pop("exact_staleness", None)
         kwargs.pop("max_staleness", None)
