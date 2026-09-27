@@ -842,6 +842,17 @@ def reconcile_manifest_tombstones(
                 elif old_operator_hold:
                     row["routable"] = False
                     row["routable_reason"] = old_reason
+                elif (
+                    old_reason == "price-unavailable"
+                    and present_reason == "price-unavailable"
+                    and model_id in priced_ids
+                ):
+                    # A writer that carries the committed row forward keeps the
+                    # old reason even after the price returns; clear it the way
+                    # the shared chat writer does.
+                    row.pop("routable", None)
+                    row.pop("routable_reason", None)
+                    row.pop("unresolved_since", None)
                 elif present_reason != "provider-canary-failed" and old_reason in {
                     "delisted-upstream",
                     "awaiting-price",

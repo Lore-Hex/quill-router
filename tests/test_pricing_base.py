@@ -120,6 +120,43 @@ def test_relisted_route_recovers_only_with_a_fresh_price(present_extra: dict) ->
     assert "routable_reason" not in priced
 
 
+@pytest.mark.parametrize(
+    "copies_committed_row",
+    [False, True],
+    ids=["writer-rebuilds-row", "writer-copies-committed-row"],
+)
+def test_relisted_route_disabled_for_want_of_a_price_recovers_once_priced(
+    copies_committed_row: bool,
+) -> None:
+    delisted = {
+        "id": "provider/relisted",
+        "routable": False,
+        "routable_reason": "delisted-upstream",
+        "missing_since": "2026-09-20",
+    }
+    unpriced = reconcile_manifest_tombstones(
+        [delisted],
+        {"provider/relisted": {**delisted}},
+        priced_ids=set(),
+        source="api",
+    )[0]
+    assert (unpriced["routable"], unpriced["routable_reason"]) == (False, "price-unavailable")
+
+    # Several provider writers carry the committed row forward and only add
+    # the fresh price, so the old unroutable fields arrive with it.
+    prices = {"input_token_price_per_m": 100_000, "output_token_price_per_m": 100_000}
+    present = {**unpriced, **prices} if copies_committed_row else {"id": "provider/relisted", **prices}
+    recovered = reconcile_manifest_tombstones(
+        [unpriced],
+        {"provider/relisted": present},
+        priced_ids={"provider/relisted"},
+        source="api",
+    )[0]
+    # Routable is the absence of the flag, as the shared chat writer leaves it.
+    assert "routable" not in recovered
+    assert "routable_reason" not in recovered
+
+
 def test_tombstone_reconciliation_preserves_new_unpriced_operator_hold() -> None:
     held = {
         "id": "provider/free-trial",
