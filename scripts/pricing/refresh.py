@@ -34,16 +34,20 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import atexit
 import importlib
 import json
 import logging
 import os
+import shutil
 import sys
+import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from scripts.check_price_spike import spiking_providers
 from scripts.pricing.base import (
     ModelPrice,
     PriceTier,
@@ -64,6 +68,8 @@ from trusted_router.provider_lifecycle import provider_model_retired  # noqa: E4
 from trusted_router.provider_manifest_policy import (  # noqa: E402
     EXPIRING_PROVIDER_MANIFEST_SLUGS,
 )
+
+HELD_FOR_REVIEW_HEADING = "Held for price review (last published prices kept):"
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SNAPSHOT_PATH = REPO_ROOT / "src" / "trusted_router" / "data" / "openrouter_snapshot.json"
@@ -265,6 +271,53 @@ def _endpoint_pricing_source(slug: str, healed_slugs: set[str]) -> str:
 
 def _import_provider(slug: str):
     return importlib.import_module(f"scripts.pricing.providers.{slug}")
+
+
+def _copy_published_prices() -> Path:
+    """Copy the published snapshot and manifests before this run writes either."""
+    baseline = Path(tempfile.mkdtemp(prefix="pricing-baseline-"))
+    atexit.register(shutil.rmtree, baseline, ignore_errors=True)
+    shutil.copyfile(SNAPSHOT_PATH, baseline / SNAPSHOT_PATH.name)
+    shutil.copytree(PROVIDER_MANIFEST_DIR, baseline / PROVIDER_MANIFEST_DIR.name)
+    return baseline
+
+
+def _spiking_results(
+    baseline: Path,
+    results: dict[str, ProviderPricingResult],
+    held: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """Freshly refreshed providers whose published routes now fail the spike gate."""
+    try:
+        spiking = spiking_providers(
+            baseline / SNAPSHOT_PATH.name,
+            SNAPSHOT_PATH,
+            baseline / PROVIDER_MANIFEST_DIR.name,
+            PROVIDER_MANIFEST_DIR,
+        )
+    except ValueError as exc:
+        # Unusable input is the workflow spike gate's to report, as before.
+        log.warning("pricing.spike_hold_skipped error=%s", exc)
+        return {}
+    hold: dict[str, list[str]] = {}
+    for provider, routes in spiking.items():
+        slug = _result_slug_for_provider(provider) if provider else None
+        result = results.get(slug) if slug else None
+        if result is not None and slug not in held and not result.source.startswith("stale_"):
+            hold.setdefault(slug, []).extend(routes)
+    return hold
+
+
+def _restore_published_manifest(baseline: Path, slug: str) -> None:
+    manifest_path_value = getattr(_import_provider(slug), "MANIFEST_PATH", None)
+    if manifest_path_value is None:
+        return
+    target = Path(manifest_path_value)
+    published = baseline / PROVIDER_MANIFEST_DIR.name / target.name
+    if published.exists():
+        shutil.copyfile(published, target)
+    else:
+        target.unlink(missing_ok=True)
 
 
 def _result_slug_for_provider(provider_slug: str) -> str:
@@ -1240,6 +1293,7 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    baseline = None if args.summary_only else _copy_published_prices()
 
     log.info("pricing.refresh.openrouter_ingest")
     or_snapshot = build_openrouter_snapshot()
@@ -1291,8 +1345,36 @@ def main(argv: list[str] | None = None) -> int:
 
     merged = _merge_snapshot(or_snapshot, provider_index, set(healed))
 
-    if not args.summary_only:
+    held: dict[str, list[str]] = {}
+    if baseline is not None:
         _write_snapshot(merged)
+        # A price spike holds only its own provider at the last published
+        # prices, so the rest of the catalog still refreshes. The workflow's
+        # spike gate still fails the run on any spike not held here.
+        while hold := _spiking_results(baseline, results, held):
+            held.update(hold)
+            for slug in hold:
+                _restore_published_manifest(baseline, slug)
+                results.pop(slug, None)
+            hold_failures = [(slug, "price spike held for review") for slug in hold]
+            failures.extend(hold_failures)
+            unrecovered_failures.extend(
+                _apply_stale_fallbacks(results, hold_failures, committed_snapshot)
+            )
+            healed = [slug for slug in healed if slug not in held]
+            provider_index = _index_provider_prices(results)
+            disagreements = _cross_check(provider_index, or_snapshot)
+            id_mismatches = _cross_check_ids(results, or_snapshot)
+            merged = _merge_snapshot(or_snapshot, provider_index, set(healed))
+            _write_snapshot(merged)
+        if len(unrecovered_failures) > MAX_TOLERATED_FAILURES:
+            log.error(
+                "pricing.refresh.too_many_unrecovered_failures count=%d limit=%d failures=%s",
+                len(unrecovered_failures),
+                MAX_TOLERATED_FAILURES,
+                unrecovered_failures,
+            )
+            return 1
         log.info("pricing.refresh.wrote path=%s models=%d", SNAPSHOT_PATH, merged["model_count"])
 
     summary = _summary_lines(results, healed, failures, disagreements, id_mismatches)
@@ -1312,6 +1394,18 @@ def main(argv: list[str] | None = None) -> int:
         print("Supplemental provider manifests:")
         for note in manifest_notes:
             print(f"  {note}")
+    if held:
+        print()
+        print(HELD_FOR_REVIEW_HEADING)
+        for slug, routes in sorted(held.items()):
+            print(f"  {slug}:")
+            for route in routes:
+                print(f"    {route}")
+        print(
+            "::warning title=Provider prices held for review::"
+            f"{', '.join(sorted(held))} kept their last published prices. A real "
+            "change is accepted in APPROVED_ENDPOINT_PRICE_TRANSITIONS."
+        )
     return 0
 
 
