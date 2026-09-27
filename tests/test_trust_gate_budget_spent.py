@@ -40,7 +40,9 @@ def alerts(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return sent
 
 
-@pytest.fixture
+# Every test runs under a frozen monotonic clock, so no pause can expire a
+# verdict or a deadline between two statements.
+@pytest.fixture(autouse=True)
 def clock(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     now = [100.0]
     monkeypatch.setattr(gate.time, "monotonic", lambda: now[0])
