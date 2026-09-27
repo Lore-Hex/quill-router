@@ -47,7 +47,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from scripts.check_price_spike import route_pairs, route_provider, spiking_providers
+from scripts.check_price_spike import spiking_providers
 from scripts.pricing.base import (
     PARSERS_DIR,
     ModelPrice,
@@ -310,30 +310,49 @@ def _spiking_results(
     return hold
 
 
+def _held_endpoint_pricing(snapshot: Any, held: dict[str, list[str]]) -> dict[str, Any]:
+    """Every held provider's snapshot endpoint, keyed by route, with its full pricing block."""
+    out: dict[str, Any] = {}
+    models = snapshot.get("models") if isinstance(snapshot, dict) else None
+    for model in models or []:
+        if not isinstance(model, dict):
+            continue
+        for endpoint in model.get("endpoints") or []:
+            if not isinstance(endpoint, dict):
+                continue
+            provider = endpoint.get("tr_provider_slug")
+            if not isinstance(provider, str) or _result_slug_for_provider(provider) not in held:
+                continue
+            route = (
+                f"{model.get('id')} [{provider}:{endpoint.get('tag') or ''}:{endpoint.get('model_id')}]"
+            )
+            out[route] = endpoint.get("pricing")
+    return out
+
+
 def _held_routes_changed(baseline: Path, held: dict[str, list[str]]) -> list[str]:
     """Held providers' routes that differ from what was published, if any.
 
     A hold may only publish when it kept every held provider exactly as
-    published: same routes, same prices. Anything else is reported so the run
-    can fall back to publishing nothing.
+    published: the same snapshot endpoints with the same full pricing blocks
+    (cached input and tiers included), and byte-identical manifests. Anything
+    else is reported so the run can fall back to publishing nothing.
     """
-    snapshot_pair, manifest_pair = route_pairs(
-        baseline / SNAPSHOT_PATH.name,
-        SNAPSHOT_PATH,
-        baseline / PROVIDER_MANIFEST_DIR.name,
-        PROVIDER_MANIFEST_DIR,
+    published = _held_endpoint_pricing(
+        json.loads((baseline / SNAPSHOT_PATH.name).read_text(encoding="utf-8")), held
     )
-    changed: list[str] = []
-    for pair in (snapshot_pair, manifest_pair):
-        if pair is None:
+    now = _held_endpoint_pricing(json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8")), held)
+    changed = [route for route in sorted(set(published) | set(now)) if published.get(route) != now.get(route)]
+    for slug in held:
+        manifest_path_value = getattr(_import_provider(slug), "MANIFEST_PATH", None)
+        if manifest_path_value is None:
             continue
-        published, now = pair
-        for route in sorted(set(published) | set(now)):
-            provider = route_provider(route)
-            if provider is None or _result_slug_for_provider(provider) not in held:
-                continue
-            if published.get(route) != now.get(route):
-                changed.append(route)
+        target = Path(manifest_path_value)
+        before = baseline / PROVIDER_MANIFEST_DIR.name / target.name
+        before_bytes = before.read_bytes() if before.exists() else None
+        after_bytes = target.read_bytes() if target.exists() else None
+        if before_bytes != after_bytes:
+            changed.append(f"{target.name} (manifest)")
     return changed
 
 

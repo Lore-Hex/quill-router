@@ -87,7 +87,7 @@ def published(
                 {
                     "id": row["id"],
                     "endpoints": [
-                        {"tr_provider_slug": ep["tr_provider_slug"], "model_id": ep["model_id"]}
+                        {key: ep[key] for key in ("tr_provider_slug", "model_id", "tag") if key in ep}
                         for ep in row["endpoints"]
                     ],
                 }
@@ -251,6 +251,48 @@ def test_a_hold_that_cannot_keep_the_provider_exact_publishes_nothing(
     out = capsys.readouterr().out
     assert f"Held providers could not be kept exactly as published: {key}\n" in out
     assert f"  acme/model [{name}::acme/model]\n" in out
+
+
+def test_a_hold_that_would_merge_distinct_published_cache_prices_publishes_nothing(
+    published: dict[str, Any],
+    provider: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Two published endpoints of one provider differ only in cached input;
+    # re-pricing keeps one price per provider and model, so one would change.
+    key, name = provider
+    model = _model("acme/model", name, "0.000001", "0.000002")
+    model["endpoints"] = [
+        {
+            "tr_provider_slug": name,
+            "model_id": "acme/model",
+            "tag": tag,
+            "pricing": {"prompt": "0.000001", "completion": "0.000002", "input_cache_read": cached},
+        }
+        for tag, cached in ((f"{name}/a", "0.0000001"), (f"{name}/b", "0.00000011"))
+    ]
+    published["models"][0] = model
+    refresh.SNAPSHOT_PATH.write_text(json.dumps(published))
+    _fetched(monkeypatch, key, ModelPrice(3_000_000, 2_000_000))
+
+    assert refresh.main([]) == 1
+
+    assert "Held providers could not be kept exactly as published" in capsys.readouterr().out
+
+
+def test_a_hold_that_empties_the_snapshot_publishes_nothing(
+    published: dict[str, Any],
+    provider: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key, name = provider
+    published["models"][:] = [_model("acme/model", name, "0.000001", "0")]
+    refresh.SNAPSHOT_PATH.write_text(json.dumps(published))
+    results = _fetched(monkeypatch, key, ModelPrice(3_000_000, 1_000_000))
+    del results["grok"]
+
+    assert refresh.main([]) == 1
 
 
 def test_unusable_comparison_input_skips_holding_without_crashing(
