@@ -3,15 +3,15 @@
 This deliberately parses a narrow shell vocabulary, never executes shell or gcloud.
 New migration idioms must extend the parser and regenerate spanner_ddl.py.
 
-Every Spanner DDL transport token in repository code or configuration must be
-consumed by extraction or covered by an occurrence-bound, reasoned exemption.
-Every DDL statement on the fixed migration list must be consumed or reviewed:
-schema sources, _lib.sh, workflows, infra Terraform, Cloud Build and Dockerfiles.
-Transport scanning is independent of execution and covers code/configuration
-names and extensions, executable files and shebangs, outside tests/, docs/ and
-build/dependency directories. Raw scanning includes comments and strings.
-Line reviews bind normalized text and occurrence count; manual native SQL binds
-its digest. Statement matches span newlines, but not separate string literals.
+Every Spanner DDL transport token in repository files that are neither binary
+nor on the reviewed data list must be consumed or have an occurrence-bound,
+reasoned exemption. Root tests/, docs/ and build/dependency directories are excluded.
+Every whole-word DB-API DDL verb on the fixed migration list must be consumed or
+reviewed: schema sources, _lib.sh, workflows, infra Terraform, Cloud Build and
+Dockerfiles. The verb set is checked against the installed SDK's RE_DDL.pattern.
+Raw scanning includes comments and strings, without requiring an object keyword
+or adjacency. Line reviews bind normalized text and occurrence count; manual
+native SQL binds its digest.
 
 Non-goals: DDL through an API/tool with no DDL-specific token (e.g. a generic
 cursor.execute supplied a connection externally), transport tokens or URLs
@@ -377,28 +377,44 @@ def migration_sources(root: Path) -> list[Path]:
     return sorted(path for path in seeds if path.is_file())
 
 
-CODE_CONFIG_EXTENSIONS = {
-    ".py", ".pyi", ".sh", ".bash", ".zsh", ".js", ".mjs", ".cjs", ".ts", ".tsx",
-    ".go", ".java", ".kt", ".rb", ".rs", ".tf", ".hcl", ".yaml", ".yml", ".json",
-    ".toml", ".cfg", ".ini", ".sql", ".mk",
+# Reviewed data formats only. Unknown extensions/names default to transport scanning.
+DATA_EXTENSIONS = {
+    ".md": "Markdown documentation",
+    ".rst": "reStructuredText documentation",
+    ".txt": "plain-text prose/data",
+    ".csv": "tabular data",
+    ".tsv": "tabular data",
+    ".svg": "vector image asset",
+    ".png": "raster image asset",
+    ".jpg": "raster image asset",
+    ".jpeg": "raster image asset",
+    ".gif": "raster image asset",
+    ".ico": "icon asset",
+    ".webp": "raster image asset",
+    ".pdf": "document asset",
+    ".woff": "font asset",
+    ".woff2": "font asset",
+    ".ttf": "font asset",
+    ".lock": "dependency resolution data",
+}
+DATA_PATHS = {".test_durations": "generated pytest timing data at the repository root"}
+DATA_NAME_PREFIXES = {
+    "LICENSE": "license/legal text",
+    "NOTICE": "third-party attribution/legal text",
 }
 
 
 def transport_sources(root: Path) -> list[Path]:
-    """All repository code/configuration, regardless of how or whether it runs."""
+    """Everything is code unless binary (NUL in first 8 KiB) or reviewed data."""
     paths = []
     for path in repository_files(root):
-        if not path.is_file():
+        if (not path.is_file() or path.suffix.lower() in DATA_EXTENSIONS
+                or path.relative_to(root).as_posix() in DATA_PATHS
+                or path.name.startswith(tuple(DATA_NAME_PREFIXES))):
             continue
-        if (path.suffix.lower() in CODE_CONFIG_EXTENSIONS
-                or path.name.startswith(("Dockerfile", "Makefile"))
-                or path.name == "Procfile"
-                or path.stat().st_mode & 0o111):
-            paths.append(path)
-        else:
-            with path.open("rb") as stream:
-                if stream.read(2) == b"#!":
-                    paths.append(path)
+        with path.open("rb") as stream:
+            if b"\0" not in stream.read(8192):
+                paths.append(path)
     return paths
 
 
@@ -440,12 +456,19 @@ def ddl_transport_matches(source: str) -> Iterator[re.Match[str]]:
         yield match
 
 
-DDL_STATEMENT = re.compile(
-    r"\b(?:CREATE|ALTER|DROP)\b(?:\s+\w+)*?\s+"
-    r"(?:TABLE|INDEX|VIEW|SEQUENCE|CHANGE\s+STREAM|SCHEMA|MODEL|PROPERTY\s+GRAPH|"
-    r"DATABASE|ROLE|PROTO\s+BUNDLE|LOCALITY\s+GROUP|PLACEMENT)\b|"
-    r"\bROW\s+DELETION\s+POLICY\b", re.I,
-)
+DDL_VERBS = frozenset({"CREATE", "ALTER", "DROP", "GRANT", "REVOKE", "RENAME", "ANALYZE"})
+DDL_STATEMENT = re.compile(r"\b(?:" + "|".join(sorted(DDL_VERBS)) + r")\b", re.I)
+
+
+def assert_sdk_ddl_verbs_match() -> None:
+    from google.cloud.spanner_dbapi.parse_utils import RE_DDL
+
+    # Fail closed if the SDK changes either its verbs or its pattern structure.
+    verbs = re.fullmatch(r"\^\\s\*\(([A-Z]+(?:\|[A-Z]+)*)\)", RE_DDL.pattern)
+    assert verbs is not None, f"Review changed SDK RE_DDL pattern: {RE_DDL.pattern!r}"
+    assert set(verbs[1].split("|")) == DDL_VERBS, (
+        f"Review SDK DDL verb drift: SDK={verbs[1]}, guard={sorted(DDL_VERBS)}"
+    )
 
 
 def exemption_remedy() -> str:
@@ -528,6 +551,7 @@ def shell_source(path: Path) -> tuple[str, list[int]]:
 
 
 def migration_ddl(root: Path = ROOT) -> tuple[str, ...]:
+    assert_sdk_ddl_verbs_match()
     sources = schema_sources(root)
     # The library must stay carrier-free even if no script sources it anymore.
     assert_ddl_carriers_consumed(root / "scripts/deploy/_lib.sh", [], root)

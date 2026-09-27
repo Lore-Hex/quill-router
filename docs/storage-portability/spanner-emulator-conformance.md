@@ -8,16 +8,32 @@ The base GoogleSQL table comes from `scripts/deploy/infra.sh` (duplicated in `in
 
 [spanner_ddl.py](../../tests/conformance/spanner_ddl.py) is checked-in schema as code. [The parser](../../tests/conformance/spanner_schema_source.py) extracts CREATE statements, resolves static index names, adds missing columns, and expands retention-policy calls without running shell scripts. Source digests additionally fail on changed helpers, new files, or shell syntax the narrow parser does not understand. Review changes before regenerating with `python -m tests.conformance.spanner_schema_source`. Unrecognized schema helpers fail extraction, so regeneration cannot silently bless an unsupported `ensure_*` call. Source digests intentionally make even migration-comment changes require review/regeneration.
 
-The guard's guarantee is scoped: **(a) every Spanner DDL transport token in repository code or configuration is consumed by the extractor or covered by an occurrence-bound, reasoned exemption; (b) every DDL statement on the fixed migration list is consumed or reviewed.** These lexical carriers are tripwires, not a complete inventory of ways to change Spanner schema.
+The guard's guarantee is scoped: **(a) every Spanner DDL transport token in a repository file that is neither binary nor on the reviewed data list (outside the excluded directories below) is consumed by the extractor or covered by an occurrence-bound, reasoned exemption; (b) every whole-word occurrence of a DB-API DDL verb on the fixed migration list is consumed or reviewed.** These lexical carriers are tripwires, not a complete inventory of ways to change Spanner schema.
 
-- **Transport surface:** all repository code and configuration, independent of how or whether it is executed. This includes `.py .pyi .sh .bash .zsh .js .mjs .cjs .ts .tsx .go .java .kt .rb .rs .tf .hcl .yaml .yml .json .toml .cfg .ini .sql`, `Dockerfile*`, `Makefile*`, `*.mk`, `Procfile`, and any executable file or file starting with a shebang. Root `tests/` and `docs/`, dependency/build directories (`.venv`, `node_modules`, `vendor`, `dist`, `build`, `target`, `.next`), `.git`, and Python/tool cache directories are excluded. Helpers in arbitrary directories, ClickHouse code and SQL, experiments, sites, and IaC outside `infra/` all receive transport scanning.
+- **Transport surface:** every repository file except binary files (a NUL byte in the first 8 KiB) and the explicit reviewed data list below, independent of extension, executable bit, shebang, or how or whether it is executed. Root `tests/` and `docs/`, dependency/build directories (`.venv`, `node_modules`, `vendor`, `dist`, `build`, `target`, `.next`), `.git`, and Python/tool cache directories are excluded. Helpers in arbitrary directories, ClickHouse code and SQL, experiments, sites, and IaC outside `infra/` all receive transport scanning. Unknown extensions and extensionless files default to code.
 - **Fixed migration list (statement surface):** the extracted schema sources above, `scripts/deploy/_lib.sh`, every file under `.github/workflows/`, every `infra/**/*.tf`, and all `cloudbuild*.yaml`, `cloudbuild*.yml` and `Dockerfile*` files, subject to the same excluded directories. Execution and imports never expand this list. The existing manual native SQL file described below retains its explicit digest review.
 
-Everything else is data and is not scanned: `.test_durations`, non-executable Markdown, text, CSV and images need no registry entries. New ClickHouse SQL containing only statements and ordinary `middleware` imports also need no registry changes. A helper using `spanner_dbapi` is caught at its own transport token regardless of launchers such as `timeout`, `env`, `xargs`, subprocess calls, or working-directory changes; the guard does not model execution syntax.
+The reviewed data list lives in `DATA_EXTENSIONS`, `DATA_PATHS` and `DATA_NAME_PREFIXES` in the parser, with a reason for every entry:
+
+| Exclusion | Reason |
+|---|---|
+| `.md`, `.rst` | Markdown and reStructuredText documentation |
+| `.txt` | Plain-text prose/data |
+| `.csv`, `.tsv` | Tabular data |
+| `.svg` | Vector image asset |
+| `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp` | Raster image assets |
+| `.ico` | Icon asset |
+| `.pdf` | Document asset |
+| `.woff`, `.woff2`, `.ttf` | Font assets |
+| `.lock` | Dependency resolution data |
+| Root `.test_durations` | Generated pytest timing data |
+| Basenames `LICENSE*`, `NOTICE*` (case-sensitive) | License/legal text and third-party attribution |
+
+Extensions are case-insensitive. These exclusions need no registry entries, including a timing-only `.test_durations` regeneration or a new Markdown file. The fixed migration statement list still receives its own review. New ClickHouse SQL containing only statements and ordinary `middleware` imports also need no registry changes. A helper using `spanner_dbapi` is caught at its own transport token regardless of launchers such as `timeout`, `env`, `xargs`, subprocess calls, or working-directory changes; the guard does not model execution syntax.
 
 Raw carrier scanning includes comments and strings, decodes UTF-8 with replacement, and does not strip language syntax. Transport identifiers split on non-alphanumerics and camelCase boundaries: whole parts `ddl`/`ddls`, adjacent `extra` + `statements`, and `databases` + `create`. Additional tripwires are `spanner_dbapi`, `updateSchema`, `spanner cli` / `spanner-cli` (including `--source` invocations), `jdbc:cloudspanner`, `liquibase`, `flyway`, `sqlalchemy_spanner` and `spanner+spanner:`. Ordinary `middleware` imports do not match.
 
-Statement carriers are CREATE/ALTER/DROP followed across whitespace **including newlines** by intervening words and TABLE, INDEX, VIEW, SEQUENCE, CHANGE STREAM, SCHEMA, MODEL, PROPERTY GRAPH, DATABASE, ROLE, PROTO BUNDLE, LOCALITY GROUP or PLACEMENT, plus ROW DELETION POLICY. For example, a triple-quoted `ALTER` followed by `TABLE` on the next line in a migration heredoc fails. Concatenation across separate string literals in one expression is not interpreted.
+Statement carriers are **any whole-word, case-insensitive occurrence of CREATE, ALTER, DROP, GRANT, REVOKE, RENAME or ANALYZE** on the fixed migration list (55 files in this checkout). These are the DDL verbs in the installed `google.cloud.spanner_dbapi.parse_utils.RE_DDL.pattern`; extraction and a dedicated test assert SDK verb-set parity, so SDK additions require review. No object keyword or adjacency is required: `ALTER/*c*/TABLE`, `ALTER -- c` followed by a newline and `TABLE`, role grants/revocations, renames and bare `ANALYZE` all fail unless consumed or exempted. Comments, log prose and CLI flags containing whole-word verbs are deliberately included. Concatenation across separate string literals in one expression is not interpreted.
 
 Each carrier must belong to a dispatch consumed by extraction (including a literal assignment feeding it) or have a reviewed entry in [the exemption registry](../../tests/conformance/spanner_ddl_exemptions.json). Recognizing unused SQL literals alone does not consume them. Existing shell-indirection and unsupported-dispatch guards remain in force. The registry has two bindings:
 

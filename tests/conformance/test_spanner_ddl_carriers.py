@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 from collections import Counter
 
@@ -85,7 +86,7 @@ def test_lowercase_statement_in_new_file_fails(repo, relative):
     path = repo / relative
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\nalter table tr_entities add column review_lost STRING(64)\n")
-    with pytest.raises(AssertionError, match=rf"{relative}:2: unconsumed DDL carrier: alter table"):
+    with pytest.raises(AssertionError, match=rf"{relative}:2: unconsumed DDL carrier: alter"):
         schema.migration_ddl(repo)
 
 
@@ -98,7 +99,7 @@ def test_lowercase_statement_in_new_file_fails(repo, relative):
     "CREATE TABLE", "CREATE INDEX", "CREATE UNIQUE INDEX", "CREATE NULL_FILTERED INDEX",
     "CREATE UNIQUE NULL_FILTERED INDEX", "CREATE SEARCH INDEX", "CREATE CHANGE STREAM", "CREATE VIEW",
     "CREATE SEQUENCE", "ALTER TABLE", "ALTER INDEX", "ALTER DATABASE", "DROP TABLE", "DROP INDEX",
-    "DROP VIEW", "DROP SEQUENCE", "ROW DELETION POLICY",
+    "DROP VIEW", "DROP SEQUENCE", "GRANT", "REVOKE", "RENAME", "ANALYZE",
 ])
 def test_all_literal_carriers_include_quotes_and_ignore_case(tmp_path, carrier):
     path = tmp_path / "scripts/review.txt"
@@ -181,7 +182,7 @@ def test_retirement_script_is_extracted_and_changes_fresh_schema(repo):
 def test_unconsumed_literal_assignment_is_not_an_extracted_dispatch(repo):
     path = repo / "scripts/deploy/migrate_money_primitives.sh"
     path.write_text(path.read_text() + '\nLOST="CREATE TABLE uncalled (id INT64) PRIMARY KEY(id)"\n')
-    with pytest.raises(AssertionError, match=r"migrate_money_primitives.sh:\d+: unconsumed DDL carrier: CREATE TABLE"):
+    with pytest.raises(AssertionError, match=r"migrate_money_primitives.sh:\d+: unconsumed DDL carrier: CREATE"):
         schema.migration_ddl(repo)
 
 
@@ -223,7 +224,7 @@ def test_review_six_admin_carriers_in_copies(repo, relative, payload, carrier):
     line = prefix.count("\n") + payload[:payload.index(carrier)].count("\n") + 1
     with pytest.raises(AssertionError) as error:
         schema.assert_schema_matches(spanner_ddl.DDL, schema.source_digests(repo), repo)
-    assert f"{path}:{line}: unconsumed DDL carrier: {carrier}" in str(error.value)
+    assert f"{path}:{line}: unconsumed DDL carrier: {carrier.split()[0]}" in str(error.value)
     assert "expected occurrence count" in str(error.value)
     assert "SHA-256" in str(error.value)
 
@@ -271,7 +272,7 @@ def test_manual_sql_check_body_is_digest_bound_in_copy(repo):
     shutil.copyfile(schema.ROOT / relative, path)
     assert schema.migration_ddl(repo) == spanner_ddl.DDL
     path.write_text(path.read_text().replace("'lightning','operator'", "'unreviewed','operator'"))
-    with pytest.raises(AssertionError, match=r"spanner_provenance.sql:6: DDL carrier: ALTER TABLE;.*re-review"):
+    with pytest.raises(AssertionError, match=r"spanner_provenance.sql:5: DDL carrier: DROP;.*re-review"):
         schema.migration_ddl(repo)
 
 
@@ -313,7 +314,7 @@ def test_raw_scan_never_invokes_shell_parser_and_decodes_leniently(tmp_path, mon
 
 def test_statement_scan_is_word_bounded(tmp_path):
     path = tmp_path / "review.txt"
-    path.write_text("RECREATE TABLE example\nCREATE TABLET example\n")
+    path.write_text("RECREATE TABLE example\nALTERED TABLE example\nDROPPED TABLE example\n")
     schema.assert_ddl_carriers_consumed(path, [], tmp_path)
 
 
@@ -423,7 +424,7 @@ def test_review_seven_dbapi_from_library_fails_on_transport(repo):
 def test_review_seven_multiline_statement_in_migration_heredoc(repo):
     path = repo / "scripts/deploy/migrate_money_primitives.sh"
     path.write_text(path.read_text() + '\npython - <<"PYTHON"\nconn.cursor().execute("""ALTER\nTABLE tr_entities ADD COLUMN review_lost STRING(64)""")\nPYTHON\n')
-    with pytest.raises(AssertionError, match=r"unconsumed DDL carrier: ALTER\nTABLE"):
+    with pytest.raises(AssertionError, match=r"unconsumed DDL carrier: ALTER"):
         schema.assert_schema_matches(spanner_ddl.DDL, schema.source_digests(repo), repo)
 
 
@@ -507,10 +508,10 @@ def test_deploy_program_transport_fails_but_statement_only_is_documented_non_goa
 @pytest.mark.parametrize("name", [
     *["new" + suffix for suffix in (
         ".py .pyi .sh .bash .zsh .js .mjs .cjs .ts .tsx .go .java .kt .rb .rs .tf .hcl "
-        ".yaml .yml .json .toml .cfg .ini .sql .mk"
+        ".yaml .yml .json .toml .cfg .ini .sql .mk .cs .cc .cpp .h .php .xml .properties .ps1 .jsx .kts .ipynb .unknown"
     ).split()],
     "Dockerfile", "Dockerfile.new", "Makefile", "Makefile.new", "Procfile",
-    "executable", "shebang",
+    "executable", "shebang", "extensionless",
 ])
 def test_every_code_configuration_file_kind_is_transport_scanned(repo, name):
     path = repo / "new_area" / name
@@ -525,9 +526,11 @@ def test_every_code_configuration_file_kind_is_transport_scanned(repo, name):
     assert f"{path}:{prefix.count(chr(10)) + 1}: unconsumed DDL carrier: update_ddl" in str(error.value)
 
 
-@pytest.mark.parametrize("relative", [".test_durations", "new.md", "new.txt", "new.csv", "new.png"])
+@pytest.mark.parametrize("relative", [*schema.DATA_PATHS, *["new" + ext for ext in schema.DATA_EXTENSIONS],
+                                      "LICENSE", "LICENSE-MIT", "nested/NOTICE.third-party"])
 def test_data_transport_words_need_no_registry_change(repo, relative):
     path = repo / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("database.update_ddl(statements)\n")
     assert path not in schema.transport_sources(repo)
     assert schema.migration_ddl(repo) == spanner_ddl.DDL
@@ -542,4 +545,82 @@ def test_fixed_migration_list_matches_statements_across_newlines(repo, relative)
     path.write_text(prefix + 'sql = """ALTER\nTABLE tr_entities ADD COLUMN review_lost STRING(64)"""\n')
     with pytest.raises(AssertionError) as error:
         schema.migration_ddl(repo)
-    assert f"{path}:{prefix.count(chr(10)) + 1}: unconsumed DDL carrier: ALTER\nTABLE" in str(error.value)
+    assert f"{path}:{prefix.count(chr(10)) + 1}: unconsumed DDL carrier: ALTER" in str(error.value)
+
+
+@pytest.mark.parametrize("relative,command,payload,carrier", [
+    ("review_helpers/schema.php", "php review_helpers/schema.php",
+     '<?php $database->updateDdl(["ALTER TABLE tr_entities ADD COLUMN review_lost STRING(64)"]);',
+     "updateDdl"),
+    ("review_helpers/Program.cs", "dotnet run --project review_helpers",
+     'connection.CreateDdlCommand("ALTER TABLE tr_entities ADD COLUMN review_lost STRING(64)");',
+     "CreateDdlCommand"),
+    ("review_helpers/schema.ipynb", "",
+     json.dumps({"cells": [{"cell_type": "code", "source": ["database.update_ddl(statements)"]}]}),
+     "update_ddl"),
+    ("review_helpers/schema.xml", "",
+     '<action method="updateDdl">ALTER TABLE tr_entities ADD COLUMN review_lost STRING(64)</action>',
+     "updateDdl"),
+], ids=["php", "csharp", "notebook", "xml"])
+def test_round_nine_transports_in_previously_omitted_files(repo, relative, command, payload, carrier):
+    path = repo / relative
+    path.parent.mkdir()
+    path.write_text(payload + "\n")
+    library = repo / "scripts/deploy/_lib.sh"
+    library.write_text(library.read_text() + "\n" + command + "\n")
+    with pytest.raises(AssertionError) as error:
+        schema.assert_schema_matches(spanner_ddl.DDL, spanner_ddl.SOURCE_DIGESTS, repo)
+    assert f"{path}:1: unconsumed DDL carrier: {carrier}" in str(error.value)
+
+
+@pytest.mark.parametrize("statement", [
+    "ALTER/*c*/TABLE tr_entities ADD COLUMN review_lost STRING(64)",
+    "ALTER -- c\nTABLE tr_entities ADD COLUMN review_lost STRING(64)",
+    "RENAME TABLE review_old TO review_new",
+    "GRANT SELECT ON TABLE tr_entities TO ROLE review_role",
+    "REVOKE SELECT ON TABLE tr_entities FROM ROLE review_role",
+    "ANALYZE",
+], ids=["block-comment", "line-comment", "rename", "grant", "revoke", "analyze"])
+def test_round_nine_dbapi_ddl_verbs_fail_in_library_assignments(repo, statement):
+    path = repo / "scripts/deploy/_lib.sh"
+    prefix = path.read_text() + "\n"
+    path.write_text(prefix + f'REVIEW_SQL="{statement}"\n')
+    with pytest.raises(AssertionError) as error:
+        schema.assert_schema_matches(spanner_ddl.DDL, spanner_ddl.SOURCE_DIGESTS, repo)
+    verb = re.match(r"\w+", statement)[0]
+    assert f"{path}:{prefix.count(chr(10)) + 1}: unconsumed DDL carrier: {verb}" in str(error.value)
+
+
+def test_ddl_verbs_match_installed_sdk():
+    schema.assert_sdk_ddl_verbs_match()
+
+
+def test_sdk_new_ddl_verb_requires_review(monkeypatch):
+    from google.cloud.spanner_dbapi import parse_utils
+
+    monkeypatch.setattr(parse_utils, "RE_DDL", re.compile(parse_utils.RE_DDL.pattern[:-1] + "|TRUNCATE)"))
+    with pytest.raises(AssertionError, match="Review SDK DDL verb drift"):
+        schema.assert_sdk_ddl_verbs_match()
+
+
+@pytest.mark.parametrize("verb", sorted(schema.DDL_VERBS))
+def test_each_whole_word_verb_requires_review_without_object(tmp_path, verb):
+    path = tmp_path / "review.sh"
+    path.write_text(f'LOG="{verb.lower()}"\n')
+    with pytest.raises(AssertionError, match=f"DDL carrier: {verb.lower()}"):
+        schema.assert_ddl_carriers_consumed(path, [], tmp_path)
+
+
+@pytest.mark.parametrize("nul_offset", [0, 8191, 8192, None])
+def test_binary_detection_uses_first_eight_kib(tmp_path, nul_offset):
+    path = tmp_path / "unknown.format"
+    raw = b"x" * 8200 + b" database.update_ddl(statements)"
+    if nul_offset is not None:
+        raw = raw[:nul_offset] + b"\0" + raw[nul_offset:]
+    path.write_bytes(raw)
+    assert (path in schema.transport_sources(tmp_path)) == (nul_offset is None or nul_offset >= 8192)
+
+
+def test_data_exclusions_have_review_reasons():
+    for exclusions in (schema.DATA_EXTENSIONS, schema.DATA_PATHS, schema.DATA_NAME_PREFIXES):
+        assert all(reason.strip() for reason in exclusions.values())

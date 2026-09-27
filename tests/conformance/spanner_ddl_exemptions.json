@@ -148,6 +148,10 @@
       "log \"ERROR: tr_entities already has a DIFFERENT row deletion policy: $policy\"": {
         "count": 1,
         "reason": "Operator log/rollback instructions only; this line does not dispatch DDL."
+      },
+      "log \"Stored generated expressions cannot be altered in place. Drop the\"": {
+        "count": 1,
+        "reason": "Printed rollback advice for a generated column; no dispatch."
       }
     },
     "scripts/deploy/migrate_gateway_request_index.sh": {
@@ -202,6 +206,10 @@
       "log \"dry-run DDL: $1\"": {
         "count": 1,
         "reason": "Migration comment, verification/acknowledgement or diagnostic text; does not submit additional schema."
+      },
+      "log \"complete; no DELETE, DROP, or terminal_at backfill was executed\"": {
+        "count": 1,
+        "reason": "Completion log explicitly describing operations that were not executed."
       }
     },
     "scripts/deploy/migrate_spend_lease.sh": {
@@ -238,6 +246,18 @@
       "# The single CREATE TABLE literal: both the fresh-install branch and the": {
         "count": 1,
         "reason": "Migration comment, verification/acknowledgement or diagnostic text; does not submit additional schema."
+      },
+      "# it: resolve by hand (runbook step 2b) rather than drop history.": {
+        "count": 1,
+        "reason": "Comment directing manual reconciliation without discarding history."
+      },
+      "# state we must not drop.": {
+        "count": 1,
+        "reason": "Comment explaining preservation of reconciliation state."
+      },
+      "printf '%s\\n' \"ERROR: tr_trust_backfill has the three-column key and ${foreign_rows} non-owner_inventory row(s); refusing to drop reconciliation state (runbook step 2b)\" >&2": {
+        "count": 1,
+        "reason": "Error message refusing to discard non-owner reconciliation state."
       }
     },
     "scripts/deploy/migrate_typed_counters.sh": {
@@ -264,6 +284,14 @@
       "# fresh CREATE TABLE above keeps them NOT NULL.": {
         "count": 1,
         "reason": "Migration comment, verification/acknowledgement or diagnostic text; does not submit additional schema."
+      },
+      "# predate the option being added to the CREATE statements above.": {
+        "count": 1,
+        "reason": "Comment describing commit-timestamp options on already-extracted statements."
+      },
+      "# Config columns (*_limit_micro) are seeded from the api_key row on create; the": {
+        "count": 1,
+        "reason": "Comment describing application seeding of configuration columns."
       }
     },
     "scripts/deploy/rollout.sh": {
@@ -394,6 +422,164 @@
       "-- storage_postgres.py::_execute_ddl rather than here, so this file stays": {
         "count": 1,
         "reason": "Comment pointing to the PostgreSQL/Aurora DSQL adapter async-index handling; not a native GoogleSQL transport."
+      }
+    },
+    ".github/workflows/check-analytics-freshness.yml": {
+      "gh label create aws-analytics-freshness \\": {
+        "count": 1,
+        "reason": "GitHub label creation for analytics freshness alerts."
+      },
+      "gh issue create \\": {
+        "count": 1,
+        "reason": "GitHub issue creation for analytics freshness alerts."
+      }
+    },
+    ".github/workflows/check-archive-freshness.yml": {
+      "echo \"A 403 in that journal means the node identity lost its bucket grant (this is\"": {
+        "count": 1,
+        "reason": "Printed bucket-permission troubleshooting advice."
+      },
+      "gh label create archive-freshness \\": {
+        "count": 1,
+        "reason": "GitHub label creation for archive freshness alerts."
+      },
+      "gh issue create \\": {
+        "count": 1,
+        "reason": "GitHub issue creation for archive freshness alerts."
+      }
+    },
+    ".github/workflows/check-client-telemetry-freshness.yml": {
+      "gh label create client-telemetry-freshness \\": {
+        "count": 1,
+        "reason": "GitHub label creation for telemetry freshness alerts."
+      },
+      "gh issue create \\": {
+        "count": 1,
+        "reason": "GitHub issue creation for telemetry freshness alerts."
+      }
+    },
+    ".github/workflows/check-repo-security-coverage.yml": {
+      "gh issue create --repo \"$GITHUB_REPOSITORY\" \\": {
+        "count": 1,
+        "reason": "GitHub issue creation for repository security coverage alerts."
+      }
+    },
+    ".github/workflows/cloud-security-baseline.yml": {
+      "gh issue create --title \"$TITLE\" \"${LABEL_ARGS[@]}\" --body \"$BODY\"": {
+        "count": 1,
+        "reason": "GitHub issue creation for cloud security alerts."
+      }
+    },
+    ".github/workflows/deploy-aws-control-plane.yml": {
+      "# quill-router deploy grant (the TR_AWS_* repo secrets are dead - the": {
+        "count": 1,
+        "reason": "Comment describing AWS deploy authorization."
+      }
+    },
+    ".github/workflows/deploy.yml": {
+      "# project Viewer/Owner perms that we don't want to grant the": {
+        "count": 1,
+        "reason": "Comment describing restricted project permissions."
+      },
+      "# tr_user_lifetime_topup is written INSIDE the credit-grant transaction": {
+        "count": 1,
+        "reason": "Comment describing the existing credit transaction, not schema execution."
+      },
+      "# by every purchase webhook, so a missing table would abort the grant": {
+        "count": 1,
+        "reason": "Comment describing credit transaction failure when a table is missing."
+      },
+      "echo \"${region} deploy did not create a revision\"": {
+        "count": 1,
+        "reason": "Printed Cloud Run revision deployment failure."
+      }
+    },
+    ".github/workflows/refresh-prices.yml": {
+      "# llama+together failover endpoints drop from the snapshot.": {
+        "count": 1,
+        "reason": "Comment describing endpoint removal from a price snapshot."
+      },
+      "# gemma-4 endpoints drop from the snapshot. Each scraper": {
+        "count": 1,
+        "reason": "Comment describing endpoint removal from a price snapshot."
+      },
+      "# Never rebase generated output after checking it: that would create": {
+        "count": 1,
+        "reason": "Comment explaining generated-output rebase policy."
+      },
+      "# The create-status response currently omits `creator` and `sha`.": {
+        "count": 1,
+        "reason": "Comment describing the GitHub commit-status response."
+      },
+      "gh issue create \\": {
+        "count": 1,
+        "reason": "GitHub issue creation for price refresh failures."
+      }
+    },
+    "experiments/lightning_router/Dockerfile": {
+      "RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin funding": {
+        "count": 1,
+        "reason": "Linux useradd flag disables home-directory creation."
+      }
+    },
+    "infra/aws_deploy_role.tf": {
+      "# both. PowerUserAccess does not grant PassRole, so this statement is": {
+        "count": 1,
+        "reason": "Comment describing AWS IAM PassRole permissions."
+      }
+    },
+    "infra/control_lb_certificates.tf": {
+      "# this role; declaring it here makes the grant visible and drift-checked.": {
+        "count": 1,
+        "reason": "Comment describing declarative IAM role authorization."
+      }
+    },
+    "scripts/deploy/_lib.sh": {
+      "printf '%s' \"$value\" | gc secrets create \"$secret_name\" \\": {
+        "count": 1,
+        "reason": "Secret Manager secret creation; no Spanner schema dispatch."
+      }
+    },
+    "scripts/deploy/infra.sh": {
+      "gc spanner instances create \"$SPANNER_INSTANCE_ID\" \\": {
+        "count": 1,
+        "reason": "Spanner instance provisioning, not database schema."
+      },
+      "--enable-drop-protection \\": {
+        "count": 1,
+        "reason": "Spanner instance drop-protection option, not a DROP statement."
+      },
+      "gc bigtable instances create \"$BIGTABLE_INSTANCE_ID\" \\": {
+        "count": 1,
+        "reason": "Bigtable instance provisioning, not Spanner schema."
+      },
+      "gc bigtable instances tables create \"$BIGTABLE_GENERATION_TABLE\" \\": {
+        "count": 1,
+        "reason": "Bigtable table provisioning, not Spanner schema."
+      },
+      "gc iam roles create \"$BIGTABLE_SCHEMA_ROLE_ID\" \\": {
+        "count": 1,
+        "reason": "IAM custom-role provisioning, not Spanner schema."
+      },
+      "gc storage buckets create \"gs://${DEPLOY_MUTEX_BUCKET}\" \\": {
+        "count": 1,
+        "reason": "Cloud Storage bucket provisioning, not Spanner schema."
+      },
+      "gc kms keyrings create \"$KMS_KEYRING_ID\" --location \"$REGION\"": {
+        "count": 1,
+        "reason": "Cloud KMS keyring provisioning, not Spanner schema."
+      },
+      "gc kms keys create \"$BYOK_KMS_KEY_ID\" \\": {
+        "count": 1,
+        "reason": "Cloud KMS BYOK key provisioning, not Spanner schema."
+      },
+      "gc kms keys create \"$GOOGLE_ADS_KMS_KEY_ID\" \\": {
+        "count": 1,
+        "reason": "Cloud KMS Google Ads key provisioning, not Spanner schema."
+      },
+      "gc iam service-accounts create \"$GOOGLE_DATA_MANAGER_SERVICE_ACCOUNT_ID\" \\": {
+        "count": 1,
+        "reason": "IAM service-account provisioning, not Spanner schema."
       }
     }
   }
