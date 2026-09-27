@@ -19,12 +19,16 @@ from tests.conformance.spanner_sql_inventory import SRC, assert_complete
 def _fixture_git(*args: str, **kwargs):
     """Run git for a test fixture without the developer's global or system config.
 
-    Global excludes, commit signing or hooks must not change what a fixture
-    tracks or whether its setup succeeds.
+    Global excludes (including git's default ~/.config/git/ignore, which loads
+    even without a global config file), commit signing, hooks or an inherited
+    GIT_DIR (as inside a git hook) must not change what a fixture tracks or
+    whether its setup succeeds.
     """
-    env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
+    inherited = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    env = {**inherited, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
+    identity = ["-c", "user.email=t@example.invalid", "-c", "user.name=t"]
     return subprocess.run(  # noqa: S603 - fixed git setup
-        ["git", "-c", "user.email=t@example.invalid", "-c", "user.name=t", *args],  # noqa: S607
+        ["git", *identity, "-c", f"core.excludesFile={os.devnull}", *args],  # noqa: S607
         env=env, check=True, **kwargs,
     )
 

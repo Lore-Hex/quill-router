@@ -382,12 +382,15 @@ def _tracked_files(root: Path) -> list[tuple[Path, bytes]] | None:
     if not (root / ".git").exists():
         return None
     git = ["git", "-C", str(root)]
+    # Describe the checkout at root, not one an inherited GIT_DIR (as inside a
+    # git hook) points to.
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     top = subprocess.run([*git, "rev-parse", "--show-toplevel"],  # noqa: S603 - fixed git query
-                         capture_output=True, check=True).stdout.removesuffix(b"\n")
+                         capture_output=True, check=True, env=env).stdout.removesuffix(b"\n")
     if Path(os.fsdecode(top)).resolve() != root.resolve():
         raise AssertionError(f"{root}: has .git, but git places the checkout at {os.fsdecode(top)}")
     listed = subprocess.run([*git, "ls-files", "--stage", "-z"],  # noqa: S603 - fixed git query
-                            capture_output=True, check=True).stdout
+                            capture_output=True, check=True, env=env).stdout
     paths: dict[Path, bytes] = {}
     for entry in listed.split(b"\0"):
         info, _, name = entry.partition(b"\t")
