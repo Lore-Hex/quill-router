@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import functools
 import os
-from collections.abc import Callable
-from datetime import UTC, datetime
+from collections.abc import Callable, Iterator
 
 import pytest
 from fastapi.testclient import TestClient
@@ -20,10 +19,15 @@ os.environ["TR_STORAGE_BACKEND"] = "memory"
 # trusted_router imports below resolve the catalog; an override CI already
 # exported is kept (see tests/lifecycle_freeze.py).
 import tests.lifecycle_freeze  # noqa: F401 - import-time side effect, see above
-from trusted_router import post_commit
+
+# Likewise one catalog-freshness instant, pinned before trusted_router.main
+# builds its app and prewarms the public catalog (see the module).
+from tests import catalog_freshness_freeze
+from trusted_router import catalog_data, post_commit
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR
+from trusted_router.routes import catalog as catalog_routes
 from trusted_router.storage import STORE, InMemoryStore, configure_store
 
 
@@ -71,31 +75,23 @@ def reset_store() -> None:
     STORE.reset()
 
 
-# Before every committed provider manifest's deadline. Only the EXPIRED
-# sentinel (datetime.min), which marks an invalid manifest, stays non-current.
-CATALOG_FRESHNESS_INSTANT = datetime(2000, 1, 1, tzinfo=UTC)
-
-
 @pytest.fixture(autouse=True)
-def catalog_freshness_before_every_deadline(
+def live_monitors_judge_catalog_freshness_on_the_real_clock(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Judge catalog freshness at an instant before every committed deadline.
+) -> Iterator[None]:
+    """Lift the catalog-freshness pin for live provider-health monitors.
 
-    The hourly price refresh runs this suite against the catalog it is about
-    to publish, and a provider held at its last published prices keeps its old
-    manifest. A test about routes, prices or billing must not fail, and block
-    every provider's publication, because a committed manifest aged past its
-    deadline. Tests about freshness pass an explicit ``at=`` instead.
-
-    Live provider-health monitors keep the real clock: they compare the
-    catalog with artifacts generated on it, such as the social cards.
+    They compare the catalog with artifacts generated on the real clock, such
+    as the social cards. The public catalog cache is rebuilt on each side so
+    that neither clock's projection outlives the test.
     """
-    if request.node.get_closest_marker("provider_health") is not None:
+    if request.node.get_closest_marker("provider_health") is None:
+        yield
         return
-    from trusted_router import catalog_data
-
-    monkeypatch.setattr(catalog_data, "_utc_now", lambda: CATALOG_FRESHNESS_INSTANT)
+    monkeypatch.setattr(catalog_data, "_utc_now", catalog_freshness_freeze.REAL_CATALOG_CLOCK)
+    catalog_routes._public_catalog_payload.cache_clear()
+    yield
+    catalog_routes._public_catalog_payload.cache_clear()
 
 
 @pytest.fixture(autouse=True)
