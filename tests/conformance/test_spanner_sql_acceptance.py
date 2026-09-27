@@ -15,6 +15,7 @@ import pytest
 
 from tests.conformance.spanner_emulator import (
     NULL_FILTERED_HINT,
+    NULL_FILTERED_INDEXES,
     emulator_sql,
     names_null_filtered_index,
 )
@@ -61,8 +62,22 @@ def test_null_filtered_hint_set_matches_registered_statements():
                   for statement in [*(case.seed or []), *case.statements]]
     expected = {sql for sql, _, _ in statements if names_null_filtered_index(sql)}
     actual = {original[0] for original in statements
-              if emulator_sql(original[0]).startswith(NULL_FILTERED_HINT)}
+              if NULL_FILTERED_HINT in emulator_sql(original[0])}
     assert actual == expected and expected
+    for sql, _, _ in statements:
+        # Independent of the rewrite regex: every index-name occurrence must be
+        # the FORCE_INDEX value inside a hint, not merely somewhere in the SQL.
+        covered = []
+        for block in re.finditer(r"@\{[^{}]*\}", sql):
+            for force in re.finditer(r"(?:\{|,)\s*FORCE_INDEX\s*=\s*(\w+)\s*(?=,|\})", block[0], re.I):
+                if force[1].lower() in NULL_FILTERED_INDEXES:
+                    covered.append((block.start() + force.start(1), block.start() + force.end(1)))
+                    rewritten = emulator_sql(block[0])
+                    assert rewritten.startswith("@{") and rewritten.endswith("}")
+                    assert NULL_FILTERED_HINT in rewritten
+        references = [token.span() for token in re.finditer(r"\b\w+\b", sql)
+                      if token[0].lower() in NULL_FILTERED_INDEXES]
+        assert references == covered, sql
 
 
 def test_timestamp_string_bindings_use_utc_z():
@@ -218,7 +233,7 @@ CANARIES = [
     ("row-dependent-json-remove-path",
      "SELECT JSON_REMOVE(PARSE_JSON(body), CONCAT('$.',id)) FROM tr_entities",
      "SELECT JSON_REMOVE(PARSE_JSON(body), '$.x') FROM tr_entities",
-     r"(?is)(?=.*JSON_REMOVE)(?=.*(?:Argument 2|path))(?=.*constant)"),
+     r"(?i)\bArgument 2 to JSON_REMOVE must be (?:a constant expression|a literal or query parameter)\b"),
     ("over-1000-functions", function_limit_sql(520), function_limit_sql(450),
      r"Number of functions exceeds the maximum allowed limit of 1000"),
 ]
@@ -263,3 +278,29 @@ def test_frozen_fragments_are_inside_fingerprinted_scopes():
                 assert source.fingerprint == registration["fingerprint"], key
                 seen.add(name)
     assert fragments <= seen
+
+
+@pytest.mark.parametrize("message", [
+    "Argument 2 to JSON_REMOVE must be a constant expression",
+    "Argument 2 to JSON_REMOVE must be a literal or query parameter [at 1:38]",
+], ids=["production", "emulator-run-2"])
+def test_json_remove_reported_restriction_texts(message):
+    # Supplied diagnostic fixtures verify the matcher, not live server wording.
+    pattern = next(case[3] for case in CANARIES if case[0] == "row-dependent-json-remove-path")
+    assert re.search(pattern, message)
+    for unrelated in ("Argument 2 to JSON_REMOVE must be constant",
+                      "Argument 1 to JSON_REMOVE must be a constant expression",
+                      "Argument 2 to JSON_SET must be a literal or query parameter"):
+        assert re.search(pattern, unrelated) is None
+
+
+def test_register_claim_scenario_has_production_value_shapes():
+    from trusted_router.spend_leases import spend_lease_scope_salt
+
+    case = next(case for case in literal_cases() if case.name == "storage_gcp_spend_lease:register_claim:1/0")
+    _, params, _ = case.statements[0]
+    # DDL's CLAIM branch requires a non-null provisional_id; the global default
+    # is None for BOUND rows. Keep this override local to the inserting scenario.
+    assert isinstance(params["provisional_id"], str) and 0 < len(params["provisional_id"]) <= 64
+    assert 0 < len(params["scope"]) <= 256
+    assert params["scope_salt"] == spend_lease_scope_salt(params["scope"])

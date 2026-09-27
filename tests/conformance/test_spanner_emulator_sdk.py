@@ -10,6 +10,7 @@ from tests.conformance.spanner_emulator import (
     NULL_FILTERED_HINT,
     NULL_FILTERED_INDEXES,
     emulator_sdk_shim,
+    emulator_sql,
 )
 
 # Independent of the shim's installation list so dropping an entry is caught.
@@ -41,7 +42,7 @@ def test_sdk_null_filtered_hint_and_passthrough(monkeypatch, cls, method, argume
     queries = [(plain, plain), ("SELECT tr_receipt_key_versions_suffix", "SELECT tr_receipt_key_versions_suffix")]
     for index in sorted(NULL_FILTERED_INDEXES):
         sql = f"SELECT @id FROM example@{{FORCE_INDEX={index}}}"  # noqa: S608 - synthetic SDK recorder input
-        hinted = NULL_FILTERED_HINT + " " + sql
+        hinted = sql[:-1] + ", " + NULL_FILTERED_HINT + "}"
         queries.extend([(sql, hinted), (hinted, hinted)])
 
     with emulator_sdk_shim():
@@ -99,7 +100,7 @@ def test_batch_snapshot_forwarding_and_transaction_inheritance_hint_once(monkeyp
     with emulator_sdk_shim():
         for cls in (BatchSnapshot, Transaction):
             assert cls.execute_sql(object(), sql=sql, params=params) is calls
-            assert calls[-1][0] == NULL_FILTERED_HINT + " " + sql
+            assert calls[-1][0] == sql[:-1] + ", " + NULL_FILTERED_HINT + "}"
             assert calls[-1][1]["params"] is params
 
 
@@ -113,7 +114,8 @@ def test_resources_require_emulators_before_sdk_changes(monkeypatch, failure):
 
     from tests.conformance import spanner_emulator
 
-    originals = [getattr(cls, method) for cls, method, _ in SDK_METHODS]
+    methods = [*SDK_METHODS, (Database, "snapshot", "kwargs")]
+    originals = [getattr(cls, method) for cls, method, _ in methods]
     interval = timedelta(minutes=7)
     monkeypatch.setattr(DatabaseSessionsManager, "_MAINTENANCE_THREAD_POLLING_INTERVAL", interval)
     client = Mock()
@@ -121,7 +123,7 @@ def test_resources_require_emulators_before_sdk_changes(monkeypatch, failure):
     error = pytest.skip.Exception if failure == "skip" else AssertionError
 
     def require():
-        assert [getattr(cls, method) for cls, method, _ in SDK_METHODS] == originals
+        assert [getattr(cls, method) for cls, method, _ in methods] == originals
         assert DatabaseSessionsManager._MAINTENANCE_THREAD_POLLING_INTERVAL is interval
         raise error("emulators unavailable")
 
@@ -129,5 +131,55 @@ def test_resources_require_emulators_before_sdk_changes(monkeypatch, failure):
     with pytest.raises(error, match="emulators unavailable"), spanner_emulator.emulator_resources():
         pytest.fail("must not enter resources")
     client.assert_not_called()
-    assert [getattr(cls, method) for cls, method, _ in SDK_METHODS] == originals
+    assert [getattr(cls, method) for cls, method, _ in methods] == originals
     assert DatabaseSessionsManager._MAINTENANCE_THREAD_POLLING_INTERVAL is interval
+
+
+@pytest.mark.parametrize("verb", ["SELECT * FROM", "UPDATE", "DELETE FROM"])
+def test_null_filtered_hint_is_merged_only_into_force_index_blocks(verb):
+    index = "tr_receipt_key_versions"
+    block = f"@{{ INDEX_STRATEGY = FORCE_INDEX_UNION, FoRcE_InDeX = {index.upper()} }}"
+    other = "@{FORCE_INDEX=tr_credit_movement_by_time}"
+    sql = f"{verb} tr_entities{block} JOIN tr_entities@{{FORCE_INDEX={index}}} ON TRUE {other}"
+    expected = sql.replace(block, block[:-1] + ", " + NULL_FILTERED_HINT + "}").replace(
+        f"@{{FORCE_INDEX={index}}}", f"@{{FORCE_INDEX={index}, {NULL_FILTERED_HINT}}}")
+    assert emulator_sql(sql) == expected
+    assert emulator_sql(expected) == expected
+    for plain in (f"SELECT {index}", f"SELECT '{index}'", f"SELECT 1 /* {index} */",
+                  f"SELECT * FROM t@{{other={index}}}", f"SELECT * FROM t@{{FORCE_INDEX={index}_suffix}}"):  # noqa: S608 - synthetic recorder input
+        assert emulator_sql(plain) == plain
+    existing = f"SELECT * FROM t@{{force_index={index}, SPANNER_EMULATOR.disable_query_null_filtered_index_check = TRUE}}"  # noqa: S608 - synthetic recorder input
+    assert emulator_sql(existing) == existing
+    assert emulator_sql(existing.replace("= TRUE", "= false")) == existing.replace("= TRUE", "= true")
+
+
+@pytest.mark.parametrize("failure", [False, True], ids=["normal-exit", "exception-exit"])
+def test_sdk_snapshot_drops_only_staleness_and_restores(monkeypatch, failure):
+    from datetime import timedelta
+
+    calls = []
+    receiver, result = object(), object()
+
+    def original(self, **kwargs):
+        calls.append((self, kwargs))
+        return result
+
+    monkeypatch.setattr(Database, "snapshot", original)
+    retained = {"multi_use": True, "read_timestamp": object(), "min_read_timestamp": object(),
+                "other_option": object()}
+    try:
+        with emulator_sdk_shim():
+            for bounds in ({}, {"exact_staleness": timedelta(seconds=30)},
+                           {"max_staleness": timedelta(seconds=60)},
+                           {"exact_staleness": timedelta(seconds=5), "max_staleness": timedelta(seconds=5)}):
+                for options in ({}, retained):
+                    assert Database.snapshot(receiver, **bounds, **options) is result
+                    actual_self, actual_options = calls[-1]
+                    assert actual_self is receiver
+                    assert actual_options == options
+                    assert all(actual_options[key] is value for key, value in options.items())
+            if failure:
+                raise RuntimeError("body failure")
+    except RuntimeError as exc:
+        assert failure and str(exc) == "body failure"
+    assert Database.snapshot is original

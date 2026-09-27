@@ -20,7 +20,9 @@ NULL_FILTERED_INDEXES = {
     match[1].lower() for ddl in DDL
     if (match := re.search(r"CREATE (?:UNIQUE )?NULL_FILTERED INDEX (\w+)", ddl))
 }
-NULL_FILTERED_HINT = "@{spanner_emulator.disable_query_null_filtered_index_check=true}"
+NULL_FILTERED_HINT = "spanner_emulator.disable_query_null_filtered_index_check=true"
+_TABLE_HINT = re.compile(r"@\{[^{}]*\}")
+_FORCE_INDEX = re.compile(r"(?:\{|,)\s*FORCE_INDEX\s*=\s*(\w+)\s*(?=,|\})", re.I)
 
 
 def names_null_filtered_index(sql: str) -> bool:
@@ -29,9 +31,27 @@ def names_null_filtered_index(sql: str) -> bool:
 
 def emulator_sql(sql: str) -> str:
     """Preserve SQL verbatim except for the emulator's index-eligibility hint."""
-    if names_null_filtered_index(sql) and not sql.lstrip().startswith(NULL_FILTERED_HINT):
-        return NULL_FILTERED_HINT + " " + sql
-    return sql
+    def merge(match: re.Match[str]) -> str:
+        block = match[0]
+        if not any(index[1].lower() in NULL_FILTERED_INDEXES for index in _FORCE_INDEX.finditer(block)):
+            return block
+        existing = re.compile(r"(\bspanner_emulator\.disable_query_null_filtered_index_check\s*=\s*)(true|false)\b", re.I)
+        if existing.search(block):
+            return existing.sub(lambda hint: hint[0] if hint[2].lower() == "true" else hint[1] + "true", block)
+        return block[:-1] + ", " + NULL_FILTERED_HINT + "}"
+
+    return _TABLE_HINT.sub(merge, sql)
+
+
+def _snapshot_wrapper(original: Callable[..., Any]) -> Callable[..., Any]:
+    @wraps(original)
+    def wrapped(self: Any, **kwargs: Any) -> Any:
+        # Fresh emulator schemas and read-your-writes conformance need strong reads.
+        kwargs.pop("exact_staleness", None)
+        kwargs.pop("max_staleness", None)
+        return original(self, **kwargs)
+
+    return wrapped
 
 
 def _sdk_wrapper(original: Callable[..., Any], argument: str) -> Callable[..., Any]:
@@ -59,7 +79,7 @@ def emulator_sdk_shim() -> Iterator[None]:
     Only emulator_resources installs this, after the emulator safety checks.
     Transaction inherits execute_sql from _SnapshotBase. BatchSnapshot
     forwarding and Database partitioned DML are covered too; repeated SDK
-    forwarding cannot double-prefix SQL.
+    forwarding cannot duplicate table hints. Snapshot staleness is suppressed.
     """
     from google.cloud.spanner_v1.database import BatchSnapshot, Database
     from google.cloud.spanner_v1.snapshot import _SnapshotBase
@@ -74,6 +94,7 @@ def emulator_sdk_shim() -> Iterator[None]:
             (BatchSnapshot, "execute_sql", "sql"),
         ):
             stack.enter_context(patch.object(cls, method, _sdk_wrapper(getattr(cls, method), argument)))
+        stack.enter_context(patch.object(Database, "snapshot", _snapshot_wrapper(Database.snapshot)))
         yield
 
 

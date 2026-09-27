@@ -6,7 +6,9 @@ Primary transports: {'SELECT': 191, 'DML': 207, 'batch DML': 29}. Counts describ
 
 Discovery scans every `src/trusted_router/**/*.py` by default. Only `storage_postgres.py` is excluded as the reviewed PostgreSQL adapter. The manifest separately fingerprints 46 discovered non-GoogleSQL expressions (PostgreSQL helpers/branches, ClickHouse, Google Ads, and one operator explanation), each with a reason. New modules and changed classifications fail closed. Leading comments, parenthesized queries, INSERT OR IGNORE, split prefixes and dynamic f-string prefixes are included.
 
-First CI run: **449/496 passed**; all three rejection canaries were rejected. The remaining 47 failures were 32 heartbeat type errors, 3 timestamp errors, 11 null-filtered-index checks, and one oversized positive control. Round 2 server execution remains pending CI.
+First CI run: **449/496 passed**; all three rejection canaries were rejected. The remaining 47 failures were 32 heartbeat type errors, 3 timestamp errors, 11 null-filtered-index checks, and one oversized positive control.
+
+Run 2 (round-2 commit `45a1d0f`, before the round-3 store-path shim) completed native conformance in **49.26 s: 96 passed, 10 xfailed, 16 skipped, 14 failed**; acceptance in **27.21 s: 554 passed, 5 failed**. The teardown hang is gone. The native failures were 12 stale movement reads, one receipt-key null-filtered-index check, and one synthetic-rollup ordering bug. Acceptance failed twice on the DML statement-level hint, twice on the CLAIM CHECK constraint, and once on JSON_REMOVE diagnostic wording. Evidence is the supplied `emu-ci/run2.txt`; round-4 server results are pending CI.
 
 Pinned to the images pulled in run 1:
 
@@ -15,9 +17,20 @@ Pinned to the images pulled in run 1:
 
 ## Emulator limitations
 
-The one SQL emulator accommodation is the statement hint `@{spanner_emulator.disable_query_null_filtered_index_check=true}`. The harness derives index names from `CREATE [UNIQUE] NULL_FILTERED INDEX` in the production DDL and adds the hint only to statements naming one of those indexes, including sequential and batch DML. An always-on guard checks exact equality of the hinted and eligible statement sets. Production SQL is unchanged.
+The shim makes two emulator accommodations, without changing production SQL or settings:
+
+1. It derives null-filtered index names from `CREATE [UNIQUE] NULL_FILTERED INDEX` in `spanner_ddl.DDL` and merges `spanner_emulator.disable_query_null_filtered_index_check=true` into each `@{FORCE_INDEX=...}` table-hint block naming one of those indexes. Matching is case-insensitive and whitespace-tolerant, preserves other keys, and is idempotent; other SQL is byte-identical. Run 2 showed that a statement-level prefix breaks UPDATE (including batch DML): the emulator accepts this hint on table scans and queries, while DML statements accept only `ignore_unknown_hints`. An always-on guard checks every registered index-name occurrence is a FORCE_INDEX value inside a hint and that every eligible block is rewritten.
+2. It wraps `Database.snapshot` to drop only `exact_staleness` and `max_staleness`, making these reads strong. Explicit `read_timestamp` and `min_read_timestamp`, `multi_use`, and other options pass through unchanged. Fresh emulator databases otherwise read an older schema or miss just-written movements. Source inspection found only `exact_staleness`: conditional 5-second reads at `storage_gcp.py:4461`, `4573`, `7065`, movement history at 30 seconds (`4509`), and the earnings display aggregate at 60 seconds (`4544`). Production history/reporting intentionally lags writes by up to 30/60 seconds to use nearby replicas; these reads do not authorize transfers. Neither the Python fake (which ignores staleness) nor this emulator conformance backend asserts that production lag.
+
+`emulator_resources()` installs the shared SDK shim only after emulator safety checks succeed and restores all patched methods on exit, including exceptions. Both acceptance and the real native store use it. Offline recorders verify SQL rewriting, snapshot option preservation, and restoration; server execution of the round-4 changes still requires CI.
+
+The synthetic-rollup ordering failure reproduces on the real Bigtable emulator: `limit=2` returns the middle and oldest periods. This is native-store bug [#1370](https://github.com/Lore-Hex/quill-router/issues/1370): `synthetic_rollups` limits an ascending row-key scan before sorting newest-first. Its strict xfail now applies to both `spanner-fake` and `spanner-emulator`, alongside the ten legacy-money gaps. Collection tests enforce that classification. The store fix is outside this PR.
+
+Run 2 also confirms the emulator enforces `spend_lease_scope_arbitration_shape`, which the fake does not. `register_claim:1` inherited the BOUND-oriented default `provisional_id=None`, violating the CLAIM branch's non-null requirement. Only that scenario now supplies a nonempty provisional authorization ID, a scope, and its production four-hex-character hash salt. The production INSERT already supplies NULL BOUND fields and non-null terminal time as required by the DDL. Other synthetic scenarios that matched no rows are unchanged.
 
 The first CI run's emulator explained: “The emulator is not able to determine whether the null filtered index … can be used to answer this query as it may filter out nulls that may be required to answer the query.” It directed testing against Cloud Spanner and said “the emulator will accept the query and return a valid result when it is run with the check disabled.” These are live production queries; the hint bypasses the emulator's index eligibility check, not SQL parsing or execution. Eleven first-run failures had this message. This evidence comes from the supplied CI logs; no online documentation was fetched.
+
+The JSON_REMOVE canary requires `Argument 2 to JSON_REMOVE must be` followed by exactly `a constant expression` or `a literal or query parameter`. The other two canary patterns matched run 2. Offline fixtures check both reported phrases and unrelated-message rejection; they cannot prove live emulator wording.
 
 ## Fragment and binding fidelity
 
@@ -25,7 +38,9 @@ Frozen SQL fragments remain explicit scenarios: `where` in `storage_gcp.list_cre
 
 Manifest types are compared to the production type maps wherever those maps cover a parameter; names, timestamp strings and heartbeat model annotations are checked separately. Profiling checks that every returned builder statement reaches an executed case (including seeds), not just that a builder was invoked.
 
-Round-2 offline verification: 294 passed / 990 skipped / 11 xfailed for the focused conformance and workflow gate; 9 passed / 549 skipped for the isolated coverage proof; coverage reporting resolves all sources. The exact CI report command yields 22% for this focused proof (below its full-suite 70% threshold). All 12 requested mutations were caught in copies. See [gate results and failing test names](spanner-emulator-conformance.md#round-2-gate-results). Server execution remains pending CI.
+Round-2 offline verification: 294 passed / 990 skipped / 11 xfailed for the focused conformance and workflow gate; 9 passed / 549 skipped for the isolated coverage proof; coverage reporting resolves all sources. The exact CI report command yields 22% for this focused proof (below its full-suite 70% threshold). All 12 requested mutations were caught in copies. See [gate results and failing test names](spanner-emulator-conformance.md#round-2-gate-results). Run-2 server results are recorded above; round-4 server execution remains pending CI.
+
+Round-4 offline verification: ruff passed; mypy reported no issues in 400 source files; the focused conformance/workflow gate reported **325 passed, 990 skipped, 11 xfailed** in 59.73 s. All five copy-only mutations were caught, and canary specificity checks passed in both phrase mutations. See [round-4 results and failing test names](spanner-emulator-conformance.md#round-4-gate-results). No full-suite or local emulator run was performed.
 
 ## Source expressions
 

@@ -236,10 +236,10 @@ _C1_LEGACY_MONEY = (
     "from the Store contract, not a gap in the fake — the typed path has its own "
     "tests (tests/test_billing_typed_*.py), but it is NOT this suite's assertions."
 )
-_FAKE_ROLLUP_ORDERING = (
-    "tests/fakes/spanner.py does not reproduce Bigtable's row ordering for "
-    "synthetic rollups, so the limit-is-a-newest-first-prefix property cannot be "
-    "asserted through it. A fake limitation, not a store claim either way."
+_NATIVE_ROLLUP_ORDERING = (
+    "Native store bug #1370 (Lore-Hex/quill-router): synthetic_rollups applies "
+    "limit to an ascending Bigtable row-key scan before sorting newest-first; "
+    "the real Bigtable emulator also returns the oldest periods."
 )
 
 #: Tests the native STORE is KNOWN not to satisfy, each with the
@@ -255,6 +255,7 @@ _FAKE_ROLLUP_ORDERING = (
 #: Anything not listed here is genuinely asserted against the native Spanner
 #: store, cross-plane credit transfer included.
 _NATIVE_STORE_KNOWN_GAPS: dict[str, str] = {
+    "test_synthetic_rollups_apply_ranges_order_limit_and_histogram_option": _NATIVE_ROLLUP_ORDERING,
     "test_reserve_then_settle_less_releases_unused_hold": _C1_LEGACY_MONEY,
     "test_reserve_then_settle_more_books_full_actual": _C1_LEGACY_MONEY,
     "test_reserve_then_refund_restores_exact_balance": _C1_LEGACY_MONEY,
@@ -267,9 +268,7 @@ _NATIVE_STORE_KNOWN_GAPS: dict[str, str] = {
     "test_authorization_frozen_zero_hold_releases_zero": _C1_LEGACY_MONEY,
 }
 
-_FAKE_ONLY_GAPS = {
-    "test_synthetic_rollups_apply_ranges_order_limit_and_histogram_option": _FAKE_ROLLUP_ORDERING,
-}
+_FAKE_ONLY_GAPS: dict[str, str] = {}
 
 
 _BACKEND_KNOWN_GAPS = {

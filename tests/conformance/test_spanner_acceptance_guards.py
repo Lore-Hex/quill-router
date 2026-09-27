@@ -232,3 +232,19 @@ def test_native_legacy_gaps_are_strict_at_collection():
             assert len(marks) == 1 and marks[0].kwargs == {"strict": True, "reason": _C1_LEGACY_MONEY}
         else:
             assert not marks
+
+
+@pytest.mark.parametrize("backend", ["spanner-fake", "spanner-emulator"])
+def test_native_rollup_gap_is_strict_at_collection(backend):
+    from types import SimpleNamespace
+
+    from tests.conformance.conftest import _FAKE_ONLY_GAPS, pytest_collection_modifyitems
+
+    name = "test_synthetic_rollups_apply_ranges_order_limit_and_histogram_option"
+    marks = []
+    item = SimpleNamespace(callspec=SimpleNamespace(params={"store": backend}),
+                           originalname=name, add_marker=marks.append)
+    pytest_collection_modifyitems([item])
+    assert name not in _FAKE_ONLY_GAPS
+    assert len(marks) == 1 and marks[0].name == "xfail" and marks[0].kwargs["strict"] is True
+    assert "#1370" in marks[0].kwargs["reason"]

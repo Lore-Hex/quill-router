@@ -2774,6 +2774,11 @@
             "provisional_id": "STRING",
             "scope": "STRING",
             "scope_salt": "STRING"
+          },
+          "values": {
+            "provisional_id": "authz_acceptance_claim",
+            "scope": "acceptance-claim-scope",
+            "scope_salt": "0c55"
           }
         }
       ]
