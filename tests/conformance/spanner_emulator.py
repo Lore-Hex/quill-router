@@ -25,27 +25,73 @@ _TABLE_HINT = re.compile(r"@\{[^{}]*\}")
 _FORCE_INDEX = re.compile(r"(?:\{|,)\s*FORCE_INDEX\s*=\s*(\w+)\s*(?=,|\})", re.I)
 
 
+def sql_code(sql: str) -> str:
+    """Mask GoogleSQL quotes/comments, preserving offsets for surgical edits.
+
+    Prefixes (r, b, rb, br, in either case) do not change quote boundaries:
+    even raw literals cannot close on an escaped quote. Triple quotes must be
+    recognized before single quotes. Fail closed on unterminated regions.
+    """
+    masked = list(sql)
+    pos = 0
+    while pos < len(sql):
+        start = pos
+        if sql.startswith(("--", "#"), pos):
+            end = sql.find("\n", pos)
+            pos = len(sql) if end < 0 else end
+        elif sql.startswith("/*", pos):
+            end = sql.find("*/", pos + 2)
+            pos = len(sql) if end < 0 else end + 2
+        elif sql[pos] in "\"'`":
+            quote = sql[pos]
+            delimiter = quote * 3 if quote != "`" and sql.startswith(quote * 3, pos) else quote
+            pos += len(delimiter)
+            while pos < len(sql):
+                if sql[pos] == "\\":
+                    pos += 2
+                elif sql.startswith(delimiter, pos):
+                    pos += len(delimiter)
+                    break
+                else:
+                    pos += 1
+            pos = min(pos, len(sql))
+        else:
+            pos += 1
+            continue
+        masked[start:pos] = ["\n" if char == "\n" else " " for char in sql[start:pos]]
+    return "".join(masked)
+
+
 def names_null_filtered_index(sql: str) -> bool:
-    return bool(set(re.findall(r"\b\w+\b", sql.lower())) & NULL_FILTERED_INDEXES)
+    return bool(set(re.findall(r"\b\w+\b", sql_code(sql).lower())) & NULL_FILTERED_INDEXES)
 
 
 def emulator_sql(sql: str) -> str:
     """Preserve SQL verbatim except for the emulator's index-eligibility hint."""
     def merge(match: re.Match[str]) -> str:
-        block = match[0]
-        if not any(index[1].lower() in NULL_FILTERED_INDEXES for index in _FORCE_INDEX.finditer(block)):
+        block = sql[match.start():match.end()]
+        if not any(index[1].lower() in NULL_FILTERED_INDEXES for index in _FORCE_INDEX.finditer(match[0])):
             return block
         existing = re.compile(r"(\bspanner_emulator\.disable_query_null_filtered_index_check\s*=\s*)(true|false)\b", re.I)
-        if existing.search(block):
-            return existing.sub(lambda hint: hint[0] if hint[2].lower() == "true" else hint[1] + "true", block)
+        if hint := existing.search(match[0]):
+            return block if hint[2].lower() == "true" else block[:hint.start(2)] + "true" + block[hint.end(2):]
         return block[:-1] + ", " + NULL_FILTERED_HINT + "}"
 
-    return _TABLE_HINT.sub(merge, sql)
+    # Match only code, splice into the original so literals/comments stay exact.
+    result = sql
+    for match in reversed(list(_TABLE_HINT.finditer(sql_code(sql)))):
+        result = result[:match.start()] + merge(match) + result[match.end():]
+    return result
 
 
 def _snapshot_wrapper(original: Callable[..., Any]) -> Callable[..., Any]:
     @wraps(original)
     def wrapped(self: Any, **kwargs: Any) -> Any:
+        from google.cloud.spanner_v1.snapshot import Snapshot
+
+        # The SDK constructor validates the ORIGINAL combination without RPCs
+        # or session acquisition. Do not hide errors by dropping bounds first.
+        Snapshot(session=None, **kwargs)
         # Fresh emulator schemas and read-your-writes conformance need strong reads.
         kwargs.pop("exact_staleness", None)
         kwargs.pop("max_staleness", None)

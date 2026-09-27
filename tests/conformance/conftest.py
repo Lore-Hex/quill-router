@@ -254,21 +254,21 @@ _NATIVE_ROLLUP_ORDERING = (
 #:
 #: Anything not listed here is genuinely asserted against the native Spanner
 #: store, cross-plane credit transfer included.
-_NATIVE_STORE_KNOWN_GAPS: dict[str, str] = {
-    "test_synthetic_rollups_apply_ranges_order_limit_and_histogram_option": _NATIVE_ROLLUP_ORDERING,
-    "test_reserve_then_settle_less_releases_unused_hold": _C1_LEGACY_MONEY,
-    "test_reserve_then_settle_more_books_full_actual": _C1_LEGACY_MONEY,
-    "test_reserve_then_refund_restores_exact_balance": _C1_LEGACY_MONEY,
-    "test_settle_is_idempotent": _C1_LEGACY_MONEY,
-    "test_refund_is_idempotent": _C1_LEGACY_MONEY,
-    "test_concurrent_reserves_cannot_oversubscribe": _C1_LEGACY_MONEY,
-    "test_insufficient_reserve_does_not_mutate_balance": _C1_LEGACY_MONEY,
-    "test_finalize_gateway_authorization_is_exactly_once": _C1_LEGACY_MONEY,
-    "test_finalize_unknown_authorization_is_false_not_error": _C1_LEGACY_MONEY,
-    "test_authorization_frozen_zero_hold_releases_zero": _C1_LEGACY_MONEY,
+_NATIVE_STORE_KNOWN_GAPS: dict[tuple[str, str], str] = {
+    ("store", "test_store_semantics.py::test_synthetic_rollups_apply_ranges_order_limit_and_histogram_option"): _NATIVE_ROLLUP_ORDERING,
+    ("store", "test_store_semantics.py::test_reserve_then_settle_less_releases_unused_hold"): _C1_LEGACY_MONEY,
+    ("store", "test_store_semantics.py::test_reserve_then_settle_more_books_full_actual"): _C1_LEGACY_MONEY,
+    ("store", "test_store_semantics.py::test_reserve_then_refund_restores_exact_balance"): _C1_LEGACY_MONEY,
+    ("store", "test_store_semantics.py::test_settle_is_idempotent"): _C1_LEGACY_MONEY,
+    ("store", "test_store_semantics.py::test_refund_is_idempotent"): _C1_LEGACY_MONEY,
+    ("store", "test_store_semantics.py::test_concurrent_reserves_cannot_oversubscribe"): _C1_LEGACY_MONEY,
+    ("store", "test_store_semantics.py::test_insufficient_reserve_does_not_mutate_balance"): _C1_LEGACY_MONEY,
+    ("store", "test_store_semantics.py::test_finalize_gateway_authorization_is_exactly_once"): _C1_LEGACY_MONEY,
+    ("store", "test_store_semantics.py::test_finalize_unknown_authorization_is_false_not_error"): _C1_LEGACY_MONEY,
+    ("store", "test_store_semantics.py::test_authorization_frozen_zero_hold_releases_zero"): _C1_LEGACY_MONEY,
 }
 
-_FAKE_ONLY_GAPS: dict[str, str] = {}
+_FAKE_ONLY_GAPS: dict[tuple[str, str], str] = {}
 
 
 _BACKEND_KNOWN_GAPS = {
@@ -277,13 +277,19 @@ _BACKEND_KNOWN_GAPS = {
 }
 
 
+def gap_test_id(item):
+    # Preserve the module path (and any class), remove only parametrization.
+    return item.nodeid.removeprefix("tests/conformance/").split("[", 1)[0]
+
+
 def pytest_collection_modifyitems(items):
     for item in items:
         params = getattr(getattr(item, "callspec", None), "params", {})
-        backend = params.get("store", params.get("user_credit_transfer_store"))
-        gap = _BACKEND_KNOWN_GAPS.get(backend, {}).get(item.originalname)
-        if gap is not None:
-            item.add_marker(pytest.mark.xfail(reason=gap, strict=True))
+        for fixture in ("store", "user_credit_transfer_store"):
+            backend = params.get(fixture)
+            gap = _BACKEND_KNOWN_GAPS.get(backend, {}).get((fixture, gap_test_id(item)))
+            if gap is not None:
+                item.add_marker(pytest.mark.xfail(reason=gap, strict=True))
 
 
 @pytest.fixture(params=_BACKEND_PARAMS, ids=lambda name: f"backend={name}")

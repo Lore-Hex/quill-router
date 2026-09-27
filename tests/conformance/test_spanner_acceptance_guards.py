@@ -193,6 +193,43 @@ def test_schema_blind_spots_fail_closed_in_copies(tmp_path, addition):
         migration_ddl(tmp_path)
 
 
+@pytest.mark.parametrize("addition", [
+    "apply_ddl 'alter table tr_entities add column review_lost STRING(64)'\n",
+    'apply_ddl "ALTER\nTABLE tr_entities ADD COLUMN review_lost STRING(64)"\n',
+    'gcloud spanner databases ddl update db --ddl="CREATE TABLE review_kept (id STRING(64)) PRIMARY KEY(id)"; '
+    "gcloud spanner databases ddl update db --ddl='ALTER TABLE tr_entities ADD COLUMN review_lost STRING(64)'\n",
+    'apply_ddl "$UNPARSED_DDL"\n',
+    'apply_ddl $UNPARSED_DDL\n',
+    "APPLY_DDL 'alter table tr_entities add column review_lost STRING(64)'\n",
+    "DDL 'alter\ntable tr_entities add column review_lost STRING(64)'\n",
+    "gcloud spanner databases ddl update db \\\n --DDL 'alter table tr_entities add column review_lost STRING(64)'\n",
+], ids=["lowercase-alter", "split-alter-table", "same-line-dispatches", "quoted-variable",
+        "bare-variable", "uppercase-helper", "uppercase-ddl-helper", "uppercase-gcloud-option"])
+def test_every_ddl_dispatch_is_consumed_in_copies(tmp_path, addition):
+    # Review round 2 probes now require rejection even with refreshed digests.
+    from tests.conformance.spanner_schema_source import source_digests
+
+    scripts = tmp_path / "scripts/deploy"
+    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    path = scripts / "migrate_money_primitives.sh"
+    original = path.read_text() + "\n"
+    path.write_text(original + addition)
+    line = original.count("\n") + 1
+    # Joined continuations report the physical start of the logical command.
+    with pytest.raises(AssertionError, match=rf"migrate_money_primitives.sh:{line}: unconsumed DDL dispatch"):
+        assert_schema_matches(spanner_ddl.DDL, source_digests(tmp_path), tmp_path)
+
+
+def test_lowercase_split_create_index_is_extracted(tmp_path):
+    scripts = tmp_path / "scripts/deploy"
+    shutil.copytree(ROOT / "scripts/deploy", scripts)
+    path = scripts / "migrate_money_primitives.sh"
+    path.write_text(path.read_text() + '\napply_ddl "create\nindex review_added ON tr_entities (kind)"\n')
+    ddl = migration_ddl(tmp_path)
+    assert "create index review_added ON tr_entities (kind)" in ddl
+    assert len(ddl) == len(spanner_ddl.DDL) + 1
+
+
 @pytest.mark.parametrize("expression", [
     '"INSERT OR IGNORE INTO tr_entities (kind, id) VALUES (@kind, @id)"',
     '"/* comment */ SELECT id FROM tr_entities"',
@@ -223,12 +260,13 @@ def test_native_legacy_gaps_are_strict_at_collection():
               if reason == _C1_LEGACY_MONEY}
     assert len(legacy) == 10
     assert _BACKEND_KNOWN_GAPS["spanner-emulator"] == _NATIVE_STORE_KNOWN_GAPS
-    for name in legacy | _FAKE_ONLY_GAPS.keys():
+    for fixture, name in legacy | _FAKE_ONLY_GAPS.keys():
         marks = []
-        item = SimpleNamespace(callspec=SimpleNamespace(params={"store": "spanner-emulator"}),
-                               originalname=name, add_marker=marks.append)
+        item = SimpleNamespace(callspec=SimpleNamespace(params={fixture: "spanner-emulator"}),
+                               nodeid="tests/conformance/" + name + "[backend=spanner-emulator]",
+                               originalname=name.split("::")[-1], add_marker=marks.append)
         pytest_collection_modifyitems([item])
-        if name in legacy:
+        if (fixture, name) in legacy:
             assert len(marks) == 1 and marks[0].kwargs == {"strict": True, "reason": _C1_LEGACY_MONEY}
         else:
             assert not marks
@@ -243,8 +281,77 @@ def test_native_rollup_gap_is_strict_at_collection(backend):
     name = "test_synthetic_rollups_apply_ranges_order_limit_and_histogram_option"
     marks = []
     item = SimpleNamespace(callspec=SimpleNamespace(params={"store": backend}),
+                           nodeid="tests/conformance/test_store_semantics.py::" + name + "[backend=" + backend + "]",
                            originalname=name, add_marker=marks.append)
     pytest_collection_modifyitems([item])
     assert name not in _FAKE_ONLY_GAPS
     assert len(marks) == 1 and marks[0].name == "xfail" and marks[0].kwargs["strict"] is True
     assert "#1370" in marks[0].kwargs["reason"]
+
+
+@pytest.mark.parametrize("fixture", ["store", "user_credit_transfer_store", "unrelated_store"])
+@pytest.mark.parametrize("backend", ["memory", "postgres", "spanner-pg", "spanner-fake", "spanner-emulator"])
+@pytest.mark.parametrize("module", ["test_store_semantics.py", "test_unrelated.py"])
+def test_gap_registration_matches_only_its_module_fixture_and_backend(fixture, backend, module):
+    from types import SimpleNamespace
+
+    from tests.conformance.conftest import pytest_collection_modifyitems
+
+    name = "test_finalize_unknown_authorization_is_false_not_error"
+    marks = []
+    item = SimpleNamespace(callspec=SimpleNamespace(params={fixture: backend}), originalname=name,
+                           nodeid=f"tests/conformance/{module}::{name}[backend={backend}]",
+                           add_marker=marks.append)
+    pytest_collection_modifyitems([item])
+    expected = (module == "test_store_semantics.py" and fixture == "store"
+                and backend in {"spanner-fake", "spanner-emulator"})
+    assert bool(marks) == expected
+    if marks:
+        assert len(marks) == 1 and marks[0].kwargs["strict"] is True
+
+
+def test_all_gap_registrations_match_collected_items_for_every_backend(tmp_path):
+    import subprocess
+    import sys
+    import textwrap
+
+    from tests.conformance.conftest import _BACKEND_KNOWN_GAPS
+
+    names = {test_id.split("::")[-1] for gaps in _BACKEND_KNOWN_GAPS.values()
+             for _, test_id in gaps}
+    unrelated = tmp_path / "test_unrelated.py"
+    unrelated.write_text("import pytest\n" + "\n".join(
+        '@pytest.mark.parametrize("store", ["spanner-fake", "spanner-emulator"])\n'
+        '@pytest.mark.parametrize("user_credit_transfer_store", ["spanner-fake", "spanner-emulator"])\n'
+        f"def {name}(store, user_credit_transfer_store): pass\n"
+        for name in sorted(names)
+    ))
+    # A separate collection makes this guard work even when selected on its
+    # own. No fixtures run, no server is contacted, and no pytest cache is made.
+    probe = textwrap.dedent('''
+        import sys
+        import pytest
+        from tests.conformance.conftest import _BACKEND_KNOWN_GAPS, gap_test_id
+
+        class VerifyGaps:
+            def pytest_collection_finish(self, session):
+                for backend, registrations in _BACKEND_KNOWN_GAPS.items():
+                    for (fixture, test_id), reason in registrations.items():
+                        matches = [item for item in session.items
+                                   if gap_test_id(item) == test_id
+                                   and getattr(getattr(item, "callspec", None), "params", {}).get(fixture) == backend]
+                        assert matches, f"Dead gap registration: {backend}/{fixture}/{test_id}"
+                        for item in matches:
+                            marks = list(item.iter_markers("xfail"))
+                            assert len(marks) == 1, item.nodeid
+                            assert marks[0].kwargs == {"strict": True, "reason": reason}, item.nodeid
+                collisions = [item for item in session.items if item.path.name == "test_unrelated.py"]
+                assert collisions
+                for item in collisions:
+                    assert not list(item.iter_markers("xfail")), item.nodeid
+
+        raise SystemExit(pytest.main(["--collect-only", "-q", "-p", "no:cacheprovider",
+                                     "tests/conformance/test_store_semantics.py", sys.argv[1]], plugins=[VerifyGaps()]))
+    ''')
+    result = subprocess.run([sys.executable, "-c", probe, str(unrelated)], cwd=ROOT, capture_output=True, text=True, timeout=60)  # noqa: S603
+    assert result.returncode == 0, result.stdout + result.stderr

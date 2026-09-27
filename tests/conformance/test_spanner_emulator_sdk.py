@@ -165,13 +165,10 @@ def test_sdk_snapshot_drops_only_staleness_and_restores(monkeypatch, failure):
         return result
 
     monkeypatch.setattr(Database, "snapshot", original)
-    retained = {"multi_use": True, "read_timestamp": object(), "min_read_timestamp": object(),
-                "other_option": object()}
+    retained = {"multi_use": True, "transaction_id": b"transaction"}
     try:
         with emulator_sdk_shim():
-            for bounds in ({}, {"exact_staleness": timedelta(seconds=30)},
-                           {"max_staleness": timedelta(seconds=60)},
-                           {"exact_staleness": timedelta(seconds=5), "max_staleness": timedelta(seconds=5)}):
+            for bounds in ({}, {"exact_staleness": timedelta(seconds=30)}):
                 for options in ({}, retained):
                     assert Database.snapshot(receiver, **bounds, **options) is result
                     actual_self, actual_options = calls[-1]
@@ -183,3 +180,110 @@ def test_sdk_snapshot_drops_only_staleness_and_restores(monkeypatch, failure):
     except RuntimeError as exc:
         assert failure and str(exc) == "body failure"
     assert Database.snapshot is original
+
+
+@pytest.mark.parametrize("options", ["conflicting-bounds", "multi-use-max"])
+def test_sdk_snapshot_original_invalid_options_still_raise(options):
+    # Adapted from review2_probes.py: use the real SDK, mocking only acquisition.
+    from datetime import timedelta
+    from unittest.mock import Mock
+
+    kwargs = {"max_staleness": timedelta(seconds=5)}
+    kwargs.update({"exact_staleness": timedelta(seconds=5)} if options == "conflicting-bounds"
+                  else {"multi_use": True})
+    database = Mock()
+    for shim in (False, True, False):
+        from contextlib import nullcontext
+
+        with emulator_sdk_shim() if shim else nullcontext():
+            with pytest.raises(ValueError), Database.snapshot(database, **kwargs):
+                pytest.fail("invalid original options reached a snapshot")
+
+
+@pytest.mark.parametrize("bound", ["exact_staleness", "max_staleness"])
+def test_sdk_valid_staleness_becomes_strong_only_inside_shim(bound):
+    from datetime import timedelta
+    from unittest.mock import Mock
+
+    database = Mock()
+    options = {bound: timedelta(seconds=5)}
+    with Database.snapshot(database, **options) as snapshot:
+        assert not snapshot._strong
+    with emulator_sdk_shim(), Database.snapshot(database, **options) as snapshot:
+        assert snapshot._strong
+        assert snapshot._exact_staleness is None and snapshot._max_staleness is None
+    with Database.snapshot(database, **options) as snapshot:
+        assert not snapshot._strong
+
+
+@pytest.mark.parametrize(("method", "args", "kwargs", "seconds", "multi_use"), [
+    ("earnings_summary", ("user-display",), {"allow_stale": True}, 5, False),
+    ("list_credit_movements", ("user:user-display",), {}, 30, False),
+    ("custom_model_earnings_by_model", ("user-display",), {"since": "2026-01-01T00:00:00Z"}, 60, False),
+    ("get_lifetime_topup_microdollars", ("user-display",), {"allow_stale": True}, 5, False),
+    ("typed_key_usage", ("key-display",), {"allow_stale": True}, 5, True),
+])
+def test_production_staleness_callers_remain_valid(method, args, kwargs, seconds, multi_use):
+    from datetime import timedelta
+    from unittest.mock import Mock
+
+    from tests.fakes.spanner import make_fake_store
+
+    store, fake, _ = make_fake_store()
+    getattr(store, method)(*args, **kwargs)
+    expected = {"exact_staleness": timedelta(seconds=seconds)}
+    if multi_use:
+        expected["multi_use"] = True
+    assert fake.snapshot_calls == [expected]
+    database = Mock()
+    with Database.snapshot(database, **expected) as snapshot:
+        assert snapshot._exact_staleness == expected["exact_staleness"]
+        assert snapshot._multi_use == multi_use
+    with emulator_sdk_shim(), Database.snapshot(database, **expected) as snapshot:
+        assert snapshot._strong and snapshot._multi_use == multi_use
+
+
+_QUOTED_HINTS = [
+    prefix + delimiter + "@{FORCE_INDEX=tr_receipt_key_versions}" + delimiter
+    for prefix in ("", "r", "R", "b", "B", "rb", "rB", "br", "BR")
+    for delimiter in ("'", '"', "'''", '"""')
+] + [
+    "`@{FORCE_INDEX=tr_receipt_key_versions}`",
+    "-- @{FORCE_INDEX=tr_receipt_key_versions}\n",
+    "# @{FORCE_INDEX=tr_receipt_key_versions}\n",
+    "/* @{FORCE_INDEX=tr_receipt_key_versions} */",
+    r"'escaped\' @{FORCE_INDEX=tr_receipt_key_versions}'",
+    '"escaped\\" @{FORCE_INDEX=tr_receipt_key_versions}"',
+    "'''one ' two ''\n@{FORCE_INDEX=tr_receipt_key_versions}'''",
+    '"""one " two ""\n@{FORCE_INDEX=tr_receipt_key_versions}"""',
+]
+
+
+@pytest.mark.parametrize("quoted", _QUOTED_HINTS)
+def test_sql_quoted_hints_and_comments_are_byte_identical(quoted):
+    from tests.conformance.spanner_emulator import names_null_filtered_index
+
+    sql = "SELECT " + quoted + " AS literal_value"
+    assert emulator_sql(sql) == sql
+    assert not names_null_filtered_index(sql)
+    real = "SELECT * FROM t@{FORCE_INDEX=tr_receipt_key_versions}"  # noqa: S608
+    mixed = sql + "\nUNION ALL " + real
+    assert names_null_filtered_index(mixed)
+    assert emulator_sql(mixed) == sql + "\nUNION ALL " + real[:-1] + ", " + NULL_FILTERED_HINT + "}"
+
+
+@pytest.mark.parametrize("quoted", _QUOTED_HINTS)
+def test_acceptance_hint_guard_ignores_quoted_references(monkeypatch, quoted):
+    from tests.conformance import test_spanner_sql_acceptance as acceptance
+
+    # Include one actual hint so the inventory nonempty assertion remains useful.
+    cases = [acceptance.SQLCase("quoted", [("SELECT " + quoted, {}, {})]),
+             acceptance.SQLCase("real", [("SELECT * FROM t@{FORCE_INDEX=tr_receipt_key_versions}", {}, {})])]  # noqa: S608
+    monkeypatch.setattr(acceptance, "all_cases", lambda: cases)
+    acceptance.test_null_filtered_hint_set_matches_registered_statements()
+
+
+def test_hint_option_in_comment_is_not_rewritten():
+    comment = "/* spanner_emulator.disable_query_null_filtered_index_check=false */"
+    sql = "SELECT * FROM t@{FORCE_INDEX=tr_receipt_key_versions " + comment + "}"  # noqa: S608
+    assert emulator_sql(sql) == sql[:-1] + ", " + NULL_FILTERED_HINT + "}"

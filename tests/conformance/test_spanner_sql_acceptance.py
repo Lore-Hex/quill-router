@@ -18,6 +18,7 @@ from tests.conformance.spanner_emulator import (
     NULL_FILTERED_INDEXES,
     emulator_sql,
     names_null_filtered_index,
+    sql_code,
 )
 from tests.conformance.spanner_sql_builders import SQLCase, builder_cases
 from tests.conformance.spanner_sql_inventory import (
@@ -62,22 +63,33 @@ def test_null_filtered_hint_set_matches_registered_statements():
                   for statement in [*(case.seed or []), *case.statements]]
     expected = {sql for sql, _, _ in statements if names_null_filtered_index(sql)}
     actual = {original[0] for original in statements
-              if NULL_FILTERED_HINT in emulator_sql(original[0])}
+              if NULL_FILTERED_HINT in sql_code(emulator_sql(original[0]))}
     assert actual == expected and expected
     for sql, _, _ in statements:
+        code = sql_code(sql)
         # Independent of the rewrite regex: every index-name occurrence must be
         # the FORCE_INDEX value inside a hint, not merely somewhere in the SQL.
         covered = []
-        for block in re.finditer(r"@\{[^{}]*\}", sql):
+        replacements = []
+        for block in re.finditer(r"@\{[^{}]*\}", code):
+            has_index = False
             for force in re.finditer(r"(?:\{|,)\s*FORCE_INDEX\s*=\s*(\w+)\s*(?=,|\})", block[0], re.I):
                 if force[1].lower() in NULL_FILTERED_INDEXES:
+                    has_index = True
                     covered.append((block.start() + force.start(1), block.start() + force.end(1)))
-                    rewritten = emulator_sql(block[0])
+                    rewritten = emulator_sql(sql[block.start():block.end()])
                     assert rewritten.startswith("@{") and rewritten.endswith("}")
                     assert NULL_FILTERED_HINT in rewritten
-        references = [token.span() for token in re.finditer(r"\b\w+\b", sql)
+            if has_index:
+                replacements.append((block.start(), block.end(), rewritten))
+        references = [token.span() for token in re.finditer(r"\b\w+\b", code)
                       if token[0].lower() in NULL_FILTERED_INDEXES]
         assert references == covered, sql
+        expected_sql = sql
+        for start, end, replacement in reversed(replacements):
+            expected_sql = expected_sql[:start] + replacement + expected_sql[end:]
+        # Checking just the set of index references can hide changes to data.
+        assert emulator_sql(sql) == expected_sql, sql
 
 
 def test_timestamp_string_bindings_use_utc_z():

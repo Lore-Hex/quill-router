@@ -13,51 +13,83 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-# Exact reviewed non-schema lines; no wildcard for new DDL dispatches.
-# Helper bodies are expanded by their recognized calls below. Drops upgrade an
-# existing installation; fresh installs use the current CREATE definitions.
-REVIEWED_DDL_LINES = {
+# Reviewed dispatch ARGUMENTS, normalized for whitespace and case. Helper
+# bodies are expanded by their recognized callers below. No wildcard variables.
+REVIEWED_DDL_STATEMENTS = {
     "infra.sh": {
-        '--ddl="ALTER DATABASE \\`${SPANNER_DATABASE_ID}\\` SET OPTIONS (version_retention_period = \'7d\')"': "database retention option, not table schema",
+        r"ALTER DATABASE \`${SPANNER_DATABASE_ID}\` SET OPTIONS (version_retention_period = '7d')": "database retention option",
     },
-    "migrate_entity_ttl.sh": {
-        '--instance="$INSTANCE" ${PROJECT_ARG[@]+"${PROJECT_ARG[@]}"} --ddl="$ddl"': "apply_ddl helper dispatches parsed literal callers",
-        'log "  ALTER TABLE tr_entities DROP ROW DELETION POLICY;"': "printed rollback advice only",
-        'log "  ALTER TABLE tr_entities DROP COLUMN ephemeral_expires_at;"': "printed rollback advice only",
-    },
+    "migrate_entity_ttl.sh": {"$ddl": "apply_ddl forwards parsed callers"},
     "migrate_gateway_request_index.sh": {
-        '--project="$PROJECT" --ddl="$1"': "ddl helper dispatches parsed literal callers",
-        '1) ddl "DROP INDEX $OLD" ;;': "--retire-unique removes historical unique index",
-    },
-    "migrate_generation_records.sh": {
-        '--ddl="$DDL"': "dispatches parsed DDL CREATE literal",
-        '--ddl="$INDEX_DDL"': "dispatches parsed INDEX_DDL CREATE literal",
+        "$1": "ddl forwards parsed callers",
+        "DROP INDEX $OLD": "retire historical unique index",
     },
     "migrate_request_retention.sh": {
-        '--instance="$INSTANCE" --ddl="$1"': "ddl helper dispatches parsed literal callers",
-        'ddl "ALTER TABLE $1 ADD COLUMN $2 TIMESTAMP"': "expanded ensure_column helper",
-        'ddl "ALTER TABLE $table ADD ROW DELETION POLICY (OLDER_THAN(terminal_at, INTERVAL 30 DAY))"': "expanded ensure_policy helper",
+        "$1": "ddl forwards parsed callers",
+        "ALTER TABLE $1 ADD COLUMN $2 TIMESTAMP": "expanded ensure_column helper",
+        "ALTER TABLE $table ADD ROW DELETION POLICY (OLDER_THAN(terminal_at, INTERVAL 30 DAY))": "expanded ensure_policy helper",
     },
     "migrate_trust_reconciliation.sh": {
-        'apply_ddl "DROP TABLE tr_trust_backfill"': "destructive empty legacy marker recreation; current CREATE retained",
+        "DROP TABLE tr_trust_backfill": "recreate empty legacy marker; retain current CREATE",
     },
 }
 for _file in (
     "migrate_receipt_key_versions.sh", "migrate_money_primitives.sh",
     "migrate_spend_lease.sh", "migrate_trust_reconciliation.sh", "migrate_typed_counters.sh",
 ):
-    REVIEWED_DDL_LINES.setdefault(_file, {})[
-        '--instance="$INSTANCE" "${PROJECT_ARG[@]}" --ddl="$1"'
-    ] = "apply_ddl helper dispatches parsed literal callers"
+    REVIEWED_DDL_STATEMENTS.setdefault(_file, {})["$1"] = "apply_ddl forwards parsed callers"
 for _file in ("migrate_spend_lease.sh", "migrate_typed_counters.sh"):
-    REVIEWED_DDL_LINES[_file][
-        'apply_ddl "ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}"'
+    REVIEWED_DDL_STATEMENTS[_file][
+        "ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}"
     ] = "expanded ensure_column helper"
-REVIEWED_DDL_LINES["migrate_typed_counters.sh"][
-    'apply_ddl "ALTER TABLE ${table} ALTER COLUMN ${col} SET OPTIONS (allow_commit_timestamp=true)"'
+REVIEWED_DDL_STATEMENTS["migrate_typed_counters.sh"][
+    "ALTER TABLE ${table} ALTER COLUMN ${col} SET OPTIONS (allow_commit_timestamp=true)"
 ] = "expanded ensure_commit_ts_col helper"
 
-DDL_LINE = re.compile(r"CREATE TABLE|CREATE .*INDEX|ALTER TABLE|DROP (?:TABLE|INDEX)|ROW DELETION POLICY|--ddl")
+# Shell words retain their offsets and quoted segments, including embedded
+# newlines. Comments/quoted strings cannot masquerade as helper invocations.
+_SHELL_TOKEN = re.compile(
+    r"\#[^\n]*|(?:\\.|\"(?:\\.|[^\"\\])*\"|'[^']*'|[^\s;|&()\"'\\#])+|[^\s]",
+    re.S,
+)
+_DDL_DISPATCH = re.compile(r"apply_ddl|ddl|--ddl(?:=.*)?", re.I | re.S)
+
+
+def normalized_statement(text: str) -> str:
+    return " ".join(text.split()).casefold()
+
+
+def ddl_dispatch_arguments(source: str) -> list[tuple[int, int]]:
+    """Every helper call / --ddl argument, not merely lines with SQL keywords.
+
+    Checking --ddl everywhere also covers gc (infra.sh's gcloud alias) and
+    database-create commands. Unknown/dynamic arguments must fail closed.
+    """
+    tokens = [token for token in _SHELL_TOKEN.finditer(source) if not token[0].startswith("#")]
+    spans = []
+    for i, token in enumerate(tokens):
+        if not _DDL_DISPATCH.fullmatch(token[0]):
+            continue
+        following = tokens[i + 1] if i + 1 < len(tokens) else None
+        if token[0].lower() == "ddl":
+            # The gcloud subcommand, not the shell helper.
+            if i and tokens[i - 1][0].lower() == "databases":
+                continue
+        if following is not None and following[0] == "(":
+            continue  # helper definition
+        if "=" in token[0]:
+            spans.append((token.start() + token[0].index("=") + 1, token.end()))
+        elif following is not None and following[0] not in {";", "|", "&", ")", "}"}:
+            spans.append(following.span())
+        else:
+            spans.append((token.end(), token.end()))  # missing argument fails
+    return spans
+
+
+def shell_argument(text: str) -> str:
+    if len(text) >= 2 and text[0] in "\"'" and text[-1] == text[0]:
+        return text[1:-1]
+    return text
 
 
 def assert_no_shell_variables(statement: str, location: str) -> None:
@@ -110,11 +142,10 @@ def migration_ddl(root: Path = ROOT) -> tuple[str, ...]:
         def location(match, path=path, physical_lines=physical_lines, source=source):
             return f"{path}:{physical_lines[source.count(chr(10), 0, match.start())]}"
 
-        consumed: set[int] = set()
+        consumed: set[tuple[int, int]] = set()
 
-        def consume(match, consumed=consumed, source=source):
-            consumed.update(range(source.count("\n", 0, match.start()) + 1,
-                                  source.count("\n", 0, match.end()) + 2))
+        def consume(match, consumed=consumed):
+            consumed.add(match.span())
 
         # Comments can contain suggested rollback DDL, never schema to apply.
         calls = re.findall(r"(?m)^\s*(ensure_\w+)\s+", source)
@@ -128,18 +159,18 @@ def migration_ddl(root: Path = ROOT) -> tuple[str, ...]:
             assert options and re.sub(r"\s+", "", options[1]).lower() == "allow_commit_timestamp=true", "unknown commit timestamp helper"
             commit_columns.update(commit_calls)
         variables = dict(re.findall(r"(?m)^([A-Z_]+)=([a-zA-Z_][a-zA-Z_0-9]*)$", source))
-        for match in re.finditer(r'''(["'])(CREATE (?:TABLE|(?:UNIQUE )?(?:NULL_FILTERED )?INDEX)\b.*?)\1''', source, re.S):
+        for match in re.finditer(r'''(["'])(CREATE\s+(?:TABLE|(?:UNIQUE\s+)?(?:NULL_FILTERED\s+)?INDEX)\b.*?)\1''', source, re.I | re.S):
             consume(match)
             ddl = " ".join(match[2].split())
             ddl = re.sub(r"\$([A-Z_]+)", lambda variable, variables=variables: variables.get(variable[1], variable[0]), ddl)
             assert_no_shell_variables(ddl, location(match))
-            if ddl.startswith("CREATE TABLE"):
+            if ddl.upper().startswith("CREATE TABLE"):
                 name = ddl.split()[2]
                 if name in creates:
                     assert creates[name] == ddl, f"conflicting fresh schemas for {name}"
                 creates[name] = ddl
             else:
-                name = re.search(r"INDEX (\w+)", ddl)[1]
+                name = re.search(r"INDEX (\w+)", ddl, re.I)[1]
                 if name in indexes:
                     assert indexes[name] == ddl, f"conflicting index {name}"
                 indexes[name] = ddl
@@ -166,18 +197,27 @@ def migration_ddl(root: Path = ROOT) -> tuple[str, ...]:
         for match in re.finditer(r'"ALTER TABLE (\w+) ADD ROW DELETION POLICY \(([^"\n]+)\)"', source):
             consume(match)
             policies[match[1]] = match[2]
-        reviewed = dict(REVIEWED_DDL_LINES.get(path.name, {}))
-        for line, text in enumerate(source.splitlines(), 1):
-            if not DDL_LINE.search(text) or line in consumed:
+        reviewed = {normalized_statement(text): reason
+                    for text, reason in REVIEWED_DDL_STATEMENTS.get(path.name, {}).items()}
+        # A variable dispatch is accepted only if its sole literal assignment
+        # was itself parsed, e.g. MARKER_DDL. Unknown shell expansion is rejected.
+        assignments: dict[str, list[tuple[int, int]]] = {}
+        for assignment in re.finditer(r"(?m)^[ \t]*([A-Z_]+)=", source):
+            literal = next((span for span in consumed if span[0] == assignment.end()), None)
+            assignments.setdefault(assignment[1], []).append(literal or (-1, -1))
+        for start, end in ddl_dispatch_arguments(source):
+            argument = shell_argument(source[start:end])
+            if (start, end) in consumed:
                 continue
-            first = physical_lines[line - 1]
-            end = physical_lines[line] if line < len(physical_lines) else len(path.read_text().splitlines()) + 1
-            for number in range(first, end):
-                physical = path.read_text().splitlines()[number - 1].strip()
-                if not DDL_LINE.search(physical):
+            variable = re.fullmatch(r"\$([A-Z_]+)|\$\{([A-Z_]+)\}", argument)
+            if variable:
+                definitions = assignments.get(variable[1] or variable[2], [])
+                if len(definitions) == 1 and definitions[0] in consumed:
                     continue
-                assert physical in reviewed, f"{path}:{number}: unconsumed DDL: {physical}"
-                reviewed.pop(physical)  # duplicate new dispatch also needs review
+            normalized = normalized_statement(argument)
+            number = physical_lines[source.count("\n", 0, start)]
+            assert normalized in reviewed, f"{path}:{number}: unconsumed DDL dispatch: {argument}"
+            reviewed.pop(normalized)  # a second unparsed dispatch needs review
     result = list(creates.values())
     for (table, column), definition in additions.items():
         assert table in creates, f"missing base table {table}"
