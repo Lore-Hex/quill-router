@@ -390,7 +390,6 @@ def trust_html(
     control_repo = html.escape(CONTROL_PLANE_REPO)
     gateway_repo = html.escape(ATTESTED_GATEWAY_REPO)
     infra_repo = html.escape(CLOUD_INFRA_REPO)
-    quill_repo = html.escape(QUILL_REPO)
     python_sdk_repo = html.escape(PYTHON_SDK_REPO)
     javascript_sdk_repo = html.escape(JAVASCRIPT_SDK_REPO)
     provider_check_repo = html.escape(PROVIDER_CHECK_REPO)
@@ -507,7 +506,7 @@ def trust_html(
   <header>
     <nav>
       <a class="brand" href="{control_origin}"><span class="mark">TR</span><span>TrustedRouter</span></a>
-      <div class="links"><a href="{control_repo}">Control repo</a><a href="{gateway_repo}">Gateway repo</a><a href="{infra_repo}">Infra repo</a><a href="{quill_repo}">Quill repo</a><a href="/trust/gcp-release.json">gcp-release.json</a><a href="{docs_url}">API docs</a><a href="{control_origin}">Console</a></div>
+      <div class="links"><a href="{control_repo}">Control repo</a><a href="{gateway_repo}">Gateway repo</a><a href="{infra_repo}">Infra repo</a><a href="/trust/gcp-release.json">gcp-release.json</a><a href="{docs_url}">API docs</a><a href="{control_origin}">Console</a></div>
     </nav>
   </header>
   <main class="wrap">
@@ -612,7 +611,6 @@ def trust_html(
           <div><a href="{control_repo}">Lore-Hex/quill-router</a><p>Control plane, billing, keys, compatibility routes, dashboard, and trust page.</p></div>
           <div><a href="{gateway_repo}">Lore-Hex/quill-cloud-proxy</a><p>Attested prompt gateway, release digest, and Confidential Space verification path.</p></div>
           <div><a href="{infra_repo}">Lore-Hex/quill-cloud-infra</a><p>Cloud deployment scripts, measured workload bringup, and trust publication flow.</p></div>
-          <div><a href="{quill_repo}">Lore-Hex/quill</a><p>Open-source Quill client, device, bootstrap, and attestation-facing code.</p></div>
           <div><a href="{python_sdk_repo}">Lore-Hex/trusted-router-py</a><p>Python SDK repository for attestation-aware client helpers.</p></div>
           <div><a href="{javascript_sdk_repo}">Lore-Hex/trusted-router-js</a><p>JavaScript SDK repository for browser and Node integrations.</p></div>
           <div><a href="{provider_check_repo}">Lore-Hex/trustedrouter-provider-check</a><p>Public provider conformance suite for validating the attested gateway translator contract.</p></div>
