@@ -15,7 +15,8 @@ SOURCE_DIGESTS = {'scripts/deploy/infra.sh': 'd45d94bc8133ac3279d458624966e8cedf
  'scripts/deploy/migrate_request_retention.sh': '3d6bcf6b543a866b157c02c5abf5b4403f07aaf8e84da7a5dbccf802adc7e1dd',
  'scripts/deploy/migrate_spend_lease.sh': '407c5e4338e7ad327ccd673782d715f0777eba2f49d51a4ad6f9b0f85361dbe6',
  'scripts/deploy/migrate_trust_reconciliation.sh': '7864237a2a0a187f5db14da4812e96481f105b28c4737bc2cfc83b481321140c',
- 'scripts/deploy/migrate_typed_counters.sh': 'd1f3dc7eaa4fc383bcea7ce75846b92dd71532296d4773c3aa9cc818c24fc909'}
+ 'scripts/deploy/migrate_typed_counters.sh': 'd1f3dc7eaa4fc383bcea7ce75846b92dd71532296d4773c3aa9cc818c24fc909',
+ 'scripts/deploy/retire_settle_outbox_hot_index.sh': 'ce6bac93d3c5442eccfe88aa74eeff151033905161b2d6c87489b4ec9c08cd45'}
 
 DDL = ('CREATE TABLE tr_entities (kind STRING(64) NOT NULL, id STRING(512) NOT NULL, body '
  'STRING(MAX) NOT NULL, updated_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true)) '

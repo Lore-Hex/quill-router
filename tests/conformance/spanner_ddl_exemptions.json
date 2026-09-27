@@ -1,0 +1,57 @@
+{
+  "files": {
+    "scripts/lightning/postgres_provenance.sql": "PostgreSQL-only constraint migration (VALIDATE CONSTRAINT); not native GoogleSQL."
+  },
+  "lines": {
+    "scripts/axiom_growth/provision.py": {
+      "CREATE VIEW IF NOT EXISTS tr.growth_daily_usage ON CLUSTER trustedrouter": "ClickHouse growth analytics view (ON CLUSTER trustedrouter), not Spanner schema."
+    },
+    "scripts/deploy/aws_eu_clickhouse_schema_apply.sh": {
+      "EXPECTED=\"$(grep -oiE 'CREATE TABLE IF NOT EXISTS [a-z0-9_]+' \"$WORK/schema.sql\" \\": "Parses ClickHouse schema table names for post-apply verification."
+    },
+    "scripts/deploy/clickhouse_capacity_smoke.sh": {
+      "node_query \"$index\" \"DROP TABLE IF EXISTS ${table} SYNC\" >/dev/null 2>&1 || true": "Disposable ClickHouse capacity-smoke table, not Spanner schema.",
+      "schema=\"CREATE TABLE IF NOT EXISTS ${table} (": "Disposable ClickHouse capacity-smoke table, not Spanner schema."
+    },
+    "scripts/deploy/clickhouse_operational_analytics.sh": {
+      "echo \"table tr.${table} is missing on ${NAMES[$index]}; create it with CREATE TABLE IF NOT EXISTS tr.${table} ON CLUSTER trustedrouter from SHOW CREATE TABLE on a replica that has it, then rerun\" >&2": "Operator instructions for repairing ClickHouse cluster tables."
+    },
+    "scripts/deploy/clickhouse_replicated_migrate.sh": {
+      "targets=\"$(grep -oiE 'ALTER TABLE +(tr\\.)?[A-Za-z0-9_]+ +ON CLUSTER +[A-Za-z0-9_]+' \"$path\" \\": "ClickHouse ON CLUSTER migration parsing or operator diagnostics.",
+      "| sed -E 's/^ALTER TABLE +(tr\\.)?//I; s/ +ON CLUSTER +/ /I' | sort -u || true)\"": "ClickHouse ON CLUSTER migration parsing or operator diagnostics.",
+      "echo \"refusing ${file}: no 'ALTER TABLE ... ON CLUSTER' statement found; this applier only handles replicated migrations\" >&2": "ClickHouse ON CLUSTER migration parsing or operator diagnostics.",
+      "echo \"refusing ${file}: tr.${table} is missing on $(printf '%s' \"$missing\" | tr '\\n' ' ')of cluster ${cluster}; an ON CLUSTER ALTER would succeed on the other replicas and leave mixed schemas. Create it first with CREATE TABLE IF NOT EXISTS tr.${table} ON CLUSTER ${cluster} using SHOW CREATE TABLE from a replica that has it.\" >&2": "ClickHouse ON CLUSTER migration parsing or operator diagnostics."
+    },
+    "scripts/deploy/infra-stage0.sh": {
+      "gc_or_dry spanner databases create \"$NEW_SPANNER_DATABASE\" \\": "Standalone stage-zero bootstrap/retention operation outside rolling deploy; base table duplicates infra.sh.",
+      "--ddl='CREATE TABLE tr_entities (kind STRING(64) NOT NULL, id STRING(512) NOT NULL, body STRING(MAX) NOT NULL, updated_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true)) PRIMARY KEY (kind, id)'": "Standalone stage-zero bootstrap/retention operation outside rolling deploy; base table duplicates infra.sh.",
+      "dry_log \"gcloud spanner databases ddl update $NEW_SPANNER_DATABASE --instance=$NEW_SPANNER_INSTANCE --ddl=ALTER_DATABASE_PITR_7D\"": "Standalone stage-zero bootstrap/retention operation outside rolling deploy; base table duplicates infra.sh.",
+      "gc spanner databases ddl update \"$NEW_SPANNER_DATABASE\" \\": "Standalone stage-zero bootstrap/retention operation outside rolling deploy; base table duplicates infra.sh.",
+      "--ddl=\"ALTER DATABASE \\`${NEW_SPANNER_DATABASE}\\` SET OPTIONS (version_retention_period = '7d')\"": "Standalone stage-zero bootstrap/retention operation outside rolling deploy; base table duplicates infra.sh."
+    },
+    "scripts/deploy/migrate_entity_ttl.sh": {
+      "log \" ALTER TABLE tr_entities DROP ROW DELETION POLICY;\"": "Operator log/rollback instructions only; this line does not dispatch DDL.",
+      "log \" ALTER TABLE tr_entities DROP COLUMN ephemeral_expires_at;\"": "Operator log/rollback instructions only; this line does not dispatch DDL.",
+      "log \"row deletion policy exists with the expected interval, skip\"": "Operator log/rollback instructions only; this line does not dispatch DDL.",
+      "log \"ERROR: tr_entities already has a DIFFERENT row deletion policy: $policy\"": "Operator log/rollback instructions only; this line does not dispatch DDL."
+    },
+    "scripts/deploy/spanner_reliability.sh": {
+      "run source_gc spanner databases ddl update \"$SPANNER_DATABASE_ID\" \\": "Operational PITR retention setting; does not change the fresh-install table/index schema.",
+      "--ddl=\"ALTER DATABASE \\`${SPANNER_DATABASE_ID}\\` SET OPTIONS (version_retention_period = '7d')\"": "Operational PITR retention setting; does not change the fresh-install table/index schema."
+    },
+    "scripts/deploy/spanner_zero_downtime_cutover.sh": {
+      "gc_or_dry spanner databases create \"$DATABASE\" \\": "Standalone cutover bootstrap outside rolling deploy; base table duplicates infra.sh.",
+      "--ddl='CREATE TABLE tr_entities (kind STRING(64) NOT NULL, id STRING(512) NOT NULL, body STRING(MAX) NOT NULL, updated_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true)) PRIMARY KEY (kind, id)'": "Standalone cutover bootstrap outside rolling deploy; base table duplicates infra.sh."
+    },
+    "scripts/lightning/spanner_provenance.sql": {
+      "ALTER TABLE tr_trust_event ADD CONSTRAINT tr_trust_event_provider_lightning": "Manual Lightning constraint upgrade outside rolling deployment and fresh-install schema.",
+      "ALTER TABLE tr_trust_event DROP CONSTRAINT tr_trust_event_provider;": "Manual Lightning constraint upgrade outside rolling deployment and fresh-install schema."
+    },
+    "src/trusted_router/storage_postgres.py": {
+      "\"CREATE INDEX ASYNC IF NOT EXISTS tr_receipt_key_versions\\n\"": "PostgreSQL/Aurora DSQL index creation or its explanatory docstring; not native GoogleSQL.",
+      "DSQL builds indexes asynchronously and rejects a plain `CREATE INDEX`": "PostgreSQL/Aurora DSQL index creation or its explanatory docstring; not native GoogleSQL.",
+      "with \"unsupported mode. please use CREATE INDEX ASYNC.\" Stock Postgres": "PostgreSQL/Aurora DSQL index creation or its explanatory docstring; not native GoogleSQL.",
+      "\"CREATE INDEX IF NOT EXISTS tr_receipt_key_versions\"": "PostgreSQL/Aurora DSQL index creation or its explanatory docstring; not native GoogleSQL."
+    }
+  }
+}

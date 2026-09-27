@@ -3,8 +3,11 @@
 This deliberately parses a narrow shell vocabulary, never executes shell or gcloud.
 New migration idioms must extend the parser and regenerate spanner_ddl.py.
 
-Threat model: a developer adds a migration using a new shell idiom. Every
-literal DDL carrier, including quoted text, must belong to a consumed dispatch.
+Repo-wide guard surface: every file in scripts/ and .github/workflows/, plus
+src/trusted_router/**/*.py. Tests and docs are outside the surface.
+Threat model: a developer applies DDL in any literal form, including Python or
+REST. Every literal carrier (case-insensitive, quotes included, comments excluded)
+must belong to an extracted dispatch or an exact-line reviewed registry exemption.
 Deliberate obfuscation of the carrier words themselves (e.g. "--d""dl" or
 building the flag from variables) is out of scope. Literal carriers fail closed.
 """
@@ -12,11 +15,16 @@ from __future__ import annotations
 
 import difflib
 import hashlib
+import io
+import json
 import re
 import shlex
+import tokenize
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+EXEMPTION_REGISTRY = "tests/conformance/spanner_ddl_exemptions.json"
+DDL_EXEMPTIONS = json.loads((ROOT / EXEMPTION_REGISTRY).read_text())
 
 
 # Reviewed dispatch ARGUMENTS, normalized for whitespace ONLY. Shell variable names are case-sensitive.
@@ -53,6 +61,7 @@ def shell_tokens(source: str, comments: list[tuple[int, int]] | None = None) -> 
     This lexer does not expand or execute any shell text.
     """
     spans: set[tuple[int, int]] = set()
+    heredocs: list[str] = []
 
     def scan(pos: int, terminator: str = "") -> int:
         while pos < len(source):
@@ -68,6 +77,16 @@ def shell_tokens(source: str, comments: list[tuple[int, int]] | None = None) -> 
                     comments.append((pos, len(source) if end < 0 else end))
                 pos = len(source) if end < 0 else end
                 continue
+            if source[pos] == "\n" and heredocs and comments is not None:
+                # Heredoc bodies are literal input, not shell comments/quotes.
+                # Keep their raw carriers visible to the independent scan.
+                pos += 1
+                for delimiter in heredocs:
+                    closing = re.search(rf"(?m)^\t*{re.escape(delimiter)}$", source[pos:])
+                    assert closing, f"unterminated heredoc at offset {pos}"
+                    pos += closing.end()
+                heredocs.clear()
+                continue
             if source[pos] in "\n;|&()":
                 start = pos
                 pos += 1
@@ -79,6 +98,12 @@ def shell_tokens(source: str, comments: list[tuple[int, int]] | None = None) -> 
             quote = ""
             while pos < len(source):
                 char = source[pos]
+                if not quote and comments is not None and source.startswith("<<", pos):
+                    heredoc = re.match(r"<<-?[ \t]*(['\"]?)([A-Za-z_]\w*)\1", source[pos:])
+                    if heredoc:
+                        heredocs.append(heredoc[2])
+                        pos += heredoc.end()
+                        continue
                 if char == "\\" and quote != "'":
                     pos += 2
                 elif char == "'" and quote != '"':
@@ -138,7 +163,7 @@ def ddl_dispatch_arguments(source: str, path: Path, physical_lines: list[int], r
     except AssertionError as exc:
         raise AssertionError(f"{path}:1: {exc}") from exc
     if reviewed_library:
-        assert_ddl_carriers_consumed(path, [])
+        assert_ddl_carriers_consumed(path, [], root)
     words = ["".join(shlex.split(token[0])) if token[0] != "\n" else "\n" for token in tokens]
 
     def fail(index: int, reason: str) -> None:
@@ -292,7 +317,8 @@ def assert_no_shell_variables(statement: str, location: str) -> None:
 
 def schema_sources(root: Path = ROOT) -> list[Path]:
     scripts = root / "scripts/deploy"
-    return [scripts / "infra.sh", *sorted(scripts.glob("migrate_*.sh"))]
+    return [scripts / "infra.sh", *sorted(scripts.glob("migrate_*.sh")),
+            scripts / "retire_settle_outbox_hot_index.sh"]
 
 
 def source_digests(root: Path = ROOT) -> dict[str, str]:
@@ -307,36 +333,99 @@ def assert_schema_matches(ddl: tuple[str, ...], digests: dict[str, str], root: P
     assert ddl == migration_ddl(root), "GoogleSQL DDL drift from deployment migrations"
 
 
+def is_generated_bytecode(path: Path) -> bool:
+    # Only binary interpreter artifacts are excluded, never source files merely
+    # placed in a cache directory or given an unfamiliar extension.
+    if path.suffix != ".pyc" or "__pycache__" not in path.parts:
+        return False
+    with path.open("rb") as stream:
+        return stream.read(4)[2:] == b"\r\n"
+
+
+def carrier_sources(root: Path) -> list[Path]:
+    """Discover the surface, never an execution graph or an extension allowlist."""
+    return sorted({path for directory in (root / "scripts", root / ".github/workflows")
+                   for path in directory.rglob("*") if path.is_file() and not is_generated_bytecode(path)}
+                  | set((root / "src/trusted_router").rglob("*.py")))
+
+
 def uncommented_source(path: Path) -> str:
-    """Raw text with only shell comments blanked; preserve quotes and offsets."""
+    """Blank comments without changing offsets, newlines, or quoted text."""
     source = path.read_text()
     comments: list[tuple[int, int]] = []
-    try:
-        shell_tokens(source, comments)
-    except AssertionError as exc:
-        raise AssertionError(f"{path}:1: {exc}") from exc
+    if path.suffix == ".py":
+        offsets = [0]
+        for line in source.splitlines(keepends=True):
+            offsets.append(offsets[-1] + len(line))
+        for token in tokenize.generate_tokens(io.StringIO(source).readline):
+            if token.type == tokenize.COMMENT:
+                comments.append((offsets[token.start[0] - 1] + token.start[1],
+                                 offsets[token.end[0] - 1] + token.end[1]))
+    elif path.suffix == ".sh" or source.startswith(("#!/bin/sh", "#!/bin/bash", "#!/usr/bin/env bash")):
+        try:
+            shell_tokens(source, comments)
+        except AssertionError as exc:
+            raise AssertionError(f"{path}:1: {exc}") from exc
+    else:
+        # Skip quoted strings before matching comments. Unknown file types have
+        # no assumed comment syntax: their entire raw text remains in scope.
+        comment_pattern = {
+            ".sql": r"--[^\n]*|/\*[\s\S]*?\*/",
+            ".mjs": r"//[^\n]*|/\*[\s\S]*?\*/",
+            ".js": r"//[^\n]*|/\*[\s\S]*?\*/",
+            ".yaml": r"(?<!\S)\#[^\n]*",
+            ".yml": r"(?<!\S)\#[^\n]*",
+            ".toml": r"\#[^\n]*",
+        }.get(path.suffix, r"\#[^\n]*" if path.name in {"Dockerfile", "Caddyfile"} else None)
+        if comment_pattern:
+            strings = r"(?:'[^']*(?:''[^']*)*'|\"(?:\\.|[^\"\\])*\"|`(?:\\.|[^`\\])*`)"
+            for match in re.finditer(f"{strings}|(?P<comment>{comment_pattern})", source):
+                if match.group("comment") is not None:
+                    comments.append(match.span())
     for start, end in reversed(comments):
-        source = source[:start] + " " * (end - start) + source[end:]
+        source = source[:start] + re.sub(r"[^\n]", " ", source[start:end]) + source[end:]
     return source
 
 
-DDL_CARRIER = re.compile(r"--ddl(?:-file)?|ddl-file|ddl\s+update|databases\s+create", re.I)
+DDL_CARRIER = re.compile(
+    r"--ddl(?:-file)?|ddl-file|ddl\s+update|databases\s+create|update_ddl|"
+    r"UpdateDatabaseDdl|updateDdl|extra_statements|extraStatements|ddl_statements|"
+    r"databases/[^\s\"'/?]+/ddl\b|"
+    r"CREATE\s+(?:TABLE|(?:UNIQUE\s+)?(?:NULL_FILTERED\s+)?INDEX|SEARCH\s+INDEX|"
+    r"CHANGE\s+STREAM|VIEW|SEQUENCE)\b|ALTER\s+(?:TABLE|INDEX|DATABASE)\b|"
+    r"DROP\s+(?:TABLE|INDEX|VIEW|SEQUENCE)\b|ROW\s+DELETION\s+POLICY\b", re.I,
+)
 
 
-def assert_ddl_carriers_consumed(path: Path, dispatch_spans: list[tuple[int, int]] | None) -> None:
-    """Account for literal carriers independently of the recognized shell idioms."""
+def assert_ddl_carriers_consumed(path: Path, dispatch_spans: list[tuple[int, int]] | None,
+                                 root: Path = ROOT) -> None:
+    """Fail closed on every literal carrier, regardless of transport or syntax."""
+    relative = path.relative_to(root).as_posix()
+    if relative in DDL_EXEMPTIONS["files"]:
+        return
     source = uncommented_source(path)
+    raw_lines = path.read_text().splitlines()
+    exemptions = DDL_EXEMPTIONS["lines"].get(relative, {})
     matches = list(DDL_CARRIER.finditer(source))
+    # Keep the early unsupported ddl-file check: an understood --ddl argument
+    # cannot account for a second, unsupported file argument in the same call.
+    matches.sort(key=lambda match: match[0].lower() not in {"--ddl-file", "ddl-file"})
     for match in matches:
-        location = f"{path}:{source.count(chr(10), 0, match.start()) + 1}"
-        carrier = match[0]
-        assert carrier.lower() not in {"--ddl-file", "ddl-file"}, f"{location}: unsupported DDL carrier: {carrier}"
-    if dispatch_spans is None:
-        return  # Early forbidden-carrier check, before structural extraction.
-    for match in matches:
-        location = f"{path}:{source.count(chr(10), 0, match.start()) + 1}"
-        assert any(start <= match.start() and match.end() <= end for start, end in dispatch_spans), (
-            f"{location}: unconsumed DDL carrier: {match[0]}"
+        line = source.count("\n", 0, match.start()) + 1
+        last_line = source.count("\n", 0, match.end() - 1) + 1
+        if all(normalized_statement(raw_lines[i - 1]) in exemptions for i in range(line, last_line + 1)):
+            continue
+        unsupported = match[0].lower() in {"--ddl-file", "ddl-file"}
+        if dispatch_spans is None and not unsupported:
+            continue  # Structural extraction must first account for dispatches.
+        if not unsupported and any(start <= match.start() and match.end() <= end
+                                   for start, end in dispatch_spans or []):
+            continue
+        kind = "unsupported" if unsupported else "unconsumed"
+        raise AssertionError(
+            f"{path}:{line}: {kind} DDL carrier: {match[0]}; "
+            "make the schema extractor consume it (a real schema change), or add a reviewed "
+            f"exemption entry in {EXEMPTION_REGISTRY}"
         )
 
 
@@ -358,14 +447,16 @@ def shell_source(path: Path) -> tuple[str, list[int]]:
 def migration_ddl(root: Path = ROOT) -> tuple[str, ...]:
     sources = schema_sources(root)
     # The library must stay carrier-free even if no script sources it anymore.
-    assert_ddl_carriers_consumed(root / "scripts/deploy/_lib.sh", [])
+    assert_ddl_carriers_consumed(root / "scripts/deploy/_lib.sh", [], root)
+    accounted: dict[Path, list[tuple[int, int]]] = {}
     creates: dict[str, str] = {}
     indexes: dict[str, str] = {}
     additions: dict[tuple[str, str], str] = {}
     policies: dict[str, str] = {}
     commit_columns: set[tuple[str, str]] = set()
+    retired_indexes: set[str] = set()
     for path in sources:
-        assert_ddl_carriers_consumed(path, None)
+        assert_ddl_carriers_consumed(path, None, root)
         source, physical_lines = shell_source(path)
 
         def location(match, path=path, physical_lines=physical_lines, source=source):
@@ -434,23 +525,35 @@ def migration_ddl(root: Path = ROOT) -> tuple[str, ...]:
         for assignment in re.finditer(r"(?m)^[ \t]*([A-Z_]+)=", source):
             literal = next((span for span in consumed if span[0] == assignment.end()), None)
             assignments.setdefault(assignment[1], []).append(literal or (-1, -1))
+        used_literals: set[tuple[int, int]] = set()
         arguments, dispatch_spans = ddl_dispatch_arguments(source, path, physical_lines, root)
         for start, end in arguments:
             argument = shell_argument(source[start:end])
             if (start, end) in consumed:
+                used_literals.add((start, end))
                 continue
             variable = re.fullmatch(r"\$([A-Z_]+)|\$\{([A-Z_]+)\}", argument)
             if variable:
                 definitions = assignments.get(variable[1] or variable[2], [])
                 if len(definitions) == 1 and definitions[0] in consumed:
+                    used_literals.add(definitions[0])
                     continue
+            if path.name == "retire_settle_outbox_hot_index.sh" and re.fullmatch(r"DROP INDEX \w+", argument):
+                retired_indexes.add(argument.split()[2])
+                continue
             normalized = normalized_statement(argument)
             number = physical_lines[source.count("\n", 0, start)]
             assert normalized in reviewed, f"{path}:{number}: unconsumed DDL dispatch: {argument}"
             reviewed.pop(normalized)  # a second unparsed dispatch needs review
         # Recognizing a sink is insufficient: all its dispatch arguments above
         # must be consumed (or individually reviewed) before these spans count.
-        assert_ddl_carriers_consumed(path, dispatch_spans)
+        accounted[path] = [*dispatch_spans, *used_literals]
+        assert_ddl_carriers_consumed(path, accounted[path], root)
+    for path in carrier_sources(root):
+        if path not in accounted:
+            assert_ddl_carriers_consumed(path, [], root)
+    for name in retired_indexes:
+        indexes.pop(name, None)  # Historical indexes may already be absent on fresh installs.
     result = list(creates.values())
     for (table, column), definition in additions.items():
         assert table in creates, f"missing base table {table}"
