@@ -81,8 +81,8 @@ MUTATIONS = [
     (
         "test_workspace_checks_use_exact_caller_transaction",
         GATE,
-        'state = read_lease_trust(reader, store._param_types, workspace_id)',
-        'state = read_lease_trust(reader, store._param_types, "wrong-workspace")',
+        "workspace_trust = read_workspace_lease_trust(reader, store._param_types, workspace_id)",
+        'workspace_trust = read_workspace_lease_trust(reader, store._param_types, "wrong-workspace")',
         "swap the workspace ID in the transactional trust read",
     ),
     (
