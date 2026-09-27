@@ -34,7 +34,7 @@ from scripts.pricing.providers._direct_openai import (
     positive_chat_prices,
 )
 from scripts.pricing.refresh import _PRICING_RESULT_PROVIDER_ALIASES, PROVIDER_SLUGS
-from trusted_router import catalog_ingest
+from trusted_router import catalog_data, catalog_ingest
 from trusted_router.catalog import (
     GATEWAY_PREPAID_PROVIDER_SLUGS,
     MODEL_ENDPOINTS,
@@ -807,7 +807,8 @@ def test_runtime_only_provider_routes_expire_without_freezing_other_catalogs(
     sample = next(
         endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "upstage"
     )
-    now = datetime.now(UTC)
+    # The catalog's own clock, which judges every route's freshness.
+    now = catalog_data._utc_now()
     expired = replace(
         sample,
         id=f"{sample.id}-expired-test",

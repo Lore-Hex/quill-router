@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools
 import os
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -68,6 +69,26 @@ def reset_store() -> None:
     if not isinstance(STORE.target, InMemoryStore):
         configure_store(InMemoryStore())
     STORE.reset()
+
+
+# Before every committed provider manifest's deadline. Only the EXPIRED
+# sentinel (datetime.min), which marks an invalid manifest, stays non-current.
+CATALOG_FRESHNESS_INSTANT = datetime(2000, 1, 1, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+def catalog_freshness_before_every_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Judge catalog freshness at an instant before every committed deadline.
+
+    The hourly price refresh runs this suite against the catalog it is about
+    to publish, and a provider held at its last published prices keeps its old
+    manifest. A test about routes, prices or billing must not fail, and block
+    every provider's publication, because a committed manifest aged past its
+    deadline. Tests about freshness pass an explicit ``at=`` instead.
+    """
+    from trusted_router import catalog_data
+
+    monkeypatch.setattr(catalog_data, "_utc_now", lambda: CATALOG_FRESHNESS_INSTANT)
 
 
 @pytest.fixture(autouse=True)
