@@ -206,23 +206,26 @@ gh workflow run deploy.yml --repo Lore-Hex/quill-router --ref main \
   -f regional_quota_lease_issuance=false
 ```
 
-After the queued deployment is fully green in every region, reconciliation is healthy, and
-the durable stop latch has been explicitly re-armed as described below:
+Historically, after the queued deployment was fully green in every region,
+reconciliation healthy, and the durable stop latch re-armed as described below,
+an operator dispatched:
 
 ```bash
 gh workflow run deploy.yml --repo Lore-Hex/quill-router --ref main \
   -f regional_quota_lease_issuance=true
 ```
 
-Routine workflow dispatches use `preserve` to copy the primary live issuance
-marker; this is not per-region preservation. Push-triggered deploys (absent or
-empty input) use `REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED` in
-`scripts/deploy/rollout.sh`. **Since 2026-09-27 that pin is `false`**: the
-Bigtable ledger is being retired rather than ported, so no new regional holds
-are issued; capability and reconciliation stay on until the open-lease backlog
-is empty, then the ledger itself is removed. The same literal is the incident
-containment recipe: change it through review so successor pushes inherit OFF.
-A code change in an uncommitted checkout alone does not change production.
+**Retired 2026-09-27.** The Bigtable ledger is being removed rather than
+ported, so `scripts/deploy/rollout.sh` resolves the issuance marker as
+pin → normalize → stop latch → **retirement override**, and the override
+forces the marker off whatever the earlier steps produced: an absent or empty
+push input (the pin, now `false`), a `preserve` dispatch over a live ON marker,
+an explicit `true` dispatch, or an `allow` latch. The log names the request it
+overrode. Capability and reconciliation stay on until the open-lease backlog is
+empty, then the ledger itself is removed. Re-enabling issuance is a reviewed
+source change that removes the override (and restores the pin), never a
+dispatch or latch edit. A code change in an uncommitted checkout alone does not
+change production.
 
 The dispatch kill switch `regional_quota_lease_issuance=false` now persists
 `off` to `gs://tr-deploy-mutex-quill-cloud-proxy/controls/regional-quota-issuance.txt`
@@ -287,10 +290,14 @@ OFF on **every serving revision**, complete the subsequent OFF rollout, and keep
 capability and reconciliation enabled to drain existing work. Do not use a manual
 Cloud Run env update as durable containment: config-as-code overwrites it.
 
-To re-arm, resolve the incident and verify protocol compatibility on all serving
-regions and the scheduled worker, plus healthy reconciliation. Restore the code
-pin to true if incident containment changed it. An operator then deletes the
-stop object or writes `allow` (choose one), and dispatches issuance=true:
+The re-arm procedure below is **historical** (pre-retirement): today the
+retirement override in `rollout.sh` forces issuance off regardless of the
+latch or dispatch input, so none of these steps can turn it on. Re-enabling
+requires a reviewed source change first. For the record, re-arming used to be:
+resolve the incident and verify protocol compatibility on all serving regions
+and the scheduled worker, plus healthy reconciliation; restore the code pin to
+true; then delete the stop object or write `allow` (choose one), and dispatch
+issuance=true:
 
 ```bash
 # Option 1: remove containment.

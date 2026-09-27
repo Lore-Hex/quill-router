@@ -142,8 +142,8 @@ def test_deploy_pins_stage_c_admission_acceptance_off() -> None:
 
 def test_deploy_pins_spend_lease_issuance_and_binding_off() -> None:
     # Bigtable ledger retirement (2026-09-27): no new spend leases are minted,
-    # so binding cannot become load-bearing; an explicit operator true still
-    # has to pass the unit-4 fence.
+    # both flags render false literally, and any other binding value is
+    # rejected before a revision exists.
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
 
     assert '"TR_SPEND_LEASE_ISSUANCE_ENABLED=false"' in rollout

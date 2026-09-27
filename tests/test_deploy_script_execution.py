@@ -1167,8 +1167,8 @@ def test_rollout_enforces_accounting_floor_while_capability_drains(
 def test_rollout_defaults_spend_lease_issuance_and_binding_off(
     harness: DeployScriptHarness,
 ) -> None:
-    # Bigtable ledger retirement (2026-09-27): without an explicit operator
-    # override the revision mints no spend leases and binds none.
+    # Bigtable ledger retirement (2026-09-27): the revision mints no spend
+    # leases and binds none; there is no operator override for either.
     run = harness.run("scripts/deploy/rollout.sh")
     assert run.returncode == 0, summarise(run)
 
