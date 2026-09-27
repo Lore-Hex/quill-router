@@ -842,13 +842,22 @@ def reconcile_manifest_tombstones(
                 elif old_operator_hold:
                     row["routable"] = False
                     row["routable_reason"] = old_reason
-                elif present_reason != "provider-canary-failed" and (
-                    old_reason == "delisted-upstream"
-                    or (old_reason == "awaiting-price" and model_id in priced_ids)
-                ):
-                    row["routable"] = True
-                    row.pop("routable_reason", None)
-                    row.pop("unresolved_since", None)
+                elif present_reason != "provider-canary-failed" and old_reason in {
+                    "delisted-upstream",
+                    "awaiting-price",
+                }:
+                    # Recovery needs a usable price. A returning route whose
+                    # price did not parse would otherwise publish no token rate.
+                    if model_id in priced_ids:
+                        row["routable"] = True
+                        row.pop("routable_reason", None)
+                        row.pop("unresolved_since", None)
+                    elif old_reason == "delisted-upstream" and (
+                        row.get("routable") is not False
+                        or row.get("routable_reason") == "delisted-upstream"
+                    ):
+                        row["routable"] = False
+                        row["routable_reason"] = "price-unavailable"
             reconciled.append(row)
             continue
 

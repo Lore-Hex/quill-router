@@ -77,6 +77,49 @@ def test_tombstone_reconciliation_preserves_operator_hold_across_relist() -> Non
     assert "missing_since" not in relisted
 
 
+@pytest.mark.parametrize(
+    "present_extra",
+    [
+        {"routable": False, "routable_reason": "price-unavailable"},
+        {"routable": False, "routable_reason": "delisted-upstream"},
+        {},
+    ],
+    ids=["writer-marked-unpriced", "writer-kept-committed-reason", "writer-left-routable"],
+)
+def test_relisted_route_recovers_only_with_a_fresh_price(present_extra: dict) -> None:
+    delisted = {
+        "id": "provider/relisted",
+        "routable": False,
+        "routable_reason": "delisted-upstream",
+        "missing_since": "2026-09-20",
+    }
+
+    unpriced = reconcile_manifest_tombstones(
+        [delisted],
+        {"provider/relisted": {"id": "provider/relisted", **present_extra}},
+        priced_ids=set(),
+        source="api",
+    )[0]
+    assert unpriced["routable"] is False
+    assert unpriced["routable_reason"] == "price-unavailable"
+    assert "missing_since" not in unpriced
+
+    priced = reconcile_manifest_tombstones(
+        [delisted],
+        {
+            "provider/relisted": {
+                "id": "provider/relisted",
+                "input_token_price_per_m": 1_000_000,
+                "output_token_price_per_m": 2_000_000,
+            }
+        },
+        priced_ids={"provider/relisted"},
+        source="api",
+    )[0]
+    assert priced["routable"] is True
+    assert "routable_reason" not in priced
+
+
 def test_tombstone_reconciliation_preserves_new_unpriced_operator_hold() -> None:
     held = {
         "id": "provider/free-trial",
