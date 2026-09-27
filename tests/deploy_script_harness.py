@@ -349,7 +349,7 @@ if tag_path.is_file():
         }
     )
 print(json.dumps({
-    "metadata": {"annotations": {
+    "metadata": {"generation": 1, "annotations": {
         "run.googleapis.com/ingress": "internal-and-cloud-load-balancing"
     }},
     "status": {"traffic": traffic},
@@ -514,7 +514,7 @@ if tag_path.is_file():
         }
     )
 print(json.dumps({
-    "metadata": {"annotations": {
+    "metadata": {"generation": 1, "annotations": {
         "run.googleapis.com/ingress": "internal-and-cloud-load-balancing"
     }},
     "status": {"traffic": traffic},
@@ -1489,7 +1489,17 @@ QUOTA_EXECUTION: dict[str, Any] = {
 QUOTA_READINESS_RESPONSES = (
     (r"projects describe.*projectNumber", "44325983244"),
     (r"storage buckets describe .*tr-deploy-mutex.*--format=json", '{"lifecycle_config":{"rule":[{"action":{"type":"Delete"},"condition":{"age":1,"matchesPrefix":["locks/"]}}]}}'),
-    (r"storage objects list --raw --format=json .*controls/", '[{"bucket":"tr-deploy-mutex-quill-cloud-proxy","name":"controls/regional-quota-issuance.txt"}]'),
+    (r"storage objects list --raw --format=json .*controls/", '[{"bucket":"tr-deploy-mutex-quill-cloud-proxy","name":"controls/regional-quota-issuance.txt"},{"bucket":"tr-deploy-mutex-quill-cloud-proxy","name":"controls/ledger-drain-observation.json"}]'),
+    # The ledger retirement gate's durable observation: this fleet state
+    # (service generation 1, the active revision everywhere) has been in place
+    # since well before any drain interval.
+    (
+        r"storage cat .*controls/ledger-drain-observation.json",
+        json.dumps({"regions": {
+            region: {"generation": "1", "revisions": "trusted-router-active", "off_since": "2026-09-01T00:00:00Z"}
+            for region in ("us-central1", "us-east4", "europe-west4", "southamerica-east1")
+        }, "updated_at": "2026-09-01T00:00:00Z"}),
+    ),
     (r"storage cat .*controls/regional-quota-issuance.txt", "allow"),
     (r"scheduler jobs describe .*regional-quota.*--format=json", json.dumps(QUOTA_SCHEDULER)),
     (r"run jobs describe .*regional-quota.*--format=json", json.dumps(QUOTA_WORKER)),

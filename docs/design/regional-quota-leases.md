@@ -165,8 +165,15 @@ provisioners and the background reconciler deploys:
   before any revision is created; `regional_quota_drain_gate.sh` runs the
   same gate earlier, in `migrate-schema`. It proves: every serving revision
   (held regions included) carries issuance, spend issuance, binding and
-  admission markers `false` (an absent marker is `false` too - config.py
-  defaults every one of them off; any other value refuses); Spanner holds no
+  admission markers `false` on every revision that can still take requests -
+  the traffic split's members and every tagged revision, since a tag stays
+  addressable at 0% (an absent marker is `false` too - config.py defaults
+  every one of them off; any other value refuses); the fleet has been
+  quiescent for the drain interval (120 s, longer than the gateway's 25 s
+  authorize budget) as recorded in `controls/ledger-drain-observation.json` -
+  each region's service generation and reachable revision set with the time
+  that state was first seen, reset by any change because Cloud Run keeps no
+  traffic history; Spanner holds no
   `regional_quota_lease_open` / `regional_quota_lease_workspace_open` entity,
   no unsettled `RegionalCredits` reservation (read together with the index
   rows: a pending or dead settle-outbox intent needs the ledger only while
@@ -176,16 +183,17 @@ provisioners and the background reconciler deploys:
   reconciler's own `open` counts only rows due now); and, while a reconciler
   schedule still exists, that its exact target job (project, location, name
   parsed from the schedule) reported five all-zero passes, all after the
-  newest serving revision was created plus the drain interval. A missing
-  schedule without a retirement marker is a partial teardown: Spanner still
-  decides, with a warning.
-- `scripts/deploy/retire_ledger_workers.sh` runs after the secondary ramp.
-  It defers (with a workflow warning) while any serving revision still
-  carries capability or a profile map, re-checks Spanner, deletes both
+  fleet state was first seen plus the drain interval. A missing schedule
+  without a retirement marker is a partial teardown: Spanner still decides,
+  with a warning.
+- `scripts/deploy/retire_ledger_workers.sh` runs after the secondary ramp,
+  under the deployment mutex (the workflow's, or its own when invoked
+  directly). It defers (with a workflow warning) while any reachable
+  revision still carries capability or a profile map, waits out the drain
+  interval for the last traffic move, re-checks Spanner, deletes both
   schedules, waits for each worker's running executions, deletes every
-  `trusted-router-{regional-quota,spend-lease}-reconciler-*` job in the
-  control-plane regions plus the workers' configured and targeted regions,
-  proves absence, and only then writes
+  worker the project-wide inventory names, proves absence, and only then
+  writes
   `gs://tr-deploy-mutex-quill-cloud-proxy/controls/ledger-retirement.json`
   (`state: retired`, scoped to the project, Spanner instance and database).
   That marker waives only the worker evidence afterwards, and only while

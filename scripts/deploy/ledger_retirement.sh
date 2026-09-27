@@ -30,12 +30,20 @@
 #      hides the rest, hence the table count;
 #   3. while a reconciler schedule still exists, its exact target job (name and
 #      location parsed from the schedule) reported REQUIRED all-zero passes,
-#      all of them after every serving revision had been created plus a drain
+#      all of them after the current fleet state was first seen plus the drain
 #      interval, so the picture in 2 is neither a paused worker nor a stale one.
 # Before any Spanner count is trusted, the fleet must have been quiescent:
-# no region's traffic may have changed within the drain interval (Cloud Run
-# keeps a predecessor's in-flight requests alive across a traffic move, and
-# an older issuance-off revision can regain traffic seconds before the gate).
+# every revision that can still take requests in a region - the traffic
+# split's members and every tagged revision, tags stay addressable at 0% -
+# must carry the markers, and the region must have served only such
+# revisions for the drain interval. That interval is proven by a durable
+# observation (controls/ledger-drain-observation.json): each region's service
+# generation and reachable revision set, with the time this fleet state was
+# first seen; any change - a deploy, a rollback, a tag - resets that time,
+# because Cloud Run offers no traffic history and keeps a predecessor's
+# in-flight requests alive across a move. The interval only has to outlast
+# the authorize phase of such a request (the gateway's 25 s budget), so it
+# defaults to 120 s.
 # Once the workers are gone, the durable marker written by ledger_retire_workers
 # waives only the worker evidence (there is no worker left to report), and only
 # while every serving revision still satisfies the retirement invariants
@@ -152,98 +160,193 @@ ledger_spanner_open_work() {
   log "Spanner holds no regional lease, RegionalCredits reservation, or unfinished spend-lease row"
 }
 
-# Every serving revision, held regions included, must satisfy each marker.
+# Every revision that can still take requests in a region - the traffic
+# split's members and every tagged revision - must satisfy each marker.
 # `name=false` accepts an absent marker because config.py defaults these
 # switches to false; `name=__absent__` requires the setting to be unset or
-# empty (an app-profile map alone opens a ledger client). Records the fleet's
-# most recent traffic change in LEDGER_FLEET_NEWEST_REVISION_AT: the latest of
-# each service's condition transition times (traffic moves update them) and
-# the serving revision's creation time, whichever is newer.
-LEDGER_FLEET_NEWEST_REVISION_AT=""
+# empty (an app-profile map alone opens a ledger client). Records each
+# region's fleet state (service generation + reachable revisions) in
+# LEDGER_FLEET_STATE, one "region<TAB>generation<TAB>rev,rev" line per region.
+LEDGER_FLEET_STATE=""
 _ledger_serving_markers() {
   local purpose="$1"
   shift
   local -a regions
   IFS=',' read -r -a regions <<<"$TR_CONTROL_PLANE_REGIONS"
-  local region revision_json service_json status pair name expected value created
-  LEDGER_FLEET_NEWEST_REVISION_AT=""
+  local region service_json reachable generation names revision revision_json pair name expected value
+  LEDGER_FLEET_STATE=""
   for region in "${regions[@]}"; do
-    status=0
-    revision_json="$(regional_quota_active_revision_json "$region" false)" || status=$?
-    if [ "$status" -ne 0 ]; then
-      log "refusing ${purpose}: cannot read the serving revision in ${region}"
-      return 1
-    fi
     service_json="$(gc run services describe "$SERVICE" --region="$region" --format=json 2>/dev/null)" || {
       log "refusing ${purpose}: cannot read the service in ${region}"
       return 1
     }
-    created="$(python3 - "$revision_json" "$service_json" <<'PY'
+    # Two lines: the service generation, then the reachable revision names.
+    # (A tab-separated pair would lose an empty first field to `read`.)
+    reachable="$(python3 -c '
 import json, sys
-revision = json.loads(sys.argv[1])
-service = json.loads(sys.argv[2])
-stamps = []
-created = revision.get("metadata", {}).get("creationTimestamp")
-if not isinstance(created, str) or not created:
-    raise SystemExit("serving revision has no creationTimestamp")
-stamps.append(created)
-for condition in service.get("status", {}).get("conditions", []) or []:
-    stamp = condition.get("lastTransitionTime") if isinstance(condition, dict) else None
-    if isinstance(stamp, str) and stamp:
-        stamps.append(stamp)
-print(max(stamps))
-PY
-)" || {
-      log "refusing ${purpose}: the serving revision in ${region} has no creation time"
+service = json.load(sys.stdin)
+names = set()
+for item in service.get("status", {}).get("traffic", []) or []:
+    if not isinstance(item, dict):
+        continue
+    name = item.get("revisionName")
+    if isinstance(name, str) and name and (int(item.get("percent") or 0) > 0 or item.get("tag")):
+        names.add(name)
+if not names:
+    raise SystemExit("no reachable revision")
+generation = service.get("metadata", {}).get("generation")
+if not isinstance(generation, int) or isinstance(generation, bool) or generation <= 0:
+    raise SystemExit("no service generation")
+print(generation)
+print(",".join(sorted(names)))
+' <<<"$service_json")" || {
+      log "refusing ${purpose}: ${region} has no reachable revision or no service generation"
       return 1
     }
-    if [ -z "$LEDGER_FLEET_NEWEST_REVISION_AT" ] || [[ "$created" > "$LEDGER_FLEET_NEWEST_REVISION_AT" ]]; then
-      LEDGER_FLEET_NEWEST_REVISION_AT="$created"
+    { IFS= read -r generation; IFS= read -r names; } <<<"$reachable"
+    if [ -z "$generation" ] || [ -z "$names" ]; then
+      log "refusing ${purpose}: cannot read the fleet state of ${region}"
+      return 1
     fi
-    for pair in "$@"; do
-      name="${pair%%=*}"
-      expected="${pair#*=}"
-      value="$(regional_quota_revision_env "$revision_json" "$name" __missing__)" || return 1
-      if [ "$expected" = "__absent__" ]; then
-        if [ "$value" != "__missing__" ] && [ -n "$value" ]; then
-          log "refusing ${purpose}: ${region} still serves ${name}=${value}"
+    LEDGER_FLEET_STATE="${LEDGER_FLEET_STATE}${LEDGER_FLEET_STATE:+$'\n'}${region}	${generation}	${names}"
+    for revision in ${names//,/ }; do
+      revision_json="$(gc run revisions describe "$revision" --region="$region" --format=json 2>/dev/null)" || {
+        log "refusing ${purpose}: cannot read revision ${revision} in ${region}"
+        return 1
+      }
+      for pair in "$@"; do
+        name="${pair%%=*}"
+        expected="${pair#*=}"
+        value="$(regional_quota_revision_env "$revision_json" "$name" __missing__)" || return 1
+        if [ "$expected" = "__absent__" ]; then
+          if [ "$value" != "__missing__" ] && [ -n "$value" ]; then
+            log "refusing ${purpose}: ${region} still serves ${name}=${value} on ${revision}"
+            return 1
+          fi
+        elif [ "$value" = "__missing__" ] && [ "$expected" = "false" ]; then
+          log "${region}: ${name} is not set on ${revision}; it defaults to false"
+        elif [ "$value" != "$expected" ]; then
+          log "refusing ${purpose}: ${region} still serves ${name}=${value} on ${revision}"
           return 1
         fi
-      elif [ "$value" = "__missing__" ] && [ "$expected" = "false" ]; then
-        log "${region}: ${name} is not set on the serving revision; it defaults to false"
-      elif [ "$value" != "$expected" ]; then
-        log "refusing ${purpose}: ${region} still serves ${name}=${value}"
-        return 1
-      fi
+      done
     done
   done
 }
 
-# No Spanner count is trusted until every region's last traffic change is at
-# least the drain interval old: a predecessor revision's in-flight requests
-# outlive a traffic move, and they can still mint or settle a hold.
+ledger_drain_observation_uri() {
+  printf 'gs://%s/controls/ledger-drain-observation.json\n' "$(ledger_retirement_bucket)"
+}
+
+# Merge the fleet state just verified into the durable observation and print
+# the time the current state of the region that changed most recently was
+# first seen. A region keeps its off_since only while its service generation
+# and reachable revision set are unchanged; otherwise it starts over now.
+_ledger_observe_fleet() {
+  regional_quota_verify_control_lifecycle || return 1
+  local listing present record="{}" merged
+  listing="$(regional_quota_gc_read storage objects list --raw --format=json "gs://$(ledger_retirement_bucket)/controls/*")" || {
+    log "refusing ledger retirement: cannot list the control prefix"
+    return 1
+  }
+  present="$(python3 -c '
+import json, sys
+items = json.load(sys.stdin)
+urls = ["gs://" + i["bucket"] + "/" + i["name"] for i in items if isinstance(i, dict) and not i.get("timeDeleted")]
+print("true" if sys.argv[1] in urls else "false")
+' "$(ledger_drain_observation_uri)" <<<"$listing")" || return 1
+  if [ "$present" = true ]; then
+    record="$(regional_quota_gc_read storage cat "$(ledger_drain_observation_uri)")" || {
+      log "refusing ledger retirement: cannot read the drain observation"
+      return 1
+    }
+  fi
+  local merged_file
+  merged_file="$(mktemp "${TMPDIR:-/tmp}/ledger-observation.XXXXXX")" || return 1
+  merged="$(python3 - "$record" "$LEDGER_FLEET_STATE" "$merged_file" <<'PY'
+import datetime as dt
+import json
+import sys
+
+raw, state, out = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    old = json.loads(raw or "{}")
+except ValueError:
+    old = {}
+regions = old.get("regions") if isinstance(old, dict) else None
+if not isinstance(regions, dict):
+    regions = {}
+now = dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+new = {}
+for line in state.splitlines():
+    region, generation, names = line.split("\t")
+    previous = regions.get(region) if isinstance(regions.get(region), dict) else {}
+    unchanged = (
+        str(previous.get("generation", "")) == generation
+        and previous.get("revisions") == names
+        and isinstance(previous.get("off_since"), str)
+    )
+    new[region] = {
+        "generation": generation,
+        "revisions": names,
+        "off_since": previous["off_since"] if unchanged else now,
+    }
+with open(out, "w") as handle:
+    json.dump({"regions": new, "updated_at": now}, handle)
+print(max(entry["off_since"] for entry in new.values()))
+PY
+)" || {
+    rm -f "$merged_file"
+    log "refusing ledger retirement: cannot merge the drain observation"
+    return 1
+  }
+  # stdout is this function's result; the upload's output is not part of it
+  gc storage cp "$merged_file" "$(ledger_drain_observation_uri)" --quiet >/dev/null || {
+    rm -f "$merged_file"
+    log "refusing ledger retirement: cannot record the drain observation"
+    return 1
+  }
+  rm -f "$merged_file"
+  printf '%s\n' "$merged"
+}
+
+# No Spanner count is trusted until every region has served only verified
+# revisions for the drain interval, as the durable observation records it.
+# Sets LEDGER_FLEET_QUIESCENT_IN to the seconds still to wait when refusing.
+LEDGER_FLEET_QUIESCENT_IN=0
+LEDGER_FLEET_OFF_SINCE=""
 ledger_fleet_quiescent() {
-  local interval="${TR_LEDGER_DRAIN_INTERVAL_SECONDS:-600}"
-  python3 - "$LEDGER_FLEET_NEWEST_REVISION_AT" "$interval" <<'PY' || return 1
+  local interval="${TR_LEDGER_DRAIN_INTERVAL_SECONDS:-120}" off_since result
+  LEDGER_FLEET_QUIESCENT_IN=0
+  LEDGER_FLEET_OFF_SINCE=""
+  off_since="$(_ledger_observe_fleet)" || return 1
+  LEDGER_FLEET_OFF_SINCE="$off_since"
+  result="$(python3 - "$off_since" "$interval" <<'PY'
 import datetime as dt
 import sys
 
-newest, interval = sys.argv[1], int(sys.argv[2])
+since, interval = sys.argv[1], int(sys.argv[2])
 try:
-    changed = dt.datetime.fromisoformat(newest.replace("Z", "+00:00"))
+    changed = dt.datetime.fromisoformat(since.replace("Z", "+00:00"))
 except ValueError:
-    raise SystemExit(f"refusing ledger retirement: fleet traffic time {newest!r} is unreadable")
+    raise SystemExit(f"refusing ledger retirement: drain observation time {since!r} is unreadable")
 if changed.tzinfo is None:
     changed = changed.replace(tzinfo=dt.UTC)
 now = dt.datetime.now(dt.UTC)
 ready = changed + dt.timedelta(seconds=interval)
-if now < ready:
-    raise SystemExit(
-        f"refusing ledger retirement: fleet traffic changed at {changed.isoformat()}; "
-        f"wait until {ready.isoformat()} ({interval}s drain interval)"
-    )
-print(f"fleet quiescent since {changed.isoformat()} (+{interval}s drain interval)")
+remaining = max(0, int((ready - now).total_seconds()) + 1) if now < ready else 0
+print(remaining)
+if remaining:
+    print(f"fleet state first seen at {changed.isoformat()}; wait until {ready.isoformat()} ({interval}s drain interval)", file=sys.stderr)
+else:
+    print(f"fleet quiescent since {changed.isoformat()} (+{interval}s drain interval)", file=sys.stderr)
 PY
+)" || return 1
+  LEDGER_FLEET_QUIESCENT_IN="$result"
+  if [ "$result" != "0" ]; then
+    log "refusing ledger retirement: the fleet is not yet quiescent (${result}s to go)"
+    return 1
+  fi
 }
 
 ledger_issuance_off_everywhere() {
@@ -290,15 +393,15 @@ print("%s\t%s\t%s" % (scheduler.get("state", ""), match.group(1), match.group(3)
 }
 
 # The exact target job of a live schedule (project, location and name) must
-# have reported REQUIRED all-zero passes, every one of them after the newest
-# serving revision was created plus the drain interval. A paused or silent
+# have reported REQUIRED all-zero passes, every one of them after the fleet
+# state was first observed plus the drain interval. A paused or silent
 # worker refuses: nobody is draining.
 _ledger_reconciler_evidence() {
   local label="$1" state="$2" job_region="$3" job="$4" marker="$5"
   shift 5
   local required="${TR_LEDGER_DRAIN_REQUIRED_PASSES:-5}"
   local freshness="${TR_LEDGER_DRAIN_FRESHNESS:-15m}"
-  local interval="${TR_LEDGER_DRAIN_INTERVAL_SECONDS:-600}"
+  local interval="${TR_LEDGER_DRAIN_INTERVAL_SECONDS:-120}"
   if [ "$state" != "ENABLED" ]; then
     log "refusing ledger retirement: the ${label} schedule is ${state:-in an unknown state}; it must be draining"
     return 1
@@ -313,7 +416,7 @@ _ledger_reconciler_evidence() {
     log "refusing ledger retirement: cannot read ${label} completions"
     return 1
   }
-  python3 - "$label" "$marker" "$required" "$json" "$LEDGER_FLEET_NEWEST_REVISION_AT" "$interval" "$@" <<'PY'
+  python3 - "$label" "$marker" "$required" "$json" "$LEDGER_FLEET_OFF_SINCE" "$interval" "$@" <<'PY'
 import datetime as dt
 import json
 import re
@@ -334,7 +437,7 @@ def parse(stamp: str) -> dt.datetime:
 try:
     cutoff = parse(newest) + dt.timedelta(seconds=int(interval))
 except ValueError:
-    raise SystemExit(f"refusing ledger retirement: serving revision time {newest!r} is unreadable")
+    raise SystemExit(f"refusing ledger retirement: fleet observation time {newest!r} is unreadable")
 try:
     entries = json.loads(raw or "[]")
 except ValueError:
@@ -365,7 +468,7 @@ early = [when for when, _ in lines if when < cutoff]
 if early:
     raise SystemExit(
         f"refusing ledger retirement: {label} completion at {min(early).isoformat()} "
-        f"predates the drain cutoff {cutoff.isoformat()} (newest serving revision + {interval}s)"
+        f"predates the drain cutoff {cutoff.isoformat()} (fleet state first seen + {interval}s)"
     )
 for _, line in lines:
     values = dict(re.findall(r"\b([a-z_]+)=(\d+)\b", line))
@@ -577,14 +680,35 @@ ledger_retire_workers() {
     log "deferring worker retirement; the ledgers stay provisioned until every region serves a capability-off revision"
     return 0
   fi
-  ledger_fleet_quiescent || return 1
+  # The last secondary may have moved traffic moments ago: wait out the drain
+  # interval under the mutex, re-reading the fleet each time, rather than
+  # failing the release step.
+  local waited=0 pause="${TR_LEDGER_RETIRE_RETRY_SLEEP_SECONDS:-10}"
+  local budget="${TR_LEDGER_DRAIN_INTERVAL_SECONDS:-120}"
+  until ledger_fleet_quiescent; do
+    if [ "$waited" -ge "$budget" ] || [ "$LEDGER_FLEET_QUIESCENT_IN" = "0" ]; then
+      return 1
+    fi
+    log "waiting ${LEDGER_FLEET_QUIESCENT_IN}s for the fleet to become quiescent"
+    sleep "$pause"
+    waited=$((waited + pause))
+    ledger_capability_off_everywhere || return 1
+  done
   ledger_spanner_open_work || return 1
+  # The names an interrupted earlier run recorded participate in every
+  # inventory, the recorded-retirement re-check included.
+  local -a targets=()
+  local recorded job
+  recorded="$(_ledger_recorded_targets)" || return 1
+  while IFS= read -r job; do
+    [ -n "$job" ] && targets+=("$job")
+  done <<<"$recorded"
   if [ "$recorded_complete" = true ]; then
     # A recorded retirement is a no-op only once the current state agrees:
     # a rollback that recreated the schedules or workers gets torn down
     # again and the marker rewritten.
     local leftovers
-    leftovers="$(_ledger_worker_inventory)" || return 1
+    leftovers="$(_ledger_worker_inventory "${targets[@]+"${targets[@]}"}")" || return 1
     local scheduler region target
     for scheduler in "$(_ledger_regional_scheduler)|$(_ledger_regional_scheduler_region)" \
                      "$(_ledger_spend_scheduler)|$(_ledger_spend_scheduler_region)"; do
@@ -602,12 +726,7 @@ ledger_retire_workers() {
 
   # Learn the schedules' targets and record them durably before anything is
   # deleted, merged with what an interrupted earlier run recorded.
-  local -a targets=()
-  local recorded scheduler region target job_region job
-  recorded="$(_ledger_recorded_targets)" || return 1
-  while IFS= read -r job; do
-    [ -n "$job" ] && targets+=("$job")
-  done <<<"$recorded"
+  local scheduler region target job_region
   local -a live_schedules=()
   for scheduler in "$(_ledger_regional_scheduler)|$(_ledger_regional_scheduler_region)" \
                    "$(_ledger_spend_scheduler)|$(_ledger_spend_scheduler_region)"; do

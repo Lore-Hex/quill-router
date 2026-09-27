@@ -30,13 +30,13 @@ SPEND_SCHEDULE = "trusted-router-spend-lease-reconcile"
 REGIONAL_JOB = "trusted-router-regional-quota-reconciler-7c4f22f"
 SPEND_JOB = "trusted-router-spend-lease-reconciler-7c4f22f"
 MARKER_URI = "gs://tr-deploy-mutex-quill-cloud-proxy/controls/ledger-retirement.json"
-# Serving revisions were created an hour ago; drained evidence is from now.
-REVISION_CREATED = "2026-09-27T11:00:00Z"
+# The fleet state was first observed an hour before the drained evidence.
+OBSERVED_AT = "2026-09-27T11:00:00Z"
 NOW = dt.datetime(2026, 9, 27, 12, 0, tzinfo=dt.UTC)
 
 # The scripts source _lib.sh for PROJECT_ID, SERVICE, the region list, the
-# Spanner ids and gc. The fake below replaces exactly that surface, so no real
-# cloud call can leak through the recorded fake.
+# Spanner ids and gc, and deploy_mutex.sh for the lock. The fakes below
+# replace exactly that surface, so no real cloud call can leak through.
 _PRELUDE = r'''
 set -euo pipefail
 PROJECT_ID=quill-cloud-proxy
@@ -66,12 +66,16 @@ gc() {
     'storage objects list')
       if [ -f "$FIXTURES/list-error" ]; then cat "$FIXTURES/list-error" >&2; return 1; fi
       objects='{"bucket":"tr-deploy-mutex-quill-cloud-proxy","name":"controls/regional-quota-issuance.txt"}'
-      [ -f "$FIXTURES/marker" ] && objects="$objects,{\"bucket\":\"tr-deploy-mutex-quill-cloud-proxy\",\"name\":\"controls/ledger-retirement.json\"}"
-      [ -f "$FIXTURES/targets" ] && objects="$objects,{\"bucket\":\"tr-deploy-mutex-quill-cloud-proxy\",\"name\":\"controls/ledger-retirement-targets.json\"}"
+      for control in marker:ledger-retirement.json targets:ledger-retirement-targets.json observation:ledger-drain-observation.json; do
+        if [ -f "$FIXTURES/${control%%:*}" ]; then
+          objects="$objects,{\"bucket\":\"tr-deploy-mutex-quill-cloud-proxy\",\"name\":\"controls/${control#*:}\"}"
+        fi
+      done
       echo "[$objects]" ;;
     'storage cat '*)
       case "$3" in
         *ledger-retirement-targets.json) file="$FIXTURES/targets" ;;
+        *ledger-drain-observation.json) file="$FIXTURES/observation" ;;
         *) file="$FIXTURES/marker" ;;
       esac
       if [ -f "$file" ]; then cat "$file"
@@ -79,6 +83,7 @@ gc() {
     'storage cp '*)
       case "$4" in
         *ledger-retirement-targets.json) cp "$3" "$FIXTURES/targets" ;;
+        *ledger-drain-observation.json) cp "$3" "$FIXTURES/observation" ;;
         *) cp "$3" "$FIXTURES/marker" ;;
       esac ;;
     'spanner databases execute-sql')
@@ -100,11 +105,19 @@ gc() {
     'scheduler jobs delete')
       touch "$FIXTURES/scheduler-missing-$4" ;;
     'run services describe')
-      if [ -f "$FIXTURES/service-$region.json" ]; then cat "$FIXTURES/service-$region.json"
-      else echo "ERROR: (gcloud.run.services.describe) NOT_FOUND: Service [trusted-router] could not be found." >&2; return 1; fi ;;
-    'storage cp-fail '*) return 1 ;;
+      if [ ! -f "$FIXTURES/service-$region.json" ]; then
+        echo "ERROR: (gcloud.run.services.describe) NOT_FOUND: Service [trusted-router] could not be found." >&2; return 1
+      fi
+      if [ -f "$FIXTURES/service-churn" ]; then
+        # a fleet that changes on every read: the generation keeps moving
+        churn="$(cat "$FIXTURES/service-churn")"; churn=$((churn + 1)); echo "$churn" > "$FIXTURES/service-churn"
+        sed -E 's/"generation": ?[0-9]+/"generation": '"$churn"'/' "$FIXTURES/service-$region.json"
+      else
+        cat "$FIXTURES/service-$region.json"
+      fi ;;
     'run revisions describe')
-      cat "$FIXTURES/revision-$region.json" ;;
+      if [ -f "$FIXTURES/revision-$region-$4.json" ]; then cat "$FIXTURES/revision-$region-$4.json"
+      else echo "ERROR: (gcloud.run.revisions.describe) NOT_FOUND: Revision [$4] could not be found." >&2; return 1; fi ;;
     'logging read '*)
       if [[ "$*" == *"regional_quota.reconcile_complete"* ]]; then cat "$FIXTURES/regional-evidence.json"
       else cat "$FIXTURES/spend-evidence.json"; fi ;;
@@ -171,48 +184,80 @@ def _calls(tmp_path: Path) -> list[str]:
     return (tmp_path / "calls").read_text().splitlines()
 
 
+def _stamp(when: dt.datetime) -> str:
+    return when.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _ago(seconds: int) -> str:
+    return _stamp(dt.datetime.now(dt.UTC) - dt.timedelta(seconds=seconds))
+
+
 _OFF_MARKERS = {
     "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "false",
     "TR_SPEND_LEASE_ISSUANCE_ENABLED": "false",
     "TR_SPEND_LEASE_BINDING_ENABLED": "false",
     "TR_SPEND_LEASE_ADMISSION_ACCEPT": "false",
 }
+_STEP_ONE = {**_OFF_MARKERS, "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true",
+             "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES": "us-central1=tr-quota-us-central1",
+             "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES": "us-central1=tr-spend-us-central1"}
+_STEP_TWO = {**_OFF_MARKERS, "TR_REGIONAL_QUOTA_LEASES_ENABLED": "false"}
+
+
+def _live(region: str) -> str:
+    return f"trusted-router-{region}-live"
 
 
 def _serving(
     tmp_path: Path,
     env_by_region: dict[str, dict[str, str]],
     *,
-    created: str = REVISION_CREATED,
-    transitioned: str | None = None,
+    generation: int = 7,
+    tagged: dict[str, tuple[str, dict[str, str]]] | None = None,
 ) -> None:
+    """Each region serves one 100% revision; ``tagged`` adds a 0% tagged revision."""
     for region, env in env_by_region.items():
-        service: dict[str, object] = {
-            "status": {"traffic": [{"revisionName": f"trusted-router-{region}-live", "percent": 100}]},
-        }
-        if transitioned is not None:
-            service["status"]["conditions"] = [  # type: ignore[index]
-                {"type": "Ready", "status": "True", "lastTransitionTime": REVISION_CREATED},
-                {"type": "RoutesReady", "status": "True", "lastTransitionTime": transitioned},
-            ]
-        (tmp_path / f"service-{region}.json").write_text(json.dumps(service))
-        (tmp_path / f"revision-{region}.json").write_text(json.dumps({
-            "metadata": {"creationTimestamp": created},
-            "spec": {"containers": [{"env": [{"name": name, "value": value} for name, value in env.items()]}]},
+        traffic = [{"revisionName": _live(region), "percent": 100}]
+        revisions = {_live(region): env}
+        if tagged and region in tagged:
+            name, tagged_env = tagged[region]
+            traffic.append({"revisionName": name, "percent": 0, "tag": "staged-probe"})
+            revisions[name] = tagged_env
+        (tmp_path / f"service-{region}.json").write_text(json.dumps({
+            "metadata": {"generation": generation},
+            "status": {"traffic": traffic},
         }))
+        for name, revision_env in revisions.items():
+            (tmp_path / f"revision-{region}-{name}.json").write_text(json.dumps({
+                "metadata": {"creationTimestamp": OBSERVED_AT},
+                "spec": {"containers": [{"env": [{"name": key, "value": value} for key, value in revision_env.items()]}]},
+            }))
+
+
+def _observed(tmp_path: Path, *, since: str = OBSERVED_AT, generation: int = 7, regions: tuple[str, ...] = REGIONS,
+              revisions: dict[str, str] | None = None) -> None:
+    """The durable observation says this fleet state has been in place since ``since``."""
+    (tmp_path / "observation").write_text(json.dumps({
+        "regions": {
+            region: {"generation": str(generation), "revisions": (revisions or {}).get(region, _live(region)), "off_since": since}
+            for region in regions
+        },
+        "updated_at": since,
+    }))
+
+
+def _observation(tmp_path: Path) -> dict[str, dict[str, str]]:
+    return json.loads((tmp_path / "observation").read_text())["regions"]
 
 
 def _step_one_fleet(tmp_path: Path) -> None:
-    # Every region serves a step-1 revision: issuance off, capability still on.
-    _serving(tmp_path, {region: {**_OFF_MARKERS, "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true",
-                                 "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES": "us-central1=tr-quota-us-central1",
-                                 "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES": "us-central1=tr-spend-us-central1"}
-                        for region in REGIONS})
+    _serving(tmp_path, {region: _STEP_ONE for region in REGIONS})
+    _observed(tmp_path)
 
 
 def _step_two_fleet(tmp_path: Path) -> None:
-    # Every region serves a step-2 revision: capability off, no profile maps.
-    _serving(tmp_path, {region: {**_OFF_MARKERS, "TR_REGIONAL_QUOTA_LEASES_ENABLED": "false"} for region in REGIONS})
+    _serving(tmp_path, {region: _STEP_TWO for region in REGIONS})
+    _observed(tmp_path)
 
 
 def _schedule(name: str, job: str, *, state: str = "ENABLED", region: str = "us-east4") -> str:
@@ -250,16 +295,23 @@ def _spend_line(**overrides: int) -> str:
     return f"INFO:__main__:spend_lease.reconcile_complete {rendered}"
 
 
-def _entries(lines: list[str], *, at: dt.datetime = NOW) -> list[dict[str, str]]:
+def _entries(lines: list[str], *, at: dt.datetime = NOW, spacing: dt.timedelta = dt.timedelta(minutes=1)) -> list[dict[str, str]]:
     return [
-        {"textPayload": line, "timestamp": (at - dt.timedelta(minutes=index)).strftime("%Y-%m-%dT%H:%M:%SZ")}
+        {"textPayload": line, "timestamp": _stamp(at - spacing * index)}
         for index, line in enumerate(lines)
     ]
 
 
-def _evidence(tmp_path: Path, regional: list[str], spend: list[str], *, at: dt.datetime = NOW) -> None:
-    (tmp_path / "regional-evidence.json").write_text(json.dumps(_entries(regional, at=at)))
-    (tmp_path / "spend-evidence.json").write_text(json.dumps(_entries(spend, at=at)))
+def _evidence(
+    tmp_path: Path,
+    regional: list[str],
+    spend: list[str],
+    *,
+    at: dt.datetime = NOW,
+    spacing: dt.timedelta = dt.timedelta(minutes=1),
+) -> None:
+    (tmp_path / "regional-evidence.json").write_text(json.dumps(_entries(regional, at=at, spacing=spacing)))
+    (tmp_path / "spend-evidence.json").write_text(json.dumps(_entries(spend, at=at, spacing=spacing)))
 
 
 def _drained(tmp_path: Path) -> None:
@@ -290,6 +342,7 @@ def test_gate_passes_on_a_drained_step_one_fleet(tmp_path: Path) -> None:
     run = _run(tmp_path, GATE)
     assert run.returncode == 0, run.stderr
     assert "ledger escrow is drained" in run.stderr
+    assert "fleet quiescent since 2026-09-27T11:00:00+00:00 (+120s drain interval)" in run.stderr
     calls = _calls(tmp_path)
     assert sum("run revisions describe" in call for call in calls) == len(REGIONS)
     counts = [call for call in calls if call.startswith("spanner databases execute-sql")]
@@ -302,6 +355,73 @@ def test_gate_passes_on_a_drained_step_one_fleet(tmp_path: Path) -> None:
     assert f'resource.labels.location="us-east4" AND resource.labels.job_name="{REGIONAL_JOB}"' in logging[0]
     assert 'resource.labels.project_id="quill-cloud-proxy"' in logging[0]
     assert f'resource.labels.location="us-east4" AND resource.labels.job_name="{SPEND_JOB}"' in logging[1]
+    # The unchanged fleet state keeps its first-seen time in the observation.
+    assert all(entry["off_since"] == OBSERVED_AT for entry in _observation(tmp_path).values())
+
+
+def test_gate_starts_the_drain_clock_when_the_fleet_state_is_new_or_changed(tmp_path: Path) -> None:
+    # No observation yet: the state is recorded now and the gate waits.
+    _serving(tmp_path, {region: _STEP_ONE for region in REGIONS})
+    _schedules(tmp_path)
+    _evidence(tmp_path, [_regional_line()] * 5, [_spend_line()] * 5)
+    run = _run(tmp_path, GATE)
+    assert run.returncode != 0
+    assert "fleet is not yet quiescent" in run.stderr and "120s drain interval" in run.stderr
+    assert not any(call.startswith("spanner") for call in _calls(tmp_path))
+    recorded = _observation(tmp_path)
+    assert set(recorded) == set(REGIONS)
+    assert all(entry["generation"] == "7" and entry["revisions"] == _live(region) for region, entry in recorded.items())
+
+    # A service generation change (a deploy, a traffic move, a tag) resets
+    # that region's clock even though the same revision serves.
+    _observed(tmp_path)
+    _serving(tmp_path, {region: _STEP_ONE for region in REGIONS}, generation=8)
+    run = _run(tmp_path, GATE)
+    assert run.returncode != 0
+    assert "fleet is not yet quiescent" in run.stderr
+    assert _observation(tmp_path)["us-central1"]["off_since"] != OBSERVED_AT
+
+    # A different reachable revision set resets it too; the other region keeps its clock.
+    _observed(tmp_path)
+    _serving(tmp_path, {region: _STEP_ONE for region in REGIONS},
+             tagged={"us-east4": ("trusted-router-us-east4-probe", _STEP_ONE)})
+    run = _run(tmp_path, GATE)
+    assert run.returncode != 0
+    assert _observation(tmp_path)["us-east4"]["revisions"] == "trusted-router-us-east4-live,trusted-router-us-east4-probe"
+    assert _observation(tmp_path)["us-east4"]["off_since"] != OBSERVED_AT
+    assert _observation(tmp_path)["us-central1"]["off_since"] == OBSERVED_AT
+
+    # The recorded state passes once it is older than the interval, and only
+    # then (with worker passes that postdate that moment).
+    _observed(tmp_path, since=_ago(30))
+    _serving(tmp_path, {region: _STEP_ONE for region in REGIONS})
+    _evidence(tmp_path, [_regional_line()] * 5, [_spend_line()] * 5,
+              at=dt.datetime.now(dt.UTC), spacing=dt.timedelta(seconds=1))
+    run = _run(tmp_path, GATE)
+    assert run.returncode != 0
+    assert "fleet is not yet quiescent" in run.stderr
+    run = _run(tmp_path, GATE, extra="TR_LEDGER_DRAIN_INTERVAL_SECONDS=5\n")
+    assert run.returncode == 0, run.stderr
+
+
+def test_gate_checks_every_reachable_revision_including_tags(tmp_path: Path) -> None:
+    # A tagged revision stays addressable through its tag at 0% traffic; an
+    # issuance-on one there can still mint.
+    _drained(tmp_path)
+    _serving(tmp_path, {region: _STEP_ONE for region in REGIONS},
+             tagged={"us-east4": ("trusted-router-us-east4-old", {**_STEP_ONE, "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "true"})})
+    _observed(tmp_path, revisions={"us-east4": "trusted-router-us-east4-live,trusted-router-us-east4-old"})
+    run = _run(tmp_path, GATE)
+    assert run.returncode != 0
+    assert "us-east4 still serves TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED=true on trusted-router-us-east4-old" in run.stderr
+    assert not any(call.startswith("spanner") for call in _calls(tmp_path))
+
+    # An off tagged revision is fine once that state has been observed long enough.
+    _serving(tmp_path, {region: _STEP_ONE for region in REGIONS},
+             tagged={"us-east4": ("trusted-router-us-east4-old", _STEP_ONE)})
+    run = _run(tmp_path, GATE)
+    assert run.returncode == 0, run.stderr
+    assert sum("run revisions describe" in call for call in _calls(tmp_path)) == 3
 
 
 def test_gate_stands_down_on_a_recorded_retirement_only_while_the_fleet_still_honours_it(tmp_path: Path) -> None:
@@ -310,7 +430,7 @@ def test_gate_stands_down_on_a_recorded_retirement_only_while_the_fleet_still_ho
     run = _run(tmp_path, GATE)
     assert run.returncode == 0, run.stderr
     assert "recorded as complete and every serving revision still runs without the ledgers" in run.stderr
-    # The marker waives the worker evidence only; Spanner is always read.
+    # The marker waives the worker evidence only; quiescence and Spanner are always checked.
     assert sum(call.startswith("spanner") for call in _calls(tmp_path)) == 4
     assert not any(call.startswith("logging") for call in _calls(tmp_path))
 
@@ -322,9 +442,9 @@ def test_gate_stands_down_on_a_recorded_retirement_only_while_the_fleet_still_ho
     assert "Spanner still holds 2 unsettled RegionalCredits reservations" in run.stderr
     (tmp_path / "count-reservations").unlink()
 
-    # A traffic rollback restored a capability-on revision: the full gate is
-    # back. The workers are gone, so Spanner decides (with the warnings).
-    _serving(tmp_path, {"us-central1": {**_OFF_MARKERS, "TR_REGIONAL_QUOTA_LEASES_ENABLED": "false"},
+    # And the rollback itself: a capability-on revision serves again. The
+    # workers are gone, so Spanner decides (with the warnings).
+    _serving(tmp_path, {"us-central1": _STEP_TWO,
                         "us-east4": {**_OFF_MARKERS, "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true",
                                      "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES": "us-central1=tr-quota-us-central1"}})
     for schedule in (REGIONAL_SCHEDULE, SPEND_SCHEDULE):
@@ -354,7 +474,7 @@ def test_gate_ignores_a_marker_that_does_not_record_this_retirement(tmp_path: Pa
     run = _run(tmp_path, GATE)
     assert run.returncode == 0, run.stderr
     assert "treating the ledgers as live" in run.stderr
-    assert any(call.startswith("spanner") for call in _calls(tmp_path))
+    assert any(call.startswith("logging") for call in _calls(tmp_path))
 
 
 def test_gate_aborts_when_the_control_prefix_cannot_be_listed(tmp_path: Path) -> None:
@@ -379,36 +499,52 @@ def test_gate_refuses_while_any_serving_revision_can_still_mint(tmp_path: Path, 
     # A held region keeps serving its older revision; both ledgers' issuance,
     # binding and admission must be off on every one of them.
     _drained(tmp_path)
-    env = {**_OFF_MARKERS, "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true", name: value}
-    _serving(tmp_path, {"us-central1": {**_OFF_MARKERS}, "us-east4": env})
+    _serving(tmp_path, {"us-central1": _STEP_ONE, "us-east4": {**_STEP_ONE, name: value}})
     run = _run(tmp_path, GATE)
     assert run.returncode != 0
-    assert f"us-east4 still serves {name}={value}" in run.stderr
-    assert not any(call.startswith("spanner") for call in _calls(tmp_path))
+    assert f"us-east4 still serves {name}={value} on trusted-router-us-east4-live" in run.stderr
+    assert not any(call.startswith(("spanner", "storage cp")) for call in _calls(tmp_path))
 
 
 def test_gate_accepts_an_absent_marker_because_config_defaults_it_off(tmp_path: Path) -> None:
     # A revision that never carried the switch runs config.py's default,
     # which is false for every marker the gate inspects.
     _drained(tmp_path)
-    _serving(tmp_path, {"us-central1": {**_OFF_MARKERS}, "us-east4": {}})
+    _serving(tmp_path, {"us-central1": _STEP_ONE, "us-east4": {}})
     run = _run(tmp_path, GATE)
     assert run.returncode == 0, run.stderr
-    assert "us-east4: TR_SPEND_LEASE_ISSUANCE_ENABLED is not set on the serving revision; it defaults to false" in run.stderr
+    assert "us-east4: TR_SPEND_LEASE_ISSUANCE_ENABLED is not set on trusted-router-us-east4-live; it defaults to false" in run.stderr
 
 
-def test_gate_refuses_an_unreadable_or_undated_serving_revision(tmp_path: Path) -> None:
+def test_gate_refuses_an_unreadable_service_or_revision(tmp_path: Path) -> None:
     _drained(tmp_path)
     (tmp_path / "service-us-east4.json").unlink()
     run = _run(tmp_path, GATE)
     assert run.returncode != 0
-    assert "cannot read the serving revision in us-east4" in run.stderr
+    assert "cannot read the service in us-east4" in run.stderr
 
     _drained(tmp_path)
-    (tmp_path / "revision-us-east4.json").write_text(json.dumps({"spec": {"containers": [{"env": []}]}}))
+    (tmp_path / f"revision-us-east4-{_live('us-east4')}.json").unlink()
     run = _run(tmp_path, GATE)
     assert run.returncode != 0
-    assert "serving revision in us-east4 has no creation time" in run.stderr
+    assert f"cannot read revision {_live('us-east4')} in us-east4" in run.stderr
+
+    _drained(tmp_path)
+    (tmp_path / "service-us-east4.json").write_text(json.dumps({"metadata": {"generation": 7}, "status": {"traffic": []}}))
+    run = _run(tmp_path, GATE)
+    assert run.returncode != 0
+    assert "us-east4 has no reachable revision" in run.stderr
+
+    # Without the service generation a traffic move between the same
+    # revisions would go unnoticed, so the state is not trusted at all.
+    _drained(tmp_path)
+    (tmp_path / "service-us-east4.json").write_text(json.dumps({
+        "metadata": {}, "status": {"traffic": [{"revisionName": _live("us-east4"), "percent": 100}]},
+    }))
+    run = _run(tmp_path, GATE)
+    assert run.returncode != 0
+    assert "us-east4 has no reachable revision or no service generation" in run.stderr
+    assert not any(call.startswith("spanner") or "--region=us-east4" in call and "revisions describe" in call for call in _calls(tmp_path))
 
 
 @pytest.mark.parametrize(
@@ -525,17 +661,17 @@ def test_gate_refuses_on_reconciler_evidence(tmp_path: Path, regional: list[str]
     assert message in run.stderr
 
 
-def test_gate_requires_evidence_after_the_newest_revision_plus_the_drain_interval(tmp_path: Path) -> None:
-    # Passes recorded before the last issuance-off revision existed (or within
-    # the drain interval after it) prove nothing about what that revision's
-    # predecessor may have minted in its final minutes.
+def test_gate_requires_evidence_after_the_fleet_state_was_seen_plus_the_interval(tmp_path: Path) -> None:
+    # Passes recorded before the current fleet state existed (or within the
+    # drain interval after it) prove nothing about what its predecessor may
+    # have minted in its final minutes.
     _drained(tmp_path)
-    _serving(tmp_path, {region: {**_OFF_MARKERS, "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true"} for region in REGIONS},
-             created="2026-09-27T11:55:00Z")
-    run = _run(tmp_path, GATE)
+    _observed(tmp_path, since="2026-09-27T11:59:30Z")
+    run = _run(tmp_path, GATE, extra="TR_LEDGER_DRAIN_INTERVAL_SECONDS=60\n")
     assert run.returncode != 0
-    assert "predates the drain cutoff 2026-09-27T12:05:00+00:00 (newest serving revision + 600s)" in run.stderr
+    assert "predates the drain cutoff 2026-09-27T12:00:30+00:00 (fleet state first seen + 60s)" in run.stderr
 
+    _observed(tmp_path, since="2026-09-27T11:50:00Z")
     run = _run(tmp_path, GATE, extra="TR_LEDGER_DRAIN_INTERVAL_SECONDS=60\n")
     assert run.returncode == 0, run.stderr
 
@@ -543,38 +679,6 @@ def test_gate_requires_evidence_after_the_newest_revision_plus_the_drain_interva
     run = _run(tmp_path, GATE, extra="TR_LEDGER_DRAIN_INTERVAL_SECONDS=60\n")
     assert run.returncode != 0
     assert "completion has no timestamp" in run.stderr
-
-
-def test_gate_waits_for_the_drain_interval_after_the_last_traffic_change(tmp_path: Path) -> None:
-    # A traffic move seconds ago (an older issuance-off revision regaining
-    # traffic, a rollback restored) leaves the predecessor's in-flight
-    # requests alive; nothing is trusted until the interval has passed.
-    _drained(tmp_path)
-    just_now = (dt.datetime.now(dt.UTC) - dt.timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    _serving(tmp_path, {region: {**_OFF_MARKERS, "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true"} for region in REGIONS},
-             transitioned=just_now)
-    run = _run(tmp_path, GATE)
-    assert run.returncode != 0
-    assert "fleet traffic changed at" in run.stderr and "600s drain interval" in run.stderr
-    assert not any(call.startswith("spanner") for call in _calls(tmp_path))
-
-    # The marker path waits too.
-    _retired_marker(tmp_path)
-    _serving(tmp_path, {region: {**_OFF_MARKERS, "TR_REGIONAL_QUOTA_LEASES_ENABLED": "false"} for region in REGIONS},
-             transitioned=just_now)
-    run = _run(tmp_path, GATE)
-    assert run.returncode != 0
-    assert "fleet traffic changed at" in run.stderr
-    assert not any(call.startswith("spanner") for call in _calls(tmp_path))
-
-    # Old transitions are fine; the revision's own age still counts.
-    (tmp_path / "marker").unlink()
-    _drained(tmp_path)
-    _serving(tmp_path, {region: {**_OFF_MARKERS, "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true"} for region in REGIONS},
-             transitioned="2026-09-27T11:30:00Z")
-    run = _run(tmp_path, GATE)
-    assert run.returncode == 0, run.stderr
-    assert "fleet quiescent since 2026-09-27T11:30:00+00:00" in run.stdout + run.stderr
 
 
 def test_gate_ignores_unrelated_log_lines_and_refuses_malformed_evidence(tmp_path: Path) -> None:
@@ -649,15 +753,42 @@ def test_retire_deletes_schedules_then_workers_and_records_the_retirement(tmp_pa
     assert marker["state"] == "retired"
     assert marker["project"] == "quill-cloud-proxy" and marker["spanner_database"] == "trusted-router"
     assert marker["spanner_instance"] == "trusted-router-nam6"
-    # The deployment mutex is held from before the first check until the end.
-    assert calls[0] == "mutex acquire" and calls[-1] == "mutex release"
-    assert all("--verbosity=warning" in call for call in calls if call.startswith("run jobs list"))
+    assert marker["workers_deleted"] == 4 and marker["release"] == "abc12345"
     # Targets were recorded before the first schedule was deleted.
     targets = json.loads((tmp_path / "targets").read_text())
     assert targets == {"targets": sorted([REGIONAL_JOB, SPEND_JOB])}
     assert calls.index([c for c in calls if c.startswith("storage cp") and "targets" in c][0]) < calls.index(schedule_deletes[0])
-    assert marker["workers_deleted"] == 4 and marker["release"] == "abc12345"
+    # The deployment mutex is held from before the first check until the end.
+    assert calls[0] == "mutex acquire" and calls[-1] == "mutex release"
+    assert all("--verbosity=warning" in call for call in calls if call.startswith("run jobs list"))
     assert "ledger reconciler workers retired (4 job(s) deleted)" in run.stderr
+
+
+def test_retire_waits_out_the_drain_interval_after_the_last_traffic_move(tmp_path: Path) -> None:
+    # The last secondary moved traffic moments before this step: wait under
+    # the mutex, re-reading the fleet, instead of failing the release.
+    _serving(tmp_path, {region: _STEP_TWO for region in REGIONS})
+    _observed(tmp_path, since=_ago(2))
+    _schedules(tmp_path)
+    _workers(tmp_path)
+    run = _run(tmp_path, RETIRE, extra="TR_LEDGER_DRAIN_INTERVAL_SECONDS=4\nTR_LEDGER_RETIRE_RETRY_SLEEP_SECONDS=1\n")
+    assert run.returncode == 0, run.stderr
+    assert "for the fleet to become quiescent" in run.stderr
+    assert "ledger reconciler workers retired (4 job(s) deleted)" in run.stderr
+    assert sum(call.startswith("run services describe") for call in _calls(tmp_path)) > len(REGIONS)
+
+    # A fleet that keeps changing never becomes quiescent; the wait is
+    # bounded by the interval and nothing is torn down.
+    (tmp_path / "marker").unlink()
+    _schedules(tmp_path)
+    _workers(tmp_path)
+    (tmp_path / "service-churn").write_text("100")
+    run = _run(tmp_path, RETIRE, extra="TR_LEDGER_DRAIN_INTERVAL_SECONDS=2\nTR_LEDGER_RETIRE_RETRY_SLEEP_SECONDS=1\n")
+    assert run.returncode != 0
+    assert "fleet is not yet quiescent" in run.stderr
+    assert not any("delete" in call for call in _calls(tmp_path))
+    assert not (tmp_path / "marker").exists()
+    assert _calls(tmp_path)[-1] == "mutex release"
 
 
 def test_retire_is_a_verified_no_op_once_recorded(tmp_path: Path) -> None:
@@ -669,12 +800,12 @@ def test_retire_is_a_verified_no_op_once_recorded(tmp_path: Path) -> None:
     assert run.returncode == 0, run.stderr
     assert "already recorded as complete and nothing has come back" in run.stderr
     calls = _calls(tmp_path)
-    # The fleet, Spanner, the listing and both schedules are re-verified...
+    # The fleet, quiescence, Spanner, the listing and both schedules are re-verified...
     assert sum(call.startswith("spanner") for call in calls) == 4
     assert any(call.startswith("run jobs list") for call in calls)
     assert sum(call.startswith("scheduler jobs describe") for call in calls) == 2
-    # ...and nothing is deleted or rewritten.
-    assert not any("delete" in call or call.startswith("storage cp") for call in calls)
+    # ...and nothing is deleted or rewritten, except the observation.
+    assert not any("delete" in call or call.endswith("controls/ledger-retirement.json --quiet") for call in calls)
 
     # A rollback recreated a schedule and its worker: they are retired again
     # and the marker rewritten.
@@ -687,10 +818,18 @@ def test_retire_is_a_verified_no_op_once_recorded(tmp_path: Path) -> None:
     assert f"deleted worker {SPEND_JOB} in us-east4" in run.stderr
     assert json.loads((tmp_path / "marker").read_text())["workers_deleted"] == 1
 
+    # A recorded custom target that came back is found through the record,
+    # not the prefixes, even on the marker path.
+    (tmp_path / "targets").write_text(json.dumps({"targets": ["quota-custom-worker"]}))
+    (tmp_path / "jobs").write_text("us-west1\tquota-custom-worker\n")
+    run = _run(tmp_path, RETIRE)
+    assert run.returncode == 0, run.stderr
+    assert "deleted worker quota-custom-worker in us-west1" in run.stderr
+
 
 def test_retire_defers_while_a_region_still_serves_capability_or_a_profile_map(tmp_path: Path) -> None:
-    _serving(tmp_path, {"us-central1": {**_OFF_MARKERS, "TR_REGIONAL_QUOTA_LEASES_ENABLED": "false"},
-                        "us-east4": {**_OFF_MARKERS, "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true"}})
+    _serving(tmp_path, {"us-central1": _STEP_TWO, "us-east4": {**_OFF_MARKERS, "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true"}})
+    _observed(tmp_path)
     _schedules(tmp_path)
     _workers(tmp_path)
     run = _run(tmp_path, RETIRE)
@@ -700,12 +839,19 @@ def test_retire_defers_while_a_region_still_serves_capability_or_a_profile_map(t
     assert not any("delete" in call for call in _calls(tmp_path))
     assert not (tmp_path / "marker").exists()
 
-    _serving(tmp_path, {"us-central1": {**_OFF_MARKERS, "TR_REGIONAL_QUOTA_LEASES_ENABLED": "false"},
-                        "us-east4": {**_OFF_MARKERS, "TR_REGIONAL_QUOTA_LEASES_ENABLED": "false",
-                                     "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES": "us-central1=tr-spend-us-central1"}})
+    _serving(tmp_path, {"us-central1": _STEP_TWO,
+                        "us-east4": {**_STEP_TWO, "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES": "us-central1=tr-spend-us-central1"}})
     run = _run(tmp_path, RETIRE)
     assert run.returncode == 0, run.stderr
     assert "us-east4 still serves TR_SPEND_LEASE_BIGTABLE_APP_PROFILES=us-central1=tr-spend-us-central1" in run.stderr
+    assert not any("delete" in call for call in _calls(tmp_path))
+
+    # A tagged capability-on revision defers too: its tag still routes.
+    _serving(tmp_path, {region: _STEP_TWO for region in REGIONS},
+             tagged={"us-central1": ("trusted-router-us-central1-old", _STEP_ONE)})
+    run = _run(tmp_path, RETIRE)
+    assert run.returncode == 0, run.stderr
+    assert "us-central1 still serves TR_REGIONAL_QUOTA_LEASES_ENABLED=true on trusted-router-us-central1-old" in run.stderr
     assert not any("delete" in call for call in _calls(tmp_path))
 
 
@@ -718,6 +864,7 @@ def test_retire_fails_when_spanner_regressed_since_the_gate(tmp_path: Path) -> N
     assert run.returncode != 0
     assert "Spanner still holds 2 unfinished spend-lease open rows" in run.stderr
     assert not any("delete" in call for call in _calls(tmp_path))
+    assert _calls(tmp_path)[-1] == "mutex release"
 
 
 def test_retire_waits_for_running_executions_then_gives_up(tmp_path: Path) -> None:

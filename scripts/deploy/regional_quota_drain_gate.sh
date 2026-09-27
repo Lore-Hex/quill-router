@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Refuse to remove regional quota and spend-lease ledger capability while
-# escrow is still open. Read-only; the same gate runs again inside rollout.sh
-# for every rollout entry point. See ledger_retirement.sh for what it proves.
+# escrow is still open. Changes nothing but the drain observation record; the
+# same gate runs again inside rollout.sh for every rollout entry point. See
+# ledger_retirement.sh for what it proves.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
