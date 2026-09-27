@@ -1,0 +1,587 @@
+[
+  {
+    "provider": "chutes",
+    "model_id": "deepseek/deepseek-v3.2",
+    "upstream_id": "deepseek-ai/DeepSeek-V3.2-TEE",
+    "quantization": "fp8",
+    "label": "FP8",
+    "weight_formats": [
+      "fp8"
+    ],
+    "kv_cache_dtype": null,
+    "model_repository": "deepseek-ai/DeepSeek-V3.2",
+    "model_revision": "a7e62ac04ecb2c0a54d736dc46601c5606cf10a6",
+    "reviewed_on": "2026-09-27",
+    "sources": [
+      {
+        "title": "Published chute serving code (mutable; hash recorded)",
+        "url": "https://api.chutes.ai/chutes/code/398651e1-5f85-5e50-a513-7c5324e8e839",
+        "sha256": "1a56a1be934ae580442b0df34d1a02446308b6380b1605aea19ee68739522a66"
+      },
+      {
+        "title": "Pinned weight configuration",
+        "url": "https://huggingface.co/deepseek-ai/DeepSeek-V3.2/resolve/a7e62ac04ecb2c0a54d736dc46601c5606cf10a6/config.json"
+      }
+    ],
+    "notes": "Pinned weight configuration declares FP8 quantization; excluded modules can retain higher precision."
+  },
+  {
+    "provider": "chutes",
+    "model_id": "google/gemma-4-31b-turbo",
+    "upstream_id": "google/gemma-4-31B-turbo-TEE",
+    "quantization": "nvfp4",
+    "label": "NVFP4",
+    "weight_formats": [
+      "nvfp4"
+    ],
+    "kv_cache_dtype": null,
+    "model_repository": "nvidia/Gemma-4-31B-IT-NVFP4",
+    "model_revision": "4135a98a9b728a548947683219633b25682223ac",
+    "reviewed_on": "2026-09-27",
+    "sources": [
+      {
+        "title": "Published chute serving code (mutable; hash recorded)",
+        "url": "https://api.chutes.ai/chutes/code/42ee92ba-a537-5a73-8741-876067750db7",
+        "sha256": "c510d102bbccff523fecd0bd745dfbd34b6c9ce1ef68712107e9c07bbe28436b"
+      },
+      {
+        "title": "Pinned weight configuration",
+        "url": "https://huggingface.co/nvidia/Gemma-4-31B-IT-NVFP4/resolve/4135a98a9b728a548947683219633b25682223ac/config.json"
+      }
+    ],
+    "notes": "Pinned weight configuration declares NVFP4 quantization; excluded modules can retain higher precision."
+  },
+  {
+    "provider": "chutes",
+    "model_id": "mistralai/mistral-nemo",
+    "upstream_id": "unsloth/Mistral-Nemo-Instruct-2407-TEE",
+    "quantization": "bf16",
+    "label": "BF16",
+    "weight_formats": [
+      "bf16"
+    ],
+    "kv_cache_dtype": null,
+    "model_repository": "unsloth/Mistral-Nemo-Instruct-2407",
+    "model_revision": "e9976040f42d8a5590ed58cefe973061b3f973b5",
+    "reviewed_on": "2026-09-27",
+    "sources": [
+      {
+        "title": "Published chute serving code (mutable; hash recorded)",
+        "url": "https://api.chutes.ai/chutes/code/7725a31d-28df-5bb7-9d29-c23b49df5472",
+        "sha256": "36a058616fb35eac8db156d9dfec78efa448088594e3cbea827e1c7c49e930a3"
+      },
+      {
+        "title": "Pinned weight configuration",
+        "url": "https://huggingface.co/unsloth/Mistral-Nemo-Instruct-2407/resolve/e9976040f42d8a5590ed58cefe973061b3f973b5/config.json"
+      }
+    ],
+    "notes": "Pinned model configuration declares BF16, with no weight quantization override in the reviewed serving code."
+  },
+  {
+    "provider": "chutes",
+    "model_id": "moonshotai/kimi-k2.6",
+    "upstream_id": "moonshotai/Kimi-K2.6-TEE",
+    "quantization": "int4",
+    "label": "INT4 (mixed)",
+    "weight_formats": [
+      "int4"
+    ],
+    "kv_cache_dtype": null,
+    "model_repository": "moonshotai/Kimi-K2.6",
+    "model_revision": "d9cb81bc88b9bd2dc89877599f23c614ded72b9c",
+    "reviewed_on": "2026-09-27",
+    "sources": [
+      {
+        "title": "Published chute serving code (mutable; hash recorded)",
+        "url": "https://api.chutes.ai/chutes/code/aac09863-35b4-5d9b-9b67-6e6a9d54273a",
+        "sha256": "32a95db3de33a5b9c09952f8ae89cf89f3d179555e744ecc5331462e1bd5a28a"
+      },
+      {
+        "title": "Pinned weight configuration",
+        "url": "https://huggingface.co/moonshotai/Kimi-K2.6/resolve/d9cb81bc88b9bd2dc89877599f23c614ded72b9c/config.json"
+      }
+    ],
+    "notes": "INT4 packed weight groups in the text model; excluded modules retain higher precision."
+  },
+  {
+    "provider": "chutes",
+    "model_id": "qwen/qwen3-235b-a22b-thinking-2507",
+    "upstream_id": "Qwen/Qwen3-235B-A22B-Thinking-2507-TEE",
+    "quantization": "bf16",
+    "label": "BF16",
+    "weight_formats": [
+      "bf16"
+    ],
+    "kv_cache_dtype": null,
+    "model_repository": "Qwen/Qwen3-235B-A22B-Thinking-2507",
+    "model_revision": "4cd68849b2a0fadb84866c703b133aa8c8636130",
+    "reviewed_on": "2026-09-27",
+    "sources": [
+      {
+        "title": "Published chute serving code (mutable; hash recorded)",
+        "url": "https://api.chutes.ai/chutes/code/21d129e5-8426-5c29-a6be-844e0f5f5e30",
+        "sha256": "6feb49aedc20419a3562b1c6b350c7d8e89987f242716621fbd7b8678fac0858"
+      },
+      {
+        "title": "Pinned weight configuration",
+        "url": "https://huggingface.co/Qwen/Qwen3-235B-A22B-Thinking-2507/resolve/4cd68849b2a0fadb84866c703b133aa8c8636130/config.json"
+      }
+    ],
+    "notes": "Pinned model configuration declares BF16, with no weight quantization override in the reviewed serving code."
+  },
+  {
+    "provider": "chutes",
+    "model_id": "qwen/qwen3-32b",
+    "upstream_id": "Qwen/Qwen3-32B-TEE",
+    "quantization": "fp8",
+    "label": "FP8",
+    "weight_formats": [
+      "fp8"
+    ],
+    "kv_cache_dtype": null,
+    "model_repository": "Qwen/Qwen3-32B-FP8",
+    "model_revision": "aa55da1ecc13d006e8b8e4f54579b1ea8c3db2df",
+    "reviewed_on": "2026-09-27",
+    "sources": [
+      {
+        "title": "Published chute serving code (mutable; hash recorded)",
+        "url": "https://api.chutes.ai/chutes/code/ac059e33-eb27-541c-b9a9-24b214036475",
+        "sha256": "cbdc6e3fa0c3d68f20b160463a88bf8aabe2a06b4c234f66c31407610c4e998c"
+      },
+      {
+        "title": "Pinned weight configuration",
+        "url": "https://huggingface.co/Qwen/Qwen3-32B-FP8/resolve/aa55da1ecc13d006e8b8e4f54579b1ea8c3db2df/config.json"
+      }
+    ],
+    "notes": "Pinned weight configuration declares FP8 quantization; excluded modules can retain higher precision."
+  },
+  {
+    "provider": "chutes",
+    "model_id": "qwen/qwen3.5-397b-a17b",
+    "upstream_id": "Qwen/Qwen3.5-397B-A17B-TEE",
+    "quantization": "fp8",
+    "label": "FP8",
+    "weight_formats": [
+      "fp8"
+    ],
+    "kv_cache_dtype": null,
+    "model_repository": "Qwen/Qwen3.5-397B-A17B-FP8",
+    "model_revision": "9f1f3de9a3a48cfd340fd73ca98c02625b7afb3b",
+    "reviewed_on": "2026-09-27",
+    "sources": [
+      {
+        "title": "Published chute serving code (mutable; hash recorded)",
+        "url": "https://api.chutes.ai/chutes/code/51a4284a-a5a0-5e44-a9cc-6af5a2abfbcf",
+        "sha256": "fa2a2cf5d4b27108dbe0c9d9d43a109c2f9779e3134a6f5e8c1d8f21120ffc98"
+      },
+      {
+        "title": "Pinned weight configuration",
+        "url": "https://huggingface.co/Qwen/Qwen3.5-397B-A17B-FP8/resolve/9f1f3de9a3a48cfd340fd73ca98c02625b7afb3b/config.json"
+      }
+    ],
+    "notes": "Pinned weight configuration declares FP8 quantization; excluded modules can retain higher precision."
+  },
+  {
+    "provider": "chutes",
+    "model_id": "qwen/qwen3.6-27b",
+    "upstream_id": "Qwen/Qwen3.6-27B-TEE",
+    "quantization": "fp8",
+    "label": "FP8",
+    "weight_formats": [
+      "fp8"
+    ],
+    "kv_cache_dtype": null,
+    "model_repository": "Qwen/Qwen3.6-27B-FP8",
+    "model_revision": "e89b16ebf1988b3d6befa7de50abc2d76f26eb09",
+    "reviewed_on": "2026-09-27",
+    "sources": [
+      {
+        "title": "Published chute serving code (mutable; hash recorded)",
+        "url": "https://api.chutes.ai/chutes/code/7aa5e899-c0ba-5482-af48-d3f31d635c9f",
+        "sha256": "f209977ffc6de74034bd0eade90a4f45080aeb4aebffaf6298ef3baa86dc7439"
+      },
+      {
+        "title": "Pinned weight configuration",
+        "url": "https://huggingface.co/Qwen/Qwen3.6-27B-FP8/resolve/e89b16ebf1988b3d6befa7de50abc2d76f26eb09/config.json"
+      }
+    ],
+    "notes": "Pinned weight configuration declares FP8 quantization; excluded modules can retain higher precision."
+  },
+  {
+    "provider": "chutes",
+    "model_id": "z-ai/glm-5.1",
+    "upstream_id": "zai-org/GLM-5.1-TEE",
+    "quantization": "fp8",
+    "label": "FP8",
+    "weight_formats": [
+      "fp8"
+    ],
+    "kv_cache_dtype": null,
+    "model_repository": "zai-org/GLM-5.1-FP8",
+    "model_revision": "f396cf805182f4ca10fa675e1a99815b3ca384db",
+    "reviewed_on": "2026-09-27",
+    "sources": [
+      {
+        "title": "Published chute serving code (mutable; hash recorded)",
+        "url": "https://api.chutes.ai/chutes/code/b048fe26-0352-5c46-acf7-335e527e7f3d",
+        "sha256": "64c133b44e07c7aaea899f8629acfa6febdd1e11c1e368e391d4bc6b7aa20df8"
+      },
+      {
+        "title": "Pinned weight configuration",
+        "url": "https://huggingface.co/zai-org/GLM-5.1-FP8/resolve/f396cf805182f4ca10fa675e1a99815b3ca384db/config.json"
+      }
+    ],
+    "notes": "Pinned weight configuration declares FP8 quantization; excluded modules can retain higher precision."
+  },
+  {
+    "provider": "chutes",
+    "model_id": "z-ai/glm-5.2",
+    "upstream_id": "zai-org/GLM-5.2-TEE",
+    "quantization": "nvfp4",
+    "label": "NVFP4",
+    "weight_formats": [
+      "nvfp4"
+    ],
+    "kv_cache_dtype": "fp8_e4m3",
+    "model_repository": "nvidia/GLM-5.2-NVFP4",
+    "model_revision": "aec724e8c7b8ee9db3b48c01c320f63f9cdaf8aa",
+    "reviewed_on": "2026-09-27",
+    "sources": [
+      {
+        "title": "Published chute serving code (mutable; hash recorded)",
+        "url": "https://api.chutes.ai/chutes/code/08901219-159f-55a7-87cf-9d0d02744668",
+        "sha256": "eca62092fb21a39873254329b793d054baf07f4c0e75431d2cdfb33c3db54d51"
+      },
+      {
+        "title": "Pinned weight configuration",
+        "url": "https://huggingface.co/nvidia/GLM-5.2-NVFP4/resolve/aec724e8c7b8ee9db3b48c01c320f63f9cdaf8aa/config.json"
+      }
+    ],
+    "notes": "Pinned weight configuration declares NVFP4 quantization; excluded modules can retain higher precision."
+  },
+  {
+    "provider": "near-ai",
+    "model_id": "z-ai/glm-5.3-flash",
+    "upstream_id": "z-ai/glm-5.3-flash",
+    "quantization": "fp8",
+    "label": "FP8",
+    "weight_formats": [
+      "fp8"
+    ],
+    "kv_cache_dtype": "bfloat16",
+    "model_repository": "zai-org/GLM-5.3-Flash",
+    "model_revision": "84c6a6aa9497188e15a635ba793b0f95a79b1033",
+    "reviewed_on": "2026-09-27",
+    "sources": [
+      {
+        "title": "Published serving configuration",
+        "url": "https://github.com/nearai/cvm-compose-files/blob/e14107901d202215ab44eb027eb4792047d5ec83/prod/GLM-5.3-Flash-SGL-TP4.yaml",
+        "sha256": "2878b9c4c6db512a7538dc4e8981fd5acae72cdaace7794509f48161bcce08e3"
+      },
+      {
+        "title": "Pinned weight configuration",
+        "url": "https://huggingface.co/zai-org/GLM-5.3-Flash/resolve/84c6a6aa9497188e15a635ba793b0f95a79b1033/config.json"
+      }
+    ],
+    "notes": "Official FP8 weights. Published serving command separately selects BF16 KV cache; excluded weight modules retain higher precision."
+  },
+  {
+    "provider": "privatemode",
+    "model_id": "openai/gpt-oss-120b",
+    "upstream_id": "gpt-oss-120b",
+    "quantization": "mxfp4",
+    "label": "MXFP4 (mixed)",
+    "weight_formats": [
+      "mxfp4"
+    ],
+    "kv_cache_dtype": "fp8",
+    "model_repository": "openai/gpt-oss-120b",
+    "model_revision": "b5c939de8f754692c1647ca79fbf85e8c1e70f8a",
+    "reviewed_on": "2026-09-27",
+    "sources": [
+      {
+        "title": "Published model revisions and root hashes",
+        "url": "https://github.com/edgelesssys/privatemode-public/blob/9995223e02461fef93742fe9921dc03f7cc4f1a7/models.yaml"
+      },
+      {
+        "title": "Published serving configuration",
+        "url": "https://github.com/edgelesssys/privatemode-public/blob/9995223e02461fef93742fe9921dc03f7cc4f1a7/deployment.yaml"
+      },
+      {
+        "title": "Pinned weight configuration",
+        "url": "https://huggingface.co/openai/gpt-oss-120b/resolve/b5c939de8f754692c1647ca79fbf85e8c1e70f8a/config.json"
+      }
+    ],
+    "notes": "MXFP4 weight quantization; attention, routers, embeddings and output head are excluded."
+  },
+  {
+    "provider": "privatemode",
+    "model_id": "z-ai/glm-5.3",
+    "upstream_id": "glm-5.3",
+    "quantization": "nvfp4",
+    "label": "NVFP4",
+    "weight_formats": [
+      "nvfp4"
+    ],
+    "kv_cache_dtype": "fp8_e4m3",
+    "model_repository": "LibertAIDAI/GLM-5.3-NVFP4",
+    "model_revision": "653d98214a487d78c1b2a37167b56764b6240080",
+    "reviewed_on": "2026-09-27",
+    "sources": [
+      {
+        "title": "Published model revisions and root hashes",
+        "url": "https://github.com/edgelesssys/privatemode-public/blob/9995223e02461fef93742fe9921dc03f7cc4f1a7/models.yaml"
+      },
+      {
+        "title": "Published serving configuration",
+        "url": "https://github.com/edgelesssys/privatemode-public/blob/9995223e02461fef93742fe9921dc03f7cc4f1a7/deployment.yaml"
+      },
+      {
+        "title": "Pinned weight configuration",
+        "url": "https://huggingface.co/LibertAIDAI/GLM-5.3-NVFP4/resolve/653d98214a487d78c1b2a37167b56764b6240080/config.json"
+      }
+    ],
+    "notes": "NVFP4 quantized weight groups; exclusions retain higher precision."
+  },
+  {
+    "provider": "privatemode",
+    "model_id": "z-ai/glm-5.3-flash",
+    "upstream_id": "glm-5.3-flash",
+    "quantization": "fp8",
+    "label": "FP8",
+    "weight_formats": [
+      "fp8"
+    ],
+    "kv_cache_dtype": "fp8",
+    "model_repository": "zai-org/GLM-5.3-Flash",
+    "model_revision": "04c4e9e95c5da8862dced7e5056455116f83a7e0",
+    "reviewed_on": "2026-09-27",
+    "sources": [
+      {
+        "title": "Published model revisions and root hashes",
+        "url": "https://github.com/edgelesssys/privatemode-public/blob/9995223e02461fef93742fe9921dc03f7cc4f1a7/models.yaml"
+      },
+      {
+        "title": "Published serving configuration",
+        "url": "https://github.com/edgelesssys/privatemode-public/blob/9995223e02461fef93742fe9921dc03f7cc4f1a7/deployment.yaml"
+      },
+      {
+        "title": "Pinned weight configuration",
+        "url": "https://huggingface.co/zai-org/GLM-5.3-Flash/resolve/04c4e9e95c5da8862dced7e5056455116f83a7e0/config.json"
+      }
+    ],
+    "notes": "Official FP8 weight configuration; excluded attention, shared-expert and vision modules retain higher precision."
+  },
+  {
+    "provider": "tinfoil",
+    "model_id": "deepseek/deepseek-v4.1-flash",
+    "upstream_id": "deepseek-v4-1-flash",
+    "quantization": "fp8",
+    "label": "FP8 + FP4 experts",
+    "weight_formats": [
+      "fp8",
+      "fp4"
+    ],
+    "kv_cache_dtype": null,
+    "model_repository": "deepseek-ai/DeepSeek-V4.1-Flash",
+    "model_revision": "dba1be0a40aa45a94ad051997016db3960a90277",
+    "reviewed_on": "2026-09-27",
+    "sources": [
+      {
+        "title": "Published serving configuration",
+        "url": "https://github.com/tinfoilsh/confidential-deepseek-v4-1-flash/blob/c195341d2352c174220f85ebdfc8e4146c22e0e7/tinfoil-config.yml",
+        "sha256": "53382e1fa073dd2ac1b6b6cbbd777240a8175942412cf5166a320c0c201be5d6"
+      },
+      {
+        "title": "Published model router",
+        "url": "https://github.com/tinfoilsh/confidential-model-router/blob/d6439903d66531e96e81666798fd954f94ca7c36/config.yml"
+      },
+      {
+        "title": "Pinned weight configuration",
+        "url": "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/resolve/dba1be0a40aa45a94ad051997016db3960a90277/config.json"
+      }
+    ],
+    "notes": "Pinned quantization config declares FP8 with FP4 expert weights. BF16 default dtype does not describe the quantized weights."
+  },
+  {
+    "provider": "tinfoil",
+    "model_id": "google/gemma-4-31b-it",
+    "upstream_id": "gemma4-31b",
+    "quantization": "bf16",
+    "label": "BF16",
+    "weight_formats": [
+      "bf16"
+    ],
+    "kv_cache_dtype": null,
+    "model_repository": "google/gemma-4-31B-it",
+    "model_revision": "842da3794eaa0b77d5f08bae87a17459d91ff475",
+    "reviewed_on": "2026-09-27",
+    "sources": [
+      {
+        "title": "Published serving configuration",
+        "url": "https://github.com/tinfoilsh/confidential-gemma4-31b/blob/dc843335b9321cba44672c3035d1fe00a610afda/tinfoil-config.yml",
+        "sha256": "f4a04f41cc8089e9f1144cd6ed99df7c39b2facc339fabd1018d964af22537b7"
+      },
+      {
+        "title": "Published model router",
+        "url": "https://github.com/tinfoilsh/confidential-model-router/blob/d6439903d66531e96e81666798fd954f94ca7c36/config.yml"
+      },
+      {
+        "title": "Pinned weight configuration",
+        "url": "https://huggingface.co/google/gemma-4-31B-it/resolve/842da3794eaa0b77d5f08bae87a17459d91ff475/config.json"
+      }
+    ],
+    "notes": "Pinned model configuration declares BF16, with no weight quantization override in the reviewed serving command. Draft model precision is separate."
+  },
+  {
+    "provider": "tinfoil",
+    "model_id": "meta-llama/llama-3.3-70b-instruct",
+    "upstream_id": "llama3-3-70b",
+    "quantization": "fp8",
+    "label": "FP8",
+    "weight_formats": [
+      "fp8"
+    ],
+    "kv_cache_dtype": null,
+    "model_repository": "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic",
+    "model_revision": "984c96b73bcf6a675945bac6382b9ed551e5d42b",
+    "reviewed_on": "2026-09-27",
+    "sources": [
+      {
+        "title": "Published serving configuration",
+        "url": "https://github.com/tinfoilsh/confidential-llama3-3-70b/blob/6fcf3241c7fff3745804bca9323909cc41143148/tinfoil-config.yml",
+        "sha256": "8fe283b2e88ca19ac7fd603a3a392ba05503a74a1e98fab06025c449f4bccfda"
+      },
+      {
+        "title": "Published model router",
+        "url": "https://github.com/tinfoilsh/confidential-model-router/blob/d6439903d66531e96e81666798fd954f94ca7c36/config.yml"
+      },
+      {
+        "title": "Pinned weight configuration",
+        "url": "https://huggingface.co/RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic/resolve/984c96b73bcf6a675945bac6382b9ed551e5d42b/config.json"
+      }
+    ],
+    "notes": "FP8 weight groups with dynamic FP8 activations; excluded layers retain higher precision."
+  },
+  {
+    "provider": "tinfoil",
+    "model_id": "moonshotai/kimi-k3",
+    "upstream_id": "kimi-k3",
+    "quantization": "mxfp4",
+    "label": "MXFP4 (mixed)",
+    "weight_formats": [
+      "mxfp4"
+    ],
+    "kv_cache_dtype": "fp8",
+    "model_repository": "moonshotai/Kimi-K3",
+    "model_revision": "a590ce090cb049c93a33dfe8c208ec652aa20503",
+    "reviewed_on": "2026-09-27",
+    "sources": [
+      {
+        "title": "Published serving configuration",
+        "url": "https://github.com/tinfoilsh/confidential-kimi-k3/blob/88bc54870c41a58e2ef4e659950ef32b20e4ed6d/tinfoil-config.yml",
+        "sha256": "fb50932f50b362f2ce25bf125a8496b2546af5124962f9c0f63490e845214122"
+      },
+      {
+        "title": "Published model router",
+        "url": "https://github.com/tinfoilsh/confidential-model-router/blob/d6439903d66531e96e81666798fd954f94ca7c36/config.yml"
+      },
+      {
+        "title": "Pinned weight configuration",
+        "url": "https://huggingface.co/moonshotai/Kimi-K3/resolve/a590ce090cb049c93a33dfe8c208ec652aa20503/config.json"
+      }
+    ],
+    "notes": "MXFP4 packed weight groups in the text model; attention, shared experts and vision components include higher-precision exclusions."
+  },
+  {
+    "provider": "tinfoil",
+    "model_id": "openai/gpt-oss-120b",
+    "upstream_id": "gpt-oss-120b",
+    "quantization": "mxfp4",
+    "label": "MXFP4 (mixed)",
+    "weight_formats": [
+      "mxfp4"
+    ],
+    "kv_cache_dtype": null,
+    "model_repository": "openai/gpt-oss-120b",
+    "model_revision": "b5c939de8f754692c1647ca79fbf85e8c1e70f8a",
+    "reviewed_on": "2026-09-27",
+    "sources": [
+      {
+        "title": "Published serving configuration",
+        "url": "https://github.com/tinfoilsh/confidential-gpt-oss-120b/blob/ac69e7ae6e827dd4ab08bd743adda68deabc8b0b/tinfoil-config.yml",
+        "sha256": "934beeeec474f89c254bfb5978bec256929eb7a61dfecdcfc182342216a77aa0"
+      },
+      {
+        "title": "Published model router",
+        "url": "https://github.com/tinfoilsh/confidential-model-router/blob/d6439903d66531e96e81666798fd954f94ca7c36/config.yml"
+      },
+      {
+        "title": "Pinned weight configuration",
+        "url": "https://huggingface.co/openai/gpt-oss-120b/resolve/b5c939de8f754692c1647ca79fbf85e8c1e70f8a/config.json"
+      }
+    ],
+    "notes": "MXFP4 weight quantization; attention, routers, embeddings and output head are excluded."
+  },
+  {
+    "provider": "tinfoil",
+    "model_id": "z-ai/glm-5.3",
+    "upstream_id": "glm-5-3",
+    "quantization": "nvfp4",
+    "label": "NVFP4",
+    "weight_formats": [
+      "nvfp4"
+    ],
+    "kv_cache_dtype": "fp8_e4m3",
+    "model_repository": "Inferact/GLM-5.3-NVFP4",
+    "model_revision": "ce67b36f3669192b5bb233819f0fda6c8a9837f8",
+    "reviewed_on": "2026-09-27",
+    "sources": [
+      {
+        "title": "Published serving configuration",
+        "url": "https://github.com/tinfoilsh/confidential-glm5-3-nvfp4/blob/4ef4be53cabe1a50108bb92ad67d6c336eaa0a9b/tinfoil-config.yml",
+        "sha256": "f51694f90bc95cce3be6a76d7bb2763fbe8c6f15608e976186c7ab89ce4daa3a"
+      },
+      {
+        "title": "Published model router",
+        "url": "https://github.com/tinfoilsh/confidential-model-router/blob/d6439903d66531e96e81666798fd954f94ca7c36/config.yml"
+      },
+      {
+        "title": "Pinned weight configuration",
+        "url": "https://huggingface.co/Inferact/GLM-5.3-NVFP4/resolve/ce67b36f3669192b5bb233819f0fda6c8a9837f8/config.json"
+      }
+    ],
+    "notes": "NVFP4 quantized weight groups; exclusions retain higher precision."
+  },
+  {
+    "provider": "tinfoil",
+    "model_id": "z-ai/glm-5.3-flash",
+    "upstream_id": "glm-5-3-flash",
+    "quantization": "nvfp4",
+    "label": "NVFP4 + FP8",
+    "weight_formats": [
+      "nvfp4",
+      "fp8"
+    ],
+    "kv_cache_dtype": "fp8",
+    "model_repository": "RedHatAI/GLM-5.3-Flash-NVFP4",
+    "model_revision": "240131d6a447c8d89acd428c5ddfc85598651744",
+    "reviewed_on": "2026-09-27",
+    "sources": [
+      {
+        "title": "Published serving configuration",
+        "url": "https://github.com/tinfoilsh/confidential-glm5-3-flash/blob/9326fe5d3d33af08af4769e57fb941308a9771ce/tinfoil-config.yml",
+        "sha256": "a49b602685820573a9d9613de4b45b420d55b8b45ceda6479df3d7e683031574"
+      },
+      {
+        "title": "Published model router",
+        "url": "https://github.com/tinfoilsh/confidential-model-router/blob/d6439903d66531e96e81666798fd954f94ca7c36/config.yml"
+      },
+      {
+        "title": "Pinned weight configuration",
+        "url": "https://huggingface.co/RedHatAI/GLM-5.3-Flash-NVFP4/resolve/240131d6a447c8d89acd428c5ddfc85598651744/config.json"
+      }
+    ],
+    "notes": "NVFP4 expert groups in layers 3-44; FP8 expert group in layer 45. Excluded layers retain higher precision."
+  }
+]

@@ -197,6 +197,7 @@
           <th>Input</th>
           <th>Cached input</th>
           <th>Output</th>
+          <th>Weight format</th>
           <th>TR router attested</th>
           <th>Provider policy</th>
         </tr>
@@ -208,6 +209,19 @@
           <td>{{ endpoint.prompt_price }}</td>
           <td>{{ endpoint.cached_prompt_price }}</td>
           <td>{{ endpoint.completion_price }}</td>
+          <td>
+            {% if endpoint.precision %}
+            <details>
+              <summary>{{ endpoint.precision.label }}</summary>
+              <p>Published serving configuration, reviewed {{ endpoint.precision.reviewed_on }}. Per-request precision is not verified.</p>
+              <p>{{ endpoint.precision.notes }}</p>
+              <p>KV cache: {{ endpoint.precision.kv_cache_dtype or 'unspecified' }}.</p>
+              {% for source in endpoint.precision.sources %}
+              <p><a href="{{ source.url }}" target="_blank" rel="noopener noreferrer">{{ source.title }}</a></p>
+              {% endfor %}
+            </details>
+            {% else %}Unknown{% endif %}
+          </td>
           <td>{% if endpoint.attested_gateway %}<span class="pill good">yes</span>{% else %}no{% endif %}</td>
           <td>
             {{ provider_privacy_badges(endpoint) }}

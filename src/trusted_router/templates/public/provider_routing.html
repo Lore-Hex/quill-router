@@ -71,7 +71,15 @@
       </tbody>
     </table>
   </div>
-  <p style="margin-top:12px"><code>quantizations</code>, <code>enforce_distillable_text</code>, non-token <code>max_price</code> units, and <code>sort: "exacto"</code> return <code>501 not_supported_in_alpha</code>. Quantization filtering requires evidence binding a serving model to its precision. Workload attestation alone does not establish that, including for confidential providers.</p>
+  <p style="margin-top:12px"><code>quantizations</code>, <code>enforce_distillable_text</code>, non-token <code>max_price</code> units, and <code>sort: "exacto"</code> return <code>501 not_supported_in_alpha</code>. Quantization metadata is available for reviewed endpoints; filtering by it is not implemented.</p>
+</section>
+
+<section class="status-section" style="margin-top:48px" id="precision-metadata">
+  <h2>Published weight formats</h2>
+  <p>Model pages and endpoint JSON include reviewed weight formats for Tinfoil, Privatemode, NEAR AI, and Chutes deployments. The same model can have different formats at different providers. Unreviewed endpoints return <code>null</code> and display Unknown.</p>
+  <p><code>GET /v1/models/{author}/{slug}/endpoints</code> returns <code>quantization</code> and <code>trustedrouter.precision</code>. The full catalog includes these under <code>trustedrouter.endpoints[].quantization</code> and <code>trustedrouter.endpoints[].precision</code>.</p>
+  <p>The precision object links the published serving code and pinned model configuration, with a review date and model revision. <code>quantization</code> names the primary format; <code>weight_formats</code>, <code>label</code>, and <code>notes</code> describe mixed formats and higher-precision exclusions. <code>kv_cache_dtype</code> is separate: an FP8 cache does not imply FP8 weights.</p>
+  <p>This is a reviewed configuration snapshot, not per-request proof of the loaded weights. <code>evidence_type</code> is <code>published_serving_config</code> and <code>runtime_verified</code> is false. Provider changes require a new review; workload attestation alone does not establish serving precision.</p>
 </section>
 
 <section class="status-section" style="margin-top:48px" id="performance-preferences">

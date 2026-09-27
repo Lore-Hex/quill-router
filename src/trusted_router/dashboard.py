@@ -110,6 +110,7 @@ from trusted_router.provider_locations import (
     provider_inference_locations,
     provider_model_locations,
 )
+from trusted_router.provider_precision import endpoint_precision_metadata
 from trusted_router.seo_catalog import seo_catalog_evidence
 from trusted_router.seo_meta import (
     SEO_TITLE_MAX_LENGTH,
@@ -5355,6 +5356,7 @@ def _model_detail_view(
                 "provider_e2ee": endpoint_e2ee(endpoint) if ep_provider else None,
                 "provider_policy": endpoint_provider_policy(endpoint) if ep_provider else "",
                 "endpoint_id": endpoint.id,
+                "precision": endpoint_precision_metadata(endpoint),
             }
         )
     # Sort cheapest-first by total prompt+completion price; ties broken by

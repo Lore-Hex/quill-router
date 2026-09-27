@@ -50,6 +50,7 @@ from trusted_router.openai_service_tiers import (
 )
 from trusted_router.provider_lifecycle import provider_catalog_revision, provider_pricing_schedule
 from trusted_router.provider_locations import inference_location_metadata
+from trusted_router.provider_precision import endpoint_precision_metadata, endpoint_quantization
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.routing import catalog_endpoint_candidates, provider_route_preferences
 
@@ -530,6 +531,7 @@ def register_catalog_routes(router: APIRouter) -> None:
                     "pricing": _endpoint_pricing_payload(endpoint),
                     "usage_type": endpoint.usage_type,
                     "upstream_id": endpoint.upstream_id,
+                    "quantization": endpoint_quantization(endpoint),
                     "prompt_price_microdollars_per_million_tokens": (
                         endpoint.prompt_price_microdollars_per_million_tokens
                     ),
@@ -543,6 +545,7 @@ def register_catalog_routes(router: APIRouter) -> None:
                         )
                     ),
                     "trustedrouter": {
+                        "precision": endpoint_precision_metadata(endpoint),
                         "reasoning_modes": reasoning_modes(endpoint.provider, endpoint.model_id),
                         "attested_gateway": PROVIDERS[endpoint.provider].attested_gateway,
                         "stores_content": endpoint_stores_content(endpoint),

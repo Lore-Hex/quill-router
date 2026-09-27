@@ -65,10 +65,24 @@ concurrent reservations and BYOK exclusion using the exact production DML.
 
 ## Precision evidence
 
-No currently integrated attestation has been established to bind model weights,
-revision and serving precision. A TEE flag or verified TLS/workload identity is
-not sufficient to invent that metadata. `provider.quantizations` remains an
-explicit 501 until a provider supplies verifiable precision evidence.
+Reviewed per-endpoint weight formats live in `data/provider_precision.json`,
+separate from automated pricing refreshes. Exact provider, canonical model and
+upstream ID must match. The catalog and model pages expose the primary
+quantization, mixed-weight details, KV-cache dtype, pinned model revision,
+published serving-code sources and review date. Unknown routes remain unknown.
+All reads are cached local lookups, with no inference-path network calls.
+
+These are published configuration snapshots, not per-request proofs of model
+weights or precision. `runtime_verified` is false. A verified workload/TLS
+identity alone does not establish weight identity. `provider.quantizations`
+filtering remains an explicit 501; this change supplies metadata only.
+
+To update evidence, inspect the serving code and its pinned weight config at
+the linked revisions. Quantization configs (including nested text configs)
+take precedence over a default BF16 dtype; KV-cache flags describe cache only.
+Check mixed quantization groups and exclusions. Chutes sources are mutable;
+record the reviewed source SHA-256 and exact weight revision. Refresh the
+review date only after inspection, never from the price-ingest job.
 
 ## Release and rollback
 
