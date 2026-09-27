@@ -364,13 +364,12 @@ jobs:
           echo '### Public snapshot worker not updated' >> "$GITHUB_STEP_SUMMARY"
           echo 'The worker sync failed. The previous worker was retained or rollback was attempted; check its service and five snapshot products before declaring it healthy. Control-plane success is not worker-publication success.' >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Provision bounded regional quota ledger
-        # Idempotent. The table and fixed single-cluster app profiles must
-        # exist before any serving revision can enable the workspace canary.
-        run: bash scripts/deploy/regional_quota_ledger.sh
-
-      - name: Provision spend-lease Bigtable ledger
-        run: bash scripts/deploy/spend_lease_ledger.sh
+      - name: Assert the regional quota and spend-lease ledgers are drained
+        # Read-only. The next serving revision carries no ledger capability, so
+        # before any revision changes this proves every serving revision already
+        # has issuance off and both reconcilers report empty passes. A missing
+        # reconciler schedule means the ledgers were retired by an earlier run.
+        run: bash scripts/deploy/regional_quota_drain_gate.sh
 
   sync-runtime-secrets:
     # Validate the small set of runtime credentials while the image build and
@@ -969,7 +968,7 @@ jobs:
             echo "extra=" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Ramp secondaries serially while reconciler deploys
+      - name: Ramp secondaries serially
         env:
           PREV_EU: ${{ needs.deploy.outputs.previous_europe_west4_revision }}
           PREV_US_EAST4: ${{ needs.deploy.outputs.previous_us_east4_revision }}
@@ -982,6 +981,12 @@ jobs:
           TR_STAGED_WATCHDOG_SKIP_BASELINE: ${{ inputs.hotfix == true && '1' || '0' }}
           TR_BILLING_5XX_GATE_SKIP: ${{ inputs.hotfix == true && 'true' || 'false' }}
         run: bash scripts/deploy/ramp_secondaries.sh
+
+      - name: Retire the regional quota and spend-lease reconciler workers
+        # Every region now serves (or holds) a revision without ledger
+        # capability, so the once-a-minute workers have nothing left to drain.
+        # Idempotent: a schedule or job that is already gone is the goal state.
+        run: bash scripts/deploy/retire_ledger_workers.sh
 
       - name: Deploy synthetic monitor Cloud Run Job
         # Re-deploys the synthetic monitor Cloud Run Job + Cloud Scheduler

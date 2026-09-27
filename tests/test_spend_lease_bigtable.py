@@ -94,27 +94,6 @@ def _gcloud_calls(run: HarnessRun, *prefix: str) -> list[list[str]]:
     return [call for call in run.calls if call[: len(expected)] == expected]
 
 
-def _assert_workflow_order(workflow: str) -> None:
-    migrate_schema = workflow.split("\n  migrate-schema:\n", 1)[1].split(
-        "\n  sync-runtime-secrets:\n", 1
-    )[0]
-    ledger_scripts = re.findall(
-        r"^        run: bash scripts/deploy/([a-z_]+_ledger\.sh)$",
-        migrate_schema,
-        re.MULTILINE,
-    )
-    regional = ledger_scripts.index("regional_quota_ledger.sh")
-    assert ledger_scripts[regional + 1] == "spend_lease_ledger.sh"
-
-
-def _assert_orchestrator_order(orchestrator: str) -> None:
-    deploy_scripts = re.findall(
-        r'bash "\$\{SCRIPT_DIR\}/deploy/([^" ]+\.sh)"', orchestrator
-    )
-    regional = deploy_scripts.index("regional_quota_ledger.sh")
-    assert deploy_scripts[regional + 1] == "spend_lease_ledger.sh"
-
-
 def test_fresh_run_creates_latest_version_only_family_without_maxage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -275,24 +254,6 @@ def test_second_run_creates_nothing_and_prints_profile_environment(
         "us-central1=tr-spend-us-central1,"
         "europe-west4=tr-spend-europe-west4"
     ) in run.stdout
-
-
-def test_deploy_workflow_runs_spend_lease_immediately_after_regional_quota() -> None:
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text()
-
-    _assert_workflow_order(workflow)
-    spend_step = workflow.split(
-        "      - name: Provision spend-lease Bigtable ledger\n", 1
-    )[1].split("\n      - name:", 1)[0]
-    assert "env:" not in spend_step
-    assert "        run: bash scripts/deploy/spend_lease_ledger.sh" in spend_step
-
-
-def test_deploy_gcp_invokes_spend_lease_immediately_after_regional_quota() -> None:
-    orchestrator = (ROOT / "scripts/deploy-gcp.sh").read_text()
-
-    _assert_orchestrator_order(orchestrator)
-    assert 'TR_SPEND_LEASE_CLUSTER_MAP=' not in orchestrator
 
 
 def test_deploy_lib_defaults_spend_lease_cluster_map_and_honours_override() -> None:

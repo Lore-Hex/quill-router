@@ -424,7 +424,10 @@ def test_custom_worker_name(tmp_path: Path, override: str) -> None:
     assert f"run jobs describe {job}" in (tmp_path / "calls").read_text()
 
 
-@pytest.mark.parametrize("script", ["rollout.sh", "worker"])
+# rollout.sh no longer enforces the accounting floor: capability is retired
+# (2026-09-27), so no serving revision settles regional holds. The worker
+# script keeps its floor until it is deleted with the ledger.
+@pytest.mark.parametrize("script", ["worker"])
 @pytest.mark.parametrize("config", [{"config": {}}, {"config": {"Labels": {"com.trustedrouter.accounting_protocol": "1"}}}])
 def test_overridden_incompatible_image_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script: str, config: dict[str, Any],

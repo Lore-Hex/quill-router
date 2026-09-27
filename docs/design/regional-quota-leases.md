@@ -151,6 +151,31 @@ uses the exact Spanner path until that region has an isolated local ledger.
 
 ## Rollout gates
 
+**Retired 2026-09-27 (step 2).** `scripts/deploy/rollout.sh` now pins
+`TR_REGIONAL_QUOTA_LEASES_ENABLED=false`, refuses an explicit `true`, and
+renders none of the ledger settings (cohort, shards, TTL, tables, cluster
+maps, app profiles): the store opens a Bigtable ledger client whenever an
+app-profile map is present, capability or not, so their absence is what keeps
+Bigtable out of every serving process. Two release steps replace the
+provisioners and the background reconciler deploys:
+
+- `scripts/deploy/regional_quota_drain_gate.sh` runs in `migrate-schema`,
+  before any revision changes. It proves every serving revision (held regions
+  included) already carries `TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED=false`
+  and that the last five passes of both reconcilers were empty and recent
+  (`inspected=0 backlog=0 remaining=0 errors=0`; `candidates=0 open=0
+  dead=0 errors=0`). A missing reconciler schedule means the ledgers were
+  retired by an earlier run and the gate is a no-op.
+- `scripts/deploy/retire_ledger_workers.sh` runs after the secondary ramp and
+  deletes both Cloud Scheduler jobs, then every
+  `trusted-router-regional-quota-reconciler-*` and
+  `trusted-router-spend-lease-reconciler-*` Cloud Run job in every
+  control-plane region. It is idempotent and stays in the release until the
+  scripts that created those resources are deleted with the ledger code.
+
+The provisioner and worker scripts remain on disk, unwired, until then. The
+description below is the pre-retirement design.
+
 Two independent flags make a rolling deploy safe:
 
 - `TR_REGIONAL_QUOTA_LEASES_ENABLED` is fleet capability. It keeps the fixed

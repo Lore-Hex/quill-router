@@ -1233,18 +1233,10 @@ _INTERNAL_SURFACE_LEGACY_ENV = {
     "TR_ANALYTICS_OUTBOX_ENABLED": "true",
     "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED": "true",
     "TR_USER_MODELS_DISPATCH_ENABLED": "true",
-    "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true",
+    # The legacy service carries only the two (false) markers since the
+    # 2026-09-27 ledger retirement; no ledger setting exists on it any more.
+    "TR_REGIONAL_QUOTA_LEASES_ENABLED": "false",
     "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "false",
-    "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS": "workspace-pilot",
-    "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS": "120",
-    "TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS": "5000000",
-    "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS": "5000",
-    "TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT": "16",
-    "TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS": "4",
-    "TR_REGIONAL_QUOTA_BIGTABLE_TABLE": "trustedrouter-regional-quota",
-    "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES": (
-        "us-central1=tr-quota-us-central1"
-    ),
     "TR_FEDERATION_HOME_BASE_URL": "https://trustedrouter.com/v1",
     "TR_FEDERATION_DEFERRED_SETTLEMENT_ENABLED": "true",
 }
@@ -1503,9 +1495,9 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
             "TR_GENERATION_RECORDS_ENABLED": "false",
             "TR_BIGTABLE_MIRROR_WRITES_ENABLED": "true",
             "TR_ANALYTICS_READ_MODE": "bigtable",
-            # Generic rollout safeguards exercise the default issuance-ON path.
             "TR_DEPLOY_RELEASE_ID": "abc12345",
-            "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true",
+            # Lease capability is retired (2026-09-27): rollout.sh pins it off and
+            # refuses an explicit true, so the generic fixture sets nothing here.
             # No dispatch issuance input: exercise rollout.sh's code pin.
             # Reuse the stateful legacy-service tag behavior in the harness.
             "HARNESS_PUBLIC_SURFACE_SMOKE": "1",
