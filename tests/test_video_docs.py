@@ -10,6 +10,7 @@ def test_video_docs_are_public_discoverable_and_truthful(client: TestClient) -> 
     assert response.status_code == 200
     assert "minimax/hailuo-3" in response.text
     assert "minimax/h3-max" in response.text
+    assert "bytedance/seedance-2.5" in response.text
     assert "MiniMax H3 Max" in response.text
     assert "Hailuo 3, also called H3" in response.text
     assert "google/veo-3.1-fast" in response.text

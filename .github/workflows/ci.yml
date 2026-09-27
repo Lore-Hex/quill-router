@@ -29,6 +29,74 @@ jobs:
       - name: Mypy
         run: uv run mypy
 
+  spanner-emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SPANNER_EMULATOR_HOST: 127.0.0.1:9010
+      BIGTABLE_EMULATOR_HOST: 127.0.0.1:8086
+      TR_CONFORMANCE_EMULATOR_SCHEMA: "1"
+      TR_SPANNER_POOL_SIZE: "2"
+    services:
+      spanner:
+        image: gcr.io/cloud-spanner-emulator/emulator@sha256:c6f3402f2599684f295a0fdefb6fbbbfb18a0e43e309ff5456ccb452a4570a79
+        ports:
+          - 9010:9010
+          - 9020:9020
+      bigtable:
+        image: gcr.io/google.com/cloudsdktool/google-cloud-cli@sha256:7617d937e9360d769de4ef66266a8caae503c1dbbd050c93404d3f30045c5125
+        # The SDK image's default bash stays alive while the step below starts
+        # the emulator. GitHub services have no `command` field.
+        options: --interactive --tty
+        ports:
+          - 8086:8086
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+      - name: Start Bigtable emulator in the service container
+        run: |
+          docker exec -d ${{ job.services.bigtable.id }} /bin/sh -c \
+            'exec gcloud beta emulators bigtable start --host-port=0.0.0.0:8086 --quiet > /tmp/bigtable-emulator.log 2>&1'
+      - name: Sync
+        run: uv sync --frozen
+      - name: Wait for both emulators (fail if unavailable)
+        run: |
+          uv run python - <<'PY'
+          import socket
+          import time
+          deadline = time.monotonic() + 60
+          pending = {9010, 9020, 8086}
+          while pending and time.monotonic() < deadline:
+              for port in tuple(pending):
+                  try:
+                      with socket.create_connection(("127.0.0.1", port), timeout=1):
+                          pending.remove(port)
+                  except OSError:
+                      pass
+              if pending:
+                  time.sleep(0.5)
+          assert not pending, f"Emulator ports unavailable: {sorted(pending)}"
+          PY
+      # Serial: Spanner emulator locks the entire database for read-write
+      # transactions. Each conformance test provisions disposable resources;
+      # SQL acceptance shares its own database and always rolls back DML.
+      - name: Native GoogleSQL conformance
+        run: uv run pytest -q -rsx tests/conformance -k spanner-emulator
+      - name: Production SQL acceptance and schema drift
+        if: ${{ !cancelled() }}
+        run: >-
+          uv run pytest -q -rsx
+          tests/conformance/test_spanner_schema.py
+          tests/conformance/test_spanner_sql_acceptance.py
+      - name: Emulator logs
+        if: failure()
+        run: |
+          docker logs ${{ job.services.spanner.id }}
+          docker logs ${{ job.services.bigtable.id }}
+          docker exec ${{ job.services.bigtable.id }} cat /tmp/bigtable-emulator.log || true
+
   frontend:
     runs-on: ubuntu-latest
     steps:

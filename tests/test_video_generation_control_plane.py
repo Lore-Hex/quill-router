@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
+import pytest
 from fastapi.testclient import TestClient
 
 from trusted_router.catalog import (
@@ -18,6 +19,7 @@ from trusted_router.security import lookup_hash_api_key
 from trusted_router.storage import STORE
 
 VIDEO_MODELS = {
+    "bytedance/seedance-2.5",
     "bytedance/seedance-2.0",
     "bytedance/seedance-2.0-fast",
     "google/veo-3.1",
@@ -156,17 +158,24 @@ def test_video_router_rejects_text_models_and_honors_provider_filters() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("model_id", "provider", "resolution"),
+    [("minimax/hailuo-3", "atlas-cloud", "2K"), ("bytedance/seedance-2.5", "venice", "480p")],
+)
 def test_video_authorize_and_settle_bill_exact_fixed_microdollars(
     client: TestClient,
     inference_key: str,
+    model_id: str,
+    provider: str,
+    resolution: str,
 ) -> None:
     quote = 850_500
-    auth = _authorize_video(client, inference_key, quote=quote)
+    auth = _authorize_video(client, inference_key, model=model_id, quote=quote)
     authorization = STORE.get_gateway_authorization(str(auth["authorization_id"]))
     assert authorization is not None
     assert authorization.estimated_microdollars == quote
     assert authorization.additional_cost_reservation_microdollars == quote
-    assert auth["provider"] == "atlas-cloud"
+    assert auth["provider"] == provider
     assert auth["usage_type"] == "Credits"
 
     response = client.post(
@@ -178,12 +187,12 @@ def test_video_authorize_and_settle_bill_exact_fixed_microdollars(
             "elapsed_seconds": 2.5,
             "finish_reason": "completed",
             "route_type": "videos",
-            "selected_model": "minimax/hailuo-3",
+            "selected_model": model_id,
             "selected_endpoint": auth["endpoint_id"],
             "additional_cost_microdollars": quote,
             "video_input_mode": "image",
             "video_duration_seconds": 5,
-            "video_resolution": "2K",
+            "video_resolution": resolution,
             "video_aspect_ratio": "source",
             "video_generate_audio": True,
         },
@@ -193,17 +202,17 @@ def test_video_authorize_and_settle_bill_exact_fixed_microdollars(
     generations = list(STORE.generation_store.generations.values())
     assert len(generations) == 1
     assert generations[0].total_cost_microdollars == quote
-    assert generations[0].model == "minimax/hailuo-3"
+    assert generations[0].model == model_id
     assert generations[0].route_type == "videos"
     assert generations[0].video_input_mode == "image"
     assert generations[0].video_duration_seconds == 5
-    assert generations[0].video_resolution == "2K"
+    assert generations[0].video_resolution == resolution
     assert generations[0].video_aspect_ratio == "source"
     assert generations[0].video_generate_audio is True
     benchmark = STORE.provider_benchmark_samples(date=None, limit=10)[0]
     assert benchmark.route_type == "videos"
     assert benchmark.video_duration_seconds == 5
-    assert benchmark.video_resolution == "2K"
+    assert benchmark.video_resolution == resolution
 
 
 def test_video_settlement_cannot_exceed_content_free_quote(

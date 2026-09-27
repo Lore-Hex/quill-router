@@ -12,6 +12,30 @@ import pytest
 
 from scripts import check_price_coverage
 from scripts.check_price_coverage import audit
+from trusted_router.provider_manifest_policy import (
+    EXPIRED_PROVIDER_MANIFEST,
+    provider_manifest_canary_quarantine_valid_until,
+    provider_manifest_valid_until,
+)
+
+
+def _one_day_past_deadline(slug: str, raw: dict) -> dt.datetime:
+    """One day past a committed manifest's deadline, found the way the audit finds it.
+
+    A deadline is generated_at plus 14 days unless a published promotion
+    (pricing_valid_until) ends first, and a manifest whose every route failed
+    its canary is aged by its quarantine deadline instead. The hourly refresh
+    moves generated_at, so tests that read committed manifests must not assume
+    which bound applies.
+    """
+    for deadline_of in (
+        provider_manifest_valid_until,
+        provider_manifest_canary_quarantine_valid_until,
+    ):
+        deadline = deadline_of(slug, raw, max_age_days=14)
+        if deadline is not None and deadline != EXPIRED_PROVIDER_MANIFEST:
+            return deadline + dt.timedelta(days=1)
+    raise AssertionError(f"{slug}.json has no deadline the coverage audit would use")
 
 _NEW_AUTOMATIC_FEED_MODELS = {
     "aion-labs/aion-3.0",
@@ -271,11 +295,10 @@ def test_stale_fallback_manifests_are_age_gated_even_with_live_scrapers() -> Non
     raw = json.loads(
         check_price_coverage.MANIFEST_DIR.joinpath("upstage.json").read_text(encoding="utf-8")
     )
-    generated = dt.datetime.fromisoformat(raw["generated_at"].replace("Z", "+00:00"))
 
     warnings, _info, hard_failures = check_price_coverage._run_audit(
         14,
-        generated + dt.timedelta(days=15),
+        _one_day_past_deadline("upstage", raw),
         check_model_discovery=False,
     )
 
@@ -284,15 +307,43 @@ def test_stale_fallback_manifests_are_age_gated_even_with_live_scrapers() -> Non
     assert warning not in hard_failures
 
 
+@pytest.mark.parametrize("promotion", [True, False], ids=["promotion-ends-first", "fourteen-days"])
+def test_a_fully_quarantined_manifest_is_aged_like_the_audit_ages_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, promotion: bool
+) -> None:
+    raw = json.loads(
+        check_price_coverage.MANIFEST_DIR.joinpath("upstage.json").read_text(encoding="utf-8")
+    )
+    # Regenerated after the promotion window opened, as the hourly refresh does.
+    raw["generated_at"] = "2026-09-27T16:55:00Z"
+    raw["pricing_valid_until"] = "2026-10-10T00:00:00+00:00"
+    if not promotion:
+        del raw["pricing_valid_until"]
+    for row in raw["models"]:
+        row["routable"] = False
+        row["routable_reason"] = "provider-canary-failed"
+    (tmp_path / "upstage.json").write_text(json.dumps(raw), encoding="utf-8")
+    monkeypatch.setattr(check_price_coverage, "MANIFEST_DIR", tmp_path)
+
+    warning, covered = check_price_coverage._audit_fallback_manifest(
+        "upstage",
+        max_age_days=14,
+        now=_one_day_past_deadline("upstage", raw),
+    )
+
+    assert warning is not None
+    assert "is 15d stale" in warning
+    assert covered is None
+
+
 def test_discovery_only_non_runtime_manifest_warns_without_global_freeze() -> None:
     raw = json.loads(
         check_price_coverage.MANIFEST_DIR.joinpath("stepfun.json").read_text(encoding="utf-8")
     )
-    generated = dt.datetime.fromisoformat(raw["generated_at"].replace("Z", "+00:00"))
 
     warnings, _info, hard_failures = check_price_coverage._run_audit(
         14,
-        generated + dt.timedelta(days=15),
+        _one_day_past_deadline("stepfun", raw),
         check_model_discovery=False,
     )
 
@@ -308,11 +359,10 @@ def test_nvidia_runtime_fallback_manifest_is_age_gated_provider_locally() -> Non
     raw = json.loads(
         check_price_coverage.MANIFEST_DIR.joinpath("nvidia-nim.json").read_text(encoding="utf-8")
     )
-    generated = dt.datetime.fromisoformat(raw["generated_at"].replace("Z", "+00:00"))
 
     warnings, _info, hard_failures = check_price_coverage._run_audit(
         14,
-        generated + dt.timedelta(days=15),
+        _one_day_past_deadline("nvidia-nim", raw),
         check_model_discovery=False,
     )
 

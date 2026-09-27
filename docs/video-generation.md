@@ -9,6 +9,7 @@ provider. TrustedRouter does not send video requests through OpenRouter.
 
 | TrustedRouter model | Family | Default |
 |---|---|---|
+| `bytedance/seedance-2.5` | Seedance 2.5 | 5 seconds, 720p |
 | `bytedance/seedance-2.0-fast` | Seedance 2.0 Fast | 5 seconds, 720p |
 | `bytedance/seedance-2.0` | Seedance 2.0 | 5 seconds, 720p |
 | `lightricks/ltx-2.3-fast` | LTX 2.3 Fast | 6 seconds, 1080p |
@@ -19,6 +20,13 @@ provider. TrustedRouter does not send video requests through OpenRouter.
 
 `GET /v1/videos/models` is the source of truth for currently enabled models and
 their supported parameters.
+
+Seedance 2.5 is served through Venice with text, first/last-frame image, and
+image/audio-reference input. It accepts 4-30 seconds, 480p/720p/1080p, and an
+optional `generate_audio` switch. Image-to-video inherits the source image's
+aspect ratio. Prompts may contain up to 15,000 characters. Video references
+are not enabled on this route. Pricing is quoted live per job, not per text
+token; the route is neither ZDR nor confidential.
 
 ## Create and download
 
