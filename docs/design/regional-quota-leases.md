@@ -216,9 +216,10 @@ provisioners and the background reconciler deploys:
   waits
   for the fleet state it finds to age out (a fleet that changes again during
   that wait fails the step), re-checks Spanner, deletes both
-  schedules, waits for each worker's running executions, deletes every
-  worker the project-wide inventory names, proves absence, and only then
-  writes
+  schedules, waits for every worker's running executions (one a schedule
+  started moments earlier can still mark a lease dead), re-checks Spanner
+  again, deletes every worker the project-wide inventory names, proves
+  absence, and only then writes
   `gs://tr-deploy-mutex-quill-cloud-proxy/controls/ledger-retirement.json`
   (`state: retired`, scoped to the project, Spanner instance and database).
   That marker waives only the worker evidence afterwards, and only while

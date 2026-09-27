@@ -1038,6 +1038,10 @@ ledger_retire_workers() {
 
   local inventory deleted=0
   inventory="$(_ledger_worker_inventory "${targets[@]+"${targets[@]}"}")" || return 1
+  # Every worker's running executions finish before any definition goes:
+  # an execution a schedule started moments before its deletion can still
+  # change Spanner (a spend reconciler marks a lease dead after enough
+  # ledger timeouts), and the count below must see its last word.
   while IFS=$'\t' read -r region job; do
     [ -n "${region}${job}" ] || continue
     if [ -z "$region" ] || [ -z "$job" ]; then
@@ -1045,6 +1049,10 @@ ledger_retire_workers() {
       return 1
     fi
     _ledger_wait_for_executions "$job" "$region" || return 1
+  done <<<"$inventory"
+  ledger_spanner_open_work || return 1
+  while IFS=$'\t' read -r region job; do
+    [ -n "${region}${job}" ] || continue
     _ledger_require_lock || return 1
     gc run jobs delete "$job" --region="$region" --quiet || {
       log "refusing worker retirement: cannot delete ${job} in ${region}"
@@ -1071,7 +1079,8 @@ ledger_retire_workers() {
     fi
   done
 
-  _ledger_require_lock || return 1
+  # Generation first, then ownership, then the fenced write: a lease that
+  # runs out between the two hands the fence to the new holder.
   local record generation
   record="$(mktemp "${TMPDIR:-/tmp}/ledger-retirement.XXXXXX")" || return 1
   if ! _ledger_read_control "$(ledger_retirement_marker_uri)" "$record"; then
@@ -1079,6 +1088,10 @@ ledger_retire_workers() {
     return 1
   fi
   generation="$LEDGER_CONTROL_GENERATION"
+  _ledger_require_lock || {
+    rm -f "$record"
+    return 1
+  }
   python3 -c '
 import datetime as dt, json, sys
 print(json.dumps({

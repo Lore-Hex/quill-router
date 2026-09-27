@@ -95,9 +95,10 @@ gc() {
       if [ -f "$FIXTURES/$fixture" ]; then control_generation "$fixture"
       else echo 'ERROR: (gcloud.storage.objects.describe) NOT_FOUND' >&2; return 1; fi
       # "takeover-lock-after" N: the production lock changes hands on the
-      # Nth read of the pass record, i.e. between an earlier ownership
-      # check and this read
-      if [ "$fixture" = gate-pass ] && [ -f "$FIXTURES/takeover-lock-after" ]; then
+      # Nth read of the record named by "takeover-lock-on" (the pass record
+      # unless told otherwise), i.e. between an earlier ownership check and
+      # this read
+      if [ "$fixture" = "$(cat "$FIXTURES/takeover-lock-on" 2>/dev/null || echo gate-pass)" ] && [ -f "$FIXTURES/takeover-lock-after" ]; then
         left=$(( $(cat "$FIXTURES/takeover-lock-after") - 1 ))
         if [ "$left" -le 0 ]; then rm -f "$FIXTURES/takeover-lock-after"; mv "$FIXTURES/takeover-lock" "$FIXTURES/lock"
         else echo "$left" > "$FIXTURES/takeover-lock-after"; fi
@@ -186,6 +187,9 @@ print(json.dumps(jobs))
         if [ "$remaining" -gt 0 ]; then
           echo "$((remaining - 1))" > "$FIXTURES/executions-$job"
           printf '%s-exec\t\n' "$job"
+        elif [ -f "$FIXTURES/dead-after-executions" ]; then
+          # the execution that just finished marked a lease dead
+          rm -f "$FIXTURES/dead-after-executions"; echo 1 > "$FIXTURES/count-spend"
         fi
       fi
       printf '%s-done\t2026-09-27T12:00:00Z\n' "$job" ;;
@@ -1282,6 +1286,50 @@ def test_retire_waits_for_running_executions_then_gives_up(tmp_path: Path) -> No
     assert f"{SPEND_JOB} in us-east4 still has running executions after 3 checks" in run.stderr
     assert not any(call.startswith(f"run jobs delete {SPEND_JOB}") for call in _calls(tmp_path))
     assert not (tmp_path / "marker").exists()
+
+
+def test_retire_rechecks_spanner_after_every_execution_has_finished(tmp_path: Path) -> None:
+    # A spend reconciler execution that a schedule started moments before
+    # its deletion can still mark a lease dead. Every worker's executions
+    # finish, then Spanner is read again, before any definition is deleted.
+    _step_two_fleet(tmp_path)
+    _schedules(tmp_path)
+    _workers(tmp_path)
+    (tmp_path / f"executions-{SPEND_JOB}").write_text("1")
+    (tmp_path / "dead-after-executions").write_text("")
+    run = _run(tmp_path, RETIRE)
+    assert run.returncode != 0
+    assert "Spanner still holds 1 unfinished spend-lease open rows" in run.stderr
+    calls = _calls(tmp_path)
+    assert any(call.startswith("scheduler jobs delete") for call in calls)
+    assert not any(call.startswith("run jobs delete") for call in calls)
+    assert not (tmp_path / "marker").exists()
+    # every worker was waited for before the count was taken
+    last_wait = max(index for index, call in enumerate(calls) if call.startswith("run jobs executions list"))
+    last_count = max(index for index, call in enumerate(calls) if call.startswith("spanner"))
+    assert last_wait < last_count
+
+
+def test_retire_publishes_the_marker_only_while_it_still_holds_the_lock(tmp_path: Path) -> None:
+    # A recorded retirement, a schedule that came back paused, and a lock
+    # that changes hands while the marker record is being read for its
+    # generation: ownership is re-checked after that read, so the old
+    # marker stays and the step fails.
+    _retired_marker(tmp_path)
+    _step_two_fleet(tmp_path)
+    (tmp_path / f"scheduler-json-{REGIONAL_SCHEDULE}").write_text(_schedule(REGIONAL_SCHEDULE, REGIONAL_JOB, state="PAUSED"))
+    (tmp_path / f"scheduler-missing-{SPEND_SCHEDULE}").write_text("")
+    (tmp_path / "jobs").write_text(f"us-east4\t{REGIONAL_JOB}\n")
+    _lock(tmp_path, "op-9")
+    (tmp_path / "lock").rename(tmp_path / "takeover-lock")
+    _lock(tmp_path, "op-1")
+    (tmp_path / "takeover-lock-on").write_text("marker")
+    (tmp_path / "takeover-lock-after").write_text("2")
+    run = _run(tmp_path, RETIRE, extra="TR_DEPLOY_MUTEX_OPERATION=op-1\n")
+    assert run.returncode != 0
+    assert "deployment operation op-1 does not hold the production lock" in run.stderr
+    assert not (tmp_path / "takeover-lock-after").exists()
+    assert json.loads((tmp_path / "marker").read_text())["completed_at"] == "2026-09-27T14:00:00Z"
 
 
 def test_retire_fails_closed_on_list_or_delete_errors(tmp_path: Path) -> None:
