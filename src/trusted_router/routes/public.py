@@ -1164,6 +1164,34 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def provider_routing_docs() -> str:
         return public_page_html(settings, "docs/provider-routing")
 
+    @public_html_route("/performance-routing")
+    async def performance_routing_landing() -> str:
+        return public_page_html(settings, "performance-routing")
+
+    @public_html_route("/spend-controls")
+    async def spend_controls_landing() -> str:
+        return public_page_html(settings, "spend-controls")
+
+    @public_html_route("/prompt-caching")
+    async def prompt_caching_landing() -> str:
+        return public_page_html(settings, "prompt-caching")
+
+    @public_html_route("/model-precision")
+    async def model_precision_landing() -> str:
+        return public_page_html(settings, "model-precision")
+
+    @public_html_route("/docs/performance-routing")
+    async def performance_routing_docs() -> str:
+        return public_page_html(settings, "docs/performance-routing")
+
+    @public_html_route("/docs/spend-controls")
+    async def spend_controls_docs() -> str:
+        return public_page_html(settings, "docs/spend-controls")
+
+    @public_html_route("/docs/model-precision")
+    async def model_precision_docs() -> str:
+        return public_page_html(settings, "docs/model-precision")
+
     @public_html_route("/docs/receipts")
     async def receipts_docs() -> str:
         return public_page_html(settings, "docs/receipts")

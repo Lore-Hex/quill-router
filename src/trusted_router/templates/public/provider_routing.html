@@ -76,6 +76,7 @@
 
 <section class="status-section" style="margin-top:48px" id="precision-metadata">
   <h2>Published weight formats</h2>
+  <p><a href="/docs/model-precision">Precision metadata API guide</a> and <a href="/model-precision">model precision overview</a>.</p>
   <p>Model pages and endpoint JSON include reviewed weight formats for Tinfoil, Privatemode, NEAR AI, and Chutes deployments. The same model can have different formats at different providers. Unreviewed endpoints return <code>null</code> and display Unknown.</p>
   <p><code>GET /v1/models/{author}/{slug}/endpoints</code> returns <code>quantization</code> and <code>trustedrouter.precision</code>. The full catalog includes these under <code>trustedrouter.endpoints[].quantization</code> and <code>trustedrouter.endpoints[].precision</code>.</p>
   <p>The precision object links the published serving code and pinned model configuration, with a review date and model revision. <code>quantization</code> names the primary format; <code>weight_formats</code>, <code>label</code>, and <code>notes</code> describe mixed formats and higher-precision exclusions. <code>kv_cache_dtype</code> is separate: an FP8 cache does not imply FP8 weights.</p>
@@ -84,6 +85,7 @@
 
 <section class="status-section" style="margin-top:48px" id="performance-preferences">
   <h2>Performance preferences</h2>
+  <p><a href="/docs/performance-routing">Performance routing API guide</a> and <a href="/performance-routing">performance routing overview</a>.</p>
   <p>Following <a href="https://openrouter.ai/docs/guides/routing/provider-selection">OpenRouter's provider-selection interface</a>, use a number for p50 or an object with <code>p50</code>, <code>p75</code>, <code>p90</code>, and <code>p99</code>. All supplied thresholds must be met to receive priority. Throughput p90 means a rate achieved by at least 90% of measured requests.</p>
   <pre><code>{"provider": {"preferred_max_latency": {"p90": 3}, "preferred_min_throughput": 40}}</code></pre>
   <p>Measurements use successful streaming requests with reported token counts from the last five minutes, scoped to the gateway region and control-plane instance. Storage is bounded and routing adds no analytics query. Cold instances and routes without recent measurements retain normal fallback ordering. These are best-effort preferences, not performance guarantees. Explicit provider order, model fallback order, privacy requirements, and allowlists still apply.</p>

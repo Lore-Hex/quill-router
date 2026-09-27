@@ -1,0 +1,35 @@
+{% extends "public/_routing_feature_base.html" %}
+{% block feature_kind %}API guide{% endblock %}
+{% block feature_content %}
+<section class="routing-feature-section">
+  <p><a href="/performance-routing">Performance routing overview</a></p>
+  <h2>Set speed preferences on a request</h2>
+  <p>For synchronous Chat Completions, Responses, and Messages, pass <code>preferred_max_latency</code> and <code>preferred_min_throughput</code> inside the <code>provider</code> object. Latency is time to first token in seconds; throughput is output tokens per second. A latency preference is not a timeout.</p>
+  <pre><code>import os
+from openai import OpenAI
+
+client = OpenAI(base_url="{{ api_base_url }}",
+                api_key=os.environ["TRUSTEDROUTER_API_KEY"])
+
+stream = client.chat.completions.create(
+    model="trustedrouter/auto",
+    messages=[{"role": "user", "content": "Explain this idea."}],
+    max_tokens=256,
+    stream=True,
+    extra_body={"provider": {
+        "preferred_max_latency": {"p90": 3},
+        "preferred_min_throughput": 40,
+        "max_price": {"prompt": 1, "completion": 3}
+    }},
+)
+for chunk in stream:
+    if chunk.choices:
+        print(chunk.choices[0].delta.content or "", end="", flush=True)</code></pre>
+  <p>The snippet sets example targets and price ceilings. Check the <a href="/v1/models">live catalog</a> for models and prices that fit your workload.</p>
+</section>
+<section class="routing-feature-section routing-feature-columns">
+  <div><h2>Scalar and percentile values</h2><p>A number means p50. Objects accept <code>p50</code>, <code>p75</code>, <code>p90</code>, and <code>p99</code>. All supplied thresholds must be met to receive priority. Throughput p90 means a rate achieved by at least 90% of measured requests.</p><p>Negative values, unsupported percentiles such as p95, and malformed values return <code>400</code>. Unsupported endpoint types return <code>501</code> instead of silently dropping the preferences.</p></div>
+  <div><h2>What takes precedence</h2><p>Hard provider, privacy, price, and capability filters narrow the pool first. Explicit <code>provider.order</code> and model fallback ordering take precedence over these soft speed preferences. Eligible alternatives remain available.</p><p>Use <a href="/docs/provider-routing">provider pinning and filtering</a> for requirements that must be enforced.</p></div>
+</section>
+<section class="routing-feature-section"><h2>Measurement scope</h2><p>Preferences use successful streaming settlements with provider-reported token counts from the last five minutes, scoped to the gateway region and control-plane instance. Measurements stay in bounded local memory; routing adds no analytics query.</p><p>A cold instance or an endpoint without recent samples keeps normal fallback ordering. This is a best-effort ranking preference, not a performance guarantee. Measure first-token latency and output rate on representative requests before changing your policy.</p></section>
+{% endblock %}

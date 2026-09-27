@@ -1,0 +1,19 @@
+{% extends "public/_routing_feature_base.html" %}
+{% block feature_content %}
+<section class="routing-feature-section routing-feature-columns">
+  <div><h2>Reuse the context you keep sending.</h2><p>Agents often send the same system instructions, tools, and documents on every turn. Provider prompt caches can reduce the cost of those repeated prefixes. TrustedRouter preserves supported native cache controls and reports provider cache usage.</p><p>Send a <code>session_id</code> for best-effort affinity to the last successful endpoint. That gives a later request a chance to reach the same provider cache while eligible fallback routes remain available.</p><p><a class="btn" href="/docs/prompt-caching">Read the caching guide</a></p></div>
+  <div><h3>A session, with fallback</h3><pre><code>{
+  "model": "trustedrouter/auto",
+  "session_id": "research-session-42",
+  "stream": true,
+  "messages": [
+    {"role": "system", "content": "Your stable context"},
+    {"role": "user", "content": "The next question"}
+  ]
+}</code></pre><p>Use an opaque session identifier, rather than a person's name or other sensitive data.</p></div>
+</section>
+<section class="routing-feature-section routing-feature-columns">
+  <div><h2>Read the actual cache result.</h2><p>Inspect cached input tokens, cache creation tokens where available, and settled cost. Cache lifetime, minimum prefix size, and pricing depend on the selected provider and model. A fallback may start with a cache miss.</p><p>Measure repeated task cost on your own workload before projecting savings. Affinity alone is not evidence of a cache hit.</p></div>
+  <div><h2>Routing hints, not a second prompt store.</h2><p>The routing cache holds metadata, not prompts or outputs. Affinity is process-local, scoped to the key, model, and gateway region, and expires after ten idle minutes. Another instance or a restart may miss it.</p><p>Your hard privacy filters still apply. Explicit <code>provider.order</code> overrides affinity. Review the selected provider's retention policy before enabling its content cache.</p></div>
+</section>
+{% endblock %}

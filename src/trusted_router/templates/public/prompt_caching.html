@@ -1,5 +1,6 @@
 {% extends "public/_base.html" %}
 {% block body %}
+<p><a href="/prompt-caching">Prompt caching and cache aware routing overview</a></p>
 
 <section class="marketing-split" aria-label="Prompt caching quickstart">
   <div class="marketing-copy">
@@ -114,7 +115,7 @@ print(response.usage.cache_read_input_tokens)</code></pre>
   </div>
 </section>
 
-<section class="marketing-split" style="margin-top:48px">
+<section class="marketing-split" style="margin-top:48px" id="session-affinity">
   <div class="marketing-copy">
     <span class="eyebrow">Routing choice</span>
     <h2>Keep a session near its provider cache.</h2>
@@ -124,14 +125,17 @@ print(response.usage.cache_read_input_tokens)</code></pre>
     <p>Without an explicit session, text conversations can gain affinity after an actual discounted cache hit. The enclave derives an opaque, key-scoped digest from the opening messages using an enclave-only secret. Prompts and outputs stay out of the routing cache. The cache is bounded, process-local, and scoped by API key, model, and gateway region; enclave or control-plane restarts, another instance, or locally admitted lease requests may miss it. Privacy filters always apply, and fallback remains available.</p>
   </div>
   <div class="copy-terminal">
-    <div class="code-head"><span>Prefer one provider, retain fallback</span><span>JSON</span></div>
+    <div class="code-head"><span>Session affinity, retain fallback</span><span>JSON</span></div>
     <pre><code>{
-  "model": "your/model",
-  "provider": {
-    "order": ["your-preferred-provider"],
-    "allow_fallbacks": true
-  }
+  "model": "trustedrouter/auto",
+  "session_id": "research-session-42",
+  "stream": true,
+  "messages": [
+    {"role": "system", "content": "Your stable context"},
+    {"role": "user", "content": "The next question"}
+  ]
 }</code></pre>
+    <p>Use an opaque identifier. Explicit <code>provider.order</code> takes precedence over session affinity.</p>
   </div>
 </section>
 
