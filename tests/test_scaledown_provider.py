@@ -282,10 +282,12 @@ def test_free_output_is_visible_in_all_model_prices(task):
 def test_unknown_zero_prices_still_mean_selected_route():
     from dataclasses import replace
 
-    from trusted_router.catalog import endpoints_for_model
+    from trusted_router.catalog import MODEL_ENDPOINTS
     from trusted_router.dashboard import _endpoint_price_range, _price
 
-    endpoint = endpoints_for_model("scaledown/compress")[0]
+    # Formatting needs any real endpoint, current or not: the hourly refresh's
+    # validation run must not fail because this manifest reached its deadline.
+    endpoint = next(e for e in MODEL_ENDPOINTS.values() if e.model_id == "scaledown/compress")
     attr = "completion_price_microdollars_per_million_tokens"
     assert _price(0) == "selected route"
     assert _price(-1, include_zero=True) == "selected route"

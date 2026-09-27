@@ -178,6 +178,81 @@ def test_the_spike_is_real_without_the_hold(
     assert set(spiking_providers(before, refresh.SNAPSHOT_PATH)) == {name}
 
 
+def test_a_held_manifest_only_provider_is_restored_exactly_and_is_not_a_failure(
+    published: dict[str, Any],
+    provider: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # beta has no snapshot route, so the stale fallback recovers nothing for
+    # it; its routes live only in the manifest, which is restored as published.
+    key, _name = provider
+    manifest = refresh.PROVIDER_MANIFEST_DIR / "beta.json"
+    published_manifest = json.dumps(
+        {
+            "provider": "beta",
+            "price_scale": "microdollars_per_million",
+            "models": [
+                {
+                    "id": "beta/model",
+                    "input_token_price_per_m": 1_000_000,
+                    "output_token_price_per_m": 2_000_000,
+                }
+            ],
+        }
+    )
+    manifest.write_text(published_manifest)
+    parsers = tmp_path / "parsers"
+    parsers.mkdir()
+    parser = parsers / "beta.py"
+    parser.write_text("# published parser\n")
+    monkeypatch.setattr(refresh, "PARSERS_DIR", parsers)
+    monkeypatch.setattr(refresh, "parser_path", lambda slug: parsers / f"{slug}.py")
+
+    def spiking_hook(_result: ProviderPricingResult) -> list[str]:
+        spiked = json.loads(published_manifest)
+        spiked["models"][0]["input_token_price_per_m"] = 3_000_000
+        manifest.write_text(json.dumps(spiked))
+        parser.write_text("# self-healed parser that produced the spike\n")
+        return ["beta: refreshed"]
+
+    modules = {"beta": SimpleNamespace(MANIFEST_PATH=manifest, write_provider_manifest=spiking_hook)}
+    monkeypatch.setattr(refresh, "_import_provider", lambda slug: modules.get(slug, SimpleNamespace()))
+    monkeypatch.setattr(refresh, "PROVIDER_SLUGS", (key, "grok", "beta"))
+    results = _fetched(monkeypatch, key, ModelPrice(1_000_000, 2_000_000))
+    results["beta"] = ProviderPricingResult(
+        slug="beta", source="api", prices={"beta/model": ModelPrice(3_000_000, 2_000_000)}
+    )
+
+    assert refresh.main([]) == 0  # MAX_TOLERATED_FAILURES is 0 in this fixture
+
+    assert manifest.read_text() == published_manifest
+    assert parser.read_text() == "# published parser\n"
+    assert _endpoint_prices()["x-ai/grok-next [grok]"] == ("0.0000035", "0.000004")
+    assert "beta" not in results
+
+
+def test_unusable_comparison_input_skips_holding_without_crashing(
+    published: dict[str, Any],
+    provider: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    key, _name = provider
+    _fetched(monkeypatch, key, ModelPrice(3_000_000, 2_000_000))
+
+    def unusable(*_args: Any, **_kwargs: Any) -> Any:
+        raise AttributeError("'list' object has no attribute 'get'")
+
+    monkeypatch.setattr(refresh, "spiking_providers", unusable)
+
+    assert refresh.main([]) == 0
+
+    assert "pricing.spike_hold_skipped" in caplog.text
+    # Nothing was held: the workflow's spike gate decides on the tripled price.
+    assert refresh.HELD_FOR_REVIEW_HEADING not in caplog.text
+
+
 def test_every_published_route_provider_maps_to_one_refresh_result() -> None:
     # A route whose provider name did not map would never be held, and the
     # whole refresh would freeze again on its spike.

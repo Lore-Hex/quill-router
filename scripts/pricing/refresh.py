@@ -49,12 +49,14 @@ from typing import Any
 
 from scripts.check_price_spike import spiking_providers
 from scripts.pricing.base import (
+    PARSERS_DIR,
     ModelPrice,
     PriceTier,
     ProviderPricingResult,
     configure_runtime_required_models,
     guard_manifest_prune,
     log,
+    parser_path,
     read_stale_provider_manifest,
     safe_exception_summary,
 )
@@ -274,11 +276,12 @@ def _import_provider(slug: str):
 
 
 def _copy_published_prices() -> Path:
-    """Copy the published snapshot and manifests before this run writes either."""
+    """Copy the published snapshot, manifests and parsers before this run writes any."""
     baseline = Path(tempfile.mkdtemp(prefix="pricing-baseline-"))
     atexit.register(shutil.rmtree, baseline, ignore_errors=True)
     shutil.copyfile(SNAPSHOT_PATH, baseline / SNAPSHOT_PATH.name)
     shutil.copytree(PROVIDER_MANIFEST_DIR, baseline / PROVIDER_MANIFEST_DIR.name)
+    shutil.copytree(PARSERS_DIR, baseline / PARSERS_DIR.name)
     return baseline
 
 
@@ -295,9 +298,8 @@ def _spiking_results(
             baseline / PROVIDER_MANIFEST_DIR.name,
             PROVIDER_MANIFEST_DIR,
         )
-    except ValueError as exc:
-        # Unusable input is the workflow spike gate's to report, as before.
-        log.warning("pricing.spike_hold_skipped error=%s", exc)
+    except Exception as exc:  # noqa: BLE001 - the workflow gate reports unusable input
+        log.warning("pricing.spike_hold_skipped error=%s", safe_exception_summary(exc))
         return {}
     hold: dict[str, list[str]] = {}
     for provider, routes in spiking.items():
@@ -308,16 +310,20 @@ def _spiking_results(
     return hold
 
 
-def _restore_published_manifest(baseline: Path, slug: str) -> None:
+def _restore_published_files(baseline: Path, slug: str) -> None:
+    """Put back the provider's manifest and parser exactly as last published."""
     manifest_path_value = getattr(_import_provider(slug), "MANIFEST_PATH", None)
-    if manifest_path_value is None:
-        return
-    target = Path(manifest_path_value)
-    published = baseline / PROVIDER_MANIFEST_DIR.name / target.name
-    if published.exists():
-        shutil.copyfile(published, target)
-    else:
-        target.unlink(missing_ok=True)
+    if manifest_path_value is not None:
+        target = Path(manifest_path_value)
+        published = baseline / PROVIDER_MANIFEST_DIR.name / target.name
+        if published.exists():
+            shutil.copyfile(published, target)
+        else:
+            target.unlink(missing_ok=True)
+    # A self-healed parser that produced the spike must not be committed.
+    published_parser = baseline / PARSERS_DIR.name / parser_path(slug).name
+    if published_parser.exists():
+        shutil.copyfile(published_parser, parser_path(slug))
 
 
 def _result_slug_for_provider(provider_slug: str) -> str:
@@ -1354,12 +1360,16 @@ def main(argv: list[str] | None = None) -> int:
         while hold := _spiking_results(baseline, results, held):
             held.update(hold)
             for slug in hold:
-                _restore_published_manifest(baseline, slug)
+                _restore_published_files(baseline, slug)
                 results.pop(slug, None)
-            hold_failures = [(slug, "price spike held for review") for slug in hold]
-            failures.extend(hold_failures)
-            unrecovered_failures.extend(
-                _apply_stale_fallbacks(results, hold_failures, committed_snapshot)
+            # The stale fallback re-prices the provider's snapshot routes from
+            # the published snapshot; its manifest routes are restored above.
+            # A hold is therefore never a missing provider, so it does not
+            # count toward MAX_TOLERATED_FAILURES.
+            _apply_stale_fallbacks(
+                results,
+                [(slug, "price spike held for review") for slug in hold],
+                committed_snapshot,
             )
             healed = [slug for slug in healed if slug not in held]
             provider_index = _index_provider_prices(results)
@@ -1367,14 +1377,6 @@ def main(argv: list[str] | None = None) -> int:
             id_mismatches = _cross_check_ids(results, or_snapshot)
             merged = _merge_snapshot(or_snapshot, provider_index, set(healed))
             _write_snapshot(merged)
-        if len(unrecovered_failures) > MAX_TOLERATED_FAILURES:
-            log.error(
-                "pricing.refresh.too_many_unrecovered_failures count=%d limit=%d failures=%s",
-                len(unrecovered_failures),
-                MAX_TOLERATED_FAILURES,
-                unrecovered_failures,
-            )
-            return 1
         log.info("pricing.refresh.wrote path=%s models=%d", SNAPSHOT_PATH, merged["model_count"])
 
     summary = _summary_lines(results, healed, failures, disagreements, id_mismatches)

@@ -234,6 +234,7 @@ jobs:
             /tmp/before-provider-models/
 
       - name: Refresh provider-direct prices (with self-heal)
+        id: refresh
         # `set -o pipefail` so the script's exit code propagates through
         # the `| tee` and an exit-1 from refresh.py (too many providers
         # failed entirely) actually fails the step. Without pipefail
@@ -553,14 +554,11 @@ jobs:
         # a reviewed change lands in APPROVED_ENDPOINT_PRICE_TRANSITIONS.
         if: always()
         env:
+          REFRESH_OUTCOME: ${{ steps.refresh.outcome }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           summary=/tmp/refresh-summary.txt
-          # Without a completed refresh there is no evidence either way.
-          if [ ! -s "${summary}" ] || ! grep -q '^Hourly price refresh' "${summary}"; then
-            exit 0
-          fi
           title="[bot] Provider prices held for review"
           issue_number=$(gh issue list \
             --repo "${GITHUB_REPOSITORY}" \
@@ -568,7 +566,7 @@ jobs:
             --search "${title} in:title" \
             --json number,title \
             --jq "map(select(.title == \"${title}\"))[0].number // empty")
-          if grep -q '^Held for price review' "${summary}"; then
+          if [ -s "${summary}" ] && grep -q '^Held for price review' "${summary}"; then
             {
               echo "These providers' routes rose 2x or more (or both prices went to zero), so the hourly refresh kept their last published prices and published every other provider."
               echo
@@ -585,7 +583,8 @@ jobs:
             else
               gh issue create --repo "${GITHUB_REPOSITORY}" --title "${title}" --body-file /tmp/held-issue.md
             fi
-          elif [ -n "${issue_number}" ]; then
+          elif [ "${REFRESH_OUTCOME}" = "success" ] && [ -n "${issue_number}" ]; then
+            # Only a refresh that finished can show that nothing is held.
             gh issue close "${issue_number}" \
               --repo "${GITHUB_REPOSITORY}" \
               --comment "No provider held by ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
