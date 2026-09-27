@@ -514,6 +514,28 @@ APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
             Decimal("0.000000015"),
             Decimal("0.00000003"),
         ),
+        # Wafer's first-party GET https://pass.wafer.ai/v1/models, verified
+        # 2026-09-27 in cents per million: GLM-5.3-Flash input 43, cache read
+        # 5 for DeepSeek-V4.1-Flash and 24 for DeepSeek-V4-Pro. The operator
+        # accepted the repricing on 2026-09-27.
+        (
+            "z-ai/glm-5.3-flash [wafer:wafer:GLM-5.3-Flash]",
+            "prompt",
+            Decimal("0.0000001"),
+            Decimal("0.00000043"),
+        ),
+        (
+            "deepseek/deepseek-v4.1-flash [wafer:wafer:DeepSeek-V4.1-Flash] cached-input",
+            "prompt",
+            Decimal("0.00000001"),
+            Decimal("0.00000005"),
+        ),
+        (
+            "deepseek/deepseek-v4-pro [wafer:wafer:DeepSeek-V4-Pro] cached-input",
+            "prompt",
+            Decimal("0.00000003"),
+            Decimal("0.00000024"),
+        ),
     }
 )
 
