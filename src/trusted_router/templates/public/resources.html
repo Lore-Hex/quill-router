@@ -1,5 +1,14 @@
 {% extends "public/_base.html" %}
 {% block body %}
+<section aria-label="Routing controls" style="margin-bottom:32px">
+  <h2>Control how each request is served</h2>
+  <ul class="link-list">
+    <li><a href="/performance-routing">Performance routing</a><span>Preferences for first-token latency and output speed</span></li>
+    <li><a href="/spend-controls">Spend controls</a><span>Key budgets and opt-in strict admission</span></li>
+    <li><a href="/prompt-caching">Prompt caching</a><span>Provider cache usage and session affinity</span></li>
+    <li><a href="/model-precision">Model precision</a><span>Reviewed formats and evidence by provider</span></li>
+  </ul>
+</section>
 <section class="marketing-grid three" aria-label="TrustedRouter topic hubs">
   <a class="marketing-card card-as-link" href="/token-exchange"><span class="card-label">Enterprise</span><h3>AI token exchange</h3><p>Model choice, procurement, and verifiable privacy through one API.</p><span class="card-link">Get the brochure →</span></a>
   <a class="marketing-card card-as-link" href="/compare"><span class="card-label">Compare</span><h3>AI gateways</h3><p>Compare hosted gateways, self-hosted proxies, cloud platforms, and confidential inference services with dated evidence.</p><span class="card-link">Compare gateways →</span></a>

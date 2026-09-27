@@ -1,0 +1,36 @@
+{% extends "public/_routing_feature_base.html" %}
+{% block feature_kind %}API guide{% endblock %}
+{% block feature_content %}
+<section class="routing-feature-section">
+  <p><a href="/model-precision">Model precision overview</a></p>
+  <h2>Read the selected provider's metadata</h2>
+  <p>Precision belongs to an endpoint, not a model name. <code>GET /v1/models/{author}/{slug}/endpoints</code> returns <code>quantization</code> and <code>trustedrouter.precision</code> for each endpoint. The catalog also exposes these at <code>trustedrouter.endpoints[].quantization</code> and <code>trustedrouter.endpoints[].precision</code>.</p>
+  <pre><code>import httpx
+
+model = "openai/gpt-oss-120b"
+response = httpx.get(
+    f"{{ control_plane_api_base_url }}/models/{model}/endpoints", timeout=20
+)
+response.raise_for_status()
+for endpoint in response.json()["data"]:
+    precision = endpoint.get("trustedrouter", {}).get("precision")
+    print(endpoint["provider"], endpoint.get("quantization"))
+    if precision:
+        print(precision["reviewed_on"], precision["model_revision"])
+        print(precision["sources"])</code></pre>
+  <p>These are public metadata endpoints and require no API key. Use <a href="/models">model pages</a> to inspect the same evidence visually.</p>
+</section>
+<section class="routing-feature-section"><h2>Field meanings</h2><ul>
+  <li><code>quantization</code>: the primary reviewed weight format. Unknown values are <code>null</code>.</li>
+  <li><code>weight_formats</code>, <code>label</code>, <code>notes</code>: mixed formats and higher-precision exclusions.</li>
+  <li><code>kv_cache_dtype</code>: the cache representation, separate from model weights. An FP8 KV cache does not establish FP8 weights.</li>
+  <li><code>model_repository</code>, <code>model_revision</code>: the source model and reviewed revision.</li>
+  <li><code>reviewed_on</code>, <code>sources</code>: the review date and links to serving code and model configuration.</li>
+  <li><code>evidence_type</code>: <code>published_serving_config</code>.</li>
+  <li><code>runtime_verified</code>: <code>false</code>. This is not per-request proof of the weights loaded by the upstream provider.</li>
+</ul></section>
+<section class="routing-feature-section routing-feature-columns">
+  <div><h2>Unknown stays unknown</h2><p>Reviewed records must match the provider, canonical model, and upstream ID. An unmatched endpoint returns <code>null</code> rather than an inferred precision. Pricing updates do not automatically refresh these reviews.</p><p>A provider changing its deployment requires a fresh review. Follow the evidence links and date before treating the record as current.</p></div>
+  <div><h2>Metadata and routing are separate</h2><p><code>provider.quantizations</code> filtering is not implemented. Requests using it receive <code>501 not_supported_in_alpha</code>. The metadata helps you compare and select providers; it does not silently enable a precision guarantee.</p><p><a href="/trust">Gateway attestation</a>, provider retention policy, reviewed serving configuration, and per-request weight identity are different evidence. Keep that distinction in eval reports.</p></div>
+</section>
+{% endblock %}

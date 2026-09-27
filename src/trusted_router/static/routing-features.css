@@ -1,0 +1,42 @@
+.routing-feature-hero {
+  padding: 44px 0 32px;
+  max-width: 850px;
+}
+.routing-feature-hero h1 {
+  font-size: 48px;
+  line-height: 1.12;
+  letter-spacing: 0;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+  margin: 18px 0;
+}
+.routing-feature-hero .lead { max-width: 740px; }
+.routing-feature-content { min-width: 0; }
+.routing-feature-section {
+  border-top: 1px solid var(--line);
+  padding: 32px 0;
+}
+.routing-feature-section h2 { font-size: 28px; line-height: 1.25; text-wrap: balance; }
+.routing-feature-section p, .routing-feature-section li { max-width: 85ch; line-height: 1.7; }
+.routing-feature-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px; }
+.routing-feature-columns > * { min-width: 0; }
+.routing-feature-content pre {
+  overflow: auto;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 14px;
+  line-height: 1.65;
+  max-width: 100%;
+}
+.routing-feature-content p code, .routing-feature-content li code { overflow-wrap: anywhere; }
+.routing-feature-links { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 32px; padding: 0; list-style: none; }
+.routing-feature-links a { display: inline-block; min-height: 40px; font-weight: 600; }
+.routing-feature-links span { display: block; }
+
+@media (max-width: 640px) {
+  .routing-feature-hero { padding: 28px 0; }
+  .routing-feature-hero h1 { font-size: 36px; }
+  .routing-feature-columns, .routing-feature-links { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .routing-feature-section { padding: 24px 0; }
+}

@@ -1,0 +1,29 @@
+{% extends "public/_base.html" %}
+{% block head_extra %}
+<link rel="stylesheet" href="/static/routing-features.css?v={{ static_version|default('local') }}">
+{% endblock %}
+{% block hero %}
+<header class="routing-feature-hero">
+  <p class="eyebrow">TrustedRouter / {% block feature_kind %}Routing controls{% endblock %}</p>
+  <h1>{{ heading }}</h1>
+  <p class="lead">{{ description }}</p>
+  <div class="hero-actions">
+    <button class="btn primary" type="button" data-action="open-signin">Create API key</button>
+    <a class="btn" href="/docs/provider-routing">Provider routing reference</a>
+  </div>
+</header>
+{% endblock %}
+{% block body %}
+<div class="routing-feature-content">
+  {% block feature_content %}{% endblock %}
+  <nav class="routing-feature-section" aria-label="Related routing features">
+    <h2>Build your routing policy</h2>
+    <ul class="routing-feature-links">
+      <li><a href="/performance-routing">Performance routing</a><span>Prefer the response speed your app needs.</span></li>
+      <li><a href="/spend-controls">Spend controls</a><span>Choose budgets for each API key.</span></li>
+      <li><a href="/prompt-caching">Prompt caching</a><span>Reuse provider caches across a session.</span></li>
+      <li><a href="/model-precision">Model precision</a><span>Inspect the evidence behind weight formats.</span></li>
+    </ul>
+  </nav>
+</div>
+{% endblock %}
