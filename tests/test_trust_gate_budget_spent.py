@@ -12,6 +12,7 @@ import logging
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -24,11 +25,13 @@ from trusted_router import trust_eligibility as gate
 
 
 @pytest.fixture
-def armed() -> tuple[Any, Any, Any]:
+def armed() -> tuple[Any, Any, Any, datetime]:
     store, db, _ = make_fake_store(request_record_write_mode="typed")
     settings = arm_store(store, db)
     workspace_state(db)
-    return store, db, settings
+    # Every gate call in a test evaluates and consumes evidence at this one
+    # instant, taken after the evidence was written.
+    return store, db, settings, datetime.now(UTC)
 
 
 @pytest.fixture
@@ -75,13 +78,15 @@ def test_workspace_read_failure_pages_only_when_budget_remains(
     armed: Any, alerts: list[str], monkeypatch: pytest.MonkeyPatch, caplog: Any,
     offset: float, pages: bool,
 ) -> None:
-    store, _db, settings = armed
-    verdict = gate.global_trust_verdict(store, settings)
+    store, _db, settings, now = armed
+    verdict = gate.global_trust_verdict(store, settings, now=now)
     assert verdict.failure is None
     monkeypatch.setattr(type(store), "_read_entity_tx", _deadline_exceeded)
 
     with _shared_deadline(offset):
-        outcome = gate.lease_eligibility(store, settings, "workspace", global_verdict=verdict)
+        outcome = gate.lease_eligibility(
+            store, settings, "workspace", global_verdict=verdict, now=now
+        )
 
     # The request outcome is identical either way: no lease, central fallback.
     assert outcome == (None, "trust_gate_unarmed")
@@ -101,23 +106,23 @@ def test_workspace_read_failure_pages_only_when_budget_remains(
 def test_global_refresh_cut_short_by_budget_is_not_cached(
     armed: Any, alerts: list[str], monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, db, settings = armed
+    store, db, settings, now = armed
     snapshot = type(db).snapshot
     monkeypatch.setattr(type(db), "snapshot", _deadline_exceeded)
 
     with _shared_deadline(-1.0):
-        spent = gate.global_trust_verdict(store, settings)
+        spent = gate.global_trust_verdict(store, settings, now=now)
         assert spent.failure == gate.ADMISSION_BUDGET_SPENT
-        assert gate.lease_eligibility(store, settings, "workspace", global_verdict=spent) == (
-            None, "trust_gate_unarmed"
-        )
+        assert gate.lease_eligibility(
+            store, settings, "workspace", global_verdict=spent, now=now
+        ) == (None, "trust_gate_unarmed")
     assert alerts == []
-    assert gate._caches[store].verdict is None or gate._caches[store].verdict is not spent
+    assert gate._caches[store].verdict is None
 
     # The next caller, with budget left, re-reads the evidence instead of
     # inheriting a refusal for the verdict's whole cache lifetime.
     monkeypatch.setattr(type(db), "snapshot", snapshot)
-    fresh = gate.global_trust_verdict(store, settings)
+    fresh = gate.global_trust_verdict(store, settings, now=now)
     assert fresh.failure is None
     assert gate._caches[store].verdict is fresh
 
@@ -125,17 +130,17 @@ def test_global_refresh_cut_short_by_budget_is_not_cached(
 def test_global_refresh_failure_with_budget_left_is_still_cached_and_paged(
     armed: Any, alerts: list[str], monkeypatch: pytest.MonkeyPatch, clock: list[float],
 ) -> None:
-    store, db, settings = armed
+    store, db, settings, now = armed
     snapshot = type(db).snapshot
     monkeypatch.setattr(type(db), "snapshot", _deadline_exceeded)
 
     with _shared_deadline(60.0):
-        failed = gate.global_trust_verdict(store, settings)
+        failed = gate.global_trust_verdict(store, settings, now=now)
         assert failed.failure == "read_failed"
         assert gate._caches[store].verdict is failed
-        assert gate.lease_eligibility(store, settings, "workspace", global_verdict=failed) == (
-            None, "trust_gate_unarmed"
-        )
+        assert gate.lease_eligibility(
+            store, settings, "workspace", global_verdict=failed, now=now
+        ) == (None, "trust_gate_unarmed")
     assert alerts == ["trust.gate_unarmed condition=read_failed"]
 
     # A real read failure keeps its full negative-cache lifetime: until expiry
@@ -144,18 +149,18 @@ def test_global_refresh_failure_with_budget_left_is_still_cached_and_paged(
     monkeypatch.setattr(type(db), "snapshot", snapshot)
     clock[0] = failed.expires_monotonic - 0.001
     reads = (len(db.snapshot_calls), db.snapshot_execute_sql_calls)
-    assert gate.global_trust_verdict(store, settings) is failed
+    assert gate.global_trust_verdict(store, settings, now=now) is failed
     assert (len(db.snapshot_calls), db.snapshot_execute_sql_calls) == reads
     clock[0] = failed.expires_monotonic
-    assert gate.global_trust_verdict(store, settings).failure is None
+    assert gate.global_trust_verdict(store, settings, now=now).failure is None
     assert len(db.snapshot_calls) == reads[0] + 1
 
 
 def test_budget_cut_refresh_neither_replaces_nor_renews_an_older_verdict(
     armed: Any, alerts: list[str], monkeypatch: pytest.MonkeyPatch, clock: list[float],
 ) -> None:
-    store, db, settings = armed
-    primed = gate.global_trust_verdict(store, settings)
+    store, db, settings, now = armed
+    primed = gate.global_trust_verdict(store, settings, now=now)
     assert primed.failure is None
     # Still valid but inside its refresh margin, so the next caller refreshes.
     clock[0] = primed.expires_monotonic - gate.GLOBAL_TRUST_REFRESH_MARGIN_SECONDS / 2
@@ -163,14 +168,14 @@ def test_budget_cut_refresh_neither_replaces_nor_renews_an_older_verdict(
     monkeypatch.setattr(type(db), "snapshot", _deadline_exceeded)
 
     with _shared_deadline(-1.0):
-        spent = gate.global_trust_verdict(store, settings)
+        spent = gate.global_trust_verdict(store, settings, now=now)
     assert spent.failure == gate.ADMISSION_BUDGET_SPENT
     # The older verdict is untouched, so its own expiry still bounds it.
     assert gate._caches[store].verdict is primed
 
     monkeypatch.setattr(type(db), "snapshot", snapshot)
     reads = len(db.snapshot_calls)
-    fresh = gate.global_trust_verdict(store, settings)
+    fresh = gate.global_trust_verdict(store, settings, now=now)
     assert len(db.snapshot_calls) == reads + 1  # a real refresh, not a copy
     assert fresh.failure is None and fresh is not primed
     assert fresh.expires_monotonic == clock[0] + gate.GLOBAL_TRUST_TTL_SECONDS
