@@ -234,7 +234,6 @@ jobs:
             /tmp/before-provider-models/
 
       - name: Refresh provider-direct prices (with self-heal)
-        id: refresh
         # `set -o pipefail` so the script's exit code propagates through
         # the `| tee` and an exit-1 from refresh.py (too many providers
         # failed entirely) actually fails the step. Without pipefail
@@ -550,11 +549,11 @@ jobs:
 
       - name: Reconcile held-price issue
         # The refresh holds a provider whose prices spiked at its last
-        # published prices and publishes the rest. Keep the hold visible until
-        # a reviewed change lands in APPROVED_ENDPOINT_PRICE_TRANSITIONS.
+        # published prices and publishes the rest. The issue stays open until
+        # a person closes it: a later run without the hold may only mean the
+        # provider's fetch failed and fell back to its published prices.
         if: always()
         env:
-          REFRESH_OUTCOME: ${{ steps.refresh.outcome }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
@@ -570,7 +569,7 @@ jobs:
             {
               echo "These providers' routes rose 2x or more (or both prices went to zero), so the hourly refresh kept their last published prices and published every other provider."
               echo
-              echo "If a change is real, verify it against the provider's own price source and add the exact transition to APPROVED_ENDPOINT_PRICE_TRANSITIONS in scripts/check_price_spike.py. A held provider's expiring manifest still fails closed 14 days after its last publish."
+              echo "If a change is real, verify it against the provider's own price source and add the exact transition to APPROVED_ENDPOINT_PRICE_TRANSITIONS in scripts/check_price_spike.py, then close this issue. A held provider's expiring manifest still fails closed 14 days after its last publish."
               echo
               echo "Latest run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
               echo
@@ -583,9 +582,4 @@ jobs:
             else
               gh issue create --repo "${GITHUB_REPOSITORY}" --title "${title}" --body-file /tmp/held-issue.md
             fi
-          elif [ "${REFRESH_OUTCOME}" = "success" ] && [ -n "${issue_number}" ]; then
-            # Only a refresh that finished can show that nothing is held.
-            gh issue close "${issue_number}" \
-              --repo "${GITHUB_REPOSITORY}" \
-              --comment "No provider held by ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
           fi
