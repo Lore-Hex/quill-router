@@ -420,6 +420,85 @@ def test_a_hold_that_would_leave_a_model_without_routes_publishes_nothing(
     assert "x-ai/grok-next (no route left after the hold)" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize(
+    "grok_price",
+    [ModelPrice(0, 0), ModelPrice(3_500_000, 4_000_000)],
+    ids=["openrouter-priced", "grok-priced"],
+)
+def test_a_hold_that_drops_a_route_from_an_openrouter_priced_model_publishes_nothing(
+    published: dict[str, Any],
+    provider: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    grok_price: ModelPrice,
+) -> None:
+    # OpenRouter's headline for the model may be the held provider's new route.
+    # When grok prices $0, the all-zero fallback publishes that headline.
+    key, name = provider
+    feed = refresh.build_openrouter_snapshot()
+    grok = feed["models"][1]
+    grok["pricing"] = {"prompt": "0.000001", "completion": "0.000001"}
+    grok["endpoints"] = [
+        {
+            "tr_provider_slug": name,
+            "model_id": "x-ai/grok-next",
+            "tag": f"{name}/us",
+            "pricing": {"prompt": "0.000001", "completion": "0.000001"},
+        },
+        {
+            "tr_provider_slug": "grok",
+            "model_id": "x-ai/grok-next",
+            "pricing": {"prompt": "0.000003", "completion": "0.000004"},
+        },
+    ]
+    monkeypatch.setattr(refresh, "build_openrouter_snapshot", lambda: feed)
+    results = _fetched(monkeypatch, key, ModelPrice(3_000_000, 2_000_000))
+    results["grok"] = ProviderPricingResult(
+        slug="grok", source="api", prices={"x-ai/grok-next": grok_price}
+    )
+
+    if grok_price == ModelPrice(0, 0):
+        assert refresh.main([]) == 1
+        out = capsys.readouterr().out
+        assert "x-ai/grok-next (OpenRouter's headline may be a dropped route's)" in out
+        return
+
+    assert refresh.main([]) == 0
+
+    published_grok = next(
+        model
+        for model in json.loads(refresh.SNAPSHOT_PATH.read_text())["models"]
+        if model["id"] == "x-ai/grok-next"
+    )
+    assert published_grok["pricing"]["prompt"] == "0.0000035"
+    assert [ep["tr_provider_slug"] for ep in published_grok["endpoints"]] == ["grok"]
+
+
+def test_a_held_provider_keeps_its_own_price_index_restriction() -> None:
+    held = {"acme": ["acme/model [acme::acme/model]"]}
+    published = {
+        "models": [
+            {"id": model_id, "endpoints": [{"tr_provider_slug": "acme", "model_id": model_id}]}
+            for model_id in ("acme/chat", "acme/embed")
+        ]
+    }
+    prices = {
+        model_id: ModelPrice(1_000_000, 0) for model_id in ("acme/chat", "acme/embed", "acme/new")
+    }
+    results = {
+        "acme": ProviderPricingResult(
+            slug="acme",
+            source="stale_manifest",
+            prices=prices,
+            price_index_model_ids=frozenset({"acme/chat", "acme/new"}),
+        )
+    }
+
+    refresh._index_only_published_models(results, published, held)
+
+    assert results["acme"].price_index_model_ids == {"acme/chat"}
+
+
 def test_unusable_comparison_input_skips_holding_without_crashing(
     published: dict[str, Any],
     provider: tuple[str, str],

@@ -370,13 +370,15 @@ def _drop_unpublished_held_routes(
 
     OpenRouter's endpoint feed can add a route for a held provider (a new
     regional tag, say), and a held provider publishes nothing new until the
-    hold is reviewed. Surviving endpoints and model headlines keep their
-    prices. Returns the models this left without any endpoint, which must not
-    be published; a published route that is gone is left for the exactness
-    guard to refuse.
+    hold is reviewed. Where TR's providers priced the model, dropping such a
+    route changes no price: the headline comes from per-provider prices, and a
+    held provider prices only the models it had published. Returns the models
+    that must not be published: any left without a route, and any priced by
+    OpenRouter's fallback, whose headline may have been the dropped route's.
+    A published route that is gone is left for the exactness guard to refuse.
     """
     published_routes = set(_held_endpoint_pricing(published, held))
-    emptied: list[str] = []
+    refused: list[str] = []
     for model in merged.get("models") or []:
         if not isinstance(model, dict) or not isinstance(model.get("endpoints"), list):
             continue
@@ -385,10 +387,14 @@ def _drop_unpublished_held_routes(
             for endpoint in model["endpoints"]
             if (route := _held_route(model, endpoint, held)) is None or route in published_routes
         ]
-        if model["endpoints"] and not kept:
-            emptied.append(f"{model.get('id')} (no route left after the hold)")
+        if len(kept) < len(model["endpoints"]):
+            if not kept:
+                refused.append(f"{model.get('id')} (no route left after the hold)")
+            elif model.get("pricing_source") == "openrouter_fallback":
+                reason = "OpenRouter's headline may be a dropped route's"
+                refused.append(f"{model.get('id')} ({reason})")
         model["endpoints"] = kept
-    return emptied
+    return refused
 
 
 def _held_routes_changed(baseline: Path, held: dict[str, list[str]]) -> list[str]:
@@ -1464,7 +1470,7 @@ def main(argv: list[str] | None = None) -> int:
         # A price spike holds only its own provider at the last published
         # prices, so the rest of the catalog still refreshes. The workflow's
         # spike gate still fails the run on any spike not held here.
-        emptied: list[str] = []
+        refused: list[str] = []
         while hold := _spiking_results(baseline, results, held):
             held.update(hold)
             for slug in hold:
@@ -1487,9 +1493,9 @@ def main(argv: list[str] | None = None) -> int:
             disagreements = _cross_check(provider_index, or_snapshot)
             id_mismatches = _cross_check_ids(results, or_snapshot)
             merged = _merge_snapshot(or_snapshot, provider_index, set(healed))
-            emptied = _drop_unpublished_held_routes(merged, published, held)
+            refused = _drop_unpublished_held_routes(merged, published, held)
             _write_snapshot(merged)
-        if held and (changed := _held_routes_changed(baseline, held) + emptied):
+        if held and (changed := _held_routes_changed(baseline, held) + refused):
             # Re-pricing could not reproduce a held provider exactly (e.g. an
             # OpenRouter-fallback route or a rejected stale price). Publish
             # nothing, as before holds existed; the spike gate explains why.
