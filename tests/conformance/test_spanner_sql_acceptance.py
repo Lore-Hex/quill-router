@@ -13,7 +13,11 @@ from unittest.mock import patch
 
 import pytest
 
-from tests.conformance.spanner_ddl import DDL
+from tests.conformance.spanner_emulator import (
+    NULL_FILTERED_HINT,
+    emulator_sql,
+    names_null_filtered_index,
+)
 from tests.conformance.spanner_sql_builders import SQLCase, builder_cases
 from tests.conformance.spanner_sql_inventory import (
     assert_complete,
@@ -42,24 +46,6 @@ def literal_cases():
             yield SQLCase(f"{key}/{index}", [(sql, params, types)])
 
 
-NULL_FILTERED_INDEXES = {
-    match[1] for ddl in DDL
-    if (match := re.search(r"CREATE (?:UNIQUE )?NULL_FILTERED INDEX (\w+)", ddl))
-}
-NULL_FILTERED_HINT = "@{spanner_emulator.disable_query_null_filtered_index_check=true}"
-
-
-def names_null_filtered_index(sql):
-    return bool(set(re.findall(r"\b\w+\b", sql)) & NULL_FILTERED_INDEXES)
-
-
-def emulator_statement(statement):
-    sql, params, types = statement
-    if names_null_filtered_index(sql):
-        sql = NULL_FILTERED_HINT + " " + sql
-    return sql, params, types
-
-
 def all_cases():
     return [*literal_cases(), *builder_cases()]
 
@@ -75,7 +61,7 @@ def test_null_filtered_hint_set_matches_registered_statements():
                   for statement in [*(case.seed or []), *case.statements]]
     expected = {sql for sql, _, _ in statements if names_null_filtered_index(sql)}
     actual = {original[0] for original in statements
-              if emulator_statement(original)[0].startswith(NULL_FILTERED_HINT)}
+              if emulator_sql(original[0]).startswith(NULL_FILTERED_HINT)}
     assert actual == expected and expected
 
 
@@ -175,7 +161,6 @@ def rolled_back(database):
 
 
 def execute_dml(transaction, statements, *, batch):
-    statements = [emulator_statement(statement) for statement in statements]
     if batch:
         status, counts = transaction.batch_update(statements)
         assert status.code == 0, f"Batch DML rejected: {status}"
@@ -195,7 +180,7 @@ def execute_dml(transaction, statements, *, batch):
 def test_production_sql_acceptance(sql_database, case):
     try:
         if len(case.statements) == 1 and query_kind(case.statements[0][0]) in {"SELECT", "WITH"}:
-            sql, params, types = emulator_statement(case.statements[0])
+            sql, params, types = case.statements[0]
             with sql_database.snapshot() as snapshot:
                 list(snapshot.execute_sql(sql, params=params, param_types=types))
         else:

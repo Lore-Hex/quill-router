@@ -1,6 +1,6 @@
 # Native GoogleSQL emulator conformance
 
-This change adds a real GoogleSQL server gate alongside the unchanged Python fake and the PostgreSQL-dialect backend. It does not establish production equivalence. The first CI run established schema provisioning and rejection of the three invalid constructions; round 2 corrects the harness failures and strengthens offline guards.
+This change adds a real GoogleSQL server gate alongside the unchanged Python fake and the PostgreSQL-dialect backend. It does not establish production equivalence. The first CI run established schema provisioning and rejection of the three invalid constructions; round 2 corrects the harness failures and strengthens offline guards. Round 3 extends the emulator accommodation to the native store through a shared SDK shim and restores SDK state on exit.
 
 ## Schema source and scope
 
@@ -26,7 +26,7 @@ The `spanner-emulator` job pins the exact image digests pulled in its first CI r
 
 Run 1 successfully started both service containers and submitted the complete 63-statement schema. Acceptance executed all 496 cases in approximately ten seconds: **449 passed, 47 failed**. All three rejection canaries were rejected. Failures were harness heartbeat types (32), TIMESTAMP strings (3), null-filtered-index eligibility checks (11), and the overlarge “below limit” control (1). The native conformance step passed its first test, then timed out in SDK teardown. Both steps spent about ten minutes joining the SDK multiplexed-session maintenance thread; this was teardown time, not test execution time.
 
-The emulator path sets `DatabaseSessionsManager._MAINTENANCE_THREAD_POLLING_INTERVAL` to 100 ms before constructing any Spanner client. The offline mock-SDK test asserts this ordering. Production configuration is untouched. Native tests share one disposable instance/database/Bigtable table per session, construct a store per test, and retain session resource teardown. The per-test `unique` fixture supplies order-independent identifiers. Acceptance shares those resources if both suites run in one process; CI's two pytest processes each provision once.
+The emulator path sets `DatabaseSessionsManager._MAINTENANCE_THREAD_POLLING_INTERVAL` to 100 ms before constructing any Spanner client. The offline mock-SDK test asserts this ordering and restoration of the original interval after database close, including body, setup and close failures. Production configuration is untouched. Native tests share one disposable instance/database/Bigtable table per session, construct a store per test, and retain session resource teardown. The per-test `unique` fixture supplies order-independent identifiers. Acceptance shares those resources if both suites run in one process; CI's two pytest processes each provision once.
 
 The job exposes Spanner gRPC 9010 / REST 9020 and Bigtable 8086. The SDK service container stays alive with interactive/TTY options and starts Bigtable via `docker exec -d`. Readiness is bounded to 60 seconds. `TR_CONFORMANCE_EMULATOR_SCHEMA=1` requires both loopback emulator endpoints; missing or unreachable servers fail rather than skip. Anonymous credentials and synthetic resource IDs are used. DDL is submitted in ordered batches of at most 20 with bounded admin RPC waits.
 
@@ -38,7 +38,17 @@ Exactly ten removed legacy-money methods are strict xfails for **both native-sto
 
 See [the inventory](spanner-sql-inventory.md) for every source expression and runtime case. Discovery covers all Python modules by default, excluding only the reviewed `storage_postgres.py` dialect adapter. Other non-GoogleSQL expressions in mixed or analytics modules remain explicitly classified and fingerprinted in the manifest, so new files and expressions cannot escape review.
 
-The one SQL emulator accommodation is the statement hint `@{spanner_emulator.disable_query_null_filtered_index_check=true}`. The harness derives index names from `CREATE [UNIQUE] NULL_FILTERED INDEX` in the production DDL and adds the hint only to statements naming one of those indexes, including sequential and batch DML. An always-on guard checks exact equality of the hinted and eligible statement sets. Production SQL is unchanged.
+The one SQL emulator accommodation is the statement hint `@{spanner_emulator.disable_query_null_filtered_index_check=true}`. A shared SDK-boundary shim derives index names from `CREATE [UNIQUE] NULL_FILTERED INDEX` in `spanner_ddl.DDL` and adds the hint only to statements naming one of those indexes. `emulator_resources()` installs it only after `require_emulators()` succeeds and restores the original SDK methods on exit, including exceptions. Both acceptance and the real `SpannerBigtableStore` use it; acceptance no longer rewrites individual calls. Other SQL passes through byte-identical, and already hinted SQL is never prefixed twice.
+
+Source inspection confirms the store reaches `_SnapshotBase.execute_sql` (also inherited by `Transaction`), `Transaction.execute_update`, and `Transaction.batch_update` via `storage_gcp_batch_dml.execute_batch_dml`. The shim also covers `Database.execute_partitioned_dml` and `BatchSnapshot.execute_sql` defensively. In the installed SDK, `database.py:1618` belongs to **BatchSnapshot**, not Database; neither extra entry point currently has a caller under `src/trusted_router`. Positional and keyword `sql`/`dml`/`statements`, batch strings and tuples, bindings and other options are covered by always-on recorder tests. A forwarding test proves that nested SDK calls add the hint exactly once. An always-on guard still checks exact equality of the hinted and eligible registered statement sets. Production SQL is unchanged.
+
+The affected native store methods are:
+
+- `storage_gcp.list_receipt_keys`
+- `storage_gcp_regional_quota.terminal_regional_hold_amount` / its nested `txn`
+- `storage_gcp_request_records.read_gateway_authorization_by_gateway_request_id`
+- `storage_gcp_settle_outbox.due`, `due_auto_refills`, and `auto_refill_pending_freshness`
+- `storage_gcp_spend_lease._due_rows` and `arm_bound_retention`
 
 The first CI run's emulator explained: “The emulator is not able to determine whether the null filtered index … can be used to answer this query as it may filter out nulls that may be required to answer the query.” It directed testing against Cloud Spanner and said “the emulator will accept the query and return a valid result when it is run with the check disabled.” These are live production queries; the hint bypasses the emulator's index eligibility check, not SQL parsing or execution. Eleven first-run failures had this message. This evidence comes from the supplied CI logs; no online documentation was fetched.
 
@@ -87,6 +97,19 @@ All commands used `uv run --offline --frozen`; the coverage proof used an isolat
 | Discard all heartbeat builder cases | `test_registered_builders_are_actually_called` |
 
 The three schema mutations are also permanent parametrized negative controls in `test_schema_blind_spots_fail_closed_in_copies`. The new-module test additionally covers commented, parenthesized, split-prefix and dynamic-prefix SQL. Cleanup tests cover session creation, begin, body, rollback and deletion failures. No production code or schema source was edited; server acceptance, native rollup ordering, corrected teardown runtime and the whole-workflow ≥70% gate still need CI.
+
+### Round-3 gate results
+
+All commands used `uv run --offline --frozen`, with `UV_CACHE_DIR` under `/private/tmp` because the default cache is outside the writable sandbox. No network, commits, pushes, full-suite run or local emulator execution.
+
+| Gate | Result |
+|---|---|
+| `ruff check .` | All checks passed |
+| `mypy` | Success: no issues found in 400 source files |
+| `pytest -q -p no:cacheprovider tests/conformance tests/test_ci_workflow.py` | **315 passed, 990 skipped, 11 xfailed**, 18 warnings in 62.33s |
+| Remove `_SnapshotBase.execute_sql` shim installation in a temporary copy | **3 failed, 15 deselected** in 0.67s; all three fail on missing SQL hint |
+
+The mutation failed `test_sdk_null_filtered_hint_and_passthrough[positional-_SnapshotBase.execute_sql]`, `test_sdk_null_filtered_hint_and_passthrough[keyword-_SnapshotBase.execute_sql]`, and `test_sdk_null_filtered_hint_and_passthrough[mixed-_SnapshotBase.execute_sql]` in `tests/conformance/test_spanner_emulator_sdk.py`. The copy reused the installed environment with `--no-sync` (building the copied project offline otherwise required uncached hatchling), and ran `python -m pytest -q -p no:cacheprovider tests/conformance/test_spanner_emulator_sdk.py -k 'test_sdk_null_filtered_hint_and_passthrough and _SnapshotBase'`. The working checkout kept the shim enabled.
 
 ## Exact table, column, index and policy inventory
 
