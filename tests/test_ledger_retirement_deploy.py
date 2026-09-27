@@ -65,16 +65,22 @@ gc() {
       echo '{"lifecycle_config":{"rule":[{"action":{"type":"Delete"},"condition":{"age":1,"matchesPrefix":["locks/"]}}]}}' ;;
     'storage objects list')
       if [ -f "$FIXTURES/list-error" ]; then cat "$FIXTURES/list-error" >&2; return 1; fi
-      if [ -f "$FIXTURES/marker" ]; then
-        echo '[{"bucket":"tr-deploy-mutex-quill-cloud-proxy","name":"controls/regional-quota-issuance.txt"},{"bucket":"tr-deploy-mutex-quill-cloud-proxy","name":"controls/ledger-retirement.json"}]'
-      else
-        echo '[{"bucket":"tr-deploy-mutex-quill-cloud-proxy","name":"controls/regional-quota-issuance.txt"}]'
-      fi ;;
+      objects='{"bucket":"tr-deploy-mutex-quill-cloud-proxy","name":"controls/regional-quota-issuance.txt"}'
+      [ -f "$FIXTURES/marker" ] && objects="$objects,{\"bucket\":\"tr-deploy-mutex-quill-cloud-proxy\",\"name\":\"controls/ledger-retirement.json\"}"
+      [ -f "$FIXTURES/targets" ] && objects="$objects,{\"bucket\":\"tr-deploy-mutex-quill-cloud-proxy\",\"name\":\"controls/ledger-retirement-targets.json\"}"
+      echo "[$objects]" ;;
     'storage cat '*)
-      if [ -f "$FIXTURES/marker" ]; then cat "$FIXTURES/marker"
+      case "$3" in
+        *ledger-retirement-targets.json) file="$FIXTURES/targets" ;;
+        *) file="$FIXTURES/marker" ;;
+      esac
+      if [ -f "$file" ]; then cat "$file"
       else echo 'ERROR: (gcloud.storage.cat) No URLs matched' >&2; return 1; fi ;;
     'storage cp '*)
-      cp "$3" "$FIXTURES/marker" ;;
+      case "$4" in
+        *ledger-retirement-targets.json) cp "$3" "$FIXTURES/targets" ;;
+        *) cp "$3" "$FIXTURES/marker" ;;
+      esac ;;
     'spanner databases execute-sql')
       if [ -f "$FIXTURES/spanner-error" ]; then echo "ERROR: (gcloud.spanner.databases.execute-sql) DEADLINE_EXCEEDED" >&2; return 1; fi
       case "$sql" in
@@ -103,6 +109,7 @@ gc() {
       else cat "$FIXTURES/spend-evidence.json"; fi ;;
     'run jobs list')
       if [ -f "$FIXTURES/jobs-list-error" ]; then echo "ERROR: (gcloud.run.jobs.list) PERMISSION_DENIED" >&2; return 1; fi
+      if [ -f "$FIXTURES/jobs-unreachable" ]; then echo "WARNING: The following regions were unreachable: us-west1" >&2; fi
       if [ -f "$FIXTURES/jobs" ]; then cat "$FIXTURES/jobs"; fi ;;
     'run jobs executions')
       if [ -f "$FIXTURES/executions-$job" ]; then
@@ -245,6 +252,7 @@ def _retired_marker(tmp_path: Path, **overrides: str) -> None:
     marker = {
         "state": "retired",
         "project": "quill-cloud-proxy",
+        "spanner_instance": "trusted-router-nam6",
         "spanner_database": "trusted-router",
         "completed_at": "2026-09-27T14:00:00Z",
     }
@@ -282,7 +290,17 @@ def test_gate_stands_down_on_a_recorded_retirement_only_while_the_fleet_still_ho
     run = _run(tmp_path, GATE)
     assert run.returncode == 0, run.stderr
     assert "recorded as complete and every serving revision still runs without the ledgers" in run.stderr
-    assert not any(call.startswith(("spanner", "logging")) for call in _calls(tmp_path))
+    # The marker waives the worker evidence only; Spanner is always read.
+    assert sum(call.startswith("spanner") for call in _calls(tmp_path)) == 4
+    assert not any(call.startswith("logging") for call in _calls(tmp_path))
+
+    # Escrow created during a temporary rollback outlives the traffic
+    # restoration; the fleet looks retired again, Spanner does not.
+    (tmp_path / "count-reservations").write_text("2\n")
+    run = _run(tmp_path, GATE)
+    assert run.returncode != 0
+    assert "Spanner still holds 2 unsettled RegionalCredits reservations" in run.stderr
+    (tmp_path / "count-reservations").unlink()
 
     # A traffic rollback restored a capability-on revision: the full gate is
     # back. The workers are gone, so Spanner decides (with the warnings).
@@ -306,6 +324,7 @@ def test_gate_stands_down_on_a_recorded_retirement_only_while_the_fleet_still_ho
     [
         pytest.param({"state": "started"}, id="incomplete"),
         pytest.param({"project": "another-project"}, id="other-project"),
+        pytest.param({"spanner_instance": "other-instance"}, id="other-instance"),
         pytest.param({"spanner_database": "other-db"}, id="other-database"),
     ],
 )
@@ -569,11 +588,19 @@ def test_retire_deletes_schedules_then_workers_and_records_the_retirement(tmp_pa
         assert calls.index(f"run jobs executions list --job={job} {region} --format=value(metadata.name,status.completionTime)") < calls.index(delete)
     # Absence is proven project-wide before the marker is written.
     listings = [index for index, call in enumerate(calls) if call.startswith("run jobs list")]
-    marker_write = next(index for index, call in enumerate(calls) if call.startswith("storage cp"))
+    marker_write = next(
+        index for index, call in enumerate(calls)
+        if call.startswith("storage cp") and call.endswith("controls/ledger-retirement.json --quiet")
+    )
     assert len(listings) == 2 and listings[-1] > calls.index(job_deletes[-1]) and listings[-1] < marker_write
     marker = json.loads((tmp_path / "marker").read_text())
     assert marker["state"] == "retired"
     assert marker["project"] == "quill-cloud-proxy" and marker["spanner_database"] == "trusted-router"
+    assert marker["spanner_instance"] == "trusted-router-nam6"
+    # Targets were recorded before the first schedule was deleted.
+    targets = json.loads((tmp_path / "targets").read_text())
+    assert targets == {"targets": sorted([REGIONAL_JOB, SPEND_JOB])}
+    assert calls.index([c for c in calls if c.startswith("storage cp") and "targets" in c][0]) < calls.index(schedule_deletes[0])
     assert marker["workers_deleted"] == 4 and marker["release"] == "abc12345"
     assert "ledger reconciler workers retired (4 job(s) deleted)" in run.stderr
 
@@ -659,6 +686,20 @@ def test_retire_fails_closed_on_list_or_delete_errors(tmp_path: Path) -> None:
     assert not (tmp_path / "marker").exists()
 
 
+def test_retire_refuses_an_incomplete_project_wide_listing(tmp_path: Path) -> None:
+    # Unreachable regions come back as a warning with exit 0 and a partial
+    # list; certifying absence from that would lose a worker.
+    _step_two_fleet(tmp_path)
+    _schedules(tmp_path)
+    _workers(tmp_path)
+    (tmp_path / "jobs-unreachable").write_text("")
+    run = _run(tmp_path, RETIRE)
+    assert run.returncode != 0
+    assert "Cloud Run job listing is incomplete: WARNING: The following regions were unreachable: us-west1" in run.stderr
+    assert not any(call.startswith("run jobs delete") for call in _calls(tmp_path))
+    assert not (tmp_path / "marker").exists()
+
+
 def test_retire_finds_exact_named_and_schedule_targeted_workers_project_wide(tmp_path: Path) -> None:
     # Deployers accept exact job names (TR_*_RECONCILER_JOB) and custom
     # locations; the schedules name their own targets. None of those match the
@@ -689,22 +730,26 @@ def test_retire_finds_exact_named_and_schedule_targeted_workers_project_wide(tmp
 
 def test_retire_retry_after_an_interrupted_teardown_still_finds_every_worker(tmp_path: Path) -> None:
     # First run: schedules deleted, then a delete fails. The schedules that
-    # named the workers' locations are gone; the retry must still find them.
+    # named the workers - including a custom target that matches neither
+    # prefix nor override - are gone; the retry must still find them all
+    # through the targets recorded before the first deletion.
     _step_two_fleet(tmp_path)
-    (tmp_path / f"scheduler-json-{REGIONAL_SCHEDULE}").write_text(_schedule(REGIONAL_SCHEDULE, REGIONAL_JOB, region="us-west1"))
+    (tmp_path / f"scheduler-json-{REGIONAL_SCHEDULE}").write_text(_schedule(REGIONAL_SCHEDULE, "quota-custom-worker", region="us-west1"))
     (tmp_path / f"scheduler-json-{SPEND_SCHEDULE}").write_text(_schedule(SPEND_SCHEDULE, SPEND_JOB, region="us-west1"))
-    (tmp_path / "jobs").write_text(f"us-west1\t{REGIONAL_JOB}\nus-west1\t{SPEND_JOB}\n")
-    (tmp_path / f"delete-error-{SPEND_JOB}").write_text("")
+    (tmp_path / "jobs").write_text(f"us-west1\tquota-custom-worker\nus-west1\t{SPEND_JOB}\n")
+    (tmp_path / "delete-error-quota-custom-worker").write_text("")
     run = _run(tmp_path, RETIRE)
     assert run.returncode != 0
     assert not (tmp_path / "marker").exists()
     assert (tmp_path / f"scheduler-missing-{REGIONAL_SCHEDULE}").exists()
-    assert (tmp_path / "jobs").read_text() == f"us-west1\t{SPEND_JOB}\n"
+    assert json.loads((tmp_path / "targets").read_text()) == {"targets": sorted(["quota-custom-worker", SPEND_JOB])}
+    assert (tmp_path / "jobs").read_text() == f"us-west1\tquota-custom-worker\nus-west1\t{SPEND_JOB}\n"
 
-    (tmp_path / f"delete-error-{SPEND_JOB}").unlink()
+    (tmp_path / "delete-error-quota-custom-worker").unlink()
     run = _run(tmp_path, RETIRE)
     assert run.returncode == 0, run.stderr
     assert "schedule trusted-router-regional-quota-reconcile is already gone" in run.stderr
+    assert "deleted worker quota-custom-worker in us-west1" in run.stderr
     assert f"deleted worker {SPEND_JOB} in us-west1" in run.stderr
     assert (tmp_path / "jobs").read_text() == ""
-    assert json.loads((tmp_path / "marker").read_text())["workers_deleted"] == 1
+    assert json.loads((tmp_path / "marker").read_text())["workers_deleted"] == 2

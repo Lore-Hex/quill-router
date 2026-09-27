@@ -168,9 +168,11 @@ provisioners and the background reconciler deploys:
   admission markers `false` (an absent marker is `false` too - config.py
   defaults every one of them off; any other value refuses); Spanner holds no
   `regional_quota_lease_open` / `regional_quota_lease_workspace_open` entity,
-  no unsettled `RegionalCredits` reservation (a pending or dead settle-outbox
-  intent leaves its reservation unsettled, so this count covers the outbox
-  without scanning it), and no `spend_lease_open` row that is not `done` (the
+  no unsettled `RegionalCredits` reservation (read together with the index
+  rows: a pending or dead settle-outbox intent needs the ledger only while
+  its lease is open, and that lease's index row stays until reconciliation
+  closes it, so the outbox itself - which has no status index - is never
+  scanned), and no `spend_lease_open` row that is not `done` (the
   reconciler's own `open` counts only rows due now); and, while a reconciler
   schedule still exists, that its exact target job (project, location, name
   parsed from the schedule) reported five all-zero passes, all after the
@@ -185,15 +187,17 @@ provisioners and the background reconciler deploys:
   control-plane regions plus the workers' configured and targeted regions,
   proves absence, and only then writes
   `gs://tr-deploy-mutex-quill-cloud-proxy/controls/ledger-retirement.json`
-  (`state: retired`, scoped to the project and Spanner database). That
-  marker stands the gate down afterwards - but only while every serving
-  revision still runs without capability or a profile map; a traffic
-  rollback to an older revision brings the full gate back. The worker
-  inventory is project-wide and includes the exact names the deployers
-  accept as overrides plus the schedules' own targets, so a retry after an
-  interrupted teardown still finds every worker. Both steps stay in the
-  release until the scripts that created those resources are deleted with
-  the ledger code.
+  (`state: retired`, scoped to the project, Spanner instance and database).
+  That marker waives only the worker evidence afterwards, and only while
+  every serving revision still runs without capability or a profile map;
+  the Spanner checks always run, and a traffic rollback to an older
+  revision brings the full gate back. The worker inventory is project-wide
+  (a listing that warns about unreachable regions refuses) and includes the
+  exact names the deployers accept as overrides plus the schedules' own
+  targets, which are recorded in `controls/ledger-retirement-targets.json`
+  before any schedule is deleted, so a retry after an interrupted teardown
+  still finds every worker. Both steps stay in the release until the
+  scripts that created those resources are deleted with the ledger code.
 
 The provisioner and worker scripts remain on disk, unwired, until then. The
 description below is the pre-retirement design.
