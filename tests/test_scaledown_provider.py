@@ -264,10 +264,14 @@ def test_public_pages_and_usage_examples(client):
 
 
 @pytest.mark.parametrize("task", scaledown.TASKS)
-def test_free_output_is_visible_in_all_model_prices(task):
+def test_free_output_is_visible_in_all_model_prices(task, monkeypatch):
     from trusted_router.catalog import MODELS
+    from trusted_router.catalog_data import ModelEndpoint
     from trusted_router.dashboard import _model_detail_view, _model_route_evidence, _model_view
 
+    # This checks price formatting, not freshness: the hourly refresh's
+    # validation run must not fail because this manifest reached its deadline.
+    monkeypatch.setattr(ModelEndpoint, "catalog_is_current", lambda _self, *, at=None: True)
     model = MODELS[f"scaledown/{task}"]
     listing = _model_view(model, test_mode=True)
     detail = _model_detail_view(model, test_mode=True)

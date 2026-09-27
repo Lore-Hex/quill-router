@@ -47,7 +47,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from scripts.check_price_spike import spiking_providers
+from scripts.check_price_spike import route_pairs, route_provider, spiking_providers
 from scripts.pricing.base import (
     PARSERS_DIR,
     ModelPrice,
@@ -308,6 +308,33 @@ def _spiking_results(
         if result is not None and slug not in held and not result.source.startswith("stale_"):
             hold.setdefault(slug, []).extend(routes)
     return hold
+
+
+def _held_routes_changed(baseline: Path, held: dict[str, list[str]]) -> list[str]:
+    """Held providers' routes that differ from what was published, if any.
+
+    A hold may only publish when it kept every held provider exactly as
+    published: same routes, same prices. Anything else is reported so the run
+    can fall back to publishing nothing.
+    """
+    snapshot_pair, manifest_pair = route_pairs(
+        baseline / SNAPSHOT_PATH.name,
+        SNAPSHOT_PATH,
+        baseline / PROVIDER_MANIFEST_DIR.name,
+        PROVIDER_MANIFEST_DIR,
+    )
+    changed: list[str] = []
+    for pair in (snapshot_pair, manifest_pair):
+        if pair is None:
+            continue
+        published, now = pair
+        for route in sorted(set(published) | set(now)):
+            provider = route_provider(route)
+            if provider is None or _result_slug_for_provider(provider) not in held:
+                continue
+            if published.get(route) != now.get(route):
+                changed.append(route)
+    return changed
 
 
 def _restore_published_files(baseline: Path, slug: str) -> None:
@@ -1377,6 +1404,15 @@ def main(argv: list[str] | None = None) -> int:
             id_mismatches = _cross_check_ids(results, or_snapshot)
             merged = _merge_snapshot(or_snapshot, provider_index, set(healed))
             _write_snapshot(merged)
+        if held and (changed := _held_routes_changed(baseline, held)):
+            # Re-pricing could not reproduce a held provider exactly (e.g. an
+            # OpenRouter-fallback route or a rejected stale price). Publish
+            # nothing, as before holds existed; the spike gate explains why.
+            log.error("pricing.hold_not_exact providers=%s routes=%s", sorted(held), changed[:20])
+            print(f"Held providers could not be kept exactly as published: {', '.join(sorted(held))}")
+            for route in changed:
+                print(f"  {route}")
+            return 1
         log.info("pricing.refresh.wrote path=%s models=%d", SNAPSHOT_PATH, merged["model_count"])
 
     summary = _summary_lines(results, healed, failures, disagreements, id_mismatches)

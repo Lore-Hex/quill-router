@@ -232,6 +232,27 @@ def test_a_held_manifest_only_provider_is_restored_exactly_and_is_not_a_failure(
     assert "beta" not in results
 
 
+def test_a_hold_that_cannot_keep_the_provider_exact_publishes_nothing(
+    published: dict[str, Any],
+    provider: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The stale fallback refuses a one-sided zero price, so re-pricing cannot
+    # reproduce this route and holding would silently delete it. The refresh
+    # instead publishes nothing, as it did before holds existed.
+    key, name = provider
+    published["models"][0] = _model("acme/model", name, "0.000001", "0")
+    refresh.SNAPSHOT_PATH.write_text(json.dumps(published))
+    _fetched(monkeypatch, key, ModelPrice(3_000_000, 1_000_000))
+
+    assert refresh.main([]) == 1
+
+    out = capsys.readouterr().out
+    assert f"Held providers could not be kept exactly as published: {key}\n" in out
+    assert f"  acme/model [{name}::acme/model]\n" in out
+
+
 def test_unusable_comparison_input_skips_holding_without_crashing(
     published: dict[str, Any],
     provider: tuple[str, str],
