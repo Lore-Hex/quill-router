@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from tests.private_repository import mentions as private_repository_mentions
 from tests.route_inventory import route_methods
 from trusted_router.config import Settings
 from trusted_router.main import create_app
@@ -612,12 +613,16 @@ def test_og_image_route_serves_png(client: TestClient) -> None:
 
     trust = client.get("/trust")
     assert trust.status_code == 200
+    assert trust.headers["content-type"].split(";")[0].strip() == "text/html"
+    assert '<link rel="canonical" href="https://trustedrouter.com/trust">' in trust.text
     assert "Trust boundary" in trust.text
     assert "gcp-release.json" in trust.text
     assert "https://github.com/Lore-Hex/quill-router" in trust.text
     assert "https://github.com/Lore-Hex/quill-cloud-proxy" in trust.text
     assert "https://github.com/Lore-Hex/quill-cloud-infra" in trust.text
-    assert "https://github.com/Lore-Hex/quill" in trust.text
+    # Lore-Hex/quill is private, so a link to it is a 404 for every visitor.
+    # The page names it only in the printed release record.
+    assert private_repository_mentions(trust.text) == []
     assert "https://github.com/Lore-Hex/trusted-router-js" in trust.text
     assert "https://github.com/Lore-Hex/trustedrouter-provider-check" in trust.text
 

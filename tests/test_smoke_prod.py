@@ -19,6 +19,7 @@ from typing import Any
 import httpx
 import pytest
 
+from tests.private_repository import mentions as private_repository_mentions
 from trusted_router.routing_candidates import auto_candidate_models
 
 PROD_BASE_URL = os.environ.get("TR_PROD_BASE_URL", "https://trustedrouter.com")
@@ -682,15 +683,22 @@ def test_trust_page_and_release_files_are_published(trust_client: httpx.Client) 
     assert image.status_code == 200, image.text
     assert accepted_images.status_code == 200, accepted_images.text
     body = page.text
+    # The trust page itself: text/html whose source carries the page's
+    # canonical link tag, not any 200 whose body names the repositories.
+    media_type = page.headers["content-type"].split(";")[0].strip()
+    assert media_type == "text/html", page.headers["content-type"]
+    assert '<link rel="canonical" href="https://trustedrouter.com/trust">' in body
     for repo in [
         "Lore-Hex/quill-router",
         "Lore-Hex/quill-cloud-proxy",
         "Lore-Hex/quill-cloud-infra",
-        "Lore-Hex/quill",
         "Lore-Hex/trusted-router-py",
         "Lore-Hex/trusted-router-js",
     ]:
-        assert repo in body
+        assert f'href="https://github.com/{repo}"' in body, repo
+    # Lore-Hex/quill is private, so a link to it is a 404 for every visitor.
+    # The page names it only in the printed release record.
+    assert private_repository_mentions(body) == []
     data = release.json()
     assert data["tls"]["hostname"] == "api.trustedrouter.com"
     assert data["source_repositories"]["control_plane"].endswith("/quill-router")
