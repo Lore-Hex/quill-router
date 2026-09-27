@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -419,13 +420,215 @@ def test_trust_page_shows_every_plane_and_flags_the_ones_without_a_measurement()
     assert AZURE_HOSTDATA in page
     assert "aws-release.json" in page
     assert "azure-release.json" in page
-    assert "No measurement published for this plane yet" not in page
+    assert "No measurement is available for this plane right now" not in page
 
     bare = Settings(environment="test", trust_gcp_image_digest="sha256:" + "00" * 32)
     with TestClient(create_app(bare, init_observability=False)) as client:
         bare_page = client.get("/trust").text
     # Absence has to be legible on the page too, not just in the JSON.
-    assert bare_page.count("No measurement published for this plane yet") == 2
+    assert bare_page.count("No measurement is available for this plane right now") == 2
+
+
+def test_trust_page_renders_the_plane_records_the_json_routes_serve(
+    httpx_mock: HTTPXMock,
+) -> None:
+    # /trust rendered AWS and Azure from local settings while
+    # /trust/aws-release.json and /trust/azure-release.json mirrored the
+    # plane-owned records. A control plane with no local measurement settings
+    # then served both records and printed "No measurement published" on the
+    # page. The page renders the records the routes serve, on /trust and on
+    # the trust hostnames.
+    pcr0, hostdata = "ab" * 48, "44" * 32
+    issuer = "https://trquilluaen.uaen.attest.azure.net"
+    httpx_mock.add_response(
+        url=re.compile(r"https://trust\.example/aws\.json\?tr_cache_bucket=\d+"),
+        json=_aws_upstream(pcr0, [pcr0]),
+        is_reusable=True,
+    )
+    httpx_mock.add_response(
+        url=re.compile(r"https://trust\.example/azure\.json\?tr_cache_bucket=\d+"),
+        json=_azure_upstream(hostdata, issuer),
+        is_reusable=True,
+    )
+    settings = Settings(
+        environment="test",
+        trust_gcp_image_digest="sha256:" + "00" * 32,
+        trust_aws_release_url="https://trust.example/aws.json",
+        trust_azure_release_url="https://trust.example/azure.json",
+    )
+    with TestClient(create_app(settings, init_observability=False)) as client:
+        pages = [
+            client.get("/trust").text,
+            client.get("/", headers={"host": "trust.allyrouter.com"}).text,
+        ]
+        aws = client.get("/trust/aws-release.json").json()
+        azure = client.get("/trust/azure-release.json").json()
+
+    assert (aws["pcr0"], azure["hostdata"]) == (pcr0, hostdata)
+    for page in pages:
+        assert "No measurement is available for this plane right now" not in page
+        assert aws["pcr0"] in page
+        assert azure["hostdata"] in page
+        assert issuer in page
+
+
+def _canary_observer(**overrides: object) -> Settings:
+    return Settings(
+        environment="canary",
+        service_surface="observer",
+        observer_internal_token="observer-only-" + "o" * 32,
+        **overrides,  # type: ignore[arg-type]
+    )
+
+
+def test_canary_planes_mirror_the_canonical_release_records() -> None:
+    # The AWS and Azure control planes run as canary. The defaults applied to
+    # production only, so those planes had no record URL, answered 503 for
+    # /trust/aws-release.json and /trust/azure-release.json, and printed "No
+    # measurement published" on their /trust pages.
+    settings = _canary_observer()
+
+    assert (
+        settings.trust_gcp_release_url,
+        settings.trust_aws_release_url,
+        settings.trust_azure_release_url,
+    ) == (
+        "https://trust.trustedrouter.com/trust/gcp-release.json",
+        "https://trust.trustedrouter.com/trust/aws-release.json",
+        "https://trust.trustedrouter.com/trust/azure-release.json",
+    )
+
+
+@pytest.mark.parametrize(
+    "field", ["trust_gcp_release_url", "trust_aws_release_url", "trust_azure_release_url"]
+)
+def test_a_deployed_plane_refuses_a_release_url_that_is_not_https(field: str) -> None:
+    with pytest.raises(ValueError, match=f"TR_{field.upper()}=https://"):
+        _canary_observer(**{field: "http://trust.example/record.json"})
+
+
+@pytest.mark.parametrize("environment", ["local", "test"])
+def test_local_and_test_environments_have_no_default_release_urls(
+    environment: str, httpx_mock: HTTPXMock
+) -> None:
+    settings = Settings(environment=environment, trust_gcp_image_digest="sha256:" + "00" * 32)
+    assert (
+        settings.trust_gcp_release_url,
+        settings.trust_aws_release_url,
+        settings.trust_azure_release_url,
+    ) == ("", "", "")
+    with TestClient(create_app(settings, init_observability=False)) as client:
+        for path in ("/trust", "/trust/aws-release.json", "/trust/azure-release.json"):
+            client.get(path)
+    assert httpx_mock.get_requests() == []
+
+
+@pytest.mark.parametrize("stale", ["aws", "azure"])
+def test_a_stale_plane_record_is_labelled_and_keeps_the_page_out_of_caches(
+    stale: str, httpx_mock: HTTPXMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The mirror serves its last validated copy for a while after a refresh
+    # fails, and that plane's routes mark the copy no-store. The page renders
+    # the same copy, so it must not be cached publicly either. The other plane
+    # stays live and cacheable, so only the stale record can make the page
+    # no-store.
+    from trusted_router.services import trust_release
+
+    # One second is the shortest window _fetch's cache bucket accepts.
+    monkeypatch.setattr(trust_release, "_FRESH_SECONDS", 1.0)
+    measurement = {"aws": "ab" * 48, "azure": "44" * 32}
+    upstream = {
+        "aws": _aws_upstream(measurement["aws"], [measurement["aws"]]),
+        "azure": _azure_upstream(measurement["azure"]),
+    }
+    live = "azure" if stale == "aws" else "aws"
+    stale_url = re.compile(rf"https://trust\.example/{stale}\.json\?tr_cache_bucket=\d+")
+    httpx_mock.add_response(url=stale_url, json=upstream[stale])
+    httpx_mock.add_response(url=stale_url, status_code=500)
+    httpx_mock.add_response(
+        url=re.compile(rf"https://trust\.example/{live}\.json\?tr_cache_bucket=\d+"),
+        json=upstream[live],
+        is_reusable=True,
+    )
+    settings = Settings(
+        environment="test",
+        trust_gcp_image_digest="sha256:" + "00" * 32,
+        trust_aws_release_url="https://trust.example/aws.json",
+        trust_azure_release_url="https://trust.example/azure.json",
+    )
+    text = {"aws": "/trust/pcr0-aws.txt", "azure": "/trust/hostdata-azure.txt"}
+    with TestClient(create_app(settings, init_observability=False)) as client:
+        first = client.get(f"/trust/{stale}-release.json")
+        time.sleep(1.1)
+        page = client.get("/trust")
+        stale_routes = [client.get(f"/trust/{stale}-release.json"), client.get(text[stale])]
+        live_routes = [client.get(f"/trust/{live}-release.json"), client.get(text[live])]
+
+    assert first.headers["x-trustedrouter-release-status"] == "live"
+    for response in stale_routes:
+        assert response.status_code == 200
+        assert response.headers["x-trustedrouter-release-status"] == "stale"
+        assert response.headers["cache-control"] == "no-store"
+    assert stale_routes[1].text == f"{measurement[stale]}\n"
+    for response in live_routes:
+        assert response.headers["x-trustedrouter-release-status"] == "live"
+        assert response.headers["cache-control"] == "max-age=60, public"
+    assert measurement[stale] in page.text
+    assert measurement[live] in page.text
+    assert page.text.count("This plane's release record could not be refreshed") == 1
+    assert page.headers["cache-control"] == "no-store"
+    # The page's status header is the GCP record's, embedded in this test.
+    assert page.headers["x-trustedrouter-release-status"] == "embedded"
+
+
+@pytest.mark.parametrize("down", ["aws", "azure"])
+def test_a_plane_with_no_record_keeps_the_page_out_of_caches(
+    down: str, httpx_mock: HTTPXMock
+) -> None:
+    # With a plane's upstream down and nothing cached, its record route has no
+    # measurement to serve: 503, no-store. The page says there is none and is
+    # not cached either. The other plane publishes, so the note shows once.
+    measurement = {"aws": "ab" * 48, "azure": "44" * 32}
+    upstream = {
+        "aws": _aws_upstream(measurement["aws"], [measurement["aws"]]),
+        "azure": _azure_upstream(measurement["azure"]),
+    }
+    up = "azure" if down == "aws" else "aws"
+    httpx_mock.add_response(
+        url=re.compile(rf"https://trust\.example/{down}\.json\?tr_cache_bucket=\d+"),
+        status_code=500,
+        is_reusable=True,
+    )
+    httpx_mock.add_response(
+        url=re.compile(rf"https://trust\.example/{up}\.json\?tr_cache_bucket=\d+"),
+        json=upstream[up],
+        is_reusable=True,
+    )
+    settings = Settings(
+        environment="test",
+        trust_gcp_image_digest="sha256:" + "00" * 32,
+        trust_aws_release_url="https://trust.example/aws.json",
+        trust_azure_release_url="https://trust.example/azure.json",
+    )
+    text = {"aws": "/trust/pcr0-aws.txt", "azure": "/trust/hostdata-azure.txt"}
+    with TestClient(create_app(settings, init_observability=False)) as client:
+        down_routes = [client.get(f"/trust/{down}-release.json"), client.get(text[down])]
+        up_routes = [client.get(f"/trust/{up}-release.json"), client.get(text[up])]
+        page = client.get("/trust")
+
+    for response in down_routes:
+        assert (response.status_code, response.headers["cache-control"]) == (503, "no-store")
+        assert response.headers["x-trustedrouter-release-status"] == "unavailable"
+    for response in up_routes:
+        assert (response.status_code, response.headers["x-trustedrouter-release-status"]) == (
+            200,
+            "live",
+        )
+    assert up_routes[1].text == f"{measurement[up]}\n"
+    assert page.status_code == 200
+    assert measurement[up] in page.text
+    assert page.text.count("No measurement is available for this plane right now") == 1
+    assert page.headers["cache-control"] == "no-store"
 
 
 # --- A mirror serves a record; it does not rewrite it ------------------------
@@ -565,6 +768,24 @@ def test_primary_digest_is_always_in_its_own_accepted_set(httpx_mock: HTTPXMock)
 
 def _aws_upstream(pcr0: str, accepted: list[str]) -> dict[str, object]:
     return {"platform": "aws-nitro-enclaves", "pcr0": pcr0, "accepted_pcr0s": accepted}
+
+
+def _azure_upstream(
+    hostdata: str, issuer: str = "https://trquilluaen.uaen.attest.azure.net"
+) -> dict[str, object]:
+    return {
+        "platform": "azure-confidential-containers-sev-snp",
+        "hostdata": hostdata,
+        "accepted_hostdata": [hostdata],
+        "attestation_issuers": [issuer],
+        "regions": [
+            {
+                "attestation_url": "https://api-azure.trustedrouter.com/attestation",
+                "hostdata": hostdata,
+                "attestation_issuer": issuer,
+            }
+        ],
+    }
 
 
 def test_aws_record_is_mirrored_from_the_plane_not_control_plane_config(

@@ -1839,6 +1839,18 @@ class Settings(BaseSettings):
             return self
         production = environment == "production"
         missing = []
+        # Every deployed control plane (production, and the canary planes on
+        # AWS and Azure) serves /trust and mirrors the three plane-owned release
+        # records, so each gets the canonical record URLs unless it names others.
+        for field, default in (
+            ("trust_gcp_release_url", "https://trust.trustedrouter.com/trust/gcp-release.json"),
+            ("trust_aws_release_url", "https://trust.trustedrouter.com/trust/aws-release.json"),
+            ("trust_azure_release_url", "https://trust.trustedrouter.com/trust/azure-release.json"),
+        ):
+            if not getattr(self, field):
+                setattr(self, field, default)
+            elif not getattr(self, field).startswith("https://"):
+                missing.append(f"TR_{field.upper()}=https://...")
         if environment != "worker" and surface in {"control", "public"}:
             if not self.attribution_cookie_key and not self.attribution_cookie_secret:
                 missing.append("TR_ATTRIBUTION_COOKIE_KEY or TR_ATTRIBUTION_COOKIE_SECRET")
@@ -2008,16 +2020,6 @@ class Settings(BaseSettings):
             )
         if surface in account_surfaces and not self.byok_kms_key_name:
             missing.append("TR_BYOK_KMS_KEY_NAME")
-        if not self.trust_gcp_release_url:
-            self.trust_gcp_release_url = "https://trust.trustedrouter.com/trust/gcp-release.json"
-        if not self.trust_aws_release_url:
-            self.trust_aws_release_url = "https://trust.trustedrouter.com/trust/aws-release.json"
-        if not self.trust_azure_release_url:
-            self.trust_azure_release_url = (
-                "https://trust.trustedrouter.com/trust/azure-release.json"
-            )
-        elif not self.trust_gcp_release_url.startswith("https://"):
-            missing.append("TR_TRUST_GCP_RELEASE_URL=https://...")
         invalid_release_fallbacks = [
             url
             for url in self.trust_gcp_release_fallback_url_list

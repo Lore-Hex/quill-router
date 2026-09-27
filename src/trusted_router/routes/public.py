@@ -906,6 +906,21 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         except TrustReleaseUnavailable:
             return embedded(settings), "embedded"
 
+    async def _plane_record(
+        resolver: TrustReleaseResolver,
+        embedded: Callable[[Settings], Mapping[str, Any]],
+        release: Callable[..., dict[str, Any]],
+    ) -> tuple[dict[str, Any], str]:
+        """An AWS or Azure record as its route serves it, and the route's status.
+
+        'unavailable' when the record has no measurement to publish.
+        """
+        metadata, status = await _mirrored(resolver, embedded)
+        record = release(settings, metadata=metadata)
+        if record["release_metadata_status"] == "not-configured":
+            return record, "unavailable"
+        return record, status
+
     async def resolved_trust_release() -> ResolvedTrustRelease:
         try:
             return await trust_release_resolver.resolve()
@@ -922,6 +937,40 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     def trust_response_status(status: str) -> int:
         return 200 if status in {"live", "embedded"} else 503
+
+    async def trust_page_response(*, public_domain: str, api_base_url: str) -> HTMLResponse:
+        """The trust page, rendering the three records their own routes serve.
+
+        The page takes the cache policy of its least cacheable record: a stale
+        or missing AWS or Azure record makes it no-store, as it makes
+        /trust/aws-release.json or /trust/azure-release.json. Its HTTP status
+        and x-trustedrouter-release-status are the GCP record's.
+        """
+        release = await resolved_trust_release()
+        aws, aws_status = await _plane_record(
+            aws_release_resolver, embedded_aws_metadata, aws_release
+        )
+        azure, azure_status = await _plane_record(
+            azure_release_resolver, embedded_azure_metadata, azure_release
+        )
+        headers = trust_response_headers(release.status)
+        if {aws_status, azure_status} - {"live", "embedded"}:
+            headers["cache-control"] = "no-store"
+        return HTMLResponse(
+            trust_html(
+                settings,
+                public_domain=public_domain,
+                api_base_url=api_base_url,
+                release_metadata=release.metadata,
+                release_metadata_status=release.status,
+                aws_record=aws,
+                aws_status=aws_status,
+                azure_record=azure,
+                azure_status=azure_status,
+            ),
+            status_code=trust_response_status(release.status),
+            headers=headers,
+        )
 
     def public_document_headers(path: str) -> dict[str, str]:
         return {
@@ -1045,18 +1094,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         domain = request_control_domain(request, settings)
         api_base_url = request_api_base_url(request, settings)
         if is_trust_hostname(settings, hostname):
-            release = await resolved_trust_release()
-            return HTMLResponse(
-                trust_html(
-                    settings,
-                    public_domain=domain,
-                    api_base_url=api_base_url,
-                    release_metadata=release.metadata,
-                    release_metadata_status=release.status,
-                ),
-                status_code=trust_response_status(release.status),
-                headers=trust_response_headers(release.status),
-            )
+            return await trust_page_response(public_domain=domain, api_base_url=api_base_url)
         if is_status_hostname(settings, hostname):
             return await _cached_status_page_response(
                 settings,
@@ -1083,17 +1121,9 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     @public_html_route("/trust")
     async def trust_page(request: Request) -> HTMLResponse:
-        release = await resolved_trust_release()
-        return HTMLResponse(
-            trust_html(
-                settings,
-                public_domain=request_control_domain(request, settings),
-                api_base_url=request_api_base_url(request, settings),
-                release_metadata=release.metadata,
-                release_metadata_status=release.status,
-            ),
-            status_code=trust_response_status(release.status),
-            headers=trust_response_headers(release.status),
+        return await trust_page_response(
+            public_domain=request_control_domain(request, settings),
+            api_base_url=request_api_base_url(request, settings),
         )
 
     @public_html_route("/compare/openrouter")
@@ -2439,49 +2469,50 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             headers=trust_response_headers(release.status),
         )
 
-    # AWS and Azure are deploy-time configured, so unlike the GCP record there
-    # is nothing to resolve and no stale/live distinction to report. What there
-    # IS is an unconfigured state, and that must not render as a measurement:
-    # serve 503 so a verifier treats it as "no answer" rather than reading
+    # An AWS or Azure record with no measurement must not render as one: serve
+    # 503 so a verifier treats it as "no answer" rather than reading
     # "not-configured" as the value it should expect.
-    def _static_release_response(payload: dict[str, Any], status: str = "embedded") -> JSONResponse:
-        configured = payload["release_metadata_status"] != "not-configured"
+    def _plane_release_response(record: dict[str, Any], status: str) -> JSONResponse:
         return JSONResponse(
-            payload,
-            status_code=200 if configured else 503,
-            headers=trust_response_headers(status if configured else "unavailable"),
+            record,
+            status_code=503 if status == "unavailable" else 200,
+            headers=trust_response_headers(status),
         )
 
     @app.get("/trust/aws-release.json")
     async def trust_release_aws() -> JSONResponse:
-        metadata, status = await _mirrored(aws_release_resolver, embedded_aws_metadata)
-        return _static_release_response(aws_release(settings, metadata=metadata), status)
+        record, status = await _plane_record(
+            aws_release_resolver, embedded_aws_metadata, aws_release
+        )
+        return _plane_release_response(record, status)
 
     @app.get("/trust/azure-release.json")
     async def trust_release_azure() -> JSONResponse:
-        metadata, status = await _mirrored(azure_release_resolver, embedded_azure_metadata)
-        return _static_release_response(azure_release(settings, metadata=metadata), status)
+        record, status = await _plane_record(
+            azure_release_resolver, embedded_azure_metadata, azure_release
+        )
+        return _plane_release_response(record, status)
 
     @app.get("/trust/pcr0-aws.txt")
     async def trust_pcr0_aws() -> PlainTextResponse:
-        metadata, _ = await _mirrored(aws_release_resolver, embedded_aws_metadata)
-        payload = aws_release(settings, metadata=metadata)
-        configured = payload["release_metadata_status"] != "not-configured"
+        record, status = await _plane_record(
+            aws_release_resolver, embedded_aws_metadata, aws_release
+        )
         return PlainTextResponse(
-            "".join(f"{value}\n" for value in payload["accepted_pcr0s"]),
-            status_code=200 if configured else 503,
-            headers=trust_response_headers("embedded" if configured else "unavailable"),
+            "".join(f"{value}\n" for value in record["accepted_pcr0s"]),
+            status_code=503 if status == "unavailable" else 200,
+            headers=trust_response_headers(status),
         )
 
     @app.get("/trust/hostdata-azure.txt")
     async def trust_hostdata_azure() -> PlainTextResponse:
-        metadata, _ = await _mirrored(azure_release_resolver, embedded_azure_metadata)
-        payload = azure_release(settings, metadata=metadata)
-        configured = payload["release_metadata_status"] != "not-configured"
+        record, status = await _plane_record(
+            azure_release_resolver, embedded_azure_metadata, azure_release
+        )
         return PlainTextResponse(
-            "".join(f"{value}\n" for value in payload["accepted_hostdata"]),
-            status_code=200 if configured else 503,
-            headers=trust_response_headers("embedded" if configured else "unavailable"),
+            "".join(f"{value}\n" for value in record["accepted_hostdata"]),
+            status_code=503 if status == "unavailable" else 200,
+            headers=trust_response_headers(status),
         )
 
     @app.get("/trust/image-digest-gcp.txt")
