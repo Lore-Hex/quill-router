@@ -50,10 +50,13 @@
 # share one deployment mutex operation. Each of them runs this gate, and each
 # would otherwise see the others' new revisions as fleet changes. So a pass
 # is recorded in the observation under the mutex operation it ran under, and
-# a later gate under the same operation stands on it: while that lock is
-# held, the fleet changes only through this release's own revisions, which
-# render every marker off. A standalone rollout takes its own lock and its
-# own operation, so it always runs the full gate.
+# a later gate under the same operation stands on it - provided the live
+# production lock is still held by that operation and unexpired, since the
+# premise is that while the lock is held, the fleet changes only through
+# this release's own revisions, which render every marker off. A standalone
+# rollout takes its own lock and its own operation, so it always runs the
+# full gate; a teardown under an inherited operation requires the same live
+# lock and fails otherwise (a re-run acquires afresh).
 # Once the workers are gone, the durable marker written by ledger_retire_workers
 # waives only the worker evidence (there is no worker left to report), and only
 # while every serving revision still satisfies the retirement invariants
@@ -158,10 +161,14 @@ _ledger_spanner_count() {
   printf '%s\n' "$value"
 }
 
-# Every query is bounded by a key or an index: tr_entities is keyed by kind,
-# tr_reservation_by_expiry leads on settled (unsettled rows are the in-flight
-# few, hold_usage_type is a back-join on that range), and spend_lease_open is
-# the pilot's small working table. Nothing here touches tr_entities.body.
+# tr_entities is keyed by kind and tr_reservation_by_expiry leads on settled
+# (unsettled rows are the in-flight few, hold_usage_type is a back-join on
+# that range). spend_lease_open has no index that covers this predicate: a
+# dead row keeps phase='open' with next_attempt_at NULL, which the
+# null-filtered due index cannot see, so the table is read the way its own
+# reconciler reads it (phase/dead scans) - it is the single pilot
+# workspace's working table, and done rows are purged by retention. Nothing
+# here touches tr_entities.body.
 ledger_spanner_open_work() {
   local -a labels sqls
   labels=(
@@ -194,6 +201,8 @@ ledger_spanner_open_work() {
 # empty (an app-profile map alone opens a ledger client). Records each
 # region's fleet state (service generation + reachable revisions) in
 # LEDGER_FLEET_STATE, one "region<TAB>generation<TAB>rev,rev" line per region.
+# Exit 2 = a reachable revision serves a disallowed value (a known state);
+# exit 1 = the fleet could not be read or is not reconciled (unknown).
 LEDGER_FLEET_STATE=""
 _ledger_serving_markers() {
   local purpose="$1"
@@ -267,13 +276,13 @@ print(",".join(sorted(names)))
         if [ "$expected" = "__absent__" ]; then
           if [ "$value" != "__missing__" ] && [ -n "$value" ]; then
             log "refusing ${purpose}: ${region} still serves ${name}=${value} on ${revision}"
-            return 1
+            return 2
           fi
         elif [ "$value" = "__missing__" ] && [ "$expected" = "false" ]; then
           log "${region}: ${name} is not set on ${revision}; it defaults to false"
         elif [ "$value" != "$expected" ]; then
           log "refusing ${purpose}: ${region} still serves ${name}=${value} on ${revision}"
-          return 1
+          return 2
         fi
       done
     done
@@ -529,6 +538,32 @@ _ledger_spend_scheduler_region() { printf '%s\n' "${TR_SPEND_LEASE_RECONCILER_SC
 _ledger_regional_job_prefix() { printf '%s\n' "${TR_REGIONAL_QUOTA_RECONCILER_JOB_PREFIX:-trusted-router-regional-quota-reconciler}"; }
 _ledger_spend_job_prefix() { printf '%s\n' "${TR_SPEND_LEASE_RECONCILER_JOB_PREFIX:-trusted-router-spend-lease-reconciler}"; }
 
+# 0 = the live production lock is held by this mutex operation and has not
+# expired. The lock record is what deploy_mutex.sh writes; an inherited
+# operation string alone proves nothing once the lock expired or was taken
+# over.
+_ledger_mutex_held_by() {
+  local operation="$1" record
+  record="$(regional_quota_gc_read storage cat "gs://$(ledger_retirement_bucket)/locks/trusted-router-production.json" 2>/dev/null)" || return 1
+  python3 -c '
+import datetime as dt, json, sys
+try:
+    record = json.load(sys.stdin)
+except ValueError:
+    raise SystemExit(1)
+if not isinstance(record, dict) or record.get("operation_id") != sys.argv[1]:
+    raise SystemExit(1)
+raw = record.get("expires_at")
+try:
+    expires = dt.datetime.fromisoformat(raw.replace("Z", "+00:00")) if isinstance(raw, str) else None
+except ValueError:
+    expires = None
+if expires is None or expires.tzinfo is None:
+    raise SystemExit(1)
+raise SystemExit(0 if expires > dt.datetime.now(dt.UTC) else 1)
+' "$operation" <<<"$record"
+}
+
 # 0 = the observation records a gate pass under this mutex operation.
 _ledger_gate_passed_under() {
   local operation="$1" record
@@ -580,8 +615,11 @@ print(json.dumps(record))
 ledger_retirement_gate() {
   local operation="${TR_DEPLOY_MUTEX_OPERATION:-}"
   if [ -n "$operation" ] && _ledger_gate_passed_under "$operation"; then
-    log "ledger retirement gate already passed under deployment operation ${operation}; while that lock is held the fleet changes only through this release's own revisions"
-    return 0
+    if _ledger_mutex_held_by "$operation"; then
+      log "ledger retirement gate already passed under deployment operation ${operation}; while that lock is held the fleet changes only through this release's own revisions"
+      return 0
+    fi
+    log "a gate pass is recorded under deployment operation ${operation} but the production lock is no longer held by it (expired or replaced); running the full gate"
   fi
   _ledger_retirement_gate_checks || return 1
   if [ -n "$operation" ]; then
@@ -594,16 +632,21 @@ _ledger_retirement_gate_checks() {
   ledger_retirement_completed || status=$?
   case "$status" in
     0)
-      if ledger_capability_off_everywhere; then
-        # The marker waives the worker evidence, never the quiescence or
-        # Spanner checks: a temporary rollback could have created escrow
-        # that outlived it.
-        ledger_fleet_quiescent || return 1
-        ledger_spanner_open_work || return 1
-        log "ledger retirement is recorded as complete and every serving revision still runs without the ledgers"
-        return 0
-      fi
-      log "ledger retirement is recorded but a serving revision carries lease capability again; running the full gate"
+      status=0
+      ledger_capability_off_everywhere || status=$?
+      case "$status" in
+        0)
+          # The marker waives the worker evidence, never the quiescence or
+          # Spanner checks: a temporary rollback could have created escrow
+          # that outlived it.
+          ledger_fleet_quiescent || return 1
+          ledger_spanner_open_work || return 1
+          log "ledger retirement is recorded as complete and every serving revision still runs without the ledgers"
+          return 0
+          ;;
+        2) log "ledger retirement is recorded but a serving revision carries lease capability again; running the full gate" ;;
+        *) return 1 ;;
+      esac
       ;;
     1) ;;
     *) return 1 ;;
@@ -766,6 +809,10 @@ for job in jobs:
 
 ledger_retire_workers() {
   local status=0 recorded_complete=false
+  if [ -n "${TR_DEPLOY_MUTEX_OPERATION:-}" ] && ! _ledger_mutex_held_by "$TR_DEPLOY_MUTEX_OPERATION"; then
+    log "refusing worker retirement: the inherited deployment operation ${TR_DEPLOY_MUTEX_OPERATION} does not hold the production lock (expired or replaced); a re-run acquires its own"
+    return 1
+  fi
   ledger_retirement_completed || status=$?
   case "$status" in
     0) recorded_complete=true ;;
@@ -774,12 +821,22 @@ ledger_retire_workers() {
   esac
   # A held region still serves a capability-on revision with its profile
   # maps: the workers are harmless while nothing new can be issued, so leave
-  # them for the next release rather than retiring under a live ledger.
-  if ! ledger_capability_off_everywhere; then
-    echo "::warning::ledger workers kept: a serving revision still carries lease capability; retirement retries on the next release"
-    log "deferring worker retirement; the ledgers stay provisioned until every region serves a capability-off revision"
-    return 0
-  fi
+  # them for the next release rather than retiring under a live ledger. A
+  # fleet that cannot be read is not that: the step fails.
+  status=0
+  ledger_capability_off_everywhere || status=$?
+  case "$status" in
+    0) ;;
+    2)
+      echo "::warning::ledger workers kept: a serving revision still carries lease capability; retirement retries on the next release"
+      log "deferring worker retirement; the ledgers stay provisioned until every region serves a capability-off revision"
+      return 0
+      ;;
+    *)
+      log "refusing worker retirement: the fleet could not be verified"
+      return 1
+      ;;
+  esac
   # The last secondary may have moved traffic moments ago: wait for the fleet
   # state found here to age out, under the mutex, re-reading the fleet each
   # time, rather than failing the release step. A fleet that changes again

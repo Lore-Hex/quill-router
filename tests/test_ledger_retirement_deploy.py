@@ -76,6 +76,7 @@ gc() {
       case "$3" in
         *ledger-retirement-targets.json) file="$FIXTURES/targets" ;;
         *ledger-drain-observation.json) file="$FIXTURES/observation" ;;
+        *locks/trusted-router-production.json) file="$FIXTURES/lock" ;;
         *) file="$FIXTURES/marker" ;;
       esac
       if [ -f "$file" ]; then cat "$file"
@@ -272,6 +273,17 @@ def _observation(tmp_path: Path) -> dict[str, dict[str, str]]:
 
 def _recorded_gate(tmp_path: Path) -> dict[str, str] | None:
     return json.loads((tmp_path / "observation").read_text()).get("gate")
+
+
+def _lock(tmp_path: Path, operation: str, *, expires_in: int = 3600) -> None:
+    """The production lock record as deploy_mutex.sh writes it."""
+    now = dt.datetime.now(dt.UTC)
+    (tmp_path / "lock").write_text(json.dumps({
+        "cloud": "gcp", "owner": "test", "tool": "workflow", "pid": 1,
+        "operation_id": operation,
+        "created_at": _stamp(now),
+        "expires_at": _stamp(now + dt.timedelta(seconds=expires_in)),
+    }))
 
 
 def _step_one_fleet(tmp_path: Path) -> None:
@@ -480,6 +492,7 @@ def test_gate_pass_is_shared_by_the_siblings_of_one_mutex_operation(tmp_path: Pa
     _step_two_fleet(tmp_path)
     _schedules(tmp_path)
     _evidence(tmp_path, [_regional_line()] * 5, [_spend_line()] * 5)
+    _lock(tmp_path, "op-1")
     run = _run(tmp_path, GATE, extra="TR_DEPLOY_MUTEX_OPERATION=op-1\n")
     assert run.returncode == 0, run.stderr
     recorded = _recorded_gate(tmp_path)
@@ -490,6 +503,22 @@ def test_gate_pass_is_shared_by_the_siblings_of_one_mutex_operation(tmp_path: Pa
     assert run.returncode == 0, run.stderr
     assert "already passed under deployment operation op-1" in run.stderr
     assert not any(call.startswith(("run services describe", "spanner", "logging")) for call in _calls(tmp_path))
+
+    # The record stands only while the production lock is still held by
+    # that operation: expired, taken over or gone, the full gate runs (and
+    # here finds the generation change).
+    for stale in ("expired", "replaced", "gone"):
+        if stale == "expired":
+            _lock(tmp_path, "op-1", expires_in=-1)
+        elif stale == "replaced":
+            _lock(tmp_path, "op-9")
+        else:
+            (tmp_path / "lock").unlink()
+        run = _run(tmp_path, GATE, extra="TR_DEPLOY_MUTEX_OPERATION=op-1\n")
+        assert run.returncode != 0, stale
+        assert "production lock is no longer held by it (expired or replaced); running the full gate" in run.stderr, stale
+        assert any(call.startswith("run services describe") for call in _calls(tmp_path)), stale
+    _lock(tmp_path, "op-1")
 
     # Another operation is another release: the full gate runs, and the
     # generation change it finds restarts the drain clock.
@@ -505,10 +534,19 @@ def test_gate_pass_is_shared_by_the_siblings_of_one_mutex_operation(tmp_path: Pa
     assert any(call.startswith("run services describe") for call in _calls(tmp_path))
     assert _recorded_gate(tmp_path) is None
 
-    # The teardown's own observation rewrites keep a recorded pass.
+    # A teardown under an inherited operation needs that live lock too; it
+    # fails (never defers) without it, and its observation rewrites keep a
+    # recorded pass.
+    _lock(tmp_path, "op-3")
     run = _run(tmp_path, GATE, extra="TR_DEPLOY_MUTEX_OPERATION=op-3\n")
     assert run.returncode == 0, run.stderr
     (tmp_path / "jobs").write_text(f"us-east4\t{REGIONAL_JOB}\nus-east4\t{SPEND_JOB}\n")
+    _lock(tmp_path, "op-3", expires_in=-1)
+    run = _run(tmp_path, RETIRE, extra="TR_DEPLOY_MUTEX_OPERATION=op-3\n")
+    assert run.returncode != 0
+    assert "inherited deployment operation op-3 does not hold the production lock" in run.stderr
+    assert not any("delete" in call for call in _calls(tmp_path))
+    _lock(tmp_path, "op-3")
     run = _run(tmp_path, RETIRE, extra="TR_DEPLOY_MUTEX_OPERATION=op-3\n")
     assert run.returncode == 0, run.stderr
     assert (tmp_path / "marker").exists()
@@ -899,9 +937,11 @@ def test_retire_deletes_schedules_then_workers_and_records_the_retirement(tmp_pa
 
 def test_retire_waits_for_the_fleet_state_it_finds_to_age_out(tmp_path: Path) -> None:
     # The last secondary moved traffic moments before this step: wait under
-    # the mutex, re-reading the fleet, instead of failing the release.
+    # the mutex, re-reading the fleet, instead of failing the release. The
+    # observation is stamped a little ahead of the clock so that no amount
+    # of setup time makes the fleet quiescent before the first check.
     _serving(tmp_path, {region: _STEP_TWO for region in REGIONS})
-    _observed(tmp_path, since=_ago(2))
+    _observed(tmp_path, since=_ago(-3))
     _schedules(tmp_path)
     _workers(tmp_path)
     run = _run(tmp_path, RETIRE, extra="TR_LEDGER_DRAIN_INTERVAL_SECONDS=4\nTR_LEDGER_RETIRE_RETRY_SLEEP_SECONDS=1\n")
@@ -988,6 +1028,29 @@ def test_retire_defers_while_a_region_still_serves_capability_or_a_profile_map(t
     assert run.returncode == 0, run.stderr
     assert "us-central1 still serves TR_REGIONAL_QUOTA_LEASES_ENABLED=true on trusted-router-us-central1-old" in run.stderr
     assert not any("delete" in call for call in _calls(tmp_path))
+
+
+def test_retire_fails_rather_than_defers_when_the_fleet_cannot_be_read(tmp_path: Path) -> None:
+    # Deferral is for a known capability-on state. An unreadable or
+    # unreconciled service is unknown: the step fails and retires nothing.
+    _step_two_fleet(tmp_path)
+    _schedules(tmp_path)
+    _workers(tmp_path)
+    (tmp_path / "service-us-east4.json").unlink()
+    run = _run(tmp_path, RETIRE)
+    assert run.returncode != 0
+    assert "cannot read the service in us-east4" in run.stderr
+    assert "the fleet could not be verified" in run.stderr
+    assert "::warning::" not in run.stdout
+    assert not any("delete" in call for call in _calls(tmp_path))
+
+    _serving(tmp_path, {region: _STEP_TWO for region in REGIONS}, generation=8, observed=7)
+    run = _run(tmp_path, RETIRE)
+    assert run.returncode != 0
+    assert "generation 8 is not reconciled yet (observed 7)" in run.stderr
+    assert "::warning::" not in run.stdout
+    assert not any("delete" in call for call in _calls(tmp_path))
+    assert not (tmp_path / "marker").exists()
 
 
 def test_retire_fails_when_spanner_regressed_since_the_gate(tmp_path: Path) -> None:

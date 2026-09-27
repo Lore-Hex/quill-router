@@ -182,7 +182,9 @@ provisioners and the background reconciler deploys:
   its lease is open, and that lease's index row stays until reconciliation
   closes it, so the outbox itself - which has no status index - is never
   scanned), and no `spend_lease_open` row that is not `done` (the
-  reconciler's own `open` counts only rows due now); and, while a reconciler
+  reconciler's own `open` counts only rows due now; this pilot table is
+  read the way its reconciler reads it, since a dead row keeps
+  `next_attempt_at` NULL and the due index cannot see it); and, while a reconciler
   schedule still exists, that its exact target job (project, location, name
   parsed from the schedule) reported five all-zero passes, all after the
   fleet state was first seen plus the drain interval. A missing schedule
@@ -190,13 +192,17 @@ provisioners and the background reconciler deploys:
   with a warning. The release workflow warms the four regions in parallel
   processes that share one deployment mutex operation; the gate runs once
   before that fan-out and records its pass in the observation under that
-  operation, and the siblings' own gates stand on it - while the lock is
+  operation, and the siblings' own gates stand on it while the production
+  lock is still held by that operation and unexpired - while the lock is
   held, the fleet changes only through this release's revisions. A
-  standalone rollout takes its own lock and always runs the full gate.
+  standalone rollout takes its own lock and always runs the full gate; the
+  teardown under an inherited operation requires the same live lock.
 - `scripts/deploy/retire_ledger_workers.sh` runs after the secondary ramp,
   under the deployment mutex (the workflow's, or its own when invoked
   directly). It defers (with a workflow warning) while any reachable
-  revision still carries capability, a profile map or a spend switch, waits
+  revision still carries capability, a profile map or a spend switch - a
+  fleet it cannot read or that is not reconciled fails the step instead -
+  waits
   for the fleet state it finds to age out (a fleet that changes again during
   that wait fails the step), re-checks Spanner, deletes both
   schedules, waits for each worker's running executions, deletes every
