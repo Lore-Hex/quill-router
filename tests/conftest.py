@@ -77,7 +77,9 @@ CATALOG_FRESHNESS_INSTANT = datetime(2000, 1, 1, tzinfo=UTC)
 
 
 @pytest.fixture(autouse=True)
-def catalog_freshness_before_every_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+def catalog_freshness_before_every_deadline(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Judge catalog freshness at an instant before every committed deadline.
 
     The hourly price refresh runs this suite against the catalog it is about
@@ -85,7 +87,12 @@ def catalog_freshness_before_every_deadline(monkeypatch: pytest.MonkeyPatch) -> 
     manifest. A test about routes, prices or billing must not fail, and block
     every provider's publication, because a committed manifest aged past its
     deadline. Tests about freshness pass an explicit ``at=`` instead.
+
+    Live provider-health monitors keep the real clock: they compare the
+    catalog with artifacts generated on it, such as the social cards.
     """
+    if request.node.get_closest_marker("provider_health") is not None:
+        return
     from trusted_router import catalog_data
 
     monkeypatch.setattr(catalog_data, "_utc_now", lambda: CATALOG_FRESHNESS_INSTANT)
