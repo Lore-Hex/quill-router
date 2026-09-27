@@ -130,10 +130,13 @@ def _detect_stale_heartbeats(settings: Settings) -> list[Decision]:
                 Decision(
                     playbook="heartbeat-stale",
                     subject=str(row["name"]),
+                    # A job beats only after a clean run, so staleness has two
+                    # causes: no runs at all, or runs that keep failing.
                     detail=(
-                        f"no beat for {row.get('age_seconds')}s "
-                        f"(last {row.get('last_beat_at')}); the scheduler behind this "
-                        "job is dead or wedged"
+                        f"no successful run for {row.get('age_seconds')}s "
+                        f"(last {row.get('last_beat_at')}); either the scheduler "
+                        "is not running this job or every run is failing - check "
+                        "the job's own logs"
                     ),
                     page=True,
                 )
