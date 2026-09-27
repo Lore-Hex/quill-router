@@ -415,17 +415,19 @@ ENV_VARS=(
 
 # Preserve the money-path and federation feature switches exactly. Missing
 # values are a refusal, never an invitation to silently fall back to defaults.
+# The regional escrow ledger is retired (2026-09-27): a legacy service that
+# still serves lease capability carries the app-profile maps this surface no
+# longer copies, and a revision with capability but no map cannot boot. Refuse
+# that source rather than inherit half of it; the markers render false.
 for plain_name in \
   TR_REGIONAL_QUOTA_LEASES_ENABLED \
-  TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED \
-  TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS \
-  TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS \
-  TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS \
-  TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS \
-  TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT \
-  TR_REGIONAL_QUOTA_BIGTABLE_TABLE \
-  TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES; do
-  ENV_VARS+=("${plain_name}=$(legacy_env_required "$plain_name")")
+  TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED; do
+  legacy_marker="$(legacy_env_required "$plain_name")"
+  if [ "$legacy_marker" != "false" ]; then
+    echo "ERROR: active ${LEGACY_SERVICE} revision still serves ${plain_name}=${legacy_marker}; retire the ledger on the legacy service first" >&2
+    exit 1
+  fi
+  ENV_VARS+=("${plain_name}=false")
 done
 
 for optional_plain_name in \
@@ -439,8 +441,7 @@ for optional_plain_name in \
   TR_SYNTHETIC_MONITOR_MODEL \
   TR_SYNTHETIC_CONTROL_PLANE_BASE_URL \
   TR_SYNTHETIC_CANONICAL_ATTESTED \
-  TR_EXTERNAL_LIVE_REGIONS \
-  TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS; do
+  TR_EXTERNAL_LIVE_REGIONS; do
   if optional_plain_value="$(legacy_env_optional "$optional_plain_name")"; then
     ENV_VARS+=("${optional_plain_name}=${optional_plain_value}")
   fi

@@ -1302,7 +1302,9 @@ def test_release_wiring_runs_trust_jobs_after_synthetic_and_after_spend_lease_re
     assert "TR_TRUST_JOBS_DEPLOY: ${{ vars.TR_TRUST_JOBS_DEPLOY || '0' }}" in step
     assert "TR_TRUST_STRIPE_ACCOUNT_ID: ${{ vars.TR_TRUST_STRIPE_ACCOUNT_ID || '' }}" in step
     assert 'bash "${SCRIPT_DIR}/deploy/trust_jobs.sh"' in orchestrator
-    assert orchestrator.index('deploy/spend_lease_reconciler.sh"') < orchestrator.index(
+    # The spend-lease reconciler is retired (2026-09-27); trust jobs still run
+    # after the rollout and before the synthetic monitor.
+    assert orchestrator.index('deploy/rollout.sh"') < orchestrator.index(
         'deploy/trust_jobs.sh"'
     ) < orchestrator.index('deploy/synthetic.sh"')
     jobs = (ROOT / TRUST_JOBS).read_text()
