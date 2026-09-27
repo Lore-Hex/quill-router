@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import runpy
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -656,3 +657,22 @@ def test_explicitly_registered_extra_gap_variant_is_marked(monkeypatch):
                            nodeid="tests/conformance/" + test_id, originalname=name, add_marker=marks.append)
     conftest.pytest_collection_modifyitems([item])
     assert len(marks) == 1 and marks[0].kwargs == {"strict": True, "reason": "explicitly reviewed variant"}
+
+
+def test_a_git_checkout_scans_tracked_files_and_a_plain_directory_scans_all(tmp_path_factory):
+    # google-github-actions/auth writes gha-creds-*.json into the workspace; the
+    # hourly price refresh's validation run failed on it as a "DDL carrier".
+    carrier = '{"note": "update_ddl"}\n'
+    checkout = tmp_path_factory.mktemp("checkout")
+    subprocess.run(["git", "init", "-q", str(checkout)], check=True)  # noqa: S603, S607 - fixed git setup
+    (checkout / "migrate.sh").write_text(carrier)
+    (checkout / "gha-creds-untracked.json").write_text(carrier)
+    subprocess.run(["git", "-C", str(checkout), "add", "migrate.sh"], check=True)  # noqa: S603, S607 - fixed git setup
+
+    assert schema.repository_files(checkout) == [checkout / "migrate.sh"]
+
+    plain = tmp_path_factory.mktemp("plain")
+    (plain / "migrate.sh").write_text(carrier)
+    (plain / "gha-creds-untracked.json").write_text(carrier)
+
+    assert schema.repository_files(plain) == [plain / "gha-creds-untracked.json", plain / "migrate.sh"]

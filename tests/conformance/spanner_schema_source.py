@@ -3,7 +3,8 @@
 This deliberately parses a narrow shell vocabulary, never executes shell or gcloud.
 New migration idioms must extend the parser and regenerate spanner_ddl.py.
 
-Scan every repository file as raw bytes decoded as UTF-8 with replacement, except:
+Scan every repository file as raw bytes decoded as UTF-8 with replacement (in a git
+checkout the tracked files: untracked workspace files never ship), except:
 (a) root tests/ and docs/ (even files executed by a deploy step are out of scope);
 (b) build/dependency directories .git, .venv, node_modules, dist, build,
 __pycache__, vendor, target, .next, .mypy_cache, .pytest_cache, .ruff_cache,
@@ -39,6 +40,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
@@ -364,13 +366,46 @@ EXCLUDED_DIRECTORIES = {
 }
 
 
+def _tracked_files(root: Path) -> list[Path] | None:
+    """The tracked files when root is the top of a git checkout, else None."""
+    try:
+        top = subprocess.run(["git", "-C", str(root), "rev-parse", "--show-toplevel"],  # noqa: S603, S607 - fixed git query
+                             capture_output=True, text=True, check=True).stdout.strip()
+        if not top or Path(top).resolve() != root.resolve():
+            return None
+        listed = subprocess.run(["git", "-C", str(root), "ls-files", "-z"],  # noqa: S603, S607 - fixed git query
+                                capture_output=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return [root / name for name in listed.decode("utf-8", "surrogateescape").split("\0") if name]
+
+
 def repository_files(root: Path) -> list[Path]:
-    paths = []
-    for directory, names, files in os.walk(root):
-        names[:] = sorted(name for name in names if name not in EXCLUDED_DIRECTORIES
-                          and not (Path(directory) == root and name in {"tests", "docs"}))
-        paths.extend(Path(directory) / name for name in files)
-    return sorted(paths)
+    """The repository's files under root, minus the excluded directories.
+
+    In a git checkout the repository is its tracked files. An untracked
+    workspace file, such as the gha-creds-*.json that google-github-actions/auth
+    writes into the workspace, never ships and must not be read, let alone
+    echoed into a CI log. A plain directory, such as a test's copy, is walked.
+    """
+    tracked = _tracked_files(root)
+    if tracked is None:
+        paths = []
+        for directory, names, files in os.walk(root):
+            names[:] = sorted(name for name in names if name not in EXCLUDED_DIRECTORIES
+                              and not (Path(directory) == root and name in {"tests", "docs"}))
+            paths.extend(Path(directory) / name for name in files)
+        return sorted(paths)
+    kept = []
+    for path in tracked:
+        parts = path.relative_to(root).parts
+        if any(part in EXCLUDED_DIRECTORIES for part in parts[:-1]):
+            continue
+        if len(parts) > 1 and parts[0] in {"tests", "docs"}:
+            continue
+        if path.is_file():
+            kept.append(path)
+    return sorted(kept)
 
 
 def migration_sources(root: Path) -> list[Path]:
