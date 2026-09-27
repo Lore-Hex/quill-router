@@ -308,6 +308,38 @@ def test_a_hold_that_empties_the_snapshot_publishes_nothing(
     assert refresh.main([]) == 1
 
 
+@pytest.mark.parametrize("drop", [True, False], ids=["unpublished-route-dropped", "control-no-drop"])
+def test_a_held_provider_publishes_only_its_published_routes(
+    published: dict[str, Any],
+    provider: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    drop: bool,
+) -> None:
+    # OpenRouter's feed lists a new regional endpoint for the held provider's
+    # model (production, 2026-09-27: z-ai/glm-5.3 [wafer:wafer/us:GLM-5.3]).
+    key, name = provider
+    feed = refresh.build_openrouter_snapshot()
+    feed["models"][0]["endpoints"].append(
+        {"tr_provider_slug": name, "model_id": "acme/model", "tag": f"{name}/us"}
+    )
+    monkeypatch.setattr(refresh, "build_openrouter_snapshot", lambda: feed)
+    if not drop:
+        monkeypatch.setattr(refresh, "_drop_unpublished_held_routes", lambda *_args: None)
+    _fetched(monkeypatch, key, ModelPrice(3_000_000, 2_000_000))
+
+    if not drop:
+        assert refresh.main([]) == 1
+        assert f"acme/model [{name}:{name}/us:acme/model]" in capsys.readouterr().out
+        return
+
+    assert refresh.main([]) == 0
+
+    acme = next(model for model in json.loads(refresh.SNAPSHOT_PATH.read_text())["models"] if model["id"] == "acme/model")
+    assert [(ep.get("tag"), ep["pricing"]["prompt"]) for ep in acme["endpoints"]] == [(None, "0.000001")]
+    assert _endpoint_prices()["x-ai/grok-next [grok]"] == ("0.0000035", "0.000004")
+
+
 def test_unusable_comparison_input_skips_holding_without_crashing(
     published: dict[str, Any],
     provider: tuple[str, str],

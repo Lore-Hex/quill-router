@@ -310,6 +310,16 @@ def _spiking_results(
     return hold
 
 
+def _held_route(model: dict[str, Any], endpoint: Any, held: dict[str, list[str]]) -> str | None:
+    """The route key of a held provider's snapshot endpoint, or None for any other endpoint."""
+    if not isinstance(endpoint, dict):
+        return None
+    provider = endpoint.get("tr_provider_slug")
+    if not isinstance(provider, str) or _result_slug_for_provider(provider) not in held:
+        return None
+    return f"{model.get('id')} [{provider}:{endpoint.get('tag') or ''}:{endpoint.get('model_id')}]"
+
+
 def _held_endpoint_pricing(snapshot: Any, held: dict[str, list[str]]) -> dict[str, list[str]]:
     """Every held provider's snapshot endpoint pricing block, grouped by route.
 
@@ -322,16 +332,33 @@ def _held_endpoint_pricing(snapshot: Any, held: dict[str, list[str]]) -> dict[st
         if not isinstance(model, dict):
             continue
         for endpoint in model.get("endpoints") or []:
-            if not isinstance(endpoint, dict):
-                continue
-            provider = endpoint.get("tr_provider_slug")
-            if not isinstance(provider, str) or _result_slug_for_provider(provider) not in held:
-                continue
-            route = (
-                f"{model.get('id')} [{provider}:{endpoint.get('tag') or ''}:{endpoint.get('model_id')}]"
-            )
-            out.setdefault(route, []).append(json.dumps(endpoint.get("pricing"), sort_keys=True))
+            route = _held_route(model, endpoint, held)
+            if route is not None:
+                out.setdefault(route, []).append(json.dumps(endpoint.get("pricing"), sort_keys=True))
     return {route: sorted(blocks) for route, blocks in out.items()}
+
+
+def _drop_unpublished_held_routes(
+    merged: dict[str, Any], published: Any, held: dict[str, list[str]]
+) -> None:
+    """Keep each held provider to the routes it had published.
+
+    OpenRouter's endpoint feed can add a route for a held provider (a new
+    regional tag, say). The merge prices it at the provider's held price for
+    that model, but a held provider publishes nothing new until the hold is
+    reviewed. Model headlines are priced per provider, not per endpoint, so
+    dropping it changes no price; a published route that is gone is left for
+    the exactness guard to refuse.
+    """
+    published_routes = set(_held_endpoint_pricing(published, held))
+    for model in merged.get("models") or []:
+        if not isinstance(model, dict) or not isinstance(model.get("endpoints"), list):
+            continue
+        model["endpoints"] = [
+            endpoint
+            for endpoint in model["endpoints"]
+            if (route := _held_route(model, endpoint, held)) is None or route in published_routes
+        ]
 
 
 def _held_routes_changed(baseline: Path, held: dict[str, list[str]]) -> list[str]:
@@ -1426,6 +1453,9 @@ def main(argv: list[str] | None = None) -> int:
             disagreements = _cross_check(provider_index, or_snapshot)
             id_mismatches = _cross_check_ids(results, or_snapshot)
             merged = _merge_snapshot(or_snapshot, provider_index, set(healed))
+            # A hold implies the comparison already read this published copy.
+            published = json.loads((baseline / SNAPSHOT_PATH.name).read_text(encoding="utf-8"))
+            _drop_unpublished_held_routes(merged, published, held)
             _write_snapshot(merged)
         if held and (changed := _held_routes_changed(baseline, held)):
             # Re-pricing could not reproduce a held provider exactly (e.g. an
