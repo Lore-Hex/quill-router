@@ -261,11 +261,13 @@ def test_a_hold_that_cannot_keep_the_provider_exact_publishes_nothing(
     assert f"  acme/model [{name}::acme/model]\n" in out
 
 
+@pytest.mark.parametrize("same_tag", [False, True], ids=["distinct-tags", "same-tag"])
 def test_a_hold_that_would_merge_distinct_published_cache_prices_publishes_nothing(
     published: dict[str, Any],
     provider: tuple[str, str],
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    same_tag: bool,
 ) -> None:
     # Two published endpoints of one provider differ only in cached input;
     # re-pricing keeps one price per provider and model, so one would change.
@@ -278,7 +280,10 @@ def test_a_hold_that_would_merge_distinct_published_cache_prices_publishes_nothi
             "tag": tag,
             "pricing": {"prompt": "0.000001", "completion": "0.000002", "input_cache_read": cached},
         }
-        for tag, cached in ((f"{name}/a", "0.0000001"), (f"{name}/b", "0.00000011"))
+        for tag, cached in (
+            (f"{name}/a", "0.0000001"),
+            (f"{name}/a" if same_tag else f"{name}/b", "0.00000011"),
+        )
     ]
     published["models"][0] = model
     refresh.SNAPSHOT_PATH.write_text(json.dumps(published))

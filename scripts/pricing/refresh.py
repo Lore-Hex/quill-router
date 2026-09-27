@@ -310,9 +310,13 @@ def _spiking_results(
     return hold
 
 
-def _held_endpoint_pricing(snapshot: Any, held: dict[str, list[str]]) -> dict[str, Any]:
-    """Every held provider's snapshot endpoint, keyed by route, with its full pricing block."""
-    out: dict[str, Any] = {}
+def _held_endpoint_pricing(snapshot: Any, held: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Every held provider's snapshot endpoint pricing block, grouped by route.
+
+    Nothing stops two endpoints from sharing a route key, so each key keeps
+    all of its pricing blocks rather than the last one.
+    """
+    out: dict[str, list[str]] = {}
     models = snapshot.get("models") if isinstance(snapshot, dict) else None
     for model in models or []:
         if not isinstance(model, dict):
@@ -326,8 +330,8 @@ def _held_endpoint_pricing(snapshot: Any, held: dict[str, list[str]]) -> dict[st
             route = (
                 f"{model.get('id')} [{provider}:{endpoint.get('tag') or ''}:{endpoint.get('model_id')}]"
             )
-            out[route] = endpoint.get("pricing")
-    return out
+            out.setdefault(route, []).append(json.dumps(endpoint.get("pricing"), sort_keys=True))
+    return {route: sorted(blocks) for route, blocks in out.items()}
 
 
 def _held_routes_changed(baseline: Path, held: dict[str, list[str]]) -> list[str]:
