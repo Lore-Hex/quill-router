@@ -102,6 +102,7 @@ gc() {
     'run services describe')
       if [ -f "$FIXTURES/service-$region.json" ]; then cat "$FIXTURES/service-$region.json"
       else echo "ERROR: (gcloud.run.services.describe) NOT_FOUND: Service [trusted-router] could not be found." >&2; return 1; fi ;;
+    'storage cp-fail '*) return 1 ;;
     'run revisions describe')
       cat "$FIXTURES/revision-$region.json" ;;
     'logging read '*)
@@ -139,6 +140,13 @@ def _script_body(path: Path) -> str:
     body = body.replace('source "${SCRIPT_DIR}/_lib.sh"', ":")
     body = body.replace('source "${SCRIPT_DIR}/regional_quota_rollout.sh"', 'source "$HELPER"')
     body = body.replace('source "${SCRIPT_DIR}/ledger_retirement.sh"', 'source "$LIBRARY"')
+    # The deployment mutex is a recording stub: acquire marks ownership the
+    # way deploy_mutex.sh does, release records that it ran.
+    body = body.replace(
+        'source "${SCRIPT_DIR}/deploy_mutex.sh"',
+        'deploy_mutex_acquire() { printf "mutex acquire\\n" >> "$FIXTURES/calls"; DEPLOY_MUTEX_SCOPE_OWNS_LOCK=1; }\n'
+        'deploy_mutex_release() { printf "mutex release\\n" >> "$FIXTURES/calls"; }',
+    )
     assert 'source "${SCRIPT_DIR}/' not in body, "every sourced helper must be replaced"
     return body
 
@@ -171,11 +179,23 @@ _OFF_MARKERS = {
 }
 
 
-def _serving(tmp_path: Path, env_by_region: dict[str, dict[str, str]], *, created: str = REVISION_CREATED) -> None:
+def _serving(
+    tmp_path: Path,
+    env_by_region: dict[str, dict[str, str]],
+    *,
+    created: str = REVISION_CREATED,
+    transitioned: str | None = None,
+) -> None:
     for region, env in env_by_region.items():
-        (tmp_path / f"service-{region}.json").write_text(json.dumps({
+        service: dict[str, object] = {
             "status": {"traffic": [{"revisionName": f"trusted-router-{region}-live", "percent": 100}]},
-        }))
+        }
+        if transitioned is not None:
+            service["status"]["conditions"] = [  # type: ignore[index]
+                {"type": "Ready", "status": "True", "lastTransitionTime": REVISION_CREATED},
+                {"type": "RoutesReady", "status": "True", "lastTransitionTime": transitioned},
+            ]
+        (tmp_path / f"service-{region}.json").write_text(json.dumps(service))
         (tmp_path / f"revision-{region}.json").write_text(json.dumps({
             "metadata": {"creationTimestamp": created},
             "spec": {"containers": [{"env": [{"name": name, "value": value} for name, value in env.items()]}]},
@@ -525,6 +545,38 @@ def test_gate_requires_evidence_after_the_newest_revision_plus_the_drain_interva
     assert "completion has no timestamp" in run.stderr
 
 
+def test_gate_waits_for_the_drain_interval_after_the_last_traffic_change(tmp_path: Path) -> None:
+    # A traffic move seconds ago (an older issuance-off revision regaining
+    # traffic, a rollback restored) leaves the predecessor's in-flight
+    # requests alive; nothing is trusted until the interval has passed.
+    _drained(tmp_path)
+    just_now = (dt.datetime.now(dt.UTC) - dt.timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    _serving(tmp_path, {region: {**_OFF_MARKERS, "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true"} for region in REGIONS},
+             transitioned=just_now)
+    run = _run(tmp_path, GATE)
+    assert run.returncode != 0
+    assert "fleet traffic changed at" in run.stderr and "600s drain interval" in run.stderr
+    assert not any(call.startswith("spanner") for call in _calls(tmp_path))
+
+    # The marker path waits too.
+    _retired_marker(tmp_path)
+    _serving(tmp_path, {region: {**_OFF_MARKERS, "TR_REGIONAL_QUOTA_LEASES_ENABLED": "false"} for region in REGIONS},
+             transitioned=just_now)
+    run = _run(tmp_path, GATE)
+    assert run.returncode != 0
+    assert "fleet traffic changed at" in run.stderr
+    assert not any(call.startswith("spanner") for call in _calls(tmp_path))
+
+    # Old transitions are fine; the revision's own age still counts.
+    (tmp_path / "marker").unlink()
+    _drained(tmp_path)
+    _serving(tmp_path, {region: {**_OFF_MARKERS, "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true"} for region in REGIONS},
+             transitioned="2026-09-27T11:30:00Z")
+    run = _run(tmp_path, GATE)
+    assert run.returncode == 0, run.stderr
+    assert "fleet quiescent since 2026-09-27T11:30:00+00:00" in run.stdout + run.stderr
+
+
 def test_gate_ignores_unrelated_log_lines_and_refuses_malformed_evidence(tmp_path: Path) -> None:
     _drained(tmp_path)
     _evidence(tmp_path, [_regional_line()] * 5 + ["INFO:regional_quota.reconciler_start"], [_spend_line()] * 5)
@@ -597,6 +649,9 @@ def test_retire_deletes_schedules_then_workers_and_records_the_retirement(tmp_pa
     assert marker["state"] == "retired"
     assert marker["project"] == "quill-cloud-proxy" and marker["spanner_database"] == "trusted-router"
     assert marker["spanner_instance"] == "trusted-router-nam6"
+    # The deployment mutex is held from before the first check until the end.
+    assert calls[0] == "mutex acquire" and calls[-1] == "mutex release"
+    assert all("--verbosity=warning" in call for call in calls if call.startswith("run jobs list"))
     # Targets were recorded before the first schedule was deleted.
     targets = json.loads((tmp_path / "targets").read_text())
     assert targets == {"targets": sorted([REGIONAL_JOB, SPEND_JOB])}
@@ -605,12 +660,32 @@ def test_retire_deletes_schedules_then_workers_and_records_the_retirement(tmp_pa
     assert "ledger reconciler workers retired (4 job(s) deleted)" in run.stderr
 
 
-def test_retire_is_a_no_op_once_recorded(tmp_path: Path) -> None:
+def test_retire_is_a_verified_no_op_once_recorded(tmp_path: Path) -> None:
     _retired_marker(tmp_path)
+    _step_two_fleet(tmp_path)
+    for schedule in (REGIONAL_SCHEDULE, SPEND_SCHEDULE):
+        (tmp_path / f"scheduler-missing-{schedule}").write_text("")
     run = _run(tmp_path, RETIRE)
     assert run.returncode == 0, run.stderr
-    assert "already recorded as complete" in run.stderr
-    assert not any(call.startswith(("run ", "scheduler", "spanner")) for call in _calls(tmp_path))
+    assert "already recorded as complete and nothing has come back" in run.stderr
+    calls = _calls(tmp_path)
+    # The fleet, Spanner, the listing and both schedules are re-verified...
+    assert sum(call.startswith("spanner") for call in calls) == 4
+    assert any(call.startswith("run jobs list") for call in calls)
+    assert sum(call.startswith("scheduler jobs describe") for call in calls) == 2
+    # ...and nothing is deleted or rewritten.
+    assert not any("delete" in call or call.startswith("storage cp") for call in calls)
+
+    # A rollback recreated a schedule and its worker: they are retired again
+    # and the marker rewritten.
+    (tmp_path / f"scheduler-missing-{SPEND_SCHEDULE}").unlink()
+    (tmp_path / f"scheduler-json-{SPEND_SCHEDULE}").write_text(_schedule(SPEND_SCHEDULE, SPEND_JOB))
+    (tmp_path / "jobs").write_text(f"us-east4\t{SPEND_JOB}\n")
+    run = _run(tmp_path, RETIRE)
+    assert run.returncode == 0, run.stderr
+    assert "workers or schedules came back; retiring them again" in run.stderr
+    assert f"deleted worker {SPEND_JOB} in us-east4" in run.stderr
+    assert json.loads((tmp_path / "marker").read_text())["workers_deleted"] == 1
 
 
 def test_retire_defers_while_a_region_still_serves_capability_or_a_profile_map(tmp_path: Path) -> None:
@@ -753,3 +828,42 @@ def test_retire_retry_after_an_interrupted_teardown_still_finds_every_worker(tmp
     assert f"deleted worker {SPEND_JOB} in us-west1" in run.stderr
     assert (tmp_path / "jobs").read_text() == ""
     assert json.loads((tmp_path / "marker").read_text())["workers_deleted"] == 2
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        pytest.param("not json", id="not-json"),
+        pytest.param("{}", id="no-targets"),
+        pytest.param('{"targets": "quota-custom-worker"}', id="not-a-list"),
+        pytest.param('{"targets": ["Quota Custom Worker"]}', id="invalid-name"),
+    ],
+)
+def test_retire_refuses_a_malformed_targets_record(tmp_path: Path, record: str) -> None:
+    # A record it cannot trust must never be silently emptied: the retry
+    # guarantee for schedule-only target names depends on it.
+    _step_two_fleet(tmp_path)
+    _schedules(tmp_path)
+    _workers(tmp_path)
+    (tmp_path / "targets").write_text(record)
+    run = _run(tmp_path, RETIRE)
+    assert run.returncode != 0
+    assert "recorded worker targets are unreadable" in run.stderr
+    assert not any("delete" in call for call in _calls(tmp_path))
+    assert not (tmp_path / "marker").exists()
+
+
+def test_retire_matches_historical_prefixes_alongside_configured_ones(tmp_path: Path) -> None:
+    # A configured prefix must not hide the workers earlier releases created
+    # under the default prefix.
+    _step_two_fleet(tmp_path)
+    _schedules(tmp_path)
+    (tmp_path / "jobs").write_text(
+        "us-east4\tcustom-quota-abc123\n"
+        f"us-east4\t{REGIONAL_JOB}\n"
+        f"us-east4\t{SPEND_JOB}\n"
+    )
+    run = _run(tmp_path, RETIRE, extra="TR_REGIONAL_QUOTA_RECONCILER_JOB_PREFIX=custom-quota\n")
+    assert run.returncode == 0, run.stderr
+    deleted = {call.split()[3] for call in _calls(tmp_path) if call.startswith("run jobs delete")}
+    assert deleted == {"custom-quota-abc123", REGIONAL_JOB, SPEND_JOB}

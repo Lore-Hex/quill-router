@@ -32,13 +32,17 @@
 #      location parsed from the schedule) reported REQUIRED all-zero passes,
 #      all of them after every serving revision had been created plus a drain
 #      interval, so the picture in 2 is neither a paused worker nor a stale one.
+# Before any Spanner count is trusted, the fleet must have been quiescent:
+# no region's traffic may have changed within the drain interval (Cloud Run
+# keeps a predecessor's in-flight requests alive across a traffic move, and
+# an older issuance-off revision can regain traffic seconds before the gate).
 # Once the workers are gone, the durable marker written by ledger_retire_workers
 # waives only the worker evidence (there is no worker left to report), and only
 # while every serving revision still satisfies the retirement invariants
-# (capability off, no app-profile map); the Spanner checks always run, so
-# escrow created during a temporary rollback is found even after traffic
-# returns. A missing schedule without that marker is a partial teardown,
-# never proof of retirement.
+# (capability off, no app-profile map); the quiescence and Spanner checks
+# always run, so escrow created during a temporary rollback is found even
+# after traffic returns. A missing schedule without that marker is a partial
+# teardown, never proof of retirement.
 
 ledger_retirement_bucket() {
   printf '%s\n' "${TR_DEPLOY_MUTEX_BUCKET:-tr-deploy-mutex-quill-cloud-proxy}"
@@ -151,15 +155,17 @@ ledger_spanner_open_work() {
 # Every serving revision, held regions included, must satisfy each marker.
 # `name=false` accepts an absent marker because config.py defaults these
 # switches to false; `name=__absent__` requires the setting to be unset or
-# empty (an app-profile map alone opens a ledger client). Records the newest
-# serving revision's creation time in LEDGER_FLEET_NEWEST_REVISION_AT.
+# empty (an app-profile map alone opens a ledger client). Records the fleet's
+# most recent traffic change in LEDGER_FLEET_NEWEST_REVISION_AT: the latest of
+# each service's condition transition times (traffic moves update them) and
+# the serving revision's creation time, whichever is newer.
 LEDGER_FLEET_NEWEST_REVISION_AT=""
 _ledger_serving_markers() {
   local purpose="$1"
   shift
   local -a regions
   IFS=',' read -r -a regions <<<"$TR_CONTROL_PLANE_REGIONS"
-  local region revision_json status pair name expected value created
+  local region revision_json service_json status pair name expected value created
   LEDGER_FLEET_NEWEST_REVISION_AT=""
   for region in "${regions[@]}"; do
     status=0
@@ -168,14 +174,26 @@ _ledger_serving_markers() {
       log "refusing ${purpose}: cannot read the serving revision in ${region}"
       return 1
     fi
-    created="$(python3 -c '
+    service_json="$(gc run services describe "$SERVICE" --region="$region" --format=json 2>/dev/null)" || {
+      log "refusing ${purpose}: cannot read the service in ${region}"
+      return 1
+    }
+    created="$(python3 - "$revision_json" "$service_json" <<'PY'
 import json, sys
-revision = json.load(sys.stdin)
+revision = json.loads(sys.argv[1])
+service = json.loads(sys.argv[2])
+stamps = []
 created = revision.get("metadata", {}).get("creationTimestamp")
 if not isinstance(created, str) or not created:
     raise SystemExit("serving revision has no creationTimestamp")
-print(created)
-' <<<"$revision_json")" || {
+stamps.append(created)
+for condition in service.get("status", {}).get("conditions", []) or []:
+    stamp = condition.get("lastTransitionTime") if isinstance(condition, dict) else None
+    if isinstance(stamp, str) and stamp:
+        stamps.append(stamp)
+print(max(stamps))
+PY
+)" || {
       log "refusing ${purpose}: the serving revision in ${region} has no creation time"
       return 1
     }
@@ -199,6 +217,33 @@ print(created)
       fi
     done
   done
+}
+
+# No Spanner count is trusted until every region's last traffic change is at
+# least the drain interval old: a predecessor revision's in-flight requests
+# outlive a traffic move, and they can still mint or settle a hold.
+ledger_fleet_quiescent() {
+  local interval="${TR_LEDGER_DRAIN_INTERVAL_SECONDS:-600}"
+  python3 - "$LEDGER_FLEET_NEWEST_REVISION_AT" "$interval" <<'PY' || return 1
+import datetime as dt
+import sys
+
+newest, interval = sys.argv[1], int(sys.argv[2])
+try:
+    changed = dt.datetime.fromisoformat(newest.replace("Z", "+00:00"))
+except ValueError:
+    raise SystemExit(f"refusing ledger retirement: fleet traffic time {newest!r} is unreadable")
+if changed.tzinfo is None:
+    changed = changed.replace(tzinfo=dt.UTC)
+now = dt.datetime.now(dt.UTC)
+ready = changed + dt.timedelta(seconds=interval)
+if now < ready:
+    raise SystemExit(
+        f"refusing ledger retirement: fleet traffic changed at {changed.isoformat()}; "
+        f"wait until {ready.isoformat()} ({interval}s drain interval)"
+    )
+print(f"fleet quiescent since {changed.isoformat()} (+{interval}s drain interval)")
+PY
 }
 
 ledger_issuance_off_everywhere() {
@@ -350,8 +395,10 @@ ledger_retirement_gate() {
   case "$status" in
     0)
       if ledger_capability_off_everywhere; then
-        # The marker waives the worker evidence, never the Spanner checks:
-        # a temporary rollback could have created escrow that outlived it.
+        # The marker waives the worker evidence, never the quiescence or
+        # Spanner checks: a temporary rollback could have created escrow
+        # that outlived it.
+        ledger_fleet_quiescent || return 1
         ledger_spanner_open_work || return 1
         log "ledger retirement is recorded as complete and every serving revision still runs without the ledgers"
         return 0
@@ -362,6 +409,7 @@ ledger_retirement_gate() {
     *) return 1 ;;
   esac
   ledger_issuance_off_everywhere || return 1
+  ledger_fleet_quiescent || return 1
   ledger_spanner_open_work || return 1
 
   local target state job_region job
@@ -433,11 +481,18 @@ print("true" if sys.argv[1] in urls else "false")
     return 1
   }
   python3 -c '
-import json, sys
-record = json.load(sys.stdin)
-for name in record.get("targets", []):
-    if isinstance(name, str) and name:
-        print(name)
+import json, re, sys
+try:
+    record = json.load(sys.stdin)
+except ValueError:
+    raise SystemExit("not JSON")
+targets = record.get("targets") if isinstance(record, dict) else None
+if not isinstance(targets, list):
+    raise SystemExit("no targets list")
+for name in targets:
+    if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,62}", name):
+        raise SystemExit(f"invalid target name {name!r}")
+    print(name)
 ' <<<"$record" || {
     log "refusing worker retirement: the recorded worker targets are unreadable"
     return 1
@@ -448,10 +503,18 @@ _ledger_record_targets() {
   regional_quota_verify_control_lifecycle || return 1
   local record
   record="$(mktemp "${TMPDIR:-/tmp}/ledger-targets.XXXXXX")" || return 1
-  python3 -c '
-import json, sys
-print(json.dumps({"targets": sorted(set(name for name in sys.argv[1:] if name))}))
-' "$@" >"$record"
+  if ! python3 -c '
+import json, re, sys
+names = sorted(set(name for name in sys.argv[1:] if name))
+for name in names:
+    if not re.fullmatch(r"[a-z][a-z0-9-]{0,62}", name):
+        raise SystemExit(f"invalid target name {name!r}")
+print(json.dumps({"targets": names}))
+' "$@" >"$record"; then
+    rm -f "$record"
+    log "refusing worker retirement: cannot serialize the worker targets"
+    return 1
+  fi
   gc storage cp "$record" "$(ledger_retirement_targets_uri)" --quiet || {
     rm -f "$record"
     log "refusing worker retirement: cannot record the worker targets"
@@ -470,7 +533,7 @@ print(json.dumps({"targets": sorted(set(name for name in sys.argv[1:] if name))}
 _ledger_worker_inventory() {
   local listing listing_stderr
   listing_stderr="$(mktemp "${TMPDIR:-/tmp}/ledger-jobs.XXXXXX")"
-  listing="$(gc run jobs list --format='value(metadata.labels."cloud.googleapis.com/location",metadata.name)' 2>"$listing_stderr")" || {
+  listing="$(gc run jobs list --verbosity=warning --format='value(metadata.labels."cloud.googleapis.com/location",metadata.name)' 2>"$listing_stderr")" || {
     log "refusing worker retirement: cannot list Cloud Run jobs: $(<"$listing_stderr")"
     rm -f "$listing_stderr"
     return 1
@@ -482,9 +545,12 @@ _ledger_worker_inventory() {
   fi
   rm -f "$listing_stderr"
   local exact=" ${TR_REGIONAL_QUOTA_RECONCILER_JOB:-} ${TR_SPEND_LEASE_RECONCILER_JOB:-} $* "
+  # Historical default prefixes are always matched: a configured prefix must
+  # not hide the workers earlier releases created under the defaults.
   printf '%s\n' "$listing" | while IFS=$'\t' read -r region job; do
     [ -n "$job" ] && [ -n "$region" ] || continue
     case "$job" in
+      trusted-router-regional-quota-reconciler-*|trusted-router-spend-lease-reconciler-*|\
       "$(_ledger_regional_job_prefix)-"*|"$(_ledger_spend_job_prefix)-"*) printf '%s\t%s\n' "$region" "$job" ;;
       *)
         case "$exact" in
@@ -496,13 +562,10 @@ _ledger_worker_inventory() {
 }
 
 ledger_retire_workers() {
-  local status=0
+  local status=0 recorded_complete=false
   ledger_retirement_completed || status=$?
   case "$status" in
-    0)
-      log "ledger retirement is already recorded as complete"
-      return 0
-      ;;
+    0) recorded_complete=true ;;
     1) ;;
     *) return 1 ;;
   esac
@@ -514,7 +577,28 @@ ledger_retire_workers() {
     log "deferring worker retirement; the ledgers stay provisioned until every region serves a capability-off revision"
     return 0
   fi
+  ledger_fleet_quiescent || return 1
   ledger_spanner_open_work || return 1
+  if [ "$recorded_complete" = true ]; then
+    # A recorded retirement is a no-op only once the current state agrees:
+    # a rollback that recreated the schedules or workers gets torn down
+    # again and the marker rewritten.
+    local leftovers
+    leftovers="$(_ledger_worker_inventory)" || return 1
+    local scheduler region target
+    for scheduler in "$(_ledger_regional_scheduler)|$(_ledger_regional_scheduler_region)" \
+                     "$(_ledger_spend_scheduler)|$(_ledger_spend_scheduler_region)"; do
+      region="${scheduler#*|}"
+      scheduler="${scheduler%%|*}"
+      target="$(_ledger_schedule_target "$scheduler" "$region")" || return 1
+      [ -z "$target" ] || leftovers="${leftovers}${leftovers:+$'\n'}schedule:${scheduler}"
+    done
+    if [ -z "$leftovers" ]; then
+      log "ledger retirement is already recorded as complete and nothing has come back"
+      return 0
+    fi
+    log "ledger retirement is recorded but workers or schedules came back; retiring them again: ${leftovers//$'\n'/ }"
+  fi
 
   # Learn the schedules' targets and record them durably before anything is
   # deleted, merged with what an interrupted earlier run recorded.

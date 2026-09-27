@@ -75,7 +75,7 @@ fi
 # spend-lease ledgers (retired 2026-09-27). Whatever the entry point - the
 # release workflow, deploy-gcp.sh, break-glass, an analytics cutover - prove
 # first that nothing can still need them. Read-only; a recorded retirement
-# stands it down.
+# waives only the reconciler evidence, never the fleet or Spanner checks.
 ledger_retirement_gate
 
 TRUST_SOURCE_COMMIT=""
@@ -725,8 +725,9 @@ ENV_VARS=(
   # Regional escrow is retired (2026-09-27). Both markers are rendered false
   # and no ledger table, app-profile map, or cluster map is rendered at all:
   # the store opens a Bigtable ledger client whenever a profile map is set,
-  # capability or not, so their absence is what keeps Bigtable out of the
-  # process.
+  # capability or not, so their absence is what keeps the two ledger clients
+  # out of the process. The generation mirror client (spanner-bigtable) is
+  # the analytics cutover's business, not this change's.
   "TR_REGIONAL_QUOTA_LEASES_ENABLED=${REGIONAL_QUOTA_LEASES_ENABLED}"
   "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED=${REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED}"
   # 2026-08-30 pilot: Joseph's own Personal Workspace (first-party, his account,
