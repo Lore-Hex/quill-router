@@ -325,7 +325,7 @@ def test_a_held_provider_publishes_only_its_published_routes(
     )
     monkeypatch.setattr(refresh, "build_openrouter_snapshot", lambda: feed)
     if not drop:
-        monkeypatch.setattr(refresh, "_drop_unpublished_held_routes", lambda *_args: None)
+        monkeypatch.setattr(refresh, "_drop_unpublished_held_routes", lambda *_args: [])
     _fetched(monkeypatch, key, ModelPrice(3_000_000, 2_000_000))
 
     if not drop:
@@ -338,6 +338,86 @@ def test_a_held_provider_publishes_only_its_published_routes(
     acme = next(model for model in json.loads(refresh.SNAPSHOT_PATH.read_text())["models"] if model["id"] == "acme/model")
     assert [(ep.get("tag"), ep["pricing"]["prompt"]) for ep in acme["endpoints"]] == [(None, "0.000001")]
     assert _endpoint_prices()["x-ai/grok-next [grok]"] == ("0.0000035", "0.000004")
+
+
+@pytest.mark.parametrize(
+    "index_only_published", [True, False], ids=["filtered", "control-unfiltered"]
+)
+def test_a_held_provider_sets_no_headline_for_a_model_it_had_not_published(
+    published: dict[str, Any],
+    provider: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    index_only_published: bool,
+) -> None:
+    # A manifest fallback prices every model in the held provider's manifest,
+    # including one OpenRouter now lists for it that it never published.
+    key, name = provider
+    feed = refresh.build_openrouter_snapshot()
+    feed["models"][1]["endpoints"].append({"tr_provider_slug": name, "model_id": "x-ai/grok-next"})
+    monkeypatch.setattr(refresh, "build_openrouter_snapshot", lambda: feed)
+    _fetched(monkeypatch, key, ModelPrice(3_000_000, 2_000_000))
+
+    def manifest_fallback(
+        results: dict[str, ProviderPricingResult],
+        failures: list[tuple[str, str]],
+        _snapshot: Any,
+    ) -> list[tuple[str, str]]:
+        for slug, _reason in failures:
+            results[slug] = ProviderPricingResult(
+                slug=slug,
+                source="stale_manifest",
+                prices={
+                    "acme/model": ModelPrice(1_000_000, 2_000_000),
+                    "x-ai/grok-next": ModelPrice(1_000_000, 1_000_000),
+                },
+            )
+        return []
+
+    monkeypatch.setattr(refresh, "_apply_stale_fallbacks", manifest_fallback)
+    if not index_only_published:
+        monkeypatch.setattr(refresh, "_index_only_published_models", lambda *_args: None)
+
+    assert refresh.main([]) == 0
+
+    grok = next(
+        model
+        for model in json.loads(refresh.SNAPSHOT_PATH.read_text())["models"]
+        if model["id"] == "x-ai/grok-next"
+    )
+    assert [ep["tr_provider_slug"] for ep in grok["endpoints"]] == ["grok"]
+    # grok's own refreshed price; the control shows the held provider's price leaking in.
+    assert grok["pricing"]["prompt"] == ("0.0000035" if index_only_published else "0.000001")
+
+
+def test_a_hold_that_would_leave_a_model_without_routes_publishes_nothing(
+    published: dict[str, Any],
+    provider: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # grok prices its model at $0, so the merge keeps OpenRouter's endpoints for
+    # it; the only one belongs to the held provider, which never published it.
+    key, name = provider
+    feed = refresh.build_openrouter_snapshot()
+    grok = feed["models"][1]
+    grok["pricing"] = {"prompt": "0.000003", "completion": "0.000004"}
+    grok["endpoints"] = [
+        {
+            "tr_provider_slug": name,
+            "model_id": "x-ai/grok-next",
+            "tag": f"{name}/us",
+            "pricing": {"prompt": "0.000003", "completion": "0.000004"},
+        }
+    ]
+    monkeypatch.setattr(refresh, "build_openrouter_snapshot", lambda: feed)
+    results = _fetched(monkeypatch, key, ModelPrice(3_000_000, 2_000_000))
+    results["grok"] = ProviderPricingResult(
+        slug="grok", source="api", prices={"x-ai/grok-next": ModelPrice(0, 0)}
+    )
+
+    assert refresh.main([]) == 1
+
+    assert "x-ai/grok-next (no route left after the hold)" in capsys.readouterr().out
 
 
 def test_unusable_comparison_input_skips_holding_without_crashing(
