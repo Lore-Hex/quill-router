@@ -27,7 +27,12 @@
 #      settled-but-open work and the reservation count covers the rest, and
 #      the outbox itself, which has no status index, is never scanned. The
 #      spend reconciler's own "open" counts only rows DUE now; retry backoff
-#      hides the rest, hence the table count;
+#      hides the rest, hence the table count. A spend lease closed on both
+#      sides (local_closed_at set, which requires global_closed_at) has
+#      released its escrow and keeps phase='open' only for retention; that
+#      cleanup needs no ledger and never runs for the pilot's last lease
+#      while the fence names it (nothing succeeds it once issuance is off),
+#      so such rows are not counted. Dead rows always are;
 #   3. while a reconciler schedule still exists, its exact target job (name and
 #      location parsed from the schedule) reported REQUIRED all-zero passes,
 #      all of them after the current fleet state was first seen plus the drain
@@ -184,7 +189,7 @@ ledger_spanner_open_work() {
     "SELECT COUNT(*) FROM tr_entities WHERE kind = 'regional_quota_lease_open'"
     "SELECT COUNT(*) FROM tr_entities WHERE kind = 'regional_quota_lease_workspace_open'"
     "SELECT COUNT(*) FROM tr_reservation@{FORCE_INDEX=tr_reservation_by_expiry} WHERE settled = false AND hold_usage_type = 'RegionalCredits'"
-    "SELECT COUNT(*) FROM spend_lease_open WHERE phase != 'done' OR dead = true"
+    "SELECT COUNT(*) FROM spend_lease_open WHERE dead = true OR (phase != 'done' AND local_closed_at IS NULL)"
   )
   local index count
   for index in "${!labels[@]}"; do
@@ -616,8 +621,15 @@ ledger_retirement_gate() {
     log "a gate pass is recorded under deployment operation ${operation} but the production lock is no longer held by it (expired or replaced); running the full gate"
   fi
   _ledger_retirement_gate_checks || return 1
+  # Only the operation that holds the live lock may publish a pass: a
+  # stale one whose checks happen to succeed must not overwrite the current
+  # release's record.
   if [ -n "$operation" ]; then
-    _ledger_record_gate_pass "$operation" || return 1
+    if _ledger_mutex_held_by "$operation"; then
+      _ledger_record_gate_pass "$operation" || return 1
+    else
+      log "not recording the gate pass: deployment operation ${operation} does not hold the production lock"
+    fi
   fi
 }
 

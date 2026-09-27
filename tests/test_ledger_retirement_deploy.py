@@ -537,6 +537,22 @@ def test_gate_pass_is_shared_by_the_siblings_of_one_mutex_operation(tmp_path: Pa
     assert any(call.startswith("run services describe") for call in _calls(tmp_path))
     assert _recorded_gate(tmp_path) == recorded
 
+    # A stale operation whose full checks succeed publishes nothing: the
+    # record belongs to whoever holds the live lock.
+    _lock(tmp_path, "op-9")
+    run = _run(tmp_path, GATE, extra="TR_DEPLOY_MUTEX_OPERATION=op-1\n")
+    assert run.returncode == 0, run.stderr
+    assert "not recording the gate pass: deployment operation op-1 does not hold the production lock" in run.stderr
+    assert _recorded_gate(tmp_path) == recorded
+    run = _run(tmp_path, GATE, extra="TR_DEPLOY_MUTEX_OPERATION=op-9\n")
+    assert run.returncode == 0, run.stderr
+    assert (_recorded_gate(tmp_path) or {}).get("operation") == "op-9"
+    _lock(tmp_path, "op-1")
+    run = _run(tmp_path, GATE, extra="TR_DEPLOY_MUTEX_OPERATION=op-1\n")
+    assert run.returncode == 0, run.stderr
+    recorded = _recorded_gate(tmp_path)
+    assert recorded is not None and recorded["operation"] == "op-1"
+
     # The pass lives in its own record: an unlocked gate that overwrites
     # the observation with an older copy (it holds no mutex, so it can
     # overlap a release) cannot erase it, and the sibling still stands on it.
@@ -752,6 +768,11 @@ def test_gate_refuses_on_spanner_open_work(tmp_path: Path, key: str, label: str)
     assert run.returncode != 0
     assert f"Spanner still holds 3 {label}" in run.stderr
     assert not any(call.startswith("logging read") for call in _calls(tmp_path))
+    if key == "spend":
+        # A lease closed on both sides keeps phase='open' for retention only
+        # and, with issuance off, is never succeeded; it must not count.
+        spend = next(call for call in _calls(tmp_path) if "spend_lease_open" in call)
+        assert "WHERE dead = true OR (phase != 'done' AND local_closed_at IS NULL)" in spend
 
 
 def test_gate_fails_closed_on_a_spanner_error_or_a_non_numeric_count(tmp_path: Path) -> None:

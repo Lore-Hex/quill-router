@@ -181,10 +181,13 @@ provisioners and the background reconciler deploys:
   rows: a pending or dead settle-outbox intent needs the ledger only while
   its lease is open, and that lease's index row stays until reconciliation
   closes it, so the outbox itself - which has no status index - is never
-  scanned), and no `spend_lease_open` row that is not `done` (the
-  reconciler's own `open` counts only rows due now; this pilot table is
-  read the way its reconciler reads it, since a dead row keeps
-  `next_attempt_at` NULL and the due index cannot see it); and, while a reconciler
+  scanned), and no dead or unfinished `spend_lease_open` row - a lease
+  closed on both sides (`local_closed_at` set) has released its escrow and
+  keeps `phase='open'` only for retention, a cleanup that needs no ledger
+  and never runs for the pilot's last lease while the fence names it, so
+  it does not count (the reconciler's own `open` counts only rows due now;
+  this pilot table is read the way its reconciler reads it, since a dead
+  row keeps `next_attempt_at` NULL and the due index cannot see it); and, while a reconciler
   schedule still exists, that its exact target job (project, location, name
   parsed from the schedule) reported five all-zero passes, all after the
   fleet state was first seen plus the drain interval. A missing schedule
