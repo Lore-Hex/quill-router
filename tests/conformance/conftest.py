@@ -20,8 +20,8 @@ Backend availability
 --------------------
 `memory` always runs. Backends that need a live server (the Spanner/Bigtable
 emulators or a Postgres container) are opt-in: their factory calls
-`pytest.skip()` when the server isn't reachable, so the suite stays green on a
-laptop and gains real cross-backend enforcement in CI. A backend that is
+`pytest.skip()` when the backend is not configured. Once native emulator
+coverage is explicitly enabled, missing or unreachable servers fail the test. A backend that is
 skipped proves nothing, which is why `test_memory_backend_is_always_runnable`
 deliberately does NOT depend on the parametrized `store` fixture — a guard
 that can itself be skipped guards nothing.
@@ -29,8 +29,9 @@ that can itself be skipped guards nothing.
 Test isolation
 --------------
 `InMemoryStore` is constructed fresh per test, so it is isolated for free.
-Server-backed backends are NOT: `SpannerBigtableStore.reset()` explicitly
-refuses to wipe a real database. Tests therefore must not reuse fixed
+Native GoogleSQL tests provision and delete fresh emulator resources because
+`SpannerBigtableStore.reset()` refuses to wipe a real database. Other server
+backends share their database. Tests therefore must not reuse fixed
 identifiers across tests — every id is namespaced with the per-test `unique`
 fixture below, so a shared emulator database stays order-independent and
 uncontaminated between runs.
@@ -59,48 +60,21 @@ def _memory_store() -> Store:
 
 
 def _spanner_emulator_store() -> Store:
-    """`SpannerBigtableStore` pointed at the Google emulators.
+    """Provision an isolated native GoogleSQL database and Bigtable table."""
+    from tests.conformance.spanner_emulator import emulator_store
 
-    `SpannerBigtableStore.__init__` eagerly opens clients, and the Google
-    client libraries route to a local emulator when SPANNER_EMULATOR_HOST /
-    BIGTABLE_EMULATOR_HOST are exported. Both are required: this store spans
-    two services and a half-configured one fails in a confusing way partway
-    through a test rather than skipping cleanly here.
-
-    Schema provisioning against the emulator is deliberately NOT done here —
-    it is the next increment. Until then this backend skips, and the suite
-    documents the gap instead of pretending to cover it.
-    """
-    spanner_host = os.environ.get("SPANNER_EMULATOR_HOST")
-    bigtable_host = os.environ.get("BIGTABLE_EMULATOR_HOST")
-    if not (spanner_host and bigtable_host):
-        pytest.skip(
-            "Spanner/Bigtable emulators not configured "
-            "(export SPANNER_EMULATOR_HOST and BIGTABLE_EMULATOR_HOST)"
-        )
-    if not os.environ.get("TR_CONFORMANCE_EMULATOR_SCHEMA"):
-        pytest.skip(
-            "emulator schema provisioning not implemented yet "
-            "(set TR_CONFORMANCE_EMULATOR_SCHEMA=1 once it lands)"
-        )
-    from trusted_router.storage_gcp import SpannerBigtableStore
-
-    return SpannerBigtableStore(
-        project_id=os.environ.get("TR_CONFORMANCE_PROJECT", "tr-conformance"),
-        spanner_instance_id=os.environ.get("TR_CONFORMANCE_SPANNER_INSTANCE", "tr-test"),
-        spanner_database_id=os.environ.get("TR_CONFORMANCE_SPANNER_DB", "tr-test"),
-        bigtable_instance_id=os.environ.get("TR_CONFORMANCE_BIGTABLE_INSTANCE", "tr-test"),
-        generation_table=os.environ.get(
-            "TR_CONFORMANCE_BIGTABLE_TABLE", "trustedrouter-generations"
-        ),
-    )
+    # Keep the existing factory API; fixtures own cleanup through close().
+    context = emulator_store()
+    backend = context.__enter__()
+    backend.close = lambda: context.__exit__(None, None, None)
+    return backend
 
 
 def _spanner_fake_store() -> Store:
     """The REAL `SpannerBigtableStore`, over the in-process Spanner fake.
 
-    This is the only backend in this table that executes `storage_gcp.py`, and
-    it is the one that runs unconditionally in CI. That combination is the
+    This backend executes `storage_gcp.py` without an external service and
+    runs unconditionally in CI. That combination is the
     point of it.
 
     WHY IT EXISTS, since the obvious objection is "a fake proves nothing":
@@ -108,9 +82,8 @@ def _spanner_fake_store() -> Store:
     Spanner server, which tests Spanner's SQL DIALECT — genuinely valuable — but
     it never executes one line of the native-Spanner store, so it cannot cover
     the sharded money code GCP actually runs in production. `spanner-emulator`
-    does construct that store, and skips unconditionally (no emulator schema
-    provisioning). Between them the native store had NO runnable semantic
-    coverage at all, which is how its cross-plane credit transfer sat
+    now constructs that store against provisioned emulators in CI. Previously
+    the native store had no runnable semantic coverage, which is how its cross-plane credit transfer sat
     unimplemented behind a comment saying it could not be tested.
 
     `tests/fakes/spanner.py` is not a stub: it models the read-set validation
@@ -125,7 +98,7 @@ def _spanner_fake_store() -> Store:
     not the Spanner query planner and not its lock manager. It cannot catch an
     unsupported SQL construct, a DDL/schema mismatch, or a real ABORTED storm.
     Passing here means the STORE'S LOGIC is right; `spanner-emulator` is still
-    the backend that would prove the SQL runs on Spanner, and it still skips.
+    the backend that validates SQL on the native GoogleSQL emulator in CI.
     """
     from tests.fakes.spanner import make_fake_store
 
