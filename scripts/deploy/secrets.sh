@@ -349,10 +349,20 @@ grant_tr_deploy_secret_access "trustedrouter-sakana-api-key"
 grant_tr_deploy_secret_access "trustedrouter-perplexity-api-key"
 grant_tr_deploy_secret_access "trustedrouter-krea-api-key"
 grant_tr_deploy_secret_access "trustedrouter-fal-api-key"
-# The ten wave-3 keys are runtime-only until authenticated hourly discovery is
-# explicitly approved. Do not grant the GitHub deploy identity access merely
-# because the secrets exist; the attested workload identities hold their own
-# per-secret runtime grants in each cloud.
+# Authenticated hourly discovery for the former runtime-only providers was
+# approved by the operator on 2026-09-27; the refresh workflow reads these the
+# same way it reads every other provider key above.
+grant_tr_deploy_secret_access "trustedrouter-upstage-api-key"
+grant_tr_deploy_secret_access "trustedrouter-sail-research-api-key"
+grant_tr_deploy_secret_access "trustedrouter-reka-api-key"
+grant_tr_deploy_secret_access "trustedrouter-nextbit-api-key"
+grant_tr_deploy_secret_access "trustedrouter-akashml-api-key"
+grant_tr_deploy_secret_access "trustedrouter-mancer-api-key"
+grant_tr_deploy_secret_access "trustedrouter-nscale-api-key"
+grant_tr_deploy_secret_access "trustedrouter-aion-labs-api-key"
+grant_tr_deploy_secret_access "trustedrouter-sambanova-api-key"
+grant_tr_deploy_secret_access "trustedrouter-arcee-api-key"
+grant_tr_deploy_secret_access "trustedrouter-inception-api-key"
 grant_tr_deploy_secret_access "trustedrouter-zero-g-api-key"
 grant_tr_deploy_secret_access "trustedrouter-clickhouse-control-read-password"
 grant_tr_deploy_secret_access "trustedrouter-adyen-test-api-key"

@@ -13,7 +13,6 @@ from scripts.pricing.providers import featherless, jina, scaleway
 from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS, providers_for_display
 from trusted_router.provider_manifest_policy import (
     EXPIRING_PROVIDER_MANIFEST_SLUGS,
-    RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS,
 )
 
 
@@ -215,6 +214,3 @@ def test_blocked_providers_remain_public_but_have_no_routes(client: TestClient) 
 
 def test_new_provider_manifests_expire_without_hiding_ci_secret_failures() -> None:
     assert {"scaleway", "featherless", "jina"} <= EXPIRING_PROVIDER_MANIFEST_SLUGS
-    assert {"scaleway", "featherless", "jina"}.isdisjoint(
-        RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS
-    )

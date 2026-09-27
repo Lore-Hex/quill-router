@@ -66,7 +66,6 @@ from trusted_router.provider_manifest_policy import (
 )
 from trusted_router.provider_manifest_policy import (
     EXPIRING_PROVIDER_MANIFEST_SLUGS,
-    RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS,
 )
 from trusted_router.provider_manifest_policy import (
     provider_manifest_valid_until as _provider_manifest_valid_until,
@@ -174,11 +173,9 @@ _INGEST_PATH = Path(__file__).parent / "data" / "openrouter_snapshot.json"
 
 _PROVIDER_MODELS_DIR = Path(__file__).parent / "data" / "provider_models"
 
-# These provider catalogs require credentials that are intentionally unavailable
-# to GitHub Actions until the operator explicitly approves that trust expansion.
-# Their routes fail closed at manifest expiry without freezing unrelated catalog
-# updates. Fresh authenticated discovery advances the deadline automatically.
-_RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS = RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS
+# Manifest-backed provider routes fail closed at manifest expiry without
+# freezing unrelated catalog updates. The hourly authenticated discovery
+# advances the deadline automatically.
 _EXPIRING_PROVIDER_MANIFEST_SLUGS = EXPIRING_PROVIDER_MANIFEST_SLUGS
 
 

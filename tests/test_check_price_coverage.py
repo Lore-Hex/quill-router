@@ -113,6 +113,8 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
         return {"data": [{"id": "trinity-large-thinking"}]}
     if "api.inceptionlabs.ai" in url:
         return {"data": [{"id": "mercury-2"}]}
+    if "inference.api.nscale.com" in url:
+        return {"data": [{"id": "black-forest-labs/FLUX.1-schnell"}]}
     if "api.intelligence.io.solutions" in url:
         return {"data": [{"id": "deepseek-ai/DeepSeek-V4-Flash-0731"}]}
     if "api.scaleway.ai" in url:
@@ -178,8 +180,6 @@ def test_prepaid_provider_without_current_price_source_is_a_hard_failure(
     monkeypatch.setattr(check_price_coverage, "_scraper_slugs", lambda: set())
     monkeypatch.setattr(check_price_coverage, "_OPTIONAL_STALE_MANIFEST_PROVIDER_SLUGS", set())
     monkeypatch.setattr(check_price_coverage, "EXPIRING_PROVIDER_MANIFEST_SLUGS", set())
-    monkeypatch.setattr(check_price_coverage, "_RUNTIME_ONLY_DISCOVERY_SLUGS", set())
-    monkeypatch.setattr(check_price_coverage, "_DIRECT_OPENAI_DISCOVERY_SLUGS", frozenset())
 
     manifest = tmp_path / "test-provider.json"
     if manifest_state == "invalid":
@@ -541,10 +541,21 @@ def test_every_manifest_fallback_provider_is_age_gated() -> None:
     assert check_price_coverage.EXPIRING_PROVIDER_MANIFEST_SLUGS == expected
 
 
-def test_runtime_only_discovery_is_always_backed_by_prepaid_age_gate() -> None:
+_FORMER_RUNTIME_ONLY_SLUGS = frozenset(
+    {
+        "aion-labs", "akashml", "arcee", "inception", "mancer", "nextbit",
+        "reka", "sail-research", "sambanova", "upstage",
+    }
+)
+
+
+def test_former_runtime_only_providers_are_ci_discovered_and_age_gated() -> None:
     from trusted_router.catalog import GATEWAY_PREPAID_PROVIDER_SLUGS
 
-    assert check_price_coverage._RUNTIME_ONLY_DISCOVERY_SLUGS <= (
+    ci_slugs = {module.SLUG for module in check_price_coverage._CI_DIRECT_OPENAI_DISCOVERY_MODULES}
+    assert _FORMER_RUNTIME_ONLY_SLUGS <= ci_slugs
+    # Still quarantined per provider if hourly discovery fails for 14 days.
+    assert _FORMER_RUNTIME_ONLY_SLUGS <= (
         set(GATEWAY_PREPAID_PROVIDER_SLUGS)
         & set(check_price_coverage._OPTIONAL_STALE_MANIFEST_PROVIDER_SLUGS)
     )
@@ -583,10 +594,21 @@ def test_invalid_runtime_fallback_manifest_is_quarantined_without_global_block(
     assert warning not in hard_failures
 
 
-def test_runtime_only_discovery_without_credentials_is_expected(
+def test_former_runtime_only_providers_are_discovered_like_the_others(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    for module in check_price_coverage._DIRECT_OPENAI_DISCOVERY_MODULES:
+    """No key in the environment no longer skips discovery silently.
+
+    The hourly workflow always supplies these keys, so discovery runs; an
+    absent key surfaces as a fetch failure instead of an 'intentionally
+    disabled' pass that let the committed manifest age out unnoticed.
+    """
+    modules = [
+        module for module in check_price_coverage._CI_DIRECT_OPENAI_DISCOVERY_MODULES
+        if module.SLUG in _FORMER_RUNTIME_ONLY_SLUGS
+    ]
+    assert {module.SLUG for module in modules} == _FORMER_RUNTIME_ONLY_SLUGS
+    for module in modules:
         for env_name in module.CATALOG.api_key_envs:
             monkeypatch.delenv(env_name, raising=False)
 
@@ -596,22 +618,18 @@ def test_runtime_only_discovery_without_credentials_is_expected(
         fetched_urls.append(url)
         return _known_provider_model_payload(url, env_names)
 
-    warnings, info = check_price_coverage._model_discovery_audit(
+    _warnings, info = check_price_coverage._model_discovery_audit(
         fetch_text=lambda _url: "Supported Models: GLM-5.2",
         fetch_json=fake_fetch_json,
         published_model_ids={"z-ai/glm-5.2"} | _NEW_AUTOMATIC_FEED_ROWS,
     )
 
-    for module in check_price_coverage._DIRECT_OPENAI_DISCOVERY_MODULES:
-        assert any(
-            item.startswith(f"{module.SLUG}: authenticated discovery intentionally disabled")
-            for item in info
-        )
-        assert not any(module.SLUG in item and "fetch failed" in item for item in warnings)
+    for module in modules:
+        assert not any("intentionally disabled" in item for item in info if module.SLUG in item)
         expected_url = module.CATALOG.spec.catalog_url or (
             f"{module.CATALOG.spec.base_url.rstrip('/')}/models"
         )
-        assert expected_url not in fetched_urls
+        assert expected_url in fetched_urls
 
 
 def test_discovery_errors_never_publish_exception_details() -> None:
