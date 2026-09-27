@@ -189,8 +189,13 @@ provisioners and the background reconciler deploys:
   this pilot table is read the way its reconciler reads it, since a dead
   row keeps `next_attempt_at` NULL and the due index cannot see it); and, while a reconciler
   schedule still exists, that its exact target job (project, location, name
-  parsed from the schedule) reported five all-zero passes, all after the
-  fleet state was first seen plus the drain interval. A missing schedule
+  parsed from the schedule) reported five healthy passes - no errors,
+  nothing dead, nothing left half-created; open work is Spanner's call,
+  since the spend reconciler visits a retention-only lease on every pass -
+  all after the fleet state was first seen plus the drain interval. Every
+  control object (observation, gate pass, targets, marker) is uploaded with
+  a generation precondition read before its content, so a late upload can
+  never overwrite a newer record; the targets record only grows. A missing schedule
   without a retirement marker is a partial teardown: Spanner still decides,
   with a warning. The release workflow warms the four regions in parallel
   processes that share one deployment mutex operation; the gate runs once

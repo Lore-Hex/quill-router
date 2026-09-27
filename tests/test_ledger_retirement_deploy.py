@@ -49,7 +49,25 @@ SPANNER_DATABASE_ID=trusted-router
 TR_LEDGER_RETIRE_RETRY_SLEEP_SECONDS=0
 TR_LEDGER_RETIRE_EXECUTION_WAIT_ATTEMPTS=3
 log() { echo "$*" >&2; }
+# Control objects live in fixture files; each carries a generation (1 when a
+# test seeded the file directly, bumped by every upload) and uploads honour
+# --if-generation-match. A one-shot "race-<fixture>" file stands for a write
+# by someone else landing between the script's read and its upload. The
+# helpers are defined inside gc: regional_quota_gc_read re-executes gc from
+# `declare -f gc` in a fresh shell, where nothing else of this prelude exists.
 gc() {
+  control_fixture() {
+    case "$1" in
+      *ledger-retirement-targets.json) echo targets ;;
+      *ledger-drain-observation.json) echo observation ;;
+      *ledger-gate-pass.json) echo gate-pass ;;
+      *locks/trusted-router-production.json) echo lock ;;
+      *) echo marker ;;
+    esac
+  }
+  control_generation() {
+    if [ -f "$FIXTURES/$1" ]; then cat "$FIXTURES/gen-$1" 2>/dev/null || echo 1; else echo 0; fi
+  }
   printf '%s\n' "$*" >> "$FIXTURES/calls"
   local region="" job="" sql=""
   for argument in "$@"; do
@@ -72,23 +90,30 @@ gc() {
         fi
       done
       echo "[$objects]" ;;
+    'storage objects describe')
+      fixture="$(control_fixture "$4")"
+      if [ -f "$FIXTURES/$fixture" ]; then control_generation "$fixture"
+      else echo 'ERROR: (gcloud.storage.objects.describe) NOT_FOUND' >&2; return 1; fi ;;
     'storage cat '*)
-      case "$3" in
-        *ledger-retirement-targets.json) file="$FIXTURES/targets" ;;
-        *ledger-drain-observation.json) file="$FIXTURES/observation" ;;
-        *ledger-gate-pass.json) file="$FIXTURES/gate-pass" ;;
-        *locks/trusted-router-production.json) file="$FIXTURES/lock" ;;
-        *) file="$FIXTURES/marker" ;;
-      esac
-      if [ -f "$file" ]; then cat "$file"
+      fixture="$(control_fixture "$3")"
+      if [ -f "$FIXTURES/$fixture" ]; then cat "$FIXTURES/$fixture"
       else echo 'ERROR: (gcloud.storage.cat) No URLs matched' >&2; return 1; fi ;;
     'storage cp '*)
-      case "$4" in
-        *ledger-retirement-targets.json) cp "$3" "$FIXTURES/targets" ;;
-        *ledger-drain-observation.json) cp "$3" "$FIXTURES/observation" ;;
-        *ledger-gate-pass.json) cp "$3" "$FIXTURES/gate-pass" ;;
-        *) cp "$3" "$FIXTURES/marker" ;;
-      esac ;;
+      fixture="$(control_fixture "$4")"
+      expected=""
+      for argument in "$@"; do
+        case "$argument" in --if-generation-match=*) expected="${argument#*=}" ;; esac
+      done
+      current="$(control_generation "$fixture")"
+      if [ -f "$FIXTURES/race-$fixture" ]; then
+        rm -f "$FIXTURES/race-$fixture"
+        current=$((current + 1)); echo "$current" > "$FIXTURES/gen-$fixture"
+        [ -f "$FIXTURES/$fixture" ] || echo '{"written_by":"someone else"}' > "$FIXTURES/$fixture"
+      fi
+      if [ -n "$expected" ] && [ "$expected" != "$current" ]; then
+        echo "ERROR: (gcloud.storage.cp) HTTPError 412: At least one of the pre-conditions you specified did not hold." >&2; return 1
+      fi
+      cp "$3" "$FIXTURES/$fixture"; echo $((current + 1)) > "$FIXTURES/gen-$fixture" ;;
     'spanner databases execute-sql')
       if [ -f "$FIXTURES/spanner-error" ]; then echo "ERROR: (gcloud.spanner.databases.execute-sql) DEADLINE_EXCEEDED" >&2; return 1; fi
       case "$sql" in
@@ -836,8 +861,14 @@ def test_gate_refuses_a_paused_or_unverifiable_schedule(tmp_path: Path) -> None:
         pytest.param(
             [_regional_line()] * 5,
             [_spend_line()] * 4 + [_spend_line(open=1, dead=1)],
-            "spend-lease reconciler is not drained (open=1 dead=1)",
-            id="spend-open-and-dead",
+            "spend-lease reconciler is not drained (dead=1)",
+            id="spend-dead",
+        ),
+        pytest.param(
+            [_regional_line()] * 5,
+            [_spend_line(candidates=1)] + [_spend_line()] * 4,
+            "spend-lease reconciler is not drained (candidates=1)",
+            id="spend-candidate",
         ),
         pytest.param(
             [_regional_line()] * 3,
@@ -865,6 +896,68 @@ def test_gate_refuses_on_reconciler_evidence(tmp_path: Path, regional: list[str]
     run = _run(tmp_path, GATE)
     assert run.returncode != 0
     assert message in run.stderr
+
+
+def test_gate_lets_spanner_decide_open_work_and_asks_the_worker_only_for_health(tmp_path: Path) -> None:
+    # The spend reconciler visits a lease closed on both sides - kept for
+    # retention, never succeeded once issuance is off - on every pass and
+    # reports it as open=1 deferred=1. Spanner's count excludes it; the
+    # worker evidence must not undo that.
+    _drained(tmp_path)
+    _evidence(tmp_path, [_regional_line()] * 5, [_spend_line(open=1, deferred=1)] * 5)
+    run = _run(tmp_path, GATE)
+    assert run.returncode == 0, run.stderr
+    assert "spend-lease reconciler: 5 consecutive empty passes" in run.stdout
+
+
+def test_control_records_are_never_overwritten_by_a_concurrent_write(tmp_path: Path) -> None:
+    # Every control upload is fenced on the generation read before the
+    # content. A write by someone else that lands in between (the race file
+    # stands for it) fails the fence instead of being overwritten.
+    _step_two_fleet(tmp_path)
+    _schedules(tmp_path)
+    _evidence(tmp_path, [_regional_line()] * 5, [_spend_line()] * 5)
+    (tmp_path / "gate-pass").write_text(json.dumps({"operation": "op-9", "passed_at": OBSERVED_AT}))
+    _lock(tmp_path, "op-1")
+    (tmp_path / "race-gate-pass").write_text("")
+    run = _run(tmp_path, GATE, extra="TR_DEPLOY_MUTEX_OPERATION=op-1\n")
+    assert run.returncode != 0
+    assert "cannot record the gate pass" in run.stderr
+    assert (_recorded_gate(tmp_path) or {}).get("operation") == "op-9"
+
+    # The observation merge is retried on a lost fence, and the pass then lands.
+    (tmp_path / "race-observation").write_text("")
+    run = _run(tmp_path, GATE, extra="TR_DEPLOY_MUTEX_OPERATION=op-1\n")
+    assert run.returncode == 0, run.stderr
+    assert "changed underneath this gate; reading it again (attempt 1)" in run.stderr
+    assert (_recorded_gate(tmp_path) or {}).get("operation") == "op-1"
+
+    # Recorded targets are never lost: the record is merged, and a lost fence
+    # stops the teardown before its first deletion.
+    _workers(tmp_path)
+    (tmp_path / "targets").write_text(json.dumps({"targets": ["us-west1/quota-custom-worker"]}))
+    (tmp_path / "race-targets").write_text("")
+    run = _run(tmp_path, RETIRE, extra="TR_DEPLOY_MUTEX_OPERATION=op-1\n")
+    assert run.returncode != 0
+    assert "cannot record the worker targets" in run.stderr
+    assert not any("delete" in call for call in _calls(tmp_path))
+    assert json.loads((tmp_path / "targets").read_text()) == {"targets": ["us-west1/quota-custom-worker"]}
+    run = _run(tmp_path, RETIRE, extra="TR_DEPLOY_MUTEX_OPERATION=op-1\n")
+    assert run.returncode == 0, run.stderr
+    assert json.loads((tmp_path / "targets").read_text()) == {
+        "targets": sorted(["us-west1/quota-custom-worker", f"us-east4/{REGIONAL_JOB}", f"us-east4/{SPEND_JOB}"]),
+    }
+
+    # And the marker: a lost fence leaves it unwritten for the retry to prove
+    # absence again.
+    (tmp_path / "marker").unlink()
+    _schedules(tmp_path)
+    _workers(tmp_path)
+    (tmp_path / "race-marker").write_text("")
+    run = _run(tmp_path, RETIRE, extra="TR_DEPLOY_MUTEX_OPERATION=op-1\n")
+    assert run.returncode != 0
+    assert "cannot write the marker" in run.stderr
+    assert json.loads((tmp_path / "marker").read_text()) == {"written_by": "someone else"}
 
 
 def test_gate_requires_evidence_after_the_fleet_state_was_seen_plus_the_interval(tmp_path: Path) -> None:
@@ -952,7 +1045,7 @@ def test_retire_deletes_schedules_then_workers_and_records_the_retirement(tmp_pa
     listings = [index for index, call in enumerate(calls) if call.startswith("run jobs list")]
     marker_write = next(
         index for index, call in enumerate(calls)
-        if call.startswith("storage cp") and call.endswith("controls/ledger-retirement.json --quiet")
+        if call.startswith("storage cp") and "controls/ledger-retirement.json --quiet" in call
     )
     assert len(listings) == 2 and listings[-1] > calls.index(job_deletes[-1]) and listings[-1] < marker_write
     marker = json.loads((tmp_path / "marker").read_text())
@@ -966,6 +1059,7 @@ def test_retire_deletes_schedules_then_workers_and_records_the_retirement(tmp_pa
     assert calls.index([c for c in calls if c.startswith("storage cp") and "targets" in c][0]) < calls.index(schedule_deletes[0])
     # The deployment mutex is held from before the first check until the end.
     assert calls[0] == "mutex acquire" and calls[-1] == "mutex release"
+    assert all("--if-generation-match=" in call for call in calls if call.startswith("storage cp"))
     assert all("--verbosity=warning" in call and "--format=json" in call for call in calls if call.startswith("run jobs list"))
     assert "ledger reconciler workers retired (4 job(s) deleted)" in run.stderr
 
@@ -1031,7 +1125,7 @@ def test_retire_is_a_verified_no_op_once_recorded(tmp_path: Path) -> None:
     assert any(call.startswith("run jobs list") for call in calls)
     assert sum(call.startswith("scheduler jobs describe") for call in calls) == 2
     # ...and nothing is deleted or rewritten, except the observation.
-    assert not any("delete" in call or call.endswith("controls/ledger-retirement.json --quiet") for call in calls)
+    assert not any("delete" in call or "controls/ledger-retirement.json --quiet" in call for call in calls)
 
     # A rollback recreated a schedule and its worker: they are retired again
     # and the marker rewritten.

@@ -34,9 +34,16 @@
 #      while the fence names it (nothing succeeds it once issuance is off),
 #      so such rows are not counted. Dead rows always are;
 #   3. while a reconciler schedule still exists, its exact target job (name and
-#      location parsed from the schedule) reported REQUIRED all-zero passes,
-#      all of them after the current fleet state was first seen plus the drain
-#      interval, so the picture in 2 is neither a paused worker nor a stale one.
+#      location parsed from the schedule) reported REQUIRED healthy passes -
+#      no errors, nothing dead, nothing left half-created - all of them after
+#      the current fleet state was first seen plus the drain interval, so the
+#      picture in 2 is neither a paused worker nor a stale one. Open work is
+#      Spanner's call, not the worker's: the spend reconciler visits a
+#      retention-only lease on every pass (open=1 deferred=1).
+# Every control object (observation, gate pass, targets, marker) is written
+# with a generation precondition read before its content, so an upload that
+# lands after another writer's - a lease that ran out while gcloud retried -
+# fails instead of overwriting the newer record.
 # Before any Spanner count is trusted, the fleet must have been quiescent:
 # every revision that can still take requests in a region - the traffic
 # split's members and every tagged revision, tags stay addressable at 0% -
@@ -81,11 +88,19 @@ ledger_retirement_marker_uri() {
   printf 'gs://%s/controls/ledger-retirement.json\n' "$(ledger_retirement_bucket)"
 }
 
-# Prints a control object's content, nothing when it does not exist (the
-# prefix listing decides that, never a failed read), and fails when that
-# cannot be told. Every control object here is JSON, so present is non-empty.
+# Reads a control object into the file at $2 - empty when it does not exist
+# (the prefix listing decides that, never a failed read) - and fails when
+# that cannot be told. Every control object here is JSON, so present means
+# non-empty. Leaves the object's generation in LEDGER_CONTROL_GENERATION
+# (0 = absent) for a fenced write; it is read BEFORE the content, so a write
+# landing between the two fails the fence rather than being overwritten.
+# Call it directly, never inside a command substitution: the generation
+# comes back through the shell variable.
+LEDGER_CONTROL_GENERATION=0
 _ledger_read_control() {
-  local uri="$1" listing present
+  local uri="$1" out="$2" listing present generation
+  LEDGER_CONTROL_GENERATION=0
+  : >"$out"
   listing="$(regional_quota_gc_read storage objects list --raw --format=json "gs://$(ledger_retirement_bucket)/controls/*")" || {
     log "refusing ledger retirement: cannot list the control prefix"
     return 1
@@ -107,27 +122,46 @@ print("true" if sys.argv[1] in urls else "false")
     return 1
   }
   [ "$present" = true ] || return 0
-  regional_quota_gc_read storage cat "$uri" || {
+  generation="$(regional_quota_gc_read storage objects describe "$uri" --format='value(generation)')" || {
+    log "refusing ledger retirement: cannot read the generation of ${uri}"
+    return 1
+  }
+  case "$generation" in
+    ''|*[!0-9]*)
+      log "refusing ledger retirement: the generation of ${uri} is unreadable: '${generation}'"
+      return 1
+      ;;
+  esac
+  LEDGER_CONTROL_GENERATION="$generation"
+  regional_quota_gc_read storage cat "$uri" >"$out" || {
     log "refusing ledger retirement: cannot read ${uri}"
     return 1
   }
 }
 
-# Uploads a control object; the upload's own output never reaches a caller
-# that captures this function's result.
+# Uploads a control object only while it is still at the generation it was
+# read at (0 = it must not exist yet). The upload's own output never reaches
+# a caller that captures this function's result.
 _ledger_write_control() {
-  local file="$1" uri="$2"
+  local file="$1" uri="$2" generation="$3"
   regional_quota_verify_control_lifecycle || return 1
-  gc storage cp "$file" "$uri" --quiet >/dev/null
+  gc storage cp "$file" "$uri" --quiet --if-generation-match="$generation" >/dev/null
 }
 
 # 0 = a completed retirement marker for this project and database exists;
 # 1 = no such marker; 2 = cannot tell.
 ledger_retirement_completed() {
   regional_quota_verify_control_lifecycle || return 2
-  local marker
-  marker="$(_ledger_read_control "$(ledger_retirement_marker_uri)")" || return 2
-  [ -n "$marker" ] || return 1
+  local marker_file
+  marker_file="$(mktemp "${TMPDIR:-/tmp}/ledger-marker.XXXXXX")" || return 2
+  if ! _ledger_read_control "$(ledger_retirement_marker_uri)" "$marker_file"; then
+    rm -f "$marker_file"
+    return 2
+  fi
+  if [ ! -s "$marker_file" ]; then
+    rm -f "$marker_file"
+    return 1
+  fi
   if python3 -c '
 import json, sys
 try:
@@ -142,9 +176,11 @@ ok = (
     and marker.get("spanner_database") == sys.argv[3]
 )
 raise SystemExit(0 if ok else 1)
-' "$PROJECT_ID" "$SPANNER_INSTANCE_ID" "$SPANNER_DATABASE_ID" <<<"$marker"; then
+' "$PROJECT_ID" "$SPANNER_INSTANCE_ID" "$SPANNER_DATABASE_ID" <"$marker_file"; then
+    rm -f "$marker_file"
     return 0
   fi
+  rm -f "$marker_file"
   log "ledger retirement marker exists but does not record a completed retirement of ${PROJECT_ID}/${SPANNER_INSTANCE_ID}/${SPANNER_DATABASE_ID}; treating the ledgers as live"
   return 1
 }
@@ -310,11 +346,32 @@ ledger_gate_pass_uri() {
 # first seen. A region keeps its off_since only while its service generation
 # and reachable revision set are unchanged; otherwise it starts over now.
 # Two gates may write this concurrently (an unlocked one never holds the
-# mutex); a lost update can only make an off_since later, never earlier,
-# because every write derives from the live state and the record it read.
+# mutex); the write is fenced on the generation read, and a lost fence
+# re-reads and merges again.
 _ledger_observe_fleet() {
-  local record merged
-  record="$(_ledger_read_control "$(ledger_drain_observation_uri)")" || return 1
+  local attempt merged
+  for attempt in 1 2 3; do
+    if merged="$(_ledger_observe_fleet_once)"; then
+      printf '%s\n' "$merged"
+      return 0
+    fi
+    [ "$attempt" -lt 3 ] || break
+    log "the drain observation changed underneath this gate; reading it again (attempt ${attempt})"
+  done
+  log "refusing ledger retirement: cannot record the drain observation"
+  return 1
+}
+
+_ledger_observe_fleet_once() {
+  local record merged generation record_file
+  record_file="$(mktemp "${TMPDIR:-/tmp}/ledger-observation.XXXXXX")" || return 1
+  if ! _ledger_read_control "$(ledger_drain_observation_uri)" "$record_file"; then
+    rm -f "$record_file"
+    return 1
+  fi
+  generation="$LEDGER_CONTROL_GENERATION"
+  record="$(cat "$record_file")"
+  rm -f "$record_file"
   local merged_file
   merged_file="$(mktemp "${TMPDIR:-/tmp}/ledger-observation.XXXXXX")" || return 1
   merged="$(python3 - "$record" "$LEDGER_FLEET_STATE" "$merged_file" <<'PY'
@@ -354,9 +411,8 @@ PY
     log "refusing ledger retirement: cannot merge the drain observation"
     return 1
   }
-  _ledger_write_control "$merged_file" "$(ledger_drain_observation_uri)" || {
+  _ledger_write_control "$merged_file" "$(ledger_drain_observation_uri)" "$generation" || {
     rm -f "$merged_file"
-    log "refusing ledger retirement: cannot record the drain observation"
     return 1
   }
   rm -f "$merged_file"
@@ -578,9 +634,12 @@ raise SystemExit(0 if expires > dt.datetime.now(dt.UTC) else 1)
 # under an operation writes that record, so nothing an unlocked gate writes
 # (the observation) can erase it.
 _ledger_gate_passed_under() {
-  local operation="$1" record
-  record="$(_ledger_read_control "$(ledger_gate_pass_uri)")" || return 1
-  [ -n "$record" ] || return 1
+  local operation="$1" record_file status=0
+  record_file="$(mktemp "${TMPDIR:-/tmp}/ledger-gate.XXXXXX")" || return 1
+  if ! _ledger_read_control "$(ledger_gate_pass_uri)" "$record_file" || [ ! -s "$record_file" ]; then
+    rm -f "$record_file"
+    return 1
+  fi
   python3 -c '
 import json, sys
 try:
@@ -588,17 +647,24 @@ try:
 except ValueError:
     raise SystemExit(1)
 raise SystemExit(0 if isinstance(record, dict) and record.get("operation") == sys.argv[1] else 1)
-' "$operation" <<<"$record"
+' "$operation" <"$record_file" || status=$?
+  rm -f "$record_file"
+  return "$status"
 }
 
 _ledger_record_gate_pass() {
-  local operation="$1" record
+  local operation="$1" record generation
   record="$(mktemp "${TMPDIR:-/tmp}/ledger-gate.XXXXXX")" || return 1
+  if ! _ledger_read_control "$(ledger_gate_pass_uri)" "$record"; then
+    rm -f "$record"
+    return 1
+  fi
+  generation="$LEDGER_CONTROL_GENERATION"
   python3 -c '
 import datetime as dt, json, sys
 print(json.dumps({"operation": sys.argv[1], "passed_at": dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")}))
 ' "$operation" >"$record"
-  _ledger_write_control "$record" "$(ledger_gate_pass_uri)" || {
+  _ledger_write_control "$record" "$(ledger_gate_pass_uri)" "$generation" || {
     rm -f "$record"
     log "refusing ledger retirement: cannot record the gate pass"
     return 1
@@ -674,7 +740,7 @@ _ledger_retirement_gate_checks() {
   if [ -n "$target" ]; then
     IFS=$'\t' read -r state job_region job <<<"$target"
     _ledger_reconciler_evidence "spend-lease reconciler" "$state" "$job_region" "$job" \
-      "spend_lease.reconcile_complete" candidates open dead errors || return 1
+      "spend_lease.reconcile_complete" candidates dead errors || return 1
   else
     log "warning: the spend-lease reconciler schedule is already gone without a retirement marker; relying on Spanner evidence alone"
   fi
@@ -716,10 +782,10 @@ _LEDGER_TARGET_PATTERN='[a-z][a-z0-9-]{0,62}/[a-z][a-z0-9-]{0,62}'
 # The targets the schedules pointed at, recorded durably before any schedule
 # is deleted, so a retry after an interrupted teardown still knows a custom
 # target that matches neither prefix nor override. Absent = nothing recorded.
-_ledger_recorded_targets() {
-  local record
-  record="$(_ledger_read_control "$(ledger_retirement_targets_uri)")" || return 1
-  [ -n "$record" ] || return 0
+# Validated "location/name" lines from a targets record file; nothing when
+# the file is empty (no record); fails on anything it cannot trust.
+_ledger_targets_in() {
+  [ -s "$1" ] || return 0
   python3 -c '
 import json, re, sys
 try:
@@ -733,28 +799,53 @@ for target in targets:
     if not isinstance(target, str) or not re.fullmatch(sys.argv[1], target):
         raise SystemExit("invalid target %r" % (target,))
     print(target)
-' "$_LEDGER_TARGET_PATTERN" <<<"$record" || {
+' "$_LEDGER_TARGET_PATTERN" <"$1" || {
     log "refusing worker retirement: the recorded worker targets are unreadable"
     return 1
   }
 }
 
+_ledger_recorded_targets() {
+  local file status=0
+  file="$(mktemp "${TMPDIR:-/tmp}/ledger-targets.XXXXXX")" || return 1
+  if ! _ledger_read_control "$(ledger_retirement_targets_uri)" "$file"; then
+    rm -f "$file"
+    return 1
+  fi
+  _ledger_targets_in "$file" || status=$?
+  rm -f "$file"
+  return "$status"
+}
+
+# The record only ever grows: what an earlier run recorded is kept, so a
+# fenced write that lands after another run's cannot lose a target.
 _ledger_record_targets() {
-  local record
+  local record recorded generation existing
+  existing="$(mktemp "${TMPDIR:-/tmp}/ledger-targets.XXXXXX")" || return 1
+  if ! _ledger_read_control "$(ledger_retirement_targets_uri)" "$existing"; then
+    rm -f "$existing"
+    return 1
+  fi
+  generation="$LEDGER_CONTROL_GENERATION"
+  recorded="$(_ledger_targets_in "$existing")" || {
+    rm -f "$existing"
+    return 1
+  }
+  rm -f "$existing"
   record="$(mktemp "${TMPDIR:-/tmp}/ledger-targets.XXXXXX")" || return 1
   if ! python3 -c '
 import json, re, sys
-targets = sorted(set(target for target in sys.argv[2:] if target))
+targets = sorted(set(target for target in sys.argv[2:] + sys.stdin.read().split() if target))
 for target in targets:
     if not re.fullmatch(sys.argv[1], target):
         raise SystemExit("invalid target %r" % (target,))
 print(json.dumps({"targets": targets}))
-' "$_LEDGER_TARGET_PATTERN" "$@" >"$record"; then
+' "$_LEDGER_TARGET_PATTERN" "$@" <<<"$recorded" >"$record"; then
     rm -f "$record"
     log "refusing worker retirement: cannot serialize the worker targets"
     return 1
   fi
-  _ledger_write_control "$record" "$(ledger_retirement_targets_uri)" || {
+  _ledger_write_control "$record" "$(ledger_retirement_targets_uri)" "$generation" || {
     rm -f "$record"
     log "refusing worker retirement: cannot record the worker targets"
     return 1
@@ -968,8 +1059,13 @@ ledger_retire_workers() {
   done
 
   _ledger_require_lock || return 1
-  local record
+  local record generation
   record="$(mktemp "${TMPDIR:-/tmp}/ledger-retirement.XXXXXX")" || return 1
+  if ! _ledger_read_control "$(ledger_retirement_marker_uri)" "$record"; then
+    rm -f "$record"
+    return 1
+  fi
+  generation="$LEDGER_CONTROL_GENERATION"
   python3 -c '
 import datetime as dt, json, sys
 print(json.dumps({
@@ -982,7 +1078,7 @@ print(json.dumps({
     "workers_deleted": int(sys.argv[5]),
 }))
 ' "$PROJECT_ID" "$SPANNER_INSTANCE_ID" "$SPANNER_DATABASE_ID" "${RELEASE:-unknown}" "$deleted" >"$record"
-  _ledger_write_control "$record" "$(ledger_retirement_marker_uri)" || {
+  _ledger_write_control "$record" "$(ledger_retirement_marker_uri)" "$generation" || {
     rm -f "$record"
     log "refusing to record retirement: cannot write the marker"
     return 1

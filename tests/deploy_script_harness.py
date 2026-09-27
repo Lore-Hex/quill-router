@@ -1498,6 +1498,8 @@ QUOTA_READINESS_RESPONSES = (
     (r"projects describe.*projectNumber", "44325983244"),
     (r"storage buckets describe .*tr-deploy-mutex.*--format=json", '{"lifecycle_config":{"rule":[{"action":{"type":"Delete"},"condition":{"age":1,"matchesPrefix":["locks/"]}}]}}'),
     (r"storage objects list --raw --format=json .*controls/", '[{"bucket":"tr-deploy-mutex-quill-cloud-proxy","name":"controls/regional-quota-issuance.txt"},{"bucket":"tr-deploy-mutex-quill-cloud-proxy","name":"controls/ledger-drain-observation.json"}]'),
+    # control objects are written with a generation precondition read first
+    (r"storage objects describe .*controls/.*--format=value\(generation\)", "1"),
     # The ledger retirement gate's durable observation: this fleet state
     # (service generation 1, the active revision everywhere) has been in place
     # since well before any drain interval.
