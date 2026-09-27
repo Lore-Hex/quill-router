@@ -1374,6 +1374,10 @@ SEPTEMBER_27_WAFER_REFRESH_TRANSITIONS = [
         "deepseek/deepseek-v4-pro [wafer:wafer:DeepSeek-V4-Pro] cached-input",
         "prompt", "3E-8", "2.4E-7",
     ),
+    (
+        "deepseek/deepseek-v4-pro [wafer:wafer:DeepSeek-V4-Pro] cached-input",
+        "prompt", "3E-8", "1.7E-7",
+    ),
 ]
 
 
