@@ -8,6 +8,8 @@ refuse every other caller for the verdict's cache lifetime.
 
 from __future__ import annotations
 
+import dataclasses
+import logging
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -75,13 +77,16 @@ def test_workspace_read_failure_pages_only_when_budget_remains(
 
     # The request outcome is identical either way: no lease, central fallback.
     assert outcome == (None, "trust_gate_unarmed")
+    records = [r for r in caplog.records if r.name == gate.log.name]
     if pages:
         assert alerts == ["trust.gate_unarmed condition=read_failed"]
-        assert "condition=read_failed" in caplog.text
+        [failed] = [r for r in records if r.getMessage() == "trust.gate_unarmed read_failed"]
+        assert failed.exc_info is not None and failed.exc_info[0] is DeadlineExceeded
     else:
         assert alerts == []
-        assert gate.ADMISSION_BUDGET_SPENT in caplog.text
-        assert "condition=read_failed" not in caplog.text
+        assert [(r.levelno, r.getMessage()) for r in records] == [
+            (logging.WARNING, f"trust.gate_unarmed {gate.ADMISSION_BUDGET_SPENT}")
+        ]
 
 
 def test_global_refresh_cut_short_by_budget_is_not_cached(
@@ -112,6 +117,7 @@ def test_global_refresh_failure_with_budget_left_is_still_cached_and_paged(
     armed: Any, alerts: list[str], monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store, db, settings = armed
+    snapshot = type(db).snapshot
     monkeypatch.setattr(type(db), "snapshot", _deadline_exceeded)
 
     with _shared_deadline(60.0):
@@ -122,3 +128,35 @@ def test_global_refresh_failure_with_budget_left_is_still_cached_and_paged(
             None, "trust_gate_unarmed"
         )
     assert alerts == ["trust.gate_unarmed condition=read_failed"]
+
+    # A real read failure keeps its negative-cache lifetime: the next caller is
+    # refused from the cache without another read, even once reads recover.
+    monkeypatch.setattr(type(db), "snapshot", snapshot)
+    assert gate.global_trust_verdict(store, settings) is failed
+
+
+def test_budget_cut_refresh_neither_replaces_nor_renews_an_older_verdict(
+    armed: Any, alerts: list[str], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, db, settings = armed
+    primed = gate.global_trust_verdict(store, settings)
+    assert primed.failure is None
+    # Still valid but inside its refresh margin, so the next caller refreshes.
+    in_margin = dataclasses.replace(
+        primed, expires_monotonic=time.monotonic() + gate.GLOBAL_TRUST_REFRESH_MARGIN_SECONDS / 2
+    )
+    gate._caches[store].verdict = in_margin
+    snapshot = type(db).snapshot
+    monkeypatch.setattr(type(db), "snapshot", _deadline_exceeded)
+
+    with _shared_deadline(-1.0):
+        spent = gate.global_trust_verdict(store, settings)
+    assert spent.failure == gate.ADMISSION_BUDGET_SPENT
+    # The older verdict is untouched, so its own expiry still bounds it.
+    assert gate._caches[store].verdict is in_margin
+
+    monkeypatch.setattr(type(db), "snapshot", snapshot)
+    fresh = gate.global_trust_verdict(store, settings)
+    assert fresh.failure is None and fresh is not in_margin
+    assert gate._caches[store].verdict is fresh
+    assert alerts == []
