@@ -209,7 +209,7 @@
           <td>{{ endpoint.prompt_price }}</td>
           <td>{{ endpoint.cached_prompt_price }}</td>
           <td>{{ endpoint.completion_price }}</td>
-          <td>
+          <td class="model-precision">
             {% if endpoint.precision %}
             <details>
               <summary>{{ endpoint.precision.label }}</summary>
