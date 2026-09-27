@@ -671,7 +671,8 @@ def test_a_git_checkout_scans_tracked_files_and_a_plain_directory_scans_all(tmp_
     for relative in [*tracked, "gha-creds-untracked.json", "anything.txt"]:
         (checkout / relative).parent.mkdir(parents=True, exist_ok=True)
         (checkout / relative).write_text(carrier)
-    subprocess.run(["git", "-C", str(checkout), "add", *tracked], check=True)  # noqa: S603, S607 - fixed git setup
+    # --force: a developer's global excludes (e.g. build/) must not untrack fixtures.
+    subprocess.run(["git", "-C", str(checkout), "add", "--force", *tracked], check=True)  # noqa: S603, S607 - fixed git setup
 
     # Tracked files are scanned whatever their name; excluded directories
     # (at any depth) and the root tests/ stay out; untracked files never count.
@@ -692,7 +693,7 @@ def test_a_git_checkout_with_a_submodule_is_refused(tmp_path_factory, active):
     sub = tmp_path_factory.mktemp("sub")
     subprocess.run([*git, "init", "-q", str(sub)], check=True)  # noqa: S603 - fixed git setup
     (sub / "migrate.sh").write_text('{"note": "update_ddl"}\n')
-    subprocess.run([*git, "-C", str(sub), "add", "migrate.sh"], check=True)  # noqa: S603 - fixed git setup
+    subprocess.run([*git, "-C", str(sub), "add", "--force", "migrate.sh"], check=True)  # noqa: S603 - fixed git setup
     subprocess.run([*git, "-C", str(sub), "commit", "-q", "-m", "sub"], check=True)  # noqa: S603 - fixed git setup
     checkout = tmp_path_factory.mktemp("super")
     subprocess.run([*git, "init", "-q", str(checkout)], check=True)  # noqa: S603 - fixed git setup
@@ -716,7 +717,7 @@ def test_a_checkout_missing_a_tracked_file_is_refused(tmp_path_factory):
     (checkout / "migrate.sh").write_text('{"note": "update_ddl"}\n')
     (checkout / "scripts").mkdir()
     (checkout / "linked").symlink_to("scripts", target_is_directory=True)
-    subprocess.run(["git", "-C", str(checkout), "add", "migrate.sh", "linked"], check=True)  # noqa: S603, S607 - fixed git setup
+    subprocess.run(["git", "-C", str(checkout), "add", "--force", "migrate.sh", "linked"], check=True)  # noqa: S603, S607 - fixed git setup
 
     # A tracked symlink to a directory is not a file to scan, as before.
     assert schema.repository_files(checkout) == [checkout / "migrate.sh"]
