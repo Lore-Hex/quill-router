@@ -12,6 +12,23 @@ import pytest
 
 from scripts import check_price_coverage
 from scripts.check_price_coverage import audit
+from trusted_router.provider_manifest_policy import provider_manifest_valid_until
+
+
+def _one_day_past_deadline(slug: str, raw: dict) -> dt.datetime:
+    """One day past a committed manifest's own deadline.
+
+    The deadline is generated_at plus 14 days unless a published promotion
+    (pricing_valid_until) ends first; manifests outside the expiring set are
+    aged from generated_at. Tests that read committed manifests must not
+    assume which bound applies, because the hourly refresh moves generated_at.
+    """
+    deadline = provider_manifest_valid_until(slug, raw)
+    if deadline is None:
+        deadline = dt.datetime.fromisoformat(raw["generated_at"].replace("Z", "+00:00")) + dt.timedelta(
+            days=14
+        )
+    return deadline + dt.timedelta(days=1)
 
 _NEW_AUTOMATIC_FEED_MODELS = {
     "aion-labs/aion-3.0",
@@ -271,11 +288,10 @@ def test_stale_fallback_manifests_are_age_gated_even_with_live_scrapers() -> Non
     raw = json.loads(
         check_price_coverage.MANIFEST_DIR.joinpath("upstage.json").read_text(encoding="utf-8")
     )
-    generated = dt.datetime.fromisoformat(raw["generated_at"].replace("Z", "+00:00"))
 
     warnings, _info, hard_failures = check_price_coverage._run_audit(
         14,
-        generated + dt.timedelta(days=15),
+        _one_day_past_deadline("upstage", raw),
         check_model_discovery=False,
     )
 
@@ -288,11 +304,10 @@ def test_discovery_only_non_runtime_manifest_warns_without_global_freeze() -> No
     raw = json.loads(
         check_price_coverage.MANIFEST_DIR.joinpath("stepfun.json").read_text(encoding="utf-8")
     )
-    generated = dt.datetime.fromisoformat(raw["generated_at"].replace("Z", "+00:00"))
 
     warnings, _info, hard_failures = check_price_coverage._run_audit(
         14,
-        generated + dt.timedelta(days=15),
+        _one_day_past_deadline("stepfun", raw),
         check_model_discovery=False,
     )
 
@@ -308,11 +323,10 @@ def test_nvidia_runtime_fallback_manifest_is_age_gated_provider_locally() -> Non
     raw = json.loads(
         check_price_coverage.MANIFEST_DIR.joinpath("nvidia-nim.json").read_text(encoding="utf-8")
     )
-    generated = dt.datetime.fromisoformat(raw["generated_at"].replace("Z", "+00:00"))
 
     warnings, _info, hard_failures = check_price_coverage._run_audit(
         14,
-        generated + dt.timedelta(days=15),
+        _one_day_past_deadline("nvidia-nim", raw),
         check_model_discovery=False,
     )
 
