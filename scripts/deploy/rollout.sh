@@ -26,6 +26,8 @@ source "${SCRIPT_DIR}/deploy_mutex.sh"
 source "${SCRIPT_DIR}/_cloud_run_revision_probe.sh"
 # shellcheck source=scripts/deploy/regional_quota_rollout.sh
 source "${SCRIPT_DIR}/regional_quota_rollout.sh"
+# shellcheck source=scripts/deploy/ledger_retirement.sh
+source "${SCRIPT_DIR}/ledger_retirement.sh"
 
 WARM_PROBE_TAG="staged-probe"
 WARM_PROBE_REGIONS=()
@@ -68,6 +70,13 @@ trap 'exit 143' TERM
 if [ -z "${TR_DEPLOY_MUTEX_OPERATION:-}" ]; then
   deploy_mutex_acquire
 fi
+
+# Every revision this script creates runs without the regional quota and
+# spend-lease ledgers (retired 2026-09-27). Whatever the entry point - the
+# release workflow, deploy-gcp.sh, break-glass, an analytics cutover - prove
+# first that nothing can still need them. Read-only; a recorded retirement
+# stands it down.
+ledger_retirement_gate
 
 TRUST_SOURCE_COMMIT=""
 TRUST_IMAGE_REFERENCE=""
@@ -440,10 +449,10 @@ fi
 # Retired 2026-09-27: the Bigtable ledger is being removed (Joseph's call:
 # switch the pilot off rather than port the ledger). The pin is false, and the
 # retirement override below forces the marker off whatever the dispatch input,
-# live marker, or stop latch say. Capability stays on so already-issued holds
-# settle, refund, and drain; the next change removes the ledger itself once the
-# reconciler reports an empty backlog. Re-arming is a source change through
-# review (docs/design/regional-quota-leases.md).
+# live marker, or stop latch say. Capability is pinned off above as well, and
+# ledger_retirement_gate proves the escrow is drained before any revision is
+# created. Re-arming is a source change through review
+# (docs/design/regional-quota-leases.md).
 REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED=false
 LIVE_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED="$(
   read_primary_regional_quota_env \

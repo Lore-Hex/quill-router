@@ -159,19 +159,31 @@ app-profile map is present, capability or not, so their absence is what keeps
 Bigtable out of every serving process. Two release steps replace the
 provisioners and the background reconciler deploys:
 
-- `scripts/deploy/regional_quota_drain_gate.sh` runs in `migrate-schema`,
-  before any revision changes. It proves every serving revision (held regions
-  included) already carries `TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED=false`
-  and that the last five passes of both reconcilers were empty and recent
-  (`inspected=0 backlog=0 remaining=0 errors=0`; `candidates=0 open=0
-  dead=0 errors=0`). A missing reconciler schedule means the ledgers were
-  retired by an earlier run and the gate is a no-op.
-- `scripts/deploy/retire_ledger_workers.sh` runs after the secondary ramp and
-  deletes both Cloud Scheduler jobs, then every
-  `trusted-router-regional-quota-reconciler-*` and
-  `trusted-router-spend-lease-reconciler-*` Cloud Run job in every
-  control-plane region. It is idempotent and stays in the release until the
-  scripts that created those resources are deleted with the ledger code.
+- `scripts/deploy/ledger_retirement.sh` is sourced by `rollout.sh`, so the gate
+  runs for every entry point (the release workflow, `deploy-gcp.sh`,
+  break-glass, the analytics cutover) right after the deployment mutex and
+  before any revision is created; `regional_quota_drain_gate.sh` runs the
+  same gate earlier, in `migrate-schema`. It proves: every serving revision
+  (held regions included) carries issuance, spend issuance, binding and
+  admission markers `false` (a missing marker refuses); Spanner holds no
+  `regional_quota_lease_open` / `regional_quota_lease_workspace_open` entity,
+  no unsettled `RegionalCredits` reservation, no pending or dead settle-outbox
+  intent for one, and no `spend_lease_open` row that is not `done` (the
+  reconciler's own `open` counts only rows due now); and, while a reconciler
+  schedule still exists, that its exact target job reported five recent
+  all-zero passes. A missing schedule without a retirement marker is a
+  partial teardown: Spanner still decides, with a warning.
+- `scripts/deploy/retire_ledger_workers.sh` runs after the secondary ramp.
+  It defers (with a workflow warning) while any serving revision still
+  carries capability or a profile map, re-checks Spanner, deletes both
+  schedules, waits for each worker's running executions, deletes every
+  `trusted-router-{regional-quota,spend-lease}-reconciler-*` job in the
+  control-plane regions plus the workers' configured and targeted regions,
+  proves absence, and only then writes
+  `gs://tr-deploy-mutex-quill-cloud-proxy/controls/ledger-retirement.json`
+  (`state: retired`). That marker is the only thing that stands the gate
+  down afterwards. Both steps stay in the release until the scripts that
+  created those resources are deleted with the ledger code.
 
 The provisioner and worker scripts remain on disk, unwired, until then. The
 description below is the pre-retirement design.

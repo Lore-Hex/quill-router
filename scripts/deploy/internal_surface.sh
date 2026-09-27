@@ -415,13 +415,19 @@ ENV_VARS=(
 
 # Preserve the money-path and federation feature switches exactly. Missing
 # values are a refusal, never an invitation to silently fall back to defaults.
-# The ledger settings themselves (cohort, shards, tables, app profiles) are
-# retired with the regional escrow ledger (2026-09-27) and no longer exist on
-# the legacy service; only the two markers remain, both false.
+# The regional escrow ledger is retired (2026-09-27): a legacy service that
+# still serves lease capability carries the app-profile maps this surface no
+# longer copies, and a revision with capability but no map cannot boot. Refuse
+# that source rather than inherit half of it; the markers render false.
 for plain_name in \
   TR_REGIONAL_QUOTA_LEASES_ENABLED \
   TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED; do
-  ENV_VARS+=("${plain_name}=$(legacy_env_required "$plain_name")")
+  legacy_marker="$(legacy_env_required "$plain_name")"
+  if [ "$legacy_marker" != "false" ]; then
+    echo "ERROR: active ${LEGACY_SERVICE} revision still serves ${plain_name}=${legacy_marker}; retire the ledger on the legacy service first" >&2
+    exit 1
+  fi
+  ENV_VARS+=("${plain_name}=false")
 done
 
 for optional_plain_name in \

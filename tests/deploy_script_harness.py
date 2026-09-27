@@ -1431,6 +1431,35 @@ QUOTA_SCHEDULER: dict[str, Any] = {
         "oauthToken": {"serviceAccountEmail": "44325983244-compute@developer.gserviceaccount.com"},
     },
 }
+# The spend-lease reconciler schedule, for the ledger retirement interlock.
+SPEND_SCHEDULER: dict[str, Any] = {
+    "state": "ENABLED",
+    "httpTarget": {
+        "uri": "https://us-east4-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/quill-cloud-proxy/jobs/trusted-router-spend-lease-reconciler-abc12345:run",
+        "httpMethod": "POST",
+        "oauthToken": {"serviceAccountEmail": "44325983244-compute@developer.gserviceaccount.com"},
+    },
+}
+# Five recent all-zero passes of each worker: what a drained ledger looks like.
+_REGIONAL_DRAINED_LINE = (
+    "INFO:trusted_router.regional_quota_reconcile_cli:regional_quota.reconcile_complete "
+    "inspected=0 reconciled=0 closed=0 errors=0 backlog=0 processed=0 remaining=0 "
+    "completed=0 abandoned=0 budget_exhausted=0"
+)
+_SPEND_DRAINED_LINE = (
+    "INFO:__main__:spend_lease.reconcile_complete candidates=0 open=0 recovered=0 "
+    "bound=0 closed=0 deferred=0 errors=0 dead=0"
+)
+LEDGER_DRAINED_RESPONSES = (
+    (r"scheduler jobs describe .*spend-lease-reconcile.*--format=json", json.dumps(SPEND_SCHEDULER)),
+    (r"logging read .*regional_quota\.reconcile_complete", json.dumps([{"textPayload": _REGIONAL_DRAINED_LINE}] * 5)),
+    (r"logging read .*spend_lease\.reconcile_complete", json.dumps([{"textPayload": _SPEND_DRAINED_LINE}] * 5)),
+    (r"spanner databases execute-sql .*regional_quota_lease_open", "0"),
+    (r"spanner databases execute-sql .*regional_quota_lease_workspace_open", "0"),
+    (r"spanner databases execute-sql .*FROM tr_reservation@", "0"),
+    (r"spanner databases execute-sql .*FROM tr_settle_outbox AS o JOIN", "0"),
+    (r"spanner databases execute-sql .*FROM spend_lease_open WHERE", "0"),
+)
 QUOTA_WORKER: dict[str, Any] = {
     "metadata": {"generation": 1},
     "spec": {"template": {"spec": {"template": {"spec": _QUOTA_WORKER_SPEC}}}},
@@ -1459,6 +1488,7 @@ QUOTA_READINESS_RESPONSES = (
     (r"run jobs describe .*regional-quota.*--format=json", json.dumps(QUOTA_WORKER)),
     (r"run jobs executions list .*--format=json", json.dumps([QUOTA_EXECUTION])),
     (r"logging read .*regional_quota.reconciler_complete", '[{"textPayload":"regional_quota.reconciler_complete elapsed_ms=10"}]'),
+    *LEDGER_DRAINED_RESPONSES,
 )
 
 
@@ -1521,6 +1551,11 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
                                             "name": "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED",
                                             "value": "false",
                                         },
+                                        # Step-1 markers: the ledger retirement gate
+                                        # requires them off on every serving revision.
+                                        {"name": "TR_SPEND_LEASE_ISSUANCE_ENABLED", "value": "false"},
+                                        {"name": "TR_SPEND_LEASE_BINDING_ENABLED", "value": "false"},
+                                        {"name": "TR_SPEND_LEASE_ADMISSION_ACCEPT", "value": "false"},
                                     ]
                                 }
                             ]

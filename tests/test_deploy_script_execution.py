@@ -745,7 +745,12 @@ _LIVE_REGIONAL_QUOTA_ENV = {
     "REGIONAL_QUOTA_ACCOUNTING_PROTOCOL": "2",
     "TR_RELEASE": "abc12345",
     "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true",
-    "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "true",
+    # A step-1 primary: issuance, spend issuance, binding and admission are
+    # already off, which the ledger retirement gate requires everywhere.
+    "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "false",
+    "TR_SPEND_LEASE_ISSUANCE_ENABLED": "false",
+    "TR_SPEND_LEASE_BINDING_ENABLED": "false",
+    "TR_SPEND_LEASE_ADMISSION_ACCEPT": "false",
     "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS": "workspace-pilot,workspace-canary",
     "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES": "us-central1=tr-quota-us-central1",
     "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS": "60",
@@ -792,14 +797,14 @@ def _regional_quota_rollout_harness(
     [
         # Absent/empty control resolves to REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED,
         # which is OFF since the 2026-09-27 Bigtable ledger retirement.
-        pytest.param(None, "true", "false", id="absent-pins-off-live-true"),
-        pytest.param(None, "false", "false", id="absent-pins-off-live-false"),
-        pytest.param("", "true", "false", id="empty-pins-off-live-true"),
-        # Retirement override: preserve over a live ON marker and an explicit
-        # true both render OFF (and say so in the log).
-        pytest.param("preserve", "true", "false", id="dispatch-preserve-live-true-forced-off"),
+        # A live ON marker anywhere now refuses the rollout at the ledger
+        # retirement gate (tested below), so every case here serves OFF.
+        pytest.param(None, "false", "false", id="absent-pins-off"),
+        pytest.param("", "false", "false", id="empty-pins-off"),
+        pytest.param("preserve", "false", "false", id="dispatch-preserve-live-false"),
+        # Retirement override: an explicit true renders OFF and says so.
         pytest.param("true", "false", "false", id="dispatch-true-forced-off"),
-        pytest.param("false", "true", "false", id="dispatch-disables-live-true"),
+        pytest.param("false", "false", "false", id="dispatch-false"),
     ],
 )
 def test_rollout_regional_quota_issuance_control(
@@ -825,7 +830,7 @@ def test_rollout_regional_quota_issuance_control(
     assert rendered_env["TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED"] == expected
     # Capability is retired with the ledger; the live marker is never copied.
     assert rendered_env["TR_REGIONAL_QUOTA_LEASES_ENABLED"] == "false"
-    forced_off = control == "true" or (control == "preserve" and live == "true")
+    forced_off = control == "true"
     assert ("regional quota issuance is retired" in run.stderr) is forced_off
     assert not _LEDGER_SETTING_NAMES & rendered_env.keys()
     # Enabling (including preserve=true) must preflight every serving region
@@ -849,7 +854,7 @@ def test_rollout_regional_quota_issuance_control(
     [
         # A fresh fleet must first deploy protocol-capable revisions with issuance off.
         pytest.param({}, "false", "false", id="no-live-settings-forced-off"),
-        pytest.param(_LIVE_REGIONAL_QUOTA_ENV, None, "false", id="stale-live-settings-pinned-off"),
+        pytest.param(_LIVE_REGIONAL_QUOTA_ENV, None, "false", id="step-one-live-settings-dropped"),
     ],
 )
 def test_rollout_renders_no_ledger_settings(
@@ -871,6 +876,20 @@ def test_rollout_renders_no_ledger_settings(
     assert rendered["TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED"] == expected_issuance
     assert rendered["REGIONAL_QUOTA_ACCOUNTING_PROTOCOL"] == "2"
     assert not _LEDGER_SETTING_NAMES & rendered.keys()
+
+
+def test_rollout_gate_refuses_while_a_region_still_issues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The revisions this rollout creates have no ledger, so a serving revision
+    # that can still mint a regional hold blocks it before anything changes.
+    live_env = {**_LIVE_REGIONAL_QUOTA_ENV, "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "true"}
+    isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, live_env)
+    run = isolated.run("scripts/deploy/rollout.sh")
+    assert run.returncode != 0
+    assert "still serves TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED=true" in run.stderr
+    assert not any(call[3:5] == ["run", "deploy"] for call in run.calls)
+    assert not any("spanner" in call for call in run.calls)
 
 
 def test_rollout_refuses_regional_quota_capability(
