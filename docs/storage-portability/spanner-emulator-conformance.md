@@ -8,28 +8,34 @@ The base GoogleSQL table comes from `scripts/deploy/infra.sh` (duplicated in `in
 
 [spanner_ddl.py](../../tests/conformance/spanner_ddl.py) is checked-in schema as code. [The parser](../../tests/conformance/spanner_schema_source.py) extracts CREATE statements, resolves static index names, adds missing columns, and expands retention-policy calls without running shell scripts. Source digests additionally fail on changed helpers, new files, or shell syntax the narrow parser does not understand. Review changes before regenerating with `python -m tests.conformance.spanner_schema_source`. Unrecognized schema helpers fail extraction, so regeneration cannot silently bless an unsupported `ensure_*` call. Source digests intentionally make even migration-comment changes require review/regeneration.
 
-The guard's guarantee is scoped: **(a) every Spanner DDL transport token in a repository file that is neither binary nor on the reviewed data list (outside the excluded directories below) is consumed by the extractor or covered by an occurrence-bound, reasoned exemption; (b) every whole-word occurrence of a DB-API DDL verb on the fixed migration list is consumed or reviewed.** These lexical carriers are tripwires, not a complete inventory of ways to change Spanner schema.
+The guard's guarantee is scoped: **every Spanner DDL transport token on the transport surface is consumed by the extractor or covered by an occurrence-bound, reasoned exemption; every whole-word occurrence of a DB-API DDL verb on the fixed migration list is consumed or reviewed.** These lexical carriers are tripwires, not a complete inventory of ways to change Spanner schema.
 
-- **Transport surface:** every repository file except binary files (a NUL byte in the first 8 KiB) and the explicit reviewed data list below, independent of extension, executable bit, shebang, or how or whether it is executed. Root `tests/` and `docs/`, dependency/build directories (`.venv`, `node_modules`, `vendor`, `dist`, `build`, `target`, `.next`), `.git`, and Python/tool cache directories are excluded. Helpers in arbitrary directories, ClickHouse code and SQL, experiments, sites, and IaC outside `infra/` all receive transport scanning. Unknown extensions and extensionless files default to code.
-- **Fixed migration list (statement surface):** the extracted schema sources above, `scripts/deploy/_lib.sh`, every file under `.github/workflows/`, every `infra/**/*.tf`, and all `cloudbuild*.yaml`, `cloudbuild*.yml` and `Dockerfile*` files, subject to the same excluded directories. Execution and imports never expand this list. The existing manual native SQL file described below retains its explicit digest review.
+**Transport surface:** scan EVERY repository file by default, as raw bytes decoded as UTF-8 with replacement, except:
 
-The reviewed data list lives in `DATA_EXTENSIONS`, `DATA_PATHS` and `DATA_NAME_PREFIXES` in the parser, with a reason for every entry:
+(a) Root `tests/` and `docs/`. A deploy step that executes a file under `tests/` or `docs/` is explicitly out of scope.
 
-| Exclusion | Reason |
+(b) Build/dependency directories: `.git`, `.venv`, `node_modules`, `dist`, `build`, `__pycache__`, `vendor`, `target`, `.next`, and tool caches `.mypy_cache`, `.pytest_cache`, `.ruff_cache`, `.hypothesis`, at any depth.
+
+(c) The explicit existing data files listed by **exact repository-relative path** in `DATA_PATHS` in the parser, each with a reason. The complete list is:
+
+| Exact data path | Reason |
 |---|---|
-| `.md`, `.rst` | Markdown and reStructuredText documentation |
-| `.txt` | Plain-text prose/data |
-| `.csv`, `.tsv` | Tabular data |
-| `.svg` | Vector image asset |
-| `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp` | Raster image assets |
-| `.ico` | Icon asset |
-| `.pdf` | Document asset |
-| `.woff`, `.woff2`, `.ttf` | Font assets |
-| `.lock` | Dependency resolution data |
-| Root `.test_durations` | Generated pytest timing data |
-| Basenames `LICENSE*`, `NOTICE*` (case-sensitive) | License/legal text and third-party attribution |
+| `.test_durations` | Generated pytest timing data; test node IDs contain transport words and timing regeneration must not require schema review. |
 
-Extensions are case-insensitive. These exclusions need no registry entries, including a timing-only `.test_durations` regeneration or a new Markdown file. The fixed migration statement list still receives its own review. New ClickHouse SQL containing only statements and ordinary `middleware` imports also need no registry changes. A helper using `spanner_dbapi` is caught at its own transport token regardless of launchers such as `timeout`, `env`, `xargs`, subprocess calls, or working-directory changes; the guard does not model execution syntax.
+(d) Binary files **only when all three conditions hold**: no shebang, no code/script extension, and a NUL byte in the first 8 KiB. A shebang (`#!` at the start) or a code/script extension always forces scanning, NULs notwithstanding, subject to (a)-(c). `CODE_EXTENSIONS` in the parser defines those inclusion overrides, case-insensitively. It never excludes a file. A NUL after the first 8 KiB does not exclude a file.
+
+There are **no data extension or basename patterns**. New `.txt`, `.md`, `.lock`, `NOTICE*`, and `LICENSE*` files are scanned like any other file. Existing lock files, READMEs, notices and licenses remain scanned too; none needs an exact-path exemption today. Helpers in arbitrary directories, ClickHouse code and SQL, experiments, sites, and IaC outside `infra/` all receive transport scanning. Executable bits and launcher syntax do not determine the scan surface.
+
+**Fixed migration list (statement surface):** the extracted schema sources above, `scripts/deploy/_lib.sh`, every file under `.github/workflows/`, every `infra/**/*.tf`, and all `cloudbuild*.yaml`, `cloudbuild*.yml` and `Dockerfile*` files, subject to the same excluded directories. Execution and imports never expand this list. The existing manual native SQL file described below retains its explicit digest review.
+
+The round-15 audit found exactly two existing non-code text files with transport tokens among the previously name-excluded files outside (a)-(b):
+
+| File | Matches | Handling |
+|---|---:|---|
+| `.test_durations` | 6 | Exact-path data exemption above; matches are pytest node IDs, not programs. |
+| `.codex-review-1.md:22` | 1 | Occurrence-bound line exemption in `spanner_ddl_exemptions.json`; archived review prose about receipt-column deployment ordering, not a schema dispatch. The rest of the file remains scanned. |
+
+No other previously name-excluded text file contains a transport token. New ClickHouse SQL containing only statements and ordinary `middleware` imports also need no registry changes. A helper using `spanner_dbapi` is caught at its own transport token regardless of launchers such as `timeout`, `env`, `xargs`, subprocess calls, or working-directory changes; the guard does not model execution syntax.
 
 Raw carrier scanning includes comments and strings, decodes UTF-8 with replacement, and does not strip language syntax. Transport identifiers split on non-alphanumerics and camelCase boundaries: whole parts `ddl`/`ddls`, adjacent `extra` + `statements`, and `databases` + `create`. Additional tripwires are `spanner_dbapi`, `updateSchema`, `spanner cli` / `spanner-cli` (including `--source` invocations), `jdbc:cloudspanner`, `liquibase`, `flyway`, `sqlalchemy_spanner` and `spanner+spanner:`. Ordinary `middleware` imports do not match.
 
@@ -40,9 +46,9 @@ Each carrier must belong to a dispatch consumed by extraction (including a liter
 - **Lines (`lines`):** repository path, exact whitespace-normalized physical line text preserving case and quotes, and expected occurrence count. Added or removed copies fail even if no carrier remains. This is the only binding that can review transports. A multiline match requires every physical line to be reviewed.
 - **Manual native SQL (`files`):** repository path and SHA-256 of all bytes; statements only. `scripts/lightning/spanner_provenance.sql` retains this check. Any change requires review, including changes beneath an unchanged ALTER line inside a CHECK constraint.
 
-There are no directory or statement-pattern exemptions. Diagnostics name physical `file:line`, the carrier and the registry remedy. Registry entries do not bypass structural validation of migration dispatch arguments, and regeneration runs the same guard.
+There are no additional directory or statement-pattern exemptions in the registry. Diagnostics name physical `file:line`, the carrier and the registry remedy. Registry entries do not bypass structural validation of migration dispatch arguments, and regeneration runs the same guard.
 
-Explicit non-goals are DDL through an API or tool with **no DDL-specific token** (for example a generic `cursor.execute` supplied a connection externally), transport tokens or URLs assembled at runtime (for example `getattr(db, "update_" + "d" + "dl")`), **statement text outside the fixed migration list** (for example an `ALTER TABLE` literal in `clickhouse/build_public_snapshots.py` or `trusted_router.regional_quota_reconcile_gate`), data files, and anything applied outside the repository (console or manual commands). Statement text outside the list cannot reach Spanner without a transport; appending `database.update_ddl([...])` to either program fails, while appending only statement text passes. Recognizing a transport vocabulary cannot establish completeness. The real backstop is [Lore-Hex/quill-router#1372](https://github.com/Lore-Hex/quill-router/issues/1372): a scheduled production INFORMATION_SCHEMA comparison with the checked-in schema. That comparison is outside this PR.
+Explicit non-goals are DDL through an API or tool with **no DDL-specific token** (for example a generic `cursor.execute` supplied a connection externally), transport tokens or URLs assembled at runtime (for example `getattr(db, "update_" + "d" + "dl")`), **statement text outside the fixed migration list** (for example an `ALTER TABLE` literal in `clickhouse/build_public_snapshots.py` or `trusted_router.regional_quota_reconcile_gate`), **root `tests/` and `docs/` (including deploy steps executing files there)**, **the exact data path `.test_durations`**, the build/dependency directories and binary files defined in (b) and (d), and anything applied outside the repository (console or manual commands). Statement text outside the list cannot reach Spanner without a transport; appending `database.update_ddl([...])` to either program fails, while appending only statement text passes. Recognizing a transport vocabulary cannot establish completeness. The real backstop is [Lore-Hex/quill-router#1372](https://github.com/Lore-Hex/quill-router/issues/1372): a scheduled production INFORMATION_SCHEMA comparison with the checked-in schema. That comparison is outside this PR.
 
 The generated schema contains **63 DDL statements: 21 tables, 14 secondary indexes, and 9 row-deletion policies**, including the additive column operations. This is the fully migrated **fresh-install** schema, not a claim that every production database already has each optional migration. In particular:
 

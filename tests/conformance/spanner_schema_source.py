@@ -3,9 +3,16 @@
 This deliberately parses a narrow shell vocabulary, never executes shell or gcloud.
 New migration idioms must extend the parser and regenerate spanner_ddl.py.
 
-Every Spanner DDL transport token in repository files that are neither binary
-nor on the reviewed data list must be consumed or have an occurrence-bound,
-reasoned exemption. Root tests/, docs/ and build/dependency directories are excluded.
+Scan every repository file as raw bytes decoded as UTF-8 with replacement, except:
+(a) root tests/ and docs/ (even files executed by a deploy step are out of scope);
+(b) build/dependency directories .git, .venv, node_modules, dist, build,
+__pycache__, vendor, target, .next, .mypy_cache, .pytest_cache, .ruff_cache,
+and .hypothesis;
+(c) the existing exact data path .test_durations (generated pytest timing data);
+(d) binary files with no shebang, no CODE_EXTENSIONS suffix, and a NUL byte in
+the first 8 KiB. A shebang or code/script extension always defeats binary skipping.
+No extension or basename pattern excludes data. Every scanned Spanner DDL
+transport token must be consumed or have an occurrence-bound, reasoned exemption.
 Every whole-word DB-API DDL verb on the fixed migration list must be consumed or
 reviewed: schema sources, _lib.sh, workflows, infra Terraform, Cloud Build and
 Dockerfiles. The verb set is checked against the installed SDK's RE_DDL.pattern.
@@ -17,8 +24,10 @@ Non-goals: DDL through an API/tool with no DDL-specific token (e.g. a generic
 cursor.execute supplied a connection externally), transport tokens or URLs
 assembled at runtime (e.g. getattr(db, "update_" + "d" + "dl")), statement text
 outside the fixed migration list (e.g. ALTER TABLE in clickhouse/build_public_snapshots.py;
-it cannot reach Spanner without a transport), data files (e.g. .test_durations,
-Markdown, CSV), and anything applied outside this repository (e.g. console SQL).
+it cannot reach Spanner without a transport), root tests/ and docs/ (including
+deploy steps executing files there), the exact data path .test_durations, the
+build/dependency directories and binary files defined above, and anything
+applied outside this repository (e.g. console SQL).
 Lore-Hex/quill-router#1372 tracks the scheduled production INFORMATION_SCHEMA
 comparison that provides the real backstop (out of this PR).
 """
@@ -377,44 +386,28 @@ def migration_sources(root: Path) -> list[Path]:
     return sorted(path for path in seeds if path.is_file())
 
 
-# Reviewed data formats only. Unknown extensions/names default to transport scanning.
-DATA_EXTENSIONS = {
-    ".md": "Markdown documentation",
-    ".rst": "reStructuredText documentation",
-    ".txt": "plain-text prose/data",
-    ".csv": "tabular data",
-    ".tsv": "tabular data",
-    ".svg": "vector image asset",
-    ".png": "raster image asset",
-    ".jpg": "raster image asset",
-    ".jpeg": "raster image asset",
-    ".gif": "raster image asset",
-    ".ico": "icon asset",
-    ".webp": "raster image asset",
-    ".pdf": "document asset",
-    ".woff": "font asset",
-    ".woff2": "font asset",
-    ".ttf": "font asset",
-    ".lock": "dependency resolution data",
-}
+# Exact reviewed paths only; new files of any name/extension default to scanning.
 DATA_PATHS = {".test_durations": "generated pytest timing data at the repository root"}
-DATA_NAME_PREFIXES = {
-    "LICENSE": "license/legal text",
-    "NOTICE": "third-party attribution/legal text",
-}
+# Inclusion override for the binary heuristic, never an exclusion allowlist.
+CODE_EXTENSIONS = frozenset((
+    ".py .pyi .sh .bash .zsh .fish .js .mjs .cjs .jsx .ts .tsx .go .java .kt .kts "
+    ".rb .rs .tf .hcl .yaml .yml .json .toml .cfg .ini .sql .mk .cs .c .cc .cpp "
+    ".cxx .h .hh .hpp .hxx .php .xml .properties .ps1 .psm1 .bat .cmd .pl .pm "
+    ".r .lua .swift .scala .groovy .ipynb"
+).split())
 
 
 def transport_sources(root: Path) -> list[Path]:
-    """Everything is code unless binary (NUL in first 8 KiB) or reviewed data."""
+    """Scan all files except the module's (a)-(d); names never imply data."""
     paths = []
     for path in repository_files(root):
-        if (not path.is_file() or path.suffix.lower() in DATA_EXTENSIONS
-                or path.relative_to(root).as_posix() in DATA_PATHS
-                or path.name.startswith(tuple(DATA_NAME_PREFIXES))):
+        if not path.is_file() or path.relative_to(root).as_posix() in DATA_PATHS:
             continue
         with path.open("rb") as stream:
-            if b"\0" not in stream.read(8192):
-                paths.append(path)
+            prefix = stream.read(8192)
+        if (prefix.startswith(b"#!") or path.suffix.lower() in CODE_EXTENSIONS
+                or b"\0" not in prefix):
+            paths.append(path)
     return paths
 
 

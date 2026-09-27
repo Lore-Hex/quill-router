@@ -526,8 +526,7 @@ def test_every_code_configuration_file_kind_is_transport_scanned(repo, name):
     assert f"{path}:{prefix.count(chr(10)) + 1}: unconsumed DDL carrier: update_ddl" in str(error.value)
 
 
-@pytest.mark.parametrize("relative", [*schema.DATA_PATHS, *["new" + ext for ext in schema.DATA_EXTENSIONS],
-                                      "LICENSE", "LICENSE-MIT", "nested/NOTICE.third-party"])
+@pytest.mark.parametrize("relative", list(schema.DATA_PATHS))
 def test_data_transport_words_need_no_registry_change(repo, relative):
     path = repo / relative
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -622,5 +621,69 @@ def test_binary_detection_uses_first_eight_kib(tmp_path, nul_offset):
 
 
 def test_data_exclusions_have_review_reasons():
-    for exclusions in (schema.DATA_EXTENSIONS, schema.DATA_PATHS, schema.DATA_NAME_PREFIXES):
-        assert all(reason.strip() for reason in exclusions.values())
+    for relative, reason in schema.DATA_PATHS.items():
+        assert (schema.ROOT / relative).is_file()
+        assert reason.strip()
+
+
+@pytest.mark.parametrize("name", [
+    "schema.txt", "schema.lock", "schema.md", "NOTICE_schema.sh",
+    "LICENSE", "LICENSE-MIT", "NOTICE.third-party", "README.md", ".test_durations",
+    *["schema" + suffix for suffix in (
+        ".rst .csv .tsv .svg .png .jpg .jpeg .gif .ico .webp .pdf .woff .woff2 .ttf"
+    ).split()],
+])
+def test_round_fifteen_data_names_do_not_hide_executed_helpers(repo, name):
+    relative = f"review_helpers/{name}"
+    path = repo / relative
+    path.parent.mkdir()
+    path.write_text('gcloud spanner databases ddl update db --ddl="ALTER TABLE tr_entities ADD COLUMN review_lost STRING(64)"\n')
+    execute(repo, relative)
+    with pytest.raises(AssertionError) as error:
+        schema.assert_schema_matches(spanner_ddl.DDL, spanner_ddl.SOURCE_DIGESTS, repo)
+    assert f"{path}:1: unconsumed DDL carrier: ddl" in str(error.value)
+
+
+@pytest.mark.parametrize("name,shebang", [
+    ("schema.sh", b"#!/bin/bash\n"),
+    ("schema.sh", b""),
+    ("schema.SH", b""),
+    ("schema", b"#!/bin/bash\n"),
+    ("schema.txt", b"#!/bin/bash\n"),
+], ids=["shebang-sh", "extension-only", "uppercase-extension", "shebang-only", "shebang-txt"])
+def test_round_fifteen_nul_comment_does_not_hide_executed_helpers(repo, name, shebang):
+    relative = f"review_helpers/{name}"
+    path = repo / relative
+    path.parent.mkdir()
+    path.write_bytes(shebang + b'# literal NUL: \0\n'
+                     b'gcloud spanner databases ddl update db --ddl="ALTER TABLE tr_entities ADD COLUMN review_lost STRING(64)"\n')
+    execute(repo, relative)
+    with pytest.raises(AssertionError) as error:
+        schema.assert_schema_matches(spanner_ddl.DDL, spanner_ddl.SOURCE_DIGESTS, repo)
+    line = 3 if shebang else 2
+    assert f"{path}:{line}: unconsumed DDL carrier: ddl" in str(error.value)
+
+
+def test_round_fifteen_binary_without_shebang_or_extension_is_skipped(repo):
+    path = repo / "binary_asset"
+    path.write_bytes(b"\x89\xff\0\x01database.update_ddl(statements)\xfe")
+    assert path not in schema.transport_sources(repo)
+    schema.assert_schema_matches(spanner_ddl.DDL, spanner_ddl.SOURCE_DIGESTS, repo)
+
+
+@pytest.mark.parametrize("change", ["duplicate", "remove", "transport"])
+def test_review_note_line_exemption_is_occurrence_bound(repo, change):
+    relative = ".codex-review-1.md"
+    path = repo / relative
+    shutil.copyfile(schema.ROOT / relative, path)
+    schema.assert_schema_matches(spanner_ddl.DDL, spanner_ddl.SOURCE_DIGESTS, repo)
+    line = next(iter(schema.DDL_EXEMPTIONS["lines"][relative]))
+    if change == "duplicate":
+        path.write_text(path.read_text() + line + "\n")
+    elif change == "remove":
+        path.write_text(path.read_text().replace(line, ""))
+    else:
+        path.write_text(path.read_text() + "database.update_ddl(statements)\n")
+    diagnostic = "unconsumed DDL carrier" if change == "transport" else "line exemption occurrence count changed"
+    with pytest.raises(AssertionError, match=diagnostic):
+        schema.assert_schema_matches(spanner_ddl.DDL, spanner_ddl.SOURCE_DIGESTS, repo)
