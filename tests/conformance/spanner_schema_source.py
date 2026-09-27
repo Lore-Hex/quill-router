@@ -4,7 +4,8 @@ This deliberately parses a narrow shell vocabulary, never executes shell or gclo
 New migration idioms must extend the parser and regenerate spanner_ddl.py.
 
 Scan every repository file as raw bytes decoded as UTF-8 with replacement (in a git
-checkout the tracked files: untracked workspace files never ship), except:
+checkout the tracked files: untracked workspace files never ship; the named schema
+sources below are read whether tracked or not), except:
 (a) root tests/ and docs/ (even files executed by a deploy step are out of scope);
 (b) build/dependency directories .git, .venv, node_modules, dist, build,
 __pycache__, vendor, target, .next, .mypy_cache, .pytest_cache, .ruff_cache,
@@ -342,6 +343,9 @@ def assert_no_shell_variables(statement: str, location: str) -> None:
 
 
 def schema_sources(root: Path = ROOT) -> list[Path]:
+    # Named inputs, tracked or not: a migration still being written must reach
+    # the schema check and regeneration before it is committed. Only the broad
+    # carrier sweep (repository_files) is limited to a checkout's tracked files.
     scripts = root / "scripts/deploy"
     return [scripts / "infra.sh", *sorted(scripts.glob("migrate_*.sh")),
             scripts / "retire_settle_outbox_hot_index.sh"]
