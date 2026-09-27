@@ -520,6 +520,10 @@
       "gh issue create \\": {
         "count": 1,
         "reason": "GitHub issue creation for price refresh failures."
+      },
+      "gh issue create --repo \"${GITHUB_REPOSITORY}\" --title \"${title}\" --body-file /tmp/held-issue.md": {
+        "count": 1,
+        "reason": "GitHub issue creation for providers held at their published prices."
       }
     },
     "experiments/lightning_router/Dockerfile": {
