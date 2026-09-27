@@ -1556,13 +1556,17 @@ done
 
 `TR_SPEND_LEASE_BINDING_ENABLED` makes issued spend leases authoritative for
 allocation, arbitration, the authorize pre-read, and the mint-entry rule.
-Production defaults it on, but only the workspace in
-`TR_SPEND_LEASE_PILOT_WORKSPACE_IDS` is eligible; issuance remains required.
+Since 2026-09-27 production pins both `TR_SPEND_LEASE_ISSUANCE_ENABLED` and
+binding **off** (the spend-lease Bigtable ledger is being retired); only the
+workspace in `TR_SPEND_LEASE_PILOT_WORKSPACE_IDS` was ever eligible. An
+explicit `TR_SPEND_LEASE_BINDING_ENABLED=true` is refused by the rollout,
+because binding without issuance cannot boot.
 
-For an emergency hotfix deploy, set
-`TR_SPEND_LEASE_BINDING_ENABLED=false`. Never roll back below spend-lease unit 4
-while binding is on: the rollout fence requires the unit-4 settlement clamp and
-repair/mirror marker before it will deploy a binding-enabled revision.
+There is no operator override: the rollout renders
+`TR_SPEND_LEASE_BINDING_ENABLED=false` literally and rejects any other value
+before a revision exists. The former unit-4 fence (which refused a
+binding-enabled image without the settlement clamp) is gone with the binding
+path it guarded.
 
 ## <a id="spend-lease-reconciler"></a>Spend-lease reconciler
 

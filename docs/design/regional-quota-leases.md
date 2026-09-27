@@ -170,8 +170,9 @@ The rollout reads preserved quota state from the revision receiving exactly
 created revision, or latest ready revision, because all three can name a failed
 candidate after traffic has rolled back. An ambiguous traffic split or any
 control-plane read error aborts. Only an exact missing-service response is
-treated as a fresh environment. With the normal ON pin, a fresh fleet must
-explicitly request issuance=false for its first compatibility deployment.
+treated as a fresh environment. Since the 2026-09-27 retirement the marker is
+forced off whatever the input, live marker, or latch say, and the accounting
+floor is enforced whenever capability is on.
 
 Issuance requires accounting compatibility, independently of the git release:
 
@@ -205,22 +206,26 @@ gh workflow run deploy.yml --repo Lore-Hex/quill-router --ref main \
   -f regional_quota_lease_issuance=false
 ```
 
-After the queued deployment is fully green in every region, reconciliation is healthy, and
-the durable stop latch has been explicitly re-armed as described below:
+Historically, after the queued deployment was fully green in every region,
+reconciliation healthy, and the durable stop latch re-armed as described below,
+an operator dispatched:
 
 ```bash
 gh workflow run deploy.yml --repo Lore-Hex/quill-router --ref main \
   -f regional_quota_lease_issuance=true
 ```
 
-Routine workflow dispatches use `preserve` to copy the primary live issuance
-marker; this is not per-region preservation. Push-triggered deploys (absent or
-empty input) use `REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED=true` in
-`scripts/deploy/rollout.sh`. During an incident, the emergency containment recipe
-is to change that literal to `false` and commit it through review so successor
-pushes inherit OFF. Keep the incident pin off until compatibility and reconciler
-readiness are verified, then restore `true` through review. The normal pin stays
-true. A code change in an uncommitted checkout alone does not change production.
+**Retired 2026-09-27.** The Bigtable ledger is being removed rather than
+ported, so `scripts/deploy/rollout.sh` resolves the issuance marker as
+pin → normalize → stop latch → **retirement override**, and the override
+forces the marker off whatever the earlier steps produced: an absent or empty
+push input (the pin, now `false`), a `preserve` dispatch over a live ON marker,
+an explicit `true` dispatch, or an `allow` latch. The log names the request it
+overrode. Capability and reconciliation stay on until the open-lease backlog is
+empty, then the ledger itself is removed. Re-enabling issuance is a reviewed
+source change that removes the override (and restores the pin), never a
+dispatch or latch edit. A code change in an uncommitted checkout alone does not
+change production.
 
 The dispatch kill switch `regional_quota_lease_issuance=false` now persists
 `off` to `gs://tr-deploy-mutex-quill-cloud-proxy/controls/regional-quota-issuance.txt`
@@ -285,10 +290,14 @@ OFF on **every serving revision**, complete the subsequent OFF rollout, and keep
 capability and reconciliation enabled to drain existing work. Do not use a manual
 Cloud Run env update as durable containment: config-as-code overwrites it.
 
-To re-arm, resolve the incident and verify protocol compatibility on all serving
-regions and the scheduled worker, plus healthy reconciliation. Restore the code
-pin to true if incident containment changed it. An operator then deletes the
-stop object or writes `allow` (choose one), and dispatches issuance=true:
+The re-arm procedure below is **historical** (pre-retirement): today the
+retirement override in `rollout.sh` forces issuance off regardless of the
+latch or dispatch input, so none of these steps can turn it on. Re-enabling
+requires a reviewed source change first. For the record, re-arming used to be:
+resolve the incident and verify protocol compatibility on all serving regions
+and the scheduled worker, plus healthy reconciliation; restore the code pin to
+true; then delete the stop object or write `allow` (choose one), and dispatch
+issuance=true:
 
 ```bash
 # Option 1: remove containment.
@@ -428,8 +437,9 @@ Production activation requires all of the following:
 Implemented gates include the transactional adapter, exact global grant and
 close transactions, a once-per-minute reconciler, integer-only property tests,
 ambiguous Bigtable commit replay, fencing, concurrent idempotency, exact key
-usage import, and 16-way local sharding. Production issuance is pinned on with
-the five-workspace cohort pinned above. Any local read, conditional write,
+usage import, and 16-way local sharding. Production issuance ran pinned on with
+the five-workspace cohort pinned above until 2026-09-27; it is now retired
+(see Rollout gates). Any local read, conditional write,
 missing profile, or initialization ambiguity falls back to exact Spanner
 authorization. Missing
 lease state is quarantined and its global escrow is not guessed back into the

@@ -140,14 +140,15 @@ def test_deploy_pins_stage_c_admission_acceptance_off() -> None:
     assert '"TR_SPEND_LEASE_ADMISSION_ACCEPT=false"' in rollout
 
 
-def test_deploy_enables_spend_lease_binding_with_emergency_override() -> None:
+def test_deploy_pins_spend_lease_issuance_and_binding_off() -> None:
+    # Bigtable ledger retirement (2026-09-27): no new spend leases are minted,
+    # both flags render false literally, and any other binding value is
+    # rejected before a revision exists.
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
 
-    assert '"TR_SPEND_LEASE_ISSUANCE_ENABLED=true"' in rollout
-    assert (
-        '"TR_SPEND_LEASE_BINDING_ENABLED='
-        '${TR_SPEND_LEASE_BINDING_ENABLED:-true}"' in rollout
-    )
+    assert '"TR_SPEND_LEASE_ISSUANCE_ENABLED=false"' in rollout
+    assert '"TR_SPEND_LEASE_BINDING_ENABLED=false"' in rollout
+    assert "TR_SPEND_LEASE_BINDING_ENABLED=${TR_SPEND_LEASE_BINDING_ENABLED} is retired" in rollout
     assert (
         '"TR_SPEND_LEASE_PILOT_WORKSPACE_IDS='
         '45819281-0ce9-4811-a0cd-c660ab3a116d"' in rollout
@@ -363,7 +364,13 @@ def test_production_deploy_interlocks_regional_quota_issuance() -> None:
         in rollout
     )
     assert '"TR_REGIONAL_QUOTA_LEASES_ENABLED=false"' not in rollout
-    assert "regional_quota_preflight_issuance_fleet" in rollout
+    # Retirement: the accounting floor follows capability, not issuance.
+    assert (
+        'if [ "$REGIONAL_QUOTA_LEASES_ENABLED" = "true" ]; then\n'
+        "  regional_quota_require_image_protocol\n"
+        "fi\n" in rollout
+    )
+    assert "regional quota issuance is retired" in rollout
     assert 'service.get("status", {}).get("traffic", [])' in helper
     assert "latestCreatedRevisionName" in helper
     assert "latestReadyRevisionName" in helper

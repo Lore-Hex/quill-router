@@ -438,12 +438,15 @@ esac
 
 # workflow_dispatch passes one of preserve/false/true through unchanged. The
 # deploy shell, not GitHub's expression coercion, turns that raw operator intent
-# into the boolean written on the Cloud Run revision. A fresh fleet must
-# explicitly request false for its first compatibility deploy.
-# Emergency containment: commit the pin below to false so successor pushes
-# inherit OFF (docs/design/regional-quota-leases.md). Keep it true normally.
-# The durable stop latch overrides explicit true/preserve inputs.
-REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED=true
+# into the boolean written on the Cloud Run revision.
+# Retired 2026-09-27: the Bigtable ledger is being removed (Joseph's call:
+# switch the pilot off rather than port the ledger). The pin is false, and the
+# retirement override below forces the marker off whatever the dispatch input,
+# live marker, or stop latch say. Capability stays on so already-issued holds
+# settle, refund, and drain; the next change removes the ledger itself once the
+# reconciler reports an empty backlog. Re-arming is a source change through
+# review (docs/design/regional-quota-leases.md).
+REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED=false
 LIVE_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED="$(
   read_primary_regional_quota_env \
     "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" \
@@ -458,6 +461,15 @@ REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED="$(
 REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED="$(
   regional_quota_apply_stop_latch "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED"
 )"
+# Retirement override: no dispatch input (including an explicit true), no
+# live ON marker preserved by a dispatch, and no `allow` latch can mint a new
+# regional hold again. Say so instead of silently rendering false.
+case "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" in
+  true)
+    log "regional quota issuance is retired (Bigtable ledger retirement); forcing the marker off (requested ${REGIONAL_QUOTA_LEASE_ISSUANCE_CONTROL})"
+    REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED=false
+    ;;
+esac
 if [ "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" = "true" ] &&
    [ "$REGIONAL_QUOTA_LEASES_ENABLED" != "true" ]; then
   log "refusing rollout: regional quota issuance requires lease capability"
@@ -492,41 +504,30 @@ if [ "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" = "true" ] && {
   exit 1
 fi
 
-# This executes before gcloud run deploy can create any issuance-enabled
-# revision. Every currently active fleet member and the scheduled worker must
-# declare the accounting protocol, and reconciliation must be healthy.
-# Compatible older releases pass; missing or incompatible markers refuse rollout.
+# This executes before gcloud run deploy can create any revision. While lease
+# capability is on, every serving revision still settles, refunds, and drains
+# protocol-2 holds, so an image below the accounting floor would mis-account
+# them even though it can no longer issue. Missing or incompatible labels
+# refuse rollout.
 regional_quota_resolve_image
+if [ "$REGIONAL_QUOTA_LEASES_ENABLED" = "true" ]; then
+  regional_quota_require_image_protocol
+fi
+# Issuance is retired above, so this fleet preflight is unreachable until the
+# machinery is deleted with the ledger.
 if [ "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" = "true" ]; then
   regional_quota_require_image_protocol
   regional_quota_preflight_issuance_fleet
   regional_quota_preflight_reconciler
 fi
 
-# Binding makes the unit-4 settlement clamp and repair/mirror path load-bearing.
-# Refuse a source rollback that would build a binding-enabled image without
-# those rules. The emergency rollback path is explicit: deploy with binding
-# disabled, then investigate or roll forward from there.
-SPEND_LEASE_BINDING_TARGET="${TR_SPEND_LEASE_BINDING_ENABLED:-true}"
-if [ "$SPEND_LEASE_BINDING_TARGET" = "true" ] &&
-   [ -z "$SPEND_LEASE_BIGTABLE_APP_PROFILES" ]; then
-  log "refusing rollout: TR_SPEND_LEASE_BINDING_ENABLED=true requires non-empty TR_SPEND_LEASE_BIGTABLE_APP_PROFILES"
+# Spend-lease binding is retired with issuance (2026-09-27): config.py refuses
+# to boot a revision that binds without issuing, so an explicit request is
+# refused here rather than rendered into an unbootable revision.
+if [ "${TR_SPEND_LEASE_BINDING_ENABLED:-false}" != "false" ]; then
+  log "refusing rollout: TR_SPEND_LEASE_BINDING_ENABLED=${TR_SPEND_LEASE_BINDING_ENABLED} is retired; spend-lease issuance is pinned off"
   exit 1
 fi
-case "$SPEND_LEASE_BINDING_TARGET" in
-  true)
-    spend_lease_unit_4_source="${SCRIPT_DIR}/../../src/trusted_router/services/spend_lease_settlement.py"
-    if ! grep -Fq "def clamp_spend_lease_charge(" "$spend_lease_unit_4_source"; then
-      log "refusing rollout: TR_SPEND_LEASE_BINDING_ENABLED=true requires spend-lease unit 4 (missing clamp_spend_lease_charge); rollback only with TR_SPEND_LEASE_BINDING_ENABLED=false"
-      exit 1
-    fi
-    ;;
-  false) ;;
-  *)
-    log "refusing rollout: TR_SPEND_LEASE_BINDING_ENABLED must be true or false"
-    exit 1
-    ;;
-esac
 
 # Prefer the private three-replica ClickHouse load balancer once provisioned.
 # The direct node-1 address remains only as a migration fallback for projects
@@ -769,8 +770,13 @@ ENV_VARS=(
   # Deliberately non-sticky: pilot state is source-controlled; the sticky idiom
   # is for operator-set values, and a source default cannot override an existing
   # deployed marker.
-  "TR_SPEND_LEASE_ISSUANCE_ENABLED=true"
-  "TR_SPEND_LEASE_BINDING_ENABLED=${TR_SPEND_LEASE_BINDING_ENABLED:-true}"
+  # OFF since 2026-09-27: the spend-lease Bigtable ledger is being retired.
+  # The one pilot workspace minted a handful of leases a week (about a dozen
+  # non-empty reconciler passes in the seven days before this flip). Binding
+  # requires issuance (config.py), so it is off too; the guard above refuses an
+  # explicit request.
+  "TR_SPEND_LEASE_ISSUANCE_ENABLED=false"
+  "TR_SPEND_LEASE_BINDING_ENABLED=false"
   # Stage C ships inert. This literal source-controlled default is the router
   # kill switch; verification stays deployed so in-flight receipts fail closed.
   "TR_SPEND_LEASE_ADMISSION_ACCEPT=false"

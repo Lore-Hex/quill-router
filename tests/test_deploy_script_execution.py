@@ -773,11 +773,15 @@ def _regional_quota_rollout_harness(
 @pytest.mark.parametrize(
     ("control", "live", "expected"),
     [
-        pytest.param(None, "true", "true", id="absent-pins-on-live-true"),
-        pytest.param(None, "false", "true", id="absent-pins-on-live-false"),
-        pytest.param("", "true", "true", id="empty-pins-on-live-true"),
-        pytest.param("preserve", "true", "true", id="dispatch-preserve-live-true"),
-        pytest.param("true", "false", "true", id="dispatch-enables-live-false"),
+        # Absent/empty control resolves to REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED,
+        # which is OFF since the 2026-09-27 Bigtable ledger retirement.
+        pytest.param(None, "true", "false", id="absent-pins-off-live-true"),
+        pytest.param(None, "false", "false", id="absent-pins-off-live-false"),
+        pytest.param("", "true", "false", id="empty-pins-off-live-true"),
+        # Retirement override: preserve over a live ON marker and an explicit
+        # true both render OFF (and say so in the log).
+        pytest.param("preserve", "true", "false", id="dispatch-preserve-live-true-forced-off"),
+        pytest.param("true", "false", "false", id="dispatch-true-forced-off"),
         pytest.param("false", "true", "false", id="dispatch-disables-live-true"),
     ],
 )
@@ -803,6 +807,8 @@ def test_rollout_regional_quota_issuance_control(
     rendered_env = _cloud_run_job_env(deploy)
     assert rendered_env["TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED"] == expected
     assert rendered_env["TR_REGIONAL_QUOTA_LEASES_ENABLED"] == "true"
+    forced_off = control == "true" or (control == "preserve" and live == "true")
+    assert ("regional quota issuance is retired" in run.stderr) is forced_off
     for name, value in _REGIONAL_QUOTA_PINS.items():
         assert rendered_env[name] == value
     # Enabling (including preserve=true) must preflight every serving region
@@ -821,56 +827,12 @@ def test_rollout_regional_quota_issuance_control(
             )
 
 
-@pytest.mark.parametrize("missing", [
-    "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS",
-    "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES",
-])
-def test_rollout_regional_quota_dispatch_true_requires_pilot_and_profiles(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    missing: str,
-) -> None:
-    isolated = _regional_quota_rollout_harness(
-        tmp_path, monkeypatch, {**_LIVE_REGIONAL_QUOTA_ENV, missing: ""},
-    )
-    run = isolated.run(
-        "scripts/deploy/rollout.sh",
-        extra_env={"TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "true", missing: ""},
-    )
-
-    assert run.returncode != 0, summarise(run)
-    expected = (
-        "refusing empty regional quota setting: TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES"
-        if missing == "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES"
-        else "issuance requires pilot workspaces and fixed Bigtable app profiles"
-    )
-    assert expected in run.stderr
-    assert not any("run" in call and "deploy" in call for call in run.calls)
-
-
-def test_rollout_regional_quota_dispatch_true_refuses_incompatible_fleet(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    live_env = dict(_LIVE_REGIONAL_QUOTA_ENV)
-    del live_env["TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED"]
-    isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, live_env)
-    run = isolated.run(
-        "scripts/deploy/rollout.sh",
-        extra_env={"TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "true"},
-    )
-
-    assert run.returncode != 0, summarise(run)
-    assert "lacks TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" in run.stderr
-    assert not any("run" in call and "deploy" in call for call in run.calls)
-
-
 @pytest.mark.parametrize(
     ("live_env", "control", "expected_issuance"),
     [
         # A fresh fleet must first deploy protocol-capable revisions with issuance off.
         pytest.param({}, "false", "false", id="no-live-settings-forced-off"),
-        pytest.param(_LIVE_REGIONAL_QUOTA_ENV, None, "true", id="stale-live-settings-pinned-on"),
+        pytest.param(_LIVE_REGIONAL_QUOTA_ENV, None, "false", id="stale-live-settings-pinned-off"),
     ],
 )
 def test_rollout_renders_every_regional_quota_pin(
@@ -1160,9 +1122,53 @@ def test_reconciler_receives_same_regional_quota_profiles(
     assert _cloud_run_job_env(deploy)["TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES"] == (profiles or _QUOTA_PROFILES)
 
 
-def test_rollout_binding_unit_4_fence_passes_with_settle_clamp(
+
+def test_rollout_refuses_explicit_spend_lease_binding(
     harness: DeployScriptHarness,
 ) -> None:
+    # config.py refuses a revision that binds spend leases without issuing
+    # them, and issuance is pinned off, so the request is refused before any
+    # revision exists instead of rendering an unbootable one.
+    run = harness.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={"TR_SPEND_LEASE_BINDING_ENABLED": "true"},
+    )
+    assert run.returncode != 0
+    assert "TR_SPEND_LEASE_BINDING_ENABLED=true is retired" in run.stderr
+    assert not any(
+        call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
+        and call[4:6] == ["deploy", "trusted-router"]
+        for call in run.calls
+    )
+
+
+def test_rollout_enforces_accounting_floor_while_capability_drains(
+    harness: DeployScriptHarness,
+) -> None:
+    # Issuance is retired, but a capability-on fleet still settles protocol-2
+    # holds; an image labelled below the floor must not be deployed into it.
+    run = harness.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={
+            "HARNESS_IMAGE_CONFIG": json.dumps(
+                {"config": {"Labels": {"com.trustedrouter.accounting_protocol": "1"}}}
+            ),
+        },
+    )
+    assert run.returncode != 0
+    assert "protocol" in run.stderr
+    assert not any(
+        call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
+        and call[4:6] == ["deploy", "trusted-router"]
+        for call in run.calls
+    )
+
+
+def test_rollout_defaults_spend_lease_issuance_and_binding_off(
+    harness: DeployScriptHarness,
+) -> None:
+    # Bigtable ledger retirement (2026-09-27): the revision mints no spend
+    # leases and binds none; there is no operator override for either.
     run = harness.run("scripts/deploy/rollout.sh")
     assert run.returncode == 0, summarise(run)
 
@@ -1172,111 +1178,12 @@ def test_rollout_binding_unit_4_fence_passes_with_settle_clamp(
         if call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
         and call[4:6] == ["deploy", "trusted-router"]
     )
-    serialized_env = deploy[deploy.index("--set-env-vars") + 1]
-    assert "TR_SPEND_LEASE_BINDING_ENABLED=true" in serialized_env.split("|")
-    assert "TR_SPEND_LEASE_BIGTABLE_TABLE=trustedrouter-spend-lease" in serialized_env.split(
-        "|"
-    )
-    assert (
-        "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES=us-central1=tr-spend-us-central1"
-        in serialized_env.split("|")
-    )
+    serialized_env = deploy[deploy.index("--set-env-vars") + 1].split("|")
+    assert "TR_SPEND_LEASE_ISSUANCE_ENABLED=false" in serialized_env
+    assert "TR_SPEND_LEASE_BINDING_ENABLED=false" in serialized_env
+    assert "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED=false" in serialized_env
 
 
-def test_rollout_binding_refuses_empty_spend_lease_app_profiles(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    script = "scripts/deploy/rollout.sh"
-    fixture = SCRIPT_FIXTURES[script]
-    active_revision = json.dumps(
-        {
-            "spec": {
-                "containers": [
-                    {
-                        "env": [
-                            {
-                                "name": "TR_REGIONAL_QUOTA_LEASES_ENABLED",
-                                "value": "false",
-                            },
-                            {
-                                "name": "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED",
-                                "value": "false",
-                            },
-                            {
-                                "name": "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES",
-                                "value": "",
-                            },
-                        ]
-                    }
-                ]
-            }
-        },
-        separators=(",", ":"),
-    )
-    responses = (
-        (
-            r"run revisions describe trusted-router-active .*--format=json",
-            active_revision,
-        ),
-        *(
-            response
-            for response in fixture.responses
-            if "run revisions describe trusted-router-active" not in response[0]
-        ),
-    )
-    monkeypatch.setitem(
-        SCRIPT_FIXTURES,
-        script,
-        replace(fixture, responses=responses),
-    )
-    isolated = DeployScriptHarness(tmp_path / "spend-lease-profiles-empty")
-
-    # This fleet declares no lease capability; force issuance off so the
-    # binding guard, not the issuance preflight, is what refuses.
-    run = isolated.run(script, extra_env={"TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "false"})
-
-    assert run.returncode != 0
-    assert (
-        "TR_SPEND_LEASE_BINDING_ENABLED=true requires non-empty "
-        "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES"
-        in run.stderr
-    )
-    assert not any(
-        call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
-        and call[4:6] == ["deploy", "trusted-router"]
-        for call in run.calls
-    )
-
-
-def test_rollout_binding_unit_4_fence_refuses_missing_settle_clamp(
-    tmp_path: Path,
-) -> None:
-    isolated = DeployScriptHarness(tmp_path / "spend-lease-unit-4-missing")
-    settlement = (
-        isolated.mirror
-        / "src/trusted_router/services/spend_lease_settlement.py"
-    )
-    settlement.write_text(
-        settlement.read_text().replace(
-            "def clamp_spend_lease_charge(",
-            "def removed_spend_lease_charge_clamp(",
-            1,
-        )
-    )
-
-    run = isolated.run("scripts/deploy/rollout.sh")
-
-    assert run.returncode != 0
-    assert (
-        "TR_SPEND_LEASE_BINDING_ENABLED=true requires spend-lease unit 4 "
-        "(missing clamp_spend_lease_charge)" in run.stderr
-    )
-    assert not any(
-        call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
-        and call[4:6] == ["deploy", "trusted-router"]
-        for call in run.calls
-    )
 
 
 def test_rollout_lists_optional_secrets_once_without_missing_secret_probes(
