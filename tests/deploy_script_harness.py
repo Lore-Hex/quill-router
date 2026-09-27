@@ -1450,14 +1450,21 @@ _SPEND_DRAINED_LINE = (
     "INFO:__main__:spend_lease.reconcile_complete candidates=0 open=0 recovered=0 "
     "bound=0 closed=0 deferred=0 errors=0 dead=0"
 )
+# The harness stamps HARNESS_QUOTA_COMPLETION_TIME with the run's wall clock,
+# so the passes postdate the (old) serving revisions plus the drain interval.
 LEDGER_DRAINED_RESPONSES = (
     (r"scheduler jobs describe .*spend-lease-reconcile.*--format=json", json.dumps(SPEND_SCHEDULER)),
-    (r"logging read .*regional_quota\.reconcile_complete", json.dumps([{"textPayload": _REGIONAL_DRAINED_LINE}] * 5)),
-    (r"logging read .*spend_lease\.reconcile_complete", json.dumps([{"textPayload": _SPEND_DRAINED_LINE}] * 5)),
+    (
+        r"logging read .*regional_quota\.reconcile_complete",
+        json.dumps([{"textPayload": _REGIONAL_DRAINED_LINE, "timestamp": "HARNESS_QUOTA_COMPLETION_TIME"}] * 5),
+    ),
+    (
+        r"logging read .*spend_lease\.reconcile_complete",
+        json.dumps([{"textPayload": _SPEND_DRAINED_LINE, "timestamp": "HARNESS_QUOTA_COMPLETION_TIME"}] * 5),
+    ),
     (r"spanner databases execute-sql .*regional_quota_lease_open", "0"),
     (r"spanner databases execute-sql .*regional_quota_lease_workspace_open", "0"),
     (r"spanner databases execute-sql .*FROM tr_reservation@", "0"),
-    (r"spanner databases execute-sql .*FROM tr_settle_outbox AS o JOIN", "0"),
     (r"spanner databases execute-sql .*FROM spend_lease_open WHERE", "0"),
 )
 QUOTA_WORKER: dict[str, Any] = {
@@ -1538,6 +1545,7 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
                 r"run revisions describe trusted-router-active .*--format=json",
                 json.dumps(
                     {
+                        "metadata": {"creationTimestamp": "2026-09-01T00:00:00Z"},
                         "spec": {
                             "containers": [
                                 {

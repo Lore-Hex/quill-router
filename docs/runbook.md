@@ -1575,9 +1575,12 @@ path it guarded.
 before the capability-off rollout, and `scripts/deploy/retire_ledger_workers.sh`
 deletes the `trusted-router-spend-lease-reconcile` schedule and every
 `trusted-router-spend-lease-reconciler-*` job after the ramp (the same for the
-regional quota reconciler). The alerts and CLI below describe the retired
-worker; a `spend_lease.*` heartbeat alert after the retirement deploy means
-an alert rule outlived the job, not that the job is unhealthy.
+regional quota reconciler) - or defers, with a workflow warning, while any
+region still serves a capability-on revision. The alerts and CLI below
+describe the retired worker. Once the release log shows `ledger reconciler
+workers retired` and `controls/ledger-retirement.json` exists in the deploy
+mutex bucket, a `spend_lease.*` heartbeat alert means an alert rule outlived
+the job; before that, it means what it always meant.
 
 The versioned `trusted-router-spend-lease-reconciler-*` Cloud Run Job ran once
 per minute with a 50-second task deadline. It is intentionally active while

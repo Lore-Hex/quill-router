@@ -771,7 +771,10 @@ def _regional_quota_rollout_harness(
     fixture = SCRIPT_FIXTURES[script]
     revision_env = [{"name": name, "value": value} for name, value in live_env.items()]
     active_revision = json.dumps(
-        {"spec": {"containers": [{"env": revision_env}]}},
+        {
+            "metadata": {"creationTimestamp": "2026-09-01T00:00:00Z"},
+            "spec": {"containers": [{"env": revision_env}]},
+        },
         separators=(",", ":"),
     )
     monkeypatch.setitem(

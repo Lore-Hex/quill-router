@@ -10,6 +10,7 @@ the retirement durably. Both are executed for real here against a recording
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import subprocess
@@ -29,6 +30,9 @@ SPEND_SCHEDULE = "trusted-router-spend-lease-reconcile"
 REGIONAL_JOB = "trusted-router-regional-quota-reconciler-7c4f22f"
 SPEND_JOB = "trusted-router-spend-lease-reconciler-7c4f22f"
 MARKER_URI = "gs://tr-deploy-mutex-quill-cloud-proxy/controls/ledger-retirement.json"
+# Serving revisions were created an hour ago; drained evidence is from now.
+REVISION_CREATED = "2026-09-27T11:00:00Z"
+NOW = dt.datetime(2026, 9, 27, 12, 0, tzinfo=dt.UTC)
 
 # The scripts source _lib.sh for PROJECT_ID, SERVICE, the region list, the
 # Spanner ids and gc. The fake below replaces exactly that surface, so no real
@@ -76,7 +80,6 @@ gc() {
       case "$sql" in
         *regional_quota_lease_workspace_open*) key=workspace-open ;;
         *regional_quota_lease_open*) key=open ;;
-        *tr_settle_outbox*) key=intents ;;
         *tr_reservation*) key=reservations ;;
         *spend_lease_open*) key=spend ;;
         *) key=unknown ;;
@@ -99,8 +102,8 @@ gc() {
       if [[ "$*" == *"regional_quota.reconcile_complete"* ]]; then cat "$FIXTURES/regional-evidence.json"
       else cat "$FIXTURES/spend-evidence.json"; fi ;;
     'run jobs list')
-      if [ -f "$FIXTURES/jobs-list-error-$region" ]; then echo "ERROR: (gcloud.run.jobs.list) PERMISSION_DENIED" >&2; return 1; fi
-      if [ -f "$FIXTURES/jobs-$region" ]; then cat "$FIXTURES/jobs-$region"; fi ;;
+      if [ -f "$FIXTURES/jobs-list-error" ]; then echo "ERROR: (gcloud.run.jobs.list) PERMISSION_DENIED" >&2; return 1; fi
+      if [ -f "$FIXTURES/jobs" ]; then cat "$FIXTURES/jobs"; fi ;;
     'run jobs executions')
       if [ -f "$FIXTURES/executions-$job" ]; then
         remaining="$(cat "$FIXTURES/executions-$job")"
@@ -113,9 +116,9 @@ gc() {
     'run jobs delete')
       if [ -f "$FIXTURES/delete-error-$4" ]; then echo "ERROR: (gcloud.run.jobs.delete) PERMISSION_DENIED" >&2; return 1; fi
       # a deleted job vanishes from later listings
-      if [ -f "$FIXTURES/jobs-$region" ]; then
-        grep -v -x "$4" "$FIXTURES/jobs-$region" > "$FIXTURES/jobs-$region.next" || true
-        mv "$FIXTURES/jobs-$region.next" "$FIXTURES/jobs-$region"
+      if [ -f "$FIXTURES/jobs" ]; then
+        awk -F'\t' -v gone="$4" '$2 != gone' "$FIXTURES/jobs" > "$FIXTURES/jobs.next"
+        mv "$FIXTURES/jobs.next" "$FIXTURES/jobs"
       fi ;;
     *) echo "unexpected cloud call: $*" >&2; return 90 ;;
   esac
@@ -133,10 +136,10 @@ def _script_body(path: Path) -> str:
     return body
 
 
-def _run(tmp_path: Path, script: Path) -> subprocess.CompletedProcess[str]:
+def _run(tmp_path: Path, script: Path, *, extra: str = "") -> subprocess.CompletedProcess[str]:
     (tmp_path / "calls").write_text("")
     return subprocess.run(  # noqa: S603 - fixed shell, repository-owned script, local fake gc
-        ["/bin/bash", "-c", _PRELUDE + _script_body(script)],
+        ["/bin/bash", "-c", _PRELUDE + extra + _script_body(script)],
         text=True,
         capture_output=True,
         env={
@@ -161,12 +164,13 @@ _OFF_MARKERS = {
 }
 
 
-def _serving(tmp_path: Path, env_by_region: dict[str, dict[str, str]]) -> None:
+def _serving(tmp_path: Path, env_by_region: dict[str, dict[str, str]], *, created: str = REVISION_CREATED) -> None:
     for region, env in env_by_region.items():
         (tmp_path / f"service-{region}.json").write_text(json.dumps({
             "status": {"traffic": [{"revisionName": f"trusted-router-{region}-live", "percent": 100}]},
         }))
         (tmp_path / f"revision-{region}.json").write_text(json.dumps({
+            "metadata": {"creationTimestamp": created},
             "spec": {"containers": [{"env": [{"name": name, "value": value} for name, value in env.items()]}]},
         }))
 
@@ -219,9 +223,16 @@ def _spend_line(**overrides: int) -> str:
     return f"INFO:__main__:spend_lease.reconcile_complete {rendered}"
 
 
-def _evidence(tmp_path: Path, regional: list[str], spend: list[str]) -> None:
-    (tmp_path / "regional-evidence.json").write_text(json.dumps([{"textPayload": line} for line in regional]))
-    (tmp_path / "spend-evidence.json").write_text(json.dumps([{"textPayload": line} for line in spend]))
+def _entries(lines: list[str], *, at: dt.datetime = NOW) -> list[dict[str, str]]:
+    return [
+        {"textPayload": line, "timestamp": (at - dt.timedelta(minutes=index)).strftime("%Y-%m-%dT%H:%M:%SZ")}
+        for index, line in enumerate(lines)
+    ]
+
+
+def _evidence(tmp_path: Path, regional: list[str], spend: list[str], *, at: dt.datetime = NOW) -> None:
+    (tmp_path / "regional-evidence.json").write_text(json.dumps(_entries(regional, at=at)))
+    (tmp_path / "spend-evidence.json").write_text(json.dumps(_entries(spend, at=at)))
 
 
 def _drained(tmp_path: Path) -> None:
@@ -230,8 +241,15 @@ def _drained(tmp_path: Path) -> None:
     _evidence(tmp_path, [_regional_line()] * 5, [_spend_line()] * 5)
 
 
-def _retired_marker(tmp_path: Path) -> None:
-    (tmp_path / "marker").write_text(json.dumps({"state": "retired", "completed_at": "2026-09-27T14:00:00Z"}))
+def _retired_marker(tmp_path: Path, **overrides: str) -> None:
+    marker = {
+        "state": "retired",
+        "project": "quill-cloud-proxy",
+        "spanner_database": "trusted-router",
+        "completed_at": "2026-09-27T14:00:00Z",
+    }
+    marker.update(overrides)
+    (tmp_path / "marker").write_text(json.dumps(marker))
 
 
 # ---------------------------------------------------------------------------
@@ -246,23 +264,53 @@ def test_gate_passes_on_a_drained_step_one_fleet(tmp_path: Path) -> None:
     assert "ledger escrow is drained" in run.stderr
     calls = _calls(tmp_path)
     assert sum("run revisions describe" in call for call in calls) == len(REGIONS)
-    assert sum(call.startswith("spanner databases execute-sql") for call in calls) == 5
-    # The evidence filter names the schedule's exact target job, not a prefix.
+    counts = [call for call in calls if call.startswith("spanner databases execute-sql")]
+    assert len(counts) == 4
+    assert all("--priority=low" in call and "--timeout=60s" in call for call in counts)
+    assert not any("tr_settle_outbox" in call for call in counts)
+    # The evidence filter names the schedule's exact target: project, location and job.
     logging = [call for call in calls if call.startswith("logging read")]
     assert len(logging) == 2
-    assert f'resource.labels.job_name="{REGIONAL_JOB}"' in logging[0]
-    assert f'resource.labels.job_name="{SPEND_JOB}"' in logging[1]
+    assert f'resource.labels.location="us-east4" AND resource.labels.job_name="{REGIONAL_JOB}"' in logging[0]
+    assert 'resource.labels.project_id="quill-cloud-proxy"' in logging[0]
+    assert f'resource.labels.location="us-east4" AND resource.labels.job_name="{SPEND_JOB}"' in logging[1]
 
 
-def test_gate_stands_down_only_on_a_recorded_retirement(tmp_path: Path) -> None:
+def test_gate_stands_down_on_a_recorded_retirement_only_while_the_fleet_still_honours_it(tmp_path: Path) -> None:
     _retired_marker(tmp_path)
+    _step_two_fleet(tmp_path)
     run = _run(tmp_path, GATE)
     assert run.returncode == 0, run.stderr
-    assert "recorded as complete" in run.stderr
-    assert not any(call.startswith(("spanner", "logging", "run ")) for call in _calls(tmp_path))
+    assert "recorded as complete and every serving revision still runs without the ledgers" in run.stderr
+    assert not any(call.startswith(("spanner", "logging")) for call in _calls(tmp_path))
 
-    # A marker that does not record completion is not a retirement.
-    (tmp_path / "marker").write_text(json.dumps({"state": "started"}))
+    # A traffic rollback restored a capability-on revision: the full gate is
+    # back. The workers are gone, so Spanner decides (with the warnings).
+    _serving(tmp_path, {"us-central1": {**_OFF_MARKERS, "TR_REGIONAL_QUOTA_LEASES_ENABLED": "false"},
+                        "us-east4": {**_OFF_MARKERS, "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true",
+                                     "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES": "us-central1=tr-quota-us-central1"}})
+    for schedule in (REGIONAL_SCHEDULE, SPEND_SCHEDULE):
+        (tmp_path / f"scheduler-missing-{schedule}").write_text("")
+    run = _run(tmp_path, GATE)
+    assert run.returncode == 0, run.stderr
+    assert "carries lease capability again; running the full gate" in run.stderr
+    assert any(call.startswith("spanner") for call in _calls(tmp_path))
+    (tmp_path / "count-open").write_text("1\n")
+    run = _run(tmp_path, GATE)
+    assert run.returncode != 0
+    assert "Spanner still holds 1 open regional lease index rows" in run.stderr
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        pytest.param({"state": "started"}, id="incomplete"),
+        pytest.param({"project": "another-project"}, id="other-project"),
+        pytest.param({"spanner_database": "other-db"}, id="other-database"),
+    ],
+)
+def test_gate_ignores_a_marker_that_does_not_record_this_retirement(tmp_path: Path, marker: dict[str, str]) -> None:
+    _retired_marker(tmp_path, **marker)
     _drained(tmp_path)
     run = _run(tmp_path, GATE)
     assert run.returncode == 0, run.stderr
@@ -310,12 +358,18 @@ def test_gate_accepts_an_absent_marker_because_config_defaults_it_off(tmp_path: 
     assert "us-east4: TR_SPEND_LEASE_ISSUANCE_ENABLED is not set on the serving revision; it defaults to false" in run.stderr
 
 
-def test_gate_refuses_an_unreadable_serving_revision(tmp_path: Path) -> None:
+def test_gate_refuses_an_unreadable_or_undated_serving_revision(tmp_path: Path) -> None:
     _drained(tmp_path)
     (tmp_path / "service-us-east4.json").unlink()
     run = _run(tmp_path, GATE)
     assert run.returncode != 0
     assert "cannot read the serving revision in us-east4" in run.stderr
+
+    _drained(tmp_path)
+    (tmp_path / "revision-us-east4.json").write_text(json.dumps({"spec": {"containers": [{"env": []}]}}))
+    run = _run(tmp_path, GATE)
+    assert run.returncode != 0
+    assert "serving revision in us-east4 has no creation time" in run.stderr
 
 
 @pytest.mark.parametrize(
@@ -324,14 +378,14 @@ def test_gate_refuses_an_unreadable_serving_revision(tmp_path: Path) -> None:
         ("open", "open regional lease index rows"),
         ("workspace-open", "open regional lease workspace index rows"),
         ("reservations", "unsettled RegionalCredits reservations"),
-        ("intents", "pending or dead settle intents for RegionalCredits reservations"),
         ("spend", "unfinished spend-lease open rows"),
     ],
 )
 def test_gate_refuses_on_spanner_open_work(tmp_path: Path, key: str, label: str) -> None:
     # Spanner is the source of truth: an empty reconciler pass does not prove
-    # that a settle intent or an unsettled RegionalCredits reservation is gone,
-    # and the spend reconciler only counts rows that are DUE now.
+    # that an unsettled RegionalCredits reservation (whose pending or dead
+    # settle intent still needs the ledger) is gone, and the spend reconciler
+    # only counts rows that are DUE now.
     _drained(tmp_path)
     (tmp_path / f"count-{key}").write_text("3\n")
     run = _run(tmp_path, GATE)
@@ -432,6 +486,26 @@ def test_gate_refuses_on_reconciler_evidence(tmp_path: Path, regional: list[str]
     assert message in run.stderr
 
 
+def test_gate_requires_evidence_after_the_newest_revision_plus_the_drain_interval(tmp_path: Path) -> None:
+    # Passes recorded before the last issuance-off revision existed (or within
+    # the drain interval after it) prove nothing about what that revision's
+    # predecessor may have minted in its final minutes.
+    _drained(tmp_path)
+    _serving(tmp_path, {region: {**_OFF_MARKERS, "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true"} for region in REGIONS},
+             created="2026-09-27T11:55:00Z")
+    run = _run(tmp_path, GATE)
+    assert run.returncode != 0
+    assert "predates the drain cutoff 2026-09-27T12:05:00+00:00 (newest serving revision + 600s)" in run.stderr
+
+    run = _run(tmp_path, GATE, extra="TR_LEDGER_DRAIN_INTERVAL_SECONDS=60\n")
+    assert run.returncode == 0, run.stderr
+
+    (tmp_path / "regional-evidence.json").write_text(json.dumps([{"textPayload": _regional_line()}] * 5))
+    run = _run(tmp_path, GATE, extra="TR_LEDGER_DRAIN_INTERVAL_SECONDS=60\n")
+    assert run.returncode != 0
+    assert "completion has no timestamp" in run.stderr
+
+
 def test_gate_ignores_unrelated_log_lines_and_refuses_malformed_evidence(tmp_path: Path) -> None:
     _drained(tmp_path)
     _evidence(tmp_path, [_regional_line()] * 5 + ["INFO:regional_quota.reconciler_start"], [_spend_line()] * 5)
@@ -443,7 +517,7 @@ def test_gate_ignores_unrelated_log_lines_and_refuses_malformed_evidence(tmp_pat
     assert "evidence is not JSON" in run.stderr
 
     (tmp_path / "regional-evidence.json").write_text(json.dumps(
-        [{"textPayload": "regional_quota.reconcile_complete inspected=0"}] * 5
+        _entries(["regional_quota.reconcile_complete inspected=0"] * 5)
     ))
     run = _run(tmp_path, GATE)
     assert run.returncode != 0
@@ -455,14 +529,15 @@ def test_gate_ignores_unrelated_log_lines_and_refuses_malformed_evidence(tmp_pat
 # ---------------------------------------------------------------------------
 
 
-def _workers(tmp_path: Path) -> None:
-    (tmp_path / "jobs-us-central1").write_text(
-        "trusted-router-regional-quota-reconciler-0ae8c79\n"
-        "trusted-router-synthetic-us-central1\n"
-        "trusted-router-regional-quota-reconciler-5262dd97\n"
-    )
-    (tmp_path / "jobs-us-east4").write_text(
-        f"{REGIONAL_JOB}\n{SPEND_JOB}\ntrusted-router-trust-reconciler\n"
+def _workers(tmp_path: Path, extra: str = "") -> None:
+    (tmp_path / "jobs").write_text(
+        "us-central1\ttrusted-router-regional-quota-reconciler-0ae8c79\n"
+        "us-central1\ttrusted-router-synthetic-us-central1\n"
+        "us-central1\ttrusted-router-regional-quota-reconciler-5262dd97\n"
+        f"us-east4\t{REGIONAL_JOB}\n"
+        f"us-east4\t{SPEND_JOB}\n"
+        "us-east4\ttrusted-router-trust-reconciler\n"
+        + extra
     )
 
 
@@ -492,10 +567,14 @@ def test_retire_deletes_schedules_then_workers_and_records_the_retirement(tmp_pa
         job = delete.split()[3]
         region = delete.split()[4]
         assert calls.index(f"run jobs executions list --job={job} {region} --format=value(metadata.name,status.completionTime)") < calls.index(delete)
-    # Absence is proven before the marker is written, and the marker records completion.
-    assert calls.index("run jobs list --region=us-east4 --format=value(metadata.name)") < calls.index([c for c in calls if c.startswith("storage cp")][0])
+    # Absence is proven project-wide before the marker is written.
+    listings = [index for index, call in enumerate(calls) if call.startswith("run jobs list")]
+    marker_write = next(index for index, call in enumerate(calls) if call.startswith("storage cp"))
+    assert len(listings) == 2 and listings[-1] > calls.index(job_deletes[-1]) and listings[-1] < marker_write
     marker = json.loads((tmp_path / "marker").read_text())
-    assert marker["state"] == "retired" and marker["workers_deleted"] == 4 and marker["release"] == "abc12345"
+    assert marker["state"] == "retired"
+    assert marker["project"] == "quill-cloud-proxy" and marker["spanner_database"] == "trusted-router"
+    assert marker["workers_deleted"] == 4 and marker["release"] == "abc12345"
     assert "ledger reconciler workers retired (4 job(s) deleted)" in run.stderr
 
 
@@ -508,7 +587,6 @@ def test_retire_is_a_no_op_once_recorded(tmp_path: Path) -> None:
 
 
 def test_retire_defers_while_a_region_still_serves_capability_or_a_profile_map(tmp_path: Path) -> None:
-    _step_two_fleet(tmp_path)
     _serving(tmp_path, {"us-central1": {**_OFF_MARKERS, "TR_REGIONAL_QUOTA_LEASES_ENABLED": "false"},
                         "us-east4": {**_OFF_MARKERS, "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true"}})
     _schedules(tmp_path)
@@ -543,7 +621,7 @@ def test_retire_fails_when_spanner_regressed_since_the_gate(tmp_path: Path) -> N
 def test_retire_waits_for_running_executions_then_gives_up(tmp_path: Path) -> None:
     _step_two_fleet(tmp_path)
     _schedules(tmp_path)
-    (tmp_path / "jobs-us-east4").write_text(f"{SPEND_JOB}\n")
+    (tmp_path / "jobs").write_text(f"us-east4\t{SPEND_JOB}\n")
     (tmp_path / f"executions-{SPEND_JOB}").write_text("2")
     run = _run(tmp_path, RETIRE)
     assert run.returncode == 0, run.stderr
@@ -552,7 +630,7 @@ def test_retire_waits_for_running_executions_then_gives_up(tmp_path: Path) -> No
     assert any(call.startswith(f"run jobs delete {SPEND_JOB}") for call in calls)
 
     (tmp_path / "marker").unlink()
-    (tmp_path / "jobs-us-east4").write_text(f"{SPEND_JOB}\n")
+    (tmp_path / "jobs").write_text(f"us-east4\t{SPEND_JOB}\n")
     (tmp_path / f"executions-{SPEND_JOB}").write_text("10")
     _schedules(tmp_path)
     run = _run(tmp_path, RETIRE)
@@ -566,13 +644,13 @@ def test_retire_fails_closed_on_list_or_delete_errors(tmp_path: Path) -> None:
     _step_two_fleet(tmp_path)
     _schedules(tmp_path)
     _workers(tmp_path)
-    (tmp_path / "jobs-list-error-us-east4").write_text("")
+    (tmp_path / "jobs-list-error").write_text("")
     run = _run(tmp_path, RETIRE)
     assert run.returncode != 0
-    assert "cannot list Cloud Run jobs in us-east4" in run.stderr
+    assert "cannot list Cloud Run jobs" in run.stderr
     assert not (tmp_path / "marker").exists()
 
-    (tmp_path / "jobs-list-error-us-east4").unlink()
+    (tmp_path / "jobs-list-error").unlink()
     _schedules(tmp_path)
     (tmp_path / f"delete-error-{SPEND_JOB}").write_text("")
     run = _run(tmp_path, RETIRE)
@@ -581,31 +659,52 @@ def test_retire_fails_closed_on_list_or_delete_errors(tmp_path: Path) -> None:
     assert not (tmp_path / "marker").exists()
 
 
-def test_retire_honours_the_workers_configured_locations(tmp_path: Path) -> None:
-    # Schedules may live outside the primary region and the workers outside
-    # the control-plane list; both come from the same settings the deployers
-    # used, plus whatever the schedules themselves target.
+def test_retire_finds_exact_named_and_schedule_targeted_workers_project_wide(tmp_path: Path) -> None:
+    # Deployers accept exact job names (TR_*_RECONCILER_JOB) and custom
+    # locations; the schedules name their own targets. None of those match the
+    # historical prefixes, and none live in the control-plane region list.
     _step_two_fleet(tmp_path)
-    (tmp_path / f"scheduler-json-{REGIONAL_SCHEDULE}").write_text(_schedule(REGIONAL_SCHEDULE, REGIONAL_JOB, region="europe-west4"))
+    (tmp_path / f"scheduler-json-{REGIONAL_SCHEDULE}").write_text(_schedule(REGIONAL_SCHEDULE, "quota-custom-worker", region="europe-west4"))
     (tmp_path / f"scheduler-json-{SPEND_SCHEDULE}").write_text(_schedule(SPEND_SCHEDULE, SPEND_JOB, region="us-west1"))
-    (tmp_path / "jobs-europe-west4").write_text(f"{REGIONAL_JOB}\n")
-    (tmp_path / "jobs-us-west1").write_text(f"{SPEND_JOB}\n")
-    (tmp_path / "jobs-southamerica-east1").write_text("trusted-router-spend-lease-reconciler-old\n")
-    prelude_extra = (
-        "TR_REGIONAL_QUOTA_RECONCILER_SCHEDULER_REGION=us-east4\n"
-        "TR_SPEND_LEASE_RECONCILER_JOB_REGION=southamerica-east1\n"
+    (tmp_path / "jobs").write_text(
+        "europe-west4\tquota-custom-worker\n"
+        f"us-west1\t{SPEND_JOB}\n"
+        "southamerica-east1\tspend-explicit-worker\n"
+        "southamerica-east1\ttrusted-router-synthetic-southamerica-east1\n"
     )
-    (tmp_path / "calls").write_text("")
-    run = subprocess.run(  # noqa: S603 - fixed shell, repository-owned script, local fake gc
-        ["/bin/bash", "-c", _PRELUDE + prelude_extra + _script_body(RETIRE)],
-        text=True, capture_output=True, check=False,
-        env={**os.environ, "HELPER": str(HELPER), "LIBRARY": str(LIBRARY), "FIXTURES": str(tmp_path)},
-    )
+    extra = "TR_REGIONAL_QUOTA_RECONCILER_SCHEDULER_REGION=us-east4\nTR_SPEND_LEASE_RECONCILER_JOB=spend-explicit-worker\n"
+    run = _run(tmp_path, RETIRE, extra=extra)
     assert run.returncode == 0, run.stderr
     calls = _calls(tmp_path)
     assert f"scheduler jobs describe {REGIONAL_SCHEDULE} --location=us-east4 --format=json" in calls
     assert f"scheduler jobs delete {REGIONAL_SCHEDULE} --location=us-east4 --quiet" in calls
-    listed = {call.split()[3] for call in calls if call.startswith("run jobs list")}
-    assert listed == {"--region=us-central1", "--region=us-east4", "--region=europe-west4", "--region=us-west1", "--region=southamerica-east1"}
-    deletes = {call.split()[3] for call in calls if call.startswith("run jobs delete")}
-    assert deletes == {REGIONAL_JOB, SPEND_JOB, "trusted-router-spend-lease-reconciler-old"}
+    deletes = {(call.split()[3], call.split()[4]) for call in calls if call.startswith("run jobs delete")}
+    assert deletes == {
+        ("quota-custom-worker", "--region=europe-west4"),
+        (SPEND_JOB, "--region=us-west1"),
+        ("spend-explicit-worker", "--region=southamerica-east1"),
+    }
+    assert json.loads((tmp_path / "marker").read_text())["workers_deleted"] == 3
+
+
+def test_retire_retry_after_an_interrupted_teardown_still_finds_every_worker(tmp_path: Path) -> None:
+    # First run: schedules deleted, then a delete fails. The schedules that
+    # named the workers' locations are gone; the retry must still find them.
+    _step_two_fleet(tmp_path)
+    (tmp_path / f"scheduler-json-{REGIONAL_SCHEDULE}").write_text(_schedule(REGIONAL_SCHEDULE, REGIONAL_JOB, region="us-west1"))
+    (tmp_path / f"scheduler-json-{SPEND_SCHEDULE}").write_text(_schedule(SPEND_SCHEDULE, SPEND_JOB, region="us-west1"))
+    (tmp_path / "jobs").write_text(f"us-west1\t{REGIONAL_JOB}\nus-west1\t{SPEND_JOB}\n")
+    (tmp_path / f"delete-error-{SPEND_JOB}").write_text("")
+    run = _run(tmp_path, RETIRE)
+    assert run.returncode != 0
+    assert not (tmp_path / "marker").exists()
+    assert (tmp_path / f"scheduler-missing-{REGIONAL_SCHEDULE}").exists()
+    assert (tmp_path / "jobs").read_text() == f"us-west1\t{SPEND_JOB}\n"
+
+    (tmp_path / f"delete-error-{SPEND_JOB}").unlink()
+    run = _run(tmp_path, RETIRE)
+    assert run.returncode == 0, run.stderr
+    assert "schedule trusted-router-regional-quota-reconcile is already gone" in run.stderr
+    assert f"deleted worker {SPEND_JOB} in us-west1" in run.stderr
+    assert (tmp_path / "jobs").read_text() == ""
+    assert json.loads((tmp_path / "marker").read_text())["workers_deleted"] == 1

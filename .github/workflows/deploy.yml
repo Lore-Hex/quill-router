@@ -365,10 +365,11 @@ jobs:
           echo 'The worker sync failed. The previous worker was retained or rollback was attempted; check its service and five snapshot products before declaring it healthy. Control-plane success is not worker-publication success.' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Assert the regional quota and spend-lease ledgers are drained
-        # Read-only. The next serving revision carries no ledger capability, so
-        # before any revision changes this proves every serving revision already
-        # has issuance off and both reconcilers report empty passes. A missing
-        # reconciler schedule means the ledgers were retired by an earlier run.
+        # Read-only, and rollout.sh runs the same gate again before it creates
+        # any revision. It proves every serving revision already has issuance
+        # off, Spanner holds no ledger work, and (while a schedule exists) the
+        # reconcilers report recent empty passes. Only the retirement marker a
+        # verified teardown writes stands it down; see ledger_retirement.sh.
         run: bash scripts/deploy/regional_quota_drain_gate.sh
 
   sync-runtime-secrets:

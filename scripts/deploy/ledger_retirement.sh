@@ -17,16 +17,21 @@
 #      either; only an explicit other value refuses);
 #   2. Spanner, the source of truth, holds no work that would need a ledger:
 #      no open regional lease index rows, no unsettled RegionalCredits
-#      reservation (settlement, refund and reaping of one all replay through
-#      the ledger), no pending or dead settle-outbox intent for such a
-#      reservation, and no spend-lease open row that is not done (the
-#      reconciler's own "open" counts only rows DUE now; retry backoff hides
-#      the rest);
-#   3. while a reconciler schedule still exists, its exact target job reported
-#      five recent all-zero passes, so the picture in 2 is not a paused worker.
-# Once the workers are gone the durable marker written by ledger_retire_workers
-# is the only thing that stands the gate down. A missing schedule without that
-# marker is a partial teardown, never proof of retirement.
+#      reservation, and no spend-lease open row that is not done. Settlement,
+#      refund and reaping of a regional reservation all replay through the
+#      ledger, and a pending or dead settle-outbox intent leaves its
+#      reservation unsettled until it applies, so the reservation count covers
+#      the outbox without scanning it. The spend reconciler's own "open" counts
+#      only rows DUE now; retry backoff hides the rest, hence the table count;
+#   3. while a reconciler schedule still exists, its exact target job (name and
+#      location parsed from the schedule) reported REQUIRED all-zero passes,
+#      all of them after every serving revision had been created plus a drain
+#      interval, so the picture in 2 is neither a paused worker nor a stale one.
+# Once the workers are gone, the durable marker written by ledger_retire_workers
+# stands the gate down - but only while every serving revision still satisfies
+# the retirement invariants (capability off, no app-profile map). A traffic
+# rollback to an older revision brings the full gate back. A missing schedule
+# without that marker is a partial teardown, never proof of retirement.
 
 ledger_retirement_bucket() {
   printf '%s\n' "${TR_DEPLOY_MUTEX_BUCKET:-tr-deploy-mutex-quill-cloud-proxy}"
@@ -36,7 +41,8 @@ ledger_retirement_marker_uri() {
   printf 'gs://%s/controls/ledger-retirement.json\n' "$(ledger_retirement_bucket)"
 }
 
-# 0 = a completed retirement marker exists; 1 = no marker; 2 = cannot tell.
+# 0 = a completed retirement marker for this project and database exists;
+# 1 = no such marker; 2 = cannot tell.
 ledger_retirement_completed() {
   regional_quota_verify_control_lifecycle || return 2
   local listing present marker
@@ -71,11 +77,17 @@ try:
     marker = json.load(sys.stdin)
 except ValueError:
     raise SystemExit(1)
-raise SystemExit(0 if isinstance(marker, dict) and marker.get("state") == "retired" else 1)
-' <<<"$marker"; then
+ok = (
+    isinstance(marker, dict)
+    and marker.get("state") == "retired"
+    and marker.get("project") == sys.argv[1]
+    and marker.get("spanner_database") == sys.argv[2]
+)
+raise SystemExit(0 if ok else 1)
+' "$PROJECT_ID" "$SPANNER_DATABASE_ID" <<<"$marker"; then
     return 0
   fi
-  log "ledger retirement marker exists but does not record a completed retirement; treating the ledgers as live"
+  log "ledger retirement marker exists but does not record a completed retirement of ${PROJECT_ID}/${SPANNER_DATABASE_ID}; treating the ledgers as live"
   return 1
 }
 
@@ -83,6 +95,8 @@ _ledger_spanner_count() {
   local label="$1" sql="$2" value
   value="$(gc spanner databases execute-sql "$SPANNER_DATABASE_ID" \
     --instance="$SPANNER_INSTANCE_ID" \
+    --priority=low \
+    --timeout=60s \
     --sql="$sql" \
     --format='value(rows[0])')" || {
     log "refusing ledger retirement: cannot count ${label}"
@@ -98,23 +112,21 @@ _ledger_spanner_count() {
 }
 
 # Every query is bounded by a key or an index: tr_entities is keyed by kind,
-# tr_reservation_by_expiry leads on settled, spend_lease_open is the pilot's
-# small working table, and the outbox status scan is the same one the release
-# gates already run. Nothing here touches tr_entities.body.
+# tr_reservation_by_expiry leads on settled (unsettled rows are the in-flight
+# few, hold_usage_type is a back-join on that range), and spend_lease_open is
+# the pilot's small working table. Nothing here touches tr_entities.body.
 ledger_spanner_open_work() {
   local -a labels sqls
   labels=(
     "open regional lease index rows"
     "open regional lease workspace index rows"
     "unsettled RegionalCredits reservations"
-    "pending or dead settle intents for RegionalCredits reservations"
     "unfinished spend-lease open rows"
   )
   sqls=(
     "SELECT COUNT(*) FROM tr_entities WHERE kind = 'regional_quota_lease_open'"
     "SELECT COUNT(*) FROM tr_entities WHERE kind = 'regional_quota_lease_workspace_open'"
     "SELECT COUNT(*) FROM tr_reservation@{FORCE_INDEX=tr_reservation_by_expiry} WHERE settled = false AND hold_usage_type = 'RegionalCredits'"
-    "SELECT COUNT(*) FROM tr_settle_outbox AS o JOIN tr_reservation AS r ON r.reservation_id = o.reservation_id WHERE o.status IN ('pending', 'dead') AND r.hold_usage_type = 'RegionalCredits'"
     "SELECT COUNT(*) FROM spend_lease_open WHERE phase != 'done' OR dead = true"
   )
   local index count
@@ -125,25 +137,42 @@ ledger_spanner_open_work() {
       return 1
     fi
   done
-  log "Spanner holds no regional lease, RegionalCredits reservation, regional settle intent, or unfinished spend-lease row"
+  log "Spanner holds no regional lease, RegionalCredits reservation, or unfinished spend-lease row"
 }
 
 # Every serving revision, held regions included, must satisfy each marker.
 # `name=false` accepts an absent marker because config.py defaults these
 # switches to false; `name=__absent__` requires the setting to be unset or
-# empty (an app-profile map alone opens a ledger client).
+# empty (an app-profile map alone opens a ledger client). Records the newest
+# serving revision's creation time in LEDGER_FLEET_NEWEST_REVISION_AT.
+LEDGER_FLEET_NEWEST_REVISION_AT=""
 _ledger_serving_markers() {
   local purpose="$1"
   shift
   local -a regions
   IFS=',' read -r -a regions <<<"$TR_CONTROL_PLANE_REGIONS"
-  local region revision_json status pair name expected value
+  local region revision_json status pair name expected value created
+  LEDGER_FLEET_NEWEST_REVISION_AT=""
   for region in "${regions[@]}"; do
     status=0
     revision_json="$(regional_quota_active_revision_json "$region" false)" || status=$?
     if [ "$status" -ne 0 ]; then
       log "refusing ${purpose}: cannot read the serving revision in ${region}"
       return 1
+    fi
+    created="$(python3 -c '
+import json, sys
+revision = json.load(sys.stdin)
+created = revision.get("metadata", {}).get("creationTimestamp")
+if not isinstance(created, str) or not created:
+    raise SystemExit("serving revision has no creationTimestamp")
+print(created)
+' <<<"$revision_json")" || {
+      log "refusing ${purpose}: the serving revision in ${region} has no creation time"
+      return 1
+    }
+    if [ -z "$LEDGER_FLEET_NEWEST_REVISION_AT" ] || [[ "$created" > "$LEDGER_FLEET_NEWEST_REVISION_AT" ]]; then
+      LEDGER_FLEET_NEWEST_REVISION_AT="$created"
     fi
     for pair in "$@"; do
       name="${pair%%=*}"
@@ -207,20 +236,23 @@ print("%s\t%s\t%s" % (scheduler.get("state", ""), match.group(1), match.group(3)
 ' "$PROJECT_ID" "$scheduler" <<<"$scheduler_json" || return 1
 }
 
-# The exact target job of a live schedule must have reported REQUIRED recent
-# all-zero passes. A paused or silent worker refuses: nobody is draining.
+# The exact target job of a live schedule (project, location and name) must
+# have reported REQUIRED all-zero passes, every one of them after the newest
+# serving revision was created plus the drain interval. A paused or silent
+# worker refuses: nobody is draining.
 _ledger_reconciler_evidence() {
-  local label="$1" state="$2" job="$3" marker="$4"
-  shift 4
+  local label="$1" state="$2" job_region="$3" job="$4" marker="$5"
+  shift 5
   local required="${TR_LEDGER_DRAIN_REQUIRED_PASSES:-5}"
   local freshness="${TR_LEDGER_DRAIN_FRESHNESS:-15m}"
+  local interval="${TR_LEDGER_DRAIN_INTERVAL_SECONDS:-600}"
   if [ "$state" != "ENABLED" ]; then
     log "refusing ledger retirement: the ${label} schedule is ${state:-in an unknown state}; it must be draining"
     return 1
   fi
   local json
   json="$(gc logging read \
-    "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"${job}\" AND textPayload:\"${marker}\"" \
+    "resource.type=\"cloud_run_job\" AND resource.labels.project_id=\"${PROJECT_ID}\" AND resource.labels.location=\"${job_region}\" AND resource.labels.job_name=\"${job}\" AND textPayload:\"${marker}\"" \
     --freshness="$freshness" \
     --limit="$required" \
     --order=desc \
@@ -228,13 +260,28 @@ _ledger_reconciler_evidence() {
     log "refusing ledger retirement: cannot read ${label} completions"
     return 1
   }
-  python3 - "$label" "$marker" "$required" "$json" "$@" <<'PY'
+  python3 - "$label" "$marker" "$required" "$json" "$LEDGER_FLEET_NEWEST_REVISION_AT" "$interval" "$@" <<'PY'
+import datetime as dt
 import json
 import re
 import sys
 
-label, marker, required, raw = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
-zero_fields = sys.argv[5:]
+label, marker, required, raw, newest, interval = sys.argv[1:7]
+required = int(required)
+zero_fields = sys.argv[7:]
+
+
+def parse(stamp: str) -> dt.datetime:
+    value = dt.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=dt.UTC)
+    return value
+
+
+try:
+    cutoff = parse(newest) + dt.timedelta(seconds=int(interval))
+except ValueError:
+    raise SystemExit(f"refusing ledger retirement: serving revision time {newest!r} is unreadable")
 try:
     entries = json.loads(raw or "[]")
 except ValueError:
@@ -243,15 +290,31 @@ if not isinstance(entries, list):
     raise SystemExit(f"refusing ledger retirement: {label} evidence is not a list")
 lines = []
 for entry in entries:
-    payload = entry.get("textPayload") if isinstance(entry, dict) else None
-    if isinstance(payload, str) and marker in payload:
-        lines.append(payload)
+    if not isinstance(entry, dict):
+        continue
+    payload = entry.get("textPayload")
+    if not isinstance(payload, str) or marker not in payload:
+        continue
+    stamp = entry.get("timestamp")
+    try:
+        when = parse(stamp) if isinstance(stamp, str) else None
+    except ValueError:
+        when = None
+    if when is None:
+        raise SystemExit(f"refusing ledger retirement: {label} completion has no timestamp")
+    lines.append((when, payload))
 if len(lines) < required:
     raise SystemExit(
         f"refusing ledger retirement: {label} has {len(lines)} recent completion(s); "
         f"require {required} (is the worker running?)"
     )
-for line in lines:
+early = [when for when, _ in lines if when < cutoff]
+if early:
+    raise SystemExit(
+        f"refusing ledger retirement: {label} completion at {min(early).isoformat()} "
+        f"predates the drain cutoff {cutoff.isoformat()} (newest serving revision + {interval}s)"
+    )
+for _, line in lines:
     values = dict(re.findall(r"\b([a-z_]+)=(\d+)\b", line))
     missing = [field for field in zero_fields if field not in values]
     if missing:
@@ -260,7 +323,7 @@ for line in lines:
     if busy:
         summary = " ".join(f"{k}={v}" for k, v in busy.items())
         raise SystemExit(f"refusing ledger retirement: {label} is not drained ({summary})")
-print(f"{label} ({sys.argv[2].split('.')[0]}): {len(lines)} consecutive empty passes")
+print(f"{label}: {len(lines)} consecutive empty passes after {cutoff.isoformat()}")
 PY
 }
 
@@ -278,8 +341,11 @@ ledger_retirement_gate() {
   ledger_retirement_completed || status=$?
   case "$status" in
     0)
-      log "ledger retirement is recorded as complete; nothing to gate"
-      return 0
+      if ledger_capability_off_everywhere; then
+        log "ledger retirement is recorded as complete and every serving revision still runs without the ledgers; nothing to gate"
+        return 0
+      fi
+      log "ledger retirement is recorded but a serving revision carries lease capability again; running the full gate"
       ;;
     1) ;;
     *) return 1 ;;
@@ -287,19 +353,19 @@ ledger_retirement_gate() {
   ledger_issuance_off_everywhere || return 1
   ledger_spanner_open_work || return 1
 
-  local target state job
+  local target state job_region job
   target="$(_ledger_schedule_target "$(_ledger_regional_scheduler)" "$(_ledger_regional_scheduler_region)")" || return 1
   if [ -n "$target" ]; then
-    IFS=$'\t' read -r state _ job <<<"$target"
-    _ledger_reconciler_evidence "regional quota reconciler" "$state" "$job" \
+    IFS=$'\t' read -r state job_region job <<<"$target"
+    _ledger_reconciler_evidence "regional quota reconciler" "$state" "$job_region" "$job" \
       "regional_quota.reconcile_complete" inspected backlog remaining errors || return 1
   else
     log "warning: the regional quota reconciler schedule is already gone without a retirement marker; relying on Spanner evidence alone"
   fi
   target="$(_ledger_schedule_target "$(_ledger_spend_scheduler)" "$(_ledger_spend_scheduler_region)")" || return 1
   if [ -n "$target" ]; then
-    IFS=$'\t' read -r state _ job <<<"$target"
-    _ledger_reconciler_evidence "spend-lease reconciler" "$state" "$job" \
+    IFS=$'\t' read -r state job_region job <<<"$target"
+    _ledger_reconciler_evidence "spend-lease reconciler" "$state" "$job_region" "$job" \
       "spend_lease.reconcile_complete" candidates open dead errors || return 1
   else
     log "warning: the spend-lease reconciler schedule is already gone without a retirement marker; relying on Spanner evidence alone"
@@ -331,16 +397,27 @@ _ledger_wait_for_executions() {
   done
 }
 
-_ledger_matching_jobs() {
-  local region="$1" listing
-  listing="$(gc run jobs list --region="$region" --format='value(metadata.name)')" || {
-    log "refusing worker retirement: cannot list Cloud Run jobs in ${region}"
+# Project-wide worker inventory as "region<TAB>name" lines: every job under
+# either historical prefix, the exact names the deployers accept as
+# overrides, and the targets the schedules name. Project-wide so a retry
+# after an interrupted teardown - schedules already gone - still finds a
+# worker in a region only a schedule used to point at.
+_ledger_worker_inventory() {
+  local listing
+  listing="$(gc run jobs list --format='value(metadata.labels."cloud.googleapis.com/location",metadata.name)')" || {
+    log "refusing worker retirement: cannot list Cloud Run jobs"
     return 1
   }
-  printf '%s\n' "$listing" | while IFS= read -r job; do
-    [ -n "$job" ] || continue
+  local exact=" ${TR_REGIONAL_QUOTA_RECONCILER_JOB:-} ${TR_SPEND_LEASE_RECONCILER_JOB:-} $* "
+  printf '%s\n' "$listing" | while IFS=$'\t' read -r region job; do
+    [ -n "$job" ] && [ -n "$region" ] || continue
     case "$job" in
-      "$(_ledger_regional_job_prefix)-"*|"$(_ledger_spend_job_prefix)-"*) printf '%s\n' "$job" ;;
+      "$(_ledger_regional_job_prefix)-"*|"$(_ledger_spend_job_prefix)-"*) printf '%s\t%s\n' "$region" "$job" ;;
+      *)
+        case "$exact" in
+          *" ${job} "*) printf '%s\t%s\n' "$region" "$job" ;;
+        esac
+        ;;
     esac
   done
 }
@@ -366,12 +443,9 @@ ledger_retire_workers() {
   fi
   ledger_spanner_open_work || return 1
 
-  local -a job_regions
-  IFS=',' read -r -a job_regions <<<"$TR_CONTROL_PLANE_REGIONS"
-  job_regions+=(
-    "${TR_REGIONAL_QUOTA_RECONCILER_JOB_REGION:-us-east4}"
-    "${TR_SPEND_LEASE_RECONCILER_JOB_REGION:-us-east4}"
-  )
+  # Learn the schedules' targets before anything is deleted; they extend the
+  # inventory and survive in this run even if a later step fails.
+  local -a targets=()
   local scheduler region target job_region job
   for scheduler in "$(_ledger_regional_scheduler)|$(_ledger_regional_scheduler_region)" \
                    "$(_ledger_spend_scheduler)|$(_ledger_spend_scheduler_region)"; do
@@ -383,7 +457,7 @@ ledger_retire_workers() {
       continue
     fi
     IFS=$'\t' read -r _ job_region job <<<"$target"
-    job_regions+=("$job_region")
+    targets+=("$job")
     gc scheduler jobs delete "$scheduler" --location="$region" --quiet || {
       log "refusing worker retirement: cannot delete schedule ${scheduler} in ${region}"
       return 1
@@ -391,31 +465,25 @@ ledger_retire_workers() {
     log "deleted schedule ${scheduler} in ${region} (target ${job} in ${job_region})"
   done
 
-  local seen=" " deleted=0 jobs
-  for region in "${job_regions[@]}"; do
-    case "$seen" in *" ${region} "*) continue ;; esac
-    seen="${seen}${region} "
-    jobs="$(_ledger_matching_jobs "$region")" || return 1
-    while IFS= read -r job; do
-      [ -n "$job" ] || continue
-      _ledger_wait_for_executions "$job" "$region" || return 1
-      gc run jobs delete "$job" --region="$region" --quiet || {
-        log "refusing worker retirement: cannot delete ${job} in ${region}"
-        return 1
-      }
-      deleted=$((deleted + 1))
-      log "deleted worker ${job} in ${region}"
-    done <<<"$jobs"
-  done
-
-  # Prove absence before recording completion.
-  for region in $seen; do
-    jobs="$(_ledger_matching_jobs "$region")" || return 1
-    if [ -n "$jobs" ]; then
-      log "refusing to record retirement: workers remain in ${region}: ${jobs//$'\n'/ }"
+  local inventory deleted=0
+  inventory="$(_ledger_worker_inventory "${targets[@]+"${targets[@]}"}")" || return 1
+  while IFS=$'\t' read -r region job; do
+    [ -n "$job" ] || continue
+    _ledger_wait_for_executions "$job" "$region" || return 1
+    gc run jobs delete "$job" --region="$region" --quiet || {
+      log "refusing worker retirement: cannot delete ${job} in ${region}"
       return 1
-    fi
-  done
+    }
+    deleted=$((deleted + 1))
+    log "deleted worker ${job} in ${region}"
+  done <<<"$inventory"
+
+  # Prove absence, project-wide, before recording completion.
+  inventory="$(_ledger_worker_inventory "${targets[@]+"${targets[@]}"}")" || return 1
+  if [ -n "$inventory" ]; then
+    log "refusing to record retirement: workers remain: ${inventory//$'\t'/:}"
+    return 1
+  fi
   for scheduler in "$(_ledger_regional_scheduler)|$(_ledger_regional_scheduler_region)" \
                    "$(_ledger_spend_scheduler)|$(_ledger_spend_scheduler_region)"; do
     region="${scheduler#*|}"
@@ -434,11 +502,13 @@ ledger_retire_workers() {
 import datetime as dt, json, sys
 print(json.dumps({
     "state": "retired",
+    "project": sys.argv[1],
+    "spanner_database": sys.argv[2],
     "completed_at": dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-    "release": sys.argv[1],
-    "workers_deleted": int(sys.argv[2]),
+    "release": sys.argv[3],
+    "workers_deleted": int(sys.argv[4]),
 }))
-' "${RELEASE:-unknown}" "$deleted" >"$record"
+' "$PROJECT_ID" "$SPANNER_DATABASE_ID" "${RELEASE:-unknown}" "$deleted" >"$record"
   gc storage cp "$record" "$(ledger_retirement_marker_uri)" --quiet || {
     rm -f "$record"
     log "refusing to record retirement: cannot write the marker"
