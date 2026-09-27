@@ -350,22 +350,41 @@ def global_trust_verdict(
                     store, settings, reader=snapshot, now=evaluated_at, deadlines=deadlines
                 )
         except Exception:
-            log.exception("trust.gate_unarmed read_failed")
-            failure = "read_failed"
+            failure = _read_failure()
         verdict = GlobalTrustVerdict(
             key, failure, evaluated_at, started + GLOBAL_TRUST_TTL_SECONDS, tuple(deadlines)
         )
-        cache.verdict = verdict
+        # A read cut short by this caller's budget says nothing about the
+        # evidence; caching it would refuse every caller for the full TTL.
+        if failure != ADMISSION_BUDGET_SPENT:
+            cache.verdict = verdict
         return verdict
+
+
+# The caller's shared RPC budget ran out before the trust read finished.
+ADMISSION_BUDGET_SPENT = "admission_budget_spent"
+
+
+def _read_failure() -> str:
+    """Classify a failed trust read: the caller's budget, or the read itself."""
+    from trusted_router.storage_gcp_io import shared_rpc_budget_spent
+
+    if shared_rpc_budget_spent():
+        log.warning("trust.gate_unarmed %s", ADMISSION_BUDGET_SPENT)
+        return ADMISSION_BUDGET_SPENT
+    log.exception("trust.gate_unarmed read_failed")
+    return "read_failed"
 
 
 def _unarmed(failure: str) -> tuple[int | None, str | None]:
     from trusted_router.synthetic.alerts import ops_alert
 
-    log.error("trust.gate_unarmed condition=%s", failure)
-    ops_alert(
-        f"trust.gate_unarmed condition={failure}", fingerprint=["trust.gate_unarmed", failure]
-    )
+    # Same outcome either way: no lease, fall back to central authorize.
+    if failure != ADMISSION_BUDGET_SPENT:
+        log.error("trust.gate_unarmed condition=%s", failure)
+        ops_alert(
+            f"trust.gate_unarmed condition={failure}", fingerprint=["trust.gate_unarmed", failure]
+        )
     return None, "trust_gate_unarmed"
 
 
@@ -386,8 +405,7 @@ def lease_eligibility(
         try:
             global_verdict = global_verdict or global_trust_verdict(store, settings, now=now)
         except Exception:
-            log.exception("trust.gate_unarmed read_failed")
-            return _unarmed("read_failed")
+            return _unarmed(_read_failure())
     # A caller supplying a transaction MUST also supply the global verdict.
     # Missing/expired evidence refuses without opening a snapshot or doing I/O.
     failure = (
@@ -408,8 +426,7 @@ def lease_eligibility(
         except Exception:
             # Preserve the non-transactional admission refusal on snapshot or
             # workspace-read failure. Transaction callers still own retries.
-            log.exception("trust.gate_unarmed read_failed")
-            return _unarmed("read_failed")
+            return _unarmed(_read_failure())
     from trusted_router.storage_gcp_counters import credit_shard_count
     from trusted_router.storage_models import CreditAccount
 
