@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for the Fireworks AI serverless models enabled on the TrustedRouter Fireworks account. Verified against https://api.fireworks.ai/inference/v1/models, Fireworks' first-party pricing page, and direct chat completions. Kimi K3 is a verified launch route served before the account model-list feed caught up. Fireworks uses full accounts/fireworks/models/... upstream IDs, so the enclave preserves upstream_id verbatim for this provider.",
   "provider": "fireworks",
   "source": "https://api.fireworks.ai/inference/v1/models",
-  "generated_at": "2026-09-24T01:12:43Z",
+  "generated_at": "2026-09-27T23:04:50Z",
   "model_count": 25,
   "models": [
     {
@@ -63,7 +63,8 @@
         "chat/completions"
       ],
       "status": 1,
-      "created": 1776455694
+      "created": 1776455694,
+      "missing_since": "2026-09-27"
     },
     {
       "id": "deepseek/deepseek-v4-pro",
@@ -123,7 +124,8 @@
         "chat/completions"
       ],
       "status": 1,
-      "created": 1781630293
+      "created": 1781630293,
+      "missing_since": "2026-09-27"
     },
     {
       "id": "z-ai/glm-5.2-fast",
@@ -153,7 +155,8 @@
         "chat/completions"
       ],
       "status": 1,
-      "created": 1781630293
+      "created": 1781630293,
+      "missing_since": "2026-09-27"
     },
     {
       "id": "openai/gpt-oss-120b",
@@ -203,7 +206,8 @@
       "created": 1785514482,
       "input_token_price_per_m": 220000,
       "output_token_price_per_m": 660000,
-      "cached_input_token_price_per_m": 7000
+      "cached_input_token_price_per_m": 7000,
+      "missing_since": "2026-09-27"
     },
     {
       "display_name": "DeepSeek V4 Pro 0813 on Fireworks",
@@ -226,7 +230,8 @@
       "created": 1786637155,
       "input_token_price_per_m": 1320000,
       "output_token_price_per_m": 3960000,
-      "cached_input_token_price_per_m": 44000
+      "cached_input_token_price_per_m": 44000,
+      "missing_since": "2026-09-27"
     },
     {
       "display_name": "MiniMax M2.7 on Fireworks",
@@ -321,7 +326,8 @@
       "created": 1781283600,
       "input_token_price_per_m": 950000,
       "output_token_price_per_m": 4000000,
-      "cached_input_token_price_per_m": 190000
+      "cached_input_token_price_per_m": 190000,
+      "missing_since": "2026-09-27"
     },
     {
       "display_name": "Kimi K2.7 Code Fast on Fireworks",
@@ -485,7 +491,8 @@
       "created": 1786326846,
       "input_token_price_per_m": 350000,
       "output_token_price_per_m": 1500000,
-      "cached_input_token_price_per_m": 40000
+      "cached_input_token_price_per_m": 40000,
+      "missing_since": "2026-09-27"
     },
     {
       "display_name": "NVIDIA Nemotron 3 Ultra on Fireworks",
@@ -575,7 +582,8 @@
       "created": 1788181305,
       "input_token_price_per_m": 220000,
       "output_token_price_per_m": 660000,
-      "cached_input_token_price_per_m": 7000
+      "cached_input_token_price_per_m": 7000,
+      "missing_since": "2026-09-27"
     },
     {
       "display_name": "GLM 5.3 Fast on Fireworks",

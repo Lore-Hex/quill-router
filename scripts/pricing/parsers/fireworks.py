@@ -36,6 +36,9 @@ MODEL_LABELS = {
     "MiniMax M2.7": "minimax/minimax-m2.7",
     "MiniMax 2.7": "minimax/minimax-m2.7",
     "MiniMax 2.5": "minimax/minimax-m2.5",
+    "Ember 1": "fireworks/ember-1",
+    "Ember-1": "fireworks/ember-1",
+    "Ember 1.0": "fireworks/ember-1",
 }
 
 _FAMILY_AUTHORS = (
@@ -45,6 +48,8 @@ _FAMILY_AUTHORS = (
     ("kimi-", "moonshotai"),
     ("minimax-", "minimax"),
     ("qwen", "qwen"),
+    ("ember-", "fireworks"),
+    ("ember", "fireworks"),
 )
 _LINKED_PRICE_ROW = re.compile(
     r"\[(?P<label>[^]]+)\]\((?P<href>[^)]+)\)\s*\|\s*"
@@ -53,6 +58,15 @@ _LINKED_PRICE_ROW = re.compile(
     r"\$(?P<completion>[0-9]+(?:\.[0-9]+)?)",
     flags=re.I,
 )
+
+# Fallback pricing for Fireworks-native models not itemized in the pricing
+# table (they fall under the "More than 16B parameters" size-based rate).
+_SIZE_BASED_FALLBACK = {
+    "fireworks/ember-1": {
+        "prompt_micro_per_m": 900_000,
+        "completion_micro_per_m": 900_000,
+    },
+}
 
 
 def _money_to_micro(raw: str) -> int:
@@ -69,10 +83,7 @@ def _canonical_linked_model(label: str, href: str) -> str | None:
     # Fireworks sometimes gives a Fast or US row the standard model's link.
     # Auto-aliasing that row would overwrite the standard price, so require
     # those modifiers to be present in the provider-native slug as well.
-    if any(
-        modifier in label_words and modifier not in slug_words
-        for modifier in ("fast", "us")
-    ):
+    if any(modifier in label_words and modifier not in slug_words for modifier in ("fast", "us")):
         return None
     for prefix, author in _FAMILY_AUTHORS:
         if slug.startswith(prefix):
@@ -114,4 +125,11 @@ def parse(html: str) -> dict:
             "prompt_cached_micro_per_m": _money_to_micro(match.group("cached")),
             "completion_micro_per_m": _money_to_micro(match.group("completion")),
         }
+    # Apply size-based fallback pricing for Fireworks-native models that
+    # aren't listed in the itemized pricing table but are documented as
+    # falling under the "$0.90 per 1M tokens" tier for >16B dense models.
+    for model_id, prices in _SIZE_BASED_FALLBACK.items():
+        if model_id in out:
+            continue
+        out[model_id] = dict(prices)
     return out

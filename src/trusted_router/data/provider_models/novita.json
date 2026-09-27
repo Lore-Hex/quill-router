@@ -3,8 +3,8 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-09-24T13:22:08Z",
-  "model_count": 162,
+  "generated_at": "2026-09-27T23:04:50Z",
+  "model_count": 165,
   "models": [
     {
       "id": "Sao10K/L3-8B-Stheno-v3.2",
@@ -4760,6 +4760,100 @@
       ],
       "status": 1,
       "created": 1790240765,
+      "context_length": 1048576,
+      "max_output_tokens": 393216,
+      "input_token_price_per_m": 3000,
+      "output_token_price_per_m": 12000,
+      "cached_input_token_price_per_m": 60
+    },
+    {
+      "id": "deepseek/deepseek-v4-flash-0731-p",
+      "upstream_id": "deepseek/deepseek-v4-flash-0731-p",
+      "display_name": "deepseek/deepseek-v4-flash-0731-p",
+      "title": "deepseek/deepseek-v4-flash-0731-p",
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions",
+        "anthropic",
+        "responses"
+      ],
+      "status": 1,
+      "created": 1790471310,
+      "context_length": 1048576,
+      "max_output_tokens": 393216,
+      "input_token_price_per_m": 4400,
+      "output_token_price_per_m": 13200,
+      "cached_input_token_price_per_m": 148
+    },
+    {
+      "id": "deepseek/deepseek-v4-pro-0813-p",
+      "upstream_id": "deepseek/deepseek-v4-pro-0813-p",
+      "display_name": "deepseek/deepseek-v4-pro-0813-p",
+      "title": "deepseek/deepseek-v4-pro-0813-p",
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions",
+        "responses",
+        "anthropic"
+      ],
+      "status": 1,
+      "created": 1790471016,
+      "context_length": 1048576,
+      "max_output_tokens": 393216,
+      "input_token_price_per_m": 13200,
+      "output_token_price_per_m": 39600,
+      "cached_input_token_price_per_m": 440
+    },
+    {
+      "id": "deepseek/deepseek-v4.1-flash-dst",
+      "upstream_id": "deepseek/deepseek-v4.1-flash-dst",
+      "display_name": "DeepSeek V4.1 Flash DST",
+      "title": "deepseek/deepseek-v4.1-flash-dst",
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions",
+        "anthropic",
+        "responses"
+      ],
+      "status": 1,
+      "created": 1790413998,
       "context_length": 1048576,
       "max_output_tokens": 393216,
       "input_token_price_per_m": 3000,
