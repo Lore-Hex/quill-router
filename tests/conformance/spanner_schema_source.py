@@ -3,7 +3,9 @@
 This deliberately parses a narrow shell vocabulary, never executes shell or gcloud.
 New migration idioms must extend the parser and regenerate spanner_ddl.py.
 
-Scan every repository file as raw bytes decoded as UTF-8 with replacement, except:
+Scan every repository file as raw bytes decoded as UTF-8 with replacement (in a git
+checkout the tracked files: untracked workspace files never ship; the named schema
+sources below are read whether tracked or not), except:
 (a) root tests/ and docs/ (even files executed by a deploy step are out of scope);
 (b) build/dependency directories .git, .venv, node_modules, dist, build,
 __pycache__, vendor, target, .next, .mypy_cache, .pytest_cache, .ruff_cache,
@@ -39,6 +41,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
@@ -340,6 +343,9 @@ def assert_no_shell_variables(statement: str, location: str) -> None:
 
 
 def schema_sources(root: Path = ROOT) -> list[Path]:
+    # Named inputs, tracked or not: a migration still being written must reach
+    # the schema check and regeneration before it is committed. Only the broad
+    # carrier sweep (repository_files) is limited to a checkout's tracked files.
     scripts = root / "scripts/deploy"
     return [scripts / "infra.sh", *sorted(scripts.glob("migrate_*.sh")),
             scripts / "retire_settle_outbox_hot_index.sh"]
@@ -364,13 +370,76 @@ EXCLUDED_DIRECTORIES = {
 }
 
 
+def _tracked_files(root: Path) -> list[tuple[Path, bytes]] | None:
+    """The tracked files and their git modes when root is a git checkout, else None.
+
+    A checkout is a directory with .git at its root. Its files come from git or
+    the scan fails; falling back to a walk would read untracked workspace files.
+    A submodule (git lists its files only in some configurations) or tracked
+    paths that differ only by case (one file on a case-insensitive filesystem)
+    are refused.
+    """
+    if not (root / ".git").exists():
+        return None
+    git = ["git", "-C", str(root)]
+    # Describe the checkout at root, not one an inherited GIT_DIR (as inside a
+    # git hook) points to.
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    top = subprocess.run([*git, "rev-parse", "--show-toplevel"],  # noqa: S603 - fixed git query
+                         capture_output=True, check=True, env=env).stdout.removesuffix(b"\n")
+    if Path(os.fsdecode(top)).resolve() != root.resolve():
+        raise AssertionError(f"{root}: has .git, but git places the checkout at {os.fsdecode(top)}")
+    listed = subprocess.run([*git, "ls-files", "--stage", "-z"],  # noqa: S603 - fixed git query
+                            capture_output=True, check=True, env=env).stdout
+    paths: dict[Path, bytes] = {}
+    for entry in listed.split(b"\0"):
+        info, _, name = entry.partition(b"\t")
+        if not name:
+            continue
+        path = root / os.fsdecode(name)
+        if info.startswith(b"160000 "):
+            raise AssertionError(f"{path}: submodules are outside the schema scan; "
+                                 "extend repository_files() before adding one")
+        paths[path] = info.split(b" ", 1)[0]
+    folded = Counter(str(path).casefold() for path in paths)
+    collisions = sorted(str(path) for path in paths if folded[str(path).casefold()] > 1)
+    if collisions:
+        raise AssertionError(f"tracked paths differ only by case: {collisions[:6]}; "
+                             "one of them cannot be read on a case-insensitive filesystem")
+    return list(paths.items())
+
+
 def repository_files(root: Path) -> list[Path]:
-    paths = []
-    for directory, names, files in os.walk(root):
-        names[:] = sorted(name for name in names if name not in EXCLUDED_DIRECTORIES
-                          and not (Path(directory) == root and name in {"tests", "docs"}))
-        paths.extend(Path(directory) / name for name in files)
-    return sorted(paths)
+    """The repository's files under root, minus the excluded directories.
+
+    In a git checkout the repository is its tracked files. An untracked
+    workspace file, such as the gha-creds-*.json that google-github-actions/auth
+    writes into the workspace, never ships and must not be read, let alone
+    echoed into a CI log. A plain directory, such as a test's copy, is walked.
+    """
+    tracked = _tracked_files(root)
+    if tracked is None:
+        paths = []
+        for directory, names, files in os.walk(root):
+            names[:] = sorted(name for name in names if name not in EXCLUDED_DIRECTORIES
+                              and not (Path(directory) == root and name in {"tests", "docs"}))
+            paths.extend(Path(directory) / name for name in files)
+        return sorted(paths)
+    kept = []
+    for path, mode in tracked:
+        parts = path.relative_to(root).parts
+        if any(part in EXCLUDED_DIRECTORIES for part in parts[:-1]):
+            continue
+        if len(parts) > 1 and parts[0] in {"tests", "docs"}:
+            continue
+        if path.is_file():
+            kept.append(path)
+        elif mode != b"120000":
+            # A symlink is scanned when it resolves to a file, as the walk did;
+            # a tracked file missing from disk would escape the scan.
+            raise AssertionError(f"{path}: tracked but missing from the checkout (sparse or "
+                                 "deleted); the schema scan needs every tracked file")
+    return sorted(kept)
 
 
 def migration_sources(root: Path) -> list[Path]:

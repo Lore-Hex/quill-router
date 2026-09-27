@@ -1,8 +1,10 @@
 """Negative controls run against copies, without changing production adapters."""
 from __future__ import annotations
 
+import os
 import runpy
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -12,6 +14,23 @@ from tests.conformance import spanner_schema_source as schema
 from tests.conformance.spanner_emulator import require_emulators
 from tests.conformance.spanner_schema_source import ROOT, assert_schema_matches, migration_ddl
 from tests.conformance.spanner_sql_inventory import SRC, assert_complete
+
+
+def _fixture_git(*args: str, **kwargs):
+    """Run git for a test fixture without the developer's global or system config.
+
+    Global excludes (including git's default ~/.config/git/ignore, which loads
+    even without a global config file), commit signing, hooks or an inherited
+    GIT_DIR (as inside a git hook) must not change what a fixture tracks or
+    whether its setup succeeds.
+    """
+    inherited = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    env = {**inherited, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
+    identity = ["-c", "user.email=t@example.invalid", "-c", "user.name=t"]
+    return subprocess.run(  # noqa: S603 - fixed git setup
+        ["git", *identity, "-c", f"core.excludesFile={os.devnull}", *args],  # noqa: S607
+        env=env, check=True, **kwargs,
+    )
 
 
 def copy_schema_repository(root):
@@ -656,3 +675,87 @@ def test_explicitly_registered_extra_gap_variant_is_marked(monkeypatch):
                            nodeid="tests/conformance/" + test_id, originalname=name, add_marker=marks.append)
     conftest.pytest_collection_modifyitems([item])
     assert len(marks) == 1 and marks[0].kwargs == {"strict": True, "reason": "explicitly reviewed variant"}
+
+
+@pytest.mark.parametrize("name", ["checkout", "checkout ending in a space "])
+def test_a_git_checkout_scans_tracked_files_and_a_plain_directory_scans_all(tmp_path_factory, name):
+    # google-github-actions/auth writes gha-creds-*.json into the workspace; the
+    # hourly price refresh's validation run failed on it as a "DDL carrier".
+    carrier = '{"note": "update_ddl"}\n'
+    checkout = tmp_path_factory.mktemp("repo") / name
+    checkout.mkdir()
+    _fixture_git("init", "-q", str(checkout))
+    tracked = ["migrate.sh", "gha-creds-tracked.json", "build/generated.sh", "tests/fixture.sh", "nested/tests/tool.sh"]
+    for relative in [*tracked, "gha-creds-untracked.json", "anything.txt"]:
+        (checkout / relative).parent.mkdir(parents=True, exist_ok=True)
+        (checkout / relative).write_text(carrier)
+    _fixture_git("-C", str(checkout), "add", *tracked)
+
+    # Tracked files are scanned whatever their name; excluded directories
+    # (at any depth) and the root tests/ stay out; untracked files never count.
+    assert schema.repository_files(checkout) == sorted(
+        checkout / relative for relative in ("gha-creds-tracked.json", "migrate.sh", "nested/tests/tool.sh")
+    )
+
+    plain = tmp_path_factory.mktemp("plain")
+    (plain / "migrate.sh").write_text(carrier)
+    (plain / "gha-creds-untracked.json").write_text(carrier)
+
+    assert schema.repository_files(plain) == [plain / "gha-creds-untracked.json", plain / "migrate.sh"]
+
+
+@pytest.mark.parametrize("active", [True, False], ids=["active", "inactive"])
+def test_a_git_checkout_with_a_submodule_is_refused(tmp_path_factory, active):
+    sub = tmp_path_factory.mktemp("sub")
+    _fixture_git("init", "-q", str(sub))
+    (sub / "migrate.sh").write_text('{"note": "update_ddl"}\n')
+    _fixture_git("-C", str(sub), "add", "migrate.sh")
+    _fixture_git("-C", str(sub), "commit", "-q", "-m", "sub")
+    checkout = tmp_path_factory.mktemp("super")
+    _fixture_git("init", "-q", str(checkout))
+    _fixture_git("-c", "protocol.file.allow=always", "-C", str(checkout), "submodule", "add", "-q", str(sub), "vendored")
+    if not active:
+        _fixture_git("-C", str(checkout), "config", "submodule.vendored.active", "false")
+
+    # Git lists a submodule's files only when it is active; refuse either way.
+    with pytest.raises(AssertionError, match="submodules are outside the schema scan"):
+        schema.repository_files(checkout)
+
+
+def test_a_checkout_missing_a_tracked_file_is_refused(tmp_path_factory):
+    checkout = tmp_path_factory.mktemp("sparse")
+    _fixture_git("init", "-q", str(checkout))
+    (checkout / "migrate.sh").write_text('{"note": "update_ddl"}\n')
+    (checkout / "scripts").mkdir()
+    (checkout / "linked").symlink_to("scripts", target_is_directory=True)
+    _fixture_git("-C", str(checkout), "add", "migrate.sh", "linked")
+
+    # A tracked symlink to a directory is not a file to scan, as before.
+    assert schema.repository_files(checkout) == [checkout / "migrate.sh"]
+
+    # As in a sparse checkout, the tracked file is absent from disk.
+    (checkout / "migrate.sh").unlink()
+    with pytest.raises(AssertionError, match="tracked but missing from the checkout"):
+        schema.repository_files(checkout)
+
+
+def test_a_checkout_git_cannot_enumerate_is_refused_not_walked(tmp_path_factory):
+    checkout = tmp_path_factory.mktemp("broken")
+    (checkout / ".git").write_text("gitdir: /nonexistent\n")
+    (checkout / "gha-creds-untracked.json").write_text('{"note": "update_ddl"}\n')
+
+    with pytest.raises(subprocess.CalledProcessError):
+        schema.repository_files(checkout)
+
+
+def test_tracked_paths_that_differ_only_by_case_are_refused(tmp_path_factory):
+    checkout = tmp_path_factory.mktemp("cases")
+    _fixture_git("init", "-q", str(checkout))
+    blob = _fixture_git(
+        "-C", str(checkout), "hash-object", "-w", "--stdin", input=b"pass\n", capture_output=True
+    ).stdout.decode().strip()
+    for name in ("scripts/DDL.py", "scripts/ddl.py"):
+        _fixture_git("-C", str(checkout), "update-index", "--add", "--cacheinfo", f"100644,{blob},{name}")
+
+    with pytest.raises(AssertionError, match="differ only by case"):
+        schema.repository_files(checkout)
