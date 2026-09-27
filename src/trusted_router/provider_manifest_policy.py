@@ -7,28 +7,22 @@ from typing import Any
 
 from trusted_router.pricing import provider_manifest_price_profile_is_valid
 
-RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS = frozenset(
+# Every provider whose live scraper can fall back to a committed manifest is
+# quarantined independently when that manifest ages out. All of them have CI
+# discovery access through the hourly refresh; the age limit is provider-scoped
+# stale-price containment for the hours that discovery fails.
+EXPIRING_PROVIDER_MANIFEST_SLUGS = frozenset(
     {
         "aion-labs",
         "akashml",
         "arcee",
         "inception",
         "mancer",
-        "nscale",
         "nextbit",
         "reka",
         "sail-research",
         "sambanova",
         "upstage",
-    }
-)
-
-# Every provider whose live scraper can fall back to a committed manifest is
-# quarantined independently when that manifest ages out. Runtime-only is the
-# stricter credential-isolation subset; the remaining entries already have CI
-# discovery access but still need provider-scoped stale-price containment.
-EXPIRING_PROVIDER_MANIFEST_SLUGS = RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS | frozenset(
-    {
         "bfl",
         "decart",
         "fal",
@@ -53,7 +47,6 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS | frozen
     }
 )
 PROVIDER_MANIFEST_MAX_AGE_DAYS = 14
-RUNTIME_ONLY_PROVIDER_MANIFEST_MAX_AGE_DAYS = PROVIDER_MANIFEST_MAX_AGE_DAYS
 EXPIRED_PROVIDER_MANIFEST = datetime.min.replace(tzinfo=UTC)
 _CANARY_QUARANTINE_REASONS = frozenset({"provider-canary-failed"})
 

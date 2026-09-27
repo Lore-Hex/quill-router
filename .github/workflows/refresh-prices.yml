@@ -185,7 +185,18 @@ jobs:
                       PERPLEXITY_API_KEY:trustedrouter-perplexity-api-key \
                       KREA_API_KEY:trustedrouter-krea-api-key \
                       FAL_API_KEY:trustedrouter-fal-api-key \
-                      WANDB_API_KEY:trustedrouter-wandb-api-key; do
+                      WANDB_API_KEY:trustedrouter-wandb-api-key \
+                      UPSTAGE_API_KEY:trustedrouter-upstage-api-key \
+                      SAIL_RESEARCH_API_KEY:trustedrouter-sail-research-api-key \
+                      REKA_API_KEY:trustedrouter-reka-api-key \
+                      NEXTBIT_API_KEY:trustedrouter-nextbit-api-key \
+                      AKASHML_API_KEY:trustedrouter-akashml-api-key \
+                      MANCER_API_KEY:trustedrouter-mancer-api-key \
+                      NSCALE_API_KEY:trustedrouter-nscale-api-key \
+                      AION_LABS_API_KEY:trustedrouter-aion-labs-api-key \
+                      SAMBANOVA_API_KEY:trustedrouter-sambanova-api-key \
+                      ARCEE_API_KEY:trustedrouter-arcee-api-key \
+                      INCEPTION_API_KEY:trustedrouter-inception-api-key; do
             env="${pair%%:*}"
             secret="${pair#*:}"
             if ! KEY=$(gcloud secrets versions access latest \
