@@ -1892,6 +1892,7 @@ def test_venice_privacy_is_model_specific_and_never_claims_tee() -> None:
         "z-ai/glm-5v-turbo",
     }
     video_models = {
+        "bytedance/seedance-2.5",
         "bytedance/seedance-2.0",
         "bytedance/seedance-2.0-fast",
         "google/veo-3.1",
