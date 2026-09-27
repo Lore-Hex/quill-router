@@ -1363,10 +1363,25 @@ SEPTEMBER_22_REFRESH_TRANSITIONS = [
     ),
 ]
 
+# Exact failing-run 36313186338 values (2026-09-27).
+SEPTEMBER_27_WAFER_REFRESH_TRANSITIONS = [
+    ("z-ai/glm-5.3-flash [wafer:wafer:GLM-5.3-Flash]", "prompt", "1E-7", "4.3E-7"),
+    (
+        "deepseek/deepseek-v4.1-flash [wafer:wafer:DeepSeek-V4.1-Flash] cached-input",
+        "prompt", "1E-8", "5E-8",
+    ),
+    (
+        "deepseek/deepseek-v4-pro [wafer:wafer:DeepSeek-V4-Pro] cached-input",
+        "prompt", "3E-8", "2.4E-7",
+    ),
+]
+
 
 @pytest.mark.parametrize(
     ("route", "dimension", "old", "new"),
-    CONFIRMED_REFRESH_TRANSITIONS + SEPTEMBER_22_REFRESH_TRANSITIONS,
+    CONFIRMED_REFRESH_TRANSITIONS
+    + SEPTEMBER_22_REFRESH_TRANSITIONS
+    + SEPTEMBER_27_WAFER_REFRESH_TRANSITIONS,
 )
 def test_confirmed_refresh_transition_is_allowed(
     route: str, dimension: str, old: str, new: str,
@@ -1397,7 +1412,9 @@ def test_all_fourteen_confirmed_refresh_transitions_are_allowed() -> None:
 
 @pytest.mark.parametrize(
     ("route", "dimension", "old", "new"),
-    CONFIRMED_REFRESH_TRANSITIONS + SEPTEMBER_22_REFRESH_TRANSITIONS,
+    CONFIRMED_REFRESH_TRANSITIONS
+    + SEPTEMBER_22_REFRESH_TRANSITIONS
+    + SEPTEMBER_27_WAFER_REFRESH_TRANSITIONS,
 )
 @pytest.mark.parametrize("mutation", ["remove-approval", "after-price", "endpoint-tag"])
 def test_confirmed_refresh_mutations_still_block(

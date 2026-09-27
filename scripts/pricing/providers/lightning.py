@@ -91,8 +91,9 @@ def fetch() -> ProviderPricingResult:
         response.raise_for_status()
         payload = response.json()
     rows = payload.get("data") or []
-    prices: dict[str, ModelPrice] = {}
-    discovered: dict[str, dict[str, Any]] = {}
+    # The public catalog also lists third-party apps under the id of the model
+    # they wrap, each with its own name and sometimes its own price.
+    listings: dict[str, list[tuple[str, dict[str, Any], int, int]]] = {}
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -118,24 +119,42 @@ def fetch() -> ProviderPricingResult:
             continue
         prompt_micro_per_m = int(round(prompt_per_token * 1_000_000_000_000))
         completion_micro_per_m = int(round(completion_per_token * 1_000_000_000_000))
+        listings.setdefault(or_id, []).append(
+            (native_id, row, prompt_micro_per_m, completion_micro_per_m)
+        )
+
+    prices: dict[str, ModelPrice] = {}
+    discovered: dict[str, dict[str, Any]] = {}
+    notes: list[str] = []
+    for or_id, candidates in listings.items():
+        native_id, row, prompt_micro_per_m, completion_micro_per_m = candidates[0]
+        discovered_row: dict[str, Any] = {
+            "id": or_id,
+            "upstream_id": native_id,
+            "endpoints": ["chat/completions"],
+        }
+        discovered[or_id] = discovered_row
+        if len(candidates) > 1:
+            # No listing speaks for the model when several share its id: keep
+            # the committed name, and publish no price if their prices differ,
+            # which leaves the route unroutable rather than billing any one of
+            # them.
+            rates = {(prompt, completion) for _, _, prompt, completion in candidates}
+            if len(rates) > 1:
+                notes.append(f"{or_id}: {len(candidates)} listings disagree on price; no price published")
+                continue
+        else:
+            discovered_row["display_name"] = str(row.get("name") or native_id)
+            context_length = positive_int(row.get("context_length"))
+            if context_length is not None:
+                discovered_row["context_length"] = context_length
         prices[or_id] = ModelPrice(
             prompt_micro_per_m=prompt_micro_per_m,
             completion_micro_per_m=completion_micro_per_m,
         )
-        discovered_row: dict[str, Any] = {
-            "id": or_id,
-            "upstream_id": native_id,
-            "display_name": str(row.get("name") or native_id),
-            "endpoints": ["chat/completions"],
-        }
-        context_length = positive_int(row.get("context_length"))
-        if context_length is not None:
-            discovered_row["context_length"] = context_length
-        discovered[or_id] = discovered_row
 
     _DISCOVERED_MANIFEST_ROWS = discovered
 
-    notes: list[str] = []
     errors = validate(prices, EXPECTED_MODELS)
     if errors:
         notes.append(f"validation notes: {errors}")
