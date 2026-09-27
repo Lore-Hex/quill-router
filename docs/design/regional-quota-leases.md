@@ -170,8 +170,9 @@ The rollout reads preserved quota state from the revision receiving exactly
 created revision, or latest ready revision, because all three can name a failed
 candidate after traffic has rolled back. An ambiguous traffic split or any
 control-plane read error aborts. Only an exact missing-service response is
-treated as a fresh environment. With the normal ON pin, a fresh fleet must
-explicitly request issuance=false for its first compatibility deployment.
+treated as a fresh environment. Since the 2026-09-27 retirement the marker is
+forced off whatever the input, live marker, or latch say, and the accounting
+floor is enforced whenever capability is on.
 
 Issuance requires accounting compatibility, independently of the git release:
 
@@ -429,8 +430,9 @@ Production activation requires all of the following:
 Implemented gates include the transactional adapter, exact global grant and
 close transactions, a once-per-minute reconciler, integer-only property tests,
 ambiguous Bigtable commit replay, fencing, concurrent idempotency, exact key
-usage import, and 16-way local sharding. Production issuance is pinned on with
-the five-workspace cohort pinned above. Any local read, conditional write,
+usage import, and 16-way local sharding. Production issuance ran pinned on with
+the five-workspace cohort pinned above until 2026-09-27; it is now retired
+(see Rollout gates). Any local read, conditional write,
 missing profile, or initialization ambiguity falls back to exact Spanner
 authorization. Missing
 lease state is quarantined and its global escrow is not guessed back into the

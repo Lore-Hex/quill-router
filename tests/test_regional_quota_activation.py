@@ -249,9 +249,15 @@ def test_latch_truth_table(tmp_path: Path, latch: str | None, requested: str) ->
         (tmp_path / "latch").write_text(latch)
     run = _run(tmp_path, _resolution_body(requested))
     assert run.returncode == 0, run.stderr
-    assert run.stdout.strip() == (requested if latch in (None, "allow") else "false")
+    # Retirement (2026-09-27): the marker is off whatever the input or latch
+    # say; a request that would have resolved ON is named in the log.
+    assert run.stdout.strip() == "false"
     if latch in ("garbage", ""):
         assert "invalid content; treating as off" in run.stderr
+    if requested == "true" and latch in (None, "allow"):
+        assert "regional quota issuance is retired" in run.stderr
+    else:
+        assert "regional quota issuance is retired" not in run.stderr
 
 
 @pytest.mark.parametrize("requested", ["true", "false"])
@@ -275,11 +281,13 @@ def test_latch_read_error_aborts_rollout(tmp_path: Path, requested: str, error: 
     "ERROR: (gcloud.storage.cat) No URLs matched: gs://tr-deploy-mutex-quill-cloud-proxy/controls/regional-quota-issuance.txt",
     "ERROR: (gcloud.storage.cat) HTTPError 404: No such object: tr-deploy-mutex-quill-cloud-proxy/controls/regional-quota-issuance.txt",
 ])
-def test_latch_object_not_found_preserves_request(tmp_path: Path, error: str) -> None:
+def test_latch_object_not_found_does_not_abort(tmp_path: Path, error: str) -> None:
     (tmp_path / "latch-error").write_text(error)
     run = _run(tmp_path, _resolution_body("true"))
     assert run.returncode == 0, run.stderr
-    assert run.stdout.strip() == "true"
+    # A missing latch is not an error; the retirement override then wins.
+    assert run.stdout.strip() == "false"
+    assert "regional quota issuance is retired" in run.stderr
     assert "storage cat" not in (tmp_path / "calls").read_text()
 
 
@@ -424,12 +432,10 @@ def test_overridden_incompatible_image_refused(
     env = {"IMAGE": "us-central1-docker.pkg.dev/project/repo/old:pre-r1",
            "HARNESS_IMAGE_CONFIG": json.dumps(config)}
     if script == "rollout.sh":
-        # The protocol floor guards issuance ON; the push pin is OFF since the
-        # 2026-09-27 ledger retirement, so request issuance explicitly here.
-        run = DeployScriptHarness(tmp_path / "serving").run(
-            "scripts/deploy/rollout.sh",
-            extra_env={**env, "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "true"},
-        )
+        # Issuance is retired, but capability (the harness fleet declares it)
+        # still settles protocol-2 holds, so the floor must hold with
+        # issuance off.
+        run = DeployScriptHarness(tmp_path / "serving").run("scripts/deploy/rollout.sh", extra_env=env)
     else:
         run = _run_regional_quota_reconciler(tmp_path, monkeypatch, state="PAUSED", extra_env=env)
     assert run.returncode != 0
