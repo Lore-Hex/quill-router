@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import functools
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,10 +19,15 @@ os.environ["TR_STORAGE_BACKEND"] = "memory"
 # trusted_router imports below resolve the catalog; an override CI already
 # exported is kept (see tests/lifecycle_freeze.py).
 import tests.lifecycle_freeze  # noqa: F401 - import-time side effect, see above
-from trusted_router import post_commit
+
+# Likewise one catalog-freshness instant, pinned before trusted_router.main
+# builds its app and prewarms the public catalog (see the module).
+from tests import catalog_freshness_freeze
+from trusted_router import catalog_data, post_commit
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR
+from trusted_router.routes import catalog as catalog_routes
 from trusted_router.storage import STORE, InMemoryStore, configure_store
 
 
@@ -68,6 +73,25 @@ def reset_store() -> None:
     if not isinstance(STORE.target, InMemoryStore):
         configure_store(InMemoryStore())
     STORE.reset()
+
+
+@pytest.fixture(autouse=True)
+def live_monitors_judge_catalog_freshness_on_the_real_clock(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[None]:
+    """Lift the catalog-freshness pin for live provider-health monitors.
+
+    They compare the catalog with artifacts generated on the real clock, such
+    as the social cards. The public catalog cache is rebuilt on each side so
+    that neither clock's projection outlives the test.
+    """
+    if request.node.get_closest_marker("provider_health") is None:
+        yield
+        return
+    monkeypatch.setattr(catalog_data, "_utc_now", catalog_freshness_freeze.REAL_CATALOG_CLOCK)
+    catalog_routes._public_catalog_payload.cache_clear()
+    yield
+    catalog_routes._public_catalog_payload.cache_clear()
 
 
 @pytest.fixture(autouse=True)
