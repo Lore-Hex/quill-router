@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from tests.conformance import spanner_ddl
+from tests.conformance import spanner_schema_source as schema
 from tests.conformance.spanner_emulator import require_emulators
 from tests.conformance.spanner_schema_source import ROOT, assert_schema_matches, migration_ddl
 from tests.conformance.spanner_sql_inventory import SRC, assert_complete
@@ -235,19 +236,19 @@ def test_lowercase_split_create_index_is_extracted(tmp_path):
       "--instance=$INSTANCE"
       "--ddl=ALTER TABLE tr_entities ADD COLUMN review_lost STRING(64)")
 gcloud "${args[@]}"
-''', "ddl update"),
+''', "ddl"),
     ('''$GCLOUD spanner databases ddl update "$DATABASE" --ddl-file=/dev/stdin <<'SQL'
 ALTER TABLE tr_entities ADD COLUMN review_lost STRING(64)
 SQL
 ''', "--ddl-file"),
     ('''gcp "spanner" "databases" "ddl" "update" "$DATABASE" "--ddl=ALTER TABLE tr_entities ADD COLUMN review_lost STRING(64)"
-''', "--ddl"),
+''', "ddl"),
     ('''args=("spanner" "databases" "ddl" "update" "$DATABASE"
       "--DDL=alter table tr_entities add column review_lost STRING(64)")
 gcloud "${args[@]}"
-''', "--DDL"),
+''', "ddl"),
     ('"$GCLOUD" spanner databases create "$DATABASE"\n', "databases create"),
-    ('args=(spanner databases ddl\n update "$DATABASE")\n', "ddl\n update"),
+    ('args=(spanner databases ddl\n update "$DATABASE")\n', "ddl"),
 ], ids=["reviewer-array", "variable-gcloud-ddl-file-heredoc", "library-gcp-wrapper",
         "uppercase-flag-lowercase-sql", "unknown-create", "multiline-command-words"])
 def test_literal_ddl_carriers_fail_closed_in_copies(tmp_path, addition, carrier):
@@ -280,7 +281,7 @@ def test_quoted_array_ddl_carrier_fails_closed(tmp_path):
       "--ddl=ALTER TABLE tr_entities ADD COLUMN review_lost STRING(64)")
 gcloud "${args[@]}"
 ''')
-    with pytest.raises(AssertionError, match=r"migrate_review_hole.sh:3: unconsumed DDL carrier: --ddl"):
+    with pytest.raises(AssertionError, match=r"migrate_review_hole.sh:1: unconsumed DDL carrier: ddl"):
         migration_ddl(tmp_path)
 
 
@@ -288,10 +289,10 @@ gcloud "${args[@]}"
     ('''args=(spanner databases ddl update "$DATABASE"
       "--ddl=ALTER TABLE tr_entities ADD COLUMN review_lost STRING(64)")
 gcloud "${args[@]}"
-''', "ddl update"),
+''', "ddl"),
     ('''gcp() { gcloud --project "$PROJECT_ID" "$@"; }
 gcp "spanner" "databases" "ddl" "update" db "--ddl=ALTER TABLE tr_entities ADD COLUMN review_lost STRING(64)"
-''', "--ddl"),
+''', "ddl"),
     ('''gcp() { gcloud --project "$PROJECT_ID" "$@"; }
 gcp spanner databases ddl update db --ddl-file=/dev/stdin <<'SQL'
 ALTER TABLE tr_entities ADD COLUMN review_lost STRING(64)
@@ -324,14 +325,15 @@ def test_ddl_file_rejected_even_inside_consumed_dispatch(tmp_path, carrier):
     assert f"{path}:1: unsupported DDL carrier: {carrier}" in str(error.value)
 
 
-def test_carrier_comments_are_excluded_in_copies(tmp_path):
+@pytest.mark.parametrize("name", ["infra.sh", "migrate_money_primitives.sh", "_lib.sh"])
+def test_carrier_comments_require_exemptions_in_copies(tmp_path, name):
     scripts = tmp_path / "scripts/deploy"
     shutil.copytree(ROOT / "scripts/deploy", scripts)
-    for name in ("infra.sh", "migrate_money_primitives.sh", "_lib.sh"):
-        path = scripts / name
-        path.write_text(path.read_text() + '\n# --ddl --ddl-file ddl-file ddl update databases create\n'
-                        + 'echo done # "--DDL=" --ddl-file databases create\n')
-    assert migration_ddl(tmp_path) == spanner_ddl.DDL
+    path = scripts / name
+    path.write_text(path.read_text() + '\n# --ddl --ddl-file ddl-file ddl update databases create\n'
+                    + 'echo done # "--DDL=" --ddl-file databases create\n')
+    with pytest.raises(AssertionError, match="DDL carrier:"):
+        migration_ddl(tmp_path)
 
 
 @pytest.mark.parametrize("expression", [
@@ -463,10 +465,12 @@ def test_all_gap_registrations_match_collected_items_for_every_backend(tmp_path)
 
 
 @pytest.mark.parametrize("escape", ["renamed-helper", "eval", "printf-eval", "sourced-file"])
-def test_sink_discovery_rejects_review_round_three_escapes(tmp_path, escape):
+def test_sink_discovery_rejects_review_round_three_escapes(tmp_path, monkeypatch, escape):
     scripts = tmp_path / "scripts/deploy"
     shutil.copytree(ROOT / "scripts/deploy", scripts)
     path = scripts / "migrate_money_primitives.sh"
+    # Review the removed declaration exemption so the escape still reaches extraction.
+    monkeypatch.delitem(schema.DDL_EXEMPTIONS["lines"]["scripts/deploy/migrate_money_primitives.sh"], "apply_ddl() {")
     source = path.read_text().replace("apply_ddl", "run_schema")
     additions = {
         "renamed-helper": "run_schema 'alter table tr_entities add column review_lost STRING(64)'\n",
@@ -482,10 +486,12 @@ eval "run_schema '$SQL'"
         migration_ddl(tmp_path)
 
 
-def test_renamed_dispatcher_supported_call_is_extracted(tmp_path):
+def test_renamed_dispatcher_supported_call_is_extracted(tmp_path, monkeypatch):
     scripts = tmp_path / "scripts/deploy"
     shutil.copytree(ROOT / "scripts/deploy", scripts)
     path = scripts / "migrate_money_primitives.sh"
+    # The renamed declaration no longer needs its count-bound carrier exemption.
+    monkeypatch.delitem(schema.DDL_EXEMPTIONS["lines"]["scripts/deploy/migrate_money_primitives.sh"], "apply_ddl() {")
     path.write_text(path.read_text().replace("apply_ddl", "run_schema")
                     + '\nrun_schema "ALTER TABLE tr_entities ADD COLUMN review_added STRING(64)"\n')
     assert "ALTER TABLE tr_entities ADD COLUMN review_added STRING(64)" in migration_ddl(tmp_path)

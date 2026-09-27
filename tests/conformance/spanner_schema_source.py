@@ -3,23 +3,29 @@
 This deliberately parses a narrow shell vocabulary, never executes shell or gcloud.
 New migration idioms must extend the parser and regenerate spanner_ddl.py.
 
-Repo-wide guard surface: every file in scripts/ and .github/workflows/, plus
-src/trusted_router/**/*.py. Tests and docs are outside the surface.
-Threat model: a developer applies DDL in any literal form, including Python or
-REST. Every literal carrier (case-insensitive, quotes included, comments excluded)
-must belong to an extracted dispatch or an exact-line reviewed registry exemption.
-Deliberate obfuscation of the carrier words themselves (e.g. "--d""dl" or
-building the flag from variables) is out of scope. Literal carriers fail closed.
+The carrier guard scans leniently decoded raw bytes across the repository, including
+comments, without language lexers. Tests, docs, dependencies and build caches are
+excluded. The transport is the security boundary: statement text is inert without
+a transport, including when read from another file. Transport identifiers split on
+non-alphanumerics and camelCase boundaries; a part must equal ddl, or adjacent
+parts extra/statements or databases/create. Middleware, middle and paddle do not
+match. Every transport requires extraction or a normalized, occurrence-bound line
+exemption. Statement scanning is defence in depth outside reasoned file/directory
+exemptions for other dialects and data/review files. Only manual native Spanner SQL
+file exemptions bind SHA-256. File/directory exemptions never cover transports.
+Runtime-assembled carriers and changes made outside the repository are out of scope.
 """
 from __future__ import annotations
 
 import difflib
+import fnmatch
 import hashlib
-import io
 import json
+import os
 import re
 import shlex
-import tokenize
+from collections import Counter
+from collections.abc import Iterator
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -98,6 +104,9 @@ def shell_tokens(source: str, comments: list[tuple[int, int]] | None = None) -> 
             quote = ""
             while pos < len(source):
                 char = source[pos]
+                if not quote and source.startswith("<<<", pos):
+                    pos += 3  # A here-string must never become a heredoc at its second '<'.
+                    continue
                 if not quote and comments is not None and source.startswith("<<", pos):
                     heredoc = re.match(r"<<-?[ \t]*(['\"]?)([A-Za-z_]\w*)\1", source[pos:])
                     if heredoc:
@@ -333,87 +342,116 @@ def assert_schema_matches(ddl: tuple[str, ...], digests: dict[str, str], root: P
     assert ddl == migration_ddl(root), "GoogleSQL DDL drift from deployment migrations"
 
 
-def is_generated_bytecode(path: Path) -> bool:
-    # Only binary interpreter artifacts are excluded, never source files merely
-    # placed in a cache directory or given an unfamiliar extension.
-    if path.suffix != ".pyc" or "__pycache__" not in path.parts:
-        return False
-    with path.open("rb") as stream:
-        return stream.read(4)[2:] == b"\r\n"
+EXCLUDED_DIRECTORIES = {
+    ".git", ".venv", "node_modules", "dist", "build", "__pycache__",
+    ".mypy_cache", ".pytest_cache", ".ruff_cache", ".hypothesis",
+}
 
 
 def carrier_sources(root: Path) -> list[Path]:
-    """Discover the surface, never an execution graph or an extension allowlist."""
-    return sorted({path for directory in (root / "scripts", root / ".github/workflows")
-                   for path in directory.rglob("*") if path.is_file() and not is_generated_bytecode(path)}
-                  | set((root / "src/trusted_router").rglob("*.py")))
+    """Walk every location/extension, pruning only tests, docs and generated directories."""
+    paths = []
+    for directory, names, files in os.walk(root):
+        names[:] = sorted(name for name in names if name not in EXCLUDED_DIRECTORIES
+                          and not (Path(directory) == root and name in {"tests", "docs"}))
+        paths.extend(Path(directory) / name for name in files)
+    return sorted(paths)
 
 
-def uncommented_source(path: Path) -> str:
-    """Blank comments without changing offsets, newlines, or quoted text."""
-    source = path.read_text()
-    comments: list[tuple[int, int]] = []
-    if path.suffix == ".py":
-        offsets = [0]
-        for line in source.splitlines(keepends=True):
-            offsets.append(offsets[-1] + len(line))
-        for token in tokenize.generate_tokens(io.StringIO(source).readline):
-            if token.type == tokenize.COMMENT:
-                comments.append((offsets[token.start[0] - 1] + token.start[1],
-                                 offsets[token.end[0] - 1] + token.end[1]))
-    elif path.suffix == ".sh" or source.startswith(("#!/bin/sh", "#!/bin/bash", "#!/usr/bin/env bash")):
-        try:
-            shell_tokens(source, comments)
-        except AssertionError as exc:
-            raise AssertionError(f"{path}:1: {exc}") from exc
-    else:
-        # Skip quoted strings before matching comments. Unknown file types have
-        # no assumed comment syntax: their entire raw text remains in scope.
-        comment_pattern = {
-            ".sql": r"--[^\n]*|/\*[\s\S]*?\*/",
-            ".mjs": r"//[^\n]*|/\*[\s\S]*?\*/",
-            ".js": r"//[^\n]*|/\*[\s\S]*?\*/",
-            ".yaml": r"(?<!\S)\#[^\n]*",
-            ".yml": r"(?<!\S)\#[^\n]*",
-            ".toml": r"\#[^\n]*",
-        }.get(path.suffix, r"\#[^\n]*" if path.name in {"Dockerfile", "Caddyfile"} else None)
-        if comment_pattern:
-            strings = r"(?:'[^']*(?:''[^']*)*'|\"(?:\\.|[^\"\\])*\"|`(?:\\.|[^`\\])*`)"
-            for match in re.finditer(f"{strings}|(?P<comment>{comment_pattern})", source):
-                if match.group("comment") is not None:
-                    comments.append(match.span())
-    for start, end in reversed(comments):
-        source = source[:start] + re.sub(r"[^\n]", " ", source[start:end]) + source[end:]
-    return source
+# Prefilter only; whole-part checks below decide whether a candidate is a carrier.
+IDENTIFIER_TOKEN = re.compile(r"(?<![\w-])[\w-]*(?:ddl|extra|statements|databases|create)[\w-]*", re.I)
+IDENTIFIER_PART = re.compile(r"[^\W_]+", re.UNICODE)
+CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 
 
-DDL_CARRIER = re.compile(
-    r"--ddl(?:-file)?|ddl-file|ddl\s+update|databases\s+create|update_ddl|"
-    r"UpdateDatabaseDdl|updateDdl|extra_statements|extraStatements|ddl_statements|"
-    r"databases/[^\s\"'/?]+/ddl\b|"
-    r"CREATE\s+(?:TABLE|(?:UNIQUE\s+)?(?:NULL_FILTERED\s+)?INDEX|SEARCH\s+INDEX|"
-    r"CHANGE\s+STREAM|VIEW|SEQUENCE)\b|ALTER\s+(?:TABLE|INDEX|DATABASE)\b|"
-    r"DROP\s+(?:TABLE|INDEX|VIEW|SEQUENCE)\b|ROW\s+DELETION\s+POLICY\b", re.I,
+def ddl_transport_matches(source: str) -> Iterator[re.Match[str]]:
+    """Keep raw token spans while matching whole identifier parts, not substrings."""
+    previous = ""
+    previous_token: re.Match[str] | None = None
+    spans: set[tuple[int, int]] = set()
+    for token in IDENTIFIER_TOKEN.finditer(source):
+        if previous_token is not None and IDENTIFIER_PART.search(source[previous_token.end():token.start()]):
+            previous = ""
+        for word in IDENTIFIER_PART.finditer(token[0]):
+            for part in CAMEL_BOUNDARY.split(word[0]):
+                part = part.lower()
+                if part == "ddl":
+                    spans.add(token.span())
+                if (previous, part) in {("extra", "statements"), ("databases", "create")}:
+                    assert previous_token is not None
+                    spans.add((previous_token.start(), token.end()))
+                previous, previous_token = part, token
+    for start, end in sorted(spans):
+        match = re.compile(r"[\s\S]+").match(source, start, end)
+        assert match is not None
+        yield match
+
+
+DDL_STATEMENT = re.compile(
+    r"\b(?:CREATE|ALTER|DROP)\b(?:[ \t]+\w+)*?[ \t]+"
+    r"(?:TABLE|INDEX|VIEW|SEQUENCE|CHANGE[ \t]+STREAM|SCHEMA|MODEL|PROPERTY[ \t]+GRAPH|"
+    r"DATABASE|ROLE|PROTO[ \t]+BUNDLE|LOCALITY[ \t]+GROUP|PLACEMENT)\b|"
+    r"\bROW[ \t]+DELETION[ \t]+POLICY\b", re.I,
 )
+
+
+def exemption_remedy() -> str:
+    return (
+        "make the schema extractor consume it (a real schema change), or add a reviewed "
+        f"exemption entry in {EXEMPTION_REGISTRY} with a reason "
+        "(line: path + whitespace-normalized text + expected occurrence count; "
+        "native SQL file: path + SHA-256; statement file/pattern or directory: reason, statements only)"
+    )
 
 
 def assert_ddl_carriers_consumed(path: Path, dispatch_spans: list[tuple[int, int]] | None,
                                  root: Path = ROOT) -> None:
     """Fail closed on every literal carrier, regardless of transport or syntax."""
     relative = path.relative_to(root).as_posix()
-    if relative in DDL_EXEMPTIONS["files"]:
-        return
-    source = uncommented_source(path)
-    raw_lines = path.read_text().splitlines()
+    raw = path.read_bytes()
+    source = raw.decode("utf-8", errors="replace")
+    raw_lines = source.split("\n")
+    matches = [(match, True) for match in ddl_transport_matches(source)]
+    matches.extend((match, False) for match in DDL_STATEMENT.finditer(source))
+    matches.sort(key=lambda item: (item[0][0].lower() not in {"--ddl-file", "ddl-file"}, item[0].start()))
+    file_exemption = DDL_EXEMPTIONS["files"].get(relative)
+    if file_exemption is not None:
+        assert file_exemption["reason"].strip()
+        if hashlib.sha256(raw).hexdigest() != file_exemption["sha256"]:
+            match = matches[0][0] if matches else None
+            line = source.count("\n", 0, match.start()) + 1 if match else 1
+            carrier = match[0] if match else "previously exempt file"
+            raise AssertionError(f"{path}:{line}: DDL carrier: {carrier}; file exemption SHA-256 changed; "
+                                 f"re-review the entire file; {exemption_remedy()}")
     exemptions = DDL_EXEMPTIONS["lines"].get(relative, {})
-    matches = list(DDL_CARRIER.finditer(source))
-    # Keep the early unsupported ddl-file check: an understood --ddl argument
-    # cannot account for a second, unsupported file argument in the same call.
-    matches.sort(key=lambda match: match[0].lower() not in {"--ddl-file", "ddl-file"})
-    for match in matches:
+    normalized_lines = [normalized_statement(line) for line in raw_lines]
+    counts = Counter(normalized_lines)
+    for text, entry in exemptions.items():
+        assert entry["reason"].strip() and type(entry["count"]) is int and entry["count"] > 0
+        if counts[text] != entry["count"]:
+            line = normalized_lines.index(text) + 1 if text in normalized_lines else 1
+            raise AssertionError(f"{path}:{line}: DDL carrier: {text}; line exemption occurrence count "
+                                 f"changed: expected {entry['count']}, found {counts[text]}; "
+                                 f"re-review the line; {exemption_remedy()}")
+    statement_exempt = file_exemption is not None
+    for pattern, entry in DDL_EXEMPTIONS.get("statement_files", {}).items():
+        assert entry["reason"].strip()
+        assert not Path(pattern).is_absolute() and ".." not in Path(pattern).parts
+        if fnmatch.fnmatchcase(relative, pattern):
+            statement_exempt = True
+    for directory, entry in DDL_EXEMPTIONS.get("directories", {}).items():
+        assert entry["reason"].strip()
+        directory_path = Path(directory)
+        assert not directory_path.is_absolute() and ".." not in directory_path.parts
+        assert directory_path.parts
+        if directory_path in Path(relative).parents:
+            statement_exempt = True
+    for match, transport in matches:
         line = source.count("\n", 0, match.start()) + 1
         last_line = source.count("\n", 0, match.end() - 1) + 1
-        if all(normalized_statement(raw_lines[i - 1]) in exemptions for i in range(line, last_line + 1)):
+        if all(normalized_lines[i - 1] in exemptions for i in range(line, last_line + 1)):
+            continue
+        if not transport and statement_exempt:
             continue
         unsupported = match[0].lower() in {"--ddl-file", "ddl-file"}
         if dispatch_spans is None and not unsupported:
@@ -422,15 +460,18 @@ def assert_ddl_carriers_consumed(path: Path, dispatch_spans: list[tuple[int, int
                                    for start, end in dispatch_spans or []):
             continue
         kind = "unsupported" if unsupported else "unconsumed"
-        raise AssertionError(
-            f"{path}:{line}: {kind} DDL carrier: {match[0]}; "
-            "make the schema extractor consume it (a real schema change), or add a reviewed "
-            f"exemption entry in {EXEMPTION_REGISTRY}"
-        )
+        raise AssertionError(f"{path}:{line}: {kind} DDL carrier: {match[0]}; {exemption_remedy()}")
 
 
 def shell_source(path: Path) -> tuple[str, list[int]]:
-    raw = uncommented_source(path)
+    raw = path.read_bytes().decode("utf-8", errors="replace")
+    comments: list[tuple[int, int]] = []
+    try:
+        shell_tokens(raw, comments)
+    except AssertionError as exc:
+        raise AssertionError(f"{path}:1: {exc}") from exc
+    for start, end in reversed(comments):
+        raw = raw[:start] + re.sub(r"[^\n]", " ", raw[start:end]) + raw[end:]
     assert not raw.endswith("\\\n"), f"{path}:{raw.count(chr(10))}: unfinished shell continuation"
     # Keep offsets identical to the raw file for the independent carrier scan.
     source = raw.replace("\\\n", "  ")
