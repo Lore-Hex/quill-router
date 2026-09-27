@@ -24,7 +24,7 @@ def _endpoint(provider: str, model_id: str):
 
 
 def _records():
-    return [ProviderPrecision.model_validate(row)
+    return [ProviderPrecision.from_dict(row)
             for row in json.loads(provider_precision._SNAPSHOT.read_text())]
 
 
@@ -111,7 +111,7 @@ def test_invalid_or_empty_snapshot_cannot_take_down_catalog(tmp_path, monkeypatc
 
 
 def test_duplicate_routes_fail_closed(tmp_path, monkeypatch) -> None:
-    row = _records()[0].model_dump(mode="json")
+    row = json.loads(provider_precision._SNAPSHOT.read_text())[0]
     path = tmp_path / "duplicate.json"
     path.write_text(json.dumps([row, row]))
     provider_precision._precision_index.cache_clear()
@@ -121,6 +121,18 @@ def test_duplicate_routes_fail_closed(tmp_path, monkeypatch) -> None:
             assert provider_precision._precision_index() == {}
     finally:
         provider_precision._precision_index.cache_clear()
+
+
+@pytest.mark.parametrize("change", [
+    {"weight_formats": "fp8"}, {"weight_formats": []}, {"quantization": "unknown"},
+    {"runtime_verified": True}, {"model_revision": "main"},
+    {"sources": [{"title": "Source", "url": "http://example.com"}]},
+    {"evidence_type": "attested"},
+])
+def test_invalid_evidence_cannot_be_published(change) -> None:
+    row = json.loads(provider_precision._SNAPSHOT.read_text())[0]
+    with pytest.raises((TypeError, ValueError)):
+        ProviderPrecision.from_dict({**row, **change})
 
 
 def test_missing_snapshot_fails_closed(tmp_path, monkeypatch) -> None:

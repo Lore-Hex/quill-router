@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+from dataclasses import asdict, dataclass
 from datetime import date
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
-
-from pydantic import BaseModel, ConfigDict, Field
 
 from trusted_router.catalog_data import ModelEndpoint
 
@@ -21,34 +21,74 @@ logger = logging.getLogger(__name__)
 _SNAPSHOT = Path(__file__).parent / "data/provider_precision.json"
 
 
-class PrecisionSource(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
+@dataclass(frozen=True)
+class PrecisionSource:
     title: str
-    url: str = Field(pattern=r"^https://")
-    sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    url: str
+    sha256: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.title, str) or not self.title:
+            raise ValueError("missing precision source title")
+        if not isinstance(self.url, str) or not self.url.startswith("https://"):
+            raise ValueError("invalid precision source URL")
+        if self.sha256 is not None and (
+            not isinstance(self.sha256, str) or not re.fullmatch(r"[a-f0-9]{64}", self.sha256)
+        ):
+            raise ValueError("invalid precision source hash")
 
 
-class ProviderPrecision(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
+@dataclass(frozen=True)
+class ProviderPrecision:
     provider: str
     model_id: str
     upstream_id: str
     quantization: Literal["bf16", "fp8", "nvfp4", "mxfp4", "int4"]
     label: str
     weight_formats: tuple[str, ...]
-    kv_cache_dtype: str | None = None
+    kv_cache_dtype: str | None
     model_repository: str
-    model_revision: str = Field(pattern=r"^[a-f0-9]{40}$")
+    model_revision: str
     reviewed_on: date
-    sources: tuple[PrecisionSource, ...] = Field(min_length=2)
+    sources: tuple[PrecisionSource, ...]
     notes: str
     evidence_type: Literal["published_serving_config"] = "published_serving_config"
     runtime_verified: Literal[False] = False
 
+    def __post_init__(self) -> None:
+        for field in (self.provider, self.model_id, self.upstream_id, self.label,
+                      self.model_repository, self.model_revision, self.notes):
+            if not isinstance(field, str) or not field:
+                raise ValueError("invalid precision field")
+        if self.quantization not in ("bf16", "fp8", "nvfp4", "mxfp4", "int4"):
+            raise ValueError("invalid weight format")
+        if self.quantization not in self.weight_formats or not all(
+            v in ("bf16", "fp4", "fp8", "nvfp4", "mxfp4", "int4") for v in self.weight_formats
+        ):
+            raise ValueError("invalid weight formats")
+        if self.kv_cache_dtype is not None and not isinstance(self.kv_cache_dtype, str):
+            raise ValueError("invalid KV cache dtype")
+        if not re.fullmatch(r"[a-f0-9]{40}", self.model_revision) or len(self.sources) < 2:
+            raise ValueError("missing pinned precision evidence")
+        if self.runtime_verified is not False or self.evidence_type != "published_serving_config":
+            raise ValueError("published configs are not runtime proofs")
+
+    @classmethod
+    def from_dict(cls, row: dict[str, Any]) -> ProviderPrecision:
+        values = dict(row)
+        values["reviewed_on"] = date.fromisoformat(values["reviewed_on"])
+        values["sources"] = tuple(PrecisionSource(**source) for source in values["sources"])
+        values["weight_formats"] = tuple(values["weight_formats"])
+        return cls(**values)
+
     def metadata(self) -> dict[str, Any]:
-        return self.model_dump(mode="json", exclude={"provider", "model_id", "upstream_id"})
+        result = asdict(self)
+        for field in ("provider", "model_id", "upstream_id"):
+            del result[field]
+        result["reviewed_on"] = self.reviewed_on.isoformat()
+        result["sources"] = list(result["sources"])
+        result["weight_formats"] = list(result["weight_formats"])
+        return result
 
 
 @lru_cache(maxsize=1)
@@ -57,13 +97,13 @@ def _precision_index() -> dict[tuple[str, str, str], ProviderPrecision]:
         rows = json.loads(_SNAPSHOT.read_text())
         index = {}
         for row in rows:
-            record = ProviderPrecision.model_validate(row)
+            record = ProviderPrecision.from_dict(row)
             key = (record.provider, record.model_id, record.upstream_id)
             if key in index:
                 raise ValueError("duplicate precision route")
             index[key] = record
         return index
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError, KeyError):
         # Informational evidence must not take catalog or inference offline.
         logger.warning("provider_precision_snapshot_invalid")
         return {}
