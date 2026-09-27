@@ -75,8 +75,8 @@ def test_native_spanner_job_runs_both_focused_server_gates() -> None:
     assert job["env"]["TR_CONFORMANCE_EMULATOR_SCHEMA"] == "1"
     assert job["env"]["SPANNER_EMULATOR_HOST"] == "127.0.0.1:9010"
     assert job["env"]["BIGTABLE_EMULATOR_HOST"] == "127.0.0.1:8086"
-    assert job["services"]["spanner"]["image"] == "gcr.io/cloud-spanner-emulator/emulator:latest"
-    assert job["services"]["bigtable"]["image"] == "gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators"
+    assert job["services"]["spanner"]["image"] == "gcr.io/cloud-spanner-emulator/emulator@sha256:c6f3402f2599684f295a0fdefb6fbbbfb18a0e43e309ff5456ccb452a4570a79"
+    assert job["services"]["bigtable"]["image"] == "gcr.io/google.com/cloudsdktool/google-cloud-cli@sha256:7617d937e9360d769de4ef66266a8caae503c1dbbd050c93404d3f30045c5125"
     steps = [step for step in job["steps"] if "uv run pytest" in step.get("run", "")]
     assert len(steps) == 2
     assert "tests/conformance -k spanner-emulator" in steps[0]["run"]

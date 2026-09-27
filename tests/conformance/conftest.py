@@ -29,9 +29,9 @@ that can itself be skipped guards nothing.
 Test isolation
 --------------
 `InMemoryStore` is constructed fresh per test, so it is isolated for free.
-Native GoogleSQL tests provision and delete fresh emulator resources because
-`SpannerBigtableStore.reset()` refuses to wipe a real database. Other server
-backends share their database. Tests therefore must not reuse fixed
+Native GoogleSQL provisions one disposable instance/database/table per session,
+and constructs a fresh store per test. Server backends share their database.
+Tests therefore must not reuse fixed
 identifiers across tests — every id is namespaced with the per-test `unique`
 fixture below, so a shared emulator database stays order-independent and
 uncontaminated between runs.
@@ -59,12 +59,26 @@ def _memory_store() -> Store:
     return InMemoryStore()
 
 
+@pytest.fixture(scope="session")
+def native_emulator_resources():
+    """One disposable schema/table per session; identifiers are unique per test."""
+    from tests.conformance.spanner_emulator import emulator_resources
+
+    with emulator_resources() as resources:
+        yield resources
+
+
 def _spanner_emulator_store() -> Store:
-    """Provision an isolated native GoogleSQL database and Bigtable table."""
+    raise AssertionError("use the session-owned native_emulator_resources fixture")
+
+
+def _backend(request: pytest.FixtureRequest) -> Store:
+    if request.param != "spanner-emulator":
+        return BACKENDS[request.param]()
     from tests.conformance.spanner_emulator import emulator_store
 
-    # Keep the existing factory API; fixtures own cleanup through close().
-    context = emulator_store()
+    _, _, instance_id = request.getfixturevalue("native_emulator_resources")
+    context = emulator_store(instance_id)
     backend = context.__enter__()
     backend.close = lambda: context.__exit__(None, None, None)
     return backend
@@ -228,7 +242,7 @@ _FAKE_ROLLUP_ORDERING = (
     "asserted through it. A fake limitation, not a store claim either way."
 )
 
-#: Tests the `spanner-fake` backend is KNOWN not to satisfy, each with the
+#: Tests the native STORE is KNOWN not to satisfy, each with the
 #: reason. Applied as **strict xfail**, deliberately, not skip:
 #:
 #:   * a skip is invisible in a green run and would let this backend read as
@@ -240,7 +254,7 @@ _FAKE_ROLLUP_ORDERING = (
 #:
 #: Anything not listed here is genuinely asserted against the native Spanner
 #: store, cross-plane credit transfer included.
-_SPANNER_FAKE_KNOWN_GAPS: dict[str, str] = {
+_NATIVE_STORE_KNOWN_GAPS: dict[str, str] = {
     "test_reserve_then_settle_less_releases_unused_hold": _C1_LEGACY_MONEY,
     "test_reserve_then_settle_more_books_full_actual": _C1_LEGACY_MONEY,
     "test_reserve_then_refund_restores_exact_balance": _C1_LEGACY_MONEY,
@@ -251,8 +265,26 @@ _SPANNER_FAKE_KNOWN_GAPS: dict[str, str] = {
     "test_finalize_gateway_authorization_is_exactly_once": _C1_LEGACY_MONEY,
     "test_finalize_unknown_authorization_is_false_not_error": _C1_LEGACY_MONEY,
     "test_authorization_frozen_zero_hold_releases_zero": _C1_LEGACY_MONEY,
-    "test_synthetic_rollups_apply_ranges_order_limit_and_histogram_option": (_FAKE_ROLLUP_ORDERING),
 }
+
+_FAKE_ONLY_GAPS = {
+    "test_synthetic_rollups_apply_ranges_order_limit_and_histogram_option": _FAKE_ROLLUP_ORDERING,
+}
+
+
+_BACKEND_KNOWN_GAPS = {
+    "spanner-fake": {**_NATIVE_STORE_KNOWN_GAPS, **_FAKE_ONLY_GAPS},
+    "spanner-emulator": dict(_NATIVE_STORE_KNOWN_GAPS),
+}
+
+
+def pytest_collection_modifyitems(items):
+    for item in items:
+        params = getattr(getattr(item, "callspec", None), "params", {})
+        backend = params.get("store", params.get("user_credit_transfer_store"))
+        gap = _BACKEND_KNOWN_GAPS.get(backend, {}).get(item.originalname)
+        if gap is not None:
+            item.add_marker(pytest.mark.xfail(reason=gap, strict=True))
 
 
 @pytest.fixture(params=_BACKEND_PARAMS, ids=lambda name: f"backend={name}")
@@ -263,13 +295,7 @@ def store(request: pytest.FixtureRequest) -> Iterator[Store]:
     reported per-backend so a skipped backend is visible rather than silently
     counted as a pass.
     """
-    if request.param == "spanner-fake":
-        gap = _SPANNER_FAKE_KNOWN_GAPS.get(
-            getattr(request.node, "originalname", None) or request.node.name
-        )
-        if gap is not None:
-            request.node.add_marker(pytest.mark.xfail(reason=gap, strict=True))
-    backend = BACKENDS[request.param]()
+    backend = _backend(request)
     try:
         yield backend
     finally:
@@ -398,7 +424,7 @@ def user_credit_transfer_store(request: pytest.FixtureRequest) -> Iterator[Store
         finally:
             conn._raw.close()
         return
-    backend = BACKENDS[request.param]()
+    backend = _backend(request)
     try:
         yield backend
     finally:

@@ -18,7 +18,29 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src/trusted_router"
 MANIFEST = Path(__file__).with_name("spanner_sql_manifest.json")
-SQL_START = re.compile(r"^\s*(SELECT|INSERT(?: OR UPDATE)? INTO|UPDATE|DELETE FROM|WITH)\s", re.I)
+# Uppercase clause pairs anywhere in a string, including comments/prefixes.
+SQL_START = re.compile(
+    r"\b(?:SELECT\b[\s\S]*?\bFROM|INSERT\b[\s\S]*?\bINTO|"
+    r"UPDATE\b[\s\S]*?\bSET|DELETE\s+FROM)\b|^\s*SELECT\s"
+)
+# Reviewed dialect exclusion: this adapter emits PostgreSQL, not GoogleSQL.
+EXCLUSIONS = {"storage_postgres.py": "PostgreSQL dialect adapter"}
+
+
+def source_paths(src: Path):
+    return (path for path in sorted(src.rglob("*.py"))
+            if path.relative_to(src).as_posix() not in EXCLUSIONS)
+
+
+def constant_text(node: ast.AST) -> str:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        return "".join(constant_text(part) for part in node.values)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return constant_text(node.left) + constant_text(node.right)
+    return ""
+
 
 
 def fingerprint(node: ast.AST) -> str:
@@ -56,21 +78,18 @@ class SourceSQL:
 
 def discover(src: Path = SRC) -> dict[str, SourceSQL]:
     found = {}
-    for path in sorted(src.glob("storage_gcp*.py")):
+    for path in source_paths(src):
         tree = ast.parse(path.read_text())
+        module = ".".join(path.relative_to(src).with_suffix("").parts)
         parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
         candidates: dict[int, ast.expr] = {}
         for node in ast.walk(tree):
-            if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                text = node.value
-            elif isinstance(node, ast.JoinedStr):
-                text = "".join(n.value for n in node.values if isinstance(n, ast.Constant))
-            else:
+            if not isinstance(node, (ast.Constant, ast.JoinedStr, ast.BinOp)):
                 continue
-            if isinstance(parents.get(node), (ast.JoinedStr, ast.Expr)) or not SQL_START.match(text):
+            if isinstance(parents.get(node), (ast.JoinedStr, ast.BinOp, ast.Expr)):
                 continue
-            while isinstance(parents.get(node), (ast.BinOp, ast.JoinedStr)):
-                node = parents[node]
+            if not SQL_START.search(constant_text(node)):
+                continue
             candidates[node.lineno] = node
         counters: dict[str, int] = {}
         for line, node in sorted(candidates.items()):
@@ -81,19 +100,20 @@ def discover(src: Path = SRC) -> dict[str, SourceSQL]:
                 scope = parents[node]  # constant assignment, not the whole module
             name = getattr(scope, "name", "constants")
             counters[name] = counters.get(name, 0) + 1
-            key = f"{path.stem}:{name}:{counters[name]}"
-            found[key] = SourceSQL(key, path.stem, node, scope, tree, line)
+            key = f"{module}:{name}:{counters[name]}"
+            found[key] = SourceSQL(key, module, node, scope, tree, line)
     assert found, "no native GoogleSQL expressions discovered"
     return found
 
 
 def builders(src: Path = SRC) -> dict[str, str]:
     result = {}
-    for path in sorted(src.glob("storage_gcp*.py")):
+    for path in source_paths(src):
         tree = ast.parse(path.read_text())
+        module = ".".join(path.relative_to(src).with_suffix("").parts)
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef) and (node.name.endswith(("_statement", "_statements", "_sql"))):
-                result[f"{path.stem}:{node.name}"] = fingerprint(node)
+                result[f"{module}:{node.name}"] = fingerprint(node)
     return result
 
 
@@ -101,8 +121,9 @@ def sql_sinks(src: Path = SRC) -> dict[str, str]:
     """Track dispatch scopes too: new indirect SQL/batch calls cannot hide behind names."""
     result = {}
     methods = {"execute_sql", "execute_update", "execute_partitioned_dml", "batch_update", "execute_batch_dml"}
-    for path in sorted(src.glob("storage_gcp*.py")):
+    for path in source_paths(src):
         tree = ast.parse(path.read_text())
+        module = ".".join(path.relative_to(src).with_suffix("").parts)
         parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
@@ -117,7 +138,7 @@ def sql_sinks(src: Path = SRC) -> dict[str, str]:
                     ancestors.append(node.name)
                     if scope is None:
                         scope = node
-            key = path.stem + ":" + ".".join(reversed(ancestors))
+            key = module + ":" + ".".join(reversed(ancestors))
             result[key] = fingerprint(scope or tree)
     return result
 
@@ -128,8 +149,8 @@ def evaluate(source: SourceSQL, bindings: dict[str, Any]) -> str:
     # Bindings use Python expressions only for module-owned column/SQL constants.
     for key, value in bindings.items():
         namespace[key] = eval(value[1:], namespace) if isinstance(value, str) and value.startswith("=") else value  # noqa: S307 - checked-in test scenarios
-    sql = eval(compile(ast.Expression(source.expression), source.module, "eval"), namespace)  # noqa: S307 - repository source
-    assert isinstance(sql, str) and SQL_START.match(sql), source.key
+    sql = eval(compile(ast.Expression(source.expression), f"<spanner-sql-inventory:{source.module}>", "eval"), namespace)  # noqa: S307 - repository source
+    assert isinstance(sql, str) and SQL_START.search(sql), source.key
     return sql
 
 
@@ -140,14 +161,17 @@ def load_manifest() -> dict[str, Any]:
 def assert_complete(src: Path = SRC) -> None:
     actual = discover(src)
     manifest = load_manifest()
-    expected = manifest["expressions"]
+    expected = {**manifest["expressions"], **manifest["non_google_sql"]}
     assert actual.keys() == expected.keys(), (
         f"Unregistered SQL: {sorted(actual.keys() - expected.keys())}; "
         f"stale SQL registrations: {sorted(expected.keys() - actual.keys())}"
     )
     for key, source in actual.items():
         assert source.fingerprint == expected[key]["fingerprint"], f"SQL scope changed: {key}; review acceptance cases and register it"
-        assert expected[key]["scenarios"], f"No executable scenarios for {key}"
+        if key in manifest["expressions"]:
+            assert expected[key]["scenarios"], f"No executable scenarios for {key}"
+        else:
+            assert expected[key]["reason"], f"Unreviewed dialect classification: {key}"
     assert sql_sinks(src) == manifest["sinks"], "SQL dispatch inventory changed; review indirect SQL and batch shapes"
     assert builders(src) == manifest["builders"], "SQL builder inventory changed; register and exercise its output"
 
@@ -155,8 +179,8 @@ def assert_complete(src: Path = SRC) -> None:
 def parameter_types(source: SourceSQL) -> dict[str, str]:
     """Read literal SDK type dictionaries in the closest scope first.
 
-    Used only when authoring the manifest; CI consumes the reviewed, explicit map.
-    Unknown parameters fail generation instead of silently becoming STRING.
+    The always-on binding guard compares the reviewed manifest with these maps.
+    Unknown parameters require explicit review instead of silently becoming STRING.
     """
     result = {}
     for scope in (source.tree, source.scope):

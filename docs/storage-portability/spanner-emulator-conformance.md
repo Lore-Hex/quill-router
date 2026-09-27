@@ -1,6 +1,6 @@
 # Native GoogleSQL emulator conformance
 
-This change adds a real GoogleSQL server gate alongside the unchanged Python fake and the PostgreSQL-dialect backend. It does not establish production equivalence: CI must first demonstrate that the selected emulator accepts the current SQL and rejects the three known invalid constructions.
+This change adds a real GoogleSQL server gate alongside the unchanged Python fake and the PostgreSQL-dialect backend. It does not establish production equivalence. The first CI run established schema provisioning and rejection of the three invalid constructions; round 2 corrects the harness failures and strengthens offline guards.
 
 ## Schema source and scope
 
@@ -17,58 +17,76 @@ The generated schema contains **63 DDL statements: 21 tables, 14 secondary index
 - `migrate_trust_reconciliation.sh` conditionally recreates the old three-column-key marker table only when it contains no real reconciliation state. This fixture uses the current five-column primary key without running that destructive upgrade.
 - Existing installations intentionally add nullable key-window usage and reservation `credit_shard` columns; fresh CREATE definitions retain NOT NULL/defaults. This suite does not test historical rolling-upgrade schemas or backfills.
 
-## CI provisioning
+## CI provisioning and first-run evidence
 
-The new `spanner-emulator` job uses these explicit image tags:
+The `spanner-emulator` job pins the exact image digests pulled in its first CI run:
 
-- `gcr.io/cloud-spanner-emulator/emulator:latest`, exposing gRPC 9010 and REST 9020.
-- `gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators`, exposing 8086. GitHub service definitions have no `command` field, so the SDK image's shell is kept alive with interactive/TTY options and `docker exec -d` starts `gcloud beta emulators bigtable start --host-port=0.0.0.0:8086 --quiet`.
+- Spanner: `gcr.io/cloud-spanner-emulator/emulator@sha256:c6f3402f2599684f295a0fdefb6fbbbfb18a0e43e309ff5456ccb452a4570a79`.
+- Bigtable SDK: `gcr.io/google.com/cloudsdktool/google-cloud-cli@sha256:7617d937e9360d769de4ef66266a8caae503c1dbbd050c93404d3f30045c5125` (the first run's `emulators` image).
 
-The image tags, image entrypoint behavior, and live startup were **not verified locally**: this machine has no Docker/emulator and network use was prohibited. The tags are moving tags; pin the successful CI images to reviewed digests when reproducibility is required. No image version has been invented or claimed tested.
+Run 1 successfully started both service containers and submitted the complete 63-statement schema. Acceptance executed all 496 cases in approximately ten seconds: **449 passed, 47 failed**. All three rejection canaries were rejected. Failures were harness heartbeat types (32), TIMESTAMP strings (3), null-filtered-index eligibility checks (11), and the overlarge “below limit” control (1). The native conformance step passed its first test, then timed out in SDK teardown. Both steps spent about ten minutes joining the SDK multiplexed-session maintenance thread; this was teardown time, not test execution time.
 
-The job sets `SPANNER_EMULATOR_HOST=127.0.0.1:9010`, `BIGTABLE_EMULATOR_HOST=127.0.0.1:8086`, and `TR_CONFORMANCE_EMULATOR_SCHEMA=1`. Readiness is bounded to 60 seconds. Missing/unreachable endpoints after explicit opt-in fail; they cannot silently skip the CI gate. Only loopback endpoints and a fixed synthetic project are accepted. No cloud credentials are required.
+The emulator path sets `DatabaseSessionsManager._MAINTENANCE_THREAD_POLLING_INTERVAL` to 100 ms before constructing any Spanner client. The offline mock-SDK test asserts this ordering. Production configuration is untouched. Native tests share one disposable instance/database/Bigtable table per session, construct a store per test, and retain session resource teardown. The per-test `unique` fixture supplies order-independent identifiers. Acceptance shares those resources if both suites run in one process; CI's two pytest processes each provision once.
 
-[Provisioning](../../tests/conformance/spanner_emulator.py) calls the installed SDK's `spanner.Client(..., credentials=AnonymousCredentials()).instance(..., configuration_name="projects/tr-conformance/instanceConfigs/emulator-config").create().result(timeout=60)` and `instance.database("conformance", ddl_statements=DDL[:20]).create().result(timeout=120)`. These invoke `InstanceAdminClient.create_instance` and `DatabaseAdminClient.create_database` with `extra_statements`; remaining DDL is submitted via `database.update_ddl(...).result(timeout=120)` in ordered batches of at most 20. GoogleSQL is the default dialect. Bigtable uses `bigtable.Client(..., admin=True, credentials=AnonymousCredentials()).instance(...).table("generations").create(column_families=...)`, invoking the table-admin `create_table` API. The emulator implicitly namespaces the Bigtable instance; no production cluster/profile is created. Families are `m`, `activity`, `benchmark`, `synthetic`, and `rollup`. Retention GC scheduling is not part of the Store behavioral contract.
+The job exposes Spanner gRPC 9010 / REST 9020 and Bigtable 8086. The SDK service container stays alive with interactive/TTY options and starts Bigtable via `docker exec -d`. Readiness is bounded to 60 seconds. `TR_CONFORMANCE_EMULATOR_SCHEMA=1` requires both loopback emulator endpoints; missing or unreachable servers fail rather than skip. Anonymous credentials and synthetic resource IDs are used. DDL is submitted in ordered batches of at most 20 with bounded admin RPC waits.
 
-Each conformance test gets disposable instance/database/table names; cleanup closes the store's Spanner session pool, deletes its Bigtable table and drops its Spanner instance. This avoids the production store's intentionally forbidden `reset()`. Acceptance cases share a separate module-scoped disposable database. SELECT results are consumed in snapshots. DML uses `database.session()`, `session.create()`, `session.transaction()`, `transaction.begin()`, and a `finally` rollback plus session deletion. There is no commit path, including on assertion or RPC failure. Batch DML checks status and one count per statement. No required-check configuration changes were made.
-
-Ten legacy-money Store-protocol tests are already documented as adapter gaps in the fake registry because the native store removed the legacy methods. **No new xfail or skip is applied to the emulator.** These tests are expected to expose the same contract failures in the first CI run; this task does not reimplement removed money paths or weaken conformance assertions. The existing eleven fake xfails remain unchanged. The acceptance step runs even after a conformance failure, so contract gaps cannot prevent SQL diagnostics. All SQL acceptance cases fail normally on any rejection.
+Exactly ten removed legacy-money methods are strict xfails for **both native-store backends**, using the shared store-level registry. The fake-only Bigtable rollup ordering gap stays fake-only; emulator failures there remain failures. Collection-level checks enforce this distinction. Acceptance executes every registered native SQL case without xfails.
 
 ## Statement coverage and emulator limitations
 
-See the [complete per-statement inventory](spanner-sql-inventory.md) for SELECT/DML grouping, named parameter types, sensitive features, source links, and actual batch shapes. The scanner covers all `storage_gcp*.py` SQL expressions, complete enclosing function fingerprints (normalized across Python AST versions), SQL dispatch scopes, and `*_statement`/`*_statements`/`*_sql` builders. New indirect calls, changed builders and literals fail the offline guard until registered. The current SQL is evaluated/imported at test time; the manifest does not freeze a second copy of it.
+283 native expressions (167 SELECT, 116 DML), 303 literal scenarios, 124 builder/capture cases, 427 primary acceptance cases, 116 additional batch cases, 3 rejection canaries and 3 positive controls; 15 builders and 202 dispatch scopes fingerprinted.
 
-The runtime cases include both authorize batch alternatives (typed/legacy, speculative/sequential), claim/reaper/retention variants, strict windows, current/rolled key windows including BYOK and imported window amounts, both authorization INSERT variants, generation/operational outbox writes, full 32-shard freshness queries, enqueue batches, optional settlement metadata combinations, `_SETTLED_PAYLOAD_SQL`, and the guarded done UPDATE with THEN RETURN. `_API_KEY_AUTH_CONTEXT_SQL` and all other literal SELECT/DML expressions are included in the source inventory. Types used are STRING, INT64, BOOL, TIMESTAMP and ARRAY<STRING> (the inventory lists each binding).
+See [the inventory](spanner-sql-inventory.md) for every source expression and runtime case. Discovery covers all Python modules by default, excluding only the reviewed `storage_postgres.py` dialect adapter. Other non-GoogleSQL expressions in mixed or analytics modules remain explicitly classified and fingerprinted in the manifest, so new files and expressions cannot escape review.
 
-**No current emulator limitation document was available locally, and none was fetched under the no-network instruction. Therefore this report does not label any current statement “documented unsupported” on the basis of an unverified recollection.** These are the primary references for the first CI review, not sources read during this implementation: [emulator overview and limitations](https://cloud.google.com/spanner/docs/emulator), [emulator README](https://github.com/GoogleCloudPlatform/cloud-spanner-emulator/blob/master/README.md), and [Bigtable emulator](https://cloud.google.com/bigtable/docs/emulator).
+The one SQL emulator accommodation is the statement hint `@{spanner_emulator.disable_query_null_filtered_index_check=true}`. The harness derives index names from `CREATE [UNIQUE] NULL_FILTERED INDEX` in the production DDL and adds the hint only to statements naming one of those indexes, including sequential and batch DML. An always-on guard checks exact equality of the hinted and eligible statement sets. Production SQL is unchanged.
 
-Per-statement support remains unverified for every JSON function, named argument, THEN RETURN, PENDING_COMMIT_TIMESTAMP, and FORCE_INDEX use listed in the inventory. The full production DDL, including all row-deletion policies and generated columns, is submitted unchanged; no unsupported DDL is silently removed. An unsupported statement is a named CI failure, not a skip or blanket xfail. TTL background expiry, query plans, IAM/TLS, production contention, optimizer choices, exact staleness, and production resource limits are not demonstrated by the offline tests or by simple SQL acceptance.
+The first CI run's emulator explained: “The emulator is not able to determine whether the null filtered index … can be used to answer this query as it may filter out nulls that may be required to answer the query.” It directed testing against Cloud Spanner and said “the emulator will accept the query and return a valid result when it is run with the check disabled.” These are live production queries; the hint bypasses the emulator's index eligibility check, not SQL parsing or execution. Eleven first-run failures had this message. This evidence comes from the supplied CI logs; no online documentation was fetched.
 
-Three server canaries require InvalidArgument for row-dependent JSON_SET `create_if_missing`, row-dependent JSON_REMOVE paths, and a statement containing over 1000 IF calls. Three positive controls verify that literal JSON paths/options and a smaller function count actually work, so missing functions cannot masquerade as enforcement of the restrictions. If an emulator version accepts any of the invalid cases, CI fails and explicitly exposes the emulator's inability to guard that production rule. That failure needs investigation rather than an exception that makes the check green.
+The DDL is unchanged, including generated columns and row-deletion policies. Acceptance establishes server analysis/execution with synthetic bindings, mostly on empty tables. Seeded heartbeat and done-returning cases additionally require affected rows. TTL background expiry, query plans, IAM/TLS, contention, staleness and production resource limits remain outside this proof.
 
-Most inventory cases test analysis/execution with synthetic bindings against empty tables, so they do not establish all value-dependent behavior. The settlement heartbeat cases and done-returning case do seed their target rows and require one affected/returned row. Conformance tests remain the separate behavioral contract.
+The canaries now match their specific restriction: `create_if_missing` plus literal/parameter wording; JSON_REMOVE argument/path plus constant wording; and the exact 1000-function limit message. Each control uses the same table, column and expression as its canary, changing only the prohibited argument or repetition count. The matched IF expressions use 450 copies (~900 functions) for acceptance and 520 (~1040) for rejection. Unrelated InvalidArgument messages cannot satisfy the canaries. Exact emulator wording for the two JSON restrictions will be checked in CI.
+
+Frozen SQL fragments remain explicit scenarios: `where` in `storage_gcp.list_credit_movements`, `storage_gcp._list_entities`, and `storage_gcp_google_ads._list_entities`; `suffix_sql` in `storage_gcp._list_entities` and `tail` in `storage_gcp_google_ads._list_entities`; `arms` in `SpannerOperationalAnalyticsOutbox.oldest_enqueued_at`; `sibling` in `done_retention_statements`; `phase_sql` in `_due_rows`; and `suffix` in `trust_eligibility.read_lease_trust` / `billing_paused_tx`. The always-on scope guard requires an assignment for each fragment inside its fingerprinted production scope, so changing its production construction invalidates completeness. Module column constants used by the newly registered reconciliation queries are evaluated from production. Builder batches use the matching key shard and settlement's `defer_retention=True`.
 
 ## Offline evidence and remaining verification
 
-Dependencies were installed with `uv sync --offline --frozen --link-mode copy` from a writable clone of the existing local uv cache. The final full-suite attempt used Python 3.14.6, pytest 9.1.1, google-cloud-spanner 3.69.1, google-cloud-bigtable 2.42.0, and coverage 7.13.5. Lint, mypy and the focused conformance run also passed in the frozen Python 3.11.15 workspace environment. Inventory fingerprints were verified across both Python AST versions.
+Round 2 uses `uv run --offline --frozen` throughout, without network, commits or pushes. The full repository suite was explicitly not run: this sandbox cannot bind localhost and CI owns that gate. The requested focused conformance/workflow tests, lint, mypy, isolated coverage proof and copy-based mutations are recorded in the round-2 result below. No local emulator execution is claimed.
 
-| Local check | Result |
+Schema extraction now rejects every unconsumed DDL-bearing line with file:line. Exact reviewed exceptions cover helper dispatch/expansion, database options, printed rollback advice, destructive empty-marker recreation and `--retire-unique`. Heredoc DDL, single-quoted ALTER dispatches and variable-backed column definitions fail rather than silently regenerating. Unresolved shell dollars fail (the existing SQL JSON path `'$.expires_at'` is explicitly recognized). Regeneration prints a unified DDL diff before writing.
+
+Coverage evaluates source expressions under `<spanner-sql-inventory:module>` pseudo-filenames, which coverage ignores; evaluating expressions does not claim production source-line coverage. Full-suite ≥70% coverage and the corrected real-emulator run remain CI responsibilities.
+
+### Round-2 gate results
+
+All commands used `uv run --offline --frozen`; the coverage proof used an isolated `COVERAGE_FILE` under `/private/tmp`.
+
+| Gate | Result |
 |---|---|
-| `uv run --offline --frozen ruff check .` | Passed |
-| `uv run --offline --frozen mypy` | Passed: 400 source files |
-| Schema, SQL inventory, binding, builder, provisioning, rollback and mutation guards | 13 passed; 492 live-server cases explicitly skipped |
-| Complete conformance suite plus eight timeout retries from an earlier full attempt | 278 passed, 933 skipped, 11 xfailed; includes 270 conformance/guard passes and eight passing retries |
-| CI workflow guards after adding the focused native job | 4 passed |
-| Final full-suite coverage attempt | **Blocked:** 1 failed, 5,581 passed, 935 skipped, 12 xfailed after 38m15s |
-| Complete-suite coverage ≥70% | **Unverified**; the full run did not complete |
+| `ruff check .` | All checks passed |
+| `mypy` | Success: no issues found in 400 source files |
+| `pytest -q -p no:cacheprovider tests/conformance tests/test_ci_workflow.py` | **294 passed, 990 skipped, 11 xfailed**, 18 warnings in 85.81s |
+| `coverage run -m pytest -q tests/conformance/test_spanner_sql_acceptance.py` | **9 passed, 549 skipped**, 6 warnings in 74.56s |
+| `coverage report > /dev/null` | Exit 0; no pseudo-source error |
+| CI's `coverage report --show-missing --skip-covered --fail-under=70` | Exit 2: **22%**, below 70%, because this isolated proof ran only the focused acceptance module. Full-suite coverage was not run or claimed. |
+| Copy-only mutations | **12/12 caught** at the intended failing tests below |
+| Valid schema addition in a copy | Regeneration printed unified DDL diff before writing |
 
-The final full command was `pytest -q --maxfail=1 --cov=trusted_router --cov-report=term --cov-fail-under=70`, run serially through the frozen Python 3.14 environment with `COVERAGE_CORE=ctrace` and `TR_CHECK_LIVE_OPENROUTER=0`. Its blocker is `tests/test_gateway_reuse_probe.py::test_attested_gateway_reuse_is_measured_on_the_route_it_keeps_warm`: the sandbox rejects its local test-server bind to `127.0.0.1:0` with `PermissionError: [Errno 1] operation not permitted`. This test was not modified or skipped to bypass the restriction. Partial coverage is not presented as a passing measurement.
+| Mutation | Failing test |
+|---|---|
+| Restore 10-minute polling | `test_provisioning_submits_all_ddl_and_cleans_up` |
+| Drop one emulator legacy-money gap | `test_native_legacy_gaps_are_strict_at_collection` |
+| Bind a `+00:00` TIMESTAMP | `test_timestamp_string_bindings_use_utc_z` |
+| Omit hint for receipt-key index | `test_null_filtered_hint_set_matches_registered_statements` |
+| Generic canary regex | `test_canary_rejection_is_specific[row-dependent-json-remove-path]` |
+| Add INSERT OR IGNORE literal | `test_spanner_sql_inventory_is_complete` |
+| Add SQL in a new module | `test_spanner_sql_inventory_is_complete` |
+| Heredoc DDL | `test_regeneration_extraction` in the mutated copy |
+| Single-quoted ALTER | `test_regeneration_extraction` in the mutated copy |
+| Variable-backed column definition | `test_regeneration_extraction` in the mutated copy |
+| Manifest STRING → INT64 | `test_every_registered_case_has_exact_typed_bindings` |
+| Discard all heartbeat builder cases | `test_registered_builders_are_actually_called` |
 
-Earlier parallel attempts encountered HTTP request-body and mocked release-subprocess timeouts; all eight initial timeout failures passed in a subsequent serial retry. Python 3.11 also cannot parse an existing unrelated PEP 695 test fixture, so the full run used Python 3.14. The serial run exposed and fixed one change-related failure: the existing workflow guard globally assumed exactly two pytest commands. It now protects the two full-suite jobs while separately verifying the new job's services, opt-in, focused commands, and acceptance step after a conformance failure.
-
-Copy-based mutation guards append an unregistered SQL literal, add an unregistered builder, change `kind STRING(64)` to INT64 in a copied DDL module, and add an unknown migration idiom. Each triggers the corresponding assertion; originals are untouched. Missing-emulator skips explicitly say that no SQL was validated.
-
-Pending an unrestricted CI run: complete repository-suite execution and the ≥70% coverage gate; both emulator image startup paths; every admin RPC and production DDL operation; real Spanner and Bigtable conformance; every SELECT/DML/batch execution and rollback against the server; all three production-rejection canaries and their positive controls; and current documented feature-support classification. No emulator or production execution is claimed locally. No network access, repository commit, push, deployment, fake modification, or required-check configuration change was performed.
+The three schema mutations are also permanent parametrized negative controls in `test_schema_blind_spots_fail_closed_in_copies`. The new-module test additionally covers commented, parenthesized, split-prefix and dynamic-prefix SQL. Cleanup tests cover session creation, begin, body, rollback and deletion failures. No production code or schema source was edited; server acceptance, native rollup ordering, corrected teardown runtime and the whole-workflow ≥70% gate still need CI.
 
 ## Exact table, column, index and policy inventory
 

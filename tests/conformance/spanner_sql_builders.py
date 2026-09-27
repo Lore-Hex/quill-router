@@ -1,12 +1,13 @@
 """Exercise emitted SQL variants using production builders and parameter maps."""
 from __future__ import annotations
 
+import json
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from itertools import product
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, get_type_hints
 
 from google.cloud.spanner_v1 import param_types as pt
 from google.rpc.status_pb2 import Status
@@ -78,7 +79,7 @@ def builder_cases() -> list[SQLCase]:
         key_hash="acceptance-key", model="acceptance-model", provider_name="acceptance-provider",
         app="acceptance", tokens_prompt=1, tokens_completion=1, total_cost_microdollars=1,
         usage_type=UsageType.CREDITS, speed_tokens_per_second=1.0, finish_reason="stop",
-        status="success", streamed=False, created_at=NOW.isoformat(),
+        status="success", streamed=False, created_at=NOW.isoformat().replace("+00:00", "Z"),
     )
     outbox = SpannerOperationalAnalyticsOutbox(None, pt)
     insert_auth = gateway_authorization_insert_statement(pt, authorization, created_at=NOW)
@@ -94,7 +95,7 @@ def builder_cases() -> list[SQLCase]:
         idempotency_fingerprint="acceptance-fingerprint", expires_at=NOW, created_at=NOW,
     )
     entity = counters.entity_insert_statement(pt, "acceptance", "acceptance", "{}")
-    reserve_key = counters.reserve_key_statement(pt, "acceptance-key", 1, is_byok=False)
+    reserve_key = counters.reserve_key_statement(pt, "acceptance-key", 1, is_byok=False, shard=0)
     gen = generation_insert_statement(pt, generation, terminal_at=NOW)
     activity = outbox.activity_insert_statement(generation)
     for name, statement in (("authorization", insert_auth), ("admission", insert_admission),
@@ -114,9 +115,13 @@ def builder_cases() -> list[SQLCase]:
     from trusted_router.storage_gcp_request_records import _AUTHORIZATION_HEARTBEAT_FIELDS
 
     heartbeat_values: dict[str, Any] = {
-        "started_at": NOW.isoformat(), "heartbeat_seq": 1, "heartbeat_at": NOW.isoformat(),
-        "heartbeat_hash": "hash", "selected_endpoint_id": "endpoint", "delivered_usage": {"tokens": 1},
+        "started_at": NOW.isoformat().replace("+00:00", "Z"), "heartbeat_seq": 1, "heartbeat_at": NOW.isoformat().replace("+00:00", "Z"),
+        "heartbeat_hash": "hash", "selected_endpoint_id": "endpoint", "delivered_usage": json.dumps({"tokens": 1}, sort_keys=True, separators=(",", ":")),
     }
+    annotations = get_type_hints(GatewayAuthorization)
+    assert heartbeat_values.keys() == set(_AUTHORIZATION_HEARTBEAT_FIELDS)
+    for field, value in heartbeat_values.items():
+        assert isinstance(value, annotations[field]), (field, value, annotations[field])
     for bits in product((False, True), repeat=len(_AUTHORIZATION_HEARTBEAT_FIELDS)):
         fields = {field: heartbeat_values[field] if bit else None for field, bit in zip(_AUTHORIZATION_HEARTBEAT_FIELDS, bits, strict=True)}
         seed = gateway_authorization_insert_statement(pt, replace(authorization, **fields), created_at=NOW)
@@ -133,7 +138,7 @@ def builder_cases() -> list[SQLCase]:
     cases.append(SQLCase("enqueue-retention-clear-batch", clear, batch=True))
     for reservation_id in (None, "acceptance-reservation"):
         statements = done_retention_statements(pt, authorization_id="acceptance-auth", intent_kind="settle",
-                                              reservation_id=reservation_id, now=NOW.isoformat())
+                                              reservation_id=reservation_id, now=NOW.isoformat().replace("+00:00", "Z"))
         cases.append(SQLCase(f"done-retention-{reservation_id}", statements, batch=True))
     cases.append(SQLCase("speculative-done-batch", speculative_done_statements(
         pt, authorization_id="acceptance-auth", intent_kind="settle", reservation_id="acceptance-reservation",
@@ -155,6 +160,7 @@ def builder_cases() -> list[SQLCase]:
         if claim_hold:
             writes.append(counters.claim_reservation_statement(
                 pt, "acceptance-reservation", actual_micro=1, settled_usage_type="credits", terminal_at=NOW,
+                defer_retention=True,
             ))
         writes.append(settled)
         if done_outbox:
@@ -178,7 +184,7 @@ def builder_cases() -> list[SQLCase]:
         cases.append(SQLCase(f"outbox-enqueue-batch-{has_reservation}-{refill}", capture.statements, batch=True))
         if has_reservation and not refill:
             params = {"aid": "acceptance-auth", "kind": "settle", "lease_owner": None,
-                      "status": "done", "now": NOW.isoformat()}
+                      "status": "done", "now": NOW.isoformat().replace("+00:00", "Z")}
             types = {name: pt.TIMESTAMP if name == "now" else pt.STRING for name in params}
             cases.append(SQLCase("guarded-done-returning", [(_DONE_ROW_SQL, params, types)],
                                  seed=[capture.statements[0]], expected_counts=[1]))

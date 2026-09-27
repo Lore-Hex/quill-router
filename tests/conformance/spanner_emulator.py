@@ -5,6 +5,7 @@ import os
 import socket
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -34,6 +35,11 @@ def emulator_resources() -> Iterator[tuple[Any, Any, str]]:
     require_emulators()
     from google.auth.credentials import AnonymousCredentials
     from google.cloud import bigtable, spanner
+    from google.cloud.spanner_v1.database_sessions_manager import DatabaseSessionsManager
+
+    # The SDK sleeps once per polling interval; close() joins that thread.
+    # Set this BEFORE constructing any client, exclusively in the emulator path.
+    DatabaseSessionsManager._MAINTENANCE_THREAD_POLLING_INTERVAL = timedelta(milliseconds=100)
 
     project = "tr-conformance"
     instance_id = "conf-" + uuid4().hex[:12]
@@ -66,18 +72,15 @@ def emulator_resources() -> Iterator[tuple[Any, Any, str]]:
 
 
 @contextmanager
-def emulator_store() -> Iterator[Any]:
+def emulator_store(instance_id: str) -> Iterator[Any]:
     from trusted_router.storage_gcp import SpannerBigtableStore
 
-    with emulator_resources() as (_, _table, instance_id):
-        store = SpannerBigtableStore(
-            project_id="tr-conformance", spanner_instance_id=instance_id,
-            spanner_database_id="conformance", bigtable_instance_id=instance_id,
-            generation_table="generations",
-        )
-        try:
-            yield store
-        finally:
-            # The production store deliberately has no destructive reset.
-            # Drain its SDK pool before dropping our per-test instance.
-            store._database.close()
+    store = SpannerBigtableStore(
+        project_id="tr-conformance", spanner_instance_id=instance_id,
+        spanner_database_id="conformance", bigtable_instance_id=instance_id,
+        generation_table="generations",
+    )
+    try:
+        yield store
+    finally:
+        store._database.close()

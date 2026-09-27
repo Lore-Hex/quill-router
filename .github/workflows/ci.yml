@@ -39,12 +39,12 @@ jobs:
       TR_SPANNER_POOL_SIZE: "2"
     services:
       spanner:
-        image: gcr.io/cloud-spanner-emulator/emulator:latest
+        image: gcr.io/cloud-spanner-emulator/emulator@sha256:c6f3402f2599684f295a0fdefb6fbbbfb18a0e43e309ff5456ccb452a4570a79
         ports:
           - 9010:9010
           - 9020:9020
       bigtable:
-        image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+        image: gcr.io/google.com/cloudsdktool/google-cloud-cli@sha256:7617d937e9360d769de4ef66266a8caae503c1dbbd050c93404d3f30045c5125
         # The SDK image's default bash stays alive while the step below starts
         # the emulator. GitHub services have no `command` field.
         options: --interactive --tty
