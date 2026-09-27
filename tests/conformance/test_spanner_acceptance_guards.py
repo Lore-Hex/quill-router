@@ -1,6 +1,7 @@
 """Negative controls run against copies, without changing production adapters."""
 from __future__ import annotations
 
+import os
 import runpy
 import shutil
 import subprocess
@@ -13,6 +14,19 @@ from tests.conformance import spanner_schema_source as schema
 from tests.conformance.spanner_emulator import require_emulators
 from tests.conformance.spanner_schema_source import ROOT, assert_schema_matches, migration_ddl
 from tests.conformance.spanner_sql_inventory import SRC, assert_complete
+
+
+def _fixture_git(*args: str, **kwargs):
+    """Run git for a test fixture without the developer's global or system config.
+
+    Global excludes, commit signing or hooks must not change what a fixture
+    tracks or whether its setup succeeds.
+    """
+    env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
+    return subprocess.run(  # noqa: S603 - fixed git setup
+        ["git", "-c", "user.email=t@example.invalid", "-c", "user.name=t", *args],  # noqa: S607
+        env=env, check=True, **kwargs,
+    )
 
 
 def copy_schema_repository(root):
@@ -666,13 +680,12 @@ def test_a_git_checkout_scans_tracked_files_and_a_plain_directory_scans_all(tmp_
     carrier = '{"note": "update_ddl"}\n'
     checkout = tmp_path_factory.mktemp("repo") / name
     checkout.mkdir()
-    subprocess.run(["git", "init", "-q", str(checkout)], check=True)  # noqa: S603, S607 - fixed git setup
+    _fixture_git("init", "-q", str(checkout))
     tracked = ["migrate.sh", "gha-creds-tracked.json", "build/generated.sh", "tests/fixture.sh", "nested/tests/tool.sh"]
     for relative in [*tracked, "gha-creds-untracked.json", "anything.txt"]:
         (checkout / relative).parent.mkdir(parents=True, exist_ok=True)
         (checkout / relative).write_text(carrier)
-    # --force: a developer's global excludes (e.g. build/) must not untrack fixtures.
-    subprocess.run(["git", "-C", str(checkout), "add", "--force", *tracked], check=True)  # noqa: S603, S607 - fixed git setup
+    _fixture_git("-C", str(checkout), "add", *tracked)
 
     # Tracked files are scanned whatever their name; excluded directories
     # (at any depth) and the root tests/ stay out; untracked files never count.
@@ -689,22 +702,16 @@ def test_a_git_checkout_scans_tracked_files_and_a_plain_directory_scans_all(tmp_
 
 @pytest.mark.parametrize("active", [True, False], ids=["active", "inactive"])
 def test_a_git_checkout_with_a_submodule_is_refused(tmp_path_factory, active):
-    git = ["git", "-c", "user.email=t@example.invalid", "-c", "user.name=t", "-c", "protocol.file.allow=always"]
     sub = tmp_path_factory.mktemp("sub")
-    subprocess.run([*git, "init", "-q", str(sub)], check=True)  # noqa: S603 - fixed git setup
+    _fixture_git("init", "-q", str(sub))
     (sub / "migrate.sh").write_text('{"note": "update_ddl"}\n')
-    subprocess.run([*git, "-C", str(sub), "add", "--force", "migrate.sh"], check=True)  # noqa: S603 - fixed git setup
-    subprocess.run([*git, "-C", str(sub), "commit", "-q", "-m", "sub"], check=True)  # noqa: S603 - fixed git setup
+    _fixture_git("-C", str(sub), "add", "migrate.sh")
+    _fixture_git("-C", str(sub), "commit", "-q", "-m", "sub")
     checkout = tmp_path_factory.mktemp("super")
-    subprocess.run([*git, "init", "-q", str(checkout)], check=True)  # noqa: S603 - fixed git setup
-    subprocess.run(  # noqa: S603 - fixed git setup
-        [*git, "-C", str(checkout), "submodule", "add", "-q", str(sub), "vendored"], check=True
-    )
-
+    _fixture_git("init", "-q", str(checkout))
+    _fixture_git("-c", "protocol.file.allow=always", "-C", str(checkout), "submodule", "add", "-q", str(sub), "vendored")
     if not active:
-        subprocess.run(  # noqa: S603 - fixed git setup
-            [*git, "-C", str(checkout), "config", "submodule.vendored.active", "false"], check=True
-        )
+        _fixture_git("-C", str(checkout), "config", "submodule.vendored.active", "false")
 
     # Git lists a submodule's files only when it is active; refuse either way.
     with pytest.raises(AssertionError, match="submodules are outside the schema scan"):
@@ -713,11 +720,11 @@ def test_a_git_checkout_with_a_submodule_is_refused(tmp_path_factory, active):
 
 def test_a_checkout_missing_a_tracked_file_is_refused(tmp_path_factory):
     checkout = tmp_path_factory.mktemp("sparse")
-    subprocess.run(["git", "init", "-q", str(checkout)], check=True)  # noqa: S603, S607 - fixed git setup
+    _fixture_git("init", "-q", str(checkout))
     (checkout / "migrate.sh").write_text('{"note": "update_ddl"}\n')
     (checkout / "scripts").mkdir()
     (checkout / "linked").symlink_to("scripts", target_is_directory=True)
-    subprocess.run(["git", "-C", str(checkout), "add", "--force", "migrate.sh", "linked"], check=True)  # noqa: S603, S607 - fixed git setup
+    _fixture_git("-C", str(checkout), "add", "migrate.sh", "linked")
 
     # A tracked symlink to a directory is not a file to scan, as before.
     assert schema.repository_files(checkout) == [checkout / "migrate.sh"]
@@ -739,15 +746,12 @@ def test_a_checkout_git_cannot_enumerate_is_refused_not_walked(tmp_path_factory)
 
 def test_tracked_paths_that_differ_only_by_case_are_refused(tmp_path_factory):
     checkout = tmp_path_factory.mktemp("cases")
-    git = ["git", "-C", str(checkout)]
-    subprocess.run(["git", "init", "-q", str(checkout)], check=True)  # noqa: S603, S607 - fixed git setup
-    blob = subprocess.run(  # noqa: S603 - fixed git setup
-        [*git, "hash-object", "-w", "--stdin"], input=b"pass\n", capture_output=True, check=True
+    _fixture_git("init", "-q", str(checkout))
+    blob = _fixture_git(
+        "-C", str(checkout), "hash-object", "-w", "--stdin", input=b"pass\n", capture_output=True
     ).stdout.decode().strip()
     for name in ("scripts/DDL.py", "scripts/ddl.py"):
-        subprocess.run(  # noqa: S603 - fixed git setup
-            [*git, "update-index", "--add", "--cacheinfo", f"100644,{blob},{name}"], check=True
-        )
+        _fixture_git("-C", str(checkout), "update-index", "--add", "--cacheinfo", f"100644,{blob},{name}")
 
     with pytest.raises(AssertionError, match="differ only by case"):
         schema.repository_files(checkout)
