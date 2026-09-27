@@ -341,6 +341,10 @@ def trust_html(
     api_base_url: str | None = None,
     release_metadata: Mapping[str, Any] | None = None,
     release_metadata_status: str = "embedded",
+    aws_record: Mapping[str, Any] | None = None,
+    aws_status: str = "embedded",
+    azure_record: Mapping[str, Any] | None = None,
+    azure_status: str = "embedded",
 ) -> str:
     release = gcp_release(
         settings,
@@ -411,25 +415,33 @@ def trust_html(
         release_warning = ""
     release_json = html.escape(json.dumps(release, indent=2, sort_keys=True) + "\n")
 
-    aws = aws_release(settings)
-    azure = azure_release(settings)
+    # The records /trust/aws-release.json and /trust/azure-release.json serve,
+    # with the status each of those routes reports.
+    aws = aws_record if aws_record is not None else aws_release(settings)
+    azure = azure_record if azure_record is not None else azure_release(settings)
     aws_pcr0 = html.escape(str(aws["pcr0"]))
     aws_api = html.escape(str(aws["api_base_url"]))
     azure_hostdata = html.escape(str(azure["hostdata"]))
     azure_api = html.escape(str(azure["api_base_url"]))
     azure_issuers = html.escape(", ".join(azure["attestation_issuers"]) or NOT_CONFIGURED)
 
-    def _plane_note(payload: Mapping[str, Any]) -> str:
+    def _plane_note(payload: Mapping[str, Any], status: str) -> str:
         if payload["release_metadata_status"] == NOT_CONFIGURED:
             return (
-                "<p><strong>No measurement published for this plane yet.</strong> "
+                "<p><strong>No measurement is available for this plane right now.</strong> "
                 "Do not treat its absence as a measurement of zero — verify against a "
                 "live attestation before sending sensitive data.</p>"
             )
+        if status == "stale":
+            return (
+                "<p><strong>This plane's release record could not be refreshed.</strong> "
+                "This is the last validated copy — verify against a live attestation "
+                "before sending sensitive data.</p>"
+            )
         return ""
 
-    aws_note = _plane_note(aws)
-    azure_note = _plane_note(azure)
+    aws_note = _plane_note(aws, aws_status)
+    azure_note = _plane_note(azure, azure_status)
     return f"""<!doctype html>
 <html lang="en">
 <head>
