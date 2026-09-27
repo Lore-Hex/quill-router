@@ -367,17 +367,31 @@ EXCLUDED_DIRECTORIES = {
 
 
 def _tracked_files(root: Path) -> list[Path] | None:
-    """The tracked files, submodules included, when root is the top of a git checkout."""
+    """The tracked files when root is the top of a git checkout, else None.
+
+    A submodule is one gitlink entry whose files git lists only in some
+    configurations, so a checkout containing one is refused outright.
+    """
     try:
         top = subprocess.run(["git", "-C", str(root), "rev-parse", "--show-toplevel"],  # noqa: S603, S607 - fixed git query
                              capture_output=True, check=True).stdout.removesuffix(b"\n")
         if not top or Path(os.fsdecode(top)).resolve() != root.resolve():
             return None
-        listed = subprocess.run(["git", "-C", str(root), "ls-files", "--recurse-submodules", "-z"],  # noqa: S603, S607 - fixed git query
+        listed = subprocess.run(["git", "-C", str(root), "ls-files", "--stage", "-z"],  # noqa: S603, S607 - fixed git query
                                 capture_output=True, check=True).stdout
     except (OSError, subprocess.CalledProcessError):
         return None
-    return [root / os.fsdecode(name) for name in listed.split(b"\0") if name]
+    paths: dict[Path, None] = {}
+    for entry in listed.split(b"\0"):
+        info, _, name = entry.partition(b"\t")
+        if not name:
+            continue
+        path = root / os.fsdecode(name)
+        if info.startswith(b"160000 "):
+            raise AssertionError(f"{path}: submodules are outside the schema scan; "
+                                 "extend repository_files() before adding one")
+        paths[path] = None
+    return list(paths)
 
 
 def repository_files(root: Path) -> list[Path]:

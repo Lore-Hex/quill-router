@@ -686,7 +686,8 @@ def test_a_git_checkout_scans_tracked_files_and_a_plain_directory_scans_all(tmp_
     assert schema.repository_files(plain) == [plain / "gha-creds-untracked.json", plain / "migrate.sh"]
 
 
-def test_a_git_checkout_scans_its_submodules_files(tmp_path_factory):
+@pytest.mark.parametrize("active", [True, False], ids=["active", "inactive"])
+def test_a_git_checkout_with_a_submodule_is_refused(tmp_path_factory, active):
     git = ["git", "-c", "user.email=t@example.invalid", "-c", "user.name=t", "-c", "protocol.file.allow=always"]
     sub = tmp_path_factory.mktemp("sub")
     subprocess.run([*git, "init", "-q", str(sub)], check=True)  # noqa: S603 - fixed git setup
@@ -699,4 +700,11 @@ def test_a_git_checkout_scans_its_submodules_files(tmp_path_factory):
         [*git, "-C", str(checkout), "submodule", "add", "-q", str(sub), "vendored"], check=True
     )
 
-    assert checkout / "vendored/migrate.sh" in schema.repository_files(checkout)
+    if not active:
+        subprocess.run(  # noqa: S603 - fixed git setup
+            [*git, "-C", str(checkout), "config", "submodule.vendored.active", "false"], check=True
+        )
+
+    # Git lists a submodule's files only when it is active; refuse either way.
+    with pytest.raises(AssertionError, match="submodules are outside the schema scan"):
+        schema.repository_files(checkout)
