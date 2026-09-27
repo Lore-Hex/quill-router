@@ -28,12 +28,6 @@
         "reason": "ClickHouse analytics operation or explanation, not Spanner schema."
       }
     },
-    "scripts/axiom_growth/provision.py": {
-      "CREATE VIEW IF NOT EXISTS tr.growth_daily_usage ON CLUSTER trustedrouter": {
-        "count": 1,
-        "reason": "ClickHouse growth analytics view (ON CLUSTER trustedrouter), not Spanner schema."
-      }
-    },
     "scripts/cleanup_smoke_signups.py": {
       "Run as a project Owner (needs Spanner DDL/DML perms):": {
         "count": 1,
@@ -44,16 +38,32 @@
       "every table plus DDL, on a cluster that also holds wallets, keys and the": {
         "count": 1,
         "reason": "ClickHouse schema provisioning, parsing or operator explanation, not Spanner schema."
-      },
-      "CREATE ROLE tr_drain WITH LOGIN;": {
-        "count": 1,
-        "reason": "PostgreSQL service-role/database provisioning, not native Spanner schema."
       }
     },
-    "scripts/deploy/aws_eu_clickhouse_schema_apply.sh": {
-      "EXPECTED=\"$(grep -oiE 'CREATE TABLE IF NOT EXISTS [a-z0-9_]+' \"$WORK/schema.sql\" \\": {
+    "scripts/deploy/infra-stage0.sh": {
+      "log \" creating database $NEW_SPANNER_DATABASE on $NEW_SPANNER_INSTANCE (mirrored DDL)\"": {
         "count": 1,
-        "reason": "Parses ClickHouse schema table names for post-apply verification."
+        "reason": "Stage-0 provisioning log only; no schema dispatch."
+      },
+      "gc_or_dry spanner databases create \"$NEW_SPANNER_DATABASE\" \\": {
+        "count": 1,
+        "reason": "Stage-0 creates the alternate-instance database with the same tr_entities base table extracted from infra.sh; not an additional fresh-install migration."
+      },
+      "--ddl='CREATE TABLE tr_entities (kind STRING(64) NOT NULL, id STRING(512) NOT NULL, body STRING(MAX) NOT NULL, updated_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true)) PRIMARY KEY (kind, id)'": {
+        "count": 1,
+        "reason": "Stage-0 duplicate of the infra.sh tr_entities base table, including the commit-timestamp option and primary key."
+      },
+      "dry_log \"gcloud spanner databases ddl update $NEW_SPANNER_DATABASE --instance=$NEW_SPANNER_INSTANCE --ddl=ALTER_DATABASE_PITR_7D\"": {
+        "count": 1,
+        "reason": "Stage-0 dry-run log describing the seven-day PITR setting; no schema dispatch."
+      },
+      "gc spanner databases ddl update \"$NEW_SPANNER_DATABASE\" \\": {
+        "count": 1,
+        "reason": "Stage-0 database retention dispatch; repeats the seven-day PITR option reviewed in infra.sh, not a table/index migration."
+      },
+      "--ddl=\"ALTER DATABASE \\`${NEW_SPANNER_DATABASE}\\` SET OPTIONS (version_retention_period = '7d')\"": {
+        "count": 1,
+        "reason": "Stage-0 seven-day PITR database option, matching the reviewed infra.sh retention setting."
       }
     },
     "scripts/deploy/migrate_analytics_outbox.sh": {
@@ -266,6 +276,44 @@
         "reason": "Schema rollout/retention explanation only; this line dispatches no DDL."
       }
     },
+    "scripts/deploy/spanner_reliability.sh": {
+      "run source_gc spanner databases ddl update \"$SPANNER_DATABASE_ID\" \\": {
+        "count": 1,
+        "reason": "Reliability provisioning repeats the reviewed infra.sh seven-day PITR database option; no table/index migration."
+      },
+      "--ddl=\"ALTER DATABASE \\`${SPANNER_DATABASE_ID}\\` SET OPTIONS (version_retention_period = '7d')\"": {
+        "count": 1,
+        "reason": "Seven-day PITR database option matches the reviewed infra.sh retention setting."
+      }
+    },
+    "scripts/deploy/spanner_zero_downtime_cutover.sh": {
+      "# expects a database that ALREADY exists with matching DDL \u2014 it": {
+        "count": 1,
+        "reason": "Cutover comment describing the import prerequisite; no schema dispatch."
+      },
+      "# stub from Stage 0 (and re-create with the same DDL) only when": {
+        "count": 1,
+        "reason": "Cutover comment describing the Stage-0 stub; no schema dispatch."
+      },
+      "log \" creating target database $DATABASE on $NEW_INSTANCE with mirrored DDL\"": {
+        "count": 1,
+        "reason": "Cutover target-database provisioning log only; no schema dispatch."
+      },
+      "gc_or_dry spanner databases create \"$DATABASE\" \\": {
+        "count": 1,
+        "reason": "Cutover creates an import target with the same tr_entities base table extracted from infra.sh; not an additional fresh-install migration."
+      },
+      "--ddl='CREATE TABLE tr_entities (kind STRING(64) NOT NULL, id STRING(512) NOT NULL, body STRING(MAX) NOT NULL, updated_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true)) PRIMARY KEY (kind, id)'": {
+        "count": 1,
+        "reason": "Cutover duplicate of the infra.sh tr_entities base table, including the commit-timestamp option and primary key."
+      }
+    },
+    "scripts/lightning/activate_web.py": {
+      "operator.gc(\"sql\", \"databases\", \"create\", \"funding\", \"--instance=\" + INSTANCE)": {
+        "count": 1,
+        "reason": "Creates the standalone Lightning PostgreSQL database via gcloud sql, not a Spanner database."
+      }
+    },
     "src/trusted_router/operational_analytics_freshness.py": {
       "#: needs no DDL: ``(kind, id)`` is the primary key and ``body`` the JSON below.": {
         "count": 1,
@@ -342,10 +390,10 @@
         "reason": "PostgreSQL/Aurora DSQL adapter operation or explanation, not native GoogleSQL."
       }
     },
-    "scripts/lightning/activate_web.py": {
-      "operator.gc(\"sql\", \"databases\", \"create\", \"funding\", \"--instance=\" + INSTANCE)": {
+    "src/trusted_router/storage_postgres_schema.sql": {
+      "-- storage_postgres.py::_execute_ddl rather than here, so this file stays": {
         "count": 1,
-        "reason": "Creates the standalone Lightning PostgreSQL database via gcloud sql, not a Spanner database."
+        "reason": "Comment pointing to the PostgreSQL/Aurora DSQL adapter async-index handling; not a native GoogleSQL transport."
       }
     }
   }

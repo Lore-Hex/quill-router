@@ -3,20 +3,24 @@
 This deliberately parses a narrow shell vocabulary, never executes shell or gcloud.
 New migration idioms must extend the parser and regenerate spanner_ddl.py.
 
-Every recognized DDL carrier in the migration surface and every recognized DDL
-transport in the runtime surface must be consumed or reviewed. Migration roots
-include schema sources, the deployment library, workflows, infra Terraform,
-Cloud Build and Dockerfiles, plus their transitive repository execution targets.
-Runtime Python packages are scanned for transports only. Raw carrier scanning
-includes comments; line reviews bind normalized text and occurrence count, and
-the manual native SQL review binds its digest.
+Every Spanner DDL transport token in repository code or configuration must be
+consumed by extraction or covered by an occurrence-bound, reasoned exemption.
+Every DDL statement on the fixed migration list must be consumed or reviewed:
+schema sources, _lib.sh, workflows, infra Terraform, Cloud Build and Dockerfiles.
+Transport scanning is independent of execution and covers code/configuration
+names and extensions, executable files and shebangs, outside tests/, docs/ and
+build/dependency directories. Raw scanning includes comments and strings.
+Line reviews bind normalized text and occurrence count; manual native SQL binds
+its digest. Statement matches span newlines, but not separate string literals.
 
-These are tripwires, not a complete inventory of ways to change Spanner schema.
-Non-goals: generic SQL execution outside the migration surface, tools reading SQL
-files outside it, IaC outside infra/, changes applied outside this repository,
-and carrier words assembled at runtime. String-literal concatenation is not
-interpreted. Lore-Hex/quill-router#1372 tracks the scheduled production
-INFORMATION_SCHEMA comparison that provides the real backstop (out of this PR).
+Non-goals: DDL through an API/tool with no DDL-specific token (e.g. a generic
+cursor.execute supplied a connection externally), transport tokens or URLs
+assembled at runtime (e.g. getattr(db, "update_" + "d" + "dl")), statement text
+outside the fixed migration list (e.g. ALTER TABLE in clickhouse/build_public_snapshots.py;
+it cannot reach Spanner without a transport), data files (e.g. .test_durations,
+Markdown, CSV), and anything applied outside this repository (e.g. console SQL).
+Lore-Hex/quill-router#1372 tracks the scheduled production INFORMATION_SCHEMA
+comparison that provides the real backstop (out of this PR).
 """
 from __future__ import annotations
 
@@ -346,6 +350,7 @@ def assert_schema_matches(ddl: tuple[str, ...], digests: dict[str, str], root: P
 
 EXCLUDED_DIRECTORIES = {
     ".git", ".venv", "node_modules", "dist", "build", "__pycache__",
+    "vendor", "target", ".next",
     ".mypy_cache", ".pytest_cache", ".ruff_cache", ".hypothesis",
 }
 
@@ -353,14 +358,14 @@ EXCLUDED_DIRECTORIES = {
 def repository_files(root: Path) -> list[Path]:
     paths = []
     for directory, names, files in os.walk(root):
-        names[:] = sorted(name for name in names if name not in EXCLUDED_DIRECTORIES)
+        names[:] = sorted(name for name in names if name not in EXCLUDED_DIRECTORIES
+                          and not (Path(directory) == root and name in {"tests", "docs"}))
         paths.extend(Path(directory) / name for name in files)
     return sorted(paths)
 
 
 def migration_sources(root: Path) -> list[Path]:
-    from tests.conformance.spanner_execution_surface import execution_targets
-
+    """Fixed statement review list; execution and imports do not expand it."""
     seeds = set(schema_sources(root)) | {root / "scripts/deploy/_lib.sh"}
     for path in repository_files(root):
         relative = path.relative_to(root)
@@ -369,42 +374,36 @@ def migration_sources(root: Path) -> list[Path]:
                 or path.name.startswith("Dockerfile")
                 or (path.name.startswith("cloudbuild") and path.suffix in {".yaml", ".yml"})):
             seeds.add(path)
-    pending = sorted(seeds)
-    reached: set[Path] = set()
-    while pending:
-        path = pending.pop()
-        if path in reached or not path.is_file():
+    return sorted(path for path in seeds if path.is_file())
+
+
+CODE_CONFIG_EXTENSIONS = {
+    ".py", ".pyi", ".sh", ".bash", ".zsh", ".js", ".mjs", ".cjs", ".ts", ".tsx",
+    ".go", ".java", ".kt", ".rb", ".rs", ".tf", ".hcl", ".yaml", ".yml", ".json",
+    ".toml", ".cfg", ".ini", ".sql", ".mk",
+}
+
+
+def transport_sources(root: Path) -> list[Path]:
+    """All repository code/configuration, regardless of how or whether it runs."""
+    paths = []
+    for path in repository_files(root):
+        if not path.is_file():
             continue
-        reached.add(path)
-        pending.extend(execution_targets(path, root))
-    return sorted(reached)
-
-
-def runtime_sources(root: Path, migrations: list[Path]) -> list[Path]:
-    # An executed/imported repository package makes all its Python modules runtime
-    # surface, including self-migrating modules not currently imported by the entrypoint.
-    from tests.conformance.spanner_execution_surface import imported_modules, package_directory
-
-    packages = {root / "src/trusted_router"}
-    pending = list(migrations)
-    visited: set[Path] = set()
-    while pending:
-        path = pending.pop()
-        if path in visited or path.suffix != ".py":
-            continue
-        visited.add(path)
-        pending.extend(imported_modules(path, root))
-        own = package_directory(path, root)
-        if own is not None:
-            packages.add(own)
-        # Package membership expands transport coverage, not execution/import reachability.
-    return sorted({path for package in packages for path in package.rglob("*.py")
-                   if not set(path.relative_to(root).parts) & EXCLUDED_DIRECTORIES})
+        if (path.suffix.lower() in CODE_CONFIG_EXTENSIONS
+                or path.name.startswith(("Dockerfile", "Makefile"))
+                or path.name == "Procfile"
+                or path.stat().st_mode & 0o111):
+            paths.append(path)
+        else:
+            with path.open("rb") as stream:
+                if stream.read(2) == b"#!":
+                    paths.append(path)
+    return paths
 
 
 def carrier_sources(root: Path) -> list[Path]:
-    migrations = migration_sources(root)
-    return sorted(set(migrations) | set(runtime_sources(root, migrations)))
+    return sorted(set(migration_sources(root)) | set(transport_sources(root)))
 
 
 # Prefilter only; whole-part checks below decide whether a candidate is a carrier.
@@ -637,13 +636,13 @@ def migration_ddl(root: Path = ROOT) -> tuple[str, ...]:
     for path in migrations:
         if path not in accounted:
             assert_ddl_carriers_consumed(path, [], root)
-    for path in set(runtime_sources(root, migrations)) - set(migrations):
-        assert_ddl_carriers_consumed(path, [], root, statements=False)
-    # Explicit retained manual-native-SQL review, outside the automatic surfaces.
+    # Retain the explicit manual-native-SQL statement review in addition to transports.
     for relative in DDL_EXEMPTIONS["files"]:
         path = root / relative
         if path.is_file():
             assert_ddl_carriers_consumed(path, [], root)
+    for path in sorted(set(transport_sources(root)) - set(migrations)):
+        assert_ddl_carriers_consumed(path, [], root, statements=False)
     for name in retired_indexes:
         indexes.pop(name, None)  # Historical indexes may already be absent on fresh installs.
     result = list(creates.values())

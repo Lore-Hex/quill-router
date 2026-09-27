@@ -1,4 +1,4 @@
-"""Scoped literal DDL guard: repository copies exercise execution closure."""
+"""Repository transport and fixed migration statement guards, exercised in copies."""
 from __future__ import annotations
 
 import hashlib
@@ -25,12 +25,7 @@ def repo(tmp_path, migration_files):
         target = tmp_path / original.relative_to(schema.ROOT)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(original, target)
-        for parent in original.parents:
-            if parent == schema.ROOT:
-                break
-            init = parent / "__init__.py"
-            if init.is_file():
-                shutil.copyfile(init, tmp_path / init.relative_to(schema.ROOT))
+    (tmp_path / "src/trusted_router").mkdir(parents=True, exist_ok=True)
     return tmp_path
 
 
@@ -83,16 +78,13 @@ def test_update_ddl_helper_fails_in_copies(repo, relative):
         schema.migration_ddl(repo)
 
 
-@pytest.mark.parametrize("relative", ["scripts/review", "scripts/review.sql", "scripts/review.unfamiliar",
-                                      ".github/workflows/review.yml", ".github/workflows/review.unfamiliar",
+@pytest.mark.parametrize("relative", [".github/workflows/review.yml", ".github/workflows/review.unfamiliar",
                                       "infra/review.tf", "Dockerfile.review",
-                                      "cloudbuild-review.yaml", "new_package/review.go"])
+                                      "cloudbuild-review.yaml"])
 def test_lowercase_statement_in_new_file_fails(repo, relative):
     path = repo / relative
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\nalter table tr_entities add column review_lost STRING(64)\n")
-    if relative.startswith(("scripts/", "new_package/")):
-        execute(repo, relative)
     with pytest.raises(AssertionError, match=rf"{relative}:2: unconsumed DDL carrier: alter table"):
         schema.migration_ddl(repo)
 
@@ -214,6 +206,12 @@ client.update_database_ddl(request={
      "CREATE OR REPLACE VIEW"),
 ], ids=["reviewer-admin-call", "transport-only", "statement-only"])
 def test_review_six_admin_carriers_in_copies(repo, relative, payload, carrier):
+    if relative == "scripts/review.py" and carrier == "CREATE OR REPLACE VIEW":
+        path = repo / relative
+        path.write_text(payload)
+        execute(repo, relative)
+        assert schema.migration_ddl(repo) == spanner_ddl.DDL
+        return
     path = repo / relative
     prefix = path.read_text() + "\n" if path.exists() else ""
     if path.suffix == ".sh":
@@ -357,15 +355,19 @@ def test_out_of_scope_statements_need_no_registry_change_in_copy(repo, relative)
 
 
 @pytest.mark.parametrize("relative", [
-    "clickhouse/013_example.sql", "experiments/new/helper.py", ".codex-review-new.md",
+    "clickhouse/013_example.sql", "experiments/new/helper.py",
     "src/trusted_router/static/openapi-public.json", "infra_elsewhere/new.tf",
     "src/trusted_router/storage_postgres_schema.sql", "sites/new.js",
 ])
-def test_transport_outside_surfaces_is_documented_non_goal(repo, relative):
+def test_repository_transport_fails_outside_old_surfaces(repo, relative):
     path = repo / relative
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text('client.update_database_ddl(statements=open("x.sql").read())\n')
-    assert schema.migration_ddl(repo) == spanner_ddl.DDL
+    original = schema.ROOT / relative
+    prefix = original.read_text() + "\n" if original.is_file() else ""
+    path.write_text(prefix + 'client.update_database_ddl(statements=open("x.sql").read())\n')
+    with pytest.raises(AssertionError) as error:
+        schema.migration_ddl(repo)
+    assert f"{path}:{prefix.count(chr(10)) + 1}: unconsumed DDL carrier: update_database_ddl" in str(error.value)
 
 
 @pytest.mark.parametrize("transport", [
@@ -409,16 +411,12 @@ conn.cursor().execute("ALTER TABLE tr_entities ADD COLUMN review_lost STRING(64)
 """
 
 
-@pytest.mark.parametrize("payload, carrier", [
-    (DBAPI, "spanner_dbapi"),
-    (DBAPI.splitlines()[-1] + "\n", "ALTER TABLE"),
-])
-def test_review_seven_dbapi_from_library_joins_migration_surface(repo, payload, carrier):
+def test_review_seven_dbapi_from_library_fails_on_transport(repo):
     path = repo / "clickhouse/review_schema.py"
     path.parent.mkdir(exist_ok=True)
-    path.write_text(payload)
+    path.write_text(DBAPI)
     execute(repo, "clickhouse/review_schema.py")
-    with pytest.raises(AssertionError, match=f"unconsumed DDL carrier: {carrier}"):
+    with pytest.raises(AssertionError, match="review_schema.py:1: unconsumed DDL carrier: spanner_dbapi"):
         schema.assert_schema_matches(spanner_ddl.DDL, spanner_ddl.SOURCE_DIGESTS, repo)
 
 
@@ -436,15 +434,6 @@ def test_spanner_cli_source_in_migration_fails(repo):
         schema.migration_ddl(repo)
 
 
-def test_dynamic_execution_target_fails_closed(repo):
-    path = repo / "scripts/deploy/migrate_money_primitives.sh"
-    prefix = path.read_text() + "\n"
-    path.write_text(prefix + 'python "$SCRIPT"\n')
-    with pytest.raises(AssertionError) as error:
-        schema.migration_ddl(repo)
-    assert f"{path}:{prefix.count(chr(10)) + 1}: unresolved execution target: $SCRIPT" in str(error.value)
-
-
 def test_timing_only_regeneration_needs_no_registry_change(repo):
     path = repo / ".test_durations"
     data = json.loads((schema.ROOT / ".test_durations").read_text())
@@ -452,20 +441,105 @@ def test_timing_only_regeneration_needs_no_registry_change(repo):
     assert schema.migration_ddl(repo) == spanner_ddl.DDL
 
 
-@pytest.mark.parametrize("command", [
-    "python clickhouse/bridge.py", "uv run --frozen python clickhouse/bridge.py",
-    "uv run --offline --frozen clickhouse/bridge.py", "python -m clickhouse.bridge",
-    "bash clickhouse/bridge.sh", "sh clickhouse/bridge.sh", "./clickhouse/bridge.sh",
-    "source clickhouse/bridge.sh", ". clickhouse/bridge.sh", "node clickhouse/bridge.mjs",
+@pytest.mark.parametrize("command,bridge", [
+    ("timeout 60s uv run --frozen python review_helpers/check.py", ""),
+    ("env -u PYTHONPATH python review_helpers/check.py", ""),
+    ("printf '%s\\n' review_helpers/check.py | xargs python", ""),
+    ("result=`python review_helpers/check.py`", ""),
+    ('''python -c 'import subprocess; subprocess.run(["python", "review_helpers/check.py"], check=True)' ''', ""),
+    ('''python - <<'PYTHON'
+import subprocess
+subprocess.run(["python", "review_helpers/check.py"], check=True)
+PYTHON''', ""),
+    ("python review_bridge.py", '''import subprocess
+args = ["python", "review_helpers/check.py"]
+subprocess.run(args, check=True)
+'''),
+    ("python review_bridge.py", '''import subprocess
+subprocess.run(args=["python", "review_helpers/check.py"], check=True)
+'''),
+    ("python review_bridge.py", '''from subprocess import run
+run(["python", "review_helpers/check.py"], check=True)
+'''),
+    ("python review_bridge.py", '''import os, subprocess
+subprocess.run(os.environ["COMMAND"], shell=True, check=True)
+'''),
+    ("(cd review_helpers && python check.py)", ""),
+    ("uv run --directory review_helpers python check.py", ""),
+    ('timeout 60s python "$SCRIPT"', ""),
+    ("", ""),
+], ids=["timeout", "env", "xargs", "backticks", "python-c", "python-heredoc",
+        "subprocess-argument-list", "subprocess-keyword", "subprocess-import",
+        "subprocess-dynamic", "cd", "uv-directory", "dynamic-target", "unlaunched"])
+def test_round_eight_helper_transport_fails_regardless_of_launcher(repo, command, bridge):
+    path = repo / "review_helpers/check.py"
+    path.parent.mkdir()
+    path.write_text(DBAPI)
+    # A benign root namesake must not conceal the helper in another directory.
+    (repo / "check.py").write_text("pass\n")
+    (repo / "review_bridge.py").write_text(bridge)
+    library = repo / "scripts/deploy/_lib.sh"
+    library.write_text(library.read_text() + "\n" + command + "\n")
+    with pytest.raises(AssertionError) as error:
+        schema.assert_schema_matches(spanner_ddl.DDL, spanner_ddl.SOURCE_DIGESTS, repo)
+    assert f"{path}:1: unconsumed DDL carrier: spanner_dbapi" in str(error.value)
+
+
+@pytest.mark.parametrize("relative", ["clickhouse/build_public_snapshots.py",
+                                      "src/trusted_router/regional_quota_reconcile_gate.py"])
+def test_deploy_program_transport_fails_but_statement_only_is_documented_non_goal(repo, relative):
+    path = repo / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(schema.ROOT / relative, path)
+    prefix = path.read_text() + "\n"
+    path.write_text(prefix + 'statement = "ALTER TABLE tr_entities ADD COLUMN review_lost STRING(64)"\n')
+    assert path not in schema.migration_sources(repo)
+    assert "statement text\noutside the fixed migration list" in schema.__doc__
+    doc = (schema.ROOT / "docs/storage-portability/spanner-emulator-conformance.md").read_text()
+    assert "statement text outside the fixed migration list" in doc
+    assert schema.migration_ddl(repo) == spanner_ddl.DDL
+    path.write_text(path.read_text() + "database.update_ddl([statement])\n")
+    with pytest.raises(AssertionError) as error:
+        schema.assert_schema_matches(spanner_ddl.DDL, spanner_ddl.SOURCE_DIGESTS, repo)
+    assert f"{path}:{prefix.count(chr(10)) + 2}: unconsumed DDL carrier: update_ddl" in str(error.value)
+
+
+@pytest.mark.parametrize("name", [
+    *["new" + suffix for suffix in (
+        ".py .pyi .sh .bash .zsh .js .mjs .cjs .ts .tsx .go .java .kt .rb .rs .tf .hcl "
+        ".yaml .yml .json .toml .cfg .ini .sql .mk"
+    ).split()],
+    "Dockerfile", "Dockerfile.new", "Makefile", "Makefile.new", "Procfile",
+    "executable", "shebang",
 ])
-def test_execution_closure_is_transitive(repo, command):
-    base = repo / "clickhouse"
-    base.mkdir(exist_ok=True)
-    (base / "bridge.py").write_text('import subprocess\nsubprocess.run(["bash", "clickhouse/leaf.sh"], check=True)\n')
-    (base / "bridge.sh").write_text("bash clickhouse/leaf.sh\n")
-    (base / "bridge.mjs").write_text('execFileSync("bash", ["clickhouse/leaf.sh"]);\n')
-    (base / "leaf.sh").write_text('echo "ALTER TABLE review"\n')
-    workflow = repo / ".github/workflows/review.yml"
-    workflow.write_text("steps:\n  - run: " + command + "\n")
-    with pytest.raises(AssertionError, match="leaf.sh:1: unconsumed DDL carrier: ALTER TABLE"):
+def test_every_code_configuration_file_kind_is_transport_scanned(repo, name):
+    path = repo / "new_area" / name
+    path.parent.mkdir()
+    prefix = "#!/usr/bin/env python\n" if name == "shebang" else ""
+    path.write_text(prefix + "database.update_ddl(statements)\n")
+    if name == "executable":
+        path.chmod(0o755)
+    assert path in schema.transport_sources(repo)
+    with pytest.raises(AssertionError) as error:
         schema.migration_ddl(repo)
+    assert f"{path}:{prefix.count(chr(10)) + 1}: unconsumed DDL carrier: update_ddl" in str(error.value)
+
+
+@pytest.mark.parametrize("relative", [".test_durations", "new.md", "new.txt", "new.csv", "new.png"])
+def test_data_transport_words_need_no_registry_change(repo, relative):
+    path = repo / relative
+    path.write_text("database.update_ddl(statements)\n")
+    assert path not in schema.transport_sources(repo)
+    assert schema.migration_ddl(repo) == spanner_ddl.DDL
+
+
+@pytest.mark.parametrize("relative", ["scripts/deploy/_lib.sh", ".github/workflows/review.yml",
+                                      "infra/nested/review.tf", "cloudbuild-review.yaml", "Dockerfile.review"])
+def test_fixed_migration_list_matches_statements_across_newlines(repo, relative):
+    path = repo / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    prefix = path.read_text() + "\n" if path.exists() else ""
+    path.write_text(prefix + 'sql = """ALTER\nTABLE tr_entities ADD COLUMN review_lost STRING(64)"""\n')
+    with pytest.raises(AssertionError) as error:
+        schema.migration_ddl(repo)
+    assert f"{path}:{prefix.count(chr(10)) + 1}: unconsumed DDL carrier: ALTER\nTABLE" in str(error.value)

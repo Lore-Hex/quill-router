@@ -16,11 +16,6 @@ from tests.conformance.spanner_sql_inventory import SRC, assert_complete
 
 def copy_schema_repository(root):
     shutil.copytree(ROOT / "scripts/deploy", root / "scripts/deploy")
-    # The library executes this module; the migration surface follows that edge.
-    package = root / "src/trusted_router"
-    package.mkdir(parents=True)
-    for name in ("enclave_regions.py", "__init__.py"):
-        shutil.copyfile(ROOT / "src/trusted_router" / name, package / name)
 
 
 def test_unregistered_sql_fails_in_a_copy(tmp_path):
