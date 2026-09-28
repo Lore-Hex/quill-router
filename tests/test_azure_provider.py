@@ -1848,6 +1848,11 @@ def test_azure_manifest_registers_prepaid_only_gateway_routes() -> None:
     assert "x-ai/grok-4.3@azure/prepaid" not in MODEL_ENDPOINTS
     for row in rows:
         model_id = row["id"]
+        if row.get("routable") is False:
+            # A row the refresh tombstoned is dark, not routed.
+            assert f"{model_id}@azure/prepaid" not in MODEL_ENDPOINTS
+            assert f"{model_id}@azure/byok" not in MODEL_ENDPOINTS
+            continue
         endpoint = MODEL_ENDPOINTS[f"{model_id}@azure/prepaid"]
         assert endpoint.provider == "azure"
         assert endpoint.usage_type == "Credits"

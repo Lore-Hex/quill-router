@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.manifest import guard_fixed_output_prices
@@ -17,6 +19,12 @@ from trusted_router.image_generation import (
 
 MANIFEST_DIR = (
     Path(__file__).resolve().parents[1] / "src" / "trusted_router" / "data" / "provider_models"
+)
+_MEDIA_ROUTES = (
+    ("recraft/recraftv4_1", "recraft"),
+    ("black-forest-labs/flux-2-klein-4b", "bfl"),
+    ("decart/lucy-image-2", "decart"),
+    (fal.MODEL_ID, fal.SLUG),
 )
 
 
@@ -156,14 +164,14 @@ def test_media_providers_are_refreshable_prepaid_gateway_routes() -> None:
     assert expected <= GATEWAY_PREPAID_PROVIDER_SLUGS
 
     models, endpoints = _supplemental_provider_models_and_endpoints()
-    for model_id, provider in (
-        ("recraft/recraftv4_1", "recraft"),
-        ("black-forest-labs/flux-2-klein-4b", "bfl"),
-        ("decart/lucy-image-2", "decart"),
-        (fal.MODEL_ID, fal.SLUG),
-    ):
-        assert model_id in models
-        assert f"{model_id}@{provider}/prepaid" in endpoints
+    for model_id, provider in _MEDIA_ROUTES:
+        manifest = json.loads((MANIFEST_DIR / f"{provider}.json").read_text())
+        row = next(row for row in manifest["models"] if row["id"] == model_id)
+        if row.get("routable") is False:
+            assert f"{model_id}@{provider}/prepaid" not in endpoints
+        else:
+            assert model_id in models
+            assert f"{model_id}@{provider}/prepaid" in endpoints
 
     # Video routes are installed from the audited enclave registry, not the
     # generic chat/image manifest ingester.
@@ -191,6 +199,15 @@ def test_media_providers_are_refreshable_prepaid_gateway_routes() -> None:
     else:
         assert krea_model in models
         assert f"{krea_model}@krea/prepaid" in endpoints
+
+
+@pytest.mark.provider_health
+@pytest.mark.parametrize(("model_id", "provider"), _MEDIA_ROUTES)
+def test_media_provider_serves_its_route(model_id: str, provider: str) -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    _models, endpoints = _supplemental_provider_models_and_endpoints()
+    assert f"{model_id}@{provider}/prepaid" in endpoints
 
 
 def test_fixed_media_price_change_fails_before_manifest_write(tmp_path: Path) -> None:

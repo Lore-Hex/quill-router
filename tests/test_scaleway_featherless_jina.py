@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from scripts.pricing.base import ModelPrice
 from scripts.pricing.providers import featherless, jina, scaleway
 from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS, providers_for_display
+from trusted_router.pricing import _customer_price
 from trusted_router.provider_manifest_policy import (
     EXPIRING_PROVIDER_MANIFEST_SLUGS,
 )
@@ -67,20 +68,40 @@ def test_featherless_uses_shared_canonical_model_ids() -> None:
 
 
 def test_featherless_deepseek_v41_route_preserves_provider_limits_and_prices() -> None:
-    endpoint = MODEL_ENDPOINTS["deepseek/deepseek-v4.1-flash@featherless/prepaid"]
-    assert endpoint.upstream_id == "deepseek-ai/DeepSeek-V4.1-Flash"
-    assert endpoint.published_prompt_price_microdollars_per_million_tokens == 316_500
-    assert endpoint.published_completion_price_microdollars_per_million_tokens == 1_266_000
     manifest = json.loads(featherless.MANIFEST_PATH.read_text())
     row = next(row for row in manifest["models"] if row["id"] == "deepseek/deepseek-v4.1-flash")
     assert row["context_length"] == 262144
     assert row["cached_input_token_price_per_m"] == 30_000
     assert row["max_output_tokens"] == 32768
     assert row["input_modalities"] == ["text", "image"]
-    assert row["routable"] is True
+    # A row the refresh tombstoned is dark; a live one is routed at its exact
+    # upstream ID and the provider's prices plus markup.
+    endpoint = MODEL_ENDPOINTS.get("deepseek/deepseek-v4.1-flash@featherless/prepaid")
+    if row.get("routable") is False:
+        assert endpoint is None
+    else:
+        assert endpoint is not None
+        assert endpoint.upstream_id == "deepseek-ai/DeepSeek-V4.1-Flash"
+        assert endpoint.published_prompt_price_microdollars_per_million_tokens == _customer_price(
+            row["input_token_price_per_m"]
+        )
+        assert (
+            endpoint.published_completion_price_microdollars_per_million_tokens
+            == _customer_price(row["output_token_price_per_m"])
+        )
 
 
+@pytest.mark.provider_health
+def test_featherless_serves_deepseek_v41_flash() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    assert "deepseek/deepseek-v4.1-flash@featherless/prepaid" in MODEL_ENDPOINTS
+
+
+@pytest.mark.provider_health
 def test_featherless_qwen38_flash_next_is_routable() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
     endpoint = MODEL_ENDPOINTS["qwen/qwen3.8-flash-next@featherless/prepaid"]
 
     assert endpoint.provider == "featherless"
