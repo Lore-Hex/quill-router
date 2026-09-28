@@ -23,8 +23,9 @@ picker and footer share one ordered directory and highlight the current market.
 - Buyers book an enterprise pilot or visit the existing email-gated brochure flow.
   Suppliers use the existing provider marketplace application. Credentials are
   handled separately by that onboarding flow.
-- No application server, Spanner access, inference, cookies or third-party pixels
-  on these sites. Allowlisted UTM fields pass to intake. Initial site visits are
+- Static pages fetch the public `/token-exchange/evidence/{profile}.json` feed
+  from TrustedRouter on load and every five minutes. There is no direct Spanner
+  access, inference, cookie, or third-party pixel on these sites. Allowlisted UTM fields pass to intake. Initial site visits are
   not funnel events; central intake and signup use TrustedRouter's existing tracking.
 
 The HTTPS proxy also retains independent flagship certificates
@@ -111,3 +112,57 @@ ZDR policies and verified confidential inference are separate properties. Avoid
 invented liquidity, customers, guaranteed savings, certifications or financial
 exchange affiliation. Shanghai service availability requires explicit eligibility
 and jurisdictional review.
+
+## Live evidence contract
+
+All 13 markets use `live-evidence.js` and the backend's `token_exchange.py`.
+The feed reads the same effective catalog endpoints used by `/models`, selecting
+exactly one Tinfoil Credits route with confidential compute and E2EE. It displays
+exact USD/1M decimal prices and links to the model's provider table. The catalog's
+headline minimum is a cross-provider minimum, not a Tinfoil quote. Prices follow
+the existing catalog refresh/release cycle; the sites need no separate rebuild.
+
+The backend reads the public status and release JSON for the market's established
+GCP/Azure profile. Responses have a five-minute server cache, no stale-response
+window, and `Cache-Control: no-store` to prevent additional browser/CDN caching.
+Failed sources are absent; embedded/stale release records are not republished.
+No checked-in evidence snapshot is used by the site build.
+
+Each displayed component must exist upstream. Its last-check timestamp appears
+on the widget, with percentages rounded to two decimals. Checks older than six
+minutes (twice the core probe cadence), missing dates, and future dates suppress
+percentages and bars. Open pages reassess freshness every second. A failed feed
+clears values; the worst component state produces one label naming affected
+components. Release measurements are labelled published records and require a
+fresh attestation component; they do not establish location.
+
+Regression checks:
+
+```sh
+uv run pytest tests/test_token_exchange_evidence.py -q
+NODE_PATH=/path/to/node_modules node sites/token-exchange/verify-live.cjs /tmp/token-exchange-build
+```
+
+The browser test serves New York and London as two local staging hostnames,
+stops the actual HTTP feed, and waits the real five-minute interval with pages
+left open. It checks visible failure, stale dates, rounding, state selection,
+missing components, and responsive layout. This is staging verification, not
+proof of production deployment. Deploy the backend through the reviewed release
+workflow before publishing the static assets. Run all repository gates first.
+
+For the upstream-outage check (backend remains healthy while status is killed),
+serve the built site on port 8089, then run these in separate terminals:
+
+```sh
+uv run python sites/token-exchange/stage_evidence.py
+NODE_PATH=/path/to/node_modules node sites/token-exchange/verify-upstream.cjs
+```
+
+This binds only loopback. It uses the production public route and its real
+five-minute cache against a stoppable local HTTP status source. The test leaves
+New York and London open, shuts that source down, and checks that uptime and
+attestation disappear while independently sourced catalog prices remain.
+
+The Token Exchange Sites workflow runs the stale/mixed-state browser checks and
+the real five-minute upstream outage test on pull requests and main changes to
+the shared site or evidence backend. It does not publish the sites.

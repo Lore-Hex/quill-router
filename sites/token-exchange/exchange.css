@@ -489,3 +489,7 @@ footer .brand small{font-size:12px}
  .hero-copy .actions{margin-top:36px}
 }
 .hero[data-art-locked]::before{left:var(--hero-art-left);right:var(--hero-art-right);mask-image:var(--hero-art-mask)}
+
+/* Check times remain on the widget face, including stale/failed checks. */
+.last-check { font: 11px/1.5 var(--mono, monospace); color: var(--muted, #a8b0bd); margin: 6px 0 10px; }
+.evidence-state { font-size: 12px; line-height: 1.5; margin: 12px 0; }
