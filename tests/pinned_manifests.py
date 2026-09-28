@@ -544,10 +544,16 @@ def serve_manifest_rows(
 ) -> None:
     """Serve `provider`'s routes for these manifest rows in this process's
     registry, built by the catalog's own manifest ingestion, in place of any
-    route with the same id. A model the registry lacks is added with them."""
+    route with the same id. A model the registry lacks is added with them.
+    The rows keep the provider's committed manifest header (its generation
+    time, which dates an expiring manifest's deadline, and any price scale)."""
+    committed = catalog_ingest._PROVIDER_MODELS_DIR / f"{provider}.json"
+    header: dict[str, Any] = {"provider": provider}
+    if committed.exists():
+        header = json.loads(committed.read_text(encoding="utf-8"))
     manifests = directory / "served_provider_models"
     manifests.mkdir(parents=True, exist_ok=True)
-    manifest = {"provider": provider, "models": [dict(row) for row in rows]}
+    manifest = {**header, "models": [dict(row) for row in rows]}
     (manifests / f"{provider}.json").write_text(json.dumps(manifest), encoding="utf-8")
     with monkeypatch.context() as patch:
         patch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", manifests)
