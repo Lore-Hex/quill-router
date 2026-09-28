@@ -142,6 +142,14 @@ def test_image_catalog_and_exact_cached_billing(client: TestClient, model: str) 
     assert row["supports_streaming"] is False  # completion-only, not native partial renders
 
 
+@pytest.mark.provider_health
+@pytest.mark.parametrize("model", sorted(OPENAI_IMAGE_MODEL_IDS))
+def test_openai_serves_gpt_image_2_5(model: str) -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    assert f"{model}@openai/prepaid" in MODEL_ENDPOINTS
+
+
 @pytest.mark.usefixtures("image_routes")
 def test_image_cached_settlement_is_exactly_once(
     client: TestClient, user_headers: dict[str, str],
