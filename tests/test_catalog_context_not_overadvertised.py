@@ -53,8 +53,12 @@ def test_advertised_context_matches_publisher_or_top_provider() -> None:
     )
 
 
+@pytest.mark.provider_health
 def test_glm_5_3_flash_advertises_the_publisher_window() -> None:
-    """Regression: six reseller endpoints report 1310720; Z.AI's own says 1048576."""
+    """Regression: six reseller endpoints report 1310720; Z.AI's own says 1048576.
+
+    Live provider state: it needs Z.AI to list the model today. The rule holds
+    on a fixture in test_publisher_window_wins_over_ranked_reseller."""
     models, _ = _ingested_models_and_endpoints()
     model = models.get("z-ai/glm-5.3-flash")
     assert model is not None, "z-ai/glm-5.3-flash missing from the ingested catalog"
