@@ -133,6 +133,54 @@ PHALA_KIMI_K3 = {
     "provider_route_class": "standard_pass_through",
 }
 
+# The two approved OpenRouter-only routes as its manifest lists them.
+OPENROUTER_SEED_2_1_TURBO = {
+    "id": "bytedance-seed/seed-2-1-turbo",
+    "upstream_id": "bytedance-seed/seed-2-1-turbo",
+    "display_name": "ByteDance Seed: Seed 2.1 Turbo",
+    "context_length": 262144,
+    "endpoints": ["chat/completions"],
+    "input_modalities": ["text", "image", "video"],
+    "output_modalities": ["text"],
+    "input_token_price_per_m": 500000,
+    "output_token_price_per_m": 2500000,
+    "reliability": {
+        "first_token_timeout_seconds": 45,
+        "completion_timeout_seconds": 600,
+        "stream_idle_timeout_seconds": 120,
+    },
+    "max_completion_tokens": 235929,
+    "supported_parameters": [
+        "reasoning", "include_reasoning", "frequency_penalty", "max_tokens", "temperature",
+        "top_p", "stop", "tools", "response_format", "structured_outputs", "tool_choice",
+    ],
+    "pricing_source": (
+        "https://openrouter.ai/api/v1/models/bytedance-seed/seed-2-1-turbo/endpoints"
+    ),
+}
+OPENROUTER_UNION_ALPHA = {
+    "id": "stealth/union-alpha",
+    "upstream_id": "stealth/union-alpha",
+    "display_name": "Union Alpha",
+    "context_length": 262144,
+    "max_completion_tokens": 131072,
+    "endpoints": ["chat/completions"],
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"],
+    "supported_parameters": [
+        "max_tokens", "temperature", "top_p", "tools", "tool_choice", "response_format",
+    ],
+    "input_token_price_per_m": 0,
+    "output_token_price_per_m": 0,
+    "pricing_source": "https://openrouter.ai/api/v1/models/stealth/union-alpha/endpoints",
+    "reliability": {
+        "first_token_timeout_seconds": 45,
+        "completion_timeout_seconds": 600,
+        "stream_idle_timeout_seconds": 120,
+    },
+    "missing_since": "2026-09-17",
+}
+
 # Pearl's GLM-5.3 route as its manifest lists it.
 PEARL_GLM_5_3 = {
     "display_name": "Z.AI: GLM-5.3",
