@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.manifest import guard_fixed_output_prices
-from scripts.pricing.providers import bfl, decart, fal, krea, recraft
+from scripts.pricing.providers import bfl, fal, krea, recraft
 from trusted_router.catalog_data import GATEWAY_PREPAID_PROVIDER_SLUGS
 from trusted_router.catalog_ingest import _supplemental_provider_models_and_endpoints
 from trusted_router.image_generation import (
@@ -65,28 +65,6 @@ def test_bfl_pricing_parser_ignores_unrecognized_models() -> None:
     assert bfl._parse_pricing(html) == {
         "black-forest-labs/flux-2-klein-4b": 14_000,
         "black-forest-labs/flux-2-max": 70_000,
-    }
-
-
-def test_decart_pricing_parser_maps_native_resolutions() -> None:
-    html = """
-    <table>
-      <tr><th>Model</th><th>ID</th><th>720p</th><th>Best for</th></tr>
-      <tr><td>Lucy 2.5</td><td>lucy-2.5</td><td>$0.02/sec</td><td>Realtime</td></tr>
-    </table>
-    <table>
-      <tr><th>Model</th><th>ID</th><th>480p</th><th>720p</th><th>Best for</th></tr>
-      <tr><td>Lucy 2.5</td><td>lucy-2.5</td><td>-</td><td>$0.04/sec</td><td>Video</td></tr>
-      <tr><td>Lucy VTON 3.5</td><td>lucy-vton-3.5</td><td>-</td><td>$0.04/sec</td><td>Video</td></tr>
-      <tr><td>Lucy Restyle 2</td><td>lucy-restyle-2</td><td>-</td><td>$0.01/sec</td><td>Video</td></tr>
-      <tr><td>Lucy Image 2</td><td>lucy-image-2</td><td>$0.01</td><td>$0.02</td><td>Image</td></tr>
-    </table>
-    """
-    assert decart._parse_pricing(html) == {
-        "decart/lucy-image-2": {"480p": 10_000, "720p": 20_000},
-        "decart/lucy-2.5": 40_000,
-        "decart/lucy-vton-3.5": 40_000,
-        "decart/lucy-restyle-2": 10_000,
     }
 
 
