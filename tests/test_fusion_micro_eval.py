@@ -25,23 +25,37 @@ from trusted_router.evals.fusion_micro import (
     write_micro_artifacts,
 )
 
+# Plans are priced from today's catalog; whether they fit their caps at those
+# prices is provider state, checked below.
+_UNCAPPED = 10**12
 
-def test_micro_hybrid_plan_stays_under_default_cap() -> None:
-    plan = build_micro_run_plan(mode="micro-hybrid")
 
-    assert plan.total_cost_microdollars <= 1_250_000
+def test_micro_hybrid_plan_prices_offline_and_search_segments() -> None:
+    plan = build_micro_run_plan(mode="micro-hybrid", max_cost_microdollars=_UNCAPPED)
+
     assert plan.model_cost_microdollars > 0
     assert plan.search_cost_microdollars > 0
     assert {segment.id for segment in plan.segments} == {"offline", "search-smoke"}
 
 
-def test_micro_offline_has_no_live_search_and_is_cheaper() -> None:
+@pytest.mark.provider_health
+def test_micro_hybrid_plan_stays_under_default_cap() -> None:
+    """Live provider state: a host delisting a model can raise the catalog
+    price the plan is estimated from. provider-catalog-health.yml reports it
+    hourly, and the price refresh does not wait on it."""
+    plan = build_micro_run_plan(mode="micro-hybrid")
     offline = build_micro_run_plan(mode="micro-offline")
-    hybrid = build_micro_run_plan(mode="micro-hybrid")
+
+    assert plan.total_cost_microdollars <= 1_250_000
+    assert offline.total_cost_microdollars < 700_000
+
+
+def test_micro_offline_has_no_live_search_and_is_cheaper() -> None:
+    offline = build_micro_run_plan(mode="micro-offline", max_cost_microdollars=_UNCAPPED)
+    hybrid = build_micro_run_plan(mode="micro-hybrid", max_cost_microdollars=_UNCAPPED)
 
     assert offline.search_cost_microdollars == 0
     assert offline.total_cost_microdollars < hybrid.total_cost_microdollars
-    assert offline.total_cost_microdollars < 700_000
 
 
 def test_search_smoke_is_fusion_only_and_search_cost_is_explicit() -> None:
