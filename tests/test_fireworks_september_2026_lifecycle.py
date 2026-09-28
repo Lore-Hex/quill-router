@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
 from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import fireworks
+from tests.pinned_manifests import (
+    DEEPSEEK_V4_PRO_0813_ROUTES,
+    USE_PINNED_MANIFESTS,
+    pinned_manifests,
+)
 from trusted_router import catalog, provider_lifecycle
 from trusted_router.catalog_data import ModelEndpoint
 
@@ -35,6 +40,17 @@ _RETAINED = {
     "nvidia/nemotron-3.5-lightning": "accounts/fireworks/models/nemotron-lightning-3p5-30b-a3b",
     "minimax/minimax-m3": "accounts/fireworks/models/minimax-m3",
     "openai/gpt-oss-120b": "accounts/fireworks/models/gpt-oss-120b",
+}
+# A route Fireworks keeps past the cutoff, as its manifest lists it.
+_FIREWORKS_V4P1_FLASH = {
+    "id": "deepseek/deepseek-v4p1-flash",
+    "upstream_id": _RETAINED["deepseek/deepseek-v4p1-flash"],
+    "model_type": "chat",
+    "endpoints": ["chat/completions"],
+    "context_length": 1048576,
+    "input_token_price_per_m": 300000,
+    "output_token_price_per_m": 1200000,
+    "cached_input_token_price_per_m": 6000,
 }
 
 
@@ -120,9 +136,16 @@ def test_fireworks_september_discovery_rejects_stale_native_feed(
     assert set(fireworks._DISCOVERED_MANIFEST_ROWS) == expected
 
 
-def test_fireworks_september_cold_start_preserves_immutable_deepseek_identity() -> None:
+def test_fireworks_september_cold_start_preserves_immutable_deepseek_identity(
+    tmp_path: Path,
+) -> None:
+    # The 0813 release leaf's routes as they were before the cutoff, and a
+    # route Fireworks keeps: the rule holds whatever the hosts list today.
+    environ = pinned_manifests(
+        tmp_path, (*DEEPSEEK_V4_PRO_0813_ROUTES, ("fireworks", _FIREWORKS_V4P1_FLASH)),
+    )
     result = subprocess.run(  # noqa: S603 - fixed local interpreter and literal test program.
-        [sys.executable, "-c", "\n".join([
+        [sys.executable, "-c", USE_PINNED_MANIFESTS + "\n".join([
             "from trusted_router.catalog import MODELS, endpoints_for_model",
             "model_id = 'deepseek/deepseek-v4-pro-0813'",
             "assert MODELS[model_id].id == model_id",
@@ -131,7 +154,7 @@ def test_fireworks_september_cold_start_preserves_immutable_deepseek_identity() 
             "assert all(e.model_id == model_id for e in routes)",
             "assert endpoints_for_model('deepseek/deepseek-v4p1-flash')",
         ])],
-        env={**os.environ, "TR_ENVIRONMENT": "test", "TR_LIFECYCLE_CLOCK_OVERRIDE": _CUTOFF.isoformat()},
+        env={**environ, "TR_ENVIRONMENT": "test", "TR_LIFECYCLE_CLOCK_OVERRIDE": _CUTOFF.isoformat()},
         text=True, capture_output=True, timeout=60, check=False,
     )
     assert result.returncode == 0, result.stderr
