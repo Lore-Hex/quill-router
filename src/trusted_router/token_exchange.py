@@ -83,7 +83,7 @@ def exchange_evidence(profile: str) -> dict[str, Any]:
         release = None
     return dict(
         generated_at=datetime.now(UTC).isoformat(),
-        refresh_seconds=300,
+        refresh_seconds=60,
         # Core probes run every three minutes (scripts/deploy/synthetic.sh).
         stale_after_seconds=360,
         prices=confidential_prices(),

@@ -505,3 +505,12 @@ h1,h2,h3,.headline-accent,.privacy-choice h3,.review-resources h3,
 
 /* Empty live-data slots leave the source links as the fallback. */
 [data-live-state]:empty,[data-live-attestation]:empty,.last-check:empty,[data-live-price-unit][hidden]{display:none}
+
+/* Source-only cards size to their content instead of stretching beside prices. */
+.trust-evidence .uptime-panel:has([data-live-services]:empty),
+.trust-evidence .attestation-panel:has([data-live-attestation]:empty){align-self:start;min-height:0}
+@media(min-width:1101px){
+ .trust-evidence:has([data-live-services]:empty):has([data-live-attestation]:empty){grid-template-columns:1fr 1fr}
+ .trust-evidence:has([data-live-services]:empty):has([data-live-attestation]:empty)>.catalogue{grid-column:1/-1}
+ .trust-evidence:has([data-live-services]:empty):has([data-live-attestation]:empty) .privacy-comparison{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+}

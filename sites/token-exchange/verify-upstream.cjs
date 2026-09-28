@@ -19,15 +19,15 @@ const assert=require('node:assert/strict');
     }
     const response=await context.request.post('http://127.0.0.1:8094/__stage/stop-status');
     assert(response.ok());const stopped=Date.now();
-    console.log('Actual upstream status HTTP server stopped; production backend and its 300s cache remain running.');
+    console.log('Actual upstream status HTTP server stopped; production backend and its 60s cache remain running.');
     await Promise.all(pages.map(async page => {
-      await page.waitForFunction(()=>document.querySelector('[data-live-state]').textContent === '' && document.querySelector('[data-live-services]').children.length === 0,{},{timeout:320000, polling:100});
+      await page.waitForFunction(()=>document.querySelector('[data-live-state]').textContent === '' && document.querySelector('[data-live-services]').children.length === 0,{},{timeout:80000, polling:100});
       assert.equal(await page.locator('.service-history').count(),0);
       assert.equal(await page.locator('.build-digest').count(),0);
       // Pricing is independently sourced from the backend catalog and stays valid.
       assert.equal(await page.locator('.privacy-column').count(),3);
     }));
-    assert(Date.now()-stopped<320000,'Exceeded the revalidation deadline');
-    console.log(`PASS upstream failure through real backend cache: two markets degraded after ${((Date.now()-stopped)/1000).toFixed(1)}s; independent catalog prices remain.`);
+    assert(Date.now()-stopped<80000,'Exceeded the revalidation deadline');
+    console.log(`PASS upstream failure through real backend cache: two markets returned to source links after ${((Date.now()-stopped)/1000).toFixed(1)}s; independent catalog prices remain.`);
   } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1)});

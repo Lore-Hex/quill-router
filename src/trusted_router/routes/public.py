@@ -2083,7 +2083,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             settings,
             key=f"exchange:evidence:{profile}",
             media_type="application/json",
-            ttl_seconds=300,
+            ttl_seconds=60,
             stale_seconds=0,
             background_tasks=background_tasks,
             cache_control_override="no-store",

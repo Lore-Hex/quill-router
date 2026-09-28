@@ -99,7 +99,7 @@ def test_public_feed_cache_expires_without_stale_fallback(monkeypatch):
         assert response.json()['components']
         cached = public._STATUS_RESPONSE_CACHE['exchange:evidence:new-york']
         public._STATUS_RESPONSE_CACHE['exchange:evidence:new-york'] = replace(
-            cached, cached_at=cached.cached_at - 301)
+            cached, cached_at=cached.cached_at - 61)
         monkeypatch.setattr(public, 'exchange_evidence', lambda _: {'components': []})
         assert client.get(url).json()['components'] == []
         assert client.get('/token-exchange/evidence/not-a-profile.json').status_code == 404

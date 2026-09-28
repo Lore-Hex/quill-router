@@ -10,7 +10,7 @@
   const attestation = root.querySelector('[data-live-attestation]');
   const caption = root.querySelector('[data-live-caption]');
   const statusCaption = caption?.textContent;
-  const refreshMs = 300000;
+  const refreshMs = 60000;
   const staleMs = 360000; // Twice the three-minute core probe schedule.
   const endpoint = `https://trustedrouter.com/token-exchange/evidence/${root.dataset.evidenceProfile}.json`;
   let payload = null;
@@ -32,12 +32,6 @@
   const fresh = value => age(value) <= staleMs;
   const lastCheck = value => {
     if (!dated(value)) return '';
-    const elapsed = age(value);
-    if (elapsed > staleMs) {
-      const units = elapsed >= 86400000 ? [86400000, 'day'] : elapsed >= 3600000 ? [3600000, 'hour'] : [60000, 'minute'];
-      const count = Math.floor(elapsed / units[0]);
-      return `Last check ${count} ${units[1]}${count === 1 ? '' : 's'} ago`;
-    }
     return `Last check ${new Date(value).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC')}`;
   };
   const link = (label, url) => {
@@ -53,13 +47,15 @@
     if (priceUnit) priceUnit.hidden = true;
     attestation.replaceChildren();
   };
-  const statuses = {up: 'Operational', degraded: 'Degraded', down: 'Down', unknown: 'No data', stale: 'Stale'};
-  const severity = {up: 0, degraded: 1, unknown: 2, stale: 3, down: 4};
+  const presentable = c => c && typeof c.id === 'string' && typeof c.name === 'string'
+    && c.status === 'up' && fresh(c.last_checked_at)
+    && typeof c.uptime_24h_percent === 'number' && c.uptime_24h_percent >= 0
+    && c.uptime_24h_percent <= 100 && c.sample_count_24h > 0;
   function render() {
     // Recheck age each second without replacing focused links every second.
-    const dates = (Array.isArray(payload?.components) ? payload.components : []).map(c => lastCheck(c?.last_checked_at));
+    const dates = (Array.isArray(payload?.components) ? payload.components : []).map(c => fresh(c?.last_checked_at));
     const key = JSON.stringify([receivedAt, Boolean(payload), Date.now() - receivedAt > refreshMs + 15000,
-      age(payload?.generated_at) > 2 * refreshMs + 15000, dates, lastCheck(payload?.attestation_check?.last_checked_at)]);
+      age(payload?.generated_at) > 2 * refreshMs + 15000, dates, fresh(payload?.attestation_check?.last_checked_at)]);
     if (key === renderedKey) return;
     renderedKey = key;
     if (!payload || Date.now() - receivedAt > refreshMs + 15000 || age(payload.generated_at) > 2 * refreshMs + 15000) {
@@ -81,47 +77,39 @@
     if (!prices.childElementCount) prices.append(link('Browse Tinfoil model routes ↗', 'https://trustedrouter.com/models?filter=e2e'));
     services.replaceChildren();
     const components = Array.isArray(payload.components) ? payload.components : [];
-    if (caption) caption.textContent = components.some(c => c && fresh(c.last_checked_at) && typeof c.uptime_24h_percent === 'number' && c.uptime_24h_percent >= 0 && c.uptime_24h_percent <= 100 && c.sample_count_24h > 0) ? caption.dataset.uptimeLabel : statusCaption;
-    const assessed = [];
-    for (const c of components) {
-      if (!c || typeof c.id !== 'string' || typeof c.name !== 'string') continue;
-      const current = fresh(c.last_checked_at);
-      const status = !current ? (dated(c.last_checked_at) ? 'stale' : 'unknown') : (typeof c.status === 'string' && Object.hasOwn(severity, c.status) ? c.status : 'unknown');
-      assessed.push({name: c.name, status});
+    // A landing page is not an incident dashboard. If any source is unhealthy
+    // or incomplete, use the existing status link instead of a partial all-clear.
+    const showServices = components.length > 0 && components.every(presentable);
+    if (caption) caption.textContent = showServices ? caption.dataset.uptimeLabel : statusCaption;
+    state.textContent = '';
+    for (const c of showServices ? components : []) {
       const row = node('div', undefined, 'service-history');
       const heading = node('div', undefined, 'service-heading');
-      heading.append(node('span', c.name));
-      const uptime = c.uptime_24h_percent;
-      if (current && typeof uptime === 'number' && uptime >= 0 && uptime <= 100 && c.sample_count_24h > 0) {
-        const value = node('strong', uptime.toFixed(2));
-        value.append(node('small', '%'));
-        heading.append(value);
-      }
+      const value = node('strong', c.uptime_24h_percent.toFixed(2));
+      value.append(node('small', '%'));
+      heading.append(node('span', c.name), value);
       row.append(heading, node('p', lastCheck(c.last_checked_at), 'last-check'));
-      if (current) {
+      const history = Array.isArray(c.history) ? c.history.slice(-24) : [];
+      // Never recolor or drop individual failure buckets to imply a clean history.
+      // Keep the measured percentage, but omit the whole chart when incomplete.
+      if (history.length && history.every(bucket => bucket && dated(bucket.bucket_start)
+          && bucket.sample_count > 0 && bucket.status === 'up')) {
         const bars = node('div', undefined, 'health-bars');
         bars.setAttribute('role', 'img');
         bars.setAttribute('aria-label', `${c.name}: hourly history`);
-        for (const bucket of (Array.isArray(c.history) ? c.history.slice(-24) : [])) {
-          if (!bucket || typeof bucket.bucket_start !== 'string') continue;
-          const value = bucket.sample_count > 0 && ['up', 'degraded', 'down'].includes(bucket.status) ? bucket.status : 'unknown';
-          const bar = node('span', undefined, `health-bar ${value}`);
-          bar.title = `${bucket.bucket_start}: ${statuses[value]}`;
+        for (const bucket of history) {
+          const bar = node('span', undefined, 'health-bar up');
+          bar.title = `${bucket.bucket_start}: Operational`;
           bars.append(bar);
         }
         row.append(bars);
       }
       services.append(row);
     }
-    assessed.sort((a, b) => severity[b.status] - severity[a.status]);
-    const worst = assessed[0];
-    state.textContent = !worst ? '' : worst.status === 'up' ? 'Operational' : `${statuses[worst.status]} · ${assessed.filter(c => c.status === worst.status).map(c => c.name).join(', ')}`;
     attestation.replaceChildren();
     const check = payload.attestation_check;
-    attestation.append(node('p', lastCheck(check?.last_checked_at), 'last-check'));
     const release = payload.release;
-    if (!check || !fresh(check.last_checked_at) || !release) return;
-    attestation.append(node('p', typeof check.status === 'string' ? (statuses[check.status] || 'No data') : 'No data', 'evidence-state'));
+    if (!check || check.status !== 'up' || !fresh(check.last_checked_at) || !release) return;
     if (root.dataset.evidenceProfile === 'dubai') {
       const region = (Array.isArray(release.regions) ? release.regions : []).find(r => r && r.attestation_url === 'https://api-azure.trustedrouter.com/attestation' && typeof r.origin_hostname === 'string' && r.origin_hostname.endsWith('.uaenorth.azurecontainer.io'));
       if (release.platform !== 'azure-confidential-containers-sev-snp' || !region || typeof region.hostdata !== 'string' || !/^[a-f0-9]{64}$/.test(region.hostdata) || !Array.isArray(release.accepted_hostdata) || !release.accepted_hostdata.includes(region.hostdata)) return;
@@ -130,6 +118,7 @@
       if (release.platform !== 'gcp-confidential-space' || typeof release.image_digest !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(release.image_digest)) return;
       attestation.append(node('p', 'Published build digest', 'digest-label'), node('code', release.image_digest, 'build-digest'));
     }
+    attestation.prepend(node('p', lastCheck(check.last_checked_at), 'last-check'));
     if (typeof release.source_commit === 'string') attestation.append(node('p', `Published source ${release.source_commit.slice(0, 8)}`));
     attestation.append(node('p', 'Location: Not proven by attestation'));
   }
@@ -148,7 +137,7 @@
     render();
     refreshing = false;
     // Start the next interval AFTER receipt. A timer started before the initial
-    // response can hit the server cache just before its five-minute expiry.
+    // response can hit the server cache just before its one-minute expiry.
     refreshTimer = setTimeout(refresh, refreshMs);
   }
   refresh();

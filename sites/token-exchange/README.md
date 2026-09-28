@@ -24,7 +24,7 @@ picker and footer share one ordered directory and highlight the current market.
   Suppliers use the existing provider marketplace application. Credentials are
   handled separately by that onboarding flow.
 - Static pages fetch the public `/token-exchange/evidence/{profile}.json` feed
-  from TrustedRouter on load and every five minutes. There is no direct Spanner
+  from TrustedRouter on load and every minute. There is no direct Spanner
   access, inference, cookie, or third-party pixel on these sites. Allowlisted UTM fields pass to intake. Initial site visits are
   not funnel events; central intake and signup use TrustedRouter's existing tracking.
 
@@ -123,18 +123,26 @@ headline minimum is a cross-provider minimum, not a Tinfoil quote. Prices follow
 the existing catalog refresh/release cycle; the sites need no separate rebuild.
 
 The backend reads the public status and release JSON for the market's established
-GCP/Azure profile. Responses have a five-minute server cache, no stale-response
+GCP/Azure profile. Responses have a one-minute server cache, no stale-response
 window, and `Cache-Control: no-store` to prevent additional browser/CDN caching.
 Failed sources are absent; embedded/stale release records are not republished.
 No checked-in evidence snapshot is used by the site build.
 
-Each displayed component must exist upstream. Its last-check timestamp appears
-on the widget, with percentages rounded to two decimals. Checks older than six
-minutes (twice the core probe cadence), missing dates, and future dates suppress
-percentages and bars. Open pages reassess freshness every second. A failed feed
-clears values; the worst component state produces one label naming affected
-components. Release measurements are labelled published records and require a
-fresh attestation component; they do not establish location.
+The landing page shows measured service details only when every supplied
+component is operational, fresh and complete. Degraded, failed, unknown or stale
+checks quietly return the whole service panel to its existing source link;
+there is no partial all-clear, warning badge or stale percentage. Historical
+failure or missing-data buckets are never recolored or cherry-picked: the whole
+chart is omitted while the accurate uptime percentage remains. Full incident
+history stays available through the Service status link.
+
+Attestation details require an operational, fresh check and valid published
+release metadata; otherwise only the Published release link remains. Prices are
+independently sourced and remain visible when valid. A failed feed returns every
+panel to its source links. Successful refreshes restore details automatically.
+Checks older than six minutes, missing dates and future dates remain ineligible.
+The browser reassesses freshness every second and fetches every minute, matching
+the shorter server cache. Published measurements do not establish location.
 
 Regression checks:
 
@@ -144,8 +152,8 @@ NODE_PATH=/path/to/node_modules node sites/token-exchange/verify-live.cjs /tmp/t
 ```
 
 The browser test serves New York and London as two local staging hostnames,
-stops the actual HTTP feed, and waits the real five-minute interval with pages
-left open. It checks visible failure, stale dates, rounding, state selection,
+stops the actual HTTP feed, and waits the real one-minute interval with pages
+left open. It checks quiet fallbacks, stale dates, rounding, state selection,
 missing components, and responsive layout. This is staging verification, not
 proof of production deployment. Deploy the backend through the reviewed release
 workflow before publishing the static assets. Run all repository gates first.
@@ -159,10 +167,10 @@ NODE_PATH=/path/to/node_modules node sites/token-exchange/verify-upstream.cjs
 ```
 
 This binds only loopback. It uses the production public route and its real
-five-minute cache against a stoppable local HTTP status source. The test leaves
+one-minute cache against a stoppable local HTTP status source. The test leaves
 New York and London open, shuts that source down, and checks that uptime and
 attestation disappear while independently sourced catalog prices remain.
 
 The Token Exchange Sites workflow runs the stale/mixed-state browser checks and
-the real five-minute upstream outage test on pull requests and main changes to
+the real one-minute upstream outage test on pull requests and main changes to
 the shared site or evidence backend. It does not publish the sites.
