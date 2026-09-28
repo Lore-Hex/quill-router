@@ -571,19 +571,24 @@ def test_gateway_authorizes_custom_model_backed_by_orchestration_alias(
         hidden_prompt="use the private playbook",
     )
 
-    authorize = client.post(
-        "/v1/internal/gateway/authorize",
-        json={
-            "api_key_hash": key["hash"],
-            "model": custom["id"],
-            "estimated_input_tokens": 100,
-            "max_output_tokens": 10,
-        },
-    )
-    assert authorize.status_code == 200, authorize.text
-    data = authorize.json()["data"]
+    def authorize(model_id: str) -> dict[str, Any]:
+        response = client.post(
+            "/v1/internal/gateway/authorize",
+            json={
+                "api_key_hash": key["hash"],
+                "model": model_id,
+                "estimated_input_tokens": 100,
+                "max_output_tokens": 10,
+            },
+        )
+        assert response.status_code == 200, response.text
+        return response.json()["data"]
+
+    data = authorize(custom["id"])
     assert data["requested_model"] == custom["id"]
-    assert data["model"] == "cerebras/gpt-oss-120b"
+    # The custom model routes as its base alias does, on whichever hosts
+    # serve the alias today.
+    assert data["model"] == authorize("trustedrouter/socrates-1.0")["model"]
     assert data["custom_model"]["base_model_id"] == "trustedrouter/socrates-1.0"
     assert data["route_candidates"], data
 
