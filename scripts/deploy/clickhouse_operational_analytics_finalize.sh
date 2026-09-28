@@ -101,6 +101,7 @@ node_ssh --command="sudo sh -c '
     /opt/tr-clickhouse/venv/bin/python -m clickhouse.rollup_synthetic
 '"
 
-node_ssh --command="sudo systemctl start tr-clickhouse-synthetic-rollup.timer tr-clickhouse-operational-parity.timer"
-node_ssh --command="sudo systemctl start tr-clickhouse-operational-parity.service"
+# The operational-parity units read the Bigtable shadow; they are retired
+# (2026-09-28) and clickhouse_operational_analytics.sh removes them.
+node_ssh --command="sudo systemctl start tr-clickhouse-synthetic-rollup.timer"
 log "operational parity is healthy; begin the seven-day dual-read soak"

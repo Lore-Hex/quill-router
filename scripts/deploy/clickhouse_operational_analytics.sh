@@ -128,18 +128,21 @@ node_ssh 0 --command="sudo sh -c '
     /etc/systemd/system/tr-clickhouse-synthetic-rollup.service
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-synthetic-rollup.timer \
     /etc/systemd/system/tr-clickhouse-synthetic-rollup.timer
-  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-synthetic-reconcile.service \
-    /etc/systemd/system/tr-clickhouse-synthetic-reconcile.service
-  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-synthetic-reconcile.timer \
-    /etc/systemd/system/tr-clickhouse-synthetic-reconcile.timer
+  # The synthetic-reconcile and operational-parity units repaired ClickHouse
+  # from the Bigtable shadow. Bigtable receives no writes any more
+  # (2026-09-28), so they are retired: stopped, disabled and removed.
+  systemctl disable --now tr-clickhouse-synthetic-reconcile.timer \
+    tr-clickhouse-synthetic-reconcile.service \
+    tr-clickhouse-operational-parity.timer \
+    tr-clickhouse-operational-parity.service >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/tr-clickhouse-synthetic-reconcile.service \
+    /etc/systemd/system/tr-clickhouse-synthetic-reconcile.timer \
+    /etc/systemd/system/tr-clickhouse-operational-parity.service \
+    /etc/systemd/system/tr-clickhouse-operational-parity.timer
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-client-rollup.service \
     /etc/systemd/system/tr-clickhouse-client-rollup.service
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-client-rollup.timer \
     /etc/systemd/system/tr-clickhouse-client-rollup.timer
-  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-operational-parity.service \
-    /etc/systemd/system/tr-clickhouse-operational-parity.service
-  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-operational-parity.timer \
-    /etc/systemd/system/tr-clickhouse-operational-parity.timer
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-public-snapshots.service \
     /etc/systemd/system/tr-clickhouse-public-snapshots.service
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-public-snapshots.timer \
@@ -218,7 +221,7 @@ node_ssh 0 --command="sudo sh -c '
     /opt/tr-clickhouse/venv/bin/python -m clickhouse.rollup_synthetic
 '"
 
-node_ssh 0 --command="sudo systemctl enable tr-clickhouse-operational-ingest.service tr-clickhouse-synthetic-rollup.timer tr-clickhouse-synthetic-reconcile.timer tr-clickhouse-client-rollup.timer tr-clickhouse-operational-parity.timer tr-clickhouse-public-snapshots.timer tr-clickhouse-archive-restore.timer tr-clickhouse-spanner-delivery.timer"
+node_ssh 0 --command="sudo systemctl enable tr-clickhouse-operational-ingest.service tr-clickhouse-synthetic-rollup.timer tr-clickhouse-client-rollup.timer tr-clickhouse-public-snapshots.timer tr-clickhouse-archive-restore.timer tr-clickhouse-spanner-delivery.timer"
 
 log "verifying exact replica identity after synchronization"
 PARITY_TABLES="activity_generations synthetic_probe_samples spend_lease_shadow synthetic_status_rollups public_analytics_snapshots client_request_events client_minute_counters client_availability_rollups operational_outbox_quarantine"
@@ -275,7 +278,6 @@ for index in 0 1 2; do
 done
 
 node_ssh 0 --command="sudo systemctl is-active --quiet tr-clickhouse-operational-ingest.service"
-node_ssh 0 --command="sudo systemctl start tr-clickhouse-synthetic-reconcile.timer tr-clickhouse-client-rollup.timer tr-clickhouse-public-snapshots.timer tr-clickhouse-public-snapshots.service tr-clickhouse-archive-restore.timer tr-clickhouse-spanner-delivery.timer tr-clickhouse-spanner-delivery.service"
+node_ssh 0 --command="sudo systemctl start tr-clickhouse-client-rollup.timer tr-clickhouse-public-snapshots.timer tr-clickhouse-public-snapshots.service tr-clickhouse-archive-restore.timer tr-clickhouse-spanner-delivery.timer tr-clickhouse-spanner-delivery.service"
 
-log "operational analytics infrastructure is ready; Bigtable is still authoritative"
-log "deploy the operational outbox producer, then run clickhouse_operational_analytics_finalize.sh --apply"
+log "operational analytics infrastructure is ready; ClickHouse is authoritative and the Bigtable repair units are retired"
