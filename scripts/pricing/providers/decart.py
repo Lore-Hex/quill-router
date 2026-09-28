@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import re
-from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -44,40 +43,94 @@ INCLUDE_IN_PRICE_INDEX = False
 MANIFEST_STALE_FALLBACK = True
 
 
-def _microdollars(raw: str) -> int:
-    return int(Decimal(raw) * Decimal(1_000_000))
+def _microdollars(dollars: str, cents_and_below: str | None) -> int:
+    """Exact microdollars from a price's digits; a finer price is not billable."""
+    fraction = (cents_and_below or "").rstrip("0")
+    if len(fraction) > 6:
+        raise RuntimeError(
+            f"decart: ${dollars}.{cents_and_below} is not a whole number of microdollars"
+        )
+    return int(dollars) * 1_000_000 + int(fraction.ljust(6, "0"))
 
 
-def _parse_price_cell(cell: Any) -> int:
-    match = re.search(r"\$([0-9]+(?:\.[0-9]+)?)", cell.get_text(" ", strip=True))
+# Queued video jobs are billed per second and images per image. A realtime
+# rate must never price a queued job. So a row is read only under a Video or
+# Image models heading, only from a table in the queued and image shape (one
+# ID, 480p and 720p column; realtime tables have no 480p), and by column
+# header, never by position.
+_SECTIONS = ("video models", "image models")
+_SHAPE = ("id", "480p", "720p")
+_PER_SECOND_PRICE = re.compile(r"\$([0-9]+)(?:\.([0-9]+))?/sec")
+_PER_IMAGE_PRICE = re.compile(r"\$([0-9]+)(?:\.([0-9]+))?")
+
+
+def _text(node: Any) -> str:
+    return " ".join(node.get_text(" ", strip=True).replace("\u200b", "").split())
+
+
+def _parse_price_cell(cell: Any, pattern: re.Pattern[str], where: str) -> int:
+    text = _text(cell)
+    match = pattern.fullmatch(text)
     if match is None:
-        raise RuntimeError("decart: pricing row is malformed")
-    return _microdollars(match.group(1))
+        raise RuntimeError(f"decart: {where} is not a price: {text!r}")
+    return _microdollars(match.group(1), match.group(2))
+
+
+def _section(table: Any) -> str:
+    heading = table.find_previous(["h1", "h2", "h3", "h4", "h5", "h6"])
+    return _text(heading).casefold() if heading is not None else ""
+
+
+def _wanted(section: str, upstream_id: str) -> tuple[str, dict[str, re.Pattern[str]]] | None:
+    """The model a row prices and the columns that price it, if any."""
+    if section == "video models" and upstream_id in {spec[0] for spec in VIDEO_MODELS.values()}:
+        return f"decart/{upstream_id}", {"720p": _PER_SECOND_PRICE}
+    if section == "image models" and upstream_id == IMAGE_UPSTREAM_ID:
+        return IMAGE_MODEL_ID, {"480p": _PER_IMAGE_PRICE, "720p": _PER_IMAGE_PRICE}
+    return None
 
 
 def _parse_pricing(html: str) -> dict[str, int | dict[str, int]]:
     soup = BeautifulSoup(html, "html.parser")
     prices: dict[str, int | dict[str, int]] = {}
-    wanted_video_upstream_ids = {spec[0] for spec in VIDEO_MODELS.values()}
-    for row in soup.select("tr"):
-        cells = row.find_all(["td", "th"])
-        if len(cells) < 4:
+    for table in soup.find_all("table"):
+        section = _section(table)
+        rows = table.find_all("tr")
+        if section not in _SECTIONS or not rows:
             continue
-        upstream_id = cells[1].get_text(" ", strip=True).strip("`")
-        if upstream_id == IMAGE_UPSTREAM_ID and len(cells) >= 5:
-            prices[IMAGE_MODEL_ID] = {
-                "480p": _parse_price_cell(cells[2]),
-                "720p": _parse_price_cell(cells[3]),
+        header = rows[0].find_all(["th", "td"])
+        columns = [_text(cell).casefold() for cell in header]
+        if columns.count("id") != 1:
+            raise RuntimeError(f"decart: a {section} table needs exactly one ID column")
+        for row in rows[1:]:
+            cells = row.find_all(["td", "th"])
+            if len(cells) != len(columns):
+                raise RuntimeError(f"decart: a {section} row does not match its header")
+            wanted = _wanted(section, _text(cells[columns.index("id")]).strip("`"))
+            if wanted is None:
+                continue
+            model_id, priced_columns = wanted
+            for name in _SHAPE:
+                if columns.count(name) != 1:
+                    raise RuntimeError(f"decart: {model_id} needs exactly one {name} column")
+            if any(
+                cell.get(span, "1") != "1"
+                for cell in (*header, *cells)
+                for span in ("colspan", "rowspan")
+            ):
+                raise RuntimeError(f"decart: {model_id}'s table spans cells")
+            parsed = {
+                name: _parse_price_cell(cells[columns.index(name)], pattern, f"{model_id} {name}")
+                for name, pattern in priced_columns.items()
             }
-        elif upstream_id in wanted_video_upstream_ids and len(cells) >= 5:
-            # The four-column realtime table has no 480p column. Requiring the
-            # five-column async table prevents the cheaper realtime rate from
-            # ever being applied to queued video jobs.
-            prices[f"decart/{upstream_id}"] = _parse_price_cell(cells[3])
+            price: int | dict[str, int] = parsed if model_id == IMAGE_MODEL_ID else parsed["720p"]
+            if prices.get(model_id, price) != price:
+                raise RuntimeError(f"decart: {model_id} is listed at two prices")
+            prices[model_id] = price
     expected = {IMAGE_MODEL_ID, *VIDEO_MODELS}
-    missing = sorted(expected - prices.keys())
-    if missing:
-        raise RuntimeError(f"decart: official pricing rows missing: {', '.join(missing)}")
+    missing_rows = sorted(expected - prices.keys())
+    if missing_rows:
+        raise RuntimeError(f"decart: official pricing rows missing: {', '.join(missing_rows)}")
     return prices
 
 
