@@ -1011,10 +1011,38 @@
       "input_token_price_per_m": 64750,
       "output_token_price_per_m": 195000,
       "cached_input_token_price_per_m": 32375
+    },
+    {
+      "display_name": "DeepSeek: DeepSeek V4 Pro 0813",
+      "title": "deepseek-ai/DeepSeek-V4-Pro-0813",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-pro-0813",
+      "upstream_id": "deepseek-ai/DeepSeek-V4-Pro-0813",
+      "context_length": 1048576,
+      "max_output_tokens": 393216,
+      "supported_features": [
+        "tools",
+        "reasoning",
+        "prompt_cache"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 1240000,
+      "output_token_price_per_m": 3500000,
+      "cached_input_token_price_per_m": 140000
     }
   ],
   "source": "https://api.intelligence.io.solutions/api/v1/models",
-  "generated_at": "2026-09-28T11:44:42Z",
+  "generated_at": "2026-09-28T15:04:09Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 37
+  "model_count": 38
 }

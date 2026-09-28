@@ -569,10 +569,11 @@
       "retirement_at": "2026-09-28T00:00:00Z",
       "replacement_model_id": "openai/gpt-5.6-terra",
       "created": 1698959748,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 1000000,
       "output_token_price_per_m": 2000000,
-      "missing_since": "2026-09-28"
+      "missing_since": "2026-09-28",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "gpt-3.5-turbo-instruct",
@@ -994,7 +995,7 @@
     }
   ],
   "source": "https://api.openai.com/v1/models",
-  "generated_at": "2026-09-28T11:44:42Z",
+  "generated_at": "2026-09-28T15:04:09Z",
   "price_scale": "microdollars_per_million",
   "model_count": 39
 }
