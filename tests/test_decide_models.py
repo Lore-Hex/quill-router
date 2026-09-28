@@ -1336,7 +1336,15 @@ def test_a_comparison_faq_names_a_call_both_models_accept(client: Any) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", ["openai/gpt-oss-20b", "trustedrouter/archimedes-1.0"])
+@pytest.mark.parametrize(
+    "model_id",
+    # A vehicle chat model is always cataloged (tests/catalog_vehicles.py); the
+    # private proxy only while Mistral Large, its backing model, is.
+    [
+        "anthropic/claude-haiku-4.5",
+        *(["trustedrouter/archimedes-1.0"] if "trustedrouter/archimedes-1.0" in MODELS else []),
+    ],
+)
 async def test_any_chat_model_is_accepted_on_the_decide_route(model_id: str) -> None:
     # What the comparison FAQ's "both take /v1/decide" rests on.
     response = await _authorize(
