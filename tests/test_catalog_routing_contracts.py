@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from datetime import timedelta
 from typing import Any
 
 import pytest
 
 from tests.lifecycle_clock import catalog_predates
+from trusted_router import provider_lifecycle
 from trusted_router.catalog import (
     ADVISOR_CATALOG_MODEL_ORDERS,
     ADVISOR_MODEL_ID,
@@ -85,6 +87,8 @@ from trusted_router.catalog import (
     ZEUS_3_0_MODEL_ID,
     ZEUS_MODEL_ID,
     InvalidAutoModelOrder,
+    Model,
+    ModelEndpoint,
     auto_candidate_models,
     canonical_orchestration_model_id,
     endpoint_privacy_tier,
@@ -109,6 +113,7 @@ from trusted_router.catalog_data import (
 )
 from trusted_router.catalog_ingest import (
     _PROVIDER_MODELS_DIR,
+    _author_provider,
     _authoritative_provider_model_ids,
     _is_provider_deprecated_model,
     _modalities,
@@ -119,6 +124,7 @@ from trusted_router.pricing import _customer_price
 from trusted_router.provider_lifecycle import (
     BASETEN_SEPTEMBER_2026_RETIREMENT_AT,
     FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT,
+    WAFER_KIMI_K26_RETIREMENT_AT,
     XIAOMI_MIMO_V25_PRO_ULTRASPEED_RETIREMENT_AT,
 )
 from trusted_router.routes.internal.gateway import _gateway_provider_route_payload
@@ -152,6 +158,38 @@ def _delisted(endpoint_id: str) -> bool:
     """Whether the route's provider no longer lists its model."""
     model_id, _, route = endpoint_id.partition("@")
     return _listed_row(route.split("/")[0], model_id) is None
+
+
+def _serve_on_fixture_routes(
+    monkeypatch: pytest.MonkeyPatch, model_id: str, *routes: tuple[str, str],
+) -> Model:
+    """Serve a chat model on these (provider, usage type) fixture routes, in
+    order, beside any the catalog has; a model the catalog lost is put back.
+    Privacy posture comes from the catalog's own provider and per-model rules."""
+    model = MODELS.get(model_id)
+    if model is None:
+        model = Model(
+            id=model_id,
+            name=model_id,
+            provider=_author_provider(model_id, [{"tr_provider_slug": routes[0][0]}]) or "",
+            context_length=128_000,
+        )
+        monkeypatch.setitem(MODELS, model_id, model)
+    for provider, usage_type in routes:
+        suffix = "prepaid" if usage_type == "Credits" else "byok"
+        endpoint = ModelEndpoint(
+            id=f"{model_id}@{provider}/{suffix}",
+            model_id=model_id,
+            provider=provider,
+            usage_type=usage_type,
+            upstream_id=f"fixture-{provider}",
+            prompt_price_microdollars_per_million_tokens=1_000_000,
+            completion_price_microdollars_per_million_tokens=3_000_000,
+            published_prompt_price_microdollars_per_million_tokens=1_000_000,
+            published_completion_price_microdollars_per_million_tokens=3_000_000,
+        )
+        monkeypatch.setitem(MODEL_ENDPOINTS, endpoint.id, endpoint)
+    return model
 
 
 def test_archimedes_private_proxy_tracks_mistral_large_without_exposing_it() -> None:
@@ -354,8 +392,13 @@ def test_every_prepaid_endpoint_is_backed_by_attested_gateway_dispatch() -> None
     } <= credits_providers
 
 
-def test_model_storage_flag_is_gateway_scoped_endpoint_flag_is_provider_scoped() -> None:
-    shape = model_to_openrouter_shape(MODELS["openai/gpt-4.1-mini"])
+def test_model_storage_flag_is_gateway_scoped_endpoint_flag_is_provider_scoped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _serve_on_fixture_routes(
+        monkeypatch, "fixture/openai-chat", ("openai", "Credits"), ("openai", "BYOK"),
+    )
+    shape = model_to_openrouter_shape(model)
     meta = shape["trustedrouter"]
 
     # Top-level trustedrouter.stores_content is the router's own retention
@@ -843,7 +886,7 @@ def test_privacy_meta_models_expand_to_expected_provider_pools() -> None:
     assert eu_shape["trustedrouter"]["auto_candidates"]
 
 
-def test_closed_provider_zdr_claims_are_route_scoped() -> None:
+def test_closed_provider_zdr_claims_are_route_scoped(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep public ZDR claims fail-closed for major closed providers.
 
     Amazon/Bedrock, Anthropic, and Google AI Studio remain outside
@@ -864,6 +907,11 @@ def test_closed_provider_zdr_claims_are_route_scoped() -> None:
         assert PROVIDERS[provider].provider_zero_data_retention is not True
         assert provider_privacy_tier(PROVIDERS[provider]) < PRIVACY_TIER_ZERO_RETENTION
 
+    # Fixture routes of each kind stand beside whatever Vertex and OpenAI list.
+    _serve_on_fixture_routes(monkeypatch, "fixture/vertex-chat", ("google-vertex", "Credits"))
+    _serve_on_fixture_routes(
+        monkeypatch, "fixture/openai-chat", ("openai", "Credits"), ("openai", "BYOK"),
+    )
     vertex = PROVIDERS["google-vertex"]
     assert vertex.provider_zero_data_retention is False
     assert vertex.prepaid_zero_data_retention is True
@@ -1844,7 +1892,9 @@ def test_trustedrouter_meta_route_expansion_is_credits_only(model_id: str) -> No
         ATHENA_MODEL_ID,
     ],
 )
-def test_openpatcher_and_athena_force_us_provider_routes(model_id: str) -> None:
+def test_openpatcher_and_athena_force_us_provider_routes(
+    model_id: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     shape = model_to_openrouter_shape(MODELS[model_id])
     assert shape["trustedrouter"]["required_provider_jurisdiction"] == PROVIDER_JURISDICTION_US
 
@@ -1854,6 +1904,10 @@ def test_openpatcher_and_athena_force_us_provider_routes(model_id: str) -> None:
         # endpoint list to inspect here; Go tests pin the subrequest policy.
         return
 
+    # A US host and a Singapore host for the GLM models every one of these
+    # presets routes to: only the US host may serve.
+    for candidate in ("z-ai/glm-5.2-fast", "z-ai/glm-5.2"):
+        _serve_on_fixture_routes(monkeypatch, candidate, ("deepinfra", "Credits"), ("zai", "Credits"))
     endpoints = chat_route_endpoint_candidates(
         {"model": model_id},
         Settings(environment="test"),
@@ -1926,7 +1980,14 @@ def test_provider_jurisdiction_filter_keeps_only_us_based_endpoints() -> None:
     )
 
 
-def test_privacy_meta_models_force_endpoint_privacy_floor() -> None:
+def test_privacy_meta_models_force_endpoint_privacy_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A confidential Tinfoil route and ZDR prepaid routes on OpenAI and Vertex,
+    # whatever those providers list today.
+    _serve_on_fixture_routes(monkeypatch, "fixture/confidential", ("tinfoil", "Credits"))
+    _serve_on_fixture_routes(monkeypatch, "fixture/zdr-openai", ("openai", "Credits"))
+    _serve_on_fixture_routes(monkeypatch, "fixture/zdr-vertex", ("google-vertex", "Credits"))
     zdr_endpoints = chat_route_endpoint_candidates(
         {"model": ZDR_MODEL_ID},
         Settings(environment="test"),
@@ -1939,7 +2000,6 @@ def test_privacy_meta_models_force_endpoint_privacy_floor() -> None:
     assert zdr_endpoints
     assert e2e_endpoints
     assert e2e_endpoints[0][1].provider == "tinfoil"
-    assert "chutes" in {endpoint.provider for _model, endpoint in e2e_endpoints}
     assert "anthropic" not in {endpoint.provider for _model, endpoint in zdr_endpoints}
     assert "google-ai-studio" not in {endpoint.provider for _model, endpoint in zdr_endpoints}
     assert "google-vertex" in {endpoint.provider for _model, endpoint in zdr_endpoints}
@@ -2076,7 +2136,11 @@ def test_every_tinfoil_endpoint_is_confidential_and_e2ee() -> None:
     )
 
 
-def test_eu_meta_model_restricts_endpoint_pool_to_eu_focused_providers() -> None:
+def test_eu_meta_model_restricts_endpoint_pool_to_eu_focused_providers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_on_fixture_routes(monkeypatch, "fixture/eu-mistral", ("mistral", "Credits"))
+    _serve_on_fixture_routes(monkeypatch, "fixture/eu-gemini", ("google-vertex", "Credits"))
     eu_endpoints = chat_route_endpoint_candidates(
         {"model": EU_MODEL_ID},
         Settings(environment="test"),
@@ -2097,14 +2161,26 @@ def test_eu_meta_model_restricts_endpoint_pool_to_eu_focused_providers() -> None
     assert {endpoint.provider for _model, endpoint in narrowed} == {"google-vertex"}
 
 
-def test_route_candidates_honor_models_provider_order_sort_and_dedupe() -> None:
+def test_route_candidates_honor_models_provider_order_sort_and_dedupe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for model_id, provider, price in (
+        ("fixture/openai-mini", "openai", 2_000_000),
+        ("fixture/mistral-small", "mistral", 1_000_000),
+        ("fixture/deepseek-flash", "deepseek", 3_000_000),
+    ):
+        monkeypatch.setitem(MODELS, model_id, Model(
+            id=model_id, name=model_id, provider=provider, context_length=128_000,
+            prompt_price_microdollars_per_million_tokens=price,
+            completion_price_microdollars_per_million_tokens=price,
+        ))
     candidates = chat_route_candidates(
         {
-            "model": "openai/gpt-4.1-mini",
+            "model": "fixture/openai-mini",
             "models": [
-                "mistralai/mistral-small-2603",
-                "openai/gpt-4.1-mini",
-                "deepseek/deepseek-v4-flash",
+                "fixture/mistral-small",
+                "fixture/openai-mini",
+                "fixture/deepseek-flash",
             ],
             "provider": {
                 "order": ["deepseek"],
@@ -2115,30 +2191,31 @@ def test_route_candidates_honor_models_provider_order_sort_and_dedupe() -> None:
         Settings(environment="test"),
     )
 
-    # provider.order=["deepseek"] pins deepseek first. The remaining two
-    # are price-sorted: mistral-small-2603 is cheaper than the current
-    # OpenAI low-end probe.
+    # provider.order=["deepseek"] pins deepseek first, though it is the most
+    # expensive. The remaining two are price-sorted, and the model named twice
+    # appears once.
     assert [model.id for model in candidates] == [
-        "deepseek/deepseek-v4-flash",
-        "mistralai/mistral-small-2603",
-        "openai/gpt-4.1-mini",
+        "fixture/deepseek-flash",
+        "fixture/mistral-small",
+        "fixture/openai-mini",
     ]
 
 
 @pytest.mark.parametrize(
-    ("model_id", "provider"),
-    [
-        ("moonshotai/kimi-k3", "kimi"),
-        ("moonshotai/kimi-k2.6", "kimi"),
-        ("openai/gpt-4.1-mini", "openai"),
-        ("mistralai/mistral-small-2603", "mistral"),
-        ("deepseek/deepseek-v4-flash", "deepseek"),
-        ("meta-llama/llama-3.1-8b-instruct", "novita"),
-        ("google/gemini-2.5-flash", "google-ai-studio"),
-        ("anthropic/claude-sonnet-4.6", "anthropic"),
-    ],
+    "provider",
+    ["kimi", "openai", "mistral", "deepseek", "novita", "google-ai-studio", "anthropic"],
 )
-def test_endpoint_candidates_make_dual_mode_models_explicit(model_id: str, provider: str) -> None:
+def test_endpoint_candidates_make_dual_mode_models_explicit(
+    provider: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A BYOK-only host, then the provider's twin routes as the registry adds them.
+    model_id = _serve_on_fixture_routes(
+        monkeypatch,
+        "fixture/dual-mode",
+        ("cerebras", "BYOK"),
+        (provider, "Credits"),
+        (provider, "BYOK"),
+    ).id
     endpoints = chat_route_endpoint_candidates(
         {"model": model_id},
         Settings(environment="test"),
@@ -2366,9 +2443,13 @@ def test_makora_provider_prices_follow_published_lineup() -> None:
         )
 
 
-def test_anthropic_claude_fable_5_is_available_but_not_zdr_routable() -> None:
+def test_anthropic_claude_fable_5_is_available_but_not_zdr_routable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Claude Fable 5 is available again, but it is not a ZDR route."""
-    model = MODELS["anthropic/claude-fable-5"]
+    model = _serve_on_fixture_routes(
+        monkeypatch, "anthropic/claude-fable-5", ("anthropic", "Credits"), ("anthropic", "BYOK"),
+    )
     endpoints = endpoints_for_model(model.id)
     assert endpoints
     assert "anthropic" in {endpoint.provider for endpoint in endpoints}
@@ -2396,13 +2477,21 @@ def test_anthropic_claude_fable_5_is_available_but_not_zdr_routable() -> None:
     assert "No route candidates match" in str(exc.value)
 
 
-def test_wafer_kimi_k26_is_available_but_standard_tier_only() -> None:
-    model = MODELS["moonshotai/kimi-k2.6"]
+def test_wafer_kimi_k26_is_available_but_standard_tier_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Wafer withdrew ZDR for Kimi K2.6 on 2026-06-26 and retired the route on
+    # 2026-09-18. Until then a Wafer route for it is standard tier only,
+    # whatever Wafer's feed lists.
+    monkeypatch.setattr(
+        provider_lifecycle,
+        "_utc_now",
+        lambda: WAFER_KIMI_K26_RETIREMENT_AT - timedelta(seconds=1),
+    )
+    model = _serve_on_fixture_routes(monkeypatch, "moonshotai/kimi-k2.6", ("wafer", "Credits"))
     wafer_endpoints = [
         endpoint for endpoint in endpoints_for_model(model.id) if endpoint.provider == "wafer"
     ]
-    if not wafer_endpoints:
-        pytest.skip("wafer no longer lists kimi-k2.6 — delisted upstream")
     assert all(
         endpoint_privacy_tier(endpoint) == PRIVACY_TIER_STANDARD for endpoint in wafer_endpoints
     )
@@ -2577,3 +2666,32 @@ def test_model_shape_omits_cache_read_price_when_absent() -> None:
             assert "input_cache_read" not in shape["pricing"]
             return
     raise AssertionError("no model without a cached tier price found — test needs a new subject")
+
+
+# Live provider state. provider-catalog-health.yml reports these hourly; the
+# rules above hold whichever of these routes a provider delists.
+@pytest.mark.provider_health
+@pytest.mark.parametrize(
+    "endpoint_id",
+    [
+        "anthropic/claude-fable-5@anthropic/prepaid",
+    ],
+)
+def test_the_routes_these_rules_were_written_against_are_still_served(endpoint_id: str) -> None:
+    assert endpoint_id in MODEL_ENDPOINTS, f"{endpoint_id} is no longer served"
+
+
+@pytest.mark.provider_health
+def test_the_privacy_pools_still_draw_on_their_named_providers() -> None:
+    zdr_endpoints = chat_route_endpoint_candidates(
+        {"model": ZDR_MODEL_ID},
+        Settings(environment="test"),
+    )
+    e2e_endpoints = chat_route_endpoint_candidates(
+        {"model": E2E_MODEL_ID},
+        Settings(environment="test"),
+    )
+
+    assert {"google-vertex", "openai"} <= {endpoint.provider for _model, endpoint in zdr_endpoints}
+    assert e2e_endpoints[0][1].provider == "tinfoil"
+    assert "chutes" in {endpoint.provider for _model, endpoint in e2e_endpoints}
