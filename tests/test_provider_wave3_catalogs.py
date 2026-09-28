@@ -159,25 +159,31 @@ def test_public_routing_status_requires_a_callable_endpoint() -> None:
     assert provider_to_openrouter_shape(PROVIDERS["krea"])["routing_status"] == "blocked"
 
 
-def test_failed_live_canaries_stay_dark() -> None:
-    nextbit_rows = {
-        row["id"]: row
-        for row in json.loads(nextbit.MANIFEST_PATH.read_text(encoding="utf-8"))["models"]
+def test_a_route_held_by_a_failed_live_canary_stays_dark(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Which routes fail their live canary changes hour to hour: the refresh
+    # re-checks every held route, and SambaNova's minimax-m3 passed again on
+    # 2026-09-28. So the rule is checked on a fixture, not on today's holds.
+    row = {
+        "id": "minimax/minimax-m3",
+        "upstream_id": "MiniMax-M3",
+        "model_type": "chat",
+        "endpoints": ["chat/completions"],
+        "input_token_price_per_m": 600_000,
+        "output_token_price_per_m": 2_400_000,
     }
-    samba_rows = {
-        row["id"]: row
-        for row in json.loads(sambanova.MANIFEST_PATH.read_text(encoding="utf-8"))["models"]
-    }
-    assert nextbit_rows["google/gemma-2-27b-it"]["routable"] is False
-    assert samba_rows["minimax/minimax-m3"]["routable"] is False
-    assert not any(
-        endpoint.provider == "nextbit" and endpoint.model_id == "google/gemma-2-27b-it"
-        for endpoint in MODEL_ENDPOINTS.values()
-    )
-    assert not any(
-        endpoint.provider == "sambanova" and endpoint.model_id == "minimax/minimax-m3"
-        for endpoint in MODEL_ENDPOINTS.values()
-    )
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+
+    def routes(**state: object) -> set[tuple[str, str]]:
+        manifest = {"provider": "sambanova", "models": [{**row, **state}]}
+        (tmp_path / "sambanova.json").write_text(json.dumps(manifest), encoding="utf-8")
+        _models, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
+        return {(endpoint.provider, endpoint.model_id) for endpoint in endpoints.values()}
+
+    assert routes(routable=False, routable_reason="provider-canary-failed") == set()
+    # Control: the same row, once its canary passes, is routed.
+    assert ("sambanova", "minimax/minimax-m3") in routes()
 
 
 def test_akash_missing_deepseek_route_stays_dark_without_disabling_other_routes() -> None:
