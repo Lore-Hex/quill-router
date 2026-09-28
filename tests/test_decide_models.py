@@ -42,7 +42,10 @@ from trusted_router.catalog_data import (
 from trusted_router.catalog_privacy import endpoint_stores_content, endpoint_zero_data_retention
 from trusted_router.config import Settings
 from trusted_router.main import create_app
-from trusted_router.provider_lifecycle import FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT
+from trusted_router.provider_lifecycle import (
+    FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT,
+    provider_model_retired,
+)
 from trusted_router.routing import decide_route_endpoint_candidates
 from trusted_router.storage import STORE, InMemoryStore
 
@@ -520,10 +523,15 @@ def _a_served_outsider(model_id: str, monkeypatch: pytest.MonkeyPatch) -> str:
     outsiders = sorted({e.provider for e in serving if e.provider not in chain})
     if outsiders:
         return outsiders[0]
-    host = _a_host_outside(chain)
+    host = _an_outsider(
+        model_id,
+        lambda route: not provider_model_retired(route.provider, route.model_id, route.upstream_id),
+    )
     template = next(e for e in serving if e.provider in chain)
     added = replace(template, id=f"{backing}@{host}/prepaid", provider=host)
-    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", {**catalog.MODEL_ENDPOINTS, added.id: added})
+    # In place: routing_candidates iterates the registry's dict itself, so a
+    # replacement assigned to catalog.MODEL_ENDPOINTS would never reach it.
+    monkeypatch.setitem(catalog.MODEL_ENDPOINTS, added.id, added)
     return host
 
 
@@ -544,8 +552,11 @@ async def _assert_the_outsider_is_routable(model_id: str, outsider: str) -> None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", OFFERED_NAMED_IDS)
-async def test_a_named_model_authorizes_on_its_chain_in_order(model_id: str) -> None:
+@pytest.mark.parametrize("model_id", NAMED_IDS)
+async def test_a_named_model_authorizes_on_its_chain_in_order(
+    model_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _serve_on_fixture_routes(monkeypatch, model_id)
     chain = list(NAMED_DECISION_MODEL_PROVIDERS[model_id])
     expected = list(_serving_chain(model_id))
     assert await _named_candidates(model_id, None) == expected
@@ -593,13 +604,14 @@ async def test_zev_and_bare_model_advance_to_existing_host_at_fireworks_cutoff(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", OFFERED_NAMED_IDS)
+@pytest.mark.parametrize("model_id", NAMED_IDS)
 @pytest.mark.parametrize("preference", ["none", "price", "outsider first"])
 async def test_a_named_chain_cannot_be_widened_or_reordered_by_the_request(
     model_id: str, preference: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The chain is enforced at authorize, not merely requested by the gateway:
     no preference may add a host or promote one over the head of the chain."""
+    _serve_on_fixture_routes(monkeypatch, model_id)
     chain = list(NAMED_DECISION_MODEL_PROVIDERS[model_id])
     outsider = _a_served_outsider(model_id, monkeypatch)
     await _assert_the_outsider_is_routable(model_id, outsider)
@@ -615,7 +627,7 @@ async def test_a_named_chain_cannot_be_widened_or_reordered_by_the_request(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", OFFERED_NAMED_IDS)
+@pytest.mark.parametrize("model_id", NAMED_IDS)
 async def test_a_named_model_refuses_a_request_pinned_outside_its_chain(
     model_id: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -623,6 +635,7 @@ async def test_a_named_model_refuses_a_request_pinned_outside_its_chain(
     right; serving from outside the chain is not. Asserted on the response
     itself: this used to be an `except AssertionError` around the helper, which
     would also have swallowed a 200 that leaked the backing model."""
+    _serve_on_fixture_routes(monkeypatch, model_id)
     outsider = _a_served_outsider(model_id, monkeypatch)
     await _assert_the_outsider_is_routable(model_id, outsider)
     response = await _authorize(
@@ -643,11 +656,12 @@ async def test_a_named_model_refuses_a_request_pinned_outside_its_chain(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", OFFERED_NAMED_IDS)
+@pytest.mark.parametrize("model_id", NAMED_IDS)
 @pytest.mark.parametrize("filter_kind", ["ignore_all", "only_then_ignore"])
 async def test_excluding_every_named_host_is_not_a_retryable_outage(
-    model_id: str, filter_kind: str
+    model_id: str, filter_kind: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _serve_on_fixture_routes(monkeypatch, model_id)
     chain = list(NAMED_DECISION_MODEL_PROVIDERS[model_id])
     preferences: dict[str, Any] = {"ignore": chain}
     if filter_kind == "only_then_ignore":
@@ -916,12 +930,13 @@ async def test_deny_satisfied_outside_named_chain_is_not_relaxed_again(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", OFFERED_NAMED_IDS)
+@pytest.mark.parametrize("model_id", NAMED_IDS)
 async def test_a_genuine_named_host_outage_stays_retryable_and_attributable(
     model_id: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     from trusted_router.routes.internal import gateway
 
+    _serve_on_fixture_routes(monkeypatch, model_id)
     monkeypatch.setattr(gateway, "provider_model_available_from_gateway_region", lambda *_: False)
     response = await _authorize(
         {
