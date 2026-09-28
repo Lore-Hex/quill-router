@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from tests import catalog_vehicles
 from trusted_router.catalog import (
     _PROVIDER_DEPRECATED_UPSTREAM_MODELS,
     _PROVIDER_SERVED_MODEL_ALLOWLIST,
@@ -137,7 +138,12 @@ def test_together_credits_follow_started_serverless_manifest() -> None:
 
 
 def test_dark_authoritative_manifest_rows_cannot_return_through_shared_snapshot() -> None:
-    endpoint_pairs = {(endpoint.provider, endpoint.model_id) for endpoint in MODEL_ENDPOINTS.values()}
+    # The registry's routes, not a vehicle the test session put back.
+    endpoint_pairs = {
+        (endpoint.provider, endpoint.model_id)
+        for endpoint in MODEL_ENDPOINTS.values()
+        if endpoint.id not in catalog_vehicles.VEHICLES_ADDED
+    }
     for provider_slug in _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS:
         raw = json.loads(
             (_PROVIDER_MODELS_DIR / f"{provider_slug}.json").read_text(encoding="utf-8")
@@ -161,7 +167,7 @@ def test_dark_manifest_rows_cannot_return_as_prepaid_snapshot_routes() -> None:
     endpoint_pairs = {
         (endpoint.provider, endpoint.model_id)
         for endpoint in MODEL_ENDPOINTS.values()
-        if endpoint.usage_type == "Credits"
+        if endpoint.usage_type == "Credits" and endpoint.id not in catalog_vehicles.VEHICLES_ADDED
     }
     assert not {
         (provider_slug, model_id)

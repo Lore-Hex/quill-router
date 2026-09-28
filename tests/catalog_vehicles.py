@@ -96,8 +96,12 @@ def _freeze() -> None:
 if __name__ == "__main__" and sys.argv[1:] == ["--freeze"]:
     _freeze()
 else:
-    VEHICLES_ADDED = install_missing(
-        catalog_registry.MODELS,
-        catalog_registry.MODEL_ENDPOINTS,
-        json.loads(FROZEN.read_text(encoding="utf-8")),
+    # What this session added, which the registry did not build: a test of the
+    # registry's own output against the manifests leaves these out.
+    VEHICLES_ADDED = frozenset(
+        install_missing(
+            catalog_registry.MODELS,
+            catalog_registry.MODEL_ENDPOINTS,
+            json.loads(FROZEN.read_text(encoding="utf-8")),
+        )
     )
