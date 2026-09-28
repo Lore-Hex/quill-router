@@ -12,7 +12,63 @@
     "new": "if False:",
     "positive_cases": [
       "raw_json_valid"
-    ]
+    ],
+    "wire_boundary": {
+      "enforcement": "Runtime Frozen JSON wrap validator requires the identity-checked capability in a private per-invocation Pydantic context copied from the caller dict. Nested DTOs share it; copied execution contexts, child tasks and unrelated adapters do not. The capability is revoked in finally.",
+      "regressions": "tests/test_billing_snapshot_boundary.py",
+      "mutations": [
+        {
+          "name": "wire_check_disabled",
+          "old": "if info.mode == \"json\" and not _authorized_wire(info.context):",
+          "new": "if False:"
+        },
+        {
+          "name": "wire_mode_check_removed",
+          "old": "if info.mode == \"json\" and not _authorized_wire(info.context):",
+          "new": "if not _authorized_wire(info.context):"
+        },
+        {
+          "name": "wire_context_never_set",
+          "old": "self[_WIRE_KEY] = self.capability",
+          "new": "self[_WIRE_KEY] = object()"
+        },
+        {
+          "name": "wire_context_leaked",
+          "old": "wire_context.capability.active = False",
+          "new": "pass"
+        },
+        {
+          "name": "wire_capability_ambient",
+          "old": "_authorized_wire(info.context)",
+          "new": "_AMBIENT_WIRE.get()",
+          "replacements": [
+            {
+              "old": "_WIRE_KEY = object()",
+              "new": "from contextvars import ContextVar\n\n_WIRE_KEY = object()\n_AMBIENT_WIRE = ContextVar(\"_AMBIENT_WIRE\", default=False)"
+            },
+            {
+              "old": "wire_context = _WireContext(context)",
+              "new": "wire_context = _WireContext(context)\n        ambient_token = _AMBIENT_WIRE.set(True)"
+            },
+            {
+              "old": "wire_context.capability.active = False",
+              "new": "_AMBIENT_WIRE.reset(ambient_token)"
+            }
+          ]
+        },
+        {
+          "name": "strict_false_forwarded",
+          "old": "if strict is False:",
+          "new": "if False:"
+        },
+        {
+          "name": "extra_forwarded",
+          "old": "if extra is not None:",
+          "new": "if False:"
+        }
+      ],
+      "options": "model_validate_json and model_validate reject strict=False and every non-None extra override with unsupported_option. Strict None/True retain field constraints and JSON semantics. Alias/name switches cannot bypass constraints on these alias-free DTOs. JSON context must be dict/None and is shallow-copied, never mutated; arbitrary Python context is passed through."
+    }
   },
   {
     "name": "extra_frozen",
@@ -3708,8 +3764,8 @@
       "frozen_null_object",
       "eligibility_null_object"
     ],
-    "old": "class Frozen(BaseModel):",
-    "new": "class Frozen(BaseModel):\n    @classmethod\n    def model_validate(cls, obj: Any, **kwargs: Any) -> Any:\n        return super().model_validate({} if obj is None else obj, **kwargs)\n"
+    "old": "            obj, strict=strict, extra=extra, from_attributes=from_attributes,",
+    "new": "            {} if obj is None else obj, strict=strict, extra=extra, from_attributes=from_attributes,"
   },
   {
     "name": "candidate_endpoint_id_string_type",
@@ -3810,5 +3866,94 @@
     "old": "    payload_hash: Digest | None",
     "new": "    payload_hash: Digest | int | None",
     "scope": "AcceptanceOutcome"
+  },
+  {
+    "name": "json_bom_accepted",
+    "rule": "Wire JSON rejects a UTF-8 BOM with invalid_encoding",
+    "cases": [
+      "snapshot_utf8_bom",
+      "snapshot_str_bom"
+    ],
+    "old": "raise ValueError(\"invalid_encoding\")\n    data = json.loads",
+    "new": "raw = raw[1:]\n    data = json.loads",
+    "failure": "error_code"
+  },
+  {
+    "name": "json_utf16_accepted",
+    "rule": "Wire JSON rejects UTF-16/32 with or without BOM",
+    "cases": [
+      "snapshot_utf16le",
+      "snapshot_utf16le_bom",
+      "snapshot_utf16be",
+      "snapshot_utf16be_bom",
+      "snapshot_utf32le",
+      "snapshot_utf32le_bom",
+      "snapshot_utf32be",
+      "snapshot_utf32be_bom"
+    ],
+    "old": "if b\"\\x00\" in raw:",
+    "new": "if b\"\\x00\" in raw:\n            raw = raw.decode(json.detect_encoding(raw)).encode(\"utf-8\")\n        if False:",
+    "failure": "error_code"
+  },
+  {
+    "name": "json_invalid_utf8_accepted",
+    "rule": "Wire JSON rejects invalid UTF-8 with invalid_encoding",
+    "cases": [
+      "eligibility_utf8_encoded_surrogate"
+    ],
+    "old": "errors=\"strict\"",
+    "new": "errors=\"replace\"",
+    "failure": "error_code"
+  },
+  {
+    "name": "json_surrogate_accepted",
+    "rule": "Decoded string values reject lone high and low surrogates with invalid_string",
+    "cases": [
+      "eligibility_surrogate_high_value",
+      "eligibility_surrogate_low_value",
+      "eligibility_surrogate_literal_value"
+    ],
+    "old": "if any(0xD800 <= ord(char) <= 0xDFFF for char in value):",
+    "new": "if False:",
+    "failure": "error_code",
+    "positive_cases": [
+      "eligibility_canonical_surrogate_pair",
+      "eligibility_canonical_utf8_nonascii"
+    ]
+  },
+  {
+    "name": "json_surrogate_nested_accepted",
+    "rule": "Decoded string keys and values reject surrogates at every depth with invalid_string",
+    "cases": [
+      "eligibility_surrogate_key",
+      "eligibility_surrogate_nested_value",
+      "eligibility_surrogate_nested_key"
+    ],
+    "old": "if any(0xD800 <= ord(char) <= 0xDFFF for char in value):",
+    "new": "if False:",
+    "failure": "error_code"
+  },
+  {
+    "name": "canonical_del_unescaped",
+    "rule": "Canonical ASCII JSON escapes DEL as lowercase \\u007f",
+    "cases": [
+      "eligibility_canonical_del"
+    ],
+    "old": ").encode(\"ascii\")",
+    "new": ").replace(\"\\\\u007f\", \"\\x7f\").encode(\"ascii\")",
+    "failure": "value"
+  },
+  {
+    "name": "canonical_c0_unescaped",
+    "rule": "Canonical ASCII JSON escapes C0 controls as lowercase \\u0001",
+    "cases": [
+      "eligibility_canonical_c0"
+    ],
+    "old": ").encode(\"ascii\")",
+    "new": ").replace(\"\\\\u0001\", \"\\x01\").encode(\"ascii\")",
+    "failure": "value",
+    "positive_cases": [
+      "eligibility_canonical_escaped_nul"
+    ]
   }
 ]

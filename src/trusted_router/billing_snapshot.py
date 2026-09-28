@@ -3,17 +3,35 @@
 Callers supply effective customer-priced endpoints and requested/observed feature
 facts. No catalog lookup occurs during evaluation. See docs/async-settlement-billing-v1.md
 for the byte contract, checked-int64 domain and last-tier fallback decision.
+
+Supported wire entry points are this module's parse_* functions and each DTO's
+model_validate_json; both run strict_json_loads on the raw JSON. TypeAdapter
+validate_json, an enclosing model's validate_json/model_validate_json, and all
+other JSON paths fail at runtime with unsupported_wire_path: decoded values
+cannot reveal duplicate keys or the original byte encoding. Python validation (including
+from_attributes) checks string fields after extraction as well as raw inputs.
+model_construct and unvalidated model_copy updates are trusted-only unchecked
+APIs, not input validation; do not use them for contract DTOs in production.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 from enum import StrEnum
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ModelWrapValidatorHandler,
+    TypeAdapter,
+    ValidationInfo,
+    model_validator,
+)
+from pydantic.config import ExtraValues
 
 from trusted_router.catalog_data import ModelEndpoint
 from trusted_router.stage_d import endpoint_pricing_candidate
@@ -23,19 +41,109 @@ UInt = Annotated[int, Field(strict=True, ge=0, le=MAX_INT)]
 Identity = Annotated[str, Field(min_length=1, max_length=512, pattern=r"^[A-Za-z0-9_./:@+\-]+$")]
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 SettlementMode = Literal["sync", "async"]
+_WIRE_KEY = object()
+
+
+class _WireCapability:
+    def __init__(self) -> None:
+        self.active = True
+
+
+class _WireContext(dict[Any, Any]):
+    """A copied caller context with a revocable, invocation-local capability."""
+
+    def __init__(self, context: dict[Any, Any] | None) -> None:
+        super().__init__(context or {})
+        self.capability = _WireCapability()
+        self[_WIRE_KEY] = self.capability
+
+
+def _authorized_wire(context: Any) -> bool:
+    return (
+        isinstance(context, _WireContext)
+        and context.capability.active
+        and context.get(_WIRE_KEY) is context.capability
+    )
+
+
+def _validation_options(strict: bool | None, extra: ExtraValues | None) -> None:
+    # Pydantic's call-level options override even field-level strict/extra rules.
+    if strict is False:
+        raise TypeError("unsupported_option: strict=False")
+    if extra is not None:
+        raise TypeError("unsupported_option: extra")
 
 
 class Frozen(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", validate_default=True)
 
+    @classmethod
+    def model_validate(
+        cls, obj: Any, *, strict: bool | None = None, extra: ExtraValues | None = None,
+        from_attributes: bool | None = None, context: Any | None = None,
+        by_alias: bool | None = None, by_name: bool | None = None,
+    ) -> Self:
+        """Keep mandatory field constraints on the supported Python entry point."""
+        _validation_options(strict, extra)
+        return super().model_validate(
+            obj, strict=strict, extra=extra, from_attributes=from_attributes,
+            context=context, by_alias=by_alias, by_name=by_name,
+        )
+
+    @classmethod
+    def model_validate_json(
+        cls, json_data: str | bytes | bytearray, *, strict: bool | None = None,
+        extra: ExtraValues | None = None, context: Any | None = None,
+        by_alias: bool | None = None, by_name: bool | None = None,
+    ) -> Self:
+        """All contract DTOs share the same strict wire decoder."""
+        _validation_options(strict, extra)
+        if context is not None and not isinstance(context, dict):
+            raise TypeError("unsupported_option: JSON context must be a dict or None")
+        if not isinstance(json_data, (str, bytes)):
+            raise TypeError("JSON text must be bytes or str")
+        strict_json_loads(json_data)
+        wire_context = _WireContext(context)
+        try:
+            return super().model_validate_json(
+                json_data, strict=strict, extra=extra, context=wire_context,
+                by_alias=by_alias, by_name=by_name,
+            )
+        finally:
+            wire_context.capability.active = False
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def strict_wire_path(
+        cls, value: Any, handler: ModelWrapValidatorHandler[Self], info: ValidationInfo,
+    ) -> Self:
+        """Only the strict raw-JSON entry point may validate DTOs in JSON mode."""
+        if info.mode == "json" and not _authorized_wire(info.context):
+            raise ValueError("unsupported_wire_path")
+        return handler(value)
+
     @model_validator(mode="before")
     @classmethod
-    def integer_versions(cls, value: Any) -> Any:
+    def integer_versions(cls, value: Any, info: ValidationInfo) -> Any:
+        _validate_strings(value)
         if isinstance(value, dict):
             for name in ("v", "price_history_version", "snapshot_version"):
                 if name in value and type(value[name]) is not int:
                     raise ValueError("unknown price version")
+            if info.mode == "json":
+                # A model-before validator materializes JSON arrays as lists;
+                # restore their tuple representation for strict JSON validation.
+                # Python-mode strict validation must still reject list inputs.
+                for name in ("candidates", "tiers"):
+                    if name in cls.model_fields and isinstance(value.get(name), list):
+                        value = {**value, name: tuple(value[name])}
         return value
+
+    @model_validator(mode="after")
+    def scalar_strings(self) -> Self:
+        """Check extracted fields too, including from_attributes inputs."""
+        _validate_strings(self)
+        return self
 
 
 class Eligibility(Frozen):
@@ -271,9 +379,58 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def parse_snapshot(raw: bytes | str) -> BillingSnapshot:
+def _validate_strings(value: Any) -> None:
+    """Reject surrogates in raw inputs and every constructed model field."""
+    if isinstance(value, str):
+        if any(0xD800 <= ord(char) <= 0xDFFF for char in value):
+            raise ValueError("invalid_string")
+    elif isinstance(value, BaseModel):
+        for name in type(value).model_fields:
+            _validate_strings(getattr(value, name))
+    elif isinstance(value, Mapping):
+        for key, item in value.items():
+            _validate_strings(key)
+            _validate_strings(item)
+    elif isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        for item in value:
+            _validate_strings(item)
+
+
+def strict_json_loads(raw: bytes | str) -> Any:
+    """Decode BOM-free UTF-8 JSON and reject non-scalar Unicode strings.
+
+    Raw NUL bytes cannot occur in UTF-8 JSON text; checking them also rejects
+    BOM-less UTF-16/32 before json.loads can auto-detect a different encoding.
+    Escaped NUL (and all other escaped C0 controls) remains valid.
+    """
+    if isinstance(raw, bytes):
+        if b"\x00" in raw:
+            raise ValueError("invalid_encoding")
+        try:
+            raw = raw.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as exc:
+            raise ValueError("invalid_encoding") from exc
+    if raw.startswith("\ufeff"):
+        raise ValueError("invalid_encoding")
     data = json.loads(raw, object_pairs_hook=_unique_object)
-    return BillingSnapshot.model_validate(data)
+    _validate_strings(data)
+    return data
+
+
+def parse_snapshot(raw: bytes | str) -> BillingSnapshot:
+    return BillingSnapshot.model_validate_json(raw)
+
+
+def parse_envelope(raw: bytes | str) -> TerminalEnvelope:
+    return TerminalEnvelope.model_validate_json(raw)
+
+
+def parse_acceptance(raw: bytes | str) -> AcceptanceOutcome:
+    return AcceptanceOutcome.model_validate_json(raw)
+
+
+def parse_eligibility(raw: bytes | str) -> Eligibility:
+    return Eligibility.model_validate_json(raw)
 
 
 def build_snapshot(endpoints: Iterable[ModelEndpoint], requested: Eligibility) -> BillingSnapshot:

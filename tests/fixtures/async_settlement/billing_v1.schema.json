@@ -215,6 +215,42 @@
     "ValidationCase": {
       "additionalProperties": false,
       "description": "Literal inputs, including malformed wire values; never derive expectations.",
+      "oneOf": [
+        {
+          "not": {
+            "required": [
+              "raw_json_hex"
+            ]
+          },
+          "required": [
+            "input"
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "input"
+            ]
+          },
+          "properties": {
+            "raw_json_hex": {
+              "type": "string"
+            },
+            "operation": {
+              "enum": [
+                "snapshot_json",
+                "envelope_json",
+                "acceptance_json",
+                "eligibility_json",
+                "model_json"
+              ]
+            }
+          },
+          "required": [
+            "raw_json_hex"
+          ]
+        }
+      ],
       "properties": {
         "name": {
           "title": "Name",
@@ -223,6 +259,10 @@
         "operation": {
           "enum": [
             "snapshot_json",
+            "envelope_json",
+            "acceptance_json",
+            "eligibility_json",
+            "model_json",
             "model",
             "envelope",
             "acceptance",
@@ -235,7 +275,21 @@
           "type": "string"
         },
         "input": {
+          "default": null,
           "title": "Input"
+        },
+        "raw_json_hex": {
+          "anyOf": [
+            {
+              "pattern": "^(?:[0-9a-f]{2})*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Raw Json Hex"
         },
         "model": {
           "anyOf": [
@@ -307,7 +361,9 @@
                 "charge_mismatch",
                 "unsupported_endpoint",
                 "arithmetic_overflow",
-                "string_type"
+                "string_type",
+                "invalid_encoding",
+                "invalid_string"
               ],
               "type": "string"
             },
@@ -329,6 +385,18 @@
           "default": null,
           "title": "Expected Hash"
         },
+        "expected_canonical_ascii": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected Canonical Ascii"
+        },
         "evaluated_usage": {
           "anyOf": [
             {
@@ -346,7 +414,6 @@
       "required": [
         "name",
         "operation",
-        "input",
         "expected_error"
       ],
       "title": "ValidationCase",

@@ -98,7 +98,82 @@ integer decimal notation, and explicit nulls. Candidates are unique and sorted
 by ASCII endpoint ID. SHA-256 is lowercase hex. Hashes are returned separately
 by `canonical_hash`; there is no self-referential hash field inside a snapshot
 or envelope. A wire response can attach the snapshot hash beside the canonical
-payload. Duplicate JSON keys are rejected by `parse_snapshot`.
+payload. DEL is escaped as `\u007f`; C0 controls use JSON's short escapes
+(`\b`, `\t`, `\n`, `\f`, `\r`) or lowercase four-digit escapes such as `\u0001`.
+
+The supported wire entry points are this module's `parse_*` functions and each
+DTO's `model_validate_json`; both run `strict_json_loads` on the raw JSON.
+`TypeAdapter(...).validate_json`, JSON validation of an enclosing model, and
+all other JSON paths are **rejected at runtime with `unsupported_wire_path`**. Already-decoded values
+cannot reveal duplicate keys or the original byte encoding. Use the outermost
+contract DTO's supported entry point, even when that DTO contains other DTOs.
+`Frozen` enforces this in a wrap validator whenever validation runs in JSON
+mode. After strict decoding, the supported entry point creates a private
+Pydantic context containing a fresh capability object. The wrap validator
+requires that exact object by identity in that invocation's context. Nested
+DTOs share the context; copied `contextvars` contexts, workers, child tasks and
+unrelated re-entrant adapters do not inherit it. The capability is revoked in
+`finally`, including on validation failure, so even a captured validation
+context or its shallow copy cannot authorize a later call. There is no ambient authorization flag.
+Pydantic decodes the original JSON again to preserve JSON strict semantics, so
+its objects have different identities from the strict decoder's objects;
+payload identity cannot be checked against that first decoding. Authorization
+is sufficient at the invocation boundary: only the supported entry point
+creates the private context after checking the raw bytes. Validators are
+trusted code and must not explicitly forward that private context to an
+unrelated validation while the call is active.
+
+Both `model_validate_json` and Python `model_validate` reject `strict=False`
+and every non-`None` `extra` override with `TypeError("unsupported_option: ...")`.
+`strict=None` retains the contract's field-level strictness; `strict=True`
+retains Pydantic's JSON strict semantics (including JSON arrays for tuples).
+Pydantic lets per-call `strict=False` override field-level strictness, so the
+Python entry point rejects that option too. `extra=None` always uses the
+model's `extra="forbid"` contract. `by_alias` and `by_name` are passed through:
+the contract DTOs have no aliases, so these switches cannot bypass field
+constraints or extra rejection; invalid combinations still raise Pydantic's
+error. JSON `context` accepts only a dict or `None`; caller entries are
+shallow-copied into the private context without mutating the caller's dict.
+Python context is passed through unchanged. Python adapters and enclosing
+models retain Pydantic's normal option semantics and must not supply weakening
+options; use the DTO entry points when accepting caller-selected options.
+
+`tests/test_billing_snapshot_boundary.py` exercises these runtime boundaries,
+supported nested parsing, option policy and cleanup after success or failure;
+there is no AST guard.
+
+Every supported JSON entry point accepts a `str` or BOM-free UTF-8 `bytes` only.
+`strict_json_loads` rejects a UTF-8 BOM (including a leading U+FEFF in a
+`str`), UTF-16/32 with or without a BOM, and invalid UTF-8 with the exact
+`ValueError("invalid_encoding")` reason. Raw NUL bytes are classified as
+`invalid_encoding`; escaped `\u0000` remains valid JSON. The helper decodes
+bytes before calling `json.loads`, so Python's encoding auto-detection is never
+used. Duplicate keys are rejected at every object depth.
+
+After JSON escape decoding, any string value or key containing U+D800–U+DFFF
+is rejected at every depth with `ValueError("invalid_string")`, including
+unknown fields and nested arrays. Valid escaped surrogate pairs decode to one
+Unicode scalar and remain accepted; canonical output uses the corresponding
+lowercase surrogate-pair escapes. Direct Python model inputs also reject
+surrogate code points before field validation. The shared `Frozen` after-validator
+also walks every extracted field, recursively including nested models, sequence
+elements and mapping keys/values. This covers attribute objects with
+`from_attributes=True`, `TypeAdapter.validate_python`, and Python validation of
+enclosing models. The before-validator remains necessary for unknown inputs
+that never become model fields.
+
+`model_construct` and unvalidated `model_copy(update=...)` are **trusted-only,
+unchecked construction APIs**, not input validation. Do not use them for these
+contract DTOs in production; revalidation is not a general repair mechanism for
+unchecked instances. These trusted APIs do not run validation, including the
+runtime wire check. No production code currently uses them for contract DTOs.
+
+`Frozen.model_validate_json` routes every contract DTO through this helper,
+including raw/normalized usage and evaluation models. The public
+`parse_snapshot`, `parse_envelope`, `parse_acceptance` and `parse_eligibility`
+wrappers all use that entry point. Eligibility uses the same parser for both
+requested and observed contexts. The canonical serializer and all evaluator
+arithmetic remain unchanged.
 
 The terminal envelope binds authorization, prospective generation, workspace,
 key, invocation nonce, local billing authority, journal region/epoch, selected
@@ -116,8 +191,8 @@ Its adjacent `.schema.json` describes the harness, including intentionally
 invalid snapshot/usage/context objects and the allowed error codes. `FixtureSchema`
 validates it and pins its schema;
 the production models validate positive wire payloads. The fixture byte SHA-256
-is pinned in `tests/test_billing_snapshot.py` (727 cases):
-`a748ef09cfbd6bdfb2f84fb0b4a05af7030e6a1a6c69e2a54cf20a096bfcef4b`.
+is pinned in `tests/test_billing_snapshot.py` (759 cases):
+`4aedf13e4ba30b4d1f0767f829e790c37ce3f957a39c15d1eb6aff8c8734fd81`.
 All amounts and normalized usage
 are literal test data; the evaluator never generates expectations. Envelope
 hash literals were produced from those literal payloads with standard JSON and
@@ -159,16 +234,24 @@ wrong error code; positive controls detect incorrect charges or rejections.
 These are **selected-vector counts**, not claims that unrelated vectors are
 unaffected by a shared-type mutation.
 
+Wire-decoding controls require `invalid_encoding` or `invalid_string` before
+delegating to Pydantic's JSON validator. Pydantic can independently reject malformed
+input, so these controls detect the wrong error code when the explicit guard is
+removed. Python mapping/sequence traversal and strict JSON round trips have separate
+regressions and mutation controls; they do not add Go wire rules or fixture vectors.
+
 ## Fixture operations and coverage boundaries
 
-The original 717 case objects remain byte-identical, in their original order.
-Tests reconstruct the Round 2 and Round 3 files and verify both original hashes.
+The original 727 case objects remain byte-identical, in their original order.
+Tests reconstruct the Round 2, Round 3 and Round 4 files and verify their original hashes.
 The appended cases use explicit operations:
 
 | Operation | Literal input and assertion |
 |---|---|
 | Original evaluation case (no `operation`) | Existing snapshot, usage, eligibility, literal charge/normalization/hash. Requested exclusions now build with a valid endpoint so empty candidates cannot mask a missing eligibility check. |
-| `snapshot_json` | Raw JSON text; duplicate root, candidate, rate and tier keys survive decoding. Baseline object, rates and tiers are otherwise valid. |
+| `snapshot_json` | Raw JSON text in `input` or literal bytes in `raw_json_hex`; duplicate keys and invalid encodings survive fixture decoding. Baseline object, rates and tiers are otherwise valid. |
+| `envelope_json`, `acceptance_json`, `eligibility_json` | The corresponding public JSON parser, with exact encoding/string rejection reasons or literal canonical bytes/hash. |
+| `model_json` | The named DTO's inherited `model_validate_json` entry point, using the same strict decoder. |
 | `model` | A complete input for the named DTO; one invalid field, omitted required field, extra field, or violated invariant. |
 | `envelope` | Complete literal terminal envelope plus literal snapshot; validates DTO and binding. Includes positive settle/refund hashes, wrong hash/charge/endpoint and evaluator-result comparison. |
 | `acceptance` | Complete literal outcome; all five statuses, every durable missing-field combination, and rejection hash-only, pending-only and both. |
@@ -176,6 +259,13 @@ The appended cases use explicit operations:
 | `field` | The **actual declared field schema** on a named DTO, before cross-field validators. In Python this is `model_fields[field].rebuild_annotation()`, not a duplicated test-only definition. |
 | `builder` | Literal candidate and optional endpoint overrides converted to the existing endpoint dataclass without coercion, then frozen. Tests pre-conversion validation and nullable tier inputs. |
 | `checked` | Literal intermediate integer at the public checked-arithmetic boundary. |
+
+A validation case supplies exactly one of `input` and `raw_json_hex`. The hex
+branch is allowed only for JSON parse operations and contains lowercase pairs
+of hex digits. `expected_canonical_ascii` stores the literal expected canonical
+ASCII bytes, alongside `expected_hash`; neither is derived by the test runner.
+The new `invalid_encoding` and `invalid_string` expectations assert exact error
+reasons, unlike the existing broad model-validation categories.
 
 PR 2 must implement every operation, including field-schema projections and
 builder pre-conversion checks. Running just the original evaluation loop is
@@ -627,6 +717,13 @@ cases remain green while only the selected numeric-rejection vector fails.
 | TerminalEnvelope.selected_endpoint: string input type | `terminalenvelope_selected_endpoint_string_type` | `terminalenvelope_selected_endpoint_string_type` | 1/1 → 1/1 |
 | TerminalEnvelope.snapshot_hash: string input type | `terminalenvelope_snapshot_hash_string_type` | `terminalenvelope_snapshot_hash_string_type` | 1/1 → 1/1 |
 | AcceptanceOutcome.payload_hash: string input type | `acceptanceoutcome_payload_hash_string_type` | `acceptanceoutcome_payload_hash_string_type` | 1/1 → 1/1 |
+| Wire JSON rejects a UTF-8 BOM with invalid_encoding | `snapshot_utf8_bom`, `snapshot_str_bom` | `json_bom_accepted` | 2/2 → 2/2 |
+| Wire JSON rejects UTF-16/32 with or without BOM | `snapshot_utf16le`, `snapshot_utf16le_bom`, `snapshot_utf16be`, `snapshot_utf16be_bom`, `snapshot_utf32le`, `snapshot_utf32le_bom`, `snapshot_utf32be`, `snapshot_utf32be_bom` | `json_utf16_accepted` | 8/8 → 8/8 |
+| Wire JSON rejects invalid UTF-8 with invalid_encoding | `eligibility_utf8_encoded_surrogate` | `json_invalid_utf8_accepted` | 1/1 → 1/1 |
+| Decoded string values reject lone high and low surrogates with invalid_string | `eligibility_surrogate_high_value`, `eligibility_surrogate_low_value`, `eligibility_surrogate_literal_value`, `eligibility_canonical_surrogate_pair`, `eligibility_canonical_utf8_nonascii` | `json_surrogate_accepted` | 3/3 → 3/3 |
+| Decoded string keys and values reject surrogates at every depth with invalid_string | `eligibility_surrogate_key`, `eligibility_surrogate_nested_value`, `eligibility_surrogate_nested_key` | `json_surrogate_nested_accepted` | 3/3 → 3/3 |
+| Canonical ASCII JSON escapes DEL as lowercase \u007f | `eligibility_canonical_del` | `canonical_del_unescaped` | 1/1 → 1/1 |
+| Canonical ASCII JSON escapes C0 controls as lowercase \u0001 | `eligibility_canonical_c0`, `eligibility_canonical_escaped_nul` | `canonical_c0_unescaped` | 1/1 → 1/1 |
 
 ## Original 102 fixture cases (preserved)
 
@@ -734,6 +831,177 @@ cases remain green while only the selected numeric-rejection vector fails.
 | `tier_descending_boundaries` | invalid_snapshot |
 | `unknown_context_field_requested` | invalid_context |
 | `unknown_context_field_observed` | invalid_context |
+
+## Round 8 runtime wire enforcement (2026-09-28)
+
+The AST boundary guard is replaced by a `Frozen` wrap validator. JSON-mode
+validation requires the module-private `_STRICT_WIRE` context flag. The shared
+`model_validate_json` override sets it around strict decoding and inherited
+JSON validation, restoring the previous value in `finally`; all four `parse_*`
+helpers delegate to that override. Internal DTO nesting remains supported.
+Python dictionary and attribute validation still run the existing string checks.
+
+Runtime regressions cover every DTO, assignment aliases, annotated `TypeAlias`,
+`Annotated`, PEP 695 aliases (executed on Python 3.14.6), lists, optional DTOs and
+foreign model fields. Astra's exact duplicate-key payload
+`{"usage_type":"USD","usage_type":"Credits"}` fails with
+`unsupported_wire_path` through adapters and foreign models. Supported parsers
+still reject it as duplicate JSON. Metadata describing a string as `Eligibility`
+remains valid. Strict `True`/`False`, bytes/text, all DTOs, all four parsers and
+internal nesting have positive controls. Success, decoder failure, model failure,
+input-type failure and restoration of a prior context value have cleanup checks.
+
+The runtime mutation specifications are recorded under `wire_boundary` in
+`billing_v1.rules.json` and executed in memory by the boundary test module:
+
+| Mutation | Red under mutation → green after restoration |
+|---|---|
+| Disable the wrap boundary check | 16/16 → 16/16 |
+| Remove only the JSON-mode condition (reject Python too) | 1/1 → 1/1 |
+| Never set the context flag | 4/4 → 4/4 |
+| Leave the context flag set | 4/4 → 4/4 |
+
+Verification using the supplied Python 3.14.6 virtualenv:
+
+- Boundary suite: **44 passed**; all four mutation controls pass.
+- Requested focused suite: **2,438 passed**, 820 warnings, in 170.30 seconds,
+  including all **84 settlement differentials**.
+- Repository-wide `ruff check --no-cache .`: **All checks passed!**
+- `mypy src/trusted_router`: **Success: no issues found in 401 source files**.
+- Serializer, hash, snapshot builder, evaluator and envelope verifier ASTs are
+  unchanged against `HEAD`.
+- The full repository attempt ran with four workers and coverage in an external
+  temporary copy. It was interrupted after 1,148.43 seconds following a failure
+  and prolonged slow progress: **5,815 passed, 992 skipped, 11 xfailed, one failed**.
+  `test_committed_charge[outbox_recovery-responses_nonstream]` received HTTP 408
+  `Request body timed out` from the gateway settle endpoint. All **84 settlement
+  differentials pass again** on the current code (34.30 seconds). The same isolated
+  case passes with the committed `HEAD` billing module (**1 passed**, 1.06 seconds).
+  **Full-suite success and the 70% coverage gate remain unverified.**
+
+The byte fixture is unchanged from the Round 8 starting worktree; SHA-256 remains
+`4aedf13e4ba30b4d1f0767f829e790c37ce3f957a39c15d1eb6aff8c8734fd81`.
+
+## Round 7 structural Python validation (2026-09-28)
+
+`Frozen.scalar_strings` validates every constructed field after Pydantic's
+attribute extraction; `_validate_strings` now also traverses `BaseModel` fields.
+The before-validator still protects unknown mapping keys/values and sequences.
+The supported raw-JSON boundary is documented above and in the module docstring.
+Round 7 introduced a production source guard with an empty exception allowlist.
+Round 8 replaces it with runtime enforcement because static alias detection was incomplete.
+
+- Removing the after-check: **13/13 red → 13/13 green**. This covers high/low
+  surrogates through DTO attribute input, `TypeAdapter.validate_python`, ordinary
+  and frozen enclosing models, plus nested model/tuple/list/dictionary fields.
+- Widening the guard allowlist to `*`: its temporary `TypeAdapter(Eligibility)`
+  negative control fails (**1/1 red → 1/1 green** after restoration).
+- Existing Python controls still pass: mapping traversal **12/12 → 12/12**,
+  sequence traversal **4/4 → 4/4**, strict JSON delegation **8/8 → 8/8**.
+  The mapping control now selects unknown keys/values; the new after-validator
+  independently protects the four recognized-field cases from the old control.
+- Requested regression selection, including the guard and 84 settlement
+  differentials: **2,403 passed**, 821 warnings, in 115.39 seconds. All **389
+  mutation controls** pass (374 rule controls, nine evaluator controls, four
+  Python entry controls, frozen assignment and the guard allowlist control).
+- Repository-wide `ruff check --no-cache .`: **All checks passed!**
+- `mypy src/trusted_router`: **Success: no issues found in 401 source files**.
+- The shared fixture, rules and schema are unchanged from the Round 6 starting
+  worktree. Fixture SHA-256 remains
+  `4aedf13e4ba30b4d1f0767f829e790c37ce3f957a39c15d1eb6aff8c8734fd81`;
+  the original 727-case byte pins pass. Serializer, hash, builder and evaluator
+  ASTs are unchanged from the committed baseline.
+- Fresh application creation registers **393 routes** without importing
+  `billing_snapshot`.
+- The full repository gate is **not verified**. The serial attempt stopped at
+  **5,446 passed, 992 skipped, 11 xfailed, one failed** when the cloud rollout
+  verifier's `uv` subprocess could not initialize `/Users/jperla/.cache/uv`.
+  Redirecting the cache to `/private/tmp` and using the supplied virtualenv
+  without syncing made that isolated test pass.
+- A four-worker full-suite retry ended at **8,042 passed, 993 skipped,
+  12 xfailed, two failed** in 871.90 seconds. The failures were
+  `test_credit_transfer.py::TestHttpSurface::test_a_valid_credit_token_credits_once_however_often_delivered`
+  (HTTP 408, request-body timeout) and
+  `test_ledger_retirement_deploy.py::test_gate_passes_on_a_drained_step_one_fleet`
+  (a shell subprocess's Python lacked `datetime.UTC`). Both pass in isolation
+  with the supplied virtualenv first on `PATH`: **2 passed** in 1.41 seconds.
+  No full-suite success or repository coverage threshold is claimed.
+
+Round 7 changes only the contract module, this document, the contract regression
+and mutation test modules, and the new boundary test. All changes remain
+uncommitted. Test caches, coverage data, temporary files and logs stay outside
+the worktree.
+
+## Round 5 wire tightening (2026-09-28)
+
+The Python side now requires BOM-free UTF-8 JSON and Unicode scalar strings.
+This deliberately tightens the frozen contract; PR 2 must consume the updated
+fixture and implement the same rules. No new Go parity run is claimed here.
+`strict_json_loads` is shared by all DTO JSON entry points and the four parser
+wrappers. The canonical serializer, builder, evaluator, arithmetic checker and
+envelope verifier functions are byte-identical to Round 4.
+
+- Shared fixture: **759 cases**, SHA-256
+  `4aedf13e4ba30b4d1f0767f829e790c37ce3f957a39c15d1eb6aff8c8734fd81`.
+  All original **727 cases are byte-identical**, checked against the prior file
+  and the pinned Round 4 reconstruction; older reconstruction pins also pass.
+- Seven new controls: **19/19 red selected → 19/19 green selected**.
+  BOM acceptance: **2/2 → 2/2**; UTF-16/32 acceptance: **8/8 → 8/8**;
+  invalid UTF-8 replacement: **1/1 → 1/1**; surrogate value acceptance:
+  **3/3 → 3/3**; nested/key surrogate error codes: **3/3 → 3/3**;
+  unescaped DEL: **1/1 → 1/1**; unescaped C0: **1/1 → 1/1**.
+  All **384 controls** pass with **559/559 red selected → 559/559 green selected**.
+- Requested regression selection: **2,304 passed**, 820 warnings, in 113.64 seconds.
+  This includes the unchanged real-settlement differential cases.
+- Repository-wide `ruff check --no-cache .`: **All checks passed!**
+- `mypy src/trusted_router`: **Success: no issues found in 401 source files**.
+- All DTO JSON entry points are tested for encoding and nested surrogate
+  rejection. All four parser wrappers have valid bytes/string round trips and
+  duplicate-key rejection checks. Fixture schema tests enforce the exclusive
+  raw-byte/text input branches.
+- Fresh app creation: **393 routes**, with `billing_snapshot` absent from
+  `sys.modules`; source search finds no production imports.
+
+New literal case names:
+
+- `snapshot_utf8_bom`
+- `snapshot_utf16le`
+- `snapshot_utf16le_bom`
+- `snapshot_utf16be`
+- `snapshot_utf16be_bom`
+- `snapshot_utf32le`
+- `snapshot_utf32le_bom`
+- `snapshot_utf32be`
+- `snapshot_utf32be_bom`
+- `snapshot_invalid_utf8`
+- `eligibility_utf8_encoded_surrogate`
+- `snapshot_str_bom`
+- `eligibility_surrogate_high_value`
+- `eligibility_surrogate_low_value`
+- `eligibility_surrogate_key`
+- `eligibility_surrogate_nested_value`
+- `eligibility_surrogate_nested_key`
+- `eligibility_surrogate_literal_value`
+- `envelope_json_utf8_bom`
+- `envelope_json_surrogate_key`
+- `acceptance_json_utf8_bom`
+- `acceptance_json_surrogate_key`
+- `eligibility_json_utf8_bom`
+- `eligibility_json_surrogate_key`
+- `model_json_utf8_bom`
+- `model_json_surrogate_key`
+- `eligibility_canonical_del`
+- `eligibility_canonical_c0`
+- `eligibility_canonical_escaped_nul`
+- `eligibility_canonical_surrogate_pair`
+- `eligibility_canonical_utf8_nonascii`
+- `snapshot_utf8_bytes`
+
+Checks use the requested existing interpreter, with bytecode and pytest cache
+writes disabled. Logs, scratch scripts, before/after audit inputs and caches
+live under `/private/tmp/billing-v1-round5`. No git writes were performed;
+changes remain uncommitted. This round uses the explicitly requested regression
+selection; the full-suite and coverage figures below are historical evidence.
 
 ## Round 4 local verification (2026-09-28)
 

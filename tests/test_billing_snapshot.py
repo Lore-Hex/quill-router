@@ -3,20 +3,22 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from collections import UserDict, UserList
 from dataclasses import replace
 from pathlib import Path
+from types import MappingProxyType, SimpleNamespace
 from typing import Any, Literal
 from unittest.mock import patch
 
 import pytest
-from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
 
 from trusted_router import billing_snapshot as billing
 from trusted_router.catalog_data import ModelEndpoint
 from trusted_router.pricing import PriceTier
 
 FIXTURE = Path(__file__).parent / "fixtures/async_settlement/billing_v1.json"
-FIXTURE_SHA256 = "a748ef09cfbd6bdfb2f84fb0b4a05af7030e6a1a6c69e2a54cf20a096bfcef4b"
+FIXTURE_SHA256 = "4aedf13e4ba30b4d1f0767f829e790c37ce3f957a39c15d1eb6aff8c8734fd81"
 DATA = json.loads(FIXTURE.read_bytes())
 ALL_CASES = DATA["cases"]
 # The original evaluation vectors also drive real settlement differentials.
@@ -50,10 +52,28 @@ class FixtureCase(BaseModel):
 class ValidationCase(BaseModel):
     """Literal inputs, including malformed wire values; never derive expectations."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_extra={
+        "oneOf": [
+            {"required": ["input"], "not": {"required": ["raw_json_hex"]}},
+            {
+                "required": ["raw_json_hex"], "not": {"required": ["input"]},
+                "properties": {
+                    "raw_json_hex": {"type": "string"},
+                    "operation": {"enum": [
+                        "snapshot_json", "envelope_json", "acceptance_json",
+                        "eligibility_json", "model_json",
+                    ]},
+                },
+            },
+        ],
+    })
     name: str
-    operation: Literal["snapshot_json", "model", "envelope", "acceptance", "type", "field", "checked", "builder"]
-    input: Any
+    operation: Literal[
+        "snapshot_json", "envelope_json", "acceptance_json", "eligibility_json", "model_json",
+        "model", "envelope", "acceptance", "type", "field", "checked", "builder",
+    ]
+    input: Any = None
+    raw_json_hex: str | None = Field(default=None, pattern=r"^(?:[0-9a-f]{2})*$")
     model: Literal[
         "Frozen", "Eligibility", "Rates", "Tier", "Candidate", "BillingSnapshot",
         "RawUsage", "NormalizedUsage", "Evaluation", "TerminalEnvelope", "AcceptanceOutcome",
@@ -65,10 +85,20 @@ class ValidationCase(BaseModel):
         "invalid_snapshot", "invalid_context", "invalid_usage", "invalid_envelope",
         "invalid_acceptance", "invalid_evaluation", "invalid_type", "invalid_builder",
         "snapshot_hash_mismatch", "charge_mismatch", "unsupported_endpoint", "arithmetic_overflow",
-        "string_type",
+        "string_type", "invalid_encoding", "invalid_string",
     ] | None
     expected_hash: str | None = None
+    expected_canonical_ascii: str | None = None
     evaluated_usage: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def one_input(self) -> ValidationCase:
+        if ("input" in self.model_fields_set) == ("raw_json_hex" in self.model_fields_set):
+            raise ValueError("exactly one of input and raw_json_hex is required")
+        if "raw_json_hex" in self.model_fields_set:
+            if self.raw_json_hex is None or not self.operation.endswith("_json"):
+                raise ValueError("raw_json_hex requires a JSON parse operation")
+        return self
 
 
 class FixtureSchema(BaseModel):
@@ -81,9 +111,17 @@ class FixtureSchema(BaseModel):
 def check_validation_case(case: dict[str, Any]) -> None:
     def validate() -> Any:
         operation = case["operation"]
-        payload = case["input"]
+        payload = bytes.fromhex(case["raw_json_hex"]) if "raw_json_hex" in case else case["input"]
         if operation == "snapshot_json":
             return billing.parse_snapshot(payload)
+        if operation == "envelope_json":
+            return billing.parse_envelope(payload)
+        if operation == "acceptance_json":
+            return billing.parse_acceptance(payload)
+        if operation == "eligibility_json":
+            return billing.parse_eligibility(payload)
+        if operation == "model_json":
+            return getattr(billing, case["model"]).model_validate_json(payload)
         if operation == "envelope":
             snapshot = billing.BillingSnapshot.model_validate(case["snapshot"])
             envelope = billing.TerminalEnvelope.model_validate(payload)
@@ -122,11 +160,14 @@ def check_validation_case(case: dict[str, Any]) -> None:
         return
     if error is not None:
         # Stable wire categories for model errors, exact reasons for semantic checks.
-        match = None if error.startswith("invalid_") else f"^{error}$"
+        exact = error in ("invalid_encoding", "invalid_string")
+        match = None if error.startswith("invalid_") and not exact else f"^{error}$"
         with pytest.raises(ValueError, match=match):
             validate()
     else:
         result = validate()
+        if case.get("expected_canonical_ascii") is not None:
+            assert billing.canonical_bytes(result) == case["expected_canonical_ascii"].encode("ascii")
         if case.get("expected_hash") is not None:
             assert billing.canonical_hash(result) == case["expected_hash"]
 
@@ -192,6 +233,10 @@ def test_fixture_schema_and_pin() -> None:
     round3 = dict(DATA, cases=ALL_CASES[:717])
     round3_bytes = (json.dumps(round3, indent=2, ensure_ascii=True) + "\n").encode("ascii")
     assert hashlib.sha256(round3_bytes).hexdigest() == "949e7eab8be042cb3d8044c0ba087ff0c9e98c96c7894e2f0c3ebd27b2db185b"
+    # Round 5 only appends: preserve all 727 Round 4 cases byte-for-byte.
+    round4 = dict(DATA, cases=ALL_CASES[:727])
+    round4_bytes = (json.dumps(round4, indent=2, ensure_ascii=True) + "\n").encode("ascii")
+    assert hashlib.sha256(round4_bytes).hexdigest() == "a748ef09cfbd6bdfb2f84fb0b4a05af7030e6a1a6c69e2a54cf20a096bfcef4b"
     assert len({c["name"] for c in ALL_CASES}) == len(ALL_CASES)
     assert json.loads(FIXTURE.with_suffix(".schema.json").read_bytes()) == FixtureSchema.model_json_schema()
     for case in CASES:
@@ -310,3 +355,205 @@ def test_envelope_hash_binds_identity_and_accounting_metadata(field: str, value:
     payload[field] = value
     changed = billing.TerminalEnvelope.model_validate(payload)
     assert billing.canonical_hash(changed) != case["expected_terminal_envelope_hash"]
+
+
+JSON_MODELS = [
+    model for model in vars(billing).values()
+    if isinstance(model, type) and issubclass(model, billing.Frozen)
+]
+
+
+@pytest.mark.parametrize("model", JSON_MODELS, ids=lambda model: model.__name__)
+@pytest.mark.parametrize("raw,error", [
+    (b'\xef\xbb\xbf{}', "invalid_encoding"),
+    ('{}', None),
+    (b'{\x00}\x00', "invalid_encoding"),
+    (b'\x00{\x00}', "invalid_encoding"),
+    (b'{\x00\x00\x00}\x00\x00\x00', "invalid_encoding"),
+    (b'\x00\x00\x00{\x00\x00\x00}', "invalid_encoding"),
+    (b'{"unknown":"\xff"}', "invalid_encoding"),
+    ('{"unknown":[{"value":"\\ud800"}]}', "invalid_string"),
+    ('{"unknown":[{"\\udfff":true}]}', "invalid_string"),
+])
+def test_all_dto_json_entry_points(model: type[billing.Frozen], raw: bytes | str, error: str | None) -> None:
+    if error is not None:
+        with pytest.raises(ValueError, match=f"^{error}$"):
+            model.model_validate_json(raw)
+    else:
+        # JSON mode still enforces each DTO's required fields, defaults and types.
+        try:
+            expected = model.model_validate({})
+        except ValidationError:
+            with pytest.raises(ValidationError):
+                model.model_validate_json(raw)
+        else:
+            assert model.model_validate_json(raw) == expected
+
+
+def test_json_wrapper_roundtrips() -> None:
+    case = next(case for case in CASES if case["name"] == "openai_cache")
+    snapshot = billing.BillingSnapshot.model_validate(case["snapshot"])
+    envelope = billing.TerminalEnvelope.model_validate(dict(
+        DATA["envelope_identity"], selected_endpoint=case["selected_endpoint"],
+        snapshot_hash=billing.canonical_hash(snapshot), usage=case["expected_normalized_usage"],
+        charge_micro=case["expected_charge_micro"],
+    ))
+    for parser, value in [
+        (billing.parse_snapshot, snapshot), (billing.parse_envelope, envelope),
+        (billing.parse_acceptance, billing.AcceptanceOutcome(status="invalid")),
+        (billing.parse_eligibility, billing.Eligibility()),
+    ]:
+        encoded = billing.canonical_bytes(value)
+        assert parser(encoded) == value
+        assert parser(encoded.decode("utf-8")) == value
+        duplicate = encoded[:-1] + b',' + encoded[1:]
+        with pytest.raises(ValueError, match="duplicate JSON key"):
+            parser(duplicate)
+
+
+@pytest.mark.parametrize("value", ["\ud800", "\udfff", {"nested": ["\ud800"]}, {"\udfff": 1}])
+def test_python_model_inputs_reject_surrogates(value: Any) -> None:
+    with pytest.raises(ValueError, match="invalid_string"):
+        billing.Eligibility.model_validate({"usage_type": value})
+
+
+@pytest.mark.parametrize("mapping", [MappingProxyType, UserDict])
+@pytest.mark.parametrize("location", ["value", "key", "nested_value", "nested_key"])
+@pytest.mark.parametrize("surrogate", ["\ud800", "\udfff"])
+def test_python_mapping_inputs_reject_surrogates(
+    mapping: Any, location: str, surrogate: str,
+) -> None:
+    value = mapping({surrogate: "Credits"} if location.endswith("key")
+                    else {"usage_type": surrogate})
+    if location.startswith("nested"):
+        value = mapping({"unknown": [mapping({"deeper": (value,)})]})
+    with pytest.raises(ValueError, match="invalid_string"):
+        billing.Eligibility.model_validate(value)
+
+
+@pytest.mark.parametrize("location", ["value", "key"])
+@pytest.mark.parametrize("surrogate", ["\ud800", "\udfff"])
+def test_python_sequence_inputs_reject_surrogates(location: str, surrogate: str) -> None:
+    value = {surrogate: True} if location == "key" else surrogate
+    with pytest.raises(ValueError, match="invalid_string"):
+        billing.Eligibility.model_validate({"unknown": UserList([UserList([value])])})
+
+
+@pytest.mark.parametrize("mapping", [MappingProxyType, UserDict])
+def test_python_mapping_inputs_roundtrip(mapping: Any) -> None:
+    value = billing.Eligibility.model_validate(mapping({"usage_type": "Credits😀"}))
+    assert billing.parse_eligibility(billing.canonical_bytes(value)) == value
+
+
+@pytest.mark.parametrize("entry", ["dto", "adapter", "container", "frozen_container"])
+@pytest.mark.parametrize("surrogate", ["\ud800", "\udfff"])
+def test_python_attribute_inputs_reject_surrogates(entry: str, surrogate: str) -> None:
+    # Define containers here so mutation controls bind the current DTO schema.
+    class Container(BaseModel):
+        eligibility: billing.Eligibility
+
+    class FrozenContainer(billing.Frozen):
+        eligibility: billing.Eligibility
+
+    value = SimpleNamespace(usage_type=surrogate)
+    with pytest.raises(ValueError, match="invalid_string"):
+        if entry == "dto":
+            billing.Eligibility.model_validate(value, from_attributes=True)
+        elif entry == "adapter":
+            TypeAdapter(billing.Eligibility).validate_python(value, from_attributes=True)
+        elif entry == "container":
+            Container.model_validate(SimpleNamespace(eligibility=value), from_attributes=True)
+        else:
+            FrozenContainer.model_validate(SimpleNamespace(eligibility=value), from_attributes=True)
+
+
+@pytest.mark.parametrize("location", ["model", "tuple", "list", "dict_key", "dict_value"])
+def test_after_validator_walks_all_field_values(location: str) -> None:
+    class PlainModel(BaseModel):
+        value: str
+
+    class Fields(billing.Frozen):
+        model: PlainModel
+        tuple_values: tuple[str, ...]
+        list_values: list[str]
+        dict_values: dict[str, str]
+
+    value = SimpleNamespace(
+        model=PlainModel(value="\ud800" if location == "model" else "scalar😀"),
+        tuple_values=("\ud800" if location == "tuple" else "scalar😀",),
+        list_values=["\ud800" if location == "list" else "scalar😀"],
+        dict_values={"\ud800" if location == "dict_key" else "key":
+                     "\ud800" if location == "dict_value" else "scalar😀"},
+    )
+    with pytest.raises(ValueError, match="invalid_string"):
+        Fields.model_validate(value, from_attributes=True)
+
+
+def test_python_attribute_inputs_roundtrip() -> None:
+    for validate in (billing.Eligibility.model_validate,
+                     TypeAdapter(billing.Eligibility).validate_python):
+        value = validate(SimpleNamespace(usage_type="Credits😀"), from_attributes=True)
+        assert billing.parse_eligibility(billing.canonical_bytes(value)) == value
+
+
+def dto_roundtrip_values() -> dict[str, billing.Frozen]:
+    case = next(case for case in CASES if case["name"] == "openai_cache")
+    snapshot = billing.BillingSnapshot.model_validate(case["snapshot"])
+    usage = billing.NormalizedUsage.model_validate(case["expected_normalized_usage"])
+    candidate = snapshot.candidates[0]
+    return {
+        "Frozen": billing.Frozen(),
+        "Eligibility": billing.Eligibility(usage_type="Credits😀"),
+        "Rates": candidate.rates,
+        "Tier": billing.Tier(max_prompt_tokens=None, rates=candidate.rates),
+        "Candidate": candidate,
+        "BillingSnapshot": snapshot,
+        "RawUsage": billing.RawUsage.model_validate(case["raw_usage"]),
+        "NormalizedUsage": usage,
+        "Evaluation": billing.Evaluation(usage=usage, charge_micro=case["expected_charge_micro"]),
+        "TerminalEnvelope": billing.TerminalEnvelope.model_validate(dict(
+            DATA["envelope_identity"], selected_endpoint=case["selected_endpoint"],
+            snapshot_hash=billing.canonical_hash(snapshot), usage=usage,
+            charge_micro=case["expected_charge_micro"],
+        )),
+        "AcceptanceOutcome": billing.AcceptanceOutcome(status="invalid"),
+        "AcceptanceOutcome_accepted": billing.AcceptanceOutcome(
+            status="accepted", payload_hash="a" * 64, settlement_status="pending",
+        ),
+    }
+
+
+@pytest.mark.parametrize("name", [model.__name__ for model in JSON_MODELS]
+                         + ["AcceptanceOutcome_accepted"])
+@pytest.mark.parametrize("strict", [None, True])
+@pytest.mark.parametrize("as_bytes", [False, True])
+def test_dto_json_strict_roundtrips(name: str, strict: bool | None, as_bytes: bool) -> None:
+    value = dto_roundtrip_values()[name]
+    encoded = billing.canonical_bytes(value)
+    raw = encoded if as_bytes else encoded.decode("utf-8")
+    parsed = type(value).model_validate_json(raw, strict=strict)
+    assert parsed == value
+    assert billing.canonical_bytes(parsed) == encoded
+
+
+@pytest.mark.parametrize("name,field", [("Candidate", "tiers"), ("BillingSnapshot", "candidates")])
+def test_python_strict_validation_still_rejects_arrays(name: str, field: str) -> None:
+    value = dto_roundtrip_values()[name]
+    data = value.model_dump()
+    data[field] = list(data[field])
+    with pytest.raises(ValidationError) as exc:
+        type(value).model_validate(data, strict=True)
+    assert [(error["loc"], error["type"]) for error in exc.value.errors()] == [((field,), "tuple_type")]
+
+
+@pytest.mark.parametrize("changes", [
+    {}, {"input": "{}", "raw_json_hex": "7b7d"},
+    {"raw_json_hex": None}, {"raw_json_hex": "0"}, {"raw_json_hex": "zz"},
+    {"operation": "model", "raw_json_hex": "7b7d"},
+])
+def test_fixture_wire_input_branch_is_exclusive(changes: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError):
+        ValidationCase.model_validate({
+            "name": "bad_input_branch", "operation": "snapshot_json", "expected_error": None,
+            **changes,
+        })

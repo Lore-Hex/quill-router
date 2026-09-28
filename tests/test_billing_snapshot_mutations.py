@@ -2,12 +2,34 @@
 from __future__ import annotations
 
 import json
+from collections import UserDict
+from functools import partial
+from itertools import product
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from tests.test_billing_snapshot import ALL_CASES, check_case
+from tests.test_billing_snapshot import (
+    ALL_CASES,
+    check_case,
+)
+from tests.test_billing_snapshot import (
+    test_after_validator_walks_all_field_values as check_after_validator_walks_all_field_values,
+)
+from tests.test_billing_snapshot import (
+    test_dto_json_strict_roundtrips as check_dto_json_strict_roundtrips,
+)
+from tests.test_billing_snapshot import (
+    test_python_attribute_inputs_reject_surrogates as check_python_attribute_inputs_reject_surrogates,
+)
+from tests.test_billing_snapshot import (
+    test_python_mapping_inputs_reject_surrogates as check_python_mapping_inputs_reject_surrogates,
+)
+from tests.test_billing_snapshot import (
+    test_python_sequence_inputs_reject_surrogates as check_python_sequence_inputs_reject_surrogates,
+)
 from trusted_router import billing_snapshot as billing
 
 MUTATIONS = [
@@ -90,6 +112,63 @@ def test_mutation_is_killed(name: str, names: list[str], old: str, new: str) -> 
 RULES = json.loads((Path(__file__).parent / "fixtures/async_settlement/billing_v1.rules.json").read_bytes())
 
 
+@pytest.mark.parametrize("name,old,new", [
+    ("mapping_dict_only", "elif isinstance(value, Mapping):", "elif isinstance(value, dict):"),
+    ("sequence_list_tuple_only",
+     "elif isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):",
+     "elif isinstance(value, (list, tuple)):"),
+    ("python_mode_json_validation",
+     "return super().model_validate_json(\n                json_data,",
+     "return cls.model_validate(\n                strict_json_loads(json_data),"),
+    ("after_field_validation_removed", "        _validate_strings(self)\n", ""),
+])
+def test_python_entry_point_mutation_is_killed(name: str, old: str, new: str) -> None:
+    if name == "mapping_dict_only":
+        checks = [partial(check_python_mapping_inputs_reject_surrogates, mapping, location, char)
+                  for mapping, location, char in product(
+                      [MappingProxyType, UserDict],
+                      # Known field values now have the independent after check.
+                      ["key", "nested_value", "nested_key"], ["\ud800", "\udfff"],
+                  )]
+    elif name == "sequence_list_tuple_only":
+        checks = [partial(check_python_sequence_inputs_reject_surrogates, location, char)
+                  for location, char in product(["value", "key"], ["\ud800", "\udfff"])]
+    elif name == "after_field_validation_removed":
+        checks = [partial(check_python_attribute_inputs_reject_surrogates, entry, char)
+                  for entry, char in product(
+                      ["dto", "adapter", "container", "frozen_container"], ["\ud800", "\udfff"],
+                  )]
+        checks.extend(partial(check_after_validator_walks_all_field_values, location)
+                      for location in ["model", "tuple", "list", "dict_key", "dict_value"])
+    else:
+        checks = [partial(check_dto_json_strict_roundtrips, model, True, as_bytes)
+                  for model, as_bytes in product(
+                      ["AcceptanceOutcome", "AcceptanceOutcome_accepted", "Candidate", "BillingSnapshot"],
+                      [False, True],
+                  )]
+    assert billing.__file__ is not None
+    source = Path(billing.__file__).read_text()
+    assert source.count(old) == 1
+    for check in checks:
+        check()
+    original = billing.__dict__.copy()
+    try:
+        exec(compile(source.replace(old, new), billing.__file__, "exec"), billing.__dict__)  # noqa: S102
+        for check in checks:
+            if name == "python_mode_json_validation":
+                with pytest.raises(ValidationError):
+                    check()
+            else:
+                with pytest.raises((AssertionError, pytest.fail.Exception)):
+                    check()
+    finally:
+        billing.__dict__.clear()
+        billing.__dict__.update(original)
+    for check in checks:
+        check()
+    print(f"{name}: red {len(checks)}/{len(checks)} -> green {len(checks)}/{len(checks)}")
+
+
 def mutate_rule(source: str, rule: dict) -> str:
     """Limit field mutations to one model; other models retain their constraints."""
     old, new = rule["old"], rule["new"]
@@ -125,9 +204,12 @@ def test_validation_mutation_is_killed(rule: dict) -> None:
             elif rule.get("failure") == "value":
                 with pytest.raises(AssertionError):
                     check_case(case)
+            elif rule.get("failure") == "error_code":
+                # Pytest may render an exact-string regex mismatch as a diff.
+                with pytest.raises((AssertionError, pytest.fail.Exception)):
+                    check_case(case)
             else:
-                failure = (AssertionError, pytest.fail.Exception) if rule.get("failure") == "error_code" else pytest.fail.Exception
-                with pytest.raises(failure, match="Regex pattern did not match|DID NOT RAISE"):
+                with pytest.raises(pytest.fail.Exception, match="DID NOT RAISE"):
                     check_case(case)
         if all(case.get("expected_error") == "string_type" for case in selected):
             # Widening one Identity/Digest binding must kill only its own vector.
