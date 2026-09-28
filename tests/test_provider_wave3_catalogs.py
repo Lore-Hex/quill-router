@@ -846,8 +846,14 @@ def test_former_runtime_only_secrets_join_the_hourly_refresh_block() -> None:
 def test_runtime_only_provider_routes_expire_without_freezing_other_catalogs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sample = next(
-        endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "upstage"
+    # A fixture route of a runtime-only provider: expiry is a rule of the
+    # route's deadline, whatever Upstage lists today.
+    sample = ModelEndpoint(
+        id="upstage/solar-pro4@upstage/prepaid",
+        model_id="upstage/solar-pro4",
+        provider="upstage",
+        usage_type="Credits",
+        upstream_id="solar-pro4",
     )
     # The catalog's own clock, which judges every route's freshness.
     now = catalog_data._utc_now()
@@ -867,7 +873,12 @@ def test_runtime_only_provider_routes_expire_without_freezing_other_catalogs(
     endpoint_ids = {endpoint.id for endpoint in endpoints_for_model(sample.model_id)}
     assert expired.id not in endpoint_ids
     assert current.id in endpoint_ids
-    assert sample.catalog_valid_until is not None
+    # Every route Upstage's expiring manifest publishes carries its deadline.
+    assert all(
+        endpoint.catalog_valid_until is not None
+        for endpoint in MODEL_ENDPOINTS.values()
+        if endpoint.provider == "upstage"
+    )
 
 
 def test_malformed_runtime_only_manifest_expires_every_route() -> None:

@@ -344,6 +344,80 @@ TINFOIL_GLM_5_3_FLASH = {
     "cached_input_token_price_per_m": 100000,
 }
 
+# Sakana's direct Fugu route as its manifest lists it.
+SAKANA_FUGU_ULTRA_V1_1 = {
+    "display_name": "fugu-ultra-v1.1",
+    "title": "fugu-ultra-v1.1",
+    "model_type": "chat",
+    "input_modalities": ["text"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "id": "sakana-ai/fugu-ultra-v1.1",
+    "upstream_id": "fugu-ultra-v1.1",
+    "context_length": 1000000,
+    "created": 1784781704,
+    "routable": True,
+    "input_token_price_per_m": 5000000,
+    "output_token_price_per_m": 30000000,
+    "cached_input_token_price_per_m": 500000,
+    "price_tiers": [
+        {
+            "max_prompt_tokens": 272000,
+            "input_token_price_per_m": 5000000,
+            "output_token_price_per_m": 30000000,
+            "cached_input_token_price_per_m": 500000,
+        },
+        {
+            "max_prompt_tokens": None,
+            "input_token_price_per_m": 10000000,
+            "output_token_price_per_m": 45000000,
+            "cached_input_token_price_per_m": 1000000,
+        },
+    ],
+}
+
+# Xiaomi's MiMo V2.6 routes as its manifest lists them.
+XIAOMI_MIMO_V2_6 = tuple(
+    {
+        "id": f"xiaomi/mimo-v2.6-{suffix}",
+        "upstream_id": f"mimo-v2.6-{suffix}",
+        "display_name": f"Xiaomi MiMo V2.6 {display}",
+        "title": f"MiMo-V2.6-{title}",
+        "created": 1790051106,
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "model_type": "chat",
+        "endpoints": ["chat/completions"],
+        "features": ["serverless", "function-calling", "reasoning", "structured-output"],
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "metadata_source": f"https://mimo.mi.com/models/en-US/mimo-v2.6-{suffix}",
+        "input_token_price_per_m": prompt,
+        "output_token_price_per_m": output,
+        "cached_input_token_price_per_m": cached,
+    }
+    for suffix, display, title, prompt, output, cached in (
+        ("flash", "Flash", "Flash", 140000, 280000, 2800),
+        ("pro", "Pro", "Pro", 435000, 870000, 3600),
+        ("pro-ultraspeed", "Pro UltraSpeed", "Pro-UltraSpeed", 4350000, 8700000, 36000),
+    )
+)
+
+# Thinking Machines' Tinker GLM-5.3 sampler route as its manifest lists it.
+THINKINGMACHINES_GLM_5_3 = {
+    "id": "z-ai/glm-5.3",
+    "upstream_id": "zai-org/GLM-5.3:peft:262144",
+    "display_name": "Z.ai GLM 5.3 256K",
+    "context_length": 262144,
+    "input_modalities": ["text"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "input_token_price_per_m": 4860000,
+    "output_token_price_per_m": 12150000,
+    "cached_input_token_price_per_m": 972000,
+}
+
 # Pearl's GLM-5.3 route as its manifest lists it.
 PEARL_GLM_5_3 = {
     "display_name": "Z.AI: GLM-5.3",
