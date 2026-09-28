@@ -4,9 +4,12 @@
   const root = document.querySelector('[data-evidence-profile]');
   if (!root) return;
   const prices = document.querySelector('[data-live-prices]');
+  const priceUnit = document.querySelector('[data-live-price-unit]');
   const services = root.querySelector('[data-live-services]');
   const state = root.querySelector('[data-live-state]');
   const attestation = root.querySelector('[data-live-attestation]');
+  const caption = root.querySelector('[data-live-caption]');
+  const statusCaption = caption?.textContent;
   const refreshMs = 300000;
   const staleMs = 360000; // Twice the three-minute core probe schedule.
   const endpoint = `https://trustedrouter.com/token-exchange/evidence/${root.dataset.evidenceProfile}.json`;
@@ -28,7 +31,7 @@
   const dated = value => age(value) !== Infinity;
   const fresh = value => age(value) <= staleMs;
   const lastCheck = value => {
-    if (!dated(value)) return 'Last check unavailable';
+    if (!dated(value)) return '';
     const elapsed = age(value);
     if (elapsed > staleMs) {
       const units = elapsed >= 86400000 ? [86400000, 'day'] : elapsed >= 3600000 ? [3600000, 'hour'] : [60000, 'minute'];
@@ -43,10 +46,12 @@
     return el;
   };
   const unavailable = () => {
-    prices.replaceChildren(link('Prices unavailable · View Tinfoil routes', 'https://trustedrouter.com/models?filter=e2e'));
+    prices.replaceChildren(link('Browse Tinfoil model routes ↗', 'https://trustedrouter.com/models?filter=e2e'));
     services.replaceChildren();
-    state.textContent = 'Status unavailable · See source';
-    attestation.replaceChildren(node('p', 'Check unavailable · See published release'));
+    if (caption) caption.textContent = statusCaption;
+    state.textContent = '';
+    if (priceUnit) priceUnit.hidden = true;
+    attestation.replaceChildren();
   };
   const statuses = {up: 'Operational', degraded: 'Degraded', down: 'Down', unknown: 'No data', stale: 'Stale'};
   const severity = {up: 0, degraded: 1, unknown: 2, stale: 3, down: 4};
@@ -72,9 +77,11 @@
       col.append(choice, node('div', 'Confidential + E2EE', 'privacy-provider'), node('div', `$${row.input} / $${row.output}`, 'privacy-price'));
       prices.append(col);
     }
-    if (!prices.childElementCount) prices.append(link('Prices unavailable · View Tinfoil routes', 'https://trustedrouter.com/models?filter=e2e'));
+    if (priceUnit) priceUnit.hidden = !prices.childElementCount;
+    if (!prices.childElementCount) prices.append(link('Browse Tinfoil model routes ↗', 'https://trustedrouter.com/models?filter=e2e'));
     services.replaceChildren();
     const components = Array.isArray(payload.components) ? payload.components : [];
+    if (caption) caption.textContent = components.some(c => c && fresh(c.last_checked_at) && typeof c.uptime_24h_percent === 'number' && c.uptime_24h_percent >= 0 && c.uptime_24h_percent <= 100 && c.sample_count_24h > 0) ? caption.dataset.uptimeLabel : statusCaption;
     const assessed = [];
     for (const c of components) {
       if (!c || typeof c.id !== 'string' || typeof c.name !== 'string') continue;
@@ -108,7 +115,7 @@
     }
     assessed.sort((a, b) => severity[b.status] - severity[a.status]);
     const worst = assessed[0];
-    state.textContent = !worst ? 'Status unavailable · See source' : worst.status === 'up' ? 'Operational' : `${statuses[worst.status]} · ${assessed.filter(c => c.status === worst.status).map(c => c.name).join(', ')}`;
+    state.textContent = !worst ? '' : worst.status === 'up' ? 'Operational' : `${statuses[worst.status]} · ${assessed.filter(c => c.status === worst.status).map(c => c.name).join(', ')}`;
     attestation.replaceChildren();
     const check = payload.attestation_check;
     attestation.append(node('p', lastCheck(check?.last_checked_at), 'last-check'));

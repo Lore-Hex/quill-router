@@ -84,7 +84,7 @@ const site = http.createServer((req,res) => {
     }
     for (const invalid of ['missing','future']) {
       dateMode=invalid;await pages[0].reload();
-      await pages[0].waitForFunction(()=>document.querySelector('[data-live-services]').textContent.includes('Last check unavailable'));
+      await pages[0].waitForFunction(()=>document.querySelector('[data-live-services]').children.length > 0 && [...document.querySelectorAll('[data-live-services] .last-check')].every(e => e.textContent === ''));
       assert.equal(await pages[0].locator('[data-live-services] strong').count(),0);
       assert.equal(await pages[0].locator('.build-digest').count(),0);
     }
@@ -99,7 +99,7 @@ const site = http.createServer((req,res) => {
     await new Promise(r=>feed.close(r));
     console.log('Staging feed stopped; waiting for the real 300-second revalidation (no clock acceleration).');
     for (const page of pages) {
-      await page.waitForFunction(()=>document.querySelector('[data-live-state]').textContent.includes('Status unavailable'),{},{timeout:320000});
+      await page.waitForFunction(()=>document.querySelector('[data-live-state]').textContent === '' && document.querySelector('[data-live-services]').children.length === 0,{},{timeout:320000});
       assert.equal(await page.locator('.health-bar').count(),0);
       assert.equal(await page.locator('.build-digest').count(),0);
       assert(!((await page.locator('[data-live-prices]').textContent()).includes('$')));

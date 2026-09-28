@@ -21,7 +21,7 @@ const assert=require('node:assert/strict');
     assert(response.ok());const stopped=Date.now();
     console.log('Actual upstream status HTTP server stopped; production backend and its 300s cache remain running.');
     await Promise.all(pages.map(async page => {
-      await page.waitForFunction(()=>document.querySelector('[data-live-state]').textContent.includes('Status unavailable'),{},{timeout:320000, polling:100});
+      await page.waitForFunction(()=>document.querySelector('[data-live-state]').textContent === '' && document.querySelector('[data-live-services]').children.length === 0,{},{timeout:320000, polling:100});
       assert.equal(await page.locator('.service-history').count(),0);
       assert.equal(await page.locator('.build-digest').count(),0);
       // Pricing is independently sourced from the backend catalog and stays valid.

@@ -25,7 +25,10 @@ class EvidenceTests(unittest.TestCase):
                 self.assertNotIn('As of ', page)
                 self.assertNotIn('health-bar up', page)
                 self.assertNotIn('≈ $', page)
-                self.assertIn('Status unavailable', page)
+                self.assertNotIn('unavailable', page)
+                self.assertIn('Service status ↗', page)
+                self.assertIn('Browse Tinfoil model routes ↗', page)
+                self.assertIn('data-live-price-unit hidden', page)
                 self.assertIn('https://trustedrouter.com/models?filter=e2e', page)
 
     def test_source_bindings_and_review_links(self):
