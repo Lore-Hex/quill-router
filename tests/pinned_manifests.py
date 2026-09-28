@@ -54,6 +54,103 @@ DEEPSEEK_FLASH = _deepseek_row(
 )
 DEEPSEEK_DIRECT_ROWS = (DEEPSEEK_V4_FLASH, DEEPSEEK_V4_PRO, DEEPSEEK_FLASH)
 
+# OpenAI's own routes as its manifest lists them, for rules of OpenAI's
+# routes: its prepaid ZDR contract, Priority processing, image billing.
+OPENAI_GPT_4O_MINI = {
+    "display_name": "gpt-4o-mini",
+    "title": "gpt-4o-mini",
+    "model_type": "chat",
+    "input_modalities": ["text"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "id": "openai/gpt-4o-mini",
+    "upstream_id": "gpt-4o-mini",
+    "created": 1721172741,
+    "routable": True,
+    "input_token_price_per_m": 150000,
+    "output_token_price_per_m": 600000,
+    "cached_input_token_price_per_m": 75000,
+}
+OPENAI_GPT_5_5 = {
+    "display_name": "gpt-5.5",
+    "title": "gpt-5.5",
+    "model_type": "chat",
+    "input_modalities": ["text"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "id": "openai/gpt-5.5",
+    "upstream_id": "gpt-5.5",
+    "created": 1776824847,
+    "routable": True,
+    "input_token_price_per_m": 5000000,
+    "output_token_price_per_m": 30000000,
+    "cached_input_token_price_per_m": 500000,
+    "price_tiers": [
+        {
+            "max_prompt_tokens": 272000,
+            "input_token_price_per_m": 5000000,
+            "output_token_price_per_m": 30000000,
+            "cached_input_token_price_per_m": 500000,
+        },
+        {
+            "max_prompt_tokens": None,
+            "input_token_price_per_m": 10000000,
+            "output_token_price_per_m": 45000000,
+            "cached_input_token_price_per_m": 1000000,
+        },
+    ],
+}
+OPENAI_GPT_5_6_SOL = {
+    "display_name": "gpt-5.6-sol",
+    "title": "gpt-5.6-sol",
+    "model_type": "chat",
+    "input_modalities": ["text"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "id": "openai/gpt-5.6-sol",
+    "upstream_id": "gpt-5.6-sol",
+    "created": 1782228018,
+    "routable": True,
+    "input_token_price_per_m": 4000000,
+    "output_token_price_per_m": 20000000,
+    "cached_input_token_price_per_m": 400000,
+    "price_tiers": [
+        {
+            "max_prompt_tokens": 272000,
+            "input_token_price_per_m": 4000000,
+            "output_token_price_per_m": 20000000,
+            "cached_input_token_price_per_m": 400000,
+        },
+        {
+            "max_prompt_tokens": None,
+            "input_token_price_per_m": 8000000,
+            "output_token_price_per_m": 30000000,
+            "cached_input_token_price_per_m": 800000,
+        },
+    ],
+}
+OPENAI_GPT_IMAGE_2_5 = tuple(
+    {
+        "display_name": f"GPT Image 2.5 {variant.title()}",
+        "title": f"gpt-image-2.5-{variant}",
+        "model_type": "image",
+        "input_modalities": ["text"],
+        "output_modalities": ["image"],
+        "endpoints": ["images"],
+        "status": 1,
+        "id": f"openai/gpt-image-2.5-{variant}",
+        "upstream_id": f"gpt-image-2.5-{variant}",
+        "routable": True,
+        "input_token_price_per_m": 5000000,
+        "output_token_price_per_m": 30000000,
+        "cached_input_token_price_per_m": 1250000,
+    }
+    for variant in ("flare", "sunburst")
+)
+
 # The routes the DeepSeek V4 Pro 0813 release leaf is built from
 # (catalog_registry._install_deepseek_v4_pro_release_routes), as their
 # manifests listed them before Fireworks retired its route on 2026-09-25.
@@ -131,11 +228,12 @@ def serve_manifest_rows(
     """Serve `provider`'s routes for these manifest rows in this process's
     registry, built by the catalog's own manifest ingestion, in place of any
     route with the same id. A model the registry lacks is added with them."""
-    directory.mkdir(parents=True, exist_ok=True)
+    manifests = directory / "served_provider_models"
+    manifests.mkdir(parents=True, exist_ok=True)
     manifest = {"provider": provider, "models": [dict(row) for row in rows]}
-    (directory / f"{provider}.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (manifests / f"{provider}.json").write_text(json.dumps(manifest), encoding="utf-8")
     with monkeypatch.context() as patch:
-        patch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", directory)
+        patch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", manifests)
         models, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
     assert endpoints, f"the catalog built no {provider} route from {manifest}"
     for model_id, model in models.items():
