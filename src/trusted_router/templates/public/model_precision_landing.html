@@ -1,0 +1,19 @@
+{% extends "public/_routing_feature_base.html" %}
+{% block feature_content %}
+<section class="routing-feature-section routing-feature-columns">
+  <div><h2>One model name. Different serving formats.</h2><p>A provider may serve a model in BF16, FP8, INT4, or a mixed format. Those choices matter when comparing output quality, memory use, speed, and cost. The model name alone leaves part of that comparison missing.</p><p>TrustedRouter publishes reviewed precision metadata for selected endpoints, linked to the serving code and pinned model configuration. Start with <a href="/models">a model's provider list</a> and follow the evidence.</p><p><a class="btn" href="/docs/model-precision">Read the metadata guide</a></p></div>
+  <div><h3>Inspect an endpoint</h3><pre><code>GET https://trustedrouter.com/v1/models/
+    {author}/{slug}/endpoints
+
+quantization
+trustedrouter.precision.weight_formats
+trustedrouter.precision.model_revision
+trustedrouter.precision.reviewed_on
+trustedrouter.precision.sources
+trustedrouter.precision.runtime_verified</code></pre><p>The URL is shown on two lines for readability. The API path is one continuous URL.</p></div>
+</section>
+<section class="routing-feature-section routing-feature-columns">
+  <div><h2>Evidence you can inspect.</h2><p>The primary weight format, mixed-format details, and KV-cache dtype are separate fields. The metadata includes the review date and source links so an evaluator can see exactly what was reviewed.</p><p>Unreviewed precision remains <code>null</code>. Unknown is more useful than an inferred answer presented as fact.</p></div>
+  <div><h2>Keep the proof in scope.</h2><p><code>runtime_verified</code> is false. A published serving configuration is not per-request proof of loaded weights or precision, and gateway attestation alone cannot establish an upstream model's identity.</p><p>Quantization metadata is available; <code>provider.quantizations</code> filtering remains an explicit <code>501</code>. Compare the evidence before choosing a route.</p></div>
+</section>
+{% endblock %}

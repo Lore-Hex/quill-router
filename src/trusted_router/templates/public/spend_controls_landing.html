@@ -1,0 +1,16 @@
+{% extends "public/_routing_feature_base.html" %}
+{% block feature_content %}
+<section class="routing-feature-section routing-feature-columns">
+  <div><h2>Give each application a budget.</h2><p>Create separate keys for a customer, project, or agent. Set daily, weekly, monthly, and lifetime USD limits. Keep your application budgets visible alongside <a href="/docs/tagging">request tags and cost allocation</a>.</p><p>Ordinary spending windows use approximate checks. For concurrent workloads, opt into <code>budget_strict</code> to include outstanding request estimates in admission decisions.</p><p><a class="btn" href="/docs/spend-controls">Set up spend controls</a></p></div>
+  <div><h3>An opt-in project budget</h3><pre><code>{
+  "name": "Research agent",
+  "limit_daily": 5,
+  "limit_monthly": 100,
+  "budget_strict": true
+}</code></pre><p>Create this key with a management key. Strict mode is off by default and fixed when the key is created.</p></div>
+</section>
+<section class="routing-feature-section routing-feature-columns">
+  <div><h2>Account for work already in flight.</h2><p>Strict admission counts reserved estimates alongside settled spend in enforced windows. Settlement and refunds release the corresponding holds. A window reset keeps outstanding holds counted until the request finishes.</p><p>This controls estimated-cost admission. Final provider usage can exceed an estimate, so an absolute final-charge ceiling would be the wrong promise.</p></div>
+  <div><h2>Choose the tradeoff deliberately.</h2><p>Strict mode can be much slower: authorization goes through a shared counter rather than approximate snapshots or local leases. Admission concurrency and database work are bounded to protect the service.</p><p>Exhausted windows return <code>429</code>. Busy strict admission returns retryable <code>503</code>. The guide explains reset headers and backoff.</p></div>
+</section>
+{% endblock %}

@@ -6,6 +6,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/_lib.sh
 source "${SCRIPT_DIR}/_lib.sh"
+# shellcheck source=scripts/deploy/deploy_mutex.sh
+source "${SCRIPT_DIR}/deploy_mutex.sh"
 
 NAMES=(tr-clickhouse-1 tr-clickhouse-2 tr-clickhouse-3)
 ZONES=(us-central1-a us-central1-b us-central1-c)
@@ -270,6 +272,25 @@ for region in "${regions[@]}"; do
   [ "$region" = "$TR_PRIMARY_REGION" ] || ordered_regions+=("$region")
 done
 ordered_regions+=("$TR_PRIMARY_REGION")
+
+# One production lock across the serial cutover. Every regional rollout below
+# inherits this operation, so the ledger retirement gate runs once here and
+# the rollouts stand on its pass instead of refusing each other's new
+# revisions as fleet changes (see ledger_retirement.sh).
+release_cutover_deploy_mutex() {
+  local cutover_status=$?
+  trap '' INT TERM
+  trap - EXIT
+  if [ "${DEPLOY_MUTEX_SCOPE_OWNS_LOCK:-0}" -eq 1 ]; then
+    deploy_mutex_release
+  fi
+  exit "$cutover_status"
+}
+trap release_cutover_deploy_mutex EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+deploy_mutex_acquire
+bash "${SCRIPT_DIR}/regional_quota_drain_gate.sh"
 
 for region in "${ordered_regions[@]}"; do
   log "cutting ${region} to Spanner + ClickHouse; other regions remain warm"

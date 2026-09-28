@@ -1,8 +1,8 @@
 {
   "provider": "nebius",
   "source": "https://api.tokenfactory.nebius.com/v1/models?verbose=true",
-  "generated_at": "2026-09-24T13:22:08Z",
-  "model_count": 46,
+  "generated_at": "2026-09-27T23:04:50Z",
+  "model_count": 47,
   "models": [
     {
       "id": "meta-llama/Meta-Llama-3.1-8B-Instruct",
@@ -1166,6 +1166,32 @@
       "input_modalities": [
         "text",
         "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "qwen/qwen3.8-27b",
+      "upstream_id": "Qwen/Qwen3.8-27B",
+      "display_name": "Qwen3.8-27B",
+      "title": "qwen/qwen3.8-27b",
+      "created": 1788458731,
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 450000,
+      "output_token_price_per_m": 3000000,
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling"
+      ],
+      "input_modalities": [
+        "text"
       ],
       "output_modalities": [
         "text"

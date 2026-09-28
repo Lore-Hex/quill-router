@@ -100,8 +100,8 @@
       "id": "openai/gpt-oss-120b",
       "upstream_id": "gpt-oss-120b",
       "routable": true,
-      "input_token_price_per_m": 87824,
-      "output_token_price_per_m": 798400
+      "input_token_price_per_m": 79840,
+      "output_token_price_per_m": 479040
     },
     {
       "display_name": "ReMM-SLerp",
@@ -146,7 +146,7 @@
   ],
   "source": "https://mancer.tech/oai/v1/models",
   "pricing_source": "https://mancer.tech/models",
-  "generated_at": "2026-09-14T20:00:58Z",
+  "generated_at": "2026-09-27T23:04:50Z",
   "price_scale": "microdollars_per_million",
   "model_count": 7
 }

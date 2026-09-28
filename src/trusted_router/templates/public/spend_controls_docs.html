@@ -1,0 +1,32 @@
+{% extends "public/_routing_feature_base.html" %}
+{% block feature_kind %}API guide{% endblock %}
+{% block feature_content %}
+<section class="routing-feature-section">
+  <p><a href="/spend-controls">Spend controls overview</a></p>
+  <h2>Create a key with a deliberate budget</h2>
+  <p>Use a management key with <code>POST /v1/keys</code> on the control-plane hostname. <code>limit</code>, <code>limit_daily</code>, <code>limit_weekly</code>, and <code>limit_monthly</code> are USD amounts. <code>budget_strict</code> is off by default and immutable after creation.</p>
+  <pre><code>import os
+import httpx
+
+response = httpx.post(
+    "{{ control_plane_api_base_url }}/keys",
+    headers={"Authorization": "Bearer " + os.environ["TR_MANAGEMENT_KEY"]},
+    json={
+        "name": "Research agent",
+        "limit_daily": 5,
+        "limit_monthly": 100,
+        "budget_strict": True,
+        "budget_alert_only": False,
+    },
+    timeout=30,
+)
+response.raise_for_status()
+# Store the returned key securely. Keep it out of logs.</code></pre>
+  <p>Use the new key for inference at <code>{{ api_base_url }}</code>. Read its settings with <code>GET /v1/key</code> on the control-plane hostname. Create a separate key to change admission mode; changing <code>budget_strict</code> on an existing key is rejected.</p>
+</section>
+<section class="routing-feature-section routing-feature-columns">
+  <div><h2>What strict mode counts</h2><p>Ordinary spend-window checks are approximate and exclude in-flight holds. Strict mode counts outstanding estimated costs alongside settled spend in each enforced UTC window. Settlement or refund releases the recorded hold, even across a window reset.</p><p>Strict mode is estimated-cost admission, not an absolute final-charge guarantee. Actual provider usage may exceed an estimate. <code>budget_alert_only: true</code> remains alert-only; leave it false for enforcement.</p></div>
+  <div><h2>Latency and concurrency</h2><p>Strict authorization can be much slower because it uses a shared database counter and bypasses local spend leases. Each process admits at most 16 strict keys concurrently, with one authorization per key and no waiting queue.</p><p>The database-work budget is five seconds. Other request work and connection acquisition remain subject to their existing bounds. The admission slot is released after authorization, before generation, so a long answer does not occupy it.</p></div>
+</section>
+<section class="routing-feature-section"><h2>Handle limits and retries</h2><ul><li><code>429</code>: an enforced spending window is exhausted. Honor <code>Retry-After</code> and the <code>RateLimit-Reset</code> window.</li><li><code>503</code>: strict admission is busy or temporarily unavailable. Use bounded exponential backoff with jitter.</li><li><code>RateLimit-Limit</code> and <code>RateLimit-Remaining</code> are integer microdollars, unlike the USD amounts in key creation.</li></ul><p>See <a href="/docs#rate-limit-headers">spend-window headers</a> and <a href="/docs/tagging">tagging</a> for client backoff and cost attribution. Keep management keys on your server.</p></section>
+{% endblock %}

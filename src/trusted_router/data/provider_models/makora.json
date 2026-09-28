@@ -3,7 +3,7 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://inference.makora.com/v1/models",
-  "generated_at": "2026-09-24T13:22:08Z",
+  "generated_at": "2026-09-27T23:04:50Z",
   "price_scale": "microdollars_per_million",
   "model_count": 16,
   "models": [
@@ -99,8 +99,8 @@
       "endpoints": [
         "chat/completions"
       ],
-      "input_token_price_per_m": 100000,
-      "output_token_price_per_m": 340000,
+      "input_token_price_per_m": 80000,
+      "output_token_price_per_m": 320000,
       "input_modalities": [
         "text",
         "image"
@@ -130,7 +130,7 @@
         "reasoning",
         "json_mode"
       ],
-      "cached_input_token_price_per_m": 34000,
+      "cached_input_token_price_per_m": 32000,
       "routable": true
     },
     {

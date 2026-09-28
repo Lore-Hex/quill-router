@@ -151,6 +151,92 @@ uses the exact Spanner path until that region has an isolated local ledger.
 
 ## Rollout gates
 
+**Retired 2026-09-27 (step 2).** `scripts/deploy/rollout.sh` now pins
+`TR_REGIONAL_QUOTA_LEASES_ENABLED=false`, refuses an explicit `true`, and
+renders none of the ledger settings (cohort, shards, TTL, tables, cluster
+maps, app profiles): the store opens a Bigtable ledger client whenever an
+app-profile map is present, capability or not, so their absence is what keeps
+Bigtable out of every serving process. Two release steps replace the
+provisioners and the background reconciler deploys:
+
+- `scripts/deploy/ledger_retirement.sh` is sourced by `rollout.sh`, so the gate
+  runs for every entry point (the release workflow, `deploy-gcp.sh`,
+  break-glass, the analytics cutover) right after the deployment mutex and
+  before any revision is created; `regional_quota_drain_gate.sh` runs the
+  same gate earlier, in `migrate-schema`. It proves: every serving revision
+  (held regions included) carries issuance, spend issuance, binding and
+  admission markers `false` on every revision that can still take requests -
+  the traffic split's members and every tagged revision, since a tag stays
+  addressable at 0% (an absent marker is `false` too - config.py defaults
+  every one of them off; any other value refuses); the fleet has been
+  quiescent for the drain interval (120 s, longer than the gateway's 25 s
+  authorize budget) as recorded in `controls/ledger-drain-observation.json` -
+  each region's service generation and reachable revision set with the time
+  that state was first seen, reset by any change because Cloud Run keeps no
+  traffic history (a service is read only once `status.observedGeneration`
+  has caught up with its generation and no reconciliation is in progress:
+  `status.traffic` describes the last reconciled spec); Spanner holds no
+  `regional_quota_lease_open` / `regional_quota_lease_workspace_open` entity,
+  no unsettled `RegionalCredits` reservation (read together with the index
+  rows: a pending or dead settle-outbox intent needs the ledger only while
+  its lease is open, and that lease's index row stays until reconciliation
+  closes it, so the outbox itself - which has no status index - is never
+  scanned), and no dead or unfinished `spend_lease_open` row - a lease
+  closed on both sides (`local_closed_at` set) has released its escrow and
+  keeps `phase='open'` only for retention, a cleanup that needs no ledger
+  and never runs for the pilot's last lease while the fence names it, so
+  it does not count (the reconciler's own `open` counts only rows due now;
+  this pilot table is read the way its reconciler reads it, since a dead
+  row keeps `next_attempt_at` NULL and the due index cannot see it); and, while a reconciler
+  schedule still exists, that its exact target job (project, location, name
+  parsed from the schedule) reported five healthy passes - no errors,
+  nothing dead, nothing left half-created; open work is Spanner's call,
+  since the spend reconciler visits a retention-only lease on every pass -
+  all after the fleet state was first seen plus the drain interval. Every
+  control object (observation, gate pass, targets, marker) is uploaded with
+  a generation precondition read before its content, so a late upload can
+  never overwrite a newer record; the targets record only grows. A missing schedule
+  without a retirement marker is a partial teardown: Spanner still decides,
+  with a warning. The release workflow warms the four regions in parallel
+  processes that share one deployment mutex operation; the gate runs once
+  before that fan-out and records its pass in `controls/ledger-gate-pass.json`
+  under that operation (only a gate under an operation writes that record,
+  so an unlocked gate's observation write cannot erase it), and the
+  siblings' own gates stand on it while the production
+  lock is still held by that operation and unexpired - while the lock is
+  held, the fleet changes only through this release's revisions. A
+  standalone rollout takes its own lock and always runs the full gate; the
+  teardown re-reads that lock before every destructive step and the marker,
+  since its waits can outlast a lease, and fails once it is not held.
+- `scripts/deploy/retire_ledger_workers.sh` runs after the secondary ramp,
+  under the deployment mutex (the workflow's, or its own when invoked
+  directly). It defers (with a workflow warning) while any reachable
+  revision still carries capability, a profile map or a spend switch - a
+  fleet it cannot read or that is not reconciled fails the step instead -
+  waits
+  for the fleet state it finds to age out (a fleet that changes again during
+  that wait fails the step), re-checks Spanner, deletes both
+  schedules, waits for every worker's running executions (one a schedule
+  started moments earlier can still mark a lease dead), re-checks Spanner
+  again, deletes every worker the project-wide inventory names, proves
+  absence, and only then writes
+  `gs://tr-deploy-mutex-quill-cloud-proxy/controls/ledger-retirement.json`
+  (`state: retired`, scoped to the project, Spanner instance and database).
+  That marker waives only the worker evidence afterwards, and only while
+  every serving revision still runs without capability or a profile map;
+  the Spanner checks always run, and a traffic rollback to an older
+  revision brings the full gate back. The worker inventory is project-wide
+  (a listing that warns about unreachable regions, or names a job without a
+  readable location, refuses) and matches workers by `location/name`: the
+  exact identities the deployers accept as overrides plus the schedules' own
+  targets, which are recorded in `controls/ledger-retirement-targets.json`
+  before any schedule is deleted, so a retry after an interrupted teardown
+  still finds every worker. Both steps stay in the release until the
+  scripts that created those resources are deleted with the ledger code.
+
+The provisioner and worker scripts remain on disk, unwired, until then. The
+description below is the pre-retirement design.
+
 Two independent flags make a rolling deploy safe:
 
 - `TR_REGIONAL_QUOTA_LEASES_ENABLED` is fleet capability. It keeps the fixed
@@ -170,8 +256,9 @@ The rollout reads preserved quota state from the revision receiving exactly
 created revision, or latest ready revision, because all three can name a failed
 candidate after traffic has rolled back. An ambiguous traffic split or any
 control-plane read error aborts. Only an exact missing-service response is
-treated as a fresh environment. With the normal ON pin, a fresh fleet must
-explicitly request issuance=false for its first compatibility deployment.
+treated as a fresh environment. Since the 2026-09-27 retirement the marker is
+forced off whatever the input, live marker, or latch say, and the accounting
+floor is enforced whenever capability is on.
 
 Issuance requires accounting compatibility, independently of the git release:
 
@@ -205,22 +292,26 @@ gh workflow run deploy.yml --repo Lore-Hex/quill-router --ref main \
   -f regional_quota_lease_issuance=false
 ```
 
-After the queued deployment is fully green in every region, reconciliation is healthy, and
-the durable stop latch has been explicitly re-armed as described below:
+Historically, after the queued deployment was fully green in every region,
+reconciliation healthy, and the durable stop latch re-armed as described below,
+an operator dispatched:
 
 ```bash
 gh workflow run deploy.yml --repo Lore-Hex/quill-router --ref main \
   -f regional_quota_lease_issuance=true
 ```
 
-Routine workflow dispatches use `preserve` to copy the primary live issuance
-marker; this is not per-region preservation. Push-triggered deploys (absent or
-empty input) use `REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED=true` in
-`scripts/deploy/rollout.sh`. During an incident, the emergency containment recipe
-is to change that literal to `false` and commit it through review so successor
-pushes inherit OFF. Keep the incident pin off until compatibility and reconciler
-readiness are verified, then restore `true` through review. The normal pin stays
-true. A code change in an uncommitted checkout alone does not change production.
+**Retired 2026-09-27.** The Bigtable ledger is being removed rather than
+ported, so `scripts/deploy/rollout.sh` resolves the issuance marker as
+pin → normalize → stop latch → **retirement override**, and the override
+forces the marker off whatever the earlier steps produced: an absent or empty
+push input (the pin, now `false`), a `preserve` dispatch over a live ON marker,
+an explicit `true` dispatch, or an `allow` latch. The log names the request it
+overrode. Capability and reconciliation stay on until the open-lease backlog is
+empty, then the ledger itself is removed. Re-enabling issuance is a reviewed
+source change that removes the override (and restores the pin), never a
+dispatch or latch edit. A code change in an uncommitted checkout alone does not
+change production.
 
 The dispatch kill switch `regional_quota_lease_issuance=false` now persists
 `off` to `gs://tr-deploy-mutex-quill-cloud-proxy/controls/regional-quota-issuance.txt`
@@ -285,10 +376,14 @@ OFF on **every serving revision**, complete the subsequent OFF rollout, and keep
 capability and reconciliation enabled to drain existing work. Do not use a manual
 Cloud Run env update as durable containment: config-as-code overwrites it.
 
-To re-arm, resolve the incident and verify protocol compatibility on all serving
-regions and the scheduled worker, plus healthy reconciliation. Restore the code
-pin to true if incident containment changed it. An operator then deletes the
-stop object or writes `allow` (choose one), and dispatches issuance=true:
+The re-arm procedure below is **historical** (pre-retirement): today the
+retirement override in `rollout.sh` forces issuance off regardless of the
+latch or dispatch input, so none of these steps can turn it on. Re-enabling
+requires a reviewed source change first. For the record, re-arming used to be:
+resolve the incident and verify protocol compatibility on all serving regions
+and the scheduled worker, plus healthy reconciliation; restore the code pin to
+true; then delete the stop object or write `allow` (choose one), and dispatch
+issuance=true:
 
 ```bash
 # Option 1: remove containment.
@@ -428,8 +523,9 @@ Production activation requires all of the following:
 Implemented gates include the transactional adapter, exact global grant and
 close transactions, a once-per-minute reconciler, integer-only property tests,
 ambiguous Bigtable commit replay, fencing, concurrent idempotency, exact key
-usage import, and 16-way local sharding. Production issuance is pinned on with
-the five-workspace cohort pinned above. Any local read, conditional write,
+usage import, and 16-way local sharding. Production issuance ran pinned on with
+the five-workspace cohort pinned above until 2026-09-27; it is now retired
+(see Rollout gates). Any local read, conditional write,
 missing profile, or initialization ambiguity falls back to exact Spanner
 authorization. Missing
 lease state is quarantined and its global escrow is not guessed back into the

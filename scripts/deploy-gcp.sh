@@ -12,7 +12,7 @@
 #   3. image.sh    — Artifact Registry repo + buildx push (linux/amd64)
 #   4. secrets.sh  — Secret Manager + runtime IAM bindings
 #   5. rollout.sh  — parallel multi-region Cloud Run deploy + LB wiring
-#   6. regional quota ledger + reconciler (idempotent, feature allowlisted)
+#   6. ledger retirement: drain gate before rollout, worker teardown after it
 #   7. synthetic.sh — US/EU synthetic monitor jobs + schedules
 
 set -euo pipefail
@@ -32,13 +32,11 @@ bash "${SCRIPT_DIR}/deploy/migrate_analytics_outbox.sh"
 bash "${SCRIPT_DIR}/deploy/migrate_operational_analytics_outbox.sh"
 bash "${SCRIPT_DIR}/deploy/image.sh"
 bash "${SCRIPT_DIR}/deploy/secrets.sh"
-bash "${SCRIPT_DIR}/deploy/regional_quota_ledger.sh" \
-  </dev/null
-bash "${SCRIPT_DIR}/deploy/spend_lease_ledger.sh" \
-  </dev/null
+# Both escrow ledgers are retired (2026-09-27): prove they are drained before
+# the capability-off rollout, then remove their reconciler workers after it.
+bash "${SCRIPT_DIR}/deploy/regional_quota_drain_gate.sh"
 bash "${SCRIPT_DIR}/deploy/rollout.sh"
-bash "${SCRIPT_DIR}/deploy/regional_quota_reconciler.sh"
-bash "${SCRIPT_DIR}/deploy/spend_lease_reconciler.sh"
+bash "${SCRIPT_DIR}/deploy/retire_ledger_workers.sh"
 # Trust reconciler + tier jobs: gated on TR_TRUST_JOBS_DEPLOY=1 inside
 # trust_jobs.sh; the default release changes no production trust schedule.
 bash "${SCRIPT_DIR}/deploy/trust_jobs.sh"

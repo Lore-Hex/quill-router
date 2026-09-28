@@ -79,7 +79,6 @@ from scripts.pricing.video_sources import (
 from trusted_router.provider_manifest_policy import (
     EXPIRED_PROVIDER_MANIFEST,
     EXPIRING_PROVIDER_MANIFEST_SLUGS,
-    RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS,
     provider_manifest_canary_quarantine_valid_until,
     provider_manifest_valid_until,
 )
@@ -491,7 +490,10 @@ _DISCOVERABLE_MANIFEST_PROVIDERS_BASE: tuple[
     ),
 )
 
-_DIRECT_OPENAI_DISCOVERY_MODULES = (
+# Providers on the direct OpenAI catalog adapter. Their credentials are
+# available to the hourly refresh workflow, so a missing workflow secret is a
+# deployment error, not an intentionally skipped discovery check.
+_CI_DIRECT_OPENAI_DISCOVERY_MODULES = (
     upstage,
     sail_research,
     reka,
@@ -502,13 +504,6 @@ _DIRECT_OPENAI_DISCOVERY_MODULES = (
     sambanova,
     arcee,
     inception,
-)
-
-# These providers use the same direct OpenAI catalog adapter, but their
-# credentials are available to the hourly refresh workflow. Keep them out of
-# the runtime-only set so a missing workflow secret is a deployment error, not
-# an intentionally skipped discovery check.
-_CI_DIRECT_OPENAI_DISCOVERY_MODULES = (
     confidential_ai,
     perplexity,
     regolo,
@@ -519,7 +514,6 @@ _CI_DIRECT_OPENAI_DISCOVERY_MODULES = (
 )
 
 _STALE_MANIFEST_PROVIDER_MODULES = (
-    *_DIRECT_OPENAI_DISCOVERY_MODULES,
     *_CI_DIRECT_OPENAI_DISCOVERY_MODULES,
     io_net,
     jina,
@@ -544,11 +538,6 @@ _STALE_MANIFEST_PROVIDER_MODULE_BY_SLUG = {
 }
 _OPTIONAL_STALE_MANIFEST_PROVIDER_SLUGS = frozenset(_STALE_MANIFEST_PROVIDER_MODULE_BY_SLUG)
 
-_RUNTIME_ONLY_DISCOVERY_SLUGS = RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS
-_DIRECT_OPENAI_DISCOVERY_SLUGS = frozenset(
-    module.SLUG for module in (*_DIRECT_OPENAI_DISCOVERY_MODULES, nscale)
-)
-
 _DISCOVERABLE_MANIFEST_PROVIDERS = _DISCOVERABLE_MANIFEST_PROVIDERS_BASE + tuple(
     (
         module.SLUG,
@@ -556,10 +545,7 @@ _DISCOVERABLE_MANIFEST_PROVIDERS = _DISCOVERABLE_MANIFEST_PROVIDERS_BASE + tuple
         module.CATALOG.api_key_envs,
         module.CATALOG.model_id,
     )
-    for module in (
-        *_DIRECT_OPENAI_DISCOVERY_MODULES,
-        *_CI_DIRECT_OPENAI_DISCOVERY_MODULES,
-    )
+    for module in _CI_DIRECT_OPENAI_DISCOVERY_MODULES
 )
 
 _GLM_DISCOVERABLE_PROVIDER_APIS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
@@ -916,14 +902,6 @@ def _model_discovery_audit(
         # coverage.  The global catalog can contain the same model through a
         # different provider and must not hide this provider's unresolved row.
         published = routable or published_model_ids
-        if slug in _RUNTIME_ONLY_DISCOVERY_SLUGS and not any(
-            os.environ.get(env_name) for env_name in env_names
-        ):
-            info.append(
-                f"{slug}: authenticated discovery intentionally disabled; "
-                "committed manifest age gate active ✓"
-            )
-            continue
         try:
             payload = fetch_json(url, env_names)
         except Exception as exc:  # noqa: BLE001
@@ -1150,26 +1128,6 @@ def _run_audit(
         warnings.append(warning)
         hard_fail_warnings.append(warning)
 
-    runtime_only_without_age_gate = _RUNTIME_ONLY_DISCOVERY_SLUGS - (
-        set(GATEWAY_PREPAID_PROVIDER_SLUGS) & set(_OPTIONAL_STALE_MANIFEST_PROVIDER_SLUGS)
-    )
-    if runtime_only_without_age_gate:
-        warning = (
-            "runtime-only discovery provider(s) lack a prepaid manifest age gate: "
-            f"{', '.join(sorted(runtime_only_without_age_gate))}"
-        )
-        warnings.append(warning)
-        hard_fail_warnings.append(warning)
-
-    if _DIRECT_OPENAI_DISCOVERY_SLUGS != _RUNTIME_ONLY_DISCOVERY_SLUGS:
-        warning = (
-            "authenticated discovery provider policy mismatch: modules="
-            f"{', '.join(sorted(_DIRECT_OPENAI_DISCOVERY_SLUGS))}; policy="
-            f"{', '.join(sorted(_RUNTIME_ONLY_DISCOVERY_SLUGS))}"
-        )
-        warnings.append(warning)
-        hard_fail_warnings.append(warning)
-
     if check_model_discovery:
         video_prices = audit_video_price_sources(fetch_text)
         warnings.extend(video_prices.warnings)
@@ -1206,7 +1164,7 @@ def _run_audit(
             )
             if warning is not None:
                 warnings.append(warning)
-                # Runtime-only authenticated catalogs expire their own routes
+                # Expiring provider manifests expire their own routes
                 # dynamically. Their stale manifest remains an operator alert,
                 # but cannot freeze unrelated providers' price publication.
                 if slug not in EXPIRING_PROVIDER_MANIFEST_SLUGS:

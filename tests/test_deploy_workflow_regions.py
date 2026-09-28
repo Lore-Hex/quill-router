@@ -291,7 +291,7 @@ def test_all_regions_launch_together_but_only_primary_warm_gates_traffic() -> No
     assert "Queued deploys fail closed" in deploy
 
 
-def test_secondaries_ramp_serially_while_reconciler_deploys() -> None:
+def test_secondaries_ramp_serially() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     rollout = workflow.split("\n  rollout-secondaries:\n", 1)[1].split(
         "\n  public-surface-companion:\n", 1
@@ -308,7 +308,7 @@ def test_secondaries_ramp_serially_while_reconciler_deploys() -> None:
     assert 'echo "TR_DEPLOY_MUTEX_OPERATION=${DEPLOY_MUTEX_OPERATION}"' in rollout
     assert 'echo "TR_DEPLOY_MUTEX_GENERATION=${DEPLOY_MUTEX_GENERATION}"' in rollout
 
-    ramp_step = rollout.index("- name: Ramp secondaries serially while reconciler deploys")
+    ramp_step = rollout.index("- name: Ramp secondaries serially\n")
     ramp = rollout[ramp_step : rollout.index("- name: Deploy synthetic monitor", ramp_step)]
     assert "run: bash scripts/deploy/ramp_secondaries.sh" in ramp
     assert "run: |" not in ramp
@@ -319,12 +319,11 @@ def test_secondaries_ramp_serially_while_reconciler_deploys() -> None:
     billing_gate = script.index("assert_no_billing_5xx.sh")
     assert stamp < staged_call < billing_gate
 
-    reconciler = script.index("regional_quota_reconciler.sh")
-    ramp_loop = script.index("for region in europe-west4 us-east4 southamerica-east1")
-    wait = script.index('wait "${reconciler_pid}"')
-    assert reconciler < ramp_loop < wait
-    assert 'regional_quota_reconciler.sh" >"${reconciler_log}" 2>&1 &' in script
-    assert "printf '\\n=== regional quota reconciler deploy ===\\n'" in script
+    # The ledger reconciler workers are retired (2026-09-27): nothing runs in
+    # the background alongside the ramp any more.
+    assert "regional_quota_reconciler.sh" not in script
+    assert "spend_lease_reconciler.sh" not in script
+    assert "reconciler_pid" not in script
     assert "Later regions remain warm at zero traffic and never received traffic" in script
     assert "#695 (billing 5xx, 2026-08-20)" in script
     assert "--slo-class router_core" in script

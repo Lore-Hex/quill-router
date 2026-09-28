@@ -514,6 +514,36 @@ APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
             Decimal("0.000000015"),
             Decimal("0.00000003"),
         ),
+        # Wafer's first-party GET https://pass.wafer.ai/v1/models, verified
+        # 2026-09-27 in cents per million: GLM-5.3-Flash input 43, cache read
+        # 5 for DeepSeek-V4.1-Flash and 24 for DeepSeek-V4-Pro. The operator
+        # accepted the repricing on 2026-09-27.
+        (
+            "z-ai/glm-5.3-flash [wafer:wafer:GLM-5.3-Flash]",
+            "prompt",
+            Decimal("0.0000001"),
+            Decimal("0.00000043"),
+        ),
+        (
+            "deepseek/deepseek-v4.1-flash [wafer:wafer:DeepSeek-V4.1-Flash] cached-input",
+            "prompt",
+            Decimal("0.00000001"),
+            Decimal("0.00000005"),
+        ),
+        (
+            "deepseek/deepseek-v4-pro [wafer:wafer:DeepSeek-V4-Pro] cached-input",
+            "prompt",
+            Decimal("0.00000003"),
+            Decimal("0.00000024"),
+        ),
+        # Wafer's feed moved this cache read to 17 cents per million by
+        # 2026-09-27 17:43Z, inside the same accepted repricing.
+        (
+            "deepseek/deepseek-v4-pro [wafer:wafer:DeepSeek-V4-Pro] cached-input",
+            "prompt",
+            Decimal("0.00000003"),
+            Decimal("0.00000017"),
+        ),
     }
 )
 
@@ -836,6 +866,87 @@ def check(
     return failures, changes, removed
 
 
+def failing_routes(
+    before: dict[str, dict[str, str]],
+    after: dict[str, dict[str, str]],
+    spike_ratio: float = DEFAULT_SPIKE_RATIO,
+) -> set[str]:
+    """Routes that fail on their own: check() applied one continuing route at a time."""
+    return {
+        route
+        for route, prev in before.items()
+        if route in after and check({route: prev}, {route: after[route]}, spike_ratio)[0]
+    }
+
+
+def route_provider(route: str) -> str | None:
+    """The provider slug of a "model [provider:tag:upstream]" route, or None for a bare model id."""
+    _, bracketed, rest = route.partition(" [")
+    return rest.split(":", 1)[0] if bracketed else None
+
+
+RoutePrices = dict[str, dict[str, str]]
+
+
+def route_pairs(
+    before: Path,
+    after: Path,
+    before_provider_manifests: Path | None = None,
+    after_provider_manifests: Path | None = None,
+) -> tuple[tuple[RoutePrices, RoutePrices], tuple[RoutePrices, RoutePrices] | None]:
+    """The before/after price maps whose spikes fail the gate.
+
+    Snapshot prices are compared per endpoint when both snapshots carry endpoint
+    pricing, otherwise per model. Manifest routes are compared when both
+    directories are given. Unusable manifest input raises ValueError.
+    """
+    before_endpoints = _load_endpoints(before)
+    after_endpoints = _load_endpoints(after)
+    if before_endpoints and after_endpoints:
+        snapshot_pair = (before_endpoints, after_endpoints)
+    else:
+        # Keep the utility useful for compact fixtures and older snapshots that
+        # predate endpoint pricing.
+        snapshot_pair = (_load(before), _load(after))
+    if before_provider_manifests is None or after_provider_manifests is None:
+        return snapshot_pair, None
+    before_manifest_names = {
+        path.name for path in _provider_manifest_paths(before_provider_manifests)
+    }
+    after_manifest_names = {
+        path.name for path in _provider_manifest_paths(after_provider_manifests)
+    }
+    missing_manifests = sorted(before_manifest_names - after_manifest_names)
+    if missing_manifests:
+        raise ValueError(
+            "provider manifests disappeared after refresh: " + ", ".join(missing_manifests)
+        )
+    return snapshot_pair, (
+        _load_provider_manifests(before_provider_manifests),
+        _load_provider_manifests(after_provider_manifests),
+    )
+
+
+def spiking_providers(
+    before: Path,
+    after: Path,
+    before_provider_manifests: Path | None = None,
+    after_provider_manifests: Path | None = None,
+    spike_ratio: float = DEFAULT_SPIKE_RATIO,
+) -> dict[str | None, list[str]]:
+    """Failing routes grouped by provider slug; None collects routes without one."""
+    snapshot_pair, manifest_pair = route_pairs(
+        before, after, before_provider_manifests, after_provider_manifests
+    )
+    grouped: dict[str | None, list[str]] = {}
+    for pair in (snapshot_pair, manifest_pair):
+        if pair is None:
+            continue
+        for route in sorted(failing_routes(*pair, spike_ratio)):
+            grouped.setdefault(route_provider(route), []).append(route)
+    return grouped
+
+
 def _summary_line(changes: list[str], removed: list[str]) -> str:
     n_changed = len(changes)
     if n_changed == 0 and not removed:
@@ -882,51 +993,23 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    before = _load(args.before)
-    after = _load(args.after)
-    _headline_failures, changes, removed = check(before, after, args.spike_ratio)
-    before_endpoints = _load_endpoints(args.before)
-    after_endpoints = _load_endpoints(args.after)
-    if before_endpoints and after_endpoints:
-        failures, _endpoint_changes, _removed_endpoints = check(
-            before_endpoints,
-            after_endpoints,
-            args.spike_ratio,
+    try:
+        snapshot_pair, manifest_pair = route_pairs(
+            args.before,
+            args.after,
+            args.before_provider_manifests,
+            args.after_provider_manifests,
         )
-    else:
-        # Keep the utility useful for compact fixtures and older snapshots that
-        # predate endpoint pricing.
-        failures = _headline_failures
-
-    if args.before_provider_manifests is not None:
-        try:
-            before_manifest_names = {
-                path.name
-                for path in _provider_manifest_paths(args.before_provider_manifests)
-            }
-            after_manifest_names = {
-                path.name
-                for path in _provider_manifest_paths(args.after_provider_manifests)
-            }
-            missing_manifests = sorted(before_manifest_names - after_manifest_names)
-            if missing_manifests:
-                raise ValueError(
-                    "provider manifests disappeared after refresh: "
-                    + ", ".join(missing_manifests)
-                )
-            before_provider_routes = _load_provider_manifests(
-                args.before_provider_manifests
-            )
-            after_provider_routes = _load_provider_manifests(
-                args.after_provider_manifests
-            )
-        except ValueError as exc:
-            print(f"PRICE SPIKE INPUT ERROR: {exc}", file=sys.stderr)
-            return 2
+    except ValueError as exc:
+        print(f"PRICE SPIKE INPUT ERROR: {exc}", file=sys.stderr)
+        return 2
+    _headline_failures, changes, removed = check(
+        _load(args.before), _load(args.after), args.spike_ratio
+    )
+    failures, _snapshot_changes, _snapshot_removed = check(*snapshot_pair, args.spike_ratio)
+    if manifest_pair is not None:
         provider_failures, provider_changes, provider_removed = check(
-            before_provider_routes,
-            after_provider_routes,
-            args.spike_ratio,
+            *manifest_pair, args.spike_ratio
         )
         failures.extend(provider_failures)
         changes.extend(provider_changes)

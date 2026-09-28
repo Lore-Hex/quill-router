@@ -39,7 +39,8 @@
       "upstream_id": "anthropic/claude-haiku-4-5-20251001",
       "context_length": 200000,
       "input_token_price_per_m": 1000000,
-      "output_token_price_per_m": 5000000
+      "output_token_price_per_m": 5000000,
+      "missing_since": "2026-09-27"
     },
     {
       "display_name": "Claude Opus 4.1",
@@ -82,7 +83,8 @@
       "upstream_id": "anthropic/claude-opus-4-5-20251101",
       "context_length": 200000,
       "input_token_price_per_m": 5000000,
-      "output_token_price_per_m": 25000000
+      "output_token_price_per_m": 25000000,
+      "missing_since": "2026-09-27"
     },
     {
       "display_name": "Claude Opus 4.6",
@@ -102,7 +104,8 @@
       "upstream_id": "anthropic/claude-opus-4-6",
       "context_length": 200000,
       "input_token_price_per_m": 5000000,
-      "output_token_price_per_m": 25000000
+      "output_token_price_per_m": 25000000,
+      "missing_since": "2026-09-27"
     },
     {
       "display_name": "Claude Opus 4.7",
@@ -122,7 +125,8 @@
       "upstream_id": "anthropic/claude-opus-4-7",
       "context_length": 1000000,
       "input_token_price_per_m": 5000000,
-      "output_token_price_per_m": 25000000
+      "output_token_price_per_m": 25000000,
+      "missing_since": "2026-09-27"
     },
     {
       "display_name": "Claude Opus 4.8",
@@ -141,8 +145,8 @@
       "id": "anthropic/claude-opus-4-8",
       "upstream_id": "anthropic/claude-opus-4-8",
       "context_length": 1000000,
-      "input_token_price_per_m": 5000000,
-      "output_token_price_per_m": 25000000
+      "routable": false,
+      "routable_reason": "price-unavailable"
     },
     {
       "display_name": "Claude Opus 5",
@@ -162,7 +166,8 @@
       "upstream_id": "anthropic/claude-opus-5",
       "context_length": 1048576,
       "input_token_price_per_m": 5000000,
-      "output_token_price_per_m": 25000000
+      "output_token_price_per_m": 25000000,
+      "missing_since": "2026-09-27"
     },
     {
       "display_name": "Claude Sonnet 4.5",
@@ -182,7 +187,8 @@
       "upstream_id": "anthropic/claude-sonnet-4-5-20250929",
       "context_length": 200000,
       "input_token_price_per_m": 3000000,
-      "output_token_price_per_m": 15000000
+      "output_token_price_per_m": 15000000,
+      "missing_since": "2026-09-27"
     },
     {
       "display_name": "Claude Sonnet 4.6",
@@ -202,7 +208,8 @@
       "upstream_id": "anthropic/claude-sonnet-4-6",
       "context_length": 200000,
       "input_token_price_per_m": 3000000,
-      "output_token_price_per_m": 15000000
+      "output_token_price_per_m": 15000000,
+      "missing_since": "2026-09-27"
     },
     {
       "display_name": "Claude Sonnet 5",
@@ -222,7 +229,8 @@
       "upstream_id": "anthropic/claude-sonnet-5",
       "context_length": 1048576,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 15000000
+      "output_token_price_per_m": 15000000,
+      "missing_since": "2026-09-27"
     },
     {
       "display_name": "Gemini 2.5 Flash",
@@ -402,7 +410,8 @@
       "upstream_id": "lightning-ai/deepseek-v4-pro",
       "context_length": 1048576,
       "input_token_price_per_m": 890000,
-      "output_token_price_per_m": 3000000
+      "output_token_price_per_m": 3000000,
+      "missing_since": "2026-09-27"
     },
     {
       "display_name": "gpt-oss-120b",
@@ -955,10 +964,50 @@
       "context_length": 131072,
       "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000
+    },
+    {
+      "display_name": "mimo-v2.6-pro",
+      "title": "lightning-ai/mimo-v2.6-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "lightning-ai/mimo-v2.6-pro",
+      "upstream_id": "lightning-ai/mimo-v2.6-pro",
+      "context_length": 262144,
+      "input_token_price_per_m": 440000,
+      "output_token_price_per_m": 870000
+    },
+    {
+      "display_name": "gpt-6-sol",
+      "title": "openai/gpt-6-sol",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-6-sol",
+      "upstream_id": "openai/gpt-6-sol",
+      "context_length": 1050000,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     }
   ],
   "source": "https://lightning.ai/api/v1/models",
-  "generated_at": "2026-09-24T13:22:08Z",
+  "generated_at": "2026-09-27T23:04:50Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 47
+  "model_count": 49
 }

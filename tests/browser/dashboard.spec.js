@@ -504,11 +504,15 @@ test("local trust page links the public source repositories and release files", 
     "Lore-Hex/quill-router",
     "Lore-Hex/quill-cloud-proxy",
     "Lore-Hex/quill-cloud-infra",
-    "Lore-Hex/quill",
     "Lore-Hex/trusted-router-py",
     "Lore-Hex/trusted-router-js",
   ]) {
     await expect(page.getByRole("link", { name: repo }).first()).toBeVisible();
+  }
+  // Lore-Hex/quill is private, so a link to it is a 404 for every visitor.
+  // The two links this page had to it are gone.
+  for (const name of ["Quill repo", "Lore-Hex/quill"]) {
+    await expect(page.getByRole("link", { name, exact: true })).toHaveCount(0);
   }
   await expect(page.getByRole("link", { name: "gcp-release.json" }).first()).toBeVisible();
   await expect(page.getByRole("link", { name: "image-digest-gcp.txt" })).toBeVisible();

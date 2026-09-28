@@ -34,7 +34,7 @@ from scripts.pricing.providers._direct_openai import (
     positive_chat_prices,
 )
 from scripts.pricing.refresh import _PRICING_RESULT_PROVIDER_ALIASES, PROVIDER_SLUGS
-from trusted_router import catalog_ingest
+from trusted_router import catalog_data, catalog_ingest
 from trusted_router.catalog import (
     GATEWAY_PREPAID_PROVIDER_SLUGS,
     MODEL_ENDPOINTS,
@@ -44,7 +44,6 @@ from trusted_router.catalog import (
 )
 from trusted_router.catalog_ingest import (
     _EXPIRED_PROVIDER_MANIFEST,
-    _RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS,
     _provider_manifest_valid_until,
 )
 from trusted_router.pricing import (
@@ -54,8 +53,6 @@ from trusted_router.pricing import (
 from trusted_router.provider_manifest_policy import (
     EXPIRING_PROVIDER_MANIFEST_SLUGS,
     PROVIDER_MANIFEST_MAX_AGE_DAYS,
-    RUNTIME_ONLY_PROVIDER_MANIFEST_MAX_AGE_DAYS,
-    RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS,
 )
 from trusted_router.services.inference_errors import default_provider_secret_ref
 
@@ -80,7 +77,22 @@ SPECIALIZED_READY = {
     "krea",
 }
 IMPLEMENTED = READY | SPECIALIZED_READY
-RUNTIME_ONLY_READY = (READY - {"io-net", "sakana"}) | {"nscale"}
+# The providers that were refreshed only by hand until 2026-09-27 and now go
+# through the hourly authenticated refresh like every other provider.
+FORMER_RUNTIME_ONLY = (READY - {"io-net", "sakana"}) | {"nscale"}
+_FORMER_RUNTIME_ONLY_ENV = {
+    "upstage": "UPSTAGE_API_KEY",
+    "sail-research": "SAIL_RESEARCH_API_KEY",
+    "reka": "REKA_API_KEY",
+    "nextbit": "NEXTBIT_API_KEY",
+    "akashml": "AKASHML_API_KEY",
+    "mancer": "MANCER_API_KEY",
+    "nscale": "NSCALE_API_KEY",
+    "aion-labs": "AION_LABS_API_KEY",
+    "sambanova": "SAMBANOVA_API_KEY",
+    "arcee": "ARCEE_API_KEY",
+    "inception": "INCEPTION_API_KEY",
+}
 ROUTABLE_READY = READY | {"perplexity"}
 PENDING = {
     "perceptron",
@@ -765,37 +777,28 @@ def test_wave3_pricing_fixtures_are_captured_from_first_party_sources() -> None:
         assert f"Captured from {source_url}" in source
 
 
-def test_wave3_secrets_do_not_join_the_all_or_nothing_refresh_block() -> None:
+def test_former_runtime_only_secrets_join_the_hourly_refresh_block() -> None:
     root = Path(__file__).parents[1]
     workflow = (root / ".github/workflows/refresh-prices.yml").read_text(encoding="utf-8")
     secret_setup = (root / "scripts/deploy/secrets.sh").read_text(encoding="utf-8")
-    runtime_only = {
-        line.strip()
-        for line in (root / "scripts/deploy/runtime_only_provider_secrets.txt")
-        .read_text(encoding="utf-8")
-        .splitlines()
-        if line.strip()
-    }
     mandatory_step = workflow.split("- name: Pull PARASAIL_API_KEY", 1)[1]
     mandatory_step = mandatory_step.split("- name:", 1)[0]
-    expected_secrets = {
-        f"trustedrouter-{module.SLUG}-api-key"
-        for module in MODULES
-        if module.SLUG in RUNTIME_ONLY_READY
-    } | {"trustedrouter-nscale-api-key"}
-    assert runtime_only == expected_secrets
-    for module in MODULES:
-        if module.SLUG not in RUNTIME_ONLY_READY:
-            continue
-        secret_name = f"trustedrouter-{module.SLUG}-api-key"
-        assert secret_name not in mandatory_step
-        assert f'grant_tr_deploy_secret_access "{secret_name}"' not in secret_setup
 
-    assert _RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS == RUNTIME_ONLY_READY
-    assert RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS == RUNTIME_ONLY_READY
+    assert set(_FORMER_RUNTIME_ONLY_ENV) == FORMER_RUNTIME_ONLY
+    for slug, env_name in _FORMER_RUNTIME_ONLY_ENV.items():
+        secret_name = f"trustedrouter-{slug}-api-key"
+        # Pulled by the all-or-nothing loop: a missing grant fails the refresh
+        # loudly instead of silently letting the manifest age out.
+        assert f"{env_name}:{secret_name}" in mandatory_step
+        assert f'grant_tr_deploy_secret_access "{secret_name}"' in secret_setup
+    for module in MODULES:
+        if module.SLUG in FORMER_RUNTIME_ONLY:
+            assert _FORMER_RUNTIME_ONLY_ENV[module.SLUG] in module.CATALOG.api_key_envs
+    assert not (root / "scripts/deploy/runtime_only_provider_secrets.txt").exists()
+
+    # They keep the provider-scoped stale-price containment the others have.
     assert IMPLEMENTED | {"nscale"} < EXPIRING_PROVIDER_MANIFEST_SLUGS
     assert PROVIDER_MANIFEST_MAX_AGE_DAYS == 14
-    assert RUNTIME_ONLY_PROVIDER_MANIFEST_MAX_AGE_DAYS == 14
 
 
 def test_runtime_only_provider_routes_expire_without_freezing_other_catalogs(
@@ -804,7 +807,8 @@ def test_runtime_only_provider_routes_expire_without_freezing_other_catalogs(
     sample = next(
         endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "upstage"
     )
-    now = datetime.now(UTC)
+    # The catalog's own clock, which judges every route's freshness.
+    now = catalog_data._utc_now()
     expired = replace(
         sample,
         id=f"{sample.id}-expired-test",

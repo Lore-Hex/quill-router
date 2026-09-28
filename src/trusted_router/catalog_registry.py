@@ -1031,6 +1031,18 @@ for _model_id, _model in _DECISION_MODELS.items():
 # to quote, submit, poll, and clean up. Token prices are zero because billing
 # uses the provider's per-job quote as a fixed integer-microdollar charge.
 _VIDEO_MODELS: dict[str, Model] = {
+    "bytedance/seedance-2.5": Model(
+        id="bytedance/seedance-2.5",
+        name="ByteDance Seedance 2.5",
+        provider="venice",
+        context_length=15_000,
+        supports_chat=False,
+        supports_video=True,
+        input_modalities=("text", "image", "audio"),
+        output_modalities=("video",),
+        prepaid_available=True,
+        byok_available=False,
+    ),
     "bytedance/seedance-2.0": Model(
         id="bytedance/seedance-2.0",
         name="ByteDance Seedance 2.0",
@@ -1443,6 +1455,7 @@ def _install_deepseek_v4_pro_release_routes() -> None:
 _install_deepseek_v4_pro_release_routes()
 
 _VIDEO_UPSTREAM_IDS = {
+    "bytedance/seedance-2.5": "seedance-2-5-text-to-video-basic",
     "bytedance/seedance-2.0": "seedance-2-0-text-to-video",
     "bytedance/seedance-2.0-fast": "seedance-2-0-fast-text-to-video",
     "lightricks/ltx-2.3": "ltx-2-v2-3-full-text-to-video",

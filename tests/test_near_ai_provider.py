@@ -14,7 +14,7 @@ from scripts.check_price_coverage import _DISCOVERABLE_MANIFEST_PROVIDERS
 from scripts.pricing.providers import near_ai
 from scripts.pricing.refresh import PROVIDER_SLUGS
 from tests.lifecycle_clock import CATALOG_CLOCK
-from trusted_router import provider_lifecycle
+from trusted_router import catalog_data, provider_lifecycle
 from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS
 from trusted_router.catalog_data import (
     PRIVACY_TIER_CONFIDENTIAL,
@@ -285,8 +285,9 @@ def test_near_ai_is_e2e_eligible_but_never_satisfies_zdr_or_deny(
     monkeypatch: pytest.MonkeyPatch, expired: bool,
 ) -> None:
     model_id = "z-ai/glm-5.3-flash"
-    # Exercise routing policy independently of the live manifest's refresh age.
-    # Expired evidence must still fail closed, even for a pinned E2E provider.
+    # Exercise routing policy independently of the live manifest's refresh age,
+    # judged on the catalog's own clock. Expired evidence must still fail
+    # closed, even for a pinned E2E provider.
     endpoint = next(
         row for row in MODEL_ENDPOINTS.values()
         if row.provider == "near-ai" and row.model_id == model_id
@@ -295,7 +296,7 @@ def test_near_ai_is_e2e_eligible_but_never_satisfies_zdr_or_deny(
         MODEL_ENDPOINTS, endpoint.id,
         replace(
             endpoint,
-            catalog_valid_until=datetime.now(UTC) + timedelta(days=-1 if expired else 1),
+            catalog_valid_until=catalog_data._utc_now() + timedelta(days=-1 if expired else 1),
         ),
     )
     e2e_ids = {model.id for model in e2e_candidate_models(limit=100)}

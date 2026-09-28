@@ -466,12 +466,12 @@ def test_nscale_catalog_is_fail_closed_and_privacy_is_not_overclaimed() -> None:
     assert default_provider_secret_ref(nscale.SLUG) == "env://NSCALE_API_KEY"
 
 
-def test_nscale_secret_is_runtime_only() -> None:
+def test_nscale_secret_is_refreshed_hourly() -> None:
     root = Path(__file__).parents[1]
     secrets = (root / "scripts/deploy/secrets.sh").read_text(encoding="utf-8")
     workflow = (root / ".github/workflows/refresh-prices.yml").read_text(encoding="utf-8")
     assert (
         'ensure_secret_from_env_file "NSCALE_API_KEY" "trustedrouter-nscale-api-key"'
     ) in secrets
-    assert 'grant_tr_deploy_secret_access "trustedrouter-nscale-api-key"' not in secrets
-    assert "NSCALE_API_KEY:trustedrouter-nscale-api-key" not in workflow
+    assert 'grant_tr_deploy_secret_access "trustedrouter-nscale-api-key"' in secrets
+    assert "NSCALE_API_KEY:trustedrouter-nscale-api-key" in workflow

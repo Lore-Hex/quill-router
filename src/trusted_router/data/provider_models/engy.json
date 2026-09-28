@@ -67,8 +67,7 @@
       "title": "glm-5.3-flash",
       "model_type": "chat",
       "input_modalities": [
-        "text",
-        "image"
+        "text"
       ],
       "output_modalities": [
         "text"
@@ -139,7 +138,7 @@
       "status": 1,
       "id": "moonshotai/kimi-k3",
       "upstream_id": "kimi-k3",
-      "context_length": 1048576,
+      "context_length": 1113088,
       "routable": true,
       "supported_features": [
         "chat",
@@ -238,6 +237,6 @@
       "cached_input_token_price_per_m": 8000
     }
   ],
-  "generated_at": "2026-09-24T13:22:08Z",
+  "generated_at": "2026-09-27T23:04:50Z",
   "model_count": 8
 }

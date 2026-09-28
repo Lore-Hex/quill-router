@@ -1,0 +1,24 @@
+{% extends "public/_routing_feature_base.html" %}
+{% block feature_content %}
+<section class="routing-feature-section routing-feature-columns">
+  <div>
+    <h2>The first token and the rest of the answer.</h2>
+    <p>A chat app needs a quick first response. An agent writing a long answer needs fast output too. Set a preference for each through the same API you already use.</p>
+    <p><code>preferred_max_latency</code> expresses time to first token in seconds. <code>preferred_min_throughput</code> expresses output tokens per second. TrustedRouter prefers eligible routes that meet your thresholds using recent successful streaming measurements.</p>
+    <p><a class="btn" href="/docs/performance-routing">Read the API guide</a></p>
+  </div>
+  <div><h3>A preference for interactive responses</h3><pre><code>{
+  "model": "trustedrouter/auto",
+  "stream": true,
+  "messages": [{"role": "user", "content": "Explain this idea."}],
+  "provider": {
+    "preferred_max_latency": {"p90": 3},
+    "preferred_min_throughput": 40
+  }
+}</code></pre><p>Example thresholds, not promised response times.</p></div>
+</section>
+<section class="routing-feature-section routing-feature-columns">
+  <div><h2>Your requirements come first.</h2><p>Keep your provider allowlist, privacy requirements, model fallback order, and token price ceilings. Performance preferences rank eligible choices. They never bring an excluded provider back into the pool.</p><p>Explicit <code>provider.order</code> takes precedence. Set <code>provider.only</code> when only particular providers may serve the request.</p></div>
+  <div><h2>Keep fallback available.</h2><p>A preferred speed is not a timeout or a service guarantee. Other eligible routes remain available when the target cannot be met. Routes without recent measurements retain normal fallback ordering.</p><p>Use the <a href="/leaderboard">provider leaderboard</a> to explore measured performance, then compare results on your own workload.</p></div>
+</section>
+{% endblock %}

@@ -185,7 +185,18 @@ jobs:
                       PERPLEXITY_API_KEY:trustedrouter-perplexity-api-key \
                       KREA_API_KEY:trustedrouter-krea-api-key \
                       FAL_API_KEY:trustedrouter-fal-api-key \
-                      WANDB_API_KEY:trustedrouter-wandb-api-key; do
+                      WANDB_API_KEY:trustedrouter-wandb-api-key \
+                      UPSTAGE_API_KEY:trustedrouter-upstage-api-key \
+                      SAIL_RESEARCH_API_KEY:trustedrouter-sail-research-api-key \
+                      REKA_API_KEY:trustedrouter-reka-api-key \
+                      NEXTBIT_API_KEY:trustedrouter-nextbit-api-key \
+                      AKASHML_API_KEY:trustedrouter-akashml-api-key \
+                      MANCER_API_KEY:trustedrouter-mancer-api-key \
+                      NSCALE_API_KEY:trustedrouter-nscale-api-key \
+                      AION_LABS_API_KEY:trustedrouter-aion-labs-api-key \
+                      SAMBANOVA_API_KEY:trustedrouter-sambanova-api-key \
+                      ARCEE_API_KEY:trustedrouter-arcee-api-key \
+                      INCEPTION_API_KEY:trustedrouter-inception-api-key; do
             env="${pair%%:*}"
             secret="${pair#*:}"
             if ! KEY=$(gcloud secrets versions access latest \
@@ -534,4 +545,41 @@ jobs:
             gh issue close "${issue_number}" \
               --repo "${GITHUB_REPOSITORY}" \
               --comment "Resolved by ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
+          fi
+
+      - name: Reconcile held-price issue
+        # The refresh holds a provider whose prices spiked at its last
+        # published prices and publishes the rest. The issue stays open until
+        # a person closes it: a later run without the hold may only mean the
+        # provider's fetch failed and fell back to its published prices.
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          summary=/tmp/refresh-summary.txt
+          title="[bot] Provider prices held for review"
+          issue_number=$(gh issue list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --state open \
+            --search "${title} in:title" \
+            --json number,title \
+            --jq "map(select(.title == \"${title}\"))[0].number // empty")
+          if [ -s "${summary}" ] && grep -q '^Held for price review' "${summary}"; then
+            {
+              echo "These providers' routes rose 2x or more (or both prices went to zero), so the hourly refresh kept their last published prices and published every other provider."
+              echo
+              echo "If a change is real, verify it against the provider's own price source and add the exact transition to APPROVED_ENDPOINT_PRICE_TRANSITIONS in scripts/check_price_spike.py, then close this issue. A held provider's expiring manifest still fails closed 14 days after its last publish."
+              echo
+              echo "Latest run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+              echo
+              echo '```'
+              sed -n '/^Held for price review/,/^$/p' "${summary}"
+              echo '```'
+            } > /tmp/held-issue.md
+            if [ -n "${issue_number}" ]; then
+              gh issue edit "${issue_number}" --repo "${GITHUB_REPOSITORY}" --body-file /tmp/held-issue.md
+            else
+              gh issue create --repo "${GITHUB_REPOSITORY}" --title "${title}" --body-file /tmp/held-issue.md
+            fi
           fi

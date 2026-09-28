@@ -140,33 +140,23 @@ def test_deploy_pins_stage_c_admission_acceptance_off() -> None:
     assert '"TR_SPEND_LEASE_ADMISSION_ACCEPT=false"' in rollout
 
 
-def test_deploy_enables_spend_lease_binding_with_emergency_override() -> None:
+def test_deploy_pins_spend_lease_issuance_and_binding_off() -> None:
+    # Bigtable ledger retirement (2026-09-27): no new spend leases are minted,
+    # both flags render false literally, and any other binding value is
+    # rejected before a revision exists.
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
 
-    assert '"TR_SPEND_LEASE_ISSUANCE_ENABLED=true"' in rollout
-    assert (
-        '"TR_SPEND_LEASE_BINDING_ENABLED='
-        '${TR_SPEND_LEASE_BINDING_ENABLED:-true}"' in rollout
-    )
+    assert '"TR_SPEND_LEASE_ISSUANCE_ENABLED=false"' in rollout
+    assert '"TR_SPEND_LEASE_BINDING_ENABLED=false"' in rollout
+    assert "TR_SPEND_LEASE_BINDING_ENABLED=${TR_SPEND_LEASE_BINDING_ENABLED} is retired" in rollout
     assert (
         '"TR_SPEND_LEASE_PILOT_WORKSPACE_IDS='
         '45819281-0ce9-4811-a0cd-c660ab3a116d"' in rollout
     )
-    assert (
-        'read_primary_regional_quota_env "TR_SPEND_LEASE_BIGTABLE_TABLE" '
-        '"trustedrouter-spend-lease"' in rollout
-    )
-    assert (
-        '"TR_SPEND_LEASE_BIGTABLE_APP_PROFILES" \\\n'
-        '    "us-central1=tr-spend-us-central1"' in rollout
-    )
-    assert (
-        '"TR_SPEND_LEASE_BIGTABLE_TABLE=${SPEND_LEASE_BIGTABLE_TABLE}"' in rollout
-    )
-    assert (
-        '"TR_SPEND_LEASE_BIGTABLE_APP_PROFILES='
-        '${SPEND_LEASE_BIGTABLE_APP_PROFILES}"' in rollout
-    )
+    # The ledger table and app-profile map are no longer rendered at all: a
+    # rendered profile map is what makes the store open a Bigtable client.
+    assert "TR_SPEND_LEASE_BIGTABLE_TABLE" not in rollout
+    assert "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES" not in rollout
 
 
 def test_deploy_removes_only_explicitly_missing_optional_secrets() -> None:
@@ -349,10 +339,11 @@ def test_production_deploy_interlocks_regional_quota_issuance() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text()
 
     assert 'source "${SCRIPT_DIR}/regional_quota_rollout.sh"' in rollout
-    assert (
-        'read_primary_regional_quota_env "TR_REGIONAL_QUOTA_LEASES_ENABLED" "false"'
-        in rollout
-    )
+    # Capability is a source pin since the ledger retirement (2026-09-27); the
+    # live marker is never copied and an explicit true is refused.
+    assert "\nREGIONAL_QUOTA_LEASES_ENABLED=false\n" in rollout
+    assert 'read_primary_regional_quota_env "TR_REGIONAL_QUOTA_LEASES_ENABLED"' not in rollout
+    assert "is retired; the regional escrow ledger is gone" in rollout
     assert (
         '"TR_REGIONAL_QUOTA_LEASES_ENABLED=${REGIONAL_QUOTA_LEASES_ENABLED}"'
         in rollout
@@ -362,8 +353,7 @@ def test_production_deploy_interlocks_regional_quota_issuance() -> None:
         '${REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED}"'
         in rollout
     )
-    assert '"TR_REGIONAL_QUOTA_LEASES_ENABLED=false"' not in rollout
-    assert "regional_quota_preflight_issuance_fleet" in rollout
+    assert "regional quota issuance is retired" in rollout
     assert 'service.get("status", {}).get("traffic", [])' in helper
     assert "latestCreatedRevisionName" in helper
     assert "latestReadyRevisionName" in helper
@@ -373,40 +363,54 @@ def test_production_deploy_interlocks_regional_quota_issuance() -> None:
         "${{ inputs.regional_quota_lease_issuance }}"
         in workflow
     )
-    assert (
-        '"TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES=${REGIONAL_QUOTA_BIGTABLE_APP_PROFILES}"'
-        in rollout
-    )
+    assert "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES=" not in rollout
+    assert "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES=" not in rollout
 
 
-def test_production_deploy_provisions_and_schedules_regional_quota_reconciliation() -> None:
+def test_production_deploy_retires_the_ledger_workers() -> None:
+    # Ledger retirement (2026-09-27): no release provisions a ledger or deploys
+    # a reconciler; the drain gate runs before any revision changes and the
+    # worker teardown runs after every secondary is ramped or held.
     orchestrator = (ROOT / "scripts/deploy-gcp.sh").read_text()
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text()
+    secondary_ramp = (ROOT / "scripts/deploy/ramp_secondaries.sh").read_text()
+
+    for retired in (
+        "regional_quota_ledger.sh",
+        "spend_lease_ledger.sh",
+        "regional_quota_reconciler.sh",
+        "spend_lease_reconciler.sh",
+    ):
+        assert f"bash scripts/deploy/{retired}" not in workflow, retired
+        assert f"deploy/{retired}" not in orchestrator, retired
+        assert f"bash \"${{SCRIPT_DIR}}/{retired}\"" not in secondary_ramp, retired
+
+    migrate_schema = workflow.split("\n  migrate-schema:\n", 1)[1].split(
+        "\n  sync-runtime-secrets:\n", 1
+    )[0]
+    assert "run: bash scripts/deploy/regional_quota_drain_gate.sh" in migrate_schema
+    rollout_secondaries = workflow.split("\n  rollout-secondaries:\n", 1)[1].split(
+        "\n  public-surface-companion:\n", 1
+    )[0]
+    ramp = rollout_secondaries.index("run: bash scripts/deploy/ramp_secondaries.sh")
+    retire = rollout_secondaries.index("run: bash scripts/deploy/retire_ledger_workers.sh")
+    synthetic = rollout_secondaries.index("- name: Deploy synthetic monitor Cloud Run Job")
+    assert ramp < retire < synthetic
+
+    gate = orchestrator.index('deploy/regional_quota_drain_gate.sh"')
+    rollout = orchestrator.index('deploy/rollout.sh"')
+    teardown = orchestrator.index('deploy/retire_ledger_workers.sh"')
+    assert gate < rollout < teardown
+
+
+
+def test_regional_quota_worker_and_provisioner_script_contracts() -> None:
+    # Unwired since the 2026-09-27 ledger retirement, but still on disk until
+    # the ledger code is deleted with them; keep their contracts honest.
     library = (ROOT / "scripts/deploy/_lib.sh").read_text()
     provisioner = (ROOT / "scripts/deploy/regional_quota_ledger.sh").read_text()
     reconciler = (ROOT / "scripts/deploy/regional_quota_reconciler.sh").read_text()
-    secondary_ramp = (ROOT / "scripts/deploy/ramp_secondaries.sh").read_text()
 
-    assert 'deploy/regional_quota_ledger.sh' in orchestrator
-    assert 'deploy/regional_quota_reconciler.sh' in orchestrator
-    assert "bash scripts/deploy/regional_quota_ledger.sh" in workflow
-    assert "bash scripts/deploy/ramp_secondaries.sh" in workflow
-    assert 'bash "${SCRIPT_DIR}/regional_quota_reconciler.sh"' in secondary_ramp
-    assert workflow.index("bash scripts/deploy/regional_quota_ledger.sh") < workflow.index(
-        "bash scripts/deploy/rollout.sh"
-    )
-    reconciler_start = secondary_ramp.index(
-        'bash "${SCRIPT_DIR}/regional_quota_reconciler.sh"'
-    )
-    ramp_loop = secondary_ramp.index(
-        "for region in europe-west4 us-east4 southamerica-east1"
-    )
-    reconciler_wait = secondary_ramp.index('wait "${reconciler_pid}"')
-    assert reconciler_start < ramp_loop < reconciler_wait
-    assert (
-        'regional_quota_reconciler.sh" >"${reconciler_log}" 2>&1 &'
-        in secondary_ramp
-    )
     assert "--transactional-writes" in provisioner
     assert "trusted-router-logs-c1" in library
     assert "us-central1=tr-quota-us-central1" in library

@@ -349,10 +349,14 @@ if tag_path.is_file():
         }
     )
 print(json.dumps({
-    "metadata": {"annotations": {
+    "metadata": {"generation": 1, "annotations": {
         "run.googleapis.com/ingress": "internal-and-cloud-load-balancing"
     }},
-    "status": {"traffic": traffic},
+    "status": {
+        "observedGeneration": 1,
+        "conditions": [{"type": "Ready", "status": "True"}],
+        "traffic": traffic,
+    },
 }, separators=(",", ":")))
 PY
     exit 0
@@ -514,10 +518,14 @@ if tag_path.is_file():
         }
     )
 print(json.dumps({
-    "metadata": {"annotations": {
+    "metadata": {"generation": 1, "annotations": {
         "run.googleapis.com/ingress": "internal-and-cloud-load-balancing"
     }},
-    "status": {"traffic": traffic},
+    "status": {
+        "observedGeneration": 1,
+        "conditions": [{"type": "Ready", "status": "True"}],
+        "traffic": traffic,
+    },
 }, separators=(",", ":")))
 PY
     exit 0
@@ -1233,18 +1241,10 @@ _INTERNAL_SURFACE_LEGACY_ENV = {
     "TR_ANALYTICS_OUTBOX_ENABLED": "true",
     "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED": "true",
     "TR_USER_MODELS_DISPATCH_ENABLED": "true",
-    "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true",
+    # The legacy service carries only the two (false) markers since the
+    # 2026-09-27 ledger retirement; no ledger setting exists on it any more.
+    "TR_REGIONAL_QUOTA_LEASES_ENABLED": "false",
     "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "false",
-    "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS": "workspace-pilot",
-    "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS": "120",
-    "TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS": "5000000",
-    "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS": "5000",
-    "TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT": "16",
-    "TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS": "4",
-    "TR_REGIONAL_QUOTA_BIGTABLE_TABLE": "trustedrouter-regional-quota",
-    "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES": (
-        "us-central1=tr-quota-us-central1"
-    ),
     "TR_FEDERATION_HOME_BASE_URL": "https://trustedrouter.com/v1",
     "TR_FEDERATION_DEFERRED_SETTLEMENT_ENABLED": "true",
 }
@@ -1439,6 +1439,42 @@ QUOTA_SCHEDULER: dict[str, Any] = {
         "oauthToken": {"serviceAccountEmail": "44325983244-compute@developer.gserviceaccount.com"},
     },
 }
+# The spend-lease reconciler schedule, for the ledger retirement interlock.
+SPEND_SCHEDULER: dict[str, Any] = {
+    "state": "ENABLED",
+    "httpTarget": {
+        "uri": "https://us-east4-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/quill-cloud-proxy/jobs/trusted-router-spend-lease-reconciler-abc12345:run",
+        "httpMethod": "POST",
+        "oauthToken": {"serviceAccountEmail": "44325983244-compute@developer.gserviceaccount.com"},
+    },
+}
+# Five recent all-zero passes of each worker: what a drained ledger looks like.
+_REGIONAL_DRAINED_LINE = (
+    "INFO:trusted_router.regional_quota_reconcile_cli:regional_quota.reconcile_complete "
+    "inspected=0 reconciled=0 closed=0 errors=0 backlog=0 processed=0 remaining=0 "
+    "completed=0 abandoned=0 budget_exhausted=0"
+)
+_SPEND_DRAINED_LINE = (
+    "INFO:__main__:spend_lease.reconcile_complete candidates=0 open=0 recovered=0 "
+    "bound=0 closed=0 deferred=0 errors=0 dead=0"
+)
+# The harness stamps HARNESS_QUOTA_COMPLETION_TIME with the run's wall clock,
+# so the passes postdate the (old) serving revisions plus the drain interval.
+LEDGER_DRAINED_RESPONSES = (
+    (r"scheduler jobs describe .*spend-lease-reconcile.*--format=json", json.dumps(SPEND_SCHEDULER)),
+    (
+        r"logging read .*regional_quota\.reconcile_complete",
+        json.dumps([{"textPayload": _REGIONAL_DRAINED_LINE, "timestamp": "HARNESS_QUOTA_COMPLETION_TIME"}] * 5),
+    ),
+    (
+        r"logging read .*spend_lease\.reconcile_complete",
+        json.dumps([{"textPayload": _SPEND_DRAINED_LINE, "timestamp": "HARNESS_QUOTA_COMPLETION_TIME"}] * 5),
+    ),
+    (r"spanner databases execute-sql .*regional_quota_lease_open", "0"),
+    (r"spanner databases execute-sql .*regional_quota_lease_workspace_open", "0"),
+    (r"spanner databases execute-sql .*FROM tr_reservation@", "0"),
+    (r"spanner databases execute-sql .*FROM spend_lease_open WHERE", "0"),
+)
 QUOTA_WORKER: dict[str, Any] = {
     "metadata": {"generation": 1},
     "spec": {"template": {"spec": {"template": {"spec": _QUOTA_WORKER_SPEC}}}},
@@ -1461,12 +1497,25 @@ QUOTA_EXECUTION: dict[str, Any] = {
 QUOTA_READINESS_RESPONSES = (
     (r"projects describe.*projectNumber", "44325983244"),
     (r"storage buckets describe .*tr-deploy-mutex.*--format=json", '{"lifecycle_config":{"rule":[{"action":{"type":"Delete"},"condition":{"age":1,"matchesPrefix":["locks/"]}}]}}'),
-    (r"storage objects list --raw --format=json .*controls/", '[{"bucket":"tr-deploy-mutex-quill-cloud-proxy","name":"controls/regional-quota-issuance.txt"}]'),
+    (r"storage objects list --raw --format=json .*controls/", '[{"bucket":"tr-deploy-mutex-quill-cloud-proxy","name":"controls/regional-quota-issuance.txt"},{"bucket":"tr-deploy-mutex-quill-cloud-proxy","name":"controls/ledger-drain-observation.json"}]'),
+    # control objects are written with a generation precondition read first
+    (r"storage objects describe .*controls/.*--format=value\(generation\)", "1"),
+    # The ledger retirement gate's durable observation: this fleet state
+    # (service generation 1, the active revision everywhere) has been in place
+    # since well before any drain interval.
+    (
+        r"storage cat .*controls/ledger-drain-observation.json",
+        json.dumps({"regions": {
+            region: {"generation": "1", "revisions": "trusted-router-active", "off_since": "2026-09-01T00:00:00Z"}
+            for region in ("us-central1", "us-east4", "europe-west4", "southamerica-east1")
+        }, "updated_at": "2026-09-01T00:00:00Z"}),
+    ),
     (r"storage cat .*controls/regional-quota-issuance.txt", "allow"),
     (r"scheduler jobs describe .*regional-quota.*--format=json", json.dumps(QUOTA_SCHEDULER)),
     (r"run jobs describe .*regional-quota.*--format=json", json.dumps(QUOTA_WORKER)),
     (r"run jobs executions list .*--format=json", json.dumps([QUOTA_EXECUTION])),
     (r"logging read .*regional_quota.reconciler_complete", '[{"textPayload":"regional_quota.reconciler_complete elapsed_ms=10"}]'),
+    *LEDGER_DRAINED_RESPONSES,
 )
 
 
@@ -1503,9 +1552,9 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
             "TR_GENERATION_RECORDS_ENABLED": "false",
             "TR_BIGTABLE_MIRROR_WRITES_ENABLED": "true",
             "TR_ANALYTICS_READ_MODE": "bigtable",
-            # Generic rollout safeguards exercise the default issuance-ON path.
             "TR_DEPLOY_RELEASE_ID": "abc12345",
-            "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true",
+            # Lease capability is retired (2026-09-27): rollout.sh pins it off and
+            # refuses an explicit true, so the generic fixture sets nothing here.
             # No dispatch issuance input: exercise rollout.sh's code pin.
             # Reuse the stateful legacy-service tag behavior in the harness.
             "HARNESS_PUBLIC_SURFACE_SMOKE": "1",
@@ -1516,6 +1565,7 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
                 r"run revisions describe trusted-router-active .*--format=json",
                 json.dumps(
                     {
+                        "metadata": {"creationTimestamp": "2026-09-01T00:00:00Z"},
                         "spec": {
                             "containers": [
                                 {
@@ -1529,6 +1579,11 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
                                             "name": "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED",
                                             "value": "false",
                                         },
+                                        # Step-1 markers: the ledger retirement gate
+                                        # requires them off on every serving revision.
+                                        {"name": "TR_SPEND_LEASE_ISSUANCE_ENABLED", "value": "false"},
+                                        {"name": "TR_SPEND_LEASE_BINDING_ENABLED", "value": "false"},
+                                        {"name": "TR_SPEND_LEASE_ADMISSION_ACCEPT", "value": "false"},
                                     ]
                                 }
                             ]

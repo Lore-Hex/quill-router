@@ -120,6 +120,16 @@ def remaining_rpc_budget(max_seconds: float) -> float:
     return remaining
 
 
+def shared_rpc_budget_spent() -> bool:
+    """True once the caller's shared Spanner deadline has passed.
+
+    Every bounded RPC's timeout is the remaining shared budget, so an RPC that
+    fails after this point failed because the caller ran out of time.
+    """
+    deadline = _SPANNER_RPC_DEADLINE.get()
+    return deadline is not None and time.monotonic() >= deadline
+
+
 def configure_spanner_rpc_deadlines(
     database: Any,
     *,

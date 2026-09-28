@@ -259,6 +259,13 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/docs/telemetry",
     "/docs/receipts",
     "/docs/provider-routing",
+    "/performance-routing",
+    "/spend-controls",
+    "/prompt-caching",
+    "/model-precision",
+    "/docs/performance-routing",
+    "/docs/spend-controls",
+    "/docs/model-precision",
     "/docs/prompt-caching",
     "/docs/batch",
     "/docs/decide",
@@ -766,6 +773,41 @@ _NOT_FOUND_PAGE = PublicPage(
 
 
 PUBLIC_PAGES: dict[str, PublicPage] = {
+    "performance-routing": PublicPage(
+        template="public/performance_routing_landing.html",
+        title="LLM Performance Routing",
+        description="Prefer LLM routes by time to first token and output speed. Keep provider, price, and privacy controls while retaining eligible fallback routes.",
+    ),
+    "spend-controls": PublicPage(
+        template="public/spend_controls_landing.html",
+        title="LLM API Spend Controls",
+        description="Set daily, weekly, and monthly API key budgets. Opt into strict estimated-cost admission to count in-flight requests, with clear speed tradeoffs.",
+    ),
+    "prompt-caching": PublicPage(
+        template="public/prompt_caching_landing.html",
+        title="Prompt Caching And Cache Aware Routing",
+        description="Reuse provider prompt caches and keep sessions near their last successful route. Inspect cached tokens and cost through one OpenAI-compatible API.",
+    ),
+    "model-precision": PublicPage(
+        template="public/model_precision_landing.html",
+        title="LLM Model Precision And Quantization",
+        description="Compare reviewed model weight formats by provider. Follow serving-code and model-revision evidence, with unknown precision clearly marked.",
+    ),
+    "docs/performance-routing": PublicPage(
+        template="public/performance_routing_docs.html",
+        title="Latency And Throughput Routing API Guide",
+        description="Configure scalar and percentile latency and throughput preferences. Learn provider-order precedence, measurement scope, fallback behavior, and errors.",
+    ),
+    "docs/spend-controls": PublicPage(
+        template="public/spend_controls_docs.html",
+        title="Strict Budget API Guide",
+        description="Create API keys with opt-in strict budget admission. Understand USD limits, in-flight estimates, UTC resets, concurrency bounds, and retry handling.",
+    ),
+    "docs/model-precision": PublicPage(
+        template="public/model_precision_docs.html",
+        title="Model Precision Metadata API Guide",
+        description="Read per-provider quantization, mixed weight formats, model revisions, and evidence links. Distinguish reviewed configuration from runtime verification.",
+    ),
     **{
         slug: PublicPage(
             template="public/company_signin.html",
@@ -4505,6 +4547,9 @@ def llms_txt(settings: Settings) -> str:
         f"- [Synth guide](https://{domain}/docs/synth)",
         f"- [Responses web search](https://{domain}/docs/web-search)",
         f"- [Prompt caching](https://{domain}/docs/prompt-caching)",
+        f"- [Performance routing](https://{domain}/docs/performance-routing)",
+        f"- [API key spend controls](https://{domain}/docs/spend-controls)",
+        f"- [Model precision metadata](https://{domain}/docs/model-precision)",
         f"- [Batch API](https://{domain}/docs/batch)",
         f"- [Decision models](https://{domain}/docs/decide)",
         f"- [Video generation](https://{domain}/docs/video)",
@@ -4642,6 +4687,9 @@ def docs_llms_txt(settings: Settings) -> str:
             f"- Synth guide: https://{domain}/docs/synth",
             f"- Responses web search: https://{domain}/docs/web-search",
             f"- Prompt caching: https://{domain}/docs/prompt-caching",
+            f"- Performance routing: https://{domain}/docs/performance-routing",
+            f"- API key spend controls: https://{domain}/docs/spend-controls",
+            f"- Model precision metadata: https://{domain}/docs/model-precision",
             f"- Batch API: https://{domain}/docs/batch",
             f"- Decision models (POST {DECIDE_PATH}): https://{domain}/docs/decide",
             f"- Video generation: https://{domain}/docs/video",
@@ -4767,6 +4815,9 @@ def docs_llms_full_txt(settings: Settings) -> str:
         f"- Synth guide: https://{domain}/docs/synth",
         f"- Responses web search: https://{domain}/docs/web-search",
         f"- Prompt caching: https://{domain}/docs/prompt-caching",
+        f"- Performance routing: https://{domain}/docs/performance-routing",
+        f"- API key spend controls: https://{domain}/docs/spend-controls",
+        f"- Model precision metadata: https://{domain}/docs/model-precision",
         f"- Batch API: https://{domain}/docs/batch",
         f"- Decision models (POST {DECIDE_PATH}): https://{domain}/docs/decide",
         f"- Video generation: https://{domain}/docs/video",

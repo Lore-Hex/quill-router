@@ -221,7 +221,7 @@
       "routable": true,
       "input_token_price_per_m": 980000,
       "output_token_price_per_m": 3080000,
-      "cached_input_token_price_per_m": 182000
+      "cached_input_token_price_per_m": 180000
     },
     {
       "display_name": "zai-org/GLM-5.3-Flash",
@@ -241,14 +241,36 @@
       "upstream_id": "zai-org/GLM-5.3-Flash",
       "created": 1700000000,
       "routable": true,
-      "input_token_price_per_m": 105000,
+      "input_token_price_per_m": 110000,
       "output_token_price_per_m": 350000,
-      "cached_input_token_price_per_m": 21000
+      "cached_input_token_price_per_m": 20000
+    },
+    {
+      "display_name": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "title": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4.1-flash",
+      "upstream_id": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "created": 1700000000,
+      "routable": true,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 600000,
+      "cached_input_token_price_per_m": 6000
     }
   ],
   "source": "https://api.sailresearch.com/v1/models",
   "pricing_source": "https://docs.sailresearch.com/pricing",
-  "generated_at": "2026-09-14T20:00:58Z",
+  "generated_at": "2026-09-27T23:04:50Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 11
+  "model_count": 12
 }

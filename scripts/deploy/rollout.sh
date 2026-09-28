@@ -20,13 +20,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_deploy_hold.sh"
 # shellcheck source=scripts/deploy/_lib.sh
 source "${SCRIPT_DIR}/_lib.sh"
-regional_quota_validate_settings
 # shellcheck source=scripts/deploy/deploy_mutex.sh
 source "${SCRIPT_DIR}/deploy_mutex.sh"
 # shellcheck source=scripts/deploy/_cloud_run_revision_probe.sh
 source "${SCRIPT_DIR}/_cloud_run_revision_probe.sh"
 # shellcheck source=scripts/deploy/regional_quota_rollout.sh
 source "${SCRIPT_DIR}/regional_quota_rollout.sh"
+# shellcheck source=scripts/deploy/ledger_retirement.sh
+source "${SCRIPT_DIR}/ledger_retirement.sh"
 
 WARM_PROBE_TAG="staged-probe"
 WARM_PROBE_REGIONS=()
@@ -69,6 +70,13 @@ trap 'exit 143' TERM
 if [ -z "${TR_DEPLOY_MUTEX_OPERATION:-}" ]; then
   deploy_mutex_acquire
 fi
+
+# Every revision this script creates runs without the regional quota and
+# spend-lease ledgers (retired 2026-09-27). Whatever the entry point - the
+# release workflow, deploy-gcp.sh, break-glass, an analytics cutover - prove
+# first that nothing can still need them. Read-only; a recorded retirement
+# waives only the reconciler evidence, never the fleet or Spanner checks.
+ledger_retirement_gate
 
 TRUST_SOURCE_COMMIT=""
 TRUST_IMAGE_REFERENCE=""
@@ -424,26 +432,28 @@ read_primary_regional_quota_env() {
     "$default_value"
 }
 
-LIVE_REGIONAL_QUOTA_LEASES_ENABLED="$(
-  read_primary_regional_quota_env "TR_REGIONAL_QUOTA_LEASES_ENABLED" "false"
-)"
-REGIONAL_QUOTA_LEASES_ENABLED="${TR_REGIONAL_QUOTA_LEASES_ENABLED:-${LIVE_REGIONAL_QUOTA_LEASES_ENABLED:-false}}"
-case "$REGIONAL_QUOTA_LEASES_ENABLED" in
-  true|false) ;;
-  *)
-    log "refusing rollout: TR_REGIONAL_QUOTA_LEASES_ENABLED must be true or false"
-    exit 1
-    ;;
-esac
+# Lease capability is retired (2026-09-27, step 2 of the Bigtable retirement):
+# the regional escrow ledger no longer exists for a serving revision, so the
+# capability marker is a source pin, never live-primary state. Turning it on
+# would make the store open a Bigtable ledger client again, which is exactly
+# what this change removes, so an explicit request is refused.
+REGIONAL_QUOTA_LEASES_ENABLED=false
+if [ "${TR_REGIONAL_QUOTA_LEASES_ENABLED:-false}" != "false" ]; then
+  log "refusing rollout: TR_REGIONAL_QUOTA_LEASES_ENABLED=${TR_REGIONAL_QUOTA_LEASES_ENABLED} is retired; the regional escrow ledger is gone"
+  exit 1
+fi
 
 # workflow_dispatch passes one of preserve/false/true through unchanged. The
 # deploy shell, not GitHub's expression coercion, turns that raw operator intent
-# into the boolean written on the Cloud Run revision. A fresh fleet must
-# explicitly request false for its first compatibility deploy.
-# Emergency containment: commit the pin below to false so successor pushes
-# inherit OFF (docs/design/regional-quota-leases.md). Keep it true normally.
-# The durable stop latch overrides explicit true/preserve inputs.
-REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED=true
+# into the boolean written on the Cloud Run revision.
+# Retired 2026-09-27: the Bigtable ledger is being removed (Joseph's call:
+# switch the pilot off rather than port the ledger). The pin is false, and the
+# retirement override below forces the marker off whatever the dispatch input,
+# live marker, or stop latch say. Capability is pinned off above as well, and
+# ledger_retirement_gate proves the escrow is drained before any revision is
+# created. Re-arming is a source change through review
+# (docs/design/regional-quota-leases.md).
+REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED=false
 LIVE_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED="$(
   read_primary_regional_quota_env \
     "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" \
@@ -458,75 +468,44 @@ REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED="$(
 REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED="$(
   regional_quota_apply_stop_latch "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED"
 )"
+# Retirement override: no dispatch input (including an explicit true), no
+# live ON marker preserved by a dispatch, and no `allow` latch can mint a new
+# regional hold again. Say so instead of silently rendering false.
+case "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" in
+  true)
+    log "regional quota issuance is retired (Bigtable ledger retirement); forcing the marker off (requested ${REGIONAL_QUOTA_LEASE_ISSUANCE_CONTROL})"
+    REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED=false
+    ;;
+esac
 if [ "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" = "true" ] &&
    [ "$REGIONAL_QUOTA_LEASES_ENABLED" != "true" ]; then
   log "refusing rollout: regional quota issuance requires lease capability"
   exit 1
 fi
 
-# R4: cohort and ledger settings are code pins, never live-primary state.
-# Explicit environment values override the pins (including an empty cohort).
-# Shared with the provisioner and reconciler through _lib.sh.
-REGIONAL_QUOTA_BIGTABLE_APP_PROFILES="$TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES"
-REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS="$TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS"
-REGIONAL_QUOTA_BIGTABLE_TABLE="$TR_REGIONAL_QUOTA_BIGTABLE_TABLE"
-SPEND_LEASE_BIGTABLE_TABLE="${TR_SPEND_LEASE_BIGTABLE_TABLE:-$(
-  read_primary_regional_quota_env "TR_SPEND_LEASE_BIGTABLE_TABLE" "trustedrouter-spend-lease"
-)}"
-SPEND_LEASE_BIGTABLE_APP_PROFILES="${TR_SPEND_LEASE_BIGTABLE_APP_PROFILES:-$(
-  read_primary_regional_quota_env \
-    "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES" \
-    "us-central1=tr-spend-us-central1"
-)}"
-REGIONAL_QUOTA_LEASE_TTL_SECONDS="$TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS"
-REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS="$TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS"
-REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS="$TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS"
-REGIONAL_QUOTA_LEASE_SHARD_COUNT="$TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT"
-# Cross-continent callbacks need the same ledger budget as the reconciler.
-REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS="$TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS"
-if [ "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" = "true" ] && {
-  [ -z "$REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS" ] ||
-  [ -z "$REGIONAL_QUOTA_BIGTABLE_APP_PROFILES" ];
-}; then
-  log "refusing rollout: regional quota issuance requires pilot workspaces and fixed Bigtable app profiles"
-  exit 1
-fi
+# The ledger settings (cohort, shards, TTL, tables, app profiles, cluster maps)
+# are no longer rendered: with capability off the store must not open a
+# Bigtable ledger client, and an app-profile map alone would make it do so.
 
-# This executes before gcloud run deploy can create any issuance-enabled
-# revision. Every currently active fleet member and the scheduled worker must
-# declare the accounting protocol, and reconciliation must be healthy.
-# Compatible older releases pass; missing or incompatible markers refuse rollout.
+# Pin the image to its digest before any revision is created. The accounting
+# protocol floor that used to follow here guarded capability-on fleets; with
+# capability retired no revision settles regional holds any more.
 regional_quota_resolve_image
+# Issuance is retired above, so this fleet preflight is unreachable until the
+# machinery is deleted with the ledger.
 if [ "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" = "true" ]; then
   regional_quota_require_image_protocol
   regional_quota_preflight_issuance_fleet
   regional_quota_preflight_reconciler
 fi
 
-# Binding makes the unit-4 settlement clamp and repair/mirror path load-bearing.
-# Refuse a source rollback that would build a binding-enabled image without
-# those rules. The emergency rollback path is explicit: deploy with binding
-# disabled, then investigate or roll forward from there.
-SPEND_LEASE_BINDING_TARGET="${TR_SPEND_LEASE_BINDING_ENABLED:-true}"
-if [ "$SPEND_LEASE_BINDING_TARGET" = "true" ] &&
-   [ -z "$SPEND_LEASE_BIGTABLE_APP_PROFILES" ]; then
-  log "refusing rollout: TR_SPEND_LEASE_BINDING_ENABLED=true requires non-empty TR_SPEND_LEASE_BIGTABLE_APP_PROFILES"
+# Spend-lease binding is retired with issuance (2026-09-27): config.py refuses
+# to boot a revision that binds without issuing, so an explicit request is
+# refused here rather than rendered into an unbootable revision.
+if [ "${TR_SPEND_LEASE_BINDING_ENABLED:-false}" != "false" ]; then
+  log "refusing rollout: TR_SPEND_LEASE_BINDING_ENABLED=${TR_SPEND_LEASE_BINDING_ENABLED} is retired; spend-lease issuance is pinned off"
   exit 1
 fi
-case "$SPEND_LEASE_BINDING_TARGET" in
-  true)
-    spend_lease_unit_4_source="${SCRIPT_DIR}/../../src/trusted_router/services/spend_lease_settlement.py"
-    if ! grep -Fq "def clamp_spend_lease_charge(" "$spend_lease_unit_4_source"; then
-      log "refusing rollout: TR_SPEND_LEASE_BINDING_ENABLED=true requires spend-lease unit 4 (missing clamp_spend_lease_charge); rollback only with TR_SPEND_LEASE_BINDING_ENABLED=false"
-      exit 1
-    fi
-    ;;
-  false) ;;
-  *)
-    log "refusing rollout: TR_SPEND_LEASE_BINDING_ENABLED must be true or false"
-    exit 1
-    ;;
-esac
 
 # Prefer the private three-replica ClickHouse load balancer once provisioned.
 # The direct node-1 address remains only as a migration fallback for projects
@@ -743,22 +722,14 @@ ENV_VARS=(
   # operator overrides it. This prevents routine rollouts from reopening the
   # unbounded generic write path.
   "TR_REQUEST_RECORD_WRITE_MODE=${REQUEST_RECORD_WRITE_MODE}"
-  # Bounded regional escrow. Capability keeps settlement/reconciliation ready;
-  # the independent issuance marker stays off through the compatibility phase.
+  # Regional escrow is retired (2026-09-27). Both markers are rendered false
+  # and no ledger table, app-profile map, or cluster map is rendered at all:
+  # the store opens a Bigtable ledger client whenever a profile map is set,
+  # capability or not, so their absence is what keeps the two ledger clients
+  # out of the process. The generation mirror client (spanner-bigtable) is
+  # the analytics cutover's business, not this change's.
   "TR_REGIONAL_QUOTA_LEASES_ENABLED=${REGIONAL_QUOTA_LEASES_ENABLED}"
   "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED=${REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED}"
-  "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS=${REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS}"
-  "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS=${REGIONAL_QUOTA_LEASE_TTL_SECONDS}"
-  "TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS=${REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS}"
-  "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS=${REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS}"
-  "TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT=${REGIONAL_QUOTA_LEASE_SHARD_COUNT}"
-  "TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS=${REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS}"
-  "TR_REGIONAL_QUOTA_CLUSTER_MAP=${TR_REGIONAL_QUOTA_CLUSTER_MAP}"
-  "TR_SPEND_LEASE_CLUSTER_MAP=${TR_SPEND_LEASE_CLUSTER_MAP}"
-  "TR_REGIONAL_QUOTA_BIGTABLE_TABLE=${REGIONAL_QUOTA_BIGTABLE_TABLE}"
-  "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES=${REGIONAL_QUOTA_BIGTABLE_APP_PROFILES}"
-  "TR_SPEND_LEASE_BIGTABLE_TABLE=${SPEND_LEASE_BIGTABLE_TABLE}"
-  "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES=${SPEND_LEASE_BIGTABLE_APP_PROFILES}"
   # 2026-08-30 pilot: Joseph's own Personal Workspace (first-party, his account,
   # at his direction). The previous pilot, TrustedRouter Synthetic Monitoring
   # (d385c399-b245-4147-a528-0a4f6f170c71), was structurally ineligible because
@@ -769,8 +740,13 @@ ENV_VARS=(
   # Deliberately non-sticky: pilot state is source-controlled; the sticky idiom
   # is for operator-set values, and a source default cannot override an existing
   # deployed marker.
-  "TR_SPEND_LEASE_ISSUANCE_ENABLED=true"
-  "TR_SPEND_LEASE_BINDING_ENABLED=${TR_SPEND_LEASE_BINDING_ENABLED:-true}"
+  # OFF since 2026-09-27: the spend-lease Bigtable ledger is being retired.
+  # The one pilot workspace minted a handful of leases a week (about a dozen
+  # non-empty reconciler passes in the seven days before this flip). Binding
+  # requires issuance (config.py), so it is off too; the guard above refuses an
+  # explicit request.
+  "TR_SPEND_LEASE_ISSUANCE_ENABLED=false"
+  "TR_SPEND_LEASE_BINDING_ENABLED=false"
   # Stage C ships inert. This literal source-controlled default is the router
   # kill switch; verification stays deployed so in-flight receipts fail closed.
   "TR_SPEND_LEASE_ADMISSION_ACCEPT=false"
