@@ -29,17 +29,20 @@ def serve_on_fixture_route(
     author: str,
     usage_type: str = "Credits",
     context_length: int = 131_072,
+    model: Model | None = None,
     **route_fields: Any,
 ) -> ModelEndpoint:
     """Serve `model_id` on `host`; `author` is the model's publisher slug.
 
     `route_fields` override the route's defaults (upstream id, prices, ...).
-    The model the catalog already carries is kept as it is.
+    The model the catalog already carries is kept as it is; otherwise `model`
+    is carried, or a chat model.
     """
     monkeypatch.setitem(
         MODELS,
         model_id,
         MODELS.get(model_id)
+        or model
         or Model(id=model_id, name=model_id, provider=author, context_length=context_length),
     )
     fields: dict[str, Any] = {
