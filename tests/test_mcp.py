@@ -6,9 +6,11 @@ import threading
 from typing import Any
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from trusted_router.catalog import MODELS
+from trusted_router.catalog_data import Model
 from trusted_router.mcp_metadata import MCP_SERVER_NAME, MCP_SERVER_TITLE
 from trusted_router.routes import mcp as mcp_routes
 from trusted_router.routes.mcp import (
@@ -193,7 +195,17 @@ def test_mcp_initialize_and_tool_list(
 def test_mcp_models_list_includes_sonnet_5_and_subagent(
     client: TestClient,
     inference_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # MCP searches the models the catalog carries. Carry Sonnet 5, whether or
+    # not a host serves it today.
+    sonnet_5 = "anthropic/claude-sonnet-5"
+    monkeypatch.setitem(
+        MODELS,
+        sonnet_5,
+        MODELS.get(sonnet_5)
+        or Model(id=sonnet_5, name="Claude Sonnet 5", provider="anthropic", context_length=200_000),
+    )
     sonnet_payload = _mcp_call(
         client,
         "models-list",
