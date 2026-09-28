@@ -2356,12 +2356,15 @@ class NamedDecisionModel(NamedTuple):
     # at 1516 ms but would double the advertised output price; slower perfect
     # hosts and hosts with errors or missed checks were excluded.
     # gemmev moved to Gemma 4 26B A4B on 2026-09-28, when DeepInfra dropped
-    # Gemma 4 E4B, its only host. Measured the same way, each host pinned, one
-    # at a time: W&B 1387 ms, nextbit 1587 ms, io.net 1738 ms, each 87/87 with
-    # 24/24 valid calls. SiliconFlow also passed (2034 ms) but would raise the
-    # advertised price 40%. Makora, Scaleway and Cloudflare think by default
-    # (about 1,000 output tokens a decision, 5-15x the cost) and were excluded;
-    # Gemma 4 31B Turbo scored 84/87.
+    # Gemma 4 E4B, its only host. Measured the same way, each host pinned, in
+    # three runs that day (two of them after the gateway tuned the model), 72
+    # calls per host: nextbit 1760 ms median and 2260 ms p90, W&B 1940 and 2936,
+    # io.net 1964 and 2701; every host 87/87 with 24/24 valid calls in every run.
+    # One run alone had W&B first (1387 ms), so the order comes from all three.
+    # SiliconFlow also passed (2034 ms) but would raise the advertised price 40%.
+    # Makora, Scaleway and Cloudflare think by default (about 1,000 output tokens
+    # a decision, 5-15x the cost) and were excluded; Gemma 4 31B Turbo scored
+    # 84/87.
     # The rest are pinned to the single host they were measured on. The
     # attested gateway asks for exactly this chain and authorize enforces it,
     # so neither side can widen it alone.
@@ -2408,7 +2411,7 @@ NAMED_DECISION_MODELS: tuple[NamedDecisionModel, ...] = (
         GEMMEV_1_0_MODEL_ID,
         "TrustedRouter Gemmev 1.0",
         "google/gemma-4-26b-a4b-it",
-        ("wandb", "nextbit", "io-net"),
+        ("nextbit", "wandb", "io-net"),
     ),
 )
 
@@ -3254,7 +3257,7 @@ NATIVE_DECISION_MODEL_PROVIDERS: dict[str, str] = {
     "meta-llama/llama-3.3-70b-instruct": "sambanova",
     "google/gemini-3.1-flash-lite": "google-ai-studio",
     "openai/gpt-oss-20b": "deepinfra",
-    "google/gemma-4-26b-a4b-it": "wandb",
+    "google/gemma-4-26b-a4b-it": "nextbit",
     "deepseek/deepseek-v4.1-flash": "wafer",
 }
 
