@@ -493,3 +493,11 @@ footer .brand small{font-size:12px}
 /* Check times remain on the widget face, including stale/failed checks. */
 .last-check { font: 11px/1.5 var(--mono, monospace); color: var(--muted, #a8b0bd); margin: 6px 0 10px; }
 .evidence-state { font-size: 12px; line-height: 1.5; margin: 12px 0; }
+
+/* Shared Archivo typography across the regional exchanges. */
+h1,h2,h3,.headline-accent,.privacy-choice h3,.review-resources h3,
+.uptime-panel figcaption,.attestation-panel h3,.trust-evidence .catalogue-label{
+ font-family:Archivo,Arial,sans-serif;font-weight:400;letter-spacing:-.035em;
+}
+.headline-accent{font-style:normal}
+.health-metric strong,.service-heading strong{font-family:Archivo,Arial,sans-serif;font-weight:400}
