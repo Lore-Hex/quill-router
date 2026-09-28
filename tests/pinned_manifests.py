@@ -181,6 +181,103 @@ OPENROUTER_UNION_ALPHA = {
     "missing_since": "2026-09-17",
 }
 
+# Routes the provider-contract tests check, as their manifests list them.
+FIREWORKS_GPT_OSS_120B = {
+    "id": "openai/gpt-oss-120b",
+    "upstream_id": "accounts/fireworks/models/gpt-oss-120b",
+    "display_name": "OpenAI GPT OSS 120B on Fireworks",
+    "title": "accounts/fireworks/models/gpt-oss-120b",
+    "context_length": 131072,
+    "max_output_tokens": 65536,
+    "input_token_price_per_m": 150000,
+    "output_token_price_per_m": 600000,
+    "cached_input_token_price_per_m": 15000,
+    "model_type": "chat",
+    "features": ["reasoning", "serverless"],
+    "input_modalities": ["text"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "created": 1754345600,
+}
+FIREWORKS_KIMI_K3 = {
+    "id": "moonshotai/kimi-k3",
+    "upstream_id": "accounts/fireworks/models/kimi-k3",
+    "display_name": "Kimi K3 on Fireworks",
+    "title": "accounts/fireworks/models/kimi-k3",
+    "context_length": 1048576,
+    "max_output_tokens": 65536,
+    "input_token_price_per_m": 3000000,
+    "output_token_price_per_m": 15000000,
+    "cached_input_token_price_per_m": 300000,
+    "model_type": "chat",
+    "features": ["reasoning", "function-calling", "serverless", "vision"],
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "created": 1784483409,
+}
+BASETEN_GLM_5_2_FAST = {
+    "display_name": "GLM 5.2 Fast",
+    "title": "zai-org/GLM-5.2-Fast",
+    "model_type": "chat",
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "id": "z-ai/glm-5.2-fast",
+    "upstream_id": "zai-org/GLM-5.2-Fast",
+    "context_length": 1048576,
+    "supported_features": ["tools", "json_mode", "structured_outputs", "reasoning"],
+    "supported_sampling_parameters": ["temperature", "top_p", "stop"],
+    "input_token_price_per_m": 2100000,
+    "output_token_price_per_m": 6600000,
+    "cached_input_token_price_per_m": 210000,
+    "max_output_tokens": 262144,
+}
+ALIBABA_QWEN_3_7_FLASH = tuple(
+    {
+        "id": f"qwen/{upstream_id}",
+        "upstream_id": upstream_id,
+        "display_name": display_name,
+        "title": upstream_id,
+        "model_type": "chat",
+        "endpoints": ["chat/completions"],
+        "created": 1790607786,
+        "context_length": 1048576,
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text"],
+        "input_token_price_per_m": 30000,
+        "output_token_price_per_m": 130000,
+        "cached_input_token_price_per_m": 6000,
+        "price_tiers": [
+            {
+                "max_prompt_tokens": 32000,
+                "input_token_price_per_m": 30000,
+                "output_token_price_per_m": 130000,
+                "cached_input_token_price_per_m": 6000,
+            },
+            {
+                "max_prompt_tokens": 256000,
+                "input_token_price_per_m": 100000,
+                "output_token_price_per_m": 400000,
+                "cached_input_token_price_per_m": 20000,
+            },
+            {
+                "max_prompt_tokens": None,
+                "input_token_price_per_m": 200000,
+                "output_token_price_per_m": 800000,
+                "cached_input_token_price_per_m": 40000,
+            },
+        ],
+    }
+    for upstream_id, display_name in (
+        ("qwen3.7-flash", "Qwen3.7 Flash"),
+        ("qwen3.7-flash-2026-07-15", "Qwen3.7 Flash 2026 07 15"),
+    )
+)
+
 # Pearl's GLM-5.3 route as its manifest lists it.
 PEARL_GLM_5_3 = {
     "display_name": "Z.AI: GLM-5.3",

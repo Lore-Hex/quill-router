@@ -2,13 +2,21 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 
 from tests.lifecycle_clock import catalog_predates
-from trusted_router.catalog import MODELS, Model, endpoints_for_model
+from tests.pinned_manifests import (
+    ALIBABA_QWEN_3_7_FLASH,
+    BASETEN_GLM_5_2_FAST,
+    FIREWORKS_GPT_OSS_120B,
+    FIREWORKS_KIMI_K3,
+    serve_manifest_rows,
+)
+from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, Model, endpoints_for_model
 from trusted_router.provider_lifecycle import FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT
 from trusted_router.providers import (
     OPENAI_COMPATIBLE_PROVIDERS,
@@ -645,7 +653,25 @@ async def test_wafer_live_adapter_omits_zdr_header_for_non_zdr_model(tmp_path, m
     assert calls[0]["json"]["model"] == "Qwen3.5-397B-A17B"
 
 
-def test_fireworks_catalog_exposes_provider_specific_endpoints() -> None:
+# The catalog tests below build each route from its manifest row pinned in
+# tests/pinned_manifests.py: how a row is published holds whatever the host
+# lists today. That it still lists these routes is a provider_health check.
+@pytest.mark.provider_health
+@pytest.mark.parametrize("endpoint_id", [
+    "openai/gpt-oss-120b@fireworks/prepaid",
+    "moonshotai/kimi-k3@fireworks/prepaid",
+    "z-ai/glm-5.2-fast@baseten/prepaid",
+    "qwen/qwen3.7-flash@alibaba/prepaid",
+    "qwen/qwen3.7-flash-2026-07-15@alibaba/prepaid",
+])
+def test_provider_still_serves_the_contract_route(endpoint_id: str) -> None:
+    assert endpoint_id in MODEL_ENDPOINTS
+
+
+def test_fireworks_catalog_exposes_provider_specific_endpoints(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    serve_manifest_rows(monkeypatch, tmp_path, "fireworks", [FIREWORKS_GPT_OSS_120B])
     endpoints = endpoints_for_model("openai/gpt-oss-120b")
     fireworks = [endpoint for endpoint in endpoints if endpoint.provider == "fireworks"]
 
@@ -658,7 +684,10 @@ def test_fireworks_catalog_exposes_provider_specific_endpoints() -> None:
     }
 
 
-def test_fireworks_catalog_exposes_kimi_k3_with_cached_pricing() -> None:
+def test_fireworks_catalog_exposes_kimi_k3_with_cached_pricing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    serve_manifest_rows(monkeypatch, tmp_path, "fireworks", [FIREWORKS_KIMI_K3])
     endpoints = endpoints_for_model("moonshotai/kimi-k3")
     fireworks = [endpoint for endpoint in endpoints if endpoint.provider == "fireworks"]
 
@@ -678,7 +707,11 @@ def test_fireworks_catalog_exposes_kimi_k3_with_cached_pricing() -> None:
     } == {316_500}
 
 
-def test_fireworks_catalog_exposes_glm_52_fast_router() -> None:
+def test_fireworks_catalog_exposes_glm_52_fast_router(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    # After Fireworks' retirement the router is still served by Baseten.
+    serve_manifest_rows(monkeypatch, tmp_path, "baseten", [BASETEN_GLM_5_2_FAST])
     endpoints = endpoints_for_model("z-ai/glm-5.2-fast")
     fireworks = [endpoint for endpoint in endpoints if endpoint.provider == "fireworks"]
     if not catalog_predates(FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT):
@@ -702,7 +735,10 @@ def test_fireworks_catalog_exposes_glm_52_fast_router() -> None:
     } == {221_550}
 
 
-def test_baseten_catalog_exposes_glm_52_fast_router() -> None:
+def test_baseten_catalog_exposes_glm_52_fast_router(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    serve_manifest_rows(monkeypatch, tmp_path, "baseten", [BASETEN_GLM_5_2_FAST])
     endpoints = endpoints_for_model("z-ai/glm-5.2-fast")
     baseten = [endpoint for endpoint in endpoints if endpoint.provider == "baseten"]
 
@@ -722,8 +758,12 @@ def test_baseten_catalog_exposes_glm_52_fast_router() -> None:
     } == {221_550}
 
 
-def test_alibaba_catalog_is_routable_after_workspace_entitlement() -> None:
+def test_alibaba_catalog_is_routable_after_workspace_entitlement(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
     from trusted_router.catalog import GATEWAY_PREPAID_PROVIDER_SLUGS, PROVIDERS
+
+    serve_manifest_rows(monkeypatch, tmp_path, "alibaba", ALIBABA_QWEN_3_7_FLASH)
 
     assert "alibaba" in PROVIDERS
     assert PROVIDERS["alibaba"].supports_prepaid is True
