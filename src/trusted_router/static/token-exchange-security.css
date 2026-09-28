@@ -1,0 +1,31 @@
+.ts-heading { padding-block: 56px 28px; }
+.token-exchange-security h1 { font-size: 48px; }
+.ts-lead { max-width: 720px; color: var(--text-body); margin: 22px 0 0; }
+.ts-download { padding-bottom: 44px; }
+.token-exchange-security .tm-download-tool { padding: 24px 28px; }
+.token-exchange-security .tm-download-tool h2 { font: 500 22px/1.4 "Archivo", sans-serif; }
+.token-exchange-security .ts-format { margin: 6px 0 20px; font-size: 14px; color: var(--text-muted); }
+.ts-form-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 20px; align-items: end; }
+.ts-form-row > div { min-width: 0; }
+.ts-form-row .tm-button { margin: 0; }
+.token-exchange-security .tm-form-status { min-height: 24px; margin-bottom: 0; }
+.ts-documents { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 40px; padding-bottom: 56px; }
+.ts-documents article { min-width: 0; }
+.ts-cover { height: 280px; display: grid; place-items: center; background: var(--surface-raised); margin-bottom: 24px; padding: 20px; }
+.ts-cover img { width: 100%; height: 100%; object-fit: contain; min-height: 0; }
+.token-exchange-security .ts-documents h2 { font-size: 30px; margin-top: 12px; }
+.ts-documents p { color: var(--text-body); margin-bottom: 0; }
+.ts-review { padding-block: 44px; }
+.token-exchange-security .ts-review h2 { font-size: 34px; }
+.ts-review p { max-width: 760px; color: var(--text-body); }
+.token-exchange-security .ts-contact { font-size: 15px; margin-bottom: 0; }
+.ts-contact a { overflow-wrap: anywhere; }
+
+@media (max-width: 640px) {
+  .ts-heading { padding-top: 32px; }
+  .token-exchange-security h1 { font-size: 36px; }
+  .ts-form-row, .ts-documents { grid-template-columns: 1fr; }
+  .token-exchange-security .tm-download-tool { padding: 22px; }
+  .ts-form-row { gap: 14px; }
+  .ts-cover { height: 240px; }
+}

@@ -206,6 +206,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/trustedos",
     "/token-exchange",
     "/token-exchange/savings",
+    "/token-exchange/security",
     "/legal",
     "/privacy",
     "/terms",
@@ -2099,6 +2100,16 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         ),
         og_card="token-exchange.png",
         og_alt="Token Exchange by TrustedRouter: compare your enterprise AI costs",
+    ),
+    "token-exchange/security": PublicPage(
+        template="public/token_exchange_security.html",
+        title="Token Exchange Security Resources",
+        description=(
+            "Download the TrustedRouter security deck and whitepaper for your Token Exchange "
+            "review. Explore architecture, data handling, attestation and verification steps."
+        ),
+        og_card="token-exchange.png",
+        og_alt="TrustedRouter security: attestation, data handling and verification",
     ),
     "resources": PublicPage(
         template="public/resources.html",
