@@ -193,6 +193,10 @@ def _serve_on_fixture_routes(
 
 
 def test_archimedes_private_proxy_tracks_mistral_large_without_exposing_it() -> None:
+    if MISTRAL_LARGE_MODEL_ID not in MODELS:
+        # Without its backing model the proxy is not offered at all.
+        assert ARCHIMEDES_1_0_MODEL_ID not in MODELS
+        return
     archimedes = MODELS[ARCHIMEDES_1_0_MODEL_ID]
     backing = MODELS[MISTRAL_LARGE_MODEL_ID]
     archimedes_shape = model_to_openrouter_shape(archimedes)
@@ -226,115 +230,46 @@ def test_archimedes_private_proxy_tracks_mistral_large_without_exposing_it() -> 
 def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
     assert len(PROVIDERS) >= 8
     assert "kimi" in PROVIDERS
-    assert "moonshotai/kimi-k3" in MODELS
-    assert "moonshotai/kimi-k2.6" in MODELS
-    assert "moonshotai/kimi-k2.7-code" in MODELS
-    assert "moonshotai/kimi-k2.7-code-highspeed" in MODELS
-    assert "moonshotai/kimi-k2.6@kimi/prepaid" in MODEL_ENDPOINTS
-    assert "moonshotai/kimi-k2.6@kimi/byok" in MODEL_ENDPOINTS
-    assert "moonshotai/kimi-k2.7-code@kimi/prepaid" in MODEL_ENDPOINTS
-    assert "moonshotai/kimi-k2.7-code@kimi/byok" in MODEL_ENDPOINTS
-    assert "moonshotai/kimi-k2.7-code-highspeed@kimi/prepaid" in MODEL_ENDPOINTS
-    assert "moonshotai/kimi-k2.7-code-highspeed@kimi/byok" in MODEL_ENDPOINTS
-    assert "moonshotai/kimi-k3@kimi/prepaid" in MODEL_ENDPOINTS
-    assert "moonshotai/kimi-k3@kimi/byok" in MODEL_ENDPOINTS
-    assert "moonshotai/kimi-k3@novita/prepaid" in MODEL_ENDPOINTS
-    assert "moonshotai/kimi-k3@novita/byok" in MODEL_ENDPOINTS
-    assert "moonshotai/kimi-k3@gmi/prepaid" in MODEL_ENDPOINTS
-    assert "moonshotai/kimi-k3@gmi/byok" in MODEL_ENDPOINTS
-    assert "moonshotai/kimi-k3@phala/prepaid" in MODEL_ENDPOINTS
-    kimi_k3_routes = {
-        (endpoint.provider, endpoint.usage_type)
-        for endpoint in endpoints_for_model("moonshotai/kimi-k3")
-    }
-    assert {
-        ("kimi", "Credits"),
-        ("siliconflow", "Credits"),
-        ("baseten", "Credits"),
-        ("atlas-cloud", "Credits"),
-        ("novita", "Credits"),
-        ("nebius", "Credits"),
-        ("fireworks", "Credits"),
-        ("gmi", "BYOK"),
-    } <= kimi_k3_routes
-    kimi_k3 = MODELS["moonshotai/kimi-k3"]
-    from trusted_router.catalog_ingest import _PROVIDER_MODELS_DIR
-    from trusted_router.pricing import _customer_price
-
-    kimi_manifest = json.loads((_PROVIDER_MODELS_DIR / "kimi.json").read_text(encoding="utf-8"))
-    kimi_k3_row = next(row for row in kimi_manifest["models"] if row["id"] == "moonshotai/kimi-k3")
-    expected_prompt_price = _customer_price(int(kimi_k3_row["input_token_price_per_m"]))
-    expected_completion_price = _customer_price(int(kimi_k3_row["output_token_price_per_m"]))
-    expected_cached_prompt_price = _customer_price(
-        int(kimi_k3_row["cached_input_token_price_per_m"])
-    )
-    kimi_k3_endpoints = endpoints_for_model("moonshotai/kimi-k3")
-    assert kimi_k3.context_length == 1_048_576
-    assert kimi_k3.prompt_price_microdollars_per_million_tokens in {
-        endpoint.prompt_price_microdollars_per_million_tokens for endpoint in kimi_k3_endpoints
-    }
-    assert kimi_k3.completion_price_microdollars_per_million_tokens in {
-        endpoint.completion_price_microdollars_per_million_tokens for endpoint in kimi_k3_endpoints
-    }
-    kimi_k3_direct = MODEL_ENDPOINTS["moonshotai/kimi-k3@kimi/prepaid"]
-    assert kimi_k3_direct.upstream_id == "kimi-k3"
-    assert kimi_k3_direct.prompt_price_microdollars_per_million_tokens == expected_prompt_price
-    assert (
-        kimi_k3_direct.completion_price_microdollars_per_million_tokens == expected_completion_price
-    )
-    assert (
-        kimi_k3_direct.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
-        == expected_cached_prompt_price
-    )
-    assert MODEL_ENDPOINTS["moonshotai/kimi-k3@novita/prepaid"].upstream_id == "moonshotai/kimi-k3"
-    assert (
-        MODEL_ENDPOINTS["moonshotai/kimi-k3@siliconflow/prepaid"].upstream_id
-        == "moonshotai/Kimi-K3"
-    )
-    assert MODEL_ENDPOINTS["moonshotai/kimi-k3@baseten/prepaid"].upstream_id == "moonshotai/Kimi-K3"
-    assert MODEL_ENDPOINTS["moonshotai/kimi-k3@nebius/prepaid"].upstream_id == "moonshotai/Kimi-K3"
-    assert (
-        MODEL_ENDPOINTS["moonshotai/kimi-k3@fireworks/prepaid"].upstream_id
-        == "accounts/fireworks/models/kimi-k3"
-    )
-    assert (
-        MODEL_ENDPOINTS["moonshotai/kimi-k2.7-code-highspeed@kimi/prepaid"].upstream_id
-        == "kimi-k2.7-code-highspeed"
-    )
-    assert "moonshotai/kimi-k2.7-code@novita/prepaid" in MODEL_ENDPOINTS
-    assert "moonshotai/kimi-k2.7-code@novita/byok" in MODEL_ENDPOINTS
-    assert "moonshotai/kimi-k2.6" in [model.id for model in auto_candidate_models()]
-    for model_id, provider in [
-        ("anthropic/claude-sonnet-4.6", "anthropic"),
-        ("openai/gpt-4.1-mini", "openai"),
-        ("google/gemini-2.5-flash", "google-ai-studio"),
-        ("google/gemini-3.5-flash", "google-ai-studio"),
-        ("google/gemini-3.6-flash", "google-ai-studio"),
-        ("deepseek/deepseek-v4-flash", "deepseek"),
-        ("mistralai/mistral-small-2603", "mistral"),
-        ("meta-llama/llama-3.1-8b-instruct", "novita"),
-        ("moonshotai/kimi-k2.6", "kimi"),
-        ("moonshotai/kimi-k2.7-code", "novita"),
-        ("tencent/hy3", "novita"),
-        ("z-ai/glm-5.2", "zai"),
-        ("z-ai/glm-5.2", "deepinfra"),
-        ("z-ai/glm-5.2", "fireworks"),
-        ("z-ai/glm-5.2", "novita"),
-        ("z-ai/glm-5.2", "phala"),
-        ("z-ai/glm-5.2", "siliconflow"),
-        ("z-ai/glm-5.2", "together"),
-        ("z-ai/glm-5.2", "venice"),
-        ("z-ai/glm-5.2", "parasail"),
-        ("z-ai/glm-5.2", "friendli"),
-        ("cerebras/gpt-oss-120b", "cerebras"),
-    ]:
-        expected = not (
-            provider == "fireworks"
-            and model_id == "z-ai/glm-5.2"
-            and not catalog_predates(FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT)
+    # Each host that lists Kimi K3 serves it on the exact upstream id its
+    # manifest names, and Moonshot's own route at Moonshot's price, marked up.
+    for provider in ("kimi", "novita", "siliconflow", "baseten", "nebius", "fireworks"):
+        row = _listed_row(provider, "moonshotai/kimi-k3")
+        if row is None:
+            continue
+        endpoint = MODEL_ENDPOINTS[f"moonshotai/kimi-k3@{provider}/prepaid"]
+        assert endpoint.upstream_id == row["upstream_id"], provider
+        if provider == "kimi":
+            assert endpoint.prompt_price_microdollars_per_million_tokens == _customer_price(
+                int(row["input_token_price_per_m"])
+            )
+            assert endpoint.completion_price_microdollars_per_million_tokens == _customer_price(
+                int(row["output_token_price_per_m"])
+            )
+            assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == (
+                _customer_price(int(row["cached_input_token_price_per_m"]))
+            )
+    highspeed = _listed_row("kimi", "moonshotai/kimi-k2.7-code-highspeed")
+    if highspeed is not None:
+        assert (
+            MODEL_ENDPOINTS["moonshotai/kimi-k2.7-code-highspeed@kimi/prepaid"].upstream_id
+            == highspeed["upstream_id"]
         )
-        assert (f"{model_id}@{provider}/prepaid" in MODEL_ENDPOINTS) is expected
-        assert (f"{model_id}@{provider}/byok" in MODEL_ENDPOINTS) is expected
+    # A headline price is one of the model's own routes' prices.
+    if "moonshotai/kimi-k3" in MODELS:
+        kimi_k3 = MODELS["moonshotai/kimi-k3"]
+        kimi_k3_endpoints = endpoints_for_model(kimi_k3.id)
+        assert kimi_k3.prompt_price_microdollars_per_million_tokens in {
+            endpoint.prompt_price_microdollars_per_million_tokens for endpoint in kimi_k3_endpoints
+        }
+        assert kimi_k3.completion_price_microdollars_per_million_tokens in {
+            endpoint.completion_price_microdollars_per_million_tokens
+            for endpoint in kimi_k3_endpoints
+        }
+    if "moonshotai/kimi-k2.6" in MODELS:
+        assert "moonshotai/kimi-k2.6" in [model.id for model in auto_candidate_models()]
+    if not catalog_predates(FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT):
+        assert "z-ai/glm-5.2@fireworks/prepaid" not in MODEL_ENDPOINTS
+        assert "z-ai/glm-5.2@fireworks/byok" not in MODEL_ENDPOINTS
     for model in MODELS.values():
         assert model.provider in PROVIDERS
         assert isinstance(model.prompt_price_microdollars_per_million_tokens, int)
@@ -380,16 +315,6 @@ def test_every_prepaid_endpoint_is_backed_by_attested_gateway_dispatch() -> None
         if endpoint.usage_type == "Credits"
     }
     assert credits_providers <= GATEWAY_PREPAID_PROVIDER_SLUGS
-    assert {
-        "anthropic",
-        "openai",
-        "google-ai-studio",
-        "google-vertex",
-        "deepseek",
-        "mistral",
-        "kimi",
-        "zai",
-    } <= credits_providers
 
 
 def test_model_storage_flag_is_gateway_scoped_endpoint_flag_is_provider_scoped(
@@ -537,7 +462,6 @@ def test_novita_native_catalog_preserves_every_eligible_manifest_row() -> None:
     # filters. A fixed count rejects legitimate retirements yet misses dropped
     # routes whenever enough other models remain.
     _, endpoints = _supplemental_provider_models_and_endpoints()
-    assert expected
     for usage in ("Credits", "BYOK"):
         actual = {
             endpoint.model_id: endpoint.upstream_id
@@ -549,6 +473,8 @@ def test_novita_native_catalog_preserves_every_eligible_manifest_row() -> None:
         "moonshotai/kimi-k2.6", "deepseek/deepseek-ocr-2", "tencent/hy3",
         "xiaomimimo/mimo-v2.5-pro", "zai-org/glm-5.1", "Sao10K/L3-8B-Stheno-v3.2",
     ):
+        if model_id not in expected:
+            continue
         for usage in ("prepaid", "byok"):
             assert MODEL_ENDPOINTS[f"{model_id}@novita/{usage}"].upstream_id == expected[model_id]
 
@@ -697,18 +623,32 @@ def test_qwen_38_routes_only_through_hosts_with_verified_pricing() -> None:
 
 
 def test_novita_hy3_uses_live_provider_id_and_price_floor() -> None:
+    row = _listed_row("novita", "tencent/hy3")
+    if row is None:
+        return
     model = MODELS["tencent/hy3"]
     prepaid = MODEL_ENDPOINTS["tencent/hy3@novita/prepaid"]
     byok = MODEL_ENDPOINTS["tencent/hy3@novita/byok"]
+    # Novita's feed prices 100x below its public table; its manifest's scale
+    # restores them before the markup.
+    scale = json.loads((_PROVIDER_MODELS_DIR / "novita.json").read_text(encoding="utf-8"))[
+        "price_scale_to_microdollars_per_million_tokens"
+    ]
 
     # Tencent has several independent hosts. Validate the Novita endpoint
     # itself rather than whichever host happens to sort first on the model.
-    assert model.context_length == 262_144
-    assert prepaid.upstream_id == "tencent/hy3"
-    assert byok.upstream_id == "tencent/hy3"
-    assert prepaid.prompt_price_microdollars_per_million_tokens == 147_700
-    assert prepaid.completion_price_microdollars_per_million_tokens == 611_900
-    assert prepaid.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 36_925
+    assert model.context_length == row["context_length"]
+    assert prepaid.upstream_id == row["upstream_id"]
+    assert byok.upstream_id == row["upstream_id"]
+    assert prepaid.prompt_price_microdollars_per_million_tokens == _customer_price(
+        row["input_token_price_per_m"] * scale
+    )
+    assert prepaid.completion_price_microdollars_per_million_tokens == _customer_price(
+        row["output_token_price_per_m"] * scale
+    )
+    assert prepaid.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == (
+        _customer_price(row["cached_input_token_price_per_m"] * scale)
+    )
 
 
 def test_minimax_empty_operator_routes_are_not_prepaid() -> None:
@@ -985,29 +925,38 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
             if endpoint.provider == provider and endpoint.model_id == model_id
         ], f"{provider}/{model_id} should be quarantined"
 
-    # atlas-cloud's healthy openai routes must stay live — only the
-    # router-not-found phantoms are quarantined, not the whole openai namespace.
+    # atlas-cloud's healthy openai routes must stay live while it lists them —
+    # only the router-not-found phantoms are quarantined, not the whole openai
+    # namespace.
     for kept_model in ("openai/gpt-4.1-mini", "openai/gpt-5.5", "openai/gpt-5.6-sol"):
         assert [
             endpoint
             for endpoint in MODEL_ENDPOINTS.values()
             if endpoint.provider == "atlas-cloud" and endpoint.model_id == kept_model
-        ], f"atlas-cloud/{kept_model} should remain routable"
+        ] or _listed_row("atlas-cloud", kept_model) is None, (
+            f"atlas-cloud/{kept_model} should remain routable"
+        )
 
-    assert "anthropic/claude-fable-5@anthropic/prepaid" in MODEL_ENDPOINTS
     # Policy (2026-07-18): Anthropic-authored models route via Anthropic only
     # for Credits — the reseller prepaid route is gone, its BYOK route stays.
     assert "anthropic/claude-fable-5@lightning/prepaid" not in MODEL_ENDPOINTS
-    assert "anthropic/claude-fable-5@lightning/byok" in MODEL_ENDPOINTS
-    # Residue quarantine is provider-scoped: healthy siblings survive.
-    assert "z-ai/glm-5@zai/prepaid" in MODEL_ENDPOINTS
-    assert "deepseek/deepseek-v4-pro@deepseek/prepaid" in MODEL_ENDPOINTS
+    # Residue quarantine is provider-scoped: healthy siblings survive while
+    # their providers list them.
+    for endpoint_id in (
+        "anthropic/claude-fable-5@anthropic/prepaid",
+        "anthropic/claude-fable-5@lightning/byok",
+        "z-ai/glm-5@zai/prepaid",
+        "deepseek/deepseek-v4-pro@deepseek/prepaid",
+    ):
+        assert endpoint_id in MODEL_ENDPOINTS or _delisted(endpoint_id), endpoint_id
     assert [
         endpoint
         for endpoint in MODEL_ENDPOINTS.values()
         if endpoint.model_id == "google/gemini-2.5-flash-lite"
         and endpoint.provider != "google-ai-studio"
-    ], "provider-scoped AI Studio retirement must preserve healthy routes"
+    ] or _delisted("google/gemini-2.5-flash-lite@google-vertex/prepaid"), (
+        "provider-scoped AI Studio retirement must preserve healthy routes"
+    )
 
 
 def test_anthropic_opus_41_is_never_prepaid_during_retirement_transition() -> None:
@@ -1033,13 +982,21 @@ def test_deepseek_v4_pro_release_routes_are_keyed_and_credits_only() -> None:
     old_routes = endpoints_for_model(DEEPSEEK_V4_PRO_0423_MODEL_ID)
     current_routes = endpoints_for_model(DEEPSEEK_V4_PRO_0813_MODEL_ID)
 
-    assert old_routes
+    # A release leaf is an immutable Credits-only product while the catalog
+    # offers it; one it cannot build on its full route set has no routes (the
+    # installer's cases are in tests/test_deepseek_release_leaves.py).
+    for model_id in (DEEPSEEK_V4_PRO_0423_MODEL_ID, DEEPSEEK_V4_PRO_0813_MODEL_ID):
+        if model_id in MODELS:
+            assert MODELS[model_id].byok_available is False
+        else:
+            assert endpoints_for_model(model_id) == []
     assert all(endpoint.usage_type == "Credits" for endpoint in old_routes)
     assert all(endpoint.provider != "deepseek" for endpoint in old_routes)
     assert {endpoint.provider for endpoint in old_routes} <= (
         GATEWAY_PREPAID_PROVIDER_SLUGS - {"deepseek"}
     )
-    assert current_routes
+    if DEEPSEEK_V4_PRO_0813_MODEL_ID not in MODELS:
+        return
     assert all(endpoint.usage_type == "Credits" for endpoint in current_routes)
     direct_is_pro = catalog_predates(DEEPSEEK_V4_PRO_REDIRECT_AT)
     fireworks_is_live = catalog_predates(FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT)
@@ -1054,30 +1011,35 @@ def test_deepseek_v4_pro_release_routes_are_keyed_and_credits_only() -> None:
         for endpoint in current_routes
         if endpoint.provider == "deepseek"
     ] == ([("deepseek", "deepseek-v4-pro")] if direct_is_pro else [])
+    baseten_row = _listed_row("baseten", DEEPSEEK_V4_PRO_0813_MODEL_ID)
+    assert baseten_row is not None, "0813 is offered only on Baseten's listed route"
     assert [
         (endpoint.provider, endpoint.upstream_id)
         for endpoint in current_routes
         if endpoint.provider == "baseten"
-    ] == [("baseten", "deepseek-ai/DeepSeek-V4-Pro-0813")]
+    ] == [("baseten", baseten_row["upstream_id"])]
+    fireworks_row = _listed_row("fireworks", DEEPSEEK_V4_PRO_0813_MODEL_ID)
     assert [
         (endpoint.provider, endpoint.upstream_id)
         for endpoint in current_routes
         if endpoint.provider == "fireworks"
     ] == (
-        [("fireworks", "accounts/fireworks/models/deepseek-v4-pro-0813")]
-        if fireworks_is_live else []
+        [("fireworks", fireworks_row["upstream_id"])]
+        if fireworks_is_live and fireworks_row is not None else []
     )
     baseten = next(
         endpoint for endpoint in current_routes if endpoint.provider == "baseten"
     )
-    # Public prepaid rates include the normal 5.5% TrustedRouter markup over the
-    # exact provider-native $1.32 / $3.96 prices asserted in the parser test.
-    assert baseten.prompt_price_microdollars_per_million_tokens == 1_392_600
-    assert baseten.completion_price_microdollars_per_million_tokens == 4_177_800
+    # Public prepaid rates include the normal 5.5% TrustedRouter markup over
+    # Baseten's provider-native prices, asserted exactly in the parser test.
+    assert baseten.prompt_price_microdollars_per_million_tokens == _customer_price(
+        baseten_row["input_token_price_per_m"]
+    )
+    assert baseten.completion_price_microdollars_per_million_tokens == _customer_price(
+        baseten_row["output_token_price_per_m"]
+    )
     assert endpoint_zero_data_retention(baseten) is True
     assert endpoint_privacy_tier(baseten) >= PRIVACY_TIER_ZERO_RETENTION
-    assert MODELS[DEEPSEEK_V4_PRO_0423_MODEL_ID].byok_available is False
-    assert MODELS[DEEPSEEK_V4_PRO_0813_MODEL_ID].byok_available is False
 
 
 @pytest.mark.parametrize(
@@ -1298,53 +1260,60 @@ def test_orchestration_taxonomy_distinguishes_primitives_presets_and_legacy_alia
         assert tr_meta["canonical_model_id"] == canonical
 
 
-def test_open_weights_badge_is_recursive_for_combo_models() -> None:
-    open_ids = _cataloged_model_ids([
-        "deepseek/deepseek-v4-pro",
-        DEEPSEEK_V4_PRO_0423_MODEL_ID,
-        DEEPSEEK_V4_PRO_0813_MODEL_ID,
-        "z-ai/glm-5.2",
-        "moonshotai/kimi-k2.6",
-        "moonshotai/kimi-k3",
-        "google/gemma-4-31b-it",
-        PROMETHEUS_MODEL_ID,
-        PROMETHEUS_1_0_MODEL_ID,
-        PROMETHEUS_2_0_MODEL_ID,
-        PROMETHEUS_3_0_MODEL_ID,
-        IRIS_2_0_MODEL_ID,
-        IRIS_3_0_MODEL_ID,
-        PLATO_MODEL_ID,
-        PLATO_3_0_MODEL_ID,
-        PLATO_1_0_MODEL_ID,
-        PLATO_PRO_MODEL_ID,
-        PLATO_PRO_1_0_MODEL_ID,
-        PLATO_PRO_2_0_MODEL_ID,
-        OPEN_PATCHER_S1_MODEL_ID,
-        OPEN_PATCHER_A1_MODEL_ID,
-        OPEN_PATCHER_FAST1_MODEL_ID,
-        OPEN_PATCHER_G2_MODEL_ID,
-        OPEN_PATCHER_G3_MODEL_ID,
-        OPEN_PATCHER_S2_MODEL_ID,
-    ])
-    for model_id in open_ids:
-        assert model_open_weights(MODELS[model_id]), model_id
-        assert model_to_openrouter_shape(MODELS[model_id])["trustedrouter"]["open_weights"] is True
+_OPEN_WEIGHT_BADGE_IDS = [
+    "deepseek/deepseek-v4-pro",
+    DEEPSEEK_V4_PRO_0423_MODEL_ID,
+    DEEPSEEK_V4_PRO_0813_MODEL_ID,
+    "z-ai/glm-5.2",
+    "moonshotai/kimi-k2.6",
+    "moonshotai/kimi-k3",
+    "google/gemma-4-31b-it",
+    PROMETHEUS_MODEL_ID,
+    PROMETHEUS_1_0_MODEL_ID,
+    PROMETHEUS_2_0_MODEL_ID,
+    PROMETHEUS_3_0_MODEL_ID,
+    IRIS_2_0_MODEL_ID,
+    IRIS_3_0_MODEL_ID,
+    PLATO_MODEL_ID,
+    PLATO_3_0_MODEL_ID,
+    PLATO_1_0_MODEL_ID,
+    PLATO_PRO_MODEL_ID,
+    PLATO_PRO_1_0_MODEL_ID,
+    PLATO_PRO_2_0_MODEL_ID,
+    OPEN_PATCHER_S1_MODEL_ID,
+    OPEN_PATCHER_A1_MODEL_ID,
+    OPEN_PATCHER_FAST1_MODEL_ID,
+    OPEN_PATCHER_G2_MODEL_ID,
+    OPEN_PATCHER_G3_MODEL_ID,
+    OPEN_PATCHER_S2_MODEL_ID,
+]
+_CLOSED_WEIGHT_BADGE_IDS = [
+    "anthropic/claude-opus-4.8",
+    SOCRATES_1_1_MODEL_ID,
+    SOCRATES_PRO_PLUS_1_0_MODEL_ID,
+    ZEUS_MODEL_ID,
+    ZEUS_1_0_MODEL_ID,
+    ZEUS_2_0_MODEL_ID,
+    ARISTOTLE_MODEL_ID,
+    ARISTOTLE_1_1_MODEL_ID,
+    ARISTOTLE_1_0_MODEL_ID,
+    ARISTOTLE_2_0_MODEL_ID,
+]
 
-    closed_ids = _cataloged_model_ids([
-        "anthropic/claude-opus-4.8",
-        SOCRATES_1_1_MODEL_ID,
-        SOCRATES_PRO_PLUS_1_0_MODEL_ID,
-        ZEUS_MODEL_ID,
-        ZEUS_1_0_MODEL_ID,
-        ZEUS_2_0_MODEL_ID,
-        ARISTOTLE_MODEL_ID,
-        ARISTOTLE_1_1_MODEL_ID,
-        ARISTOTLE_1_0_MODEL_ID,
-        ARISTOTLE_2_0_MODEL_ID,
-    ])
-    for model_id in closed_ids:
-        assert not model_open_weights(MODELS[model_id]), model_id
-        assert model_to_openrouter_shape(MODELS[model_id])["trustedrouter"]["open_weights"] is False
+
+def test_open_weights_badge_is_recursive_for_combo_models() -> None:
+    # A model's badge follows its own weights. A combo shows it exactly when
+    # every model the catalog carries beneath it does, and fails closed with
+    # none left beneath it.
+    for model_id in _cataloged_model_ids(_OPEN_WEIGHT_BADGE_IDS + _CLOSED_WEIGHT_BADGE_IDS):
+        model = MODELS[model_id]
+        if model_id in META_MODEL_IDS:
+            candidates = meta_candidate_models(model_id)
+            expected = bool(candidates) and all(model_open_weights(c) for c in candidates)
+        else:
+            expected = model_id in _OPEN_WEIGHT_BADGE_IDS
+        assert model_open_weights(model) is expected, model_id
+        assert model_to_openrouter_shape(model)["trustedrouter"]["open_weights"] is expected
 
 
 def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
@@ -1528,28 +1497,33 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
         metadata = model_to_openrouter_shape(model)["trustedrouter"]
         if not inkling_1m_available:
             candidates = [c for c in candidates if c != "thinkingmachines/inkling-1m"]
+        available_candidates = _cataloged_model_ids(candidates)
 
         assert model.context_length == context_length
         assert metadata["route_kind"] == route_kind
-        assert metadata["auto_candidates"] == candidates
-        assert [candidate.id for candidate in meta_candidate_models(model_id)] == candidates
-        assert metadata["open_weights"] is True
+        assert metadata["auto_candidates"] == available_candidates
+        assert [candidate.id for candidate in meta_candidate_models(model_id)] == (
+            available_candidates
+        )
+        # Open weights while it has a component; with none the badge fails closed.
+        assert metadata["open_weights"] is bool(available_candidates)
 
-    inkling = MODELS["thinkingmachines/inkling"]
-    # Inkling's serverless hosts currently advertise different verified
-    # windows (256K, 512K, and 1M). The canonical row follows the largest live
-    # routed endpoint, so an hourly availability refresh may legitimately move
-    # it within this range. It must still satisfy Liberty 1.0's 256K contract
-    # and must never overstate the largest verified 1M route.
-    assert 262_144 <= inkling.context_length <= 1_048_576
-    endpoints = endpoints_for_model(inkling.id)
-    provider_ids = {endpoint.provider for endpoint in endpoints}
-    assert inkling.provider in provider_ids
-    assert "thinkingmachines" in provider_ids
-    assert len(provider_ids) >= 2
-    assert all(endpoint.upstream_id for endpoint in endpoints)
-    assert any(endpoint.usage_type == "Credits" for endpoint in endpoints)
-    assert any(endpoint.usage_type == "BYOK" for endpoint in endpoints)
+    if "thinkingmachines/inkling" in MODELS:
+        inkling = MODELS["thinkingmachines/inkling"]
+        # Inkling's serverless hosts currently advertise different verified
+        # windows (256K, 512K, and 1M). The canonical row follows the largest
+        # live routed endpoint, so an hourly availability refresh may
+        # legitimately move it within this range. It must still satisfy
+        # Liberty 1.0's 256K contract and must never overstate the largest
+        # verified 1M route.
+        assert 262_144 <= inkling.context_length <= 1_048_576
+        endpoints = endpoints_for_model(inkling.id)
+        provider_ids = {endpoint.provider for endpoint in endpoints}
+        assert inkling.provider in provider_ids
+        assert "thinkingmachines" in provider_ids or _delisted(
+            "thinkingmachines/inkling@thinkingmachines/prepaid"
+        )
+        assert all(endpoint.upstream_id for endpoint in endpoints)
 
     if inkling_1m_available:
         inkling_1m = MODELS["thinkingmachines/inkling-1m"]
@@ -1563,6 +1537,8 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
         assert "thinkingmachines/inkling-1m" not in MODELS
         assert endpoints_for_model("thinkingmachines/inkling-1m") == []
 
+    if "thinkingmachines/inkling-small" not in MODELS:
+        return
     inkling_small = MODELS["thinkingmachines/inkling-small"]
     inkling_small_shape = model_to_openrouter_shape(inkling_small)
     # The first-party route is 256K, while independent hosts can expose a
@@ -1577,17 +1553,28 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
         "image",
     ]
     assert inkling_small_shape["trustedrouter"]["open_weights"] is True
-    assert inkling_small.prompt_price_microdollars_per_million_tokens == 316_500
-    assert inkling_small.completion_price_microdollars_per_million_tokens == 1_266_000
-    inkling_small_routes = {
-        (endpoint.provider, endpoint.upstream_id)
-        for endpoint in endpoints_for_model(inkling_small.id)
-    }
-    assert (
-        "thinkingmachines",
-        "thinkingmachines/Inkling-Small:peft:262144:sampling-nvfp4",
-    ) in inkling_small_routes
-    assert all(provider and upstream_id for provider, upstream_id in inkling_small_routes)
+    inkling_small_endpoints = endpoints_for_model(inkling_small.id)
+    assert all(endpoint.provider and endpoint.upstream_id for endpoint in inkling_small_endpoints)
+    row = _listed_row("thinkingmachines", inkling_small.id)
+    if row is not None:
+        # Thinking Machines' own route, on its id and at its price, marked up.
+        first_party = [
+            endpoint for endpoint in inkling_small_endpoints
+            if endpoint.provider == "thinkingmachines"
+        ]
+        assert first_party
+        assert {endpoint.upstream_id for endpoint in first_party} == {row["upstream_id"]}
+        for endpoint in first_party:
+            assert endpoint.prompt_price_microdollars_per_million_tokens == _customer_price(
+                row["input_token_price_per_m"]
+            )
+            assert endpoint.completion_price_microdollars_per_million_tokens == _customer_price(
+                row["output_token_price_per_m"]
+            )
+        assert (
+            inkling_small.prompt_price_microdollars_per_million_tokens
+            <= first_party[0].prompt_price_microdollars_per_million_tokens
+        )
 
 
 def test_catalog_modalities_publish_only_gateway_supported_capabilities() -> None:
@@ -1827,7 +1814,9 @@ def test_prometheus_versions_are_frozen_and_rolling_alias_uses_4_0() -> None:
 
 
 def test_trustedrouter_meta_models_are_credits_only_not_byok() -> None:
-    for model_id in sorted(META_MODEL_IDS):
+    # Every meta model the catalog offers: a proxy whose backing model is gone
+    # (Archimedes without Mistral Large) is not offered at all.
+    for model_id in sorted(META_MODEL_IDS & MODELS.keys()):
         shape = model_to_openrouter_shape(MODELS[model_id])
         tr_meta = shape["trustedrouter"]
 
@@ -2026,29 +2015,36 @@ def test_phala_is_not_classified_as_verified_e2ee() -> None:
     assert "excluded from trustedrouter/e2e" in provider.provider_policy
 
 
-def test_venice_privacy_is_model_specific_and_never_claims_tee() -> None:
+_VENICE_PRIVATE_MODELS = frozenset({
+    "qwen/qwen3-235b-a22b-thinking-2507",
+    "qwen/qwen3.5-9b",
+    "qwen/qwen3.6-27b",
+    "z-ai/glm-4.6",
+    "z-ai/glm-4.7",
+    "z-ai/glm-4.7-flash",
+    "z-ai/glm-5",
+    "z-ai/glm-5.1",
+    "z-ai/glm-5.2",
+})
+_VENICE_ANONYMIZED_MODELS = frozenset({
+    "qwen/qwen3.5-397b-a17b",
+    "z-ai/glm-5-turbo",
+    "z-ai/glm-5v-turbo",
+})
+
+
+def test_venice_privacy_is_model_specific_and_never_claims_tee(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # One private and one anonymized Venice route, whatever Venice lists today.
+    _serve_on_fixture_routes(monkeypatch, "z-ai/glm-5.2", ("venice", "Credits"))
+    _serve_on_fixture_routes(monkeypatch, "z-ai/glm-5-turbo", ("venice", "Credits"))
     provider = PROVIDERS["venice"]
     assert provider.stores_content is True
     assert provider.provider_zero_data_retention is False
     assert provider.provider_confidential_compute is False
     assert provider.provider_e2ee is False
 
-    private_models = {
-        "qwen/qwen3-235b-a22b-thinking-2507",
-        "qwen/qwen3.5-9b",
-        "qwen/qwen3.6-27b",
-        "z-ai/glm-4.6",
-        "z-ai/glm-4.7",
-        "z-ai/glm-4.7-flash",
-        "z-ai/glm-5",
-        "z-ai/glm-5.1",
-        "z-ai/glm-5.2",
-    }
-    anonymized_models = {
-        "qwen/qwen3.5-397b-a17b",
-        "z-ai/glm-5-turbo",
-        "z-ai/glm-5v-turbo",
-    }
     video_models = {
         "bytedance/seedance-2.5",
         "bytedance/seedance-2.0",
@@ -2069,9 +2065,7 @@ def test_venice_privacy_is_model_specific_and_never_claims_tee() -> None:
         "minimax/hailuo-3",
     }
     endpoints = [endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "venice"]
-    assert private_models | anonymized_models | video_models <= {
-        endpoint.model_id for endpoint in endpoints
-    }
+    assert video_models <= {endpoint.model_id for endpoint in endpoints}
     assert all(
         PROVIDERS[endpoint.provider].provider_confidential_compute is False
         for endpoint in endpoints
@@ -2079,7 +2073,7 @@ def test_venice_privacy_is_model_specific_and_never_claims_tee() -> None:
     assert all(PROVIDERS[endpoint.provider].provider_e2ee is False for endpoint in endpoints)
 
     for endpoint in endpoints:
-        if endpoint.model_id in private_models:
+        if endpoint.model_id in _VENICE_PRIVATE_MODELS:
             assert endpoint_privacy_tier(endpoint) == PRIVACY_TIER_ZERO_RETENTION
             assert endpoint_zero_data_retention(endpoint) is True
             assert endpoint_stores_content(endpoint) is False
@@ -2122,13 +2116,15 @@ def test_venice_privacy_is_model_specific_and_never_claims_tee() -> None:
     assert all(endpoint["provider_zero_data_retention"] is False for endpoint in anonymized_venice)
 
 
-def test_every_tinfoil_endpoint_is_confidential_and_e2ee() -> None:
+def test_every_tinfoil_endpoint_is_confidential_and_e2ee(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     provider = PROVIDERS["tinfoil"]
+    _serve_on_fixture_routes(monkeypatch, "fixture/tinfoil-chat", ("tinfoil", "Credits"))
     endpoints = [
         endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "tinfoil"
     ]
 
-    assert endpoints
     assert provider.provider_confidential_compute is True
     assert provider.provider_e2ee is True
     assert all(
@@ -2267,16 +2263,15 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
 
     assert "xiaomi" in PROVIDERS
     assert "xiaomi" in GATEWAY_PREPAID_PROVIDER_SLUGS
-    expected = {
-        "xiaomi/mimo-v2.5": "mimo-v2.5",
-        "xiaomi/mimo-v2.5-pro": "mimo-v2.5-pro",
-    }
+    model_ids = ["xiaomi/mimo-v2.5", "xiaomi/mimo-v2.5-pro"]
     if catalog_predates(XIAOMI_MIMO_V25_PRO_ULTRASPEED_RETIREMENT_AT):
-        expected["xiaomi/mimo-v2.5-pro-ultraspeed"] = "mimo-v2.5-pro-ultraspeed"
+        model_ids.append("xiaomi/mimo-v2.5-pro-ultraspeed")
     xiaomi_credits = {}
-    for model_id, upstream in expected.items():
-        model = MODELS.get(model_id)
-        assert model is not None, f"{model_id} missing from catalog"
+    for model_id in model_ids:
+        row = _listed_row("xiaomi", model_id)
+        if row is None:
+            continue
+        model = MODELS[model_id]
         assert model.supports_chat, f"{model_id} not chat"
         assert model.provider == "xiaomi"
         assert model.prompt_price_microdollars_per_million_tokens > 0
@@ -2286,34 +2281,39 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
             if str(e.usage_type) == "Credits" and e.provider == "xiaomi"
         ]
         assert credits, f"{model_id} has no xiaomi prepaid endpoint"
-        assert {endpoint.upstream_id for endpoint in credits} == {upstream}
-        xiaomi_credits[model_id] = credits[0]
-
-    pro = MODELS["xiaomi/mimo-v2.5-pro"]
-    # Xiaomi documents this as a 1M context window. Live catalogs use both the
-    # binary 1,048,576 value and a rounded 1,050,000 value, so guard the public
-    # capability rather than freezing one representation.
-    assert 1_000_000 <= pro.context_length <= 1_050_000
-    pro_xiaomi = xiaomi_credits["xiaomi/mimo-v2.5-pro"]
-    assert pro_xiaomi.prompt_price_microdollars_per_million_tokens == 458_925
-    assert pro_xiaomi.completion_price_microdollars_per_million_tokens == 917_850
-    # The model headline is the cheapest healthy route across every provider,
-    # so a reseller may legitimately undercut Xiaomi's first-party endpoint.
-    assert pro.prompt_price_microdollars_per_million_tokens <= 458_925
-    assert pro.completion_price_microdollars_per_million_tokens <= 917_850
-
-    # UltraSpeed is the 1T-param speed-serving tier with its own ¥9/¥18
-    # ($1.305/$2.61) cost, marked up by the manifest loader (cost x 1.055,
-    # $0.01/M floor). Guard the exact prices so a regen can't silently
-    # collapse them onto the regular v2.5-pro numbers.
-    if catalog_predates(XIAOMI_MIMO_V25_PRO_ULTRASPEED_RETIREMENT_AT):
-        ultraspeed_xiaomi = xiaomi_credits["xiaomi/mimo-v2.5-pro-ultraspeed"]
-        assert ultraspeed_xiaomi.prompt_price_microdollars_per_million_tokens == 1_376_775
-        assert ultraspeed_xiaomi.completion_price_microdollars_per_million_tokens == 2_753_550
-        # It is genuinely a distinct tier from regular V2.5 Pro.
+        assert {endpoint.upstream_id for endpoint in credits} == {row["upstream_id"]}
+        # Xiaomi's own price, marked up by the manifest loader (cost x 1.055,
+        # $0.01/M floor). The model headline is the cheapest healthy route
+        # across every provider, so a reseller may undercut it.
+        xiaomi = credits[0]
+        assert xiaomi.prompt_price_microdollars_per_million_tokens == _customer_price(
+            row["input_token_price_per_m"]
+        )
+        assert xiaomi.completion_price_microdollars_per_million_tokens == _customer_price(
+            row["output_token_price_per_m"]
+        )
         assert (
-            ultraspeed_xiaomi.completion_price_microdollars_per_million_tokens
-            != pro_xiaomi.completion_price_microdollars_per_million_tokens
+            model.prompt_price_microdollars_per_million_tokens
+            <= xiaomi.prompt_price_microdollars_per_million_tokens
+        )
+        assert (
+            model.completion_price_microdollars_per_million_tokens
+            <= xiaomi.completion_price_microdollars_per_million_tokens
+        )
+        xiaomi_credits[model_id] = xiaomi
+
+    if "xiaomi/mimo-v2.5-pro" in xiaomi_credits:
+        # Xiaomi documents this as a 1M context window. Live catalogs use both
+        # the binary 1,048,576 value and a rounded 1,050,000 value, so guard
+        # the public capability rather than freezing one representation.
+        assert 1_000_000 <= MODELS["xiaomi/mimo-v2.5-pro"].context_length <= 1_050_000
+    # UltraSpeed is the 1T-param speed-serving tier with its own ¥9/¥18
+    # ($1.305/$2.61) cost: a regen must not collapse it onto V2.5 Pro's price.
+    if {"xiaomi/mimo-v2.5-pro", "xiaomi/mimo-v2.5-pro-ultraspeed"} <= xiaomi_credits.keys():
+        assert (
+            xiaomi_credits["xiaomi/mimo-v2.5-pro-ultraspeed"]
+            .completion_price_microdollars_per_million_tokens
+            != xiaomi_credits["xiaomi/mimo-v2.5-pro"].completion_price_microdollars_per_million_tokens
         )
 
 
@@ -2541,7 +2541,15 @@ def test_wafer_kimi_k26_is_available_but_standard_tier_only(
 def test_wafer_manifest_drives_zdr_routing_and_gateway_enforcement(
     endpoint_id: str,
 ) -> None:
-    zdr_endpoint = MODEL_ENDPOINTS[endpoint_id]
+    # Wafer's manifest reports ZDR support for these rows, and a delisted row
+    # keeps its report: a Wafer route for either is ZDR, and the gateway
+    # requires Wafer-ZDR on it, whether Wafer lists the model today or not.
+    zdr_endpoint = ModelEndpoint(
+        id=endpoint_id,
+        model_id=endpoint_id.partition("@")[0],
+        provider="wafer",
+        usage_type="Credits",
+    )
 
     assert endpoint_privacy_tier(zdr_endpoint) == PRIVACY_TIER_ZERO_RETENTION
     assert endpoint_zero_data_retention(zdr_endpoint) is True
@@ -2675,10 +2683,132 @@ def test_model_shape_omits_cache_read_price_when_absent() -> None:
     "endpoint_id",
     [
         "anthropic/claude-fable-5@anthropic/prepaid",
+        "anthropic/claude-fable-5@lightning/byok",
+        *(
+            f"moonshotai/{model}@{host}/{usage}"
+            for model, host in (
+                ("kimi-k2.6", "kimi"),
+                ("kimi-k2.7-code", "kimi"),
+                ("kimi-k2.7-code-highspeed", "kimi"),
+                ("kimi-k3", "kimi"),
+                ("kimi-k3", "novita"),
+                ("kimi-k3", "gmi"),
+                ("kimi-k2.7-code", "novita"),
+            )
+            for usage in ("prepaid", "byok")
+        ),
+        "moonshotai/kimi-k3@phala/prepaid",
+        *(
+            f"{model_id}@{provider}/{usage}"
+            for model_id, provider in (
+                ("anthropic/claude-sonnet-4.6", "anthropic"),
+                ("openai/gpt-4.1-mini", "openai"),
+                ("google/gemini-2.5-flash", "google-ai-studio"),
+                ("google/gemini-3.5-flash", "google-ai-studio"),
+                ("google/gemini-3.6-flash", "google-ai-studio"),
+                ("deepseek/deepseek-v4-flash", "deepseek"),
+                ("mistralai/mistral-small-2603", "mistral"),
+                ("meta-llama/llama-3.1-8b-instruct", "novita"),
+                ("tencent/hy3", "novita"),
+                ("z-ai/glm-5.2", "zai"),
+                ("z-ai/glm-5.2", "deepinfra"),
+                ("z-ai/glm-5.2", "novita"),
+                ("z-ai/glm-5.2", "phala"),
+                ("z-ai/glm-5.2", "siliconflow"),
+                ("z-ai/glm-5.2", "together"),
+                ("z-ai/glm-5.2", "venice"),
+                ("z-ai/glm-5.2", "parasail"),
+                ("z-ai/glm-5.2", "friendli"),
+                ("cerebras/gpt-oss-120b", "cerebras"),
+            )
+            for usage in ("prepaid", "byok")
+        ),
+        "z-ai/glm-5@zai/prepaid",
+        "deepseek/deepseek-v4-pro@deepseek/prepaid",
+        "moonshotai/kimi-k3@wafer/prepaid",
+        "deepseek/deepseek-v4-flash-0731-fast@wafer/prepaid",
+        "xiaomi/mimo-v2.5@xiaomi/prepaid",
+        "xiaomi/mimo-v2.5-pro@xiaomi/prepaid",
     ],
 )
 def test_the_routes_these_rules_were_written_against_are_still_served(endpoint_id: str) -> None:
     assert endpoint_id in MODEL_ENDPOINTS, f"{endpoint_id} is no longer served"
+
+
+@pytest.mark.provider_health
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        ARCHIMEDES_1_0_MODEL_ID,
+        DEEPSEEK_V4_PRO_0423_MODEL_ID,
+        DEEPSEEK_V4_PRO_0813_MODEL_ID,
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        "thinkingmachines/inkling-small",
+    ],
+)
+def test_the_models_these_rules_were_written_against_are_still_offered(model_id: str) -> None:
+    assert model_id in MODELS, f"{model_id} is no longer offered"
+
+
+@pytest.mark.provider_health
+@pytest.mark.parametrize(
+    "provider",
+    [
+        "anthropic", "openai", "google-ai-studio", "google-vertex", "deepseek", "mistral",
+        "kimi", "zai", "tinfoil",
+    ],
+)
+def test_the_major_providers_still_serve_credits(provider: str) -> None:
+    assert any(
+        endpoint.provider == provider and endpoint.usage_type == "Credits"
+        for endpoint in MODEL_ENDPOINTS.values()
+    ), f"{provider} serves no Credits route"
+
+
+@pytest.mark.provider_health
+def test_the_combo_badges_still_follow_their_open_and_closed_components() -> None:
+    for model_id in _OPEN_WEIGHT_BADGE_IDS:
+        assert model_open_weights(MODELS[model_id]), model_id
+    for model_id in _CLOSED_WEIGHT_BADGE_IDS:
+        assert not model_open_weights(MODELS[model_id]), model_id
+
+
+@pytest.mark.provider_health
+def test_kimi_k3_is_still_served_across_its_hosts() -> None:
+    assert MODELS["moonshotai/kimi-k3"].context_length == 1_048_576
+    assert {
+        ("kimi", "Credits"),
+        ("siliconflow", "Credits"),
+        ("baseten", "Credits"),
+        ("atlas-cloud", "Credits"),
+        ("novita", "Credits"),
+        ("nebius", "Credits"),
+        ("fireworks", "Credits"),
+        ("gmi", "BYOK"),
+    } <= {
+        (endpoint.provider, endpoint.usage_type)
+        for endpoint in endpoints_for_model("moonshotai/kimi-k3")
+    }
+
+
+@pytest.mark.provider_health
+def test_inkling_is_still_served_by_several_hosts() -> None:
+    endpoints = endpoints_for_model("thinkingmachines/inkling")
+    provider_ids = {endpoint.provider for endpoint in endpoints}
+
+    assert "thinkingmachines" in provider_ids
+    assert len(provider_ids) >= 2
+    assert any(endpoint.usage_type == "Credits" for endpoint in endpoints)
+    assert any(endpoint.usage_type == "BYOK" for endpoint in endpoints)
+
+
+@pytest.mark.provider_health
+def test_venice_still_serves_its_private_and_anonymized_lineup() -> None:
+    venice_models = {
+        endpoint.model_id for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "venice"
+    }
+
+    assert _VENICE_PRIVATE_MODELS | _VENICE_ANONYMIZED_MODELS <= venice_models
 
 
 @pytest.mark.provider_health
