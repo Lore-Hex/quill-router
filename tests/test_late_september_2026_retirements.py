@@ -10,6 +10,7 @@ import pytest
 from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import openai, together
+from tests.fixture_routes import serve_on_fixture_route
 from trusted_router import catalog, provider_lifecycle
 from trusted_router.catalog_data import ModelEndpoint
 
@@ -156,7 +157,14 @@ def test_manifests_remove_only_canceled_retirement() -> None:
     flash = rows[_TOGETHER_FLASH]
     assert "retirement_at" not in flash
     assert "replacement_model_id" not in flash
-    assert flash.get("routable", True)
+
+
+@pytest.mark.provider_health
+def test_together_still_lists_flash_0731() -> None:
+    """Live provider state: provider-catalog-health.yml reports it hourly, and
+    the price refresh does not wait on it."""
+    rows = {row["id"]: row for row in json.loads(together.MANIFEST_PATH.read_text())["models"]}
+    assert rows[_TOGETHER_FLASH].get("routable", True)
 
 
 @pytest.mark.parametrize("at", [
@@ -172,6 +180,13 @@ def test_together_flash_stays_routable_after_canceled_cutoff(
         (_TOGETHER_FLASH, None), ("unknown-canonical", _TOGETHER_FLASH_NATIVE),
     ):
         assert not provider_lifecycle.provider_model_retired("together", model_id, upstream_id)
+    # Together's routes are fixtures: whether it lists the model today is
+    # provider state, while the canceled cutoff must not drop them.
+    for usage_type in ("Credits", "BYOK"):
+        serve_on_fixture_route(
+            monkeypatch, _TOGETHER_FLASH, "together", author="deepseek",
+            usage_type=usage_type, upstream_id=_TOGETHER_FLASH_NATIVE,
+        )
     endpoints = [ep for ep in catalog.endpoints_for_model(_TOGETHER_FLASH)
                  if ep.provider == "together"]
     assert {ep.usage_type for ep in endpoints} == {"Credits", "BYOK"}
