@@ -6,6 +6,7 @@ import pytest
 from bs4 import BeautifulSoup
 from fastapi import HTTPException
 
+from tests.fixture_routes import serve_on_fixture_route
 from trusted_router.catalog import MODELS, endpoints_for_model, meta_candidate_models
 from trusted_router.config import Settings
 from trusted_router.routing import _apply_endpoint_provider_filters, _routing_for_body
@@ -19,12 +20,24 @@ def current_catalog(monkeypatch):
     monkeypatch.setattr(ModelEndpoint, "catalog_is_current", lambda self, **_: True)
 
 
+@pytest.fixture
+def green_pool(monkeypatch):
+    """Regolo, the renewable-inference host, serves two chat models on fixture
+    routes: which models it lists today is provider state."""
+    for model_id, author in (("z-ai/glm-5.2", "zai"), ("google/gemma-4-31b-it", "google-ai-studio")):
+        serve_on_fixture_route(monkeypatch, model_id, "regolo", author=author)
+
+
+@pytest.mark.provider_health
 def test_green_alias_has_live_catalog_candidates() -> None:
+    """Live provider state: provider-catalog-health.yml reports it hourly, and
+    the price refresh does not wait on it."""
     assert "trustedrouter/green" in MODELS
     assert meta_candidate_models("trustedrouter/green")
 
 
 @pytest.mark.parametrize("other", ["trustedrouter/auto", "trustedrouter/zdr", "trustedrouter/eu"])
+@pytest.mark.usefixtures("green_pool")
 def test_green_requirement_survives_model_order_and_provider_preferences(other: str) -> None:
     for model, fallback in itertools.permutations(["trustedrouter/green", other]):
         ids, prefs = _routing_for_body(
@@ -86,6 +99,7 @@ def test_no_qualifying_provider_never_expands_to_other_routes(monkeypatch):
         chat_route_endpoint_candidates({"model": "trustedrouter/green"}, Settings())
 
 
+@pytest.mark.usefixtures("green_pool")
 def test_green_prices_and_privacy_describe_the_eligible_provider_only():
     from trusted_router.catalog import model_to_openrouter_shape
 
@@ -115,6 +129,7 @@ def test_green_page_has_sources_code_and_a_working_share_image(client):
     assert "/green-tokens" in client.get("/").text
 
 
+@pytest.mark.usefixtures("green_pool")
 def test_green_landing_copy_is_provider_neutral_with_energy_sources(client):
     response = client.get("/green-tokens")
     assert response.status_code == 200
@@ -152,6 +167,7 @@ def test_green_hosted_search_cannot_leave_the_pool():
 
 
 @pytest.mark.parametrize("route_type", ["chat.completions", "responses"])
+@pytest.mark.usefixtures("green_pool")
 def test_green_authorizes_only_regolo_and_settles_selected_fallback_once(route_type):
     from tests.test_gateway_fallback_billing import _client_and_key
     from trusted_router.catalog import endpoint_for_id
