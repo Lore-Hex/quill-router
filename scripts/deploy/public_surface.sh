@@ -418,11 +418,29 @@ if legacy_has_secret_binding TR_GITHUB_CLIENT_ID && \
   GITHUB_OAUTH_AVAILABLE=true
 fi
 
+# Bigtable analytics are retired (2026-09-28): this surface follows a
+# control-plane revision that already reads ClickHouse alone and mirrors
+# nothing. An older legacy revision means the control plane deploys first.
 ANALYTICS_READ_MODE="$(legacy_env_required TR_ANALYTICS_READ_MODE)"
 case "$ANALYTICS_READ_MODE" in
-  bigtable|dual|clickhouse|clickhouse-only) ;;
+  clickhouse-only) ;;
   *)
     echo "ERROR: active legacy revision has invalid TR_ANALYTICS_READ_MODE=${ANALYTICS_READ_MODE}" >&2
+    exit 1
+    ;;
+esac
+STORAGE_BACKEND="$(legacy_env_required TR_STORAGE_BACKEND)"
+case "$STORAGE_BACKEND" in
+  spanner-clickhouse) ;;
+  *)
+    echo "ERROR: active legacy revision still runs TR_STORAGE_BACKEND=${STORAGE_BACKEND}; Bigtable analytics are retired, deploy the control plane first" >&2
+    exit 1
+    ;;
+esac
+case "$(legacy_env_required TR_BIGTABLE_MIRROR_WRITES_ENABLED)" in
+  false) ;;
+  *)
+    echo "ERROR: active legacy revision still mirrors analytics to Bigtable; deploy the control plane first" >&2
     exit 1
     ;;
 esac
@@ -452,7 +470,7 @@ ENV_VARS=(
   # Capability metadata only. The public service never gets the probe key
   # or internal billing token, but must display the separately scheduled jobs.
   "TR_SYNTHETIC_STATUS_PROBE_TYPES=gateway_authorize,gateway_settle,provider_fallback,openai_sdk_pong,responses_pong"
-  "TR_STORAGE_BACKEND=$(legacy_env_required TR_STORAGE_BACKEND)"
+  "TR_STORAGE_BACKEND=${STORAGE_BACKEND}"
   "TR_SPANNER_INSTANCE_ID=$(legacy_env_required TR_SPANNER_INSTANCE_ID)"
   "TR_SPANNER_DATABASE_ID=$(legacy_env_required TR_SPANNER_DATABASE_ID)"
   "TR_SPANNER_POOL_SIZE=$(legacy_env_required TR_SPANNER_POOL_SIZE)"
@@ -462,10 +480,15 @@ ENV_VARS=(
   # so run_in_transaction_with_retry rolls back deterministic API failures
   # itself (storage_gcp_io.py). Keep this a decision, not a client default.
   "GOOGLE_CLOUD_SPANNER_MULTIPLEXED_SESSIONS_FOR_RW=true"
-  "TR_BIGTABLE_INSTANCE_ID=$(legacy_env_required TR_BIGTABLE_INSTANCE_ID)"
-  "TR_BIGTABLE_GENERATION_TABLE=$(legacy_env_required TR_BIGTABLE_GENERATION_TABLE)"
-  "TR_BIGTABLE_MIRROR_WRITES_ENABLED=$(legacy_env_required TR_BIGTABLE_MIRROR_WRITES_ENABLED)"
+  "TR_BIGTABLE_MIRROR_WRITES_ENABLED=false"
   "TR_ANALYTICS_READ_MODE=${ANALYTICS_READ_MODE}"
+  # spanner-clickhouse is validated together with typed generation records
+  # and the analytics outboxes; the public store only reads them, but the
+  # process refuses to boot without the same declaration as the control plane.
+  "TR_GENERATION_RECORDS_ENABLED=$(legacy_env_required TR_GENERATION_RECORDS_ENABLED)"
+  "TR_REQUEST_RECORD_WRITE_MODE=$(legacy_env_required TR_REQUEST_RECORD_WRITE_MODE)"
+  "TR_SETTLE_OUTBOX_ENABLED=$(legacy_env_required TR_SETTLE_OUTBOX_ENABLED)"
+  "TR_ANALYTICS_OUTBOX_ENABLED=$(legacy_env_required TR_ANALYTICS_OUTBOX_ENABLED)"
   # The public surface serves /status.json, whose analytics section reports
   # outbox freshness. Without this flag the store is built with NO outbox
   # object, the page publishes reason=not_configured, and stage (c) of
@@ -491,22 +514,22 @@ SECRET_ENVS=(
   "TR_ATTRIBUTION_COOKIE_KEY=trustedrouter-attribution-cookie-key:latest"
   "TR_SENTRY_DSN=trustedrouter-sentry-dsn:latest"
 )
-NETWORK_ARGS=()
-if [ "$ANALYTICS_READ_MODE" != "bigtable" ]; then
-  ENV_VARS+=(
-    "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL=$(legacy_env_required TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL)"
-    "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER=$(legacy_env_required TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER)"
-    "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE=$(legacy_env_required TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE)"
-  )
-  SECRET_ENVS+=(
-    "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD=trustedrouter-clickhouse-control-read-password:latest"
-  )
-  NETWORK_ARGS=(
-    --network "${TR_CLOUD_RUN_NETWORK:-default}"
-    --subnet "${TR_CLOUD_RUN_SUBNET:-default}"
-    --vpc-egress private-ranges-only
-  )
-fi
+# Analytics reads come from ClickHouse alone (Bigtable retired 2026-09-28):
+# the read credentials and the VPC egress that reaches the private ClickHouse
+# address are unconditional.
+ENV_VARS+=(
+  "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL=$(legacy_env_required TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL)"
+  "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER=$(legacy_env_required TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER)"
+  "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE=$(legacy_env_required TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE)"
+)
+SECRET_ENVS+=(
+  "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD=trustedrouter-clickhouse-control-read-password:latest"
+)
+NETWORK_ARGS=(
+  --network "${TR_CLOUD_RUN_NETWORK:-default}"
+  --subnet "${TR_CLOUD_RUN_SUBNET:-default}"
+  --vpc-egress private-ranges-only
+)
 
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 SET_SECRETS="$(IFS=,; echo "${SECRET_ENVS[*]}")"
@@ -516,14 +539,11 @@ print_runtime_sa_bootstrap() {
 Owner action required (do not grant these to the deploy identity):
   gcloud iam service-accounts create tr-public --project=${PROJECT_ID}
   gcloud spanner databases add-iam-policy-binding $(legacy_env_required TR_SPANNER_DATABASE_ID) --instance=$(legacy_env_required TR_SPANNER_INSTANCE_ID) --project=${PROJECT_ID} --member=serviceAccount:${PUBLIC_RUNTIME_SA} --role=roles/spanner.databaseReader
-  gcloud projects add-iam-policy-binding ${PROJECT_ID} --member=serviceAccount:${PUBLIC_RUNTIME_SA} --role=roles/bigtable.reader
   gcloud projects add-iam-policy-binding ${PROJECT_ID} --member=serviceAccount:${PUBLIC_RUNTIME_SA} --role=roles/serviceusage.serviceUsageConsumer
   gcloud secrets add-iam-policy-binding trustedrouter-attribution-cookie-key --project=${PROJECT_ID} --member=serviceAccount:${PUBLIC_RUNTIME_SA} --role=roles/secretmanager.secretAccessor
   gcloud secrets add-iam-policy-binding trustedrouter-sentry-dsn --project=${PROJECT_ID} --member=serviceAccount:${PUBLIC_RUNTIME_SA} --role=roles/secretmanager.secretAccessor
+  gcloud secrets add-iam-policy-binding trustedrouter-clickhouse-control-read-password --project=${PROJECT_ID} --member=serviceAccount:${PUBLIC_RUNTIME_SA} --role=roles/secretmanager.secretAccessor
 EOF
-  if [ "$ANALYTICS_READ_MODE" != "bigtable" ]; then
-    echo "  gcloud secrets add-iam-policy-binding trustedrouter-clickhouse-control-read-password --project=${PROJECT_ID} --member=serviceAccount:${PUBLIC_RUNTIME_SA} --role=roles/secretmanager.secretAccessor" >&2
-  fi
 }
 
 # Every preflight precedes the first Cloud Run mutation. The owner creates the

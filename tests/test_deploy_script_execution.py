@@ -911,6 +911,49 @@ def test_rollout_gate_refuses_while_a_region_still_issues(
     assert not any("spanner" in call for call in run.calls)
 
 
+def test_rollout_renders_the_retired_bigtable_analytics_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Bigtable analytics are retired (step 3): every revision reads ClickHouse
+    # alone and mirrors nothing, whatever the live primary carried.
+    isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, _LIVE_REGIONAL_QUOTA_ENV)
+    run = isolated.run("scripts/deploy/rollout.sh")
+    assert run.returncode == 0, summarise(run)
+    deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
+    rendered = _cloud_run_job_env(deploy)
+    assert rendered["TR_STORAGE_BACKEND"] == "spanner-clickhouse"
+    assert rendered["TR_ANALYTICS_READ_MODE"] == "clickhouse-only"
+    assert rendered["TR_BIGTABLE_MIRROR_WRITES_ENABLED"] == "false"
+    assert rendered["TR_GENERATION_RECORDS_ENABLED"] == "true"
+    assert rendered["TR_REQUEST_RECORD_WRITE_MODE"] == "typed"
+    assert not {
+        "TR_BIGTABLE_INSTANCE_ID",
+        "TR_BIGTABLE_GENERATION_TABLE",
+        "TR_ANALYTICS_DUAL_READ_STARTED_AT",
+        "TR_ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT",
+    } & rendered.keys()
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("TR_STORAGE_BACKEND", "spanner-bigtable"),
+        ("TR_ANALYTICS_READ_MODE", "clickhouse"),
+        ("TR_ANALYTICS_READ_MODE", "dual"),
+        ("TR_ANALYTICS_READ_MODE", "bigtable"),
+        ("TR_BIGTABLE_MIRROR_WRITES_ENABLED", "true"),
+    ],
+)
+def test_rollout_refuses_the_retired_bigtable_analytics_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, value: str,
+) -> None:
+    isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, _LIVE_REGIONAL_QUOTA_ENV)
+    run = isolated.run("scripts/deploy/rollout.sh", extra_env={name: value})
+    assert run.returncode != 0
+    assert f"{name}={value} is retired" in run.stderr
+    assert not any(call[3:5] == ["run", "deploy"] for call in run.calls)
+
+
 def test_rollout_refuses_regional_quota_capability(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

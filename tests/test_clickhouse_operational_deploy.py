@@ -102,13 +102,18 @@ def test_operational_deploy_resumes_live_ingest_before_backfills() -> None:
     assert "deployment exited during parser/schema cutover" in script
     assert "SYSTEM SYNC REPLICA" in script
     assert "clickhouse_replicate_rollups.sh" in script
-    assert "clickhouse_operational_analytics_finalize.sh --apply" in script
+    assert "ClickHouse is authoritative and the Bigtable repair units are retired" in script
     assert "systemctl start tr-clickhouse-operational-parity.service" not in script
     assert "008_client_events_replicated.sql" in script
     assert "tr-clickhouse-client-rollup.service" in script
     assert "tr-clickhouse-client-rollup.timer" in script
-    assert "tr-clickhouse-synthetic-reconcile.service" in script
-    assert "tr-clickhouse-synthetic-reconcile.timer" in script
+    # The Bigtable repair units (synthetic-reconcile, operational-parity) are
+    # retired with the Bigtable shadow: never installed, stopped and removed.
+    for unit in ("tr-clickhouse-synthetic-reconcile", "tr-clickhouse-operational-parity"):
+        assert f"install -m 0644 /opt/tr-clickhouse/clickhouse/{unit}" not in script
+        assert f"/etc/systemd/system/{unit}.timer" in script
+    assert "systemctl disable --now tr-clickhouse-synthetic-reconcile.timer" in script
+    assert "systemctl start tr-clickhouse-synthetic-reconcile.timer" not in script
     assert "systemctl enable" in script
     assert 'id_column="event_id"' in script
 
@@ -279,8 +284,10 @@ def test_operational_finalize_requires_live_outbox_before_closing_gap() -> None:
     assert "--skip-synthetic --skip-rollups" in script
     assert "--recent-limit 20000 --skip-activity --skip-rollups" in script
     replay = script.index("replaying activity after the outbox producer is live")
-    parity = script.index("systemctl start tr-clickhouse-operational-parity.service")
-    assert replay < parity
+    rollups = script.index("systemctl start tr-clickhouse-synthetic-rollup.timer")
+    assert replay < rollups
+    # the operational-parity units read the retired Bigtable shadow
+    assert "systemctl start tr-clickhouse-operational-parity" not in script
 
 
 def test_control_reader_is_private_read_only_and_cannot_read_secrets() -> None:
@@ -333,18 +340,24 @@ def test_control_reader_grants_cover_operational_queries_and_all_client_tables()
     )
 
 
-def test_rollout_preserves_dual_read_mode_and_uses_distinct_reader_secret() -> None:
+
+def test_rollout_pins_clickhouse_only_reads_and_uses_distinct_reader_secret() -> None:
+    # Bigtable analytics are retired: the read mode is no longer preserved
+    # from the live revision, it is pinned, and the retired modes refuse.
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
     secrets = (ROOT / "scripts/deploy/secrets.sh").read_text()
-    assert "TR_ANALYTICS_READ_MODE" in rollout
-    assert "LIVE_ANALYTICS_READ_MODE" in rollout
-    assert "TR_ANALYTICS_DUAL_READ_STARTED_AT" in rollout
-    assert "TR_ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT" in rollout
+    assert "ANALYTICS_READ_MODE=clickhouse-only" in rollout
+    assert "STORAGE_BACKEND=spanner-clickhouse" in rollout
+    assert "BIGTABLE_MIRROR_WRITES_ENABLED=false" in rollout
+    assert "LIVE_ANALYTICS_READ_MODE" not in rollout
+    assert "TR_ANALYTICS_DUAL_READ_STARTED_AT" not in rollout
+    assert "TR_ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT" not in rollout
+    assert "TR_BIGTABLE_INSTANCE_ID" not in rollout
     assert "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true" in rollout
     assert "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER=tr_control_read" in rollout
     assert "trustedrouter-clickhouse-control-read-password" in rollout
     assert "trustedrouter-clickhouse-control-read-password" in secrets
-
+    assert "TR_STORAGE_BACKEND=spanner-clickhouse" in secrets
 
 def test_cutover_requires_soak_logs_queue_replica_and_positive_parity() -> None:
     script = (ROOT / "scripts/deploy/clickhouse_analytics_cutover.sh").read_text()

@@ -76,8 +76,6 @@ EXPECTED_ENV_NAMES = {
     "TR_SPANNER_INSTANCE_ID",
     "TR_SPANNER_DATABASE_ID",
     "TR_SPANNER_POOL_SIZE",
-    "TR_BIGTABLE_INSTANCE_ID",
-    "TR_BIGTABLE_GENERATION_TABLE",
     "TR_BIGTABLE_MIRROR_WRITES_ENABLED",
     "TR_GENERATION_RECORDS_ENABLED",
     "TR_ANALYTICS_READ_MODE",
@@ -470,7 +468,6 @@ def test_missing_internal_runtime_sa_refuses_before_any_mutation(
     ("failed_preflight", "message"),
     (
         (r"spanner databases get-iam-policy", "roles/spanner.databaseUser"),
-        (r"bigtable instances get-iam-policy", "roles/bigtable.user"),
         (r"secrets get-iam-policy", "roles/secretmanager.secretAccessor"),
     ),
 )
@@ -524,3 +521,45 @@ def test_missing_stage_d_probe_binding_is_optional_on_first_internal_deploy(
             if name != "TR_STAGE_D_PROBE_API_KEY"
         }
         assert Settings(**_settings_kwargs(call)).stage_d_probe_api_key == ""
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "message"),
+    [
+        ("TR_ANALYTICS_READ_MODE", "clickhouse", "invalid TR_ANALYTICS_READ_MODE=clickhouse"),
+        ("TR_STORAGE_BACKEND", "spanner-bigtable", "still runs TR_STORAGE_BACKEND=spanner-bigtable"),
+        ("TR_BIGTABLE_MIRROR_WRITES_ENABLED", "true", "still mirrors analytics to Bigtable"),
+    ],
+)
+def test_internal_refuses_a_legacy_revision_that_still_uses_bigtable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    value: str,
+    message: str,
+) -> None:
+    # Bigtable analytics are retired: the internal surface follows a
+    # control-plane revision that reads ClickHouse alone and mirrors nothing.
+    original = SCRIPT_FIXTURES[SCRIPT]
+    responses: list[tuple[str, str]] = []
+    for pattern, response in original.responses:
+        if "revisions describe trusted-router-active" not in pattern:
+            responses.append((pattern, response))
+            continue
+        revision = json.loads(response)
+        for item in revision["spec"]["containers"][0]["env"]:
+            if item.get("name") == name:
+                item["value"] = value
+        responses.append((pattern, json.dumps(revision, separators=(",", ":"))))
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES,
+        SCRIPT,
+        replace(original, responses=tuple(responses)),
+    )
+    harness = DeployScriptHarness(tmp_path / "legacy-bigtable-internal")
+
+    run = harness.run(SCRIPT, args=("companion",))
+
+    assert run.returncode != 0, summarise(run)
+    assert message in run.stderr
+    assert not any(call[3:5] == ["run", "deploy"] for call in run.calls)

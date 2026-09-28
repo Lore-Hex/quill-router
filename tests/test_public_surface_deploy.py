@@ -41,14 +41,16 @@ BASE_ENV = {
     "TR_SYNTHETIC_STATUS_PROBE_TYPES": (
         "gateway_authorize,gateway_settle,provider_fallback,openai_sdk_pong,responses_pong"
     ),
-    "TR_STORAGE_BACKEND": "spanner-bigtable",
+    "TR_STORAGE_BACKEND": "spanner-clickhouse",
     "TR_SPANNER_INSTANCE_ID": "trusted-router-nam6",
     "TR_SPANNER_DATABASE_ID": "trusted-router",
     "TR_SPANNER_POOL_SIZE": "8",
-    "TR_BIGTABLE_INSTANCE_ID": "trusted-router-logs",
-    "TR_BIGTABLE_GENERATION_TABLE": "trustedrouter-generations",
-    "TR_BIGTABLE_MIRROR_WRITES_ENABLED": "true",
-    "TR_ANALYTICS_READ_MODE": "clickhouse",
+    "TR_BIGTABLE_MIRROR_WRITES_ENABLED": "false",
+    "TR_ANALYTICS_READ_MODE": "clickhouse-only",
+    "TR_GENERATION_RECORDS_ENABLED": "true",
+    "TR_REQUEST_RECORD_WRITE_MODE": "typed",
+    "TR_SETTLE_OUTBOX_ENABLED": "true",
+    "TR_ANALYTICS_OUTBOX_ENABLED": "true",
     "GOOGLE_CLOUD_SPANNER_MULTIPLEXED_SESSIONS_FOR_RW": "true",
     # The status page this surface serves reports outbox freshness; without
     # this its store has no outbox object and publishes not_configured,
@@ -239,7 +241,9 @@ def test_missing_runtime_service_account_fails_before_cloud_mutation(
     assert run.returncode != 0
     assert "required public runtime service account" in run.stderr
     assert "roles/spanner.databaseReader" in run.stderr
-    assert "roles/bigtable.reader" in run.stderr
+    # Bigtable analytics are retired: no Bigtable role is part of the identity.
+    assert "bigtable" not in run.stderr
+    assert "trustedrouter-clickhouse-control-read-password" in run.stderr
     assert "roles/serviceusage.serviceUsageConsumer" in run.stderr
     mutating = ("create", "update", "deploy", "add-backend", "import")
     assert not any(any(part in mutating for part in call[1:]) for call in run.calls)
@@ -270,10 +274,26 @@ def test_invalid_public_capacity_fails_before_cloud_mutation(
     assert not _deploy_calls(run)
 
 
-def test_bigtable_mode_omits_clickhouse_secret_env_and_vpc_flags(
+
+@pytest.mark.parametrize(
+    ("name", "value", "message"),
+    [
+        ("TR_ANALYTICS_READ_MODE", "bigtable", "invalid TR_ANALYTICS_READ_MODE=bigtable"),
+        ("TR_ANALYTICS_READ_MODE", "clickhouse", "invalid TR_ANALYTICS_READ_MODE=clickhouse"),
+        ("TR_STORAGE_BACKEND", "spanner-bigtable", "still runs TR_STORAGE_BACKEND=spanner-bigtable"),
+        ("TR_BIGTABLE_MIRROR_WRITES_ENABLED", "true", "still mirrors analytics to Bigtable"),
+    ],
+)
+def test_companion_refuses_a_legacy_revision_that_still_uses_bigtable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    value: str,
+    message: str,
 ) -> None:
+    # Bigtable analytics are retired: this surface follows a control-plane
+    # revision that reads ClickHouse alone and mirrors nothing. An older
+    # legacy revision means the control plane deploys first.
     original = SCRIPT_FIXTURES[SCRIPT]
     responses: list[tuple[str, str]] = []
     for pattern, response in original.responses:
@@ -281,43 +301,22 @@ def test_bigtable_mode_omits_clickhouse_secret_env_and_vpc_flags(
             responses.append((pattern, response))
             continue
         revision = json.loads(response)
-        env = revision["spec"]["containers"][0]["env"]
-        for item in env:
-            if item.get("name") == "TR_ANALYTICS_READ_MODE":
-                item["value"] = "bigtable"
-        revision["spec"]["containers"][0]["env"] = [
-            item
-            for item in env
-            if not item.get("name", "").startswith(
-                "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_"
-            )
-        ]
+        for item in revision["spec"]["containers"][0]["env"]:
+            if item.get("name") == name:
+                item["value"] = value
         responses.append((pattern, json.dumps(revision, separators=(",", ":"))))
     monkeypatch.setitem(
         SCRIPT_FIXTURES,
         SCRIPT,
         replace(original, responses=tuple(responses)),
     )
-    harness = DeployScriptHarness(tmp_path / "bigtable-public")
+    harness = DeployScriptHarness(tmp_path / "legacy-bigtable-public")
 
     run = harness.run(SCRIPT, args=("companion",))
 
-    assert run.returncode == 0, summarise(run)
-    for call in _deploy_calls(run):
-        env = _serialized_mapping(call, "--set-env-vars", "|")
-        assert env["TR_ANALYTICS_READ_MODE"] == "bigtable"
-        assert not any("CLICKHOUSE" in name for name in env)
-        assert _serialized_mapping(call, "--set-secrets", ",") == {
-            "TR_ATTRIBUTION_COOKIE_KEY": (
-                "trustedrouter-attribution-cookie-key:latest"
-            ),
-            "TR_SENTRY_DSN": "trustedrouter-sentry-dsn:latest",
-        }
-        assert "--network" not in call
-        assert "--subnet" not in call
-        assert "--vpc-egress" not in call
-        assert Settings(**_settings_kwargs(call)).service_surface == "public"
-
+    assert run.returncode != 0, summarise(run)
+    assert message in run.stderr
+    assert not _deploy_calls(run)
 
 def _traffic_calls(run) -> list[list[str]]:
     return [

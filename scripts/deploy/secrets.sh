@@ -24,7 +24,7 @@ validate_synthetic_monitor_candidate() {
   log "validating synthetic monitor key against the dedicated production workspace"
   printf '%s' "$value" | (
     cd "$repo_root"
-    TR_STORAGE_BACKEND=spanner-bigtable \
+    TR_STORAGE_BACKEND=spanner-clickhouse \
       TR_GCP_PROJECT_ID="$PROJECT_ID" \
       TR_SPANNER_INSTANCE_ID="$SPANNER_INSTANCE_ID" \
       TR_SPANNER_DATABASE_ID="$SPANNER_DATABASE_ID" \
