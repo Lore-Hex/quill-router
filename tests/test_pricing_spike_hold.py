@@ -240,6 +240,25 @@ def test_a_held_manifest_only_provider_is_restored_exactly_and_is_not_a_failure(
     assert "beta" not in results
 
 
+def test_a_hold_publishes_when_the_published_route_carries_openrouter_only_keys(
+    published: dict[str, Any],
+    provider: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Snapshots published before endpoint blocks lost OpenRouter's other keys
+    # carry them on provider-priced routes. The re-merged held route drops
+    # them; its prices are unchanged, so the hold must still publish.
+    key, name = provider
+    published["models"][0]["endpoints"][0]["pricing"].update(discount=0, web_search="0.01")
+    refresh.SNAPSHOT_PATH.write_text(json.dumps(published))
+    _fetched(monkeypatch, key, ModelPrice(3_000_000, 2_000_000))  # prompt tripled
+
+    assert refresh.main([]) == 0
+
+    assert _endpoint_prices()[f"acme/model [{name}]"] == ("0.000001", "0.000002")
+    assert _endpoint_prices()["x-ai/grok-next [grok]"] == ("0.0000035", "0.000004")
+
+
 def test_a_hold_that_cannot_keep_the_provider_exact_publishes_nothing(
     published: dict[str, Any],
     provider: tuple[str, str],
