@@ -1646,6 +1646,21 @@ def test_athena_catalog_hides_orchestration_configuration() -> None:
     assert canonical_orchestration_model_id(ATHENA_MODEL_ID) == ATHENA_2_0_MODEL_ID
 
 
+@pytest.mark.provider_health
+def test_every_synth_preset_member_is_still_cataloged() -> None:
+    """A versioned synth preset whose member left the catalog runs without it
+    (meta_candidate_models skips a missing id). That must not hold up the price
+    refresh, but someone should know a frozen preset now runs a smaller graph."""
+    from trusted_router import catalog_data
+
+    missing = {
+        name: [model_id for model_id in order if model_id not in MODELS]
+        for name, order in sorted(vars(catalog_data).items())
+        if name.startswith("SYNTH_") and name.endswith("_MODEL_ORDER")
+    }
+    assert not {name: model_ids for name, model_ids in missing.items() if model_ids}
+
+
 def test_zeus_versions_are_frozen_and_rolling_alias_uses_3_0() -> None:
     assert MODELS[ZEUS_MODEL_ID].context_length == 1_000_000
     assert MODELS[ZEUS_1_0_MODEL_ID].context_length == 1_048_576
