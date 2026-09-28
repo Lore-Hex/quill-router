@@ -114,6 +114,10 @@ def test_operational_deploy_resumes_live_ingest_before_backfills() -> None:
         assert f"/etc/systemd/system/{unit}.timer" in script
     assert "systemctl disable --now tr-clickhouse-synthetic-reconcile.timer" in script
     assert "systemctl start tr-clickhouse-synthetic-reconcile.timer" not in script
+    # ...and no later enable/start names a unit the retirement removed
+    for line in script.splitlines():
+        if "systemctl enable" in line or "systemctl start" in line:
+            assert "synthetic-reconcile" not in line and "operational-parity" not in line, line
     assert "systemctl enable" in script
     assert 'id_column="event_id"' in script
 

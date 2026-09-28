@@ -221,7 +221,7 @@ node_ssh 0 --command="sudo sh -c '
     /opt/tr-clickhouse/venv/bin/python -m clickhouse.rollup_synthetic
 '"
 
-node_ssh 0 --command="sudo systemctl enable tr-clickhouse-operational-ingest.service tr-clickhouse-synthetic-rollup.timer tr-clickhouse-synthetic-reconcile.timer tr-clickhouse-client-rollup.timer tr-clickhouse-operational-parity.timer tr-clickhouse-public-snapshots.timer tr-clickhouse-archive-restore.timer tr-clickhouse-spanner-delivery.timer"
+node_ssh 0 --command="sudo systemctl enable tr-clickhouse-operational-ingest.service tr-clickhouse-synthetic-rollup.timer tr-clickhouse-client-rollup.timer tr-clickhouse-public-snapshots.timer tr-clickhouse-archive-restore.timer tr-clickhouse-spanner-delivery.timer"
 
 log "verifying exact replica identity after synchronization"
 PARITY_TABLES="activity_generations synthetic_probe_samples spend_lease_shadow synthetic_status_rollups public_analytics_snapshots client_request_events client_minute_counters client_availability_rollups operational_outbox_quarantine"
