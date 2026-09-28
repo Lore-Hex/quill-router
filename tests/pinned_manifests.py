@@ -74,6 +74,33 @@ ANTHROPIC_CLAUDE_OPUS_5 = {
     "cached_input_token_price_per_m": 500000,
 }
 
+# Pearl's GLM-5.3 route as its manifest lists it.
+PEARL_GLM_5_3 = {
+    "display_name": "Z.AI: GLM-5.3",
+    "title": "zai-org/GLM-5.3",
+    "model_type": "chat",
+    "input_modalities": ["text"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "id": "z-ai/glm-5.3",
+    "upstream_id": "zai-org/GLM-5.3",
+    "context_length": 1000000,
+    "max_output_tokens": 1000000,
+    "supported_features": [
+        "chat", "completion", "tools", "json_mode", "reasoning", "structured_outputs",
+        "prompt_caching",
+    ],
+    "supported_sampling_parameters": [
+        "temperature", "top_p", "top_k", "frequency_penalty", "presence_penalty", "stop", "seed",
+        "max_tokens",
+    ],
+    "routable": True,
+    "input_token_price_per_m": 1100000,
+    "output_token_price_per_m": 3500000,
+    "cached_input_token_price_per_m": 230000,
+}
+
 # OpenAI's own routes as its manifest lists them, for rules of OpenAI's
 # routes: its prepaid ZDR contract, Priority processing, image billing.
 OPENAI_GPT_4O_MINI = {

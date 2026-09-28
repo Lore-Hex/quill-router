@@ -3,9 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts.ingest_openrouter_catalog import filter_endpoints
 from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
+from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
+from trusted_router.catalog_data import Model, ModelEndpoint
 from trusted_router.routes.internal.gateway import _endpoint_for_id_compat
 
 
@@ -61,7 +65,28 @@ def test_committed_snapshot_has_at_most_one_route_per_google_product() -> None:
         assert len(google_products) == len(set(google_products)), model["id"]
 
 
-def test_legacy_google_endpoint_ids_preserve_their_original_product() -> None:
+def test_legacy_google_endpoint_ids_preserve_their_original_product(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Both products serve both models on fixture routes: the legacy mapping is
+    # a rule, and either product can delist either model any hour.
+    for model_id, embeddings in (
+        ("google/gemini-2.5-flash", False),
+        ("google/gemini-embedding-001", True),
+    ):
+        if model_id not in MODELS:
+            monkeypatch.setitem(MODELS, model_id, Model(
+                id=model_id, name=model_id, provider="google", context_length=1_048_576,
+                supports_chat=not embeddings, supports_embeddings=embeddings,
+            ))
+        for provider in ("google-ai-studio", "google-vertex"):
+            for usage_type, suffix in (("Credits", "prepaid"), ("BYOK", "byok")):
+                route = ModelEndpoint(
+                    id=f"{model_id}@{provider}/{suffix}", model_id=model_id,
+                    provider=provider, usage_type=usage_type,
+                )
+                monkeypatch.setitem(MODEL_ENDPOINTS, route.id, route)
+
     prepaid_chat = _endpoint_for_id_compat(
         "google/gemini-2.5-flash@gemini/prepaid"
     )
