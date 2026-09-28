@@ -311,5 +311,5 @@ def test_alibaba_is_wired_to_hourly_refresh() -> None:
     ).read_text(encoding="utf-8")
 
     assert "alibaba" in refresh.PROVIDER_SLUGS
-    assert 'cron: "0 * * * *"' in workflow
+    assert 'cron: "37 * * * *"' in workflow
     assert "ALIBABA_API_KEY:trustedrouter-alibaba-api-key" in workflow
