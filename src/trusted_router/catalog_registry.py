@@ -972,17 +972,21 @@ for _model_id, _model in _SUPPLEMENTAL_MODELS.items():
 # Archimedes is a one-model private proxy. Clone the canonical model after
 # native manifests have merged so context, capabilities, cache pricing, and
 # future price refreshes remain byte-for-byte aligned with Mistral Large.
-_archimedes_backing_model = MODELS[MISTRAL_LARGE_MODEL_ID]
-MODELS[ARCHIMEDES_1_0_MODEL_ID] = replace(
-    _archimedes_backing_model,
-    id=ARCHIMEDES_1_0_MODEL_ID,
-    name="TrustedRouter Archimedes 1.0",
-    provider="trustedrouter",
-    upstream_id=None,
-    prepaid_available=True,
-    byok_available=False,
-    hidden_public_metadata=True,
-)
+# Like a named decision model below, it is simply not offered while its backing
+# model is gone: indexing MODELS here stopped the whole control plane from
+# starting when a provider delisted one model.
+_archimedes_backing_model = MODELS.get(MISTRAL_LARGE_MODEL_ID)
+if _archimedes_backing_model is not None:
+    MODELS[ARCHIMEDES_1_0_MODEL_ID] = replace(
+        _archimedes_backing_model,
+        id=ARCHIMEDES_1_0_MODEL_ID,
+        name="TrustedRouter Archimedes 1.0",
+        provider="trustedrouter",
+        upstream_id=None,
+        prepaid_available=True,
+        byok_available=False,
+        hidden_public_metadata=True,
+    )
 # A named decision model is a one-model private proxy like Archimedes, but a
 # DECISION model: it answers POST /v1/decide only, and only on its pinned host
 # chain. Prices are filled in below, once endpoints exist, from that chain
