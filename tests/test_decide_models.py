@@ -252,7 +252,7 @@ def test_the_named_models_are_the_eight_people_were_promised() -> None:
         "trustedrouter/zev-1.0": ("fireworks", "baseten"),
         "trustedrouter/lev-1.0": ("sambanova", "parasail", "together"),
         "trustedrouter/dev-1.0": ("wafer", "deepinfra", "wandb"),
-        "trustedrouter/gemmev-1.0": ("wandb", "nextbit", "io-net"),
+        "trustedrouter/gemmev-1.0": ("nextbit", "wandb", "io-net"),
     }
     trev_chain = NAMED_DECISION_MODEL_PROVIDERS[TREV_1_0_MODEL_ID]
     assert trev_chain[0] == "cerebras"

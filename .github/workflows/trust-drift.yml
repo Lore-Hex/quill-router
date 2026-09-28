@@ -29,8 +29,8 @@ on:
   # and is what the daily run is for — it bounds detection latency for the one
   # cause no event reaches.
   #
-  # 07:23 UTC keeps it clear of the top-of-hour price-refresh and deploy rush,
-  # the same reasoning as daily-embeddings-probe.yml's 13:17.
+  # 07:23 UTC keeps it clear of the top-of-hour deploy/cron rush, the same
+  # reasoning as daily-embeddings-probe.yml's 13:17.
   schedule:
     - cron: "23 7 * * *"
   # A control-plane deploy can change how the records are MIRRORED (that is

@@ -257,23 +257,16 @@ case "$REQUEST_RECORD_WRITE_MODE" in
     ;;
 esac
 
-LIVE_STORAGE_BACKEND="$(
-  gc run services describe "$SERVICE" \
-    --region="$TR_PRIMARY_REGION" \
-    --format=json 2>/dev/null \
-    | jq -r '
-        [
-          .spec.template.spec.containers[0].env[]?
-          | select(.name == "TR_STORAGE_BACKEND")
-          | .value
-        ][0] // "spanner-bigtable"
-      ' || true
-)"
-STORAGE_BACKEND="${TR_STORAGE_BACKEND:-${LIVE_STORAGE_BACKEND:-spanner-bigtable}}"
-case "$STORAGE_BACKEND" in
-  spanner-bigtable|spanner-clickhouse) ;;
+# Bigtable analytics are retired (2026-09-28, step 3 of the Bigtable
+# retirement): every revision this script creates reads analytics from
+# ClickHouse alone and mirrors nothing to Bigtable. The live revision's
+# values are not consulted for these three settings; an explicit request for
+# the old backend, another read mode or mirror writes refuses.
+STORAGE_BACKEND=spanner-clickhouse
+case "${TR_STORAGE_BACKEND:-spanner-clickhouse}" in
+  spanner-clickhouse) ;;
   *)
-    log "refusing rollout: TR_STORAGE_BACKEND must be spanner-bigtable or spanner-clickhouse"
+    log "refusing rollout: TR_STORAGE_BACKEND=${TR_STORAGE_BACKEND} is retired; every revision runs spanner-clickhouse"
     exit 1
     ;;
 esac
@@ -290,60 +283,42 @@ LIVE_GENERATION_RECORDS_ENABLED="$(
         ][0] // empty
       ' || true
 )"
-LIVE_BIGTABLE_MIRROR_WRITES_ENABLED="$(
-  gc run services describe "$SERVICE" \
-    --region="$TR_PRIMARY_REGION" \
-    --format=json 2>/dev/null \
-    | jq -r '
-        [
-          .spec.template.spec.containers[0].env[]?
-          | select(.name == "TR_BIGTABLE_MIRROR_WRITES_ENABLED")
-          | .value
-        ][0] // empty
-      ' || true
-)"
 GENERATION_RECORDS_ENABLED="${TR_GENERATION_RECORDS_ENABLED:-${LIVE_GENERATION_RECORDS_ENABLED:-true}}"
-BIGTABLE_MIRROR_WRITES_ENABLED="${TR_BIGTABLE_MIRROR_WRITES_ENABLED:-${LIVE_BIGTABLE_MIRROR_WRITES_ENABLED:-true}}"
-case "$GENERATION_RECORDS_ENABLED:$BIGTABLE_MIRROR_WRITES_ENABLED" in
-  true:true|true:false|false:true|false:false) ;;
+case "$GENERATION_RECORDS_ENABLED" in
+  true|false) ;;
   *)
-    log "refusing rollout: generation-record and Bigtable-mirror flags must be true or false"
+    log "refusing rollout: TR_GENERATION_RECORDS_ENABLED must be true or false"
+    exit 1
+    ;;
+esac
+# The mirror flag stays rendered (false) because config.py still defaults it
+# to true and the spanner-clickhouse backend refuses to boot with it on.
+BIGTABLE_MIRROR_WRITES_ENABLED=false
+case "${TR_BIGTABLE_MIRROR_WRITES_ENABLED:-false}" in
+  false) ;;
+  *)
+    log "refusing rollout: TR_BIGTABLE_MIRROR_WRITES_ENABLED=${TR_BIGTABLE_MIRROR_WRITES_ENABLED} is retired; Bigtable receives no writes"
     exit 1
     ;;
 esac
 
-LIVE_ANALYTICS_READ_MODE="$(
-  gc run services describe "$SERVICE" \
-    --region="$TR_PRIMARY_REGION" \
-    --format=json 2>/dev/null \
-    | jq -r '
-        [
-          .spec.template.spec.containers[0].env[]?
-          | select(.name == "TR_ANALYTICS_READ_MODE")
-          | .value
-        ][0] // "bigtable"
-      ' || true
-)"
-ANALYTICS_READ_MODE="${TR_ANALYTICS_READ_MODE:-$LIVE_ANALYTICS_READ_MODE}"
-case "$ANALYTICS_READ_MODE" in
-  bigtable|dual|clickhouse|clickhouse-only) ;;
+ANALYTICS_READ_MODE=clickhouse-only
+case "${TR_ANALYTICS_READ_MODE:-clickhouse-only}" in
+  clickhouse-only) ;;
   *)
-    log "refusing rollout: invalid TR_ANALYTICS_READ_MODE"
+    log "refusing rollout: TR_ANALYTICS_READ_MODE=${TR_ANALYTICS_READ_MODE} is retired; analytics reads come from ClickHouse alone"
     exit 1
     ;;
 esac
-if [ "$STORAGE_BACKEND" = "spanner-clickhouse" ] && \
-   [ "$ANALYTICS_READ_MODE" != "clickhouse-only" ]; then
-  log "refusing rollout: spanner-clickhouse requires clickhouse-only reads"
-  exit 1
-fi
-if [ "$STORAGE_BACKEND" = "spanner-clickhouse" ] && \
-   { [ "$BIGTABLE_MIRROR_WRITES_ENABLED" != "false" ] ||
-     [ "$GENERATION_RECORDS_ENABLED" != "true" ] ||
-     [ "$REQUEST_RECORD_WRITE_MODE" != "typed" ]; }; then
-  log "refusing rollout: spanner-clickhouse requires typed generation records and no Bigtable mirror"
-  exit 1
-fi
+# spanner-clickhouse needs typed generation records: nothing else carries a
+# generation to ClickHouse once Bigtable is gone.
+case "$GENERATION_RECORDS_ENABLED:$REQUEST_RECORD_WRITE_MODE" in
+  true:typed) ;;
+  *)
+    log "refusing rollout: spanner-clickhouse requires TR_GENERATION_RECORDS_ENABLED=true and typed request records"
+    exit 1
+    ;;
+esac
 if [ "$GENERATION_RECORDS_ENABLED" = "true" ]; then
   generation_table_count="$(gc spanner databases execute-sql "$SPANNER_DATABASE_ID" \
     --instance="$SPANNER_INSTANCE_ID" \
@@ -353,50 +328,6 @@ if [ "$GENERATION_RECORDS_ENABLED" = "true" ]; then
     log "refusing rollout: tr_generation is missing; run migrate_generation_records.sh --apply"
     exit 1
   fi
-fi
-
-ANALYTICS_DUAL_READ_STARTED_AT="${TR_ANALYTICS_DUAL_READ_STARTED_AT:-}"
-if [ -z "$ANALYTICS_DUAL_READ_STARTED_AT" ]; then
-  ANALYTICS_DUAL_READ_STARTED_AT="$(
-    gc run services describe "$SERVICE" \
-      --region="$TR_PRIMARY_REGION" \
-      --format=json 2>/dev/null \
-      | jq -r '
-          [
-            .spec.template.spec.containers[0].env[]?
-            | select(.name == "TR_ANALYTICS_DUAL_READ_STARTED_AT")
-            | .value
-          ][0] // empty
-        ' || true
-  )"
-fi
-if [ "$ANALYTICS_READ_MODE" = "dual" ] && {
-  [ "$LIVE_ANALYTICS_READ_MODE" != "dual" ] ||
-  [ -z "$ANALYTICS_DUAL_READ_STARTED_AT" ];
-}; then
-  ANALYTICS_DUAL_READ_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-fi
-
-ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT="${TR_ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT:-}"
-if [ -z "$ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT" ]; then
-  ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT="$(
-    gc run services describe "$SERVICE" \
-      --region="$TR_PRIMARY_REGION" \
-      --format=json 2>/dev/null \
-      | jq -r '
-          [
-            .spec.template.spec.containers[0].env[]?
-            | select(.name == "TR_ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT")
-            | .value
-          ][0] // empty
-        ' || true
-  )"
-fi
-if [ "$ANALYTICS_READ_MODE" = "clickhouse" ] && {
-  [ "$LIVE_ANALYTICS_READ_MODE" != "clickhouse" ] ||
-  [ -z "$ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT" ];
-}; then
-  ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 fi
 
 # Regional quota capability and traffic issuance are separate switches. Resolve
@@ -594,8 +525,6 @@ ENV_VARS=(
   "TR_TWILIO_FROM_NUMBER=+15055313623"
   "TR_SPANNER_INSTANCE_ID=${SPANNER_INSTANCE_ID}"
   "TR_SPANNER_DATABASE_ID=${SPANNER_DATABASE_ID}"
-  "TR_BIGTABLE_INSTANCE_ID=${BIGTABLE_INSTANCE_ID}"
-  "TR_BIGTABLE_GENERATION_TABLE=${BIGTABLE_GENERATION_TABLE}"
   "TR_BIGTABLE_MIRROR_WRITES_ENABLED=${BIGTABLE_MIRROR_WRITES_ENABLED}"
   "TR_GENERATION_RECORDS_ENABLED=${GENERATION_RECORDS_ENABLED}"
   "TR_BYOK_KMS_KEY_NAME=${BYOK_KMS_KEY_NAME}"
@@ -714,9 +643,6 @@ ENV_VARS=(
   "TR_OPERATIONAL_ANALYTICS_SINK=outbox"
   "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_WRITE_USER=tr_ops_ingest"
   "TR_ANALYTICS_READ_MODE=${ANALYTICS_READ_MODE}"
-  "TR_ANALYTICS_DUAL_READ_GRACE_SECONDS=30"
-  "TR_ANALYTICS_DUAL_READ_STARTED_AT=${ANALYTICS_DUAL_READ_STARTED_AT}"
-  "TR_ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT=${ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT}"
   # The first expand deployment defaults to legacy. After an explicit typed
   # cutover, preserve the primary region's live mode on later deploys unless an
   # operator overrides it. This prevents routine rollouts from reopening the
@@ -775,8 +701,8 @@ ENV_VARS=(
   # a handful of point reads once per 15s. Do not re-arm without it.
   #
   # Conditions verified against production immediately before this flip:
-  # typed Spanner settlement (TR_STORAGE_BACKEND=spanner-bigtable,
-  # TR_REQUEST_RECORD_WRITE_MODE=typed) on the serving revision in all four
+  # typed Spanner settlement (TR_STORAGE_BACKEND=spanner-bigtable at the
+  # time, TR_REQUEST_RECORD_WRITE_MODE=typed) on the serving revision in all four
   # regions; stripe and x402 markers complete, zero unmatched, zero semantic
   # mismatches, 900 s consistency delay; the Stripe account pin reaching the
   # router; the pilot workspace tier 2, unlatched, on all 16 shards with no null
