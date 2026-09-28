@@ -21,8 +21,13 @@ os.environ["TR_STORAGE_BACKEND"] = "memory"
 import tests.lifecycle_freeze  # noqa: F401 - import-time side effect, see above
 
 # Likewise one catalog-freshness instant, pinned before trusted_router.main
-# builds its app and prewarms the public catalog (see the module).
-from tests import catalog_freshness_freeze
+# builds its app and prewarms the public catalog (see the module). Then any
+# vehicle route a provider delisted is put back, also before the app is built:
+# the money-path tests ride on a few real routes (tests/catalog_vehicles.py).
+from tests import (
+    catalog_freshness_freeze,
+    catalog_vehicles,  # noqa: F401 - import-time side effect, see above
+)
 from trusted_router import catalog_data, post_commit
 from trusted_router.config import Settings
 from trusted_router.main import create_app

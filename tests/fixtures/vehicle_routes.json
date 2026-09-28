@@ -1,0 +1,142 @@
+{
+ "endpoints": [
+  {
+   "catalog_valid_until": null,
+   "completion_price_microdollars_per_million_tokens": 5275000,
+   "completion_timeout_seconds": null,
+   "first_token_timeout_seconds": null,
+   "id": "anthropic/claude-haiku-4.5@anthropic/prepaid",
+   "model_id": "anthropic/claude-haiku-4.5",
+   "price_tiers": [
+    {
+     "completion_price_microdollars_per_million_tokens": 5275000,
+     "max_prompt_tokens": null,
+     "prompt_cached_price_microdollars_per_million_tokens": 105500,
+     "prompt_price_microdollars_per_million_tokens": 1055000
+    }
+   ],
+   "prompt_price_microdollars_per_million_tokens": 1055000,
+   "provider": "anthropic",
+   "published_completion_price_microdollars_per_million_tokens": 5275000,
+   "published_price_tiers": [
+    {
+     "completion_price_microdollars_per_million_tokens": 5275000,
+     "max_prompt_tokens": null,
+     "prompt_cached_price_microdollars_per_million_tokens": 105500,
+     "prompt_price_microdollars_per_million_tokens": 1055000
+    }
+   ],
+   "published_prompt_price_microdollars_per_million_tokens": 1055000,
+   "request_price_microdollars": 0,
+   "stream_idle_timeout_seconds": null,
+   "supported_parameters": [
+    "tools",
+    "max_tokens",
+    "reasoning",
+    "include_reasoning",
+    "structured_outputs"
+   ],
+   "upstream_id": "claude-haiku-4-5-20251001",
+   "usage_type": "Credits"
+  },
+  {
+   "catalog_valid_until": null,
+   "completion_price_microdollars_per_million_tokens": 5275000,
+   "completion_timeout_seconds": null,
+   "first_token_timeout_seconds": null,
+   "id": "anthropic/claude-haiku-4.5@anthropic/byok",
+   "model_id": "anthropic/claude-haiku-4.5",
+   "price_tiers": [
+    {
+     "completion_price_microdollars_per_million_tokens": 5275000,
+     "max_prompt_tokens": null,
+     "prompt_cached_price_microdollars_per_million_tokens": 105500,
+     "prompt_price_microdollars_per_million_tokens": 1055000
+    }
+   ],
+   "prompt_price_microdollars_per_million_tokens": 1055000,
+   "provider": "anthropic",
+   "published_completion_price_microdollars_per_million_tokens": 5275000,
+   "published_price_tiers": [
+    {
+     "completion_price_microdollars_per_million_tokens": 5275000,
+     "max_prompt_tokens": null,
+     "prompt_cached_price_microdollars_per_million_tokens": 105500,
+     "prompt_price_microdollars_per_million_tokens": 1055000
+    }
+   ],
+   "published_prompt_price_microdollars_per_million_tokens": 1055000,
+   "request_price_microdollars": 0,
+   "stream_idle_timeout_seconds": null,
+   "supported_parameters": [
+    "tools",
+    "max_tokens",
+    "reasoning",
+    "include_reasoning",
+    "structured_outputs"
+   ],
+   "upstream_id": "claude-haiku-4-5-20251001",
+   "usage_type": "BYOK"
+  }
+ ],
+ "models": [
+  {
+   "byok_available": true,
+   "completion_price_microdollars_per_million_tokens": 5275000,
+   "context_length": 200000,
+   "documentation": null,
+   "hidden_public_metadata": false,
+   "id": "anthropic/claude-haiku-4.5",
+   "input_modalities": [
+    "text",
+    "image"
+   ],
+   "minimum_charge_microdollars": 0,
+   "name": "Anthropic: Claude Haiku 4.5",
+   "output_modalities": [
+    "text"
+   ],
+   "prepaid_available": true,
+   "price_tiers": [
+    {
+     "completion_price_microdollars_per_million_tokens": 5275000,
+     "max_prompt_tokens": null,
+     "prompt_cached_price_microdollars_per_million_tokens": 105500,
+     "prompt_price_microdollars_per_million_tokens": 1055000
+    }
+   ],
+   "prompt_price_microdollars_per_million_tokens": 1055000,
+   "provider": "anthropic",
+   "published_completion_price_microdollars_per_million_tokens": 5275000,
+   "published_price_tiers": [
+    {
+     "completion_price_microdollars_per_million_tokens": 5275000,
+     "max_prompt_tokens": null,
+     "prompt_cached_price_microdollars_per_million_tokens": 105500,
+     "prompt_price_microdollars_per_million_tokens": 1055000
+    }
+   ],
+   "published_prompt_price_microdollars_per_million_tokens": 1055000,
+   "request_price_microdollars": 0,
+   "supported_parameters": [
+    "tools",
+    "tool_choice",
+    "max_tokens",
+    "temperature",
+    "top_p",
+    "top_k",
+    "reasoning",
+    "include_reasoning",
+    "structured_outputs",
+    "response_format",
+    "stop"
+   ],
+   "supports_chat": true,
+   "supports_decide": false,
+   "supports_embeddings": false,
+   "supports_messages": true,
+   "supports_video": false,
+   "upstream_id": null
+  }
+ ]
+}
