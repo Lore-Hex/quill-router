@@ -1354,57 +1354,58 @@ def _install_deepseek_v4_pro_release_routes() -> None:
     catalog exposes that exact release ID. The 0423 leaf is cloned only from
     snapshot endpoints explicitly labeled 20260423 and excludes the now rolling
     first-party route.
+
+    This runs at import, and the catalog it reads is refreshed hourly without a
+    human in the loop, so it must never raise: one provider delisting one
+    release route would otherwise stop the whole control plane from starting.
+    A leaf whose required routes are gone is not offered at all (authorize
+    answers "unknown model" for it), never offered on a different route set.
     """
     base = MODELS.get("deepseek/deepseek-v4-pro")
-    if base is None:
-        raise RuntimeError("DeepSeek V4 Pro base model is missing")
-
-    snapshot = json.loads(_INGEST_PATH.read_text())
-    historical_provider_slugs = {
-        str(endpoint.get("tr_provider_slug") or "")
-        for model in snapshot.get("models", [])
-        if model.get("id") == base.id
-        for endpoint in model.get("endpoints", [])
-        if "20260423" in str(endpoint.get("name") or "")
-        and endpoint.get("tr_provider_slug") != "deepseek"
-    }
-    historical = [
-        endpoint
-        for endpoint in _INGESTED_ENDPOINTS.values()
-        if endpoint.model_id == base.id
-        and endpoint.usage_type == "Credits"
-        and endpoint.provider in historical_provider_slugs
-    ]
-    current = MODEL_ENDPOINTS.get(f"{base.id}@deepseek/prepaid")
-    baseten_current = MODEL_ENDPOINTS.get(
-        f"{DEEPSEEK_V4_PRO_0813_MODEL_ID}@baseten/prepaid"
-    )
-    fireworks_current = MODEL_ENDPOINTS.get(
-        f"{DEEPSEEK_V4_PRO_0813_MODEL_ID}@fireworks/prepaid"
-    )
-    if (
-        not historical
-        or current is None
-        or baseten_current is None
-        or (
-            fireworks_current is None
-            and not provider_model_retired(
-                "fireworks", DEEPSEEK_V4_PRO_0813_MODEL_ID, at=CATALOG_RESOLVED_AT
-            )
+    historical: list[ModelEndpoint] = []
+    current: ModelEndpoint | None = None
+    baseten_current: ModelEndpoint | None = None
+    fireworks_current: ModelEndpoint | None = None
+    if base is not None:
+        snapshot = json.loads(_INGEST_PATH.read_text())
+        historical_provider_slugs = {
+            str(endpoint.get("tr_provider_slug") or "")
+            for model in snapshot.get("models", [])
+            if model.get("id") == base.id
+            for endpoint in model.get("endpoints", [])
+            if "20260423" in str(endpoint.get("name") or "")
+            and endpoint.get("tr_provider_slug") != "deepseek"
+        }
+        historical = [
+            endpoint
+            for endpoint in _INGESTED_ENDPOINTS.values()
+            if endpoint.model_id == base.id
+            and endpoint.usage_type == "Credits"
+            and endpoint.provider in historical_provider_slugs
+        ]
+        current = MODEL_ENDPOINTS.get(f"{base.id}@deepseek/prepaid")
+        baseten_current = MODEL_ENDPOINTS.get(
+            f"{DEEPSEEK_V4_PRO_0813_MODEL_ID}@baseten/prepaid"
         )
-    ):
-        raise RuntimeError("DeepSeek V4 Pro release routes are incomplete")
+        fireworks_current = MODEL_ENDPOINTS.get(
+            f"{DEEPSEEK_V4_PRO_0813_MODEL_ID}@fireworks/prepaid"
+        )
 
     # Versioned release IDs are immutable Credits-only products. The hourly
     # provider manifests may discover matching native IDs later, but those
     # supplemental rows must not silently add BYOK routes or alter the route
-    # set behind an already-published version.
+    # set behind an already-published version. Nor may a manifest row offer
+    # the release on its own when the leaf below is not installed.
     for endpoint_id, endpoint in tuple(MODEL_ENDPOINTS.items()):
         if endpoint.model_id in {
             DEEPSEEK_V4_PRO_0423_MODEL_ID,
             DEEPSEEK_V4_PRO_0813_MODEL_ID,
         }:
             del MODEL_ENDPOINTS[endpoint_id]
+    MODELS.pop(DEEPSEEK_V4_PRO_0423_MODEL_ID, None)
+    MODELS.pop(DEEPSEEK_V4_PRO_0813_MODEL_ID, None)
+    if base is None:
+        return
 
     def install(
         model_id: str,
@@ -1440,17 +1441,26 @@ def _install_deepseek_v4_pro_release_routes() -> None:
                 model_id=model_id,
             )
 
-    install(
-        DEEPSEEK_V4_PRO_0423_MODEL_ID,
-        "DeepSeek V4 Pro 0423",
-        historical,
+    if historical:
+        install(
+            DEEPSEEK_V4_PRO_0423_MODEL_ID,
+            "DeepSeek V4 Pro 0423",
+            historical,
+        )
+    fireworks_required = not provider_model_retired(
+        "fireworks", DEEPSEEK_V4_PRO_0813_MODEL_ID, at=CATALOG_RESOLVED_AT
     )
-    install(
-        DEEPSEEK_V4_PRO_0813_MODEL_ID,
-        "DeepSeek V4 Pro 0813",
-        [current, baseten_current] + ([fireworks_current] if fireworks_current is not None else []),
-    )
-
+    if (
+        current is not None
+        and baseten_current is not None
+        and (fireworks_current is not None or not fireworks_required)
+    ):
+        install(
+            DEEPSEEK_V4_PRO_0813_MODEL_ID,
+            "DeepSeek V4 Pro 0813",
+            [current, baseten_current]
+            + ([fireworks_current] if fireworks_current is not None else []),
+        )
 
 _install_deepseek_v4_pro_release_routes()
 
