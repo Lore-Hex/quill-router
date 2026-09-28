@@ -22,7 +22,7 @@ name: Refresh upstream prices
 on:
   schedule:
     # Hourly at :37. GitHub delays schedule events under load, names the
-    # start of every hour as a high-load time, and may drop queued runs.
+    # start of every hour as a high-load time, and may discard queued runs.
     # Moving the minute does not restore an hourly cadence: from 2026-09-21
     # to 09-27 this cron (at :00) and provider-catalog-health.yml's (at :17)
     # each started 5 or 6 scheduled runs a day.
