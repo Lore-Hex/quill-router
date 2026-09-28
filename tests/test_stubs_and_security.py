@@ -1395,8 +1395,15 @@ def test_in_memory_rate_limit_bucket_cardinality_is_capped() -> None:
     # Identities past the cap share the overflow bucket, so a rotation attack
     # is throttled collectively instead of resetting per identity.
     assert hit.allowed is False
-    # Distinct subjects below the cap keep their own buckets untouched.
-    early = limits.hit(namespace="internal", subject="fabricated-1", limit=3, window_seconds=60)
+    # An identity that got its own bucket before the cap keeps it: its second
+    # hit of three is allowed, although the overflow bucket is exhausted.
+    early = limits.hit(
+        namespace="fabricated-namespace-0",
+        subject="fabricated-1",
+        limit=3,
+        window_seconds=60,
+        now=fixed_now,
+    )
     assert early.allowed is True
 
 
