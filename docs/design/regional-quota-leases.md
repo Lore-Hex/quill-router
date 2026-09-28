@@ -151,6 +151,92 @@ uses the exact Spanner path until that region has an isolated local ledger.
 
 ## Rollout gates
 
+**Retired 2026-09-27 (step 2).** `scripts/deploy/rollout.sh` now pins
+`TR_REGIONAL_QUOTA_LEASES_ENABLED=false`, refuses an explicit `true`, and
+renders none of the ledger settings (cohort, shards, TTL, tables, cluster
+maps, app profiles): the store opens a Bigtable ledger client whenever an
+app-profile map is present, capability or not, so their absence is what keeps
+Bigtable out of every serving process. Two release steps replace the
+provisioners and the background reconciler deploys:
+
+- `scripts/deploy/ledger_retirement.sh` is sourced by `rollout.sh`, so the gate
+  runs for every entry point (the release workflow, `deploy-gcp.sh`,
+  break-glass, the analytics cutover) right after the deployment mutex and
+  before any revision is created; `regional_quota_drain_gate.sh` runs the
+  same gate earlier, in `migrate-schema`. It proves: every serving revision
+  (held regions included) carries issuance, spend issuance, binding and
+  admission markers `false` on every revision that can still take requests -
+  the traffic split's members and every tagged revision, since a tag stays
+  addressable at 0% (an absent marker is `false` too - config.py defaults
+  every one of them off; any other value refuses); the fleet has been
+  quiescent for the drain interval (120 s, longer than the gateway's 25 s
+  authorize budget) as recorded in `controls/ledger-drain-observation.json` -
+  each region's service generation and reachable revision set with the time
+  that state was first seen, reset by any change because Cloud Run keeps no
+  traffic history (a service is read only once `status.observedGeneration`
+  has caught up with its generation and no reconciliation is in progress:
+  `status.traffic` describes the last reconciled spec); Spanner holds no
+  `regional_quota_lease_open` / `regional_quota_lease_workspace_open` entity,
+  no unsettled `RegionalCredits` reservation (read together with the index
+  rows: a pending or dead settle-outbox intent needs the ledger only while
+  its lease is open, and that lease's index row stays until reconciliation
+  closes it, so the outbox itself - which has no status index - is never
+  scanned), and no dead or unfinished `spend_lease_open` row - a lease
+  closed on both sides (`local_closed_at` set) has released its escrow and
+  keeps `phase='open'` only for retention, a cleanup that needs no ledger
+  and never runs for the pilot's last lease while the fence names it, so
+  it does not count (the reconciler's own `open` counts only rows due now;
+  this pilot table is read the way its reconciler reads it, since a dead
+  row keeps `next_attempt_at` NULL and the due index cannot see it); and, while a reconciler
+  schedule still exists, that its exact target job (project, location, name
+  parsed from the schedule) reported five healthy passes - no errors,
+  nothing dead, nothing left half-created; open work is Spanner's call,
+  since the spend reconciler visits a retention-only lease on every pass -
+  all after the fleet state was first seen plus the drain interval. Every
+  control object (observation, gate pass, targets, marker) is uploaded with
+  a generation precondition read before its content, so a late upload can
+  never overwrite a newer record; the targets record only grows. A missing schedule
+  without a retirement marker is a partial teardown: Spanner still decides,
+  with a warning. The release workflow warms the four regions in parallel
+  processes that share one deployment mutex operation; the gate runs once
+  before that fan-out and records its pass in `controls/ledger-gate-pass.json`
+  under that operation (only a gate under an operation writes that record,
+  so an unlocked gate's observation write cannot erase it), and the
+  siblings' own gates stand on it while the production
+  lock is still held by that operation and unexpired - while the lock is
+  held, the fleet changes only through this release's revisions. A
+  standalone rollout takes its own lock and always runs the full gate; the
+  teardown re-reads that lock before every destructive step and the marker,
+  since its waits can outlast a lease, and fails once it is not held.
+- `scripts/deploy/retire_ledger_workers.sh` runs after the secondary ramp,
+  under the deployment mutex (the workflow's, or its own when invoked
+  directly). It defers (with a workflow warning) while any reachable
+  revision still carries capability, a profile map or a spend switch - a
+  fleet it cannot read or that is not reconciled fails the step instead -
+  waits
+  for the fleet state it finds to age out (a fleet that changes again during
+  that wait fails the step), re-checks Spanner, deletes both
+  schedules, waits for every worker's running executions (one a schedule
+  started moments earlier can still mark a lease dead), re-checks Spanner
+  again, deletes every worker the project-wide inventory names, proves
+  absence, and only then writes
+  `gs://tr-deploy-mutex-quill-cloud-proxy/controls/ledger-retirement.json`
+  (`state: retired`, scoped to the project, Spanner instance and database).
+  That marker waives only the worker evidence afterwards, and only while
+  every serving revision still runs without capability or a profile map;
+  the Spanner checks always run, and a traffic rollback to an older
+  revision brings the full gate back. The worker inventory is project-wide
+  (a listing that warns about unreachable regions, or names a job without a
+  readable location, refuses) and matches workers by `location/name`: the
+  exact identities the deployers accept as overrides plus the schedules' own
+  targets, which are recorded in `controls/ledger-retirement-targets.json`
+  before any schedule is deleted, so a retry after an interrupted teardown
+  still finds every worker. Both steps stay in the release until the
+  scripts that created those resources are deleted with the ledger code.
+
+The provisioner and worker scripts remain on disk, unwired, until then. The
+description below is the pre-retirement design.
+
 Two independent flags make a rolling deploy safe:
 
 - `TR_REGIONAL_QUOTA_LEASES_ENABLED` is fleet capability. It keeps the fixed

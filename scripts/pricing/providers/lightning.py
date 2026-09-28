@@ -91,14 +91,26 @@ def fetch() -> ProviderPricingResult:
         response.raise_for_status()
         payload = response.json()
     rows = payload.get("data") or []
-    prices: dict[str, ModelPrice] = {}
-    discovered: dict[str, dict[str, Any]] = {}
+    # The public catalog also lists third-party apps under the id of the model
+    # they wrap, each with its own name, context and sometimes price, and
+    # nothing marks which listing is the model's own. So a native id listed
+    # more than once never names the model, advertises the smallest context
+    # any of its listings claims, and publishes no price when its listings
+    # disagree on one.
+    listing_count: dict[str, int] = {}
+    listed_contexts: dict[str, list[int]] = {}
+    listed_rates: dict[str, set[tuple[int, int]]] = {}
+    latest: dict[str, tuple[str, dict[str, Any], int, int]] = {}
     for row in rows:
         if not isinstance(row, dict):
             continue
         native_id = row.get("id")
         if not isinstance(native_id, str):
             continue
+        listing_count[native_id] = listing_count.get(native_id, 0) + 1
+        context_length = positive_int(row.get("context_length"))
+        if context_length is not None:
+            listed_contexts.setdefault(native_id, []).append(context_length)
         or_id = mapped_or_canonical_model_id(native_id, _NATIVE_TO_OR_ID)
         if or_id is None:
             continue
@@ -118,24 +130,39 @@ def fetch() -> ProviderPricingResult:
             continue
         prompt_micro_per_m = int(round(prompt_per_token * 1_000_000_000_000))
         completion_micro_per_m = int(round(completion_per_token * 1_000_000_000_000))
+        listed_rates.setdefault(native_id, set()).add((prompt_micro_per_m, completion_micro_per_m))
+        # As before, a model's last priced listing picks its upstream id.
+        latest[or_id] = (native_id, row, prompt_micro_per_m, completion_micro_per_m)
+
+    prices: dict[str, ModelPrice] = {}
+    discovered: dict[str, dict[str, Any]] = {}
+    notes: list[str] = []
+    for or_id, (native_id, row, prompt_micro_per_m, completion_micro_per_m) in latest.items():
+        discovered_row: dict[str, Any] = {
+            "id": or_id,
+            "upstream_id": native_id,
+            "endpoints": ["chat/completions"],
+        }
+        if listing_count[native_id] == 1:
+            discovered_row["display_name"] = str(row.get("name") or native_id)
+        if native_id in listed_contexts:
+            discovered_row["context_length"] = min(listed_contexts[native_id])
+        discovered[or_id] = discovered_row
+        if len(listed_rates[native_id]) > 1:
+            # The shared manifest writer marks a present, unpriced route
+            # price-unavailable instead of billing any one listing's price.
+            notes.append(
+                f"{or_id}: {listing_count[native_id]} listings of {native_id} "
+                "disagree on price; no price published"
+            )
+            continue
         prices[or_id] = ModelPrice(
             prompt_micro_per_m=prompt_micro_per_m,
             completion_micro_per_m=completion_micro_per_m,
         )
-        discovered_row: dict[str, Any] = {
-            "id": or_id,
-            "upstream_id": native_id,
-            "display_name": str(row.get("name") or native_id),
-            "endpoints": ["chat/completions"],
-        }
-        context_length = positive_int(row.get("context_length"))
-        if context_length is not None:
-            discovered_row["context_length"] = context_length
-        discovered[or_id] = discovered_row
 
     _DISCOVERED_MANIFEST_ROWS = discovered
 
-    notes: list[str] = []
     errors = validate(prices, EXPECTED_MODELS)
     if errors:
         notes.append(f"validation notes: {errors}")

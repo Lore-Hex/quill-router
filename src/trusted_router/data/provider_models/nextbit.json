@@ -17,7 +17,7 @@
       "status": 1,
       "id": "bsc-lt/alia-40b-instruct-2601",
       "upstream_id": "alia-salamandra:40b",
-      "context_length": 32768,
+      "context_length": 65536,
       "max_output_tokens": 32768,
       "supported_features": [
         "tools",
@@ -153,9 +153,9 @@
         "top_logprobs"
       ],
       "routable": true,
-      "input_token_price_per_m": 90000,
-      "output_token_price_per_m": 300000,
-      "cached_input_token_price_per_m": 50000
+      "input_token_price_per_m": 67500,
+      "output_token_price_per_m": 225000,
+      "cached_input_token_price_per_m": 37500
     },
     {
       "display_name": "mythomax:13b",
@@ -194,7 +194,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 60000,
-      "output_token_price_per_m": 60000
+      "output_token_price_per_m": 60000,
+      "missing_since": "2026-09-27"
     },
     {
       "display_name": "qwen3:14b",
@@ -312,7 +313,8 @@
       "routable": false,
       "routable_reason": "provider-alias-unavailable",
       "input_token_price_per_m": 400000,
-      "output_token_price_per_m": 400000
+      "output_token_price_per_m": 400000,
+      "missing_since": "2026-09-27"
     },
     {
       "display_name": "remm-slerp:l2-13b",
@@ -355,7 +357,7 @@
     }
   ],
   "source": "https://api.nextbit256.com/v1/models",
-  "generated_at": "2026-09-14T20:00:58Z",
+  "generated_at": "2026-09-27T23:04:50Z",
   "price_scale": "microdollars_per_million",
   "model_count": 9
 }

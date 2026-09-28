@@ -215,13 +215,13 @@
       "tee_attested": true,
       "tee_type": "TDX",
       "tee_verifier": "dstack",
-      "private_provider_count": 1,
+      "private_provider_count": 2,
       "pricing_policy": "maximum-active-private-route",
-      "input_token_price_per_m": 1400000,
-      "output_token_price_per_m": 4400000,
-      "cached_input_token_price_per_m": 350000
+      "input_token_price_per_m": 2100000,
+      "output_token_price_per_m": 6600000,
+      "cached_input_token_price_per_m": 420000
     }
   ],
   "model_count": 4,
-  "generated_at": "2026-09-24T13:22:08Z"
+  "generated_at": "2026-09-27T23:04:50Z"
 }

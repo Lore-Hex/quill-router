@@ -1570,7 +1570,19 @@ path it guarded.
 
 ## <a id="spend-lease-reconciler"></a>Spend-lease reconciler
 
-The versioned `trusted-router-spend-lease-reconciler-*` Cloud Run Job runs once
+**Retired 2026-09-27.** No release deploys this worker any more:
+`scripts/deploy/regional_quota_drain_gate.sh` proves both ledgers are drained
+before the capability-off rollout, and `scripts/deploy/retire_ledger_workers.sh`
+deletes the `trusted-router-spend-lease-reconcile` schedule and every
+`trusted-router-spend-lease-reconciler-*` job after the ramp (the same for the
+regional quota reconciler) - or defers, with a workflow warning, while any
+region still serves a capability-on revision. The alerts and CLI below
+describe the retired worker. Once the release log shows `ledger reconciler
+workers retired` and `controls/ledger-retirement.json` exists in the deploy
+mutex bucket, a `spend_lease.*` heartbeat alert means an alert rule outlived
+the job; before that, it means what it always meant.
+
+The versioned `trusted-router-spend-lease-reconciler-*` Cloud Run Job ran once
 per minute with a 50-second task deadline. It is intentionally active while
 spend-lease binding is off: an empty pass verifies the regional Bigtable
 profiles, records both lag values as zero, publishes

@@ -39,12 +39,13 @@
       "id": "minimax/minimax-m3",
       "upstream_id": "MiniMaxAI/MiniMax-M3-MXFP8",
       "routable": false,
-      "routable_reason": "price-unavailable"
+      "routable_reason": "price-unavailable",
+      "missing_since": "2026-09-27"
     }
   ],
   "source": "https://api.confidential.ai/v1/models",
   "pricing_source": "https://confidential.ai/pricing",
-  "generated_at": "2026-09-24T13:22:08Z",
+  "generated_at": "2026-09-27T23:04:50Z",
   "price_scale": "microdollars_per_million",
   "model_count": 2
 }

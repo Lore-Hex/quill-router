@@ -17,6 +17,11 @@ from trusted_router.polyphemus import MODEL_ID as POLYPHEMUS_MODEL_ID
 from trusted_router.pricing import PriceTier
 
 
+def _utc_now() -> datetime:
+    """The instant catalog freshness is judged at; tests pin it."""
+    return datetime.now(UTC)
+
+
 @dataclass(frozen=True)
 class Provider:
     slug: str
@@ -429,7 +434,7 @@ class ModelEndpoint:
     def catalog_is_current(self, *, at: datetime | None = None) -> bool:
         if self.catalog_valid_until is None:
             return True
-        current = at or datetime.now(UTC)
+        current = at or _utc_now()
         if current.tzinfo is None:
             current = current.replace(tzinfo=UTC)
         return current.astimezone(UTC) < self.catalog_valid_until

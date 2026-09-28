@@ -3385,7 +3385,9 @@
       "input_token_price_per_m": 5000000,
       "output_token_price_per_m": 25000000,
       "cached_input_token_price_per_m": 500000,
-      "missing_since": "2026-09-24"
+      "missing_since": "2026-09-24",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Claude Sonnet 5 CC Max",
@@ -3409,7 +3411,9 @@
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
       "cached_input_token_price_per_m": 200000,
-      "missing_since": "2026-09-24"
+      "missing_since": "2026-09-24",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Claude Opus 5 CC Max",
@@ -3433,7 +3437,9 @@
       "input_token_price_per_m": 5000000,
       "output_token_price_per_m": 25000000,
       "cached_input_token_price_per_m": 500000,
-      "missing_since": "2026-09-24"
+      "missing_since": "2026-09-24",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Doubao Seed Character",
@@ -4188,6 +4194,6 @@
       "cached_input_token_price_per_m": 10000
     }
   ],
-  "generated_at": "2026-09-24T13:22:08Z",
+  "generated_at": "2026-09-27T23:04:50Z",
   "model_count": 150
 }

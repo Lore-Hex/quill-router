@@ -100,14 +100,6 @@ EXPECTED_ENV_NAMES = {
     "TR_TRUST_AZURE_RELEASE_URL",
     "TR_REGIONAL_QUOTA_LEASES_ENABLED",
     "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED",
-    "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS",
-    "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS",
-    "TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS",
-    "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS",
-    "TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT",
-    "TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS",
-    "TR_REGIONAL_QUOTA_BIGTABLE_TABLE",
-    "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES",
     "TR_FEDERATION_HOME_BASE_URL",
     "TR_FEDERATION_DEFERRED_SETTLEMENT_ENABLED",
     "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL",
@@ -417,6 +409,37 @@ def test_companion_cloud_state_is_a_legitimate_routed_start(
         extra_env={"HARNESS_INTERNAL_INITIAL_INGRESS": "all"},
     )
     assert run.returncode == 0, summarise(run)
+
+
+@pytest.mark.parametrize("stage", ("companion", "routed"))
+def test_internal_deploy_refuses_a_legacy_service_that_still_serves_lease_capability(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str,
+) -> None:
+    # Ledger retirement (2026-09-27): this surface no longer copies the ledger
+    # app-profile maps, and a revision with capability but no map cannot boot.
+    # A legacy service still on the capability-on step is refused as a source.
+    original = SCRIPT_FIXTURES[SCRIPT]
+    capability_on = json.loads(
+        next(reply for pattern, reply in original.responses if "run revisions describe trusted-router-active" in pattern)
+    )
+    for item in capability_on["spec"]["containers"][0]["env"]:
+        if item.get("name") == "TR_REGIONAL_QUOTA_LEASES_ENABLED":
+            item["value"] = "true"
+    responses = tuple(
+        (pattern, json.dumps(capability_on, separators=(",", ":")))
+        if "run revisions describe trusted-router-active" in pattern
+        else (pattern, reply)
+        for pattern, reply in original.responses
+    )
+    monkeypatch.setitem(SCRIPT_FIXTURES, SCRIPT, replace(original, responses=responses))
+    harness = DeployScriptHarness(tmp_path / "legacy-capability-on")
+
+    run = harness.run(SCRIPT, args=(stage,))
+
+    assert run.returncode != 0
+    assert "still serves TR_REGIONAL_QUOTA_LEASES_ENABLED=true; retire the ledger on the legacy service first" in run.stderr
+    mutating = ("create", "update", "deploy", "add-backend", "import")
+    assert not any(any(part in mutating for part in call[1:]) for call in run.calls)
 
 
 def test_missing_internal_runtime_sa_refuses_before_any_mutation(

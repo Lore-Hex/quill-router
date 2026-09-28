@@ -20,8 +20,8 @@ Backend availability
 --------------------
 `memory` always runs. Backends that need a live server (the Spanner/Bigtable
 emulators or a Postgres container) are opt-in: their factory calls
-`pytest.skip()` when the server isn't reachable, so the suite stays green on a
-laptop and gains real cross-backend enforcement in CI. A backend that is
+`pytest.skip()` when the backend is not configured. Once native emulator
+coverage is explicitly enabled, missing or unreachable servers fail the test. A backend that is
 skipped proves nothing, which is why `test_memory_backend_is_always_runnable`
 deliberately does NOT depend on the parametrized `store` fixture — a guard
 that can itself be skipped guards nothing.
@@ -29,8 +29,9 @@ that can itself be skipped guards nothing.
 Test isolation
 --------------
 `InMemoryStore` is constructed fresh per test, so it is isolated for free.
-Server-backed backends are NOT: `SpannerBigtableStore.reset()` explicitly
-refuses to wipe a real database. Tests therefore must not reuse fixed
+Native GoogleSQL provisions one disposable instance/database/table per session,
+and constructs a fresh store per test. Server backends share their database.
+Tests therefore must not reuse fixed
 identifiers across tests — every id is namespaced with the per-test `unique`
 fixture below, so a shared emulator database stays order-independent and
 uncontaminated between runs.
@@ -58,49 +59,36 @@ def _memory_store() -> Store:
     return InMemoryStore()
 
 
+@pytest.fixture(scope="session")
+def native_emulator_resources():
+    """One disposable schema/table per session; identifiers are unique per test."""
+    from tests.conformance.spanner_emulator import emulator_resources
+
+    with emulator_resources() as resources:
+        yield resources
+
+
 def _spanner_emulator_store() -> Store:
-    """`SpannerBigtableStore` pointed at the Google emulators.
+    raise AssertionError("use the session-owned native_emulator_resources fixture")
 
-    `SpannerBigtableStore.__init__` eagerly opens clients, and the Google
-    client libraries route to a local emulator when SPANNER_EMULATOR_HOST /
-    BIGTABLE_EMULATOR_HOST are exported. Both are required: this store spans
-    two services and a half-configured one fails in a confusing way partway
-    through a test rather than skipping cleanly here.
 
-    Schema provisioning against the emulator is deliberately NOT done here —
-    it is the next increment. Until then this backend skips, and the suite
-    documents the gap instead of pretending to cover it.
-    """
-    spanner_host = os.environ.get("SPANNER_EMULATOR_HOST")
-    bigtable_host = os.environ.get("BIGTABLE_EMULATOR_HOST")
-    if not (spanner_host and bigtable_host):
-        pytest.skip(
-            "Spanner/Bigtable emulators not configured "
-            "(export SPANNER_EMULATOR_HOST and BIGTABLE_EMULATOR_HOST)"
-        )
-    if not os.environ.get("TR_CONFORMANCE_EMULATOR_SCHEMA"):
-        pytest.skip(
-            "emulator schema provisioning not implemented yet "
-            "(set TR_CONFORMANCE_EMULATOR_SCHEMA=1 once it lands)"
-        )
-    from trusted_router.storage_gcp import SpannerBigtableStore
+def _backend(request: pytest.FixtureRequest) -> Store:
+    if request.param != "spanner-emulator":
+        return BACKENDS[request.param]()
+    from tests.conformance.spanner_emulator import emulator_store
 
-    return SpannerBigtableStore(
-        project_id=os.environ.get("TR_CONFORMANCE_PROJECT", "tr-conformance"),
-        spanner_instance_id=os.environ.get("TR_CONFORMANCE_SPANNER_INSTANCE", "tr-test"),
-        spanner_database_id=os.environ.get("TR_CONFORMANCE_SPANNER_DB", "tr-test"),
-        bigtable_instance_id=os.environ.get("TR_CONFORMANCE_BIGTABLE_INSTANCE", "tr-test"),
-        generation_table=os.environ.get(
-            "TR_CONFORMANCE_BIGTABLE_TABLE", "trustedrouter-generations"
-        ),
-    )
+    _, _, instance_id = request.getfixturevalue("native_emulator_resources")
+    context = emulator_store(instance_id)
+    backend = context.__enter__()
+    backend.close = lambda: context.__exit__(None, None, None)
+    return backend
 
 
 def _spanner_fake_store() -> Store:
     """The REAL `SpannerBigtableStore`, over the in-process Spanner fake.
 
-    This is the only backend in this table that executes `storage_gcp.py`, and
-    it is the one that runs unconditionally in CI. That combination is the
+    This backend executes `storage_gcp.py` without an external service and
+    runs unconditionally in CI. That combination is the
     point of it.
 
     WHY IT EXISTS, since the obvious objection is "a fake proves nothing":
@@ -108,9 +96,8 @@ def _spanner_fake_store() -> Store:
     Spanner server, which tests Spanner's SQL DIALECT — genuinely valuable — but
     it never executes one line of the native-Spanner store, so it cannot cover
     the sharded money code GCP actually runs in production. `spanner-emulator`
-    does construct that store, and skips unconditionally (no emulator schema
-    provisioning). Between them the native store had NO runnable semantic
-    coverage at all, which is how its cross-plane credit transfer sat
+    now constructs that store against provisioned emulators in CI. Previously
+    the native store had no runnable semantic coverage, which is how its cross-plane credit transfer sat
     unimplemented behind a comment saying it could not be tested.
 
     `tests/fakes/spanner.py` is not a stub: it models the read-set validation
@@ -125,7 +112,7 @@ def _spanner_fake_store() -> Store:
     not the Spanner query planner and not its lock manager. It cannot catch an
     unsupported SQL construct, a DDL/schema mismatch, or a real ABORTED storm.
     Passing here means the STORE'S LOGIC is right; `spanner-emulator` is still
-    the backend that would prove the SQL runs on Spanner, and it still skips.
+    the backend that validates SQL on the native GoogleSQL emulator in CI.
     """
     from tests.fakes.spanner import make_fake_store
 
@@ -249,13 +236,13 @@ _C1_LEGACY_MONEY = (
     "from the Store contract, not a gap in the fake — the typed path has its own "
     "tests (tests/test_billing_typed_*.py), but it is NOT this suite's assertions."
 )
-_FAKE_ROLLUP_ORDERING = (
-    "tests/fakes/spanner.py does not reproduce Bigtable's row ordering for "
-    "synthetic rollups, so the limit-is-a-newest-first-prefix property cannot be "
-    "asserted through it. A fake limitation, not a store claim either way."
+_NATIVE_ROLLUP_ORDERING = (
+    "Native store bug #1370 (Lore-Hex/quill-router): synthetic_rollups applies "
+    "limit to an ascending Bigtable row-key scan before sorting newest-first; "
+    "the real Bigtable emulator also returns the oldest periods."
 )
 
-#: Tests the `spanner-fake` backend is KNOWN not to satisfy, each with the
+#: Tests the native STORE is KNOWN not to satisfy, each with the
 #: reason. Applied as **strict xfail**, deliberately, not skip:
 #:
 #:   * a skip is invisible in a green run and would let this backend read as
@@ -267,19 +254,74 @@ _FAKE_ROLLUP_ORDERING = (
 #:
 #: Anything not listed here is genuinely asserted against the native Spanner
 #: store, cross-plane credit transfer included.
-_SPANNER_FAKE_KNOWN_GAPS: dict[str, str] = {
-    "test_reserve_then_settle_less_releases_unused_hold": _C1_LEGACY_MONEY,
-    "test_reserve_then_settle_more_books_full_actual": _C1_LEGACY_MONEY,
-    "test_reserve_then_refund_restores_exact_balance": _C1_LEGACY_MONEY,
-    "test_settle_is_idempotent": _C1_LEGACY_MONEY,
-    "test_refund_is_idempotent": _C1_LEGACY_MONEY,
-    "test_concurrent_reserves_cannot_oversubscribe": _C1_LEGACY_MONEY,
-    "test_insufficient_reserve_does_not_mutate_balance": _C1_LEGACY_MONEY,
-    "test_finalize_gateway_authorization_is_exactly_once": _C1_LEGACY_MONEY,
-    "test_finalize_unknown_authorization_is_false_not_error": _C1_LEGACY_MONEY,
-    "test_authorization_frozen_zero_hold_releases_zero": _C1_LEGACY_MONEY,
-    "test_synthetic_rollups_apply_ranges_order_limit_and_histogram_option": (_FAKE_ROLLUP_ORDERING),
+_NATIVE_STORE_KNOWN_GAPS: dict[tuple[str, str], str] = {
+    ("store", "test_store_semantics.py::test_synthetic_rollups_apply_ranges_order_limit_and_histogram_option"): _NATIVE_ROLLUP_ORDERING,
+    ("store", "test_store_semantics.py::test_reserve_then_settle_less_releases_unused_hold"): _C1_LEGACY_MONEY,
+    ("store", "test_store_semantics.py::test_reserve_then_settle_more_books_full_actual"): _C1_LEGACY_MONEY,
+    ("store", "test_store_semantics.py::test_reserve_then_refund_restores_exact_balance"): _C1_LEGACY_MONEY,
+    ("store", "test_store_semantics.py::test_settle_is_idempotent"): _C1_LEGACY_MONEY,
+    ("store", "test_store_semantics.py::test_refund_is_idempotent"): _C1_LEGACY_MONEY,
+    ("store", "test_store_semantics.py::test_concurrent_reserves_cannot_oversubscribe"): _C1_LEGACY_MONEY,
+    ("store", "test_store_semantics.py::test_insufficient_reserve_does_not_mutate_balance"): _C1_LEGACY_MONEY,
+    ("store", "test_store_semantics.py::test_finalize_gateway_authorization_is_exactly_once"): _C1_LEGACY_MONEY,
+    ("store", "test_store_semantics.py::test_finalize_unknown_authorization_is_false_not_error"): _C1_LEGACY_MONEY,
+    ("store", "test_store_semantics.py::test_authorization_frozen_zero_hold_releases_zero"): _C1_LEGACY_MONEY,
 }
+
+_FAKE_ONLY_GAPS: dict[tuple[str, str], str] = {}
+
+
+# These tests currently have exactly ONE parameter: the backend. Enumerate
+# those full IDs explicitly. Additional parameters/IDs require registry review;
+# never derive the registered variants from collected items.
+_BACKEND_KNOWN_GAPS = {
+    backend: {(fixture, f"{test_id}[backend={backend}]"): reason
+              for (fixture, test_id), reason in gaps.items()}
+    for backend, gaps in (
+        ("spanner-fake", {**_NATIVE_STORE_KNOWN_GAPS, **_FAKE_ONLY_GAPS}),
+        ("spanner-emulator", _NATIVE_STORE_KNOWN_GAPS),
+    )
+}
+
+
+def gap_test_id(item):
+    return item.nodeid.removeprefix("tests/conformance/")
+
+
+def validate_gap_registrations(items, *, require_all=True):
+    """Check exact variants, and optionally every registration in a full collection.
+
+    Partial invocations still reject new variants of registered tests. The
+    offline full-collection guard additionally rejects dead registrations.
+    """
+    matched = set()
+    for item in items:
+        params = getattr(getattr(item, "callspec", None), "params", {})
+        test_id = gap_test_id(item)
+        for backend, registrations in _BACKEND_KNOWN_GAPS.items():
+            for fixture, registered_id in registrations:
+                if params.get(fixture) != backend:
+                    continue
+                if test_id.split("[", 1)[0] == registered_id.split("[", 1)[0]:
+                    assert (fixture, test_id) in registrations, f"Unregistered gap variant: {item.nodeid}"
+                if test_id == registered_id:
+                    matched.add((backend, fixture, registered_id))
+    if require_all:
+        expected = {(backend, fixture, test_id)
+                    for backend, registrations in _BACKEND_KNOWN_GAPS.items()
+                    for fixture, test_id in registrations}
+        assert matched == expected, f"Dead gap registration: {sorted(expected - matched)}"
+
+
+def pytest_collection_modifyitems(items):
+    validate_gap_registrations(items, require_all=False)
+    for item in items:
+        params = getattr(getattr(item, "callspec", None), "params", {})
+        for fixture in ("store", "user_credit_transfer_store"):
+            backend = params.get(fixture)
+            gap = _BACKEND_KNOWN_GAPS.get(backend, {}).get((fixture, gap_test_id(item)))
+            if gap is not None:
+                item.add_marker(pytest.mark.xfail(reason=gap, strict=True))
 
 
 @pytest.fixture(params=_BACKEND_PARAMS, ids=lambda name: f"backend={name}")
@@ -290,13 +332,7 @@ def store(request: pytest.FixtureRequest) -> Iterator[Store]:
     reported per-backend so a skipped backend is visible rather than silently
     counted as a pass.
     """
-    if request.param == "spanner-fake":
-        gap = _SPANNER_FAKE_KNOWN_GAPS.get(
-            getattr(request.node, "originalname", None) or request.node.name
-        )
-        if gap is not None:
-            request.node.add_marker(pytest.mark.xfail(reason=gap, strict=True))
-    backend = BACKENDS[request.param]()
+    backend = _backend(request)
     try:
         yield backend
     finally:
@@ -425,7 +461,7 @@ def user_credit_transfer_store(request: pytest.FixtureRequest) -> Iterator[Store
         finally:
             conn._raw.close()
         return
-    backend = BACKENDS[request.param]()
+    backend = _backend(request)
     try:
         yield backend
     finally:

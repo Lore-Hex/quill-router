@@ -212,16 +212,11 @@ def test_operator_requeue_rejects_unprovisioned_ledger(
     ) in caplog.messages
 
 
-def test_spend_lease_reconciler_deploy_and_workflow_wiring() -> None:
+def test_spend_lease_reconciler_script_contract() -> None:
+    # The worker script stays on disk until the ledger code is deleted, but no
+    # release wires it any more (ledger retirement, 2026-09-27).
     script = (ROOT / "scripts/deploy/spend_lease_reconciler.sh").read_text()
     orchestrator = (ROOT / "scripts/deploy-gcp.sh").read_text()
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text()
-    rollout_secondaries = workflow.split("\n  rollout-secondaries:\n", 1)[1].split(
-        "\n  public-surface-companion:\n", 1
-    )[0]
-    ramp_step = rollout_secondaries.split(
-        "- name: Ramp secondaries serially while reconciler deploys", 1
-    )[1].split("- name: Deploy synthetic monitor", 1)[0]
     ramp_script = (ROOT / "scripts/deploy/ramp_secondaries.sh").read_text()
 
     assert "trusted-router-spend-lease-reconciler" in script
@@ -232,35 +227,7 @@ def test_spend_lease_reconciler_deploy_and_workflow_wiring() -> None:
     assert 'scheduler_state" = "PAUSED' in script
     assert "TR_SPEND_LEASE_BINDING_ENABLED" not in script
     assert "spend_lease_reconcile_cli,reconcile" in script
-    assert "bash \"${SCRIPT_DIR}/deploy/spend_lease_reconciler.sh\"" in orchestrator
-    assert "run: bash scripts/deploy/ramp_secondaries.sh" in ramp_step
+    assert "spend_lease_reconciler.sh" not in orchestrator
+    assert "spend_lease_reconciler.sh" not in ramp_script
 
-    regional_launch = ramp_script.index(
-        'bash "${SCRIPT_DIR}/regional_quota_reconciler.sh" '
-        '>"${reconciler_log}" 2>&1 &'
-    )
-    spend_lease_launch = ramp_script.index(
-        'bash "${SCRIPT_DIR}/spend_lease_reconciler.sh" '
-        '>"${spend_lease_reconciler_log}" 2>&1 &'
-    )
-    regional_pid = ramp_script.index("reconciler_pid=$!", regional_launch)
-    spend_lease_pid = ramp_script.index(
-        "spend_lease_reconciler_pid=$!", spend_lease_launch
-    )
-    ramps = ramp_script.index("for region in europe-west4 us-east4 southamerica-east1")
-    regional_wait = ramp_script.index('if wait "${reconciler_pid}"; then')
-    spend_lease_wait = ramp_script.index(
-        'if wait "${spend_lease_reconciler_pid}"; then'
-    )
-    regional_log = ramp_script.index('cat "${reconciler_log}"')
-    spend_lease_log = ramp_script.index('cat "${spend_lease_reconciler_log}"')
-    ramp_status = ramp_script.index('if [ "${ramp_status}" -ne 0 ]; then')
-    regional_status = ramp_script.index('if [ "${reconciler_status}" -ne 0 ]; then')
-    spend_lease_status = ramp_script.index(
-        'if [ "${spend_lease_reconciler_status}" -ne 0 ]; then'
-    )
-    assert regional_launch < regional_pid < ramps < regional_wait < regional_log
-    assert spend_lease_launch < spend_lease_pid < ramps < spend_lease_wait < spend_lease_log
-    assert regional_log < ramp_status
-    assert spend_lease_log < ramp_status
-    assert ramp_status < regional_status < spend_lease_status
+

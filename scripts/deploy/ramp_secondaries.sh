@@ -229,12 +229,9 @@ ramp_secondary() {
 # no-traffic warm was joined successfully by the deploy job before this script
 # was started. Keep the three secondary 10/50/100 ramps explicit, serial, and
 # stop-on-failure; no traffic move ever overlaps a sibling traffic move.
-reconciler_log="${RUNNER_TEMP}/regional-quota-reconciler.log"
-bash "${SCRIPT_DIR}/regional_quota_reconciler.sh" >"${reconciler_log}" 2>&1 &
-reconciler_pid=$!
-spend_lease_reconciler_log="${RUNNER_TEMP}/spend-lease-reconciler.log"
-bash "${SCRIPT_DIR}/spend_lease_reconciler.sh" >"${spend_lease_reconciler_log}" 2>&1 &
-spend_lease_reconciler_pid=$!
+# The regional quota and spend-lease reconciler workers used to deploy in the
+# background here; both ledgers are retired (2026-09-27) and
+# retire_ledger_workers.sh removes the workers after this ramp.
 
 held=""
 ramped=""
@@ -261,32 +258,8 @@ for region in europe-west4 us-east4 southamerica-east1; do
   esac
 done
 
-reconciler_status=0
-if wait "${reconciler_pid}"; then
-  reconciler_status=0
-else
-  reconciler_status=$?
-fi
-spend_lease_reconciler_status=0
-if wait "${spend_lease_reconciler_pid}"; then
-  spend_lease_reconciler_status=0
-else
-  spend_lease_reconciler_status=$?
-fi
-printf '\n=== regional quota reconciler deploy ===\n'
-cat "${reconciler_log}"
-printf '\n=== spend lease reconciler deploy ===\n'
-cat "${spend_lease_reconciler_log}"
 echo "held=${held} ramped=${ramped} refused=${refused}"
 
 if [ "${ramp_status}" -ne 0 ]; then
   exit "${ramp_status}"
-fi
-if [ "${reconciler_status}" -ne 0 ]; then
-  echo "::error::Regional quota reconciler deploy failed with status ${reconciler_status}."
-  exit "${reconciler_status}"
-fi
-if [ "${spend_lease_reconciler_status}" -ne 0 ]; then
-  echo "::error::Spend lease reconciler deploy failed with status ${spend_lease_reconciler_status}."
-  exit "${spend_lease_reconciler_status}"
 fi

@@ -613,9 +613,11 @@ def test_secondary_already_on_new_still_runs_watchdog_and_billing_gate(
     )
 
 
-def test_secondary_reconcilers_launch_when_every_region_is_held(
+def test_secondary_ramp_never_launches_ledger_reconcilers(
     tmp_path: Path,
 ) -> None:
+    # Both escrow ledgers are retired (2026-09-27): the ramp no longer deploys
+    # their workers in the background; retire_ledger_workers.sh removes them.
     run = _run_secondary_ramp(
         tmp_path,
         traffic=_default_secondary_traffic(),
@@ -623,8 +625,8 @@ def test_secondary_reconcilers_launch_when_every_region_is_held(
     )
 
     assert run.returncode == 0, summarise(run)
-    assert [call for call in run.calls if call[0] == "regional_quota_reconciler.sh"]
-    assert [call for call in run.calls if call[0] == "spend_lease_reconciler.sh"]
+    assert not [call for call in run.calls if call[0] == "regional_quota_reconciler.sh"]
+    assert not [call for call in run.calls if call[0] == "spend_lease_reconciler.sh"]
     assert all(
         not _regional_update_traffic_calls(run, region)
         for region in ("europe-west4", "us-east4", "southamerica-east1")
@@ -674,10 +676,24 @@ def _initialize_bake_harness_repo(harness: DeployScriptHarness) -> str:
     ).stdout.strip()
 
 
+@pytest.mark.parametrize(
+    ("region", "service_min"),
+    [
+        ("us-central1", "8"),
+        ("us-east4", "8"),
+        ("europe-west4", "8"),
+        ("southamerica-east1", "2"),
+    ],
+)
 def test_gcp_no_traffic_warm_preprovisions_and_validates_private_candidate(
     harness: DeployScriptHarness,
+    region: str,
+    service_min: str,
 ) -> None:
-    run = harness.run("scripts/deploy/rollout.sh")
+    run = harness.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={"TR_DEPLOY_TARGET_REGIONS": region},
+    )
     assert run.returncode == 0, summarise(run)
 
     deploy = next(
@@ -686,10 +702,12 @@ def test_gcp_no_traffic_warm_preprovisions_and_validates_private_candidate(
         if call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
         and call[4:7] == ["deploy", "trusted-router", "--region"]
     )
-    # The primary must absorb a burst without waiting for new instances.
+    # Each primary serving region needs burst capacity; the failover stays small.
     # Keep the staged revision primer small while retaining the service floor.
-    assert deploy[deploy.index("--min") + 1] == "8"
+    assert deploy[deploy.index("--region") + 1] == region
+    assert deploy[deploy.index("--min") + 1] == service_min
     assert deploy[deploy.index("--min-instances") + 1] == "2"
+    assert deploy[deploy.index("--concurrency") + 1] == "8"
     assert "--no-traffic" in deploy
     assert any(
         call[0:4] == ["gcloud", "run", "revisions", "describe"]
@@ -724,11 +742,31 @@ _REGIONAL_QUOTA_PINS = {
 }
 
 
+# Every ledger setting a revision used to carry; none may be rendered now.
+_LEDGER_SETTING_NAMES = frozenset({
+    "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS",
+    "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS",
+    "TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS",
+    "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS",
+    "TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT",
+    "TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS",
+    "TR_REGIONAL_QUOTA_CLUSTER_MAP",
+    "TR_SPEND_LEASE_CLUSTER_MAP",
+    "TR_REGIONAL_QUOTA_BIGTABLE_TABLE",
+    "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES",
+    "TR_SPEND_LEASE_BIGTABLE_TABLE",
+    "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES",
+})
 _LIVE_REGIONAL_QUOTA_ENV = {
     "REGIONAL_QUOTA_ACCOUNTING_PROTOCOL": "2",
     "TR_RELEASE": "abc12345",
     "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true",
-    "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "true",
+    # A step-1 primary: issuance, spend issuance, binding and admission are
+    # already off, which the ledger retirement gate requires everywhere.
+    "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "false",
+    "TR_SPEND_LEASE_ISSUANCE_ENABLED": "false",
+    "TR_SPEND_LEASE_BINDING_ENABLED": "false",
+    "TR_SPEND_LEASE_ADMISSION_ACCEPT": "false",
     "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS": "workspace-pilot,workspace-canary",
     "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES": "us-central1=tr-quota-us-central1",
     "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS": "60",
@@ -749,7 +787,10 @@ def _regional_quota_rollout_harness(
     fixture = SCRIPT_FIXTURES[script]
     revision_env = [{"name": name, "value": value} for name, value in live_env.items()]
     active_revision = json.dumps(
-        {"spec": {"containers": [{"env": revision_env}]}},
+        {
+            "metadata": {"creationTimestamp": "2026-09-01T00:00:00Z"},
+            "spec": {"containers": [{"env": revision_env}]},
+        },
         separators=(",", ":"),
     )
     monkeypatch.setitem(
@@ -775,14 +816,14 @@ def _regional_quota_rollout_harness(
     [
         # Absent/empty control resolves to REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED,
         # which is OFF since the 2026-09-27 Bigtable ledger retirement.
-        pytest.param(None, "true", "false", id="absent-pins-off-live-true"),
-        pytest.param(None, "false", "false", id="absent-pins-off-live-false"),
-        pytest.param("", "true", "false", id="empty-pins-off-live-true"),
-        # Retirement override: preserve over a live ON marker and an explicit
-        # true both render OFF (and say so in the log).
-        pytest.param("preserve", "true", "false", id="dispatch-preserve-live-true-forced-off"),
+        # A live ON marker anywhere now refuses the rollout at the ledger
+        # retirement gate (tested below), so every case here serves OFF.
+        pytest.param(None, "false", "false", id="absent-pins-off"),
+        pytest.param("", "false", "false", id="empty-pins-off"),
+        pytest.param("preserve", "false", "false", id="dispatch-preserve-live-false"),
+        # Retirement override: an explicit true renders OFF and says so.
         pytest.param("true", "false", "false", id="dispatch-true-forced-off"),
-        pytest.param("false", "true", "false", id="dispatch-disables-live-true"),
+        pytest.param("false", "false", "false", id="dispatch-false"),
     ],
 )
 def test_rollout_regional_quota_issuance_control(
@@ -806,11 +847,11 @@ def test_rollout_regional_quota_issuance_control(
     )
     rendered_env = _cloud_run_job_env(deploy)
     assert rendered_env["TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED"] == expected
-    assert rendered_env["TR_REGIONAL_QUOTA_LEASES_ENABLED"] == "true"
-    forced_off = control == "true" or (control == "preserve" and live == "true")
+    # Capability is retired with the ledger; the live marker is never copied.
+    assert rendered_env["TR_REGIONAL_QUOTA_LEASES_ENABLED"] == "false"
+    forced_off = control == "true"
     assert ("regional quota issuance is retired" in run.stderr) is forced_off
-    for name, value in _REGIONAL_QUOTA_PINS.items():
-        assert rendered_env[name] == value
+    assert not _LEDGER_SETTING_NAMES & rendered_env.keys()
     # Enabling (including preserve=true) must preflight every serving region
     # before it creates a candidate; pausing does not need that preflight.
     before_deploy = run.calls[:run.calls.index(deploy)]
@@ -832,13 +873,16 @@ def test_rollout_regional_quota_issuance_control(
     [
         # A fresh fleet must first deploy protocol-capable revisions with issuance off.
         pytest.param({}, "false", "false", id="no-live-settings-forced-off"),
-        pytest.param(_LIVE_REGIONAL_QUOTA_ENV, None, "false", id="stale-live-settings-pinned-off"),
+        pytest.param(_LIVE_REGIONAL_QUOTA_ENV, None, "false", id="step-one-live-settings-dropped"),
     ],
 )
-def test_rollout_renders_every_regional_quota_pin(
+def test_rollout_renders_no_ledger_settings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, live_env: dict[str, str],
     control: str | None, expected_issuance: str,
 ) -> None:
+    # The store opens a Bigtable ledger client whenever an app-profile map is
+    # rendered, capability or not, so retirement means none of the ledger
+    # settings reach a revision - not even from a live primary that had them.
     isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, live_env)
     run = isolated.run(
         "scripts/deploy/rollout.sh",
@@ -847,13 +891,40 @@ def test_rollout_renders_every_regional_quota_pin(
     assert run.returncode == 0, summarise(run)
     deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
     rendered = _cloud_run_job_env(deploy)
-    for name, value in _REGIONAL_QUOTA_PINS.items():
-        assert rendered[name] == value, name
+    assert rendered["TR_REGIONAL_QUOTA_LEASES_ENABLED"] == "false"
     assert rendered["TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED"] == expected_issuance
+    assert rendered["REGIONAL_QUOTA_ACCOUNTING_PROTOCOL"] == "2"
+    assert not _LEDGER_SETTING_NAMES & rendered.keys()
+
+
+def test_rollout_gate_refuses_while_a_region_still_issues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The revisions this rollout creates have no ledger, so a serving revision
+    # that can still mint a regional hold blocks it before anything changes.
+    live_env = {**_LIVE_REGIONAL_QUOTA_ENV, "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "true"}
+    isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, live_env)
+    run = isolated.run("scripts/deploy/rollout.sh")
+    assert run.returncode != 0
+    assert "still serves TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED=true" in run.stderr
+    assert not any(call[3:5] == ["run", "deploy"] for call in run.calls)
+    assert not any("spanner" in call for call in run.calls)
+
+
+def test_rollout_refuses_regional_quota_capability(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, _LIVE_REGIONAL_QUOTA_ENV)
+    run = isolated.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={"TR_REGIONAL_QUOTA_LEASES_ENABLED": "true"},
+    )
+    assert run.returncode != 0
+    assert "TR_REGIONAL_QUOTA_LEASES_ENABLED=true is retired" in run.stderr
+    assert not any(call[3:5] == ["run", "deploy"] for call in run.calls)
 
 
 @pytest.mark.parametrize("script", [
-    "scripts/deploy/rollout.sh",
     "scripts/deploy/spend_lease_ledger.sh",
     "scripts/deploy/spend_lease_reconciler.sh",
 ])
@@ -888,37 +959,7 @@ def test_empty_spend_lease_cluster_map_falls_back_to_independent_pin(
             assert rendered["TR_SPEND_LEASE_CLUSTER_MAP"] == "us-central1=trusted-router-logs-c1"
 
 
-@pytest.mark.parametrize(("name", "value"), [
-    ("TR_REGIONAL_QUOTA_CLUSTER_MAP", "us-east4=trusted-router-logs-c1"),
-    ("TR_SPEND_LEASE_CLUSTER_MAP", "us-east4=trusted-router-logs-c1"),
-    ("TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES", "us-east4=tr-quota-us-east4"),
-    ("TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS", "workspace-override"),
-    ("TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS", "90"),
-    ("TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS", "7000000"),
-    ("TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS", "1500"),
-    ("TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT", "4"),
-    ("TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS", "3"),
-    ("TR_REGIONAL_QUOTA_BIGTABLE_TABLE", "override-quota-table"),
-])
-def test_rollout_explicit_env_overrides_each_regional_quota_pin(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, value: str,
-) -> None:
-    isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, _LIVE_REGIONAL_QUOTA_ENV)
-    overrides = {name: value}
-    if name in {"TR_REGIONAL_QUOTA_CLUSTER_MAP", "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES"}:
-        overrides.update({
-            "TR_REGIONAL_QUOTA_CLUSTER_MAP": "us-east4=trusted-router-logs-c1",
-            "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES": "us-east4=tr-quota-us-east4",
-        })
-    run = isolated.run("scripts/deploy/rollout.sh", extra_env=overrides)
-    assert run.returncode == 0, summarise(run)
-    deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
-    rendered = _cloud_run_job_env(deploy)
-    for key, expected in {**_REGIONAL_QUOTA_PINS, **overrides}.items():
-        assert rendered[key] == expected, key
-
-
-@pytest.mark.parametrize("script", ["scripts/deploy/rollout.sh", "scripts/deploy/regional_quota_ledger.sh"])
+@pytest.mark.parametrize("script", ["scripts/deploy/regional_quota_ledger.sh"])
 def test_regional_quota_profile_map_mismatch_refuses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script: str,
 ) -> None:
@@ -1000,9 +1041,10 @@ _SHARED_QUOTA_OVERRIDES = {
     "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS": "1500",
     "TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT": "4",
 }
-_QUOTA_SCRIPTS = (
-    "scripts/deploy/rollout.sh", _QUOTA_LEDGER, _REGIONAL_QUOTA_RECONCILER,
-)
+# rollout.sh left this contract with the 2026-09-27 ledger retirement: it no
+# longer resolves or renders any of these. The provisioner and worker scripts
+# stay on disk (unwired) until the ledger code is deleted with them.
+_QUOTA_SCRIPTS = (_QUOTA_LEDGER, _REGIONAL_QUOTA_RECONCILER)
 
 
 @pytest.mark.parametrize("script", _QUOTA_SCRIPTS)
@@ -1122,7 +1164,6 @@ def test_reconciler_receives_same_regional_quota_profiles(
     assert _cloud_run_job_env(deploy)["TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES"] == (profiles or _QUOTA_PROFILES)
 
 
-
 def test_rollout_refuses_explicit_spend_lease_binding(
     harness: DeployScriptHarness,
 ) -> None:
@@ -1135,28 +1176,6 @@ def test_rollout_refuses_explicit_spend_lease_binding(
     )
     assert run.returncode != 0
     assert "TR_SPEND_LEASE_BINDING_ENABLED=true is retired" in run.stderr
-    assert not any(
-        call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
-        and call[4:6] == ["deploy", "trusted-router"]
-        for call in run.calls
-    )
-
-
-def test_rollout_enforces_accounting_floor_while_capability_drains(
-    harness: DeployScriptHarness,
-) -> None:
-    # Issuance is retired, but a capability-on fleet still settles protocol-2
-    # holds; an image labelled below the floor must not be deployed into it.
-    run = harness.run(
-        "scripts/deploy/rollout.sh",
-        extra_env={
-            "HARNESS_IMAGE_CONFIG": json.dumps(
-                {"config": {"Labels": {"com.trustedrouter.accounting_protocol": "1"}}}
-            ),
-        },
-    )
-    assert run.returncode != 0
-    assert "protocol" in run.stderr
     assert not any(
         call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
         and call[4:6] == ["deploy", "trusted-router"]
@@ -1182,8 +1201,9 @@ def test_rollout_defaults_spend_lease_issuance_and_binding_off(
     assert "TR_SPEND_LEASE_ISSUANCE_ENABLED=false" in serialized_env
     assert "TR_SPEND_LEASE_BINDING_ENABLED=false" in serialized_env
     assert "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED=false" in serialized_env
-
-
+    assert "TR_REGIONAL_QUOTA_LEASES_ENABLED=false" in serialized_env
+    rendered_names = {entry.split("=", 1)[0] for entry in serialized_env}
+    assert not _LEDGER_SETTING_NAMES & rendered_names
 
 
 def test_rollout_lists_optional_secrets_once_without_missing_secret_probes(

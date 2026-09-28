@@ -29,7 +29,7 @@ def positive_int(value: object) -> int | None:
         return None
     try:
         parsed = int(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     return parsed if parsed > 0 else None
 
