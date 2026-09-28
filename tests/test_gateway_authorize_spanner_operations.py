@@ -608,7 +608,8 @@ def test_metadata_changes_between_authorizes_fail_closed(
             _request(), _lookup_body(key, idempotency_key="after-change"), settings,
         )
     assert raised.value.status_code == status
-    assert raised.value.detail == {"error": {
+    assert isinstance(raised.value.detail, dict)
+    assert raised.value.detail == {"data": {"timing": raised.value.detail["data"]["timing"]}, "error": {
         "code": status, "message": message, "type": error_type, "source": "router",
     }}
     assert raised.value.headers == ({"Retry-After": "30"} if status == 503 else None)

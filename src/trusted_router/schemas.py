@@ -326,8 +326,53 @@ class SpendLeaseAdmissionRejectedError(_Strict):
     ]
 
 
+class GatewayTimingData(BaseModel):
+    """Elapsed integer milliseconds; phases exclude worker queue time."""
+
+    spanner_rpcs: int = Field(ge=0, description="Spanner deadline-wrapper calls; excludes GAPIC-internal transport retries.")
+    total_ms: int = Field(ge=0)
+    key_lookup_ms: int = Field(ge=0)
+    routing_ms: int = Field(ge=0)
+    store_ms: int = Field(ge=0)
+    post_commit_ms: int = Field(ge=0)
+
+
+class GatewayErrorData(BaseModel):
+    timing: GatewayTimingData
+
+
 class SpendLeaseAdmissionRejected(_Strict):
     error: SpendLeaseAdmissionRejectedError
+    data: GatewayErrorData | None = None
+
+
+class GatewayAuthorizeData(BaseModel):
+    # The gateway contract also contains routing/lease fields. Preserve them.
+    model_config = ConfigDict(extra="allow")
+
+    authorization_id: str
+    generation_id: str = Field(description=(
+        "Prospective generation identity: this ID is recorded when the authorization reaches "
+        "settled or reaped_snapshot (Stage D heartbeat snapshot booking). It is never recorded "
+        "for refunded authorizations, including refunding reaps. "
+        "Consumers must check the terminal authorization disposition before expecting a generation."
+    ))
+    timing: GatewayTimingData
+
+
+class GatewayAuthorizeResponse(BaseModel):
+    data: GatewayAuthorizeData
+
+
+class GatewaySettleData(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    authorization_id: str
+    timing: GatewayTimingData
+
+
+class GatewaySettleResponse(BaseModel):
+    data: GatewaySettleData
 
 
 class GatewayAuthorizeRequest(_Lenient):

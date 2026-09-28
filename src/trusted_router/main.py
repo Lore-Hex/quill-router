@@ -586,6 +586,7 @@ def create_app(
             503,
             "The request was aborted due to transient database contention; retry.",
             ErrorType.SERVICE_UNAVAILABLE,
+            data=getattr(exc, "gateway_timing_data", None),
         )
         response.headers["Retry-After"] = "1"
         return response
@@ -604,6 +605,7 @@ def create_app(
             503,
             "Persistent storage is temporarily unavailable; retry.",
             ErrorType.SERVICE_UNAVAILABLE,
+            data=getattr(exc, "gateway_timing_data", None),
         )
         response.headers["Retry-After"] = "1"
         return response

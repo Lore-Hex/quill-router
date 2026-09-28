@@ -1327,6 +1327,7 @@ def test_inline_finalize_false_leaves_outbox_pending(fake_store: tuple[Any, Any,
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["data"] == {
+        "timing": resp.json()["data"]["timing"],
         "authorization_id": auth.id,
         "settled": False,
         "already_settled": False,
@@ -2413,6 +2414,7 @@ def test_regional_settlement_failure_is_retryable_after_outbox_enqueue(
 
     assert response.status_code == 200, response.text
     assert response.json()["data"] == {
+        "timing": response.json()["data"]["timing"],
         "authorization_id": auth.id,
         "settled": False,
         "already_settled": False,
@@ -3832,6 +3834,11 @@ def test_regional_guarded_sql_matches_sequential_finalize(
                     auth.id, success=False, actual_microdollars=0, selected_usage_type="Credits",
                 ).finalized
             data = _internal_settle(auth)
+            # Compare durable billing behavior; wall-clock phases differ between
+            # the deliberately sequential reference and the batched implementation.
+            timing = data.pop("timing")
+            assert all(type(value) is int and value >= 0 for value in timing.values())
+            assert timing["total_ms"] >= timing["store_ms"]
             if scenario == "replay":
                 replay = _internal_settle(auth)
                 assert replay["cost_microdollars"] == data["cost_microdollars"]

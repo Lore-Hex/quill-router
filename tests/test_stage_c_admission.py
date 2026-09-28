@@ -43,6 +43,7 @@ from trusted_router.storage import CreditAccount, Workspace, configure_store
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
 from trusted_router.storage_gcp_keys import _gateway_authorization_idempotency_index_id
 from trusted_router.storage_gcp_spend_lease_authorize import SpendLeaseReuseLost
+from trusted_router.storage_models import generation_id_for_authorization
 
 
 def _canonical(value: Any) -> bytes:
@@ -678,6 +679,9 @@ def test_stage_c_mint_and_direct_presented_lease_reuse_end_to_end(
     )
 
     data = accepted["data"]
+    assert data["generation_id"] == generation_id_for_authorization(data["authorization_id"])
+    assert set(data["timing"]) == {"total_ms", "key_lookup_ms", "routing_ms", "store_ms", "post_commit_ms", "spanner_rpcs"}
+    assert all(type(value) is int for value in data["timing"].values())
     assert data["estimated_cost_microdollars"] == estimate
     assert data["spend_lease_admission"] == {
         "accepted": True,
@@ -705,6 +709,8 @@ def test_stage_c_mint_and_direct_presented_lease_reuse_end_to_end(
         settings,
         reserve_raw,
     )
+    assert replay["data"]["generation_id"] == data["generation_id"]
+    assert replay["data"]["timing"]["total_ms"] >= replay["data"]["timing"]["store_ms"]
     assert replay["data"]["idempotent_replay"] is True
     assert replay["data"]["authorization_id"] == data["authorization_id"]
     assert replay["data"]["spend_lease"]["remaining_micro"] == data[

@@ -82,6 +82,12 @@ from trusted_router.custom_model_markup_billing import (
     custom_model_markup_payout_event_id,
 )
 from trusted_router.errors import api_error, assert_workspace_billing_active
+from trusted_router.gateway_timing import (
+    gateway_phase,
+    gateway_timing_phase,
+    timed_gateway_async,
+    timed_gateway_sync,
+)
 from trusted_router.money import money_pair
 from trusted_router.oauth_app_policy import oauth_app_is_effectively_suspended
 from trusted_router.openai_service_tiers import (
@@ -148,9 +154,11 @@ from trusted_router.routing import (
 from trusted_router.routing_state import ROUTING_STATE
 from trusted_router.schemas import (
     GatewayAuthorizeRequest,
+    GatewayAuthorizeResponse,
     GatewayHeartbeatRequest,
     GatewayResolveCustomModelRequest,
     GatewaySettleRequest,
+    GatewaySettleResponse,
     GatewayValidateRequest,
     SpendLeaseBootRegistrationRequest,
 )
@@ -258,6 +266,7 @@ from trusted_router.storage_models import (
     TypedFinalizeResult,
     UserModelPayout,
     UserProvidedModel,
+    generation_id_for_authorization,
     iso_now,
     workspace_billing_paused,
 )
@@ -495,6 +504,7 @@ def _register_spend_lease_boot_sync(
     return {"data": {"verified": stored.verified}}
 
 
+@timed_gateway_async
 async def authorize_gateway(
     request: Request,
     body: GatewayAuthorizeRequest,
@@ -548,6 +558,7 @@ async def authorize_gateway(
         _AUTHORIZE_ADMISSION.release(subject)
 
 
+@timed_gateway_async
 async def settle_gateway(
     request: Request,
     body: GatewaySettleRequest,
@@ -786,6 +797,7 @@ def _heartbeat_rejection(reason: str) -> Exception:
 
 
 @spanner_rpc_budget(_BILLING_PATH_SPANNER_BUDGET_SECONDS)
+@timed_gateway_sync
 def _authorize_gateway_sync(
     request: Request,
     body: GatewayAuthorizeRequest,
@@ -892,6 +904,7 @@ def _authorize_gateway_sync_impl(
     named, directly unit-testable function (#40). The registered route handler is
     a thin wrapper; behavior is byte-identical to the prior inline handler."""
     require_internal_gateway(request, settings)
+    gateway_timing_phase("key_lookup_ms")
     api_key, metadata = _gateway_authorize_metadata(body)
     if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
         raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
@@ -924,6 +937,7 @@ def _authorize_gateway_sync_impl(
         ):
             spend_context["boot_failure_reason"] = "boot_digest_not_accepted"
     workspace = metadata.workspace if metadata is not None else STORE.get_workspace(api_key.workspace_id)
+    gateway_timing_phase("routing_ms")
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
     if workspace_billing_paused(workspace):
@@ -1430,6 +1444,7 @@ def _authorize_gateway_sync_impl(
     admission_snapshot_candidates: tuple[dict[str, Any], ...] | None = None
 
     def _replay_response(existing_authorization: Any) -> dict[str, Any]:
+        gateway_timing_phase("post_commit_ms")
         if body.route_type == POLYPHEMUS_SELECT_ROUTE_TYPE:
             # The selector has no upstream idempotency contract. Never repeat
             # selection (including concurrent replays) on an existing hold.
@@ -1901,34 +1916,35 @@ def _authorize_gateway_sync_impl(
             if regional_eligible:
                 assert callable(regional_authorize)
                 spend_context["regional_outcome"] = "error"
-                outcome, authorization = regional_authorize(
-                    authorization_id=authorization_id,
-                    workspace_id=workspace.id,
-                    key_hash=api_key.hash,
-                    key_usage_shards=key_usage_shards,
-                    estimate=estimate,
-                    model_id=model.id,
-                    provider=endpoint.provider,
-                    requested_model_id=requested_model_id,
-                    candidate_model_ids=[m.id for m, _e in endpoint_candidates],
-                    region=region,
-                    endpoint_id=endpoint.id,
-                    candidate_endpoint_ids=[e.id for _m, e in endpoint_candidates],
-                    idempotency_key=request_idempotency_key,
-                    idempotency_fingerprint=request_fingerprint,
-                    app_id=api_key.app_id,
-                    receipt_fee_basis_points=receipt_fee_basis_points,
-                    tags=effective_tags,
-                    expires_at=expires_at,
-                    lease_ttl_seconds=settings.regional_quota_lease_ttl_seconds,
-                    lease_max_microdollars=settings.regional_quota_lease_max_microdollars,
-                    lease_max_available_basis_points=(
-                        settings.regional_quota_lease_max_available_basis_points
-                    ),
-                    lease_shard_count=settings.regional_quota_lease_shard_count,
-                    invocation_nonce=body.invocation_nonce,
-                    observation=spend_context,
-                )
+                with gateway_phase("store_ms", after="post_commit_ms"):
+                    outcome, authorization = regional_authorize(
+                        authorization_id=authorization_id,
+                        workspace_id=workspace.id,
+                        key_hash=api_key.hash,
+                        key_usage_shards=key_usage_shards,
+                        estimate=estimate,
+                        model_id=model.id,
+                        provider=endpoint.provider,
+                        requested_model_id=requested_model_id,
+                        candidate_model_ids=[m.id for m, _e in endpoint_candidates],
+                        region=region,
+                        endpoint_id=endpoint.id,
+                        candidate_endpoint_ids=[e.id for _m, e in endpoint_candidates],
+                        idempotency_key=request_idempotency_key,
+                        idempotency_fingerprint=request_fingerprint,
+                        app_id=api_key.app_id,
+                        receipt_fee_basis_points=receipt_fee_basis_points,
+                        tags=effective_tags,
+                        expires_at=expires_at,
+                        lease_ttl_seconds=settings.regional_quota_lease_ttl_seconds,
+                        lease_max_microdollars=settings.regional_quota_lease_max_microdollars,
+                        lease_max_available_basis_points=(
+                            settings.regional_quota_lease_max_available_basis_points
+                        ),
+                        lease_shard_count=settings.regional_quota_lease_shard_count,
+                        invocation_nonce=body.invocation_nonce,
+                        observation=spend_context,
+                    )
                 spend_context["regional_outcome"] = (
                     "served" if outcome == "accepted" and authorization is not None
                     and authorization.settlement == "regional_lease"
@@ -1941,85 +1957,86 @@ def _authorize_gateway_sync_impl(
             if outcome in {"unpaid_workspace", "reconciliation_stale", "trust_gate_unarmed"}:
                 spend_context["no_lease_reason"] = outcome
             if outcome in {"unavailable", "unpaid_workspace", "reconciliation_stale", "trust_gate_unarmed"}:
-                outcome, authorization = _typed_store.authorize_gateway_typed(
-                    workspace_id=workspace.id,
-                    key_hash=api_key.hash,
-                    authorization_id=authorization_id,
-                    estimate=estimate,
-                    has_credit_candidate=has_credit_candidate,
-                    reservation_usage_type=reservation_usage_type,
-                    model_id=model.id,
-                    provider=endpoint.provider,
-                    requested_model_id=requested_model_id,
-                    candidate_model_ids=[m.id for m, _e in endpoint_candidates],
-                    region=region,
-                    endpoint_id=endpoint.id,
-                    candidate_endpoint_ids=[e.id for _m, e in endpoint_candidates],
-                    idempotency_key=request_idempotency_key,
-                    tags=effective_tags,
-                    idempotency_fingerprint=request_fingerprint,
-                    app_id=api_key.app_id,
-                    app_markup_basis_points=app_markup_basis_points,
-                    receipt_fee_basis_points=receipt_fee_basis_points,
-                    app_owner_user_id=app_owner_user_id,
-                    key_usage_shards=key_usage_shards,
-                    # The entity is already authenticated; a no-op reserve
-                    # UPDATE would still lock uncapped usage counter rows.
-                    # Window caps are enforced separately on a snapshot.
-                    skip_key_limit=api_key.limit_microdollars is None and not api_key.budget_strict,
-                    strict_budget=api_key.budget_strict,
-                    strict_budget_alert_only=api_key.budget_alert_only,
-                    # Metadata only selects the path; sequential reserve still
-                    # checks the authoritative row for BYOK exclusions.
-                    speculate_key_limit=(
-                        api_key.limit_microdollars is not None
-                        and (has_credit_candidate or api_key.include_byok_in_limit)
-                    ),
-                    custom_model_id=custom_model.id if custom_model else None,
-                    custom_model_revision=custom_model.revision if custom_model else None,
-                    custom_model_markup_basis_points=(
-                        custom_model_markup_basis_points
-                    ),
-                    custom_model_owner_user_id=custom_model_owner_user_id,
-                    user_provided_model_id=user_model.id if user_model else None,
-                    user_provided_model_revision=user_model.revision if user_model else None,
-                    user_model_prompt_price_microdollars_per_m=(
-                        user_model.prompt_price_microdollars_per_million_tokens
-                        if user_model
-                        else None
-                    ),
-                    user_model_completion_price_microdollars_per_m=(
-                        user_model.completion_price_microdollars_per_million_tokens
-                        if user_model
-                        else None
-                    ),
-                    user_model_owner_user_id=user_model.owner_user_id if user_model else None,
-                    additional_cost_reservation_microdollars=additional_cost_reservation,
-                    native_batch_eligible=native_batch_eligible,
-                    expires_at=expires_at,
-                    window_limits=window_limits or None,
-                    spend_lease=spend_lease,
-                    spend_lease_binding_plan=spend_lease_binding_plan,
-                    pricing_snapshot=pricing_snapshot,
-                    stage_d_reason=stage_d_reason,
-                    stage_d_prompt_tokens=input_tokens,
-                    stage_d_max_output_tokens=output_tokens,
-                    spend_lease_admission_receipt=body.spend_lease_admission,
-                    spend_lease_receipt_hash=admission_receipt_hash,
-                    credit_escrowed_by_spend_lease=(
-                        body.spend_lease_admission is not None
-                    ),
-                    # Replay protection survives rollback: a receipt-less retry
-                    # must never reuse an authorization created while Stage C
-                    # acceptance was enabled.
-                    spend_lease_admission_replay_protection=True,
-                    stage_d_boot_kid=(
-                        boot_auth.kid
-                        if spend_context["boot_verified"] and boot_auth is not None
-                        else None
-                    ),
-                    invocation_nonce=body.invocation_nonce,
-                )
+                with gateway_phase("store_ms", after="post_commit_ms"):
+                    outcome, authorization = _typed_store.authorize_gateway_typed(
+                        workspace_id=workspace.id,
+                        key_hash=api_key.hash,
+                        authorization_id=authorization_id,
+                        estimate=estimate,
+                        has_credit_candidate=has_credit_candidate,
+                        reservation_usage_type=reservation_usage_type,
+                        model_id=model.id,
+                        provider=endpoint.provider,
+                        requested_model_id=requested_model_id,
+                        candidate_model_ids=[m.id for m, _e in endpoint_candidates],
+                        region=region,
+                        endpoint_id=endpoint.id,
+                        candidate_endpoint_ids=[e.id for _m, e in endpoint_candidates],
+                        idempotency_key=request_idempotency_key,
+                        tags=effective_tags,
+                        idempotency_fingerprint=request_fingerprint,
+                        app_id=api_key.app_id,
+                        app_markup_basis_points=app_markup_basis_points,
+                        receipt_fee_basis_points=receipt_fee_basis_points,
+                        app_owner_user_id=app_owner_user_id,
+                        key_usage_shards=key_usage_shards,
+                        # The entity is already authenticated; a no-op reserve
+                        # UPDATE would still lock uncapped usage counter rows.
+                        # Window caps are enforced separately on a snapshot.
+                        skip_key_limit=api_key.limit_microdollars is None and not api_key.budget_strict,
+                        strict_budget=api_key.budget_strict,
+                        strict_budget_alert_only=api_key.budget_alert_only,
+                        # Metadata only selects the path; sequential reserve still
+                        # checks the authoritative row for BYOK exclusions.
+                        speculate_key_limit=(
+                            api_key.limit_microdollars is not None
+                            and (has_credit_candidate or api_key.include_byok_in_limit)
+                        ),
+                        custom_model_id=custom_model.id if custom_model else None,
+                        custom_model_revision=custom_model.revision if custom_model else None,
+                        custom_model_markup_basis_points=(
+                            custom_model_markup_basis_points
+                        ),
+                        custom_model_owner_user_id=custom_model_owner_user_id,
+                        user_provided_model_id=user_model.id if user_model else None,
+                        user_provided_model_revision=user_model.revision if user_model else None,
+                        user_model_prompt_price_microdollars_per_m=(
+                            user_model.prompt_price_microdollars_per_million_tokens
+                            if user_model
+                            else None
+                        ),
+                        user_model_completion_price_microdollars_per_m=(
+                            user_model.completion_price_microdollars_per_million_tokens
+                            if user_model
+                            else None
+                        ),
+                        user_model_owner_user_id=user_model.owner_user_id if user_model else None,
+                        additional_cost_reservation_microdollars=additional_cost_reservation,
+                        native_batch_eligible=native_batch_eligible,
+                        expires_at=expires_at,
+                        window_limits=window_limits or None,
+                        spend_lease=spend_lease,
+                        spend_lease_binding_plan=spend_lease_binding_plan,
+                        pricing_snapshot=pricing_snapshot,
+                        stage_d_reason=stage_d_reason,
+                        stage_d_prompt_tokens=input_tokens,
+                        stage_d_max_output_tokens=output_tokens,
+                        spend_lease_admission_receipt=body.spend_lease_admission,
+                        spend_lease_receipt_hash=admission_receipt_hash,
+                        credit_escrowed_by_spend_lease=(
+                            body.spend_lease_admission is not None
+                        ),
+                        # Replay protection survives rollback: a receipt-less retry
+                        # must never reuse an authorization created while Stage C
+                        # acceptance was enabled.
+                        spend_lease_admission_replay_protection=True,
+                        stage_d_boot_kid=(
+                            boot_auth.kid
+                            if spend_context["boot_verified"] and boot_auth is not None
+                            else None
+                        ),
+                        invocation_nonce=body.invocation_nonce,
+                    )
         except conflict_store_error_types() as exc:
             release_user_model_slot_after_error()
             # The generic 503 request log cannot identify a tenant hot row.
@@ -2151,11 +2168,12 @@ def _authorize_gateway_sync_impl(
             if settings.spend_lease_trust_eligibility_enabled else None
         )
         try:
-            key_limit_reservation = STORE.reserve_key_limit(
-                api_key.hash,
-                estimate,
-                usage_type=reservation_usage_type,
-            )
+            with gateway_phase("store_ms", after="post_commit_ms"):
+                key_limit_reservation = STORE.reserve_key_limit(
+                    api_key.hash,
+                    estimate,
+                    usage_type=reservation_usage_type,
+                )
             window_decision = key_limit_reservation.window_decision
             remember_spend_window_decision(request, window_decision)
         except KeyWindowLimitExceeded as exc:
@@ -2193,13 +2211,14 @@ def _authorize_gateway_sync_impl(
         )
         if has_credit_candidate:
             try:
-                credit_reservation = STORE.reserve(
-                    workspace.id,
-                    api_key.hash,
-                    estimate,
-                    idempotency_key=request_idempotency_key,
-                    key_reserved_microdollars=key_limit_reservation.reserved_microdollars,
-                )
+                with gateway_phase("store_ms", after="post_commit_ms"):
+                    credit_reservation = STORE.reserve(
+                        workspace.id,
+                        api_key.hash,
+                        estimate,
+                        idempotency_key=request_idempotency_key,
+                        key_reserved_microdollars=key_limit_reservation.reserved_microdollars,
+                    )
                 credit_reservation_id = credit_reservation.id
             except BillingPausedError as exc:
                 release_user_model_slot_after_error()
@@ -2285,7 +2304,8 @@ def _authorize_gateway_sync_impl(
             expected_pause_epoch=expected_pause_epoch,
         )
         try:
-            authorization = create_authorization()
+            with gateway_phase("store_ms", after="post_commit_ms"):
+                authorization = create_authorization()
         except BillingPausedError as exc:
             release_user_model_slot_after_error()
             raise api_error(403, "billing_paused", ErrorType.FORBIDDEN) from exc
@@ -2551,7 +2571,7 @@ def register(router: APIRouter) -> None:
     ) -> dict[str, Any]:
         return await run_in_threadpool(_gateway_resolve_custom_model_sync, request, body, settings)
 
-    @router.post("/internal/gateway/authorize")
+    @router.post("/internal/gateway/authorize", responses={200: {"model": GatewayAuthorizeResponse}})
     async def gateway_authorize(
         request: Request,
         body: GatewayAuthorizeRequest,
@@ -2606,7 +2626,7 @@ def register(router: APIRouter) -> None:
             settings,
         )
 
-    @router.post("/internal/gateway/settle")
+    @router.post("/internal/gateway/settle", responses={200: {"model": GatewaySettleResponse}})
     async def gateway_settle(
         request: Request,
         body: GatewaySettleRequest,
@@ -3084,6 +3104,14 @@ def _gateway_authorize_response(
     spend_lease_admission_remaining_micro: int | None = None,
     spend_lease_snapshot_candidates: tuple[dict[str, Any], ...] | None = None,
 ) -> dict[str, Any]:
+    """Compose the authorization response with a prospective generation identity.
+
+    data.generation_id is recorded when the authorization reaches settled or
+    reaped_snapshot (Stage D heartbeat snapshot booking). It is never recorded
+    for refunded authorizations, including refunding reaps, even though an
+    authorize replay returns the same prospective ID. Consumers must check the
+    terminal authorization disposition before expecting a generation.
+    """
     stage_d = _gateway_stage_d_payload(
         authorization,
         reason_override=stage_d_reason_override,
@@ -3111,6 +3139,7 @@ def _gateway_authorize_response(
     return {
         "data": {
             "authorization_id": authorization.id,
+            "generation_id": generation_id_for_authorization(authorization.id),
             "workspace_id": workspace_id,
             "api_key_hash": key_hash,
             "model": model.id,
@@ -3692,13 +3721,15 @@ def _record_refund_benchmark_safely(
 
 
 @spanner_rpc_budget(_BILLING_PATH_SPANNER_BUDGET_SECONDS)
+@timed_gateway_sync
 def _settle_gateway_with_admission_sync(
     body: GatewaySettleRequest,
     *,
     settings: Settings,
     background_tasks: BackgroundTasks | None = None,
 ) -> dict[str, Any]:
-    authorization = STORE.get_gateway_authorization(body.authorization_id)
+    with gateway_phase("key_lookup_ms", after="routing_ms"):
+        authorization = STORE.get_gateway_authorization(body.authorization_id)
     if authorization is None:
         raise api_error(404, "Gateway authorization not found", ErrorType.NOT_FOUND)
     subject = authorization.key_hash
@@ -3745,7 +3776,8 @@ def _settle_gateway_authorization(
     # which skips defaults for unset fields.
     if success and getattr(body, "route_fallbacks", None):
         _report_route_fallbacks(body)
-    authorization = _authorization or STORE.get_gateway_authorization(body.authorization_id)
+    with gateway_phase("key_lookup_ms", after="routing_ms"):
+        authorization = _authorization or STORE.get_gateway_authorization(body.authorization_id)
     if authorization is None:
         raise api_error(404, "Gateway authorization not found", ErrorType.NOT_FOUND)
     if authorization.settled:
@@ -4299,31 +4331,32 @@ def _settle_gateway_authorization(
         )
         if callable(result_method):
             try:
-                finalize_result = cast(
-                    TypedFinalizeResult,
-                    result_method(
-                        authorization.id,
-                        authorization_snapshot=authorization_snapshot,
-                        success=success,
-                        actual_microdollars=actual_cost,
-                        selected_usage_type=selected_usage_type,
-                        generation=generation,
-                        user_model_payout=user_model_payout,
-                        app_markup_payout=app_markup_payout,
-                        custom_model_markup_payout=custom_model_markup_payout,
-                        defer_post_commit=(
-                            functools.partial(defer_post_commit, background_tasks)
-                            if background_tasks is not None else None
+                with gateway_phase("store_ms", after="post_commit_ms"):
+                    finalize_result = cast(
+                        TypedFinalizeResult,
+                        result_method(
+                            authorization.id,
+                            authorization_snapshot=authorization_snapshot,
+                            success=success,
+                            actual_microdollars=actual_cost,
+                            selected_usage_type=selected_usage_type,
+                            generation=generation,
+                            user_model_payout=user_model_payout,
+                            app_markup_payout=app_markup_payout,
+                            custom_model_markup_payout=custom_model_markup_payout,
+                            defer_post_commit=(
+                                functools.partial(defer_post_commit, background_tasks)
+                                if background_tasks is not None else None
+                            ),
+                            # Resolve the durable intent in the finalize commit
+                            # itself (docs/design/durable-settle-outbox.md §7).
+                            settle_outbox_done=(
+                                (authorization.id, intent_kind)
+                                if settings.settle_outbox_enabled and outbox_enqueued
+                                else None
+                            ),
                         ),
-                        # Resolve the durable intent in the finalize commit
-                        # itself (docs/design/durable-settle-outbox.md §7).
-                        settle_outbox_done=(
-                            (authorization.id, intent_kind)
-                            if settings.settle_outbox_enabled and outbox_enqueued
-                            else None
-                        ),
-                    ),
-                )
+                    )
             except (RegionalLeaseLedgerError, LeaseSettlementError):
                 # The frozen outbox intent is already durable. A local ledger
                 # conflict must remain retryable so the enclave can replay and
@@ -4356,16 +4389,17 @@ def _settle_gateway_authorization(
                 return {"data": _intent_durable_gateway_data(authorization)}
         else:
             try:
-                finalized_legacy_contract = _typed_store.typed_finalize_gateway_authorization(
-                    authorization.id,
-                    success=success,
-                    actual_microdollars=actual_cost,
-                    selected_usage_type=selected_usage_type,
-                    generation=generation,
-                    user_model_payout=user_model_payout,
-                    app_markup_payout=app_markup_payout,
-                    custom_model_markup_payout=custom_model_markup_payout,
-                )
+                with gateway_phase("store_ms", after="post_commit_ms"):
+                    finalized_legacy_contract = _typed_store.typed_finalize_gateway_authorization(
+                        authorization.id,
+                        success=success,
+                        actual_microdollars=actual_cost,
+                        selected_usage_type=selected_usage_type,
+                        generation=generation,
+                        user_model_payout=user_model_payout,
+                        app_markup_payout=app_markup_payout,
+                        custom_model_markup_payout=custom_model_markup_payout,
+                    )
             except Exception:
                 if not outbox_enqueued:
                     raise
@@ -4382,13 +4416,14 @@ def _settle_gateway_authorization(
         finalized = finalize_result.finalized
     else:
         try:
-            finalized = STORE.finalize_gateway_authorization(
-                authorization.id,
-                success=success,
-                actual_microdollars=actual_cost,
-                selected_usage_type=selected_usage_type,
-                generation=generation,
-            )
+            with gateway_phase("store_ms", after="post_commit_ms"):
+                finalized = STORE.finalize_gateway_authorization(
+                    authorization.id,
+                    success=success,
+                    actual_microdollars=actual_cost,
+                    selected_usage_type=selected_usage_type,
+                    generation=generation,
+                )
         except Exception:
             if not outbox_enqueued:
                 raise

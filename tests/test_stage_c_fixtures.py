@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from trusted_router.receipt_keys import b64url_decode, b64url_encode, receipt_kid
 from trusted_router.routes.internal import gateway
 from trusted_router.schemas import (
+    GatewayAuthorizeResponse,
     SpendLeaseAdmissionMarker,
     SpendLeaseAdmissionRejected,
 )
@@ -187,6 +188,12 @@ def test_accepted_response_binds_authorization_snapshot_remaining_and_marker() -
     receipt = _bytes("admission_receipt_compact.jws")
     receipt_payload = _json("admission_receipt_payload.json")
 
+    GatewayAuthorizeResponse.model_validate({"data": response})
+    assert response["generation_id"] == "gen-c84631bc0bff56ffb260e90ad69214ce"
+    assert response["timing"] == {
+        "total_ms": 15, "key_lookup_ms": 2, "routing_ms": 3,
+        "store_ms": 8, "post_commit_ms": 2, "spanner_rpcs": 6,
+    }
     assert response["authorization_id"] == "gwa-stage-c-fixture"
     assert response["estimated_cost_microdollars"] == receipt_payload[
         "enclave_estimate_micro"
@@ -221,5 +228,11 @@ def test_every_closed_rejection_response_is_canonical_and_named() -> None:
             }
         }
         SpendLeaseAdmissionRejected.model_validate(body)
+        # Older enclaves can still omit timing; current route errors include it.
+        with_timing = {**body, "data": {"timing": {
+            "total_ms": 0, "key_lookup_ms": 0, "routing_ms": 0,
+            "store_ms": 0, "post_commit_ms": 0, "spanner_rpcs": 0,
+        }}}
+        SpendLeaseAdmissionRejected.model_validate(with_timing)
         observed.add(body["error"]["reason"])
     assert observed == ADMISSION_REFUSAL_REASONS

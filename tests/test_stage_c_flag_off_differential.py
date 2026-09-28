@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from tests.fakes.spanner import _FakeTransaction, _ParamTypes, make_fake_store
-from trusted_router import spend_leases, storage_gcp_authorize
+from trusted_router import gateway_timing, spend_leases, storage_gcp_authorize
 from trusted_router.catalog import MODELS, endpoints_for_model
 from trusted_router.config import Settings
 from trusted_router.provider_locations import inference_location_metadata
@@ -45,6 +45,7 @@ def _canonical(value: object) -> bytes:
 def test_flag_off_authorize_response_is_byte_exact_origin_main(
     monkeypatch: pytest.MonkeyPatch, paused: bool, armed: bool, shard: int,
 ) -> None:
+    monkeypatch.setattr(gateway_timing, "perf_counter", lambda: 10.0)
     store, database, _ = make_fake_store(request_record_write_mode="typed")
     settings = Settings(environment="test", spend_lease_trust_eligibility_enabled=armed)
     store.trust_settings = settings
@@ -123,10 +124,14 @@ def test_flag_off_authorize_response_is_byte_exact_origin_main(
     else:
         response = authorize()
         response["data"]["api_key_hash"] = "<api-key-hash>"
-        # Geography is an intentional additive display extension. Preserve
-        # the historical fixture and compare every original byte/field, plus
-        # exactly this extension; lease claims and database writes stay exact.
+        # Preserve the pinned historical response and compare every original
+        # byte/field plus the reviewed additive extensions. Identity and timing
+        # expectations are literal wire data, not built by production helpers.
         expected = json.loads((GOLDENS / "authorize_response.json").read_bytes())
+        additions = json.loads(
+            (Path(__file__).parent / "fixtures/gateway_response_timing.json").read_bytes()
+        )["origin_main_additions"]
+        expected["data"].update(additions)
         for route in [expected["data"], *expected["data"]["route_candidates"]]:
             route["inference_location"] = inference_location_metadata(route["provider"], route["model"])
         assert _canonical(response) == _canonical(expected)

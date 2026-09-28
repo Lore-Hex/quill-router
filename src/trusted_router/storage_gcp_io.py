@@ -17,9 +17,10 @@ import contextlib
 import contextvars
 import functools
 import secrets
+import threading
 import time
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
 from typing import Any, ParamSpec, TypeVar, cast
 
 T = TypeVar("T")
@@ -48,6 +49,41 @@ _SPANNER_RPC_DEADLINE: contextvars.ContextVar[float | None] = contextvars.Contex
     "trusted_router_spanner_rpc_deadline",
     default=None,
 )
+
+
+@dataclass
+class SpannerRpcCounter:
+    """Request-local wrapper invocations, including transaction retry attempts.
+
+    GAPIC-internal transport retries are below this wrapper and not counted.
+    The lock also permits a caller to copy its context into concurrent workers.
+    """
+
+    count: int = 0
+    lock: Any = field(default_factory=threading.Lock)
+
+    def increment(self) -> None:
+        with self.lock:
+            self.count += 1
+
+    def value(self) -> int:
+        with self.lock:
+            return self.count
+
+
+_SPANNER_RPC_COUNTER: contextvars.ContextVar[SpannerRpcCounter | None] = contextvars.ContextVar(
+    "trusted_router_spanner_rpc_counter", default=None,
+)
+
+
+@contextlib.contextmanager
+def count_spanner_rpcs() -> Iterator[SpannerRpcCounter]:
+    counter = SpannerRpcCounter()
+    token = _SPANNER_RPC_COUNTER.set(counter)
+    try:
+        yield counter
+    finally:
+        _SPANNER_RPC_COUNTER.reset(token)
 
 
 def spanner_rpc_budget(max_seconds: float) -> Callable[[Callable[P, T]], Callable[P, T]]:
@@ -169,6 +205,9 @@ def configure_spanner_rpc_deadlines(
             )
             if retry is not None and hasattr(retry, "with_timeout"):
                 kwargs["retry"] = retry.with_timeout(remaining)
+            counter = _SPANNER_RPC_COUNTER.get()
+            if counter is not None:
+                counter.increment()
             return _original(*args, **kwargs)
 
         setattr(api, method_name, bounded_rpc)
