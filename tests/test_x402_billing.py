@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import datetime as dt
 import json
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -8,6 +9,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from trusted_router import storage_rate_limits
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.storage import STORE
@@ -227,7 +229,14 @@ def test_x402_fund_rejects_workspace_id_and_cent_fraction_before_stripe(monkeypa
     assert called is False
 
 
+# The rate limiter buckets on wall-clock minutes (a tumbling window). Two
+# requests that straddle a minute land in different buckets, so tests that
+# expect the second to be refused read the limiter's clock at one instant.
+MID_WINDOW = dt.datetime(2026, 9, 28, 12, 0, 30, tzinfo=dt.UTC)
+
+
 def test_x402_fund_enforces_amount_cap_and_rate_limit(monkeypatch) -> None:
+    monkeypatch.setattr(storage_rate_limits, "utcnow", lambda: MID_WINDOW)
     calls = 0
 
     def create_payment_intent(**kwargs: Any) -> dict[str, Any]:
@@ -266,6 +275,40 @@ def test_x402_fund_enforces_amount_cap_and_rate_limit(monkeypatch) -> None:
     assert first.status_code == 402
     assert second.status_code == 429
     assert calls == 1
+
+
+@pytest.mark.parametrize(
+    ("second_request_at", "second_status"),
+    [
+        (MID_WINDOW + dt.timedelta(seconds=1), 429),
+        # main's CI run 36313168754 failed this way: the second request was
+        # allowed into the next minute and reached the payment path.
+        (MID_WINDOW + dt.timedelta(seconds=30), 402),
+    ],
+    ids=["same-minute", "next-minute"],
+)
+def test_x402_fund_rate_limit_resets_at_each_wall_clock_minute(
+    monkeypatch, second_request_at: dt.datetime, second_status: int
+) -> None:
+    clock = {"now": MID_WINDOW}
+    monkeypatch.setattr(storage_rate_limits, "utcnow", lambda: clock["now"])
+    monkeypatch.setattr(
+        "trusted_router.services.x402_billing.stripe.PaymentIntent.create",
+        lambda **kwargs: _payment_intent(
+            payment_intent_id="pi_x402_window",
+            workspace_id=str(kwargs["metadata"]["workspace_id"]),
+            status="requires_action",
+            received_cents=None,
+        ),
+    )
+    with _x402_client(x402_max_fund_dollars="5", x402_rate_limit_key_per_window=1) as client:
+        headers, _workspace_id = _api_headers(client)
+        first = client.post("/v1/billing/x402/fund", headers=headers, json={"amount": "5.00"})
+        clock["now"] = second_request_at
+        second = client.post("/v1/billing/x402/fund", headers=headers, json={"amount": "5.00"})
+
+    assert first.status_code == 402
+    assert second.status_code == second_status
 
 
 def test_x402_settle_credits_succeeded_payment_once(monkeypatch) -> None:
