@@ -19,6 +19,7 @@ from fastapi import BackgroundTasks
 from fastapi.testclient import TestClient
 from trustedrouter import AsyncTrustedRouter
 
+from tests.fixture_routes import serve_on_fixture_route
 from trusted_router.catalog import (
     CHEAP_MODEL_ID,
     E2E_MODEL_ID,
@@ -3581,22 +3582,20 @@ class _FakeBigtable:
 # ---------------------------------------------------------------------------
 
 
-def test_rotation_candidates_cover_credits_endpoints() -> None:
+def test_rotation_candidates_cover_credits_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
     from trusted_router.catalog import _PROVIDER_DEPRECATED_UPSTREAM_MODELS
 
+    # Coverage is endpoint-driven, not the prepaid_available flag: a Credits
+    # route is covered even when its model does not claim prepaid availability.
+    route = serve_on_fixture_route(monkeypatch, "test/rotation-model", "novita", author="novita")
+    assert MODELS[route.model_id].prepaid_available is False, "fixture"
     pool = rotation_candidates()
-    assert pool, "expected at least one provider with a prepaid endpoint"
+    assert route.model_id in pool["novita"]
     for provider, models in pool.items():
         assert models, f"{provider} has no models"
         assert len(models) == len(set(models)), f"{provider} has duplicate models"
-    # Both a snapshot provider and a supplemental-manifest provider are
-    # reachable — coverage is endpoint-driven, not the prepaid_available flag.
-    assert "openai" in pool
-    assert "novita" in pool
     assert "google/gemma-4-26b-a4b-it" not in pool.get("gmi", [])
     assert "google/gemma-4-31b-it" not in pool.get("gmi", [])
-    assert "moonshotai/kimi-k2.7-code" in pool.get("kimi", [])
-    assert "moonshotai/kimi-k2.7-code-highspeed" in pool.get("kimi", [])
     assert "minimax/minimax-m2.1" not in pool.get("minimax", [])
     assert "minimax/minimax-m2.5" not in pool.get("minimax", [])
     assert "deepseek/deepseek-v3.2" not in pool.get("parasail", [])
@@ -3617,6 +3616,19 @@ def test_rotation_candidates_cover_credits_endpoints() -> None:
     assert not (
         set(pool.get("tinfoil", [])) & _PROVIDER_DEPRECATED_UPSTREAM_MODELS["tinfoil"]
     )
+
+
+@pytest.mark.provider_health
+def test_rotation_candidates_cover_the_routes_we_probe() -> None:
+    """Live provider state: which hosts list these models today.
+    provider-catalog-health.yml reports it hourly, and the price refresh does
+    not wait on it."""
+    pool = rotation_candidates()
+    # Both a snapshot provider and a supplemental-manifest provider are reachable.
+    assert "openai" in pool
+    assert "novita" in pool
+    assert "moonshotai/kimi-k2.7-code" in pool.get("kimi", [])
+    assert "moonshotai/kimi-k2.7-code-highspeed" in pool.get("kimi", [])
     assert "z-ai/glm-5.3" in pool.get("tinfoil", [])
     assert "z-ai/glm-5.3-flash" in pool.get("tinfoil", [])
     assert "z-ai/glm-5.3-flash" in pool.get("fireworks", [])
