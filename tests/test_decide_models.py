@@ -18,6 +18,7 @@ from typing import Any, cast
 import httpx
 import pytest
 
+from tests.fixture_routes import bypass_catalog_caches, serve_on_fixture_route
 from tests.lifecycle_clock import catalog_predates
 from trusted_router.catalog import (
     MODELS,
@@ -37,6 +38,7 @@ from trusted_router.catalog_data import (
     PRIVATE_PROXY_MODEL_TARGETS,
     TREV_1_0_MODEL_ID,
     ZEV_1_0_MODEL_ID,
+    Model,
     ModelEndpoint,
 )
 from trusted_router.catalog_privacy import endpoint_stores_content, endpoint_zero_data_retention
@@ -274,12 +276,15 @@ def test_decide_resolver_accepts_only_decision_models() -> None:
 @pytest.mark.parametrize("hosted", [False, True])
 @pytest.mark.parametrize("defer_selection", [False, True])
 def test_resolvers_expose_relaxed_policy_without_changing_normalized_inputs(
-    hosted: bool, defer_selection: bool,
+    hosted: bool, defer_selection: bool, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dataclasses import replace
 
     from trusted_router.routing import chat_route_endpoint_candidates, normalize_routing_inputs
 
+    if not hosted:
+        # A chat route on a host that stores content, so `deny` alone empties it.
+        _serve_on_fixture_routes(monkeypatch, MEV_1_0_MODEL_ID)
     inputs = normalize_routing_inputs({
         "model": JEV if hosted else PRIVATE_PROXY_MODEL_TARGETS[MEV_1_0_MODEL_ID],
         "provider": {
@@ -380,7 +385,10 @@ async def test_jev_host_order_follows_the_default_then_the_caller(
 
 
 @pytest.mark.asyncio
-async def test_native_decision_request_authorizes_as_chat_on_the_pinned_provider() -> None:
+async def test_native_decision_request_authorizes_as_chat_on_the_pinned_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    serve_on_fixture_route(monkeypatch, "openai/gpt-oss-20b", "deepinfra", author="openai")
     response = await _authorize(
         {
             "model": "openai/gpt-oss-20b",
@@ -735,6 +743,17 @@ async def test_a_request_filter_that_strips_every_pinned_host_is_a_client_error(
     # 503 and opened "TR Gateway: billing path 5xx".
     from trusted_router.routes.internal import gateway
 
+    # Routes outside the chain that DO match each filter keep the chat model
+    # behind the name routable, so the refusal is the chain's: a zero-retention
+    # Credits host, and a customer-key route (this workspace has no key).
+    chain = NAMED_DECISION_MODEL_PROVIDERS[OEV_1_0_MODEL_ID]
+    zdr_outsider = _an_outsider(
+        OEV_1_0_MODEL_ID,
+        lambda route: endpoint_zero_data_retention(route) is True
+        and not endpoint_stores_content(route),
+    )
+    backing = _serve_on_fixture_routes(monkeypatch, OEV_1_0_MODEL_ID, hosts=(*chain, zdr_outsider))
+    serve_on_fixture_route(monkeypatch, backing, chain[0], author="openai", usage_type="BYOK")
     monkeypatch.setattr(
         gateway, "provider_model_available_from_gateway_region", lambda *_: region_available
     )
@@ -1288,9 +1307,21 @@ def test_a_decision_models_api_page_shows_the_decide_call(model_id: str, client:
     assert "chat.completions.create" in chat.text
 
 
-def test_a_comparison_page_shows_a_call_the_model_accepts(client: Any) -> None:
+def _serve_the_compared_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    """mev, trev and oev with their chat models (Mercury 2, gpt-oss-120b and
+    gpt-oss-20b), on fixture routes: a comparison page needs both models in the
+    catalog, and a provider delisting the one host behind a name drops the name."""
+    bypass_catalog_caches(monkeypatch)
+    for model_id in (MEV_1_0_MODEL_ID, TREV_1_0_MODEL_ID, OEV_1_0_MODEL_ID):
+        _serve_on_fixture_routes(monkeypatch, model_id)
+
+
+def test_a_comparison_page_shows_a_call_the_model_accepts(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The comparison page ended with `client.chat.completions.create(model=<left>)`
     whatever the left model was: for a decision model, a call that is refused."""
+    _serve_the_compared_names(monkeypatch)
     page = client.get("/compare/models/trustedrouter/mev-1.0/vs/trustedrouter/trev-1.0")
     assert page.status_code == 200, page.text[:200]
     assert "chat.completions.create" not in page.text
@@ -1305,12 +1336,29 @@ def test_a_comparison_page_shows_a_call_the_model_accepts(client: Any) -> None:
     assert '<span class="pill">decide</span>' in chat.text
 
 
-def test_a_comparison_faq_names_a_call_both_models_accept(client: Any) -> None:
+def test_a_comparison_faq_names_a_call_both_models_accept(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Its last answer was "change only the model id" for EVERY pair, which is a
     400 when one is a decision model and the call is chat. Two fixes then denied a
     call some pair DOES share. It now claims only what the flags prove (both chat;
     both take decisions -- authorize drives any chat model on /v1/decide) and
     otherwise promises nothing either way."""
+    _serve_the_compared_names(monkeypatch)
+    # The catalog's only chat model that also makes images is Google's, so the
+    # pair gets fixture models of each kind.
+    chat_and_image = serve_on_fixture_route(
+        monkeypatch, "fixture/chat-and-image", "google-ai-studio", author="google-ai-studio",
+        model=Model(id="fixture/chat-and-image", name="Fixture Chat And Image",
+                    provider="google-ai-studio",
+                    context_length=131_072, input_modalities=("text", "image"),
+                    output_modalities=("text", "image")),
+    ).model_id
+    image_only = serve_on_fixture_route(
+        monkeypatch, "fixture/image-only", "recraft", author="recraft",
+        model=Model(id="fixture/image-only", name="Fixture Image Only", provider="recraft",
+                    context_length=4_096, supports_chat=False, output_modalities=("image",)),
+    ).model_id
     mixed = client.get("/compare/models/openai/gpt-oss-20b/vs/trustedrouter/oev-1.0").text
     assert f"Both take the same request on POST {DECIDE_PATH}" in mixed
     assert "TrustedRouter Oev 1.0 does not take chat requests." in mixed
@@ -1326,7 +1374,7 @@ def test_a_comparison_faq_names_a_call_both_models_accept(client: Any) -> None:
     embedding = next(m.id for m in MODELS.values() if m.supports_embeddings and not m.supports_chat)
     for path in (
         f"/compare/models/{embedding}/vs/trustedrouter/trev-1.0",
-        "/compare/models/google/gemini-3.1-flash-image-preview/vs/recraft/recraftv3",
+        f"/compare/models/{chat_and_image}/vs/{image_only}",
     ):
         page = client.get(path)
         assert page.status_code == 200, (path, page.text[:200])
