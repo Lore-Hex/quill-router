@@ -326,9 +326,8 @@
 }
 @media(max-width:360px){.privacy-choice h3{font-size:22px}}
 
-/* Editorial rhythm: sticky navigation, broad introductions, three evidence columns. */
-html{scroll-padding-top:108px}
-.masthead{position:sticky;top:0;z-index:20;max-width:none;padding-inline:max(32px,calc((100% - 1136px)/2));min-height:88px;background:#0b0e0df5;border-bottom:1px solid var(--line);backdrop-filter:blur(16px)}
+/* Editorial rhythm: broad introductions and three evidence columns. */
+.masthead{position:relative;z-index:20;max-width:none;padding-inline:max(32px,calc((100% - 1136px)/2));min-height:88px;background:#0b0e0df5;border-bottom:1px solid var(--line);backdrop-filter:blur(16px)}
 .masthead #primary-navigation{align-items:center;gap:28px}.masthead #primary-navigation a{font-size:15px}
 .masthead #primary-navigation .nav-action{min-height:44px;padding:10px 18px;font-size:15px}
 .market-intro{align-items:center}.market-intro>.button{justify-self:end;white-space:nowrap}
@@ -355,7 +354,7 @@ html{scroll-padding-top:108px}
 @media(max-width:1100px){.masthead{padding-inline:24px}.masthead #primary-navigation{gap:18px}.masthead .brand{font-size:16px}.trust-evidence{grid-template-columns:1fr 1fr}.trust-evidence>.catalogue{grid-column:1/-1}.trust-evidence .privacy-comparison{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}}
 @media(max-width:800px){#buyers .section-intro{grid-template-columns:1fr;gap:24px}#buyers .section-intro>p:last-child{font-size:18px}.market-intro>.button{justify-self:start}.exchange-steps{gap:24px}.exchange-steps li{font-size:16px}}
 @media(max-width:600px){
- html{scroll-padding-top:88px}.masthead{min-height:68px;padding-inline:22px}.masthead #primary-navigation{background:#0b0e0d}.masthead.nav-ready #primary-navigation{padding-bottom:20px}
+ .masthead{min-height:68px;padding-inline:22px}.masthead #primary-navigation{background:#0b0e0d}.masthead.nav-ready #primary-navigation{padding-bottom:20px}
  .market-intro{gap:28px}.market-intro>.button{margin:0}.exchange-steps{grid-template-columns:1fr;gap:0;margin-top:12px}.exchange-steps li{display:flex;gap:20px;padding:20px 0;font-size:17px}.exchange-steps li::before{margin:0}
  .trust-evidence{grid-template-columns:1fr;gap:48px;margin-top:40px}.trust-evidence>.catalogue{grid-column:auto}.trust-evidence .privacy-comparison{display:block}.trust-evidence .privacy-column{padding:22px 16px}.trust-evidence .privacy-choice h3{font-size:27px}
  .privacy-band .trust-copy{font-size:18px}.trust-evidence .health-key,.trust-evidence .evidence-scope,.trust-evidence .evidence-footer{font-size:14px}.attestation-panel dl{font-size:15px}
