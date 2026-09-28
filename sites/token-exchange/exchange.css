@@ -1,3 +1,4 @@
+@font-face{font-family:"Plus Jakarta Sans";src:url('/assets/plus-jakarta-sans.ttf') format('truetype');font-weight:200 800;font-display:swap}
 @font-face{font-family:Archivo;src:url('/assets/archivo.woff2') format('woff2');font-weight:100 900;font-display:swap}
 @font-face{font-family:Spectral;src:url('/assets/spectral.woff2') format('woff2');font-weight:300;font-display:swap}
 :root{color-scheme:dark;--bg:#0b0c0e;--panel:#111518;--text:#f3f3ef;--muted:#d9ddda;--line:rgba(220,225,222,.12);--grid:rgba(220,225,222,.08);--mint:#cce8d7;--section-space:80px}
@@ -493,10 +494,10 @@ footer .brand small{font-size:12px}
 .last-check { font: 11px/1.5 var(--mono, monospace); color: var(--muted, #a8b0bd); margin: 6px 0 10px; }
 .evidence-state { font-size: 12px; line-height: 1.5; margin: 12px 0; }
 
-/* Shared Archivo typography across the regional exchanges. */
+/* Shared heading family; body/navigation retain Archivo and all metrics stay unchanged. */
 h1,h2,h3,.headline-accent,.privacy-choice h3,.review-resources h3,
 .uptime-panel figcaption,.attestation-panel h3,.trust-evidence .catalogue-label{
- font-family:Archivo,Arial,sans-serif;font-weight:400;letter-spacing:-.035em;
+ font-family:"Plus Jakarta Sans",Archivo,Arial,sans-serif;font-weight:400;letter-spacing:-.035em;
 }
 .headline-accent{font-style:normal}
 .health-metric strong,.service-heading strong{font-family:Archivo,Arial,sans-serif;font-weight:400}
