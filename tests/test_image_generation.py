@@ -14,7 +14,6 @@ from trusted_router.image_generation import (
     OPENAI_IMAGE_MODEL_IDS,
     image_input_modalities,
 )
-from trusted_router.routes import catalog as catalog_routes
 from trusted_router.storage import STORE
 
 # Image routes the tests below ride, priced as their hosts publish them today.
@@ -57,11 +56,6 @@ def _serve_image_models_on_fixture_routes(
             ),
             **fields,
         )
-    # The public catalog projection is cached per process; build it from this
-    # test's catalog without caching that catalog for later tests.
-    monkeypatch.setattr(
-        catalog_routes, "_public_catalog_payload", catalog_routes._public_catalog_payload.__wrapped__
-    )
 
 
 def test_image_catalog_is_machine_readable_and_matches_general_filter(

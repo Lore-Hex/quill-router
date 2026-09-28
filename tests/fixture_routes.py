@@ -8,7 +8,9 @@ The route and, when the catalog lacks it, the model go into the registry's own
 dicts with monkeypatch.setitem, so routing sees them and the test's teardown
 restores the catalog. Privacy and ZDR posture come from the static PROVIDERS
 table. Lifecycle retirements still apply, so a route a retirement names is
-refused here instead of silently leaving the candidates.
+refused here instead of silently leaving the candidates. The process-wide
+projections of the catalog are computed from the fixture catalog, uncached, for
+the test's duration, so fixture state never outlives the test.
 """
 
 from __future__ import annotations
@@ -19,6 +21,22 @@ import pytest
 
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, endpoints_for_model
 from trusted_router.catalog_data import Model, ModelEndpoint
+
+
+def bypass_catalog_caches(monkeypatch: pytest.MonkeyPatch) -> None:
+    """For this test, compute the cached public projections of the catalog on
+    every call and cache none of them."""
+    from trusted_router import dashboard
+    from trusted_router.routes import catalog as catalog_routes
+
+    for module, name in (
+        (catalog_routes, "_public_catalog_payload"),
+        (dashboard, "_model_comparison_pairs"),
+        (dashboard, "_model_comparison_index"),
+        (dashboard, "_model_comparison_neighbor_index"),
+    ):
+        cached = getattr(module, name)
+        monkeypatch.setattr(module, name, getattr(cached, "__wrapped__", cached))
 
 
 def serve_on_fixture_route(
@@ -38,6 +56,7 @@ def serve_on_fixture_route(
     The model the catalog already carries is kept as it is; otherwise `model`
     is carried, or a chat model.
     """
+    bypass_catalog_caches(monkeypatch)
     monkeypatch.setitem(
         MODELS,
         model_id,
@@ -69,6 +88,7 @@ def serve_on_fixture_route(
 def drop_routes(monkeypatch: pytest.MonkeyPatch, model_id: str) -> None:
     """Take every route of `model_id` out of the catalog for this test, so the
     fixture routes it serves next are the model's only routes."""
+    bypass_catalog_caches(monkeypatch)
     for endpoint_id, endpoint in list(MODEL_ENDPOINTS.items()):
         if endpoint.model_id == model_id:
             monkeypatch.delitem(MODEL_ENDPOINTS, endpoint_id)
