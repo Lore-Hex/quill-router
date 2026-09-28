@@ -28,6 +28,15 @@ from trusted_router.providers import (
 )
 from trusted_router.secrets import LocalKeyFile
 
+# The adapter tests build their models: an adapter maps a provider and model
+# ID to that provider's native request, whichever models it lists today.
+_GPT_5_4_NANO = Model(
+    id="openai/gpt-5.4-nano", name="GPT-5.4 Nano", provider="openai", context_length=400_000,
+)
+_MIMO_V2_5_PRO = Model(
+    id="xiaomi/mimo-v2.5-pro", name="MiMo V2.5 Pro", provider="xiaomi", context_length=1_050_000,
+)
+
 
 def test_token_estimators_have_minimums_and_handle_content_parts() -> None:
     assert estimate_tokens_from_text("") == 1
@@ -94,7 +103,7 @@ async def test_openai_compatible_live_adapter_uses_provider_usage_and_headers(
     client = ProviderClient(LocalKeyFile(key_file), live=True)
 
     result = await client.chat(
-        MODELS["openai/gpt-5.4-nano"],
+        _GPT_5_4_NANO,
         {"messages": [{"role": "user", "content": "hello"}], "max_tokens": 5},
     )
 
@@ -159,7 +168,7 @@ async def test_openai_compatible_adapter_forwards_documented_chat_controls(
     }
 
     result = await client.chat(
-        MODELS["openai/gpt-5.4-nano"],
+        _GPT_5_4_NANO,
         {
             "messages": [{"role": "user", "content": "hello"}],
             "max_tokens": 5,
@@ -249,7 +258,7 @@ async def test_openai_compatible_adapter_carries_tool_calls_into_chat_envelope(
     client = ProviderClient(LocalKeyFile(key_file), live=True)
 
     result = await client.chat(
-        MODELS["openai/gpt-5.4-nano"],
+        _GPT_5_4_NANO,
         {
             "messages": [{"role": "user", "content": "hello"}],
             "max_tokens": 5,
@@ -324,7 +333,7 @@ async def test_openai_compatible_adapter_forwards_provider_specific_controls(
     client = ProviderClient(LocalKeyFile(key_file), live=True)
 
     result = await client.chat(
-        MODELS["xiaomi/mimo-v2.5-pro"],
+        _MIMO_V2_5_PRO,
         {
             "messages": [{"role": "user", "content": "hello"}],
             "max_tokens": 5,
@@ -355,7 +364,7 @@ async def test_openai_compatible_adapter_forwards_provider_specific_controls(
     ("provider_model", "env_key", "env_value", "expected_url", "expected_model"),
     [
         (
-            "openai/gpt-5.4-nano",
+            _GPT_5_4_NANO,
             "OPENAI_API_KEY",
             "openai-value",
             "https://api.openai.com/v1/chat/completions",
@@ -958,7 +967,7 @@ async def test_openai_compatible_stream_adapter_passes_through_sse_and_usage(
     monkeypatch.setattr("trusted_router.provider_adapters.httpx.AsyncClient", FakeAsyncClient)
     client = ProviderClient(LocalKeyFile(key_file), live=True)
     request = {"messages": [{"role": "user", "content": "hello"}], "max_tokens": 5}
-    model = MODELS["openai/gpt-5.4-nano"]
+    model = _GPT_5_4_NANO
     state = client.new_stream_state(model, request)
 
     chunks = [chunk async for chunk in client.stream_chat(model, request, state)]
@@ -1090,7 +1099,7 @@ async def test_openai_compatible_stream_records_and_passes_through_tool_calls(
         "tools": [tool],
         "tool_choice": "auto",
     }
-    model = MODELS["openai/gpt-5.4-nano"]
+    model = _GPT_5_4_NANO
     state = client.new_stream_state(model, request)
 
     chunks = [chunk async for chunk in client.stream_chat(model, request, state)]
@@ -1170,7 +1179,7 @@ async def test_openai_compatible_stream_forwards_provider_specific_controls(
         "top_p": 0.9,
         "stop": ["END"],
     }
-    model = MODELS["xiaomi/mimo-v2.5-pro"]
+    model = _MIMO_V2_5_PRO
     state = client.new_stream_state(model, request)
 
     chunks = [chunk async for chunk in client.stream_chat(model, request, state)]
@@ -1247,7 +1256,7 @@ async def test_openai_compatible_stream_tolerates_malformed_sse_and_estimates_mi
     monkeypatch.setattr("trusted_router.provider_adapters.httpx.AsyncClient", FakeAsyncClient)
     client = ProviderClient(LocalKeyFile(key_file), live=True)
     request = {"messages": [{"role": "user", "content": "hello"}]}
-    model = MODELS["openai/gpt-5.4-nano"]
+    model = _GPT_5_4_NANO
     state = client.new_stream_state(model, request)
 
     chunks = [chunk async for chunk in client.stream_chat(model, request, state)]
