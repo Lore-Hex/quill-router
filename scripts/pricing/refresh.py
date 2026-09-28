@@ -320,8 +320,17 @@ def _held_route(model: dict[str, Any], endpoint: Any, held: dict[str, list[str]]
     return f"{model.get('id')} [{provider}:{endpoint.get('tag') or ''}:{endpoint.get('model_id')}]"
 
 
+# The keys a provider's own price sets in an endpoint block (see
+# _price_to_pricing_block). Snapshots published before 2026-09-28 also carry
+# OpenRouter's other keys (discount, web_search, input_cache_write, ...), which
+# nothing reads and the merge no longer publishes; a hold compares prices only.
+_PROVIDER_PRICING_KEYS = frozenset(
+    {"prompt", "completion", "input_cache_read", "prompt_tiers", "completion_tiers"}
+)
+
+
 def _held_endpoint_pricing(snapshot: Any, held: dict[str, list[str]]) -> dict[str, list[str]]:
-    """Every held provider's snapshot endpoint pricing block, grouped by route.
+    """Every held provider's snapshot endpoint prices, grouped by route.
 
     Nothing stops two endpoints from sharing a route key, so each key keeps
     all of its pricing blocks rather than the last one.
@@ -333,8 +342,12 @@ def _held_endpoint_pricing(snapshot: Any, held: dict[str, list[str]]) -> dict[st
             continue
         for endpoint in model.get("endpoints") or []:
             route = _held_route(model, endpoint, held)
-            if route is not None:
-                out.setdefault(route, []).append(json.dumps(endpoint.get("pricing"), sort_keys=True))
+            if route is None:
+                continue
+            pricing = endpoint.get("pricing")
+            if isinstance(pricing, dict):
+                pricing = {key: pricing[key] for key in sorted(pricing) if key in _PROVIDER_PRICING_KEYS}
+            out.setdefault(route, []).append(json.dumps(pricing, sort_keys=True))
     return {route: sorted(blocks) for route, blocks in out.items()}
 
 
@@ -401,9 +414,9 @@ def _held_routes_changed(baseline: Path, held: dict[str, list[str]]) -> list[str
     """Held providers' routes that differ from what was published, if any.
 
     A hold may only publish when it kept every held provider exactly as
-    published: the same snapshot endpoints with the same full pricing blocks
-    (cached input and tiers included), and byte-identical manifests. Anything
-    else is reported so the run can fall back to publishing nothing.
+    published: the same snapshot endpoints with the same prices (prompt,
+    completion, cached input and tiers), and byte-identical manifests.
+    Anything else is reported so the run can fall back to publishing nothing.
     """
     published = _held_endpoint_pricing(
         json.loads((baseline / SNAPSHOT_PATH.name).read_text(encoding="utf-8")), held
@@ -1206,9 +1219,13 @@ def _merge_snapshot(
                 # provider-direct price we can't bill the route, so listing
                 # it is misleading (and a $0 here would understate cost).
                 continue
-            new_ep_pricing = dict(new_ep.get("pricing") or {})
-            new_ep_pricing.update(_price_to_pricing_block(ep_price))
-            new_ep["pricing"] = new_ep_pricing
+            # The provider's block and nothing else, as for the headline above.
+            # OpenRouter's listing of this endpoint can carry rates the
+            # provider's own price does not state -- a cached-input discount
+            # most of all -- and ingest bills `input_cache_read` from this
+            # block, as does the stale-snapshot fallback when the provider's
+            # next refresh fails.
+            new_ep["pricing"] = _price_to_pricing_block(ep_price)
             new_ep["pricing_source"] = _endpoint_pricing_source(ep_slug, healed_slugs)
             # If this provider's config module exports an
             # UPSTREAM_ID_MAP, override the endpoint's model_id with
