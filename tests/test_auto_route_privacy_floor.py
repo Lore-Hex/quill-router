@@ -15,15 +15,21 @@ assumed.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi import HTTPException
 
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, endpoint_privacy_tier
 from trusted_router.catalog_data import (
+    DEEPSEEK_V4_PRO_0813_MODEL_ID,
     DEFAULT_AUTO_MODEL_ORDER,
     PRIVACY_TIER_ZERO_RETENTION,
     US_FOCUSED_PROVIDER_ORDER,
+    Model,
+    ModelEndpoint,
 )
+from trusted_router.catalog_ingest import _PROVIDER_MODELS_DIR
 from trusted_router.config import Settings
 from trusted_router.routing import chat_route_endpoint_candidates
 from trusted_router.routing_candidates import auto_candidate_models
@@ -87,7 +93,42 @@ def test_glm53_recommendations_preserve_independent_fallbacks() -> None:
     ]
 
 
-def test_zdr_filter_uses_only_compatible_routes_for_global_leader() -> None:
+def test_zdr_filter_uses_only_compatible_routes_for_global_leader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The leader is served on two fixture routes, one of which clears zero
+    # retention. Which hosts serve it today is provider state, not this rule.
+    leader = DEEPSEEK_V4_PRO_0813_MODEL_ID
+    monkeypatch.setitem(
+        MODELS,
+        leader,
+        MODELS.get(leader)
+        or Model(id=leader, name=leader, provider="deepseek", context_length=131_072,
+                 prepaid_available=True),
+    )
+    for endpoint_id, endpoint in list(MODEL_ENDPOINTS.items()):
+        if endpoint.model_id == leader:
+            monkeypatch.delitem(MODEL_ENDPOINTS, endpoint_id)
+    routes = {
+        host: ModelEndpoint(
+            id=f"{leader}@{host}/prepaid", model_id=leader, provider=host,
+            usage_type="Credits", upstream_id=f"fixture-{host}",
+            prompt_price_microdollars_per_million_tokens=1_000_000,
+            completion_price_microdollars_per_million_tokens=3_000_000,
+        )
+        for host in ("baseten", "novita")
+    }
+    assert endpoint_privacy_tier(routes["novita"]) < PRIVACY_TIER_ZERO_RETENTION, "fixture"
+    assert endpoint_privacy_tier(routes["baseten"]) >= PRIVACY_TIER_ZERO_RETENTION, "fixture"
+    for route in routes.values():
+        monkeypatch.setitem(MODEL_ENDPOINTS, route.id, route)
+    unfiltered = chat_route_endpoint_candidates(
+        {"model": "trustedrouter/auto", "messages": []}, Settings()
+    )
+    assert {endpoint.provider for model, endpoint in unfiltered if model.id == leader} == {
+        "baseten", "novita"
+    }, "fixture: without a floor, auto takes both routes"
+
     candidates = chat_route_endpoint_candidates(
         {"model": "trustedrouter/auto", "provider": {"min_privacy": "zdr"}, "messages": []},
         Settings(),
@@ -96,7 +137,7 @@ def test_zdr_filter_uses_only_compatible_routes_for_global_leader() -> None:
     leader_routes = [
         endpoint
         for model, endpoint in candidates
-        if model.id == "deepseek/deepseek-v4-pro-0813"
+        if model.id == leader
     ]
     assert {endpoint.provider for endpoint in leader_routes} == {"baseten"}
     assert all(
@@ -105,15 +146,38 @@ def test_zdr_filter_uses_only_compatible_routes_for_global_leader() -> None:
     )
 
 
+def _manifest_model_ids() -> set[str]:
+    # The price refresh tombstones a delisted row; it never deletes one.
+    ids: set[str] = set()
+    for path in _PROVIDER_MODELS_DIR.glob("*.json"):
+        rows = json.loads(path.read_text(encoding="utf-8")).get("models", [])
+        ids.update(row["id"] for row in rows if isinstance(row, dict) and row.get("id"))
+    return ids
+
+
 def test_every_auto_candidate_is_a_real_resolvable_model() -> None:
     """A typo'd id is silently dropped by auto_candidate_models, which shrinks
-    the ladder without failing anything."""
-    missing = [model_id for model_id in DEFAULT_AUTO_MODEL_ORDER if model_id not in MODELS]
-    assert not missing, f"auto references models absent from the catalog: {missing}"
+    the ladder without failing anything. A model its hosts delisted leaves the
+    ladder the same way, by design, and keeps its manifest row."""
+    known = set(MODELS) | _manifest_model_ids()
+    unknown = [model_id for model_id in DEFAULT_AUTO_MODEL_ORDER if model_id not in known]
+    assert not unknown, f"auto references models no catalog or manifest knows: {unknown}"
 
     resolved = {model.id for model in auto_candidate_models()}
-    dropped = [model_id for model_id in DEFAULT_AUTO_MODEL_ORDER if model_id not in resolved]
+    dropped = [
+        model_id
+        for model_id in DEFAULT_AUTO_MODEL_ORDER
+        if model_id in MODELS and model_id not in resolved
+    ]
     assert not dropped, f"auto candidates silently dropped during resolution: {dropped}"
+
+
+@pytest.mark.provider_health
+def test_every_auto_candidate_is_in_the_catalog() -> None:
+    """Live provider state: provider-catalog-health.yml reports it hourly, and
+    the price refresh does not wait on it."""
+    missing = [model_id for model_id in DEFAULT_AUTO_MODEL_ORDER if model_id not in MODELS]
+    assert not missing, f"auto references models absent from the catalog: {missing}"
 
 
 # --- the guarantee: out-of-bounds requests fail BEFORE a provider is called ---
