@@ -1,0 +1,54 @@
+{% extends "public/_base.html" %}
+{% block body_attributes %}class="token-exchange token-exchange-security"{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="/static/token-exchange.css?v={{ static_version }}">
+<link rel="stylesheet" href="/static/token-exchange-security.css?v={{ static_version }}">
+{% endblock %}
+{% block hero %}
+<header class="tm-inner ts-heading">
+  <p class="tm-eyebrow"><a href="/token-exchange">Token Exchange by TrustedRouter</a></p>
+  <h1>Token Exchange<br>security resources.</h1>
+  <p class="ts-lead">The architecture, the trust boundaries, and the checks your team can run. Get the security deck and technical whitepaper in one download.</p>
+</header>
+{% endblock %}
+{% block body %}
+<section class="tm-inner ts-download" aria-labelledby="security-pack-title">
+  <div class="tm-download-tool">
+    <h2 id="security-pack-title">Get the security pack</h2>
+    <p class="ts-format">Two PDFs in one ZIP. September 2026 edition.</p>
+    <form id="enterprise-brief-form" action="/token-exchange/brief" method="post" data-resource="security">
+      <div class="ts-form-row">
+        <div><label for="brief-email">Work email</label><input id="brief-email" name="email" type="email" autocomplete="email" inputmode="email" maxlength="320" placeholder="you@company.com" required aria-describedby="brief-privacy brief-status"></div>
+        <button class="tm-button tm-primary" type="submit" disabled>Download both PDFs <span aria-hidden="true">&#8595;</span></button>
+      </div>
+      <div class="tm-honeypot" aria-hidden="true"><label for="brief-website">Website</label><input id="brief-website" name="website" type="text" tabindex="-1" autocomplete="off"></div>
+      <p id="brief-privacy" class="tm-form-note">By requesting the pack, you agree that we may contact you about your security review and enterprise requirements. This does not subscribe you to a newsletter. <a href="/privacy">Privacy policy</a>.</p>
+      <p id="brief-status" class="tm-form-status" role="status" aria-live="polite" aria-atomic="true"></p>
+      <noscript><p>Email <a href="mailto:enterprise@trustedrouter.com?subject=Token%20Exchange%20security%20pack">enterprise@trustedrouter.com</a> to request both PDFs.</p></noscript>
+    </form>
+  </div>
+</section>
+<section class="tm-inner ts-documents" aria-label="Included documents">
+  <article>
+    <div class="ts-cover"><img src="/static/enterprise/security-deck-preview.png" alt="Cover of the TrustedRouter Security Deck: Encrypted end to end. Verified, not promised." width="1000" height="563" loading="lazy"></div>
+    <span class="tm-index">Security deck / 18 slides</span>
+    <h2>The overview for your team.</h2>
+    <p>Share the request path, key ownership, privacy controls and verification model with security, engineering and procurement.</p>
+  </article>
+  <article>
+    <div class="ts-cover"><img src="/static/enterprise/security-whitepaper-preview.png" alt="Cover of the TrustedRouter Security Whitepaper describing the confidential endpoint." width="707" height="1000" loading="lazy"></div>
+    <span class="tm-index">Technical whitepaper / 19 pages</span>
+    <h2>The detail behind the design.</h2>
+    <p>Review data handling, attestation, provider verification, signed receipts and known limitations. Includes source links and a verification checklist.</p>
+  </article>
+</section>
+<section class="tm-band ts-review" aria-labelledby="review-title">
+  <div class="tm-inner">
+    <h2 id="review-title">Check the evidence yourself.</h2>
+    <p>The documents explain the architecture. Use the live trust page to verify the current release and attestation before sending sensitive data.</p>
+    <div class="tm-procurement"><a href="/trust">Verify live attestation</a><a href="/security">Security overview</a><a href="/legal/dpa">DPA</a><a href="/legal/subprocessors">Subprocessors</a><a href="/legal/soc2-readiness">SOC 2 status</a></div>
+    <p class="ts-contact">Have a questionnaire or a specific requirement? <a href="mailto:security@trustedrouter.com">security@trustedrouter.com</a></p>
+  </div>
+</section>
+{% endblock %}
+{% block body_scripts %}<script src="/static/token-exchange.js?v={{ static_version }}" defer></script>{% endblock %}
