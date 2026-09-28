@@ -32,6 +32,10 @@ FROZEN = Path(__file__).parent / "fixtures" / "vehicle_routes.json"
 VEHICLE_ENDPOINT_IDS = (
     "anthropic/claude-haiku-4.5@anthropic/prepaid",
     "anthropic/claude-haiku-4.5@anthropic/byok",
+    "anthropic/claude-opus-4.7@anthropic/prepaid",
+    "anthropic/claude-opus-4.7@anthropic/byok",
+    "anthropic/claude-sonnet-4.6@anthropic/prepaid",
+    "anthropic/claude-sonnet-4.6@anthropic/byok",
 )
 
 
