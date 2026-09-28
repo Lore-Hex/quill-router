@@ -278,6 +278,72 @@ ALIBABA_QWEN_3_7_FLASH = tuple(
     )
 )
 
+# Tinfoil's confidential routes as its manifest lists them.
+TINFOIL_DEEPSEEK_V4_1_FLASH = {
+    "display_name": "DeepSeek V4.1 Flash",
+    "title": "deepseek/deepseek-v4.1-flash",
+    "model_type": "chat",
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions", "responses"],
+    "status": 1,
+    "id": "deepseek/deepseek-v4.1-flash",
+    "upstream_id": "deepseek-v4-1-flash",
+    "features": ["reasoning", "function-calling", "multimodal"],
+    "context_length": 1048576,
+    "input_token_price_per_m": 650000,
+    "output_token_price_per_m": 1450000,
+    "cached_input_token_price_per_m": 130000,
+}
+TINFOIL_KIMI_K3 = {
+    "id": "moonshotai/kimi-k3",
+    "upstream_id": "kimi-k3",
+    "display_name": "Kimi K3",
+    "title": "moonshotai/kimi-k3",
+    "context_length": 262144,
+    "input_token_price_per_m": 4000000,
+    "cached_input_token_price_per_m": 800000,
+    "output_token_price_per_m": 20000000,
+    "model_type": "chat",
+    "features": ["reasoning", "function-calling", "multimodal"],
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions", "responses"],
+    "status": 1,
+}
+TINFOIL_GLM_5_3 = {
+    "display_name": "GLM-5.3",
+    "title": "z-ai/glm-5.3",
+    "model_type": "chat",
+    "input_modalities": ["text"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions", "responses"],
+    "status": 1,
+    "id": "z-ai/glm-5.3",
+    "upstream_id": "glm-5-3",
+    "features": ["reasoning", "function-calling"],
+    "context_length": 1048576,
+    "input_token_price_per_m": 1800000,
+    "output_token_price_per_m": 5750000,
+    "cached_input_token_price_per_m": 450000,
+}
+TINFOIL_GLM_5_3_FLASH = {
+    "display_name": "GLM-5.3 Flash",
+    "title": "z-ai/glm-5.3-flash",
+    "model_type": "chat",
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions", "responses"],
+    "status": 1,
+    "id": "z-ai/glm-5.3-flash",
+    "upstream_id": "glm-5-3-flash",
+    "features": ["reasoning", "function-calling", "multimodal"],
+    "context_length": 1048576,
+    "input_token_price_per_m": 400000,
+    "output_token_price_per_m": 1250000,
+    "cached_input_token_price_per_m": 100000,
+}
+
 # Pearl's GLM-5.3 route as its manifest lists it.
 PEARL_GLM_5_3 = {
     "display_name": "Z.AI: GLM-5.3",
