@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 from fastapi import HTTPException
 
-from tests.fixture_routes import serve_on_fixture_route
+from tests.fixture_routes import drop_routes, serve_on_fixture_route
 from trusted_router.catalog import (
     PRIVACY_TIER_ZERO_RETENTION,
     PROVIDER_JURISDICTION_US,
@@ -783,7 +783,9 @@ def test_data_collection_deny_soft_fallback_keeps_standard_only_model_and_endpoi
     }
 
 
-def test_data_collection_deny_still_filters_when_satisfiable(standard_only_model: str) -> None:
+def test_data_collection_deny_still_filters_when_satisfiable(
+    standard_only_model: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from trusted_router.catalog import (
         PRIVACY_TIER_NO_STORE,
         endpoint_privacy_tier,
@@ -793,6 +795,14 @@ def test_data_collection_deny_still_filters_when_satisfiable(standard_only_model
 
     standard_model_id = standard_only_model
     private_model_id = "deepseek/deepseek-v3.2"
+    # One no-store route and one standard route, as fixtures: which hosts
+    # serve the model today is provider state.
+    drop_routes(monkeypatch, private_model_id)
+    no_store = serve_on_fixture_route(monkeypatch, private_model_id, "deepinfra", author="deepseek")
+    standard = serve_on_fixture_route(monkeypatch, private_model_id, "novita", author="deepseek")
+    assert endpoint_privacy_tier(standard) < PRIVACY_TIER_NO_STORE <= endpoint_privacy_tier(
+        no_store
+    ), "fixture"
     candidates = chat_route_candidates(
         {
             "models": [standard_model_id, private_model_id],
