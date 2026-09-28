@@ -59,6 +59,23 @@ AUTHORIZE = "/v1/internal/gateway/authorize"
 JEV_HOSTS = [("typesafe", "jev-latest"), ("vercel-ai-gateway", JEV)]
 
 
+def _serve_jev_as_built(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Jev's routes as the builder makes them from its spec: the vendor's, then
+    the relay's. The catalog drops a route whose host's manifest goes dark, and
+    TypeSafe or Vercel delisting Jev must not fail a rule about what the spec
+    builds or how a request for Jev routes. Whether both hosts still serve it
+    is test_every_decision_spec_route_is_still_served, a provider_health check."""
+    from trusted_router import catalog, catalog_ingest
+
+    model = catalog.MODELS.get(JEV) or catalog_ingest._decision_models()[JEV]
+    monkeypatch.setitem(catalog.MODELS, JEV, model)
+    for endpoint in (
+        catalog_ingest._endpoint(model, usage_type="Credits"),
+        *catalog_ingest._decision_fallback_endpoints({JEV: model}).values(),
+    ):
+        monkeypatch.setitem(catalog.MODEL_ENDPOINTS, endpoint.id, endpoint)
+
+
 def _expected_active_chain(model_id: str) -> tuple[str, ...]:
     chain = NAMED_DECISION_MODEL_PROVIDERS[model_id]
     if model_id == ZEV_1_0_MODEL_ID and not catalog_predates(FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT):
@@ -102,7 +119,10 @@ def test_jev_is_an_input_only_decision_model() -> None:
     )
 
 
-def test_jev_runs_at_its_vendor_with_the_relay_as_a_priced_fallback() -> None:
+def test_jev_runs_at_its_vendor_with_the_relay_as_a_priced_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_jev_as_built(monkeypatch)
     endpoints = endpoints_for_model(JEV)
     # Each host is called by ITS name for the model: the vendor's alias is not
     # the relay's id, and sending one to the other is a 404 on every request.
@@ -124,12 +144,31 @@ def test_every_decision_fallback_route_became_an_endpoint() -> None:
     # A fallback on a provider missing from PROVIDERS or the prepaid set is
     # skipped by the builder. Silently losing the failover is the failure this
     # guards: the vendor has an outage and there is nowhere to go.
+    from trusted_router import catalog_ingest
+    from trusted_router.catalog_data import _DECISION_SPECS, GATEWAY_PREPAID_PROVIDER_SLUGS
+
+    models = catalog_ingest._decision_models()
+    built = catalog_ingest._decision_fallback_endpoints(models)
+    for spec in _DECISION_SPECS:
+        # The vendor's own route is built only for a known prepaid provider.
+        assert spec["id"] in models, spec["id"]
+        assert spec["provider"] in PROVIDERS and spec["provider"] in GATEWAY_PREPAID_PROVIDER_SLUGS
+        assert spec["fallback_routes"], f"{spec['id']} has no failover host"
+        served = {(e.provider, e.upstream_id) for e in built.values() if e.model_id == spec["id"]}
+        for route in spec["fallback_routes"]:
+            assert (route["provider"], route["upstream_id"]) in served, route
+
+
+@pytest.mark.provider_health
+def test_every_decision_spec_route_is_still_served() -> None:
+    """Each host still serves its hosted decision model today. A host whose
+    manifest goes dark drops its route, and a vendor left without its relay has
+    nowhere to fail over. Alerts without holding up the hourly price refresh."""
     from trusted_router.catalog_data import _DECISION_SPECS
 
     for spec in _DECISION_SPECS:
         served = {(e.provider, e.upstream_id) for e in endpoints_for_model(spec["id"])}
-        assert (spec["provider"], spec["upstream_id"]) in served
-        assert spec["fallback_routes"], f"{spec['id']} has no failover host"
+        assert (spec["provider"], spec["upstream_id"]) in served, spec["id"]
         for route in spec["fallback_routes"]:
             assert (route["provider"], route["upstream_id"]) in served, route
 
@@ -259,7 +298,8 @@ def test_a_named_decision_model_is_priced_from_its_host_chain(model_id: str) -> 
         assert hidden not in public, f"{hidden!r} leaked into the public entry for {model_id}"
 
 
-def test_decide_resolver_accepts_only_decision_models() -> None:
+def test_decide_resolver_accepts_only_decision_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    _serve_jev_as_built(monkeypatch)
     candidates = decide_route_endpoint_candidates({"model": JEV}, Settings(environment="test"))
     # Vendor first by default, relay second: the order IS the failover plan.
     assert [(m.id, e.provider) for m, e in candidates] == [
@@ -282,7 +322,9 @@ def test_resolvers_expose_relaxed_policy_without_changing_normalized_inputs(
 
     from trusted_router.routing import chat_route_endpoint_candidates, normalize_routing_inputs
 
-    if not hosted:
+    if hosted:
+        _serve_jev_as_built(monkeypatch)
+    else:
         # A chat route on a host that stores content, so `deny` alone empties it.
         _serve_on_fixture_routes(monkeypatch, MEV_1_0_MODEL_ID)
     inputs = normalize_routing_inputs({
@@ -331,7 +373,10 @@ async def _authorize(body: dict[str, Any]) -> httpx.Response:
 
 
 @pytest.mark.asyncio
-async def test_gateway_authorizes_the_hosted_decision_model() -> None:
+async def test_gateway_authorizes_the_hosted_decision_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_jev_as_built(monkeypatch)
     response = await _authorize(
         {
             "model": JEV,
@@ -367,8 +412,9 @@ async def test_gateway_authorizes_the_hosted_decision_model() -> None:
     ],
 )
 async def test_jev_host_order_follows_the_default_then_the_caller(
-    provider: dict[str, Any] | None, expected: list[str]
+    provider: dict[str, Any] | None, expected: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _serve_jev_as_built(monkeypatch)
     body: dict[str, Any] = {
         "model": JEV,
         "route_type": "decide",
