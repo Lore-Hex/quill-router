@@ -154,7 +154,6 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
             "fal",
             "huggingface",
             "inception",
-            "io-net",
             "krea",
             "liquid",
             "mancer",
@@ -1864,12 +1863,21 @@ PROVIDERS: dict[str, Provider] = {
         supports_prepaid=True,
         supports_byok=False,
         provider_policy=(
-            "IO Intelligence publishes exact per-token prices in its authenticated "
-            "catalog. TrustedRouter admits only priced routes that pass a live chat "
-            "canary. No contractual ZDR, confidential-compute, or E2EE claim is "
-            "tracked for this account, so these routes are Standard."
+            "In its September 28, 2026 marketplace submission, io.net states that "
+            "inference prompts and completions are processed only in memory, are "
+            "not stored or logged, and are not used for training. Content-free "
+            "operational metadata is retained for billing, capacity planning and "
+            "abuse prevention. This is a provider declaration: the reviewed public "
+            "privacy policy does not establish inference-specific zero-retention "
+            "terms, and the applicable DPA has not been reviewed. Routes remain "
+            "Standard pending that evidence. Confidential compute is offered on "
+            "request, but this integration has no verified confidential-compute "
+            "or provider-side E2EE guarantee."
         ),
-        provider_policy_url="https://docs.io.net/docs/io-intelligence",
+        provider_policy_url="https://io.net/privacy",
+        # IO.NET Inc., Delaware corporation: public privacy policy section 1.
+        # Operator jurisdiction is not US-only inference; Canada is also declared.
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     "regolo": Provider(
         slug="regolo",

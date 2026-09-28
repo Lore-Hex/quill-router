@@ -32,6 +32,22 @@ class InferenceLocations:
 _NO_TR_PIN = "Not supported by the current TrustedRouter integration."
 
 PROVIDER_INFERENCE_LOCATIONS = {
+    "io-net": InferenceLocations(
+        locations=("United States", "Canada"),
+        scope=("io.net declares US and Canadian serving locations and data residency "
+               "in its September 28, 2026 marketplace submission. This is provider-wide "
+               "information, not an independently verified per-model or per-request location."),
+        routing="Placement, cross-country failover and future location changes require provider confirmation.",
+        provider_pinning="No per-request country or region pin verified for the shared inference API.",
+        trustedrouter_pinning=_NO_TR_PIN,
+        declaration="United States and Canada, provider-declared; no US-only or fixed-country guarantee on this route.",
+        evidence="Provider-submitted marketplace information; linked public policy is not an inference-location guarantee",
+        reviewed_on="2026-09-28",
+        sources=(
+            ("API documentation (not a location guarantee)", "https://io.net/docs/reference/ai-models/create-chat-completion"),
+            ("Privacy policy (operator identity, not GPU residency)", "https://io.net/privacy"),
+        ),
+    ),
     "deepinfra": InferenceLocations(
         locations=("United States", "Canada (Toronto, announced capacity)"),
         scope=("DeepInfra describes US infrastructure and announced its first international "
@@ -194,6 +210,7 @@ class Headquarters:
 # Keep physical HQ separate from catalog_data's legacy headquarters_country,
 # which is used for security filtering and actually identifies the API operator.
 PROVIDER_HEADQUARTERS = {
+    "io-net": Headquarters("West Hollywood, California, United States (operating address)", "Provider-submitted operating address; not independently verified as headquarters", "https://io.net", "2026-09-28"),
     "telnyx": Headquarters("Austin, Texas, United States", "Provider-submitted headquarters; company profile", "https://www.linkedin.com/company/telnyx", "2026-09-27"),
     "deepinfra": Headquarters("Palo Alto, California, United States", "Company profile", "https://www.linkedin.com/company/deep-infra", "2026-09-27"),
     "novita": Headquarters("San Francisco, California, United States", "Company profile", "https://www.linkedin.com/company/novita-ai-labs/", "2026-09-27"),
