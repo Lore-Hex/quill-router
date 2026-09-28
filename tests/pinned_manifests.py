@@ -74,6 +74,65 @@ ANTHROPIC_CLAUDE_OPUS_5 = {
     "cached_input_token_price_per_m": 500000,
 }
 
+# GMI's verified Kimi K3 and HY4 Preview routes as its manifest lists them.
+GMI_KIMI_K3 = {
+    "id": "moonshotai/kimi-k3",
+    "upstream_id": "moonshotai/kimi-k3",
+    "display_name": "moonshotai/Kimi: K3",
+    "title": "moonshotai/kimi-k3",
+    "context_length": 1048576,
+    "max_output_tokens": 65535,
+    "input_token_price_per_m": 3000000,
+    "output_token_price_per_m": 15000000,
+    "cached_input_token_price_per_m": 300000,
+    "model_type": "chat",
+    "features": ["reasoning", "function-calling", "structured-outputs", "serverless"],
+    "input_modalities": ["text"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+}
+GMI_HY4_PREVIEW = {
+    "display_name": "tencent/hy4-preview",
+    "title": "tencent/hy4-preview",
+    "model_type": "chat",
+    "input_modalities": ["text"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "id": "tencent/hy4-preview",
+    "upstream_id": "tencent/hy4-preview",
+    "context_length": 262144,
+    "input_token_price_per_m": 834000,
+    "output_token_price_per_m": 2501000,
+    "cached_input_token_price_per_m": 42000,
+}
+
+# Phala's pass-through Kimi K3 route as its manifest lists it.
+PHALA_KIMI_K3 = {
+    "id": "moonshotai/kimi-k3",
+    "upstream_id": "moonshotai/kimi-k3",
+    "display_name": "MoonshotAI: Kimi K3",
+    "title": "moonshotai/kimi-k3",
+    "context_length": 1048576,
+    "max_output_tokens": 1048576,
+    "input_token_price_per_m": 3000000,
+    "output_token_price_per_m": 15000000,
+    "cached_input_token_price_per_m": 300000,
+    "model_type": "chat",
+    "features": ["reasoning", "function-calling", "structured-outputs", "serverless"],
+    "input_modalities": ["text", "image", "video"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "supported_features": ["json_mode", "logprobs", "reasoning", "structured_outputs", "tools"],
+    "supported_sampling_parameters": [
+        "frequency_penalty", "logit_bias", "max_tokens", "min_p", "presence_penalty",
+        "repetition_penalty", "seed", "stop", "temperature", "top_k", "top_p",
+    ],
+    "provider_route_class": "standard_pass_through",
+}
+
 # Pearl's GLM-5.3 route as its manifest lists it.
 PEARL_GLM_5_3 = {
     "display_name": "Z.AI: GLM-5.3",
