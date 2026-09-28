@@ -150,6 +150,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     ModelDocumentation,
     ModelEndpoint,
     ModelProviderPrivacyOverride,
+    NamedDecisionModel,
     Provider,
     _EmbeddingSpec,
 )
@@ -992,14 +993,12 @@ MODELS[ARCHIMEDES_1_0_MODEL_ID] = replace(
 # bare MODELS[...] here would stop the whole control plane from starting over
 # one model. Without its backing model a name simply is not offered: authorize
 # answers "unknown model" for it and everything else serves.
-for _named in NAMED_DECISION_MODELS:
-    _named_backing_model = MODELS.get(_named.backing_model_id)
-    if _named_backing_model is None:
-        continue
-    MODELS[_named.id] = replace(
-        _named_backing_model,
-        id=_named.id,
-        name=_named.name,
+def named_decision_model(named: NamedDecisionModel, backing: Model) -> Model:
+    """The catalog entry for a name: its backing model, answering decide only."""
+    return replace(
+        backing,
+        id=named.id,
+        name=named.name,
         provider="trustedrouter",
         upstream_id=None,
         supports_messages=False,
@@ -1014,6 +1013,13 @@ for _named in NAMED_DECISION_MODELS:
         byok_available=False,
         hidden_public_metadata=True,
     )
+
+
+for _named in NAMED_DECISION_MODELS:
+    _named_backing_model = MODELS.get(_named.backing_model_id)
+    if _named_backing_model is None:
+        continue
+    MODELS[_named.id] = named_decision_model(_named, _named_backing_model)
 # Embedding models override any snapshot/supplemental collision: the
 # hand-curated embedding entry (input-only pricing, supports_embeddings) is
 # authoritative for these IDs. Merge BEFORE `_build_endpoints` so each gets

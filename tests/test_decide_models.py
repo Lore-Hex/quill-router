@@ -10,6 +10,7 @@ chat, pinned to one provider.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -36,7 +37,9 @@ from trusted_router.catalog_data import (
     PRIVATE_PROXY_MODEL_TARGETS,
     TREV_1_0_MODEL_ID,
     ZEV_1_0_MODEL_ID,
+    ModelEndpoint,
 )
+from trusted_router.catalog_privacy import endpoint_stores_content, endpoint_zero_data_retention
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.provider_lifecycle import FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT
@@ -433,6 +436,69 @@ async def _named_candidates(model_id: str, provider: dict[str, Any] | None) -> l
     return ordered
 
 
+def _serve_on_fixture_routes(
+    monkeypatch: pytest.MonkeyPatch,
+    model_id: str,
+    hosts: tuple[str, ...] | None = None,
+    upstream_ids: dict[str, str] | None = None,
+) -> str:
+    """Serve a name, and the chat model behind it, on fixture routes only: one
+    Credits route per host, by default the name's chain. Returns the backing id.
+
+    Routing rules hold for any catalog. The live one is rebuilt hourly from
+    provider feeds, and a host can delist a backing model at any time (DeepInfra
+    dropped gemmev's only one on 2026-09-28), so a rule test does not borrow
+    today's routes. Retirements in provider_lifecycle still apply to these;
+    pass the upstream id a retirement names in `upstream_ids`."""
+    from dataclasses import replace
+
+    from trusted_router import catalog
+    from trusted_router.catalog_registry import named_decision_model
+
+    named = next(named for named in NAMED_DECISION_MODELS if named.id == model_id)
+    backing = catalog.MODELS.get(named.backing_model_id) or replace(
+        next(model for model in catalog.MODELS.values() if model.supports_chat),
+        id=named.backing_model_id,
+        name=named.backing_model_id,
+    )
+    monkeypatch.setitem(catalog.MODELS, backing.id, backing)
+    if model_id not in catalog.MODELS:
+        monkeypatch.setitem(catalog.MODELS, model_id, named_decision_model(named, backing))
+    for endpoint_id, endpoint in list(catalog.MODEL_ENDPOINTS.items()):
+        if endpoint.model_id == backing.id:
+            monkeypatch.delitem(catalog.MODEL_ENDPOINTS, endpoint_id)
+    for host in hosts or named.chain:
+        route = ModelEndpoint(
+            id=f"{backing.id}@{host}/prepaid",
+            model_id=backing.id,
+            provider=host,
+            usage_type="Credits",
+            upstream_id=(upstream_ids or {}).get(host, f"fixture-{host}"),
+            prompt_price_microdollars_per_million_tokens=1_000_000,
+            completion_price_microdollars_per_million_tokens=3_000_000,
+            published_prompt_price_microdollars_per_million_tokens=1_000_000,
+            published_completion_price_microdollars_per_million_tokens=3_000_000,
+        )
+        monkeypatch.setitem(catalog.MODEL_ENDPOINTS, route.id, route)
+    return backing.id
+
+
+def _an_outsider(model_id: str, satisfies: Callable[[ModelEndpoint], bool]) -> str:
+    """A prepaid chat host outside the name's chain whose route for its backing
+    model satisfies a privacy rule, judged by the catalog's own rules."""
+    backing = PRIVATE_PROXY_MODEL_TARGETS[model_id]
+    chain = NAMED_DECISION_MODEL_PROVIDERS[model_id]
+    for slug, provider in sorted(PROVIDERS.items()):
+        if slug in chain or not (provider.supports_prepaid and provider.supports_chat):
+            continue
+        probe = ModelEndpoint(
+            id=f"{backing}@{slug}/prepaid", model_id=backing, provider=slug, usage_type="Credits"
+        )
+        if satisfies(probe):
+            return slug
+    raise AssertionError(f"no prepaid chat host outside {chain} satisfies {satisfies}")
+
+
 def _a_host_outside(chain: tuple[str, ...]) -> str:
     return next(host for host in ("deepinfra", "together", "cerebras") if host not in chain)
 
@@ -497,20 +563,16 @@ async def test_a_named_model_authorizes_on_its_chain_in_order(model_id: str) -> 
 async def test_zev_and_bare_model_advance_to_existing_host_at_fireworks_cutoff(
     model_id: str, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from dataclasses import replace
     from datetime import timedelta
 
-    from trusted_router import catalog, provider_lifecycle
+    from trusted_router import provider_lifecycle
 
-    backing = "z-ai/glm-5.2-fast"
-    baseten = next(e for e in endpoints_for_model(backing) if e.provider == "baseten" and not e.is_byok)
-    fireworks = replace(
-        baseten, id=f"{backing}@fireworks/prepaid", provider="fireworks",
-        upstream_id="accounts/fireworks/routers/glm-5p2-fast",
+    # The retirement names Fireworks' upstream id, so the fixture route uses it.
+    backing = _serve_on_fixture_routes(
+        monkeypatch,
+        ZEV_1_0_MODEL_ID,
+        upstream_ids={"fireworks": "accounts/fireworks/routers/glm-5p2-fast"},
     )
-    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", {
-        **catalog.MODEL_ENDPOINTS, fireworks.id: fireworks,
-    })
     cutoff = FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT
     for at, expected in [
         (cutoff - timedelta(microseconds=1), ["fireworks", "baseten"]),
@@ -702,8 +764,16 @@ async def test_an_unavailable_compatible_named_host_stays_retryable(
     from trusted_router import catalog
     from trusted_router.routes.internal import gateway
 
-    backing = PRIVATE_PROXY_MODEL_TARGETS[TREV_1_0_MODEL_ID]
     chain = NAMED_DECISION_MODEL_PROVIDERS[TREV_1_0_MODEL_ID]
+    # Two outsiders keep the backing model routable when SambaNova's manifest
+    # expires, so the chain check is reached: DeepInfra for the "only" case,
+    # and a zero-retention host for the "zdr" case.
+    zdr_outsider = _an_outsider(
+        TREV_1_0_MODEL_ID, lambda route: endpoint_zero_data_retention(route) is True
+    )
+    backing = _serve_on_fixture_routes(
+        monkeypatch, TREV_1_0_MODEL_ID, hosts=(*chain, "deepinfra", zdr_outsider)
+    )
     # SambaNova is compatible but unavailable; every other pinned host is
     # excluded, including hosts added to the chain after this test was written.
     preferences: dict[str, Any] = {"usage": "credits"}
@@ -777,17 +847,14 @@ async def test_relaxed_deny_named_chain_recovers_from_a_retryable_outage(
 ) -> None:
     from trusted_router.routes.internal import gateway
 
+    # Only the chain serves the backing model here, and its hosts store
+    # content, so deny empties every route and the resolver relaxes it.
+    _serve_on_fixture_routes(monkeypatch, model_id)
     body = {
         "model": model_id,
         "route_type": "decide",
         "region": "europe-west4",
-        "provider": {
-            "data_collection": "deny",
-            # Gev's backing model also has non-pinned ZDR hosts, so deny
-            # alone stays strict there. Limit backing scope to trigger the
-            # resolver's existing relaxation, rather than widening it here.
-            **({"only": ["google-ai-studio"]} if model_id == GEV_1_0_MODEL_ID else {}),
-        },
+        "provider": {"data_collection": "deny"},
         "estimated_input_tokens": 480,
         "max_output_tokens": 700,
     }
@@ -823,8 +890,11 @@ async def test_deny_satisfied_outside_named_chain_is_not_relaxed_again(
 ) -> None:
     from trusted_router.routes.internal import gateway
 
-    # Gev's backing resolver can satisfy deny on non-pinned hosts. Its pinned
+    # Gev's backing resolver can satisfy deny on a non-pinned host. Its pinned
     # host cannot; a diagnostic must not independently soften that policy.
+    chain = NAMED_DECISION_MODEL_PROVIDERS[GEV_1_0_MODEL_ID]
+    outsider = _an_outsider(GEV_1_0_MODEL_ID, lambda route: not endpoint_stores_content(route))
+    _serve_on_fixture_routes(monkeypatch, GEV_1_0_MODEL_ID, hosts=(*chain, outsider))
     monkeypatch.setattr(
         gateway, "provider_model_available_from_gateway_region", lambda *_: region_available
     )
