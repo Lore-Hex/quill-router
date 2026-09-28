@@ -33,6 +33,42 @@ def _settings() -> Settings:
     return Settings(environment="test")
 
 
+def _serve_on_fixture_route(
+    monkeypatch: pytest.MonkeyPatch,
+    model_id: str,
+    host: str,
+    *,
+    author: str,
+    prompt: int = 1_000_000,
+    completion: int = 3_000_000,
+):
+    """Serve a model on one fixture Credits route. A routing rule holds for any
+    catalog; which hosts list a model today is provider state."""
+    from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, endpoints_for_model
+    from trusted_router.catalog_data import Model, ModelEndpoint
+
+    monkeypatch.setitem(
+        MODELS,
+        model_id,
+        MODELS.get(model_id)
+        or Model(id=model_id, name=model_id, provider=author, context_length=131_072),
+    )
+    route = ModelEndpoint(
+        id=f"{model_id}@{host}/prepaid",
+        model_id=model_id,
+        provider=host,
+        usage_type="Credits",
+        upstream_id=f"fixture-{host}",
+        prompt_price_microdollars_per_million_tokens=prompt,
+        completion_price_microdollars_per_million_tokens=completion,
+    )
+    monkeypatch.setitem(MODEL_ENDPOINTS, route.id, route)
+    assert route.id in {endpoint.id for endpoint in endpoints_for_model(model_id)}, (
+        f"fixture: {host} has retired {model_id}"
+    )
+    return route
+
+
 @pytest.fixture
 def standard_only_model(monkeypatch: pytest.MonkeyPatch) -> str:
     from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, PROVIDERS
@@ -240,7 +276,12 @@ def test_provider_order_with_fallbacks_disabled_selects_first_available_ordered_
     assert candidates[0][1].provider == "together"
 
 
-def test_provider_only_remains_hard_with_fallbacks_enabled() -> None:
+def test_provider_only_remains_hard_with_fallbacks_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_on_fixture_route(
+        monkeypatch, "google/gemma-4-31b-it", "tinfoil", author="google-ai-studio"
+    )
     candidates = chat_route_endpoint_candidates(
         {
             "model": "google/gemma-4-31b-it",
@@ -294,7 +335,21 @@ def test_provider_max_price_filters_prompt_and_completion_prices() -> None:
     )
 
 
-def test_provider_sort_partition_preserves_or_flattens_model_fallback_order() -> None:
+def _serve_pricey_primary_and_cheap_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    _serve_on_fixture_route(
+        monkeypatch, "anthropic/claude-opus-4.8", "anthropic", author="anthropic",
+        prompt=5_000_000, completion=25_000_000,
+    )
+    _serve_on_fixture_route(
+        monkeypatch, "google/gemma-4-31b-it", "deepinfra", author="google-ai-studio",
+        prompt=100_000, completion=400_000,
+    )
+
+
+def test_provider_sort_partition_preserves_or_flattens_model_fallback_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_pricey_primary_and_cheap_fallback(monkeypatch)
     body = {
         "models": ["anthropic/claude-opus-4.8", "google/gemma-4-31b-it"],
         "provider": {"sort": {"by": "price", "partition": "model"}},
@@ -307,11 +362,15 @@ def test_provider_sort_partition_preserves_or_flattens_model_fallback_order() ->
     assert global_partition[0][0].id == "google/gemma-4-31b-it"
 
 
-def test_provider_order_never_promotes_a_fallback_model_over_primary() -> None:
+def test_provider_order_never_promotes_a_fallback_model_over_primary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The ordered provider serves only the fallback model.
+    _serve_pricey_primary_and_cheap_fallback(monkeypatch)
     candidates = chat_route_endpoint_candidates(
         {
             "models": ["anthropic/claude-opus-4.8", "google/gemma-4-31b-it"],
-            "provider": {"order": ["cerebras"]},
+            "provider": {"order": ["deepinfra"]},
         },
         _settings(),
     )
@@ -682,13 +741,18 @@ def test_min_privacy_zdr_on_auto_keeps_only_zdr_reachable() -> None:
         assert model_max_privacy_tier(model) >= PRIVACY_TIER_ZERO_RETENTION
 
 
-def test_min_privacy_confidential_keeps_confidential_reachable_model() -> None:
+def test_min_privacy_confidential_keeps_confidential_reachable_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from trusted_router.catalog import (
         PRIVACY_TIER_CONFIDENTIAL,
+        endpoint_privacy_tier,
         model_max_privacy_tier,
     )
 
-    # GLM 5.2 has a current confidential Phala route and must still route.
+    # GLM 5.2 with one confidential route must still route.
+    route = _serve_on_fixture_route(monkeypatch, "z-ai/glm-5.2", "chutes", author="zai")
+    assert endpoint_privacy_tier(route) >= PRIVACY_TIER_CONFIDENTIAL, "fixture"
     candidates = chat_route_candidates(
         {"model": "z-ai/glm-5.2", "provider": {"min_privacy": "confidential"}},
         _settings(),
@@ -708,12 +772,16 @@ def test_min_privacy_too_high_for_model_raises() -> None:
     assert exc.value.status_code == 400
 
 
-def test_model_shape_exposes_privacy_tier() -> None:
-    from trusted_router.catalog import MODELS, model_to_openrouter_shape
+def test_model_shape_exposes_privacy_tier(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trusted_router.catalog import MODELS, endpoint_privacy_tier, model_to_openrouter_shape
 
-    # A model served by a zero-retention+ provider (deepseek via phala/tinfoil)
-    # exposes the tier label and >= ZDR. (anthropic/openai/google were downgraded
-    # from ZDR to standard in 4faa10d, so they no longer clear tier 2.)
+    # A model served by a zero-retention+ route exposes the tier label and
+    # >= ZDR. (anthropic/openai/google were downgraded from ZDR to standard in
+    # 4faa10d, so they no longer clear tier 2.)
+    route = _serve_on_fixture_route(
+        monkeypatch, "deepseek/deepseek-v3.2", "chutes", author="deepseek"
+    )
+    assert endpoint_privacy_tier(route) >= PRIVACY_TIER_ZERO_RETENTION, "fixture"
     zdr_model = MODELS["deepseek/deepseek-v3.2"]
     shape = model_to_openrouter_shape(zdr_model)
     tr = shape["trustedrouter"]
@@ -906,13 +974,16 @@ def test_unverified_provider_defaults_to_stores_content() -> None:
 
 
 def _credits_endpoint(provider: str):
-    """First prepaid (Credits) endpoint for a provider, from the live catalog."""
-    from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
+    """A prepaid (Credits) route on a provider. Reliability preference belongs
+    to the provider, not to whichever models it lists today."""
+    from trusted_router.catalog_data import Model, ModelEndpoint
 
-    for ep in MODEL_ENDPOINTS.values():
-        if ep.usage_type == "Credits" and ep.provider == provider:
-            return MODELS[ep.model_id], ep
-    raise AssertionError(f"no prepaid endpoint for {provider}")
+    model = Model(id="unit/preference-model", name="Preference", provider=provider,
+                  context_length=32768, prepaid_available=True)
+    return model, ModelEndpoint(
+        id=f"{model.id}@{provider}/prepaid", model_id=model.id, provider=provider,
+        usage_type="Credits",
+    )
 
 
 def test_default_endpoint_routing_prefers_reliable_host_over_flaky() -> None:
@@ -940,7 +1011,15 @@ def test_explicit_provider_order_overrides_reliability_preference() -> None:
     assert ordered[0][1].provider == "parasail"  # caller's explicit order wins
 
 
-def test_glm_52_defaults_to_parasail_with_fallbacks_intact() -> None:
+def _serve_glm_52_on_fixture_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    for host, prompt in (("baseten", 900_000), ("parasail", 1_000_000), ("zai", 800_000)):
+        _serve_on_fixture_route(monkeypatch, "z-ai/glm-5.2", host, author="zai", prompt=prompt)
+
+
+def test_glm_52_defaults_to_parasail_with_fallbacks_intact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_glm_52_on_fixture_routes(monkeypatch)
     candidates = chat_route_endpoint_candidates(
         {"model": "z-ai/glm-5.2", "provider": {"usage": "credits"}},
         _settings(),
@@ -950,7 +1029,10 @@ def test_glm_52_defaults_to_parasail_with_fallbacks_intact() -> None:
     assert len(candidates) > 1
 
 
-def test_glm_52_explicit_provider_preferences_override_parasail_default() -> None:
+def test_glm_52_explicit_provider_preferences_override_parasail_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_glm_52_on_fixture_routes(monkeypatch)
     ordered = chat_route_endpoint_candidates(
         {
             "model": "z-ai/glm-5.2",
@@ -1029,7 +1111,12 @@ def test_same_preference_tier_keeps_catalog_order() -> None:
         ("openai/gpt-4.1", "openai/gpt-4.1"),  # canonical id unchanged
     ],
 )
-def test_chat_route_candidates_resolves_openai_aliases(requested: str, expected: str) -> None:
+def test_chat_route_candidates_resolves_openai_aliases(
+    requested: str, expected: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An alias resolves to a model the catalog carries; carry it on a fixture
+    # route, whether or not OpenAI lists it today.
+    _serve_on_fixture_route(monkeypatch, expected, "openai", author="openai")
     candidates = chat_route_candidates({"model": requested}, _settings())
     assert [c.id for c in candidates] == [expected]
 
