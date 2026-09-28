@@ -184,10 +184,12 @@ def test_every_native_decision_model_has_a_prepaid_route_on_its_unretired_chain(
 
 
 def test_the_named_models_are_the_eight_people_were_promised() -> None:
-    # Public model ids are forever once someone hardcodes one. The one exception
+    # Public model ids are forever once someone hardcodes one. The exceptions
     # on record: mev-1.0 meant Gemma 4 E4B for a few hours on 2026-09-20, before
-    # Joseph gave the name to Mercury 2 and Gemma became gemmev-1.0. Do not do
-    # that to a name with traffic: ship a new name or a new version instead.
+    # Joseph gave the name to Mercury 2 and Gemma became gemmev-1.0. And on
+    # 2026-09-28 DeepInfra, gemmev-1.0's only host, dropped Gemma 4 E4B; Joseph
+    # moved the name to Gemma 4 26B A4B rather than ship gemmev-1.1. Otherwise do
+    # not do that to a name with traffic: ship a new name or a new version.
     assert [(named.id, named.backing_model_id) for named in NAMED_DECISION_MODELS] == [
         ("trustedrouter/trev-1.0", "openai/gpt-oss-120b"),
         ("trustedrouter/mev-1.0", "inception/mercury-2"),
@@ -196,13 +198,14 @@ def test_the_named_models_are_the_eight_people_were_promised() -> None:
         ("trustedrouter/gev-1.0", "google/gemini-3.1-flash-lite"),
         ("trustedrouter/dev-1.0", "deepseek/deepseek-v4.1-flash"),
         ("trustedrouter/oev-1.0", "openai/gpt-oss-20b"),
-        ("trustedrouter/gemmev-1.0", "google/gemma-4-e4b-it"),
+        ("trustedrouter/gemmev-1.0", "google/gemma-4-26b-a4b-it"),
     ]
     assert {named.id: named.chain for named in NAMED_DECISION_MODELS if len(named.chain) > 1} == {
         "trustedrouter/trev-1.0": ("cerebras", "sambanova", "fireworks", "together"),
         "trustedrouter/zev-1.0": ("fireworks", "baseten"),
         "trustedrouter/lev-1.0": ("sambanova", "parasail", "together"),
         "trustedrouter/dev-1.0": ("wafer", "deepinfra", "wandb"),
+        "trustedrouter/gemmev-1.0": ("wandb", "nextbit", "io-net"),
     }
     trev_chain = NAMED_DECISION_MODEL_PROVIDERS[TREV_1_0_MODEL_ID]
     assert trev_chain[0] == "cerebras"
