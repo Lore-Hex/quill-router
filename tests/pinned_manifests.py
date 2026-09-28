@@ -54,6 +54,26 @@ DEEPSEEK_FLASH = _deepseek_row(
 )
 DEEPSEEK_DIRECT_ROWS = (DEEPSEEK_V4_FLASH, DEEPSEEK_V4_PRO, DEEPSEEK_FLASH)
 
+# Anthropic's Claude Opus 5 route as its manifest lists it.
+ANTHROPIC_CLAUDE_OPUS_5 = {
+    "display_name": "Claude Opus 5",
+    "title": "claude-opus-5",
+    "model_type": "chat",
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "id": "anthropic/claude-opus-5",
+    "context_length": 1000000,
+    "max_output_tokens": 128000,
+    "features": ["function-calling", "structured-outputs", "reasoning"],
+    "upstream_id": "claude-opus-5",
+    "created_at": "2026-07-24T00:00:00Z",
+    "input_token_price_per_m": 5000000,
+    "output_token_price_per_m": 25000000,
+    "cached_input_token_price_per_m": 500000,
+}
+
 # OpenAI's own routes as its manifest lists them, for rules of OpenAI's
 # routes: its prepaid ZDR contract, Priority processing, image billing.
 OPENAI_GPT_4O_MINI = {
