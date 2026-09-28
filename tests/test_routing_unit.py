@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 from fastapi import HTTPException
 
+from tests.fixture_routes import serve_on_fixture_route
 from trusted_router.catalog import (
     PRIVACY_TIER_ZERO_RETENTION,
     PROVIDER_JURISDICTION_US,
@@ -31,42 +32,6 @@ from trusted_router.routing import (
 
 def _settings() -> Settings:
     return Settings(environment="test")
-
-
-def _serve_on_fixture_route(
-    monkeypatch: pytest.MonkeyPatch,
-    model_id: str,
-    host: str,
-    *,
-    author: str,
-    prompt: int = 1_000_000,
-    completion: int = 3_000_000,
-):
-    """Serve a model on one fixture Credits route. A routing rule holds for any
-    catalog; which hosts list a model today is provider state."""
-    from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, endpoints_for_model
-    from trusted_router.catalog_data import Model, ModelEndpoint
-
-    monkeypatch.setitem(
-        MODELS,
-        model_id,
-        MODELS.get(model_id)
-        or Model(id=model_id, name=model_id, provider=author, context_length=131_072),
-    )
-    route = ModelEndpoint(
-        id=f"{model_id}@{host}/prepaid",
-        model_id=model_id,
-        provider=host,
-        usage_type="Credits",
-        upstream_id=f"fixture-{host}",
-        prompt_price_microdollars_per_million_tokens=prompt,
-        completion_price_microdollars_per_million_tokens=completion,
-    )
-    monkeypatch.setitem(MODEL_ENDPOINTS, route.id, route)
-    assert route.id in {endpoint.id for endpoint in endpoints_for_model(model_id)}, (
-        f"fixture: {host} has retired {model_id}"
-    )
-    return route
 
 
 @pytest.fixture
@@ -279,7 +244,7 @@ def test_provider_order_with_fallbacks_disabled_selects_first_available_ordered_
 def test_provider_only_remains_hard_with_fallbacks_enabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _serve_on_fixture_route(
+    serve_on_fixture_route(
         monkeypatch, "google/gemma-4-31b-it", "tinfoil", author="google-ai-studio"
     )
     candidates = chat_route_endpoint_candidates(
@@ -336,13 +301,15 @@ def test_provider_max_price_filters_prompt_and_completion_prices() -> None:
 
 
 def _serve_pricey_primary_and_cheap_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
-    _serve_on_fixture_route(
+    serve_on_fixture_route(
         monkeypatch, "anthropic/claude-opus-4.8", "anthropic", author="anthropic",
-        prompt=5_000_000, completion=25_000_000,
+        prompt_price_microdollars_per_million_tokens=5_000_000,
+        completion_price_microdollars_per_million_tokens=25_000_000,
     )
-    _serve_on_fixture_route(
+    serve_on_fixture_route(
         monkeypatch, "google/gemma-4-31b-it", "deepinfra", author="google-ai-studio",
-        prompt=100_000, completion=400_000,
+        prompt_price_microdollars_per_million_tokens=100_000,
+        completion_price_microdollars_per_million_tokens=400_000,
     )
 
 
@@ -751,7 +718,7 @@ def test_min_privacy_confidential_keeps_confidential_reachable_model(
     )
 
     # GLM 5.2 with one confidential route must still route.
-    route = _serve_on_fixture_route(monkeypatch, "z-ai/glm-5.2", "chutes", author="zai")
+    route = serve_on_fixture_route(monkeypatch, "z-ai/glm-5.2", "chutes", author="zai")
     assert endpoint_privacy_tier(route) >= PRIVACY_TIER_CONFIDENTIAL, "fixture"
     candidates = chat_route_candidates(
         {"model": "z-ai/glm-5.2", "provider": {"min_privacy": "confidential"}},
@@ -778,7 +745,7 @@ def test_model_shape_exposes_privacy_tier(monkeypatch: pytest.MonkeyPatch) -> No
     # A model served by a zero-retention+ route exposes the tier label and
     # >= ZDR. (anthropic/openai/google were downgraded from ZDR to standard in
     # 4faa10d, so they no longer clear tier 2.)
-    route = _serve_on_fixture_route(
+    route = serve_on_fixture_route(
         monkeypatch, "deepseek/deepseek-v3.2", "chutes", author="deepseek"
     )
     assert endpoint_privacy_tier(route) >= PRIVACY_TIER_ZERO_RETENTION, "fixture"
@@ -1013,7 +980,10 @@ def test_explicit_provider_order_overrides_reliability_preference() -> None:
 
 def _serve_glm_52_on_fixture_routes(monkeypatch: pytest.MonkeyPatch) -> None:
     for host, prompt in (("baseten", 900_000), ("parasail", 1_000_000), ("zai", 800_000)):
-        _serve_on_fixture_route(monkeypatch, "z-ai/glm-5.2", host, author="zai", prompt=prompt)
+        serve_on_fixture_route(
+            monkeypatch, "z-ai/glm-5.2", host, author="zai",
+            prompt_price_microdollars_per_million_tokens=prompt,
+        )
 
 
 def test_glm_52_defaults_to_parasail_with_fallbacks_intact(
@@ -1116,7 +1086,7 @@ def test_chat_route_candidates_resolves_openai_aliases(
 ) -> None:
     # An alias resolves to a model the catalog carries; carry it on a fixture
     # route, whether or not OpenAI lists it today.
-    _serve_on_fixture_route(monkeypatch, expected, "openai", author="openai")
+    serve_on_fixture_route(monkeypatch, expected, "openai", author="openai")
     candidates = chat_route_candidates({"model": requested}, _settings())
     assert [c.id for c in candidates] == [expected]
 
