@@ -87,6 +87,25 @@ def test_fireworks_september_runtime_cutoff_without_reload(
     assert {endpoint.model_id for endpoint in remaining} == {model_id}
 
 
+def test_fireworks_september_build_drops_retired_rows_its_manifest_still_lists(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    # The build drops a retired route even while the manifest still lists it:
+    # the refresh tombstones a row only after it misses the feed twice.
+    from trusted_router import catalog_ingest
+
+    rows = [
+        {"id": model_id, "upstream_id": native_id, "model_type": "chat",
+         "endpoints": ["chat/completions"]}
+        for model_id, native_id in (_RETIRING | _RETAINED).items()
+    ]
+    (tmp_path / "fireworks.json").write_text(json.dumps({"models": rows}), encoding="utf-8")
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    allowed = catalog_ingest._authoritative_provider_model_ids
+    assert allowed("fireworks", at=_CUTOFF - timedelta(microseconds=1)) == set(_RETIRING | _RETAINED)
+    assert allowed("fireworks", at=_CUTOFF) == set(_RETAINED)
+
+
 @pytest.mark.parametrize(("model_id", "native_id"), _RETAINED.items())
 def test_fireworks_september_preserves_other_routes(model_id: str, native_id: str) -> None:
     assert not provider_lifecycle.provider_model_retired("fireworks", model_id, native_id, at=_CUTOFF)

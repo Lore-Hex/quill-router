@@ -267,9 +267,6 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
         }
     if "moonshotai/kimi-k2.6" in MODELS:
         assert "moonshotai/kimi-k2.6" in [model.id for model in auto_candidate_models()]
-    if not catalog_predates(FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT):
-        assert "z-ai/glm-5.2@fireworks/prepaid" not in MODEL_ENDPOINTS
-        assert "z-ai/glm-5.2@fireworks/byok" not in MODEL_ENDPOINTS
     for model in MODELS.values():
         assert model.provider in PROVIDERS
         assert isinstance(model.prompt_price_microdollars_per_million_tokens, int)
