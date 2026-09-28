@@ -492,8 +492,13 @@ def serve_manifest_rows(
             monkeypatch.setitem(catalog_registry.MODELS, model_id, model)
     for endpoint_id, endpoint in endpoints.items():
         monkeypatch.setitem(catalog_registry.MODEL_ENDPOINTS, endpoint_id, endpoint)
-    # The public catalog projection is cached per price period: this test
-    # builds its own from these routes, and the process's cache is left as it was.
+    isolate_public_catalog_cache(monkeypatch)
+
+
+def isolate_public_catalog_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The public catalog projection is cached per price period: a test that
+    serves its own routes builds its own projection from them, and the
+    process's cache is left as it was."""
     projection = catalog_routes._public_catalog_payload
     monkeypatch.setattr(
         catalog_routes, "_public_catalog_payload", lru_cache(maxsize=1)(projection.__wrapped__)
