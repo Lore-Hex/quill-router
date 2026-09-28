@@ -10,7 +10,8 @@ from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import parasail
 from trusted_router import provider_lifecycle
-from trusted_router.catalog import endpoints_for_model
+from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, endpoints_for_model
+from trusted_router.catalog_data import Model, ModelEndpoint
 from trusted_router.synthetic.probes import rotation_candidates
 
 _CUTOFF = datetime(2026, 8, 4, 0, 0, tzinfo=UTC)
@@ -46,15 +47,55 @@ def test_parasail_retirements_switch_at_announced_date() -> None:
         )
 
 
+def _serve_on_fixture_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Parasail serves every retiring model and replacement under its announced
+    upstream ID, and another host serves each retiring model too.
+
+    Provider discovery may remove or add routes independently of an announced
+    cutoff, so the lifecycle rules below run on a self-contained catalog."""
+    served = dict((*_RETIRING, *_REPLACEMENTS))
+    for endpoint_id, endpoint in tuple(MODEL_ENDPOINTS.items()):
+        if endpoint.model_id in served:
+            monkeypatch.delitem(MODEL_ENDPOINTS, endpoint_id)
+    routes = [("parasail", model_id, upstream_id) for model_id, upstream_id in served.items()]
+    routes += [("another-provider", model_id, model_id) for model_id, _ in _RETIRING]
+    for provider, model_id, upstream_id in routes:
+        if model_id not in MODELS:
+            monkeypatch.setitem(
+                MODELS,
+                model_id,
+                Model(id=model_id, name=model_id, provider=provider, context_length=131_072),
+            )
+        endpoint = ModelEndpoint(
+            id=f"{model_id}@{provider}/prepaid",
+            model_id=model_id,
+            provider=provider,
+            usage_type="Credits",
+            upstream_id=upstream_id,
+        )
+        monkeypatch.setitem(MODEL_ENDPOINTS, endpoint.id, endpoint)
+
+
 def test_parasail_retirements_are_provider_scoped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _serve_on_fixture_routes(monkeypatch)
+    monkeypatch.setattr(
+        provider_lifecycle,
+        "_utc_now",
+        lambda: _CUTOFF - timedelta(microseconds=1),
+    )
+    for model_id, _upstream_id in _RETIRING:
+        providers = {endpoint.provider for endpoint in endpoints_for_model(model_id)}
+        assert providers == {"parasail", "another-provider"}
+
     monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
 
     for model_id, _upstream_id in _RETIRING:
         providers = {endpoint.provider for endpoint in endpoints_for_model(model_id)}
-        assert "parasail" not in providers
-        assert providers, f"{model_id} should remain available outside Parasail"
+        assert providers == {"another-provider"}, (
+            f"{model_id} should remain available outside Parasail"
+        )
 
     for model_id, upstream_id in _REPLACEMENTS:
         parasail_routes = [
@@ -200,6 +241,15 @@ def test_parasail_manifest_prunes_retired_rows_at_cutoff(
 def test_synthetic_rotation_excludes_retired_parasail_routes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _serve_on_fixture_routes(monkeypatch)
+    monkeypatch.setattr(
+        provider_lifecycle,
+        "_utc_now",
+        lambda: _CUTOFF - timedelta(microseconds=1),
+    )
+    before = set(rotation_candidates()["parasail"])
+    assert {model_id for model_id, _ in _RETIRING} <= before
+
     monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
 
     parasail_pool = set(rotation_candidates()["parasail"])
