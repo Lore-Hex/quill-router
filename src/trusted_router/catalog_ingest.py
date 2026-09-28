@@ -10,6 +10,7 @@ merge). No dependency on catalog.py, so no import cycle.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -43,6 +44,7 @@ from trusted_router.pricing import (
     _optional_customer_price_from_dollars_per_token,
     _priced,
     _provider_manifest_customer_price,
+    _provider_manifest_exact_integer,
     _provider_manifest_optional_price_cost,
     _provider_manifest_price_cost,
     _provider_manifest_price_scale,
@@ -172,6 +174,32 @@ def _build_endpoints(models: dict[str, Model]) -> dict[str, ModelEndpoint]:
 _INGEST_PATH = Path(__file__).parent / "data" / "openrouter_snapshot.json"
 
 _PROVIDER_MODELS_DIR = Path(__file__).parent / "data" / "provider_models"
+
+logger = logging.getLogger(__name__)
+
+# Provider/model pairs whose token-billed manifest row lacked a token price
+# and got no route. Ingestion runs when the catalog is imported, before
+# create_app starts Sentry, so it records them and create_app reports them.
+_REFUSED_UNPRICED_ROWS: set[tuple[str, str]] = set()
+_REPORTED_UNPRICED_ROWS: set[tuple[str, str]] = set()
+
+
+def report_refused_manifest_rows() -> None:
+    """Warn once per process about each refused row, after observability starts."""
+    for provider, model in sorted(_REFUSED_UNPRICED_ROWS - _REPORTED_UNPRICED_ROWS):
+        _REPORTED_UNPRICED_ROWS.add((provider, model))
+        logger.warning(
+            "catalog.unpriced_manifest_row_refused provider=%s model=%s", provider, model
+        )
+
+
+def _has_token_prices(raw_model: dict[str, Any]) -> bool:
+    """Whether both token prices are exact, non-negative manifest integers."""
+    for field in ("input_token_price_per_m", "output_token_price_per_m"):
+        price = _provider_manifest_exact_integer(raw_model.get(field))
+        if price is None or price < 0:
+            return False
+    return True
 
 # Manifest-backed provider routes fail closed at manifest expiry without
 # freezing unrelated catalog updates. The hourly authenticated discovery
@@ -1060,6 +1088,16 @@ def _supplemental_provider_models_and_endpoints(
             endpoint_types = {str(item) for item in (raw_model.get("endpoints") or [])}
             if not endpoint_types.intersection({"chat/completions", "images"}):
                 continue
+            # These providers bill per generated image, through a fixed hold.
+            fixed_price_image = (
+                raw_model.get("model_type") == "image" and model_id not in OPENAI_IMAGE_MODEL_IDS
+            )
+            # Every other route is billed by tokens. A missing token price
+            # would parse as zero and bill at the customer floor, or at zero
+            # for pass-through retail prices, so the row gets no route.
+            if not fixed_price_image and not _has_token_prices(raw_model):
+                _REFUSED_UNPRICED_ROWS.add((provider_slug, model_id))
+                continue
 
             prompt_cost = _provider_manifest_price_cost(
                 raw_model.get("input_token_price_per_m"),
@@ -1082,10 +1120,10 @@ def _supplemental_provider_models_and_endpoints(
             ):
                 continue
             request_price = customer_fixed_price_microdollars(raw_request_price)
-            if raw_model.get("model_type") == "image" and model_id not in OPENAI_IMAGE_MODEL_IDS:
-                # These providers bill per generated image. The enclave sends
-                # an exact fixed-price hold; applying the global token-price
-                # floor here would add a second, prompt-length-dependent charge.
+            if fixed_price_image:
+                # The enclave sends an exact fixed-price hold; applying the
+                # global token-price floor here would add a second,
+                # prompt-length-dependent charge.
                 prompt_price = 0
                 completion_price = 0
                 cached_price = None
