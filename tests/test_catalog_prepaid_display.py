@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from tests import catalog_vehicles
+from trusted_router import catalog_ingest
 from trusted_router.catalog import (
     _PROVIDER_DEPRECATED_UPSTREAM_MODELS,
     _PROVIDER_SERVED_MODEL_ALLOWLIST,
@@ -114,35 +116,33 @@ def test_model_detail_prices_credits_routes_once_and_shows_cached_input() -> Non
     )
 
 
+def _assert_a_listed_route_is_prepaid_at_its_price(provider: str, model_id: str) -> None:
+    """A route the provider lists is prepaid at its published price plus the
+    standard markup, on the exact upstream id the provider names."""
+    row = _listed_row(provider, model_id)
+    if row is None:
+        return
+    endpoint = MODEL_ENDPOINTS[f"{model_id}@{provider}/prepaid"]
+    assert endpoint.upstream_id == (row.get("upstream_id") or model_id)
+    assert endpoint.prompt_price_microdollars_per_million_tokens == _customer_price(
+        row["input_token_price_per_m"]
+    )
+    assert endpoint.completion_price_microdollars_per_million_tokens == _customer_price(
+        row["output_token_price_per_m"]
+    )
+    if "cached_input_token_price_per_m" in row:
+        assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == (
+            _customer_price(row["cached_input_token_price_per_m"])
+        )
+
+
 def test_fireworks_glm53_flash_published_price_is_prepaid() -> None:
-    # Each GLM 5.3 route Fireworks lists is prepaid at its published price plus
-    # the standard markup, on the exact upstream id Fireworks names.
     for model_id in ("z-ai/glm-5.3-flash", "z-ai/glm-5.3-fast"):
-        row = _listed_row("fireworks", model_id)
-        if row is None:
-            continue
-        endpoint = MODEL_ENDPOINTS[f"{model_id}@fireworks/prepaid"]
-        assert endpoint.upstream_id == (row.get("upstream_id") or model_id)
-        assert endpoint.prompt_price_microdollars_per_million_tokens == _customer_price(
-            row["input_token_price_per_m"]
-        )
-        assert endpoint.completion_price_microdollars_per_million_tokens == _customer_price(
-            row["output_token_price_per_m"]
-        )
-        if "cached_input_token_price_per_m" in row:
-            assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == (
-                _customer_price(row["cached_input_token_price_per_m"])
-            )
+        _assert_a_listed_route_is_prepaid_at_its_price("fireworks", model_id)
 
 
 def test_wandb_glm53_flash_with_verified_price_is_prepaid() -> None:
-    model_id = "z-ai/glm-5.3-flash"
-    assert model_id not in _provider_manifest_dark_model_ids().get("wandb", frozenset())
-    endpoint = MODEL_ENDPOINTS[f"{model_id}@wandb/prepaid"]
-    assert endpoint.upstream_id == "zai-org/GLM-5.3-Flash"
-    assert endpoint.prompt_price_microdollars_per_million_tokens == 158_250
-    assert endpoint.completion_price_microdollars_per_million_tokens == 527_500
-    assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 52_750
+    _assert_a_listed_route_is_prepaid_at_its_price("wandb", "z-ai/glm-5.3-flash")
 
 
 def test_cerebras_only_credits_serves_allowlisted_models() -> None:
@@ -169,7 +169,6 @@ def test_together_credits_follow_started_serverless_manifest() -> None:
     # retire. The generated manifest is the availability contract; freezing a
     # transient model ID here blocks every later catalog refresh after its
     # provider-confirmed retirement.
-    assert together_credits
     assert together_credits == allow
     assert "meta-llama/llama-3.1-70b-instruct" not in together_credits
 
@@ -291,7 +290,6 @@ def test_nebius_deprecated_june_2026_models_are_not_routable() -> None:
         endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "nebius"
     ]
 
-    assert nebius_endpoints
     for endpoint in nebius_endpoints:
         assert endpoint.model_id not in deprecated
         assert endpoint.upstream_id not in deprecated
@@ -315,19 +313,13 @@ def test_tinfoil_june_2026_deprecations_and_replacements_are_routable() -> None:
         endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "tinfoil"
     ]
 
-    assert tinfoil_endpoints
     for endpoint in tinfoil_endpoints:
         assert endpoint.model_id not in deprecated
         assert endpoint.upstream_id not in deprecated
 
-    glm_53 = MODEL_ENDPOINTS["z-ai/glm-5.3@tinfoil/prepaid"]
-    gemma4 = MODEL_ENDPOINTS["google/gemma-4-31b-it@tinfoil/prepaid"]
-    assert glm_53.upstream_id == "glm-5-3"
-    assert (
-        glm_53.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
-        == 474_750
-    )
-    assert gemma4.upstream_id == "gemma4-31b"
+    # The replacements Tinfoil lists are prepaid on its own ids and prices.
+    for model_id in ("z-ai/glm-5.3", "google/gemma-4-31b-it"):
+        _assert_a_listed_route_is_prepaid_at_its_price("tinfoil", model_id)
 
     assert "z-ai/glm-5.1@tinfoil/prepaid" not in MODEL_ENDPOINTS
     assert "z-ai/glm-5.1@tinfoil/byok" not in MODEL_ENDPOINTS
@@ -335,8 +327,11 @@ def test_tinfoil_june_2026_deprecations_and_replacements_are_routable() -> None:
     assert "qwen/qwen3-vl-30b-a3b-instruct@tinfoil/byok" not in MODEL_ENDPOINTS
     # Provider-scoped deprecation: non-Tinfoil routes for these model families
     # remain available when their provider still serves them.
-    assert "z-ai/glm-5.1@zai/prepaid" in MODEL_ENDPOINTS
-    assert "qwen/qwen3-vl-30b-a3b-instruct@novita/prepaid" in MODEL_ENDPOINTS
+    for endpoint_id in (
+        "z-ai/glm-5.1@zai/prepaid",
+        "qwen/qwen3-vl-30b-a3b-instruct@novita/prepaid",
+    ):
+        assert endpoint_id in MODEL_ENDPOINTS or _delisted(endpoint_id), endpoint_id
 
 
 def test_novita_july_2026_retirements_and_replacements_are_routable() -> None:
@@ -345,7 +340,6 @@ def test_novita_july_2026_retirements_and_replacements_are_routable() -> None:
         endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "novita"
     ]
 
-    assert novita_endpoints
     for endpoint in novita_endpoints:
         assert endpoint.model_id not in deprecated
         assert endpoint.upstream_id not in deprecated
@@ -361,12 +355,14 @@ def test_novita_july_2026_retirements_and_replacements_are_routable() -> None:
     assert "qwen/qwen3-vl-8b-instruct@novita/prepaid" not in MODEL_ENDPOINTS
     assert "qwen/qwen3-vl-8b-instruct@novita/byok" not in MODEL_ENDPOINTS
 
-    assert "deepseek/deepseek-v4-flash@novita/prepaid" in MODEL_ENDPOINTS
-    assert "deepseek/deepseek-v4-flash@novita/byok" in MODEL_ENDPOINTS
-    assert "qwen/qwen3.6-27b@novita/prepaid" in MODEL_ENDPOINTS
-    assert "qwen/qwen3.6-27b@novita/byok" in MODEL_ENDPOINTS
-    assert "qwen/qwen3.6-35b-a3b@novita/prepaid" in MODEL_ENDPOINTS
-    assert "qwen/qwen3.6-35b-a3b@novita/byok" in MODEL_ENDPOINTS
+    # The replacements are routable while Novita lists them.
+    for model_id in (
+        "deepseek/deepseek-v4-flash",
+        "qwen/qwen3.6-27b",
+        "qwen/qwen3.6-35b-a3b",
+    ):
+        for endpoint_id in (f"{model_id}@novita/prepaid", f"{model_id}@novita/byok"):
+            assert endpoint_id in MODEL_ENDPOINTS or _delisted(endpoint_id), endpoint_id
 
 
 def test_friendli_july_2026_glm_5_deprecation_does_not_remove_glm_52() -> None:
@@ -495,19 +491,25 @@ def test_llama_33_70b_no_longer_credits_routes_to_cerebras() -> None:
     assert credits_providers & {"novita", "parasail", "tinfoil", "together"}
 
 
-def _endpoint_for(model_id: str, provider: str, usage_type: str) -> ModelEndpoint:
-    for endpoint in endpoints_for_model(model_id):
-        if endpoint.provider == provider and endpoint.usage_type == usage_type:
-            return endpoint
-    raise AssertionError(f"missing {provider} {usage_type} endpoint for {model_id}")
-
-
-def test_novita_supplemental_prices_apply_manifest_scale() -> None:
-    endpoint = _endpoint_for(
-        "qwen/qwen3-235b-a22b-instruct-2507",
-        provider="novita",
-        usage_type="Credits",
-    )
+def test_novita_supplemental_prices_apply_manifest_scale(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    # Novita's /models feed prices 100x smaller than its public $/Mt table, and
+    # its manifest says so; the catalog applies that scale before the markup.
+    committed = json.loads((_PROVIDER_MODELS_DIR / "novita.json").read_text(encoding="utf-8"))
+    assert committed["price_scale_to_microdollars_per_million_tokens"] == 100
+    (tmp_path / "novita.json").write_text(json.dumps({
+        "provider": "novita", "price_scale_to_microdollars_per_million_tokens": 100,
+        "models": [{
+            "id": "qwen/qwen3-235b-a22b-instruct-2507",
+            "upstream_id": "qwen/qwen3-235b-a22b-instruct-2507",
+            "model_type": "chat", "endpoints": ["chat/completions"],
+            "input_token_price_per_m": 900, "output_token_price_per_m": 5800,
+        }],
+    }))
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    _, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
+    endpoint = endpoints["qwen/qwen3-235b-a22b-instruct-2507@novita/prepaid"]
 
     assert endpoint.prompt_price_microdollars_per_million_tokens == 94_950
     assert endpoint.completion_price_microdollars_per_million_tokens == 611_900
@@ -543,6 +545,18 @@ def test_novita_supplemental_prices_apply_manifest_scale() -> None:
         "openai/gpt-oss-120b@cerebras/prepaid",
         "openai/gpt-oss-120b@together/prepaid",
         "mistralai/mistral-small-24b-instruct-2501@deepinfra/prepaid",
+        "z-ai/glm-5.3-flash@wandb/prepaid",
+        "z-ai/glm-5.3@tinfoil/prepaid",
+        "google/gemma-4-31b-it@tinfoil/prepaid",
+        "z-ai/glm-5.1@zai/prepaid",
+        "qwen/qwen3-vl-30b-a3b-instruct@novita/prepaid",
+        "deepseek/deepseek-v4-flash@novita/prepaid",
+        "deepseek/deepseek-v4-flash@novita/byok",
+        "qwen/qwen3.6-27b@novita/prepaid",
+        "qwen/qwen3.6-27b@novita/byok",
+        "qwen/qwen3.6-35b-a3b@novita/prepaid",
+        "qwen/qwen3.6-35b-a3b@novita/byok",
+        "qwen/qwen3-235b-a22b-instruct-2507@novita/prepaid",
     ],
 )
 def test_the_routes_these_rules_were_written_against_are_still_served(endpoint_id: str) -> None:
@@ -550,7 +564,9 @@ def test_the_routes_these_rules_were_written_against_are_still_served(endpoint_i
 
 
 @pytest.mark.provider_health
-@pytest.mark.parametrize("provider", ["cerebras", "friendli", "gmi"])
+@pytest.mark.parametrize(
+    "provider", ["cerebras", "friendli", "gmi", "nebius", "novita", "tinfoil", "together"],
+)
 def test_the_providers_these_rules_cover_still_serve_credits(provider: str) -> None:
     assert any(
         endpoint.provider == provider and endpoint.usage_type == "Credits"
