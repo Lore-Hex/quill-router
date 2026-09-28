@@ -71,8 +71,13 @@ def test_leading_privacy_compatible_auto_candidates_are_us_and_zero_retention() 
     )
 
 
+@pytest.mark.provider_health
 def test_auto_ladder_spans_more_than_one_provider() -> None:
-    """A single-provider ladder makes one provider outage an `auto` outage."""
+    """A single-provider ladder makes one provider outage an `auto` outage.
+
+    Live provider state: which hosts serve the leading models today.
+    provider-catalog-health.yml reports it hourly, and the price refresh does
+    not wait on it."""
     providers: set[str] = set()
     qualifying = [
         model_id for model_id in DEFAULT_AUTO_MODEL_ORDER if _us_zdr_providers(model_id)
