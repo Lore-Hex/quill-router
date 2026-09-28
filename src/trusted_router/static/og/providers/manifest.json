@@ -181,10 +181,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 102,
+    "model_count": 98,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 197,
+    "route_count": 189,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -262,10 +262,10 @@
   },
   "google-ai-studio": {
     "card_version": 2,
-    "model_count": 14,
+    "model_count": 13,
     "name": "Google AI Studio",
     "privacy": "Policy documented",
-    "route_count": 26,
+    "route_count": 24,
     "route_mode": "Prepaid + BYOK",
     "slug": "google-ai-studio"
   },
@@ -361,10 +361,10 @@
   },
   "lightning": {
     "card_version": 2,
-    "model_count": 36,
+    "model_count": 27,
     "name": "Lightning AI",
     "privacy": "Policy documented",
-    "route_count": 63,
+    "route_count": 53,
     "route_mode": "Prepaid + BYOK",
     "slug": "lightning"
   },
@@ -514,10 +514,10 @@
   },
   "openai": {
     "card_version": 2,
-    "model_count": 49,
+    "model_count": 47,
     "name": "OpenAI",
     "privacy": "Zero retention",
-    "route_count": 84,
+    "route_count": 81,
     "route_mode": "Prepaid + BYOK",
     "slug": "openai"
   },
@@ -676,10 +676,10 @@
   },
   "sambanova": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 7,
     "name": "SambaNova",
     "privacy": "Policy documented",
-    "route_count": 6,
+    "route_count": 7,
     "route_mode": "Prepaid",
     "slug": "sambanova"
   },
