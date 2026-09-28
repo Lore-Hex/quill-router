@@ -61,6 +61,27 @@ def _expected_active_chain(model_id: str) -> tuple[str, ...]:
     return chain
 
 
+def _serving_chain(model_id: str) -> tuple[str, ...]:
+    """The chain hosts serving the name's backing model today, in chain order."""
+    backing = PRIVATE_PROXY_MODEL_TARGETS[model_id]
+    serving = {endpoint.provider for endpoint in endpoints_for_model(backing) if not endpoint.is_byok}
+    return tuple(host for host in NAMED_DECISION_MODEL_PROVIDERS[model_id] if host in serving)
+
+
+# The catalog is rebuilt hourly from provider feeds, and a host can drop a
+# backing model without notice: DeepInfra dropped gemma-4-e4b-it, gemmev-1.0's
+# only host, on 2026-09-28. A name is then not in the catalog at all (the
+# registry adds a name exactly when its backing model is present; pinned by
+# test_a_name_is_in_the_catalog_exactly_when_its_backing_model_is), and a name
+# whose chain hosts are all gone answers 503. The product rules below hold for
+# every name the catalog carries (PRESENT), or, for routing, every name a chain
+# host still serves (OFFERED). Whether each name is still served is a
+# provider_health check: it alerts without holding up the hourly price refresh.
+PRESENT_NAMED_IDS = [named.id for named in NAMED_DECISION_MODELS if named.id in MODELS]
+OFFERED_NAMED_IDS = [model_id for model_id in PRESENT_NAMED_IDS if _serving_chain(model_id)]
+PRESENT_NATIVE_IDS = [model_id for model_id in NATIVE_DECISION_MODEL_IDS if model_id in MODELS]
+
+
 def test_jev_is_an_input_only_decision_model() -> None:
     model = MODELS[JEV]
     assert model.supports_decide and not model.supports_chat and not model.supports_embeddings
@@ -110,7 +131,7 @@ def test_public_shape_marks_hosted_and_native_decision_models() -> None:
     assert shape["architecture"]["modality"] == "text->decision"
     assert shape["trustedrouter"]["supports_decide"] is True
     assert shape["pricing"]["completion"] == "0"
-    for model_id in NATIVE_DECISION_MODEL_IDS:
+    for model_id in PRESENT_NATIVE_IDS:
         native: dict[str, Any] = model_to_openrouter_shape(MODELS[model_id])
         assert native["trustedrouter"]["supports_decide"] is True, model_id
         # A NAME answers /v1/decide only, so that is what it advertises; the
@@ -123,12 +144,29 @@ def test_public_shape_marks_hosted_and_native_decision_models() -> None:
     assert ordinary_shape["trustedrouter"]["supports_decide"] is False
 
 
+def test_every_native_decision_model_has_a_pinned_provider() -> None:
+    assert set(NATIVE_DECISION_MODEL_PROVIDERS) == set(NATIVE_DECISION_MODEL_IDS)
+
+
+def test_a_name_is_in_the_catalog_exactly_when_its_backing_model_is() -> None:
+    # The rules below run over the names the catalog carries. A registry that
+    # dropped a name whose backing model is still here would otherwise only
+    # shrink their parameter lists.
+    for named in NAMED_DECISION_MODELS:
+        assert (named.id in MODELS) == (named.backing_model_id in MODELS), named.id
+
+
+@pytest.mark.provider_health
 def test_every_native_decision_model_has_a_prepaid_route_on_its_unretired_chain() -> None:
     """Named models and their bare backing IDs share the gateway's tuned
     host chains. An announced retirement may advance to the existing next
-    host, but an unannounced loss still fails this availability contract."""
-    assert set(NATIVE_DECISION_MODEL_PROVIDERS) == set(NATIVE_DECISION_MODEL_IDS)
+    host, but an unannounced loss still fails this availability contract.
+
+    Live provider state: provider-catalog-health.yml reports it hourly, and the
+    price refresh does not wait on it (a host delisting a model must not stop
+    every other provider's prices from publishing)."""
     for model_id, provider in NATIVE_DECISION_MODEL_PROVIDERS.items():
+        assert model_id in MODELS, f"{model_id} is not in the catalog: its model lost every route"
         assert MODELS[model_id].supports_chat, model_id
         backing = PRIVATE_PROXY_MODEL_TARGETS.get(model_id, model_id)
         providers = {
@@ -171,7 +209,7 @@ def test_the_named_models_are_the_eight_people_were_promised() -> None:
     assert len(trev_chain) >= 3, "Cerebras is heavily rate limited; trev needs real fallbacks"
 
 
-@pytest.mark.parametrize("model_id", NAMED_IDS)
+@pytest.mark.parametrize("model_id", OFFERED_NAMED_IDS)
 def test_a_named_decision_model_is_priced_from_its_host_chain(model_id: str) -> None:
     named = MODELS[model_id]
     backing = MODELS[PRIVATE_PROXY_MODEL_TARGETS[model_id]]
@@ -186,9 +224,6 @@ def test_a_named_decision_model_is_priced_from_its_host_chain(model_id: str) -> 
     chain_endpoints = [
         e for e in endpoints_for_model(backing.id) if e.provider in chain and not e.is_byok
     ]
-    assert {e.provider for e in chain_endpoints} == set(_expected_active_chain(model_id)), (
-        "an unretired chained host lost the model"
-    )
     dearest_prompt = max(e.prompt_price_microdollars_per_million_tokens for e in chain_endpoints)
     dearest_completion = max(
         e.completion_price_microdollars_per_million_tokens for e in chain_endpoints
@@ -440,10 +475,10 @@ async def _assert_the_outsider_is_routable(model_id: str, outsider: str) -> None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", NAMED_IDS)
+@pytest.mark.parametrize("model_id", OFFERED_NAMED_IDS)
 async def test_a_named_model_authorizes_on_its_chain_in_order(model_id: str) -> None:
     chain = list(NAMED_DECISION_MODEL_PROVIDERS[model_id])
-    expected = list(_expected_active_chain(model_id))
+    expected = list(_serving_chain(model_id))
     assert await _named_candidates(model_id, None) == expected
     # What the attested gateway sends.
     assert (
@@ -493,7 +528,7 @@ async def test_zev_and_bare_model_advance_to_existing_host_at_fireworks_cutoff(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", NAMED_IDS)
+@pytest.mark.parametrize("model_id", OFFERED_NAMED_IDS)
 @pytest.mark.parametrize("preference", ["none", "price", "outsider first"])
 async def test_a_named_chain_cannot_be_widened_or_reordered_by_the_request(
     model_id: str, preference: str, monkeypatch: pytest.MonkeyPatch
@@ -509,13 +544,13 @@ async def test_a_named_chain_cannot_be_widened_or_reordered_by_the_request(
         "outsider first": {"order": [outsider, chain[-1]], "allow_fallbacks": True},
     }[preference]
     ordered = await _named_candidates(model_id, provider)
-    expected = list(_expected_active_chain(model_id))
+    expected = list(_serving_chain(model_id))
     assert ordered == expected[: len(ordered)], ordered
     assert ordered[0] == expected[0]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", NAMED_IDS)
+@pytest.mark.parametrize("model_id", OFFERED_NAMED_IDS)
 async def test_a_named_model_refuses_a_request_pinned_outside_its_chain(
     model_id: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -543,7 +578,7 @@ async def test_a_named_model_refuses_a_request_pinned_outside_its_chain(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", NAMED_IDS)
+@pytest.mark.parametrize("model_id", OFFERED_NAMED_IDS)
 @pytest.mark.parametrize("filter_kind", ["ignore_all", "only_then_ignore"])
 async def test_excluding_every_named_host_is_not_a_retryable_outage(
     model_id: str, filter_kind: str
@@ -569,7 +604,7 @@ async def test_excluding_every_named_host_is_not_a_retryable_outage(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", NAMED_IDS)
+@pytest.mark.parametrize("model_id", OFFERED_NAMED_IDS)
 async def test_byok_billing_without_a_key_is_never_a_retryable_outage(
     model_id: str, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -808,7 +843,7 @@ async def test_deny_satisfied_outside_named_chain_is_not_relaxed_again(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", NAMED_IDS)
+@pytest.mark.parametrize("model_id", OFFERED_NAMED_IDS)
 async def test_a_genuine_named_host_outage_stays_retryable_and_attributable(
     model_id: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -846,14 +881,14 @@ def test_the_spellings_above_are_all_ones_routing_actually_rewrites() -> None:
     from trusted_router.routing import canonical_model_id
 
     for spelling in NON_CANONICAL_SPELLINGS:
-        for model_id in (*NAMED_IDS, JEV):
+        for model_id in (*PRESENT_NAMED_IDS, JEV):
             assert canonical_model_id(model_id + spelling) == model_id, (model_id, spelling)
-    for model_id in NAMED_IDS:
+    for model_id in PRESENT_NAMED_IDS:
         assert canonical_model_id(model_id) == model_id
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", NAMED_IDS)
+@pytest.mark.parametrize("model_id", PRESENT_NAMED_IDS)
 @pytest.mark.parametrize("suffix", NON_CANONICAL_SPELLINGS)
 @pytest.mark.parametrize("route_type", ["chat.completions", "decide"])
 async def test_a_routing_variant_cannot_unlock_a_named_decision_model(
@@ -885,6 +920,8 @@ async def test_a_routing_variant_cannot_unlock_a_named_decision_model(
 async def test_a_routing_variant_cannot_unmask_any_private_proxy_model() -> None:
     # The same hole, older than trev: every private proxy keyed on the raw id.
     for model_id, backing in PRIVATE_PROXY_MODEL_TARGETS.items():
+        if model_id not in MODELS:
+            continue
         route_type = "decide" if MODELS[model_id].supports_decide else "chat.completions"
         for spelling in NON_CANONICAL_SPELLINGS:
             response = await _authorize(
@@ -977,17 +1014,19 @@ def test_a_host_delisting_the_backing_model_never_stops_the_control_plane(
     assert unroutable == MODELS[TREV_1_0_MODEL_ID]
 
 
+@pytest.mark.provider_health
 @pytest.mark.parametrize("model_id", NAMED_IDS)
 def test_the_preferred_unretired_host_still_serves_the_backing_model(model_id: str) -> None:
     # The name sells this host's measured speed. If this fails, a provider
     # delisted the model: re-measure before changing the chain. Production is
     # already serving from the rest of the chain (or answering 503 for this one
-    # name), which is why this is a test and not a RuntimeError at import.
+    # name, or not offering it without its backing model), which is why this is
+    # a provider_health check and not a RuntimeError at import or a release gate.
     backing = PRIVATE_PROXY_MODEL_TARGETS[model_id]
     preferred = _expected_active_chain(model_id)[0]
     assert preferred in {
         endpoint.provider for endpoint in endpoints_for_model(backing) if not endpoint.is_byok
-    }
+    }, f"{preferred} no longer serves {backing}, the model behind {model_id}"
 
 
 def test_a_decision_model_is_not_a_base_for_a_custom_chat_model() -> None:
@@ -996,20 +1035,20 @@ def test_a_decision_model_is_not_a_base_for_a_custom_chat_model() -> None:
         require_custom_model_base_model,
     )
 
-    for model_id in (JEV, *NAMED_IDS):
+    for model_id in (JEV, *PRESENT_NAMED_IDS):
         assert not is_allowed_custom_model_base(MODELS[model_id]), model_id
         with pytest.raises(Exception) as raised:  # noqa: PT011 - api_error is an HTTPException
             require_custom_model_base_model(model_id)
         assert getattr(raised.value, "status_code", None) == 400
     # The chat models the gateway happens to drive as decision functions are
     # ordinary chat models and stay valid bases.
-    ordinary = [model_id for model_id in NATIVE_DECISION_MODEL_IDS if model_id not in NAMED_IDS]
+    ordinary = [model_id for model_id in PRESENT_NATIVE_IDS if model_id not in NAMED_IDS]
     assert ordinary, "fixture: the chat models behind the names should still be listed"
     for model_id in ordinary:
         assert is_allowed_custom_model_base(MODELS[model_id]), model_id
 
 
-@pytest.mark.parametrize("model_id", NAMED_IDS)
+@pytest.mark.parametrize("model_id", OFFERED_NAMED_IDS)
 def test_a_named_model_is_advertised_as_available_exactly_when_authorize_can_serve_it(
     model_id: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -1051,11 +1090,15 @@ def test_the_control_plane_starts_without_a_named_models_backing_model(model_id:
     import textwrap
 
     backing = PRIVATE_PROXY_MODEL_TARGETS[model_id]
+    # When a host has already dropped the backing model, today's catalog is the
+    # state under test and there is nothing left to remove.
+    expect_removal = backing in MODELS
     program = textwrap.dedent(
         f"""
         from trusted_router import catalog_ingest
 
         BACKING = {backing!r}
+        EXPECT_REMOVAL = {expect_removal!r}
 
         removed_from = []
 
@@ -1080,7 +1123,7 @@ def test_the_control_plane_starts_without_a_named_models_backing_model(model_id:
         )
 
         from trusted_router.catalog import MODELS, model_to_openrouter_shape  # the import under test
-        assert removed_from, "fixture: the backing model was in neither source"
+        assert bool(removed_from) == EXPECT_REMOVAL, "fixture: the backing model's sources changed"
         assert BACKING not in MODELS, "fixture: the backing model is still in the catalog"
         assert {model_id!r} not in MODELS, "a name is offered without a model behind it"
         assert "typesafe-ai/jev" in MODELS and len(MODELS) > 500
@@ -1104,7 +1147,7 @@ def test_a_named_model_is_offered_only_where_it_can_be_used(client: Any) -> None
     name kept `supports_chat` there (it needs it internally, so authorize can
     route its chat model) and was offered in both, which then refused it."""
     picker = {row["id"]: row for row in client.get("/v1/models/picker").json()["data"]}
-    for model_id in NAMED_IDS:
+    for model_id in PRESENT_NAMED_IDS:
         assert picker[model_id]["trustedrouter"]["supports_chat"] is False, model_id
         shape = model_to_openrouter_shape(MODELS[model_id])
         # ...and it lists what /v1/decide takes, not the chat model's parameters.
@@ -1125,12 +1168,12 @@ def test_a_named_model_is_never_drawn_as_a_chat_candidate() -> None:
     assert "openai/gpt-oss-20b" in {
         model.id for model in MODELS.values() if routing_candidates._is_regular_chat_model(model)
     }, "control: a plain chat model still counts"
-    for model_id in NAMED_IDS:
+    for model_id in PRESENT_NAMED_IDS:
         assert not routing_candidates._is_regular_chat_model(MODELS[model_id]), model_id
         assert model_id not in pool, model_id
 
 
-@pytest.mark.parametrize("model_id", NAMED_IDS)
+@pytest.mark.parametrize("model_id", PRESENT_NAMED_IDS)
 def test_a_named_model_reads_as_a_decision_model_everywhere_it_is_shown(
     model_id: str, client: Any
 ) -> None:
@@ -1142,7 +1185,7 @@ def test_a_named_model_reads_as_a_decision_model_everywhere_it_is_shown(
     assert '<span class="pill">decide</span>' in page.text
 
 
-@pytest.mark.parametrize("model_id", [*NAMED_IDS, "typesafe-ai/jev"])
+@pytest.mark.parametrize("model_id", [*PRESENT_NAMED_IDS, "typesafe-ai/jev"])
 def test_a_decision_models_api_page_shows_the_decide_call(model_id: str, client: Any) -> None:
     """/models/<id>/api ended in `client.chat.completions.create(model=<id>)` for
     every model in the catalog, decision models included."""
