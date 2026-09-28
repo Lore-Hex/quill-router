@@ -4930,6 +4930,13 @@ def _model_publisher(model: Model) -> Provider:
     # A TrustedRouter orchestration's publisher is not its internal selector host.
     if model.id in META_MODEL_IDS and model.id.startswith("trustedrouter/"):
         return PROVIDERS["trustedrouter"]
+    # model.provider is the default route, which for an author without its own
+    # mapping is whichever host lists the model first: MiniMax's own models
+    # showed DeepInfra as their publisher. An author with a provider entry is
+    # the publisher, whichever host serves the model.
+    author = model.id.split("/", 1)[0].lower()
+    if author in PROVIDERS:
+        return PROVIDERS[author]
     return PROVIDERS[model.provider]
 
 
