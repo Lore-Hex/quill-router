@@ -7,12 +7,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests.fakes.spanner import make_fake_store
+from tests.fixture_routes import drop_routes, serve_on_fixture_route
 from trusted_router.catalog import (
     ARCHIMEDES_1_0_MODEL_ID,
     MISTRAL_LARGE_MODEL_ID,
     MODELS,
     default_endpoint_for_model,
     endpoint_for_id,
+    endpoints_for_model,
 )
 from trusted_router.config import Settings
 from trusted_router.main import create_app
@@ -23,7 +25,6 @@ from trusted_router.partner_billing import (
     PARASAIL_LIBERTY_2_0_TOP_LEVEL_ROUTE,
     PARTNER_OPERATOR_COST_SETTLE_FIELD,
 )
-from trusted_router.provider_lifecycle import provider_model_retired
 from trusted_router.regional_quota_ledger import (
     InMemoryRegionalQuotaLedger,
     RegionalLeaseLedgerError,
@@ -124,7 +125,13 @@ def test_gateway_archimedes_rejects_byok_and_fallback_arrays() -> None:
     )
 
 
-def test_gateway_authorize_never_escapes_no_fallback_provider_order() -> None:
+def test_gateway_authorize_never_escapes_no_fallback_provider_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    serve_on_fixture_route(
+        monkeypatch, "google/gemma-4-31b-it", "tinfoil", author="google-ai-studio",
+        upstream_id="gemma4-31b",
+    )
     client, key = _client_and_key()
 
     unavailable = client.post(
@@ -460,7 +467,15 @@ def test_regional_lease_vanishing_at_reserve_keeps_its_traceback(
     assert "Traceback" in caplog.text
 
 
-def test_sakana_fugu_uses_exact_global_settlement_not_regional_escrow() -> None:
+def test_sakana_fugu_uses_exact_global_settlement_not_regional_escrow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    serve_on_fixture_route(
+        monkeypatch, "sakana-ai/fugu-ultra-v1.1", "sakana", author="sakana",
+        context_length=1_000_000, upstream_id="fugu-ultra-v1.1",
+        prompt_price_microdollars_per_million_tokens=5_000_000,
+        completion_price_microdollars_per_million_tokens=30_000_000,
+    )
     store, _db, _ = make_fake_store(request_record_write_mode="typed")
     store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
     workspace = store.create_workspace(
@@ -506,7 +521,15 @@ def test_sakana_fugu_uses_exact_global_settlement_not_regional_escrow() -> None:
     assert authorization.settlement == "local"
 
 
-def test_sakana_fugu_fails_closed_from_unsupported_europe_gateway() -> None:
+def test_sakana_fugu_fails_closed_from_unsupported_europe_gateway(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    serve_on_fixture_route(
+        monkeypatch, "sakana-ai/fugu-ultra-v1.1", "sakana", author="sakana",
+        context_length=1_000_000, upstream_id="fugu-ultra-v1.1",
+        prompt_price_microdollars_per_million_tokens=5_000_000,
+        completion_price_microdollars_per_million_tokens=30_000_000,
+    )
     store, _db, _ = make_fake_store(request_record_write_mode="typed")
     workspace = store.create_workspace(
         "owner",
@@ -804,7 +827,16 @@ def test_gateway_web_search_cost_uses_typed_reservation_and_finalize() -> None:
     assert settled_cost >= 7_000
 
 
-def test_gateway_authorizes_every_liberty_alias_to_working_nemotron_hosts() -> None:
+def test_gateway_authorizes_every_liberty_alias_to_working_nemotron_hosts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Every liberty alias offers each Credits host the catalog serves Nemotron
+    # on, whichever those are today; Baseten serves it here on a fixture route.
+    nemotron = "nvidia/nemotron-3-ultra-550b-a55b"
+    serve_on_fixture_route(
+        monkeypatch, nemotron, "baseten", author="baseten", context_length=262_144,
+        upstream_id="nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B",
+    )
     client, key = _client_and_key()
 
     for model_id in (
@@ -829,16 +861,14 @@ def test_gateway_authorizes_every_liberty_alias_to_working_nemotron_hosts() -> N
         nemotron_hosts = {
             route["provider"]
             for route in routes
-            if route["model"] == "nvidia/nemotron-3-ultra-550b-a55b"
-            and route["usage_type"] == "Credits"
+            if route["model"] == nemotron and route["usage_type"] == "Credits"
         }
-        expected_hosts = {"baseten"}
-        if not provider_model_retired(
-            "nebius",
-            "nvidia/nemotron-3-ultra-550b-a55b",
-            "nvidia/Nemotron-3-Ultra-550b-a55b",
-        ):
-            expected_hosts.add("nebius")
+        expected_hosts = {
+            endpoint.provider
+            for endpoint in endpoints_for_model(nemotron)
+            if endpoint.usage_type == "Credits"
+        }
+        assert "baseten" in expected_hosts
         assert expected_hosts <= nemotron_hosts, (model_id, routes)
         assert "gmi" not in nemotron_hosts, (model_id, routes)
 
@@ -967,7 +997,15 @@ def test_parasail_liberty_failed_request_refunds_minimum_reservation() -> None:
     assert not STORE.generation_store.generations
 
 
-def test_perplexity_fixed_request_fee_settles_once_and_refunds_on_failure() -> None:
+def test_perplexity_fixed_request_fee_settles_once_and_refunds_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    serve_on_fixture_route(
+        monkeypatch, "perplexity/sonar", "perplexity", author="perplexity",
+        upstream_id="sonar", request_price_microdollars=5_275,
+        prompt_price_microdollars_per_million_tokens=263_750,
+        completion_price_microdollars_per_million_tokens=2_637_500,
+    )
     client, key = _client_and_key()
     money = STORE.credit_money[key["workspace_id"]]
     endpoint = endpoint_for_id("perplexity/sonar@perplexity/prepaid")
@@ -1293,7 +1331,13 @@ def test_gateway_settle_can_bill_authorized_fallback_model() -> None:
     assert refreshed_key.byok_usage_microdollars == expected_cost
 
 
-def test_gateway_uses_legacy_gemini_envelope_identity_for_ai_studio() -> None:
+def test_gateway_uses_legacy_gemini_envelope_identity_for_ai_studio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    serve_on_fixture_route(
+        monkeypatch, "google/gemini-2.5-flash", "google-ai-studio", author="google-ai-studio",
+        usage_type="BYOK", upstream_id="gemini-2.5-flash",
+    )
     client, key = _client_and_key()
     STORE.upsert_byok_provider(
         workspace_id=key["workspace_id"],
@@ -1430,7 +1474,15 @@ def test_gateway_settle_rejects_unlisted_fallback_without_charge_or_generation()
     assert refreshed_key.byok_usage_microdollars == 0
 
 
-def test_gateway_refund_records_provider_benchmark_without_generation() -> None:
+def test_gateway_refund_records_provider_benchmark_without_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    drop_routes(monkeypatch, "deepseek/deepseek-v4-flash")
+    for usage_type in ("Credits", "BYOK"):
+        serve_on_fixture_route(
+            monkeypatch, "deepseek/deepseek-v4-flash", "deepseek", author="deepseek",
+            usage_type=usage_type, upstream_id="deepseek-v4-flash",
+        )
     client, key = _client_and_key()
     STORE.upsert_byok_provider(
         workspace_id=key["workspace_id"],
@@ -1561,7 +1613,15 @@ def test_gateway_byok_preference_without_workspace_config_is_rejected() -> None:
     assert not STORE.api_keys.reservations
 
 
-def test_gateway_prepaid_route_does_not_return_byok_secret_even_if_configured() -> None:
+def test_gateway_prepaid_route_does_not_return_byok_secret_even_if_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    drop_routes(monkeypatch, "moonshotai/kimi-k2.6")
+    for usage_type in ("Credits", "BYOK"):
+        serve_on_fixture_route(
+            monkeypatch, "moonshotai/kimi-k2.6", "kimi", author="kimi",
+            usage_type=usage_type, upstream_id="kimi-k2.6",
+        )
     client, key = _client_and_key()
     STORE.upsert_byok_provider(
         workspace_id=key["workspace_id"],
@@ -1595,7 +1655,15 @@ def test_gateway_prepaid_route_does_not_return_byok_secret_even_if_configured() 
     assert "kimi" in {item["provider"] for item in data["route_candidates"]}
 
 
-def test_gateway_can_prefer_byok_endpoint_for_dual_mode_model() -> None:
+def test_gateway_can_prefer_byok_endpoint_for_dual_mode_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    drop_routes(monkeypatch, "moonshotai/kimi-k2.6")
+    for usage_type in ("Credits", "BYOK"):
+        serve_on_fixture_route(
+            monkeypatch, "moonshotai/kimi-k2.6", "kimi", author="kimi",
+            usage_type=usage_type, upstream_id="kimi-k2.6",
+        )
     client, key = _client_and_key()
     STORE.upsert_byok_provider(
         workspace_id=key["workspace_id"],
