@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+from typing import Any
+
+import pytest
 
 from tests import catalog_vehicles
 from trusted_router.catalog import (
@@ -15,10 +18,38 @@ from trusted_router.catalog_ingest import (
     _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS,
     _PROVIDER_MODELS_DIR,
     _authoritative_provider_model_ids,
+    _filter_unserved_provider_endpoints,
+    _is_provider_deprecated_model,
     _provider_manifest_dark_model_ids,
 )
 from trusted_router.dashboard import _model_detail_view
+from trusted_router.pricing import _customer_price
 from trusted_router.provider_lifecycle import provider_model_retired
+
+
+def _listed_row(provider: str, model_id: str) -> dict[str, Any] | None:
+    """The provider's committed manifest row for a model it still lists. The
+    hourly refresh marks a delisted row unroutable, so it has no route to check."""
+    raw = json.loads((_PROVIDER_MODELS_DIR / f"{provider}.json").read_text(encoding="utf-8"))
+    return next(
+        (
+            row
+            for row in raw.get("models", [])
+            if isinstance(row, dict)
+            and row.get("id") == model_id
+            and row.get("routable") is not False
+            and not _is_provider_deprecated_model(
+                provider, model_id, row.get("upstream_id") or model_id
+            )
+        ),
+        None,
+    )
+
+
+def _delisted(endpoint_id: str) -> bool:
+    """Whether the route's provider no longer lists its model."""
+    model_id, _, route = endpoint_id.partition("@")
+    return _listed_row(route.split("/")[0], model_id) is None
 
 
 def _a_supplemental_priced_model() -> str:
@@ -84,17 +115,24 @@ def test_model_detail_prices_credits_routes_once_and_shows_cached_input() -> Non
 
 
 def test_fireworks_glm53_flash_published_price_is_prepaid() -> None:
-    endpoint = MODEL_ENDPOINTS["z-ai/glm-5.3-flash@fireworks/prepaid"]
-    assert endpoint.upstream_id == "accounts/fireworks/models/glm-5p3-flash"
-    assert endpoint.prompt_price_microdollars_per_million_tokens == 158_250
-    assert endpoint.completion_price_microdollars_per_million_tokens == 527_500
-    assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 31_650
-
-    fast = MODEL_ENDPOINTS["z-ai/glm-5.3-fast@fireworks/prepaid"]
-    assert fast.upstream_id == "accounts/fireworks/routers/glm-5p3-fast"
-    assert fast.prompt_price_microdollars_per_million_tokens == 2_215_500
-    assert fast.completion_price_microdollars_per_million_tokens == 6_963_000
-    assert fast.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 411_450
+    # Each GLM 5.3 route Fireworks lists is prepaid at its published price plus
+    # the standard markup, on the exact upstream id Fireworks names.
+    for model_id in ("z-ai/glm-5.3-flash", "z-ai/glm-5.3-fast"):
+        row = _listed_row("fireworks", model_id)
+        if row is None:
+            continue
+        endpoint = MODEL_ENDPOINTS[f"{model_id}@fireworks/prepaid"]
+        assert endpoint.upstream_id == (row.get("upstream_id") or model_id)
+        assert endpoint.prompt_price_microdollars_per_million_tokens == _customer_price(
+            row["input_token_price_per_m"]
+        )
+        assert endpoint.completion_price_microdollars_per_million_tokens == _customer_price(
+            row["output_token_price_per_m"]
+        )
+        if "cached_input_token_price_per_m" in row:
+            assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == (
+                _customer_price(row["cached_input_token_price_per_m"])
+            )
 
 
 def test_wandb_glm53_flash_with_verified_price_is_prepaid() -> None:
@@ -117,7 +155,6 @@ def test_cerebras_only_credits_serves_allowlisted_models() -> None:
         for e in MODEL_ENDPOINTS.values()
         if e.provider == "cerebras" and e.usage_type == "Credits"
     }
-    assert cerebras_credits
     assert cerebras_credits == allow
 
 
@@ -189,13 +226,15 @@ def test_gmi_only_credits_serves_allowlisted_models() -> None:
         if e.provider == "gmi" and e.usage_type == "Credits"
     }
     assert gmi_credits <= allow
-    assert gmi_credits
-    gmi_byok = {
-        e.model_id
-        for e in MODEL_ENDPOINTS.values()
-        if e.provider == "gmi" and e.usage_type != "Credits"
+    unverified = "fixture/not-canary-verified"
+    assert unverified not in allow
+    routes = {
+        f"{unverified}@gmi/{suffix}": ModelEndpoint(
+            id=f"{unverified}@gmi/{suffix}", model_id=unverified, provider="gmi", usage_type=usage,
+        )
+        for suffix, usage in (("prepaid", "Credits"), ("byok", "BYOK"))
     }
-    assert len(gmi_byok) > len(gmi_credits)
+    assert set(_filter_unserved_provider_endpoints(routes)) == {f"{unverified}@gmi/byok"}
 
 
 def test_anthropic_models_credits_route_first_party_only() -> None:
@@ -209,14 +248,18 @@ def test_anthropic_models_credits_route_first_party_only() -> None:
     }
     assert credits_providers <= {"anthropic"}
     # Anthropic-direct Credits lineup stays fully routable.
-    assert "anthropic/claude-fable-5@anthropic/prepaid" in MODEL_ENDPOINTS
+    for model_id in _authoritative_provider_model_ids("anthropic"):
+        assert f"{model_id}@anthropic/prepaid" in MODEL_ENDPOINTS, model_id
     # A reseller that lists Claude keeps its BYOK route but loses Credits.
-    byok_providers = {
-        e.provider
-        for e in MODEL_ENDPOINTS.values()
-        if e.model_id.startswith("anthropic/") and e.usage_type != "Credits"
+    claude = "anthropic/claude-fixture"
+    routes = {
+        f"{claude}@lightning/{suffix}": ModelEndpoint(
+            id=f"{claude}@lightning/{suffix}", model_id=claude, provider="lightning",
+            usage_type=usage,
+        )
+        for suffix, usage in (("prepaid", "Credits"), ("byok", "BYOK"))
     }
-    assert byok_providers - {"anthropic"}, "expected reseller Claude BYOK routes to remain"
+    assert set(_filter_unserved_provider_endpoints(routes)) == {f"{claude}@lightning/byok"}
 
 
 def test_cerebras_native_routes_use_verified_upstream_ids() -> None:
@@ -234,7 +277,6 @@ def test_cerebras_native_routes_use_verified_upstream_ids() -> None:
         )
     ]
 
-    assert live_rows
     for row in live_rows:
         model_id = row["id"]
         upstream_id = row.get("upstream_id") or model_id
@@ -256,10 +298,15 @@ def test_nebius_deprecated_june_2026_models_are_not_routable() -> None:
 
 
 def test_nebius_deprecation_does_not_remove_other_provider_routes() -> None:
-    assert "minimax/minimax-m2.5@minimax/byok" in MODEL_ENDPOINTS
-    assert "moonshotai/kimi-k2.6@kimi/prepaid" in MODEL_ENDPOINTS
-    assert "openai/gpt-oss-120b@cerebras/prepaid" in MODEL_ENDPOINTS
-    assert "z-ai/glm-5@zai/prepaid" in MODEL_ENDPOINTS
+    # Nebius's retirements name these model families' upstream ids. A host
+    # that still lists the model keeps its route.
+    for endpoint_id in (
+        "minimax/minimax-m2.5@minimax/byok",
+        "moonshotai/kimi-k2.6@kimi/prepaid",
+        "openai/gpt-oss-120b@cerebras/prepaid",
+        "z-ai/glm-5@zai/prepaid",
+    ):
+        assert endpoint_id in MODEL_ENDPOINTS or _delisted(endpoint_id), endpoint_id
 
 
 def test_tinfoil_june_2026_deprecations_and_replacements_are_routable() -> None:
@@ -328,18 +375,20 @@ def test_friendli_july_2026_glm_5_deprecation_does_not_remove_glm_52() -> None:
         endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "friendli"
     ]
 
-    assert friendli_endpoints
     for endpoint in friendli_endpoints:
         assert endpoint.model_id not in deprecated
         assert endpoint.upstream_id not in deprecated
 
     assert "z-ai/glm-5@friendli/prepaid" not in MODEL_ENDPOINTS
     assert "z-ai/glm-5@friendli/byok" not in MODEL_ENDPOINTS
-    assert "z-ai/glm-5.2@friendli/prepaid" in MODEL_ENDPOINTS
-    assert "z-ai/glm-5.2@friendli/byok" in MODEL_ENDPOINTS
-    # Provider-scoped deprecation: other GLM-5 routes remain available if their
-    # providers still serve them.
-    assert "z-ai/glm-5@zai/prepaid" in MODEL_ENDPOINTS
+    # Provider-scoped deprecation: GLM 5.2 on Friendli and other GLM-5 routes
+    # remain available if their providers still serve them.
+    for endpoint_id in (
+        "z-ai/glm-5.2@friendli/prepaid",
+        "z-ai/glm-5.2@friendli/byok",
+        "z-ai/glm-5@zai/prepaid",
+    ):
+        assert endpoint_id in MODEL_ENDPOINTS or _delisted(endpoint_id), endpoint_id
 
 
 def test_route_health_first_sweep_dead_routes_are_not_routable() -> None:
@@ -358,79 +407,79 @@ def test_route_health_first_sweep_dead_routes_are_not_routable() -> None:
             if endpoint.provider == provider
         ]
 
-    # Together's live serverless endpoint feed now reports GPT OSS 120B as
-    # STARTED. The generated authoritative manifest supersedes the July 18
-    # route-health quarantine, so this repaired route must stay available.
-    assert "openai/gpt-oss-120b@together/prepaid" in MODEL_ENDPOINTS
-
-    # Quarantine is provider-scoped: healthy sibling routes survive.
-    assert "openai/gpt-oss-120b@cerebras/prepaid" in MODEL_ENDPOINTS
-    assert (
-        "mistralai/mistral-small-24b-instruct-2501@deepinfra/prepaid"
-        in MODEL_ENDPOINTS
-    )
+    # Together's generated authoritative manifest supersedes the July 18
+    # route-health quarantine: GPT OSS 120B is routable while Together's
+    # serverless feed lists it. Quarantine is also provider-scoped: sibling
+    # routes survive while their providers list them.
+    for endpoint_id in (
+        "openai/gpt-oss-120b@together/prepaid",
+        "openai/gpt-oss-120b@cerebras/prepaid",
+        "mistralai/mistral-small-24b-instruct-2501@deepinfra/prepaid",
+    ):
+        assert endpoint_id in MODEL_ENDPOINTS or _delisted(endpoint_id), endpoint_id
 
 
 def test_glm_53_flash_publishes_all_verified_provider_routes() -> None:
-    expected_upstream_ids = {
-        "zai": "glm-5.3-flash",
-        "deepinfra": "zai-org/GLM-5.3-Flash",
-        "io-net": "zai-org/GLM-5.3-Flash",
-        "novita": "zai-org/glm-5.3-flash",
-    }
-
+    model_id = "z-ai/glm-5.3-flash"
     credits = {
         endpoint.provider: endpoint.upstream_id
-        for endpoint in endpoints_for_model("z-ai/glm-5.3-flash")
+        for endpoint in endpoints_for_model(model_id)
         if endpoint.usage_type == "Credits"
     }
 
-    assert expected_upstream_ids.items() <= credits.items()
+    # Each verified host that lists the model has a Credits route on the exact
+    # upstream id its manifest names.
+    for provider in ("zai", "deepinfra", "io-net", "novita"):
+        row = _listed_row(provider, model_id)
+        if row is not None:
+            assert credits.get(provider) == (row.get("upstream_id") or model_id), provider
 
 
 def test_gemini_native_supplement_publishes_missing_text_models() -> None:
-    gemini_35 = MODEL_ENDPOINTS[
-        "google/gemini-3.5-flash@google-ai-studio/prepaid"
-    ]
-    gemini_36_ai_studio = MODEL_ENDPOINTS[
-        "google/gemini-3.6-flash@google-ai-studio/prepaid"
-    ]
-    gemini_36_vertex = MODEL_ENDPOINTS[
-        "google/gemini-3.6-flash@google-vertex/prepaid"
-    ]
-    image_preview = MODEL_ENDPOINTS[
-        "google/gemini-3.1-flash-image-preview@google-ai-studio/prepaid"
-    ]
-
-    assert MODELS["google/gemini-3.5-flash"].context_length == 1_048_576
-    assert gemini_35.upstream_id == "gemini-3.5-flash"
-    assert gemini_35.prompt_price_microdollars_per_million_tokens == 1_582_500
-    assert gemini_35.completion_price_microdollars_per_million_tokens == 9_495_000
-    assert MODELS["google/gemini-3.6-flash"].context_length == 1_048_576
-    # The two Google products have independent rates and discount schedules.
-    # Their price-index isolation is covered by test_vertex_native_discovery.
-    for endpoint in (gemini_36_ai_studio, gemini_36_vertex):
-        assert endpoint.upstream_id == "gemini-3.6-flash"
+    # Each of these rows Google lists natively is a chat route on its exact
+    # upstream id. AI Studio's row also sets the model's window and list price.
+    # The two Google products have independent rates and discount schedules;
+    # their price-index isolation is covered by test_vertex_native_discovery.
+    for provider, model_id in (
+        ("google-ai-studio", "google/gemini-3.5-flash"),
+        ("google-ai-studio", "google/gemini-3.6-flash"),
+        ("google-ai-studio", "google/gemini-3.1-flash-image-preview"),
+        ("google-vertex", "google/gemini-3.6-flash"),
+    ):
+        row = _listed_row(provider, model_id)
+        if row is None:
+            continue
+        endpoint = MODEL_ENDPOINTS[f"{model_id}@{provider}/prepaid"]
+        assert MODELS[model_id].supports_chat
+        assert endpoint.upstream_id == (row.get("upstream_id") or model_id)
         assert endpoint.prompt_price_microdollars_per_million_tokens > 0
         assert endpoint.completion_price_microdollars_per_million_tokens > 0
-        assert (
-            endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
-            < endpoint.prompt_price_microdollars_per_million_tokens
-        )
-    image_model = MODELS["google/gemini-3.1-flash-image-preview"]
-    assert image_model.context_length == 65_536
-    assert image_model.supports_chat
-    assert image_preview.upstream_id == "gemini-3.1-flash-image-preview"
-    assert image_preview.prompt_price_microdollars_per_million_tokens == 527_500
-    assert image_preview.completion_price_microdollars_per_million_tokens == 63_300_000
+        if "cached_input_token_price_per_m" in row:
+            assert (
+                endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
+                < endpoint.prompt_price_microdollars_per_million_tokens
+            )
+        if provider == "google-ai-studio":
+            assert MODELS[model_id].context_length == row["context_length"]
+            assert endpoint.prompt_price_microdollars_per_million_tokens == _customer_price(
+                row["input_token_price_per_m"]
+            )
+            assert endpoint.completion_price_microdollars_per_million_tokens == _customer_price(
+                row["output_token_price_per_m"]
+            )
 
 
 def test_google_products_have_distinct_capabilities() -> None:
+    # Vertex routes are prepaid-only; AI Studio routes offer prepaid and BYOK,
+    # while each product lists the model.
     for model_id in ("google/gemini-2.5-flash", "google/gemini-3.6-flash"):
-        assert f"{model_id}@google-vertex/prepaid" in MODEL_ENDPOINTS
         assert f"{model_id}@google-vertex/byok" not in MODEL_ENDPOINTS
-        assert f"{model_id}@google-ai-studio/prepaid" in MODEL_ENDPOINTS
-        assert f"{model_id}@google-ai-studio/byok" in MODEL_ENDPOINTS
+        for endpoint_id in (
+            f"{model_id}@google-vertex/prepaid",
+            f"{model_id}@google-ai-studio/prepaid",
+            f"{model_id}@google-ai-studio/byok",
+        ):
+            assert endpoint_id in MODEL_ENDPOINTS or _delisted(endpoint_id), endpoint_id
 
 
 def test_llama_33_70b_no_longer_credits_routes_to_cerebras() -> None:
@@ -463,3 +512,47 @@ def test_novita_supplemental_prices_apply_manifest_scale() -> None:
     assert endpoint.prompt_price_microdollars_per_million_tokens == 94_950
     assert endpoint.completion_price_microdollars_per_million_tokens == 611_900
     assert endpoint.prompt_price_microdollars_per_million_tokens > 10_000
+
+
+# Live provider state. provider-catalog-health.yml reports these hourly; the
+# rules above hold whichever of these routes a provider delists.
+@pytest.mark.provider_health
+@pytest.mark.parametrize(
+    "endpoint_id",
+    [
+        "anthropic/claude-fable-5@anthropic/prepaid",
+        "z-ai/glm-5.3-flash@fireworks/prepaid",
+        "z-ai/glm-5.3-fast@fireworks/prepaid",
+        "z-ai/glm-5.2@friendli/prepaid",
+        "z-ai/glm-5.2@friendli/byok",
+        "z-ai/glm-5@zai/prepaid",
+        "google/gemini-3.5-flash@google-ai-studio/prepaid",
+        "google/gemini-3.6-flash@google-ai-studio/prepaid",
+        "google/gemini-3.6-flash@google-ai-studio/byok",
+        "google/gemini-3.6-flash@google-vertex/prepaid",
+        "google/gemini-3.1-flash-image-preview@google-ai-studio/prepaid",
+        "google/gemini-2.5-flash@google-ai-studio/prepaid",
+        "google/gemini-2.5-flash@google-ai-studio/byok",
+        "google/gemini-2.5-flash@google-vertex/prepaid",
+        "z-ai/glm-5.3-flash@zai/prepaid",
+        "z-ai/glm-5.3-flash@deepinfra/prepaid",
+        "z-ai/glm-5.3-flash@io-net/prepaid",
+        "z-ai/glm-5.3-flash@novita/prepaid",
+        "minimax/minimax-m2.5@minimax/byok",
+        "moonshotai/kimi-k2.6@kimi/prepaid",
+        "openai/gpt-oss-120b@cerebras/prepaid",
+        "openai/gpt-oss-120b@together/prepaid",
+        "mistralai/mistral-small-24b-instruct-2501@deepinfra/prepaid",
+    ],
+)
+def test_the_routes_these_rules_were_written_against_are_still_served(endpoint_id: str) -> None:
+    assert endpoint_id in MODEL_ENDPOINTS, f"{endpoint_id} is no longer served"
+
+
+@pytest.mark.provider_health
+@pytest.mark.parametrize("provider", ["cerebras", "friendli", "gmi"])
+def test_the_providers_these_rules_cover_still_serve_credits(provider: str) -> None:
+    assert any(
+        endpoint.provider == provider and endpoint.usage_type == "Credits"
+        for endpoint in MODEL_ENDPOINTS.values()
+    ), f"{provider} serves no Credits route"
