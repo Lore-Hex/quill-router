@@ -117,7 +117,7 @@
             <tr><td><span class="mono">trustedrouter/gev-1.0</span></td><td>A Google model. Small, from the Gemini family, with the format enforced by the host.</td><td>about 0.8 s</td><td>29 / 29</td><td>$0.00023</td></tr>
             <tr><td><span class="mono">trustedrouter/dev-1.0</span></td><td>Harder judgments on a budget. A DeepSeek flash model: strong judgment, cheap input. Fails over from Wafer to DeepInfra to W&amp;B.</td><td>about 1 s (0.7 to 2.4 s)</td><td>29 / 29</td><td>$0.00013</td></tr>
             <tr><td><span class="mono">trustedrouter/oev-1.0</span></td><td>A cheap all-rounder. An open-weight 20B model that reasons briefly.</td><td>about 1.6 s</td><td>29 / 29</td><td>$0.00004</td></tr>
-            <tr><td><span class="mono">trustedrouter/gemmev-1.0</span></td><td>An open Gemma model: Gemma 4 26B with 4B parameters active, answering without deliberating. Fails over across three hosts.</td><td>about 1.4 s</td><td>29 / 29</td><td>$0.00007</td></tr>
+            <tr><td><span class="mono">trustedrouter/gemmev-1.0</span></td><td>An open Gemma model: Gemma 4 26B with 4B parameters active, answering without deliberating. Fails over across three hosts.</td><td>about 2 s</td><td>29 / 29</td><td>$0.00007</td></tr>
           </tbody>
         </table>
       </div>
@@ -133,11 +133,11 @@
             <tr><td><span class="mono">google/gemini-3.1-flash-lite</span></td><td>Google AI Studio</td></tr>
             <tr><td><span class="mono">deepseek/deepseek-v4.1-flash</span></td><td>Wafer, then DeepInfra, then W&amp;B</td></tr>
             <tr><td><span class="mono">openai/gpt-oss-20b</span></td><td>DeepInfra</td></tr>
-            <tr><td><span class="mono">google/gemma-4-26b-a4b-it</span></td><td>W&amp;B, then nextbit, then io.net</td></tr>
+            <tr><td><span class="mono">google/gemma-4-26b-a4b-it</span></td><td>nextbit, then W&amp;B, then io.net</td></tr>
           </tbody>
         </table>
       </div>
-      <p><strong>How to read this.</strong> The eval is small and deliberately easy: eight labeled support tickets, four questions each, 29 checks, run in September 2026. It shows that every model here answers clear cases correctly in the right form; it does not rank them on hard ones, and across repeated runs one borderline ticket occasionally costs a model a single check. Latency is the typical median time for the model host to answer, measured from one client over repeated runs; hosts vary from run to run, and your request also pays for authorization and settlement through the gateway. Cost is for that four-question request, about 410 to 480 input tokens, at list price. Live per-token prices are always in <a href="/models"><code>GET /v1/models</code></a>.</p>
+      <p><strong>How to read this.</strong> The eval is small and deliberately easy: eight labeled support tickets, four questions each, 29 checks, run in September 2026. It shows that every model here answers clear cases correctly in the right form; it does not rank them on hard ones, and across repeated runs one borderline ticket occasionally costs a model a single check. Latency is the typical median time for the model host to answer, measured from one client over repeated runs; hosts vary from run to run, and your request also pays for authorization and settlement through the gateway. Gemmev's figure is the exception: it was measured end to end through the gateway, so it already includes them. Cost is for that four-question request, about 410 to 480 input tokens, at list price. Live per-token prices are always in <a href="/models"><code>GET /v1/models</code></a>.</p>
     </div>
   </div>
 </section>
