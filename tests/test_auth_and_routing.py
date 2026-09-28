@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
-from trusted_router.catalog import MODELS
+from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
+from trusted_router.catalog_data import Model, ModelEndpoint
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.providers import ProviderClient, ProviderError, ProviderResult
@@ -307,7 +309,41 @@ def test_regions_endpoint_and_gateway_authorize_include_routing_metadata() -> No
     assert fallback_models, f"expected fallback candidates, got {data['route_candidates']}"
 
 
-def test_gateway_authorize_honors_models_and_provider_filters() -> None:
+def _serve_on_fixture_route(
+    monkeypatch: pytest.MonkeyPatch, model_id: str, *, author: str, host: str, usage_type: str
+) -> None:
+    """Serve a model on one fixture route. Which hosts list the model today is
+    provider state; the routing rules below hold for any route."""
+    monkeypatch.setitem(
+        MODELS,
+        model_id,
+        MODELS.get(model_id)
+        or Model(id=model_id, name=model_id, provider=author, context_length=131_072),
+    )
+    suffix = "byok" if usage_type == "BYOK" else "prepaid"
+    route = ModelEndpoint(
+        id=f"{model_id}@{host}/{suffix}",
+        model_id=model_id,
+        provider=host,
+        usage_type=usage_type,
+        upstream_id=f"fixture-{model_id}",
+        prompt_price_microdollars_per_million_tokens=1_000_000,
+        completion_price_microdollars_per_million_tokens=3_000_000,
+    )
+    monkeypatch.setitem(MODEL_ENDPOINTS, route.id, route)
+
+
+def test_gateway_authorize_honors_models_and_provider_filters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_on_fixture_route(
+        monkeypatch, "mistralai/mistral-small-2603", author="mistral", host="mistral",
+        usage_type="BYOK",
+    )
+    _serve_on_fixture_route(
+        monkeypatch, "deepseek/deepseek-v4-flash", author="deepseek", host="deepseek",
+        usage_type="BYOK",
+    )
     app = create_app(Settings(environment="test"))
     local_client = TestClient(app)
     created = local_client.post(
@@ -364,7 +400,12 @@ def test_gateway_authorize_honors_models_and_provider_filters() -> None:
     ]
 
 
-def test_gateway_authorize_top_level_no_fallbacks_ignores_stale_alternatives() -> None:
+def test_gateway_authorize_top_level_no_fallbacks_ignores_stale_alternatives(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_on_fixture_route(
+        monkeypatch, "openai/gpt-oss-20b", author="openai", host="deepinfra", usage_type="BYOK"
+    )
     app = create_app(Settings(environment="test"))
     local_client = TestClient(app)
     created = local_client.post(
@@ -459,7 +500,11 @@ def test_gateway_no_fallbacks_selects_an_eligible_provider_for_exact_model() -> 
     ]
 
 
-def test_gateway_authorize_expands_fast_router_pool() -> None:
+def test_gateway_authorize_expands_fast_router_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    for model_id in FAST_MODEL_ORDER:
+        _serve_on_fixture_route(
+            monkeypatch, model_id, author="cerebras", host="cerebras", usage_type="Credits"
+        )
     app = create_app(Settings(environment="test"))
     local_client = TestClient(app)
     created = local_client.post(
@@ -482,14 +527,20 @@ def test_gateway_authorize_expands_fast_router_pool() -> None:
     data = authorize.json()["data"]
     assert data["requested_model"] == "trustedrouter/fast"
     route_candidates = data["route_candidates"]
-    expected_models = [model_id for model_id in FAST_MODEL_ORDER if model_id in MODELS]
-    assert expected_models
+    expected_models = list(FAST_MODEL_ORDER)
     assert data["model"] == expected_models[0]
     assert data["provider"] == route_candidates[0]["provider"]
     assert [item["model"] for item in route_candidates] == expected_models
     assert {item["provider"] for item in route_candidates} == {
         MODELS[model_id].provider for model_id in expected_models
     }
+
+
+@pytest.mark.provider_health
+def test_fast_router_pool_has_a_model_to_route_to() -> None:
+    """Live provider state: Cerebras serves the pool. provider-catalog-health.yml
+    reports it hourly, and the price refresh does not wait on it."""
+    assert [model_id for model_id in FAST_MODEL_ORDER if model_id in MODELS]
 
 
 def test_default_regions_only_list_actual_attested_deployments(client: TestClient) -> None:
