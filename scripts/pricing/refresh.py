@@ -1143,11 +1143,13 @@ def _merge_snapshot(
         # tier, a single spurious $0 would otherwise win `min()` and zero
         # the model, freezing the whole refresh via the spike watchdog.
         priced_by_slug = {slug: price for slug, price in by_slug.items() if not _is_unpriced(price)}
-        new_pricing = dict(new_model.get("pricing") or {})
         if priced_by_slug:
             # Model-level headline pricing = the cheapest *positively-priced*
             # provider-direct tier (matches OR's convention and what
-            # /v1/models top-level pricing should show).
+            # /v1/models top-level pricing should show). It is that
+            # provider's block and nothing else: OpenRouter's aggregate also
+            # carries rates (cache writes, web search, time-of-day overrides)
+            # set by providers TR does not route to.
             cheapest_slug, cheapest = min(
                 priced_by_slug.items(),
                 key=lambda item: (
@@ -1156,8 +1158,7 @@ def _merge_snapshot(
                     item[0],
                 ),
             )
-            new_pricing.update(_price_to_pricing_block(cheapest))
-            new_model["pricing"] = new_pricing
+            new_model["pricing"] = _price_to_pricing_block(cheapest)
             # Tag pricing_source as self-healed if ANY of the slugs that
             # priced this model went through the LLM rewrite.
             new_model["pricing_source"] = _endpoint_pricing_source(cheapest_slug, healed_slugs)
@@ -1171,6 +1172,7 @@ def _merge_snapshot(
             or_price = _or_pricing_to_micro_per_m(or_model.get("pricing") or {})
             if or_price is None or _is_unpriced(or_price):
                 continue
+            new_pricing = dict(new_model.get("pricing") or {})
             new_pricing.update(_price_to_pricing_block(or_price))
             new_model["pricing"] = new_pricing
             new_model["pricing_source"] = "openrouter_fallback"
