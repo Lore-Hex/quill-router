@@ -1020,12 +1020,13 @@ def test_selector_and_mapreduce_primitives_are_cataloged_but_gateway_only() -> N
     for model_id, (route_kind, candidates) in expected.items():
         model = MODELS[model_id]
         shape = model_to_openrouter_shape(model)
+        available_candidates = _cataloged_model_ids(candidates)
 
         assert model.provider == "trustedrouter"
         assert shape["trustedrouter"]["route_kind"] == route_kind
         assert shape["trustedrouter"]["stores_content"] is False
-        assert shape["trustedrouter"]["auto_candidates"] == candidates
-        assert [model.id for model in meta_candidate_models(model_id)] == candidates
+        assert shape["trustedrouter"]["auto_candidates"] == available_candidates
+        assert [model.id for model in meta_candidate_models(model_id)] == available_candidates
 
         with pytest.raises(Exception) as exc:
             chat_route_candidates({"model": model_id}, Settings(environment="test"))
@@ -1169,7 +1170,7 @@ def test_orchestration_taxonomy_distinguishes_primitives_presets_and_legacy_alia
 
 
 def test_open_weights_badge_is_recursive_for_combo_models() -> None:
-    open_ids = [
+    open_ids = _cataloged_model_ids([
         "deepseek/deepseek-v4-pro",
         DEEPSEEK_V4_PRO_0423_MODEL_ID,
         DEEPSEEK_V4_PRO_0813_MODEL_ID,
@@ -1195,12 +1196,12 @@ def test_open_weights_badge_is_recursive_for_combo_models() -> None:
         OPEN_PATCHER_G2_MODEL_ID,
         OPEN_PATCHER_G3_MODEL_ID,
         OPEN_PATCHER_S2_MODEL_ID,
-    ]
+    ])
     for model_id in open_ids:
         assert model_open_weights(MODELS[model_id]), model_id
         assert model_to_openrouter_shape(MODELS[model_id])["trustedrouter"]["open_weights"] is True
 
-    closed_ids = [
+    closed_ids = _cataloged_model_ids([
         "anthropic/claude-opus-4.8",
         SOCRATES_1_1_MODEL_ID,
         SOCRATES_PRO_PLUS_1_0_MODEL_ID,
@@ -1211,7 +1212,7 @@ def test_open_weights_badge_is_recursive_for_combo_models() -> None:
         ARISTOTLE_1_1_MODEL_ID,
         ARISTOTLE_1_0_MODEL_ID,
         ARISTOTLE_2_0_MODEL_ID,
-    ]
+    ])
     for model_id in closed_ids:
         assert not model_open_weights(MODELS[model_id]), model_id
         assert model_to_openrouter_shape(MODELS[model_id])["trustedrouter"]["open_weights"] is False
@@ -1525,7 +1526,9 @@ def test_athena_catalog_hides_orchestration_configuration() -> None:
         assert shape["trustedrouter"]["route_kind"] == "private_orchestration"
         assert shape["trustedrouter"]["configuration_hidden"] is True
         assert shape["trustedrouter"]["auto_candidates"] is None
-        assert [candidate.id for candidate in meta_candidate_models(model_id)] == candidates
+        assert [candidate.id for candidate in meta_candidate_models(model_id)] == (
+            _cataloged_model_ids(candidates)
+        )
         assert shape["trustedrouter"]["open_weights"] is False
 
     assert canonical_orchestration_model_id(ATHENA_MODEL_ID) == ATHENA_2_0_MODEL_ID
@@ -1546,20 +1549,28 @@ def test_zeus_versions_are_frozen_and_rolling_alias_uses_3_0() -> None:
         DEEPSEEK_V4_PRO_0423_MODEL_ID,
     ]
     zeus_2_0 = [*zeus_1_0[:-1], DEEPSEEK_V4_PRO_0813_MODEL_ID]
-    assert [model.id for model in meta_candidate_models(ZEUS_1_0_MODEL_ID)] == zeus_1_0
-    assert [model.id for model in meta_candidate_models(ZEUS_2_0_MODEL_ID)] == zeus_2_0
-    assert [model.id for model in meta_candidate_models(ZEUS_MODEL_ID)] == list(SYNTH_ZEUS_3_MODEL_ORDER)
+    assert [model.id for model in meta_candidate_models(ZEUS_1_0_MODEL_ID)] == (
+        _cataloged_model_ids(zeus_1_0)
+    )
+    assert [model.id for model in meta_candidate_models(ZEUS_2_0_MODEL_ID)] == (
+        _cataloged_model_ids(zeus_2_0)
+    )
+    assert [model.id for model in meta_candidate_models(ZEUS_MODEL_ID)] == _cataloged_model_ids(
+        list(SYNTH_ZEUS_3_MODEL_ORDER)
+    )
     zeus_shape = model_to_openrouter_shape(MODELS[ZEUS_1_0_MODEL_ID])
     assert zeus_shape["trustedrouter"]["us_provider_available"] is True
     assert zeus_shape["trustedrouter"]["eu_focused_provider_available"] is True
-    assert [model.id for model in meta_candidate_models(ZEUS_1_0_MINI_MODEL_ID)] == [
-        "google/gemini-3.1-pro-preview",
-        "google/gemini-3.5-flash",
-        "minimax/minimax-m3",
-        "z-ai/glm-5.2",
-        "xiaomi/mimo-v2.5-pro",
-        DEEPSEEK_V4_PRO_0423_MODEL_ID,
-    ]
+    assert [model.id for model in meta_candidate_models(ZEUS_1_0_MINI_MODEL_ID)] == (
+        _cataloged_model_ids([
+            "google/gemini-3.1-pro-preview",
+            "google/gemini-3.5-flash",
+            "minimax/minimax-m3",
+            "z-ai/glm-5.2",
+            "xiaomi/mimo-v2.5-pro",
+            DEEPSEEK_V4_PRO_0423_MODEL_ID,
+        ])
+    )
     assert model_us_provider_available(MODELS[ZEUS_1_0_MINI_MODEL_ID]) is True
     assert model_eu_focused_provider_available(MODELS[ZEUS_1_0_MINI_MODEL_ID]) is True
     assert canonical_orchestration_model_id(ZEUS_MODEL_ID) == ZEUS_3_0_MODEL_ID
@@ -1600,7 +1611,7 @@ def test_openpatcher_s3_uses_glm_and_deepseek_0813() -> None:
 
     assert model.name == "TrustedRouter OpenPatcher-S3"
     assert model.context_length == 1_048_576
-    assert candidates == ["z-ai/glm-5.2", DEEPSEEK_V4_PRO_0813_MODEL_ID]
+    assert candidates == _cataloged_model_ids(["z-ai/glm-5.2", DEEPSEEK_V4_PRO_0813_MODEL_ID])
     assert model_to_openrouter_shape(model)["trustedrouter"]["auto_candidates"] == candidates
 
 
@@ -1612,18 +1623,24 @@ def test_iris_versions_are_frozen_and_rolling_alias_uses_3_0() -> None:
     ]
     iris_3_0 = [*iris_2_0[:-1], DEEPSEEK_V4_PRO_0813_MODEL_ID]
 
-    assert [model.id for model in meta_candidate_models(IRIS_1_0_MODEL_ID)] == [
-        "minimax/minimax-m3",
-        "moonshotai/kimi-k2.6",
-        DEEPSEEK_V4_PRO_0423_MODEL_ID,
-    ]
-    assert [model.id for model in meta_candidate_models(IRIS_2_0_MODEL_ID)] == iris_2_0
+    assert [model.id for model in meta_candidate_models(IRIS_1_0_MODEL_ID)] == (
+        _cataloged_model_ids([
+            "minimax/minimax-m3",
+            "moonshotai/kimi-k2.6",
+            DEEPSEEK_V4_PRO_0423_MODEL_ID,
+        ])
+    )
+    assert [model.id for model in meta_candidate_models(IRIS_2_0_MODEL_ID)] == (
+        _cataloged_model_ids(iris_2_0)
+    )
     for model_id in (IRIS_MODEL_ID, IRIS_3_0_MODEL_ID):
         assert MODELS[model_id].context_length == 1_048_576
-        assert [model.id for model in meta_candidate_models(model_id)] == iris_3_0
+        assert [model.id for model in meta_candidate_models(model_id)] == (
+            _cataloged_model_ids(iris_3_0)
+        )
         assert (
             model_to_openrouter_shape(MODELS[model_id])["trustedrouter"]["auto_candidates"]
-            == iris_3_0
+            == _cataloged_model_ids(iris_3_0)
         )
 
     assert canonical_orchestration_model_id(IRIS_MODEL_ID) == IRIS_3_0_MODEL_ID
@@ -1666,19 +1683,21 @@ def test_prometheus_versions_are_frozen_and_rolling_alias_uses_4_0() -> None:
     ]
     assert [
         candidate.id for candidate in meta_candidate_models(PROMETHEUS_2_0_MODEL_ID)
-    ] == prometheus_2_0
+    ] == _cataloged_model_ids(prometheus_2_0)
     for model_id in (PROMETHEUS_3_0_MODEL_ID,):
         model = MODELS[model_id]
         shape = model_to_openrouter_shape(model)
 
         assert model.context_length == 1_048_576
-        assert [candidate.id for candidate in meta_candidate_models(model_id)] == prometheus_3_0
-        assert shape["trustedrouter"]["auto_candidates"] == prometheus_3_0
+        assert [candidate.id for candidate in meta_candidate_models(model_id)] == (
+            _cataloged_model_ids(prometheus_3_0)
+        )
+        assert shape["trustedrouter"]["auto_candidates"] == _cataloged_model_ids(prometheus_3_0)
         assert shape["trustedrouter"]["open_weights"] is True
 
     assert canonical_orchestration_model_id(PROMETHEUS_MODEL_ID) == PROMETHEUS_4_0_MODEL_ID
-    assert [model.id for model in meta_candidate_models(PROMETHEUS_MODEL_ID)] == list(
-        SYNTH_PROMETHEUS_4_MODEL_ORDER
+    assert [model.id for model in meta_candidate_models(PROMETHEUS_MODEL_ID)] == (
+        _cataloged_model_ids(list(SYNTH_PROMETHEUS_4_MODEL_ORDER))
     )
 
 
@@ -1805,14 +1824,16 @@ def test_openpatcher_g1_and_g2_stay_frozen_while_g3_uses_prometheus_3() -> None:
     }
 
     for model_id, candidates in expected.items():
-        assert [candidate.id for candidate in meta_candidate_models(model_id)] == candidates
+        assert [candidate.id for candidate in meta_candidate_models(model_id)] == (
+            _cataloged_model_ids(candidates)
+        )
 
     s2_shape = model_to_openrouter_shape(MODELS[OPEN_PATCHER_S2_MODEL_ID])
     assert s2_shape["trustedrouter"]["required_provider_jurisdiction"] is None
-    assert s2_shape["trustedrouter"]["auto_candidates"] == [
+    assert s2_shape["trustedrouter"]["auto_candidates"] == _cataloged_model_ids([
         "moonshotai/kimi-k3",
         "z-ai/glm-5.2",
-    ]
+    ])
 
 
 def test_provider_jurisdiction_filter_keeps_only_us_based_endpoints() -> None:
