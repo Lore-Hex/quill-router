@@ -25,7 +25,41 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "baidu": ProviderBrand("https://intl.cloud.baidu.com/en/product/qianfan.html"),
     "byteplus": ProviderBrand("https://www.byteplus.com/en/product/modelark"),
     "inception": ProviderBrand("https://www.inceptionlabs.ai/"),
-    "io-net": ProviderBrand("https://io.net/ai/"),
+    "io-net": ProviderBrand(
+        "https://io.net",
+        description=(
+            "IO Intelligence is io.net's OpenAI-compatible inference API for "
+            "open-weight models, with streaming chat completions and an "
+            "authenticated model and pricing catalog."
+        ),
+        # September 28, 2026 marketplace submission. Keep operational contacts,
+        # signer details and phone numbers out of public metadata.
+        company_details=(
+            ("Legal entity", "io.net, Inc.; Delaware corporation, USA"),
+            ("Brand", "io.net"),
+            ("Registered address", "1209 N Orange Street, Wilmington, DE 19801, USA"),
+            ("Operating address", "2041 N Alta Vista Ave, West Hollywood, CA 90046, USA"),
+            ("EIN", "99-2468828"),
+            ("Company registration and DUNS", "Available on request; identifiers not supplied."),
+            ("CEO", "Gaurav Sharma"),
+            ("Ownership", "Privately held"),
+            ("Compliance", "SOC 2 reported by the provider and listed in its trust center; audit report not reviewed."),
+            ("DPA and subprocessors", "Available on request; documents not yet reviewed."),
+            ("API", "Bearer-authenticated, OpenAI-compatible streaming chat completions."),
+            ("Pricing", "Input, output and cached-input token prices refresh hourly from the authenticated model catalog. Only priced, admitted routes are listed."),
+            ("Rate limits", "Provider reports HTTP 429 for rate limits and 503 for overload. Partner limit exemptions require account-specific onboarding confirmation."),
+            ("Provider checker", "Report pending; this submission is not a Provider Reliability Contract v2 conformance result."),
+            ("Information reviewed", "September 28, 2026. Company and inference declarations supplied by io.net; public policy and trust-center evidence reviewed separately."),
+        ),
+        resources=(
+            ("API catalog (authentication required)", "https://api.intelligence.io.solutions/api/v1/models"),
+            ("Model catalog documentation", "https://io.net/docs/reference/ai-models/get-models-list"),
+            ("Chat completions documentation", "https://io.net/docs/reference/ai-models/create-chat-completion"),
+            ("Privacy policy", "https://io.net/privacy"),
+            ("Terms of service", "https://io.net/terms"),
+            ("Trust center", "https://trust.io.net"),
+        ),
+    ),
     "jina": ProviderBrand("https://jina.ai/"),
     "krea": ProviderBrand("https://www.krea.ai/"),
     "liquid": ProviderBrand("https://www.liquid.ai/"),

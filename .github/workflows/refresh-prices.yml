@@ -313,7 +313,11 @@ jobs:
           uv run mypy
           # Match CI's file-grouped workers: keep the full suite, avoid a
           # 35-minute serial pass that makes publication miss its main head.
-          uv run pytest -q -n 4 --dist loadgroup
+          # Like CI, leave out provider_health: live provider state (a host
+          # still serving a model) is reported hourly by
+          # provider-catalog-health.yml. One provider delisting a model must
+          # not stop every other provider's prices from publishing.
+          uv run pytest -q -n 4 --dist loadgroup -m "not provider_health"
 
       - name: Commit, verify, and push if changed
         run: |

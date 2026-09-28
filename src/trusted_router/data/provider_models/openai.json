@@ -571,7 +571,8 @@
       "created": 1698959748,
       "routable": true,
       "input_token_price_per_m": 1000000,
-      "output_token_price_per_m": 2000000
+      "output_token_price_per_m": 2000000,
+      "missing_since": "2026-09-28"
     },
     {
       "display_name": "gpt-3.5-turbo-instruct",
@@ -993,7 +994,7 @@
     }
   ],
   "source": "https://api.openai.com/v1/models",
-  "generated_at": "2026-09-27T23:04:50Z",
+  "generated_at": "2026-09-28T11:44:42Z",
   "price_scale": "microdollars_per_million",
   "model_count": 39
 }

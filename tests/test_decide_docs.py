@@ -19,10 +19,12 @@ def test_decide_docs_publish_the_contract(client: TestClient) -> None:
 
 def test_decide_docs_list_exactly_the_models_the_catalog_advertises(client: TestClient) -> None:
     """The model table is hand-written; this keeps it from drifting from the
-    catalog, which is what /v1/models and the gateway actually serve."""
+    lineup the gateway is built to serve. A name whose host has dropped it for
+    now stays in the table: that is live provider state, reported by the
+    provider_health checks in test_decide_models.py."""
     text = client.get("/docs/decide").text
     for model_id in (*NATIVE_DECISION_MODEL_IDS, "typesafe-ai/jev"):
-        assert MODELS[model_id].supports_decide or model_id in NATIVE_DECISION_MODEL_IDS
+        assert model_id in NATIVE_DECISION_MODEL_IDS or MODELS[model_id].supports_decide
         assert f'<span class="mono">{model_id}</span>' in text, (
             f"{model_id} missing from the docs table"
         )
