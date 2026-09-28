@@ -2355,6 +2355,13 @@ class NamedDecisionModel(NamedTuple):
     # each host passed 87/87 checks with 24/24 valid calls. Telnyx passed
     # at 1516 ms but would double the advertised output price; slower perfect
     # hosts and hosts with errors or missed checks were excluded.
+    # gemmev moved to Gemma 4 26B A4B on 2026-09-28, when DeepInfra dropped
+    # Gemma 4 E4B, its only host. Measured the same way, each host pinned, one
+    # at a time: W&B 1387 ms, nextbit 1587 ms, io.net 1738 ms, each 87/87 with
+    # 24/24 valid calls. SiliconFlow also passed (2034 ms) but would raise the
+    # advertised price 40%. Makora, Scaleway and Cloudflare think by default
+    # (about 1,000 output tokens a decision, 5-15x the cost) and were excluded;
+    # Gemma 4 31B Turbo scored 84/87.
     # The rest are pinned to the single host they were measured on. The
     # attested gateway asks for exactly this chain and authorize enforces it,
     # so neither side can widen it alone.
@@ -2400,8 +2407,8 @@ NAMED_DECISION_MODELS: tuple[NamedDecisionModel, ...] = (
     NamedDecisionModel(
         GEMMEV_1_0_MODEL_ID,
         "TrustedRouter Gemmev 1.0",
-        "google/gemma-4-e4b-it",
-        ("deepinfra",),
+        "google/gemma-4-26b-a4b-it",
+        ("wandb", "nextbit", "io-net"),
     ),
 )
 
@@ -3228,14 +3235,14 @@ NATIVE_DECISION_MODEL_IDS: tuple[str, ...] = (
     "meta-llama/llama-3.3-70b-instruct",
     "google/gemini-3.1-flash-lite",
     "openai/gpt-oss-20b",
-    "google/gemma-4-e4b-it",
+    "google/gemma-4-26b-a4b-it",
     "deepseek/deepseek-v4.1-flash",
 )
 
 # The host the gateway prefers for each tuned native decision model (for the
 # named model, the head of its chain). Tuned entries were chosen from a paid
-# live eval, not a capability table: e.g. Gemma 4 E4B is driven by prompt alone
-# because DeepInfra rejects json_schema for it, and scores 29/29 that way. ANY
+# live eval, not a capability table: e.g. Gemma 4 26B A4B is driven by prompt
+# alone, and scores 29/29 that way on each host in its chain. ANY
 # other chat model also works on /v1/decide, untuned; these are the ones
 # TrustedRouter has measured and stands behind. Every pinned host must offer a
 # CREDITS route: openai/gpt-5.4-nano was measured too and left out because its
@@ -3247,7 +3254,7 @@ NATIVE_DECISION_MODEL_PROVIDERS: dict[str, str] = {
     "meta-llama/llama-3.3-70b-instruct": "sambanova",
     "google/gemini-3.1-flash-lite": "google-ai-studio",
     "openai/gpt-oss-20b": "deepinfra",
-    "google/gemma-4-e4b-it": "deepinfra",
+    "google/gemma-4-26b-a4b-it": "wandb",
     "deepseek/deepseek-v4.1-flash": "wafer",
 }
 

@@ -117,11 +117,11 @@
             <tr><td><span class="mono">trustedrouter/gev-1.0</span></td><td>A Google model. Small, from the Gemini family, with the format enforced by the host.</td><td>about 0.8 s</td><td>29 / 29</td><td>$0.00023</td></tr>
             <tr><td><span class="mono">trustedrouter/dev-1.0</span></td><td>Harder judgments on a budget. A DeepSeek flash model: strong judgment, cheap input. Fails over from Wafer to DeepInfra to W&amp;B.</td><td>about 1 s (0.7 to 2.4 s)</td><td>29 / 29</td><td>$0.00013</td></tr>
             <tr><td><span class="mono">trustedrouter/oev-1.0</span></td><td>A cheap all-rounder. An open-weight 20B model that reasons briefly.</td><td>about 1.6 s</td><td>29 / 29</td><td>$0.00004</td></tr>
-            <tr><td><span class="mono">trustedrouter/gemmev-1.0</span></td><td>The lowest price. A small open Gemma model.</td><td>about 2 s</td><td>29 / 29</td><td>$0.00002</td></tr>
+            <tr><td><span class="mono">trustedrouter/gemmev-1.0</span></td><td>An open Gemma model: Gemma 4 26B with 4B parameters active, answering without deliberating. Fails over across three hosts.</td><td>about 1.4 s</td><td>29 / 29</td><td>$0.00007</td></tr>
           </tbody>
         </table>
       </div>
-      <p><strong>What a name is.</strong> A <code>trustedrouter/</code> name is one tuned configuration: a model, the hosts it was measured on, its reasoning setting and its output format. It runs only on its own hosts, so the speed and price above are what you get, and it answers the decide route only. Improvements ship as a new version (<code>trev-1.1</code>) rather than by changing a name you have pinned.</p>
+      <p><strong>What a name is.</strong> A <code>trustedrouter/</code> name is one tuned configuration: a model, the hosts it was measured on, its reasoning setting and its output format. It runs only on its own hosts, so the speed and price above are what you get, and it answers the decide route only. Improvements ship as a new version (<code>trev-1.1</code>) rather than by changing a name you have pinned. The exception is a model its hosts stop serving: <code>gemmev-1.0</code> moved from Gemma 4 E4B to Gemma 4 26B A4B on 28 September 2026, when DeepInfra, its only host, dropped the smaller model.</p>
       <p><strong>Prefer a plain model id?</strong> The same tuning applies when you name one of these chat models directly, and any other chat model in the catalog, such as <code>anthropic/claude-opus-5</code>, works too, untuned. Larger models do better on harder judgments.</p>
       <div class="model-table-wrap">
         <table>
@@ -133,7 +133,7 @@
             <tr><td><span class="mono">google/gemini-3.1-flash-lite</span></td><td>Google AI Studio</td></tr>
             <tr><td><span class="mono">deepseek/deepseek-v4.1-flash</span></td><td>Wafer, then DeepInfra, then W&amp;B</td></tr>
             <tr><td><span class="mono">openai/gpt-oss-20b</span></td><td>DeepInfra</td></tr>
-            <tr><td><span class="mono">google/gemma-4-e4b-it</span></td><td>DeepInfra</td></tr>
+            <tr><td><span class="mono">google/gemma-4-26b-a4b-it</span></td><td>W&amp;B, then nextbit, then io.net</td></tr>
           </tbody>
         </table>
       </div>
