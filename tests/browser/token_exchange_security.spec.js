@@ -31,7 +31,8 @@ for (const [name, width, height, theme] of [
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     const overflowing = await page.locator("main h1, main h2, main p, main button").evaluateAll(elements => elements.filter(el => el.scrollWidth > el.clientWidth + 1).map(el => el.textContent));
     expect(overflowing).toEqual([]);
-    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
     await page.screenshot({ path: testInfo.outputPath(`security-${name}.png`), fullPage: true });
     await page.screenshot({ path: testInfo.outputPath(`security-${name}-viewport.png`) });
     await page.locator("#brief-email").fill("invalid");
