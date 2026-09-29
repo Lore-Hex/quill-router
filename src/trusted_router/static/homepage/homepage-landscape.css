@@ -8,7 +8,7 @@ body :is(a,button,input,summary,[tabindex]):focus-visible{outline:3px solid var(
 .preview-tools nav{display:flex;gap:24px}.preview-tools nav a{padding-block:12px;color:#adbbb2}.preview-tools nav a[aria-current]{color:var(--green)}.type-lab>summary{cursor:pointer;padding:12px 0;color:#adbbb2}.type-lab .font-review{position:absolute;inset:auto 0 auto;z-index:30;padding:20px 32px;box-shadow:0 20px 40px #0008}.font-inner{max-width:1160px;margin:auto}.type-lab{border:0}.wrap{width:min(1160px,calc(100% - 40px));margin:auto}
 .trh>.tbar{position:relative;backdrop-filter:none;background:#050706;height:var(--site-header-height);padding-inline:max(24px,calc((100vw - 1280px)/2));gap:28px;z-index:20}.brand-link{display:inline-flex;align-items:center;gap:12px;white-space:nowrap;font-size:20px;font-weight:600;letter-spacing:-.04em;color:#edf8f5}.brand-link img{width:30px;height:30px}.trnav nav{gap:22px}.trnav nav a{text-transform:none;letter-spacing:0;color:#c7d5cd;font-size:14px}.trnav .search{font-size:13px;color:#adbbb2;width:200px;height:42px;border-radius:6px}.trnav .signin{border-radius:6px;background:var(--green);color:#10241a;padding:14px 18px}.trnav .mobile-search{display:none}.trnav .menu{min-height:44px;border-radius:6px;color:var(--green)}
 .trh .hero{position:relative;isolation:isolate;overflow:hidden;padding:clamp(24px,calc(var(--hero-vh, 1svh) * 6),76px) 40px max(20px,calc(var(--hero-vh, 1svh) * 3),env(safe-area-inset-bottom));gap:0;grid-template-columns:1fr;min-height:calc(calc(var(--hero-vh, 1svh) * 100) - var(--preview-bar-height) - var(--site-header-height));align-items:stretch;background:#07100e}
-.landscape-picture{position:absolute;inset:0;z-index:-2;pointer-events:none}.landscape-image{position:absolute;inset:0;z-index:-2;object-fit:cover;object-position:50% 62%;height:100%;width:100%}.hero::before{content:'';position:absolute;inset:0;z-index:-1;background:linear-gradient(180deg,#0507069c 0%,#050706a3 48%,#05070680 58%,#05070614 70%,#050706a8 86%,#050706 100%)}
+.landscape-picture{position:absolute;inset:0;z-index:-2;pointer-events:none}.landscape-image{position:absolute;inset:0;z-index:-2;object-fit:cover;object-position:50% 62%;height:100%;width:100%}.hero::before{content:'';position:absolute;inset:0;z-index:-1;background:var(--hero-scrim,linear-gradient(180deg,#0507069c 0%,#050706a3 48%,#05070680 58%,#05070614 70%,#050706a8 86%,#050706 100%))}
 .trh .copy{gap:0;align-items:center;text-align:center}.hero-promises{display:flex;flex-wrap:wrap;justify-content:center;gap:12px 28px;list-style:none;padding:0;margin:0 0 28px;color:var(--green);font:500 12px/1.5 var(--mono);letter-spacing:.08em;text-transform:uppercase}.hero-promises li+li{position:relative}.hero-promises li+li::before{content:"";position:absolute;left:-16px;top:6px;width:3px;height:3px;border-radius:50%;background:#88b4e2}.trh h1{font-family:var(--heading-font);font-size:clamp(52px,5.8vw,84px);font-weight:650;letter-spacing:-.052em;line-height:1.04;text-wrap:balance;margin:0;max-width:900px}.trh h1 em{color:var(--green);font-style:normal}.trh .sub{font-size:18px;max-width:530px;color:#dce9e3;line-height:1.6;text-wrap:balance;margin:24px 0 28px;min-height:0}.trh .ss{gap:10px 22px;margin:0 0 28px}.trh .s{background:none;border:0;border-bottom:1px dotted #a1b5a8;font-size:12px;min-height:44px;cursor:pointer}.trh .cta{flex-wrap:wrap;justify-content:center;gap:24px}.trh .btnp,.trm .agent,.trft .btnp{background:var(--green);color:#10241a;border-radius:6px;display:inline-flex;align-items:center;min-height:48px;font-weight:550;padding:13px 22px}.trh .btnp:hover,.trm .agent:hover,.trft .btnp:hover{background:#e5fff2}.trh .lnk{color:#edf8f5}.trh .labs{margin-top:auto;width:min(980px,100%);max-width:100%;padding-block:24px 4px}.trh .labtrack{gap:0}.trh .labgroup{display:flex;gap:32px;padding-right:32px;flex-shrink:0}.trh .lab{font-size:14px;color:#d0ded7}.trh .lab img{width:24px;height:24px;flex:none;object-fit:contain;border-radius:5px;filter:none;opacity:1}.trh .labs:focus-within .labtrack{animation-play-state:paused}
 @media(hover:hover) and (pointer:fine){.trh .labs:hover .labtrack{animation-play-state:paused}}
 @media(hover:none){.trh .labs:hover:not(:focus-within) .labtrack{animation-play-state:running}}@keyframes labs{to{transform:translateX(-50%)}}
@@ -47,7 +47,7 @@ dialog{padding:28px;border:1px solid #526859;border-radius:12px;width:min(560px,
 /* Fit the opening composition to the browser's smaller, chrome-visible viewport.
    Content may grow naturally for enlarged text instead of being clipped. */
 @media(max-height:740px){
-  :root:not(.hero-sized) .trh .hero::before{background:linear-gradient(180deg,#050706a6 0%,#050706a6 72%,#050706e6 100%)}
+  :root:not(.hero-sized) .trh .hero::before{background:var(--hero-compact-scrim,linear-gradient(180deg,#050706a6 0%,#050706a6 72%,#050706e6 100%))}
   :root:not(.hero-sized) .trh .hero{padding-top:24px;padding-bottom:max(16px,env(safe-area-inset-bottom))}
   :root:not(.hero-sized) .hero-promises{margin-bottom:18px}
   :root:not(.hero-sized) .trh h1{font-size:clamp(32px,5.2vw,64px)}
@@ -55,7 +55,7 @@ dialog{padding:28px;border:1px solid #526859;border-radius:12px;width:min(560px,
   :root:not(.hero-sized) .trh .labs{padding-top:24px}
 }
 
-  :root.hero-compact .trh .hero::before{background:linear-gradient(180deg,#050706a6 0%,#050706a6 72%,#050706e6 100%)}
+  :root.hero-compact .trh .hero::before{background:var(--hero-compact-scrim,linear-gradient(180deg,#050706a6 0%,#050706a6 72%,#050706e6 100%))}
   :root.hero-compact .trh .hero{padding-top:24px;padding-bottom:max(16px,env(safe-area-inset-bottom))}
   :root.hero-compact .hero-promises{margin-bottom:18px}
   :root.hero-compact .trh h1{font-size:clamp(32px,5.2vw,64px)}
@@ -202,3 +202,15 @@ dialog{padding:28px;border:1px solid #526859;border-radius:12px;width:min(560px,
 #search-results a:hover{background:#14251c}
 #search-results a:focus-visible{outline-offset:-3px!important}
 @media(min-width:881px){.catalog-actions{align-items:flex-start;flex-direction:column}}
+
+/* Show more of the original landscape on phones, retaining shade behind copy. */
+@media(max-width:600px){
+ .trh .hero{
+  --hero-scrim:linear-gradient(180deg,#05070673 0%,#05070685 48%,#05070652 58%,#0507060a 70%,#05070673 86%,#050706 100%);
+  --hero-compact-scrim:linear-gradient(180deg,#05070694 0%,#05070694 50%,#05070652 68%,#0507062e 78%,#050706a6 92%,#050706 100%);
+ }
+}
+/* A desktop ribbon belongs inside the composition, away from the screen edge. */
+@media(min-width:1001px){
+ :root:not(.hero-landscape) .trh .hero .labs{margin-bottom:clamp(32px,calc(var(--hero-vh,1svh) * 8),88px)}
+}
