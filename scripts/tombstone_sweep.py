@@ -66,6 +66,7 @@ MANIFESTS = ROOT / DATA_PATHS[0]
 SNAPSHOT = ROOT / DATA_PATHS[1]
 PLUGIN_DIR = Path(__file__).resolve().parent
 SESSION_CRASH = "SESSION-CRASH"
+TEMP_ROOT = Path(tempfile.gettempdir()) / "tombstone-sweep" / str(os.getpid())
 
 
 def restore() -> None:
@@ -123,7 +124,13 @@ def run_pytest(files: list[str], workers: int, log: Path) -> tuple[set[str], str
         os.environ,
         PYTHONPATH=f"{ROOT / 'src'}{os.pathsep}{PLUGIN_DIR}",
         TOMBSTONE_SWEEP_FAILURES=str(failures_file),
+        # Every pytest session of a user shares one temp root, and each deletes
+        # the oldest trees there at start: under load, one session spent 24
+        # minutes deleting another's multi-gigabyte deploy-harness tree before
+        # running a test. This sweep's sessions clean up only their own.
+        PYTEST_DEBUG_TEMPROOT=str(TEMP_ROOT),
     )
+    TEMP_ROOT.mkdir(parents=True, exist_ok=True)
     env.pop("PYTEST_ADDOPTS", None)
     proc = subprocess.run(  # noqa: S603 - fixed pytest argv plus test file paths
         cmd, cwd=ROOT, env=env, capture_output=True, text=True, check=False
