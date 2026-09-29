@@ -609,5 +609,63 @@
   ],
   "title": "neurometric/text-to-sql",
   "upstream_id": "neurometric/text-to-sql"
+ },
+ {
+  "context_length": 65536,
+  "deprecation_at": null,
+  "display_name": "Structured Decisions",
+  "documentation": {
+   "description": "Structured Decisions answers one bounded decision about the facts you supply, choosing from labels you define: yes/no, one of several options, or an ordered level. Instead of generating text, it reads the answer from the model's probabilities over your labels, so the result is always exactly one of them, even if the prompt asks for something else. Put rubrics or policies in a system message or in the question. Good for routing, triage, eligibility checks and policy decisions.",
+   "example_input": "{\"model\": \"neurometric/structured-decisions\", \"messages\": [{\"role\": \"user\", \"content\": \"{\\\"state\\\": \\\"Customer: I was charged twice for my March invoice and need one charge reversed.\\\", \\\"question\\\": \\\"Which team should handle this ticket?\\\", \\\"options\\\": {\\\"billing\\\": \\\"Charges, refunds, invoices\\\", \\\"technical\\\": \\\"Bugs, outages, integrations\\\", \\\"sales\\\": \\\"Pricing, plans, upgrades\\\"}}\"}]}",
+   "example_output": "{\"choices\": [{\"message\": {\"role\": \"assistant\", \"content\": \"{\\\"answer\\\":\\\"billing\\\"}\"}}], \"decision\": {\"type\": \"choice\", \"answer\": \"billing\", \"confidence\": 0.984, \"probabilities\": {\"billing\": 0.997, \"technical\": 0.003, \"sales\": 0.0}}, \"usage\": {\"prompt_tokens\": 179, \"completion_tokens\": 0, \"total_tokens\": 179}}",
+   "input_format": "OpenAI chat completions. Give the labels in one of two ways:\n1) A user message whose content is a JSON object: {\"state\": <facts: string or object>, \"question\": <string>, \"options\": [labels] or {label: description}}. Use \"levels\": [ordered labels] instead of \"options\" for a scale (e.g. [\"low\",\"medium\",\"high\"]).\n2) response_format {\"type\":\"json_schema\"} whose schema has an \"answer\" property with an \"enum\" of labels; the whole conversation is used as the facts.\nSystem messages (rubric, policy, definitions) are included with the facts. Up to about 120 labels per decision. Sampling parameters (temperature, top_p, seed) are accepted and ignored. A request with no labels is answered by text generation instead.",
+   "output_format": "choices[0].message.content is exactly {\"answer\":\"<one of your labels>\"}. A top-level \"decision\" object adds: \"type\" (\"choice\" or \"score\"), \"answer\", \"confidence\" (0-1, how decisively the model applied your question as worded; not a calibrated probability), and \"probabilities\" (label -> probability). For levels, \"score\" is the expected level index (0 = first level). usage.completion_tokens is 0: only input tokens are billed. Streaming returns the same answer in one content chunk."
+  },
+  "endpoints": [
+   "chat/completions"
+  ],
+  "id": "neurometric/structured-decisions",
+  "input_modalities": [
+   "text"
+  ],
+  "input_token_price_per_m": 30000,
+  "lifecycle_status": "active",
+  "max_output_tokens": 1024,
+  "model_type": "chat",
+  "output_modalities": [
+   "text"
+  ],
+  "output_token_price_per_m": 0,
+  "provider_reliability": {
+   "account_quota_error_codes": [
+    "account_quota_exceeded"
+   ],
+   "incident_contact": "mailto:support@neurometric.ai",
+   "provider_id": "neurometric",
+   "regions": [
+    "us-west"
+   ],
+   "request_id_header": "x-request-id",
+   "status_url": "https://status.neurometric.ai",
+   "support_contact": "mailto:support@neurometric.ai"
+  },
+  "reliability": {
+   "capacity_scope": "model",
+   "completion_timeout_seconds": 30.0,
+   "first_token_timeout_seconds": 15.0,
+   "stream_idle_timeout_seconds": 10.0
+  },
+  "replacement_model_id": null,
+  "retirement_at": null,
+  "routable": true,
+  "status": 1,
+  "supported_features": [
+   "chat",
+   "completion",
+   "json_mode",
+   "structured_outputs"
+  ],
+  "title": "neurometric/structured-decisions",
+  "upstream_id": "neurometric/structured-decisions"
  }
 ]
