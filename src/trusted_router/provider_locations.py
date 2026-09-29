@@ -32,6 +32,16 @@ class InferenceLocations:
 _NO_TR_PIN = "Not supported by the current TrustedRouter integration."
 
 PROVIDER_INFERENCE_LOCATIONS = {
+    "tencent": InferenceLocations(
+        scope="The Singapore TokenHub ingress uses global resource scheduling. Ingress location is not GPU residency.",
+        routing="Global scheduling; individual request location and country set are not verified.",
+        provider_pinning="Tencent documents separate Guangzhou and US sites, but this integration uses the Singapore/global site only.",
+        trustedrouter_pinning=_NO_TR_PIN,
+        declaration="Global, dynamically scheduled inference; no fixed-country residency commitment.",
+        evidence="Public TokenHub API documentation",
+        reviewed_on="2026-09-29",
+        sources=(("API regions and resource scheduling scope", "https://www.tencentcloud.com/document/product/1300/78941"),),
+    ),
     "io-net": InferenceLocations(
         locations=("United States", "Canada"),
         scope=("io.net declares US and Canadian serving locations and data residency "

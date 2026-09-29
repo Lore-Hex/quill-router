@@ -27,6 +27,7 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = frozenset(
         "decart",
         "fal",
         "io-net",
+        "tencent",
         "krea",
         "perplexity",
         "scaleway",
