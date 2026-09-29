@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from tests.lifecycle_clock import catalog_predates
+from tests.pinned_manifests import GROK_47, build_manifest_rows
 from trusted_router import provider_lifecycle
 from trusted_router.catalog import (
     ADVISOR_CATALOG_MODEL_ORDERS,
@@ -104,7 +106,6 @@ from trusted_router.catalog import (
     orchestration_role,
     provider_privacy_tier,
 )
-from trusted_router.catalog_capabilities import manifest_supported_parameters
 from trusted_router.catalog_data import (
     PLATO_4_0_CATALOG_MODEL_ORDER,
     SOCRATES_3_0_CATALOG_MODEL_ORDER,
@@ -558,19 +559,23 @@ def test_grok_uses_xai_native_model_id_and_long_context_pricing(native_id: str) 
         )
 
 
-def test_grok_47_advertises_verified_capabilities() -> None:
-    row = _listed_row("grok", "x-ai/grok-4.7")
-    if row is None:
-        return
-    expected = set(manifest_supported_parameters(row))
-    assert expected <= set(MODELS["x-ai/grok-4.7"].supported_parameters)
-    assert expected <= set(
-        MODEL_ENDPOINTS["x-ai/grok-4.7@grok/prepaid"].supported_parameters
-    )
-    # xAI explicitly ignores these for Grok 4.20 and newer.
-    assert not {"logprobs", "top_logprobs"} & set(
-        MODELS["x-ai/grok-4.7"].supported_parameters
-    )
+def test_grok_47_advertises_verified_capabilities(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The catalog's own ingestion of a pinned row: the expected parameters are
+    # fixed, not derived from the feature mapping this checks.
+    models, endpoints = build_manifest_rows(monkeypatch, tmp_path, "grok", [GROK_47])
+    expected = {
+        "tools", "tool_choice", "reasoning_effort", "temperature", "top_p", "seed",
+        "response_format", "structured_outputs",
+    }
+    for parameters in (
+        models["x-ai/grok-4.7"].supported_parameters,
+        endpoints["x-ai/grok-4.7@grok/prepaid"].supported_parameters,
+    ):
+        assert expected <= set(parameters)
+        # xAI explicitly ignores these for Grok 4.20 and newer.
+        assert not {"logprobs", "top_logprobs"} & set(parameters)
 
 
 def test_openai_astra_uses_first_party_long_context_vision_route() -> None:

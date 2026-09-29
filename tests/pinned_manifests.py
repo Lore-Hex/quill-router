@@ -22,6 +22,7 @@ import pytest
 
 from tests.fixture_routes import bypass_catalog_caches
 from trusted_router import catalog_ingest, catalog_registry
+from trusted_router.catalog_data import Model, ModelEndpoint
 from trusted_router.routes import catalog as catalog_routes
 
 
@@ -54,6 +55,60 @@ DEEPSEEK_FLASH = _deepseek_row(
     "deepseek/deepseek-flash", "DeepSeek V4.1 Flash (rolling)", input_modalities=["text", "image"],
 )
 DEEPSEEK_DIRECT_ROWS = (DEEPSEEK_V4_FLASH, DEEPSEEK_V4_PRO, DEEPSEEK_FLASH)
+
+# xAI's Grok 4.7 row as its feed listed it on 2026-09-28.
+GROK_47 = {
+    "display_name": "grok-4.7",
+    "title": "grok-4.7",
+    "model_type": "chat",
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "context_length": 500000,
+    "features": ["function-calling", "tool-choice", "reasoning-effort"],
+    "id": "x-ai/grok-4.7",
+    "upstream_id": "grok-4.7",
+    "created": 1788307200,
+    "routable": True,
+    "input_token_price_per_m": 2000000,
+    "output_token_price_per_m": 6000000,
+    "cached_input_token_price_per_m": 500000,
+    "price_tiers": [
+        {
+            "max_prompt_tokens": 199999,
+            "input_token_price_per_m": 2000000,
+            "output_token_price_per_m": 6000000,
+            "cached_input_token_price_per_m": 500000,
+        },
+        {
+            "max_prompt_tokens": None,
+            "input_token_price_per_m": 4000000,
+            "output_token_price_per_m": 12000000,
+            "cached_input_token_price_per_m": 1000000,
+        },
+    ],
+    "supported_parameters": ["temperature", "top_p", "seed", "response_format", "structured_outputs"],
+}
+
+# Featherless's Qwen 3.8 Flash Next row as its feed listed it on 2026-09-28.
+FEATHERLESS_QWEN38_FLASH_NEXT = {
+    "display_name": "Qwen/Qwen3.8-Flash-Next",
+    "title": "Qwen/Qwen3.8-Flash-Next",
+    "model_type": "chat",
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "id": "qwen/qwen3.8-flash-next",
+    "upstream_id": "Qwen/Qwen3.8-Flash-Next",
+    "context_length": 262144,
+    "max_output_tokens": 32768,
+    "routable": True,
+    "input_token_price_per_m": 150000,
+    "output_token_price_per_m": 500000,
+    "cached_input_token_price_per_m": 30000,
+}
 
 # Anthropic's Claude Opus 5 route as its manifest lists it.
 ANTHROPIC_CLAUDE_OPUS_5 = {
@@ -611,17 +666,16 @@ def pinned_manifests(
     return environ
 
 
-def serve_manifest_rows(
+def build_manifest_rows(
     monkeypatch: pytest.MonkeyPatch,
     directory: Path,
     provider: str,
     rows: Iterable[dict[str, Any]],
-) -> None:
-    """Serve `provider`'s routes for these manifest rows in this process's
-    registry, built by the catalog's own manifest ingestion, in place of any
-    route with the same id. A model the registry lacks is added with them.
-    The rows keep the provider's committed manifest header (its generation
-    time, which dates an expiring manifest's deadline, and any price scale)."""
+) -> tuple[dict[str, Model], dict[str, ModelEndpoint]]:
+    """The models and routes the catalog's own manifest ingestion builds from
+    these rows of `provider`'s manifest, without touching the registry. The
+    rows keep the provider's committed manifest header (its generation time,
+    which dates an expiring manifest's deadline, and any price scale)."""
     committed = catalog_ingest._PROVIDER_MODELS_DIR / f"{provider}.json"
     header: dict[str, Any] = {"provider": provider}
     if committed.exists():
@@ -634,6 +688,19 @@ def serve_manifest_rows(
         patch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", manifests)
         models, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
     assert endpoints, f"the catalog built no {provider} route from {manifest}"
+    return models, endpoints
+
+
+def serve_manifest_rows(
+    monkeypatch: pytest.MonkeyPatch,
+    directory: Path,
+    provider: str,
+    rows: Iterable[dict[str, Any]],
+) -> None:
+    """Serve `provider`'s routes for these manifest rows in this process's
+    registry, built by build_manifest_rows, in place of any route with the
+    same id. A model the registry lacks is added with them."""
+    models, endpoints = build_manifest_rows(monkeypatch, directory, provider, rows)
     for model_id, model in models.items():
         if model_id not in catalog_registry.MODELS:
             monkeypatch.setitem(catalog_registry.MODELS, model_id, model)

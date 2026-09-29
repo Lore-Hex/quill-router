@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from scripts.pricing.base import ModelPrice
 from scripts.pricing.providers import featherless, jina, scaleway
+from tests.pinned_manifests import FEATHERLESS_QWEN38_FLASH_NEXT, build_manifest_rows
 from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS, providers_for_display
 from trusted_router.pricing import _customer_price
 from trusted_router.provider_manifest_policy import (
@@ -102,7 +103,18 @@ def test_featherless_serves_deepseek_v41_flash() -> None:
 def test_featherless_qwen38_flash_next_is_routable() -> None:
     # Live provider state: provider-catalog-health.yml reports it hourly, and
     # the price refresh does not wait on it.
-    endpoint = MODEL_ENDPOINTS["qwen/qwen3.8-flash-next@featherless/prepaid"]
+    assert "qwen/qwen3.8-flash-next@featherless/prepaid" in MODEL_ENDPOINTS
+
+
+def test_featherless_routes_qwen38_flash_next_at_its_native_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Featherless dispatches on its own id, case and all, not the canonical
+    # one, and the route bills its price plus markup.
+    _models, endpoints = build_manifest_rows(
+        monkeypatch, tmp_path, "featherless", [FEATHERLESS_QWEN38_FLASH_NEXT]
+    )
+    endpoint = endpoints["qwen/qwen3.8-flash-next@featherless/prepaid"]
 
     assert endpoint.provider == "featherless"
     assert endpoint.upstream_id == "Qwen/Qwen3.8-Flash-Next"

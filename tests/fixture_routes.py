@@ -23,20 +23,33 @@ from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, endpoints_for_model
 from trusted_router.catalog_data import Model, ModelEndpoint
 
 
-def bypass_catalog_caches(monkeypatch: pytest.MonkeyPatch) -> None:
-    """For this test, compute the cached public projections of the catalog on
-    every call and cache none of them."""
+def _cached_projections() -> tuple[tuple[Any, str], ...]:
+    """The process-wide cached public projections of the catalog."""
     from trusted_router import dashboard
     from trusted_router.routes import catalog as catalog_routes
 
-    for module, name in (
+    return (
         (catalog_routes, "_public_catalog_payload"),
         (dashboard, "_model_comparison_pairs"),
         (dashboard, "_model_comparison_index"),
         (dashboard, "_model_comparison_neighbor_index"),
-    ):
+    )
+
+
+def bypass_catalog_caches(monkeypatch: pytest.MonkeyPatch) -> None:
+    """For this test, compute the cached public projections of the catalog on
+    every call and cache none of them."""
+    for module, name in _cached_projections():
         cached = getattr(module, name)
         monkeypatch.setattr(module, name, getattr(cached, "__wrapped__", cached))
+
+
+def clear_catalog_caches() -> None:
+    """Empty each cached public projection of the catalog that is still a cache."""
+    for module, name in _cached_projections():
+        cache_clear = getattr(getattr(module, name), "cache_clear", None)
+        if cache_clear is not None:
+            cache_clear()
 
 
 def serve_on_fixture_route(
