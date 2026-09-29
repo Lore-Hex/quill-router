@@ -48,6 +48,12 @@ def _model(model_id: str, default_route: str) -> Model:
         ("black-forest-labs/fixture-model", "nscale", "Black Forest Labs", "bfl"),
         ("xiaomimimo/fixture-model", "novita", "Xiaomi MiMo", "xiaomi"),
         ("kwaipilot/fixture-model", "novita", "StreamLake", "streamlake"),
+        ("PaddlePaddle/fixture-model", "novita", "Baidu AI Cloud Qianfan", "baidu"),
+        ("THUDM/fixture-model", "novita", "Z.AI", "zai"),
+        ("FunAudioLLM/fixture-model", "siliconflow", "Alibaba Cloud Model Studio", "alibaba"),
+        ("Tongyi-MAI/fixture-model", "siliconflow", "Alibaba Cloud Model Studio", "alibaba"),
+        ("Wan-AI/fixture-model", "siliconflow", "Alibaba Cloud Model Studio", "alibaba"),
+        ("nv-mistralai/fixture-model", "nvidia-nim", "Mistral", "mistral"),
     ],
 )
 def test_a_maker_with_its_own_provider_entry_publishes_its_models_on_any_host(
@@ -266,8 +272,9 @@ def test_which_providers_serve_a_model_lists_its_hosts_not_its_maker(
             model_id,
             "deepinfra",
             author="deepinfra",
-            model=Model(id=model_id, name="Fixture FAQ model", provider="deepinfra",
-                        context_length=131_072),
+            model=Model(
+                id=model_id, name="Fixture FAQ model", provider="deepinfra", context_length=131_072
+            ),
         )
         faq = _json_ld(_soup(client, f"/models/{model_id}"))["FAQPage"]
         answer = next(
@@ -275,7 +282,9 @@ def test_which_providers_serve_a_model_lists_its_hosts_not_its_maker(
             for item in faq["mainEntity"]
             if item["name"] == "Which providers serve Fixture FAQ model?"
         )
-        assert answer.startswith("TrustedRouter currently lists DeepInfra for Fixture FAQ model."), (
+        assert answer.startswith(
+            "TrustedRouter currently lists DeepInfra for Fixture FAQ model."
+        ), (
             model_id,
             answer,
         )

@@ -4975,6 +4975,8 @@ _PUBLISHER_PROVIDER_BY_AUTHOR: dict[str, str] = {
     "bytedance": "byteplus",
     "bytedance-seed": "byteplus",
     "deepseek-ai": "deepseek",
+    # Alibaba's Tongyi labs (Fun-Audio, Z-Image, Wan) publish through Model Studio.
+    "funaudiollm": "alibaba",
     "google": "google-ai-studio",
     "jina-ai": "jina",
     # Kuaishou's own platform for its Kwaipilot KAT models, under their native ids.
@@ -4984,10 +4986,18 @@ _PUBLISHER_PROVIDER_BY_AUTHOR: dict[str, str] = {
     "mistralai": "mistral",
     "moonshot": "kimi",
     "moonshotai": "kimi",
+    # Mistral NeMo, built with NVIDIA, is on Mistral's own API.
+    "nv-mistralai": "mistral",
+    # Baidu's PaddlePaddle models (PaddleOCR-VL) are on Baidu's Qianfan API.
+    "paddlepaddle": "baidu",
     "qwen": "alibaba",
     "sakana-ai": "sakana",
     "stepfun-ai": "stepfun",
+    # GLM's original Tsinghua organisation; Z.ai now publishes GLM.
+    "thudm": "zai",
+    "tongyi-mai": "alibaba",
     "typesafe-ai": "typesafe",
+    "wan-ai": "alibaba",
     "x-ai": "grok",
     "xai": "grok",
     "xiaomimimo": "xiaomi",
@@ -6405,7 +6415,6 @@ _BRAND_DISPLAY_NAMES: dict[str, str] = {
     "nvidia": "NVIDIA",
     "openbmb": "OpenBMB",
     "openpipe": "OpenPipe",
-    "paddlepaddle": "PaddlePaddle",
     "pixverse": "PixVerse",
     "sao10k": "Sao10K",
     "shengshu": "ShengShu",
