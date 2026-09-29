@@ -16,6 +16,9 @@ These tests fail if any second copy is reintroduced.
 
 from __future__ import annotations
 
+import pytest
+
+from tests.fixture_routes import serve_on_fixture_route
 from trusted_router.catalog_data import DEFAULT_AUTO_MODEL_ORDER
 from trusted_router.config import Settings
 from trusted_router.routing_candidates import auto_candidate_models
@@ -42,11 +45,16 @@ def test_auto_leads_with_glm53_flash_then_glm53() -> None:
     assert [model.id for model in auto_candidate_models(None)[:2]] == expected
 
 
-def test_explicit_override_still_wins() -> None:
+def test_explicit_override_still_wins(monkeypatch: pytest.MonkeyPatch) -> None:
     """Emptying the setting must not cost operators the runtime override."""
-    override = "openai/gpt-4.1-mini,google/gemini-2.5-flash"
+    # Chat models on fixture routes, outside the documented ladder: which
+    # models the catalog lists today is not this rule's business. The override
+    # names them out of alphabetical order.
+    for model_id in ("test/override-b", "test/override-a"):
+        serve_on_fixture_route(monkeypatch, model_id, "novita", author="novita")
+    override = "test/override-b,test/override-a"
     resolved = [model.id for model in auto_candidate_models(override)]
-    assert resolved == ["openai/gpt-4.1-mini", "google/gemini-2.5-flash"]
+    assert resolved == ["test/override-b", "test/override-a"]
 
 
 def test_config_holds_no_second_copy_of_the_ladder() -> None:
