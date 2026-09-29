@@ -232,10 +232,21 @@ def test_neurometric_fetch_discovers_new_models_and_runs_canary(
     ]
     for row in task_rows:
         row["pricing"].update({"input": "0.010000", "output": "0.100000"})
+    structured_decisions = _model_row("neurometric/structured-decisions")
+    structured_decisions["pricing"].update({"input": "0.030000", "output": "0.000000"})
+    structured_decisions["capabilities"]["tools"] = False
+    structured_decisions["documentation"] = {
+        "description": "Choose one caller-supplied label.",
+        "input_format": "Supply state, question and options as JSON in a user message.",
+        "output_format": 'A JSON object with an answer label; output tokens are free.',
+        "example_input": '{"state":"Duplicate invoice","question":"Team?","options":["billing","sales"]}',
+        "example_output": '{"answer":"billing"}',
+    }
     rows = [
         _model_row(),
         document_extraction,
         *task_rows,
+        structured_decisions,
         _model_row("neurometric/tool-choice"),
         _model_row("qwen/qwen3-vl-8b-instruct"),
     ]
@@ -287,6 +298,7 @@ def test_neurometric_fetch_discovers_new_models_and_runs_canary(
         neurometric.CONVERSATION_SUMMARY_MODEL,
         neurometric.CLASSIFICATION_ROUTER_MODEL,
         "neurometric/tool-choice",
+        "neurometric/structured-decisions",
         "qwen/qwen3-vl-8b-instruct",
     }
     assert set(canaried) == set(result.prices)
@@ -314,6 +326,19 @@ def test_neurometric_fetch_discovers_new_models_and_runs_canary(
             documentation
         )
     assert neurometric._LIVE_CANARY_OK is True
+    # A new task needs no hard-coded model registration, including input-only pricing.
+    model_id = structured_decisions["id"]
+    assert model_id not in neurometric.EXPECTED_MODELS
+    assert result.prices[model_id].prompt_micro_per_m == 30_000
+    assert result.prices[model_id].completion_micro_per_m == 0
+    neurometric.write_provider_manifest(result)
+    manifest = json.loads(neurometric.MANIFEST_PATH.read_text(encoding="utf-8"))
+    published = next(row for row in manifest["models"] if row["id"] == model_id)
+    assert published["routable"] is True
+    assert published["input_token_price_per_m"] == 30_000
+    assert published["output_token_price_per_m"] == 0
+    assert published["documentation"] == structured_decisions["documentation"]
+    assert "tools" not in published["supported_features"]
 
 
 def test_neurometric_manifest_tombstones_only_after_repeated_fresh_miss(
@@ -552,6 +577,37 @@ def test_neurometric_text_to_sql_is_published_with_exact_pricing(client: Any) ->
     assert "SCHEMA" in page.text
     assert "QUESTION" in page.text
     assert "enterprise_customer_count" in page.text
+
+
+@pytest.mark.usefixtures("neurometric_routes")
+def test_structured_decisions_public_catalog_applies_existing_retail_policy_and_guidance(
+    client: Any,
+) -> None:
+    model_id = "neurometric/structured-decisions"
+    endpoint = MODEL_ENDPOINTS[f"{model_id}@neurometric/prepaid"]
+    assert endpoint.upstream_id == model_id
+    assert endpoint.usage_type == "Credits"
+    assert MODELS[model_id].context_length == 65536
+    assert endpoint.prompt_price_microdollars_per_million_tokens == 31650
+    # Preserve the platform's existing retail floor; the upstream price stays zero.
+    assert endpoint.completion_price_microdollars_per_million_tokens == 10000
+    response = client.get(f"/v1/models/{model_id}/endpoints")
+    assert response.status_code == 200
+    assert len(response.json()["data"]) == 1
+    published = response.json()["data"][0]
+    assert published["pricing"]["prompt"] == "0.00000003165"
+    assert published["pricing"]["completion"] == "0.00000001"
+    assert "response_format" in published["supported_parameters"]
+    assert "tools" not in published["supported_parameters"]
+    listing = client.get("/v1/models")
+    assert listing.status_code == 200
+    assert model_id in {row["id"] for row in listing.json()["data"]}
+    page = client.get(f"/models/{model_id}")
+    assert page.status_code == 200
+    assert "Structured Decisions" in page.text
+    assert "options" in page.text
+    assert "billing" in page.text
+    assert "only input tokens are billed" in page.text
 
 
 def test_neurometric_hourly_refresh_and_secret_wiring_are_complete() -> None:
