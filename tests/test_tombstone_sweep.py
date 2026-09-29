@@ -107,3 +107,26 @@ def test_a_sweep_resumes_with_the_same_groups(
 
     # group00 is not run again, and every later provider is.
     assert [provider for group in delisted for provider in group] == providers[8:]
+
+
+def test_a_sweep_refuses_a_baseline_that_did_not_finish(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    delisted = _nothing_runs(monkeypatch)
+    monkeypatch.setattr(sweep, "run_pytest", lambda *_: ({sweep.SESSION_CRASH}, "session crashed"))
+
+    with pytest.raises(SystemExit, match="baseline run did not finish"):
+        sweep.sweep(tmp_path / "out", group_size=8, workers=1)
+    assert delisted == []
+    assert not (tmp_path / "out" / "state.json").exists()
+
+
+def test_a_sweep_with_a_finished_baseline_tests_every_provider(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    delisted = _nothing_runs(monkeypatch)
+
+    sweep.sweep(tmp_path / "out", group_size=8, workers=1)
+
+    providers = sorted(path.stem for path in sweep.MANIFESTS.glob("*.json"))
+    assert [provider for group in delisted for provider in group] == providers

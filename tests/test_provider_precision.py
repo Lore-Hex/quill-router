@@ -6,7 +6,7 @@ from datetime import date
 
 import pytest
 
-from tests.pinned_manifests import isolate_public_catalog_cache
+from tests.fixture_routes import bypass_catalog_caches
 from trusted_router import provider_precision
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, model_to_openrouter_shape
 from trusted_router.catalog_data import Model, ModelEndpoint
@@ -42,14 +42,14 @@ def _reviewed_endpoint(provider: str, model_id: str) -> ModelEndpoint:
 def _serve_reviewed_routes(monkeypatch, model_id: str) -> None:
     """Serve every reviewed route of the model, and a route nobody reviewed (Z.AI's)."""
     if model_id not in MODELS:
-        monkeypatch.setitem(MODELS, model_id, Model(id=model_id, name=model_id, provider="z-ai",
+        monkeypatch.setitem(MODELS, model_id, Model(id=model_id, name=model_id, provider="zai",
                                                      context_length=131_072))
     routes = [_reviewed_endpoint(r.provider, model_id) for r in _records() if r.model_id == model_id]
     routes.append(ModelEndpoint(id=f"{model_id}@zai/prepaid", model_id=model_id, provider="zai",
                                 usage_type="Credits", upstream_id=model_id.removeprefix("z-ai/")))
     for route in routes:
         monkeypatch.setitem(MODEL_ENDPOINTS, route.id, route)
-    isolate_public_catalog_cache(monkeypatch)
+    bypass_catalog_caches(monkeypatch)
 
 
 @pytest.mark.parametrize("record", _records(), ids=lambda r: f"{r.provider}/{r.model_id}")

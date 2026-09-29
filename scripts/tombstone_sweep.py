@@ -158,6 +158,9 @@ def sweep(out: Path, group_size: int, workers: int) -> None:
     restore()
     if "baseline" not in state:
         failures, summary = run_pytest([], workers, out / "baseline.log")
+        if SESSION_CRASH in failures:
+            # Subtracting a crashed baseline would erase every later crash.
+            raise SystemExit(f"the baseline run did not finish ({summary}); see {out / 'baseline.log'}")
         state["baseline"] = {"failures": sorted(failures), "summary": summary}
         save()
         log(f"baseline: {summary}")
