@@ -11,6 +11,13 @@ same ids, before the app is built. A route the live catalog still serves is
 left exactly as it is. Whether it still serves one is a provider_health
 question, not a release one.
 
+Some tests ride a whole MODEL for rules that are not about it: a template for
+fixture models, a comparison peer, the model a settlement test authorizes. A
+model disappears when its last host delists it. A model in VEHICLE_MODEL_IDS is
+put back, with every route it had when frozen, only when the catalog has lost it
+entirely; while any host still serves it, nothing is touched, so no provider's
+delisting is masked.
+
 Refresh the frozen copy from today's catalog:
 
     PYTHONPATH="$PWD/src" python -m tests.catalog_vehicles --freeze
@@ -25,7 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from trusted_router import catalog_registry
-from trusted_router.catalog_data import Model, ModelEndpoint, PriceTier
+from trusted_router.catalog_data import Model, ModelDocumentation, ModelEndpoint, PriceTier
 
 FROZEN = Path(__file__).parent / "fixtures" / "vehicle_routes.json"
 
@@ -38,6 +45,8 @@ VEHICLE_ENDPOINT_IDS = (
     "anthropic/claude-sonnet-4.6@anthropic/byok",
 )
 
+VEHICLE_MODEL_IDS: tuple[str, ...] = ()
+
 
 def _tiers(raw: list[dict[str, Any]]) -> tuple[PriceTier, ...]:
     return tuple(PriceTier(**tier) for tier in raw)
@@ -49,7 +58,8 @@ def _model(raw: dict[str, Any]) -> Model:
         fields[name] = tuple(fields[name])
     fields["price_tiers"] = _tiers(fields["price_tiers"])
     fields["published_price_tiers"] = _tiers(fields["published_price_tiers"])
-    fields["documentation"] = None
+    documentation = fields.get("documentation")
+    fields["documentation"] = ModelDocumentation(**documentation) if documentation else None
     return Model(**fields)
 
 
@@ -78,6 +88,25 @@ def install_missing(
     return added
 
 
+def install_vanished(
+    models: dict[str, Model], endpoints: dict[str, ModelEndpoint], frozen: dict[str, Any]
+) -> list[str]:
+    """Put back each frozen vehicle model the catalog has lost entirely, with the
+    routes it had when frozen; returns the ids added."""
+    added = []
+    for vehicle in frozen.get("vehicle_models", []):
+        model = vehicle["model"]
+        if model["id"] in models:
+            continue
+        models[model["id"]] = _model(model)
+        added.append(model["id"])
+        for raw in vehicle["endpoints"]:
+            if raw["id"] not in endpoints:
+                endpoints[raw["id"]] = _endpoint(raw)
+                added.append(raw["id"])
+    return added
+
+
 def _freeze() -> None:
     endpoints = [catalog_registry.MODEL_ENDPOINTS[endpoint_id] for endpoint_id in VEHICLE_ENDPOINT_IDS]
     model_ids = sorted({endpoint.model_id for endpoint in endpoints})
@@ -89,6 +118,17 @@ def _freeze() -> None:
         "endpoints": [
             {**dataclasses.asdict(endpoint), "catalog_valid_until": None} for endpoint in endpoints
         ],
+        "vehicle_models": [
+            {
+                "model": dataclasses.asdict(catalog_registry.MODELS[model_id]),
+                "endpoints": [
+                    {**dataclasses.asdict(endpoint), "catalog_valid_until": None}
+                    for endpoint in catalog_registry.MODEL_ENDPOINTS.values()
+                    if endpoint.model_id == model_id
+                ],
+            }
+            for model_id in VEHICLE_MODEL_IDS
+        ],
     }
     FROZEN.write_text(json.dumps(frozen, indent=1, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -98,10 +138,8 @@ if __name__ == "__main__" and sys.argv[1:] == ["--freeze"]:
 else:
     # What this session added, which the registry did not build: a test of the
     # registry's own output against the manifests leaves these out.
+    _FROZEN_VEHICLES = json.loads(FROZEN.read_text(encoding="utf-8"))
     VEHICLES_ADDED = frozenset(
-        install_missing(
-            catalog_registry.MODELS,
-            catalog_registry.MODEL_ENDPOINTS,
-            json.loads(FROZEN.read_text(encoding="utf-8")),
-        )
+        install_missing(catalog_registry.MODELS, catalog_registry.MODEL_ENDPOINTS, _FROZEN_VEHICLES)
+        + install_vanished(catalog_registry.MODELS, catalog_registry.MODEL_ENDPOINTS, _FROZEN_VEHICLES)
     )
