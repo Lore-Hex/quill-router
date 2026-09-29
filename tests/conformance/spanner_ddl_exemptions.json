@@ -591,6 +591,24 @@
         "count": 1,
         "reason": "IAM service-account provisioning, not Spanner schema."
       }
+    },
+    "scripts/audit_spanner_schema.py": {
+      "from tests.conformance.spanner_ddl import DDL": {
+        "count": 1,
+        "reason": "Scheduled schema audit provisions the reviewed conformance fixture only in its separate anonymous-credential process after numeric-loopback and emulator-environment checks; never production schema changes."
+      },
+      "target = instance.database(\"fixture\", ddl_statements=DDL[:20])": {
+        "count": 1,
+        "reason": "Scheduled schema audit provisions the reviewed conformance fixture only in its separate anonymous-credential process after numeric-loopback and emulator-environment checks; never production schema changes."
+      },
+      "for offset in range(20, len(DDL), 20):": {
+        "count": 1,
+        "reason": "Scheduled schema audit provisions the reviewed conformance fixture only in its separate anonymous-credential process after numeric-loopback and emulator-environment checks; never production schema changes."
+      },
+      "target.update_ddl(DDL[offset:offset + 20]).result(timeout=120)": {
+        "count": 1,
+        "reason": "Scheduled schema audit provisions the reviewed conformance fixture only in its separate anonymous-credential process after numeric-loopback and emulator-environment checks; never production schema changes."
+      }
     }
   }
 }

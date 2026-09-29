@@ -48,7 +48,7 @@ Each carrier must belong to a dispatch consumed by extraction (including a liter
 
 There are no additional directory or statement-pattern exemptions in the registry. Diagnostics name physical `file:line`, the carrier and the registry remedy. Registry entries do not bypass structural validation of migration dispatch arguments, and regeneration runs the same guard.
 
-Explicit non-goals are DDL through an API or tool with **no DDL-specific token** (for example a generic `cursor.execute` supplied a connection externally), transport tokens or URLs assembled at runtime (for example `getattr(db, "update_" + "d" + "dl")`), **statement text outside the fixed migration list** (for example an `ALTER TABLE` literal in `clickhouse/build_public_snapshots.py` or `trusted_router.regional_quota_reconcile_gate`), **root `tests/` and `docs/` (including deploy steps executing files there)**, **the exact data path `.test_durations`**, the build/dependency directories and binary files defined in (b) and (d), and anything applied outside the repository (console or manual commands). Statement text outside the list cannot reach Spanner without a transport; appending `database.update_ddl([...])` to either program fails, while appending only statement text passes. Recognizing a transport vocabulary cannot establish completeness. The real backstop is [Lore-Hex/quill-router#1372](https://github.com/Lore-Hex/quill-router/issues/1372): a scheduled production INFORMATION_SCHEMA comparison with the checked-in schema. That comparison is outside this PR.
+Explicit non-goals are DDL through an API or tool with **no DDL-specific token** (for example a generic `cursor.execute` supplied a connection externally), transport tokens or URLs assembled at runtime (for example `getattr(db, "update_" + "d" + "dl")`), **statement text outside the fixed migration list** (for example an `ALTER TABLE` literal in `clickhouse/build_public_snapshots.py` or `trusted_router.regional_quota_reconcile_gate`), **root `tests/` and `docs/` (including deploy steps executing files there)**, **the exact data path `.test_durations`**, the build/dependency directories and binary files defined in (b) and (d), and anything applied outside the repository (console or manual commands). Statement text outside the list cannot reach Spanner without a transport; appending `database.update_ddl([...])` to either program fails, while appending only statement text passes. Recognizing a transport vocabulary cannot establish completeness. The real backstop is [Lore-Hex/quill-router#1372](https://github.com/Lore-Hex/quill-router/issues/1372): a scheduled production INFORMATION_SCHEMA comparison with the checked-in schema. That comparison is implemented by the scheduled metadata audit below.
 
 The generated schema contains **63 DDL statements: 21 tables, 14 secondary indexes, and 9 row-deletion policies**, including the additive column operations. This is the fully migrated **fresh-install** schema, not a claim that every production database already has each optional migration. In particular:
 
@@ -58,6 +58,80 @@ The generated schema contains **63 DDL statements: 21 tables, 14 secondary index
 - `migrate_gateway_request_index.sh` prepares the nonunique trace index; `--retire-unique` later drops the historical unique `tr_gateway_authorization_by_gateway_request_id`. Fresh installations include only `tr_gateway_authorization_by_trace_id`.
 - `migrate_trust_reconciliation.sh` conditionally recreates the old three-column-key marker table only when it contains no real reconciliation state. This fixture uses the current five-column primary key without running that destructive upgrade.
 - Existing installations intentionally add nullable key-window usage and reservation `credit_shard` columns; fresh CREATE definitions retain NOT NULL/defaults. This suite does not test historical rolling-upgrade schemas or backfills.
+
+## Scheduled production schema audit (#1372)
+
+`.github/workflows/spanner-schema-drift.yml` runs daily at 11:17 UTC and on manual
+dispatch, using the typed audit's existing WIF identity and the same digest-pinned
+Spanner emulator as CI. It needs no new secrets or IAM grants. The production
+path uses ADC and reads only `INFORMATION_SCHEMA` in a single read-only snapshot,
+restricted to the GoogleSQL default schema (`TABLE_SCHEMA = ''`, or
+`CONSTRAINT_SCHEMA = ''` for constraint-only views). It never scans entity bodies
+or other application tables.
+
+`python -m scripts.audit_spanner_schema` provisions and removes a unique emulator
+instance/database from `tests/conformance/spanner_ddl.py`, reads it using the same
+queries as production, and compares the sorted metadata. This comparison parses
+no schema statements. It covers table interleaving/deletion action/TTL; column
+ordinal, type, nullability, generated expression, stored flag and default; commit
+timestamp options; index type, uniqueness, null filtering, state, interleaving,
+ordered keys and storing columns; table/check constraints and foreign-key
+columns, targets and rules. Primary-key constraint names are canonicalized because
+they can be server generated; expressions retain their exact server text so
+whitespace inside literals cannot disappear. Index storing columns sort after keys.
+
+Reports put **FIXTURE-HAS / PRODUCTION-LACKS** first: these are objects that let SQL
+pass CI while failing in production. They also include **PRODUCTION-HAS /
+FIXTURE-LACKS** and individual attribute mismatches. `--json` emits a machine-readable
+report; `GITHUB_STEP_SUMMARY` appends a Markdown table. Exit codes are 0 for no
+unexplained differences, 1 for unexplained drift or stale allowlist entries, and 2
+when any metadata query, provisioning, cleanup, configuration, or report write fails.
+A failed or empty metadata read never counts as clean.
+
+The reviewed [allowlist](../../tests/conformance/spanner_schema_drift_allowlist.json)
+names one object and attribute per entry, with exact production and fixture values
+and a reason. `attribute: "object"` describes an entire absent/present object,
+including all of its attributes; it is not a wildcard. Every entry must match a
+current difference: stale entries fail even when the schemas otherwise agree.
+Seeds cover only the documented rolling-upgrade nullability, historical unique
+trace index, optional retention policies/entity TTL column, and manual Lightning
+constraint rename. They are hypotheses, **all `verified_against_production: false`**;
+server expression formatting and implicit index columns also require confirmation.
+The first production run supplies the evidence to confirm exact values, remove
+stale hypotheses, and set `verified_against_production: true` in a reviewed change.
+The script reports matched unverified entries but never edits or expands the
+allowlist automatically. An unexplained difference needs investigation, not a
+blanket exception. Other historical differences remain unexplained by design.
+
+For a local operator run, start the pinned emulator and select the operator's ADC:
+
+```bash
+gcloud auth application-default login --account josephjavierperla@tt.live
+docker run --rm -d --name tr-schema-audit-emulator -p 127.0.0.1:9010:9010 \
+  gcr.io/cloud-spanner-emulator/emulator@sha256:c6f3402f2599684f295a0fdefb6fbbbfb18a0e43e309ff5456ccb452a4570a79
+unset SPANNER_EMULATOR_HOST
+uv sync --frozen
+uv run python -m scripts.audit_spanner_schema --emulator-host 127.0.0.1:9010
+# Optional machine report:
+uv run python -m scripts.audit_spanner_schema --emulator-host 127.0.0.1:9010 --json
+docker stop tr-schema-audit-emulator
+```
+
+Defaults match the typed auditor: project `quill-cloud-proxy`, instance
+`trusted-router-nam6`, database `trusted-router`. Override with `--project`,
+`--instance`, `--database` or `TR_GCP_PROJECT_ID`, `TR_SPANNER_INSTANCE_ID`,
+`TR_SPANNER_DATABASE_ID`. The emulator endpoint uses `--emulator-host` or
+`TR_SCHEMA_AUDIT_EMULATOR_HOST`; only numeric loopback addresses are accepted.
+The parent refuses **any** `SPANNER_EMULATOR_HOST` setting (even empty) before
+constructing the production client. Only the separate child process receives
+that variable and anonymous emulator credentials. No production writes occur.
+
+Offline tests use synthetic metadata. The opt-in
+`tests/conformance/test_spanner_schema_audit.py` additionally provisions the fixture
+on the emulator and checks that every fixture table and secondary index is visible
+through this exact reader. It runs in CI's second focused emulator pytest step;
+without `TR_CONFORMANCE_EMULATOR_SCHEMA=1` it skips rather than claiming server
+coverage. Once opted in, an unavailable server fails.
 
 ## CI provisioning and emulator evidence
 
