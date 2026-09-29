@@ -4821,8 +4821,10 @@ def make_fake_store(
     request_record_write_mode: str = "legacy",
     operational_analytics_outbox_enabled: bool = False,
     generation_records_enabled: bool = False,
+    analytics_outbox_enabled: bool = False,
 ) -> tuple[Any, FakeSpannerDatabase]:
     from trusted_router.storage_gcp import SpannerBigtableStore
+    from trusted_router.storage_gcp_analytics_outbox import SpannerAnalyticsOutbox
     from trusted_router.storage_gcp_attribution import SpannerAcquisitionAttribution
     from trusted_router.storage_gcp_auth_sessions import SpannerAuthSessions
     from trusted_router.storage_gcp_broadcast import SpannerBroadcastDestinations
@@ -4895,6 +4897,9 @@ def make_fake_store(
         param_types=_ParamTypes,
         generation_records_enabled=generation_records_enabled,
         add_usage_to_key=store.api_keys.add_usage,
+        analytics_outbox=(
+            SpannerAnalyticsOutbox(db, _ParamTypes) if analytics_outbox_enabled else None
+        ),
         operational_analytics_outbox=store._operational_analytics_outbox,
     )
     store.byok_store = SpannerByok(io)

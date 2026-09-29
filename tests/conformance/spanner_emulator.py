@@ -209,11 +209,26 @@ def emulator_resources() -> Iterator[tuple[Any, str]]:
 
 @contextmanager
 def emulator_store(instance_id: str) -> Iterator[Any]:
+    from google.cloud.spanner_v1 import KeySet
+
+    from tests.fakes.analytics_pipeline import OutboxAnalyticsReader
     from trusted_router.storage_gcp import SpannerBigtableStore
 
     store = SpannerBigtableStore(
         project_id="tr-conformance", spanner_instance_id=instance_id,
         spanner_database_id="conformance",
+        operational_analytics_outbox_enabled=True, analytics_outbox_enabled=True,
+    )
+
+    def rows(table: str, columns: tuple[str, ...]) -> list[tuple[Any, ...]]:
+        with store._database.snapshot() as snapshot:
+            return [tuple(row) for row in snapshot.read(table=table, columns=columns, keyset=KeySet(all_=True))]
+
+    # The reader stands in for ClickHouse: it replays the rows the real
+    # outboxes committed to the emulator through the reference semantics.
+    store._operational_analytics = OutboxAnalyticsReader(
+        operational_rows=lambda: rows("tr_operational_analytics_outbox", ("event_kind", "event_id", "payload")),
+        benchmark_rows=lambda: rows("tr_analytics_outbox", ("event_id", "payload")),
     )
     try:
         yield store

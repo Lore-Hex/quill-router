@@ -400,7 +400,7 @@ def test_native_rollup_gap_is_strict_at_collection(backend):
 
     from tests.conformance.conftest import (
         _FAKE_ONLY_GAPS,
-        _NATIVE_ANALYTICS_IN_CLICKHOUSE,
+        _NATIVE_ROLLUPS_FROM_CLICKHOUSE_WORKER,
         pytest_collection_modifyitems,
     )
 
@@ -412,7 +412,7 @@ def test_native_rollup_gap_is_strict_at_collection(backend):
     pytest_collection_modifyitems([item])
     assert name not in _FAKE_ONLY_GAPS
     assert len(marks) == 1 and marks[0].name == "xfail" and marks[0].kwargs["strict"] is True
-    assert marks[0].kwargs["reason"] == _NATIVE_ANALYTICS_IN_CLICKHOUSE
+    assert marks[0].kwargs["reason"] == _NATIVE_ROLLUPS_FROM_CLICKHOUSE_WORKER
 
 
 @pytest.mark.parametrize("fixture", ["store", "user_credit_transfer_store", "unrelated_store"])

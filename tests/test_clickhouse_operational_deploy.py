@@ -423,6 +423,13 @@ def test_live_ingestion_restarts_every_daemon_whose_code_it_ships() -> None:
     script = (ROOT / "scripts/deploy/clickhouse_live_ingestion.sh").read_text()
 
     assert "systemctl restart tr-clickhouse-ingest.service" in script
+    # The Bigtable benchmark reconciler is retired: the archive extraction
+    # never deletes files, so an already-provisioned node must have its unit
+    # files stopped and removed, and nothing may enable them again.
+    assert "systemctl disable --now tr-clickhouse-reconcile.timer" in script
+    assert "rm -f /etc/systemd/system/tr-clickhouse-reconcile.service" in script
+    assert "enable --now tr-clickhouse-reconcile" not in script
+    assert "install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-reconcile" not in script
     # The operational drains restart through the guarded loop: both units are
     # named, and the loop both restarts and re-asserts activeness. The guard
     # exists because the postgres variant only exists on the AWS/Azure nodes.

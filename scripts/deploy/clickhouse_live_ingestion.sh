@@ -97,6 +97,14 @@ ssh_node --command="sudo sh -c '
     --multiquery < /opt/tr-clickhouse/clickhouse/012_activity_generations_workspace_id.sql
   clickhouse-client --user tr --password \"\$CH_PASSWORD\" --database tr \
     --multiquery < /opt/tr-clickhouse/clickhouse/014_reservation_overruns.sql
+  # The benchmark reconciler replayed Bigtable history into ClickHouse. The
+  # Bigtable analytics backend is retired (2026-09-29) and the archive
+  # extraction above never deletes files, so an already-provisioned node
+  # keeps the old unit files and modules: stop, disable and remove them.
+  systemctl disable --now tr-clickhouse-reconcile.timer \
+    tr-clickhouse-reconcile.service >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/tr-clickhouse-reconcile.service \
+    /etc/systemd/system/tr-clickhouse-reconcile.timer
   systemctl daemon-reload
   systemctl enable tr-clickhouse-ingest.service
   systemctl restart tr-clickhouse-ingest.service
