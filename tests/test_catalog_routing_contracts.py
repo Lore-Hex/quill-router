@@ -2,15 +2,22 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from tests.fixture_routes import drop_routes
 from tests.lifecycle_clock import catalog_predates
-from tests.pinned_manifests import GROK_47, build_manifest_rows
-from trusted_router import provider_lifecycle
+from tests.pinned_manifests import (
+    FIREWORKS_GLM_5_2,
+    GLM_5_2_ROUTES,
+    GROK_47,
+    OPENROUTER_GLM_5_2,
+    build_manifest_rows,
+)
+from trusted_router import catalog_ingest, provider_lifecycle
 from trusted_router.catalog import (
     ADVISOR_CATALOG_MODEL_ORDERS,
     ADVISOR_MODEL_ID,
@@ -1044,15 +1051,18 @@ def test_deepseek_v4_pro_release_routes_are_keyed_and_credits_only() -> None:
     assert endpoint_privacy_tier(baseten) >= PRIVACY_TIER_ZERO_RETENTION
 
 
-@pytest.mark.parametrize(
-    "model_id",
-    [
-        "moonshotai/kimi-k3",
-        "z-ai/glm-5.2",
-        "minimax/minimax-m3",
-    ],
-)
-def test_current_orchestration_backups_have_zdr_routes(model_id: str) -> None:
+_ORCHESTRATION_BACKUP_IDS = ["moonshotai/kimi-k3", "z-ai/glm-5.2", "minimax/minimax-m3"]
+
+
+@pytest.mark.parametrize("model_id", _ORCHESTRATION_BACKUP_IDS)
+def test_a_zdr_floor_keeps_only_the_zdr_routes_of_orchestration_backups(
+    model_id: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Each backup on a ZDR host (Parasail) and on a host with no retention
+    # guarantee (Novita), fixture routes both, whoever lists it today. Whether
+    # each still has a ZDR route is test_current_orchestration_backups_have_zdr_routes.
+    drop_routes(monkeypatch, model_id)
+    _serve_on_fixture_routes(monkeypatch, model_id, ("parasail", "Credits"), ("novita", "Credits"))
     candidates = chat_route_endpoint_candidates(
         {
             "model": model_id,
@@ -1063,6 +1073,7 @@ def test_current_orchestration_backups_have_zdr_routes(model_id: str) -> None:
     )
 
     assert candidates
+    assert [endpoint.id for _model, endpoint in candidates] == [f"{model_id}@parasail/prepaid"]
     assert all(
         endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_ZERO_RETENTION
         for _model, endpoint in candidates
@@ -1973,7 +1984,12 @@ def test_openpatcher_g1_and_g2_stay_frozen_while_g3_uses_prometheus_3() -> None:
     ])
 
 
-def test_provider_jurisdiction_filter_keeps_only_us_based_endpoints() -> None:
+def test_provider_jurisdiction_filter_keeps_only_us_based_endpoints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # GLM 5.2 on a US host and a Singapore host, fixture routes both, whoever
+    # lists it today.
+    _serve_on_fixture_routes(monkeypatch, "z-ai/glm-5.2", ("deepinfra", "Credits"), ("zai", "Credits"))
     endpoints = chat_route_endpoint_candidates(
         {"model": "z-ai/glm-5.2", "provider": {"jurisdiction": "us"}},
         Settings(environment="test"),
@@ -2575,10 +2591,24 @@ def test_wafer_manifest_drives_zdr_routing_and_gateway_enforcement(
     }
 
 
-def test_glm_52_supplements_publish_current_model_across_providers() -> None:
-    model_id = "z-ai/glm-5.2"
-    model = MODELS[model_id]
+def _glm_52_as_built(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> tuple[Model, dict[str, ModelEndpoint]]:
+    """GLM 5.2 as the catalog builds it from pinned data, whatever the hosts
+    list today: the model from OpenRouter's snapshot entry, and each host's
+    routes from its manifest row."""
+    snapshot = tmp_path / "openrouter_snapshot.json"
+    snapshot.write_text(json.dumps({"models": [OPENROUTER_GLM_5_2]}), encoding="utf-8")
+    with monkeypatch.context() as patch:
+        patch.setattr(catalog_ingest, "_INGEST_PATH", snapshot)
+        models, _ = catalog_ingest._ingested_models_and_endpoints()
+    endpoints: dict[str, ModelEndpoint] = {}
+    for provider, row in GLM_5_2_ROUTES:
+        endpoints |= build_manifest_rows(monkeypatch, tmp_path / provider, provider, [row])[1]
+    return models["z-ai/glm-5.2"], endpoints
 
+
+def _assert_glm_52_contract(model: Model, endpoints: dict[str, ModelEndpoint]) -> None:
     assert model.provider == "zai"
     # The context window comes from Z.AI's own endpoint, independent of
     # whichever reseller OpenRouter ranks as top_provider at refresh time.
@@ -2586,41 +2616,44 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     assert model.supports_chat
     # Each host that lists the model serves a priced prepaid route on the exact
     # upstream id its own manifest names; Z.AI's BYOK route uses Z.AI's id.
-    for endpoint_id in (
-        f"{model_id}@zai/prepaid",
-        f"{model_id}@zai/byok",
-        *(
-            f"{model_id}@{provider}/prepaid"
-            for provider in (
-                "gmi", "deepinfra", "fireworks", "novita", "phala", "siliconflow",
-                "together", "venice", "parasail", "friendli", "baseten",
-            )
-        ),
-    ):
-        row = _listed_row(endpoint_id.partition("@")[2].split("/")[0], model_id)
-        if row is None:
-            continue
-        endpoint = MODEL_ENDPOINTS[endpoint_id]
-        assert endpoint.upstream_id == row["upstream_id"], endpoint_id
-        assert endpoint.prompt_price_microdollars_per_million_tokens > 0, endpoint_id
-        assert endpoint.completion_price_microdollars_per_million_tokens > 0, endpoint_id
-    fireworks = [
-        endpoint for endpoint in endpoints_for_model(model_id)
-        if endpoint.provider == "fireworks" and endpoint.usage_type == "Credits"
-    ]
-    if not catalog_predates(FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT):
-        assert fireworks == []
+    for provider, row in GLM_5_2_ROUTES:
+        for usage in ("prepaid", "byok") if provider == "zai" else ("prepaid",):
+            endpoint_id = f"{model.id}@{provider}/{usage}"
+            endpoint = endpoints[endpoint_id]
+            assert endpoint.upstream_id == row["upstream_id"], endpoint_id
+            assert endpoint.prompt_price_microdollars_per_million_tokens > 0, endpoint_id
+            assert endpoint.completion_price_microdollars_per_million_tokens > 0, endpoint_id
+
+
+def test_glm_52_supplements_publish_current_model_across_providers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    _assert_glm_52_contract(*_glm_52_as_built(monkeypatch, tmp_path))
+
+    # Fireworks' route, still listed in its manifest, is built until its
+    # retirement on 2026-09-25 and never after.
+    fireworks_manifests = tmp_path / "fireworks"
+    fireworks_manifests.mkdir()
+    (fireworks_manifests / "fireworks.json").write_text(
+        json.dumps({"provider": "fireworks", "models": [FIREWORKS_GLM_5_2]}), encoding="utf-8"
+    )
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", fireworks_manifests)
+
+    def fireworks_routes(at: datetime) -> set[str]:
+        return set(catalog_ingest._supplemental_provider_models_and_endpoints(at=at)[1])
+
+    before = FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT - timedelta(microseconds=1)
+    assert "z-ai/glm-5.2@fireworks/prepaid" in fireworks_routes(before)
+    assert fireworks_routes(FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT) == set()
 
 
 @pytest.mark.parametrize("context_length", [131_072, 262_144, 1_000_000])
 def test_glm_52_context_contract_rejects_smaller_windows(
-    monkeypatch: pytest.MonkeyPatch, context_length: int
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, context_length: int
 ) -> None:
-    monkeypatch.setitem(
-        MODELS, "z-ai/glm-5.2", replace(MODELS["z-ai/glm-5.2"], context_length=context_length)
-    )
+    model, endpoints = _glm_52_as_built(monkeypatch, tmp_path)
     with pytest.raises(AssertionError):
-        test_glm_52_supplements_publish_current_model_across_providers()
+        _assert_glm_52_contract(replace(model, context_length=context_length), endpoints)
 
 
 def _assert_parasail_route_follows_its_row(model_id: str) -> dict[str, Any] | None:
@@ -2788,6 +2821,25 @@ def test_the_combo_badges_still_follow_their_open_and_closed_components() -> Non
         assert model_open_weights(MODELS[model_id]), model_id
     for model_id in _CLOSED_WEIGHT_BADGE_IDS:
         assert not model_open_weights(MODELS[model_id]), model_id
+
+
+@pytest.mark.provider_health
+@pytest.mark.parametrize("model_id", _ORCHESTRATION_BACKUP_IDS)
+def test_current_orchestration_backups_have_zdr_routes(model_id: str) -> None:
+    candidates = chat_route_endpoint_candidates(
+        {
+            "model": model_id,
+            "messages": [{"role": "user", "content": "PONG"}],
+            "provider": {"min_privacy": "zdr"},
+        },
+        Settings(environment="test"),
+    )
+
+    assert candidates
+    assert all(
+        endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_ZERO_RETENTION
+        for _model, endpoint in candidates
+    )
 
 
 @pytest.mark.provider_health
