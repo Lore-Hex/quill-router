@@ -289,3 +289,69 @@ def test_a_resumed_models_sweep_refuses_files_its_baseline_never_ran(
     # The selection the baseline covered resumes, with nothing left to run.
     sweep.models(root / "out", workers=2, only=["maker/model-a-fast"])
     assert len(runs) == 2
+
+
+def test_a_value_change_scales_every_price_and_limit_of_the_chosen_provider_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifests = tmp_path / "provider_models"
+    manifests.mkdir()
+    row = {
+        "id": "maker/m", "status": 1, "input_token_price_per_m": 1_000_000,
+        "output_token_price_per_m": 3_000_000, "cached_input_token_price_per_m": 0,
+        "context_length": 131_072, "max_output_tokens": 8_192,
+        "fixed_output_price_microdollars": {"1k": 1_364},
+        "price_tiers": [
+            {"max_prompt_tokens": 199_999, "input_token_price_per_m": 1_000_000},
+            {"max_prompt_tokens": None, "input_token_price_per_m": 2_000_000},
+        ],
+    }
+    for provider in ("alpha", "beta"):
+        (manifests / f"{provider}.json").write_text(json.dumps({"models": [row]}), encoding="utf-8")
+    snapshot = tmp_path / "openrouter_snapshot.json"
+    endpoints = [
+        {"tr_provider_slug": "alpha", "context_length": 131_072, "max_completion_tokens": None,
+         "pricing": {"prompt": "0.000001", "completion": "0", "discount": 0}},
+        {"tr_provider_slug": "beta", "context_length": 131_072, "pricing": {"prompt": "0.000001"}},
+    ]
+    snapshot.write_text(json.dumps({"models": [{"id": "maker/m", "endpoints": endpoints}]}), encoding="utf-8")
+    monkeypatch.setattr(sweep, "MANIFESTS", manifests)
+    monkeypatch.setattr(sweep, "SNAPSHOT", snapshot)
+
+    counts = sweep.perturb(["alpha"])
+
+    # Prices x1.07 and limits x0.9, rounded half up; zero and absent stay so.
+    assert json.loads((manifests / "alpha.json").read_text())["models"] == [{
+        **row, "input_token_price_per_m": 1_070_000, "output_token_price_per_m": 3_210_000,
+        "context_length": 117_965, "max_output_tokens": 7_373,
+        "fixed_output_price_microdollars": {"1k": 1_459},
+        "price_tiers": [
+            {"max_prompt_tokens": 179_999, "input_token_price_per_m": 1_070_000},
+            {"max_prompt_tokens": None, "input_token_price_per_m": 2_140_000},
+        ],
+    }]
+    assert json.loads((manifests / "beta.json").read_text())["models"] == [row]
+    snapshot_endpoints = json.loads(snapshot.read_text())["models"][0]["endpoints"]
+    assert snapshot_endpoints == [
+        {"tr_provider_slug": "alpha", "context_length": 117_965, "max_completion_tokens": None,
+         "pricing": {"prompt": "0.00000107", "completion": "0", "discount": 0}},
+        endpoints[1],
+    ]
+    assert counts == {"rows": 1, "endpoints": 1, "fields": 10}
+
+
+def test_the_values_sweep_changes_values_not_listings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    changed: list[list[str]] = []
+    monkeypatch.setattr(sweep, "restore", lambda: None)
+    monkeypatch.setattr(sweep, "delist", lambda group: pytest.fail("a value sweep delisted"))
+    monkeypatch.setattr(sweep, "perturb", lambda group: changed.append(group) or {})
+    monkeypatch.setattr(sweep, "run_pytest", lambda *_: (set(), "1 passed"))
+
+    sweep.sweep(tmp_path / "out", group_size=8, workers=1, values=True)
+
+    providers = sorted(path.stem for path in sweep.MANIFESTS.glob("*.json"))
+    assert [provider for group in changed for provider in group] == providers
+    assert (tmp_path / "out" / "values.json").exists()
+    assert not (tmp_path / "out" / "state.json").exists()

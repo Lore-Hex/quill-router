@@ -31,12 +31,24 @@ this in a disposable worktree with no uncommitted data edits:
     python3 scripts/tombstone_sweep.py models /tmp/models-out [--workers 6] [--only z-ai/glm-5.2 ...]
     python3 scripts/tombstone_sweep.py run - tests/test_x.py --vanish z-ai/glm-5.2
 
+    # each provider changing its prices and limits, in groups, then alone
+    python3 scripts/tombstone_sweep.py values /tmp/values-out [--group-size 8] [--workers 8]
+    python3 scripts/tombstone_sweep.py run featherless tests/test_x.py --perturb
+
 A provider delisting is one event; a model vanishing is another: providers sunset
 a model one by one until none serves it (Fireworks retired GLM 5.2 on 2026-09-25),
 and no single provider's delisting shows that. `models` tombstones one model's
 rows in every manifest and drops it from the snapshot, then runs the test files
 that name it, or name a catalog model that depends on it (a preset it is a member
 of, a name it backs), since those break with it.
+
+A provider can also change what it lists without delisting anything: a price, a
+context window. A release test that pins today's value then blocks the refresh
+the day the provider changes it. `values` scales every price in a provider's
+manifest rows and price tiers, and in its snapshot endpoints, by 1.07, and every
+context and output limit by 0.9, then runs the release suite like `sweep`. (The
+refresh's price-spike gate may hold a real jump that size; that gate is
+deliberate and not a test.)
 
 A sweep starts from a passing release suite, so every failure under a
 delisting is that delisting's. It resumes from OUT/state.json, and only with the
@@ -59,7 +71,9 @@ import sys
 import tempfile
 import time
 from collections import defaultdict
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
+from typing import Any
 
 ROOT = Path.cwd()
 DATA_PATHS = ["src/trusted_router/data/provider_models", "src/trusted_router/data/openrouter_snapshot.json"]
@@ -113,6 +127,87 @@ def delist(providers: list[str]) -> dict[str, int]:
     return counts
 
 
+PRICE_FACTOR = Decimal("1.07")
+LIMIT_FACTOR = Decimal("0.9")
+_LIMIT_KEYS = frozenset({"context_length", "max_output_tokens", "max_completion_tokens", "max_prompt_tokens"})
+
+
+def _is_price_key(key: str) -> bool:
+    return key.endswith(("_price_per_m", "_microdollars", "_microdollars_by_resolution"))
+
+
+def _scaled(value: Any, factor: Decimal) -> Any:
+    """A positive integer times factor, rounded, and changed even when rounding would not."""
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return value
+    scaled = int((Decimal(value) * factor).to_integral_value(rounding=ROUND_HALF_UP))
+    if scaled == value:
+        scaled = value + 1 if factor > 1 else max(1, value - 1)
+    return scaled
+
+
+def _perturb_fields(fields: dict[str, Any]) -> int:
+    changed = 0
+    for key, value in list(fields.items()):
+        if _is_price_key(key):
+            new = {k: _scaled(v, PRICE_FACTOR) for k, v in value.items()} if isinstance(value, dict) \
+                else _scaled(value, PRICE_FACTOR)
+        elif key in _LIMIT_KEYS:
+            new = _scaled(value, LIMIT_FACTOR)
+        else:
+            continue
+        if new != value:
+            fields[key] = new
+            changed += 1
+    return changed
+
+
+def perturb(providers: list[str]) -> dict[str, int]:
+    """Change each provider's prices by x1.07 and its limits by x0.9, in its
+    manifest rows and price tiers and in its snapshot endpoints."""
+    counts = {"rows": 0, "endpoints": 0, "fields": 0}
+    for provider in providers:
+        path = MANIFESTS / f"{provider}.json"
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        for row in raw.get("models", []):
+            if not isinstance(row, dict):
+                continue
+            changed = _perturb_fields(row)
+            for tier in row.get("price_tiers") or []:
+                if isinstance(tier, dict):
+                    changed += _perturb_fields(tier)
+            if changed:
+                counts["rows"] += 1
+                counts["fields"] += changed
+        path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+    chosen = set(providers)
+    snapshot = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
+    for model in snapshot.get("models", []):
+        for endpoint in model.get("endpoints") or []:
+            if endpoint.get("tr_provider_slug") not in chosen:
+                continue
+            changed = 0
+            pricing = endpoint.get("pricing") or {}
+            for key, value in list(pricing.items()):
+                try:
+                    amount = Decimal(value) if isinstance(value, str) else None
+                except InvalidOperation:
+                    amount = None
+                if amount is not None and amount > 0:
+                    pricing[key] = f"{(amount * PRICE_FACTOR).normalize():f}"
+                    changed += 1
+            for key in ("context_length", "max_completion_tokens", "max_prompt_tokens"):
+                new = _scaled(endpoint.get(key), LIMIT_FACTOR)
+                if new != endpoint.get(key):
+                    endpoint[key] = new
+                    changed += 1
+            if changed:
+                counts["endpoints"] += 1
+                counts["fields"] += changed
+    SNAPSHOT.write_text(json.dumps(snapshot), encoding="utf-8")
+    return counts
+
+
 def run_pytest(files: list[str], workers: int, log: Path) -> tuple[set[str], str]:
     """Run the release suite (or these files); return exact failed node ids and the summary."""
     failures_file = Path(tempfile.mkstemp(prefix="tombstone-failures-")[1])
@@ -154,9 +249,13 @@ def run_pytest(files: list[str], workers: int, log: Path) -> tuple[set[str], str
     return failures, summary
 
 
-def sweep(out: Path, group_size: int, workers: int) -> None:
+def sweep(out: Path, group_size: int, workers: int, *, values: bool = False) -> None:
+    """Change each group of providers' data, then each provider of a failing group
+    alone: delist everything, or (values=True) change every price and limit."""
+    alter = perturb if values else delist
+    event = "value change" if values else "delisting"
     out.mkdir(parents=True, exist_ok=True)
-    state_path = out / "state.json"
+    state_path = out / ("values.json" if values else "state.json")
     state = json.loads(state_path.read_text()) if state_path.exists() else {}
     providers = sorted(path.stem for path in MANIFESTS.glob("*.json"))
     # A saved group must be the group this run would test under its key;
@@ -197,7 +296,7 @@ def sweep(out: Path, group_size: int, workers: int) -> None:
             continue
         group = providers[index:index + group_size]
         try:
-            counts = delist(group)
+            counts = alter(group)
             failures, summary = run_pytest([], workers, out / f"{key}.log")
         finally:
             restore()
@@ -217,7 +316,7 @@ def sweep(out: Path, group_size: int, workers: int) -> None:
             if provider in state["single"]:
                 continue
             try:
-                counts = delist([provider])
+                counts = alter([provider])
                 failures, summary = run_pytest(files, workers, out / f"single-{provider}.log")
             finally:
                 restore()
@@ -231,8 +330,8 @@ def sweep(out: Path, group_size: int, workers: int) -> None:
         {test for group_state in state["groups"].values() for test in group_state["failures"]} - attributed
     )
     save()
-    log(f"done: {len(attributed)} tests fail on a single provider's delisting; "
-        f"{len(state['needs_several_providers'])} only when several are delisted together")
+    log(f"done: {len(attributed)} tests fail on a single provider's {event}; "
+        f"{len(state['needs_several_providers'])} only when several providers' change together")
 
 
 # Printed by the worktree's own catalog: every model some catalog model depends on
@@ -390,6 +489,11 @@ def main() -> None:
     run_parser.add_argument("files", nargs="*")
     run_parser.add_argument("--workers", type=int, default=2)
     run_parser.add_argument("--vanish", default="", help="comma-separated model ids to remove from every host")
+    run_parser.add_argument("--perturb", action="store_true", help="change prices and limits, not delist")
+    values_parser = commands.add_parser("values")
+    values_parser.add_argument("out", type=Path)
+    values_parser.add_argument("--group-size", type=int, default=8)
+    values_parser.add_argument("--workers", type=int, default=8)
     models_parser = commands.add_parser("models")
     models_parser.add_argument("out", type=Path)
     models_parser.add_argument("--workers", type=int, default=6)
@@ -403,11 +507,15 @@ def main() -> None:
     if args.command == "models":
         models(args.out, args.workers, args.only)
         return
+    if args.command == "values":
+        sweep(args.out, args.group_size, args.workers, values=True)
+        return
     providers = [] if args.providers == "-" else args.providers.split(",")
     restore()
     try:
         if providers:
-            print("delisted:", providers, delist(providers))
+            print("perturbed:" if args.perturb else "delisted:", providers,
+                  (perturb if args.perturb else delist)(providers))
         for model_id in filter(None, args.vanish.split(",")):
             print("vanished:", model_id, delist_model(model_id))
         failures, summary = run_pytest(args.files, args.workers, Path(tempfile.mkstemp(suffix=".log")[1]))
