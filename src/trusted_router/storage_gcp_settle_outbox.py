@@ -21,6 +21,7 @@ from typing import Any
 
 from google.api_core.exceptions import FailedPrecondition
 
+from trusted_router.storage_gcp_async_settlement import obligation_table_available
 from trusted_router.storage_gcp_batch_dml import DmlStatement, execute_batch_dml
 from trusted_router.storage_gcp_counter_dml import (
     clear_reservation_retention,
@@ -112,6 +113,7 @@ def _resolve_done_retention_tx(
     intent_kind: str,
     reservation_id: Any,
     now: str,
+    obligation_available: bool = True,
 ) -> None:
     """After an intent row goes ``done``: arm or defer retention on the shared
     authorization and reservation records, in the SAME transaction.
@@ -129,7 +131,7 @@ def _resolve_done_retention_tx(
     """
     statements = done_retention_statements(
         param_types, authorization_id=authorization_id, intent_kind=intent_kind,
-        reservation_id=reservation_id, now=now,
+        reservation_id=reservation_id, now=now, obligation_available=obligation_available,
     )
     execute_batch_dml(transaction, statements, [(0, 1)] * len(statements))
 
@@ -137,6 +139,7 @@ def _resolve_done_retention_tx(
 def done_retention_statements(
     param_types: Any, *, authorization_id: str, intent_kind: str,
     reservation_id: Any, now: str,
+    obligation_available: bool = True,
 ) -> list[DmlStatement]:
     """Resolve TTL in SQL against this transaction's current outbox range.
 
@@ -160,8 +163,20 @@ def done_retention_statements(
             "settled=true AND terminal_at IS NULL AND NOT EXISTS "
             "(SELECT 1 FROM tr_settle_outbox o "
             f"WHERE o.authorization_id = {table}.authorization_id "
-            f"AND o.status IN ({_GUARD_STATUS_SQL})))"
+            f"AND o.status IN ({_GUARD_STATUS_SQL})) AND NOT EXISTS ("
+            "SELECT 1 FROM tr_async_settlement_obligation a "
+            f"WHERE a.authorization_id = {table}.authorization_id "
+            "AND a.state NOT IN ('acknowledged', 'fenced')))"
         )
+        if not obligation_available:
+            sql = (
+                f"UPDATE {table} SET terminal_at=IF({sibling}, NULL, @now) "  # noqa: S608
+                f"WHERE {key}=@record_id AND IF({sibling}, terminal_at IS NOT NULL, "
+                "settled=true AND terminal_at IS NULL AND NOT EXISTS "
+                "(SELECT 1 FROM tr_settle_outbox o "
+                f"WHERE o.authorization_id = {table}.authorization_id "
+                f"AND o.status IN ({_GUARD_STATUS_SQL})))"
+            )
         statements.append((
             sql,
             {"aid": authorization_id, "kind": intent_kind, "record_id": value, "now": now},
@@ -191,6 +206,7 @@ _DONE_MISS_SQL = (
 def speculative_done_statements(
     param_types: Any, *, authorization_id: str, intent_kind: str,
     reservation_id: str,
+    obligation_available: bool = True,
 ) -> list[DmlStatement]:
     """Use the caller's retention target only after checking the stored identity.
 
@@ -207,7 +223,7 @@ def speculative_done_statements(
          "status": param_types.STRING, "rid": param_types.STRING},
     ), *done_retention_statements(
         param_types, authorization_id=authorization_id, intent_kind=intent_kind,
-        reservation_id=reservation_id, now=now,
+        reservation_id=reservation_id, now=now, obligation_available=obligation_available,
     )]
 
 
@@ -218,6 +234,7 @@ def mark_done_unleased_tx(
     authorization_id: str,
     intent_kind: str,
     retention_statements: list[DmlStatement] | None = None,
+    obligation_available: bool = True,
 ) -> bool:
     """Resolve only an unleased intent in the finalize commit.
 
@@ -227,7 +244,7 @@ def mark_done_unleased_tx(
     return _mark_done_tx(
         transaction, param_types, authorization_id=authorization_id,
         intent_kind=intent_kind, lease_owner=None,
-        retention_statements=retention_statements,
+        retention_statements=retention_statements, obligation_available=obligation_available,
     )
 
 
@@ -235,6 +252,7 @@ def _mark_done_tx(
     transaction: Any, param_types: Any, *, authorization_id: str,
     intent_kind: str, lease_owner: str | None, now: str | None = None,
     retention_statements: list[DmlStatement] | None = None,
+    obligation_available: bool = True,
 ) -> bool:
     now = now if now is not None else _iso_now()
     rows = list(transaction.execute_sql(
@@ -264,11 +282,13 @@ def _mark_done_tx(
         _resolve_done_retention_tx(
             transaction, param_types, authorization_id=authorization_id,
             intent_kind=intent_kind, reservation_id=rows[0][0], now=now,
+            obligation_available=obligation_available,
         )
     else:
         retention_statements.extend(done_retention_statements(
             param_types, authorization_id=authorization_id, intent_kind=intent_kind,
             reservation_id=rows[0][0], now=now,
+            obligation_available=obligation_available,
         ))
     return True
 
@@ -647,12 +667,14 @@ class SpannerSettleOutbox:
         the winner (or next claimant) re-runs the idempotent apply to re-derive
         the outcome. Only 'pending' rows are marked."""
         now = _iso_now()
+        obligation_available = obligation_table_available(self._database, self._pt) if done else True
 
         def txn(transaction: Any) -> str | None:
             if done:
                 return "done" if _mark_done_tx(
                     transaction, self._pt, authorization_id=authorization_id,
                     intent_kind=intent_kind, lease_owner=lease_owner, now=now,
+                    obligation_available=obligation_available,
                 ) else None
             rows = list(
                 transaction.execute_sql(

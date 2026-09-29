@@ -32,12 +32,20 @@ from trusted_router.storage_gcp_counters import UNSHARDED
 # the retention helpers below. Keep this SQL list in sync with that tuple.
 _OUTBOX_GUARD_STATUS_SQL = "'pending', 'dead'"
 
-_CLAIM_RESERVATION_SQL = (
+_CLAIM_RESERVATION_SQL_PRE_MIGRATION = (
     "UPDATE tr_reservation SET settled=true, actual_micro=@actual, "
     "settled_usage_type=@sut, terminal_at=@terminal_at "
     "WHERE reservation_id=@rid AND settled=false"
 )
-_CLAIM_RESERVATION_GUARDED_SQL = (
+_CLAIM_RESERVATION_SQL = (
+    "UPDATE tr_reservation SET settled=true, actual_micro=@actual, "
+    "settled_usage_type=@sut, terminal_at=IF(EXISTS ("
+    "SELECT 1 FROM tr_async_settlement_obligation a "
+    "WHERE a.authorization_id = tr_reservation.authorization_id "
+    "AND a.state NOT IN ('acknowledged', 'fenced')), NULL, @terminal_at) "
+    "WHERE reservation_id=@rid AND settled=false"
+)
+_CLAIM_RESERVATION_GUARDED_SQL_PRE_MIGRATION = (
     "UPDATE tr_reservation SET settled=true, actual_micro=@actual, "  # noqa: S608
     "settled_usage_type=@sut, terminal_at = IF("
     "EXISTS (SELECT 1 FROM tr_settle_outbox o "
@@ -45,16 +53,44 @@ _CLAIM_RESERVATION_GUARDED_SQL = (
     f"AND o.status IN ({_OUTBOX_GUARD_STATUS_SQL})), NULL, @terminal_at) "
     "WHERE reservation_id=@rid AND settled=false"
 )
-_COMPLETE_RESERVATION_RETENTION_SQL = (
+_CLAIM_RESERVATION_GUARDED_SQL = (
+    "UPDATE tr_reservation SET settled=true, actual_micro=@actual, "  # noqa: S608
+    "settled_usage_type=@sut, terminal_at = IF("
+    "EXISTS (SELECT 1 FROM tr_settle_outbox o "
+    "WHERE o.authorization_id = tr_reservation.authorization_id "
+    f"AND o.status IN ({_OUTBOX_GUARD_STATUS_SQL})) OR EXISTS ("
+    "SELECT 1 FROM tr_async_settlement_obligation a "
+    "WHERE a.authorization_id = tr_reservation.authorization_id "
+    "AND a.state NOT IN ('acknowledged', 'fenced')), NULL, @terminal_at) "
+    "WHERE reservation_id=@rid AND settled=false"
+)
+_COMPLETE_RESERVATION_RETENTION_SQL_PRE_MIGRATION = (
     "UPDATE tr_reservation SET terminal_at=@terminal_at "
     "WHERE reservation_id=@rid AND settled=true AND terminal_at IS NULL"
+)
+_COMPLETE_RESERVATION_RETENTION_SQL = (
+    "UPDATE tr_reservation SET terminal_at=@terminal_at "
+    "WHERE reservation_id=@rid AND settled=true AND terminal_at IS NULL "
+    "AND NOT EXISTS (SELECT 1 FROM tr_async_settlement_obligation a "
+    "WHERE a.authorization_id = tr_reservation.authorization_id "
+    "AND a.state NOT IN ('acknowledged', 'fenced'))"
+)
+_COMPLETE_RESERVATION_RETENTION_GUARDED_SQL_PRE_MIGRATION = (
+    "UPDATE tr_reservation SET terminal_at=@terminal_at "  # noqa: S608
+    "WHERE reservation_id=@rid AND settled=true AND terminal_at IS NULL "
+    "AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox o "
+    "WHERE o.authorization_id = tr_reservation.authorization_id "
+    f"AND o.status IN ({_OUTBOX_GUARD_STATUS_SQL}))"
 )
 _COMPLETE_RESERVATION_RETENTION_GUARDED_SQL = (
     "UPDATE tr_reservation SET terminal_at=@terminal_at "  # noqa: S608
     "WHERE reservation_id=@rid AND settled=true AND terminal_at IS NULL "
     "AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox o "
     "WHERE o.authorization_id = tr_reservation.authorization_id "
-    f"AND o.status IN ({_OUTBOX_GUARD_STATUS_SQL}))"
+    f"AND o.status IN ({_OUTBOX_GUARD_STATUS_SQL})) "
+    "AND NOT EXISTS (SELECT 1 FROM tr_async_settlement_obligation a "
+    "WHERE a.authorization_id = tr_reservation.authorization_id "
+    "AND a.state NOT IN ('acknowledged', 'fenced'))"
 )
 
 # reserve_key outcomes (the per-key spend-cap counterpart of reserve_credit).
@@ -715,6 +751,7 @@ def claim_reservation(
     terminal_at: Any | None = None,
     defer_retention: bool = False,
     outbox_available: bool = True,
+    obligation_available: bool = True,
     expires_before: Any | None = None,
 ) -> bool:
     """Claim a reservation for settle/refund: first caller wins.
@@ -728,7 +765,7 @@ def claim_reservation(
         param_types, reservation_id, actual_micro=actual_micro,
         settled_usage_type=settled_usage_type, terminal_at=terminal_at,
         defer_retention=defer_retention, outbox_available=outbox_available,
-        expires_before=expires_before,
+        expires_before=expires_before, obligation_available=obligation_available,
     )
     return transaction.execute_update(sql, params=params, param_types=types) == 1
 
@@ -737,6 +774,7 @@ def claim_reservation_statement(
     param_types: Any, reservation_id: str, *, actual_micro: int,
     settled_usage_type: str, terminal_at: Any | None = None,
     defer_retention: bool = False, outbox_available: bool = True,
+    obligation_available: bool = True,
     expires_before: Any | None = None,
 ) -> DmlStatement:
     """Build the same conditional claim for standalone or batch execution."""
@@ -744,6 +782,9 @@ def claim_reservation_statement(
         None if defer_retention else (terminal_at or datetime.now(UTC))
     )
     sql = _CLAIM_RESERVATION_GUARDED_SQL if outbox_available else _CLAIM_RESERVATION_SQL
+    if not obligation_available:
+        sql = (_CLAIM_RESERVATION_GUARDED_SQL_PRE_MIGRATION if outbox_available
+               else _CLAIM_RESERVATION_SQL_PRE_MIGRATION)
     params = {
             "rid": reservation_id,
             "actual": int(actual_micro),
@@ -773,12 +814,16 @@ def complete_reservation_retention(
     *,
     terminal_at: Any,
     outbox_available: bool = True,
+    obligation_available: bool = True,
 ) -> int:
     """Start TTL only after all durable settlement repair work is complete."""
+    sql = (_COMPLETE_RESERVATION_RETENTION_GUARDED_SQL if outbox_available
+           else _COMPLETE_RESERVATION_RETENTION_SQL)
+    if not obligation_available:
+        sql = (_COMPLETE_RESERVATION_RETENTION_GUARDED_SQL_PRE_MIGRATION if outbox_available
+               else _COMPLETE_RESERVATION_RETENTION_SQL_PRE_MIGRATION)
     return transaction.execute_update(
-        _COMPLETE_RESERVATION_RETENTION_GUARDED_SQL
-        if outbox_available
-        else _COMPLETE_RESERVATION_RETENTION_SQL,
+        sql,
         params={
             "rid": reservation_id,
             "terminal_at": terminal_at,

@@ -52,6 +52,10 @@ from trusted_router.spend_windows import (
     window_floors,
 )
 from trusted_router.stage_d import parse_pricing_snapshot
+from trusted_router.storage_gcp_async_settlement import (
+    ASYNC_GUARD_COUNT_SQL,
+    obligation_table_available,
+)
 from trusted_router.storage_gcp_batch_dml import DmlStatement, execute_batch_dml
 from trusted_router.storage_gcp_counter_dml import (
     KEY_ACCEPTED,
@@ -945,6 +949,7 @@ def settle_atomic(
     book_actual = actual_micro if success else 0
     book_to_byok = settled_usage_type == "BYOK"
     terminal_at = utcnow()
+    obligation_available = obligation_table_available(database, pt)
     resolved_outbox_available = (
         _outbox_table_available(database, pt) if outbox_available is None else outbox_available
     )
@@ -953,6 +958,13 @@ def settle_atomic(
         res = read_reservation(transaction, pt, reservation_id)
         if res is None:
             return {"outcome": SettleOutcome.NOT_FOUND}
+        if obligation_available and (guard_outbox or expires_before is not None) and res.get("authorization_id"):
+            async_rows = list(transaction.execute_sql(
+                ASYNC_GUARD_COUNT_SQL, params={"aid": res["authorization_id"]},
+                param_types={"aid": pt.STRING},
+            ))
+            if async_rows and int(async_rows[0][0]) > 0:
+                return {"outcome": SettleOutcome.OUTBOX_GUARDED}
         if guard_outbox and resolved_outbox_available:
             aid = res.get("authorization_id")
             if aid:
@@ -976,7 +988,7 @@ def settle_atomic(
             actual_micro=book_actual,
             settled_usage_type=settled_usage_type,
             terminal_at=terminal_at,
-            outbox_available=resolved_outbox_available,
+            outbox_available=resolved_outbox_available, obligation_available=obligation_available,
             expires_before=expires_before,
         )
         if not won:
@@ -1035,7 +1047,7 @@ def settle_atomic(
         return {"outcome": SettleOutcome.ERROR}
 
 
-def _is_table_missing(exc: Exception) -> bool:
+def _is_table_missing(exc: Exception, table: str = "tr_settle_outbox") -> bool:
     # Rollout guard: code can deploy before the operator-applied outbox DDL.
     # FAIL CLOSED on everything except the ONE real "table itself is missing"
     # shape: Cloud Spanner (and its emulator) raise NotFound("Table not found:
@@ -1048,7 +1060,7 @@ def _is_table_missing(exc: Exception) -> bool:
     lowered = str(exc).lower()
     return (
         "table not found" in lowered
-        and "tr_settle_outbox" in lowered.split("table not found", 1)[1]
+        and table in lowered.split("table not found", 1)[1]
     )
 
 
@@ -1163,10 +1175,29 @@ def _outbox_table_available(database: Any, param_types: Any) -> bool:
 # starve unguarded expired holds behind them (PR #116 review P2). The NOT
 # EXISTS runs on a snapshot, so it is ADVISORY ONLY — the strong re-read
 # inside settle_atomic(guard_outbox=True) remains the MF2 interlock.
-_REAP_SCAN_SQL = (
+_REAP_SCAN_SQL_PRE_MIGRATION = (
     "SELECT reservation_id, authorization_id, credit_reserved_micro, key_reserved_micro "
     "FROM tr_reservation "
     "WHERE settled=false AND expires_at < @now LIMIT @limit"
+)
+_REAP_SCAN_SQL = (
+    "SELECT reservation_id, authorization_id, credit_reserved_micro, key_reserved_micro "
+    "FROM tr_reservation "
+    "WHERE settled=false AND expires_at < @now "
+    "AND NOT EXISTS (SELECT 1 FROM tr_async_settlement_obligation a "
+    "WHERE a.authorization_id = tr_reservation.authorization_id "
+    "AND a.state NOT IN ('acknowledged', 'fenced')) "
+    "LIMIT @limit"
+)
+_REAP_SCAN_GUARDED_SQL_PRE_MIGRATION = (
+    "SELECT reservation_id, authorization_id, credit_reserved_micro, "  # noqa: S608
+    "key_reserved_micro "
+    "FROM tr_reservation "
+    "WHERE settled=false AND expires_at < @now "
+    "AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox o "
+    "WHERE o.authorization_id = tr_reservation.authorization_id "
+    f"AND o.status IN ({_GUARD_STATUS_SQL})) "
+    "LIMIT @limit"
 )
 _REAP_SCAN_GUARDED_SQL = (
     "SELECT reservation_id, authorization_id, credit_reserved_micro, "  # noqa: S608
@@ -1176,6 +1207,9 @@ _REAP_SCAN_GUARDED_SQL = (
     "AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox o "
     "WHERE o.authorization_id = tr_reservation.authorization_id "
     f"AND o.status IN ({_GUARD_STATUS_SQL})) "
+    "AND NOT EXISTS (SELECT 1 FROM tr_async_settlement_obligation a "
+    "WHERE a.authorization_id = tr_reservation.authorization_id "
+    "AND a.state NOT IN ('acknowledged', 'fenced')) "
     "LIMIT @limit"
 )
 
@@ -1227,7 +1261,11 @@ def reap_expired_reservations_result(
         now=time.monotonic(),
     )
 
+    obligation_available = obligation_table_available(database, pt)
     scan_sql = _REAP_SCAN_GUARDED_SQL if guard_active else _REAP_SCAN_SQL
+    if not obligation_available:
+        scan_sql = (_REAP_SCAN_GUARDED_SQL_PRE_MIGRATION if guard_active
+                    else _REAP_SCAN_SQL_PRE_MIGRATION)
     with database.snapshot() as snapshot:
         rows = list(
             snapshot.execute_sql(
@@ -1358,6 +1396,7 @@ def _finalize_reaped_reservation_atomic(
     )
 
     pt = param_types
+    obligation_available = obligation_table_available(database, pt)
     reap_timestamp = _reap_datetime(reap_now)
 
     def txn(transaction: Any) -> _ReapOneResult:
@@ -1372,6 +1411,13 @@ def _finalize_reaped_reservation_atomic(
         ):
             return _ReapOneResult(SettleOutcome.NOT_ELIGIBLE)
         authorization_id = str(res.get("authorization_id") or "")
+        if obligation_available and authorization_id:
+            async_rows = list(transaction.execute_sql(
+                ASYNC_GUARD_COUNT_SQL, params={"aid": authorization_id},
+                param_types={"aid": pt.STRING},
+            ))
+            if async_rows and int(async_rows[0][0]) > 0:
+                return _ReapOneResult(SettleOutcome.OUTBOX_GUARDED)
         if guard_outbox and authorization_id:
             guarded = list(
                 transaction.execute_sql(
@@ -1481,7 +1527,7 @@ def _finalize_reaped_reservation_atomic(
             settled_usage_type="Credits",
             terminal_at=reap_timestamp,
             defer_retention=True,
-            outbox_available=guard_outbox,
+            outbox_available=guard_outbox, obligation_available=obligation_available,
             expires_before=reap_timestamp,
         )
         if not won:
@@ -1525,7 +1571,7 @@ def _finalize_reaped_reservation_atomic(
                 pt,
                 reservation_id,
                 terminal_at=reap_timestamp,
-                outbox_available=guard_outbox,
+                outbox_available=guard_outbox, obligation_available=obligation_available,
             )
             != 1
         ):
@@ -1536,7 +1582,7 @@ def _finalize_reaped_reservation_atomic(
                 pt,
                 authorization_id,
                 terminal_at=reap_timestamp,
-                outbox_available=guard_outbox,
+                outbox_available=guard_outbox, obligation_available=obligation_available,
             )
             != 1
         ):
@@ -1673,6 +1719,7 @@ def typed_finalize_atomic(
     book_actual = actual_micro if success else 0
     book_to_byok = settled_usage_type == "BYOK"
     writes = generation_writes or []
+    obligation_available = obligation_table_available(database, pt)
     resolved_outbox_available = (
         _outbox_table_available(database, pt) if outbox_available is None else outbox_available
     )
@@ -1706,7 +1753,7 @@ def typed_finalize_atomic(
             statements.append(claim_reservation_statement(
                 pt, reservation_id, actual_micro=book_actual,
                 settled_usage_type=settled_usage_type, terminal_at=now,
-                defer_retention=True, outbox_available=resolved_outbox_available,
+                defer_retention=True, outbox_available=resolved_outbox_available, obligation_available=obligation_available,
             ))
             reasons.append("claim_zero")
         statements.append(gateway_authorization_settled_statement(pt, authorization))
@@ -1716,7 +1763,7 @@ def typed_finalize_atomic(
             assert settle_outbox_done is not None
             done = speculative_done_statements(
                 pt, authorization_id=settle_outbox_done[0], intent_kind=settle_outbox_done[1],
-                reservation_id=reservation_id,
+                reservation_id=reservation_id, obligation_available=obligation_available,
             )
             statements.extend(done)
             counts.extend([(1,), *[(0, 1)] * (len(done) - 1)])
@@ -1757,7 +1804,7 @@ def typed_finalize_atomic(
                 settled_usage_type=settled_usage_type,
                 terminal_at=now,
                 defer_retention=True,
-                outbox_available=resolved_outbox_available,
+                outbox_available=resolved_outbox_available, obligation_available=obligation_available,
             )
             if not won:
                 return {
@@ -1868,7 +1915,7 @@ def typed_finalize_atomic(
                     pt,
                     reservation_id,
                     terminal_at=now,
-                    outbox_available=resolved_outbox_available,
+                    outbox_available=resolved_outbox_available, obligation_available=obligation_available,
                 )
             outbox_marked = None
             final_writes: list[DmlStatement] = []
@@ -1881,6 +1928,7 @@ def typed_finalize_atomic(
                 outbox_marked = mark_done_unleased_tx(
                     transaction, pt, authorization_id=settle_outbox_done[0],
                     intent_kind=settle_outbox_done[1], retention_statements=final_writes,
+                    obligation_available=obligation_available,
                 )
                 final_counts.extend([(0, 1)] * len(final_writes))
             if success and generation is not None:

@@ -71,6 +71,8 @@ _TYPED_DEFAULTS: dict[str, dict[str, Any]] = {
 }
 
 _TYPED_PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
+    "tr_async_settlement_budget": ("workspace_id", "epoch"),
+    "tr_async_settlement_obligation": ("authorization_id",),
     "tr_credit_balance": ("workspace_id", "shard"),
     "tr_earnings_balance": ("user_id", "shard"),
     "tr_user_lifetime_topup": ("user_id",),
@@ -106,6 +108,8 @@ def _apply_upsert_typed(
     row = dict(existing) if existing is not None else dict(_TYPED_DEFAULTS.get(table, {}))
     row.update(incoming)
     table_rows[pk] = row
+    if table.startswith("tr_async_"):
+        versions[(table, ())] = version
     versions[(table, pk)] = version
 
 
@@ -180,6 +184,7 @@ class FakeSpannerDatabase:
         ready_barrier: threading.Barrier | None = None,
         now: dt.datetime | None = None,
     ) -> None:
+        self.missing_tables: set[str] = set()
         self.rows: dict[tuple[str, str], _Row] = {}
         # Typed counter tables (tr_credit_balance, tr_key_limit): table ->
         # (pk col0, pk col1) -> {column: value}. PK is the first two columns.
@@ -594,6 +599,13 @@ class _FakeTransaction:
             self.db.settle_outbox.get(pk),
         )
 
+    def _has_async_guard(self, sql: str, aid: str) -> bool:
+        if "tr_async_settlement_obligation" not in sql:
+            return False
+        _require_pred(sql, "state NOT IN ('acknowledged', 'fenced')", "async guard states")
+        row = self._typed_current("tr_async_settlement_obligation", (aid,))
+        return bool(row and row["state"] not in ("acknowledged", "fenced"))
+
     def _has_guarded_outbox_intent(self, authorization_id: str) -> bool:
         """Evaluate the correlated pending/dead EXISTS against the in-txn view."""
         # Range read (absence included) — record the per-authorization range
@@ -756,6 +768,7 @@ class _FakeTransaction:
         and serialize via abort-retry), evaluates the WHERE predicate, and
         conditionally buffers the SET. Returns the modified-row count.
         """
+        _check_missing_tables(self.db, sql)
         _validate_json_arguments(sql)
         if not self._in_batch and not getattr(self, "_in_returning", False):
             self.db.transaction_execute_update_calls += 1
@@ -1554,7 +1567,7 @@ class _FakeTransaction:
             else:
                 _require_pred(
                     sql,
-                    "settled_usage_type=@sut, terminal_at=@terminal_at",
+                    "settled_usage_type=@sut, terminal_at=",
                     "reservation-claim-retention-unguarded",
                 )
             rec = self._reservation_current(p["rid"])
@@ -1572,7 +1585,8 @@ class _FakeTransaction:
             ):
                 return 0  # missing or already-claimed (replay)
             terminal_at = p["terminal_at"]
-            if guarded and self._has_guarded_outbox_intent(str(rec["authorization_id"])):
+            if ((guarded and self._has_guarded_outbox_intent(str(rec["authorization_id"])))
+                    or self._has_async_guard(sql, str(rec["authorization_id"]))):
                 terminal_at = None
             new = dict(
                 rec,
@@ -1595,7 +1609,7 @@ class _FakeTransaction:
                           "settled=true AND terminal_at IS NULL AND NOT EXISTS "
                           "(SELECT 1 FROM tr_settle_outbox o "
                           f"WHERE o.authorization_id = {table}.authorization_id "
-                          f"AND o.status IN ({_GUARD_STATUS_SQL})))", "done-retention")
+                          f"AND o.status IN ({_GUARD_STATUS_SQL}))", "done-retention")
             siblings = _execute_sql(self.db, self,
                 "SELECT COUNT(*) FROM tr_settle_outbox WHERE authorization_id=@aid "  # noqa: S608
                 f"AND intent_kind != @kind AND status IN ({_GUARD_STATUS_SQL})", p)[0][0]
@@ -1609,7 +1623,8 @@ class _FakeTransaction:
                 terminal_at = None
             else:
                 if (not rec.get("settled") or rec.get("terminal_at") is not None
-                    or self._has_guarded_outbox_intent(str(rec["authorization_id"]))):
+                    or self._has_guarded_outbox_intent(str(rec["authorization_id"]))
+                    or self._has_async_guard(sql, str(rec["authorization_id"]))):
                     return 0
                 terminal_at = p["now"]
             operation = "update_reservation" if table == "tr_reservation" else "update_gateway_authorization"
@@ -1641,7 +1656,8 @@ class _FakeTransaction:
             rec = self._reservation_current(p["rid"])
             if rec is None or not rec.get("settled") or rec.get("terminal_at") is not None:
                 return 0
-            if guarded and self._has_guarded_outbox_intent(str(rec["authorization_id"])):
+            if ((guarded and self._has_guarded_outbox_intent(str(rec["authorization_id"])))
+                    or self._has_async_guard(sql, str(rec["authorization_id"]))):
                 return 0
             new = dict(rec, terminal_at=p["terminal_at"])
             self.pending_writes.append(("update_reservation", p["rid"], new))
@@ -1826,7 +1842,8 @@ class _FakeTransaction:
             rec = self._gateway_authorization_current(authorization_id)
             if rec is None or not rec.get("settled") or rec.get("terminal_at") is not None:
                 return 0
-            if guarded and self._has_guarded_outbox_intent(authorization_id):
+            if ((guarded and self._has_guarded_outbox_intent(authorization_id))
+                    or self._has_async_guard(sql, authorization_id)):
                 return 0
             new = dict(rec, terminal_at=p["terminal_at"])
             self.pending_writes.append(("update_gateway_authorization", authorization_id, new))
@@ -3260,12 +3277,57 @@ def _execute_settle_outbox_sql(
     raise NotImplementedError(sql)
 
 
+def _check_missing_tables(db: FakeSpannerDatabase, sql: str) -> None:
+    from google.api_core.exceptions import NotFound
+
+    for table in db.missing_tables:
+        if re.search(r"\b" + re.escape(table) + r"\b", sql):
+            raise NotFound(f"Table not found: {table}")
+
+
 def _execute_sql(
     db: FakeSpannerDatabase,
     txn: _FakeTransaction | None,
     sql: str,
     params: dict[str, Any],
 ) -> list[list[str]]:
+    _check_missing_tables(db, sql)
+    if sql.startswith("SELECT settled FROM tr_gateway_authorization"):
+        aid = params["aid"]
+        row = txn._gateway_authorization_current(aid) if txn else db.gateway_authorizations.get(aid)
+        return [[row["settled"]]] if row else []
+    if sql.startswith("SELECT settled FROM tr_reservation"):
+        aid = params["aid"]
+        if txn:
+            txn.read_versions[("res_auth", aid)] = db.reservation_auth_versions.get(aid, 0)
+        rows = []
+        for rid, row in db.reservations.items():
+            if row.get("authorization_id") == aid:
+                current = txn._reservation_current(rid) if txn else row
+                rows.append([current["settled"]])
+        return rows
+    if sql.startswith("SELECT COUNT(*) FROM tr_async_settlement_obligation"):
+        _require_pred(sql, "authorization_id=@aid", "async guard complete primary key")
+        aid = params["aid"]
+        if txn:
+            return [[int(txn._has_async_guard(sql, aid))]]
+        row = db.typed.get("tr_async_settlement_obligation", {}).get((aid,))
+        return [[int(bool(row and row["state"] not in ("acknowledged", "fenced")))]]
+    if sql.startswith(("SELECT workspace_id, epoch, region, cap", "SELECT authorization_id, workspace_id, epoch, region, shard")):
+        select, source = sql.split(" FROM ", 1)
+        table = source.split()[0]
+        if txn:
+            txn.read_versions.setdefault(("typed", table, ()), db.typed_versions.get((table, ()), 0))
+        records = [
+            txn._typed_current(table, pk) if txn else row
+            for pk, row in db.typed.get(table, {}).items()
+        ]
+        for parameter, column in (("workspace", "workspace_id"), ("epoch", "epoch"), ("aid", "authorization_id")):
+            if parameter in params:
+                _require_pred(sql, f"{column}=@{parameter}", "async registry filter")
+                records = [r for r in records if r[column] == params[parameter]]
+        columns = select.removeprefix("SELECT ").split(", ")
+        return [[r.get(c) for c in columns] for r in records]
     _validate_json_arguments(sql)
     kind = params.get("kind", "")
 
@@ -3996,7 +4058,7 @@ def _execute_sql(
         )
         _require_pred(sql, "expires_at < @now", "reaper-scan")
         _require_pred(sql, "LIMIT @limit", "reaper-scan")
-        guarded = "NOT EXISTS" in sql
+        guarded = "tr_settle_outbox" in sql
         if guarded:
             _require_pred(
                 sql,
@@ -4020,6 +4082,12 @@ def _execute_sql(
                     row.get("authorization_id") == aid and row.get("status") in GUARD_STATUSES
                     for row in db.settle_outbox.values()
                 ):
+                    continue
+            if "tr_async_settlement_obligation" in sql:
+                _require_pred(sql, "a.authorization_id = tr_reservation.authorization_id", "async scan PK")
+                _require_pred(sql, "a.state NOT IN ('acknowledged', 'fenced')", "async scan states")
+                obligation = db.typed.get("tr_async_settlement_obligation", {}).get((rec.get("authorization_id"),))
+                if obligation and obligation["state"] not in ("acknowledged", "fenced"):
                     continue
             out.append(
                 [

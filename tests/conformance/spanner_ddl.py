@@ -6,6 +6,7 @@ Do not remove emulator-incompatible DDL; provisioning must report it.
 
 SOURCE_DIGESTS = {'scripts/deploy/infra.sh': 'd45d94bc8133ac3279d458624966e8cedf7d9228891590585cb6c843cc4a18a2',
  'scripts/deploy/migrate_analytics_outbox.sh': '945b54b4d2f81d271f935c3360f14bb26aa52c19a823d61215ebe5cd0a478605',
+ 'scripts/deploy/migrate_async_settlement.sh': '8b7068822fc307500ca34333091314af193cedca46b2379f3b6de782a81099d1',
  'scripts/deploy/migrate_entity_ttl.sh': 'ad4f59b3608ff39a158244b71405ed427b5e47542665afb85370afd2cbebaa9f',
  'scripts/deploy/migrate_gateway_request_index.sh': '5b9a4b18007649f3108214ab2274d216b989909a5098cf38944cad7c7ad480f2',
  'scripts/deploy/migrate_generation_records.sh': 'de31377ce0ddc13926509564bf93426edb3f5fe897072ef9886db160864c0951',
@@ -25,6 +26,22 @@ DDL = ('CREATE TABLE tr_entities (kind STRING(64) NOT NULL, id STRING(512) NOT N
  'OPTIONS (allow_commit_timestamp=true), event_id STRING(128) NOT NULL, payload STRING(MAX) '
  'NOT NULL, ) PRIMARY KEY (shard, commit_ts, event_id), ROW DELETION POLICY '
  '(OLDER_THAN(commit_ts, INTERVAL 7 DAY))',
+ 'CREATE TABLE tr_async_settlement_budget ( workspace_id STRING(256) NOT NULL, epoch '
+ 'STRING(256) NOT NULL, region STRING(256) NOT NULL, cap INT64 NOT NULL, shards INT64 NOT '
+ 'NULL, slots INT64 NOT NULL, state STRING(16) NOT NULL, recorded_bound INT64, successor_epoch '
+ 'STRING(256), retention_deadline INT64, created_at TIMESTAMP NOT NULL, updated_at TIMESTAMP '
+ "NOT NULL, CONSTRAINT async_budget_state CHECK (state IN ('active', 'retiring', 'closed')), "
+ 'CONSTRAINT async_budget_bound CHECK (recorded_bound IS NULL OR (recorded_bound >= 0 AND '
+ 'recorded_bound <= cap)), ) PRIMARY KEY (workspace_id, epoch)',
+ 'CREATE TABLE tr_async_settlement_obligation ( authorization_id STRING(256) NOT NULL, '
+ 'workspace_id STRING(256) NOT NULL, epoch STRING(256) NOT NULL, region STRING(256) NOT NULL, '
+ 'shard INT64 NOT NULL, slot INT64 NOT NULL, generation_id STRING(256) NOT NULL, key_id '
+ 'STRING(256) NOT NULL, invocation_nonce STRING(256) NOT NULL, snapshot_hash STRING(64) NOT '
+ 'NULL, snapshot_version INT64 NOT NULL, idempotency_deadline INT64 NOT NULL, state STRING(16) '
+ 'NOT NULL, payload_hash STRING(64), amount INT64, ledger_receipt STRING(MAX), created_at '
+ 'TIMESTAMP NOT NULL, updated_at TIMESTAMP NOT NULL, CONSTRAINT async_obligation_state CHECK '
+ "(state IN ('pending', 'accepted', 'sync_required', 'fenced', 'acknowledged')), ) PRIMARY KEY "
+ '(authorization_id)',
  'CREATE TABLE tr_generation ( generation_id STRING(128) NOT NULL, workspace_id STRING(64) NOT '
  'NULL, key_hash STRING(128) NOT NULL, created_at TIMESTAMP NOT NULL, terminal_at TIMESTAMP '
  'NOT NULL, payload STRING(MAX) NOT NULL, ) PRIMARY KEY (generation_id), ROW DELETION POLICY '
@@ -172,6 +189,8 @@ DDL = ('CREATE TABLE tr_entities (kind STRING(64) NOT NULL, id STRING(512) NOT N
  'ALTER TABLE tr_gateway_authorization ADD COLUMN stage_d_boot_kid STRING(128)',
  'ALTER TABLE tr_gateway_authorization ADD COLUMN invocation_nonce STRING(64)',
  'ALTER TABLE tr_gateway_authorization ADD COLUMN gateway_request_id STRING(37)',
+ 'CREATE UNIQUE INDEX tr_async_obligation_by_slot ON tr_async_settlement_obligation '
+ '(workspace_id, epoch, shard, slot)',
  'CREATE NULL_FILTERED INDEX tr_gateway_authorization_by_trace_id ON tr_gateway_authorization '
  '(gateway_request_id)',
  'CREATE INDEX tr_generation_by_terminal_at ON tr_generation(terminal_at DESC) STORING '

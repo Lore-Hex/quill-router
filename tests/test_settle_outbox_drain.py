@@ -596,7 +596,7 @@ def test_fresh_settle_round_trip_order(
     settle_operations: list[tuple[Any, str, dict[str, Any]]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from trusted_router import storage_gcp_authorize
+    from trusted_router import storage_gcp_async_settlement, storage_gcp_authorize
 
     store, db, _bt = prod_shaped_store
     ws = "ws-fresh-rtt"
@@ -607,11 +607,12 @@ def test_fresh_settle_round_trip_order(
     _typed_key(db, key.hash).update(day_start=now, week_start=now, month_start=now)
     # Pin the cold schema probe so test ordering cannot change this count.
     monkeypatch.setattr(storage_gcp_authorize, "_OUTBOX_AVAILABILITY_CACHE", {})
+    monkeypatch.setattr(storage_gcp_async_settlement, "_OBLIGATION_AVAILABILITY_CACHE", {})
     settle_operations.clear()
     data = _internal_settle(auth)
     assert data["disposition"] != "intent_durable", data
     assert db.gateway_authorizations[auth.id]["settled"] is True
-    assert len(settle_operations) == 11
+    assert len(settle_operations) == 12
     reader, label, batch_params = settle_operations[1]
     assert label == "BATCH"
     batch = batch_params["statements"]
@@ -658,6 +659,7 @@ def test_fresh_settle_round_trip_order(
         ("t1", "UPDATE", "tr_gateway_authorization"),
         ("t1", "UPDATE", "tr_reservation"),
         ("t1", "COMMIT", ""),
+        ("ro", "SELECT", "tr_async_settlement_obligation"),
         ("ro", "SELECT", "tr_settle_outbox"),
         ("t3", "SELECT", "tr_reservation"),
         ("t3", "UPDATE", "tr_reservation"),
@@ -683,7 +685,7 @@ def test_fresh_settle_round_trip_order(
             phase = transactions[reader]
         table = re.search(r"(?:FROM|INTO|UPDATE) (tr_\w+)", sql)
         observed.append((phase, sql.split()[0], table[1] if table else ""))
-    assert len(settle_operations) == 19
+    assert len(settle_operations) == 20
     assert observed == expected
     params = [params for _, _, params in settle_operations]
     statements = [sql for _, sql, _ in settle_operations]
@@ -700,25 +702,26 @@ def test_fresh_settle_round_trip_order(
     }
     assert json.loads(params[1]["settle_body"])["actual_output_tokens"] == 7
     assert "SET terminal_at=NULL" in statements[2] and "SET terminal_at=NULL" in statements[3]
-    assert params[6] == {"rid": auth.credit_reservation_id}
-    assert statements[7].endswith("WHERE reservation_id=@rid AND settled=false")
-    assert params[7] == {
+    assert params[5] == params[6] == {"aid": ""}  # Independent cold schema probes.
+    assert params[7] == {"rid": auth.credit_reservation_id}
+    assert statements[8].endswith("WHERE reservation_id=@rid AND settled=false")
+    assert params[8] == {
         "rid": auth.credit_reservation_id, "actual": cost, "sut": "Credits", "terminal_at": None,
     }
-    assert statements[8].endswith("WHERE authorization_id=@authorization_id AND settled=false")
-    assert params[8]["authorization_id"] == auth.id
-    payload = json.loads(params[8]["payload"])
+    assert statements[9].endswith("WHERE authorization_id=@authorization_id AND settled=false")
+    assert params[9]["authorization_id"] == auth.id
+    payload = json.loads(params[9]["payload"])
     assert payload["workspace_id"] == ws and payload["key_hash"] == key.hash
     assert payload["credit_reservation_id"] == auth.credit_reservation_id
     assert payload["finalized_cost_microdollars"] == cost
-    assert params[9]["aid"] == auth.id and params[9]["kind"] == "settle"
-    assert params[9]["lease_owner"] is None and params[9]["status"] == "done"
-    assert "lease_owner IS NULL" in statements[9]
-    assert params[14] == {"hold": ESTIMATE, "actual": cost, "ws": ws, "shard": 0}
-    assert params[15] == {"pk": ws}
-    assert params[16]["kh"] == key.hash and params[16]["hold"] == ESTIMATE
-    assert params[16]["actual"] == cost
-    assert params[18] == {"kind": "broadcast_destination_by_workspace", "prefix": ws + "#"}
+    assert params[10]["aid"] == auth.id and params[10]["kind"] == "settle"
+    assert params[10]["lease_owner"] is None and params[10]["status"] == "done"
+    assert "lease_owner IS NULL" in statements[10]
+    assert params[15] == {"hold": ESTIMATE, "actual": cost, "ws": ws, "shard": 0}
+    assert params[16] == {"pk": ws}
+    assert params[17]["kh"] == key.hash and params[17]["hold"] == ESTIMATE
+    assert params[17]["actual"] == cost
+    assert params[19] == {"kind": "broadcast_destination_by_workspace", "prefix": ws + "#"}
     assert _typed_credit(db, ws)["total_usage"] == cost
 
 
@@ -3490,7 +3493,7 @@ def test_fresh_regional_settle_round_trip_order(
     settle_operations: list[tuple[Any, str, dict[str, Any]]],
     monkeypatch: pytest.MonkeyPatch, reread: bool,
 ) -> None:
-    from trusted_router import storage_gcp_authorize
+    from trusted_router import storage_gcp_async_settlement, storage_gcp_authorize
 
     store, db, _bt = prod_shaped_store
     ws = "ws-regional-snapshot-rtt"
@@ -3508,6 +3511,7 @@ def test_fresh_regional_settle_round_trip_order(
 
     monkeypatch.setattr(type(store), "typed_finalize_gateway_authorization_result", finalize)
     monkeypatch.setattr(storage_gcp_authorize, "_OUTBOX_AVAILABILITY_CACHE", {})
+    monkeypatch.setattr(storage_gcp_async_settlement, "_OBLIGATION_AVAILABILITY_CACHE", {})
     settle_operations.clear()
     data = _internal_settle(auth)
     assert data["disposition"] == "finalized"
@@ -3517,6 +3521,7 @@ def test_fresh_regional_settle_round_trip_order(
         ("t1", "BATCH", ""),
         ("t1", "COMMIT", ""),
         *([("ro", "SELECT", "tr_gateway_authorization")] if reread else []),
+        ("ro", "SELECT", "tr_async_settlement_obligation"),
         ("ro", "SELECT", "tr_settle_outbox"),
         ("t3", "SELECT", "tr_reservation"),
         ("t3", "UPDATE", "tr_reservation"),
@@ -3537,8 +3542,8 @@ def test_fresh_regional_settle_round_trip_order(
         table = re.search(r"(?:FROM|INTO|UPDATE) (tr_\w+)", sql)
         observed.append((phase, sql.split()[0], table[1] if table else ""))
     assert observed == expected
-    # 13 -> 11 with the snapshot; the legacy re-read adds one.
-    assert len(observed) == 11 + int(reread)
+    # Snapshot reuse saves the legacy re-read; each cold schema probe is counted.
+    assert len(observed) == 12 + int(reread)
     local = store._regional_quota_ledger.get(auth.regional_lease_id, region=auth.region)
     assert local.spent_microdollars == data["cost_microdollars"]
     assert db.reservations[auth.credit_reservation_id]["actual_micro"] == data["cost_microdollars"]

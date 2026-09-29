@@ -2,7 +2,7 @@
   "builders": {
     "storage_gcp_counter_dml:reserve_key_statement": "9eb78b975825a2ab99e03b669c8d3dbdbbbae2c0b359ad1a57e9ff5b7d604227",
     "storage_gcp_counter_dml:reservation_insert_statement": "b1ef994b99af7ae79da8a3e3795169c2704edf4e789af3994c3eda292460927e",
-    "storage_gcp_counter_dml:claim_reservation_statement": "4e6dc6e8378e7cd6042474c08fdbf8d84aa705219e942d20bd4a11da21260ce4",
+    "storage_gcp_counter_dml:claim_reservation_statement": "707eacffe9aa543d128eeee3fadf56e60a9cfd9bdf84b6dc7d21670fa0d5c59a",
     "storage_gcp_counter_dml:reservation_retention_clear_statement": "ea44390479712ba4e7d9b80b9e450797a780b107760164a313dbdf293d09e885",
     "storage_gcp_counter_dml:entity_insert_statement": "dd77ee0b463b7c33354554a82a8079efff08126fbe32b9810866da714e332f7b",
     "storage_gcp_generation_records:generation_insert_statement": "487437595bca87fd1a20593f66747ac09dea89d49c3465a189e73e0b21d7c0a5",
@@ -13,8 +13,8 @@
     "storage_gcp_request_records:_settled_payload_sql": "88f98045ea34ac1b01647e7f0b512d0f27a0430cbaab6852d003d0f9f45df1f3",
     "storage_gcp_request_records:gateway_authorization_settled_statement": "ae5e93de4af73f80e254209da33db4f523641496d30a61d994dce60f137f1952",
     "storage_gcp_request_records:gateway_authorization_retention_clear_statement": "e2b6e9ed483274375b390da089a0927566fcd480026e88c0f9b445ffe1e332d5",
-    "storage_gcp_settle_outbox:done_retention_statements": "b1d3fa9f8a69938adbc56f212e2ab4ed09e3de2ff37a4d36af7a788f71271cab",
-    "storage_gcp_settle_outbox:speculative_done_statements": "e292de31c54e6ab2d1106ae773cd992b89f07f0e21a3e56b79316f55cd7aba26"
+    "storage_gcp_settle_outbox:done_retention_statements": "b1b7e4d7c4ed81268fa8279f40fa84914e53c5037d71e3630d203c5d5731c329",
+    "storage_gcp_settle_outbox:speculative_done_statements": "7ca308a3f5d5f085ddafd43a131183fff41ca54c61336e4e7a024f4af276a308"
   },
   "expressions": {
     "byok_aad_backfill:scan:1": {
@@ -903,7 +903,7 @@
       ]
     },
     "storage_gcp_authorize:constants:1": {
-      "fingerprint": "3b1c20d776c5b798a40eb0e9b2850381af191edb3625e49d3ae57049aca59f34",
+      "fingerprint": "5749967eac607098920656dc9bd9ae3ca7fd74dd69bb2b53d8335a9d249276c6",
       "scenarios": [
         {
           "bindings": {},
@@ -915,7 +915,7 @@
       ]
     },
     "storage_gcp_authorize:constants:2": {
-      "fingerprint": "4c2ab4aeec080847c4c41e9217c06d0b983a01aa1f1384ab04013e990f5e257e",
+      "fingerprint": "d1c4c137716e2be3d7c01992870e6c191f682ee5d07331ca2df24aff138ae35f",
       "scenarios": [
         {
           "bindings": {},
@@ -1053,7 +1053,7 @@
       ]
     },
     "storage_gcp_counter_dml:constants:1": {
-      "fingerprint": "e7a115c55ae7e308e865cbb2cd99cd3ab839268902de1b77bb5142cdb75c6ddd",
+      "fingerprint": "13b2bfd0245547d4467bee31f02c988292532f52e5e1ae7359825078dbb1362c",
       "scenarios": [
         {
           "bindings": {},
@@ -1067,7 +1067,7 @@
       ]
     },
     "storage_gcp_counter_dml:constants:2": {
-      "fingerprint": "86194682a2a0ff9a9cc6c4050eeac51cd1cc2852e4f76c4597b0f8267eedac44",
+      "fingerprint": "e43e1b3eab1309343d912465b4b1c2cc619537c22df834d8de87557c9e02c4a0",
       "scenarios": [
         {
           "bindings": {},
@@ -1081,24 +1081,28 @@
       ]
     },
     "storage_gcp_counter_dml:constants:3": {
-      "fingerprint": "aaca75df3b3a3d42f5cd9679d70f559779b5a69f892ed1560e3d2cf54a4895e0",
+      "fingerprint": "2ecd66c0dd6b5d2cd76291b2c450d9e465e6cd957b870f33c0e9a219cb5f43f6",
       "scenarios": [
         {
           "bindings": {},
           "types": {
+            "actual": "INT64",
             "rid": "STRING",
+            "sut": "STRING",
             "terminal_at": "TIMESTAMP"
           }
         }
       ]
     },
     "storage_gcp_counter_dml:constants:4": {
-      "fingerprint": "a30a3cb9ef56224d1063d3413fdee0213def11ed7ca6f89e0aa8d8947cebedcc",
+      "fingerprint": "728c3ebc26c50be7e4ae5a37a9d684b83a03d2d6b3a795f87d2f8e7d5b1f977e",
       "scenarios": [
         {
           "bindings": {},
           "types": {
+            "actual": "INT64",
             "rid": "STRING",
+            "sut": "STRING",
             "terminal_at": "TIMESTAMP"
           }
         }
@@ -2238,7 +2242,7 @@
       ]
     },
     "storage_gcp_request_records:constants:1": {
-      "fingerprint": "0aaac75c7c775e32c0b50274e59ac95de4cda92c3f45b45f149820615445edb5",
+      "fingerprint": "c1679ec44d0ce98f52923c1185ed25548e190c5ec2e5e7d1f3d0d0995b802ea6",
       "scenarios": [
         {
           "bindings": {},
@@ -2250,7 +2254,7 @@
       ]
     },
     "storage_gcp_request_records:constants:2": {
-      "fingerprint": "9b60db14126d2d89b0cc6ea9a351d1d0efd4f0614b4007c4ad9eecf17c16c74a",
+      "fingerprint": "9788b00d70c862f383486fa1417840afca09e3764345b497f99272881ab710f2",
       "scenarios": [
         {
           "bindings": {},
@@ -2262,81 +2266,25 @@
       ]
     },
     "storage_gcp_request_records:constants:3": {
-      "fingerprint": "3c40966f595e813b054e5a02918fa4911c6c511528482b915317d822fabab4ff",
+      "fingerprint": "aa4ac4736fa2395a451644e4e4df621d58390780b4a0a1cd844687f61d8b7030",
       "scenarios": [
         {
           "bindings": {},
           "types": {
             "authorization_id": "STRING",
-            "created_at": "TIMESTAMP",
-            "delivered_usage": "STRING",
-            "estimated_microdollars": "INT64",
-            "finalization_outcome": "STRING",
-            "finalized_cost_microdollars": "INT64",
-            "gateway_request_id": "STRING",
-            "heartbeat_at": "TIMESTAMP",
-            "heartbeat_hash": "STRING",
-            "heartbeat_seq": "INT64",
-            "idempotency_fingerprint": "STRING",
-            "invocation_nonce": "STRING",
-            "key_hash": "STRING",
-            "model_id": "STRING",
-            "payload": "STRING",
-            "pricing_snapshot": "STRING",
-            "provider": "STRING",
-            "reservation_id": "STRING",
-            "selected_endpoint_id": "STRING",
-            "spend_lease_allocated_micro": "INT64",
-            "spend_lease_exp": "TIMESTAMP",
-            "spend_lease_gen": "INT64",
-            "spend_lease_id": "STRING",
-            "spend_lease_status": "STRING",
-            "spend_lease_token": "STRING",
-            "stage_d_boot_kid": "STRING",
-            "started_at": "TIMESTAMP",
-            "usage_type": "STRING",
-            "workspace_id": "STRING"
+            "terminal_at": "TIMESTAMP"
           }
         }
       ]
     },
     "storage_gcp_request_records:constants:4": {
-      "fingerprint": "4a0e8d1ead427b1bf601522e3dba123f5a41b9ca571869e7c025e03e1096855e",
+      "fingerprint": "53a6cd69fd642b89426ce509c9f4c893de48f90a52b2c2753a62ce1b6d3b30fd",
       "scenarios": [
         {
           "bindings": {},
           "types": {
             "authorization_id": "STRING",
-            "created_at": "TIMESTAMP",
-            "delivered_usage": "STRING",
-            "estimated_microdollars": "INT64",
-            "finalization_outcome": "STRING",
-            "finalized_cost_microdollars": "INT64",
-            "gateway_request_id": "STRING",
-            "heartbeat_at": "TIMESTAMP",
-            "heartbeat_hash": "STRING",
-            "heartbeat_seq": "INT64",
-            "idempotency_fingerprint": "STRING",
-            "invocation_nonce": "STRING",
-            "key_hash": "STRING",
-            "model_id": "STRING",
-            "payload": "STRING",
-            "pricing_snapshot": "STRING",
-            "provider": "STRING",
-            "reservation_id": "STRING",
-            "selected_endpoint_id": "STRING",
-            "spend_lease_admission_receipt": "STRING",
-            "spend_lease_allocated_micro": "INT64",
-            "spend_lease_exp": "TIMESTAMP",
-            "spend_lease_gen": "INT64",
-            "spend_lease_id": "STRING",
-            "spend_lease_receipt_hash": "STRING",
-            "spend_lease_status": "STRING",
-            "spend_lease_token": "STRING",
-            "stage_d_boot_kid": "STRING",
-            "started_at": "TIMESTAMP",
-            "usage_type": "STRING",
-            "workspace_id": "STRING"
+            "terminal_at": "TIMESTAMP"
           }
         }
       ]
@@ -2412,7 +2360,7 @@
       ]
     },
     "storage_gcp_settle_outbox:done_retention_statements:1": {
-      "fingerprint": "b1d3fa9f8a69938adbc56f212e2ab4ed09e3de2ff37a4d36af7a788f71271cab",
+      "fingerprint": "b1b7e4d7c4ed81268fa8279f40fa84914e53c5037d71e3630d203c5d5731c329",
       "scenarios": [
         {
           "bindings": {},
@@ -2425,7 +2373,7 @@
       ]
     },
     "storage_gcp_settle_outbox:done_retention_statements:2": {
-      "fingerprint": "b1d3fa9f8a69938adbc56f212e2ab4ed09e3de2ff37a4d36af7a788f71271cab",
+      "fingerprint": "b1b7e4d7c4ed81268fa8279f40fa84914e53c5037d71e3630d203c5d5731c329",
       "scenarios": [
         {
           "bindings": {
@@ -2588,7 +2536,7 @@
       ]
     },
     "storage_gcp_settle_outbox:txn:2": {
-      "fingerprint": "3ea0d355ba9fc666b7c0ce5b1af0e50db7b8a28edbcf4c33631a81d82509f885",
+      "fingerprint": "80e5b2a7b5f609f62fc9a712e4672699a8ef4cde82b13711f553ecf63066e91f",
       "scenarios": [
         {
           "bindings": {},
@@ -2600,7 +2548,7 @@
       ]
     },
     "storage_gcp_settle_outbox:txn:3": {
-      "fingerprint": "3ea0d355ba9fc666b7c0ce5b1af0e50db7b8a28edbcf4c33631a81d82509f885",
+      "fingerprint": "80e5b2a7b5f609f62fc9a712e4672699a8ef4cde82b13711f553ecf63066e91f",
       "scenarios": [
         {
           "bindings": {},
@@ -3928,6 +3876,258 @@
           "types": {}
         }
       ]
+    },
+    "storage_gcp_async_settlement:constants:1": {
+      "fingerprint": "0f7c6469f586d833460bbc05f87826a9d85f307053f5b3f6b783b622ab2adea0",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "aid": "STRING"
+          }
+        }
+      ]
+    },
+    "storage_gcp_async_settlement:constants:2": {
+      "fingerprint": "5882bc5f5f804664378152b4d237aad3c630baac8f8e94694e65373c0e412627",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {}
+        },
+        {
+          "bindings": {},
+          "types": {
+            "workspace": "STRING"
+          },
+          "wrapper": "{sql} WHERE workspace_id=@workspace"
+        }
+      ]
+    },
+    "storage_gcp_async_settlement:constants:3": {
+      "fingerprint": "47a16dd5ab56b736c3df708e6dd63efc2d9d76725308ceb46b2e093482743429",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "aid": "STRING"
+          },
+          "wrapper": "{sql} WHERE authorization_id=@aid"
+        },
+        {
+          "bindings": {},
+          "types": {
+            "workspace": "STRING",
+            "epoch": "STRING"
+          },
+          "wrapper": "{sql} WHERE workspace_id=@workspace AND epoch=@epoch"
+        }
+      ]
+    },
+    "storage_gcp_async_settlement:_bind:1": {
+      "fingerprint": "6c563454b6195f03d7e8e729cee2b784324c639f50ce858d8f5e4e098f0db0b9",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "aid": "STRING"
+          }
+        }
+      ]
+    },
+    "storage_gcp_async_settlement:_bind:2": {
+      "fingerprint": "6c563454b6195f03d7e8e729cee2b784324c639f50ce858d8f5e4e098f0db0b9",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "aid": "STRING"
+          }
+        }
+      ]
+    },
+    "storage_gcp_authorize:constants:3": {
+      "fingerprint": "e30c9099c5a776ea463ae2bdb19b738065de36304e5a0bce2315fd3f4d9b34b8",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "limit": "INT64",
+            "now": "TIMESTAMP"
+          }
+        }
+      ]
+    },
+    "storage_gcp_authorize:constants:4": {
+      "fingerprint": "53aaa4a76d684d4ff75cb7d2b8dcbd2fb0bb336e31d3887a13fb86afe3ac353a",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "limit": "INT64",
+            "now": "TIMESTAMP"
+          }
+        }
+      ]
+    },
+    "storage_gcp_counter_dml:constants:5": {
+      "fingerprint": "d38c4cdb8d87bc95097f0f2a793d32a5bf5d95cb844e50d2e45597494198c559",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "rid": "STRING",
+            "terminal_at": "TIMESTAMP"
+          }
+        }
+      ]
+    },
+    "storage_gcp_counter_dml:constants:6": {
+      "fingerprint": "f634a2d92edba2f4c40794ddb2e283cf1a8b3236928e43cb0dd54d5df95ccfe1",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "rid": "STRING",
+            "terminal_at": "TIMESTAMP"
+          }
+        }
+      ]
+    },
+    "storage_gcp_counter_dml:constants:7": {
+      "fingerprint": "5c3b36806bd75966dd4feadd3d65a51c4959eedf76b7b7c1b9e5ea3109b57ec2",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "rid": "STRING",
+            "terminal_at": "TIMESTAMP"
+          }
+        }
+      ]
+    },
+    "storage_gcp_counter_dml:constants:8": {
+      "fingerprint": "52abbbe2de7cccc1bb77b715664ec2685ba324759cb8cf762abc2b7e51e20566",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "rid": "STRING",
+            "terminal_at": "TIMESTAMP"
+          }
+        }
+      ]
+    },
+    "storage_gcp_request_records:constants:5": {
+      "fingerprint": "3c40966f595e813b054e5a02918fa4911c6c511528482b915317d822fabab4ff",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "authorization_id": "STRING",
+            "created_at": "TIMESTAMP",
+            "delivered_usage": "STRING",
+            "estimated_microdollars": "INT64",
+            "finalization_outcome": "STRING",
+            "finalized_cost_microdollars": "INT64",
+            "gateway_request_id": "STRING",
+            "heartbeat_at": "TIMESTAMP",
+            "heartbeat_hash": "STRING",
+            "heartbeat_seq": "INT64",
+            "idempotency_fingerprint": "STRING",
+            "invocation_nonce": "STRING",
+            "key_hash": "STRING",
+            "model_id": "STRING",
+            "payload": "STRING",
+            "pricing_snapshot": "STRING",
+            "provider": "STRING",
+            "reservation_id": "STRING",
+            "selected_endpoint_id": "STRING",
+            "spend_lease_allocated_micro": "INT64",
+            "spend_lease_exp": "TIMESTAMP",
+            "spend_lease_gen": "INT64",
+            "spend_lease_id": "STRING",
+            "spend_lease_status": "STRING",
+            "spend_lease_token": "STRING",
+            "stage_d_boot_kid": "STRING",
+            "started_at": "TIMESTAMP",
+            "usage_type": "STRING",
+            "workspace_id": "STRING"
+          }
+        }
+      ]
+    },
+    "storage_gcp_request_records:constants:6": {
+      "fingerprint": "4a0e8d1ead427b1bf601522e3dba123f5a41b9ca571869e7c025e03e1096855e",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "authorization_id": "STRING",
+            "created_at": "TIMESTAMP",
+            "delivered_usage": "STRING",
+            "estimated_microdollars": "INT64",
+            "finalization_outcome": "STRING",
+            "finalized_cost_microdollars": "INT64",
+            "gateway_request_id": "STRING",
+            "heartbeat_at": "TIMESTAMP",
+            "heartbeat_hash": "STRING",
+            "heartbeat_seq": "INT64",
+            "idempotency_fingerprint": "STRING",
+            "invocation_nonce": "STRING",
+            "key_hash": "STRING",
+            "model_id": "STRING",
+            "payload": "STRING",
+            "pricing_snapshot": "STRING",
+            "provider": "STRING",
+            "reservation_id": "STRING",
+            "selected_endpoint_id": "STRING",
+            "spend_lease_admission_receipt": "STRING",
+            "spend_lease_allocated_micro": "INT64",
+            "spend_lease_exp": "TIMESTAMP",
+            "spend_lease_gen": "INT64",
+            "spend_lease_id": "STRING",
+            "spend_lease_receipt_hash": "STRING",
+            "spend_lease_status": "STRING",
+            "spend_lease_token": "STRING",
+            "stage_d_boot_kid": "STRING",
+            "started_at": "TIMESTAMP",
+            "usage_type": "STRING",
+            "workspace_id": "STRING"
+          }
+        }
+      ]
+    },
+    "storage_gcp_settle_outbox:done_retention_statements:3": {
+      "fingerprint": "b1b7e4d7c4ed81268fa8279f40fa84914e53c5037d71e3630d203c5d5731c329",
+      "scenarios": [
+        {
+          "bindings": {
+            "table": "tr_gateway_authorization",
+            "key": "authorization_id",
+            "sibling": "EXISTS (SELECT 1 FROM tr_settle_outbox s WHERE s.authorization_id=@aid AND s.intent_kind != @kind AND s.status IN ('pending', 'dead'))"
+          },
+          "types": {
+            "aid": "STRING",
+            "kind": "STRING",
+            "now": "TIMESTAMP",
+            "record_id": "STRING"
+          }
+        },
+        {
+          "bindings": {
+            "table": "tr_reservation",
+            "key": "reservation_id",
+            "sibling": "EXISTS (SELECT 1 FROM tr_settle_outbox s WHERE s.authorization_id=@aid AND s.intent_kind != @kind AND s.status IN ('pending', 'dead'))"
+          },
+          "types": {
+            "aid": "STRING",
+            "kind": "STRING",
+            "now": "TIMESTAMP",
+            "record_id": "STRING"
+          }
+        }
+      ]
     }
   },
   "sinks": {
@@ -3975,17 +4175,21 @@
     "storage_gcp:SpannerBigtableStore.process_trust_demotion_remainders.txn": "17473222e40b3b33bf3cd55d8cabb1b5ef17305e28ddef1d57b3dae49bf4cf9a",
     "storage_gcp:SpannerBigtableStore.update_workspace.txn": "2b188f1bb5110ddf4b7a439988408e12cdb90838cb694444e8075eecba7e3a46",
     "storage_gcp_analytics_outbox:SpannerAnalyticsOutbox.enqueue_tx": "3c22c291513d477c9919b357013218ac503d6f06016e546babf865c9e280e5b6",
+    "storage_gcp_async_settlement:SpannerEpochRegistry._grants": "6cced6ad547b821ed21ffa3b75c12b3dc33473c9ef1b266bf8e9c1b268ce3bb0",
+    "storage_gcp_async_settlement:SpannerEpochRegistry._bind": "6c563454b6195f03d7e8e729cee2b784324c639f50ce858d8f5e4e098f0db0b9",
+    "storage_gcp_async_settlement:SpannerEpochRegistry._obligations": "3747bbc6b1bf36436496d4018a646b7d8201f916401f1c30d40e847d6cd53d72",
+    "storage_gcp_async_settlement:obligation_table_available": "d456305299c886a4f9a52edd40be3ea536882281159260b9aacd3613ae3c5929",
     "storage_gcp_authorize:_apply_user_model_payout_tx": "87282c76b37fb351b3ae5a7572ff8d6c835affc98e9d3a3b24f976fa471421f8",
     "storage_gcp_authorize:_apply_app_markup_payout_tx": "bf69f4d4f5445dbb97dcf22507d8651974f2430dc5d845fe68c2daab72dfc2c6",
     "storage_gcp_authorize:_apply_custom_model_markup_payout_tx": "a1a06d4c1dcc22a836e086dc1700440a90dad6d8c8966466902930955a34e3f0",
-    "storage_gcp_authorize:typed_finalize_atomic.speculative_batch": "d8d2fec5ec3fdae61c9a9c31b28c2fb437b03a81bf983bf7c219ad1345e73f4d",
+    "storage_gcp_authorize:typed_finalize_atomic.speculative_batch": "3dc6223df22b6a838e487d83f299ed9940f90f4439b779bc128cde209ef71eca",
     "storage_gcp_authorize:key_window_limit_decision": "5a317b9f2927443ca6d6686b5cb1d1b6ff036c6d744d511a3b5f24c63e3b2ad7",
     "storage_gcp_authorize:authorize_atomic.txn": "fb74537b6e4fdb8d0fab42b25d09ab833139f3c04f2a7191ebdda703db755f3b",
-    "storage_gcp_authorize:reap_expired_reservations_result": "9d7f819fc199930d94eaa53e939fced804e61b2cbf9f54cbf676ced4c743976e",
+    "storage_gcp_authorize:reap_expired_reservations_result": "f50ece5c43e22f5f6a71c4d57d31a43db6e6660780f15b50601a6056be38a9b9",
     "storage_gcp_authorize:key_lifetime_cap_precheck": "4e9ee17c7e9363a1fc3a9d614f15148ad6fb20ff04d272785809beef92ab0b4c",
-    "storage_gcp_authorize:_finalize_reaped_reservation_atomic.txn": "67843e960ddce62acdac35b49cc48a2ee8ef4024a21021de1f7e111e5e6dd82e",
-    "storage_gcp_authorize:typed_finalize_atomic.txn": "eb23d389ee0521e3a0575e5ca70c0999ce7c38de3b0a7f46c73dd5fc2dac12ea",
-    "storage_gcp_authorize:settle_atomic.txn": "0ec2b0d2303c8edbbcfff74724c3bee55a72195a523e21f21e04139aabeb3174",
+    "storage_gcp_authorize:settle_atomic.txn": "ca9693e548440cf7e562efc25de33e544a7e81008cd2765862305dd58c37cdf7",
+    "storage_gcp_authorize:_finalize_reaped_reservation_atomic.txn": "1eb61ea129ff86087fec8379bd3a364751cd4ff49d2ddb3cb62a5772e8848ce5",
+    "storage_gcp_authorize:typed_finalize_atomic.txn": "24dfb63fe536eb95b71cbd3a285fd64ecb03e0b2f196d62710eb6d7fe449363d",
     "storage_gcp_authorize:_outbox_table_available": "40f44f259524be5dc275f8a3400fc40fc5b8fe850c0482362de0382296e3f910",
     "storage_gcp_batch_dml:execute_batch_dml": "cf69cc8e1a62f4028bd2370e9d3d22e5f6f28856795ef05514f1f8dbc5130169",
     "storage_gcp_counter_dml:reserve_credit": "8b28eb55bf811006f16d2baaa3a9100018ba4ac454f0933a46b103fcc0d4bc88",
@@ -3998,7 +4202,7 @@
     "storage_gcp_counter_dml:reserve_key": "e3481c3aeddf7180d6bdd77bb54a337d61a1a87cd1ec3320b391a6cf521d3c83",
     "storage_gcp_counter_dml:release_key": "6275a8d4a9f68dbbf722c374c06afe37f7dca3f76e1fdc15f4c9ba2b5bed92d7",
     "storage_gcp_counter_dml:insert_reservation": "5003ba8b2eb7e352be932a768f44b7b36ade7acf6b57fa11f00b22136f98400f",
-    "storage_gcp_counter_dml:complete_reservation_retention": "04b8a59463b4526c5cb9a597aa50530988691ed1366d38232fb96e450dadcc6b",
+    "storage_gcp_counter_dml:complete_reservation_retention": "2fe72385beff64cb77116993674016daaa16aea572253950c1cb1fab565451d8",
     "storage_gcp_counter_dml:clear_reservation_retention": "3bcf32a129af5f7dfdc1d2e5108abfdbb7f7b82be72ba5ce893107d46a12dc49",
     "storage_gcp_counter_dml:insert_entity_dml": "6177de79d33a11cd64f49088137b0ee29916539b64b4c8a199c6446cb0ec0ac0",
     "storage_gcp_counter_dml:insert_entity_dml_at": "f535e040c7b5c0c884a98d21a144b7a012e697b38c4d6e223ca8456ec595c914",
@@ -4008,7 +4212,7 @@
     "storage_gcp_counter_dml:key_limit_exists": "91b8eb8029af0530303a487ff57f6e2407e243b388e98175906de69f933ead6c",
     "storage_gcp_counter_dml:read_reservation_by_idempotency": "5ef222631a8b3c1caedc551feb8d0d66601c0a4bedde382f7cbdb3d9a9ffed98",
     "storage_gcp_counter_dml:read_reservation": "f1772e5b115030a3e3559277354354703c3edfd1c81727892bdd964ccc4e0f5d",
-    "storage_gcp_counter_dml:claim_reservation": "6d137f1506de4e6959220e09f5f6b65cc3592f52743b080e7aef6d9b24e19f59",
+    "storage_gcp_counter_dml:claim_reservation": "0be8f89ef43cab22dd7a0ee392cff723fe03dd204a2dbfb82602c840513385aa",
     "storage_gcp_counter_reconcile:audit_typed_invariants": "a2b1ebed17acc2e0ced149ba2074549630b4de124622e2ec18029261247e15e4",
     "storage_gcp_counter_reconcile:_confirm_behind_ledger": "08089d2dd3647164ae49ea570aab34b6797757787d8233f2506b9c65e103c166",
     "storage_gcp_counter_reconcile:propose_usage_baselines": "542e2199b35a54736cb75eba85a621f10b7d06fb7bbbd30f4150528feecd1ad1",
@@ -4052,18 +4256,18 @@
     "storage_gcp_regional_quota:terminal_regional_hold_amount.txn": "544ec531700480216f3f4b6e72cb72f2934b92a81248e30781f354bfba261133",
     "storage_gcp_request_records:insert_gateway_authorization": "e547302283bdfc7c831a1506268696f600c4548d1d2bf56c6b45a66dacadc247",
     "storage_gcp_request_records:mark_gateway_authorization_settled": "e889d9811b28a018f96d51a27c17d5adea64f85f03cdd65f262470e182414a7a",
-    "storage_gcp_request_records:complete_gateway_authorization_retention": "e3b9c853d68ba2f1f5900a9d15e1cac6f8a526692414f5590be4c685c2b6328c",
+    "storage_gcp_request_records:complete_gateway_authorization_retention": "c50cfc0f8e0b5df93ca5c9d545a5b64876e43f31bbc03b98af6f10c824f6e640",
     "storage_gcp_request_records:clear_gateway_authorization_retention": "314e768b1b786335aedac687a810f1047c91a543c951f84d1a2232d9efb0c648",
     "storage_gcp_request_records:read_gateway_authorization_admission_columns": "0c7226dedd58930759b95d17c4a7ce827c928295fbaf65caed43b6d469f126f3",
     "storage_gcp_request_records:read_gateway_authorization": "6d8fe4656bcf4c5eed8a32c24c54dba7c97a70943bf20bb439fc26f07b4a8ce5",
     "storage_gcp_request_records:read_gateway_authorization_by_gateway_request_id": "35327f025b4c16f9c73c53adc04fb1f9d78da8dcb1cceb1edc16ada6a77baf90",
-    "storage_gcp_settle_outbox:_resolve_done_retention_tx": "5f60121b3a9a6040d4c5db3d01b32da0b28bb49a716a5a2fb3386a43d5416de7",
-    "storage_gcp_settle_outbox:_mark_done_tx": "d18c2a9ba8bf5498d523f66de836eb28463f3f4fc86d62509d69d0da31c31d4f",
+    "storage_gcp_settle_outbox:_resolve_done_retention_tx": "09b60f80d925e1fb3a2347f261a9ae598da1e276ed36808870209c8ec61249e4",
+    "storage_gcp_settle_outbox:_mark_done_tx": "4924b7c8e36613f7bf23aef334538ac840f82e3a7f82e967a22d831149a9a70e",
     "storage_gcp_settle_outbox:rewrite_frozen_settlement_tx": "b0cfe5750f3b126671b5c297f73bfd2d1d759beb225305588521a1be616fd21d",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.enqueue.insert_txn": "d3f3b67327d3c86ac0535a8015513eb0825779ab772eca46ccfd5c34a91f91ae",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.enqueue.refresh_txn": "d14013762a31ede92e5bbd0ff49b1d99d6d2048acac6e8a3a95d8fd2803dc049",
     "storage_gcp_settle_outbox:SpannerSettleOutbox._claim_one.txn": "f0c353eaf71bd1e39f55d411a4bcca80d2532ae7b3125c915cab981d0a8e777b",
-    "storage_gcp_settle_outbox:SpannerSettleOutbox.mark.txn": "3ea0d355ba9fc666b7c0ce5b1af0e50db7b8a28edbcf4c33631a81d82509f885",
+    "storage_gcp_settle_outbox:SpannerSettleOutbox.mark.txn": "80e5b2a7b5f609f62fc9a712e4672699a8ef4cde82b13711f553ecf63066e91f",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.park.txn": "cc64cd3d3a3f175b60549a053e8caa7ad1b5ce3811aecef12e28287d304cdbe6",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.attach_auto_refill.txn": "2d57f7ddcaa46d8dc462a815ad5a3d13db3214a9f20bb466e8694da26410d67e",
     "storage_gcp_settle_outbox:SpannerSettleOutbox._claim_auto_refill_one.txn": "adf4f3f8adccb10352be73e9c02627d4e690ac44ee5d742e2aa0c0ab23c9dd4a",

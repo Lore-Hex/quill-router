@@ -18,7 +18,7 @@ import anyio
 import pytest
 
 from clickhouse.ingest_operational_outbox import OperationalOutboxRow, drain_once
-from tests.fakes.spanner import _FakeTransaction, make_fake_store
+from tests.fakes.spanner import _FakeSnapshot, _FakeTransaction, make_fake_store
 from tests.test_operational_analytics import _Source, _Writer
 from tests.test_settle_outbox_drain import (
     _make_key,
@@ -125,7 +125,21 @@ def _counts(db: Any) -> tuple[int, int, int, int, int]:
 def test_reply_operation_count_and_exact_background_payloads(
     scenario: Any, monkeypatch: pytest.MonkeyPatch, optional_executor: Any,
 ) -> None:
+    from trusted_router.storage_gcp_async_settlement import ASYNC_GUARD_COUNT_SQL
+
     store, db, bt, auth, app = scenario
+    # The unnamed fake is intentionally uncached. Pin the extra cold probe,
+    # including its complete-key parameters, without hiding other reads.
+    obligation_probes = []
+    original_snapshot = _FakeSnapshot.execute_sql
+
+    def snapshot_spy(self: Any, sql: str, **kwargs: Any) -> Any:
+        if sql == ASYNC_GUARD_COUNT_SQL:
+            obligation_probes.append(kwargs['params'])
+            assert kwargs['param_types'] == {'aid': store._param_types.STRING}
+        return original_snapshot(self, sql, **kwargs)
+
+    monkeypatch.setattr(_FakeSnapshot, 'execute_sql', snapshot_spy)
     start = _counts(db)
     reply_counts: list[tuple[int, ...]] = []
     transactions: list[tuple[Any, str]] = []
@@ -149,9 +163,11 @@ def test_reply_operation_count_and_exact_background_payloads(
     assert response["data"]["disposition"] == "finalized"
     assert optional_executor.wait_idle()
     # Claim, typed finalization, done, retention and evidence share one batch.
-    # No T4 or Bigtable calls precede the response. Total: 14 -> 11 RPCs.
-    assert reply_counts == [(3, 2, 3, 2, 2)]
-    assert tuple(a - b for a, b in zip(_counts(db), start, strict=True)) == (4, 2, 4, 2, 3)
+    # No T4 or Bigtable calls precede the response. The cold obligation probe
+    # adds one read; named production clients cache confirmed availability.
+    assert obligation_probes == [{'aid': ''}]
+    assert reply_counts == [(4, 2, 3, 2, 2)]
+    assert tuple(a - b for a, b in zip(_counts(db), start, strict=True)) == (5, 2, 4, 2, 3)
     [activity_tx] = [tx for tx, sql in transactions if sql.startswith("INSERT INTO tr_operational_analytics_outbox")]
     [generation_tx] = [tx for tx, sql in transactions if sql.startswith("INSERT INTO tr_generation")]
     credit_tx = [tx for tx, sql in transactions if sql.startswith("UPDATE tr_credit_balance")]

@@ -181,9 +181,11 @@ def _assert_free_released(db: Any, ws: str, rid: str) -> None:
 def test_guard_sql_literals_come_from_guard_statuses() -> None:
     for sql in (GUARD_COUNT_SQL, _REAP_SCAN_GUARDED_SQL):
         [fragment] = re.findall(r"\bstatus IN \(([^)]*)\)", sql)
-        quoted = re.findall(r"'([^']+)'", sql)
+        quoted = re.findall(r"'([^']+)'", fragment)
         assert quoted == list(GUARD_STATUSES)
-        assert re.findall(r"'([^']+)'", fragment) == quoted
+        if "tr_async_settlement_obligation" in sql:
+            [async_states] = re.findall(r"\bstate NOT IN \(([^)]*)\)", sql)
+            assert re.findall(r"'([^']+)'", async_states) == ["acknowledged", "fenced"]
 
 
 def test_pending_row_freezes_hold() -> None:

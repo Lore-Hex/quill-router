@@ -126,20 +126,21 @@ def builder_cases() -> list[SQLCase]:
         fields = {field: heartbeat_values[field] if bit else None for field, bit in zip(_AUTHORIZATION_HEARTBEAT_FIELDS, bits, strict=True)}
         seed = gateway_authorization_insert_statement(pt, replace(authorization, **fields), created_at=NOW)
         cases.append(SQLCase("settled-heartbeat-" + "".join(str(int(bit)) for bit in bits), [settled], seed=[seed], expected_counts=[1]))
-    for guarded, expired, deferred in product((False, True), repeat=3):
+    for guarded, expired, deferred, obligation in product((False, True), repeat=4):
         claim = counters.claim_reservation_statement(
             pt, "acceptance-reservation", actual_micro=1, settled_usage_type="credits",
             terminal_at=NOW, outbox_available=guarded, expires_before=NOW if expired else None,
-            defer_retention=deferred,
+            defer_retention=deferred, obligation_available=obligation,
         )
-        cases.append(SQLCase(f"claim-{guarded}-{expired}-{deferred}", [claim]))
+        cases.append(SQLCase(f"claim-{guarded}-{expired}-{deferred}-{obligation}", [claim]))
     clear = [gateway_authorization_retention_clear_statement(pt, "acceptance-auth"),
              counters.reservation_retention_clear_statement(pt, "acceptance-reservation")]
     cases.append(SQLCase("enqueue-retention-clear-batch", clear, batch=True))
-    for reservation_id in (None, "acceptance-reservation"):
+    for reservation_id, obligation in product((None, "acceptance-reservation"), (False, True)):
         statements = done_retention_statements(pt, authorization_id="acceptance-auth", intent_kind="settle",
-                                              reservation_id=reservation_id, now=NOW.isoformat().replace("+00:00", "Z"))
-        cases.append(SQLCase(f"done-retention-{reservation_id}", statements, batch=True))
+                                              reservation_id=reservation_id, now=NOW.isoformat().replace("+00:00", "Z"),
+                                              obligation_available=obligation)
+        cases.append(SQLCase(f"done-retention-{reservation_id}-{obligation}", statements, batch=True))
     cases.append(SQLCase("speculative-done-batch", speculative_done_statements(
         pt, authorization_id="acceptance-auth", intent_kind="settle", reservation_id="acceptance-reservation",
     ), batch=True))

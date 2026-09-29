@@ -7,7 +7,7 @@
   },
   "lines": {
     ".codex-review-1.md": {
-      "- **P2 — [docs/client-receipts.md:47]:** The documentation says the migration is safe after the compatible router, but the new writer immediately names physical `kid` and `att_sha256` columns and fails if they do not exist. Reproduce by starting this revision before applying DDL and collecting a key. Fix: state expli": {
+      "- **P2 \u2014 [docs/client-receipts.md:47]:** The documentation says the migration is safe after the compatible router, but the new writer immediately names physical `kid` and `att_sha256` columns and fails if they do not exist. Reproduce by starting this revision before applying DDL and collecting a key. Fix: state expli": {
         "count": 1,
         "reason": "Archived review prose about receipt-column deployment ordering; this line executes no schema command."
       }
@@ -590,6 +590,12 @@
       "gc iam service-accounts create \"$GOOGLE_DATA_MANAGER_SERVICE_ACCOUNT_ID\" \\": {
         "count": 1,
         "reason": "IAM service-account provisioning, not Spanner schema."
+      }
+    },
+    "scripts/deploy/migrate_async_settlement.sh": {
+      "apply_ddl() {": {
+        "count": 1,
+        "reason": "Extractor-reviewed migration helper; each dispatch argument is structurally consumed."
       }
     }
   }
