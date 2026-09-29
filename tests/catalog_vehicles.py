@@ -123,6 +123,18 @@ def install_vanished(
     return added
 
 
+def registry_endpoints() -> dict[str, ModelEndpoint]:
+    """MODEL_ENDPOINTS without the vehicles this session put back: the routes
+    the catalog built from the data. A test of the registry's own output
+    against the manifests or the snapshot (a provider routes exactly its
+    routable rows; a tombstoned row has no route) reads these."""
+    return {
+        endpoint_id: endpoint
+        for endpoint_id, endpoint in catalog_registry.MODEL_ENDPOINTS.items()
+        if endpoint_id not in VEHICLES_ADDED
+    }
+
+
 def _freeze() -> None:
     endpoints = [catalog_registry.MODEL_ENDPOINTS[endpoint_id] for endpoint_id in VEHICLE_ENDPOINT_IDS]
     model_ids = sorted({endpoint.model_id for endpoint in endpoints})
@@ -153,7 +165,8 @@ if __name__ == "__main__" and sys.argv[1:] == ["--freeze"]:
     _freeze()
 else:
     # What this session added, which the registry did not build: a test of the
-    # registry's own output against the manifests leaves these out.
+    # registry's own output against the manifests leaves these out
+    # (registry_endpoints).
     _FROZEN_VEHICLES = json.loads(FROZEN.read_text(encoding="utf-8"))
     VEHICLES_ADDED = frozenset(
         install_missing(catalog_registry.MODELS, catalog_registry.MODEL_ENDPOINTS, _FROZEN_VEHICLES)

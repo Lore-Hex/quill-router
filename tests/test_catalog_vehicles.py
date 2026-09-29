@@ -7,6 +7,8 @@ import dataclasses
 import json
 from dataclasses import replace
 
+import pytest
+
 from tests import catalog_vehicles
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, endpoints_for_model
 
@@ -95,3 +97,18 @@ def test_a_vehicle_model_any_host_still_serves_is_left_alone() -> None:
 
     assert catalog_vehicles.install_vanished(models, endpoints, frozen) == []
     assert endpoints == {}
+
+
+def test_registry_endpoints_leave_out_only_what_this_session_put_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vehicle_id = catalog_vehicles.VEHICLE_ENDPOINT_IDS[0]
+    # A route the registry gained that is not a vehicle stays in.
+    gained = replace(MODEL_ENDPOINTS[vehicle_id], id="fixture/gained@anthropic/prepaid")
+    monkeypatch.setitem(MODEL_ENDPOINTS, gained.id, gained)
+    monkeypatch.setattr(catalog_vehicles, "VEHICLES_ADDED", frozenset({vehicle_id}))
+
+    built = catalog_vehicles.registry_endpoints()
+
+    assert built.keys() == MODEL_ENDPOINTS.keys() - {vehicle_id}
+    assert built[gained.id] is gained
