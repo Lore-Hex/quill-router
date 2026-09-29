@@ -24,6 +24,7 @@ from scripts.providers.sync_azure_foundry import (
     write_manifest,
 )
 from scripts.smoke_all_providers import PROBES
+from tests import catalog_vehicles
 from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS
 
 _EXPECTED_AZURE_LAUNCH_IDS = frozenset(
@@ -1846,20 +1847,21 @@ def test_azure_manifest_registers_prepaid_only_gateway_routes() -> None:
     assert all(row["id"] != "openai/gpt-5.4-mini" for row in rows)
     assert all(row["id"] != "x-ai/grok-4.3" for row in rows)
     assert "x-ai/grok-4.3@azure/prepaid" not in MODEL_ENDPOINTS
+    built = catalog_vehicles.registry_endpoints()
     for row in rows:
         model_id = row["id"]
         if row.get("routable") is False:
             # A row the refresh tombstoned is dark, not routed.
-            assert f"{model_id}@azure/prepaid" not in MODEL_ENDPOINTS
-            assert f"{model_id}@azure/byok" not in MODEL_ENDPOINTS
+            assert f"{model_id}@azure/prepaid" not in built
+            assert f"{model_id}@azure/byok" not in built
             continue
-        endpoint = MODEL_ENDPOINTS[f"{model_id}@azure/prepaid"]
+        endpoint = built[f"{model_id}@azure/prepaid"]
         assert endpoint.provider == "azure"
         assert endpoint.usage_type == "Credits"
         assert endpoint.upstream_id == row["upstream_id"]
         assert endpoint.prompt_price_microdollars_per_million_tokens > 0
         assert endpoint.completion_price_microdollars_per_million_tokens > 0
-        assert f"{model_id}@azure/byok" not in MODEL_ENDPOINTS
+        assert f"{model_id}@azure/byok" not in built
 
 
 @pytest.mark.parametrize(

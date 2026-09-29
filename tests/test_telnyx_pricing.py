@@ -7,6 +7,7 @@ import pytest
 
 from scripts.pricing.base import ModelPrice
 from scripts.pricing.providers import telnyx
+from tests import catalog_vehicles
 
 
 def test_complete_native_prices_do_not_depend_on_secondary_sources(monkeypatch) -> None:  # noqa: ANN001
@@ -392,7 +393,11 @@ def test_telnyx_manifest_is_loaded_as_prepaid_and_byok_catalog_routes() -> None:
     routable_ids = {
         str(row["id"]) for row in manifest["models"] if row.get("routable") is not False
     }
-    endpoints = [endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "telnyx"]
+    endpoints = [
+        endpoint
+        for endpoint in catalog_vehicles.registry_endpoints().values()
+        if endpoint.provider == "telnyx"
+    ]
     assert set(telnyx.EXPECTED_MODELS) <= manifest_model_ids
     assert {(endpoint.model_id, endpoint.usage_type) for endpoint in endpoints} == {
         (model_id, usage_type)

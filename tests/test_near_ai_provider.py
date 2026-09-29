@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from scripts.check_price_coverage import _DISCOVERABLE_MANIFEST_PROVIDERS
 from scripts.pricing.providers import near_ai
 from scripts.pricing.refresh import PROVIDER_SLUGS
+from tests import catalog_vehicles
 from tests.lifecycle_clock import CATALOG_CLOCK
 from tests.pinned_manifests import NEAR_AI_GLM_53_FLASH, build_manifest_rows, serve_manifest_rows
 from trusted_router import catalog_data, provider_lifecycle
@@ -270,7 +271,9 @@ def test_near_ai_is_attested_prepaid_only_and_its_catalog_follows_the_manifest()
     # The catalog serves exactly the manifest's routable, unretired rows, which
     # may be none: whether NEAR AI still lists one is a provider_health check.
     endpoints = [
-        endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "near-ai"
+        endpoint
+        for endpoint in catalog_vehicles.registry_endpoints().values()
+        if endpoint.provider == "near-ai"
     ]
     assert {endpoint.model_id for endpoint in endpoints} == {
         row["id"] for row in raw["models"]

@@ -10,6 +10,7 @@ from scripts.pricing.base import ModelPrice
 from scripts.pricing.providers import wandb
 from scripts.pricing.providers._direct_openai import DirectOpenAIProvider
 from scripts.pricing.refresh import PROVIDER_SLUGS
+from tests import catalog_vehicles
 from trusted_router.catalog import (
     GATEWAY_PREPAID_PROVIDER_SLUGS,
     PROVIDERS,
@@ -241,13 +242,14 @@ def test_wandb_manifest_is_priced_and_preserves_exact_upstream_ids() -> None:
     # clock, is not. The immutable DeepSeek releases are offered only through
     # the registry's release leaves, never by a manifest row alone.
     release_leaves = {DEEPSEEK_V4_PRO_0423_MODEL_ID, DEEPSEEK_V4_PRO_0813_MODEL_ID}
+    built = catalog_vehicles.registry_endpoints()
     for model_id, row in rows.items():
         if model_id in release_leaves:
             continue
         endpoints = [
             endpoint
             for endpoint in endpoints_for_model(model_id)
-            if endpoint.provider == wandb.SLUG
+            if endpoint.provider == wandb.SLUG and endpoint.id in built
         ]
         if row.get("routable") is False or provider_model_retired(
             wandb.SLUG, model_id, row["upstream_id"]

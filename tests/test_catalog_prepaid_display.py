@@ -163,7 +163,7 @@ def test_together_credits_follow_started_serverless_manifest() -> None:
     allow = _authoritative_provider_model_ids("together")
     together_credits = {
         e.model_id
-        for e in MODEL_ENDPOINTS.values()
+        for e in catalog_vehicles.registry_endpoints().values()
         if e.provider == "together" and e.usage_type == "Credits"
     }
     # Together's authenticated feed changes as serverless models start and
@@ -175,11 +175,9 @@ def test_together_credits_follow_started_serverless_manifest() -> None:
 
 
 def test_dark_authoritative_manifest_rows_cannot_return_through_shared_snapshot() -> None:
-    # The registry's routes, not a vehicle the test session put back.
     endpoint_pairs = {
         (endpoint.provider, endpoint.model_id)
-        for endpoint in MODEL_ENDPOINTS.values()
-        if endpoint.id not in catalog_vehicles.VEHICLES_ADDED
+        for endpoint in catalog_vehicles.registry_endpoints().values()
     }
     for provider_slug in _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS:
         raw = json.loads(
@@ -203,8 +201,8 @@ def test_dark_manifest_rows_cannot_return_as_prepaid_snapshot_routes() -> None:
     dark = _provider_manifest_dark_model_ids()
     endpoint_pairs = {
         (endpoint.provider, endpoint.model_id)
-        for endpoint in MODEL_ENDPOINTS.values()
-        if endpoint.usage_type == "Credits" and endpoint.id not in catalog_vehicles.VEHICLES_ADDED
+        for endpoint in catalog_vehicles.registry_endpoints().values()
+        if endpoint.usage_type == "Credits"
     }
     assert not {
         (provider_slug, model_id)

@@ -11,6 +11,7 @@ import pytest
 from scripts.pricing import refresh, vertex_prices
 from scripts.pricing.base import ModelPrice
 from scripts.pricing.providers import google_vertex as vertex
+from tests import catalog_vehicles
 
 MODEL = "google/gemini-3.8-flash"
 
@@ -266,8 +267,9 @@ def test_vertex_current_chat_manifest_routes_are_published() -> None:
     from trusted_router.catalog import MODEL_ENDPOINTS
 
     manifest = vertex._manifest_rows(vertex.MANIFEST_PATH)
+    built = catalog_vehicles.registry_endpoints()
     for model_id, row in manifest.items():
-        endpoint = MODEL_ENDPOINTS.get(f"{model_id}@google-vertex/prepaid")
+        endpoint = built.get(f"{model_id}@google-vertex/prepaid")
         if row.get("routable") is False:
             assert endpoint is None, model_id
         else:

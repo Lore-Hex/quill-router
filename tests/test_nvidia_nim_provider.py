@@ -8,6 +8,7 @@ import pytest
 
 from scripts.pricing import openai_catalog
 from scripts.pricing.providers import nvidia_nim
+from tests import catalog_vehicles
 from trusted_router.catalog_data import (
     DEEPSEEK_V4_PRO_0813_MODEL_ID,
     GATEWAY_PREPAID_PROVIDER_SLUGS,
@@ -304,7 +305,11 @@ def test_routable_nvidia_manifest_rows_create_prepaid_endpoints() -> None:
         for row in raw["models"]
         if row.get("model_type") == "chat" and row.get("routable") is False
     }
+    built = catalog_vehicles.registry_endpoints()
     assert all(
-        not any(endpoint.provider == "nvidia-nim" for endpoint in endpoints_for_model(model_id))
+        not any(
+            endpoint.provider == "nvidia-nim" and endpoint.id in built
+            for endpoint in endpoints_for_model(model_id)
+        )
         for model_id in unroutable_ids
     )

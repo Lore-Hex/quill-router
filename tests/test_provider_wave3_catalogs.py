@@ -34,6 +34,7 @@ from scripts.pricing.providers._direct_openai import (
     positive_chat_prices,
 )
 from scripts.pricing.refresh import _PRICING_RESULT_PROVIDER_ALIASES, PROVIDER_SLUGS
+from tests import catalog_vehicles
 from trusted_router import catalog_data, catalog_ingest
 from trusted_router.catalog import (
     GATEWAY_PREPAID_PROVIDER_SLUGS,
@@ -217,7 +218,9 @@ def test_akash_missing_deepseek_route_stays_dark_without_disabling_other_routes(
     # Direct /models plus an SSE model_not_found response confirmed the removal
     # on September 8. Do not confuse HTTP 200 transport with a working model.
     routed = {
-        endpoint.model_id for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "akashml"
+        endpoint.model_id
+        for endpoint in catalog_vehicles.registry_endpoints().values()
+        if endpoint.provider == "akashml"
     }
     assert "deepseek/deepseek-v4-flash-0731" not in routed
     # Every other route AkashML's manifest lists stays routed.

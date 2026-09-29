@@ -7,6 +7,7 @@ import pytest
 
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import chutes, cloudflare_workers_ai, digitalocean
+from tests import catalog_vehicles
 from trusted_router.catalog import (
     GATEWAY_PREPAID_PROVIDER_SLUGS,
     MODEL_ENDPOINTS,
@@ -135,7 +136,7 @@ def test_new_provider_privacy_and_gateway_registration() -> None:
 
 
 def test_new_provider_manifests_create_only_eligible_routes() -> None:
-    endpoints = list(MODEL_ENDPOINTS.values())
+    endpoints = list(catalog_vehicles.registry_endpoints().values())
 
     # A provider routes only its manifest's routable rows: none for a row the
     # refresh tombstoned or one still awaiting a price.
