@@ -15,7 +15,6 @@ def test_discovery_does_not_activate_unfunded_provider_routes() -> None:
         "darkbloom",
         "huggingface",
         "poolside",
-        "tencent",
     ):
         provider = PROVIDERS[provider_slug]
         assert provider.supports_prepaid is False

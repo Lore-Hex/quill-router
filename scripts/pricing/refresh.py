@@ -156,6 +156,7 @@ PROVIDER_SLUGS = [
     "arcee",
     "inception",
     "io_net",
+    "tencent",
     "scaleway",
     "regolo",
     "privatemode",
@@ -197,6 +198,7 @@ _PRICING_RESULT_PROVIDER_ALIASES: dict[str, tuple[str, ...]] = {
     "aion_labs": ("aion-labs",),
     "vercel_ai_gateway": ("vercel-ai-gateway",),
     "io_net": ("io-net",),
+    "tencent": ("tencent",),
     "near_ai": ("near-ai",),
 }
 
