@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from tests import catalog_vehicles
+from tests.pinned_manifests import CEREBRAS_GPT_OSS_120B
 from trusted_router import catalog_ingest
 from trusted_router.catalog import (
     _PROVIDER_DEPRECATED_UPSTREAM_MODELS,
@@ -478,17 +479,34 @@ def test_google_products_have_distinct_capabilities() -> None:
             assert endpoint_id in MODEL_ENDPOINTS or _delisted(endpoint_id), endpoint_id
 
 
-def test_llama_33_70b_no_longer_credits_routes_to_cerebras() -> None:
+def test_llama_33_70b_no_longer_credits_routes_to_cerebras(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
     # Regression for the cerebras 502s: this model's Credits route used to
     # include cerebras (which can't serve it) and fail. Its prepaid routing
-    # must now use only providers that actually serve it.
-    credits_providers = {
-        e.provider
-        for e in endpoints_for_model("meta-llama/llama-3.3-70b-instruct")
-        if e.usage_type == "Credits"
+    # must now use only providers that actually serve it: Cerebras's own feed
+    # decides its routes, here one row of it as pinned, and a host that serves
+    # the model keeps its route. Whether the model is still prepaid somewhere
+    # today is test_llama_33_70b_is_still_prepaid_off_cerebras.
+    (tmp_path / "cerebras.json").write_text(
+        json.dumps({"provider": "cerebras", "models": [CEREBRAS_GPT_OSS_120B]}), encoding="utf-8"
+    )
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    routes = {
+        f"{model_id}@{provider}/prepaid": ModelEndpoint(
+            id=f"{model_id}@{provider}/prepaid", model_id=model_id, provider=provider,
+            usage_type="Credits",
+        )
+        for model_id, provider in (
+            ("meta-llama/llama-3.3-70b-instruct", "cerebras"),
+            ("meta-llama/llama-3.3-70b-instruct", "parasail"),
+            ("openai/gpt-oss-120b", "cerebras"),
+        )
     }
-    assert "cerebras" not in credits_providers
-    assert credits_providers & {"novita", "parasail", "tinfoil", "together"}
+    assert set(_filter_unserved_provider_endpoints(routes)) == {
+        "meta-llama/llama-3.3-70b-instruct@parasail/prepaid",
+        "openai/gpt-oss-120b@cerebras/prepaid",
+    }
 
 
 def test_novita_supplemental_prices_apply_manifest_scale(
@@ -561,6 +579,17 @@ def test_novita_supplemental_prices_apply_manifest_scale(
 )
 def test_the_routes_these_rules_were_written_against_are_still_served(endpoint_id: str) -> None:
     assert endpoint_id in MODEL_ENDPOINTS, f"{endpoint_id} is no longer served"
+
+
+@pytest.mark.provider_health
+def test_llama_33_70b_is_still_prepaid_off_cerebras() -> None:
+    credits_providers = {
+        e.provider
+        for e in endpoints_for_model("meta-llama/llama-3.3-70b-instruct")
+        if e.usage_type == "Credits"
+    }
+    assert "cerebras" not in credits_providers
+    assert credits_providers & {"novita", "parasail", "tinfoil", "together"}
 
 
 @pytest.mark.provider_health
