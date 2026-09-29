@@ -28,10 +28,10 @@
   },
   "anthropic": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 13,
     "name": "Anthropic",
     "privacy": "Policy documented",
-    "route_count": 24,
+    "route_count": 26,
     "route_mode": "Prepaid + BYOK",
     "slug": "anthropic"
   },
@@ -226,10 +226,10 @@
   },
   "featherless": {
     "card_version": 2,
-    "model_count": 20,
+    "model_count": 31,
     "name": "Featherless AI",
     "privacy": "Policy documented",
-    "route_count": 20,
+    "route_count": 31,
     "route_mode": "Prepaid",
     "slug": "featherless"
   },
@@ -253,10 +253,10 @@
   },
   "gmi": {
     "card_version": 2,
-    "model_count": 71,
+    "model_count": 72,
     "name": "GMI Cloud",
     "privacy": "Policy documented",
-    "route_count": 77,
+    "route_count": 78,
     "route_mode": "Prepaid + BYOK",
     "slug": "gmi"
   },
@@ -505,10 +505,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 13,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 12,
+    "route_count": 13,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },

@@ -2,8 +2,8 @@
   "_about": "Provider-native GMI Cloud catalog. Account-visible models are intersected with GMI's official billing feed; explicitly approved routes omitted from /v1/models remain current only after an exact visible-content PONG canary succeeds.",
   "provider": "gmi",
   "source": "https://console.gmicloud.ai/api/v1/billing/model_prices",
-  "generated_at": "2026-09-28T15:04:09Z",
-  "model_count": 103,
+  "generated_at": "2026-09-28T23:57:13Z",
+  "model_count": 104,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -2485,6 +2485,27 @@
       "input_token_price_per_m": 435000,
       "output_token_price_per_m": 870000,
       "cached_input_token_price_per_m": 3600
+    },
+    {
+      "display_name": "MiMo-V2.6-Flash",
+      "title": "XiaomiMiMo/MiMo-V2.6-Flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "xiaomi/mimo-v2.6-flash",
+      "upstream_id": "XiaomiMiMo/MiMo-V2.6-Flash",
+      "context_length": 1050000,
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 280000,
+      "cached_input_token_price_per_m": 2800
     }
   ],
   "price_scale": "microdollars_per_million"

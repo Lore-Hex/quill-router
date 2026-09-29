@@ -453,11 +453,276 @@
       "input_token_price_per_m": 107800,
       "output_token_price_per_m": 280000,
       "cached_input_token_price_per_m": 86200
+    },
+    {
+      "display_name": "MiniMaxAI/MiniMax-M2.5",
+      "title": "MiniMaxAI/MiniMax-M2.5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "minimax/minimax-m2.5",
+      "upstream_id": "MiniMaxAI/MiniMax-M2.5",
+      "context_length": 204800,
+      "max_output_tokens": 32768,
+      "routable": true,
+      "input_token_price_per_m": 295000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 59000
+    },
+    {
+      "display_name": "moonshotai/Kimi-K2.5",
+      "title": "moonshotai/Kimi-K2.5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k2.5",
+      "upstream_id": "moonshotai/Kimi-K2.5",
+      "context_length": 262144,
+      "routable": true,
+      "input_token_price_per_m": 800000,
+      "output_token_price_per_m": 3400000,
+      "cached_input_token_price_per_m": 154000
+    },
+    {
+      "display_name": "Qwen/Qwen3-Coder-Next",
+      "title": "Qwen/Qwen3-Coder-Next",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-coder-next",
+      "upstream_id": "Qwen/Qwen3-Coder-Next",
+      "context_length": 32768,
+      "routable": true,
+      "input_token_price_per_m": 160000,
+      "output_token_price_per_m": 1150000,
+      "cached_input_token_price_per_m": 36000
+    },
+    {
+      "display_name": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+      "title": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-tts-12hz-1.7b-base",
+      "upstream_id": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000
+    },
+    {
+      "display_name": "Qwen/Qwen3.5-27B",
+      "title": "Qwen/Qwen3.5-27B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.5-27b",
+      "upstream_id": "Qwen/Qwen3.5-27B",
+      "context_length": 32768,
+      "max_output_tokens": 32768,
+      "routable": true,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 2400000
+    },
+    {
+      "display_name": "Qwen/Qwen3.5-2B",
+      "title": "Qwen/Qwen3.5-2B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.5-2b",
+      "upstream_id": "Qwen/Qwen3.5-2B",
+      "context_length": 32768,
+      "max_output_tokens": 32768,
+      "routable": true,
+      "input_token_price_per_m": 80000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 16000
+    },
+    {
+      "display_name": "Qwen/Qwen3.5-397B-A17B",
+      "title": "Qwen/Qwen3.5-397B-A17B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.5-397b-a17b",
+      "upstream_id": "Qwen/Qwen3.5-397B-A17B",
+      "context_length": 262144,
+      "max_output_tokens": 32768,
+      "routable": true,
+      "input_token_price_per_m": 550000,
+      "output_token_price_per_m": 3500000
+    },
+    {
+      "display_name": "Qwen/Qwen3.5-4B",
+      "title": "Qwen/Qwen3.5-4B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.5-4b",
+      "upstream_id": "Qwen/Qwen3.5-4B",
+      "context_length": 32768,
+      "max_output_tokens": 32768,
+      "routable": true,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 200000,
+      "cached_input_token_price_per_m": 20000
+    },
+    {
+      "display_name": "Qwen/Qwen3.5-9B",
+      "title": "Qwen/Qwen3.5-9B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.5-9b",
+      "upstream_id": "Qwen/Qwen3.5-9B",
+      "context_length": 32768,
+      "max_output_tokens": 32768,
+      "routable": true,
+      "input_token_price_per_m": 170000,
+      "output_token_price_per_m": 250000
+    },
+    {
+      "display_name": "Qwen/WebWorld-8B",
+      "title": "Qwen/WebWorld-8B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/webworld-8b",
+      "upstream_id": "Qwen/WebWorld-8B",
+      "context_length": 32768,
+      "routable": true,
+      "input_token_price_per_m": 468000,
+      "output_token_price_per_m": 1820000
+    },
+    {
+      "display_name": "zai-org/GLM-4.7-Flash",
+      "title": "zai-org/GLM-4.7-Flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-4.7-flash",
+      "upstream_id": "zai-org/GLM-4.7-Flash",
+      "context_length": 202752,
+      "routable": true,
+      "input_token_price_per_m": 65300,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 13100
+    },
+    {
+      "display_name": "zai-org/GLM-5",
+      "title": "zai-org/GLM-5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5",
+      "upstream_id": "zai-org/GLM-5",
+      "context_length": 202752,
+      "routable": true,
+      "input_token_price_per_m": 950000,
+      "output_token_price_per_m": 3150000,
+      "cached_input_token_price_per_m": 190000
     }
   ],
   "source": "https://api.featherless.ai/v1/models",
   "pricing_source": "https://featherless.ai/docs/request-pricing-and-credits",
-  "generated_at": "2026-09-28T15:04:09Z",
+  "generated_at": "2026-09-28T23:57:13Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 20
+  "model_count": 32
 }
