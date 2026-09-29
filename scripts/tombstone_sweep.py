@@ -27,11 +27,12 @@ this in a disposable worktree with no uncommitted data edits:
     # one or more providers delisted, specific test files
     python3 scripts/tombstone_sweep.py run anthropic,baseten tests/test_billing.py [...]
 
-A sweep resumes from OUT/state.json. Phase 2 runs whole files, not node ids: a
-delisting can shrink a catalog-derived parametrization, and pytest runs nothing
-when a requested node id is missing. A session that dies at import (a delisting
-that stops the app from starting) is recorded as SESSION-CRASH, never as zero
-failures.
+A sweep resumes from OUT/state.json, and only with the groups it was written
+with. Phase 2 runs whole files, not node ids: a delisting can shrink a
+catalog-derived parametrization, and pytest runs nothing when a requested node
+id is missing. A session that does not finish normally (a delisting that stops
+the app from starting, workers that die at import, nothing run) is recorded as
+SESSION-CRASH, never as zero failures.
 """
 
 from __future__ import annotations
@@ -122,9 +123,13 @@ def run_pytest(files: list[str], workers: int, log: Path) -> tuple[set[str], str
         (line.strip() for line in reversed(output.splitlines()) if re.search(r"\d+ (passed|failed)|no tests ran", line)),
         None,
     )
-    if summary is None:
-        # No pytest summary at all: the session died before running, typically at import.
-        return {SESSION_CRASH}, "session crashed: " + (output.strip().splitlines() or ["(no output)"])[-1]
+    # pytest exits 0 when every test passed and 1 when some failed. Anything
+    # else (an internal error, an interrupted or empty session), and a failed
+    # session with no failed test on record, means the run did not happen as
+    # asked: xdist can print "no tests ran" after its workers die at import.
+    if summary is None or proc.returncode not in (0, 1) or (proc.returncode == 1 and not failures):
+        last = summary or (output.strip().splitlines() or ["(no output)"])[-1]
+        return failures | {SESSION_CRASH}, f"session crashed (exit {proc.returncode}): {last}"
     return failures, summary
 
 
@@ -133,6 +138,16 @@ def sweep(out: Path, group_size: int, workers: int) -> None:
     state_path = out / "state.json"
     state = json.loads(state_path.read_text()) if state_path.exists() else {}
     providers = sorted(path.stem for path in MANIFESTS.glob("*.json"))
+    # A saved group must be the group this run would test under its key;
+    # another --group-size or provider list would skip providers on resume.
+    for key, group_state in state.get("groups", {}).items():
+        start = int(key.removeprefix("group")) * group_size
+        if group_state["providers"] != providers[start:start + group_size]:
+            raise SystemExit(
+                f"{state_path}: {key} holds {group_state['providers']}, but this run's {key} would be "
+                f"{providers[start:start + group_size]}. Resume with the same --group-size and "
+                "providers, or sweep into a new OUT."
+            )
 
     def save() -> None:
         state_path.write_text(json.dumps(state, indent=1, sort_keys=True), encoding="utf-8")
