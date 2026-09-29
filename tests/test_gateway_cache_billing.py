@@ -11,13 +11,19 @@ cache_creation_input_tokens. Two things must hold:
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.fixture_routes import serve_on_fixture_route
 from trusted_router.catalog import cache_token_prices_microdollars, endpoint_for_id
+from trusted_router.catalog_data import PriceTier
+from trusted_router.catalog_ingest import _PROVIDER_MODELS_DIR
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.money import token_cost_microdollars
+from trusted_router.pricing import _customer_price
 from trusted_router.storage import STORE
 from trusted_router.typed_balance import live_credit_summary
 
@@ -32,6 +38,22 @@ def _client_and_key() -> tuple[TestClient, dict]:
     )
     assert created.status_code == 201, created.text
     return client, created.json()["data"]
+
+
+def _serve_glm_53_with_a_cached_rate(monkeypatch: pytest.MonkeyPatch, provider_slug: str) -> None:
+    """GLM 5.3 on one OpenAI-compatible host, with a published cached-input
+    rate distinct from the provider's default cache multiple. A fixture: which
+    hosts list GLM 5.3 today is provider state."""
+    tier = PriceTier(
+        max_prompt_tokens=None,
+        prompt_price_microdollars_per_million_tokens=1_000_000,
+        completion_price_microdollars_per_million_tokens=3_000_000,
+        prompt_cached_price_microdollars_per_million_tokens=250_000,
+    )
+    serve_on_fixture_route(
+        monkeypatch, "z-ai/glm-5.3", provider_slug, author="zai",
+        price_tiers=(tier,), published_price_tiers=(tier,),
+    )
 
 
 def _authorize(
@@ -106,7 +128,10 @@ def test_anthropic_cache_read_and_write_tokens_are_billed() -> None:
 
 
 @pytest.mark.parametrize("provider_slug", ["tinfoil", "featherless"])
-def test_openai_compatible_cached_subset_is_normalized(provider_slug: str) -> None:
+def test_openai_compatible_cached_subset_is_normalized(
+    provider_slug: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _serve_glm_53_with_a_cached_rate(monkeypatch, provider_slug)
     client, key = _client_and_key()
     auth = _authorize(
         client,
@@ -138,8 +163,6 @@ def test_openai_compatible_cached_subset_is_normalized(provider_slug: str) -> No
         endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
     )
     assert read_price is not None
-    if provider_slug == "featherless":
-        assert read_price == 274_300  # $0.26/M with the standard customer markup.
     expected = (
         token_cost_microdollars(100, prompt_price)  # 1000 - 900 cached
         + token_cost_microdollars(50, completion_price)
@@ -169,7 +192,10 @@ def test_openai_compatible_cached_subset_is_normalized(provider_slug: str) -> No
     assert live_credit_summary(key["workspace_id"]) == balance
 
 
-def test_tinfoil_glm_53_uses_published_cached_input_rate() -> None:
+def test_tinfoil_glm_53_uses_published_cached_input_rate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_glm_53_with_a_cached_rate(monkeypatch, "tinfoil")
     client, key = _client_and_key()
     auth = _authorize(
         client,
@@ -195,7 +221,10 @@ def test_tinfoil_glm_53_uses_published_cached_input_rate() -> None:
 
     tier = endpoint.price_tiers[0]
     cached_price = tier.prompt_cached_price_microdollars_per_million_tokens
-    assert cached_price == 474_750
+    assert cached_price is not None
+    assert cached_price != cache_token_prices_microdollars(
+        "tinfoil", tier.prompt_price_microdollars_per_million_tokens
+    )[0], "fixture: the published rate must differ from the default multiple"
     expected = (
         token_cost_microdollars(
             100, tier.prompt_price_microdollars_per_million_tokens
@@ -209,6 +238,25 @@ def test_tinfoil_glm_53_uses_published_cached_input_rate() -> None:
         )
     )
     assert settle.json()["data"]["cost_microdollars"] == expected
+
+
+@pytest.mark.parametrize("provider_slug", ["tinfoil", "featherless"])
+def test_glm_53_routes_publish_the_manifest_cached_input_rate(provider_slug: str) -> None:
+    # Each routable row of the committed manifest, with the standard customer
+    # markup; a delisted row publishes no route at all.
+    raw = json.loads((_PROVIDER_MODELS_DIR / f"{provider_slug}.json").read_text(encoding="utf-8"))
+    expected = {
+        row["id"]: _customer_price(row["cached_input_token_price_per_m"])
+        for row in raw["models"]
+        if row["id"] == "z-ai/glm-5.3" and row.get("routable") is not False
+    }
+    endpoint = endpoint_for_id(f"z-ai/glm-5.3@{provider_slug}/prepaid")
+    published = (
+        {endpoint.model_id: endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens}
+        if endpoint is not None
+        else {}
+    )
+    assert published == expected
 
 
 def test_settle_without_cache_fields_is_unchanged() -> None:
@@ -239,7 +287,7 @@ def test_settle_without_cache_fields_is_unchanged() -> None:
     assert generation.cached_input_tokens == 0
 
 
-def test_settle_records_cache_reads_on_the_generation() -> None:
+def test_settle_records_cache_reads_on_the_generation(monkeypatch: pytest.MonkeyPatch) -> None:
     """The generation's cached_input_tokens must reflect the settle body.
 
     Regression: `from_settle_body` only read the legacy `cached_input_tokens`
@@ -249,6 +297,7 @@ def test_settle_records_cache_reads_on_the_generation() -> None:
     across ~700k rows in production — making prompt-cache usage look
     nonexistent. Billing was always correct; only this metric was blank.
     """
+    _serve_glm_53_with_a_cached_rate(monkeypatch, "tinfoil")
     client, key = _client_and_key()
     auth = _authorize(
         client,

@@ -422,19 +422,10 @@ def test_stale_mixed_manifest_recovers_only_chat_token_prices(tmp_path: Path) ->
 def test_nscale_catalog_is_fail_closed_and_privacy_is_not_overclaimed() -> None:
     raw = json.loads(nscale.MANIFEST_PATH.read_text(encoding="utf-8"))
     assert raw["provider"] == nscale.SLUG
-    assert raw["model_count"] >= 15
-    assert {row["model_type"] for row in raw["models"]} == {
-        "chat",
-        "embedding",
-        "image",
-    }
     routable = [row for row in raw["models"] if row.get("routable") is not False]
     blocked = [row for row in raw["models"] if row.get("routable") is False]
-    assert routable
-    assert blocked
-    assert all(
-        row.get("routable_reason") == "provider-canary-failed" for row in blocked
-    )
+    # A blocked row says why (a failed canary, a missing price, a delisting).
+    assert all(row.get("routable_reason") for row in blocked)
     assert all(
         row["input_token_price_per_m"] > 0
         and row["output_token_price_per_m"] > 0
@@ -464,6 +455,16 @@ def test_nscale_catalog_is_fail_closed_and_privacy_is_not_overclaimed() -> None:
     assert nscale.SLUG in GATEWAY_PREPAID_PROVIDER_SLUGS
     assert nscale.SLUG in refresh.PROVIDER_SLUGS
     assert default_provider_secret_ref(nscale.SLUG) == "env://NSCALE_API_KEY"
+
+
+@pytest.mark.provider_health
+def test_nscale_still_lists_its_catalog() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    raw = json.loads(nscale.MANIFEST_PATH.read_text(encoding="utf-8"))
+    assert raw["model_count"] >= 15
+    assert {row["model_type"] for row in raw["models"]} == {"chat", "embedding", "image"}
+    assert any(row.get("routable") is not False for row in raw["models"])
 
 
 def test_nscale_secret_is_refreshed_hourly() -> None:

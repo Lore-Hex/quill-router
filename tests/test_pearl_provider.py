@@ -10,6 +10,7 @@ import pytest
 from scripts.check_price_coverage import _DISCOVERABLE_MANIFEST_PROVIDERS
 from scripts.pricing.base import ProviderPricingResult
 from scripts.pricing.providers import pearl
+from tests.pinned_manifests import PEARL_GLM_5_3, serve_manifest_rows
 from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS
 
 
@@ -178,9 +179,15 @@ def test_pearl_catalog_is_prepaid_only_and_standard_privacy() -> None:
         for endpoint in MODEL_ENDPOINTS.values()
         if endpoint.provider == "pearl"
     ]
-    assert endpoints
-    assert {endpoint.usage_type for endpoint in endpoints} == {"Credits"}
+    assert all(endpoint.usage_type == "Credits" for endpoint in endpoints)
     assert all(endpoint.id.endswith("@pearl/prepaid") for endpoint in endpoints)
+
+
+@pytest.mark.provider_health
+def test_pearl_serves_glm_5_3() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    assert "z-ai/glm-5.3@pearl/prepaid" in MODEL_ENDPOINTS
 
 
 def test_pearl_refresh_tombstones_missing_legacy_route_without_rerouting(
@@ -221,7 +228,9 @@ def test_pearl_refresh_tombstones_missing_legacy_route_without_rerouting(
     assert "routable_reason" not in restored
 
 
-def test_pearl_public_api_exposes_provider_and_exact_endpoint(client: Any) -> None:
+def test_pearl_public_api_exposes_provider_and_exact_endpoint(
+    client: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
     providers = {
         row["id"]: row for row in client.get("/v1/providers").json()["data"]
     }
@@ -234,6 +243,9 @@ def test_pearl_public_api_exposes_provider_and_exact_endpoint(client: Any) -> No
     assert provider["provider_confidential_compute"] is False
     assert provider["provider_e2ee"] is False
 
+    # GLM-5.3's Pearl route built from its pinned manifest row: how the public
+    # API presents a Pearl route holds whatever Pearl lists today.
+    serve_manifest_rows(monkeypatch, tmp_path, "pearl", [PEARL_GLM_5_3])
     response = client.get("/v1/models/z-ai/glm-5.3/endpoints")
     assert response.status_code == 200
     endpoint = next(

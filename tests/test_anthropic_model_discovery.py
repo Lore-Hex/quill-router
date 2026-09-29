@@ -3,14 +3,20 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.parsers import anthropic as anthropic_parser
 from scripts.pricing.providers import anthropic
+from tests import catalog_vehicles
+from tests.pinned_manifests import ANTHROPIC_CLAUDE_OPUS_5, serve_manifest_rows
+from trusted_router import catalog_ingest
 from trusted_router.catalog import (
     MODELS,
     endpoint_zero_data_retention,
     endpoints_for_model,
 )
+from trusted_router.catalog_data import ModelEndpoint
 from trusted_router.synthetic.probes import rotation_candidates
 
 
@@ -329,7 +335,12 @@ def test_anthropic_manifest_writer_publishes_discovered_opus_5(
     assert row["cached_input_token_price_per_m"] == 500_000
 
 
-def test_opus_5_catalog_is_routable_for_chat_and_messages_but_not_zdr() -> None:
+def test_opus_5_catalog_is_routable_for_chat_and_messages_but_not_zdr(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    # Opus 5's routes built from its pinned manifest row: how the catalog
+    # publishes a Claude row holds whatever Anthropic lists today.
+    serve_manifest_rows(monkeypatch, tmp_path, "anthropic", [ANTHROPIC_CLAUDE_OPUS_5])
     model = MODELS["anthropic/claude-opus-5"]
     endpoints = endpoints_for_model(model.id)
     anthropic_endpoints = [
@@ -361,8 +372,33 @@ def test_opus_5_catalog_is_routable_for_chat_and_messages_but_not_zdr() -> None:
     assert not any(endpoint_zero_data_retention(endpoint) for endpoint in endpoints)
 
 
-def test_anthropic_rotation_uses_authenticated_manifest_not_snapshot_only_models() -> None:
-    candidates = set(rotation_candidates()["anthropic"])
+@pytest.mark.provider_health
+def test_anthropic_serves_claude_opus_5() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    assert {
+        endpoint.usage_type
+        for endpoint in endpoints_for_model("anthropic/claude-opus-5")
+        if endpoint.provider == "anthropic"
+    } == {"Credits", "BYOK"}
 
-    assert "anthropic/claude-opus-5" in candidates
+
+def test_anthropic_rotation_uses_authenticated_manifest_not_snapshot_only_models() -> None:
+    # The registry's routes, not a vehicle the test session put back.
+    candidates = {
+        model_id
+        for model_id in rotation_candidates().get("anthropic", [])
+        if f"{model_id}@anthropic/prepaid" not in catalog_vehicles.VEHICLES_ADDED
+    }
+
+    assert candidates == catalog_ingest._authoritative_provider_model_ids("anthropic")
     assert "anthropic/claude-opus-5-fast" not in candidates
+    # A Claude route only the shared snapshot lists is dropped, not rotated.
+    snapshot_only = ModelEndpoint(
+        id="anthropic/claude-opus-5-fast@anthropic/prepaid",
+        model_id="anthropic/claude-opus-5-fast",
+        provider="anthropic",
+        usage_type="Credits",
+        upstream_id="claude-opus-5-fast",
+    )
+    assert catalog_ingest._filter_unserved_provider_endpoints({snapshot_only.id: snapshot_only}) == {}

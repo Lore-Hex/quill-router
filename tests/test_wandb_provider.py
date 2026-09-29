@@ -15,6 +15,11 @@ from trusted_router.catalog import (
     PROVIDERS,
     endpoints_for_model,
 )
+from trusted_router.catalog_data import (
+    DEEPSEEK_V4_PRO_0423_MODEL_ID,
+    DEEPSEEK_V4_PRO_0813_MODEL_ID,
+)
+from trusted_router.provider_lifecycle import provider_model_retired
 from trusted_router.services.inference_errors import default_provider_secret_ref
 
 _MODELS = (
@@ -223,8 +228,6 @@ def test_wandb_manifest_is_priced_and_preserves_exact_upstream_ids() -> None:
     rows = {row["id"]: row for row in raw["models"]}
     flash = rows["z-ai/glm-5.3-flash"]
     assert flash["upstream_id"] == "zai-org/GLM-5.3-Flash"
-    assert flash.get("routable") is not False
-    assert "routable_reason" not in flash
     assert flash["input_modalities"] == ["text", "image"]
     assert flash["context_length"] == 1_048_576
     assert flash["cached_input_token_price_per_m"] > 0
@@ -233,11 +236,33 @@ def test_wandb_manifest_is_priced_and_preserves_exact_upstream_ids() -> None:
     assert all(row["input_token_price_per_m"] > 0 for row in rows.values())
     assert all(row["output_token_price_per_m"] > 0 for row in rows.values())
     assert any(row["upstream_id"] != model_id for model_id, row in rows.items())
-    model_id, row = next(iter(rows.items()))
-    endpoints = [
-        endpoint
-        for endpoint in endpoints_for_model(model_id)
-        if endpoint.provider == wandb.SLUG
-    ]
-    assert len(endpoints) == 1
-    assert endpoints[0].upstream_id == row["upstream_id"]
+    # A routable row is routed once, at its exact upstream ID; a row the refresh
+    # tombstoned, or one a scheduled retirement has taken off at the catalog's
+    # clock, is not. The immutable DeepSeek releases are offered only through
+    # the registry's release leaves, never by a manifest row alone.
+    release_leaves = {DEEPSEEK_V4_PRO_0423_MODEL_ID, DEEPSEEK_V4_PRO_0813_MODEL_ID}
+    for model_id, row in rows.items():
+        if model_id in release_leaves:
+            continue
+        endpoints = [
+            endpoint
+            for endpoint in endpoints_for_model(model_id)
+            if endpoint.provider == wandb.SLUG
+        ]
+        if row.get("routable") is False or provider_model_retired(
+            wandb.SLUG, model_id, row["upstream_id"]
+        ):
+            assert endpoints == [], model_id
+        else:
+            assert len(endpoints) == 1, model_id
+            assert endpoints[0].upstream_id == row["upstream_id"]
+
+
+@pytest.mark.provider_health
+def test_wandb_serves_glm_5_3_flash() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    rows = {row["id"]: row for row in json.loads(wandb.MANIFEST_PATH.read_text())["models"]}
+    flash = rows["z-ai/glm-5.3-flash"]
+    assert flash.get("routable") is not False
+    assert "routable_reason" not in flash

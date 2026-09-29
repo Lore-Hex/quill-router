@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests.fakes.spanner import make_fake_store
+from tests.fixture_routes import serve_on_fixture_route
 from tests.test_operational_analytics_direct import _load_drainer
 from tests.test_regional_accounting_v2 import _totals
 from trusted_router.config import Settings
@@ -31,6 +32,12 @@ from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
 def test_gateway_regional_matches_global_exactly(
     monkeypatch: pytest.MonkeyPatch, receipt: bool, case: str,
 ) -> None:
+    # Priority processing needs an OpenAI route for a priority-priced model.
+    serve_on_fixture_route(
+        monkeypatch, "openai/gpt-5.6-sol", "openai", author="openai", upstream_id="gpt-5.6-sol",
+        prompt_price_microdollars_per_million_tokens=4_220_000,
+        completion_price_microdollars_per_million_tokens=21_100_000,
+    )
     results = []
     # Include a no-receipt global oracle to independently assert the 11200/10550
     # ratio, so mutating the shared receipt helper cannot make both paths pass.

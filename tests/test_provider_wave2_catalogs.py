@@ -154,7 +154,11 @@ def test_wave2_manifests_publish_only_live_eligible_routes() -> None:
     )
     assert all(row["upstream_id"] for raw in manifests.values() for row in raw["models"])
     route_providers = {endpoint.provider for endpoint in MODEL_ENDPOINTS.values()}
-    assert {"inceptron", "morph", "atlas-cloud"}.issubset(route_providers)
+    # A provider publishes routes while its manifest has a routable row; one
+    # the refresh tombstoned entirely is simply not expected.
+    for slug in ("inceptron", "morph", "atlas-cloud"):
+        live_rows = [row for row in manifests[slug]["models"] if row.get("routable") is not False]
+        assert slug in route_providers or not live_rows, slug
     streamlake_route_models = {
         endpoint.model_id
         for endpoint in MODEL_ENDPOINTS.values()
@@ -170,6 +174,14 @@ def test_wave2_manifests_publish_only_live_eligible_routes() -> None:
         row.get("routable") is not False or row.get("routable_reason")
         for row in manifests["streamlake"]["models"]
     )
+
+
+@pytest.mark.provider_health
+def test_wave2_providers_serve_routes() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    route_providers = {endpoint.provider for endpoint in MODEL_ENDPOINTS.values()}
+    assert {"inceptron", "morph", "atlas-cloud"} <= route_providers
 
 
 def test_wave2_exact_upstream_ids_are_committed() -> None:

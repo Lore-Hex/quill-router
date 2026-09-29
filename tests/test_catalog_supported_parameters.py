@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 
-from trusted_router import catalog_ingest
-from trusted_router.catalog import MODELS, model_to_openrouter_shape
+from trusted_router import catalog, catalog_ingest
+from trusted_router.catalog import MODELS, Model, ModelEndpoint, model_to_openrouter_shape
 from trusted_router.catalog_capabilities import manifest_supported_parameters
 
 
@@ -103,27 +104,60 @@ def test_public_models_publish_openrouter_supported_parameters(client: TestClien
     )
 
     by_id = {model["id"]: model for model in models}
-    sonnet = by_id["anthropic/claude-sonnet-5"]
+    # A vehicle route (tests/catalog_vehicles.py): present whatever Anthropic lists.
+    sonnet = by_id["anthropic/claude-sonnet-4.6"]
     assert {"tools", "tool_choice", "reasoning", "structured_outputs"}.issubset(
         sonnet["supported_parameters"]
     )
 
 
-def test_model_capabilities_are_union_of_routable_endpoints() -> None:
-    model = MODELS["openai/gpt-oss-120b"]
+def test_model_capabilities_are_union_of_routable_endpoints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A model publishes every parameter its own array or a route declares. A
+    # provider extension no manifest declares (OpenAI's service_tier) is
+    # published on that provider's endpoint rows only.
+    model = Model(
+        id="fixture/union", name="Fixture", provider="novita", context_length=8_192,
+        supported_parameters=("max_tokens", "temperature"),
+    )
+    routes = (
+        ModelEndpoint(
+            id=f"{model.id}@novita/prepaid", model_id=model.id, provider="novita",
+            usage_type="Credits", supported_parameters=("max_tokens", "tools"),
+        ),
+        ModelEndpoint(
+            id=f"{model.id}@openai/byok", model_id=model.id, provider="openai",
+            usage_type="BYOK", supported_parameters=("max_tokens", "reasoning", "response_format"),
+        ),
+    )
+    monkeypatch.setitem(catalog.MODELS, model.id, model)
+    for route in routes:
+        monkeypatch.setitem(catalog.MODEL_ENDPOINTS, route.id, route)
     shape = model_to_openrouter_shape(model)
-    endpoint_parameters = {
-        parameter
+
+    assert set(shape["supported_parameters"]) == {
+        "max_tokens", "temperature", "tools", "reasoning", "response_format",
+    }
+    assert {
+        endpoint["provider"]: set(endpoint["supported_parameters"])
         for endpoint in shape["trustedrouter"]["endpoints"]
-        for parameter in endpoint["supported_parameters"]
+    } == {
+        "novita": {"max_tokens", "tools"},
+        "openai": {"max_tokens", "reasoning", "response_format", "service_tier"},
     }
 
-    assert endpoint_parameters.issubset(set(shape["supported_parameters"]))
+
+@pytest.mark.provider_health
+def test_gpt_oss_120b_publishes_tools_reasoning_and_response_format() -> None:
+    shape = model_to_openrouter_shape(MODELS["openai/gpt-oss-120b"])
+
     assert {"tools", "reasoning", "response_format"}.issubset(shape["supported_parameters"])
 
 
 def test_model_endpoints_publish_endpoint_specific_parameters(client: TestClient) -> None:
-    response = client.get("/v1/models/anthropic/claude-sonnet-5/endpoints")
+    # A vehicle route (tests/catalog_vehicles.py): present whatever Anthropic lists.
+    response = client.get("/v1/models/anthropic/claude-sonnet-4.6/endpoints")
 
     assert response.status_code == 200
     endpoints = response.json()["data"]

@@ -8,6 +8,7 @@ import pytest
 from scripts.pricing.base import ModelPrice, PriceTier, ProviderPricingResult
 from scripts.pricing.parsers.xiaomi import parse
 from scripts.pricing.providers import xiaomi
+from tests.pinned_manifests import XIAOMI_MIMO_V2_6, serve_manifest_rows
 from trusted_router.catalog import endpoints_for_model
 from trusted_router.pricing import _customer_price
 
@@ -165,8 +166,24 @@ def test_tiered_prices_fail_closed(manifest: Path, monkeypatch: pytest.MonkeyPat
     assert manifest.read_bytes() == original
 
 
+@pytest.mark.provider_health
 @pytest.mark.parametrize("suffix", ["pro", "flash", "pro-ultraspeed"])
-def test_mimo_26_has_native_credit_route(suffix: str) -> None:
+def test_xiaomi_serves_mimo_26(suffix: str) -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    assert any(
+        route.provider == "xiaomi" and route.usage_type == "Credits"
+        for route in endpoints_for_model(f"xiaomi/mimo-v2.6-{suffix}")
+    )
+
+
+@pytest.mark.parametrize("suffix", ["pro", "flash", "pro-ultraspeed"])
+def test_mimo_26_has_native_credit_route(
+    suffix: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    # The routes built from Xiaomi's pinned manifest rows: how the catalog
+    # publishes them holds whatever Xiaomi lists today.
+    serve_manifest_rows(monkeypatch, tmp_path, "xiaomi", XIAOMI_MIMO_V2_6)
     routes = [
         route for route in endpoints_for_model(f"xiaomi/mimo-v2.6-{suffix}")
         if route.provider == "xiaomi" and route.usage_type == "Credits"

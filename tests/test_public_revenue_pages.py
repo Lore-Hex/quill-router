@@ -8,8 +8,10 @@ from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 
+from tests.fixture_routes import drop_routes, serve_on_fixture_route
 from tests.lifecycle_clock import catalog_predates
 from trusted_router.catalog import PROVIDERS, endpoints_for_model
+from trusted_router.catalog_data import Model
 from trusted_router.dashboard import PUBLIC_PAGES
 from trusted_router.provider_lifecycle import (
     XIAOMI_MIMO_V25_PRO_ULTRASPEED_RETIREMENT_AT,
@@ -162,8 +164,8 @@ def test_signup_grant_amount_is_not_advertised(client: TestClient) -> None:
         response = client.get(path)
         assert response.status_code == 200, f"{path} returned {response.status_code}"
         rendered = response.text.lower()
-        assert "$0.10" not in rendered
-        assert "$0.30" not in rendered
+        # The grant amounts, not a listed model price such as $0.1055/1m.
+        assert not re.search(r"\$0\.[13]0(?![0-9])", rendered), path
         assert "ten cents" not in rendered
 
     for path in [
@@ -523,7 +525,17 @@ def test_homepage_and_nav_link_to_choose(client: TestClient) -> None:
     assert 'href="/choose"' in client.get("/models").text  # _base nav
 
 
-def test_public_models_page_does_not_require_api_key(client: TestClient) -> None:
+def test_public_models_page_does_not_require_api_key(
+    client: TestClient, monkeypatch: MonkeyPatch
+) -> None:
+    # The page chips every host that serves a model; these three serve models
+    # here on fixture routes, whatever they list today.
+    for model_id, host in (
+        ("moonshotai/kimi-k2.6", "kimi"),
+        ("moonshotai/kimi-k2.6", "parasail"),
+        ("google/gemma-4-31b-it", "tinfoil"),
+    ):
+        serve_on_fixture_route(monkeypatch, model_id, host, author=host)
     response = client.get("/models")
 
     assert response.status_code == 200
@@ -541,8 +553,16 @@ def test_public_models_page_does_not_require_api_key(client: TestClient) -> None
 
 
 def test_public_models_page_is_a_ranked_searchable_price_explorer(
-    client: TestClient,
+    client: TestClient, monkeypatch: MonkeyPatch
 ) -> None:
+    # Featured models rank first, in their configured order; the three below
+    # are carried here on fixture routes, whoever lists them today.
+    for model_id, host in (
+        ("z-ai/glm-5.3-flash", "zai"),
+        ("moonshotai/kimi-k3", "kimi"),
+        ("deepseek/deepseek-v4-pro-0813", "baseten"),
+    ):
+        serve_on_fixture_route(monkeypatch, model_id, host, author=host)
     response = client.get("/models")
 
     assert response.status_code == 200
@@ -580,8 +600,12 @@ def test_public_providers_page_has_search_and_collapsed_policy_notes(
     assert "/static/providers.js" in response.text
 
 
-def test_public_model_detail_lists_distinct_serving_providers(client: TestClient) -> None:
+def test_public_model_detail_lists_distinct_serving_providers(
+    client: TestClient, monkeypatch: MonkeyPatch
+) -> None:
     model_id = "moonshotai/kimi-k2.6"
+    # Kimi serves K2.6 here on a fixture route, whatever it lists today.
+    serve_on_fixture_route(monkeypatch, model_id, "kimi", author="kimi", upstream_id="kimi-k2.6")
     response = client.get(f"/models/{model_id}")
 
     assert response.status_code == 200
@@ -602,7 +626,18 @@ def test_public_model_detail_lists_distinct_serving_providers(client: TestClient
         assert BeautifulSoup(response.text, "html.parser").select_one(f'a.provider-chip[href="/providers/{provider}"]') is not None
 
 
-def test_byok_only_model_page_reports_no_credits_route(client: TestClient) -> None:
+def test_byok_only_model_page_reports_no_credits_route(
+    client: TestClient, monkeypatch: MonkeyPatch
+) -> None:
+    # A model served only on a BYOK route, as a fixture: which hosts list Hy3
+    # preview today, and how, is provider state.
+    model_id = "tencent/hy3-preview"
+    drop_routes(monkeypatch, model_id)
+    serve_on_fixture_route(
+        monkeypatch, model_id, "gmi", author="gmi", usage_type="BYOK",
+        model=Model(id=model_id, name="Tencent: Hy3 preview", provider="gmi",
+                    context_length=262_144),
+    )
     response = client.get("/models/tencent/hy3-preview")
 
     assert response.status_code == 200
@@ -639,8 +674,10 @@ def test_public_model_pages_never_claim_tr_stores_content(client: TestClient) ->
 
 
 def test_public_kimi_k3_page_separates_router_attestation_from_provider_e2ee(
-    client: TestClient,
+    client: TestClient, monkeypatch: MonkeyPatch
 ) -> None:
+    # Moonshot's own row, served here on a fixture route.
+    serve_on_fixture_route(monkeypatch, "moonshotai/kimi-k3", "kimi", author="kimi")
     catalog = client.get("/models")
     detail = client.get("/models/moonshotai/kimi-k3")
 
@@ -663,8 +700,12 @@ def test_public_kimi_k3_page_separates_router_attestation_from_provider_e2ee(
 
 
 def test_single_provider_model_shows_provider_posture_not_variation(
-    client: TestClient,
+    client: TestClient, monkeypatch: MonkeyPatch
 ) -> None:
+    # A model one provider serves, on a fixture route: Novita, whose privacy
+    # posture is unknown.
+    drop_routes(monkeypatch, "qwen/qwen-2.5-72b-instruct")
+    serve_on_fixture_route(monkeypatch, "qwen/qwen-2.5-72b-instruct", "novita", author="novita")
     detail = client.get("/models/qwen/qwen-2.5-72b-instruct")
 
     assert detail.status_code == 200
@@ -685,7 +726,12 @@ def test_phala_pages_do_not_claim_verified_provider_e2ee(client: TestClient) -> 
     assert "provider E2EE not verified" in detail.text
 
 
-def test_public_meta_model_detail_renders_orchestration_components(client: TestClient) -> None:
+def test_public_meta_model_detail_renders_orchestration_components(
+    client: TestClient, monkeypatch: MonkeyPatch
+) -> None:
+    # GLM 5.2 Fast, a component Baseten alone serves, is carried here on a
+    # fixture route.
+    serve_on_fixture_route(monkeypatch, "z-ai/glm-5.2-fast", "baseten", author="zai")
     response = client.get("/models/trustedrouter/socrates-1.1")
 
     assert response.status_code == 200

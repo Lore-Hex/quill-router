@@ -4,9 +4,18 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from scripts.pricing.providers import tinfoil
+from tests.pinned_manifests import (
+    TINFOIL_DEEPSEEK_V4_1_FLASH,
+    TINFOIL_GLM_5_3,
+    TINFOIL_GLM_5_3_FLASH,
+    TINFOIL_KIMI_K3,
+    serve_manifest_rows,
+)
 from trusted_router import provider_lifecycle
-from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, PROVIDERS
+from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS
 
 
 def test_tinfoil_fetch_ingests_glm_52_cached_input_price(monkeypatch) -> None:  # noqa: ANN001
@@ -282,7 +291,19 @@ def test_tinfoil_manifest_writer_publishes_discovered_chat_metadata(
     ]
 
 
-def test_tinfoil_deepseek_route_is_confidential_and_uses_live_prices() -> None:
+# The route tests below build Tinfoil's routes from its manifest rows pinned in
+# tests/pinned_manifests.py: how a row is priced holds whatever Tinfoil lists
+# today. That it still lists them is a provider_health check.
+@pytest.mark.provider_health
+@pytest.mark.parametrize("model_id", ["deepseek/deepseek-v4.1-flash", "moonshotai/kimi-k3"])
+def test_tinfoil_still_serves_its_confidential_route(model_id: str) -> None:
+    assert f"{model_id}@tinfoil/prepaid" in MODEL_ENDPOINTS
+
+
+def test_tinfoil_deepseek_route_is_confidential_and_uses_live_prices(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    serve_manifest_rows(monkeypatch, tmp_path, "tinfoil", [TINFOIL_DEEPSEEK_V4_1_FLASH])
     endpoint = MODEL_ENDPOINTS["deepseek/deepseek-v4.1-flash@tinfoil/prepaid"]
     provider = PROVIDERS["tinfoil"]
 
@@ -298,7 +319,10 @@ def test_tinfoil_deepseek_route_is_confidential_and_uses_live_prices() -> None:
     assert provider.provider_e2ee is True
 
 
-def test_tinfoil_kimi_k3_route_is_confidential_and_uses_live_capabilities() -> None:
+def test_tinfoil_kimi_k3_route_is_confidential_and_uses_live_capabilities(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    serve_manifest_rows(monkeypatch, tmp_path, "tinfoil", [TINFOIL_KIMI_K3])
     endpoint = MODEL_ENDPOINTS["moonshotai/kimi-k3@tinfoil/prepaid"]
     provider = PROVIDERS["tinfoil"]
 
@@ -311,11 +335,14 @@ def test_tinfoil_kimi_k3_route_is_confidential_and_uses_live_capabilities() -> N
     assert provider.provider_e2ee is True
 
 
-def test_tinfoil_glm53_routes_use_live_prices_and_capabilities() -> None:
+def test_tinfoil_glm53_routes_use_live_prices_and_capabilities(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    serve_manifest_rows(
+        monkeypatch, tmp_path, "tinfoil", [TINFOIL_GLM_5_3, TINFOIL_GLM_5_3_FLASH]
+    )
     glm = MODEL_ENDPOINTS["z-ai/glm-5.3@tinfoil/prepaid"]
     flash = MODEL_ENDPOINTS["z-ai/glm-5.3-flash@tinfoil/prepaid"]
-    glm_model = MODELS["z-ai/glm-5.3"]
-    flash_model = MODELS["z-ai/glm-5.3-flash"]
     provider = PROVIDERS["tinfoil"]
     rows = {
         row["id"]: row
@@ -330,11 +357,12 @@ def test_tinfoil_glm53_routes_use_live_prices_and_capabilities() -> None:
     assert flash.prompt_price_microdollars_per_million_tokens == 422_000
     assert flash.completion_price_microdollars_per_million_tokens == 1_318_750
     assert flash.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 105_500
-    assert glm_model.context_length == 1_048_576
-    # Global model modalities are a union across providers, not Tinfoil's
-    # contract: Baseten's GLM 5.3 also accepts images (live-verified 2026-09-14).
+    # Global model limits and modalities are a union across providers, not
+    # Tinfoil's contract: Baseten's GLM 5.3 also accepts images (live-verified
+    # 2026-09-14). Tinfoil's contract is its manifest rows.
+    assert rows[glm.model_id]["context_length"] == 1_048_576
     assert rows[glm.model_id]["input_modalities"] == ["text"]
-    assert flash_model.context_length == 1_048_576
+    assert rows[flash.model_id]["context_length"] == 1_048_576
     assert rows[flash.model_id]["input_modalities"] == ["text", "image"]
     assert provider.provider_zero_data_retention is True
     assert provider.provider_confidential_compute is True

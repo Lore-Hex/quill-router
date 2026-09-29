@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict
 
 import pytest
@@ -13,6 +14,7 @@ from trusted_router.catalog import (
     endpoint_stores_content,
     endpoints_for_model,
 )
+from trusted_router.catalog_ingest import _PROVIDER_MODELS_DIR
 from trusted_router.config import Settings
 from trusted_router.routing import video_route_endpoint_candidates
 from trusted_router.security import lookup_hash_api_key
@@ -97,7 +99,23 @@ def _authorize_video(
     return response.json()["data"]
 
 
+def _manifest_dark_routes() -> set[tuple[str, str]]:
+    """(provider, model id) pairs a committed provider manifest marks dark."""
+    dark: set[tuple[str, str]] = set()
+    for path in _PROVIDER_MODELS_DIR.glob("*.json"):
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        dark.update(
+            (raw["provider"], row["id"])
+            for row in raw.get("models", [])
+            if isinstance(row, dict) and row.get("routable") is False
+        )
+    return dark
+
+
 def test_launch_video_catalog_is_explicit_and_credits_only() -> None:
+    # The launch routes are an explicit list. One leaves the catalog only when
+    # its own provider's committed manifest marks the row dark.
+    dark = _manifest_dark_routes()
     for model_id in VIDEO_MODELS:
         model = MODELS[model_id]
         assert model.supports_video is True
@@ -105,9 +123,10 @@ def test_launch_video_catalog_is_explicit_and_credits_only() -> None:
         assert model.prepaid_available is True
         assert model.byok_available is False
         endpoints = endpoints_for_model(model_id)
-        expected = list(NATIVE_VIDEO_PROVIDERS.get(model_id, ("venice",)))
+        hosts = list(NATIVE_VIDEO_PROVIDERS.get(model_id, ("venice",)))
         if model_id in NATIVE_VIDEO_PROVIDERS and model_id not in NATIVE_ONLY_VIDEO_MODELS:
-            expected.append("venice")
+            hosts.append("venice")
+        expected = [host for host in hosts if (host, model_id) not in dark]
         assert [endpoint.provider for endpoint in endpoints] == expected
         assert all(endpoint.usage_type == "Credits" for endpoint in endpoints)
         assert all(endpoint.upstream_id for endpoint in endpoints)
