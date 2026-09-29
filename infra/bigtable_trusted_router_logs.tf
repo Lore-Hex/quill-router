@@ -12,9 +12,9 @@ import {
 }
 
 resource "google_bigtable_instance" "trusted_router_logs" {
-  project             = "quill-cloud-proxy"
-  name                = "trusted-router-logs"
-  display_name        = "TrustedRouter logs"
+  project      = "quill-cloud-proxy"
+  name         = "trusted-router-logs"
+  display_name = "TrustedRouter logs"
   # Provider-side guard only (no API field): the follow-up change that removes
   # this block is the destroy, and it must plan as exactly "1 to destroy".
   deletion_protection = false
