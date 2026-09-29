@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from tests.fixture_routes import bypass_catalog_caches
 from trusted_router import catalog_ingest, catalog_registry
 from trusted_router.routes import catalog as catalog_routes
 
@@ -638,14 +639,18 @@ def serve_manifest_rows(
             monkeypatch.setitem(catalog_registry.MODELS, model_id, model)
     for endpoint_id, endpoint in endpoints.items():
         monkeypatch.setitem(catalog_registry.MODEL_ENDPOINTS, endpoint_id, endpoint)
+    bypass_catalog_caches(monkeypatch)
     isolate_public_catalog_cache(monkeypatch)
 
 
 def isolate_public_catalog_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     """The public catalog projection is cached per price period: a test that
     serves its own routes builds its own projection from them, and the
-    process's cache is left as it was."""
+    process's cache is left as it was. The cache stays a cache, so a test can
+    check how it revalidates."""
     projection = catalog_routes._public_catalog_payload
     monkeypatch.setattr(
-        catalog_routes, "_public_catalog_payload", lru_cache(maxsize=1)(projection.__wrapped__)
+        catalog_routes,
+        "_public_catalog_payload",
+        lru_cache(maxsize=1)(getattr(projection, "__wrapped__", projection)),
     )
