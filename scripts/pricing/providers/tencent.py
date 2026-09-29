@@ -213,6 +213,8 @@ CATALOG = DirectOpenAIProvider(
         slug=SLUG, base_url=BASE_URL, api_key_env="TENCENT_API_KEY",
         explicit_model_map=_EXPLICIT_MAP, normalize_rows=_normalize_rows,
         price_loader=_load_prices, pricing_source_url=PRICING_URL,
+        # Published combo leaves have a pinned provider set in catalog_registry.
+        operator_hold_reasons={"deepseek/deepseek-v4-pro-0813": "immutable-release-route-set"},
         canary_max_tokens=256, canary_expected_content="PONG",
         canary_prompt="Reply exactly PONG",
         expected_models=("tencent/hy3", "z-ai/glm-5.3-flash"),
@@ -225,11 +227,6 @@ def fetch() -> ProviderPricingResult:
     result = CATALOG.fetch()
     for model_id, row in CATALOG.discovered_rows.items():
         row.update(_METADATA.get(model_id, {}))
-        # catalog_registry pins the route set of this published combo leaf.
-        # Native availability alone must not change that immutable product.
-        if model_id == "deepseek/deepseek-v4-pro-0813":
-            row["routable"] = False
-            row["routable_reason"] = "immutable-release-route-set"
     return result
 
 

@@ -115,7 +115,7 @@ def test_tencent_discovery_joins_exact_catalog_prices_and_canaries(
     monkeypatch.setattr(_direct_openai, "probe_openai_chat", probe)
     result = tencent.fetch()
     assert set(result.prices) == {"tencent/hy3", "z-ai/glm-5.3-flash", "xiaomi/mimo-v2.6-pro", "deepseek/deepseek-v4-pro-0813"}
-    assert {p["model"] for p in probes} == {"hy3", "glm-5.3-flash", "mimo-v2.6-pro", "deepseek-v4-pro-0813"}
+    assert {p["model"] for p in probes} == {"hy3", "glm-5.3-flash", "mimo-v2.6-pro"}
     assert all(p["base_url"] == "https://tokenhub-intl.tencentcloudmaas.com/v1" for p in probes)
     assert tencent.CATALOG.discovered_rows["z-ai/glm-5.3-flash"]["routable"] is False
     frozen = tencent.CATALOG.discovered_rows["deepseek/deepseek-v4-pro-0813"]
