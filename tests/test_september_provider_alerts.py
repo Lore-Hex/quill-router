@@ -6,10 +6,11 @@ import pytest
 from scripts.pricing.base import ModelPrice
 from scripts.pricing.providers import _direct_openai, inceptron
 from trusted_router.catalog import MODEL_ENDPOINTS
+from trusted_router.catalog_data import ModelEndpoint
+from trusted_router.catalog_ingest import _filter_unserved_provider_endpoints
 from trusted_router.provider_contracts import provider_model_operator_held
 
-
-@pytest.mark.parametrize(("provider", "model"), [
+_CONFIRMED_UNAVAILABLE_ROUTES = [
     ("morph", "qwen/qwen3.6-27b"),
     ("morph", "qwen/qwen3.5-397b-a17b"),
     ("morph", "minimax/minimax-m2.7"),
@@ -18,12 +19,39 @@ from trusted_router.provider_contracts import provider_model_operator_held
     ("inceptron", "minimax/minimax-m2.5"),
     ("phala", "z-ai/glm-5.3"),
     ("phala", "z-ai/glm-5.3-flash"),
-])
+]
+
+
+@pytest.mark.parametrize(("provider", "model"), _CONFIRMED_UNAVAILABLE_ROUTES)
 def test_confirmed_unavailable_routes_not_advertised(provider: str, model: str) -> None:
     assert not any(
         endpoint.provider == provider and endpoint.model_id == model
         for endpoint in MODEL_ENDPOINTS.values()
     )
+    # The catalog's route filter on fixture routes, whatever the hosts list
+    # today: it drops this provider's route and keeps the same model on a
+    # provider no removal names.
+    routes = [
+        ModelEndpoint(
+            id=f"{model}@{host}/prepaid", model_id=model, provider=host,
+            usage_type="Credits", upstream_id=model,
+        )
+        for host in (provider, "another-provider")
+    ]
+    kept = _filter_unserved_provider_endpoints({route.id: route for route in routes})
+    assert provider not in {route.provider for route in kept.values()}
+    assert "another-provider" in {route.provider for route in kept.values()}, (
+        "An unavailable reseller must not retire the model on other providers"
+    )
+
+
+@pytest.mark.provider_health
+@pytest.mark.parametrize(("provider", "model"), _CONFIRMED_UNAVAILABLE_ROUTES)
+def test_confirmed_unavailable_routes_models_remain_served_elsewhere(
+    provider: str, model: str,
+) -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
     assert any(
         endpoint.provider != provider and endpoint.model_id == model
         for endpoint in MODEL_ENDPOINTS.values()
