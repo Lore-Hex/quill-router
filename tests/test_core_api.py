@@ -540,6 +540,11 @@ def test_embeddings_and_model_endpoints(
             monkeypatch, "openai/gpt-5.5", "openai", author="openai",
             usage_type=usage_type, upstream_id="gpt-5.5",
         )
+    # And the jurisdiction filter reads GLM 5.2 on a US host and on a
+    # Singapore host, fixture routes both, whoever lists the model today.
+    drop_routes(monkeypatch, "z-ai/glm-5.2")
+    for host in ("deepinfra", "zai"):
+        serve_on_fixture_route(monkeypatch, "z-ai/glm-5.2", host, author="zai")
     # A chat-only model is not a valid embeddings target.
     not_embeddings = client.post(
         "/v1/embeddings",
@@ -656,6 +661,7 @@ def test_embeddings_and_model_endpoints(
     assert us_filtered.status_code == 200
     us_rows = us_filtered.json()["data"]
     assert us_rows
+    assert {row["provider"] for row in us_rows} == {"deepinfra"}
     assert all(row["trustedrouter"]["provider_us_based"] is True for row in us_rows)
     assert all(
         PROVIDERS[row["provider"]].provider_headquarters_country == PROVIDER_JURISDICTION_US

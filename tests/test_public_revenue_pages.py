@@ -716,9 +716,18 @@ def test_single_provider_model_shows_provider_posture_not_variation(
     assert "varies by route" not in detail.text
 
 
-def test_phala_pages_do_not_claim_verified_provider_e2ee(client: TestClient) -> None:
+def test_phala_pages_do_not_claim_verified_provider_e2ee(
+    client: TestClient, monkeypatch: MonkeyPatch
+) -> None:
+    # A model on a Phala Confidential AI route (the phala/* upstream namespace),
+    # a fixture route: Phala lists none today, and the pass-through routes it
+    # does list, GLM 5.2's among them, claim no privacy at all.
+    serve_on_fixture_route(
+        monkeypatch, "fixture/phala-confidential", "phala", author="phala",
+        upstream_id="phala/fixture-confidential",
+    )
     provider = client.get("/providers/phala")
-    detail = client.get("/models/z-ai/glm-5.2")
+    detail = client.get("/models/fixture/phala-confidential")
 
     assert provider.status_code == 200
     assert 'Verified confidential inference</th><td><span class="pill ">Not verified</span>' in provider.text

@@ -3,8 +3,11 @@ from __future__ import annotations
 import json
 import re
 
+import pytest
 from fastapi.testclient import TestClient
 
+from tests.fixture_routes import serve_on_fixture_route
+from trusted_router.catalog_data import Model
 from trusted_router.competitor_comparisons import COMPETITOR_COMPARISONS
 
 
@@ -94,7 +97,17 @@ def test_unknown_gateway_comparison_gives_an_agent_markdown(client: TestClient) 
     assert "/llms.txt" in response.text
 
 
-def test_competitor_route_does_not_shadow_model_comparisons(client: TestClient) -> None:
+def test_competitor_route_does_not_shadow_model_comparisons(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The comparison's peer, GLM 5.2, is carried here on a fixture route,
+    # whoever lists it today.
+    serve_on_fixture_route(
+        monkeypatch, "z-ai/glm-5.2", "zai", author="zai",
+        model=Model(
+            id="z-ai/glm-5.2", name="Z.ai: GLM 5.2", provider="zai", context_length=1_048_576,
+        ),
+    )
     index = client.get("/compare/models")
     detail = client.get("/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.2")
 

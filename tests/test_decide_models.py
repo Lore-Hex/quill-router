@@ -1174,10 +1174,22 @@ def test_a_host_delisting_the_backing_model_never_stops_the_control_plane(
     """Chain pricing runs at import. It used to raise when the preferred host
     stopped serving the backing model, so one provider's hourly manifest refresh
     could keep the whole control plane from starting."""
-    from trusted_router import catalog_registry
+    from dataclasses import replace
 
-    backing = PRIVATE_PROXY_MODEL_TARGETS[TREV_1_0_MODEL_ID]
+    from trusted_router import catalog, catalog_registry
+
+    # Trev and the model behind it on fixture routes, one per chain host, each
+    # host at its own price and the preferred one dearest, whoever serves the
+    # model today.
+    backing = _serve_on_fixture_routes(monkeypatch, TREV_1_0_MODEL_ID)
     chain = NAMED_DECISION_MODEL_PROVIDERS[TREV_1_0_MODEL_ID]
+    prices = (4_000_000, 2_000_000, 3_000_000, 1_000_000)
+    for host, price in zip(chain, prices, strict=True):
+        route = catalog.MODEL_ENDPOINTS[f"{backing}@{host}/prepaid"]
+        monkeypatch.setitem(
+            catalog.MODEL_ENDPOINTS, route.id,
+            replace(route, prompt_price_microdollars_per_million_tokens=price),
+        )
     live = dict(catalog_registry.MODEL_ENDPOINTS)
 
     def without(*providers: str) -> dict[str, Any]:

@@ -3,15 +3,14 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.fixture_routes import serve_on_fixture_route
 from trusted_router.catalog import (
-    MODEL_ENDPOINTS,
     PRIVACY_TIER_CONFIDENTIAL,
     PRIVACY_TIER_ZERO_RETENTION,
     PROVIDERS,
     endpoints_for_model,
     provider_privacy_tier,
 )
-from trusted_router.catalog_data import ModelEndpoint
 from trusted_router.catalog_privacy import (
     endpoint_confidential_compute,
     endpoint_e2ee,
@@ -27,14 +26,14 @@ POLICY_URL = "https://telnyx.com/privacy-policy"
 
 @pytest.fixture
 def telnyx_glm_5_2(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Telnyx serves GLM-5.2 on fixture routes: its ZDR posture is a rule of
-    Telnyx's routes, whatever Telnyx lists today."""
-    for usage_type, suffix in (("Credits", "prepaid"), ("BYOK", "byok")):
-        route = ModelEndpoint(
-            id=f"z-ai/glm-5.2@telnyx/{suffix}", model_id="z-ai/glm-5.2",
-            provider="telnyx", usage_type=usage_type, upstream_id="zai-org/GLM-5.2",
+    """Telnyx serves GLM-5.2 on fixture routes, and the catalog carries the model
+    even if every host has delisted it: its ZDR posture is a rule of Telnyx's
+    routes, whatever the hosts list today."""
+    for usage_type in ("Credits", "BYOK"):
+        serve_on_fixture_route(
+            monkeypatch, "z-ai/glm-5.2", "telnyx", author="zai",
+            usage_type=usage_type, upstream_id="zai-org/GLM-5.2",
         )
-        monkeypatch.setitem(MODEL_ENDPOINTS, route.id, route)
 
 
 @pytest.mark.provider_health
