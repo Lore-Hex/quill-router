@@ -128,17 +128,15 @@ section flips to `poller_stale` until the first heartbeat lands and
 `check_fleet_analytics_freshness` fails, by design: an unobserved lag is not 0.
 
 Bigtable analytics are retired (2026-09-28). `rollout.sh` pins every
-control-plane revision to `spanner-clickhouse` with `clickhouse-only` reads
-and refuses mirror writes; the public and internal surfaces follow the
-control plane and refuse an older legacy revision; the synthetic, trust and
-backfill jobs run `spanner-clickhouse` as workers (no analytics reads, so no
-ClickHouse credentials). The Bigtable repair units on the ClickHouse nodes
-(`synthetic-reconcile`, `operational-parity`) are stopped and removed by
-`clickhouse_operational_analytics.sh`. The August cutover ladder
-(`prepare_bigtable_retirement.sh`, `clickhouse_analytics_cutover.sh`,
-`retire_bigtable_runtime.sh`) is superseded and goes with the Bigtable code.
-The instance and its data remain until the separate, explicit deletion
-review.
+control-plane revision to `spanner-clickhouse`; the public and internal
+surfaces follow the control plane and refuse an older legacy revision; the
+synthetic, trust and backfill jobs run `spanner-clickhouse` as workers (no
+analytics reads, so no ClickHouse credentials). The analytics Bigtable
+client, mirror writes, read paths, the node repair units (`reconcile`,
+`synthetic-reconcile`, `operational-parity`) and the cutover ladder are
+deleted from the code (2026-09-29). The table's final `m`/`rollup` export
+lives in the ClickHouse archive bucket under `bigtable-final-export/`; the
+instance is destroyed through Terraform once that export is verified.
 
 `clickhouse_cluster.sh` stages all Keeper configs before restarts, starts the
 two new voters together, migrates only after full-fingerprint parity, pauses

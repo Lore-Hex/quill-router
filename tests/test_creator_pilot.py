@@ -100,7 +100,7 @@ def test_tracking_url_is_stable_and_contains_no_secret() -> None:
 def test_dry_run_does_not_create_workspace_credit_key_or_secret(
     tmp_path: Path,
 ) -> None:
-    store, _database, _ = make_fake_store()
+    store, _database = make_fake_store()
     owner = _owner(store)
     before = list(store.list_workspaces_for_user(owner.id))
     secret_path = tmp_path / "pilot.private"
@@ -127,8 +127,8 @@ def test_apply_is_idempotent_capped_non_management_and_keeps_raw_key_private(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-bigtable")
-    store, _database, _ = make_fake_store()
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
+    store, _database = make_fake_store()
     owner = _owner(store)
     secret_path = tmp_path / "pilot.private"
     argv = [
@@ -190,8 +190,8 @@ def test_apply_requires_private_suffix_before_mutating(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-bigtable")
-    store, _database, _ = make_fake_store()
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
+    store, _database = make_fake_store()
     owner = _owner(store)
 
     result = provision_creator_pilot.main(

@@ -247,7 +247,7 @@ class _FakeStripe:
 
 
 def _spanner_workspace() -> tuple[Any, Any, str]:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     workspace = store.create_workspace("owner", "p1", trial_credit_microdollars=0)
     return store, database, workspace.id
 

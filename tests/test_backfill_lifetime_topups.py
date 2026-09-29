@@ -117,7 +117,7 @@ def _seed_claim(store: Any, event_id: str, created_at: str = "2026-08-01T00:00:0
 def test_stripe_dry_run_covers_amount_rules_refunds_filters_and_aggregation(
     tmp_path: Path,
 ) -> None:
-    store, _database, _bigtable = make_fake_store()
+    store, _database = make_fake_store()
     alice, alice_first = _user_and_workspace(store, "alice@example.com")
     alice_second = store.create_workspace(alice.id, "Alice Two")
     bob, bob_workspace = _user_and_workspace(store, "bob@example.com")
@@ -265,7 +265,7 @@ def test_stripe_dry_run_covers_amount_rules_refunds_filters_and_aggregation(
 
 
 def test_deleted_workspace_attributes_raw_unknown_and_federated_skip(tmp_path: Path) -> None:
-    store, _database, _bigtable = make_fake_store()
+    store, _database = make_fake_store()
     owner, deleted_workspace = _user_and_workspace(store, "deleted@example.com")
     store.update_workspace(deleted_workspace.id, deleted=True)
     assert store.get_workspace(deleted_workspace.id) is None
@@ -310,7 +310,7 @@ def test_deleted_workspace_attributes_raw_unknown_and_federated_skip(tmp_path: P
 def test_post_cutover_user_with_existing_lifetime_total_has_zero_delta(
     tmp_path: Path,
 ) -> None:
-    store, _database, _bigtable = make_fake_store()
+    store, _database = make_fake_store()
     joseph, workspace = _user_and_workspace(store, "joseph@example.com")
     assert store.add_lifetime_topup(joseph.id, 25_000_000, "evt_post_cutover_topup")
     report = tmp_path / "joseph.jsonl"
@@ -352,7 +352,7 @@ def test_post_cutover_user_with_existing_lifetime_total_has_zero_delta(
 
 
 def test_paypal_claim_feed_supports_all_three_custom_id_formats(tmp_path: Path) -> None:
-    store, _database, _bigtable = make_fake_store()
+    store, _database = make_fake_store()
     bare_user, bare_workspace = _user_and_workspace(store, "bare@example.com")
     tr1_user, tr1_workspace = _user_and_workspace(store, "tr1@example.com")
     json_owner, json_workspace = _user_and_workspace(store, "json-owner@example.com")
@@ -408,7 +408,7 @@ def test_paypal_claim_feed_supports_all_three_custom_id_formats(tmp_path: Path) 
 
 
 def test_paypal_csv_supplements_claims_without_credentials(tmp_path: Path) -> None:
-    store, _database, _bigtable = make_fake_store()
+    store, _database = make_fake_store()
     user, workspace = _user_and_workspace(store, "paypal-csv@example.com")
     csv_path = tmp_path / "paypal.csv"
     csv_path.write_text(
@@ -437,7 +437,7 @@ def test_adyen_claim_uses_signed_merchant_reference(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("TR_ADYEN_REFERENCE_KEY", REFERENCE_KEY)
-    store, _database, _bigtable = make_fake_store()
+    store, _database = make_fake_store()
     user, workspace = _user_and_workspace(store, "adyen-backfill@example.com")
     merchant_reference = adyen_billing._new_checkout_reference(
         workspace_id=workspace.id,
@@ -468,7 +468,7 @@ def test_adyen_claim_uses_signed_merchant_reference(
 def test_manual_grants_are_off_by_default_and_only_explicit_csv_is_included(
     tmp_path: Path,
 ) -> None:
-    store, _database, _bigtable = make_fake_store()
+    store, _database = make_fake_store()
     user, _workspace = _user_and_workspace(store, "manual@example.com")
     _seed_claim(store, "manual_makeup_pi_3TaKM1")
     report_off = tmp_path / "manual-off.jsonl"
@@ -517,7 +517,7 @@ def test_manual_grants_are_off_by_default_and_only_explicit_csv_is_included(
 def test_pre_rotation_paid_sessions_count_but_manual_makeup_claim_does_not(
     tmp_path: Path,
 ) -> None:
-    store, _database, _bigtable = make_fake_store()
+    store, _database = make_fake_store()
     _user, workspace = _user_and_workspace(store, "pre-rotation@example.com")
     _seed_claim(store, "manual_makeup_pre_rotation")
     stripe = FakeStripe(
@@ -545,8 +545,8 @@ def test_pre_rotation_paid_sessions_count_but_manual_makeup_claim_does_not(
 def test_expected_total_mismatch_refuses_without_writes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-bigtable")
-    store, database, _bigtable = make_fake_store()
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
+    store, database = make_fake_store()
     user, workspace = _user_and_workspace(store, "mismatch@example.com")
     before_rows = set(database.rows)
 
@@ -571,8 +571,8 @@ def test_apply_only_user_is_idempotent_and_prints_all_verification_passes(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-bigtable")
-    store, database, _bigtable = make_fake_store()
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
+    store, database = make_fake_store()
     alice, alice_workspace = _user_and_workspace(store, "apply-alice@example.com")
     bob, bob_workspace = _user_and_workspace(store, "apply-bob@example.com")
     alice_credit_before = live_credit_summary(alice_workspace.id, store=store)
@@ -624,7 +624,7 @@ def test_apply_only_user_is_idempotent_and_prints_all_verification_passes(
 
 def test_apply_requires_spanner_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TR_STORAGE_BACKEND", "memory")
-    store, _database, _bigtable = make_fake_store()
+    store, _database = make_fake_store()
 
     assert (
         backfill.main(
@@ -639,7 +639,7 @@ def test_apply_requires_spanner_backend(monkeypatch: pytest.MonkeyPatch) -> None
 def test_stripe_claim_cross_check_is_clearly_heuristic(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    store, _database, _bigtable = make_fake_store()
+    store, _database = make_fake_store()
     _user, workspace = _user_and_workspace(store, "cross-check@example.com")
     provider_created = datetime.fromtimestamp(PRE_CUTOVER, tz=UTC)
     _seed_claim(
@@ -711,7 +711,7 @@ def test_cutover_witnesses_stamp_decides_and_disagreements_are_flagged(
     """The initiating_user_id stamp is the fingerprint of the accruing code
     path, so it decides; a creation time on the other side of the cut-over
     is flagged for the operator, never guessed silently."""
-    store, _database, _bigtable = make_fake_store()
+    store, _database = make_fake_store()
     alice, workspace = _user_and_workspace(store, "alice@example.com")
     report = tmp_path / "cutover.jsonl"
     stripe = FakeStripe(

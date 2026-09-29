@@ -17,7 +17,7 @@ def _paused_ws(store, ws: str, *, paused: bool = True) -> None:
 
 
 def test_repair_sets_reserved_to_open_holds() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_repair"
     _paused_ws(store, ws)
     # clobbered: typed credit reserved=5M, but real open holds = 120k.
@@ -48,7 +48,7 @@ def test_repair_sets_reserved_to_open_holds() -> None:
 
 
 def test_repair_refuses_unpaused() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_live"
     _paused_ws(store, ws, paused=False)
     db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
@@ -64,7 +64,7 @@ def test_repair_refuses_unpaused() -> None:
 def test_repair_aborts_if_a_typed_key_row_is_missing() -> None:
     """codex P1: a key whose typed row is missing (deleted mid-repair) must ABORT
     with ZERO writes — never create a partial, uncapped tr_key_limit row."""
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_missing_key"
     _paused_ws(store, ws)
     db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
@@ -82,7 +82,7 @@ def test_repair_aborts_if_a_typed_key_row_is_missing() -> None:
 
 
 def test_repair_aborts_on_nonzero_shard_holds() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_sharded"
     _paused_ws(store, ws)
     db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
@@ -100,7 +100,7 @@ def test_repair_aborts_on_nonzero_shard_holds() -> None:
 def test_repair_aborts_on_nonzero_key_shard_holds() -> None:
     """codex round-2 P3: a key hold on a nonzero key_shard (workspace shard 0) would
     be silently omitted from the key reserved SUM and written low — must ABORT."""
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_key_sharded"
     _paused_ws(store, ws)
     db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
@@ -123,7 +123,7 @@ def test_repair_aborts_on_nonzero_key_shard_holds() -> None:
 
 
 def test_repair_zero_holds_zeroes_reserved() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_zero"
     _paused_ws(store, ws)
     db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
@@ -136,7 +136,7 @@ def test_repair_zero_holds_zeroes_reserved() -> None:
 
 
 def test_repair_refuses_open_regional_lease_even_without_open_index() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_regional_escrow"
     _paused_ws(store, ws)
     db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {

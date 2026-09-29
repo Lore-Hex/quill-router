@@ -1,35 +1,16 @@
 from __future__ import annotations
 
-import datetime as dt
 import json
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
-from clickhouse.backfill_generation_records import _iter_recent
 from tests.fakes.spanner import _FakeTransaction, make_fake_store
 from trusted_router.storage import CreditAccount, create_store
 from trusted_router.storage_gcp_authorize import AuthorizeOutcome
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
 from trusted_router.storage_models import Generation
-
-
-class _CapturingBigtableTable:
-    def __init__(self) -> None:
-        self.filter: Any = None
-
-    def read_rows(self, **kwargs: Any) -> list[Any]:
-        self.filter = kwargs["filter_"]
-        return []
-
-
-def test_generation_backfill_uses_sdk_timestamp_range_object() -> None:
-    table = _CapturingBigtableTable()
-    cutoff = dt.datetime(2026, 7, 1, tzinfo=dt.UTC)
-
-    assert list(_iter_recent(table, cutoff=cutoff)) == []
-    assert table.filter.filters[0].range_.start == cutoff
 
 
 def _seed_credit(store: Any, workspace_id: str, total: int = 5_000_000) -> None:
@@ -111,24 +92,14 @@ def _generation(authorization: Any, key_hash: str) -> Generation:
     )
 
 
-def test_typed_settlement_atomically_persists_generation_and_activity_outbox(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    store, database, bigtable = make_fake_store(
+def test_typed_settlement_atomically_persists_generation_and_activity_outbox() -> None:
+    store, database = make_fake_store(
         request_record_write_mode="typed",
         operational_analytics_outbox_enabled=True,
         generation_records_enabled=True,
     )
     authorization, key = _authorize(store, "ws-atomic-clickhouse")
     generation = _generation(authorization, key.hash)
-
-    def fail_bigtable(*_args: Any, **_kwargs: Any) -> None:
-        raise RuntimeError("migration mirror unavailable")
-
-    monkeypatch.setattr(
-        "trusted_router.storage_gcp_generations._bt_write_generation",
-        fail_bigtable,
-    )
 
     result = store.typed_finalize_gateway_authorization_result(
         authorization.id,
@@ -145,8 +116,6 @@ def test_typed_settlement_atomically_persists_generation_and_activity_outbox(
     event = database.operational_analytics_outbox[0]
     assert event["event_kind"] == "activity"
     assert event["event_id"] == generation.id
-    assert bigtable.committed
-    assert all(key.startswith(b"benchmark") for key in bigtable.committed)
     restored = store.get_generation(generation.id)
     assert restored is not None
     assert restored.id == generation.id
@@ -164,7 +133,7 @@ def test_typed_settlement_atomically_persists_generation_and_activity_outbox(
 def test_outbox_failure_rolls_back_charge_and_generation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, database, _bigtable = make_fake_store(
+    store, database = make_fake_store(
         request_record_write_mode="typed",
         operational_analytics_outbox_enabled=True,
         generation_records_enabled=True,
@@ -204,22 +173,29 @@ def test_outbox_failure_rolls_back_charge_and_generation(
     assert database.operational_analytics_outbox == []
 
 
-def test_clickhouse_only_read_never_invokes_bigtable() -> None:
-    from trusted_router.storage_gcp import SpannerBigtableStore
+def test_settlement_without_durable_outbox_leaves_no_activity_pending() -> None:
+    store, database = make_fake_store(
+        request_record_write_mode="typed",
+        generation_records_enabled=True,
+    )
+    authorization, key = _authorize(store, "ws-no-outbox")
+    generation = _generation(authorization, key.hash)
 
-    store = object.__new__(SpannerBigtableStore)
-    store._analytics_read_mode = "clickhouse-only"
-
-    value = store._analytics_read(
-        "test",
-        bigtable=lambda: pytest.fail("Bigtable must not be called"),
-        clickhouse=lambda: ["clickhouse"],
+    result = store.typed_finalize_gateway_authorization_result(
+        authorization.id,
+        success=True,
+        actual_microdollars=900_000,
+        selected_usage_type="Credits",
+        generation=generation,
     )
 
-    assert value == ["clickhouse"]
+    assert result.finalized is True
+    # No durable delivery is configured, so nothing waits for a repair replay.
+    assert result.activity_indexed is True
+    assert database.operational_analytics_outbox == []
 
 
-def test_spanner_clickhouse_factory_disables_bigtable(
+def test_spanner_clickhouse_factory_passes_no_analytics_bigtable_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, Any] = {}
@@ -238,7 +214,6 @@ def test_spanner_clickhouse_factory_disables_bigtable(
         spanner_instance_id="instance",
         spanner_database_id="database",
         bigtable_instance_id=None,
-        bigtable_generation_table="unused",
         generation_records_enabled=True,
         operational_analytics_outbox_enabled=True,
         operational_analytics_clickhouse_url="http://clickhouse",
@@ -247,7 +222,16 @@ def test_spanner_clickhouse_factory_disables_bigtable(
 
     create_store(settings)
 
-    assert captured["bigtable_enabled"] is False
-    assert captured["bigtable_writes_enabled"] is False
-    assert captured["analytics_read_mode"] == "clickhouse-only"
     assert captured["generation_records_enabled"] is True
+    assert captured["bigtable_instance_id"] is None
+    # Only the fixed-profile ledgers still name the instance; no analytics
+    # table, app profile, mirror flag or read mode reaches the store.
+    assert {name for name in captured if name.startswith("bigtable_")} == {"bigtable_instance_id"}
+    assert not {name for name in captured if name.startswith("analytics_read")}
+
+
+def test_create_store_rejects_the_retired_backend() -> None:
+    settings = SimpleNamespace(storage_backend="spanner-bigtable")
+
+    with pytest.raises(ValueError, match="unsupported storage backend: spanner-bigtable"):
+        create_store(settings)

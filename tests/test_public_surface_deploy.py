@@ -45,8 +45,6 @@ BASE_ENV = {
     "TR_SPANNER_INSTANCE_ID": "trusted-router-nam6",
     "TR_SPANNER_DATABASE_ID": "trusted-router",
     "TR_SPANNER_POOL_SIZE": "8",
-    "TR_BIGTABLE_MIRROR_WRITES_ENABLED": "false",
-    "TR_ANALYTICS_READ_MODE": "clickhouse-only",
     "TR_GENERATION_RECORDS_ENABLED": "true",
     "TR_REQUEST_RECORD_WRITE_MODE": "typed",
     "TR_SETTLE_OUTBOX_ENABLED": "true",
@@ -278,10 +276,7 @@ def test_invalid_public_capacity_fails_before_cloud_mutation(
 @pytest.mark.parametrize(
     ("name", "value", "message"),
     [
-        ("TR_ANALYTICS_READ_MODE", "bigtable", "invalid TR_ANALYTICS_READ_MODE=bigtable"),
-        ("TR_ANALYTICS_READ_MODE", "clickhouse", "invalid TR_ANALYTICS_READ_MODE=clickhouse"),
         ("TR_STORAGE_BACKEND", "spanner-bigtable", "still runs TR_STORAGE_BACKEND=spanner-bigtable"),
-        ("TR_BIGTABLE_MIRROR_WRITES_ENABLED", "true", "still mirrors analytics to Bigtable"),
     ],
 )
 def test_companion_refuses_a_legacy_revision_that_still_uses_bigtable(
@@ -292,8 +287,8 @@ def test_companion_refuses_a_legacy_revision_that_still_uses_bigtable(
     message: str,
 ) -> None:
     # Bigtable analytics are retired: this surface follows a control-plane
-    # revision that reads ClickHouse alone and mirrors nothing. An older
-    # legacy revision means the control plane deploys first.
+    # revision that runs spanner-clickhouse. An older legacy revision means
+    # the control plane deploys first.
     original = SCRIPT_FIXTURES[SCRIPT]
     responses: list[tuple[str, str]] = []
     for pattern, response in original.responses:

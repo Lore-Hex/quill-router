@@ -199,7 +199,7 @@ def test_gateway_authorize_never_escapes_no_fallback_provider_order(
 
 
 def test_gateway_authorize_fake_spanner_uses_typed_without_allowlist_settings() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_gcp_capability_authorize"
     store._write_entity("workspace", ws, Workspace(id=ws, name="GCP", owner_user_id="u"))
     store._write_entity(
@@ -242,7 +242,7 @@ def test_gateway_authorize_fake_spanner_uses_typed_without_allowlist_settings() 
 
 
 def test_allowlisted_uncapped_key_authorizes_from_bounded_regional_escrow() -> None:
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
     workspace = store.create_workspace(
         "owner",
@@ -297,7 +297,7 @@ def test_regional_ledger_failure_falls_back_to_exact_global_authorization() -> N
             del lease
             raise RegionalLeaseLedgerError("regional ledger unavailable")
 
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     store._regional_quota_ledger = UnavailableRegionalLedger()
     workspace = store.create_workspace(
         "owner",
@@ -350,7 +350,7 @@ def test_regional_ledger_read_failure_degrades_with_one_warning_and_no_traceback
     callbacks; a cross-region timeout there is expected and the request must
     continue on the exact path with a single warning line, not a traceback
     that Error Reporting files as a crash."""
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     ledger = InMemoryRegionalQuotaLedger()
     store._regional_quota_ledger = ledger
     workspace = store.create_workspace(
@@ -426,7 +426,7 @@ def test_regional_lease_vanishing_at_reserve_keeps_its_traceback(
 ) -> None:
     """A row that read fine and is gone at reserve time is an inconsistency,
     not latency: still degrade to the exact path, but keep the traceback."""
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     ledger = InMemoryRegionalQuotaLedger()
     store._regional_quota_ledger = ledger
     workspace = store.create_workspace(
@@ -499,7 +499,7 @@ def test_sakana_fugu_uses_exact_global_settlement_not_regional_escrow(
         prompt_price_microdollars_per_million_tokens=5_000_000,
         completion_price_microdollars_per_million_tokens=30_000_000,
     )
-    store, _db, _ = make_fake_store(request_record_write_mode="typed")
+    store, _db = make_fake_store(request_record_write_mode="typed")
     store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
     workspace = store.create_workspace(
         "owner",
@@ -553,7 +553,7 @@ def test_sakana_fugu_fails_closed_from_unsupported_europe_gateway(
         prompt_price_microdollars_per_million_tokens=5_000_000,
         completion_price_microdollars_per_million_tokens=30_000_000,
     )
-    store, _db, _ = make_fake_store(request_record_write_mode="typed")
+    store, _db = make_fake_store(request_record_write_mode="typed")
     workspace = store.create_workspace(
         "owner",
         "sakana-fugu-europe",
@@ -591,7 +591,7 @@ def test_sakana_fugu_fails_closed_from_unsupported_europe_gateway(
 
 
 def test_capability_only_revision_keeps_uncapped_key_on_exact_global_path() -> None:
-    store, _db, _ = make_fake_store(request_record_write_mode="typed")
+    store, _db = make_fake_store(request_record_write_mode="typed")
     store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
     workspace = store.create_workspace(
         "owner",
@@ -640,7 +640,7 @@ def test_capability_only_revision_keeps_uncapped_key_on_exact_global_path() -> N
 def test_capability_only_peer_finalizes_lease_issued_by_enabled_peer(
     finalize_kind: str,
 ) -> None:
-    store, _db, _ = make_fake_store(request_record_write_mode="typed")
+    store, _db = make_fake_store(request_record_write_mode="typed")
     store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
     workspace = store.create_workspace(
         "owner",
@@ -713,7 +713,7 @@ def test_capability_only_peer_finalizes_lease_issued_by_enabled_peer(
 
 
 def test_capped_key_stays_on_exact_global_authorization_path() -> None:
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     ledger = InMemoryRegionalQuotaLedger()
     store._regional_quota_ledger = ledger
     workspace = store.create_workspace(
@@ -761,7 +761,7 @@ def test_capped_key_stays_on_exact_global_authorization_path() -> None:
 
 
 def test_regional_reconciler_fails_scheduler_tick_when_any_lease_errors() -> None:
-    store, _db, _ = make_fake_store(request_record_write_mode="typed")
+    store, _db = make_fake_store(request_record_write_mode="typed")
     store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
     store.reconcile_regional_quota_leases = lambda **_kwargs: {
         "inspected": 2,
@@ -784,7 +784,7 @@ def test_regional_reconciler_fails_scheduler_tick_when_any_lease_errors() -> Non
 
 
 def test_gateway_web_search_cost_uses_typed_reservation_and_finalize() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_gcp_web_search_cost"
     store._write_entity("workspace", ws, Workspace(id=ws, name="GCP", owner_user_id="u"))
     store._write_entity("credit", ws, CreditAccount(workspace_id=ws))
@@ -1223,7 +1223,7 @@ def test_parasail_liberty_billing_markers_fail_closed() -> None:
 
 
 def test_gateway_settle_ancient_legacy_reservation_missing_typed_row_is_clean() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_gcp_ancient_legacy_settle"
     store._write_entity("workspace", ws, Workspace(id=ws, name="GCP", owner_user_id="u"))
     store._write_entity(

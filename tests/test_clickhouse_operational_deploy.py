@@ -80,7 +80,7 @@ def test_provider_rollup_schema_replicates_all_published_granularities() -> None
         assert f"provider_analytics_{granularity}_replicated" in schema
 
 
-def test_operational_deploy_resumes_live_ingest_before_backfills() -> None:
+def test_operational_deploy_resumes_live_ingest_after_schema_cutover() -> None:
     script = (ROOT / "scripts/deploy/clickhouse_operational_analytics.sh").read_text()
     stop = script.index(
         "systemctl stop tr-clickhouse-operational-ingest.service"
@@ -90,9 +90,8 @@ def test_operational_deploy_resumes_live_ingest_before_backfills() -> None:
         "systemctl start tr-clickhouse-operational-ingest.service",
         migration,
     )
-    replay = script.index("clickhouse.backfill_benchmark_samples")
-    backfill = script.index("clickhouse.backfill_operational_analytics --apply")
-    assert stop < migration < start < replay < backfill
+    assert stop < migration < start
+    assert "clickhouse.backfill_" not in script
     paused_section = script[stop:start]
     assert "backfill_" not in paused_section
     assert "SYSTEM SYNC REPLICA" not in paused_section
@@ -280,20 +279,6 @@ def test_client_telemetry_single_node_schema_is_applied_with_operational_schema(
         assert name.endswith("_single_node.sql"), "must be inside the derived set"
 
 
-def test_operational_finalize_requires_live_outbox_before_closing_gap() -> None:
-    script = (
-        ROOT / "scripts/deploy/clickhouse_operational_analytics_finalize.sh"
-    ).read_text()
-    assert "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED" in script
-    assert "--skip-synthetic --skip-rollups" in script
-    assert "--recent-limit 20000 --skip-activity --skip-rollups" in script
-    replay = script.index("replaying activity after the outbox producer is live")
-    rollups = script.index("systemctl start tr-clickhouse-synthetic-rollup.timer")
-    assert replay < rollups
-    # the operational-parity units read the retired Bigtable shadow
-    assert "systemctl start tr-clickhouse-operational-parity" not in script
-
-
 def test_control_reader_is_private_read_only_and_cannot_read_secrets() -> None:
     script = (ROOT / "scripts/deploy/clickhouse_control_reader.sh").read_text()
     assert "<readonly>1</readonly>" in script
@@ -345,14 +330,14 @@ def test_control_reader_grants_cover_operational_queries_and_all_client_tables()
 
 
 
-def test_rollout_pins_clickhouse_only_reads_and_uses_distinct_reader_secret() -> None:
-    # Bigtable analytics are retired: the read mode is no longer preserved
-    # from the live revision, it is pinned, and the retired modes refuse.
+def test_rollout_pins_spanner_clickhouse_and_uses_distinct_reader_secret() -> None:
+    # Bigtable analytics are retired: the backend is pinned and none of the
+    # retired read-mode or mirror settings are rendered any more.
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
     secrets = (ROOT / "scripts/deploy/secrets.sh").read_text()
-    assert "ANALYTICS_READ_MODE=clickhouse-only" in rollout
+    assert "ANALYTICS_READ_MODE" not in rollout
     assert "STORAGE_BACKEND=spanner-clickhouse" in rollout
-    assert "BIGTABLE_MIRROR_WRITES_ENABLED=false" in rollout
+    assert "BIGTABLE_MIRROR_WRITES_ENABLED" not in rollout
     assert "LIVE_ANALYTICS_READ_MODE" not in rollout
     assert "TR_ANALYTICS_DUAL_READ_STARTED_AT" not in rollout
     assert "TR_ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT" not in rollout
@@ -362,38 +347,6 @@ def test_rollout_pins_clickhouse_only_reads_and_uses_distinct_reader_secret() ->
     assert "trustedrouter-clickhouse-control-read-password" in rollout
     assert "trustedrouter-clickhouse-control-read-password" in secrets
     assert "TR_STORAGE_BACKEND=spanner-clickhouse" in secrets
-
-def test_cutover_requires_soak_logs_queue_replica_and_positive_parity() -> None:
-    script = (ROOT / "scripts/deploy/clickhouse_analytics_cutover.sh").read_text()
-    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
-    assert "604800" in script
-    assert "analytics_dual_read_mismatch" in script
-    assert "tr_operational_analytics_outbox" in script
-    assert "TR_ANALYTICS_MAX_OUTBOX_ROWS" in script
-    assert "TR_ANALYTICS_MAX_OUTBOX_AGE_SECONDS" in script
-    assert "oldest_age_seconds" in script
-    assert "system.replicas" in script
-    assert "operational-parity.jsonl" in script
-    assert "verify_operational_parity_history.py" in script
-    assert "TR_ANALYTICS_DEPLOY_CREDENTIAL_FILE" in script
-    assert "refusing to deploy with the read-only operations identity" in script
-    assert "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE" in script
-    assert "TR_ANALYTICS_READ_MODE=clickhouse" in script
-    assert 'region_image="$(read_image "$region")"' in script
-    assert "latestCreatedRevisionName == $active[0]" in script
-    assert "latestReadyRevisionName == $active[0]" in script
-    assert "value(status.imageDigest)" in script
-    assert "does not match the live release selected for cutover" in script
-    assert 'IMAGE="$live_image"' in script
-    assert 'TR_DEPLOY_RELEASE_ID="$live_release"' in script
-    assert "TR_DEPLOY_RELEASE_ID:-" in rollout
-
-
-def test_operational_parity_worker_has_a_bounded_runtime() -> None:
-    service = (
-        ROOT / "clickhouse/tr-clickhouse-operational-parity.service"
-    ).read_text()
-    assert "TimeoutStartSec=5m" in service
 
 
 def test_generation_record_migration_has_ttl_and_delivery_audit_index() -> None:
@@ -410,37 +363,6 @@ def test_spanner_delivery_verifier_is_installed_and_bounded() -> None:
     assert "tr-clickhouse-spanner-delivery.timer" in deploy
     assert "TimeoutStartSec=5m" in service
     assert "verify_spanner_delivery" in service
-
-
-def test_final_bigtable_retirement_is_two_soak_gated_and_non_destructive() -> None:
-    script = (ROOT / "scripts/deploy/retire_bigtable_runtime.sh").read_text()
-    assert "604800" in script
-    assert "TR_ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT" in script
-    assert "operational-parity.jsonl" in script
-    assert "spanner-delivery.jsonl" in script
-    assert "archive-restore.json" in script
-    assert "archive-backfill-complete.json" in script
-    assert "tr_analytics_outbox" in script
-    assert "tr_operational_analytics_outbox" in script
-    assert "tr_settle_outbox" in script
-    assert "TR_STORAGE_BACKEND=spanner-clickhouse" in script
-    assert "TR_ANALYTICS_READ_MODE=clickhouse-only" in script
-    assert "TR_BIGTABLE_MIRROR_WRITES_ENABLED=false" in script
-    assert "verify_deployment.sh" in script
-    assert "delete-instance" not in script
-    assert "delete-table" not in script
-
-
-def test_retirement_preparation_backfills_and_restore_verifies_every_dataset() -> None:
-    script = (ROOT / "scripts/deploy/prepare_bigtable_retirement.sh").read_text()
-    assert "clickhouse_operational_analytics.sh" in script
-    assert "clickhouse.archive_daily --backfill" in script
-    assert "clickhouse.verify_archive_restore" in script
-    assert "clickhouse.verify_archive_backfill" in script
-    assert "printf" not in script
-    assert "clickhouse.verify_spanner_delivery" not in script
-    assert "tr-clickhouse-spanner-delivery.service" in script
-    assert "would not change production read mode" in script
 
 
 def test_capacity_probe_is_disposable_and_uses_a_conservative_gate() -> None:
@@ -501,6 +423,13 @@ def test_live_ingestion_restarts_every_daemon_whose_code_it_ships() -> None:
     script = (ROOT / "scripts/deploy/clickhouse_live_ingestion.sh").read_text()
 
     assert "systemctl restart tr-clickhouse-ingest.service" in script
+    # The Bigtable benchmark reconciler is retired: the archive extraction
+    # never deletes files, so an already-provisioned node must have its unit
+    # files stopped and removed, and nothing may enable them again.
+    assert "systemctl disable --now tr-clickhouse-reconcile.timer" in script
+    assert "rm -f /etc/systemd/system/tr-clickhouse-reconcile.service" in script
+    assert "enable --now tr-clickhouse-reconcile" not in script
+    assert "install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-reconcile" not in script
     # The operational drains restart through the guarded loop: both units are
     # named, and the loop both restarts and re-asserts activeness. The guard
     # exists because the postgres variant only exists on the AWS/Azure nodes.

@@ -911,24 +911,25 @@ def test_rollout_gate_refuses_while_a_region_still_issues(
     assert not any("spanner" in call for call in run.calls)
 
 
-def test_rollout_renders_the_retired_bigtable_analytics_settings(
+def test_rollout_renders_no_bigtable_analytics_settings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Bigtable analytics are retired (step 3): every revision reads ClickHouse
-    # alone and mirrors nothing, whatever the live primary carried.
+    # Bigtable analytics are retired: every revision runs spanner-clickhouse and
+    # renders none of the retired Bigtable settings, whatever the live primary carried.
     isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, _LIVE_REGIONAL_QUOTA_ENV)
     run = isolated.run("scripts/deploy/rollout.sh")
     assert run.returncode == 0, summarise(run)
     deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
     rendered = _cloud_run_job_env(deploy)
     assert rendered["TR_STORAGE_BACKEND"] == "spanner-clickhouse"
-    assert rendered["TR_ANALYTICS_READ_MODE"] == "clickhouse-only"
-    assert rendered["TR_BIGTABLE_MIRROR_WRITES_ENABLED"] == "false"
     assert rendered["TR_GENERATION_RECORDS_ENABLED"] == "true"
     assert rendered["TR_REQUEST_RECORD_WRITE_MODE"] == "typed"
     assert not {
         "TR_BIGTABLE_INSTANCE_ID",
         "TR_BIGTABLE_GENERATION_TABLE",
+        "TR_BIGTABLE_APP_PROFILE_ID",
+        "TR_BIGTABLE_MIRROR_WRITES_ENABLED",
+        "TR_ANALYTICS_READ_MODE",
         "TR_ANALYTICS_DUAL_READ_STARTED_AT",
         "TR_ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT",
     } & rendered.keys()
@@ -938,13 +939,9 @@ def test_rollout_renders_the_retired_bigtable_analytics_settings(
     ("name", "value"),
     [
         ("TR_STORAGE_BACKEND", "spanner-bigtable"),
-        ("TR_ANALYTICS_READ_MODE", "clickhouse"),
-        ("TR_ANALYTICS_READ_MODE", "dual"),
-        ("TR_ANALYTICS_READ_MODE", "bigtable"),
-        ("TR_BIGTABLE_MIRROR_WRITES_ENABLED", "true"),
     ],
 )
-def test_rollout_refuses_the_retired_bigtable_analytics_settings(
+def test_rollout_refuses_the_retired_storage_backend(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, value: str,
 ) -> None:
     isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, _LIVE_REGIONAL_QUOTA_ENV)
@@ -3103,6 +3100,9 @@ def test_combined_synthetic_refresh_preserves_security_boundaries(tmp_path: Path
         env_update = update[update.index("--update-env-vars") + 1]
         assert env_update.startswith("^|^")
         assert "TR_REGIONS=us-central1,us-east4,europe-west4,us-west1" in env_update.split("|")
+        assert "TR_STORAGE_BACKEND=spanner-clickhouse" in env_update.split("|")
+        removed = update[update.index("--remove-env-vars") + 1].split(",")
+        assert {"TR_BIGTABLE_INSTANCE_ID", "TR_BIGTABLE_GENERATION_TABLE", "TR_ANALYTICS_READ_MODE"} <= set(removed)
         assert "southamerica-east1" not in env_update
         assert "--set-secrets" not in update
         assert "--update-secrets" not in update

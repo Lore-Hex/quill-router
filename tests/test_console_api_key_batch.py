@@ -50,7 +50,7 @@ def _console_client(store: Any, email: str) -> tuple[TestClient, Any, Any]:
 def test_console_api_key_page_uses_two_read_rpcs_regardless_of_key_count(
     key_count: int,
 ) -> None:
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     client, user, workspace = _console_client(
         store,
         f"console-batch-{key_count}@example.com",
@@ -78,7 +78,7 @@ def test_console_api_key_page_uses_two_read_rpcs_regardless_of_key_count(
 
 
 def test_spanner_bulk_key_usage_sums_only_complete_configured_shards() -> None:
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     user, workspace = _workspace(store, "console-shards@example.com")
     _raw, key = store.create_api_key(
         workspace_id=workspace.id,
@@ -129,7 +129,7 @@ def test_spanner_bulk_key_usage_sums_only_complete_configured_shards() -> None:
 
 
 def test_spanner_bulk_key_usage_preserves_missing_row_fallback() -> None:
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     user, workspace = _workspace(store, "console-missing-typed@example.com")
     _raw, key = store.create_api_key(
         workspace_id=workspace.id,
@@ -155,7 +155,7 @@ def test_spanner_bulk_key_usage_preserves_missing_row_fallback() -> None:
 
 def test_spanner_bulk_projection_matches_the_legacy_fanout_values() -> None:
     """Differentially pin the old list+point-read result without concurrent writes."""
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     user, workspace = _workspace(store, "console-differential@example.com")
     keys: list[ApiKey] = []
     for index in range(3):
@@ -222,7 +222,7 @@ def test_spanner_bulk_projection_matches_the_legacy_fanout_values() -> None:
 
 
 def test_spanner_bulk_key_usage_fails_closed_on_incomplete_shards() -> None:
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     user, workspace = _workspace(store, "console-incomplete-shards@example.com")
     _raw, key = store.create_api_key(
         workspace_id=workspace.id,
@@ -238,7 +238,7 @@ def test_spanner_bulk_key_usage_fails_closed_on_incomplete_shards() -> None:
 
 
 def test_spanner_bulk_key_list_rejects_dangling_noncanonical_and_foreign_rows() -> None:
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     user, workspace = _workspace(store, "console-owner@example.com")
     other_user, other_workspace = _workspace(store, "console-foreign@example.com")
     _raw, older = store.create_api_key(
@@ -292,7 +292,7 @@ def test_spanner_bulk_key_list_rejects_dangling_noncanonical_and_foreign_rows() 
 
 
 def test_spanner_bulk_key_projection_is_strong_and_read_your_write() -> None:
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     user, workspace = _workspace(store, "console-immediate@example.com")
     snapshot_start = len(database.snapshot_calls)
     _raw, key = store.create_api_key(
@@ -373,7 +373,7 @@ def test_console_key_projection_keeps_the_existing_template_shape() -> None:
 
 
 def test_spanner_console_does_not_render_or_mutate_a_foreign_workspace_key() -> None:
-    store, _database, _bigtable = make_fake_store()
+    store, _database = make_fake_store()
     client, _user, workspace = _console_client(store, "console-security@example.com")
     other_user, other_workspace = _workspace(store, "console-security-other@example.com")
     _raw, own = store.create_api_key(

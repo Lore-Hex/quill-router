@@ -168,7 +168,7 @@ def trust_gate_failure(
     from trusted_router.storage_trust_reconciliation import MARKER_COLUMNS, _marker_from_row
 
     if (
-        settings.storage_backend not in {"spanner-bigtable", "spanner-clickhouse"}
+        settings.storage_backend != "spanner-clickhouse"
         or settings.request_record_write_mode != "typed"
         or getattr(store, "request_record_write_mode", None) != "typed"
     ):

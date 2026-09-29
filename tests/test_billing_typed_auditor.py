@@ -67,7 +67,7 @@ def _regional_lease(
 
 
 def test_auditor_clean_when_reserved_equals_open_holds() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_ok"
     _credit_row(db, ws, reserved=300_000)
     _resv(db, "r1", ws=ws, credit=200_000)
@@ -80,7 +80,7 @@ def test_auditor_clean_when_reserved_equals_open_holds() -> None:
 
 
 def test_auditor_flags_reserved_leak() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_leak"
     _credit_row(db, ws, reserved=500_000)  # but only 100k is actually open
     _resv(db, "r1", ws=ws, credit=100_000)
@@ -95,7 +95,7 @@ def test_auditor_flags_open_hold_with_no_typed_row() -> None:
     """The dangerous false-negative codex caught: an open hold whose typed row was
     deleted or never created. Iterating only typed rows would miss it; the reverse
     direction catches it."""
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_orphan_hold"
     _resv(db, "r1", ws=ws, credit=120_000)  # open hold, but NO tr_credit_balance row
 
@@ -108,7 +108,7 @@ def test_auditor_flags_open_hold_with_no_typed_row() -> None:
 
 
 def test_auditor_flags_negative_reserved() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_neg"
     _credit_row(db, ws, reserved=-50)  # underflow
 
@@ -118,7 +118,7 @@ def test_auditor_flags_negative_reserved() -> None:
 
 
 def test_auditor_key_invariant() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     kh = "key_abc"
     _key_row(db, kh, reserved=250_000)
     _resv(db, "rk", key=kh, key_micro=250_000)
@@ -133,7 +133,7 @@ def test_auditor_key_invariant() -> None:
 
 
 def test_auditor_sums_request_holds_and_multiple_regional_leases() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_regional"
     _credit_row(db, ws, reserved=700_000)
     _resv(db, "r1", ws=ws, credit=100_000)
@@ -147,7 +147,7 @@ def test_auditor_sums_request_holds_and_multiple_regional_leases() -> None:
 
 
 def test_auditor_fails_closed_for_missing_regional_lease_target() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     open_lease = OpenRegionalQuotaLease(
         lease_entity_id="missing#us-central1#lease-missing",
         workspace_id="missing",

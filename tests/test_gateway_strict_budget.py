@@ -8,7 +8,7 @@ from trusted_router.strict_budget import strict_budget_slot
 
 
 def test_strict_gateway_holds_refund_backpressure_and_no_regional_lease():
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     workspace = store.create_workspace("owner", "strict", trial_credit_microdollars=1_000_000)
     _, key = store.create_api_key(
         workspace_id=workspace.id,

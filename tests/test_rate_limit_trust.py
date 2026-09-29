@@ -5,6 +5,7 @@ import datetime as dt
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.fakes.production_storage import PRODUCTION_SPANNER_STORAGE
 from trusted_router import storage_rate_limits
 from trusted_router.config import Settings
 from trusted_router.main import create_app
@@ -42,10 +43,7 @@ def _production_settings(**updates: object) -> Settings:
         "aws_access_key_id": "test-access-key",
         "aws_secret_access_key": "test-secret-key",
         "ses_from_email": "noreply@example.com",
-        "storage_backend": "spanner-bigtable",
-        "spanner_instance_id": "trusted-router",
-        "spanner_database_id": "trusted-router",
-        "bigtable_instance_id": "trusted-router-logs",
+        **PRODUCTION_SPANNER_STORAGE,
         "byok_kms_key_name": _TEST_BYOK_KMS_KEY_NAME,
         "rate_limit_enabled": True,
         "rate_limit_client_ip_mode": "edge_header",

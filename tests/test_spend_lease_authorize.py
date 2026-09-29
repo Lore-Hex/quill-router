@@ -822,7 +822,7 @@ def test_decision_44_fence_loss_unmarks_marked_incumbent() -> None:
 
 
 def _store_binding_harness() -> tuple[Any, FakeSpannerDatabase, Any, BindingPlan, _RecordingLedger]:
-    store, db, _table = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     workspace = Workspace(id="workspace-1", name="Test", owner_user_id="user-1")
     store._write_entity("workspace", workspace.id, workspace)
     store._write_entity("credit", workspace.id, CreditAccount(workspace_id=workspace.id))

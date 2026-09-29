@@ -169,7 +169,7 @@ def test_concurrent_regional_passes_claim_one_send(
 
 
 def test_spanner_attribution_and_reminders_share_one_create_transaction() -> None:
-    store, _database, _bigtable = make_fake_store()
+    store, _database = make_fake_store()
     signup_at = "2026-08-06T12:00:00Z"
     record = AcquisitionAttribution(
         workspace_id="ws-spanner-reminder",

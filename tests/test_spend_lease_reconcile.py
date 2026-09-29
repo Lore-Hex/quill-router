@@ -40,7 +40,7 @@ REGION = "us-central1"
 
 
 def _store() -> tuple[Any, FakeSpannerDatabase, BigtableSpendLeaseLedger]:
-    store, database, _ = make_fake_store(request_record_write_mode="typed")
+    store, database = make_fake_store(request_record_write_mode="typed")
     database.now = NOW
     table = FakeBigtableTable()
     ledger = BigtableSpendLeaseLedger({REGION: table})

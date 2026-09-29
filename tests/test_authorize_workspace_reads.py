@@ -24,7 +24,7 @@ from trusted_router.types import UsageType
 
 @pytest.fixture
 def regional() -> tuple[Any, ...]:
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     settings = arm_store(store, db)
     ws = store.create_workspace("owner", "read-collapse", trial_credit_microdollars=200_000_000)
     workspace_state(db, 2, ws.id)

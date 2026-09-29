@@ -3,23 +3,17 @@ from __future__ import annotations
 import copy
 import json
 from collections.abc import Iterator
-from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from tests.fakes.production_storage import PRODUCTION_SPANNER_STORAGE
 from tests.fakes.spanner import make_fake_store
 from trusted_router.config import Settings
 from trusted_router.main import create_app
-from trusted_router.services import settle_outbox_drain as drain_mod
-from trusted_router.services.settle_outbox_apply import ApplyOutcome
 from trusted_router.storage import InMemoryStore, configure_store
-from trusted_router.storage_gcp_activity_index import (
-    generation_by_id,
-    write_generation,
-)
 from trusted_router.storage_gcp_authorize import (
     AuthorizeOutcome,
     SettleOutcome,
@@ -28,10 +22,6 @@ from trusted_router.storage_gcp_authorize import (
 )
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
 from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
-from trusted_router.storage_gcp_synthetic_index import (
-    RETENTION_FAMILY_MAX_AGES,
-    configure_retention_families,
-)
 from trusted_router.storage_models import (
     CreditAccount,
     Generation,
@@ -48,11 +38,11 @@ TOTAL_CREDIT = 5_000_000
 
 
 @pytest.fixture
-def typed_request_store() -> Iterator[tuple[Any, Any, Any]]:
-    store, database, bigtable = make_fake_store(request_record_write_mode="typed")
+def typed_request_store() -> Iterator[tuple[Any, Any]]:
+    store, database = make_fake_store(request_record_write_mode="typed")
     configure_store(store)
     try:
-        yield store, database, bigtable
+        yield store, database
     finally:
         configure_store(InMemoryStore())
 
@@ -164,9 +154,9 @@ def _generic_request_kinds(database: Any) -> set[str]:
 
 
 def test_typed_authorize_avoids_generic_rows_and_replays_one_hold(
-    typed_request_store: tuple[Any, Any, Any],
+    typed_request_store: tuple[Any, Any],
 ) -> None:
-    store, database, _bigtable = typed_request_store
+    store, database = typed_request_store
     workspace_id = "ws-typed-authorize"
     _seed_credit(store, workspace_id)
     key = _make_key(store, workspace_id)
@@ -197,9 +187,9 @@ def test_typed_authorize_avoids_generic_rows_and_replays_one_hold(
 
 
 def test_shared_trace_settles_each_call_once_and_releases_both_holds(
-    typed_request_store: tuple[Any, Any, Any],
+    typed_request_store: tuple[Any, Any],
 ) -> None:
-    store, database, _bigtable = typed_request_store
+    store, database = typed_request_store
     workspace_id = "ws-shared-trace"
     _seed_credit(store, workspace_id)
     key = _make_key(store, workspace_id)
@@ -239,9 +229,9 @@ def test_shared_trace_settles_each_call_once_and_releases_both_holds(
 
 
 def test_typed_settle_starts_bounded_replay_window_after_activity_commit(
-    typed_request_store: tuple[Any, Any, Any],
+    typed_request_store: tuple[Any, Any],
 ) -> None:
-    store, database, bigtable = typed_request_store
+    store, database = typed_request_store
     workspace_id = "ws-typed-settle"
     _seed_credit(store, workspace_id)
     key = _make_key(store, workspace_id)
@@ -275,23 +265,12 @@ def test_typed_settle_starts_bounded_replay_window_after_activity_commit(
     assert outbox["settle_body"] is None
     assert outbox["terminal_at"] is not None
     assert _generic_request_kinds(database) == set()
-    assert any(
-        "activity" in cells
-        for row_key, cells in bigtable.rows.items()
-        if row_key.startswith(b"gen#")
-    )
-    assert any(
-        "benchmark" in cells
-        for row_key, cells in bigtable.rows.items()
-        if row_key.startswith(b"benchmark")
-    )
-    assert all("m" not in cells for cells in bigtable.rows.values())
 
 
 def test_settled_idempotency_key_replays_for_full_retention_window(
-    typed_request_store: tuple[Any, Any, Any],
+    typed_request_store: tuple[Any, Any],
 ) -> None:
-    store, database, _bigtable = typed_request_store
+    store, database = typed_request_store
     workspace_id = "ws-typed-settled-replay"
     _seed_credit(store, workspace_id)
     key = _make_key(store, workspace_id)
@@ -336,9 +315,9 @@ def test_settled_idempotency_key_replays_for_full_retention_window(
 
 
 def test_gateway_route_replays_settled_request_from_bounded_record(
-    typed_request_store: tuple[Any, Any, Any],
+    typed_request_store: tuple[Any, Any],
 ) -> None:
-    store, database, _bigtable = typed_request_store
+    store, database = typed_request_store
     workspace_id = "ws-route-settled-replay"
     store._write_entity(
         "workspace",
@@ -376,110 +355,11 @@ def test_gateway_route_replays_settled_request_from_bounded_record(
     assert len(database.gateway_authorizations) == 1
 
 
-def test_bigtable_failure_preserves_private_repair_state_until_retry(
-    typed_request_store: tuple[Any, Any, Any],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from trusted_router import storage_gcp_generations as generations_mod
-
-    store, database, bigtable = typed_request_store
-    workspace_id = "ws-typed-repair"
-    _seed_credit(store, workspace_id)
-    key = _make_key(store, workspace_id)
-    outcome, authorization = _authorize(
-        store,
-        workspace_id=workspace_id,
-        key_hash=key.hash,
-    )
-    assert outcome == AuthorizeOutcome.ACCEPTED and authorization is not None
-    original_write = generations_mod._bt_write_generation
-    calls = 0
-
-    def fail_once(*args: Any, **kwargs: Any) -> None:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            raise RuntimeError("injected Bigtable outage")
-        original_write(*args, **kwargs)
-
-    monkeypatch.setattr(generations_mod, "_bt_write_generation", fail_once)
-    body = _settle_body(authorization.id)
-    body.update(
-        {
-            "prompt": "private prompt must not persist",
-            "output": "private output must not persist",
-            "tool_calls": [{"function": {"arguments": "private tool output"}}],
-            "metadata": {
-                "trustedrouter_synthetic": "true",
-                "private": "private metadata must not persist",
-            },
-            "trace": {"private": "private trace must not persist"},
-        }
-    )
-
-    response = _client().post("/v1/internal/gateway/settle", json=body)
-
-    assert response.status_code == 200, response.text
-    auth_row = database.gateway_authorizations[authorization.id]
-    reservation = database.reservations[authorization.credit_reservation_id]
-    pending = _outbox(store).get(authorization.id, "settle")
-    assert pending is not None and pending.status == "pending"
-    assert pending.terminal_at is None
-    assert pending.settle_body is not None
-    assert auth_row["settled"] is True
-    assert auth_row["terminal_at"] is None
-    assert auth_row["payload"] is not None
-    assert reservation["settled"] is True
-    assert reservation.get("terminal_at") is None
-    frozen = json.loads(pending.settle_body)
-    assert frozen["metadata"] == {"trustedrouter_synthetic": "true"}
-    durable_state = json.dumps(
-        {
-            "authorization": auth_row,
-            "reservation": reservation,
-            "outbox": database.settle_outbox[(authorization.id, "settle")],
-        },
-        default=str,
-    )
-    for secret in (
-        "private prompt",
-        "private output",
-        "private tool output",
-        "private metadata",
-        "private trace",
-    ):
-        assert secret not in durable_state
-
-    database.settle_outbox[(authorization.id, "settle")][
-        "next_attempt_at"
-    ] = "2000-01-01T00:00:00Z"
-    drained = drain_mod.drain_settle_outbox(10)
-
-    assert drained["outcomes"] == {
-        ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE: 1
-    }
-    completed = _outbox(store).get(authorization.id, "settle")
-    assert completed is not None and completed.status == "done"
-    assert completed.settle_body is None
-    assert completed.terminal_at is not None
-    assert database.gateway_authorizations[authorization.id]["payload"] is not None
-    assert database.gateway_authorizations[authorization.id]["terminal_at"] is not None
-    assert database.reservations[authorization.credit_reservation_id][
-        "terminal_at"
-    ] is not None
-    generation_keys = {
-        key for key in bigtable.rows if key.startswith(b"gen#")
-    }
-    assert len(generation_keys) == 1
-    assert calls == 2
-    assert _generic_request_kinds(database) == set()
-
-
 def test_typed_enqueue_failure_rejects_without_charging(
-    typed_request_store: tuple[Any, Any, Any],
+    typed_request_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, database, _bigtable = typed_request_store
+    store, database = typed_request_store
     workspace_id = "ws-typed-enqueue-failure"
     _seed_credit(store, workspace_id)
     key = _make_key(store, workspace_id)
@@ -518,7 +398,7 @@ def test_typed_enqueue_failure_rejects_without_charging(
 
 
 def test_legacy_rolling_finalize_defers_retention_until_outbox_done() -> None:
-    store, database, _bigtable = make_fake_store(
+    store, database = make_fake_store(
         request_record_write_mode="legacy"
     )
     workspace_id = "ws-legacy-finalize-retention"
@@ -553,10 +433,10 @@ def test_legacy_rolling_finalize_defers_retention_until_outbox_done() -> None:
 
 @pytest.mark.parametrize("outbox_status", ["pending", "dead"])
 def test_claim_with_outstanding_intent_defers_retention(
-    typed_request_store: tuple[Any, Any, Any],
+    typed_request_store: tuple[Any, Any],
     outbox_status: str,
 ) -> None:
-    store, database, _bigtable = typed_request_store
+    store, database = typed_request_store
     workspace_id = f"ws-claim-retention-{outbox_status}"
     _seed_credit(store, workspace_id)
     key = _make_key(store, workspace_id)
@@ -592,9 +472,9 @@ def test_claim_with_outstanding_intent_defers_retention(
 
 
 def test_settle_without_outbox_still_arms_retention(
-    typed_request_store: tuple[Any, Any, Any],
+    typed_request_store: tuple[Any, Any],
 ) -> None:
-    store, database, _bigtable = typed_request_store
+    store, database = typed_request_store
     workspace_id = "ws-no-outbox-retention"
     _seed_credit(store, workspace_id)
     key = _make_key(store, workspace_id)
@@ -624,9 +504,9 @@ def test_settle_without_outbox_still_arms_retention(
 
 
 def test_typed_reaper_compacts_unresolved_authorization(
-    typed_request_store: tuple[Any, Any, Any],
+    typed_request_store: tuple[Any, Any],
 ) -> None:
-    store, database, _bigtable = typed_request_store
+    store, database = typed_request_store
     workspace_id = "ws-typed-reaper"
     _seed_credit(store, workspace_id)
     key = _make_key(store, workspace_id)
@@ -660,9 +540,9 @@ def test_typed_reaper_compacts_unresolved_authorization(
 
 
 def test_late_outbox_enqueue_disarms_reaper_retention(
-    typed_request_store: tuple[Any, Any, Any],
+    typed_request_store: tuple[Any, Any],
 ) -> None:
-    store, database, _bigtable = typed_request_store
+    store, database = typed_request_store
     workspace_id = "ws-reaper-late-settle"
     _seed_credit(store, workspace_id)
     key = _make_key(store, workspace_id)
@@ -697,9 +577,9 @@ def test_late_outbox_enqueue_disarms_reaper_retention(
 
 
 def test_retention_waits_for_last_sibling_outbox_intent(
-    typed_request_store: tuple[Any, Any, Any],
+    typed_request_store: tuple[Any, Any],
 ) -> None:
-    store, database, _bigtable = typed_request_store
+    store, database = typed_request_store
     workspace_id = "ws-sibling-outbox-retention"
     _seed_credit(store, workspace_id)
     key = _make_key(store, workspace_id)
@@ -757,34 +637,6 @@ def _generation(generation_id: str, *, cost: int) -> Generation:
     )
 
 
-def test_bigtable_reads_prefer_bounded_family_and_fall_back_to_legacy(
-    typed_request_store: tuple[Any, Any, Any],
-) -> None:
-    _store, _database, bigtable = typed_request_store
-    legacy = _generation("gen-shared", cost=1)
-    bounded = _generation("gen-shared", cost=2)
-    legacy_only = _generation("gen-legacy-only", cost=3)
-    write_generation(bigtable, "m", legacy)
-    write_generation(bigtable, "activity", bounded)
-    write_generation(bigtable, "m", legacy_only)
-
-    preferred = generation_by_id(
-        bigtable,
-        ("activity", "m"),
-        "gen-shared",
-    )
-    fallback = generation_by_id(
-        bigtable,
-        ("activity", "m"),
-        "gen-legacy-only",
-    )
-
-    assert preferred is not None
-    assert preferred.total_cost_microdollars == 2
-    assert fallback is not None
-    assert fallback.total_cost_microdollars == 3
-
-
 def test_typed_production_mode_requires_durable_outbox() -> None:
     internal_token = "internal-" + "token"
     with pytest.raises(
@@ -797,97 +649,19 @@ def test_typed_production_mode_requires_durable_outbox() -> None:
             internal_gateway_token=internal_token,
             observer_internal_token="observer-" + "token",
             sentry_dsn="https://example@example.ingest.sentry.io/1",
-            storage_backend="spanner-bigtable",
-            spanner_instance_id="trusted-router",
-            spanner_database_id="trusted-router",
-            bigtable_instance_id="trusted-router-logs",
+            **{**PRODUCTION_SPANNER_STORAGE, "settle_outbox_enabled": False},
             byok_kms_key_name="projects/p/locations/global/keyRings/r/cryptoKeys/k",
-            request_record_write_mode="typed",
-            settle_outbox_enabled=False,
         )
 
 
-class _FakeFamily:
-    def __init__(self, name: str, calls: list[tuple[str, str]]) -> None:
-        self.name = name
-        self.calls = calls
-
-    def create(self) -> None:
-        self.calls.append(("create", self.name))
-
-    def update(self) -> None:
-        self.calls.append(("update", self.name))
-
-
-class _FakeAdminTable:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, str]] = []
-
-    def list_column_families(self) -> dict[str, object]:
-        return {"activity": object(), "m": object()}
-
-    def column_family(self, name: str, *, gc_rule: Any) -> _FakeFamily:
-        assert gc_rule is not None
-        return _FakeFamily(name, self.calls)
-
-
-def test_bigtable_retention_config_never_mutates_legacy_family() -> None:
-    table = _FakeAdminTable()
-
-    actions = configure_retention_families(table, apply=True)
-
-    assert {action["family"] for action in actions} == set(
-        RETENTION_FAMILY_MAX_AGES
-    )
-    assert table.calls == [
-        ("update", "activity"),
-        ("create", "benchmark"),
-        ("create", "synthetic"),
-        ("create", "rollup"),
-    ]
-    assert all(name != "m" for _action, name in table.calls)
-
-
-def test_retention_migration_is_additive_and_dry_run_by_default() -> None:
-    script = (
-        Path(__file__).parents[1]
-        / "scripts"
-        / "deploy"
-        / "migrate_request_retention.sh"
-    ).read_text()
-    executable_lines = [
-        line.strip().lower()
-        for line in script.splitlines()
-        if line.strip()
-        and not line.lstrip().startswith("#")
-        and not line.lstrip().startswith("log ")
-    ]
-
-    assert "apply=false" in executable_lines
-    assert any('if [ "${1:-}" = "--apply" ]' in line for line in executable_lines)
-    assert not any("delete from" in line for line in executable_lines)
-    assert not any("drop table" in line for line in executable_lines)
-    assert not any("update tr_" in line and "terminal_at" in line for line in executable_lines)
-    watermark_ddl = script.split(
-        'ddl "CREATE TABLE tr_stage_d_policy_watermark (', 1
-    )[1].split(') PRIMARY KEY (plane)"', 1)[0]
-    assert [
-        line.strip().removesuffix(",") for line in watermark_ddl.splitlines() if line.strip()
-    ] == [
-        "plane STRING(16) NOT NULL",
-        "highest_sequence INT64 NOT NULL",
-        "updated_at TIMESTAMP",
-    ]
-
-
 def test_dead_outbox_row_disarms_claim_armed_retention(
-    typed_request_store: tuple[Any, Any, Any],
+    typed_request_store: tuple[Any, Any],
 ) -> None:
     """A winning claim arms terminal_at at settle time (settle_atomic sets it on
     the reservation). If that authorization's outbox row later goes dead — repair
     unfinished, frozen for a human — the referenced records must be disarmed
     again, or the 30-day TTL deletes the very evidence the freeze preserves."""
-    store, database, _bigtable = typed_request_store
+    store, database = typed_request_store
     workspace_id = "ws-dead-row-retention"
     _seed_credit(store, workspace_id)
     key = _make_key(store, workspace_id)
@@ -923,13 +697,13 @@ def test_dead_outbox_row_disarms_claim_armed_retention(
 
 
 def test_parked_outbox_row_disarms_claim_armed_retention(
-    typed_request_store: tuple[Any, Any, Any],
+    typed_request_store: tuple[Any, Any],
 ) -> None:
     """park() keeps an intent outstanding without burning attempts, and it is
     reached AFTER a winning claim may have armed terminal_at (e.g. the settle
     committed but its activity index has not). A repair that parks for 30 days
     must not let the TTL delete the records it is repairing."""
-    store, database, _bigtable = typed_request_store
+    store, database = typed_request_store
     workspace_id = "ws-parked-retention"
     _seed_credit(store, workspace_id)
     key = _make_key(store, workspace_id)
@@ -959,12 +733,12 @@ def test_parked_outbox_row_disarms_claim_armed_retention(
 
 
 def test_sibling_completion_clears_already_armed_retention(
-    typed_request_store: tuple[Any, Any, Any],
+    typed_request_store: tuple[Any, Any],
 ) -> None:
     """Skipping the arm is not enough when terminal_at was ALREADY armed after
     enqueue (a winning claim does that): completing one intent while a sibling
     is still pending must actively disarm the shared records."""
-    store, database, _bigtable = typed_request_store
+    store, database = typed_request_store
     workspace_id = "ws-sibling-prearmed"
     _seed_credit(store, workspace_id)
     key = _make_key(store, workspace_id)

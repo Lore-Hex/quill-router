@@ -45,7 +45,7 @@ def _canonical(value: object) -> bytes:
 def test_flag_off_authorize_response_is_byte_exact_origin_main(
     monkeypatch: pytest.MonkeyPatch, paused: bool, armed: bool, shard: int,
 ) -> None:
-    store, database, _ = make_fake_store(request_record_write_mode="typed")
+    store, database = make_fake_store(request_record_write_mode="typed")
     settings = Settings(environment="test", spend_lease_trust_eligibility_enabled=armed)
     store.trust_settings = settings
     pause_reads: list[dict[str, Any]] = []
@@ -231,7 +231,7 @@ def test_flag_off_legacy_pause_keeps_holds_and_skips_trust_queries(
         conn = sqlite_postgres_conn()
         store = postgres_store_on(conn)
     else:
-        store, db, _ = make_fake_store(request_record_write_mode="legacy")
+        store, db = make_fake_store(request_record_write_mode="legacy")
     store.trust_settings = Settings(environment="test", spend_lease_trust_eligibility_enabled=False)
     ws = store.create_workspace("owner", "unarmed", trial_credit_microdollars=1000)
     _raw, key = store.create_api_key(
@@ -291,7 +291,7 @@ def test_flag_off_regional_pause_preserves_grant_and_authorization(
     from trusted_router import trust_eligibility
     from trusted_router.regional_quota_ledger import InMemoryRegionalQuotaLedger
 
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     store.trust_settings = Settings(environment="test", spend_lease_trust_eligibility_enabled=False)
     ws = store.create_workspace("owner", "regional-unarmed", trial_credit_microdollars=200_000_000)
     _raw, key = store.create_api_key(workspace_id=ws.id, name="key", creator_user_id="owner")

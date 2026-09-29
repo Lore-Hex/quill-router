@@ -51,8 +51,8 @@ def main(argv: list[str] | None = None, *, store: Any | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if args.apply and os.environ.get("TR_STORAGE_BACKEND") != "spanner-bigtable":
-        print("ERROR: --apply requires TR_STORAGE_BACKEND=spanner-bigtable", file=sys.stderr)
+    if args.apply and os.environ.get("TR_STORAGE_BACKEND") != "spanner-clickhouse":
+        print("ERROR: --apply requires TR_STORAGE_BACKEND=spanner-clickhouse", file=sys.stderr)
         return 2
     if args.apply and not args.verified_retained_ledger_complete:
         print(

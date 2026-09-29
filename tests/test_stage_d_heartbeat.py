@@ -506,7 +506,7 @@ def _gateway_heartbeat_store(
     stage_d_boot_kid: str | None,
     *boots: SpendLeaseBoot,
 ) -> FakeSpannerDatabase:
-    store, db, _table = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     db.now = NOW
     configure_store(store)
     _seed(stage_d_boot_kid=stage_d_boot_kid, database=db)
@@ -524,7 +524,7 @@ def _assert_heartbeat_state_unchanged(db: FakeSpannerDatabase) -> None:
 def test_heartbeat_boot_auth_uses_exact_literal_bytes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, _db, _table = make_fake_store(request_record_write_mode="typed")
+    store, _db = make_fake_store(request_record_write_mode="typed")
     configure_store(store)
     private = Ed25519PrivateKey.generate()
     public = private.public_key().public_bytes_raw()
@@ -664,7 +664,7 @@ def test_heartbeat_flag_defaults_on_and_can_disable_endpoint() -> None:
 def test_disposition_lookup_uses_heartbeat_boot_verifier_and_literal_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, _db, _table = make_fake_store(request_record_write_mode="typed")
+    store, _db = make_fake_store(request_record_write_mode="typed")
     configure_store(store)
     private = Ed25519PrivateKey.generate()
     boot = SpendLeaseBoot(
@@ -1184,7 +1184,7 @@ def test_finalize_preserves_heartbeat_committed_after_s1(
     # Independent list: dropping any one field from the SQL must fail this test.
     fields = ("heartbeat_seq", "heartbeat_at", "heartbeat_hash", "started_at",
               "selected_endpoint_id", "delivered_usage")
-    store, db, _table = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     _db, initial = _seed(database=db)
     _seed_reaper_counters(db)
     snapshot = store.get_gateway_authorization(initial.id)  # S1

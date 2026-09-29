@@ -30,7 +30,7 @@ def _seed(
     reserved: list[int] | None = None,
     workspace_id: str = WORKSPACE_ID,
 ) -> tuple[Any, Any, Any]:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     usage = usage or [0] * len(totals)
     reserved = reserved or [0] * len(totals)
     assert len(usage) == len(totals)

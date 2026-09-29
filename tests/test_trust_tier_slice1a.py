@@ -211,7 +211,7 @@ def test_every_balance_schema_copy_and_validation_site_uses_same_seven_columns()
 
 
 def test_new_balance_shards_seed_all_seven_trust_columns() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     workspace = store.create_workspace(owner_user_id="owner", name="trust seed")
 
     rows = [
@@ -236,7 +236,7 @@ def test_new_balance_shards_seed_all_seven_trust_columns() -> None:
 
 
 def test_starter_credit_records_a_nonqualifying_provisioning_fact_atomically() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     workspace = store.create_workspace(
         owner_user_id="owner",
         name="starter credit",
@@ -257,7 +257,7 @@ def test_starter_credit_records_a_nonqualifying_provisioning_fact_atomically() -
 
 
 def test_credit_provenance_is_mandatory_validated_and_committed_with_credit() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     workspace_id = "workspace-payment-fact"
     store._write_entity("credit", workspace_id, CreditAccount(workspace_id))
     database.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(workspace_id, 0)] = {
@@ -551,7 +551,7 @@ def test_pure_tier_computation(
 
 
 def test_tier_job_updates_every_active_shard_atomically_and_never_clears_latch() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     workspace_id = "workspace-tier-job"
     store._write_entity(
         "user", "owner", User(id="owner", email="owner@example.com", identity_status="approved")
@@ -719,7 +719,7 @@ def test_armed_binding_precheck_rejects_unpaid_snapshot_before_dml(
     import trusted_router.storage_gcp_spend_lease_authorize as authorize
     from tests.test_trust_eligibility_pr2 import arm_store, workspace_state
 
-    store, database, _ = make_fake_store(request_record_write_mode="typed")
+    store, database = make_fake_store(request_record_write_mode="typed")
     arm_store(store, database)
     row = workspace_state(database, trust_snapshot[0])
     row["trust_latched_at"] = trust_snapshot[1]

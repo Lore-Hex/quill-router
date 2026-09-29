@@ -7,7 +7,7 @@ from trusted_router.storage_gcp_authorize import authorize_atomic, settle_atomic
 
 
 def setup():
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     _seed_credit(store, "strict-ws", 1000)
     _, key = store.create_api_key(
         workspace_id="strict-ws",
