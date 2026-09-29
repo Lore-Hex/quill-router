@@ -46,20 +46,27 @@ BOOL_FIELDS = {"IS_NULLABLE", "IS_STORED", "IS_UNIQUE", "IS_NULL_FILTERED", "IS_
 EXPRESSION_FIELDS = {"GENERATION_EXPRESSION", "COLUMN_DEFAULT", "CHECK_CLAUSE", "ROW_DELETION_POLICY_EXPRESSION"}
 STATE_FIELDS = {"SPANNER_STATE": "COMMITTED", "INDEX_STATE": "READ_WRITE"}
 NOT_READY = "PRODUCTION OBJECT NOT READY"
-# Fold SQL syntax, not identifiers or literal contents. Function names (including
-# qualified names) are recognised by the following opening parenthesis.
-SQL_KEYWORDS = set("""
+# Fixed GoogleSQL reserved keywords, plus DAY for the schema's TTL intervals.
+# In particular, YEAR is not reserved: payload.year is a case-sensitive path.
+SQL_KEYWORDS = frozenset("""
 ALL AND ANY ARRAY AS ASC ASSERT_ROWS_MODIFIED AT BETWEEN BY CASE CAST COLLATE
-CONTAINS CREATE CROSS CUBE CURRENT DATE DATETIME DEFAULT DEFINE DESC DISTINCT
+CONTAINS CREATE CROSS CUBE CURRENT DEFAULT DEFINE DESC DISTINCT
 ELSE END ENUM ESCAPE EXCEPT EXCLUDE EXISTS EXTRACT FALSE FETCH FOLLOWING FOR FROM
 FULL GROUP GROUPING GROUPS HASH HAVING IF IGNORE IN INNER INTERSECT INTERVAL INTO
 IS JOIN LATERAL LEFT LIKE LIMIT LOOKUP MERGE NATURAL NEW NO NOT NULL NULLS OF ON
 OR ORDER OUTER OVER PARTITION PRECEDING PROTO QUALIFY RANGE RECURSIVE RESPECT RIGHT
-ROLLUP ROWS SELECT SET SOME STRUCT TABLESAMPLE THEN TIME TIMESTAMP TO TREAT TRUE
-UNBOUNDED UNION UNNEST USING WHEN WHERE WINDOW WITH WITHIN YEAR QUARTER MONTH WEEK
-DAY HOUR MINUTE SECOND MILLISECOND MICROSECOND NANOSECOND BOOL BYTES FLOAT32
-FLOAT64 INT64 NUMERIC STRING JSON
+ROLLUP ROWS SELECT SET SOME STRUCT TABLESAMPLE THEN TO TREAT TRUE
+UNBOUNDED UNION UNNEST USING WHEN WHERE WINDOW WITH WITHIN DAY
 """.split())
+# Reviewed against the generated conformance schema: expressions use CONCAT,
+# FARM_FINGERPRINT, MOD, JSON_QUERY, SAFE_CAST, INT64 and SAFE.TIMESTAMP_SECONDS;
+# TTLs use OLDER_THAN. ABS and INT64 conversion are also covered by audit probes.
+# Never infer a built-in from an arbitrary word followed by '('.
+SQL_FUNCTIONS = frozenset({
+    "ABS", "CONCAT", "FARM_FINGERPRINT", "INT64", "JSON_QUERY", "MOD",
+    "OLDER_THAN", "SAFE_CAST", "SAFE.TIMESTAMP_SECONDS",
+})
+SQL_TYPES = frozenset({"INT64"})  # SAFE_CAST(... AS INT64) in the generated schema.
 SQL_TOKEN = re.compile(
     r"(?P<space>\s+|--[^\n]*|/\*[\s\S]*?\*/)"
     r"|(?P<quoted>(?i:rb|br|r|b)?(?:'''(?:\\[\s\S]|(?!''')[^\\])*'''"
@@ -86,12 +93,14 @@ def normalise_expression(raw: str) -> list[str]:
             kinds.append(match.lastgroup)
         position = match.end()
     for i, token in enumerate(tokens):
-        if kinds[i] != "word":
+        if kinds[i] != "word" or (i > 0 and tokens[i - 1] == "."):
             continue
         end = i + 1
         while end + 1 < len(tokens) and tokens[end] == "." and kinds[end + 1] == "word":
             end += 2
-        if token.upper() in SQL_KEYWORDS or (end < len(tokens) and tokens[end] == "("):
+        if end < len(tokens) and tokens[end] == "(" and "".join(tokens[i:end]).upper() in SQL_FUNCTIONS:
+            tokens[i:end] = [part.upper() for part in tokens[i:end]]
+        elif end == i + 1 and (token.upper() in SQL_KEYWORDS or (i > 0 and tokens[i - 1] == "AS" and token.upper() in SQL_TYPES)):
             tokens[i] = token.upper()
     # Strip only pairs enclosing the entire expression, never (a+b)*c or
     # (a)+(b). Quoted parentheses were consumed as a single token above.
@@ -204,8 +213,24 @@ def validate_completeness(data: Mapping[str, Sequence[Mapping[str, Any]]]) -> No
             kind = "CHECK" if view == "CHECK_CONSTRAINTS" else "FOREIGN KEY"
             if constraint is None or constraint["CONSTRAINT_TYPE"] != kind:
                 fail(view, name, "missing or mismatched TABLE_CONSTRAINTS constraint/table")
-            if view == "REFERENTIAL_CONSTRAINTS" and row["UNIQUE_CONSTRAINT_SCHEMA"] == "" and (row["UNIQUE_CONSTRAINT_NAME"],) not in constraints:
-                fail(view, name, "unknown referenced TABLE_CONSTRAINTS key")
+            if view == "REFERENTIAL_CONSTRAINTS":
+                if row["UNIQUE_CONSTRAINT_SCHEMA"] != "":
+                    fail(view, name, "referenced schema is outside the audited default schema")
+                referenced = constraints.get((row["UNIQUE_CONSTRAINT_NAME"],))
+                if referenced is None or referenced["CONSTRAINT_TYPE"] not in {"PRIMARY KEY", "UNIQUE"}:
+                    fail(view, name, "missing or non-unique referenced TABLE_CONSTRAINTS key")
+                foreign_columns = [key for key in keys.values() if key["CONSTRAINT_NAME"] == name]
+                unique_columns = [key for key in keys.values() if key["CONSTRAINT_NAME"] == row["UNIQUE_CONSTRAINT_NAME"]]
+                positions = list(range(1, len(unique_columns) + 1))
+                # Count as well as set membership matters: duplicate, missing,
+                # null, zero and out-of-range positions must all fail closed.
+                for label, actual in (
+                    ("referenced key", [key["ORDINAL_POSITION"] for key in unique_columns]),
+                    ("foreign key", [key["ORDINAL_POSITION"] for key in foreign_columns]),
+                    ("referenced mapping", [key["POSITION_IN_UNIQUE_CONSTRAINT"] for key in foreign_columns]),
+                ):
+                    if not positions or len(actual) != len(positions) or set(actual) != set(positions):
+                        fail("KEY_COLUMN_USAGE", name, f"{label} must cover positions 1..{len(positions)} exactly once")
 
 
 def normalise(rows: Mapping[str, Sequence[Mapping[str, Any]]]) -> Schema:

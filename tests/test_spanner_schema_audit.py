@@ -499,6 +499,73 @@ def test_optional_views_can_be_empty_consistently():
     assert audit.apply_allowlist(audit.differences(schema, schema), [])["exit_code"] == 0
 
 
+def composite_foreign_key_records():
+    rows = records()
+    rows["COLUMNS"][1]["IS_NULLABLE"] = "NO"
+    rows["INDEX_COLUMNS"].append({**rows["INDEX_COLUMNS"][-1], "COLUMN_NAME": "timestamp", "ORDINAL_POSITION": 2})
+    rows["KEY_COLUMN_USAGE"].append({**rows["KEY_COLUMN_USAGE"][0], "COLUMN_NAME": "timestamp", "ORDINAL_POSITION": 2})
+    rows["KEY_COLUMN_USAGE"].append({**rows["KEY_COLUMN_USAGE"][1], "COLUMN_NAME": "timestamp", "ORDINAL_POSITION": 2, "POSITION_IN_UNIQUE_CONSTRAINT": 2})
+    return rows
+
+
+@pytest.mark.parametrize("referenced_kind", ["PRIMARY KEY", "UNIQUE"])
+@pytest.mark.parametrize("reverse_mapping", [False, True])
+def test_complete_composite_foreign_key(referenced_kind, reverse_mapping):
+    rows = composite_foreign_key_records()
+    if referenced_kind == "UNIQUE":
+        rows["TABLE_CONSTRAINTS"].append({**rows["TABLE_CONSTRAINTS"][1], "CONSTRAINT_NAME": "unique_key", "CONSTRAINT_TYPE": "UNIQUE"})
+        rows["KEY_COLUMN_USAGE"].extend([
+            {**row, "CONSTRAINT_NAME": "unique_key"} for row in rows["KEY_COLUMN_USAGE"] if row["CONSTRAINT_NAME"] == "server_pk_123"
+        ])
+        rows["REFERENTIAL_CONSTRAINTS"][0]["UNIQUE_CONSTRAINT_NAME"] = "unique_key"
+    if reverse_mapping:
+        for row in rows["KEY_COLUMN_USAGE"]:
+            if row["CONSTRAINT_NAME"] == "fk":
+                row["POSITION_IN_UNIQUE_CONSTRAINT"] = 3 - row["POSITION_IN_UNIQUE_CONSTRAINT"]
+    schema = audit.normalise(rows)
+    reversed_rows = {view: list(reversed(items)) for view, items in rows.items()}
+    assert audit.apply_allowlist(audit.differences(schema, audit.normalise(reversed_rows)), [])["exit_code"] == 0
+
+
+@pytest.mark.parametrize("side", ["production", "fixture", "both"])
+@pytest.mark.parametrize("damage", [
+    "missing_second_usage", "ordinal_gap", "ordinal_duplicate", "ordinal_null", "ordinal_zero",
+    "mapping_gap", "mapping_duplicate", "mapping_null", "mapping_zero",
+    "referenced_gap", "referenced_duplicate", "referenced_empty", "referenced_nonunique",
+    "referenced_missing", "referenced_schema",
+])
+def test_incomplete_composite_foreign_key_cannot_audit(monkeypatch, tmp_path, capsys, side, damage):
+    good = composite_foreign_key_records()
+    broken = copy.deepcopy(good)
+    if damage == "missing_second_usage":
+        broken["KEY_COLUMN_USAGE"].pop()
+    elif damage.startswith(("ordinal_", "mapping_")):
+        field = "ORDINAL_POSITION" if damage.startswith("ordinal_") else "POSITION_IN_UNIQUE_CONSTRAINT"
+        broken["KEY_COLUMN_USAGE"][-1][field] = {"gap": 3, "duplicate": 1, "null": None, "zero": 0}[damage.split("_")[1]]
+    elif damage in {"referenced_gap", "referenced_duplicate"}:
+        position = 3 if damage == "referenced_gap" else 1
+        # Keep index and primary-key views consistent to exercise the FK check.
+        broken["INDEX_COLUMNS"][-1]["ORDINAL_POSITION"] = position
+        broken["KEY_COLUMN_USAGE"][-2]["ORDINAL_POSITION"] = position
+    elif damage == "referenced_empty":
+        broken["TABLE_CONSTRAINTS"].append({**broken["TABLE_CONSTRAINTS"][1], "CONSTRAINT_NAME": "empty_unique", "CONSTRAINT_TYPE": "UNIQUE"})
+        broken["REFERENTIAL_CONSTRAINTS"][0]["UNIQUE_CONSTRAINT_NAME"] = "empty_unique"
+    elif damage in {"referenced_nonunique", "referenced_missing"}:
+        broken["REFERENTIAL_CONSTRAINTS"][0]["UNIQUE_CONSTRAINT_NAME"] = "check" if damage == "referenced_nonunique" else "missing"
+    else:
+        broken["REFERENTIAL_CONSTRAINTS"][0]["UNIQUE_CONSTRAINT_SCHEMA"] = "other_schema"
+    monkeypatch.setattr(audit, "production_schema", lambda *args: audit.normalise(broken if side in {"production", "both"} else good))
+    monkeypatch.setattr(audit, "fixture_schema", lambda *args: audit.normalise(broken if side in {"fixture", "both"} else good))
+    path = tmp_path / "allow.json"
+    path.write_text("[]")
+    assert audit.main(["--json", "--allowlist", str(path)]) == 2
+    report = json.loads(capsys.readouterr().out)
+    assert report["exit_code"] == 2
+    assert "fk" in report["error"]
+    assert "cannot audit" in report["error"]
+    assert "differences" not in report
+
+
 EXPRESSION_CASES = [
     ("COLUMNS", "GENERATION_EXPRESSION", "column/t/id"),
     ("COLUMNS", "COLUMN_DEFAULT", "column/t/id"),
@@ -514,6 +581,9 @@ EXPRESSION_CASES = [
     ("CASE WHEN id IS NULL THEN ABS(id) ELSE 0 END", "case when id is null then abs ( id ) else 0 end"),
     ("SAFE.TIMESTAMP_SECONDS(id)", "safe.timestamp_seconds (id)"),
     ("OLDER_THAN(timestamp, INTERVAL 7 DAY)", "older_than (timestamp, interval 7 day)"),
+    ("OLDER_THAN(x, INTERVAL 7 DAY)", "older_than(x, interval 7 day)"),
+    ("MOD(MOD(FARM_FINGERPRINT(CONCAT(id, '#', kind)), 16) + 16, 16)", "mod(mod(farm_fingerprint(concat(id, '#', kind)), 16) + 16, 16)"),
+    ("SAFE.TIMESTAMP_SECONDS(SAFE_CAST(JSON_QUERY(body, '$.expires_at') AS INT64))", "safe.timestamp_seconds(safe_cast(json_query(body, '$.expires_at') as int64))"),
 ])
 def test_expression_formatting_is_not_drift(view, field, obj, left, right):
     rows = records()
@@ -539,6 +609,15 @@ def test_expression_formatting_is_not_drift(view, field, obj, left, right):
     ("(x + 1) * 2", "x + 1 * 2"),
     ("x >= 1", "x > = 1"),
     ("(x) + (1)", "x + 1"),
+    ("INT64(payload.year)", "INT64(payload.YEAR)"),
+    ("INT64(payload.day)", "INT64(payload.DAY)"),
+    ("INT64(payload.case)", "INT64(payload.CASE)"),
+    ("INT64(payload.concat)", "INT64(payload.CONCAT)"),
+    ("INT64(payload.year)", "INT64(PAYLOAD.year)"),
+    ("id > 0", "ID > 0"),
+    ("custom_function(id)", "CUSTOM_FUNCTION(id)"),
+    ("custom.function(id)", "CUSTOM.function(id)"),
+    ("concat > 0", "CONCAT > 0"),
 ])
 def test_expression_meaning_is_preserved(view, field, obj, left, right):
     rows = records()
