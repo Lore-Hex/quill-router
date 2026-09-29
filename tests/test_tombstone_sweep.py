@@ -349,9 +349,50 @@ def test_the_values_sweep_changes_values_not_listings(
     monkeypatch.setattr(sweep, "perturb", lambda group: changed.append(group) or {})
     monkeypatch.setattr(sweep, "run_pytest", lambda *_: (set(), "1 passed"))
 
-    sweep.sweep(tmp_path / "out", group_size=8, workers=1, values=True)
+    sweep.sweep(tmp_path / "out", group_size=8, workers=1, values=True, thorough=True)
 
     providers = sorted(path.stem for path in sweep.MANIFESTS.glob("*.json"))
     assert [provider for group in changed for provider in group] == providers
     assert (tmp_path / "out" / "values.json").exists()
     assert not (tmp_path / "out" / "state.json").exists()
+
+
+def test_the_values_sweep_changes_everything_once_then_attributes_on_the_failed_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    providers = sorted(path.stem for path in sweep.MANIFESTS.glob("*.json"))
+    changed: list[list[str]] = []
+    runs: list[list[str]] = []
+    monkeypatch.setattr(sweep, "restore", lambda: None)
+    monkeypatch.setattr(sweep, "perturb", lambda group: changed.append(group) or {})
+
+    def run(files: list[str], *_: Any) -> tuple[set[str], str]:
+        runs.append(files)
+        if changed and providers[0] in changed[-1] and len(runs) > 1:
+            return {"tests/test_x.py::test_pin"}, "1 failed"
+        return set(), "1 passed"
+
+    monkeypatch.setattr(sweep, "run_pytest", run)
+
+    sweep.sweep(tmp_path / "out", group_size=8, workers=1, values=True)
+
+    state = json.loads((tmp_path / "out" / "values.json").read_text(encoding="utf-8"))
+    assert changed[0] == providers  # every provider at once, over the full suite
+    assert runs[:2] == [[], []]  # the baseline, then that run
+    assert all(files == ["tests/test_x.py"] for files in runs[2:])  # only the failed file after
+    assert state["single"][providers[0]]["failures"] == ["tests/test_x.py::test_pin"]
+    assert all(not single["failures"] for provider, single in state["single"].items() if provider != providers[0])
+
+
+def test_a_values_sweep_with_nothing_pinned_stops_after_one_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    changed: list[list[str]] = []
+    monkeypatch.setattr(sweep, "restore", lambda: None)
+    monkeypatch.setattr(sweep, "perturb", lambda group: changed.append(group) or {})
+    monkeypatch.setattr(sweep, "run_pytest", lambda *_: (set(), "1 passed"))
+
+    sweep.sweep(tmp_path / "out", group_size=8, workers=1, values=True)
+
+    assert len(changed) == 1
+    assert "groups" not in json.loads((tmp_path / "out" / "values.json").read_text(encoding="utf-8"))

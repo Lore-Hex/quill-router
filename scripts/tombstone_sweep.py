@@ -249,9 +249,14 @@ def run_pytest(files: list[str], workers: int, log: Path) -> tuple[set[str], str
     return failures, summary
 
 
-def sweep(out: Path, group_size: int, workers: int, *, values: bool = False) -> None:
+def sweep(out: Path, group_size: int, workers: int, *, values: bool = False, thorough: bool = False) -> None:
     """Change each group of providers' data, then each provider of a failing group
-    alone: delist everything, or (values=True) change every price and limit."""
+    alone: delist everything, or (values=True) change every price and limit.
+
+    A value change runs first for every provider at once, and the groups then run
+    only the files that failed then: two full-suite runs instead of one per group.
+    That can miss a test that only fails when providers' values move apart (a
+    pinned "cheapest route"); `thorough` runs every group over the full suite."""
     alter = perturb if values else delist
     event = "value change" if values else "delisting"
     out.mkdir(parents=True, exist_ok=True)
@@ -289,6 +294,24 @@ def sweep(out: Path, group_size: int, workers: int, *, values: bool = False) -> 
     elif state["baseline"]["failures"]:
         raise SystemExit(f"{state_path}: its baseline did not pass ({state['baseline']['summary']}); sweep into a new OUT")
 
+    group_files: list[str] = []  # the full suite
+    if values and not thorough:
+        if "all" not in state:
+            try:
+                counts = alter(providers)
+                failures, summary = run_pytest([], workers, out / "all.log")
+            finally:
+                restore()
+            state["all"] = {"counts": counts, "summary": summary, "failures": sorted(failures)}
+            save()
+            log(f"every provider at once: {summary}")
+        suspects = state["all"]["failures"]
+        if not suspects:
+            log("done: no release test fails with every provider's values changed")
+            return
+        if SESSION_CRASH not in suspects:
+            group_files = sorted({test.split("::")[0] for test in suspects})
+
     state.setdefault("groups", {})
     for index in range(0, len(providers), group_size):
         key = f"group{index // group_size:02d}"
@@ -297,7 +320,7 @@ def sweep(out: Path, group_size: int, workers: int, *, values: bool = False) -> 
         group = providers[index:index + group_size]
         try:
             counts = alter(group)
-            failures, summary = run_pytest([], workers, out / f"{key}.log")
+            failures, summary = run_pytest(group_files, workers, out / f"{key}.log")
         finally:
             restore()
         state["groups"][key] = {"providers": group, "counts": counts, "summary": summary,
@@ -494,6 +517,8 @@ def main() -> None:
     values_parser.add_argument("out", type=Path)
     values_parser.add_argument("--group-size", type=int, default=8)
     values_parser.add_argument("--workers", type=int, default=8)
+    values_parser.add_argument("--thorough", action="store_true",
+                               help="run every group over the full suite, not just the files that failed at once")
     models_parser = commands.add_parser("models")
     models_parser.add_argument("out", type=Path)
     models_parser.add_argument("--workers", type=int, default=6)
@@ -508,7 +533,7 @@ def main() -> None:
         models(args.out, args.workers, args.only)
         return
     if args.command == "values":
-        sweep(args.out, args.group_size, args.workers, values=True)
+        sweep(args.out, args.group_size, args.workers, values=True, thorough=args.thorough)
         return
     providers = [] if args.providers == "-" else args.providers.split(",")
     restore()
