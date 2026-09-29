@@ -15,15 +15,17 @@ def records():
     rows = {name: [] for name in audit.PROJECTIONS}
 
     def add(view, **values):
-        rows[view].append({field: values.get(field) for field in audit.PROJECTIONS[view].split()})
+        rows[view].append({field: values.get(field, "COMMITTED" if field == "SPANNER_STATE" else None) for field in audit.PROJECTIONS[view].split()})
 
     add("TABLES", TABLE_NAME="t")
     add("COLUMNS", TABLE_NAME="t", COLUMN_NAME="id", ORDINAL_POSITION="1", SPANNER_TYPE="INT64", IS_NULLABLE="NO", IS_GENERATED="NEVER", IS_STORED=None)
     add("COLUMNS", TABLE_NAME="t", COLUMN_NAME="timestamp", ORDINAL_POSITION=2, SPANNER_TYPE="TIMESTAMP", IS_NULLABLE="YES", IS_GENERATED="NEVER")
     add("COLUMN_OPTIONS", TABLE_NAME="t", COLUMN_NAME="timestamp", OPTION_NAME="allow_commit_timestamp", OPTION_TYPE="BOOL", OPTION_VALUE="TRUE")
     add("INDEXES", TABLE_NAME="t", INDEX_NAME="idx", INDEX_TYPE="INDEX", IS_UNIQUE=False, IS_NULL_FILTERED=True, INDEX_STATE="READ_WRITE")
+    add("INDEXES", TABLE_NAME="t", INDEX_NAME="PRIMARY_KEY", INDEX_TYPE="PRIMARY_KEY", IS_UNIQUE=True, IS_NULL_FILTERED=False, INDEX_STATE="READ_WRITE")
     for name, pos, order in [("timestamp", None, None), ("id", 1, "ASC")]:
         add("INDEX_COLUMNS", TABLE_NAME="t", INDEX_NAME="idx", COLUMN_NAME=name, ORDINAL_POSITION=pos, COLUMN_ORDERING=order)
+    add("INDEX_COLUMNS", TABLE_NAME="t", INDEX_NAME="PRIMARY_KEY", COLUMN_NAME="id", ORDINAL_POSITION=1, COLUMN_ORDERING="ASC")
     for name, kind in [("check", "CHECK"), ("server_pk_123", "PRIMARY KEY"), ("fk", "FOREIGN KEY")]:
         add("TABLE_CONSTRAINTS", TABLE_NAME="t", CONSTRAINT_NAME=name, CONSTRAINT_TYPE=kind, IS_DEFERRABLE="NO", INITIALLY_DEFERRED="NO", ENFORCED="YES")
     add("CHECK_CONSTRAINTS", CONSTRAINT_NAME="check", CHECK_CLAUSE="id > 0")
@@ -76,7 +78,6 @@ def test_both_directions_dangerous_first():
     ("COLUMN_OPTIONS", "OPTION_VALUE", "FALSE"),
     ("INDEXES", "IS_UNIQUE", True),
     ("INDEXES", "IS_NULL_FILTERED", False),
-    ("INDEXES", "INDEX_STATE", "WRITE_ONLY"),
     ("INDEXES", "INDEX_TYPE", "SEARCH"),
     ("INDEXES", "PARENT_TABLE_NAME", "parent"),
     ("INDEX_COLUMNS", "COLUMN_ORDERING", "DESC"),
@@ -84,7 +85,6 @@ def test_both_directions_dangerous_first():
     ("CHECK_CONSTRAINTS", "CHECK_CLAUSE", "id > 1"),
     ("TABLE_CONSTRAINTS", "ENFORCED", "NO"),
     ("REFERENTIAL_CONSTRAINTS", "DELETE_RULE", "NO ACTION"),
-    ("KEY_COLUMN_USAGE", "ORDINAL_POSITION", 2),
 ])
 def test_attribute_mismatch(view, field, new):
     rows = records()
@@ -97,7 +97,7 @@ def test_attribute_mismatch(view, field, new):
 
 
 def allowance(diff):
-    return {**{k: v for k, v in diff.items() if k != "direction"}, "reason": "Reviewed rolling upgrade", "verified_against_production": False}
+    return {**{k: v for k, v in diff.items() if k in {"object", "attribute", "production", "fixture"}}, "reason": "Reviewed rolling upgrade", "verified_against_production": False}
 
 
 def test_allowlist_exact_match_and_changed_values_fail():
@@ -379,3 +379,202 @@ def test_child_errors_keep_diagnostics(monkeypatch):
     monkeypatch.setattr(audit.subprocess, "run", run)
     with pytest.raises(RuntimeError, match="missing field.*details"):
         audit.fixture_schema("127.0.0.1:9010")
+
+
+@pytest.mark.parametrize(("view", "field", "state", "obj"), [
+    ("COLUMNS", "SPANNER_STATE", "WRITE_ONLY", "column/t/id"),
+    ("COLUMNS", "SPANNER_STATE", "BACKFILLING", "column/t/id"),
+    ("INDEXES", "INDEX_STATE", "WRITE_ONLY", "index/t/idx"),
+    ("CHECK_CONSTRAINTS", "SPANNER_STATE", "VALIDATING", "constraint/t/check"),
+    ("COLUMNS", "SPANNER_STATE", None, "column/t/id"),
+    ("CHECK_CONSTRAINTS", "SPANNER_STATE", "UNKNOWN", "constraint/t/check"),
+])
+@pytest.mark.parametrize("fixture_state", ["ready", "same", "absent"])
+def test_production_object_not_ready(view, field, state, obj, fixture_state):
+    rows = records()
+    if view == "COLUMNS":
+        rows[view][0].update(IS_GENERATED="ALWAYS", GENERATION_EXPRESSION="1", IS_STORED=True)
+    fixture = audit.normalise(rows)
+    rows[view][0][field] = state
+    production = audit.normalise(rows)
+    if fixture_state == "same":
+        fixture = copy.deepcopy(production)
+    elif fixture_state == "absent":
+        del fixture[obj]
+    diffs = audit.differences(production, fixture)
+    readiness = [diff for diff in diffs if diff["direction"] == "PRODUCTION OBJECT NOT READY"]
+    assert len(readiness) == 1
+    assert readiness[0]["object"] == obj
+    assert readiness[0]["attribute"] == field
+    assert readiness[0]["production"] == state
+    assert readiness[0]["required_state"] == ("READ_WRITE" if field == "INDEX_STATE" else "COMMITTED")
+    assert not any(diff["direction"] == "ATTRIBUTE-MISMATCH" for diff in diffs)
+    report = audit.apply_allowlist(diffs, [])
+    assert report["exit_code"] == 1
+    assert "PRODUCTION OBJECT NOT READY" in audit.markdown(report)
+
+
+INCOMPLETE_CASES = [
+    ("TABLES", "empty", "TABLES", "default schema"),
+    ("COLUMNS", "empty", "COLUMNS", "t"),
+    ("INDEXES", "empty", "INDEXES", "t/PRIMARY_KEY"),
+    ("INDEX_COLUMNS", "empty", "INDEX_COLUMNS", "t/PRIMARY_KEY"),
+    ("TABLE_CONSTRAINTS", "empty", "TABLE_CONSTRAINTS", "t"),
+    ("CHECK_CONSTRAINTS", "empty", "CHECK_CONSTRAINTS", "t/check"),
+    ("KEY_COLUMN_USAGE", "empty", "KEY_COLUMN_USAGE", "t/server_pk_123"),
+    ("REFERENTIAL_CONSTRAINTS", "empty", "REFERENTIAL_CONSTRAINTS", "t/fk"),
+    ("TABLES", "table_without_columns", "COLUMNS", "empty_table"),
+    ("COLUMNS", "unknown_table", "COLUMNS", "unknown"),
+    ("INDEXES", "unknown_table", "INDEXES", "unknown"),
+    ("INDEX_COLUMNS", "unknown_column", "INDEX_COLUMNS", "unknown"),
+    ("COLUMN_OPTIONS", "unknown_column", "COLUMN_OPTIONS", "unknown"),
+    ("COLUMN_OPTIONS", "unknown_table", "COLUMN_OPTIONS", "unknown"),
+    ("INDEX_COLUMNS", "unknown_table", "INDEX_COLUMNS", "unknown"),
+    ("TABLE_CONSTRAINTS", "unknown_table", "TABLE_CONSTRAINTS", "unknown"),
+    ("CHECK_CONSTRAINTS", "unknown_constraint", "CHECK_CONSTRAINTS", "t/check"),
+    ("KEY_COLUMN_USAGE", "partial", "KEY_COLUMN_USAGE", "t/fk"),
+    ("REFERENTIAL_CONSTRAINTS", "unknown_constraint", "REFERENTIAL_CONSTRAINTS", "t/fk"),
+    ("COLUMNS", "partial", "INDEX_COLUMNS", "t/timestamp"),
+    ("INDEXES", "partial", "INDEX_COLUMNS", "idx"),
+    ("INDEX_COLUMNS", "partial", "INDEX_COLUMNS", "t/idx"),
+    ("TABLE_CONSTRAINTS", "partial", "CHECK_CONSTRAINTS", "check"),
+    ("CHECK_CONSTRAINTS", "missing_clause", "CHECK_CONSTRAINTS", "t/check"),
+    ("CHECK_CONSTRAINTS", "orphan", "CHECK_CONSTRAINTS", "orphan"),
+    ("REFERENTIAL_CONSTRAINTS", "orphan", "REFERENTIAL_CONSTRAINTS", "orphan"),
+    ("KEY_COLUMN_USAGE", "orphan", "KEY_COLUMN_USAGE", "orphan"),
+    ("KEY_COLUMN_USAGE", "wrong_position", "INDEX_COLUMNS/KEY_COLUMN_USAGE", "t/PRIMARY_KEY"),
+]
+
+
+@pytest.mark.parametrize("side", ["production", "fixture"])
+@pytest.mark.parametrize(("view", "damage", "error_view", "obj"), INCOMPLETE_CASES,
+                         ids=[f"{view}-{damage}" for view, damage, _, _ in INCOMPLETE_CASES])
+def test_incomplete_metadata_cannot_audit(monkeypatch, tmp_path, capsys, side, view, damage, error_view, obj):
+    rows = records()
+    if damage == "empty":
+        rows[view] = []
+    elif damage == "table_without_columns":
+        rows[view].append({**rows[view][0], "TABLE_NAME": "empty_table"})
+    elif damage in {"unknown_table", "unknown_column", "unknown_constraint"}:
+        field = {"unknown_table": "TABLE_NAME", "unknown_column": "COLUMN_NAME", "unknown_constraint": "CONSTRAINT_NAME"}[damage]
+        rows[view][0][field] = "unknown"
+        if view == "COLUMN_OPTIONS":
+            # Even options we do not compare must have a valid owner.
+            rows[view][0]["OPTION_NAME"] = "other_option"
+    elif damage == "missing_clause":
+        rows[view][0]["CHECK_CLAUSE"] = None
+    elif damage == "orphan":
+        rows[view].append({**rows[view][0], "CONSTRAINT_NAME": "orphan"})
+    elif damage == "wrong_position":
+        rows[view][0]["ORDINAL_POSITION"] = 2
+    elif view == "COLUMNS":
+        rows[view].pop()
+    elif view == "KEY_COLUMN_USAGE":
+        rows[view].pop()
+    elif view == "INDEX_COLUMNS":
+        rows[view] = [row for row in rows[view] if row["INDEX_NAME"] == "PRIMARY_KEY"]
+    else:
+        rows[view].pop(0)
+    broken_db, _ = fake_database(rows)
+    good_db, _ = fake_database(records())
+    monkeypatch.setattr(audit, "production_schema", lambda *args: audit.read_schema(broken_db if side == "production" else good_db))
+    monkeypatch.setattr(audit, "fixture_schema", lambda *args: audit.read_schema(broken_db if side == "fixture" else good_db))
+    path = tmp_path / "allow.json"
+    path.write_text("[]")
+    assert audit.main(["--json", "--allowlist", str(path)]) == 2
+    report = json.loads(capsys.readouterr().out)
+    assert error_view in report["error"]
+    assert obj in report["error"]
+    assert "differences" not in report
+    assert audit.summary(report).startswith("CANNOT AUDIT:")
+
+
+def test_optional_views_can_be_empty_consistently():
+    rows = records()
+    for view in ("COLUMN_OPTIONS", "CHECK_CONSTRAINTS", "REFERENTIAL_CONSTRAINTS"):
+        rows[view] = []
+    rows["TABLE_CONSTRAINTS"] = [row for row in rows["TABLE_CONSTRAINTS"] if row["CONSTRAINT_TYPE"] == "PRIMARY KEY"]
+    rows["KEY_COLUMN_USAGE"] = [row for row in rows["KEY_COLUMN_USAGE"] if row["CONSTRAINT_NAME"] == "server_pk_123"]
+    schema = audit.normalise(rows)
+    assert audit.apply_allowlist(audit.differences(schema, schema), [])["exit_code"] == 0
+
+
+EXPRESSION_CASES = [
+    ("COLUMNS", "GENERATION_EXPRESSION", "column/t/id"),
+    ("COLUMNS", "COLUMN_DEFAULT", "column/t/id"),
+    ("CHECK_CONSTRAINTS", "CHECK_CLAUSE", "constraint/t/check"),
+    ("TABLES", "ROW_DELETION_POLICY_EXPRESSION", "table/t"),
+]
+
+
+@pytest.mark.parametrize(("view", "field", "obj"), EXPRESSION_CASES)
+@pytest.mark.parametrize(("left", "right"), [
+    ("id > 0", "id  >  0"),
+    ("id > 0", "((id > 0))"),
+    ("CASE WHEN id IS NULL THEN ABS(id) ELSE 0 END", "case when id is null then abs ( id ) else 0 end"),
+    ("SAFE.TIMESTAMP_SECONDS(id)", "safe.timestamp_seconds (id)"),
+    ("OLDER_THAN(timestamp, INTERVAL 7 DAY)", "older_than (timestamp, interval 7 day)"),
+])
+def test_expression_formatting_is_not_drift(view, field, obj, left, right):
+    rows = records()
+    rows[view][0][field] = left
+    production = audit.normalise(rows)
+    rows[view][0][field] = right
+    fixture = audit.normalise(rows)
+    assert production[obj][field] == left
+    assert fixture[obj][field] == right
+    assert audit.differences(production, fixture) == []
+
+
+@pytest.mark.parametrize(("view", "field", "obj"), EXPRESSION_CASES)
+@pytest.mark.parametrize(("left", "right"), [
+    ("x = 'A'", "x = 'a'"),
+    ('x = B"A"', 'x = B"a"'),
+    ("x = r'A  B'", "x = r'A B'"),
+    ("x = 1", "x = 10"),
+    ("x = 1.0", "x = 1.00"),
+    ("x = 1e2", "x = 1E2"),
+    ("x = 0xAF", "x = 0xaf"),
+    ("`Identifier` = 0", "`identifier` = 0"),
+    ("(x + 1) * 2", "x + 1 * 2"),
+    ("x >= 1", "x > = 1"),
+    ("(x) + (1)", "x + 1"),
+])
+def test_expression_meaning_is_preserved(view, field, obj, left, right):
+    rows = records()
+    rows[view][0][field] = left
+    production = audit.normalise(rows)
+    rows[view][0][field] = right
+    fixture = audit.normalise(rows)
+    diffs = audit.differences(production, fixture)
+    assert len(diffs) == 1
+    diff = diffs[0]
+    assert diff["object"] == obj
+    assert diff["production"] == left
+    assert diff["fixture"] == right
+    assert diff["production_normalised"] != diff["fixture_normalised"]
+    report = audit.apply_allowlist(diffs, [])
+    assert report["exit_code"] == 1
+    rendered = audit.markdown(report)
+    assert "raw" in rendered and "normalised" in rendered
+    assert audit.apply_allowlist(diffs, [allowance(diff)])["exit_code"] == 0
+
+
+def test_tokeniser_keeps_escaped_and_triple_quoted_literals_atomic():
+    for literal in ["'it\\'s A ( B'", "'it''s A'", '\"A ) (\"', "b\"\"\"A ) \n B\"\"\"", "r'\\x41'", "`a\\`B`"]:
+        assert audit.normalise_expression(f"( x = {literal} )") == ["x", "=", literal]
+
+
+def test_expression_report_text_keeps_raw_and_normalised(monkeypatch, tmp_path, capsys):
+    rows = records()
+    prod = audit.normalise(rows)
+    rows["CHECK_CONSTRAINTS"][0]["CHECK_CLAUSE"] = "(id > 10)"
+    fixture = audit.normalise(rows)
+    monkeypatch.setattr(audit, "production_schema", lambda *args: prod)
+    monkeypatch.setattr(audit, "fixture_schema", lambda *args: fixture)
+    path = tmp_path / "allow.json"
+    path.write_text("[]")
+    assert audit.main(["--allowlist", str(path)]) == 1
+    output = capsys.readouterr().out
+    assert '"raw": "(id > 10)"' in output
+    assert '"normalised": ["id", ">", "10"]' in output

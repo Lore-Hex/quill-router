@@ -10,6 +10,7 @@ import html
 import ipaddress
 import json
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
@@ -27,12 +28,12 @@ Schema = dict[str, dict[str, Any]]
 # All reads are metadata in the GoogleSQL default schema, never application rows.
 PROJECTIONS = {
     "TABLES": "TABLE_NAME PARENT_TABLE_NAME ON_DELETE_ACTION ROW_DELETION_POLICY_EXPRESSION",
-    "COLUMNS": "TABLE_NAME COLUMN_NAME ORDINAL_POSITION SPANNER_TYPE IS_NULLABLE IS_GENERATED GENERATION_EXPRESSION IS_STORED COLUMN_DEFAULT",
+    "COLUMNS": "TABLE_NAME COLUMN_NAME ORDINAL_POSITION SPANNER_TYPE IS_NULLABLE IS_GENERATED GENERATION_EXPRESSION IS_STORED COLUMN_DEFAULT SPANNER_STATE",
     "COLUMN_OPTIONS": "TABLE_NAME COLUMN_NAME OPTION_NAME OPTION_TYPE OPTION_VALUE",
     "INDEXES": "TABLE_NAME INDEX_NAME INDEX_TYPE IS_UNIQUE IS_NULL_FILTERED INDEX_STATE PARENT_TABLE_NAME",
     "INDEX_COLUMNS": "TABLE_NAME INDEX_NAME COLUMN_NAME ORDINAL_POSITION COLUMN_ORDERING",
     "TABLE_CONSTRAINTS": "TABLE_NAME CONSTRAINT_NAME CONSTRAINT_TYPE IS_DEFERRABLE INITIALLY_DEFERRED ENFORCED",
-    "CHECK_CONSTRAINTS": "CONSTRAINT_NAME CHECK_CLAUSE",
+    "CHECK_CONSTRAINTS": "CONSTRAINT_NAME CHECK_CLAUSE SPANNER_STATE",
     "KEY_COLUMN_USAGE": "TABLE_NAME CONSTRAINT_NAME COLUMN_NAME ORDINAL_POSITION POSITION_IN_UNIQUE_CONSTRAINT",
     "REFERENTIAL_CONSTRAINTS": "CONSTRAINT_NAME UNIQUE_CONSTRAINT_SCHEMA UNIQUE_CONSTRAINT_NAME MATCH_OPTION UPDATE_RULE DELETE_RULE",
 }
@@ -42,6 +43,68 @@ QUERIES = {
     for name, projection in PROJECTIONS.items()
 }
 BOOL_FIELDS = {"IS_NULLABLE", "IS_STORED", "IS_UNIQUE", "IS_NULL_FILTERED", "IS_DEFERRABLE", "INITIALLY_DEFERRED", "ENFORCED"}
+EXPRESSION_FIELDS = {"GENERATION_EXPRESSION", "COLUMN_DEFAULT", "CHECK_CLAUSE", "ROW_DELETION_POLICY_EXPRESSION"}
+STATE_FIELDS = {"SPANNER_STATE": "COMMITTED", "INDEX_STATE": "READ_WRITE"}
+NOT_READY = "PRODUCTION OBJECT NOT READY"
+# Fold SQL syntax, not identifiers or literal contents. Function names (including
+# qualified names) are recognised by the following opening parenthesis.
+SQL_KEYWORDS = set("""
+ALL AND ANY ARRAY AS ASC ASSERT_ROWS_MODIFIED AT BETWEEN BY CASE CAST COLLATE
+CONTAINS CREATE CROSS CUBE CURRENT DATE DATETIME DEFAULT DEFINE DESC DISTINCT
+ELSE END ENUM ESCAPE EXCEPT EXCLUDE EXISTS EXTRACT FALSE FETCH FOLLOWING FOR FROM
+FULL GROUP GROUPING GROUPS HASH HAVING IF IGNORE IN INNER INTERSECT INTERVAL INTO
+IS JOIN LATERAL LEFT LIKE LIMIT LOOKUP MERGE NATURAL NEW NO NOT NULL NULLS OF ON
+OR ORDER OUTER OVER PARTITION PRECEDING PROTO QUALIFY RANGE RECURSIVE RESPECT RIGHT
+ROLLUP ROWS SELECT SET SOME STRUCT TABLESAMPLE THEN TIME TIMESTAMP TO TREAT TRUE
+UNBOUNDED UNION UNNEST USING WHEN WHERE WINDOW WITH WITHIN YEAR QUARTER MONTH WEEK
+DAY HOUR MINUTE SECOND MILLISECOND MICROSECOND NANOSECOND BOOL BYTES FLOAT32
+FLOAT64 INT64 NUMERIC STRING JSON
+""".split())
+SQL_TOKEN = re.compile(
+    r"(?P<space>\s+|--[^\n]*|/\*[\s\S]*?\*/)"
+    r"|(?P<quoted>(?i:rb|br|r|b)?(?:'''(?:\\[\s\S]|(?!''')[^\\])*'''"
+    r'|"""(?:\\[\s\S]|(?!""")[^\\])*"""'
+    r"|'(?:\\[\s\S]|''|[^'\\])*'|\"(?:\\[\s\S]|\"\"|[^\"\\])*\")"
+    r"|`(?:\\[\s\S]|``|[^`\\])*`)"
+    r"|(?P<number>0[xX][0-9a-fA-F]+|(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)"
+    r"|(?P<word>[A-Za-z_][A-Za-z_0-9]*)"
+    r"|(?P<symbol><=|>=|!=|<>|\|\||<<|>>|[+*/%=<>&|^~.,:;()\[\]{}?-])"
+)
+
+
+def normalise_expression(raw: str) -> list[str]:
+    """Token comparison only; never rewrite literals or reassociate operations."""
+    tokens: list[str] = []
+    kinds = []
+    position = 0
+    while position < len(raw):
+        match = SQL_TOKEN.match(raw, position)
+        if match is None:
+            raise ValueError(f"Cannot tokenise SQL expression at {position}: {raw!r}")
+        if match.lastgroup != "space":
+            tokens.append(match[0])
+            kinds.append(match.lastgroup)
+        position = match.end()
+    for i, token in enumerate(tokens):
+        if kinds[i] != "word":
+            continue
+        end = i + 1
+        while end + 1 < len(tokens) and tokens[end] == "." and kinds[end + 1] == "word":
+            end += 2
+        if token.upper() in SQL_KEYWORDS or (end < len(tokens) and tokens[end] == "("):
+            tokens[i] = token.upper()
+    # Strip only pairs enclosing the entire expression, never (a+b)*c or
+    # (a)+(b). Quoted parentheses were consumed as a single token above.
+    while tokens and tokens[0] == "(" and tokens[-1] == ")":
+        depth = 0
+        for _index, lexeme in enumerate(tokens):
+            depth += (lexeme == "(") - (lexeme == ")")
+            if depth == 0:
+                break
+        if _index != len(tokens) - 1:
+            break
+        tokens = tokens[1:-1]
+    return tokens
 
 
 def value(field: str, raw: Any) -> Any:
@@ -58,18 +121,106 @@ def value(field: str, raw: Any) -> Any:
             raise ValueError(f"Invalid {field}: {raw!r}")
     if field in {"ORDINAL_POSITION", "POSITION_IN_UNIQUE_CONSTRAINT"}:
         return int(raw)
-    # Expressions deliberately remain byte-exact: collapsing spaces inside a
-    # SQL string literal can hide real check/generation/default changes.
+    # Keep raw expressions in the schema/report; tokenise only for comparison.
     return raw
+
+
+def validate_completeness(data: Mapping[str, Sequence[Mapping[str, Any]]]) -> None:
+    """Cross-check views before treating absence as schema drift on either side.
+
+    Optional views can legitimately be empty (e.g. COLUMN_OPTIONS). We can
+    detect dangling references, not an option omitted without any other trace.
+    """
+    def fail(view: str, obj: Any, detail: str) -> None:
+        raise ValueError(f"{view} {obj}: {detail}; cannot audit")
+
+    def keyed(view: str, *fields: str) -> dict[tuple[Any, ...], Mapping[str, Any]]:
+        result = {}
+        for row in data[view]:
+            key = tuple(row[field] for field in fields)
+            if key in result:
+                fail(view, key, "duplicate object")
+            result[key] = row
+        return result
+
+    tables = keyed("TABLES", "TABLE_NAME")
+    columns = keyed("COLUMNS", "TABLE_NAME", "COLUMN_NAME")
+    indexes = keyed("INDEXES", "TABLE_NAME", "INDEX_NAME")
+    index_columns = keyed("INDEX_COLUMNS", "TABLE_NAME", "INDEX_NAME", "COLUMN_NAME")
+    constraints = keyed("TABLE_CONSTRAINTS", "CONSTRAINT_NAME")
+    checks = keyed("CHECK_CONSTRAINTS", "CONSTRAINT_NAME")
+    keys = keyed("KEY_COLUMN_USAGE", "CONSTRAINT_NAME", "COLUMN_NAME")
+    references = keyed("REFERENTIAL_CONSTRAINTS", "CONSTRAINT_NAME")
+    keyed("COLUMN_OPTIONS", "TABLE_NAME", "COLUMN_NAME", "OPTION_NAME")
+    if not tables:
+        fail("TABLES", "<default schema>", "no tables visible")
+    for view in ("COLUMNS", "INDEXES", "TABLE_CONSTRAINTS"):
+        for row in data[view]:
+            if (row["TABLE_NAME"],) not in tables:
+                fail(view, dict(row), "unknown TABLES table")
+    for (table,) in tables:
+        if not any(t == table for t, _ in columns):
+            fail("COLUMNS", table, "table has no columns")
+        if (table, "PRIMARY_KEY") not in indexes:
+            fail("INDEXES", f"{table}/PRIMARY_KEY", "missing primary-key index")
+        primary = [row for row in constraints.values() if row["TABLE_NAME"] == table and row["CONSTRAINT_TYPE"] == "PRIMARY KEY"]
+        if len(primary) != 1:
+            fail("TABLE_CONSTRAINTS", table, "expected one primary-key constraint")
+        pk_name = primary[0]["CONSTRAINT_NAME"]
+        pk_columns = {(row["COLUMN_NAME"], row["ORDINAL_POSITION"]) for row in keys.values() if row["CONSTRAINT_NAME"] == pk_name}
+        indexed = {(row["COLUMN_NAME"], row["ORDINAL_POSITION"]) for row in index_columns.values() if row["TABLE_NAME"] == table and row["INDEX_NAME"] == "PRIMARY_KEY"}
+        if not pk_columns:
+            fail("KEY_COLUMN_USAGE", f"{table}/{pk_name}", "primary key has no columns")
+        if pk_columns != indexed:
+            fail("INDEX_COLUMNS/KEY_COLUMN_USAGE", f"{table}/PRIMARY_KEY", "primary-key columns disagree")
+    for table, name in indexes:
+        if not any(t == table and idx == name for t, idx, _ in index_columns):
+            fail("INDEX_COLUMNS", f"{table}/{name}", "index has no columns")
+    for view in ("INDEX_COLUMNS", "COLUMN_OPTIONS", "KEY_COLUMN_USAGE"):
+        for row in data[view]:
+            obj = f"{row['TABLE_NAME']}/{row['COLUMN_NAME']}"
+            if (row["TABLE_NAME"], row["COLUMN_NAME"]) not in columns:
+                fail(view, obj, "unknown table or column in COLUMNS")
+            if view == "INDEX_COLUMNS" and (row["TABLE_NAME"], row["INDEX_NAME"]) not in indexes:
+                fail(view, f"{obj}/{row['INDEX_NAME']}", "unknown INDEXES index")
+            if view == "KEY_COLUMN_USAGE":
+                constraint = constraints.get((row["CONSTRAINT_NAME"],))
+                if constraint is None or constraint["TABLE_NAME"] != row["TABLE_NAME"]:
+                    fail(view, f"{obj}/{row['CONSTRAINT_NAME']}", "missing or mismatched TABLE_CONSTRAINTS table")
+    for (name,), row in constraints.items():
+        obj = f"{row['TABLE_NAME']}/{name}"
+        if row["CONSTRAINT_TYPE"] == "CHECK":
+            clause = checks.get((name,), {}).get("CHECK_CLAUSE")
+            if not isinstance(clause, str) or not clause.strip():
+                fail("CHECK_CONSTRAINTS", obj, "missing check clause")
+        if row["CONSTRAINT_TYPE"] == "FOREIGN KEY":
+            if (name,) not in references:
+                fail("REFERENTIAL_CONSTRAINTS", obj, "missing foreign-key reference")
+            if not any(key[0] == name for key in keys):
+                fail("KEY_COLUMN_USAGE", obj, "foreign key has no columns")
+    for view, records in (("CHECK_CONSTRAINTS", checks), ("REFERENTIAL_CONSTRAINTS", references)):
+        for (name,), row in records.items():
+            constraint = constraints.get((name,))
+            kind = "CHECK" if view == "CHECK_CONSTRAINTS" else "FOREIGN KEY"
+            if constraint is None or constraint["CONSTRAINT_TYPE"] != kind:
+                fail(view, name, "missing or mismatched TABLE_CONSTRAINTS constraint/table")
+            if view == "REFERENTIAL_CONSTRAINTS" and row["UNIQUE_CONSTRAINT_SCHEMA"] == "" and (row["UNIQUE_CONSTRAINT_NAME"],) not in constraints:
+                fail(view, name, "unknown referenced TABLE_CONSTRAINTS key")
 
 
 def normalise(rows: Mapping[str, Sequence[Mapping[str, Any]]]) -> Schema:
     if set(rows) != set(PROJECTIONS):
-        raise ValueError("Incomplete metadata read")
+        raise ValueError(f"Incomplete metadata views: {sorted(set(rows) ^ set(PROJECTIONS))}")
     data = {}
     for name, records in rows.items():
         fields = PROJECTIONS[name].split()
-        data[name] = [{field: value(field, row[field]) for field in fields} for row in records]
+        data[name] = []
+        for row in records:
+            missing = set(fields) - row.keys()
+            if missing:
+                raise ValueError(f"{name} {dict(row)}: missing fields {sorted(missing)}")
+            data[name].append({field: value(field, row[field]) for field in fields})
+    validate_completeness(data)
     result: Schema = {}
 
     def add(key: str, row: Mapping[str, Any], omit: set[str]) -> None:
@@ -108,6 +259,7 @@ def normalise(rows: Mapping[str, Sequence[Mapping[str, Any]]]) -> Schema:
         result[key]["columns"] = []
     for row in data["CHECK_CONSTRAINTS"]:
         result[constraints[row["CONSTRAINT_NAME"]]]["CHECK_CLAUSE"] = row["CHECK_CLAUSE"]
+        result[constraints[row["CONSTRAINT_NAME"]]]["SPANNER_STATE"] = row["SPANNER_STATE"]
     for row in data["KEY_COLUMN_USAGE"]:
         result[constraints[row["CONSTRAINT_NAME"]]]["columns"].append(
             {k: v for k, v in row.items() if k not in {"TABLE_NAME", "CONSTRAINT_NAME"}}
@@ -213,8 +365,22 @@ def fixture_schema(endpoint: str) -> Schema:
     return parsed
 
 
+def comparison_value(attribute: str, raw: Any) -> Any:
+    if attribute in EXPRESSION_FIELDS and raw is not None:
+        return normalise_expression(raw)
+    if attribute == "object" and isinstance(raw, dict):
+        return {key: comparison_value(key, val) for key, val in raw.items()}
+    return raw
+
+
 def differences(production: Schema, fixture: Schema) -> list[dict[str, Any]]:
     result = []
+    # Readiness is a production property even when both servers return the same
+    # transitional state, or an object exists only in production.
+    for key, attrs in sorted(production.items()):
+        for field, final in STATE_FIELDS.items():
+            if field in attrs and attrs[field] != final:
+                result.append(dict(object=key, attribute=field, production=attrs[field], fixture=fixture.get(key, {}).get(field), direction=NOT_READY, required_state=final))
     for key in sorted(production.keys() | fixture.keys()):
         if key not in production:
             result.append(dict(object=key, attribute="object", production=None, fixture=fixture[key], direction="FIXTURE-HAS / PRODUCTION-LACKS"))
@@ -222,10 +388,16 @@ def differences(production: Schema, fixture: Schema) -> list[dict[str, Any]]:
             result.append(dict(object=key, attribute="object", production=production[key], fixture=None, direction="PRODUCTION-HAS / FIXTURE-LACKS"))
         else:
             for attr in sorted(production[key].keys() | fixture[key].keys()):
+                if attr in STATE_FIELDS:
+                    continue
                 prod, expected = production[key].get(attr), fixture[key].get(attr)
-                if prod != expected:
+                if comparison_value(attr, prod) != comparison_value(attr, expected):
                     result.append(dict(object=key, attribute=attr, production=prod, fixture=expected, direction="ATTRIBUTE-MISMATCH"))
-    order = {"FIXTURE-HAS / PRODUCTION-LACKS": 0, "PRODUCTION-HAS / FIXTURE-LACKS": 1, "ATTRIBUTE-MISMATCH": 2}
+    for diff in result:
+        if diff["attribute"] in EXPRESSION_FIELDS or diff["attribute"] == "object":
+            for side in ("production", "fixture"):
+                diff[side + "_normalised"] = comparison_value(diff["attribute"], diff[side])
+    order = {"FIXTURE-HAS / PRODUCTION-LACKS": 0, "PRODUCTION-HAS / FIXTURE-LACKS": 1, NOT_READY: 2, "ATTRIBUTE-MISMATCH": 3}
     return sorted(result, key=lambda item: (order[item["direction"]], item["object"], item["attribute"]))
 
 
@@ -281,10 +453,16 @@ def markdown(report: Mapping[str, Any]) -> str:
              "| Status / direction | Object | Attribute | Production | Fixture | Reason |",
              "| --- | --- | --- | --- | --- | --- |"]
     for row in report.get("differences", []):
-        lines.append("| " + " | ".join(cell(part) for part in (row["status"] + " / " + row["direction"], row["object"], row["attribute"], row["production"], row["fixture"], row["reason"])) + " |")
+        lines.append("| " + " | ".join(cell(part) for part in (row["status"] + " / " + row["direction"], row["object"], row["attribute"], reported_value(row, "production"), reported_value(row, "fixture"), row["reason"])) + " |")
     for entry in report.get("stale", []):
         lines.append("| " + " | ".join(cell(part) for part in ("STALE", entry["object"], entry["attribute"], entry["production"], entry["fixture"], entry["reason"])) + " |")
     return "\n".join(lines) + "\n"
+
+
+def reported_value(row: Mapping[str, Any], side: str) -> Any:
+    if side + "_normalised" in row:
+        return {"raw": row[side], "normalised": row[side + "_normalised"]}
+    return row[side]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -318,7 +496,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         print(summary(report))
         for row in report.get("differences", []):
-            print(f"{row['status']} {row['direction']} {row['object']} {row['attribute']}: production={json.dumps(row['production'], sort_keys=True)} fixture={json.dumps(row['fixture'], sort_keys=True)} {row['reason']}")
+            print(f"{row['status']} {row['direction']} {row['object']} {row['attribute']}: production={json.dumps(reported_value(row, 'production'), sort_keys=True)} fixture={json.dumps(reported_value(row, 'fixture'), sort_keys=True)} {row['reason']}")
         for entry in report.get("stale", []):
             print(f"STALE {entry['object']} {entry['attribute']}: {entry['reason']}")
     return int(report["exit_code"])

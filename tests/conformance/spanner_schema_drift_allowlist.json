@@ -82,7 +82,8 @@
       "IS_GENERATED": "ALWAYS",
       "GENERATION_EXPRESSION": "CASE WHEN kind = 'rate_limit' THEN SAFE.TIMESTAMP_SECONDS(SAFE_CAST(JSON_QUERY(body, '$.expires_at') AS INT64)) END",
       "IS_STORED": true,
-      "COLUMN_DEFAULT": null
+      "COLUMN_DEFAULT": null,
+      "SPANNER_STATE": "COMMITTED"
     },
     "reason": "Documented entity TTL generated column requires --apply plus the heavy schema-change acknowledgement; confirm exact server expression and ordinal on first production audit.",
     "verified_against_production": false
@@ -122,7 +123,8 @@
       "INITIALLY_DEFERRED": false,
       "ENFORCED": true,
       "columns": [],
-      "CHECK_CLAUSE": "provider IN ('stripe','paypal','adyen','x402','lightning','operator','system')"
+      "CHECK_CLAUSE": "provider IN ('stripe','paypal','adyen','x402','lightning','operator','system')",
+      "SPANNER_STATE": "COMMITTED"
     },
     "fixture": null,
     "reason": "Manual scripts/lightning/spanner_provenance.sql adds the Lightning provider check under a new name; confirm exact server clause on first production audit.",
@@ -138,7 +140,8 @@
       "INITIALLY_DEFERRED": false,
       "ENFORCED": true,
       "columns": [],
-      "CHECK_CLAUSE": "provider IN ('stripe','paypal','adyen','x402','lightning','operator','system')"
+      "CHECK_CLAUSE": "provider IN ('stripe','paypal','adyen','x402','lightning','operator','system')",
+      "SPANNER_STATE": "COMMITTED"
     },
     "reason": "Manual scripts/lightning/spanner_provenance.sql removes the old provider constraint; fresh installations retain its original name. Confirm on first production audit.",
     "verified_against_production": false
