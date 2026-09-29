@@ -410,19 +410,66 @@ def _drop_unpublished_held_routes(
     return refused
 
 
+def _published_disabled_held_routes(
+    baseline: Path, snapshot: dict[str, Any], held: dict[str, list[str]]
+) -> set[str]:
+    """Prove which published snapshot routes were already excluded at runtime.
+
+    Use the baseline manifest, never fresh discovery: a new canary failure
+    must not authorize a change to an otherwise exact price hold. Absence or
+    unreadable evidence is not proof that a previously published route is dark.
+    """
+    disabled_models: dict[str, set[str]] = {}
+    for slug in held:
+        manifest = getattr(_import_provider(slug), "MANIFEST_PATH", None)
+        if manifest is None:
+            continue
+        try:
+            raw = json.loads((baseline / PROVIDER_MANIFEST_DIR.name / Path(manifest).name).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        provider_slugs = _PRICING_RESULT_PROVIDER_ALIASES.get(slug, (slug,))
+        rows = raw.get("models") if isinstance(raw, dict) and raw.get("provider") in provider_slugs else None
+        if isinstance(rows, list):
+            disabled_models[slug] = {
+                row["id"] for row in rows
+                if isinstance(row, dict) and isinstance(row.get("id"), str) and row.get("routable") is False
+            }
+
+    disabled_routes: set[str] = set()
+    for model in snapshot.get("models") or []:
+        if not isinstance(model, dict) or not isinstance(model.get("id"), str):
+            continue
+        for endpoint in model.get("endpoints") or []:
+            route = _held_route(model, endpoint, held)
+            if route is None:
+                continue
+            provider = endpoint["tr_provider_slug"]
+            if model["id"] in disabled_models.get(_result_slug_for_provider(provider), set()) or provider_model_retired(
+                provider, model["id"], endpoint.get("model_id")
+            ):
+                disabled_routes.add(route)
+    return disabled_routes
+
+
 def _held_routes_changed(baseline: Path, held: dict[str, list[str]]) -> list[str]:
     """Held providers' routes that differ from what was published, if any.
 
     A hold may only publish when it kept every held provider exactly as
     published: the same snapshot endpoints with the same prices (prompt,
-    completion, cached input and tiers), and byte-identical manifests.
+    completion, cached input and tiers), and byte-identical manifests. Only
+    removal of an already disabled/retired route is safe: runtime had already
+    excluded it, and stale recovery must not revive it to satisfy this guard.
     Anything else is reported so the run can fall back to publishing nothing.
     """
-    published = _held_endpoint_pricing(
-        json.loads((baseline / SNAPSHOT_PATH.name).read_text(encoding="utf-8")), held
-    )
+    snapshot = json.loads((baseline / SNAPSHOT_PATH.name).read_text(encoding="utf-8"))
+    published = _held_endpoint_pricing(snapshot, held)
     now = _held_endpoint_pricing(json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8")), held)
-    changed = [route for route in sorted(set(published) | set(now)) if published.get(route) != now.get(route)]
+    disabled = _published_disabled_held_routes(baseline, snapshot, held)
+    changed = [
+        route for route in sorted(set(published) | set(now))
+        if published.get(route) != now.get(route) and not (route in disabled and route not in now)
+    ]
     for slug in held:
         manifest_path_value = getattr(_import_provider(slug), "MANIFEST_PATH", None)
         if manifest_path_value is None:
