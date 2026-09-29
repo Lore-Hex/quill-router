@@ -29,3 +29,30 @@ jobs:
         run: uv sync --frozen
       - name: Run typed billing audit
         run: PYTHONPATH=src uv run python scripts/audit_typed_counters.py
+
+  spanner-schema-drift:
+    name: spanner-schema-drift
+    if: github.repository == 'Lore-Hex/quill-router'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      spanner:
+        image: gcr.io/cloud-spanner-emulator/emulator@sha256:c6f3402f2599684f295a0fdefb6fbbbfb18a0e43e309ff5456ccb452a4570a79
+        ports:
+          - 9010:9010
+          - 9020:9020
+    steps:
+      - uses: actions/checkout@v4
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v3
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+      - name: Sync
+        run: uv sync --frozen
+      - name: Run production schema audit
+        run: uv run python -m scripts.audit_spanner_schema --emulator-host 127.0.0.1:9010
