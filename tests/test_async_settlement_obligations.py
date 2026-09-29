@@ -197,6 +197,45 @@ def test_registry_close_rejects_unacknowledged_slot_with_zero_outstanding() -> N
     assert ticket.column in storage.rows[grant.row_key(0)]
 
 
+def test_closed_epoch_replay_rejects_unresolved_obligation() -> None:
+    j, storage, reg, grant, (ticket,) = setup()
+    j.run(j.accept(ticket, Envelope('settle', 'endpoint', 77)))
+    reg.reconcile(ticket)
+    db = reg.database
+    assert db.typed['tr_async_settlement_obligation'][(ticket.authorization,)]['state'] == 'accepted'
+    # Seed an inconsistent closed epoch directly: normal closure forbids this.
+    db.typed['tr_async_settlement_budget'][(grant.workspace, grant.epoch)].update(
+        state='closed', recorded_bound=0, retention_deadline=20,
+    )
+    before = copy.deepcopy(db.typed)
+    journal_before = copy.deepcopy(storage.rows)
+    with pytest.raises(Conflict, match='closed epoch has unresolved obligations'):
+        reg.close(grant, retain_until=30)
+    assert db.typed == before
+    assert storage.rows == journal_before
+    assert reg.retention_deadline(grant) == 20
+
+
+@pytest.mark.parametrize('changed', [
+    Envelope('settle', 'different-endpoint', 77),
+    Envelope('settle', 'endpoint', 76),
+], ids=['payload_hash', 'amount'])
+def test_reconcile_rejects_changed_terminal_payload(changed: Envelope) -> None:
+    j, storage, reg, grant, (ticket,) = setup()
+    j.run(j.accept(ticket, Envelope('settle', 'endpoint', 77)))
+    reg.reconcile(ticket)
+    assert reg.database.typed['tr_async_settlement_obligation'][(ticket.authorization,)]['state'] == 'accepted'
+    before = copy.deepcopy(reg.database.typed)
+    # Corrupt durable evidence with another canonical payload so slot validation
+    # succeeds and reconciliation reaches the terminal projection's own guard.
+    storage.rows[grant.row_key(0)][ticket.column] = json.dumps(changed.payload(ticket)).encode()
+    journal_before = copy.deepcopy(storage.rows)
+    with pytest.raises(Conflict, match='terminal payload is immutable'):
+        reg.reconcile(ticket)
+    assert reg.database.typed == before
+    assert storage.rows == journal_before
+
+
 def test_binding_sizing_and_epoch_cannot_be_recycled() -> None:
     j, _, reg, grant, (ticket,) = setup()
     for changed in (replace(grant, shards=2), replace(grant, slots=128), replace(grant, region='other')):
@@ -425,6 +464,23 @@ def test_guarded_scan_cannot_starve_later_holds() -> None:
     assert reap_expired_reservations(db, _ParamTypes, now=_NOW, limit=1) == 1
     assert not db.reservations[guarded['reservation_id']]['settled']
     assert db.reservations[later['reservation_id']]['settled']
+
+
+def test_obligation_scan_without_outbox_cannot_starve_later_holds() -> None:
+    from tests.test_settle_outbox_guard import _assert_free_released, _assert_frozen
+
+    store, db, _ = make_fake_store()
+    db.missing_tables.add('tr_settle_outbox')
+    guarded = [_expired_authorization(store, ws=f'guarded-{i}') for i in range(3)]
+    later = _expired_authorization(store, ws='later')
+    _, _, reg, grant, _ = setup(db, count=0)
+    for i, auth in enumerate(guarded):
+        reg.bind(Ticket(grant, 0, i, auth['authorization_id'], 'g', 'k', 'n', 'a'*64, 0))
+    # More guarded holds precede the victim than fit in one advisory scan.
+    assert reap_expired_reservations(db, _ParamTypes, now=_NOW, limit=2) == 1
+    for i, auth in enumerate(guarded):
+        _assert_frozen(db, f'guarded-{i}', auth['reservation_id'])
+    _assert_free_released(db, 'later', later['reservation_id'])
 
 
 @pytest.mark.parametrize("obligation_present", [False, True])
