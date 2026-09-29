@@ -69,10 +69,11 @@ def test_a_finished_run_reports_exactly_its_failures(
     assert summary == stdout.strip()
 
 
-def _state(out: Path, providers: list[str]) -> None:
+def _state(out: Path, providers: list[str], baseline_failures: tuple[str, ...] = ()) -> None:
     out.mkdir()
     group = {"providers": providers, "counts": {}, "summary": "done", "failures": []}
-    state = {"baseline": {"failures": [], "summary": "done"}, "groups": {"group00": group}}
+    baseline = {"failures": list(baseline_failures), "summary": "done"}
+    state = {"baseline": baseline, "groups": {"group00": group}}
     (out / "state.json").write_text(json.dumps(state), encoding="utf-8")
 
 
@@ -109,24 +110,61 @@ def test_a_sweep_resumes_with_the_same_groups(
     assert [provider for group in delisted for provider in group] == providers[8:]
 
 
-def test_a_sweep_refuses_a_baseline_that_did_not_finish(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+FAILING_BASELINES = [
+    pytest.param((sweep.SESSION_CRASH,), id="crashed"),
+    # A module that fails to import is recorded under its file's node id.
+    pytest.param(("tests/test_x.py",), id="collection-error"),
+    pytest.param(("tests/test_x.py::test_y",), id="failed-test"),
+]
+
+
+@pytest.mark.parametrize("baseline_failures", FAILING_BASELINES)
+def test_a_sweep_starts_only_from_a_passing_suite(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, baseline_failures: tuple[str, ...]
 ) -> None:
     delisted = _nothing_runs(monkeypatch)
-    monkeypatch.setattr(sweep, "run_pytest", lambda *_: ({sweep.SESSION_CRASH}, "session crashed"))
+    monkeypatch.setattr(sweep, "run_pytest", lambda *_: (set(baseline_failures), "1 failed"))
 
-    with pytest.raises(SystemExit, match="baseline run did not finish"):
+    with pytest.raises(SystemExit, match="must pass before a sweep"):
         sweep.sweep(tmp_path / "out", group_size=8, workers=1)
     assert delisted == []
     assert not (tmp_path / "out" / "state.json").exists()
 
 
-def test_a_sweep_with_a_finished_baseline_tests_every_provider(
+@pytest.mark.parametrize("baseline_failures", FAILING_BASELINES)
+def test_a_sweep_does_not_resume_from_a_failing_baseline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, baseline_failures: tuple[str, ...]
+) -> None:
+    providers = sorted(path.stem for path in sweep.MANIFESTS.glob("*.json"))
+    _state(tmp_path / "out", providers[:8], baseline_failures)
+    delisted = _nothing_runs(monkeypatch)
+
+    with pytest.raises(SystemExit, match="baseline did not pass"):
+        sweep.sweep(tmp_path / "out", group_size=8, workers=1)
+    assert delisted == []
+
+
+def test_a_group_failure_is_attributed_to_the_provider_that_causes_it(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    delisted = _nothing_runs(monkeypatch)
+    # Delisting the first provider breaks a module's import, which pytest
+    # records under the file's node id; the suite passes otherwise.
+    providers = sorted(path.stem for path in sweep.MANIFESTS.glob("*.json"))
+    delisted: list[list[str]] = []
+    monkeypatch.setattr(sweep, "restore", lambda: None)
+    monkeypatch.setattr(sweep, "delist", lambda group: delisted.append(group) or {})
+
+    def run(*_: Any) -> tuple[set[str], str]:
+        if delisted and providers[0] in delisted[-1]:
+            return {"tests/test_x.py"}, "1 failed"
+        return set(), "1 passed"
+
+    monkeypatch.setattr(sweep, "run_pytest", run)
 
     sweep.sweep(tmp_path / "out", group_size=8, workers=1)
 
-    providers = sorted(path.stem for path in sweep.MANIFESTS.glob("*.json"))
-    assert [provider for group in delisted for provider in group] == providers
+    state = json.loads((tmp_path / "out" / "state.json").read_text(encoding="utf-8"))
+    assert state["groups"]["group00"]["failures"] == ["tests/test_x.py"]
+    assert {provider: single["failures"] for provider, single in state["single"].items()} == {
+        provider: ["tests/test_x.py"] if provider == providers[0] else [] for provider in providers[:8]
+    }

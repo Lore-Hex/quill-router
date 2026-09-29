@@ -27,8 +27,9 @@ this in a disposable worktree with no uncommitted data edits:
     # one or more providers delisted, specific test files
     python3 scripts/tombstone_sweep.py run anthropic,baseten tests/test_billing.py [...]
 
-A sweep resumes from OUT/state.json, and only with the groups it was written
-with. Phase 2 runs whole files, not node ids: a delisting can shrink a
+A sweep starts from a passing release suite, so every failure under a
+delisting is that delisting's. It resumes from OUT/state.json, and only with the
+groups it was written with. Phase 2 runs whole files, not node ids: a delisting can shrink a
 catalog-derived parametrization, and pytest runs nothing when a requested node
 id is missing. A session that does not finish normally (a delisting that stops
 the app from starting, workers that die at import, nothing run) is recorded as
@@ -156,15 +157,18 @@ def sweep(out: Path, group_size: int, workers: int) -> None:
         print(f"{time.strftime('%H:%M:%S')} {message}", flush=True)
 
     restore()
+    # Every failure under a delisting is that delisting's only if the suite
+    # passes without one. Subtracting a failing baseline instead would hide the
+    # same test failing for another reason, or a crash, in every group.
     if "baseline" not in state:
         failures, summary = run_pytest([], workers, out / "baseline.log")
-        if SESSION_CRASH in failures:
-            # Subtracting a crashed baseline would erase every later crash.
-            raise SystemExit(f"the baseline run did not finish ({summary}); see {out / 'baseline.log'}")
-        state["baseline"] = {"failures": sorted(failures), "summary": summary}
+        if failures:
+            raise SystemExit(f"the release suite must pass before a sweep: {summary}; see {out / 'baseline.log'}")
+        state["baseline"] = {"failures": [], "summary": summary}
         save()
         log(f"baseline: {summary}")
-    baseline = set(state["baseline"]["failures"])
+    elif state["baseline"]["failures"]:
+        raise SystemExit(f"{state_path}: its baseline did not pass ({state['baseline']['summary']}); sweep into a new OUT")
 
     state.setdefault("groups", {})
     for index in range(0, len(providers), group_size):
@@ -178,7 +182,7 @@ def sweep(out: Path, group_size: int, workers: int) -> None:
         finally:
             restore()
         state["groups"][key] = {"providers": group, "counts": counts, "summary": summary,
-                                "failures": sorted(failures - baseline)}
+                                "failures": sorted(failures)}
         save()
         log(f"{key} {group}: {summary}")
 
@@ -198,7 +202,7 @@ def sweep(out: Path, group_size: int, workers: int) -> None:
             finally:
                 restore()
             state["single"][provider] = {"counts": counts, "summary": summary,
-                                         "failures": sorted(failures - baseline)}
+                                         "failures": sorted(failures)}
             save()
             log(f"  {provider}: {summary}")
 
