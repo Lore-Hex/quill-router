@@ -42,7 +42,7 @@ def test_gateway_regional_matches_global_exactly(
     # Include a no-receipt global oracle to independently assert the 11200/10550
     # ratio, so mutating the shared receipt helper cannot make both paths pass.
     for regional, wants_receipt in [(False, False), (False, receipt), (True, receipt)]:
-        store, db, _ = make_fake_store(request_record_write_mode="typed", operational_analytics_outbox_enabled=True)
+        store, db = make_fake_store(request_record_write_mode="typed", operational_analytics_outbox_enabled=True)
         store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
         ws = store.create_workspace("owner", "R3", trial_credit_microdollars=100_000_000)
         _, key = store.create_api_key(workspace_id=ws.id, name="key", creator_user_id="owner")

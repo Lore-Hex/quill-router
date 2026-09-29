@@ -340,7 +340,7 @@ def test_worker_environment_does_not_require_serving_pilot_allowlist() -> None:
     settings = Settings(
         environment="worker",
         service_surface="control",
-        storage_backend="spanner-bigtable",
+        storage_backend="spanner-clickhouse",
         gcp_project_id="project",
         spanner_instance_id="instance",
         spanner_database_id="database",
@@ -372,12 +372,11 @@ def test_deployed_job_env_rejects_surfaces_that_do_not_own_its_bindings(
             monkeypatch.delenv(name)
     job_env = {
         "TR_ENVIRONMENT": "worker",
-        "TR_STORAGE_BACKEND": "spanner-bigtable",
+        "TR_STORAGE_BACKEND": "spanner-clickhouse",
         "TR_GCP_PROJECT_ID": "project",
         "TR_SPANNER_INSTANCE_ID": "instance",
         "TR_SPANNER_DATABASE_ID": "database",
         "TR_BIGTABLE_INSTANCE_ID": "bigtable",
-        "TR_BIGTABLE_GENERATION_TABLE": "generations",
         "TR_REQUEST_RECORD_WRITE_MODE": "typed",
         "TR_SETTLE_OUTBOX_ENABLED": "true",
         "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true",
@@ -426,7 +425,7 @@ def test_generic_worker_issuance_still_requires_serving_pilot_allowlist() -> Non
         Settings(
             environment="worker",
             service_surface="control",
-            storage_backend="spanner-bigtable",
+            storage_backend="spanner-clickhouse",
             gcp_project_id="project",
             spanner_instance_id="instance",
             spanner_database_id="database",

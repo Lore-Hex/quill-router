@@ -66,11 +66,11 @@ CUSTOM_MARKUP_MODEL_ID = "tr-custom-model/test-outbox-markup"
 
 
 @pytest.fixture
-def fake_store() -> Iterator[tuple[Any, Any, Any]]:
-    store, db, bt = make_fake_store()
+def fake_store() -> Iterator[tuple[Any, Any]]:
+    store, db = make_fake_store()
     configure_store(store)
     try:
-        yield store, db, bt
+        yield store, db
     finally:
         configure_store(InMemoryStore())
 
@@ -378,8 +378,8 @@ class _TypedStoreProxy:
         return self._store.read_typed_reservation(reservation_id)
 
 
-def test_typed_settle_applies_frozen_cost(fake_store: tuple[Any, Any, Any]) -> None:
-    store, db, _bt = fake_store
+def test_typed_settle_applies_frozen_cost(fake_store: tuple[Any, Any]) -> None:
+    store, db = fake_store
     ws = "ws_apply_typed"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -399,9 +399,9 @@ def test_typed_settle_applies_frozen_cost(fake_store: tuple[Any, Any, Any]) -> N
 
 
 def test_partner_replay_preserves_public_model_and_provider(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     ws = "ws_apply_partner"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -422,9 +422,9 @@ def test_partner_replay_preserves_public_model_and_provider(
 
 
 def test_partner_replay_preserves_internal_operator_cost(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     ws = "ws_apply_partner_operator_cost"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -440,8 +440,8 @@ def test_partner_replay_preserves_internal_operator_cost(
     assert generation["operator_cost_microdollars"] == 654_321
 
 
-def test_replay_reports_already_charged(fake_store: tuple[Any, Any, Any]) -> None:
-    store, db, _bt = fake_store
+def test_replay_reports_already_charged(fake_store: tuple[Any, Any]) -> None:
+    store, db = fake_store
     ws = "ws_apply_replay"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -455,9 +455,9 @@ def test_replay_reports_already_charged(fake_store: tuple[Any, Any, Any]) -> Non
 
 
 def test_late_settle_after_reaped_snapshot_preserves_money_and_heartbeat_generation(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     store.request_record_write_mode = "typed"
     ws = "ws-late-after-reaped-snapshot"
     _seed_credit(store, ws)
@@ -520,9 +520,9 @@ def test_late_settle_after_reaped_snapshot_preserves_money_and_heartbeat_generat
 
 
 def test_user_model_outbox_repair_pays_owner_exactly_once(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     ws = "ws_apply_user_model_payout"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -572,9 +572,9 @@ def test_user_model_outbox_repair_pays_owner_exactly_once(
 
 
 def test_typed_app_markup_settle_and_outbox_replay_book_exact_money_once(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     ws = "ws_apply_app_markup"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -604,9 +604,9 @@ def test_typed_app_markup_settle_and_outbox_replay_book_exact_money_once(
 
 
 def test_typed_custom_markup_settle_and_replay_book_exact_money_once(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     workspace_id = "ws_apply_custom_markup"
     _seed_credit(store, workspace_id)
     key = _make_key(store, workspace_id)
@@ -661,11 +661,11 @@ def test_typed_custom_markup_settle_and_replay_book_exact_money_once(
     ],
 )
 def test_forged_custom_markup_outbox_fields_do_not_charge_or_pay(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     field: str,
     forged: Any,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     workspace_id = f"ws_forged_custom_markup_{field[-12:]}"
     _seed_credit(store, workspace_id)
     key = _make_key(store, workspace_id)
@@ -703,9 +703,9 @@ def test_forged_custom_markup_outbox_fields_do_not_charge_or_pay(
 
 
 def test_missing_custom_markup_outbox_fields_fail_closed(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     workspace_id = "ws_missing_custom_markup_fields"
     _seed_credit(store, workspace_id)
     key = _make_key(store, workspace_id)
@@ -721,9 +721,9 @@ def test_missing_custom_markup_outbox_fields_fail_closed(
 
 
 def test_regional_clamp_frozen_payout_replays_without_dead_letter(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     ws = "ws_apply_regional_clamp_markup"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -753,9 +753,9 @@ def test_regional_clamp_frozen_payout_replays_without_dead_letter(
 
 
 def test_missing_frozen_app_markup_fields_derive_payout_from_authorization(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     ws = "ws_apply_app_markup_missing_fields"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -778,9 +778,9 @@ def test_missing_frozen_app_markup_fields_derive_payout_from_authorization(
     ],
 )
 def test_partial_frozen_app_markup_owner_is_only_a_cross_check(
-    fake_store: tuple[Any, Any, Any], owner: str, expected: str
+    fake_store: tuple[Any, Any], owner: str, expected: str
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     ws = f"ws_apply_app_markup_partial_{owner}"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -803,9 +803,9 @@ def test_partial_frozen_app_markup_owner_is_only_a_cross_check(
 
 
 def test_zero_markup_authorization_rejects_frozen_payout_fields(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     ws = "ws_apply_zero_markup_forged_fields"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -822,9 +822,9 @@ def test_zero_markup_authorization_rejects_frozen_payout_fields(
 
 
 def test_zero_markup_authorization_without_payout_fields_charges_only(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     ws = "ws_apply_zero_markup_no_fields"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -836,10 +836,10 @@ def test_zero_markup_authorization_without_payout_fields_charges_only(
 
 
 def test_unclaimed_frozen_overcharge_is_corrected_atomically_and_crash_replays_identically(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     store.request_record_write_mode = "typed"
     _enable_typed_generation_durability(store)
     ws = "ws-spend-lease-corrective-repair"
@@ -908,9 +908,9 @@ def test_unclaimed_frozen_overcharge_is_corrected_atomically_and_crash_replays_i
 
 
 def test_spend_lease_repair_pays_only_collected_custom_model_markup(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     store.request_record_write_mode = "typed"
     _enable_typed_generation_durability(store)
     ws = "ws-spend-lease-custom-markup-repair"
@@ -968,9 +968,9 @@ def test_spend_lease_repair_pays_only_collected_custom_model_markup(
 
 
 def test_ownerless_corrective_settle_returns_error_without_rewrite_claim_or_charge(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     store.request_record_write_mode = "typed"
     ws = "ws-spend-lease-ownerless-corrective"
     _seed_credit(store, ws)
@@ -994,9 +994,9 @@ def test_ownerless_corrective_settle_returns_error_without_rewrite_claim_or_char
 
 
 def test_lost_outbox_lease_rolls_back_corrective_finalization(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     store.request_record_write_mode = "typed"
     _enable_typed_generation_durability(store)
     ws = "ws-spend-lease-lost-repair-fence"
@@ -1018,10 +1018,10 @@ def test_lost_outbox_lease_rolls_back_corrective_finalization(
 
 
 def test_already_finalized_historical_overcharge_is_unchanged_logged_and_replayed(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     store.request_record_write_mode = "typed"
     _enable_typed_generation_durability(store)
     ws = "ws-spend-lease-historical-overcharge"
@@ -1075,9 +1075,9 @@ def test_already_finalized_historical_overcharge_is_unchanged_logged_and_replaye
 
 
 def test_two_spend_lease_repairs_book_at_most_once(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     store.request_record_write_mode = "typed"
     ws = "ws-spend-lease-two-repairs"
     _seed_credit(store, ws)
@@ -1098,9 +1098,9 @@ def test_two_spend_lease_repairs_book_at_most_once(
 
 
 def test_spend_lease_repair_losing_to_reaper_never_books_charge(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     store.request_record_write_mode = "typed"
     ws = "ws-spend-lease-repair-vs-reaper"
     _seed_credit(store, ws)
@@ -1128,9 +1128,9 @@ def test_spend_lease_repair_losing_to_reaper_never_books_charge(
 
 
 def test_missing_frozen_app_markup_fields_replay_credits_once(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
-    store, _db, _bt = fake_store
+    store, _db = fake_store
     ws = "ws_apply_app_markup_missing_fields_replay"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1154,9 +1154,9 @@ def test_missing_frozen_app_markup_fields_replay_credits_once(
     ],
 )
 def test_forged_frozen_app_markup_payout_is_invalid_without_credit(
-    fake_store: tuple[Any, Any, Any], field: str, forged: Any
+    fake_store: tuple[Any, Any], field: str, forged: Any
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     ws = f"ws_apply_forged_{field}"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1186,9 +1186,9 @@ def test_forged_frozen_app_markup_payout_is_invalid_without_credit(
 
 @pytest.mark.parametrize("intent,cost", [("refund", 0), ("settle", 0)])
 def test_typed_app_markup_refund_and_zero_cost_have_no_payout(
-    fake_store: tuple[Any, Any, Any], intent: str, cost: int
+    fake_store: tuple[Any, Any], intent: str, cost: int
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     ws = f"ws_apply_app_markup_{intent}"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1201,10 +1201,10 @@ def test_typed_app_markup_refund_and_zero_cost_have_no_payout(
 
 @pytest.mark.parametrize("bad_payout", [-1, "5600"], ids=("negative", "non-int"))
 def test_bad_frozen_user_model_payout_is_invalid_row(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     bad_payout: Any,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     ws = f"ws_apply_bad_user_model_payout_{type(bad_payout).__name__}"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1231,8 +1231,8 @@ def test_bad_frozen_user_model_payout_is_invalid_row(
     assert store.earnings_summary("owner-user-model-payout")["total_earned"] == 0
 
 
-def test_zero_cost_replay_is_benign(fake_store: tuple[Any, Any, Any]) -> None:
-    store, db, _bt = fake_store
+def test_zero_cost_replay_is_benign(fake_store: tuple[Any, Any]) -> None:
+    store, db = fake_store
     ws = "ws_apply_zero_replay"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1245,8 +1245,8 @@ def test_zero_cost_replay_is_benign(fake_store: tuple[Any, Any, Any]) -> None:
     assert len(_generation_bodies(db)) == 1
 
 
-def test_reaper_freed_reports_released_free(fake_store: tuple[Any, Any, Any]) -> None:
-    store, db, _bt = fake_store
+def test_reaper_freed_reports_released_free(fake_store: tuple[Any, Any]) -> None:
+    store, db = fake_store
     ws = "ws_apply_reaper"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1268,8 +1268,8 @@ def test_reaper_freed_reports_released_free(fake_store: tuple[Any, Any, Any]) ->
     assert _typed_credit(db, ws)["reserved"] == 0
 
 
-def test_missing_reservation(fake_store: tuple[Any, Any, Any]) -> None:
-    _store, _db, _bt = fake_store
+def test_missing_reservation(fake_store: tuple[Any, Any]) -> None:
+    _store, _db = fake_store
     row = SettleOutboxRow(
         authorization_id="gwa-missing",
         intent_kind="settle",
@@ -1285,10 +1285,10 @@ def test_missing_reservation(fake_store: tuple[Any, Any, Any]) -> None:
 
 
 def test_typed_store_unavailable_parks(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     ws = "ws_apply_park"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1316,11 +1316,11 @@ def test_typed_store_unavailable_parks(
     ],
 )
 def test_transient_outage_parks_typed_row(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
     transient_exc: Exception,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     ws = "ws_apply_transient_typed"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1338,10 +1338,10 @@ def test_transient_outage_parks_typed_row(
 
 
 def test_transient_pre_read_parks_typed_and_errors_legacy(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     typed_ws = "ws_apply_pre_read_typed"
     _seed_credit(store, typed_ws)
     typed_key = _make_key(store, typed_ws)
@@ -1383,10 +1383,10 @@ def test_transient_pre_read_parks_typed_and_errors_legacy(
 
 
 def test_transient_outage_errors_legacy_row(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, _db, _bt = fake_store
+    store, _db = fake_store
     ws = "ws_apply_transient_legacy"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1405,9 +1405,9 @@ def test_transient_outage_errors_legacy_row(
 
 
 def test_legacy_replay_repairs_failed_app_markup_payout_exactly_once(
-    fake_store: tuple[Any, Any, Any], monkeypatch: pytest.MonkeyPatch
+    fake_store: tuple[Any, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    store, _db, _bt = fake_store
+    store, _db = fake_store
     ws = "ws_apply_legacy_app_payout_repair"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1458,10 +1458,10 @@ def test_legacy_replay_repairs_failed_app_markup_payout_exactly_once(
 
 
 def test_transient_disambiguation_read_parks_typed_row(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     ws = "ws_apply_disambiguation_transient"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1481,8 +1481,8 @@ def test_transient_disambiguation_read_parks_typed_row(
     assert len(_generation_bodies(db)) == 1
 
 
-def test_retired_endpoint_does_not_reprice_or_raise(fake_store: tuple[Any, Any, Any]) -> None:
-    store, db, _bt = fake_store
+def test_retired_endpoint_does_not_reprice_or_raise(fake_store: tuple[Any, Any]) -> None:
+    store, db = fake_store
     ws = "ws_apply_retired"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1502,8 +1502,8 @@ def test_retired_endpoint_does_not_reprice_or_raise(fake_store: tuple[Any, Any, 
     assert generation["total_cost_microdollars"] == 333_333
 
 
-def test_generation_parity_coerces_lenient_types(fake_store: tuple[Any, Any, Any]) -> None:
-    store, db, _bt = fake_store
+def test_generation_parity_coerces_lenient_types(fake_store: tuple[Any, Any]) -> None:
+    store, db = fake_store
     ws = "ws_apply_generation_body_parity"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1517,8 +1517,8 @@ def test_generation_parity_coerces_lenient_types(fake_store: tuple[Any, Any, Any
     assert generation["streamed"] is False
 
 
-def test_invalid_settle_body_is_invalid_row(fake_store: tuple[Any, Any, Any]) -> None:
-    store, db, _bt = fake_store
+def test_invalid_settle_body_is_invalid_row(fake_store: tuple[Any, Any]) -> None:
+    store, db = fake_store
     ws = "ws_apply_invalid"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1533,8 +1533,8 @@ def test_invalid_settle_body_is_invalid_row(fake_store: tuple[Any, Any, Any]) ->
     assert _typed_credit(db, ws)["reserved"] == ESTIMATE
 
 
-def test_invalid_row_guards(fake_store: tuple[Any, Any, Any]) -> None:
-    store, db, _bt = fake_store
+def test_invalid_row_guards(fake_store: tuple[Any, Any]) -> None:
+    store, db = fake_store
     ws = "ws_apply_invalid_guards"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1549,8 +1549,8 @@ def test_invalid_row_guards(fake_store: tuple[Any, Any, Any]) -> None:
     assert _typed_credit(db, ws)["reserved"] == ESTIMATE
 
 
-def test_unvalidated_float_extra_is_invalid_row(fake_store: tuple[Any, Any, Any]) -> None:
-    store, db, _bt = fake_store
+def test_unvalidated_float_extra_is_invalid_row(fake_store: tuple[Any, Any]) -> None:
+    store, db = fake_store
     ws = "ws_apply_invalid_extra"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1566,8 +1566,8 @@ def test_unvalidated_float_extra_is_invalid_row(fake_store: tuple[Any, Any, Any]
     assert _typed_credit(db, ws)["reserved"] == ESTIMATE
 
 
-def test_refund_intent_releases_without_charge(fake_store: tuple[Any, Any, Any]) -> None:
-    store, db, _bt = fake_store
+def test_refund_intent_releases_without_charge(fake_store: tuple[Any, Any]) -> None:
+    store, db = fake_store
     ws = "ws_apply_refund"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1581,8 +1581,8 @@ def test_refund_intent_releases_without_charge(fake_store: tuple[Any, Any, Any])
     assert _generation_bodies(db) == []
 
 
-def test_refund_replay_reports_released_free(fake_store: tuple[Any, Any, Any]) -> None:
-    store, db, _bt = fake_store
+def test_refund_replay_reports_released_free(fake_store: tuple[Any, Any]) -> None:
+    store, db = fake_store
     ws = "ws_apply_refund_replay"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1599,10 +1599,10 @@ def test_refund_replay_reports_released_free(fake_store: tuple[Any, Any, Any]) -
 
 
 def test_error_outcome_passthrough(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     ws = "ws_apply_error_passthrough"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1654,12 +1654,12 @@ def _statement_spy(monkeypatch: pytest.MonkeyPatch) -> list[tuple[int, str]]:
 
 @pytest.mark.parametrize("record_mode,expected_attempts", [("typed", 1), ("legacy", 2)])
 def test_typed_finalize_releases_hot_rows_last_in_the_same_transaction(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
     record_mode: str,
     expected_attempts: int,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     store.request_record_write_mode = record_mode
     ws = "ws_finalize_lock_order"
     _seed_credit(store, ws)
@@ -1707,9 +1707,9 @@ def test_typed_finalize_releases_hot_rows_last_in_the_same_transaction(
 
 
 def test_zero_hold_missing_key_rolls_back_finalize_and_preserves_frozen_usage(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     store.request_record_write_mode = "typed"
     ws = "ws-missing-uncapped-key"
     _seed_credit(store, ws)

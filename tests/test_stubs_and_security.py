@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from tests.fakes.production_storage import PRODUCTION_SPANNER_STORAGE
 from tests.private_repository import mentions as private_repository_mentions
 from tests.route_inventory import route_methods
 from trusted_router.config import Settings
@@ -548,10 +549,7 @@ def test_production_dashboard_does_not_default_to_dev_user_header() -> None:
             stripe_webhook_secret="whsec_test",  # noqa: S106
             stripe_secret_key="sk_test",  # noqa: S106
             sentry_dsn="https://example@example.ingest.sentry.io/1",
-            storage_backend="spanner-bigtable",
-            spanner_instance_id="trusted-router",
-            spanner_database_id="trusted-router",
-            bigtable_instance_id="trusted-router-logs",
+            **PRODUCTION_SPANNER_STORAGE,
             byok_kms_key_name=TEST_BYOK_KMS_KEY_NAME,
         )
     )
@@ -1055,10 +1053,7 @@ def test_production_config_requires_ses_delivery_credentials() -> None:
         "stripe_webhook_secret": "whsec_" + "test",
         "stripe_secret_key": "sk_" + "test_secret",
         "sentry_dsn": "https://example@example.ingest.sentry.io/1",
-        "storage_backend": "spanner-bigtable",
-        "spanner_instance_id": "trusted-router",
-        "spanner_database_id": "trusted-router",
-        "bigtable_instance_id": "trusted-router",
+        **PRODUCTION_SPANNER_STORAGE,
         "byok_kms_key_name": TEST_BYOK_KMS_KEY_NAME,
     }
 
@@ -1077,7 +1072,7 @@ def test_production_config_requires_ses_delivery_credentials() -> None:
         )
 
 
-def test_production_spanner_clickhouse_config_is_explicit_and_bigtable_free() -> None:
+def test_production_spanner_clickhouse_config_is_explicit() -> None:
     values = {
         "environment": "production",
         "service_surface": "control",
@@ -1085,30 +1080,21 @@ def test_production_spanner_clickhouse_config_is_explicit_and_bigtable_free() ->
         "stripe_webhook_secret": "whsec_" + "test",
         "stripe_secret_key": "sk_" + "test_secret",
         "sentry_dsn": "https://example@example.ingest.sentry.io/1",
-        "storage_backend": "spanner-clickhouse",
-        "spanner_instance_id": "trusted-router",
-        "spanner_database_id": "trusted-router",
         "byok_kms_key_name": TEST_BYOK_KMS_KEY_NAME,
-        "analytics_read_mode": "clickhouse-only",
-        "generation_records_enabled": True,
-        "operational_analytics_outbox_enabled": True,
-        "analytics_outbox_enabled": True,
-        "bigtable_mirror_writes_enabled": False,
-        "request_record_write_mode": "typed",
-        "settle_outbox_enabled": True,
-        "operational_analytics_clickhouse_url": "http://10.0.0.1:8123",
-        "operational_analytics_clickhouse_password": "pass" + "word",
+        **PRODUCTION_SPANNER_STORAGE,
         **TEST_SES_SETTINGS,
     }
 
     settings = Settings(**values)
     assert settings.storage_backend == "spanner-clickhouse"
-    assert settings.bigtable_mirror_writes_enabled is False
 
-    with pytest.raises(ValidationError, match="BIGTABLE_MIRROR"):
-        Settings(**{**values, "bigtable_mirror_writes_enabled": True})
-    with pytest.raises(ValidationError, match="clickhouse-only"):
-        Settings(**{**values, "analytics_read_mode": "clickhouse"})
+    # The retired backend is refused by name, not merely unconfigured.
+    with pytest.raises(ValidationError, match="TR_STORAGE_BACKEND must be"):
+        Settings(**{**values, "storage_backend": "spanner-bigtable"})
+    with pytest.raises(ValidationError, match="TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL"):
+        Settings(**{**values, "operational_analytics_clickhouse_url": ""})
+    with pytest.raises(ValidationError, match="TR_GENERATION_RECORDS_ENABLED=true"):
+        Settings(**{**values, "generation_records_enabled": False})
 
 
 def test_production_control_plane_does_not_register_inference_routes() -> None:
@@ -1124,10 +1110,7 @@ def test_production_control_plane_does_not_register_inference_routes() -> None:
             stripe_webhook_secret=webhook_secret,
             stripe_secret_key=stripe_key,
             sentry_dsn=sentry_dsn,
-            storage_backend="spanner-bigtable",
-            spanner_instance_id="trusted-router",
-            spanner_database_id="trusted-router",
-            bigtable_instance_id="trusted-router-logs",
+            **PRODUCTION_SPANNER_STORAGE,
             byok_kms_key_name=TEST_BYOK_KMS_KEY_NAME,
         ),
         configure_store_arg=False,

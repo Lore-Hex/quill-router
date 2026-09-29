@@ -19,7 +19,7 @@ class _Report:
 
 
 class _Settings:
-    storage_backend = "spanner-bigtable"
+    storage_backend = "spanner-clickhouse"
 
 
 def _report_func(report: _Report) -> audit_typed_counters.AuditFunc:

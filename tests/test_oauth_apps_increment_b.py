@@ -797,7 +797,7 @@ def test_programmatic_code_client_id_requires_app_owner(
 
 
 def test_typed_authorization_freezes_app_id() -> None:
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     workspace_id = "ws-typed-app-attribution"
     store._write_entity("credit", workspace_id, CreditAccount(workspace_id=workspace_id))
     database.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(workspace_id, 0)] = {

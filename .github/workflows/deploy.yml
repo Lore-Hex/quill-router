@@ -294,8 +294,6 @@ jobs:
           TR_GCP_PROJECT_ID: quill-cloud-proxy
           TR_SPANNER_INSTANCE_ID: trusted-router-nam6
           TR_SPANNER_DATABASE_ID: trusted-router
-          TR_BIGTABLE_INSTANCE_ID: trusted-router-logs
-          TR_BIGTABLE_GENERATION_TABLE: trustedrouter-generations
         run: scripts/deploy/migrate_request_retention.sh --apply
       - name: Apply inert spend-lease schema
         env:

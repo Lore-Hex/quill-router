@@ -66,7 +66,7 @@ def _run_workers(workers: list[threading.Thread], barrier: threading.Barrier) ->
 
 
 def test_conditional_reserve_accepts_until_exhausted() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_seq"
     _seed_credit(store, ws, 1_000_000)
     pt = store._param_types
@@ -89,7 +89,7 @@ def test_conditional_reserve_no_overspend_under_concurrency() -> None:
     n = 8
     amount = 250_000  # 4 of 8 fit in 1_000_000
     barrier = threading.Barrier(n + 1)
-    store, db, _ = make_fake_store(ready_barrier=barrier)
+    store, db = make_fake_store(ready_barrier=barrier)
     _seed_credit(store, ws, 1_000_000)
     pt = store._param_types
 
@@ -112,7 +112,7 @@ def test_conditional_reserve_no_overspend_under_concurrency() -> None:
 
 
 def test_conditional_reserve_rejects_when_insufficient() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     ws = "ws_poor"
     _seed_credit(store, ws, 100_000)
     pt = store._param_types
@@ -121,7 +121,7 @@ def test_conditional_reserve_rejects_when_insufficient() -> None:
 
 
 def test_release_credit_settles_and_refunds() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_rel"
     _seed_credit(store, ws, 1_000_000)
     pt = store._param_types
@@ -150,7 +150,7 @@ def test_release_credit_settles_and_refunds() -> None:
 def test_release_underflow_is_noop_not_negative() -> None:
     """A stale/double release of more than `reserved` must be a 0-row no-op, not
     drive reserved negative (which would inflate apparent availability)."""
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_underflow"
     _seed_credit(store, ws, 1_000_000)
     pt = store._param_types
@@ -166,7 +166,7 @@ def test_release_underflow_is_noop_not_negative() -> None:
 def test_dml_after_mutation_is_rejected() -> None:
     """The fake fails fast on DML+mutation mixing (forbidden, docs §5), so future
     authorize/settle code that accidentally mixes is caught in tests."""
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     ws = "ws_mix"
     _seed_credit(store, ws, 1_000_000)
     pt = store._param_types
@@ -269,7 +269,7 @@ def _seed_release_row(
     *,
     include_byok: bool = True,
 ) -> tuple[Any, Any, Any, dict[str, dt.datetime]]:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     key = _make_key(store, "ws_release_path", limit=2_000_000, include_byok=include_byok)
     floors = _release_floors()
     db.typed[KEY_LIMIT_TABLE][(key.hash, 0)].update(
@@ -397,7 +397,7 @@ def test_reserve_key_capped_no_overcap_under_concurrency() -> None:
     n = 8
     amount = 250_000  # 4 of 8 fit in a 1_000_000 cap
     barrier = threading.Barrier(n + 1)
-    store, db, _ = make_fake_store(ready_barrier=barrier)
+    store, db = make_fake_store(ready_barrier=barrier)
     key = _make_key(store, ws, limit=1_000_000)
     pt = store._param_types
 
@@ -418,7 +418,7 @@ def test_reserve_key_capped_no_overcap_under_concurrency() -> None:
 
 
 def test_reserve_key_uncapped_is_no_hold() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     key = _make_key(store, "ws_unc", limit=None)
     pt = store._param_types
     r = store._database.run_in_transaction(
@@ -428,7 +428,7 @@ def test_reserve_key_uncapped_is_no_hold() -> None:
 
 
 def test_reserve_key_byok_excluded_is_no_hold() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     key = _make_key(store, "ws_byok", limit=1_000_000, include_byok=False)
     pt = store._param_types
     r = store._database.run_in_transaction(
@@ -439,7 +439,7 @@ def test_reserve_key_byok_excluded_is_no_hold() -> None:
 
 
 def test_reserve_key_insufficient_and_missing() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     key = _make_key(store, "ws_ins", limit=100_000)
     pt = store._param_types
     assert (
@@ -457,7 +457,7 @@ def test_reserve_key_insufficient_and_missing() -> None:
 
 
 def test_release_key_settles_usage_and_byok() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     key = _make_key(store, "ws_krel", limit=2_000_000)
     pt = store._param_types
     assert (
@@ -481,7 +481,7 @@ def test_release_key_settles_usage_and_byok() -> None:
 
 def test_reserve_key_include_byok_true_counts_byok_usage() -> None:
     """With include_byok=true, prior BYOK usage consumes the cap headroom."""
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     key = _make_key(store, "ws_ib", limit=1_000_000, include_byok=True)
     # BYOK usage is typed-DML-owned; the legacy JSON add_usage no longer
     # propagates into the typed row after the ownership split, so seed the typed
@@ -504,7 +504,7 @@ def test_reserve_key_include_byok_true_counts_byok_usage() -> None:
 
 
 def test_release_key_book_to_byok_and_underflow() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     key = _make_key(store, "ws_kb", limit=2_000_000)
     pt = store._param_types
     assert (
@@ -748,7 +748,7 @@ def test_reserve_key_uncapped_concurrent_no_aborts() -> None:
     classification path does not introduce lock-upgrade contention."""
     n = 6
     barrier = threading.Barrier(n + 1)
-    store, db, _ = make_fake_store(ready_barrier=barrier)
+    store, db = make_fake_store(ready_barrier=barrier)
     key = _make_key(store, "ws_uncc", limit=None)
     pt = store._param_types
     results: list[str] = []
@@ -799,7 +799,7 @@ def _insert_res(store, *, rid, scope=None, fingerprint=None, credit_hold=0, key_
 
 
 def test_reservation_insert_and_reads() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     _insert_res(store, rid="r1", scope="ws#kh#abc", fingerprint="fp1", credit_hold=500_000)
     pt = store._param_types
 
@@ -822,7 +822,7 @@ def test_reservation_insert_and_reads() -> None:
 
 
 def test_reservation_duplicate_idempotency_scope_raises_already_exists() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     _insert_res(store, rid="r1", scope="dup")
     with pytest.raises(FakeAlreadyExists):
         _insert_res(store, rid="r2", scope="dup")  # same scope -> unique conflict
@@ -833,7 +833,7 @@ def test_reservation_concurrent_same_scope_one_wins() -> None:
     INSERT commits, the other raises ALREADY_EXISTS (codex Step-3 #4) — the loser
     is NOT silently retried into a second debit."""
     barrier = threading.Barrier(3)
-    store, db, _ = make_fake_store(ready_barrier=barrier)
+    store, db = make_fake_store(ready_barrier=barrier)
     outcomes: list[str] = []
     lock = threading.Lock()
 
@@ -856,7 +856,7 @@ def test_reservation_concurrent_same_scope_one_wins() -> None:
 
 
 def test_reservation_claim_first_writer_wins() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     _insert_res(store, rid="rc", credit_hold=100_000)
     pt = store._param_types
     first = store._database.run_in_transaction(
@@ -874,7 +874,7 @@ def test_reservation_claim_first_writer_wins() -> None:
 
 
 def test_reservation_duplicate_id_raises_already_exists() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     _insert_res(store, rid="dupid")
     with pytest.raises(FakeAlreadyExists):
         _insert_res(store, rid="dupid", scope="different")  # same PK -> conflict
@@ -882,7 +882,7 @@ def test_reservation_duplicate_id_raises_already_exists() -> None:
 
 def test_reservation_claim_race_settles_once() -> None:
     barrier = threading.Barrier(7)
-    store, _db, _ = make_fake_store(ready_barrier=barrier)
+    store, _db = make_fake_store(ready_barrier=barrier)
     _insert_res(store, rid="rr", credit_hold=100_000)
     pt = store._param_types
     wins: list[bool] = []
@@ -943,7 +943,7 @@ def _authorize(
 
 
 def test_authorize_atomic_accepts_and_holds_both() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_auth"
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
@@ -963,7 +963,7 @@ def test_authorize_atomic_accepts_and_holds_both() -> None:
 def test_authorize_atomic_insufficient_credits_leaks_no_hold() -> None:
     """THE atomicity test (codex#1 #1): credit reject must roll back the key hold
     taken earlier in the same transaction — no leaked reserved."""
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_auth_poor"
     _seed_credit(store, ws, 500_000)  # less than the estimate
     key = _make_key(store, ws, limit=5_000_000)  # key has plenty
@@ -975,7 +975,7 @@ def test_authorize_atomic_insufficient_credits_leaks_no_hold() -> None:
 
 
 def test_authorize_atomic_key_limit_exceeded() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_auth_cap"
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=100_000)  # tiny cap
@@ -986,7 +986,7 @@ def test_authorize_atomic_key_limit_exceeded() -> None:
 
 
 def test_authorize_atomic_idempotent_replay() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_auth_idem"
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
@@ -1003,7 +1003,7 @@ def test_authorize_atomic_idempotent_replay() -> None:
 
 
 def test_authorize_atomic_idempotency_fingerprint_mismatch() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     ws = "ws_auth_mm"
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
@@ -1013,7 +1013,7 @@ def test_authorize_atomic_idempotency_fingerprint_mismatch() -> None:
 
 
 def test_authorize_atomic_byok_no_credit_hold() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_auth_byok"
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000, include_byok=True)
@@ -1029,7 +1029,7 @@ def test_authorize_atomic_concurrent_same_scope_one_debit() -> None:
     the other replays (ALREADY_EXISTS -> replay) — never a double reservation."""
     ws = "ws_auth_race"
     barrier = threading.Barrier(3)
-    store, db, _ = make_fake_store(ready_barrier=barrier)
+    store, db = make_fake_store(ready_barrier=barrier)
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
     outcomes: list[str] = []
@@ -1064,7 +1064,7 @@ def _settle(store, *, rid, actual, settled_ut="Credits", success=True):
 
 
 def test_settle_end_to_end_books_actual_on_both() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_e2e"
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
@@ -1083,7 +1083,7 @@ def test_settle_end_to_end_books_actual_on_both() -> None:
 
 
 def test_settle_refund_releases_without_booking() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_refund"
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
@@ -1096,7 +1096,7 @@ def test_settle_refund_releases_without_booking() -> None:
 
 
 def test_settle_replay_does_not_double_apply() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_settle_replay"
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
@@ -1111,7 +1111,7 @@ def test_settle_replay_does_not_double_apply() -> None:
 def test_settle_race_settles_once() -> None:
     ws = "ws_settle_race"
     barrier = threading.Barrier(7)
-    store, db, _ = make_fake_store(ready_barrier=barrier)
+    store, db = make_fake_store(ready_barrier=barrier)
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
     auth = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000)
@@ -1131,7 +1131,7 @@ def test_settle_race_settles_once() -> None:
 
 
 def test_settle_byok_books_byok_usage_only() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_settle_byok"
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000, include_byok=True)
@@ -1146,7 +1146,7 @@ def test_settle_byok_books_byok_usage_only() -> None:
 
 
 def test_settle_not_found() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     res = _settle(store, rid="nonexistent", actual=100)
     assert res["outcome"] == SettleOutcome.NOT_FOUND
 
@@ -1159,7 +1159,7 @@ _NOW = "2026-06-01T00:00:00Z"  # after the default authorize expiry, before 2027
 
 
 def test_reaper_reclaims_expired_unsettled_holds() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_reap"
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
@@ -1176,7 +1176,7 @@ def test_reaper_reclaims_expired_unsettled_holds() -> None:
 
 
 def test_reaper_skips_not_yet_expired() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_reap_future"
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
@@ -1187,7 +1187,7 @@ def test_reaper_skips_not_yet_expired() -> None:
 
 
 def test_reaper_skips_already_settled() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     ws = "ws_reap_settled"
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
@@ -1201,7 +1201,7 @@ def test_reaper_vs_late_settle_one_wins() -> None:
     makes exactly one of {settle, reap} win."""
     ws = "ws_reap_race"
     barrier = threading.Barrier(3)
-    store, db, _ = make_fake_store(ready_barrier=barrier)
+    store, db = make_fake_store(ready_barrier=barrier)
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
     auth = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000)
@@ -1245,7 +1245,7 @@ def test_authorize_atomic_concurrent_same_scope_different_fingerprint() -> None:
     replay of the winner's authorization) — codex keystone review."""
     ws = "ws_auth_race_mm"
     barrier = threading.Barrier(3)
-    store, _db, _ = make_fake_store(ready_barrier=barrier)
+    store, _db = make_fake_store(ready_barrier=barrier)
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
     outcomes: list[str] = []
@@ -1309,7 +1309,7 @@ def _missing_key_release_warnings(caplog: pytest.LogCaptureFixture) -> list[logg
 def test_reaper_reclaims_hold_after_api_key_deletion(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_reap_deleted_key"
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
@@ -1336,7 +1336,7 @@ def test_reaper_reclaims_hold_after_api_key_deletion(
 def test_typed_finalize_charges_credit_after_api_key_deletion(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_finalize_deleted_key"
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
@@ -1360,7 +1360,7 @@ def test_typed_finalize_charges_credit_after_api_key_deletion(
 def test_key_release_guard_failure_stays_loud(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_key_guard_loud"
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
@@ -1388,7 +1388,7 @@ def test_normal_key_release_row_count_one_path_does_not_probe_missing(
         raise AssertionError("row-count 1 release must not run the missing-row probe")
 
     monkeypatch.setattr(storage_gcp_counter_dml, "key_limit_exists", fail_if_called)
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_key_release_regression"
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
@@ -1408,7 +1408,7 @@ def test_normal_key_release_row_count_one_path_does_not_probe_missing(
 
 
 def test_typed_finalize_full_success() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_tf"
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
@@ -1430,7 +1430,7 @@ def test_typed_finalize_full_success() -> None:
 
 
 def test_typed_finalize_refund_no_generation_no_booking() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_tf_refund"
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
@@ -1447,7 +1447,7 @@ def test_typed_finalize_refund_no_generation_no_booking() -> None:
 
 
 def test_typed_finalize_replay_books_once() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_tf_replay"
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
@@ -1463,7 +1463,7 @@ def test_typed_finalize_replay_books_once() -> None:
 def test_typed_finalize_race_books_once() -> None:
     ws = "ws_tf_race"
     barrier = threading.Barrier(7)
-    store, db, _ = make_fake_store(ready_barrier=barrier)
+    store, db = make_fake_store(ready_barrier=barrier)
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
     auth = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000)
@@ -1485,7 +1485,7 @@ def test_typed_finalize_race_books_once() -> None:
 
 
 def test_store_authorize_wrapper_and_origin_detection() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     ws = "ws_wrap"
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
@@ -1511,7 +1511,7 @@ def test_store_authorize_wrapper_and_origin_detection() -> None:
 
 
 def test_store_typed_finalize_wrapper_and_reaper_wrapper() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_wrap2"
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
@@ -1549,7 +1549,7 @@ def test_typed_finalize_gateway_authorization_logs_split_timing(
     record_mode: str,
     expected_attempts: int,
 ) -> None:
-    store, _db, _ = make_fake_store(request_record_write_mode=record_mode)
+    store, _db = make_fake_store(request_record_write_mode=record_mode)
     ws = "ws_wrap_timing"
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
@@ -1629,7 +1629,7 @@ def test_typed_finalize_gateway_authorization_logs_split_timing(
 def test_typed_idempotency_lookup_survives_gate_changes() -> None:
     """get_typed_authorization_by_idempotency finds a typed auth INDEPENDENT of
     the cohort flag, so a retry replays (codex 3e route #2)."""
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     ws = "ws_idem_gate"
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)

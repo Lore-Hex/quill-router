@@ -76,9 +76,7 @@ EXPECTED_ENV_NAMES = {
     "TR_SPANNER_INSTANCE_ID",
     "TR_SPANNER_DATABASE_ID",
     "TR_SPANNER_POOL_SIZE",
-    "TR_BIGTABLE_MIRROR_WRITES_ENABLED",
     "TR_GENERATION_RECORDS_ENABLED",
-    "TR_ANALYTICS_READ_MODE",
     "TR_REQUEST_RECORD_WRITE_MODE",
     "TR_SETTLE_OUTBOX_ENABLED",
     "TR_ANALYTICS_OUTBOX_ENABLED",
@@ -526,9 +524,7 @@ def test_missing_stage_d_probe_binding_is_optional_on_first_internal_deploy(
 @pytest.mark.parametrize(
     ("name", "value", "message"),
     [
-        ("TR_ANALYTICS_READ_MODE", "clickhouse", "invalid TR_ANALYTICS_READ_MODE=clickhouse"),
         ("TR_STORAGE_BACKEND", "spanner-bigtable", "still runs TR_STORAGE_BACKEND=spanner-bigtable"),
-        ("TR_BIGTABLE_MIRROR_WRITES_ENABLED", "true", "still mirrors analytics to Bigtable"),
     ],
 )
 def test_internal_refuses_a_legacy_revision_that_still_uses_bigtable(
@@ -539,7 +535,7 @@ def test_internal_refuses_a_legacy_revision_that_still_uses_bigtable(
     message: str,
 ) -> None:
     # Bigtable analytics are retired: the internal surface follows a
-    # control-plane revision that reads ClickHouse alone and mirrors nothing.
+    # control-plane revision that runs spanner-clickhouse.
     original = SCRIPT_FIXTURES[SCRIPT]
     responses: list[tuple[str, str]] = []
     for pattern, response in original.responses:

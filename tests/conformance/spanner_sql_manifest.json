@@ -3904,7 +3904,7 @@
       ]
     },
     "trust_eligibility:trust_gate_failure:1": {
-      "fingerprint": "e0a6fb851671c6c9fea4d9c989a06eed27863fc9666c8fe7039fccb31373c99c",
+      "fingerprint": "fa244896913e106e0106d92353af0516d679f80e51cae5d955a432438dd77372",
       "scenarios": [
         {
           "bindings": {
@@ -4131,7 +4131,7 @@
     "trust_eligibility:billing_paused_tx": "5ce3a94f908455a5508ee285906563975e344a6f64f0edd4db9a9184e0d26a26",
     "trust_eligibility:read_lease_trust": "e7b6cbd755af7e76f8f83e92f1883f73feb96b84cc87ab0ca12bea941601f4bc",
     "trust_eligibility:read_workspace_lease_trust": "294cadc58b9382112d41be6c0f17a14127f34e4c914767160b51059aee79e663",
-    "trust_eligibility:trust_gate_failure": "e0a6fb851671c6c9fea4d9c989a06eed27863fc9666c8fe7039fccb31373c99c",
+    "trust_eligibility:trust_gate_failure": "fa244896913e106e0106d92353af0516d679f80e51cae5d955a432438dd77372",
     "trust_owner_budget:recompute_owner_budget": "959e550c803a9b12ebf91949eab221a57f4991b513a300a74725c0395c6e51a4"
   },
   "non_google_sql": {

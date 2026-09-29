@@ -94,7 +94,7 @@ def test_paged_entity_range_scan_serializes_against_a_concurrent_commit() -> Non
     """
     from tests.fakes.spanner import make_fake_store
 
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     store._write_entity("credit_transfer_open", "t-a", {"transfer_id": "t-a"})
     attempts: list[int] = []
 

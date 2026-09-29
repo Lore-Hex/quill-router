@@ -439,12 +439,9 @@ class Settings(BaseSettings):
     gcp_project_id: str = "quill-cloud-proxy"
     spanner_instance_id: str | None = None
     spanner_database_id: str | None = None
+    # Only the fixed-profile Bigtable ledgers (regional quota, spend lease)
+    # still open this instance; the generation analytics table is retired.
     bigtable_instance_id: str | None = None
-    bigtable_generation_table: str = "trustedrouter-generations"
-    # Migration controls. ``spanner-clickhouse`` never constructs a Bigtable
-    # client. The mirror flag lets ``spanner-bigtable`` stop new writes before
-    # the final backend switch while retaining legacy reads during soak.
-    bigtable_mirror_writes_enabled: bool = True
     generation_records_enabled: bool = False
     # Legacy in-process ClickHouse mirror. Empty URL keeps it disabled.
     clickhouse_url: str = ""
@@ -463,12 +460,6 @@ class Settings(BaseSettings):
     operational_analytics_clickhouse_user: str = "tr_control_read"
     operational_analytics_clickhouse_password: str = ""
     operational_analytics_clickhouse_database: str = "tr"
-    # dual returns Bigtable and compares ClickHouse; clickhouse reverses those
-    # roles for the second soak; clickhouse-only never calls Bigtable.
-    analytics_read_mode: str = "bigtable"
-    analytics_dual_read_grace_seconds: int = 30
-    analytics_dual_read_started_at: str = ""
-    analytics_clickhouse_primary_started_at: str = ""
     # Stage 1 live analytics outbox. This is intentionally off by default and
     # must remain off until the shadow ingester and reconciler are observed.
     analytics_outbox_enabled: bool = False
@@ -1004,14 +995,8 @@ class Settings(BaseSettings):
     # writing gateway authorizations and generation repair rows to tr_entities
     # while every region learns to read the typed table. ``typed`` moves new
     # authorizations to tr_gateway_authorization and uses the settle outbox as
-    # the bounded repair source for Bigtable activity metadata.
+    # the bounded repair source for ClickHouse activity delivery.
     request_record_write_mode: str = "legacy"
-    # Bigtable application profile name. The default profile uses
-    # single-cluster routing; `tr-multi` enables
-    # multi-cluster-routing-use-any once we have ≥3 BT clusters
-    # provisioned. Settable via env var so we can roll out the
-    # change region-by-region without re-deploying code.
-    bigtable_app_profile_id: str = ""
     # Local/test drains broadcast jobs opportunistically after settlement so
     # tests and demos are deterministic. Production should leave this false:
     # settlement enqueues durable jobs and a separate internal worker drains
@@ -1439,19 +1424,12 @@ class Settings(BaseSettings):
         ):
             if value < 0:
                 raise ValueError(f"{name} cannot be negative")
+        if self.storage_backend not in {"memory", "postgres", "spanner-clickhouse"}:
+            raise ValueError(
+                "TR_STORAGE_BACKEND must be memory, postgres, or spanner-clickhouse"
+            )
         if self.request_record_write_mode not in {"legacy", "typed"}:
             raise ValueError("TR_REQUEST_RECORD_WRITE_MODE must be 'legacy' or 'typed'")
-        if self.analytics_read_mode not in {
-            "bigtable",
-            "dual",
-            "clickhouse",
-            "clickhouse-only",
-        }:
-            raise ValueError(
-                "TR_ANALYTICS_READ_MODE must be bigtable, dual, clickhouse, or clickhouse-only"
-            )
-        if self.analytics_dual_read_grace_seconds < 0:
-            raise ValueError("TR_ANALYTICS_DUAL_READ_GRACE_SECONDS cannot be negative")
         if not 5 <= self.regional_quota_lease_ttl_seconds <= 300:
             raise ValueError("TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS must be between 5 and 300")
         if self.regional_quota_lease_max_microdollars <= 0:
@@ -1599,10 +1577,7 @@ class Settings(BaseSettings):
             )
         if self.regional_quota_leases_enabled:
             if environment not in {"local", "test"}:
-                if self.storage_backend not in {
-                    "spanner-bigtable",
-                    "spanner-clickhouse",
-                }:
+                if self.storage_backend != "spanner-clickhouse":
                     raise ValueError(
                         "TR_REGIONAL_QUOTA_LEASES_ENABLED requires a Spanner GCP backend"
                     )
@@ -1981,31 +1956,21 @@ class Settings(BaseSettings):
                 raise ValueError(f"deployed configuration is not fail-closed: {joined}")
             return self
         if storage_required and self.storage_backend == "memory":
-            missing.append("TR_STORAGE_BACKEND=spanner-bigtable or spanner-clickhouse")
-        if storage_required and self.storage_backend in {"spanner-bigtable", "spanner-clickhouse"}:
+            missing.append("TR_STORAGE_BACKEND=spanner-clickhouse or postgres")
+        if storage_required and self.storage_backend == "spanner-clickhouse":
             if not self.spanner_instance_id:
                 missing.append("TR_SPANNER_INSTANCE_ID")
             if not self.spanner_database_id:
                 missing.append("TR_SPANNER_DATABASE_ID")
-        if storage_required and self.storage_backend == "spanner-bigtable":
-            if not self.bigtable_instance_id:
-                missing.append("TR_BIGTABLE_INSTANCE_ID")
-        if storage_required and self.storage_backend == "spanner-clickhouse":
-            if self.analytics_read_mode != "clickhouse-only":
-                missing.append(
-                    "TR_ANALYTICS_READ_MODE=clickhouse-only with "
-                    "TR_STORAGE_BACKEND=spanner-clickhouse"
-                )
             if not self.generation_records_enabled:
                 missing.append("TR_GENERATION_RECORDS_ENABLED=true")
             missing.extend(operational_analytics_sink_problems(self))
             if not self.analytics_outbox_enabled:
                 missing.append("TR_ANALYTICS_OUTBOX_ENABLED=true")
-            if self.bigtable_mirror_writes_enabled:
-                missing.append("TR_BIGTABLE_MIRROR_WRITES_ENABLED=false")
             if self.request_record_write_mode != "typed":
                 missing.append("TR_REQUEST_RECORD_WRITE_MODE=typed")
-        if storage_required and self.analytics_read_mode != "bigtable":
+            # Tenant activity, usage and provider analytics are read from
+            # ClickHouse alone; without the reader the surface has no data.
             if not self.operational_analytics_clickhouse_url:
                 missing.append("TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL")
             if not self.operational_analytics_clickhouse_password:

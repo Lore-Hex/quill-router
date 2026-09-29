@@ -1,9 +1,10 @@
-"""Repair Bigtable activity mirrors from Spanner.
+"""Re-enqueue durable ClickHouse activity delivery from Spanner.
 
 Typed settlements can be repaired by --generation-id. Workspace/day scans
 cover only the legacy generation_by_workspace index, bounded by --limit.
 Resume truncated scans with --after-id from next_after_id.
-Writes are idempotent: existing rows are rewritten in place.
+Writes are idempotent: an outbox row carries a stable event id, so a replay
+overwrites rather than duplicates.
 """
 
 from __future__ import annotations
@@ -24,18 +25,18 @@ logger = logging.getLogger(__name__)
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="activity_mirror_reconcile",
-        description="Re-mirror generations into the Bigtable activity index from Spanner.",
+        prog="activity_delivery_repair",
+        description="Re-enqueue generations into the durable ClickHouse activity outbox.",
     )
     target = parser.add_mutually_exclusive_group(required=True)
-    target.add_argument("--workspace-id", help="workspace whose legacy index rows to re-mirror")
+    target.add_argument("--workspace-id", help="workspace whose legacy index rows to re-enqueue")
     target.add_argument("--generation-id", help="generation to repair, including typed settlements")
     parser.add_argument("--date", default=None, help="UTC day (YYYY-MM-DD); default: all days")
     parser.add_argument(
         "--limit",
         type=int,
         default=1000,
-        help="maximum generations to re-mirror (default 1000)",
+        help="maximum generations to re-enqueue (default 1000)",
     )
     parser.add_argument("--after-id", help="resume after the previous next_after_id index key")
     args = parser.parse_args(argv)
@@ -65,26 +66,26 @@ def main(argv: list[str] | None = None) -> int:
     configure_store(store)
     generations = getattr(store, "generation_store", None)
     if not isinstance(generations, SpannerGenerations):
-        logger.error("activity_mirror.reconcile_unsupported backend=%s", type(store).__name__)
+        logger.error("activity_delivery.repair_unsupported backend=%s", type(store).__name__)
+        return 1
+    if generations._operational_analytics_outbox is None:
+        logger.error("activity_delivery.repair_unsupported reason=operational_analytics_outbox_disabled")
         return 1
     result = generations.reconcile_activity(
         args.workspace_id, date=args.date, limit=args.limit,
         generation_id=args.generation_id, detailed=True, after_id=args.after_id,
     )
     report = {
-        "repaired": result.mirror_repaired,
         "durable_repaired": result.durable_repaired,
-        "mirror_failed": result.mirror_failed,
         "durable_failed": result.durable_failed,
         "missing": result.missing,
-        "mirror_skipped": result.mirror_skipped,
         "scanned": result.scanned,
         "truncated": result.truncated,
         "next_after_id": result.next_after_id,
     }
-    logger.info("activity_mirror.reconcile_complete %s", json.dumps(report))
+    logger.info("activity_delivery.repair_complete %s", json.dumps(report))
     print(json.dumps(report))
-    return int(bool(result.mirror_failed or result.durable_failed or result.missing))
+    return int(bool(result.durable_failed or result.missing))
 
 
 if __name__ == "__main__":  # pragma: no cover - module entry point

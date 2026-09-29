@@ -490,7 +490,7 @@ def test_regional_fence_read_deadline_falls_back_through_gateway(monkeypatch: py
     from trusted_router.main import create_app
     from trusted_router.storage import configure_store
 
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
     workspace = store.create_workspace(
         "owner",

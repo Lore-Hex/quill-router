@@ -60,10 +60,6 @@ ssh_node --command="sudo sh -c '
     -r /opt/tr-clickhouse/clickhouse/requirements-live.txt
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-ingest.service \
     /etc/systemd/system/tr-clickhouse-ingest.service
-  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-reconcile.service \
-    /etc/systemd/system/tr-clickhouse-reconcile.service
-  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-reconcile.timer \
-    /etc/systemd/system/tr-clickhouse-reconcile.timer
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-workspace-directory.service \
     /etc/systemd/system/tr-clickhouse-workspace-directory.service
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-workspace-directory.timer \
@@ -121,13 +117,11 @@ ssh_node --command="sudo sh -c '
   done
   systemctl enable --now tr-clickhouse-workspace-directory.timer
   systemctl enable --now tr-clickhouse-overrun-rollup.timer
-  systemctl enable --now tr-clickhouse-reconcile.timer
   systemctl enable --now tr-clickhouse-archive.timer
   systemctl enable --now tr-clickhouse-archive-restore.timer
   systemctl enable --now tr-clickhouse-rollup-hourly.timer
   systemctl enable --now tr-clickhouse-rollup-daily.timer
   systemctl is-active tr-clickhouse-ingest.service
-  systemctl is-active tr-clickhouse-reconcile.timer
   systemctl is-active tr-clickhouse-overrun-rollup.timer
   systemctl is-active tr-clickhouse-archive.timer
   systemctl is-active tr-clickhouse-archive-restore.timer

@@ -34,7 +34,6 @@ jobs:
     timeout-minutes: 25
     env:
       SPANNER_EMULATOR_HOST: 127.0.0.1:9010
-      BIGTABLE_EMULATOR_HOST: 127.0.0.1:8086
       TR_CONFORMANCE_EMULATOR_SCHEMA: "1"
       TR_SPANNER_POOL_SIZE: "2"
     services:
@@ -43,31 +42,20 @@ jobs:
         ports:
           - 9010:9010
           - 9020:9020
-      bigtable:
-        image: gcr.io/google.com/cloudsdktool/google-cloud-cli@sha256:7617d937e9360d769de4ef66266a8caae503c1dbbd050c93404d3f30045c5125
-        # The SDK image's default bash stays alive while the step below starts
-        # the emulator. GitHub services have no `command` field.
-        options: --interactive --tty
-        ports:
-          - 8086:8086
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
-      - name: Start Bigtable emulator in the service container
-        run: |
-          docker exec -d ${{ job.services.bigtable.id }} /bin/sh -c \
-            'exec gcloud beta emulators bigtable start --host-port=0.0.0.0:8086 --quiet > /tmp/bigtable-emulator.log 2>&1'
       - name: Sync
         run: uv sync --frozen
-      - name: Wait for both emulators (fail if unavailable)
+      - name: Wait for the Spanner emulator (fail if unavailable)
         run: |
           uv run python - <<'PY'
           import socket
           import time
           deadline = time.monotonic() + 60
-          pending = {9010, 9020, 8086}
+          pending = {9010, 9020}
           while pending and time.monotonic() < deadline:
               for port in tuple(pending):
                   try:
@@ -94,8 +82,6 @@ jobs:
         if: failure()
         run: |
           docker logs ${{ job.services.spanner.id }}
-          docker logs ${{ job.services.bigtable.id }}
-          docker exec ${{ job.services.bigtable.id }} cat /tmp/bigtable-emulator.log || true
 
   frontend:
     runs-on: ubuntu-latest

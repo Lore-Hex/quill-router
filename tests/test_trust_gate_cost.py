@@ -24,7 +24,7 @@ from trusted_router.trust_ownership import TRUST_OWNER_MUTATION_BUDGET
 
 @pytest.fixture
 def armed() -> tuple[Any, Any, Any]:
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     settings = arm_store(store, db)
     workspace_state(db)
     return store, db, settings

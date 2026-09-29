@@ -4815,83 +4815,13 @@ def _execute_owner_model_list(
     return [[body] for _created_at, _ref_id, body in hydrated]
 
 
-class FakeBigtableTable:
-    def __init__(self) -> None:
-        self.committed: list[bytes] = []
-        self.rows: dict[bytes, dict[str, dict[bytes, list[Any]]]] = {}
-        self.reads: list[tuple[bytes, bytes, int]] = []
-        self.lock = threading.Lock()
-
-    def direct_row(self, key: bytes) -> _FakeDirectRow:
-        return _FakeDirectRow(key, self)
-
-    def mutate_rows(self, rows: list[_FakeDirectRow], **_kwargs: Any) -> list[Any]:
-        from types import SimpleNamespace
-
-        for row in rows:
-            row.commit()
-        return [SimpleNamespace(code=0) for _row in rows]
-
-    def read_rows(
-        self,
-        *,
-        start_key: bytes,
-        end_key: bytes,
-        limit: int,
-        **_kwargs: Any,
-    ) -> list[Any]:
-        with self.lock:
-            self.reads.append((start_key, end_key, limit))
-            keys = [key for key in sorted(self.rows) if start_key <= key < end_key]
-            return [_FakeReadRow(self.rows[key]) for key in keys[:limit]]
-
-
-class _FakeCell:
-    def __init__(self, value: bytes) -> None:
-        self.value = value
-
-
-class _FakeReadRow:
-    def __init__(self, cells: dict[str, dict[bytes, list[Any]]]) -> None:
-        self.cells = cells
-
-
-class _FakeDirectRow:
-    def __init__(self, key: bytes, table: FakeBigtableTable) -> None:
-        self.key = key
-        self.table = table
-        self.cells: dict[str, dict[bytes, list[Any]]] = {}
-
-    def set_cell(
-        self,
-        family: str,
-        qualifier: bytes,
-        value: bytes,
-        timestamp: Any | None = None,
-    ) -> None:
-        _ = timestamp
-        self.cells.setdefault(family, {})[qualifier] = [_FakeCell(value)]
-
-    def commit(self) -> None:
-        with self.table.lock:
-            self.table.committed.append(self.key)
-            merged = {
-                family: {qualifier: list(cells) for qualifier, cells in qualifiers.items()}
-                for family, qualifiers in self.table.rows.get(self.key, {}).items()
-            }
-            for family, qualifiers in self.cells.items():
-                merged.setdefault(family, {}).update(qualifiers)
-            self.table.rows[self.key] = merged
-
-
 def make_fake_store(
     *,
     ready_barrier: threading.Barrier | None = None,
     request_record_write_mode: str = "legacy",
     operational_analytics_outbox_enabled: bool = False,
     generation_records_enabled: bool = False,
-    bigtable_writes_enabled: bool = True,
-) -> tuple[Any, FakeSpannerDatabase, FakeBigtableTable]:
+) -> tuple[Any, FakeSpannerDatabase]:
     from trusted_router.storage_gcp import SpannerBigtableStore
     from trusted_router.storage_gcp_attribution import SpannerAcquisitionAttribution
     from trusted_router.storage_gcp_auth_sessions import SpannerAuthSessions
@@ -4916,12 +4846,10 @@ def make_fake_store(
     from trusted_router.storage_gcp_wallet_challenges import SpannerWalletChallenges
 
     db = FakeSpannerDatabase(ready_barrier=ready_barrier)
-    bt = FakeBigtableTable()
     store = object.__new__(SpannerBigtableStore)
     store._spanner = _SpannerModule
     store._param_types = _ParamTypes
     store._database = db
-    store._bt_table = bt
     store.request_record_write_mode = request_record_write_mode
     store.max_workspaces_per_owner = 25
     store.trust_qualifying_providers = frozenset({"stripe", "x402"})
@@ -4929,14 +4857,8 @@ def make_fake_store(
     store.trust_tier3_min_days = 30
     store.trust_tier3_min_paid_microdollars = 50_000_000
     store._generation_records_enabled = generation_records_enabled
-    store._bigtable_writes_enabled = bigtable_writes_enabled
     # `object.__new__` skips __init__, so every attribute the real constructor
-    # sets has to be set here too. These two drive the analytics READ path
-    # (_analytics_read); without them any read-side test AttributeErrors
-    # instead of exercising the store. Defaults mirror the real signature.
-    store._bigtable_enabled = True
-    store._analytics_read_mode = "bigtable"
-    store._analytics_dual_read_grace_seconds = 0
+    # sets has to be set here too.
     store._operational_analytics = None
     store._regional_quota_ledger = None
     store._spend_lease_ledger = None
@@ -4970,13 +4892,8 @@ def make_fake_store(
     )
     store.generation_store = SpannerGenerations(
         io,
-        bt_table=bt,
         param_types=_ParamTypes,
         generation_records_enabled=generation_records_enabled,
-        bigtable_writes_enabled=bigtable_writes_enabled,
-        activity_family=store.activity_family,
-        benchmark_family=store.benchmark_family,
-        legacy_family=store.legacy_generation_family,
         add_usage_to_key=store.api_keys.add_usage,
         operational_analytics_outbox=store._operational_analytics_outbox,
     )
@@ -4993,4 +4910,4 @@ def make_fake_store(
     store.wallet_challenges = SpannerWalletChallenges(io)
     store.verification_tokens = SpannerVerificationTokens(io)
     store.email_blocks = SpannerEmailBlocks(io)
-    return store, db, bt
+    return store, db

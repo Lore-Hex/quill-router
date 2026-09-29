@@ -69,7 +69,7 @@ def test_every_predicate_reason_bit_and_order(index: int, clause: tuple[str, str
 def test_gateway_keeps_regional_outcome_before_global_fallback(
     monkeypatch: pytest.MonkeyPatch, regional_outcome: str,
 ) -> None:
-    store, db, _ = make_fake_store(
+    store, db = make_fake_store(
         request_record_write_mode="typed", operational_analytics_outbox_enabled=True,
     )
     store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
@@ -286,7 +286,7 @@ def test_grant_pool_cap_observation_reuses_existing_trust_checks() -> None:
     from tests.test_trust_eligibility_pr2 import arm_store, workspace_state
     from trusted_router.storage_gcp_regional_quota import grant_regional_quota_lease
 
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     arm_store(store, db)
     workspace_state(db, 1)
     evidence: dict[str, Any] = {}

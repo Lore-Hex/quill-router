@@ -90,7 +90,9 @@ for entry in "${jobs[@]}"; do
 
   # Image-only refreshes still reconcile non-secret routing configuration.
   # Otherwise retired gateways survive indefinitely in an old job env var.
-  env_updates="^|^TR_RELEASE=${release}|TR_REGIONS=${TR_REGIONS}"
+  # Bigtable analytics are retired: every job runs spanner-clickhouse and
+  # carries none of the retired generation-table or read-mode settings.
+  env_updates="^|^TR_RELEASE=${release}|TR_REGIONS=${TR_REGIONS}|TR_STORAGE_BACKEND=spanner-clickhouse"
   if [ "$job_kind" = "health" ]; then
     env_updates="${env_updates}|TR_SYNTHETIC_CONTROL_PLANE_HEALTH_URL=https://trustedrouter.com"
   fi
@@ -100,6 +102,7 @@ for entry in "${jobs[@]}"; do
     --region "$job_region" \
     --image "$IMAGE" \
     --update-env-vars "$env_updates" \
+    --remove-env-vars TR_BIGTABLE_INSTANCE_ID,TR_BIGTABLE_GENERATION_TABLE,TR_BIGTABLE_APP_PROFILE_ID,TR_ANALYTICS_READ_MODE,TR_BIGTABLE_MIRROR_WRITES_ENABLED \
     --quiet >/dev/null
 
   after="$(gc run jobs describe "$job_name" --region "$job_region" --format=json)"

@@ -116,7 +116,7 @@ def test_acceptance_transaction_always_rolls_back(failure):
 def test_provisioning_submits_all_ddl_and_cleans_up(monkeypatch, failure):
     from unittest.mock import Mock
 
-    from google.cloud import bigtable, spanner
+    from google.cloud import spanner
 
     from tests.conformance import spanner_emulator
     from tests.conformance.test_spanner_emulator_sdk import SDK_METHODS
@@ -124,7 +124,7 @@ def test_provisioning_submits_all_ddl_and_cleans_up(monkeypatch, failure):
     originals = [getattr(cls, method) for cls, method, _ in SDK_METHODS]
 
     monkeypatch.setattr(spanner_emulator, "require_emulators", lambda: None)
-    spanner_client, bigtable_client = Mock(), Mock()
+    spanner_client = Mock()
     from datetime import timedelta
 
     from google.cloud.spanner_v1.database_sessions_manager import DatabaseSessionsManager
@@ -139,10 +139,8 @@ def test_provisioning_submits_all_ddl_and_cleans_up(monkeypatch, failure):
         return spanner_client
 
     monkeypatch.setattr(spanner, "Client", Mock(side_effect=create_client))
-    monkeypatch.setattr(bigtable, "Client", Mock(return_value=bigtable_client))
     instance = spanner_client.instance.return_value
     database = instance.database.return_value
-    table = bigtable_client.instance.return_value.table.return_value
     def close():
         assert 0 < DatabaseSessionsManager._MAINTENANCE_THREAD_POLLING_INTERVAL.total_seconds() < 1
         if failure == "close":
@@ -160,7 +158,6 @@ def test_provisioning_submits_all_ddl_and_cleans_up(monkeypatch, failure):
                 assert 0 < len(call.args[0]) <= 20
                 submitted.extend(call.args[0])
             assert tuple(submitted) == spanner_ddl.DDL
-            assert set(table.create.call_args.kwargs["column_families"]) == {"m", "activity", "benchmark", "synthetic", "rollup"}
             instance.delete.assert_not_called()
             if failure == "body":
                 raise RuntimeError("body")
@@ -171,10 +168,6 @@ def test_provisioning_submits_all_ddl_and_cleans_up(monkeypatch, failure):
     else:
         provision()
     database.close.assert_called_once()
-    if failure == "create":
-        table.delete.assert_not_called()
-    else:
-        table.delete.assert_called_once()
     instance.delete.assert_called_once()
     assert DatabaseSessionsManager._MAINTENANCE_THREAD_POLLING_INTERVAL == timedelta(minutes=10)
     assert [getattr(cls, method) for cls, method, _ in SDK_METHODS] == originals

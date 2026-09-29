@@ -77,7 +77,7 @@ def _backend(request: pytest.FixtureRequest) -> Store:
         return BACKENDS[request.param]()
     from tests.conformance.spanner_emulator import emulator_store
 
-    _, _, instance_id = request.getfixturevalue("native_emulator_resources")
+    _, instance_id = request.getfixturevalue("native_emulator_resources")
     context = emulator_store(instance_id)
     backend = context.__enter__()
     backend.close = lambda: context.__exit__(None, None, None)
@@ -116,7 +116,7 @@ def _spanner_fake_store() -> Store:
     """
     from tests.fakes.spanner import make_fake_store
 
-    store, _database, _bigtable = make_fake_store()
+    store, _database = make_fake_store()
     return store
 
 

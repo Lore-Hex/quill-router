@@ -48,7 +48,7 @@ def _credit_totals(database: FakeSpannerDatabase, workspace_id: str) -> tuple[in
 
 
 def test_global_grant_and_reconcile_preserve_exact_credit_and_key_totals() -> None:
-    store, database, _ = make_fake_store(request_record_write_mode="typed")
+    store, database = make_fake_store(request_record_write_mode="typed")
     workspace = store.create_workspace(
         "owner",
         "regional",
@@ -176,7 +176,7 @@ def test_global_grant_and_reconcile_preserve_exact_credit_and_key_totals() -> No
 
 
 def test_global_fence_allows_only_one_active_grant_per_quota_shard() -> None:
-    store, database, _ = make_fake_store(request_record_write_mode="typed")
+    store, database = make_fake_store(request_record_write_mode="typed")
     workspace = store.create_workspace(
         "owner",
         "regional-fence",
@@ -238,7 +238,7 @@ def test_global_fence_allows_only_one_active_grant_per_quota_shard() -> None:
 
 
 def test_regional_request_record_replays_without_reserving_global_rows() -> None:
-    store, database, _ = make_fake_store(request_record_write_mode="typed")
+    store, database = make_fake_store(request_record_write_mode="typed")
     workspace = store.create_workspace(
         "owner",
         "regional-auth",
@@ -308,7 +308,7 @@ def test_regional_request_record_replays_without_reserving_global_rows() -> None
 
 
 def test_store_regional_authorize_settle_replay_and_reconcile_end_to_end() -> None:
-    store, database, _ = make_fake_store(request_record_write_mode="typed")
+    store, database = make_fake_store(request_record_write_mode="typed")
     ledger = InMemoryRegionalQuotaLedger()
     store._regional_quota_ledger = ledger
     workspace = store.create_workspace(
@@ -405,7 +405,7 @@ def test_store_regional_authorize_settle_replay_and_reconcile_end_to_end() -> No
 
 
 def test_regional_settle_falls_back_when_stale_cas_erased_authorized_hold() -> None:
-    store, database, _ = make_fake_store(request_record_write_mode="typed")
+    store, database = make_fake_store(request_record_write_mode="typed")
     ledger = InMemoryRegionalQuotaLedger()
     store._regional_quota_ledger = ledger
     workspace = store.create_workspace(
@@ -546,7 +546,7 @@ def test_regional_settle_falls_back_when_stale_cas_erased_authorized_hold() -> N
 
 
 def test_missing_regional_ledger_is_a_retryable_settlement_error() -> None:
-    store, _database, _ = make_fake_store(request_record_write_mode="typed")
+    store, _database = make_fake_store(request_record_write_mode="typed")
     authorization = GatewayAuthorization(
         id="gwa-missing-regional-ledger",
         workspace_id="ws-regional-ledger",
@@ -574,7 +574,7 @@ def test_missing_regional_ledger_is_a_retryable_settlement_error() -> None:
 
 
 def test_regional_authorize_does_not_escrow_for_unconfigured_region() -> None:
-    store, database, _ = make_fake_store(request_record_write_mode="typed")
+    store, database = make_fake_store(request_record_write_mode="typed")
 
     class UsCentralOnlyLedger(InMemoryRegionalQuotaLedger):
         def supports_region(self, region: str) -> bool:
@@ -624,7 +624,7 @@ def test_regional_authorize_does_not_escrow_for_unconfigured_region() -> None:
 
 
 def test_regional_pool_spreads_hot_workspace_across_bounded_lease_shards() -> None:
-    store, database, _ = make_fake_store(request_record_write_mode="typed")
+    store, database = make_fake_store(request_record_write_mode="typed")
     store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
     workspace = store.create_workspace(
         "owner",
@@ -708,7 +708,7 @@ def test_regional_pool_spreads_hot_workspace_across_bounded_lease_shards() -> No
 
 
 def test_settle_outbox_recovery_settles_regional_hold_before_spanner_terminal() -> None:
-    store, database, _ = make_fake_store(request_record_write_mode="typed")
+    store, database = make_fake_store(request_record_write_mode="typed")
     ledger = InMemoryRegionalQuotaLedger()
     store._regional_quota_ledger = ledger
     workspace = store.create_workspace(
@@ -801,7 +801,7 @@ def test_settle_outbox_recovery_settles_regional_hold_before_spanner_terminal() 
 
 
 def test_reconciler_closes_expired_quarantine_when_local_initialization_is_absent() -> None:
-    store, database, _ = make_fake_store(request_record_write_mode="typed")
+    store, database = make_fake_store(request_record_write_mode="typed")
     store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
     workspace = store.create_workspace(
         "owner",
@@ -858,7 +858,7 @@ def test_reconciler_closes_expired_quarantine_when_local_initialization_is_absen
 
 
 def test_reconciler_defers_live_pending_lease_before_local_initialization() -> None:
-    store, database, _ = make_fake_store(request_record_write_mode="typed")
+    store, database = make_fake_store(request_record_write_mode="typed")
     ledger = InMemoryRegionalQuotaLedger()
     store._regional_quota_ledger = ledger
     workspace = store.create_workspace(
@@ -910,7 +910,7 @@ def test_reconciler_defers_live_pending_lease_before_local_initialization() -> N
 
 
 def test_reconciler_cleans_stale_open_index_for_already_closed_lease() -> None:
-    store, database, _ = make_fake_store(request_record_write_mode="typed")
+    store, database = make_fake_store(request_record_write_mode="typed")
     ledger = InMemoryRegionalQuotaLedger()
     store._regional_quota_ledger = ledger
     workspace = store.create_workspace(
@@ -972,7 +972,7 @@ def test_reconciler_cleans_stale_open_index_for_already_closed_lease() -> None:
 
 
 def test_reconciler_lock_is_single_owner_and_fenced_after_expiry() -> None:
-    store, _database, _ = make_fake_store(request_record_write_mode="typed")
+    store, _database = make_fake_store(request_record_write_mode="typed")
 
     first = store.acquire_regional_quota_reconciler_lock(
         owner="worker-a",
@@ -1020,7 +1020,7 @@ def test_reconciler_lock_is_single_owner_and_fenced_after_expiry() -> None:
 def test_regional_close_finishes_credit_and_recovery_before_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, database, _ = make_fake_store(request_record_write_mode="typed")
+    store, database = make_fake_store(request_record_write_mode="typed")
     workspace = store.create_workspace("owner", "close-order", trial_credit_microdollars=100_000_000)
     _raw, key = store.create_api_key(
         workspace_id=workspace.id, name="uncapped", creator_user_id="owner",

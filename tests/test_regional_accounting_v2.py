@@ -28,7 +28,7 @@ def _totals(db: Any, workspace: str, key: str) -> tuple[int, int, int, int, int]
 
 
 def _setup() -> tuple[Any, Any, Any, dict[str, Any]]:
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
     ws = store.create_workspace("owner", "accounting", trial_credit_microdollars=100_000_000)
     _, key = store.create_api_key(workspace_id=ws.id, name="key", creator_user_id="owner")

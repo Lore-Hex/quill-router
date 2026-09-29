@@ -3961,21 +3961,15 @@ def create_store(settings: Any, *, initialize_schema: bool = True) -> Store:
         if initialize_schema:
             store.apply_schema()
         return store
-    if backend in {"spanner-bigtable", "spanner-clickhouse"}:
+    if backend == "spanner-clickhouse":
         from trusted_router.storage_gcp import SpannerBigtableStore
 
-        bigtable_enabled = backend == "spanner-bigtable"
         return SpannerBigtableStore(
             trust_settings=settings,
             project_id=settings.gcp_project_id,
             spanner_instance_id=settings.spanner_instance_id,
             spanner_database_id=settings.spanner_database_id,
             bigtable_instance_id=settings.bigtable_instance_id,
-            generation_table=settings.bigtable_generation_table,
-            bigtable_app_profile_id=getattr(settings, "bigtable_app_profile_id", ""),
-            bigtable_enabled=bigtable_enabled,
-            bigtable_writes_enabled=bigtable_enabled
-            and getattr(settings, "bigtable_mirror_writes_enabled", True),
             generation_records_enabled=getattr(
                 settings,
                 "generation_records_enabled",
@@ -4008,14 +4002,6 @@ def create_store(settings: Any, *, initialize_schema: bool = True) -> Store:
             ),
             operational_analytics_clickhouse_database=getattr(
                 settings, "operational_analytics_clickhouse_database", "tr"
-            ),
-            analytics_read_mode=(
-                "clickhouse-only"
-                if backend == "spanner-clickhouse"
-                else getattr(settings, "analytics_read_mode", "bigtable")
-            ),
-            analytics_dual_read_grace_seconds=getattr(
-                settings, "analytics_dual_read_grace_seconds", 30
             ),
             regional_quota_leases_enabled=getattr(settings, "regional_quota_leases_enabled", False),
             regional_quota_ledger_timeout_seconds=float(
