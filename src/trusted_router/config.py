@@ -888,6 +888,12 @@ class Settings(BaseSettings):
     # Aggregate global liquidity retained after regional grants (not per grant).
     regional_quota_global_floor_basis_points: int = 5_000
     regional_quota_lease_shard_count: int = 16
+    # PR 5 storage only: no route, worker, or enclave activation.
+    async_settlement_journal_minimum_shard_cap_micros: int = 32_000
+    async_settlement_journal_enabled: bool = False
+    async_settlement_journal_bigtable_table: str = "trustedrouter-settlement-intents"
+    async_settlement_journal_bigtable_app_profiles: str = ""
+    async_settlement_journal_rpc_timeout_seconds: float = 0.25
     regional_quota_bigtable_table: str = "trustedrouter-regional-quota"
     spend_lease_bigtable_table: str = "trustedrouter-spend-lease"
     # True only in the one-shot reconciliation Cloud Run Job. Serving
@@ -1462,6 +1468,13 @@ class Settings(BaseSettings):
             )
         if not 1 <= self.regional_quota_global_floor_basis_points <= 10_000:
             raise ValueError("TR_REGIONAL_QUOTA_GLOBAL_FLOOR_BASIS_POINTS must be between 1 and 10000")
+        if self.async_settlement_journal_minimum_shard_cap_micros <= 0:
+            raise ValueError("journal minimum shard capacity must be positive")
+        if not 0.01 <= self.async_settlement_journal_rpc_timeout_seconds <= 10:
+            raise ValueError("TR_ASYNC_SETTLEMENT_JOURNAL_RPC_TIMEOUT_SECONDS must be 0.01..10")
+        if self.async_settlement_journal_enabled:
+            if not self.bigtable_instance_id or not self.async_settlement_journal_bigtable_app_profile_map:
+                raise ValueError("async settlement journal requires an instance and regional profiles")
         if not 1.1 <= self.regional_quota_ledger_timeout_seconds <= 10.0:
             raise ValueError("TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS must be between 1.1 and 10")
         if not 1 <= self.regional_quota_ledger_cooldown_seconds <= 60:
@@ -2269,6 +2282,20 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES contains a duplicate region"
                 )
+            profiles[region] = profile
+        return profiles
+
+    @property
+    def async_settlement_journal_bigtable_app_profile_map(self) -> dict[str, str]:
+        profiles: dict[str, str] = {}
+        for raw in self.async_settlement_journal_bigtable_app_profiles.split(","):
+            if not raw.strip():
+                continue
+            region, separator, profile = raw.strip().partition("=")
+            region, profile = region.strip(), profile.strip()
+            if not separator or not region or not profile or "=" in profile or region in profiles:
+                raise ValueError("TR_ASYNC_SETTLEMENT_JOURNAL_BIGTABLE_APP_PROFILES: "
+                                 "expected unique region=app-profile entries")
             profiles[region] = profile
         return profiles
 

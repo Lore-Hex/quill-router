@@ -50,6 +50,8 @@ ALLOWED = {
     "storage_gcp_synthetic_index.py",
     # Fixed-cluster Bigtable CAS implementation of the regional storage port.
     "regional_quota_ledger.py",
+    # Fixed-cluster Bigtable implementation of the async settlement journal row port.
+    "settlement_journal_bigtable.py",
     # Fixed-cluster Bigtable CAS implementation of the spend-lease storage port.
     "spend_lease_ledger.py",
     # The two explicit cloud ports. Both import lazily so a non-GCP deployment
