@@ -1,0 +1,613 @@
+[
+ {
+  "context_length": 32768,
+  "deprecation_at": null,
+  "display_name": "granite-4.1-8b",
+  "endpoints": [
+   "chat/completions"
+  ],
+  "id": "ibm-granite/granite-4.1-8b",
+  "input_modalities": [
+   "text"
+  ],
+  "input_token_price_per_m": 50000,
+  "lifecycle_status": "active",
+  "max_output_tokens": 16384,
+  "model_type": "chat",
+  "output_modalities": [
+   "text"
+  ],
+  "output_token_price_per_m": 100000,
+  "provider_reliability": {
+   "account_quota_error_codes": [
+    "account_quota_exceeded"
+   ],
+   "incident_contact": "mailto:support@neurometric.ai",
+   "provider_id": "neurometric",
+   "regions": [
+    "us-west"
+   ],
+   "request_id_header": "x-request-id",
+   "status_url": "https://status.neurometric.ai",
+   "support_contact": "mailto:support@neurometric.ai"
+  },
+  "reliability": {
+   "capacity_scope": "global",
+   "completion_timeout_seconds": 300.0,
+   "first_token_timeout_seconds": 60.0,
+   "stream_idle_timeout_seconds": 60.0
+  },
+  "replacement_model_id": null,
+  "retirement_at": null,
+  "routable": true,
+  "status": 1,
+  "supported_features": [
+   "chat",
+   "completion",
+   "tools",
+   "json_mode",
+   "structured_outputs"
+  ],
+  "title": "ibm-granite/granite-4.1-8b",
+  "upstream_id": "ibm-granite/granite-4.1-8b"
+ },
+ {
+  "context_length": 32768,
+  "deprecation_at": null,
+  "display_name": "Qwen3-VL-8B-Instruct",
+  "endpoints": [
+   "chat/completions"
+  ],
+  "id": "qwen/qwen3-vl-8b-instruct",
+  "input_modalities": [
+   "text"
+  ],
+  "input_token_price_per_m": 105000,
+  "lifecycle_status": "active",
+  "max_output_tokens": 16384,
+  "model_type": "chat",
+  "output_modalities": [
+   "text"
+  ],
+  "output_token_price_per_m": 410000,
+  "provider_reliability": {
+   "account_quota_error_codes": [
+    "account_quota_exceeded"
+   ],
+   "incident_contact": "mailto:support@neurometric.ai",
+   "provider_id": "neurometric",
+   "regions": [
+    "us-west"
+   ],
+   "request_id_header": "x-request-id",
+   "status_url": "https://status.neurometric.ai",
+   "support_contact": "mailto:support@neurometric.ai"
+  },
+  "reliability": {
+   "capacity_scope": "global",
+   "completion_timeout_seconds": 300.0,
+   "first_token_timeout_seconds": 60.0,
+   "stream_idle_timeout_seconds": 60.0
+  },
+  "replacement_model_id": null,
+  "retirement_at": null,
+  "routable": true,
+  "status": 1,
+  "supported_features": [
+   "chat",
+   "completion",
+   "tools",
+   "json_mode",
+   "structured_outputs"
+  ],
+  "title": "qwen/qwen3-vl-8b-instruct",
+  "upstream_id": "qwen/qwen3-vl-8b-instruct"
+ },
+ {
+  "context_length": 32768,
+  "deprecation_at": null,
+  "display_name": "Qwen3-VL-8B-Thinking",
+  "endpoints": [
+   "chat/completions"
+  ],
+  "id": "qwen/qwen3-vl-8b-thinking",
+  "input_modalities": [
+   "text"
+  ],
+  "input_token_price_per_m": 162000,
+  "lifecycle_status": "active",
+  "max_output_tokens": 16384,
+  "model_type": "chat",
+  "output_modalities": [
+   "text"
+  ],
+  "output_token_price_per_m": 1890000,
+  "provider_reliability": {
+   "account_quota_error_codes": [
+    "account_quota_exceeded"
+   ],
+   "incident_contact": "mailto:support@neurometric.ai",
+   "provider_id": "neurometric",
+   "regions": [
+    "us-west"
+   ],
+   "request_id_header": "x-request-id",
+   "status_url": "https://status.neurometric.ai",
+   "support_contact": "mailto:support@neurometric.ai"
+  },
+  "reliability": {
+   "capacity_scope": "global",
+   "completion_timeout_seconds": 300.0,
+   "first_token_timeout_seconds": 60.0,
+   "stream_idle_timeout_seconds": 60.0
+  },
+  "replacement_model_id": null,
+  "retirement_at": null,
+  "routable": true,
+  "status": 1,
+  "supported_features": [
+   "chat",
+   "completion",
+   "tools",
+   "json_mode",
+   "structured_outputs",
+   "reasoning"
+  ],
+  "title": "qwen/qwen3-vl-8b-thinking",
+  "upstream_id": "qwen/qwen3-vl-8b-thinking"
+ },
+ {
+  "context_length": 32768,
+  "deprecation_at": null,
+  "display_name": "gemma-4-12B-it",
+  "endpoints": [
+   "chat/completions"
+  ],
+  "id": "google/gemma-4-12b-it",
+  "input_modalities": [
+   "text"
+  ],
+  "input_token_price_per_m": 10000,
+  "lifecycle_status": "active",
+  "max_output_tokens": 16384,
+  "model_type": "chat",
+  "output_modalities": [
+   "text"
+  ],
+  "output_token_price_per_m": 120000,
+  "provider_reliability": {
+   "account_quota_error_codes": [
+    "account_quota_exceeded"
+   ],
+   "incident_contact": "mailto:support@neurometric.ai",
+   "provider_id": "neurometric",
+   "regions": [
+    "us-west"
+   ],
+   "request_id_header": "x-request-id",
+   "status_url": "https://status.neurometric.ai",
+   "support_contact": "mailto:support@neurometric.ai"
+  },
+  "reliability": {
+   "capacity_scope": "global",
+   "completion_timeout_seconds": 300.0,
+   "first_token_timeout_seconds": 60.0,
+   "stream_idle_timeout_seconds": 60.0
+  },
+  "replacement_model_id": null,
+  "retirement_at": null,
+  "routable": true,
+  "status": 1,
+  "supported_features": [
+   "chat",
+   "completion",
+   "tools",
+   "json_mode",
+   "structured_outputs"
+  ],
+  "title": "google/gemma-4-12b-it",
+  "upstream_id": "google/gemma-4-12b-it"
+ },
+ {
+  "context_length": 65536,
+  "deprecation_at": null,
+  "display_name": "diffusiongemma-26B-A4B-it",
+  "endpoints": [
+   "chat/completions"
+  ],
+  "id": "google/diffusiongemma-26b-a4b-it",
+  "input_modalities": [
+   "text"
+  ],
+  "input_token_price_per_m": 50000,
+  "lifecycle_status": "active",
+  "max_output_tokens": 32000,
+  "model_type": "chat",
+  "output_modalities": [
+   "text"
+  ],
+  "output_token_price_per_m": 120000,
+  "provider_reliability": {
+   "account_quota_error_codes": [
+    "account_quota_exceeded"
+   ],
+   "incident_contact": "mailto:support@neurometric.ai",
+   "provider_id": "neurometric",
+   "regions": [
+    "us-west"
+   ],
+   "request_id_header": "x-request-id",
+   "status_url": "https://status.neurometric.ai",
+   "support_contact": "mailto:support@neurometric.ai"
+  },
+  "reliability": {
+   "capacity_scope": "global",
+   "completion_timeout_seconds": 300.0,
+   "first_token_timeout_seconds": 60.0,
+   "stream_idle_timeout_seconds": 60.0
+  },
+  "replacement_model_id": null,
+  "retirement_at": null,
+  "routable": true,
+  "status": 1,
+  "supported_features": [
+   "chat",
+   "completion",
+   "tools",
+   "json_mode",
+   "structured_outputs",
+   "reasoning"
+  ],
+  "title": "google/diffusiongemma-26b-a4b-it",
+  "upstream_id": "google/diffusiongemma-26b-a4b-it"
+ },
+ {
+  "context_length": 32768,
+  "deprecation_at": null,
+  "display_name": "tool-choice",
+  "endpoints": [
+   "chat/completions"
+  ],
+  "id": "neurometric/tool-choice",
+  "input_modalities": [
+   "text"
+  ],
+  "input_token_price_per_m": 10000,
+  "lifecycle_status": "active",
+  "max_output_tokens": 16384,
+  "model_type": "chat",
+  "output_modalities": [
+   "text"
+  ],
+  "output_token_price_per_m": 100000,
+  "provider_reliability": {
+   "account_quota_error_codes": [
+    "account_quota_exceeded"
+   ],
+   "incident_contact": "mailto:support@neurometric.ai",
+   "provider_id": "neurometric",
+   "regions": [
+    "us-west"
+   ],
+   "request_id_header": "x-request-id",
+   "status_url": "https://status.neurometric.ai",
+   "support_contact": "mailto:support@neurometric.ai"
+  },
+  "reliability": {
+   "capacity_scope": "global",
+   "completion_timeout_seconds": 300.0,
+   "first_token_timeout_seconds": 60.0,
+   "stream_idle_timeout_seconds": 60.0
+  },
+  "replacement_model_id": null,
+  "retirement_at": null,
+  "routable": true,
+  "status": 1,
+  "supported_features": [
+   "chat",
+   "completion",
+   "tools",
+   "json_mode",
+   "structured_outputs"
+  ],
+  "supported_parameters": [
+   "tool_choice"
+  ],
+  "title": "neurometric/tool-choice",
+  "upstream_id": "neurometric/tool-choice"
+ },
+ {
+  "context_length": 49152,
+  "deprecation_at": null,
+  "display_name": "Document Structured Extraction",
+  "documentation": {
+   "description": "Extracts caller-selected fields from invoices, contracts, forms, tickets, and other document text into typed JSON.",
+   "example_input": "{\n    \"document\": \"INVOICE A-1042. Vendor: Acme Supply. Total due: USD 87.25.\",\n    \"output_schema\": {\n      \"invoice_number\": \"string\",\n      \"vendor\": \"string\",\n      \"total\": \"number\",\n      \"currency\": \"string\"\n    }\n  }",
+   "example_output": "{\n    \"invoice_number\": \"A-1042\",\n    \"vendor\": \"Acme Supply\",\n    \"total\": 87.25,\n    \"currency\": \"USD\"\n  }",
+   "input_format": "Put one JSON object in the user message with document containing the source text and output_schema mapping every requested field to its expected type, such as string, number, boolean, or string|null. Explicitly request every field you need. Missing nullable values are returned as null.",
+   "output_format": "Returns only one JSON object containing exactly the requested fields and types. Source text is copied exactly unless a number or boolean is requested. Requested fields that are absent are returned as null."
+  },
+  "endpoints": [
+   "chat/completions"
+  ],
+  "id": "neurometric/document-structured-extraction",
+  "input_modalities": [
+   "text"
+  ],
+  "input_token_price_per_m": 10000,
+  "lifecycle_status": "active",
+  "max_output_tokens": 24576,
+  "model_type": "chat",
+  "output_modalities": [
+   "text"
+  ],
+  "output_token_price_per_m": 100000,
+  "provider_reliability": {
+   "account_quota_error_codes": [
+    "account_quota_exceeded"
+   ],
+   "incident_contact": "mailto:support@neurometric.ai",
+   "provider_id": "neurometric",
+   "regions": [
+    "us-west"
+   ],
+   "request_id_header": "x-request-id",
+   "status_url": "https://status.neurometric.ai",
+   "support_contact": "mailto:support@neurometric.ai"
+  },
+  "reliability": {
+   "capacity_scope": "global",
+   "completion_timeout_seconds": 300.0,
+   "first_token_timeout_seconds": 60.0,
+   "stream_idle_timeout_seconds": 60.0
+  },
+  "replacement_model_id": null,
+  "retirement_at": null,
+  "routable": true,
+  "status": 1,
+  "supported_features": [
+   "chat",
+   "completion",
+   "tools",
+   "json_mode",
+   "structured_outputs"
+  ],
+  "title": "neurometric/document-structured-extraction",
+  "upstream_id": "neurometric/document-structured-extraction"
+ },
+ {
+  "context_length": 32768,
+  "deprecation_at": null,
+  "display_name": "Classification Router",
+  "documentation": {
+   "description": "Classifies one or more requests against a caller-defined taxonomy and uses an explicit fallback when no supplied label applies.",
+   "example_input": "{\n    \"taxonomy_id\": \"support\",\n    \"labels\": {\n      \"Billing\": \"Charges, payments, or refunds\",\n      \"Technical\": \"Errors, outages, or product malfunctions\",\n      \"Other\": \"No other label applies\"\n    },\n    \"fallback_label\": \"Other\",\n    \"requests\": [\n      {\n        \"id\": \"REQ-1\",\n        \"text\": \"Please refund this duplicate charge.\"\n      },\n      {\n        \"id\": \"REQ-2\",\n        \"text\": \"The API returns a 502 error.\"\n      },\n      {\n        \"id\": \"REQ-3\",\n        \"text\": \"What is your office address?\"\n      }\n    ]\n  }",
+   "example_output": "{\n    \"REQ-1\": \"Billing\",\n    \"REQ-2\": \"Technical\",\n    \"REQ-3\": \"Other\"\n  }",
+   "input_format": "Put one JSON object in the user message with taxonomy_id, labels, fallback_label, and requests. labels maps each allowed label to its meaning. requests is an array of objects containing id and text. Every request ID is classified exactly once.",
+   "output_format": "Returns only one JSON object mapping each supplied request ID to exactly one supplied label. No labels outside the taxonomy are generated. The fallback label is used only when no described category applies."
+  },
+  "endpoints": [
+   "chat/completions"
+  ],
+  "id": "neurometric/classification-router",
+  "input_modalities": [
+   "text"
+  ],
+  "input_token_price_per_m": 10000,
+  "lifecycle_status": "active",
+  "max_output_tokens": 16384,
+  "model_type": "chat",
+  "output_modalities": [
+   "text"
+  ],
+  "output_token_price_per_m": 100000,
+  "provider_reliability": {
+   "account_quota_error_codes": [
+    "account_quota_exceeded"
+   ],
+   "incident_contact": "mailto:support@neurometric.ai",
+   "provider_id": "neurometric",
+   "regions": [
+    "us-west"
+   ],
+   "request_id_header": "x-request-id",
+   "status_url": "https://status.neurometric.ai",
+   "support_contact": "mailto:support@neurometric.ai"
+  },
+  "reliability": {
+   "capacity_scope": "global",
+   "completion_timeout_seconds": 300.0,
+   "first_token_timeout_seconds": 60.0,
+   "stream_idle_timeout_seconds": 60.0
+  },
+  "replacement_model_id": null,
+  "retirement_at": null,
+  "routable": true,
+  "status": 1,
+  "supported_features": [
+   "chat",
+   "completion",
+   "tools",
+   "json_mode",
+   "structured_outputs"
+  ],
+  "title": "neurometric/classification-router",
+  "upstream_id": "neurometric/classification-router"
+ },
+ {
+  "context_length": 49152,
+  "deprecation_at": null,
+  "display_name": "Conversation Summary",
+  "documentation": {
+   "description": "Converts a labeled business conversation into a structured current-state summary of the final decision, status, open actions, owners, deadlines, and risks.",
+   "example_input": "FINAL DECISION: Launch the new customer portal.\n\n  CURRENT STATUS: Waiting for security approval.\n\n  OPEN ACTION: Send the approval packet.\n  OWNER: Amina.\n  DUE: 2026-09-10.\n\n  MATERIAL RISK: Security review may delay the launch.",
+   "example_output": "{\n    \"decision\": \"Launch the new customer portal\",\n    \"current_status\": \"Waiting for security approval\",\n    \"open_items\": [\n      {\n        \"action\": \"Send the approval packet\",\n        \"owner\": \"Amina\",\n        \"due_date\": \"2026-09-10\"\n      }\n    ],\n    \"risks\": [\n      \"Security review may delay the launch\"\n    ]\n  }",
+   "input_format": "Send the conversation as text in the user message. Prefix facts with FINAL DECISION, CURRENT STATUS, OPEN ACTION, OWNER, DUE, and MATERIAL RISK. Mark outdated statements superseded and completed actions completed. These labels are required for reliable extraction.",
+   "output_format": "Returns only JSON with decision, current_status, open_items, and risks. Each open item contains action, owner, and due_date. Absent scalar values are null, absent collections are empty arrays, and completed or superseded information is excluded."
+  },
+  "endpoints": [
+   "chat/completions"
+  ],
+  "id": "neurometric/conversation-summary",
+  "input_modalities": [
+   "text"
+  ],
+  "input_token_price_per_m": 10000,
+  "lifecycle_status": "active",
+  "max_output_tokens": 24576,
+  "model_type": "chat",
+  "output_modalities": [
+   "text"
+  ],
+  "output_token_price_per_m": 100000,
+  "provider_reliability": {
+   "account_quota_error_codes": [
+    "account_quota_exceeded"
+   ],
+   "incident_contact": "mailto:support@neurometric.ai",
+   "provider_id": "neurometric",
+   "regions": [
+    "us-west"
+   ],
+   "request_id_header": "x-request-id",
+   "status_url": "https://status.neurometric.ai",
+   "support_contact": "mailto:support@neurometric.ai"
+  },
+  "reliability": {
+   "capacity_scope": "global",
+   "completion_timeout_seconds": 300.0,
+   "first_token_timeout_seconds": 60.0,
+   "stream_idle_timeout_seconds": 60.0
+  },
+  "replacement_model_id": null,
+  "retirement_at": null,
+  "routable": true,
+  "status": 1,
+  "supported_features": [
+   "chat",
+   "completion",
+   "tools",
+   "json_mode",
+   "structured_outputs"
+  ],
+  "title": "neurometric/conversation-summary",
+  "upstream_id": "neurometric/conversation-summary"
+ },
+ {
+  "context_length": 49152,
+  "deprecation_at": null,
+  "display_name": "Grounded Document QA",
+  "documentation": {
+   "description": "Answers questions only from supplied document chunks, cites the supporting chunk, and abstains when the answer is not present.",
+   "example_input": "{\n    \"chunks\": [\n      {\n        \"id\": \"DOC-1\",\n        \"status\": \"authoritative\",\n        \"text\": \"The Acme renewal date is October 15, 2026.\"\n      }\n    ],\n    \"question\": \"What is the Acme renewal date?\"\n  }",
+   "example_output": "{\n    \"answer\": \"October 15, 2026\",\n    \"citations\": [\"DOC-1\"]\n  }",
+   "input_format": "Put one JSON object in the user message with an optional request_id, a chunks array, and question. Each chunk needs a stable id, text, and status. Mark current sources authoritative and outdated sources superseded. The model will not use outside knowledge.",
+   "output_format": "Returns only JSON with answer and citations. answer is the shortest exact supporting text span or null when the documents do not contain the answer. citations contains only supporting chunk IDs and is empty when answer is null."
+  },
+  "endpoints": [
+   "chat/completions"
+  ],
+  "id": "neurometric/grounded-document-qa",
+  "input_modalities": [
+   "text"
+  ],
+  "input_token_price_per_m": 10000,
+  "lifecycle_status": "active",
+  "max_output_tokens": 24576,
+  "model_type": "chat",
+  "output_modalities": [
+   "text"
+  ],
+  "output_token_price_per_m": 100000,
+  "provider_reliability": {
+   "account_quota_error_codes": [
+    "account_quota_exceeded"
+   ],
+   "incident_contact": "mailto:support@neurometric.ai",
+   "provider_id": "neurometric",
+   "regions": [
+    "us-west"
+   ],
+   "request_id_header": "x-request-id",
+   "status_url": "https://status.neurometric.ai",
+   "support_contact": "mailto:support@neurometric.ai"
+  },
+  "reliability": {
+   "capacity_scope": "global",
+   "completion_timeout_seconds": 300.0,
+   "first_token_timeout_seconds": 60.0,
+   "stream_idle_timeout_seconds": 60.0
+  },
+  "replacement_model_id": null,
+  "retirement_at": null,
+  "routable": true,
+  "status": 1,
+  "supported_features": [
+   "chat",
+   "completion",
+   "tools",
+   "json_mode",
+   "structured_outputs"
+  ],
+  "title": "neurometric/grounded-document-qa",
+  "upstream_id": "neurometric/grounded-document-qa"
+ },
+ {
+  "context_length": 32768,
+  "deprecation_at": null,
+  "display_name": "neurometric/text-to-sql",
+  "documentation": {
+   "description": "Converts a natural-language question into one read-only SQL query using only the database dialect and schema supplied by the caller.",
+   "example_input": "DIALECT: SQLite\n\nSCHEMA:\nCREATE TABLE customers (\n    id INTEGER PRIMARY KEY,\n    name TEXT,\n    plan TEXT\n  );\n\nQUESTION:\nHow many enterprise customers are there?",
+   "example_output": "SELECT COUNT(*) AS enterprise_customer_count\n  FROM customers\n  WHERE plan = 'enterprise'",
+   "input_format": "Put plain text in the user message with three labeled sections: DIALECT, SCHEMA, and QUESTION. DIALECT identifies the SQL engine. SCHEMA contains the relevant tables, columns, keys, and relationships. QUESTION states the requested result, including exact output columns and ordering when required.",
+   "output_format": "Returns SQL text only. The output is exactly one read-only SELECT or WITH statement grounded in the supplied schema. Write operations and multiple statements are rejected. Applications should still validate the query and execute it using read-only database credentials."
+  },
+  "endpoints": [
+   "chat/completions"
+  ],
+  "id": "neurometric/text-to-sql",
+  "input_modalities": [
+   "text"
+  ],
+  "input_token_price_per_m": 50000,
+  "lifecycle_status": "active",
+  "max_output_tokens": 16384,
+  "model_type": "chat",
+  "output_modalities": [
+   "text"
+  ],
+  "output_token_price_per_m": 120000,
+  "provider_reliability": {
+   "account_quota_error_codes": [
+    "account_quota_exceeded"
+   ],
+   "incident_contact": "mailto:support@neurometric.ai",
+   "provider_id": "neurometric",
+   "regions": [
+    "us-west"
+   ],
+   "request_id_header": "x-request-id",
+   "status_url": "https://status.neurometric.ai",
+   "support_contact": "mailto:support@neurometric.ai"
+  },
+  "reliability": {
+   "capacity_scope": "global",
+   "completion_timeout_seconds": 45.0,
+   "first_token_timeout_seconds": 15.0,
+   "stream_idle_timeout_seconds": 15.0
+  },
+  "replacement_model_id": null,
+  "retirement_at": null,
+  "routable": true,
+  "status": 1,
+  "supported_features": [
+   "chat",
+   "completion",
+   "json_mode",
+   "structured_outputs"
+  ],
+  "title": "neurometric/text-to-sql",
+  "upstream_id": "neurometric/text-to-sql"
+ }
+]

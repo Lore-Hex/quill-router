@@ -1568,20 +1568,22 @@ def _filter_unserved_provider_endpoints(
         allow[provider_slug] = _authoritative_provider_model_ids(provider_slug, at=at)
 
     def _keep(endpoint: ModelEndpoint) -> bool:
+        if provider_model_operator_held(endpoint.provider, endpoint.model_id):
+            return False
+        # A route its own provider's manifest marks dark (delisted, held, or
+        # without a price) is not served, explicit media routes included.
+        if endpoint.usage_type == "Credits" and endpoint.model_id in dark.get(
+            endpoint.provider, frozenset()
+        ):
+            return False
         # Async media routes are registered only after their provider-native
         # queue contracts are implemented and tested. Chat /models manifests
         # do not list video models, so applying the chat allowlist here would
         # incorrectly remove those explicit routes.
-        if provider_model_operator_held(endpoint.provider, endpoint.model_id):
-            return False
         if endpoint.model_id in explicit_model_ids:
             return True
         if _is_provider_deprecated_model(
             endpoint.provider, endpoint.model_id, endpoint.upstream_id, at=at,
-        ):
-            return False
-        if endpoint.usage_type == "Credits" and endpoint.model_id in dark.get(
-            endpoint.provider, frozenset()
         ):
             return False
         if (

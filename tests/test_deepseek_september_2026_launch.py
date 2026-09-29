@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -7,6 +8,7 @@ from scripts.pricing import base
 from scripts.pricing.base import ModelPrice
 from scripts.pricing.parsers import deepseek as parser
 from scripts.pricing.providers import deepseek
+from tests.pinned_manifests import DEEPSEEK_DIRECT_ROWS, serve_manifest_rows
 from trusted_router import catalog
 from trusted_router import provider_lifecycle as lifecycle
 from trusted_router.catalog_data import ModelEndpoint
@@ -21,6 +23,13 @@ FLASH = "deepseek/deepseek-flash"
 PRO = "deepseek/deepseek-v4-pro"
 DATED_PRO = "deepseek/deepseek-v4-pro-0813"
 DATED_FLASH = "deepseek/deepseek-v4-flash-0731"
+
+
+@pytest.fixture
+def direct_routes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """DeepSeek's direct routes, built from its pinned manifest rows: its price
+    schedule and redirect apply to DeepSeek's own routes whatever it lists today."""
+    serve_manifest_rows(monkeypatch, tmp_path, "deepseek", DEEPSEEK_DIRECT_ROWS)
 
 
 @pytest.mark.parametrize("model", [FLASH, "deepseek/deepseek-v4-flash"])
@@ -169,6 +178,7 @@ def test_parser_handles_official_rowspans_without_stale_fallback() -> None:
     }
 
 
+@pytest.mark.usefixtures("direct_routes")
 def test_settlement_uses_authorization_quote_across_launch() -> None:
     endpoint = catalog.MODEL_ENDPOINTS[f"{PRO}@deepseek/prepaid"]
     # Published customer prices retain the existing markup and minimum rate.
@@ -181,6 +191,7 @@ def test_settlement_uses_authorization_quote_across_launch() -> None:
         ) == (prompt // 10 + cached * 9 // 10 + output // 5)
 
 
+@pytest.mark.usefixtures("direct_routes")
 def test_public_new_flash_route_and_pro_redirect_pricing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(lifecycle, "_utc_now", lambda: PRO_CUTOVER)
     client = TestClient(create_app(Settings(environment="test"), init_observability=False))
@@ -198,6 +209,7 @@ def test_public_new_flash_route_and_pro_redirect_pricing(monkeypatch: pytest.Mon
     assert "Weekends are off-peak all day in UTC" in page.text
 
 
+@pytest.mark.usefixtures("direct_routes")
 def test_flash_route_can_authorize_locally_and_advertises_tools(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -218,6 +230,7 @@ def test_flash_route_can_authorize_locally_and_advertises_tools(
 
 
 @pytest.mark.parametrize("path", ["/v1/models", "/v1/models/picker"])
+@pytest.mark.usefixtures("direct_routes")
 def test_public_catalog_revalidates_across_scheduled_price_cutover(
     monkeypatch: pytest.MonkeyPatch, path: str,
 ) -> None:

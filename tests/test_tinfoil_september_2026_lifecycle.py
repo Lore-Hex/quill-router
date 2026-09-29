@@ -98,6 +98,17 @@ def test_tinfoil_catalog_matches_glm52_cutover_state() -> None:
 
     assert (prepaid_id in MODEL_ENDPOINTS) is expected_present
     assert (byok_id in MODEL_ENDPOINTS) is expected_present
+    # The cutover retires GLM-5.2 alone, never Tinfoil's successor routes.
+    for model_id, upstream_id in (("z-ai/glm-5.3", "glm-5-3"), ("z-ai/glm-5.3-flash", "glm-5-3-flash")):
+        assert not provider_lifecycle.provider_model_retired(
+            "tinfoil", model_id, upstream_id, at=_CUTOFF
+        )
+
+
+@pytest.mark.provider_health
+def test_tinfoil_serves_the_glm_5_3_successors() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
     assert "z-ai/glm-5.3@tinfoil/prepaid" in MODEL_ENDPOINTS
     assert "z-ai/glm-5.3-flash@tinfoil/prepaid" in MODEL_ENDPOINTS
 

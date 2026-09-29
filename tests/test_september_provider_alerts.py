@@ -30,7 +30,16 @@ def test_confirmed_unavailable_routes_not_advertised(provider: str, model: str) 
     ), "An unavailable reseller must not retire the model on other providers"
 
 
+def test_morph_shared_edit_models_are_not_held() -> None:
+    # The holds above are per route: Morph's own edit models stay offered.
+    for model in ("morph/morph-v3-fast", "morph/morph-v3-large"):
+        assert not provider_model_operator_held("morph", model)
+
+
+@pytest.mark.provider_health
 def test_morph_shared_edit_models_remain_available() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
     for model in ("morph/morph-v3-fast", "morph/morph-v3-large"):
         assert any(e.provider == "morph" and e.model_id == model for e in MODEL_ENDPOINTS.values())
 

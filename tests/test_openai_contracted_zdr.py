@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
 from fastapi.testclient import TestClient
 
+from tests.pinned_manifests import OPENAI_GPT_5_5, serve_manifest_rows
 from trusted_router.catalog import (
     MODELS,
     PRIVACY_TIER_STANDARD,
@@ -17,6 +21,13 @@ from trusted_router.catalog import (
 )
 from trusted_router.config import Settings
 from trusted_router.routing import chat_route_endpoint_candidates
+
+
+@pytest.fixture(autouse=True)
+def openai_routes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """OpenAI's GPT-5.5 routes, built from its pinned manifest row: the contract
+    covers OpenAI's prepaid routes whatever OpenAI lists today."""
+    serve_manifest_rows(monkeypatch, tmp_path, "openai", [OPENAI_GPT_5_5])
 
 
 def _first_party_openai_endpoints() -> tuple[ModelEndpoint, ModelEndpoint]:

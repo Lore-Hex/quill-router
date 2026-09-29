@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+
+import pytest
 
 from scripts.pricing import refresh
 from scripts.pricing.providers import relace, stepfun
@@ -74,15 +77,33 @@ def test_stepfun_and_relace_are_fully_wired_provider_direct_routes() -> None:
     assert "relace" in PROVIDER_JURISDICTION_UNVERIFIED
 
 
+_SAMPLE_ROUTES = (
+    ("stepfun/step-3.7-flash", stepfun),
+    ("deepseek/deepseek-v4-flash-0731", relace),
+    ("moonshotai/kimi-k3", relace),
+)
+
+
 def test_stepfun_and_relace_committed_manifests_are_ingested() -> None:
     models, endpoints = _supplemental_provider_models_and_endpoints()
-    for model_id, provider in (
-        ("stepfun/step-3.7-flash", "stepfun"),
-        ("deepseek/deepseek-v4-flash-0731", "relace"),
-        ("moonshotai/kimi-k3", "relace"),
-    ):
-        assert model_id in models
-        assert f"{model_id}@{provider}/prepaid" in endpoints
+    for model_id, provider in _SAMPLE_ROUTES:
+        manifest = json.loads(provider.MANIFEST_PATH.read_text(encoding="utf-8"))
+        row = next(row for row in manifest["models"] if row["id"] == model_id)
+        # A row the refresh tombstoned is dark; a routable one is ingested.
+        if row.get("routable") is False:
+            assert f"{model_id}@{provider.SLUG}/prepaid" not in endpoints
+        else:
+            assert model_id in models
+            assert f"{model_id}@{provider.SLUG}/prepaid" in endpoints
+
+
+@pytest.mark.provider_health
+@pytest.mark.parametrize(("model_id", "provider"), _SAMPLE_ROUTES)
+def test_stepfun_and_relace_serve_their_routes(model_id: str, provider) -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    _models, endpoints = _supplemental_provider_models_and_endpoints()
+    assert f"{model_id}@{provider.SLUG}/prepaid" in endpoints
 
 
 def test_stepfun_and_relace_refresh_credentials_are_narrowly_wired() -> None:

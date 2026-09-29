@@ -837,7 +837,8 @@ def test_unauthenticated_public_reads_do_not_write_rate_limit_rows(
         "/models",
         "/providers",
         "/compare/models",
-        "/models/openai/gpt-5.2",
+        # Any model page; this one rides a route tests/catalog_vehicles.py keeps.
+        "/models/anthropic/claude-haiku-4.5",
         "/docs",
     ):
         response = client.get(path, headers=headers)

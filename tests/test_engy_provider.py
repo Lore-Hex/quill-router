@@ -10,6 +10,7 @@ import pytest
 from scripts.check_price_coverage import _DISCOVERABLE_MANIFEST_PROVIDERS
 from scripts.pricing.providers import engy
 from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS
+from trusted_router.pricing import _customer_price
 from trusted_router.providers import OPENAI_COMPATIBLE_PROVIDERS
 from trusted_router.services.inference_errors import default_provider_secret_ref
 
@@ -202,25 +203,37 @@ def test_engy_is_prepaid_zdr_but_not_confidential_or_byok() -> None:
 
 def test_engy_manifest_routes_use_exact_upstream_ids_and_customer_prices() -> None:
     endpoints = [endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "engy"]
-    expected_upstream_ids = {
-        "glm-5.2",
-        "glm-5.3-flash",
-        "qwen3.6-35b-a3b",
-    }
-    assert expected_upstream_ids <= {endpoint.upstream_id for endpoint in endpoints}
-
     manifest = json.loads(engy.MANIFEST_PATH.read_text(encoding="utf-8"))
-    manifest_upstream_ids = {
-        row["upstream_id"]
+    rows = {
+        row["upstream_id"]: row
         for row in manifest["models"]
         if row.get("model_type") == "chat" and row.get("routable") is not False
     }
-    assert {endpoint.upstream_id for endpoint in endpoints} == manifest_upstream_ids
-    assert {endpoint.usage_type for endpoint in endpoints} == {"Credits"}
-    glm = next(endpoint for endpoint in endpoints if endpoint.model_id == "z-ai/glm-5.2")
-    assert glm.prompt_price_microdollars_per_million_tokens == 717_400
-    assert glm.completion_price_microdollars_per_million_tokens == 1_582_500
-    assert glm.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 189_900
+    assert {endpoint.upstream_id for endpoint in endpoints} == set(rows)
+    for endpoint in endpoints:
+        row = rows[endpoint.upstream_id]
+        assert endpoint.usage_type == "Credits"
+        assert endpoint.prompt_price_microdollars_per_million_tokens == _customer_price(
+            row["input_token_price_per_m"]
+        )
+        assert endpoint.completion_price_microdollars_per_million_tokens == _customer_price(
+            row["output_token_price_per_m"]
+        )
+        assert endpoint.price_tiers[
+            0
+        ].prompt_cached_price_microdollars_per_million_tokens == _customer_price(
+            row["cached_input_token_price_per_m"]
+        )
+
+
+@pytest.mark.provider_health
+def test_engy_serves_its_launch_models() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    upstream_ids = {
+        endpoint.upstream_id for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "engy"
+    }
+    assert {"glm-5.2", "glm-5.3-flash", "qwen3.6-35b-a3b"} <= upstream_ids
 
 
 def test_engy_hourly_refresh_and_secret_wiring_are_complete() -> None:
