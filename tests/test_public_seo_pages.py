@@ -1380,14 +1380,16 @@ def test_model_seo_cluster_pages_are_public_and_not_openrouter_links(
 
 
 def _serve_glm_51(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The comparison peer, GLM 5.1, on a fixture route: the catalog carries it
-    even if every host has delisted it."""
-    serve_on_fixture_route(
-        monkeypatch, "z-ai/glm-5.1", "zai", author="zai",
-        model=Model(
-            id="z-ai/glm-5.1", name="Z.ai: GLM 5.1", provider="zai", context_length=204_800,
-        ),
-    )
+    """The comparison peer, GLM 5.1, on Z.AI's and Friendli's routes as fixtures
+    (a model's providers page is linked once two hosts serve it): the catalog
+    carries it even if every host has delisted it."""
+    for host in ("zai", "friendli"):
+        serve_on_fixture_route(
+            monkeypatch, "z-ai/glm-5.1", host, author="zai",
+            model=Model(
+                id="z-ai/glm-5.1", name="Z.ai: GLM 5.1", provider="zai", context_length=204_800,
+            ),
+        )
 
 
 def test_model_comparison_pages_are_public(
