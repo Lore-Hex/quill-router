@@ -1,0 +1,723 @@
+{
+  "_meta": {
+    "project": "TrustedRouter homepage rebuild",
+    "version": "1.0",
+    "finalized": "2026-09-29",
+    "data_checked_against": "trustedrouter.com /models, /pricing, /docs, /docs/spend-controls, /trust, llms.txt, github.com/Lore-Hex, customer case study (2026-09-28/29)",
+    "note": "Prices, counts and provider numbers are a snapshot. Production should read them live from the catalog source."
+  },
+  "page_order": [
+    "nav",
+    "hero",
+    "catalog",
+    "migration",
+    "verification",
+    "pricing",
+    "social_proof",
+    "faq",
+    "footer"
+  ],
+  "nav": {
+    "search_placeholder": "Search 653 models",
+    "search_shortcut": "⌘K",
+    "links": [
+      [
+        "Models",
+        "/models"
+      ],
+      [
+        "Chat",
+        "/chat"
+      ],
+      [
+        "Pricing",
+        "/pricing"
+      ],
+      [
+        "Trust",
+        "/trust"
+      ],
+      [
+        "Docs",
+        "/docs"
+      ],
+      [
+        "Status",
+        "/status",
+        "live status dot"
+      ]
+    ],
+    "theme_toggle": true,
+    "cta": "Sign in",
+    "mobile": "Collapse links, search and toggle into a Menu button below 880px."
+  },
+  "hero": {
+    "headline": "The AI router that",
+    "headline_emphasis": "shows its work.",
+    "subtitle": "Verifiably confidential compute through a single OpenAI-compatible API.",
+    "four_words": [
+      {
+        "word": "Secure",
+        "key": "secure",
+        "blurb_html": "<b>Attested gateway, open source.</b> Check any route yourself."
+      },
+      {
+        "word": "Smart",
+        "key": "smart",
+        "blurb_html": "<b>Routes to your rules:</b> model, provider, privacy level."
+      },
+      {
+        "word": "Scalable",
+        "key": "scalable",
+        "blurb_html": "<b>Three clouds, standby routes.</b> No silent fallback."
+      },
+      {
+        "word": "Savings",
+        "key": "savings",
+        "blurb_html": "<b>5.5% fee, budget caps,</b> and the cost of every request."
+      }
+    ],
+    "four_words_behavior": "Hover (mouse) or tap (touch) replaces the subtitle with the word's blurb and highlights the matching nodes on the route panel. Moving away or tapping again restores the subtitle.",
+    "highlight_map": {
+      "secure": [
+        "gateway",
+        "served provider"
+      ],
+      "smart": [
+        "your app (policy)",
+        "served provider",
+        "skipped provider"
+      ],
+      "scalable": [
+        "gateway (three clouds)",
+        "standby provider"
+      ],
+      "savings": [
+        "response cost"
+      ]
+    },
+    "primary_cta": "Get an API key",
+    "secondary_link": [
+      "Verify trust →",
+      "/trust"
+    ],
+    "model_carousel": [
+      {
+        "lab_icon": "assets/lab-anthropic.png",
+        "label": "Claude Fable 5.1"
+      },
+      {
+        "lab_icon": "assets/lab-openai.png",
+        "label": "GPT-6 Astra"
+      },
+      {
+        "lab_icon": "assets/lab-google.png",
+        "label": "Gemini 3.8 Flash"
+      },
+      {
+        "lab_icon": "assets/lab-xai.png",
+        "label": "Grok 4.6"
+      },
+      {
+        "lab_icon": "assets/lab-deepseek.png",
+        "label": "DeepSeek V4 Pro"
+      },
+      {
+        "lab_icon": "assets/lab-glm.png",
+        "label": "GLM 5.3"
+      },
+      {
+        "lab_icon": "assets/lab-kimi.png",
+        "label": "Kimi K3"
+      },
+      {
+        "lab_icon": "assets/lab-minimax.png",
+        "label": "MiniMax M3"
+      }
+    ],
+    "route_panel": {
+      "title": "One request",
+      "model": "z-ai/glm-5.3-flash",
+      "nodes": [
+        {
+          "id": "app",
+          "title": "Your app",
+          "detail": "min_privacy: \"confidential\"",
+          "tag": "OpenAI SDK"
+        },
+        {
+          "id": "gateway",
+          "title": "TrustedRouter gateway",
+          "detail": "Attested build · no content logs",
+          "tags": [
+            "GCP",
+            "AWS",
+            "AZURE"
+          ]
+        },
+        {
+          "id": "providers",
+          "items": [
+            {
+              "name": "Tinfoil",
+              "labels": [
+                "ZDR",
+                "E2EE"
+              ],
+              "seal": "✓ Attested 3m",
+              "state": "Served"
+            },
+            {
+              "name": "NEAR AI",
+              "labels": [
+                "E2EE"
+              ],
+              "state": "Standby"
+            },
+            {
+              "name": "Parasail",
+              "labels": [
+                "ZDR"
+              ],
+              "state": "Below your policy",
+              "struck": true
+            }
+          ]
+        },
+        {
+          "id": "response",
+          "title": "Response · 200",
+          "detail": "1,240 in · 380 out · $0.07385 / $0.2532 per 1M",
+          "cost": "$0.000188"
+        }
+      ],
+      "footnote": "Parasail, Together, Wafer and Baseten also serve this model, at ZDR only. They are skipped because the request asked for Confidential.",
+      "real_vs_illustrative": {
+        "real": [
+          "model id",
+          "providers and their labels",
+          "Tinfoil prices",
+          "min_privacy value",
+          "three clouds",
+          "attested gateway / no content logs"
+        ],
+        "illustrative": [
+          "token counts and the cost computed from them",
+          "'Attested 3m' seal and age",
+          "Tinfoil served vs NEAR AI standby selection"
+        ]
+      }
+    }
+  },
+  "tooltips": {
+    "ZDR": "Zero data retention. The provider keeps no prompts or outputs.",
+    "E2EE": "Confidential compute with end-to-end encryption. The prompt stays encrypted until it reaches verified provider hardware."
+  },
+  "catalog": {
+    "headline": "653 models. Every route labeled.",
+    "browse_link": [
+      "Browse all models →",
+      "/models"
+    ],
+    "count_label_all": "Popular · 6 of 653",
+    "count_label_filtered": "6 shown",
+    "filters": [
+      {
+        "label": "All",
+        "key": "all"
+      },
+      {
+        "label": "Private",
+        "key": "z",
+        "means": "models with a ZDR route"
+      },
+      {
+        "label": "Confidential",
+        "key": "c",
+        "means": "models with a Confidential (E2EE) route"
+      }
+    ],
+    "columns": [
+      "Model",
+      "Routes",
+      "Input / 1M",
+      "Output / 1M",
+      "Context"
+    ],
+    "models": {
+      "glm53f": {
+        "name": "Z.ai: GLM 5.3 Flash",
+        "id": "z-ai/glm-5.3-flash",
+        "lab_icon": "assets/lab-glm.png",
+        "route_labels": [
+          "ZDR",
+          "E2EE"
+        ],
+        "providers": 26,
+        "input_per_1m": "$0.07385",
+        "output_per_1m": "$0.2532",
+        "price_is_from": true,
+        "context": "1.05M"
+      },
+      "glm53": {
+        "name": "Z.ai: GLM 5.3",
+        "id": "z-ai/glm-5.3",
+        "lab_icon": "assets/lab-glm.png",
+        "route_labels": [
+          "ZDR",
+          "E2EE"
+        ],
+        "providers": 27,
+        "input_per_1m": "$0.82923",
+        "output_per_1m": "$2.792163",
+        "price_is_from": true,
+        "context": "1.05M"
+      },
+      "kimik3": {
+        "name": "MoonshotAI: Kimi K3",
+        "id": "moonshotai/kimi-k3",
+        "lab_icon": "assets/lab-kimi.png",
+        "route_labels": [
+          "ZDR",
+          "E2EE"
+        ],
+        "providers": 24,
+        "input_per_1m": "$2.05725",
+        "output_per_1m": "$10.28625",
+        "price_is_from": true,
+        "context": "1.05M"
+      },
+      "dsv4pro": {
+        "name": "DeepSeek V4 Pro 0813",
+        "id": "deepseek/deepseek-v4-pro-0813",
+        "lab_icon": "assets/lab-deepseek.png",
+        "route_labels": [
+          "ZDR"
+        ],
+        "providers": 1,
+        "input_per_1m": "$1.3926",
+        "output_per_1m": "$4.1778",
+        "price_is_from": false,
+        "context": "1.05M"
+      },
+      "mm3": {
+        "name": "MiniMax: MiniMax M3",
+        "id": "minimax/minimax-m3",
+        "lab_icon": "assets/lab-minimax.png",
+        "route_labels": [
+          "ZDR"
+        ],
+        "providers": 11,
+        "input_per_1m": "$0.24265",
+        "output_per_1m": "$1.0128",
+        "price_is_from": true,
+        "context": "524K"
+      },
+      "dsv4f": {
+        "name": "DeepSeek V4 Flash 0731",
+        "id": "deepseek/deepseek-v4-flash-0731",
+        "lab_icon": "assets/lab-deepseek.png",
+        "route_labels": [
+          "ZDR"
+        ],
+        "providers": 23,
+        "input_per_1m": "$0.047475",
+        "output_per_1m": "$0.09495",
+        "price_is_from": true,
+        "context": "1.05M"
+      },
+      "gpt6": {
+        "name": "OpenAI: GPT-6 Astra",
+        "id": "openai/gpt-6-astra",
+        "lab_icon": "assets/lab-openai.png",
+        "route_labels": [
+          "ZDR"
+        ],
+        "providers": 3,
+        "input_per_1m": "$10.55",
+        "output_per_1m": "$52.75",
+        "price_is_from": false,
+        "context": "1.05M"
+      },
+      "gem38": {
+        "name": "Google: Gemini 3.8 Flash",
+        "id": "google/gemini-3.8-flash",
+        "lab_icon": "assets/lab-google.png",
+        "route_labels": [
+          "ZDR"
+        ],
+        "providers": 3,
+        "input_per_1m": "$0.79125",
+        "output_per_1m": "$3.95625",
+        "price_is_from": false,
+        "context": "1.05M"
+      },
+      "dsv41f": {
+        "name": "DeepSeek V4.1 Flash",
+        "id": "deepseek/deepseek-v4.1-flash",
+        "lab_icon": "assets/lab-deepseek.png",
+        "route_labels": [
+          "ZDR",
+          "E2EE"
+        ],
+        "providers": 18,
+        "input_per_1m": "$0.0422",
+        "output_per_1m": "$0.0844",
+        "price_is_from": true,
+        "context": "1.05M"
+      },
+      "oss120": {
+        "name": "OpenAI: gpt-oss-120b",
+        "id": "openai/gpt-oss-120b",
+        "lab_icon": "assets/lab-openai.png",
+        "route_labels": [
+          "ZDR",
+          "E2EE"
+        ],
+        "providers": 23,
+        "input_per_1m": "$0.03165",
+        "output_per_1m": "$0.17935",
+        "price_is_from": true,
+        "context": "131K"
+      },
+      "gemma31": {
+        "name": "Google: Gemma 4 31B",
+        "id": "google/gemma-4-31b-it",
+        "lab_icon": "assets/lab-google.png",
+        "route_labels": [
+          "ZDR",
+          "E2EE"
+        ],
+        "providers": 15,
+        "input_per_1m": "$0.09495",
+        "output_per_1m": "$0.3587",
+        "price_is_from": true,
+        "context": "262K"
+      }
+    },
+    "lists": {
+      "all": [
+        "glm53f",
+        "glm53",
+        "kimik3",
+        "dsv4pro",
+        "dsv4f",
+        "mm3"
+      ],
+      "z": [
+        "gpt6",
+        "gem38",
+        "kimik3",
+        "dsv4pro",
+        "mm3",
+        "glm53f"
+      ],
+      "c": [
+        "glm53f",
+        "glm53",
+        "kimik3",
+        "dsv41f",
+        "oss120",
+        "gemma31"
+      ]
+    },
+    "routing_promises": {
+      "label": "Or choose a routing promise",
+      "prefix": "trustedrouter/",
+      "aliases": [
+        {
+          "alias": "trustedrouter/auto",
+          "short": "auto",
+          "tooltip": "Healthy provider rollover. For general production traffic."
+        },
+        {
+          "alias": "trustedrouter/zdr",
+          "short": "zdr",
+          "tooltip": "Zero-retention providers only. For legal and sensitive work."
+        },
+        {
+          "alias": "trustedrouter/e2e",
+          "short": "e2e",
+          "tooltip": "Confidential provider compute. For confidential workloads."
+        },
+        {
+          "alias": "trustedrouter/eu",
+          "short": "eu",
+          "tooltip": "EU-focused routes. For European workloads."
+        },
+        {
+          "alias": "trustedrouter/synth",
+          "short": "synth",
+          "tooltip": "Multiple models, one answer. For combination models."
+        }
+      ],
+      "click": "Copy the full alias to clipboard; show 'Copied trustedrouter/<alias>' in the row's hint for ~1.6s."
+    },
+    "footnote": "Customer prices per 1M tokens. \"From\" is the lowest-priced route."
+  },
+  "migration": {
+    "facts": [
+      "OpenAI SDK compatible",
+      "Any model or routing alias per request",
+      "Privacy minimums fail closed"
+    ],
+    "headline_html": "Move over with one <code>base_url</code> change.",
+    "lede": "Keep your existing OpenAI-shaped calls. Add privacy and routing constraints only when you need them.",
+    "base_url": "https://api.trustedrouter.com/v1",
+    "api_key_env": "TRUSTEDROUTER_API_KEY",
+    "primary_cta": "Get your API key",
+    "agent_link": "Migrate with your agent →",
+    "doc_links": [
+      [
+        "Migration guide →",
+        "https://trustedrouter.com/docs/migrate-from-openrouter"
+      ],
+      [
+        "Agent skill",
+        "https://trustedrouter.com/docs/agent-setup#codex-skill"
+      ],
+      [
+        "MCP server",
+        "https://trustedrouter.com/docs/mcp"
+      ]
+    ],
+    "code_tabs": [
+      "Python",
+      "TypeScript",
+      "cURL",
+      "Agent prompt"
+    ],
+    "from_sources": {
+      "openai": {
+        "b": "https://api.openai.com/v1",
+        "k": "OPENAI_API_KEY"
+      },
+      "openrouter": {
+        "b": "https://openrouter.ai/api/v1",
+        "k": "OPENROUTER_API_KEY"
+      }
+    },
+    "code_hint": "Everything else stays as it is.",
+    "agent_prompt": "Migrate this project's LLM calls to TrustedRouter.\n\n1. Read https://trustedrouter.com/llms.txt and\n   https://trustedrouter.com/docs/migrate-from-openrouter\n2. Point every OpenAI-compatible client at\n   https://api.trustedrouter.com/v1 and read the key from\n   TRUSTEDROUTER_API_KEY. Keep request and response handling as is.\n3. Check every model ID against https://trustedrouter.com/models\n   and flag any that are missing.\n4. List calls that handle sensitive data and suggest\n   provider.min_privacy \"zdr\" or \"confidential\" for each.\n5. Run the tests, then show me the diff before committing.",
+    "agent_hint": "Paste into Claude Code, Cursor or Codex.",
+    "copy_behavior": "Copy on the code panel copies the new version only (removed lines dropped, +/- markers stripped). Agent tab copies the prompt."
+  },
+  "verification": {
+    "headline": "Don't trust. Verify.",
+    "cards": [
+      {
+        "title": "An attested prompt path",
+        "body": "Prompts travel through a gateway whose build is attested, kept apart from the dashboard and billing systems.",
+        "link": [
+          "Open live trust evidence →",
+          "https://trustedrouter.com/trust"
+        ],
+        "diagram": "Your application (OpenAI-compatible request) → encrypted transport → Attested gateway (Prompt path · no content logs) → selected route → Model provider (Provider policy published separately). Below: Dashboard and billing (Control plane) — 'Runs separately. Never touches prompt content.'",
+        "width": "2 of 3"
+      },
+      {
+        "title": "Open source, down to the deploy",
+        "body": "Gateway, SDKs and deployment configuration are public. Attestation ties that source to the code serving requests.",
+        "link": [
+          "View the repositories →",
+          "https://github.com/Lore-Hex"
+        ],
+        "diagram": "Checklist: Read the source / Check the attestation / Match the digest to a commit / Verify it fails closed. Repo chips linked: quill-router, quill-cloud-proxy, quill-cloud-infra, trusted-router-py, trusted-router-js",
+        "width": "1 of 3"
+      },
+      {
+        "title": "Three clouds, visible fallback",
+        "body": "Provider and model health are measured continuously, with public latency and availability history.",
+        "link": [
+          "View public status →",
+          "https://trustedrouter.com/status"
+        ],
+        "diagram": "GCP · AWS · AZURE, 'fallback stays on the attested path'",
+        "width": "1 of 3"
+      },
+      {
+        "title": "Fails closed, never quietly downgrades",
+        "body": "If no route meets your privacy minimum, the request stops before inference instead of falling back to a weaker one.",
+        "link": [
+          "Read the privacy controls →",
+          "https://trustedrouter.com/docs"
+        ],
+        "diagram": "deepseek-v4-pro-0813 · min_privacy: \"confidential\" → only route → Baseten (ZDR · below minimum, struck) → Stopped (Before inference)",
+        "width": "2 of 3"
+      }
+    ],
+    "layout": "Bento 3 columns, 2 rows. Each card = inset diagram canvas (dot grid, darker) + caption panel (lighter). Cards in a row share diagram height and caption start via CSS subgrid."
+  },
+  "pricing": {
+    "headline": "See what your AI bill is made of.",
+    "link": [
+      "See pricing →",
+      "https://trustedrouter.com/pricing"
+    ],
+    "terms": [
+      "Provider cost + 5.5%",
+      "No monthly plan or seat fees",
+      "Bring your own provider keys",
+      "Card, ACH, PayPal or cryptocurrency"
+    ],
+    "points": [
+      {
+        "title": "Budgets that count what's in flight",
+        "body": "Daily, weekly or monthly limits per key. Strict mode counts requests still running, so parallel agents can't overrun the window.",
+        "evidence": "budget_strict: true → 429 spending window exhausted",
+        "link": [
+          "Set spend controls →",
+          "https://trustedrouter.com/docs/spend-controls"
+        ]
+      },
+      {
+        "title": "Every route priced before you call",
+        "body": "Input, cached input and output rates are published for every provider, so a route change never hides in your bill.",
+        "evidence": "glm-5.3-flash input $0.07385 to $2.11 · 28× spread",
+        "link": [
+          "Compare route prices →",
+          "https://trustedrouter.com/models"
+        ]
+      }
+    ]
+  },
+  "social_proof": {
+    "eyebrow": "Customer story · Robot, Robot & Human",
+    "numbers": "170,974 legal documents. Billions of routed tokens. Production in three weeks.",
+    "body": "RRH uses one OpenAI-compatible API for extraction, retrieval preparation and multi-stage legal reasoning, while every request crosses TrustedRouter's attested gateway.",
+    "case_study": [
+      "Read the case study →",
+      "https://trustedrouter.com/customers/robot-robot-human"
+    ],
+    "quote": "We handle other people's privileged litigation documents, the kind of material that gets subpoenaed. ‘Trust us, we won't peek’ was never an acceptable answer to give a client.",
+    "quote_style": "Italic serif; the inner quote ‘Trust us, we won't peek’ set upright.",
+    "attribution": "— Robot, Robot & Human",
+    "attribution_link": "https://trustedrouter.com/customers/robot-robot-human",
+    "press": {
+      "label": "Featured in",
+      "source": "Axios",
+      "quote": "In a demo, I was able to use a DeepSeek model in under 30 seconds using TrustedRouter, an open-source routing company.",
+      "quote_style": "Italic",
+      "link": [
+        "Read the story →",
+        "https://www.axios.com/2026/08/25/routing-is-coming-for-the-frontier-ai-labs"
+      ]
+    }
+  },
+  "faq": {
+    "headline": "What developers ask before routing.",
+    "behavior": "Accordion; first item open by default; + rotates to ×.",
+    "items": [
+      [
+        "What is TrustedRouter?",
+        "A privacy-first AI gateway that routes requests across many providers through one OpenAI-compatible API without logging prompt or output content."
+      ],
+      [
+        "Is this an OpenRouter alternative?",
+        "Yes, with an attested prompt path, public source, explicit privacy aliases, and fail-closed behavior as core design constraints."
+      ],
+      [
+        "Do you log prompts or outputs?",
+        "No. Prompt and output content are intentionally excluded from the control plane and metadata systems. Optional content export requires explicit destination-level configuration."
+      ],
+      [
+        "What does attested gateway mean?",
+        "The gateway runs in a Trusted Execution Environment and publishes evidence that connects the running image to public source. You can verify that evidence on the trust page."
+      ],
+      [
+        "Can I bring my own provider keys?",
+        "Yes. BYOK lets you retain provider commitments or enterprise rate limits while using the TrustedRouter routing and trust boundary."
+      ],
+      [
+        "What happens if attestation fails?",
+        "The gateway fails closed. It does not silently route prompts through an unverified fallback."
+      ],
+      [
+        "How do I migrate?",
+        "Keep the OpenAI SDK, change the base URL, and use the same chat or Responses calls. The migration guide includes tested examples."
+      ]
+    ]
+  },
+  "footer": {
+    "band": {
+      "headline_html": "Every model. One <em>verifiable</em> prompt path.",
+      "primary_cta": "Get your API key",
+      "secondary": [
+        "Talk to sales →",
+        "https://calendly.com/joseph-perla/15min"
+      ]
+    },
+    "brand_line": "Your prompts and outputs stay ephemeral. Private, by design.",
+    "status_pill": "All systems operational (must be driven by live status; hide or show last-check time when stale)",
+    "columns": {
+      "Product": [
+        "Models",
+        "Chat",
+        "Choose a model",
+        "Compare models",
+        "Providers",
+        "Pricing",
+        "Synth",
+        "Token exchanges",
+        "Enterprise"
+      ],
+      "Developers": [
+        "Documentation",
+        "60-second quickstart",
+        "Vibe coder quickstart",
+        "Migrate from OpenRouter",
+        "Agent setup",
+        "MCP server",
+        "Python SDK",
+        "TypeScript SDK",
+        "llms.txt"
+      ],
+      "Trust": [
+        "Trust and attestation",
+        "Security",
+        "Status",
+        "Privacy",
+        "DPA",
+        "BAA",
+        "Subprocessors",
+        "Confidential AI badge"
+      ],
+      "Compare": [
+        "OpenRouter alternative",
+        "Gateway comparisons",
+        "Private LLM API",
+        "EU AI models",
+        "US AI models"
+      ],
+      "Company": [
+        "About",
+        "Blog",
+        "Customer story",
+        "Careers",
+        "Contact",
+        "Support",
+        "Feature request",
+        "Discord"
+      ]
+    },
+    "emphasized_links": [
+      "Models",
+      "Pricing",
+      "Documentation",
+      "Vibe coder quickstart",
+      "Trust and attestation",
+      "OpenRouter alternative",
+      "Blog"
+    ],
+    "base": {
+      "left": "© 2026 Lore Hex Corp.",
+      "middle": [
+        "Terms",
+        "Privacy",
+        "GitHub",
+        "Discord"
+      ],
+      "right": "Open source · Attested · Fails closed"
+    }
+  }
+}

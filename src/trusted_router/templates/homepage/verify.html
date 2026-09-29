@@ -1,0 +1,39 @@
+<section id="verify"><div class="trv">
+ <div class="vh"><h2>Don't trust. Verify.</h2></div>
+ <div class="bento">
+  <div class="card w2">
+   <div class="cap"><div class="top"><h3>An attested prompt path</h3></div><p>Prompts travel through a gateway whose build is attested, kept apart from the dashboard and billing systems.</p><a class="go" href="/trust">Open live trust evidence →</a></div><details class="mobile-disclosure proof-disclosure" id="proof-example-1" data-mobile-disclosure open><summary><span>View the prompt-path diagram</span><span class="disclosure-indicator" aria-hidden="true">+</span></summary><div class="disclosure-body"><div class="vis">
+    <div class="flow">
+     <div class="nd"><span class="t">Your application</span><span class="d">OpenAI-compatible request</span></div>
+     <div class="ar"><i></i>encrypted<br>transport</div>
+     <div class="nd hi"><span class="t">Attested gateway</span><span class="d">Prompt path · no content logs</span></div>
+     <div class="ar"><i></i>selected<br>route</div>
+     <div class="nd"><span class="t">Model provider</span><span class="d">Provider policy published separately</span></div>
+    </div>
+    <div class="ctl"><div class="nd"><span class="t">Dashboard and billing</span><span class="d">Control plane</span></div><span class="x">Runs separately. Never touches prompt content.</span></div>
+   </div></div></details></div>
+
+  <div class="card">
+   <div class="cap"><div class="top"><h3>Open source, down to the deploy</h3></div><p>Gateway, SDKs and deployment configuration are public. Attestation ties that source to the code serving requests.</p><a class="go" href="https://github.com/Lore-Hex">View the repositories →</a></div><details class="mobile-disclosure proof-disclosure" id="proof-example-2" data-mobile-disclosure open><summary><span>Explore the source and checklist</span><span class="disclosure-indicator" aria-hidden="true">+</span></summary><div class="disclosure-body"><div class="vis">
+    <ul class="chk"><li>Read the source</li><li>Check the attestation</li><li>Match the digest to a commit</li><li>Verify it fails closed</li></ul>
+    <div class="repos"><a href="https://github.com/Lore-Hex/quill-router">quill-router</a><a href="https://github.com/Lore-Hex/quill-cloud-proxy">quill-cloud-proxy</a><a href="https://github.com/Lore-Hex/quill-cloud-infra">quill-cloud-infra</a><a href="https://github.com/Lore-Hex/trusted-router-py">trusted-router-py</a><a href="https://github.com/Lore-Hex/trusted-router-js">trusted-router-js</a></div>
+   </div></div></details></div>
+
+  <div class="card">
+   <div class="cap"><div class="top"><h3>Three clouds, visible fallback</h3></div><p>Provider and model health are measured continuously, with public latency and availability history.</p><a class="go" href="/status">View public status →</a></div><details class="mobile-disclosure proof-disclosure" id="proof-example-3" data-mobile-disclosure open><summary><span>View the cloud deployment diagram</span><span class="disclosure-indicator" aria-hidden="true">+</span></summary><div class="disclosure-body"><div class="vis">
+    <div class="clouds"><div class="nd"><span class="t">GCP</span></div><div class="nd"><span class="t">AWS</span></div><div class="nd"><span class="t">AZURE</span></div></div>
+    <div class="fb"><i></i>fallback stays on the attested path<i></i></div>
+   </div></div></details></div>
+
+  <div class="card w2">
+   <div class="cap"><div class="top"><h3>Fails closed, never quietly downgrades</h3></div><p>If no route meets your privacy minimum, the request stops before inference instead of falling back to a weaker one.</p><a class="go" href="/docs">Read the privacy controls →</a></div><details class="mobile-disclosure proof-disclosure" id="proof-example-4" data-mobile-disclosure open><summary><span>View the privacy-policy example</span><span class="disclosure-indicator" aria-hidden="true">+</span></summary><div class="disclosure-body"><div class="vis">
+    <div class="fc">
+     <div class="nd"><span class="t">deepseek-v4-pro-0813</span><span class="d">min_privacy: "confidential"</span></div>
+     <div class="ar"><i></i>only<br>route</div>
+     <div class="nd no"><span class="t">Baseten</span><span class="d">ZDR · below minimum</span></div>
+     <div class="ar"><i></i></div>
+     <div class="nd stop"><span class="t">Stopped</span><span class="d">Before inference</span></div>
+    </div>
+   </div></div></details></div>
+ </div>
+</div></section>

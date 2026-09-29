@@ -366,6 +366,8 @@ class Settings(BaseSettings):
     )
 
     environment: str = "local"
+    homepage_landscape_enabled: bool = False
+    homepage_review_tools_enabled: bool = False
     release: str = "local"
     service_name: str = "trusted-router"
     # One image serves several deliberately disjoint process roles. ``combined``

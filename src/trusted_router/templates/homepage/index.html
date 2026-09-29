@@ -1,0 +1,41 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">{% if homepage_noindex %}<meta name="robots" content="noindex,nofollow">{% endif %}<meta name="theme-color" content="#050706"><title>TrustedRouter — The AI router that shows its work</title><meta name="description" content="Verifiably confidential compute through a single OpenAI-compatible API.">{% include "_favicon.html" %}<link rel="preload" href="/static/homepage/archivo.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="/static/homepage/homepage-modules.css?v={{ homepage_version }}"><link rel="stylesheet" href="/static/homepage/font-comparison.css?v={{ homepage_version }}"><link rel="stylesheet" href="/static/homepage/homepage-landscape.css?v={{ homepage_version }}"><script nonce="{{ csp_nonce() }}">document.documentElement.dataset.font=(["archivo","jakarta","plex","manrope"].includes(new URLSearchParams(location.search).get("font"))?new URLSearchParams(location.search).get("font"):"archivo");</script><script defer src="/static/homepage/font-comparison.js?v={{ homepage_version }}"></script><script defer src="/static/homepage/homepage.js?v={{ homepage_version }}"></script><link rel="canonical" href="{{ canonical_site_url }}">
+<meta property="og:type" content="website"><meta property="og:title" content="TrustedRouter — The AI router that shows its work"><meta property="og:description" content="Verifiably confidential compute through a single OpenAI-compatible API."><meta property="og:url" content="{{ site_url }}"><meta property="og:image" content="{{ og_image }}"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="{{ og_image }}">
+<script type="application/ld+json" nonce="{{ csp_nonce() }}">{{ organization_json_ld|safe }}</script>
+<script nonce="{{ csp_nonce() }}">window.__TR__ = {{ tr_config|safe }};</script>
+<script defer src="/static/dashboard.js?v={{ static_version }}"></script>
+<link rel="stylesheet" href="/static/homepage/application.css?v={{ homepage_version }}">
+<script nonce="{{ csp_nonce() }}">
+(() => {
+  const root = document.documentElement;
+  let layoutWidth = 0;
+  function sizeHero() {
+    const width = root.clientWidth;
+    // Phone browser bars and the software keyboard only change height.
+    // Recompute for a genuine width/orientation change, not for scroll chrome.
+    if (width === layoutWidth && matchMedia('(max-width:1000px), (pointer:coarse)').matches) return;
+    layoutWidth = width;
+    const probe = document.createElement('div');
+    probe.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none;height:100svh;width:0';
+    root.append(probe);
+    const height = probe.getBoundingClientRect().height || innerHeight;
+    probe.remove();
+    root.style.setProperty('--hero-vh', `${height / 100}px`);
+    root.classList.toggle('hero-compact', height <= 740);
+    root.classList.toggle('hero-short', height <= 600);
+    root.classList.toggle('hero-landscape', height <= 480);
+    root.classList.add('hero-sized');
+  }
+  sizeHero();
+  addEventListener('resize', sizeHero, {passive:true});
+})();
+</script>
+</head><body{% if not homepage_review %} class="homepage-production"{% endif %}><a class="skip-link" href="#main">Skip to content</a>{% if homepage_review %}<aside class="preview-tools"><nav aria-label="Compare designs"><a href="http://127.0.0.1:3000/">Token Exchange</a><a href="/" aria-current="page">TrustedRouter</a><a href="http://127.0.0.1:3000/design-kit/">Design kit</a></nav><details class="type-lab"><summary>Typography lab</summary><aside class="font-review" aria-label="Font comparison"><div class="wrap font-inner"><label for="font-choice">Preview typography</label><select id="font-choice" aria-describedby="font-description" disabled><option value="archivo">1 · Archivo — baseline</option><option value="jakarta">2 · Plus Jakarta Sans headings</option><option value="plex">3 · IBM Plex Sans headings</option><option value="manrope">4 · Manrope throughout</option></select><p id="font-description" class="font-meta" role="status">Headings: Archivo · Body / navigation: Archivo</p><div class="font-links"><a id="font-share" href="?font=archivo">Link to this option</a><a href="http://127.0.0.1:3000/font-licenses/">Font sources &amp; licenses</a></div><span id="font-loading" role="status">Loading comparison fonts…</span></div></aside></details></aside>{% endif %}<div class="page">
+<main id="main">{% include "homepage/top.html" %}
+{% include "homepage/request.html" %}{% include "homepage/models.html" %}
+{% include "homepage/migrate.html" %}
+{% include "homepage/verify.html" %}
+{% include "homepage/pricing.html" %}
+{% include "homepage/customers.html" %}
+{% include "homepage/faq.html" %}
+</main>{% include "homepage/footer.html" %}
+</div><dialog id="model-search" aria-labelledby="search-title"><div class="search-head"><h2 id="search-title">Find a model</h2><button type="button" data-close-search aria-label="Close model search">×</button></div><label for="model-query">Search the model catalog</label><input id="model-query" type="search" placeholder="Model name or ID" autocomplete="off"><p class="search-note"><a class="" href="/models">Browse the full catalog →</a></p><p id="search-count" role="status"></p><button type="button" class="catalog-search" id="search-retry" hidden>Try again</button><div id="search-results"></div></dialog><div class="copy-feedback" role="status" aria-live="polite"></div><script id="homepage-data" type="application/json" nonce="{{ csp_nonce() }}">{{ homepage_data|tojson }}</script>{% include "public/_signin.html" %}</body></html>

@@ -1,0 +1,7 @@
+/* Application integration only. Approved homepage styles remain separate. */
+body.homepage-production{--preview-bar-height:0px}
+.signin-modal{max-width:380px;box-shadow:0 24px 60px #0009}
+.signin-modal h2{margin:0 0 6px;font-size:24px}.signin-sub,.signin-foot{color:var(--muted);font-size:13px}
+.signin-close{position:absolute;top:10px;right:12px;background:none;border:0;color:var(--cream);font-size:22px;min-width:44px;min-height:44px}
+.signin-providers{display:flex;flex-direction:column;gap:10px}.signin-btn{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid #526859;border-radius:6px;background:#14251c;color:var(--cream);font-size:14px;min-height:44px}.signin-btn span{width:24px;text-align:center}.signin-foot{margin-top:18px}.signup-error{padding:12px;border:1px solid #F0B3A6;color:#F0B3A6}
+#search-retry{padding:10px 14px;border:1px solid #526859;background:#14251c;color:var(--cream);border-radius:6px}

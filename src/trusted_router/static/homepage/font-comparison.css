@@ -1,0 +1,14 @@
+@font-face{font-family:"Plus Jakarta Sans";src:url('/static/homepage/fonts/plusjakartasans.ttf') format('truetype');font-weight:200 800;font-display:swap}
+@font-face{font-family:"IBM Plex Sans";src:url('/static/homepage/fonts/ibmplexsans.ttf') format('truetype');font-weight:100 700;font-display:swap}
+@font-face{font-family:Manrope;src:url('/static/homepage/fonts/manrope.ttf') format('truetype');font-weight:200 800;font-display:swap}
+:root{--heading-font:var(--font)}
+html[data-font=jakarta]{--heading-font:"Plus Jakarta Sans",Arial,sans-serif}
+html[data-font=plex]{--heading-font:"IBM Plex Sans",Arial,sans-serif}
+html[data-font=manrope]{--font:Manrope,Arial,sans-serif;--heading-font:var(--font)}
+h1,h2,h3,.workload summary strong{font-family:var(--heading-font)}
+html[data-font=manrope] pre,html[data-font=manrope] code,html[data-font=manrope] .node-glyph{font-family:var(--font)}
+/* Only the preview controls have new layout rules. Specimen metrics are untouched. */
+.font-review{background:#101612;border-bottom:1px solid var(--line);font:13px/1.5 Archivo,Arial,sans-serif;color:#d5e4da;overflow-anchor:none}
+.font-review .font-inner{display:flex;align-items:center;gap:12px 18px;flex-wrap:wrap;padding-block:12px}
+.font-review label{font-weight:500}.font-review select{font:14px/1.4 Archivo,Arial,sans-serif;color:#edf8f5;background:#14251c;border:1px solid #425f4c;border-radius:6px;min-height:44px;max-width:100%;padding:8px 30px 8px 12px}.font-review select:focus-visible{outline:3px solid #cce8d7;outline-offset:3px}.font-review p{color:#bac9bf;font:inherit}.font-review a{color:#cce8d7}.font-meta{flex:1;min-width:220px}.font-links{display:flex;gap:16px;align-items:center}.font-review select:disabled{opacity:.6}
+@media(max-width:760px){.font-review .font-inner{gap:8px 12px}.font-review label{width:100%}.font-review select{width:100%}.font-meta{flex-basis:100%}}
