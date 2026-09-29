@@ -134,29 +134,25 @@ def test_deploy_pins_thirty_cent_signup_credit_policy() -> None:
     assert '"TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS=300000"' in rollout
 
 
-def test_deploy_pins_stage_c_admission_acceptance_off() -> None:
+def test_deploy_renders_only_the_kept_spend_lease_settings() -> None:
+    # The spend-lease and regional-quota pilots are removed (2026-09). Two
+    # names outlive them: the authorize-time billing-pause gate, named before
+    # the removal, and the Stage D accepted-digest allowlist.
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
+    env_vars = rollout.split("ENV_VARS=(", 1)[1].split("\n)", 1)[0]
 
-    assert '"TR_SPEND_LEASE_ADMISSION_ACCEPT=false"' in rollout
-
-
-def test_deploy_pins_spend_lease_issuance_and_binding_off() -> None:
-    # Bigtable ledger retirement (2026-09-27): no new spend leases are minted,
-    # both flags render false literally, and any other binding value is
-    # rejected before a revision exists.
-    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
-
-    assert '"TR_SPEND_LEASE_ISSUANCE_ENABLED=false"' in rollout
-    assert '"TR_SPEND_LEASE_BINDING_ENABLED=false"' in rollout
-    assert "TR_SPEND_LEASE_BINDING_ENABLED=${TR_SPEND_LEASE_BINDING_ENABLED} is retired" in rollout
-    assert (
-        '"TR_SPEND_LEASE_PILOT_WORKSPACE_IDS='
-        '45819281-0ce9-4811-a0cd-c660ab3a116d"' in rollout
+    assert '"TR_SPEND_LEASE_TRUST_ELIGIBILITY_ENABLED=true"' in env_vars
+    assert '"TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS="' in env_vars
+    rendered = set(
+        re.findall(
+            r'"((?:TR_SPEND_LEASE|TR_REGIONAL_QUOTA|REGIONAL_QUOTA)_[A-Z0-9_]+)=',
+            env_vars,
+        )
     )
-    # The ledger table and app-profile map are no longer rendered at all: a
-    # rendered profile map is what makes the store open a Bigtable client.
-    assert "TR_SPEND_LEASE_BIGTABLE_TABLE" not in rollout
-    assert "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES" not in rollout
+    assert rendered == {
+        "TR_SPEND_LEASE_TRUST_ELIGIBILITY_ENABLED",
+        "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS",
+    }
 
 
 def test_deploy_removes_only_explicitly_missing_optional_secrets() -> None:
@@ -333,128 +329,33 @@ def test_all_attested_control_plane_regions_remain_warm() -> None:
     assert '"TR_SPANNER_POOL_SIZE=${TR_SPANNER_POOL_SIZE}"' in rollout
 
 
-def test_production_deploy_interlocks_regional_quota_issuance() -> None:
-    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
-    helper = (ROOT / "scripts/deploy/regional_quota_rollout.sh").read_text()
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text()
-
-    assert 'source "${SCRIPT_DIR}/regional_quota_rollout.sh"' in rollout
-    # Capability is a source pin since the ledger retirement (2026-09-27); the
-    # live marker is never copied and an explicit true is refused.
-    assert "\nREGIONAL_QUOTA_LEASES_ENABLED=false\n" in rollout
-    assert 'read_primary_regional_quota_env "TR_REGIONAL_QUOTA_LEASES_ENABLED"' not in rollout
-    assert "is retired; the regional escrow ledger is gone" in rollout
-    assert (
-        '"TR_REGIONAL_QUOTA_LEASES_ENABLED=${REGIONAL_QUOTA_LEASES_ENABLED}"'
-        in rollout
-    )
-    assert (
-        '"TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED='
-        '${REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED}"'
-        in rollout
-    )
-    assert "regional quota issuance is retired" in rollout
-    assert 'service.get("status", {}).get("traffic", [])' in helper
-    assert "latestCreatedRevisionName" in helper
-    assert "latestReadyRevisionName" in helper
-    assert 'regional_quota_lease_issuance:' in workflow
-    assert (
-        "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED: "
-        "${{ inputs.regional_quota_lease_issuance }}"
-        in workflow
-    )
-    assert "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES=" not in rollout
-    assert "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES=" not in rollout
-
-
-def test_production_deploy_retires_the_ledger_workers() -> None:
-    # Ledger retirement (2026-09-27): no release provisions a ledger or deploys
-    # a reconciler; the drain gate runs before any revision changes and the
-    # worker teardown runs after every secondary is ramped or held.
-    orchestrator = (ROOT / "scripts/deploy-gcp.sh").read_text()
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text()
-    secondary_ramp = (ROOT / "scripts/deploy/ramp_secondaries.sh").read_text()
-
-    for retired in (
-        "regional_quota_ledger.sh",
-        "spend_lease_ledger.sh",
-        "regional_quota_reconciler.sh",
-        "spend_lease_reconciler.sh",
-    ):
-        assert f"bash scripts/deploy/{retired}" not in workflow, retired
-        assert f"deploy/{retired}" not in orchestrator, retired
-        assert f"bash \"${{SCRIPT_DIR}}/{retired}\"" not in secondary_ramp, retired
-
-    migrate_schema = workflow.split("\n  migrate-schema:\n", 1)[1].split(
-        "\n  sync-runtime-secrets:\n", 1
-    )[0]
-    assert "run: bash scripts/deploy/regional_quota_drain_gate.sh" in migrate_schema
-    rollout_secondaries = workflow.split("\n  rollout-secondaries:\n", 1)[1].split(
-        "\n  public-surface-companion:\n", 1
-    )[0]
-    ramp = rollout_secondaries.index("run: bash scripts/deploy/ramp_secondaries.sh")
-    retire = rollout_secondaries.index("run: bash scripts/deploy/retire_ledger_workers.sh")
-    synthetic = rollout_secondaries.index("- name: Deploy synthetic monitor Cloud Run Job")
-    assert ramp < retire < synthetic
-
-    gate = orchestrator.index('deploy/regional_quota_drain_gate.sh"')
-    rollout = orchestrator.index('deploy/rollout.sh"')
-    teardown = orchestrator.index('deploy/retire_ledger_workers.sh"')
-    assert gate < rollout < teardown
-
-
-
-def test_regional_quota_worker_and_provisioner_script_contracts() -> None:
-    # Unwired since the 2026-09-27 ledger retirement, but still on disk until
-    # the ledger code is deleted with them; keep their contracts honest.
+def test_rollout_preserves_operator_pins_from_the_active_traffic_revision() -> None:
     library = (ROOT / "scripts/deploy/_lib.sh").read_text()
-    provisioner = (ROOT / "scripts/deploy/regional_quota_ledger.sh").read_text()
-    reconciler = (ROOT / "scripts/deploy/regional_quota_reconciler.sh").read_text()
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
+    internal = (ROOT / "scripts/deploy/internal_surface.sh").read_text()
+    public = (ROOT / "scripts/deploy/public_surface.sh").read_text()
 
-    assert "--transactional-writes" in provisioner
-    assert "trusted-router-logs-c1" in library
-    assert "us-central1=tr-quota-us-central1" in library
-    # R4: every region, EU included, has a regional profile routed to c1; a
-    # second transactional cluster (the EU cluster) stays forbidden until an
-    # isolated EU ledger exists.
-    assert "europe-west4=tr-quota-europe-west4" in library
-    assert "trusted-router-logs-eu" not in library
-    assert 'SCHEDULE="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULE:-* * * * *}"' in reconciler
-    assert 'JOB_REGION="${TR_REGIONAL_QUOTA_RECONCILER_JOB_REGION:-us-east4}"' in reconciler
+    # The shared resolver describes the one 100%-traffic revision, never the
+    # latest candidate or the service template: after a rollback those point
+    # at the rejected revision while traffic serves the safe predecessor.
+    assert "active_revision_json() {" in library
+    assert "revision_env() {" in library
+    assert 'service.get("status", {}).get("traffic", [])' in library
+    assert "latestCreatedRevisionName" in library
+    assert "latestReadyRevisionName" in library
     assert (
-        'SCHEDULER_REGION="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULER_REGION:-${TR_PRIMARY_REGION}}"'
-        in reconciler
+        'PRIMARY_REVISION_JSON="$(active_revision_json "$TR_PRIMARY_REGION" true)"'
+        in rollout
     )
-    assert "trusted_router.regional_quota_reconcile_gate" in reconciler
-    assert "trusted_router.regional_quota_reconcile_cli" not in reconciler
-    assert '"TR_ENVIRONMENT=worker"' in reconciler
-    assert '"TR_SERVICE_SURFACE=control"' in reconciler
-    assert '"TR_SPANNER_POOL_SIZE=1"' in reconciler
-    assert '"TR_REGIONAL_QUOTA_RECONCILER_LOCK_BUCKET=${LOCK_BUCKET}"' in reconciler
-    assert '"TR_REGIONAL_QUOTA_RECONCILER_LOCK_LEASE_SECONDS=240"' in reconciler
-    assert "roles/storage.objectUser" in reconciler
-    assert "if ! gc storage buckets describe" in reconciler
-    assert "--oauth-service-account-email=\"$RUN_SERVICE_ACCOUNT\"" in reconciler
-    assert "--clear-headers" in reconciler
-    assert "gc secrets" not in reconciler
-    assert "trustedrouter-internal-gateway-token" not in reconciler
-    assert "gc run jobs execute" in reconciler
-    assert reconciler.index("gc run jobs execute") < reconciler.index("gc scheduler jobs update")
-    assert reconciler.index("gc run jobs execute") < reconciler.index("gc scheduler jobs create")
-    assert "--max-retries 0" in reconciler
-    assert "--task-timeout 180s" in reconciler
-    assert "--max-retry-attempts=3" in reconciler
-    assert "--max-retry-duration=45s" in reconciler
-    assert "--max-doublings=1" in reconciler
-    assert "scheduler_state" in reconciler
-    assert '[ "$scheduler_state" = "PAUSED" ]' in reconciler
-    assert "skipping automatic reconciler execution while containment pause is active" in reconciler
-    assert "preserving intentional regional quota reconciler pause" in reconciler
-    assert '--route-to="$cluster"' in provisioner
-    assert "singleClusterRouting.clusterId" in provisioner
-    assert "singleClusterRouting.allowTransactionalWrites" in provisioner
-    assert "refusing regional quota profile drift" in provisioner
-    assert "gc run jobs delete" in reconciler
+    assert 'read_primary_revision_env TR_TRUST_STRIPE_ACCOUNT_ID ""' in rollout
+    # Both split surfaces derive their configuration through the same helper,
+    # sourced from the shared library.
+    for surface in (internal, public):
+        assert 'source "${SCRIPT_DIR}/_lib.sh"' in surface
+        assert 'active_revision_json "$TR_PRIMARY_REGION" false' in surface
+    # The image is pinned to its immutable digest before any revision exists.
+    assert "resolve_image_digest() {" in library
+    assert "\nresolve_image_digest\n" in rollout
 
 
 def test_deploy_preserves_request_record_mode_without_silent_legacy_fallback() -> None:

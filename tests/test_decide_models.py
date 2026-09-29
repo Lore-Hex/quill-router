@@ -335,14 +335,14 @@ def test_resolvers_expose_relaxed_policy_without_changing_normalized_inputs(
             "allow_fallbacks": False,
         },
     }, Settings(environment="test"))
-    original_hash = inputs.routing_policy_hash
+    original = replace(inputs)
     resolver = decide_route_endpoint_candidates if hosted else chat_route_endpoint_candidates
     candidates = resolver(inputs, defer_no_fallback_selection=defer_selection)
     assert isinstance(candidates, list)
     assert len(candidates) == 1
     assert candidates.effective_preferences == replace(inputs.preferences, data_collection=None)
     assert inputs.preferences.data_collection == "deny"
-    assert inputs.routing_policy_hash == original_hash
+    assert inputs == original
 
 
 def _assert_no_financial_side_effects() -> None:

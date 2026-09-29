@@ -98,9 +98,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 from scripts.deploy.service_surface_url_map import rewrite_url_map
 
@@ -163,7 +161,7 @@ for a in "$@"; do
     recorded="${recorded//$'\t'/\\t}"
     printf -v record '%s\t%s' "$record" "$recorded"
 done
-# Background reconcilers share this log: append the complete record at once.
+# Parallel region deploys share this log: append the complete record at once.
 printf '%s\n' "$record" >> "$HARNESS_ARGV_LOG"
 # Drain stdin before answering. A stub that exits without reading closes the
 # pipe under its upstream, and `aws ecr get-login-password | docker login
@@ -760,17 +758,10 @@ if [ -n "${HARNESS_FAILURES:-}" ] && [ -f "$HARNESS_FAILURES" ]; then
   done < "$HARNESS_FAILURES"
 fi
 
-# Immutable artifact metadata used by regional quota deployment interlocks.
+# Immutable artifact digest: rollout.sh pins the mutable image tag to it before
+# any revision is created, so every region deploys the same artifact.
 if [[ "$joined" == *"artifacts docker images describe"*"image_summary.digest"* ]]; then
   printf 'sha256:%064d\n' 0
-  exit 0
-fi
-if [[ "$joined" == *"docker buildx imagetools inspect"* ]]; then
-  if [ -n "${HARNESS_IMAGE_CONFIG:-}" ]; then
-    printf '%s\n' "$HARNESS_IMAGE_CONFIG"
-  else
-    printf '%s\n' '{"config":{"Labels":{"com.trustedrouter.accounting_protocol":"2"}}}'
-  fi
   exit 0
 fi
 
@@ -1033,10 +1024,6 @@ _SYNTHETIC_COMBINED_JOB_JSON = json.dumps(
                                             "value": "combined",
                                         },
                                         {
-                                            "name": "TR_SPEND_LEASE_SOAK_PROBE_ENABLED",
-                                            "value": "false",
-                                        },
-                                        {
                                             "name": "TR_INTERNAL_GATEWAY_TOKEN",
                                             "valueFrom": {
                                                 "secretKeyRef": {
@@ -1241,10 +1228,6 @@ _INTERNAL_SURFACE_LEGACY_ENV = {
     "TR_ANALYTICS_OUTBOX_ENABLED": "true",
     "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED": "true",
     "TR_USER_MODELS_DISPATCH_ENABLED": "true",
-    # The legacy service carries only the two (false) markers since the
-    # 2026-09-27 ledger retirement; no ledger setting exists on it any more.
-    "TR_REGIONAL_QUOTA_LEASES_ENABLED": "false",
-    "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "false",
     "TR_FEDERATION_HOME_BASE_URL": "https://trustedrouter.com/v1",
     "TR_FEDERATION_DEFERRED_SETTLEMENT_ENABLED": "true",
 }
@@ -1424,101 +1407,29 @@ class ScriptFixture:
     cleanup_after_gate: tuple[str, ...] = ()
 
 
-# Real Cloud Run v1 shapes for the issuance readiness read-only preflight.
-_QUOTA_WORKER_SPEC: dict[str, Any] = {
-    "containers": [{"image": "reviewed-image", "env": [
-        {"name": "TR_RELEASE", "value": "abc12345"},
-        {"name": "REGIONAL_QUOTA_ACCOUNTING_PROTOCOL", "value": "2"},
-    ]}],
-}
-QUOTA_SCHEDULER: dict[str, Any] = {
-    "state": "ENABLED",
-    "httpTarget": {
-        "uri": "https://us-east4-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/quill-cloud-proxy/jobs/trusted-router-regional-quota-reconciler-abc12345:run",
-        "httpMethod": "POST",
-        "oauthToken": {"serviceAccountEmail": "44325983244-compute@developer.gserviceaccount.com"},
-    },
-}
-# The spend-lease reconciler schedule, for the ledger retirement interlock.
-SPEND_SCHEDULER: dict[str, Any] = {
-    "state": "ENABLED",
-    "httpTarget": {
-        "uri": "https://us-east4-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/quill-cloud-proxy/jobs/trusted-router-spend-lease-reconciler-abc12345:run",
-        "httpMethod": "POST",
-        "oauthToken": {"serviceAccountEmail": "44325983244-compute@developer.gserviceaccount.com"},
-    },
-}
-# Five recent all-zero passes of each worker: what a drained ledger looks like.
-_REGIONAL_DRAINED_LINE = (
-    "INFO:trusted_router.regional_quota_reconcile_cli:regional_quota.reconcile_complete "
-    "inspected=0 reconciled=0 closed=0 errors=0 backlog=0 processed=0 remaining=0 "
-    "completed=0 abandoned=0 budget_exhausted=0"
-)
-_SPEND_DRAINED_LINE = (
-    "INFO:__main__:spend_lease.reconcile_complete candidates=0 open=0 recovered=0 "
-    "bound=0 closed=0 deferred=0 errors=0 dead=0"
-)
-# The harness stamps HARNESS_QUOTA_COMPLETION_TIME with the run's wall clock,
-# so the passes postdate the (old) serving revisions plus the drain interval.
-LEDGER_DRAINED_RESPONSES = (
-    (r"scheduler jobs describe .*spend-lease-reconcile.*--format=json", json.dumps(SPEND_SCHEDULER)),
-    (
-        r"logging read .*regional_quota\.reconcile_complete",
-        json.dumps([{"textPayload": _REGIONAL_DRAINED_LINE, "timestamp": "HARNESS_QUOTA_COMPLETION_TIME"}] * 5),
-    ),
-    (
-        r"logging read .*spend_lease\.reconcile_complete",
-        json.dumps([{"textPayload": _SPEND_DRAINED_LINE, "timestamp": "HARNESS_QUOTA_COMPLETION_TIME"}] * 5),
-    ),
-    # spanner-clickhouse requires typed generation records; rollout.sh then
-    # checks that the tr_generation table exists before rendering them.
-    (r"spanner databases execute-sql .*INFORMATION_SCHEMA.TABLES WHERE table_name='tr_generation'", "1"),
-    (r"spanner databases execute-sql .*regional_quota_lease_open", "0"),
-    (r"spanner databases execute-sql .*regional_quota_lease_workspace_open", "0"),
-    (r"spanner databases execute-sql .*FROM tr_reservation@", "0"),
-    (r"spanner databases execute-sql .*FROM spend_lease_open WHERE", "0"),
-)
-QUOTA_WORKER: dict[str, Any] = {
-    "metadata": {"generation": 1},
-    "spec": {"template": {"spec": {"template": {"spec": _QUOTA_WORKER_SPEC}}}},
-    "status": {
-        "observedGeneration": 1,
-        "conditions": [{"type": "Ready", "status": "True"}],
-        "latestCreatedExecution": {
-            "name": "quota-execution", "completionStatus": "EXECUTION_SUCCEEDED",
+# The one legacy revision receiving 100% of primary traffic. rollout.sh reads
+# its sticky operator pins (the Stripe account id) and nothing else from it;
+# tests append the pin they want preserved.
+_ROLLOUT_ACTIVE_REVISION_JSON = json.dumps(
+    {
+        "metadata": {
+            "name": "trusted-router-active",
+            "creationTimestamp": "2026-09-01T00:00:00Z",
+        },
+        "spec": {
+            "containers": [
+                {
+                    "env": [
+                        {"name": "TR_RELEASE", "value": "abc12345"},
+                        {"name": "TR_STORAGE_BACKEND", "value": "spanner-clickhouse"},
+                        {"name": "TR_REQUEST_RECORD_WRITE_MODE", "value": "typed"},
+                        {"name": "TR_GENERATION_RECORDS_ENABLED", "value": "true"},
+                    ]
+                }
+            ]
         },
     },
-}
-QUOTA_EXECUTION: dict[str, Any] = {
-    "metadata": {"name": "quota-execution"},
-    "spec": {"template": {"spec": _QUOTA_WORKER_SPEC}},
-    "status": {
-        "completionTime": "HARNESS_QUOTA_COMPLETION_TIME",
-        "conditions": [{"type": "Completed", "status": "True"}],
-    },
-}
-QUOTA_READINESS_RESPONSES = (
-    (r"projects describe.*projectNumber", "44325983244"),
-    (r"storage buckets describe .*tr-deploy-mutex.*--format=json", '{"lifecycle_config":{"rule":[{"action":{"type":"Delete"},"condition":{"age":1,"matchesPrefix":["locks/"]}}]}}'),
-    (r"storage objects list --raw --format=json .*controls/", '[{"bucket":"tr-deploy-mutex-quill-cloud-proxy","name":"controls/regional-quota-issuance.txt"},{"bucket":"tr-deploy-mutex-quill-cloud-proxy","name":"controls/ledger-drain-observation.json"}]'),
-    # control objects are written with a generation precondition read first
-    (r"storage objects describe .*controls/.*--format=value\(generation\)", "1"),
-    # The ledger retirement gate's durable observation: this fleet state
-    # (service generation 1, the active revision everywhere) has been in place
-    # since well before any drain interval.
-    (
-        r"storage cat .*controls/ledger-drain-observation.json",
-        json.dumps({"regions": {
-            region: {"generation": "1", "revisions": "trusted-router-active", "off_since": "2026-09-01T00:00:00Z"}
-            for region in ("us-central1", "us-east4", "europe-west4", "southamerica-east1")
-        }, "updated_at": "2026-09-01T00:00:00Z"}),
-    ),
-    (r"storage cat .*controls/regional-quota-issuance.txt", "allow"),
-    (r"scheduler jobs describe .*regional-quota.*--format=json", json.dumps(QUOTA_SCHEDULER)),
-    (r"run jobs describe .*regional-quota.*--format=json", json.dumps(QUOTA_WORKER)),
-    (r"run jobs executions list .*--format=json", json.dumps([QUOTA_EXECUTION])),
-    (r"logging read .*regional_quota.reconciler_complete", '[{"textPayload":"regional_quota.reconciler_complete elapsed_ms=10"}]'),
-    *LEDGER_DRAINED_RESPONSES,
+    separators=(",", ":"),
 )
 
 
@@ -1554,44 +1465,22 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
             "TR_STORAGE_BACKEND": "spanner-clickhouse",
             "TR_GENERATION_RECORDS_ENABLED": "true",
             "TR_DEPLOY_RELEASE_ID": "abc12345",
-            # Lease capability is retired (2026-09-27): rollout.sh pins it off and
-            # refuses an explicit true, so the generic fixture sets nothing here.
-            # No dispatch issuance input: exercise rollout.sh's code pin.
             # Reuse the stateful legacy-service tag behavior in the harness.
             "HARNESS_PUBLIC_SURFACE_SMOKE": "1",
         },
         responses=(
-            *QUOTA_READINESS_RESPONSES,
+            (r"projects describe.*projectNumber", "44325983244"),
+            # spanner-clickhouse requires typed generation records; rollout.sh
+            # then checks that the tr_generation table exists before rendering
+            # them.
+            (
+                r"spanner databases execute-sql .*INFORMATION_SCHEMA.TABLES"
+                r" WHERE table_name='tr_generation'",
+                "1",
+            ),
             (
                 r"run revisions describe trusted-router-active .*--format=json",
-                json.dumps(
-                    {
-                        "metadata": {"creationTimestamp": "2026-09-01T00:00:00Z"},
-                        "spec": {
-                            "containers": [
-                                {
-                                    "env": [
-                                        {"name": "REGIONAL_QUOTA_ACCOUNTING_PROTOCOL", "value": "2"},
-                                        {
-                                            "name": "TR_REGIONAL_QUOTA_LEASES_ENABLED",
-                                            "value": "true",
-                                        },
-                                        {
-                                            "name": "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED",
-                                            "value": "false",
-                                        },
-                                        # Step-1 markers: the ledger retirement gate
-                                        # requires them off on every serving revision.
-                                        {"name": "TR_SPEND_LEASE_ISSUANCE_ENABLED", "value": "false"},
-                                        {"name": "TR_SPEND_LEASE_BINDING_ENABLED", "value": "false"},
-                                        {"name": "TR_SPEND_LEASE_ADMISSION_ACCEPT", "value": "false"},
-                                    ]
-                                }
-                            ]
-                        }
-                    },
-                    separators=(",", ":"),
-                ),
+                _ROLLOUT_ACTIVE_REVISION_JSON,
             ),
             (
                 r"run revisions list .*--limit=10",
@@ -1879,8 +1768,14 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
     ),
     "scripts/deploy/synthetic.sh": ScriptFixture(
         env={"TR_BILLING_SERVICE": "trusted-router-billing"},
+        # The retired spend-lease soak job and its schedule are already gone:
+        # NOT_FOUND (a failing describe) is the steady state, and synthetic.sh
+        # deletes only what a describe still finds.
+        failures=(
+            r"scheduler jobs describe trusted-router-spend-lease-soak-",
+            r"run jobs describe trusted-router-spend-lease-soak-",
+        ),
         responses=(
-            (r"scheduler jobs describe .*spend-lease-soak", "ENABLED"),
             (
                 r"run services describe trusted-router-billing.*--format=json",
                 _SYNTHETIC_INGEST_SERVICE_JSON,
@@ -1903,7 +1798,6 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
         },
         responses=(
             (r"run jobs describe .*--format=json", _SYNTHETIC_COMBINED_JOB_JSON),
-            (r"scheduler jobs describe .*spend-lease-soak", "ENABLED"),
         ),
     ),
 }
@@ -2081,7 +1975,7 @@ class DeployScriptHarness:
         fixtures_file = run_dir / "fixtures.tsv"
         fixtures_file.write_text(
             "".join(
-                f"{pattern}\t{base64.b64encode(reply.replace('HARNESS_QUOTA_COMPLETION_TIME', datetime.now(UTC).isoformat()).encode()).decode('ascii')}\n"
+                f"{pattern}\t{base64.b64encode(reply.encode()).decode('ascii')}\n"
                 for pattern, reply in fixture.responses
             )
         )

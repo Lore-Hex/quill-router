@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import dataclasses
-import hashlib
-import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -42,7 +40,6 @@ from trusted_router.catalog_energy import GREEN_MODEL_ID, renewable_provider_slu
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
 from trusted_router.image_generation import IMAGE_MODEL_ID_SET
-from trusted_router.openai_service_tiers import OPENAI_PRIORITY_MAX_PROMPT_TOKENS
 from trusted_router.routing_state import Thresholds, parse_thresholds
 from trusted_router.types import ErrorType
 
@@ -75,7 +72,7 @@ class RoutePreferences:
 
 @dataclass(frozen=True, slots=True)
 class NormalizedRoutingInputs:
-    """The sole normalized input consumed by route selection and Stage C hashing."""
+    """The sole normalized input consumed by route selection."""
 
     model_ids: tuple[str, ...]
     preferences: RoutePreferences
@@ -84,72 +81,6 @@ class NormalizedRoutingInputs:
     service_tier: str | None
     usage_type: str | None
     fallback_policy: bool
-    priority_eligibility_bucket: str
-    models_fallback_present: bool
-
-    def canonical_document(self) -> dict[str, Any]:
-        value = dataclasses.asdict(self)
-        # Preserve existing Stage C policy hashes during rolling deploys.
-        for field in ("preferred_max_latency", "preferred_min_throughput"):
-            if not value["preferences"][field]:
-                del value["preferences"][field]
-
-        def normalize(item: Any) -> Any:
-            if isinstance(item, dict):
-                return {str(key): normalize(child) for key, child in sorted(item.items())}
-            if isinstance(item, (set, frozenset, tuple)):
-                children = [normalize(child) for child in item]
-                return sorted(children) if isinstance(item, (set, frozenset)) else children
-            return item
-
-        return normalize(value)
-
-    def canonical_json(self) -> bytes:
-        return json.dumps(
-            self.canonical_document(),
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-
-    @property
-    def routing_policy_hash(self) -> str:
-        return hashlib.sha256(self.canonical_json()).hexdigest()
-
-    @property
-    def local_admission_eligible(self) -> bool:
-        return (
-            len(self.model_ids) == 1
-            and not self.models_fallback_present
-            and self.preferences.sort is None
-            and not self.preferences.preferred_max_latency
-            and not self.preferences.preferred_min_throughput
-            and self.priority_eligibility_bucket == "eligible"
-        )
-
-
-# Every accepted raw provider key is either consumed into RoutePreferences or
-# explicitly makes Stage C local admission ineligible. Tests compare these maps
-# structurally to _PROVIDER_ROUTING_FIELDS.
-NORMALIZED_PROVIDER_FIELD_MAP = {
-    "allow_fallbacks": "fallback_policy",
-    "billing": "usage_type",
-    "country": "provider_jurisdiction",
-    "data_collection": "data_collection",
-    "headquarters_country": "provider_jurisdiction",
-    "ignore": "ignore",
-    "jurisdiction": "provider_jurisdiction",
-    "max_price": "maximum_price",
-    "min_privacy": "privacy_requirements",
-    "only": "only",
-    "order": "order",
-    "provider_country": "provider_jurisdiction",
-    "require_parameters": "requested_parameter_support",
-    "usage": "usage_type",
-    "usage_type": "usage_type",
-    "zdr": "privacy_requirements",
-}
-LOCAL_ADMISSION_INELIGIBLE_PROVIDER_FIELDS = frozenset({"sort", "preferred_max_latency", "preferred_min_throughput"})
-
 
 _PROVIDER_ALIASES = {
     "google-ai": "google-ai-studio",
@@ -868,7 +799,6 @@ def normalize_routing_inputs(
     """Build the one routing object selectors and Stage C are allowed to read."""
 
     model_ids, preferences = _routing_for_body(body, settings)
-    estimated_input_tokens = int(body.get("estimated_input_tokens") or 0)
     return NormalizedRoutingInputs(
         model_ids=tuple(model_ids),
         preferences=preferences,
@@ -881,12 +811,6 @@ def normalize_routing_inputs(
         ),
         usage_type=preferences.usage_type,
         fallback_policy=preferences.allow_fallbacks,
-        priority_eligibility_bucket=(
-            "eligible"
-            if estimated_input_tokens <= OPENAI_PRIORITY_MAX_PROMPT_TOKENS
-            else "above_threshold"
-        ),
-        models_fallback_present=body.get("models") is not None,
     )
 
 

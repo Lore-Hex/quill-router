@@ -19,24 +19,113 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
 from trusted_router.storage_gcp_batch_dml import DmlStatement
 from trusted_router.storage_gcp_codec import json_body
-from trusted_router.storage_gcp_spend_lease import (
-    AUTHORIZATION_ADMISSION_TYPED_COLUMNS,
-    AUTHORIZATION_TYPED_COLUMNS,
-    authorization_admission_typed_columns,
-    authorization_admission_typed_param_types,
-    authorization_typed_columns,
-    authorization_typed_param_types,
-    merge_authorization_typed_columns,
-)
 from trusted_router.storage_models import AmbiguousGatewayRequestId, GatewayAuthorization
 from trusted_router.types import UsageType
 
 AUTHORIZATION_TABLE = "tr_gateway_authorization"
+
+# Typed columns beside the JSON payload. The retired spend-lease pilot's
+# columns (spend_lease_id, spend_lease_gen, spend_lease_allocated_micro,
+# spend_lease_token, spend_lease_status, spend_lease_exp,
+# spend_lease_admission_receipt, spend_lease_receipt_hash) stay in the schema,
+# are NULL on every row written since the pilot's removal, and are neither
+# written nor read here.
+AUTHORIZATION_TYPED_COLUMNS = (
+    "idempotency_fingerprint",
+    "finalization_outcome",
+    "finalized_cost_microdollars",
+    "started_at",
+    "heartbeat_seq",
+    "heartbeat_at",
+    "heartbeat_hash",
+    "selected_endpoint_id",
+    "delivered_usage",
+    "pricing_snapshot",
+    "stage_d_boot_kid",
+    "invocation_nonce",
+    "gateway_request_id",
+)
+_TIMESTAMP_COLUMNS = ("started_at", "heartbeat_at")
+
+
+class AuthorizationDataError(ValueError):
+    """A persisted authorization value violates the typed-column contract."""
+
+
+def authorization_typed_columns(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Map JSON payload facts to the authorization's typed columns."""
+    values = {column: payload.get(column) for column in AUTHORIZATION_TYPED_COLUMNS}
+    for column in _TIMESTAMP_COLUMNS:
+        timestamp = values[column]
+        if timestamp is not None:
+            values[column] = _authorization_timestamp_from_payload(timestamp)
+    heartbeat_seq = values["heartbeat_seq"]
+    if heartbeat_seq is not None and int(heartbeat_seq) < 0:
+        raise AuthorizationDataError("heartbeat_seq must be NULL or non-negative")
+    return values
+
+
+def authorization_typed_param_types(param_types: Any) -> dict[str, Any]:
+    """Return the Spanner type map paired with :func:`authorization_typed_columns`."""
+    return {
+        "idempotency_fingerprint": param_types.STRING,
+        "finalization_outcome": param_types.STRING,
+        "finalized_cost_microdollars": param_types.INT64,
+        "started_at": param_types.TIMESTAMP,
+        "heartbeat_seq": param_types.INT64,
+        "heartbeat_at": param_types.TIMESTAMP,
+        "heartbeat_hash": param_types.STRING,
+        "selected_endpoint_id": param_types.STRING,
+        "delivered_usage": param_types.STRING,
+        "pricing_snapshot": param_types.STRING,
+        "stage_d_boot_kid": param_types.STRING,
+        "invocation_nonce": param_types.STRING,
+        "gateway_request_id": param_types.STRING,
+    }
+
+
+def merge_authorization_typed_columns(
+    payload: Mapping[str, Any] | None,
+    typed_columns: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Merge mixed-revision authorization facts, one field at a time.
+
+    A non-NULL typed value wins; a typed NULL falls back to the JSON payload.
+    This preserves rows written payload-only by an older rolling revision.
+    """
+    merged = dict(payload or {})
+    for column in AUTHORIZATION_TYPED_COLUMNS:
+        value = typed_columns.get(column)
+        if value is None:
+            continue
+        merged[column] = _payload_timestamp(value) if column in _TIMESTAMP_COLUMNS else value
+    return merged
+
+
+def _authorization_timestamp_from_payload(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise AuthorizationDataError("authorization timestamp must be ISO-8601") from exc
+    else:
+        raise AuthorizationDataError("authorization timestamp must be ISO-8601")
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def _payload_timestamp(value: Any) -> Any:
+    if not isinstance(value, datetime):
+        return value
+    normalized = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    return normalized.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 # Importing GUARD_STATUSES would cycle because storage_gcp_settle_outbox imports
 # the retention helpers below. Keep this SQL list in sync with that tuple.
@@ -60,45 +149,17 @@ _INSERT_GATEWAY_AUTHORIZATION_SQL = (
     "INSERT INTO tr_gateway_authorization ("
     "authorization_id, workspace_id, key_hash, reservation_id, model_id, "
     "provider, usage_type, estimated_microdollars, settled, created_at, "
-    "terminal_at, payload, spend_lease_id, spend_lease_gen, "
-    "spend_lease_allocated_micro, spend_lease_token, spend_lease_status, "
-    "spend_lease_exp, idempotency_fingerprint, finalization_outcome, "
+    "terminal_at, payload, idempotency_fingerprint, finalization_outcome, "
     "finalized_cost_microdollars, started_at, heartbeat_seq, heartbeat_at, "
     "heartbeat_hash, selected_endpoint_id, delivered_usage, pricing_snapshot, "
     "stage_d_boot_kid, invocation_nonce, gateway_request_id"
     ") VALUES ("
     "@authorization_id, @workspace_id, @key_hash, @reservation_id, @model_id, "
     "@provider, @usage_type, @estimated_microdollars, false, @created_at, "
-    "NULL, @payload, @spend_lease_id, @spend_lease_gen, "
-    "@spend_lease_allocated_micro, @spend_lease_token, @spend_lease_status, "
-    "@spend_lease_exp, @idempotency_fingerprint, @finalization_outcome, "
+    "NULL, @payload, @idempotency_fingerprint, @finalization_outcome, "
     "@finalized_cost_microdollars, @started_at, @heartbeat_seq, @heartbeat_at, "
     "@heartbeat_hash, @selected_endpoint_id, @delivered_usage, @pricing_snapshot, "
     "@stage_d_boot_kid, @invocation_nonce, @gateway_request_id"
-    ")"
-)
-
-_INSERT_GATEWAY_AUTHORIZATION_ADMISSION_SQL = (
-    "INSERT INTO tr_gateway_authorization ("
-    "authorization_id, workspace_id, key_hash, reservation_id, model_id, "
-    "provider, usage_type, estimated_microdollars, settled, created_at, "
-    "terminal_at, payload, spend_lease_id, spend_lease_gen, "
-    "spend_lease_allocated_micro, spend_lease_token, spend_lease_status, "
-    "spend_lease_exp, idempotency_fingerprint, finalization_outcome, "
-    "finalized_cost_microdollars, started_at, heartbeat_seq, heartbeat_at, "
-    "heartbeat_hash, selected_endpoint_id, delivered_usage, pricing_snapshot, "
-    "stage_d_boot_kid, invocation_nonce, gateway_request_id, "
-    "spend_lease_admission_receipt, spend_lease_receipt_hash"
-    ") VALUES ("
-    "@authorization_id, @workspace_id, @key_hash, @reservation_id, @model_id, "
-    "@provider, @usage_type, @estimated_microdollars, false, @created_at, "
-    "NULL, @payload, @spend_lease_id, @spend_lease_gen, "
-    "@spend_lease_allocated_micro, @spend_lease_token, @spend_lease_status, "
-    "@spend_lease_exp, @idempotency_fingerprint, @finalization_outcome, "
-    "@finalized_cost_microdollars, @started_at, @heartbeat_seq, @heartbeat_at, "
-    "@heartbeat_hash, @selected_endpoint_id, @delivered_usage, @pricing_snapshot, "
-    "@stage_d_boot_kid, @invocation_nonce, @gateway_request_id, "
-    "@spend_lease_admission_receipt, @spend_lease_receipt_hash"
     ")"
 )
 
@@ -116,17 +177,9 @@ def gateway_authorization_insert_statement(
     param_types: Any, authorization: GatewayAuthorization, *, created_at: Any,
 ) -> DmlStatement:
     """Insert active authorization state in the caller's billing transaction."""
-    payload = dataclasses.asdict(authorization)
-    typed = authorization_typed_columns(payload)
-    admission_typed = authorization_admission_typed_columns(payload)
-    has_admission = admission_typed["spend_lease_admission_receipt"] is not None
-    insert_sql = (
-        _INSERT_GATEWAY_AUTHORIZATION_ADMISSION_SQL
-        if has_admission
-        else _INSERT_GATEWAY_AUTHORIZATION_SQL
-    )
+    typed = authorization_typed_columns(dataclasses.asdict(authorization))
     return (
-        insert_sql,
+        _INSERT_GATEWAY_AUTHORIZATION_SQL,
         {
             "authorization_id": authorization.id,
             "workspace_id": authorization.workspace_id,
@@ -139,7 +192,6 @@ def gateway_authorization_insert_statement(
             "created_at": created_at,
             "payload": json_body(authorization),
             **typed,
-            **(admission_typed if has_admission else {}),
         },
         {
             "authorization_id": param_types.STRING,
@@ -153,29 +205,8 @@ def gateway_authorization_insert_statement(
             "created_at": param_types.TIMESTAMP,
             "payload": param_types.STRING,
             **authorization_typed_param_types(param_types),
-            **(authorization_admission_typed_param_types(param_types) if has_admission else {}),
         },
     )
-
-
-def read_gateway_authorization_admission_columns(
-    reader: Any,
-    param_types: Any,
-    authorization_id: str,
-) -> dict[str, str | None] | None:
-    """Strong-read only the Stage C replay columns for one authorization."""
-
-    rows = list(
-        reader.execute_sql(
-            "SELECT spend_lease_admission_receipt, spend_lease_receipt_hash "
-            "FROM tr_gateway_authorization WHERE authorization_id=@authorization_id",
-            params={"authorization_id": authorization_id},
-            param_types={"authorization_id": param_types.STRING},
-        )
-    )
-    if not rows:
-        return None
-    return dict(zip(AUTHORIZATION_ADMISSION_TYPED_COLUMNS, rows[0], strict=True))
 
 
 def read_gateway_authorization(
@@ -187,9 +218,7 @@ def read_gateway_authorization(
         reader.execute_sql(
             "SELECT authorization_id, workspace_id, key_hash, reservation_id, "
             "model_id, provider, usage_type, estimated_microdollars, settled, "
-            "created_at, payload, spend_lease_id, spend_lease_gen, "
-            "spend_lease_allocated_micro, spend_lease_token, spend_lease_status, "
-            "spend_lease_exp, idempotency_fingerprint, finalization_outcome, "
+            "created_at, payload, idempotency_fingerprint, finalization_outcome, "
             "finalized_cost_microdollars, started_at, heartbeat_seq, heartbeat_at, "
             "heartbeat_hash, selected_endpoint_id, delivered_usage, pricing_snapshot, "
             "stage_d_boot_kid, invocation_nonce, gateway_request_id "
@@ -238,12 +267,6 @@ def read_gateway_authorization(
         settled=bool(settled),
         created_at=_timestamp_string(created_at),
         settlement=str(merged.get("settlement") or "local"),
-        spend_lease_id=merged.get("spend_lease_id"),
-        spend_lease_gen=merged.get("spend_lease_gen"),
-        spend_lease_allocated_micro=merged.get("spend_lease_allocated_micro"),
-        spend_lease_token=merged.get("spend_lease_token"),
-        spend_lease_status=merged.get("spend_lease_status"),
-        spend_lease_exp=merged.get("spend_lease_exp"),
         idempotency_fingerprint=merged.get("idempotency_fingerprint"),
         finalization_outcome=merged.get("finalization_outcome"),
         finalized_cost_microdollars=merged.get("finalized_cost_microdollars"),
@@ -263,8 +286,8 @@ def read_gateway_authorization(
 # All nonterminal post-authorize mutations of the typed authorization row are
 # in storage_gcp_stage_d. Keep these facts out of request-local serialization.
 # Terminal outputs are replaced below under settled=false; terminal_at is a
-# separate retention column, never part of the payload. Lease/admission/Stage D
-# configuration and identity are fixed by authorize (including legacy creation).
+# separate retention column, never part of the payload. Stage D configuration
+# and identity are fixed by authorize (including legacy creation).
 _AUTHORIZATION_HEARTBEAT_FIELDS = (
     "heartbeat_seq", "heartbeat_at", "heartbeat_hash", "started_at",
     "selected_endpoint_id", "delivered_usage",

@@ -183,7 +183,7 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
         `request.state.request_id`. Echoed in every response as
         `X-TrustedRouter-Request-Id` and surfaced to all downstream
         handlers + log extras for correlation across middleware,
-        rate-limit decisions, inference, and Bigtable write failures.
+        rate-limit decisions, inference, and analytics write failures.
 
         Accepts an upstream-provided id (`X-Request-Id`, common LB
         header) if it looks safe (alnum + dashes/underscores, ≤64

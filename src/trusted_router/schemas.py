@@ -285,6 +285,14 @@ class CreditTransferRequest(_Strict):
 
 
 class SpendLeaseEcho(_Strict):
+    """Retired spend-lease wire field, kept only for idempotency fingerprints.
+
+    Deployed enclaves still echo it on every authorize (the pilot's shadow mode
+    stays on until the enclave fleet drops it), and it is part of the stored
+    idempotency fingerprint of every authorization written before the pilot's
+    removal. It must keep serializing exactly as before; nothing reads it.
+    """
+
     lease_id: str | None = Field(default=None, max_length=64)
     state: str = Field(min_length=1, max_length=64)
     remaining_micro: int | None = Field(default=None, ge=0)
@@ -298,37 +306,6 @@ class SpendLeaseBootRegistrationRequest(_Strict):
     receipt_public_key: dict[str, Any]
     attestation_evidence: str = Field(min_length=1, max_length=2 * 1024 * 1024)
     attestation_kind: str = Field(min_length=1, max_length=64)
-
-
-class SpendLeaseAdmissionMarker(_Strict):
-    accepted: Literal[True]
-    receipt_hash: str = Field(pattern="^[0-9a-f]{64}$")
-
-
-class SpendLeaseAdmissionRejectedError(_Strict):
-    code: Literal[409]
-    message: Literal["Spend-lease admission was rejected"]
-    type: Literal["admission_rejected"]
-    source: Literal["router"]
-    reason: Literal[
-        "receipt_invalid",
-        "boot_not_accepted",
-        "boot_mismatch",
-        "lease_not_open",
-        "window",
-        "policy_mismatch",
-        "estimate_mismatch",
-        "capacity",
-        "hold_refused",
-        "scope_conflict",
-        "reuse_lost",
-        "not_accepting",
-    ]
-
-
-class SpendLeaseAdmissionRejected(_Strict):
-    error: SpendLeaseAdmissionRejectedError
-
 
 class GatewayAuthorizeRequest(_Lenient):
     # Enclave-derived opaque routing hints; never persist them with activity.
@@ -370,10 +347,8 @@ class GatewayAuthorizeRequest(_Lenient):
     # atomic hold as their planner model call. This is internal-only and is
     # accepted only for enclave-owned hosted tools and asynchronous media.
     additional_cost_reservation_microdollars: int = Field(default=0, ge=0, le=100_000_000)
+    # Retired; see SpendLeaseEcho. Never read, fingerprinted for compatibility.
     spend_lease_echo: SpendLeaseEcho | None = None
-    # Compact JWS signed by the admitted lease's attested boot. It is excluded
-    # from the logical request fingerprint and is consequential only in Stage C.
-    spend_lease_admission: str | None = Field(default=None, min_length=1, max_length=16_384)
     invocation_nonce: str | None = Field(default=None, max_length=64)
 
     @model_validator(mode="after")

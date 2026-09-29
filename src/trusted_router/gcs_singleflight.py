@@ -1,7 +1,7 @@
 """Small GCS generation-guarded leases for one-shot worker admission.
 
 This module intentionally uses only the standard library. Workers import it
-before application configuration, Sentry, Spanner, or Bigtable so duplicate
+before application configuration, Sentry, or Spanner so duplicate
 Cloud Run Job executions can leave without opening expensive clients.
 """
 

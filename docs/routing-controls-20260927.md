@@ -23,8 +23,8 @@ activity records. Existing user-supplied session metadata remains governed by
 the existing attribution contract.
 
 The cache is best-effort, scoped to enclave and control-plane instances, tenant,
-requested model and gateway region. Cross-instance requests and spend-lease
-local admissions may miss it. It is not a distributed state or content store.
+requested model and gateway region. Cross-instance requests may miss it. It is
+not a distributed state or content store.
 Successful fallback refreshes the selected route. Failure does not refresh TTL.
 Explicit provider order disables affinity. A cached route cannot resurrect an
 endpoint excluded by privacy, region, capabilities or provider filters.
@@ -38,8 +38,8 @@ Source: https://openrouter.ai/docs/guides/best-practices/prompt-caching
 ## Strict spending
 
 `budget_strict` is an immutable creation-time API-key flag, default false.
-Strict keys use one key counter, include outstanding estimates in each enforced
-UTC window, and bypass regional/local admission leases. GCP performs a single
+Strict keys use one key counter and include outstanding estimates in each
+enforced UTC window. GCP performs a single
 conditional counter update followed by a locked point read in the same credit
 reservation transaction. PostgreSQL uses a conditional update with transaction
 retries. Existing settlement and refund paths release each recorded key hold.
