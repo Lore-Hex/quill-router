@@ -4977,6 +4977,8 @@ _PUBLISHER_PROVIDER_BY_AUTHOR: dict[str, str] = {
     "deepseek-ai": "deepseek",
     "google": "google-ai-studio",
     "jina-ai": "jina",
+    # Kuaishou's own platform for its Kwaipilot KAT models, under their native ids.
+    "kwaipilot": "streamlake",
     "lightricks": "ltx",
     "minimaxai": "minimax",
     "mistralai": "mistral",
@@ -6397,7 +6399,6 @@ _BRAND_DISPLAY_NAMES: dict[str, str] = {
     "inclusionai": "inclusionAI",
     "intel": "Intel",
     "jetbrains": "JetBrains",
-    "kwaipilot": "Kwaipilot",
     "meituan-longcat": "Meituan LongCat",
     "meta": "Meta",
     "microsoft": "Microsoft",

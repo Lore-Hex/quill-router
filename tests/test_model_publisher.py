@@ -47,6 +47,7 @@ def _model(model_id: str, default_route: str) -> Model:
         ("google/fixture-model", "venice", "Google AI Studio", "google-ai-studio"),
         ("black-forest-labs/fixture-model", "nscale", "Black Forest Labs", "bfl"),
         ("xiaomimimo/fixture-model", "novita", "Xiaomi MiMo", "xiaomi"),
+        ("kwaipilot/fixture-model", "novita", "StreamLake", "streamlake"),
     ],
 )
 def test_a_maker_with_its_own_provider_entry_publishes_its_models_on_any_host(
