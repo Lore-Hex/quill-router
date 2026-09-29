@@ -18,7 +18,7 @@ from trusted_router.typed_balance import live_credit_summary
 
 @pytest.fixture
 def fake_spanner_client() -> Iterator[tuple[Any, Any, TestClient]]:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     configure_store(store)
     app = create_app(
         Settings(environment="local"),
@@ -33,7 +33,7 @@ def fake_spanner_client() -> Iterator[tuple[Any, Any, TestClient]]:
 
 
 def test_live_credit_summary_typed_row_wins() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     workspace_id = "ws_typed_summary"
     store._write_entity(
         "credit",
@@ -64,7 +64,7 @@ def test_live_credit_summary_typed_row_wins() -> None:
 
 
 def test_live_credit_summary_typed_row_absent_fails_closed_despite_stale_json() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     workspace_id = "ws_json_summary"
     store._write_entity(
         "credit",
@@ -82,14 +82,14 @@ def test_live_credit_summary_typed_row_absent_fails_closed_despite_stale_json() 
 
 
 def test_spanner_store_exposes_no_json_money_snapshot() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
 
     assert not hasattr(store, "credit_money_snapshot")
 
 
 def test_live_credit_summary_no_credit_entity_returns_none() -> None:
     # A workspace with no 'credit' entity at all has no money to report.
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     assert live_credit_summary("ws_missing_entirely", store=store) is None
 
 

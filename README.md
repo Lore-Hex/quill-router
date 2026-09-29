@@ -509,15 +509,15 @@ Set `TR_INTERNAL_GATEWAY_TOKEN` outside local development.
 Production uses:
 
 ```text
-TR_STORAGE_BACKEND=spanner-bigtable
-TR_SPANNER_INSTANCE_ID=trusted-router
+TR_STORAGE_BACKEND=spanner-clickhouse
+TR_SPANNER_INSTANCE_ID=trusted-router-nam6
 TR_SPANNER_DATABASE_ID=trusted-router
-TR_BIGTABLE_INSTANCE_ID=trusted-router-logs
-TR_BIGTABLE_GENERATION_TABLE=trustedrouter-generations
+TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL=http://<clickhouse-ilb>:8123
+TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD=<control-read secret>
 ```
 
 `scripts/deploy-gcp.sh` enables the APIs, creates the Spanner table
-`tr_entities`, creates the Bigtable generation table, deploys Cloud Run, and
+`tr_entities`, deploys Cloud Run, and
 wires the current GCP trust metadata into the trust page.
 
 ## Billing

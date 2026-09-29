@@ -23,7 +23,7 @@ from trusted_router.types import UsageType
 
 
 def _authorized() -> tuple[Any, Any, Any, Any]:
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     ledger = InMemoryRegionalQuotaLedger()
     store._regional_quota_ledger = ledger
     ws = store.create_workspace("owner", "r2a", trial_credit_microdollars=200_000_000)
@@ -38,7 +38,7 @@ def _authorized() -> tuple[Any, Any, Any, Any]:
 def test_authorize_read_volume_is_independent_of_ten_thousand_closed_leases(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     arm_store(store, db)
     ws = store.create_workspace("owner", "bounded", trial_credit_microdollars=200_000_000)
     workspace_state(db, 3, ws.id)
@@ -81,7 +81,7 @@ def test_authorize_read_volume_is_independent_of_ten_thousand_closed_leases(
 def test_concurrent_grants_on_different_credit_shards_fit_only_one_pool(
     monkeypatch: pytest.MonkeyPatch, legacy_writer: bool,
 ) -> None:
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     arm_store(store, db)
     credit = workspace_state(db, 1)
     store._write_entity("credit", "workspace", CreditAccount(workspace_id="workspace", shard_count=3))
@@ -152,7 +152,7 @@ def _pending(store: Any, workspace: str, region: str, shard: int) -> quota.OpenR
 
 @pytest.mark.parametrize("limit", [81, 157, 500])
 def test_worker_capacity_honors_configured_budget_above_closure_arrival_rate(limit: int) -> None:
-    store, _db, _ = make_fake_store(request_record_write_mode="typed")
+    store, _db = make_fake_store(request_record_write_mode="typed")
     store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
     for workspace in range(5):
         for region in range(5):
@@ -168,7 +168,7 @@ def test_worker_capacity_honors_configured_budget_above_closure_arrival_rate(lim
 
 
 def test_cursor_fairly_paginates_workspaces_regions_and_pending_leases() -> None:
-    store, _db, _ = make_fake_store(request_record_write_mode="typed")
+    store, _db = make_fake_store(request_record_write_mode="typed")
     store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
     # One workspace has far more regions/leases, all pending, and none close.
     for region in range(5):
@@ -194,7 +194,7 @@ def test_cursor_fairly_paginates_workspaces_regions_and_pending_leases() -> None
 
 
 def test_worker_time_budget_preserves_unvisited_backlog_and_cursor() -> None:
-    store, _db, _ = make_fake_store(request_record_write_mode="typed")
+    store, _db = make_fake_store(request_record_write_mode="typed")
     store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
     for shard in range(100):
         _pending(store, "workspace", "region", shard)
@@ -274,7 +274,7 @@ def test_reconciler_recovers_only_durable_terminal_amount(
 
 
 def test_failing_workspace_does_not_starve_another_workspace() -> None:
-    store, _db, _ = make_fake_store(request_record_write_mode="typed")
+    store, _db = make_fake_store(request_record_write_mode="typed")
     store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
     broken = _pending(store, "a", "region", 0)
     _pending(store, "b", "region", 0)
@@ -327,7 +327,7 @@ def _grant(store: Any, workspace: str, shard: int = 0, amount: int = 5_000_000) 
 
 
 def test_grant_reads_and_locks_only_its_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     arm_store(store, db)
     for workspace in ("workspace-a", "workspace-b"):
         workspace_state(db, 3, workspace)
@@ -363,7 +363,7 @@ def test_grant_reads_and_locks_only_its_workspace(monkeypatch: pytest.MonkeyPatc
 
 
 def test_different_workspace_grants_do_not_conflict() -> None:
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     arm_store(store, db)
     for workspace in ("workspace-a", "workspace-b"):
         workspace_state(db, 1, workspace)
@@ -377,7 +377,7 @@ def test_different_workspace_grants_do_not_conflict() -> None:
 def test_authorize_does_not_read_other_workspaces_open_escrow(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     arm_store(store, db)
     ws = store.create_workspace("owner", "authorize-cost", trial_credit_microdollars=200_000_000)
     workspace_state(db, 3, ws.id)
@@ -425,7 +425,7 @@ def test_authorize_does_not_read_other_workspaces_open_escrow(
 def test_transition_counts_legacy_owned_leases_without_workspace_index(state: str) -> None:
     import json
 
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     arm_store(store, db)
     workspace_state(db, 1)
     legacy = _grant(store, "workspace", amount=4_000_000)
@@ -448,7 +448,7 @@ def test_transition_counts_legacy_owned_leases_without_workspace_index(state: st
 
 
 def test_workspace_index_retains_quarantine_and_is_deleted_atomically_on_close() -> None:
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     arm_store(store, db)
     workspace_state(db, 1)
     lease = _grant(store, "workspace")
@@ -465,7 +465,7 @@ def test_workspace_index_retains_quarantine_and_is_deleted_atomically_on_close()
 
 
 def test_pool_increase_waits_for_outstanding_smaller_bound_to_close() -> None:
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     settings = arm_store(store, db)
     workspace_state(db, 3)
     settings.regional_quota_lease_max_microdollars = 5_000_000
@@ -477,7 +477,7 @@ def test_pool_increase_waits_for_outstanding_smaller_bound_to_close() -> None:
 
 
 def test_grant_prunes_workspace_pointer_left_by_legacy_close() -> None:
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     arm_store(store, db)
     workspace_state(db, 1)
     lease = _grant(store, "workspace")
@@ -493,7 +493,7 @@ def test_grant_prunes_workspace_pointer_left_by_legacy_close() -> None:
 
 def _orphan(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Any, Any, Any]:
     """Kill the writer after local reserve commits, before either typed insert."""
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     ledger = InMemoryRegionalQuotaLedger()
     store._regional_quota_ledger = ledger
     ws = store.create_workspace("owner", "orphan", trial_credit_microdollars=200_000_000)
@@ -562,7 +562,7 @@ def test_crash_before_typed_record_is_cancelled_before_refund_and_releases_grant
 def test_delayed_writer_is_refused_compensated_and_returns_typed_fallback(
     monkeypatch: pytest.MonkeyPatch, refund_fails: bool, caplog: Any,
 ) -> None:
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     ledger = InMemoryRegionalQuotaLedger()
     store._regional_quota_ledger = ledger
     ws = store.create_workspace("owner", "delayed", trial_credit_microdollars=200_000_000)
@@ -848,7 +848,7 @@ def test_slow_leases_leave_unvisited_lease_first_in_next_invocation(
 
     from trusted_router import storage_gcp
 
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     ledger = InMemoryRegionalQuotaLedger()
     store._regional_quota_ledger = ledger
     auths = []

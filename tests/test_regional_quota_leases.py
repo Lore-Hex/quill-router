@@ -340,7 +340,7 @@ def test_regional_leases_default_off_and_fail_closed_without_dependencies() -> N
         Settings(
             environment="staging",
             service_surface="internal",
-            storage_backend="spanner-bigtable",
+            storage_backend="spanner-clickhouse",
             regional_quota_leases_enabled=True,
             regional_quota_lease_pilot_workspace_ids="workspace-1",
         )
@@ -380,7 +380,7 @@ def test_regional_lease_production_config_requires_fixed_profiles_and_outbox() -
         "operator_token": "staging-operator-" + "p" * 32,
         "operator_identities": "ops@example.com",
         "observer_internal_token": "staging-observer-" + "o" * 32,
-        "storage_backend": "spanner-bigtable",
+        "storage_backend": "spanner-clickhouse",
         "bigtable_instance_id": "trusted-router-logs",
         "request_record_write_mode": "typed",
         "regional_quota_leases_enabled": True,

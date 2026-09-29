@@ -134,8 +134,8 @@ def apply_frozen_settle(row: SettleOutboxRow) -> str:
     handler. It must not import or call pricing, auto-refill, budget alert, or
     metadata broadcast code. A new typed settlement atomically writes the
     bounded generation record and ClickHouse delivery intent. Post-commit work
-    is limited to loss-tolerant benchmark delivery and an optional migration
-    mirror; rolling legacy rows still use index_after_commit repair. Increment
+    is limited to loss-tolerant benchmark delivery; rolling legacy rows still
+    use index_after_commit repair. Increment
     4's drain interprets the rich §3 outcome and decides row status/alerting.
     """
     parsed_body = _parse_settle_body(row.settle_body)
@@ -617,12 +617,12 @@ def _apply_typed(
     outcome = result.get("outcome")
     if outcome == SettleOutcome.SETTLED:
         # The typed transaction atomically persisted the bounded generation
-        # record and operational analytics outbox row. Bigtable is only an
-        # optional migration mirror and cannot keep settlement work pending.
+        # record and operational analytics outbox row. Post-commit analytics
+        # are loss-tolerant and cannot keep settlement work pending.
         if success and generation is not None:
             generation_store = cast(Any, typed_store).generation_store
             if result.get("activity_durable"):
-                generation_store.mirror_after_commit(generation)
+                generation_store.post_commit_analytics(generation)
             elif not _index_generation_after_commit(typed_store, generation):
                 return ApplyOutcome.ACTIVITY_PENDING
         if auth.settlement == "spend_lease":

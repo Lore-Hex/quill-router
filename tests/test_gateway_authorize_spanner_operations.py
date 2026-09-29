@@ -40,7 +40,7 @@ def _request() -> Request:
 
 
 def _seed_typed_gateway_store() -> tuple[SpannerBigtableStore, object, object]:
-    store, database, _ = make_fake_store(request_record_write_mode="typed")
+    store, database = make_fake_store(request_record_write_mode="typed")
     workspace = Workspace(id="ws-rpc", name="RPC", owner_user_id="user-rpc")
     store._write_entity("workspace", workspace.id, workspace)
     store._write_entity("credit", workspace.id, CreditAccount(workspace_id=workspace.id))

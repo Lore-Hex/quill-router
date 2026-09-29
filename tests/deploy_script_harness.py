@@ -1107,8 +1107,6 @@ _PUBLIC_SURFACE_LEGACY_ENV = {
     "TR_SPANNER_INSTANCE_ID": "trusted-router-nam6",
     "TR_SPANNER_DATABASE_ID": "trusted-router",
     "TR_SPANNER_POOL_SIZE": "8",
-    "TR_BIGTABLE_MIRROR_WRITES_ENABLED": "false",
-    "TR_ANALYTICS_READ_MODE": "clickhouse-only",
     "TR_GENERATION_RECORDS_ENABLED": "true",
     "TR_REQUEST_RECORD_WRITE_MODE": "typed",
     "TR_SETTLE_OUTBOX_ENABLED": "true",
@@ -1555,8 +1553,6 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
             "TR_REQUEST_RECORD_WRITE_MODE": "typed",
             "TR_STORAGE_BACKEND": "spanner-clickhouse",
             "TR_GENERATION_RECORDS_ENABLED": "true",
-            "TR_BIGTABLE_MIRROR_WRITES_ENABLED": "false",
-            "TR_ANALYTICS_READ_MODE": "clickhouse-only",
             "TR_DEPLOY_RELEASE_ID": "abc12345",
             # Lease capability is retired (2026-09-27): rollout.sh pins it off and
             # refuses an explicit true, so the generic fixture sets nothing here.

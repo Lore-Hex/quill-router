@@ -15,7 +15,6 @@ ZONES=(us-central1-a us-central1-b us-central1-c)
 SCHEMA="${ROOT}/clickhouse/004_operational_analytics_replicated.sql"
 CLIENT_SCHEMA="${ROOT}/clickhouse/008_client_events_replicated.sql"
 BENCHMARK_WORKSPACE_SCHEMA="${ROOT}/clickhouse/007_benchmark_samples_workspace_id.sql"
-BENCHMARK_WORKSPACE_BACKFILL_LIMIT="${TR_CLICKHOUSE_BENCHMARK_WORKSPACE_BACKFILL_LIMIT:-200000}"
 CONTROL_SECRET="trustedrouter-clickhouse-control-read-password"
 APPLY=0
 
@@ -30,15 +29,10 @@ if [ "$APPLY" -eq 0 ]; then
   log "dry-run: would create the bounded Spanner operational analytics queue"
   log "dry-run: would create three-replica activity and synthetic tables"
   log "dry-run: would create client telemetry, rollup, and quarantine tables"
-  log "dry-run: would backfill bounded Bigtable history and verify replica parity"
+  log "dry-run: would verify replica parity"
   log "dry-run: would install the ingester, rollup worker, and private reader"
-  log "dry-run: would migrate and replay bounded benchmark workspace attribution"
+  log "dry-run: would migrate benchmark workspace attribution"
   exit 0
-fi
-
-if ! [[ "$BENCHMARK_WORKSPACE_BACKFILL_LIMIT" =~ ^[1-9][0-9]*$ ]]; then
-  echo "TR_CLICKHOUSE_BENCHMARK_WORKSPACE_BACKFILL_LIMIT must be a positive integer" >&2
-  exit 2
 fi
 
 node_ssh() {
@@ -174,41 +168,6 @@ done
 log "resuming live operational ingest after parser/schema cutover"
 node_ssh 0 --command="sudo systemctl start tr-clickhouse-operational-ingest.service"
 ingester_stopped=0
-
-log "replaying bounded benchmark history with workspace attribution"
-node_ssh 0 --command="sudo sh -c '
-  set -eu
-  set -a
-  . /etc/tr-clickhouse-ingest.env
-  set +a
-  cd /opt/tr-clickhouse
-  PYTHONPATH=/opt/tr-clickhouse/src \
-    /opt/tr-clickhouse/venv/bin/python -m clickhouse.backfill_benchmark_samples \
-      --limit ${BENCHMARK_WORKSPACE_BACKFILL_LIMIT} --batch 20000
-'"
-
-log "backfilling bounded Bigtable history"
-node_ssh 0 --command="sudo sh -c '
-  set -eu
-  set -a
-  . /etc/tr-clickhouse-ingest.env
-  set +a
-  cd /opt/tr-clickhouse
-  PYTHONPATH=/opt/tr-clickhouse/src \
-    /opt/tr-clickhouse/venv/bin/python -m clickhouse.backfill_operational_analytics --apply
-'"
-
-log "backfilling and verifying the bounded generation lookup window"
-node_ssh 0 --command="sudo sh -c '
-  set -eu
-  set -a
-  . /etc/tr-clickhouse-ingest.env
-  set +a
-  cd /opt/tr-clickhouse
-  PYTHONPATH=/opt/tr-clickhouse/src \
-    /opt/tr-clickhouse/venv/bin/python -m clickhouse.backfill_generation_records \
-      --apply --verify
-'"
 
 log "building initial synthetic status rollups"
 node_ssh 0 --command="sudo sh -c '

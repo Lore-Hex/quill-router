@@ -45,7 +45,7 @@ def backend(request: Any) -> Any:
         def balance(ws: str) -> int:
             return int(store.credit_money_snapshot(ws)[0])
     elif request.param == "spanner":
-        store, database, _ = make_fake_store()
+        store, database = make_fake_store()
         def balance(ws: str) -> int:
             return sum(int(row["total_credits"]) for (owner, _), row in
                        database.typed["tr_credit_balance"].items() if owner == ws)
@@ -288,7 +288,7 @@ def test_simultaneous_credit_and_resolution_do_not_leave_spendable_credit(backen
     if backend_name == "memory":
         store = InMemoryStore()
     else:
-        store, database, _ = make_fake_store()
+        store, database = make_fake_store()
     ws = store.create_workspace("owner", "concurrent", trial_credit_microdollars=0).id
     rows = enqueue(store)
     proof = verify_refunded_capture(API(ws), rows, now=NOW)

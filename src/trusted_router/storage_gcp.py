@@ -25,10 +25,7 @@ from trusted_router.custom_model_markup_billing import (
     custom_model_markup_authorization_id_from_payout_event_id,
 )
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
-from trusted_router.operational_analytics import (
-    OperationalAnalyticsClient,
-    stable_rows_fingerprint,
-)
+from trusted_router.operational_analytics import OperationalAnalyticsClient
 from trusted_router.operational_analytics_freshness import (
     BACKEND_DIRECT,
     BACKEND_SPANNER,
@@ -192,15 +189,6 @@ from trusted_router.storage_gcp_request_records import (
     read_gateway_authorization_by_gateway_request_id,
 )
 from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
-from trusted_router.storage_gcp_synthetic_index import (
-    synthetic_probe_samples as _bt_synthetic_probe_samples,
-)
-from trusted_router.storage_gcp_synthetic_index import (
-    write_synthetic_probe_sample as _bt_write_synthetic_probe_sample,
-)
-from trusted_router.storage_gcp_synthetic_rollups import (
-    synthetic_rollups as _bt_synthetic_rollups,
-)
 from trusted_router.storage_gcp_trust import (
     TRUST_EVENT_COLUMNS,
     _read_payment_tx,
@@ -382,7 +370,7 @@ class SpannerBigtableStore:
     Spanner owns strongly consistent control-plane state: users, orgs, API
     keys, reservations, credit ledger state, BYOK metadata, and Stripe event
     idempotency. ClickHouse receives bounded analytics through durable Spanner
-    outboxes. Bigtable can remain attached as a migration-only mirror.
+    outboxes.
 
     Sibling of `InMemoryStore` rather than subclass — both implement the
     `Store` Protocol. The intentional non-inheritance means a method
@@ -392,14 +380,6 @@ class SpannerBigtableStore:
     """
 
     entity_table = "tr_entities"
-    # New Bigtable writes are separated by retention class. ``m`` is retained
-    # as a read-only compatibility family until legacy history ages out.
-    legacy_generation_family = "m"
-    activity_family = "activity"
-    benchmark_family = "benchmark"
-    synthetic_family = "synthetic"
-    synthetic_rollup_family = "rollup"
-    generation_family = legacy_generation_family
 
     def __init__(
         self,
@@ -408,10 +388,6 @@ class SpannerBigtableStore:
         spanner_instance_id: str,
         spanner_database_id: str,
         bigtable_instance_id: str | None = None,
-        generation_table: str = "trustedrouter-generations",
-        bigtable_app_profile_id: str = "",
-        bigtable_enabled: bool = True,
-        bigtable_writes_enabled: bool = True,
         generation_records_enabled: bool = False,
         request_record_write_mode: str = "legacy",
         analytics_outbox_enabled: bool = False,
@@ -423,8 +399,6 @@ class SpannerBigtableStore:
         operational_analytics_clickhouse_user: str = "tr_control_read",
         operational_analytics_clickhouse_password: str = "",
         operational_analytics_clickhouse_database: str = "tr",
-        analytics_read_mode: str = "bigtable",
-        analytics_dual_read_grace_seconds: int = 30,
         regional_quota_leases_enabled: bool = False,
         regional_quota_bigtable_table: str = "trustedrouter-regional-quota",
         regional_quota_bigtable_app_profiles: dict[str, str] | None = None,
@@ -439,21 +413,8 @@ class SpannerBigtableStore:
     ) -> None:
         if not spanner_instance_id or not spanner_database_id:
             raise ValueError("Spanner instance and database IDs are required")
-        if bigtable_enabled and not bigtable_instance_id:
-            raise ValueError("Bigtable instance ID is required when Bigtable is enabled")
         if request_record_write_mode not in {"legacy", "typed"}:
             raise ValueError("request_record_write_mode must be 'legacy' or 'typed'")
-        if analytics_read_mode not in {
-            "bigtable",
-            "dual",
-            "clickhouse",
-            "clickhouse-only",
-        }:
-            raise ValueError(
-                "analytics_read_mode must be bigtable, dual, clickhouse, or clickhouse-only"
-            )
-        if not bigtable_enabled and analytics_read_mode != "clickhouse-only":
-            raise ValueError("Bigtable-free storage requires clickhouse-only reads")
         self.request_record_write_mode = request_record_write_mode
         self.max_workspaces_per_owner = int(max_workspaces_per_owner)
         self.trust_settings = trust_settings
@@ -463,13 +424,6 @@ class SpannerBigtableStore:
             trust_tier3_min_paid_microdollars
         )
         self._generation_records_enabled = generation_records_enabled
-        self._bigtable_enabled = bigtable_enabled
-        self._bigtable_writes_enabled = bigtable_writes_enabled and bigtable_enabled
-        self._analytics_read_mode = analytics_read_mode
-        self._analytics_dual_read_grace_seconds = max(
-            0,
-            int(analytics_dual_read_grace_seconds),
-        )
         self._operational_analytics = (
             OperationalAnalyticsClient(
                 base_url=operational_analytics_clickhouse_url,
@@ -480,8 +434,6 @@ class SpannerBigtableStore:
             if operational_analytics_clickhouse_url and operational_analytics_clickhouse_password
             else None
         )
-        self._analytics_parity_log_lock = threading.Lock()
-        self._analytics_last_parity_log: dict[str, float] = {}
         try:
             from google.cloud import spanner
             from google.cloud.spanner_v1 import FixedSizePool, param_types
@@ -491,8 +443,8 @@ class SpannerBigtableStore:
         # GCP credential bootstrap. On GCP (Cloud Run / GCE) the default ADC
         # chain finds the runtime SA automatically and `credentials=None` is
         # correct. Local tests or one-off admin jobs may still provide
-        # `GCP_SERVICE_ACCOUNT_KEY_JSON`; we parse it once and pass it to both
-        # Spanner and Bigtable clients explicitly.
+        # `GCP_SERVICE_ACCOUNT_KEY_JSON`; we parse it once and pass it to every
+        # GCP client explicitly.
         credentials = None
         sa_json = os.environ.get("GCP_SERVICE_ACCOUNT_KEY_JSON", "").strip()
         if sa_json:
@@ -532,33 +484,6 @@ class SpannerBigtableStore:
             )
         )
         configure_spanner_rpc_deadlines(self._database)
-        # Bigtable app-profile selection. Empty string = use the
-        # instance's implicit default profile (current behavior; single-
-        # cluster routing). Setting `tr-multi` (or whatever name we
-        # give the multi-cluster-routing-use-any profile) lets reads/
-        # writes go to the closest healthy cluster of three. Activates
-        # once the 3rd BT cluster (us-east4-a) is provisioned and the
-        # profile is created. See the multi-region expansion plan.
-        self._bt_table = None
-        if bigtable_enabled:
-            try:
-                from google.cloud import bigtable
-            except ImportError as exc:  # pragma: no cover - production image.
-                raise RuntimeError(
-                    "Install google-cloud-bigtable when Bigtable mirroring is enabled"
-                ) from exc
-            bt_instance = bigtable.Client(
-                project=project_id,
-                credentials=credentials,
-                admin=True,
-            ).instance(bigtable_instance_id)
-            if bigtable_app_profile_id:
-                self._bt_table = bt_instance.table(
-                    generation_table, app_profile_id=bigtable_app_profile_id
-                )
-            else:
-                self._bt_table = bt_instance.table(generation_table)
-        self._bigtable_app_profile_id = bigtable_app_profile_id
         self._regional_quota_ledger = None
         self._spend_lease_ledger = None
         self._regional_quota_lease_cache: dict[tuple[str, str, int], Any] = {}
@@ -682,13 +607,8 @@ class SpannerBigtableStore:
             )
         self.generation_store = SpannerGenerations(
             io,
-            bt_table=self._bt_table,
             param_types=self._param_types,
             generation_records_enabled=generation_records_enabled,
-            bigtable_writes_enabled=bigtable_writes_enabled,
-            activity_family=self.activity_family,
-            benchmark_family=self.benchmark_family,
-            legacy_family=self.legacy_generation_family,
             add_usage_to_key=self.api_keys.add_usage,
             analytics_outbox=(
                 SpannerAnalyticsOutbox(self._database, self._param_types)
@@ -4913,7 +4833,7 @@ class SpannerBigtableStore:
         The billing transaction atomically commits the bounded generation row
         and ClickHouse delivery intent. A false ``activity_indexed`` leaves the
         durable settle outbox pending for a no-double-charge repair replay.
-        ``defer_post_commit`` registers optional mirrors for bounded executor
+        ``defer_post_commit`` registers optional post-commit analytics for bounded executor
         submission after the HTTP reply; it must not execute the task inline.
         Without it, direct callers and repair workers retain synchronous writes.
         """
@@ -5057,39 +4977,40 @@ class SpannerBigtableStore:
                 from trusted_router.regional_billing import record_regional_settlement
 
                 record_regional_settlement(self, authorization, actual_microdollars, success, hold_unknown=regional_hold_unknown)
-            mirror_ms = 0.0
+            post_commit_ms = 0.0
             activity_indexed = bool(result.get("activity_durable", generation is None))
             if success and generation is not None:
-                mirror_start = time.perf_counter()
+                post_commit_start = time.perf_counter()
                 if getattr(self, "_operational_analytics_outbox", None) is None:
-                    # Without S20, this is delivery durability, not a migration
-                    # mirror. Keep the legacy repair/result contract synchronous.
+                    # Without S20 there is no durable activity delivery to wait
+                    # for. Keep the legacy repair/result contract synchronous.
                     activity_indexed = self.generation_store.index_after_commit(generation)
                 elif defer_post_commit is not None:
                     # S24 has committed generation + S20. The HTTP route passes
                     # a bounded post-response submitter; workers/direct callers retain
                     # synchronous behavior. Freeze the payload for deferred use.
                     defer_post_commit(
-                        self.generation_store.mirror_after_commit_safely,
+                        self.generation_store.post_commit_analytics_safely,
                         copy.deepcopy(generation),
                     )
                 else:
-                    self.generation_store.mirror_after_commit(generation)
-                mirror_ms = (time.perf_counter() - mirror_start) * 1000
+                    self.generation_store.post_commit_analytics(generation)
+                post_commit_ms = (time.perf_counter() - post_commit_start) * 1000
             # Splits the settle-path finalize_ms hotspot (2026-07-05 investigation)
             # into the authoritative Spanner transaction and best-effort
-            # analytics mirrors. Mirror latency never changes settle success.
+            # post-commit analytics. Their latency never changes settle success.
             # attempts counts only OUTER wrapper retries; Spanner's own internal
             # Aborted retries are invisible, so attempts>1 is definitive severe
             # contention while attempts==1 does not rule out absorbed contention.
             log.info(
                 # Keep index_ms for log-query compatibility. It now measures
-                # optional mirrors (or their scheduling), not durable delivery.
+                # optional post-commit analytics (or their scheduling), not
+                # durable delivery.
                 "typed finalize timing authorization_id=%s spanner_ms=%.1f "
                 "index_ms=%.1f attempts=%d",
                 authorization_id,
                 spanner_ms,
-                mirror_ms,
+                post_commit_ms,
                 result.get("attempts", 1),
             )
             return TypedFinalizeResult(
@@ -7335,20 +7256,11 @@ class SpannerBigtableStore:
         model: str | None = None,
         limit: int = 1000,
     ) -> list[ProviderBenchmarkSample]:
-        return self._analytics_read(
-            "provider_benchmark_samples",
-            bigtable=lambda: self.generation_store.benchmark_samples(
-                date=date,
-                provider=provider,
-                model=model,
-                limit=limit,
-            ),
-            clickhouse=lambda: self._require_operational_analytics().benchmark_samples(
-                date=date,
-                provider=provider,
-                model=model,
-                limit=limit,
-            ),
+        return self._require_operational_analytics().benchmark_samples(
+            date=date,
+            provider=provider,
+            model=model,
+            limit=limit,
         )
 
     def provider_balanced_benchmark_samples(
@@ -7539,44 +7451,26 @@ class SpannerBigtableStore:
         return str(rows[0][0]), rows[0][1]
 
     def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None:
-        if self._operational_analytics_outbox is not None:
-            try:
-                self._operational_analytics_outbox.enqueue_synthetic(sample)
-            except Exception as exc:
-                log.exception(
-                    "spanner.operational_analytics_synthetic_enqueue_failed",
-                    extra={
-                        "sample_id": sample.id,
-                        "probe_type": sample.probe_type,
-                        "target": sample.target,
-                        "error_class": type(exc).__name__,
-                        "error_message": str(exc)[:500],
-                        "retryable": True,
-                    },
-                )
-                raise
-        if not getattr(self, "_bigtable_writes_enabled", True):
-            return
+        # The durable outbox is the only path a sample takes to ClickHouse.
+        # A store without one cannot record monitoring data; say so instead
+        # of dropping the sample.
+        if self._operational_analytics_outbox is None:
+            raise RuntimeError("operational analytics outbox is not configured")
         try:
-            _bt_write_synthetic_probe_sample(
-                self._bt_table,
-                self.synthetic_family,
-                sample,
-                rollup_family=self.synthetic_rollup_family,
-                legacy_family=self.legacy_generation_family,
-            )
+            self._operational_analytics_outbox.enqueue_synthetic(sample)
         except Exception as exc:
             log.exception(
-                "bigtable.synthetic_mirror_write_failed",
+                "spanner.operational_analytics_synthetic_enqueue_failed",
                 extra={
                     "sample_id": sample.id,
                     "probe_type": sample.probe_type,
                     "target": sample.target,
                     "error_class": type(exc).__name__,
                     "error_message": str(exc)[:500],
-                    "migration_mirror_only": True,
+                    "retryable": True,
                 },
             )
+            raise
 
     def synthetic_probe_samples(
         self,
@@ -7587,24 +7481,12 @@ class SpannerBigtableStore:
         monitor_region: str | None = None,
         limit: int = 1000,
     ) -> list[SyntheticProbeSample]:
-        return self._analytics_read(
-            "synthetic_probe_samples",
-            bigtable=lambda: _bt_synthetic_probe_samples(
-                self._bt_table,
-                (self.synthetic_family, self.legacy_generation_family),
-                date=date,
-                target=target,
-                probe_type=probe_type,
-                monitor_region=monitor_region,
-                limit=limit,
-            ),
-            clickhouse=lambda: self._require_operational_analytics().synthetic_samples(
-                date=date,
-                target=target,
-                probe_type=probe_type,
-                monitor_region=monitor_region,
-                limit=limit,
-            ),
+        return self._require_operational_analytics().synthetic_samples(
+            date=date,
+            target=target,
+            probe_type=probe_type,
+            monitor_region=monitor_region,
+            limit=limit,
         )
 
     def synthetic_rollups(
@@ -7616,24 +7498,12 @@ class SpannerBigtableStore:
         include_histograms: bool = True,
         limit: int = 1000,
     ) -> list[SyntheticRollup]:
-        return self._analytics_read(
-            "synthetic_rollups",
-            bigtable=lambda: _bt_synthetic_rollups(
-                self._bt_table,
-                (self.synthetic_rollup_family, self.legacy_generation_family),
-                period=period,
-                since=since,
-                until=until,
-                include_histograms=include_histograms,
-                limit=limit,
-            ),
-            clickhouse=lambda: self._require_operational_analytics().synthetic_rollups(
-                period=period,
-                since=since,
-                until=until,
-                include_histograms=include_histograms,
-                limit=limit,
-            ),
+        return self._require_operational_analytics().synthetic_rollups(
+            period=period,
+            since=since,
+            until=until,
+            include_histograms=include_histograms,
+            limit=limit,
         )
 
     def activity(
@@ -7684,24 +7554,13 @@ class SpannerBigtableStore:
         tag_value: str | None = None,
         group_by_tag: str | None = None,
     ) -> Any:
-        return self._analytics_read(
-            "activity_result",
-            bigtable=lambda: self.generation_store.activity_result(
-                workspace_id,
-                api_key_hash=api_key_hash,
-                date=date,
-                tag_key=tag_key,
-                tag_value=tag_value,
-                group_by_tag=group_by_tag,
-            ),
-            clickhouse=lambda: self._clickhouse_activity_result(
-                workspace_id,
-                api_key_hash=api_key_hash,
-                date=date,
-                tag_key=tag_key,
-                tag_value=tag_value,
-                group_by_tag=group_by_tag,
-            ),
+        return self._clickhouse_activity_result(
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            tag_key=tag_key,
+            tag_value=tag_value,
+            group_by_tag=group_by_tag,
         )
 
     def activity_events_result(
@@ -7714,24 +7573,13 @@ class SpannerBigtableStore:
         tag_key: str | None = None,
         tag_value: str | None = None,
     ) -> Any:
-        return self._analytics_read(
-            "activity_events_result",
-            bigtable=lambda: self.generation_store.activity_events_result(
-                workspace_id,
-                api_key_hash=api_key_hash,
-                date=date,
-                limit=limit,
-                tag_key=tag_key,
-                tag_value=tag_value,
-            ),
-            clickhouse=lambda: self._clickhouse_activity_events_result(
-                workspace_id,
-                api_key_hash=api_key_hash,
-                date=date,
-                limit=limit,
-                tag_key=tag_key,
-                tag_value=tag_value,
-            ),
+        return self._clickhouse_activity_events_result(
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            limit=limit,
+            tag_key=tag_key,
+            tag_value=tag_value,
         )
 
     def usage_series(
@@ -7755,119 +7603,20 @@ class SpannerBigtableStore:
             start_day = since.date().isoformat()
             end_day = now.date().isoformat()
             min_created_at = since.strftime("%Y-%m-%dT%H:%M:%S")
-        return self._analytics_read(
-            "usage_series",
-            bigtable=lambda: self.generation_store.usage_series(
-                workspace_id,
-                start_day=start_day,
-                end_day=end_day,
-                granularity=granularity,
-                api_key_hash=api_key_hash,
-                by_model=by_model,
-                min_created_at=min_created_at,
-            ),
-            clickhouse=lambda: self._clickhouse_usage_series(
-                workspace_id,
-                start_day=start_day,
-                end_day=end_day,
-                granularity=granularity,
-                api_key_hash=api_key_hash,
-                by_model=by_model,
-                min_created_at=min_created_at,
-            ),
+        return self._clickhouse_usage_series(
+            workspace_id,
+            start_day=start_day,
+            end_day=end_day,
+            granularity=granularity,
+            api_key_hash=api_key_hash,
+            by_model=by_model,
+            min_created_at=min_created_at,
         )
 
     def _require_operational_analytics(self) -> OperationalAnalyticsClient:
         if self._operational_analytics is None:
             raise RuntimeError("operational ClickHouse reader is not configured")
         return self._operational_analytics
-
-    def _analytics_read(
-        self,
-        label: str,
-        *,
-        bigtable: Callable[[], T],
-        clickhouse: Callable[[], T],
-    ) -> T:
-        if self._analytics_read_mode == "bigtable":
-            return bigtable()
-        if self._analytics_read_mode == "clickhouse-only":
-            return clickhouse()
-        if self._analytics_read_mode == "dual":
-            primary = bigtable()
-            try:
-                shadow = clickhouse()
-            except Exception as exc:
-                self._log_analytics_read_error(label, "clickhouse", exc)
-                return primary
-            self._compare_analytics_reads(label, primary, shadow)
-            return primary
-        try:
-            primary = clickhouse()
-        except Exception as exc:
-            self._log_analytics_read_error(label, "clickhouse", exc)
-            return bigtable()
-        try:
-            shadow = bigtable()
-        except Exception as exc:
-            self._log_analytics_read_error(label, "bigtable", exc)
-            return primary
-        self._compare_analytics_reads(label, shadow, primary)
-        return primary
-
-    def _log_analytics_read_error(
-        self,
-        label: str,
-        backend: str,
-        exc: Exception,
-    ) -> None:
-        if not self._should_log_analytics_event(f"error:{label}:{backend}"):
-            return
-        log.error(
-            "analytics_read_error surface=%s backend=%s error_class=%s error=%s",
-            label,
-            backend,
-            type(exc).__name__,
-            str(exc)[:300],
-        )
-
-    def _compare_analytics_reads(self, label: str, expected: Any, actual: Any) -> None:
-        expected_signature = self._analytics_signature(expected)
-        actual_signature = self._analytics_signature(actual)
-        if expected_signature == actual_signature:
-            return
-        if not self._should_log_analytics_event(f"mismatch:{label}"):
-            return
-        log.warning(
-            "analytics_dual_read_mismatch surface=%s expected_count=%s "
-            "actual_count=%s expected_fingerprint=%s actual_fingerprint=%s",
-            label,
-            expected_signature[0],
-            actual_signature[0],
-            expected_signature[1],
-            actual_signature[1],
-        )
-
-    def _analytics_signature(self, value: Any) -> tuple[int, str]:
-        if isinstance(value, ActivityResult):
-            return stable_rows_fingerprint(value.data, grace_seconds=0)
-        if isinstance(value, list):
-            return stable_rows_fingerprint(
-                value,
-                grace_seconds=self._analytics_dual_read_grace_seconds,
-            )
-        if isinstance(value, dict):
-            return stable_rows_fingerprint([value], grace_seconds=0)
-        return stable_rows_fingerprint([{"value": str(value)}], grace_seconds=0)
-
-    def _should_log_analytics_event(self, key: str) -> bool:
-        now = time.monotonic()
-        with self._analytics_parity_log_lock:
-            previous = self._analytics_last_parity_log.get(key, 0.0)
-            if now - previous < 300.0:
-                return False
-            self._analytics_last_parity_log[key] = now
-        return True
 
     def _clickhouse_activity_rows(
         self,

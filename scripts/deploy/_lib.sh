@@ -104,10 +104,6 @@ SPANNER_EDITION="${TR_SPANNER_EDITION:-ENTERPRISE_PLUS}"
 # entity reads, finalize updates and outbox writes on Spanner.
 SPANNER_PROCESSING_UNITS="${TR_SPANNER_PROCESSING_UNITS:-600}"
 BIGTABLE_INSTANCE_ID="${TR_BIGTABLE_INSTANCE_ID:-trusted-router-logs}"
-BIGTABLE_CLUSTER_ID="${TR_BIGTABLE_CLUSTER_ID:-trusted-router-logs-c1}"
-BIGTABLE_APP_PROFILE_ID="${TR_BIGTABLE_APP_PROFILE_ID:-}"
-BIGTABLE_GENERATION_TABLE="${TR_BIGTABLE_GENERATION_TABLE:-trustedrouter-generations}"
-BIGTABLE_INSTANCE_TYPE="${TR_BIGTABLE_INSTANCE_TYPE:-PRODUCTION}"
 # All regional profiles use c1: Bigtable refuses transactional writers on
 # different clusters without bypassing its split-brain guard. EU-local ledgers
 # require separate work; never bypass that guard here.

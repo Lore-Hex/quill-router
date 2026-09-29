@@ -111,7 +111,7 @@ on **INSERT-as-claim**, which is the *typed-counter* mechanism
 So: `tr_settle_outbox` is a native Spanner table with a real PRIMARY KEY, enqueued
 via INSERT DML that raises `AlreadyExists`. Mirror broadcast's *state machine*,
 not its storage. **InMemory backend: no-op/unsupported** (durability needs
-Spanner); the mechanism is only active on `spanner-bigtable`.
+Spanner); the mechanism is only active on `spanner-clickhouse`.
 
 ### 5.2 Primary key handles settle-vs-refund polarity (SF1)
 

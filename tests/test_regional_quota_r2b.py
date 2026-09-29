@@ -26,7 +26,7 @@ from trusted_router.types import UsageType
 
 
 def setup(balance: int = 100_000_000) -> tuple[Any, Any, Any, dict[str, Any]]:
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     arm_store(store, db)
     ws = store.create_workspace("owner", "r2b", trial_credit_microdollars=0)
     workspace_state(db, 1, ws.id)["total_credits"] = balance

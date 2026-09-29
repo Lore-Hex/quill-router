@@ -26,7 +26,7 @@ from trusted_router import trust_eligibility as gate
 
 @pytest.fixture
 def armed() -> tuple[Any, Any, Any, datetime]:
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     settings = arm_store(store, db)
     workspace_state(db)
     # Every gate call in a test evaluates and consumes evidence at this one

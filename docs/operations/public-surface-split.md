@@ -55,10 +55,10 @@ for secret in \
 done
 ```
 
-The ClickHouse secret grant is required only while
-`TR_ANALYTICS_READ_MODE != bigtable`. The public deploy's complete secret
-allowlist is the derived attribution-cookie key, the deliberately T1-owned Sentry
-DSN, and that conditional ClickHouse read password. It binds no gateway,
+The ClickHouse secret grant is always required: tenant activity and usage are
+read from ClickHouse alone. The public deploy's complete secret allowlist is
+the derived attribution-cookie key, the deliberately T1-owned Sentry DSN, and
+that ClickHouse read password. It binds no gateway,
 payment, observer, SES, BYOK, or OAuth credentials.
 
 Create the policy out of band. This has the legacy policy's five-rule shape

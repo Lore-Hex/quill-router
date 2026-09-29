@@ -7,7 +7,7 @@
 # Each phase script under scripts/deploy/ is independently runnable for
 # partial deploys. The shared config + helpers live in scripts/deploy/_lib.sh.
 #
-#   1. infra.sh    — enable APIs, provision Spanner + Bigtable
+#   1. infra.sh    — enable APIs, provision Spanner
 #   2. typed billing, bounded request records, and analytics outboxes
 #   3. image.sh    — Artifact Registry repo + buildx push (linux/amd64)
 #   4. secrets.sh  — Secret Manager + runtime IAM bindings

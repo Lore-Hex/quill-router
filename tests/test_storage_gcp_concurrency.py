@@ -54,7 +54,7 @@ def test_concurrent_stripe_credit_is_idempotent_under_retries() -> None:
     workspace_id = "ws_stripe"
     n = 8
     barrier = threading.Barrier(n + 1)
-    store, db, _ = make_fake_store(ready_barrier=barrier)
+    store, db = make_fake_store(ready_barrier=barrier)
     _seed_credit(store, workspace_id, 0)
 
     results: list[bool] = []
@@ -84,7 +84,7 @@ def test_concurrent_wallet_challenge_issuance_keeps_only_one_active_nonce() -> N
     address = "0x" + "a" * 40
     n = 16
     barrier = threading.Barrier(n + 1)
-    store, db, _ = make_fake_store(ready_barrier=barrier)
+    store, db = make_fake_store(ready_barrier=barrier)
     nonces: list[str] = []
     results_lock = threading.Lock()
 
@@ -122,7 +122,7 @@ def test_concurrent_key_limit_reservations_do_not_overspend() -> None:
     n = 6
     amount = 200_000  # 5 of 6 should succeed against a 1_000_000 limit.
     barrier = threading.Barrier(n + 1)
-    store, db, _ = make_fake_store(ready_barrier=barrier)
+    store, db = make_fake_store(ready_barrier=barrier)
 
     api_key = ApiKey(
         hash="key_1",

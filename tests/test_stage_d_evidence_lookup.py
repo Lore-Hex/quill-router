@@ -44,7 +44,7 @@ def evidence_client() -> Iterator[TestClient]:
         stage_d_boot_kid=data["stage_d_boot_kid"],
         heartbeat_seq=data["heartbeat_seq"],
     )
-    store, database, _table = make_fake_store(request_record_write_mode="typed")
+    store, database = make_fake_store(request_record_write_mode="typed")
     payload = dataclasses.asdict(authorization)
     database.gateway_authorizations[authorization.id] = {
         "authorization_id": authorization.id,

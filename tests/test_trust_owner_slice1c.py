@@ -136,7 +136,7 @@ def test_in_memory_owner_inventory_lifecycle_limit_transfer_and_backfill() -> No
 
 
 def test_spanner_account_and_wallet_bootstraps_seed_owner_inventory() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     email_user = store.ensure_user("bootstrap@example.com", trial_credit_microdollars=0)
     wallet_user = store.create_wallet_user("0x" + "A" * 40)
 
@@ -173,7 +173,7 @@ def test_owner_budget_uses_actual_shards_times_seven() -> None:
 
 
 def test_fanout_increasing_reshard_rejects_grandfathered_owner_budget() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     user = store.ensure_user("fanout@example.com", trial_credit_microdollars=0)
     workspace = store.list_workspaces_for_user(user.id)[0]
     store.update_workspace(workspace.id, billing_paused=True)
@@ -239,7 +239,7 @@ def test_slice_1c_schemas_have_exact_columns_and_keys() -> None:
 
 def test_spanner_creation_inventory_and_concurrent_owner_limit() -> None:
     barrier = threading.Barrier(2)
-    store, database, _ = make_fake_store(ready_barrier=barrier)
+    store, database = make_fake_store(ready_barrier=barrier)
     store.max_workspaces_per_owner = 1
     owner = User(id="owner", email="owner@example.com")
     store._write_entity("user", owner.id, owner)
@@ -264,7 +264,7 @@ def test_spanner_creation_inventory_and_concurrent_owner_limit() -> None:
 
 
 def test_spanner_owner_backfill_repairs_both_directions_and_marks_complete() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     user = store.ensure_user("backfill@example.com", trial_credit_microdollars=0)
     workspace = store.list_workspaces_for_user(user.id)[0]
     database.typed["tr_owner_workspace"].clear()
@@ -288,7 +288,7 @@ def test_spanner_owner_backfill_repairs_both_directions_and_marks_complete() -> 
 
 
 def test_veriff_demotion_is_atomic_with_claim_and_all_shards() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     user = store.ensure_user("demote@example.com", trial_credit_microdollars=0)
     workspace = store.list_workspaces_for_user(user.id)[0]
     store.set_user_identity_status(
@@ -335,7 +335,7 @@ def test_veriff_demotion_is_atomic_with_claim_and_all_shards() -> None:
 def test_spanner_owner_demotion_over_budget_commits_fit_and_queues_remainder(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     user, workspace_ids = _seed_grandfathered_owner_fanout(
         store, database, workspace_count=46
     )
@@ -369,7 +369,7 @@ def test_spanner_owner_demotion_over_budget_commits_fit_and_queues_remainder(
 
 
 def test_spanner_owner_demotion_under_budget_writes_no_remainder() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     user, workspace_ids = _seed_grandfathered_owner_fanout(
         store, database, workspace_count=44
     )
@@ -384,7 +384,7 @@ def test_spanner_owner_demotion_under_budget_writes_no_remainder() -> None:
 
 
 def test_spanner_demotion_remainder_is_bounded_and_honors_identity_bypass() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     user = store.ensure_user("remainder@example.com", trial_credit_microdollars=0)
     workspace = store.list_workspaces_for_user(user.id)[0]
     store.set_workspace_trust_override(
@@ -413,7 +413,7 @@ def test_spanner_demotion_remainder_is_bounded_and_honors_identity_bypass() -> N
 
 
 def test_spanner_override_rewrites_all_shards_and_audits_bypass() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     user = store.ensure_user("override@example.com", trial_credit_microdollars=0)
     workspace = store.list_workspaces_for_user(user.id)[0]
     record = store.set_workspace_trust_override(
@@ -440,7 +440,7 @@ def test_spanner_override_rewrites_all_shards_and_audits_bypass() -> None:
 
 
 def test_spanner_abuse_is_idempotent_and_clear_never_unlatches() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     user = store.ensure_user("abuse@example.com", trial_credit_microdollars=0)
     workspace = store.list_workspaces_for_user(user.id)[0]
     assert store.record_workspace_abuse_and_demote(
@@ -481,7 +481,7 @@ def test_spanner_abuse_is_idempotent_and_clear_never_unlatches() -> None:
 
 
 def test_spanner_archive_excludes_inventory_latches_and_retires_leases() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     user = store.ensure_user("archive@example.com", trial_credit_microdollars=0)
     workspace = store.list_workspaces_for_user(user.id)[0]
     store._write_entity(
@@ -632,7 +632,7 @@ def test_owner_markers_preserve_source_and_revision_and_use_shared_arm_reader(ba
     elif backend == "postgres":
         store = postgres_store_on(sqlite_postgres_conn())
     else:
-        store, _database, _ = make_fake_store()
+        store, _database = make_fake_store()
 
     def read(requirement: MarkerRequirement) -> BackfillMarker | None:
         if backend == "memory":

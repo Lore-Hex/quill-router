@@ -77,7 +77,7 @@ def _backend(request: pytest.FixtureRequest) -> Store:
         return BACKENDS[request.param]()
     from tests.conformance.spanner_emulator import emulator_store
 
-    _, _, instance_id = request.getfixturevalue("native_emulator_resources")
+    _, instance_id = request.getfixturevalue("native_emulator_resources")
     context = emulator_store(instance_id)
     backend = context.__enter__()
     backend.close = lambda: context.__exit__(None, None, None)
@@ -114,9 +114,24 @@ def _spanner_fake_store() -> Store:
     Passing here means the STORE'S LOGIC is right; `spanner-emulator` is still
     the backend that validates SQL on the native GoogleSQL emulator in CI.
     """
+    from tests.fakes.analytics_pipeline import OutboxAnalyticsReader
     from tests.fakes.spanner import make_fake_store
 
-    store, _database, _bigtable = make_fake_store()
+    # Production delivers benchmark and synthetic analytics through the two
+    # durable outboxes and reads them back from ClickHouse. Both outboxes are
+    # the real Spanner code over the fake; the reader stands in for ClickHouse.
+    store, database = make_fake_store(
+        operational_analytics_outbox_enabled=True, analytics_outbox_enabled=True,
+    )
+    store._operational_analytics = OutboxAnalyticsReader(
+        operational_rows=lambda: [
+            (row["event_kind"], row["event_id"], row["payload"])
+            for row in database.operational_analytics_outbox
+        ],
+        benchmark_rows=lambda: [
+            (row["event_id"], row["payload"]) for row in database.analytics_outbox
+        ],
+    )
     return store
 
 
@@ -236,10 +251,12 @@ _C1_LEGACY_MONEY = (
     "from the Store contract, not a gap in the fake — the typed path has its own "
     "tests (tests/test_billing_typed_*.py), but it is NOT this suite's assertions."
 )
-_NATIVE_ROLLUP_ORDERING = (
-    "Native store bug #1370 (Lore-Hex/quill-router): synthetic_rollups applies "
-    "limit to an ascending Bigtable row-key scan before sorting newest-first; "
-    "the real Bigtable emulator also returns the oldest periods."
+_NATIVE_ROLLUPS_FROM_CLICKHOUSE_WORKER = (
+    "native-Spanner store serves synthetic rollups from ClickHouse, where the "
+    "rollup worker (clickhouse/rollup_synthetic.py) computes them from ingested "
+    "samples (Bigtable analytics retired 2026-09-29). The conformance backends "
+    "carry samples through the real outboxes but run no rollup worker, so this "
+    "read raises by design; the worker has its own tests."
 )
 
 #: Tests the native STORE is KNOWN not to satisfy, each with the
@@ -255,7 +272,7 @@ _NATIVE_ROLLUP_ORDERING = (
 #: Anything not listed here is genuinely asserted against the native Spanner
 #: store, cross-plane credit transfer included.
 _NATIVE_STORE_KNOWN_GAPS: dict[tuple[str, str], str] = {
-    ("store", "test_store_semantics.py::test_synthetic_rollups_apply_ranges_order_limit_and_histogram_option"): _NATIVE_ROLLUP_ORDERING,
+    ("store", "test_store_semantics.py::test_synthetic_rollups_apply_ranges_order_limit_and_histogram_option"): _NATIVE_ROLLUPS_FROM_CLICKHOUSE_WORKER,
     ("store", "test_store_semantics.py::test_reserve_then_settle_less_releases_unused_hold"): _C1_LEGACY_MONEY,
     ("store", "test_store_semantics.py::test_reserve_then_settle_more_books_full_actual"): _C1_LEGACY_MONEY,
     ("store", "test_store_semantics.py::test_reserve_then_refund_restores_exact_balance"): _C1_LEGACY_MONEY,

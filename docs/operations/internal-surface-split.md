@@ -56,7 +56,8 @@ for secret in \
 done
 ```
 
-When `TR_ANALYTICS_READ_MODE` is not `bigtable`, also grant:
+Tenant activity and provider analytics are read from ClickHouse alone, so
+also grant:
 
 ```bash
 gcloud secrets add-iam-policy-binding trustedrouter-clickhouse-control-read-password \
@@ -95,9 +96,9 @@ by the deployed internal-surface settings contract.
 This inventory was generated from the `internal` FastAPI app after removing
 broadcast drain. Every `/internal/...` route below is also mounted at the identical
 `/v1/internal/...` path; those aliases have the same requirements and are not a
-second capability. “Storage” means the database-scoped Spanner role plus the
-instance-scoped Bigtable role above. The optional ClickHouse read credential and
-VPC egress are needed only when `TR_ANALYTICS_READ_MODE` is not `bigtable`.
+second capability. “Storage” means the database-scoped Spanner role above. The
+ClickHouse read credential and VPC egress are always required: tenant activity
+and provider analytics are read from ClickHouse alone.
 
 | Route | Runtime capabilities | Bound source |
 |---|---|---|

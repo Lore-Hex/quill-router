@@ -41,7 +41,7 @@ def _seed(
     workspace_id: str = "ws-sharded",
     key_limit: int | None = None,
 ) -> tuple[Any, Any, Any]:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     store._write_entity(
         "credit",
         workspace_id,

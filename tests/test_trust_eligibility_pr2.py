@@ -17,7 +17,7 @@ from trusted_router.trust_tiers import effective_trust_tier
 def arm_store(store: Any, db: Any) -> Settings:
     settings = Settings(
         environment="test",
-        storage_backend="spanner-bigtable",
+        storage_backend="spanner-clickhouse",
         request_record_write_mode="typed",
         spend_lease_trust_eligibility_enabled=True,
         trust_stripe_account_id="acct_1",
@@ -99,7 +99,7 @@ def workspace_state(db: Any, tier: int = 3, workspace_id: str = "workspace") -> 
 def test_gate_requires_every_exact_completed_marker(
     provider: str, field: str, value: Any, caplog: Any
 ) -> None:
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     settings = arm_store(store, db)
     workspace_state(db)
     markers = db.typed["tr_trust_backfill"]
@@ -116,7 +116,7 @@ def test_gate_requires_every_exact_completed_marker(
     "condition", ["backend", "records", "account_pin", "owner_budget", "stale", "future", "delay"]
 )
 def test_gate_other_preconditions(condition: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     settings = arm_store(store, db)
     workspace_state(db)
     marker = db.typed["tr_trust_backfill"][
@@ -149,7 +149,7 @@ def test_gate_other_preconditions(condition: str, monkeypatch: pytest.MonkeyPatc
 
 @pytest.mark.parametrize("tier,cap", [(0, 0), (1, 5_000_000), (2, 25_000_000), (3, 100_000_000)])
 def test_money_tier_cap_and_guard(tier: int, cap: int) -> None:
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     settings = arm_store(store, db)
     workspace_state(db, tier)
     effective, reason = lease_eligibility(store, settings, "workspace")
@@ -184,7 +184,7 @@ def test_money_tier_cap_and_guard(tier: int, cap: int) -> None:
     ],
 )
 def test_freshness_latch_pause_refuse_without_money(change: dict[str, Any], reason: str) -> None:
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     settings = arm_store(store, db)
     row = workspace_state(db)
     row.update(change)
@@ -314,7 +314,7 @@ def test_regional_record_race_refunds_bigtable_hold_and_retires(
     from trusted_router.regional_quota_ledger import InMemoryRegionalQuotaLedger
     from trusted_router.services.regional_quota_leases import HoldState
 
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     arm_store(store, db)
     ws = store.create_workspace("owner", "race", trial_credit_microdollars=200_000_000)
     row = workspace_state(db, 3, ws.id)
@@ -379,7 +379,7 @@ def test_regional_record_race_refunds_bigtable_hold_and_retires(
 def test_regional_aggregate_cap_across_quota_shards() -> None:
     from trusted_router.storage_gcp_regional_quota import grant_regional_quota_lease
 
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     arm_store(store, db)
     workspace_state(db, 1)
     common = dict(
@@ -491,7 +491,7 @@ def test_legacy_spanner_byok_rechecks_pause_inside_creation() -> None:
     from trusted_router.storage_legacy_trust import BillingPausedError
     from trusted_router.types import UsageType
 
-    store, db, _ = make_fake_store(request_record_write_mode="legacy")
+    store, db = make_fake_store(request_record_write_mode="legacy")
     store.trust_settings = Settings(environment="test", spend_lease_trust_eligibility_enabled=True)
     ws = store.create_workspace("owner", "legacy-gcp")
     _raw, key = store.create_api_key(
@@ -518,7 +518,7 @@ def test_legacy_spanner_byok_rechecks_pause_inside_creation() -> None:
 
 
 def test_incomplete_active_shards_never_qualify() -> None:
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     settings = arm_store(store, db)
     ws = store.create_workspace("owner", "shards")
     workspace_state(db, 3, ws.id)
@@ -668,7 +668,7 @@ def test_legacy_pause_cleared_between_reserve_and_create_still_refuses(
     from trusted_router.types import UsageType
 
     if backend == "spanner":
-        store, db, _ = make_fake_store(request_record_write_mode="legacy")
+        store, db = make_fake_store(request_record_write_mode="legacy")
     else:
         store = (
             InMemoryStore() if backend == "memory" else postgres_store_on(sqlite_postgres_conn())
@@ -717,7 +717,7 @@ def test_concurrent_regional_grants_share_workspace_cap() -> None:
 
     from trusted_router.storage_gcp_regional_quota import grant_regional_quota_lease
 
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     arm_store(store, db)
     workspace_state(db, 1)
     db._ready_barrier = threading.Barrier(2)
@@ -751,7 +751,7 @@ def test_regional_record_validates_lease_and_pool_after_local_hold(
     from trusted_router.regional_quota_ledger import InMemoryRegionalQuotaLedger
     from trusted_router.services.regional_quota_leases import HoldState
 
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     arm_store(store, db)
     ws = store.create_workspace("owner", "pool-race", trial_credit_microdollars=200_000_000)
     workspace_state(db, 3, ws.id)
@@ -827,7 +827,7 @@ def test_startup_does_not_evaluate_gate_and_runtime_can_recover(
     from trusted_router.storage import configure_store
     from trusted_router.synthetic import alerts
 
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     settings = arm_store(store, db)
     db.typed["tr_trust_backfill"].clear()
     configure_store(store)
@@ -922,7 +922,7 @@ def test_gateway_shadow_mint_uses_real_gate_and_tier_cap(
     ],
 )
 def test_additional_arm_preconditions_fail_closed(condition: str) -> None:
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     settings = arm_store(store, db)
     workspace_state(db)
     marker = next(

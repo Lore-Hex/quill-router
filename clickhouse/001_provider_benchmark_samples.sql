@@ -3,8 +3,8 @@
 -- This is the leaderboard / route-health dataset that currently lives in
 -- Bigtable as `benchmark_*#...` rows, one JSON blob per row in column family
 -- `m`. Every aggregate over it today is computed by scanning rows and
--- json.loads-ing each one in Python (storage_gcp_benchmark_index.py,
--- synthetic/backfill_rollups.py). That is the workload this schema removes.
+-- json.loads-ing each one in Python (the since-retired Bigtable index
+-- modules). That is the workload this schema removes.
 --
 -- Design notes:
 --

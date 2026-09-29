@@ -280,6 +280,84 @@ def test_a_hold_that_cannot_keep_the_provider_exact_publishes_nothing(
     assert f"  acme/model [{name}::acme/model]\n" in out
 
 
+def test_a_hold_can_prune_a_route_already_quarantined_in_the_published_manifest(
+    published: dict[str, Any],
+    provider: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Sept 29: io.net M2.7 was still in the snapshot but its published
+    # manifest already said provider-canary-failed. Stale recovery correctly
+    # omitted it, then the hold guard incorrectly blocked all providers.
+    key, name = provider
+    manifest = refresh.PROVIDER_MANIFEST_DIR / f"{name}.json"
+    original = json.dumps({"provider": name, "models": [{
+        "id": "acme/model", "routable": False,
+        "routable_reason": "provider-canary-failed",
+        "input_token_price_per_m": 1_000_000,
+        "output_token_price_per_m": 2_000_000,
+    }]})
+    manifest.write_text(original)
+    module = SimpleNamespace(MANIFEST_PATH=manifest, MANIFEST_STALE_FALLBACK=True)
+    monkeypatch.setattr(refresh, "_import_provider", lambda slug: module if slug == key else SimpleNamespace())
+    _fetched(monkeypatch, key, ModelPrice(3_000_000, 2_000_000))
+
+    assert refresh.main([]) == 0
+
+    assert manifest.read_text() == original
+    assert _endpoint_prices() == {"x-ai/grok-next [grok]": ("0.0000035", "0.000004")}
+
+
+@pytest.mark.parametrize("evidence", ["disabled", "active", "missing", "malformed", "wrong-provider", "new-hold", "retired"])
+def test_hold_route_removal_requires_published_disable_or_effective_retirement(
+    published: dict[str, Any],
+    provider: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    evidence: str,
+) -> None:
+    key, name = provider
+    manifest = refresh.PROVIDER_MANIFEST_DIR / f"{name}.json"
+    raw = {
+        "provider": "another-provider" if evidence == "wrong-provider" else name,
+        "models": [{"id": "acme/model", "routable": evidence in {"active", "retired"}}],
+    }
+    if evidence not in {"missing", "new-hold"}:
+        manifest.write_text("invalid" if evidence == "malformed" else json.dumps(raw))
+    module = SimpleNamespace(MANIFEST_PATH=manifest)
+    monkeypatch.setattr(refresh, "_import_provider", lambda slug: module if slug == key else SimpleNamespace())
+    baseline = refresh._copy_published_prices()
+    if evidence == "new-hold":
+        manifest.write_text(json.dumps(raw))
+    monkeypatch.setattr(
+        refresh, "provider_model_retired",
+        lambda slug, model_id, upstream_id: evidence == "retired" and slug == name and model_id == "acme/model",
+    )
+    published["models"] = published["models"][1:]
+    refresh.SNAPSHOT_PATH.write_text(json.dumps(published))
+
+    changed = refresh._held_routes_changed(baseline, {key: []})
+
+    route = f"acme/model [{name}::acme/model]"
+    assert (route not in changed) == (evidence in {"disabled", "retired"})
+    if evidence == "new-hold":
+        assert f"{name}.json (manifest)" in changed
+
+
+def test_disabled_route_prices_still_cannot_change_during_a_hold(
+    published: dict[str, Any],
+    provider: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key, name = provider
+    manifest = refresh.PROVIDER_MANIFEST_DIR / f"{name}.json"
+    manifest.write_text(json.dumps({"provider": name, "models": [{"id": "acme/model", "routable": False}]}))
+    monkeypatch.setattr(refresh, "_import_provider", lambda _slug: SimpleNamespace(MANIFEST_PATH=manifest))
+    baseline = refresh._copy_published_prices()
+    published["models"][0]["endpoints"][0]["pricing"]["prompt"] = "0.000003"
+    refresh.SNAPSHOT_PATH.write_text(json.dumps(published))
+
+    assert refresh._held_routes_changed(baseline, {key: []}) == [f"acme/model [{name}::acme/model]"]
+
+
 @pytest.mark.parametrize("same_tag", [False, True], ids=["distinct-tags", "same-tag"])
 def test_a_hold_that_would_merge_distinct_published_cache_prices_publishes_nothing(
     published: dict[str, Any],

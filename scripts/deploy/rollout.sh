@@ -291,25 +291,6 @@ case "$GENERATION_RECORDS_ENABLED" in
     exit 1
     ;;
 esac
-# The mirror flag stays rendered (false) because config.py still defaults it
-# to true and the spanner-clickhouse backend refuses to boot with it on.
-BIGTABLE_MIRROR_WRITES_ENABLED=false
-case "${TR_BIGTABLE_MIRROR_WRITES_ENABLED:-false}" in
-  false) ;;
-  *)
-    log "refusing rollout: TR_BIGTABLE_MIRROR_WRITES_ENABLED=${TR_BIGTABLE_MIRROR_WRITES_ENABLED} is retired; Bigtable receives no writes"
-    exit 1
-    ;;
-esac
-
-ANALYTICS_READ_MODE=clickhouse-only
-case "${TR_ANALYTICS_READ_MODE:-clickhouse-only}" in
-  clickhouse-only) ;;
-  *)
-    log "refusing rollout: TR_ANALYTICS_READ_MODE=${TR_ANALYTICS_READ_MODE} is retired; analytics reads come from ClickHouse alone"
-    exit 1
-    ;;
-esac
 # spanner-clickhouse needs typed generation records: nothing else carries a
 # generation to ClickHouse once Bigtable is gone.
 case "$GENERATION_RECORDS_ENABLED:$REQUEST_RECORD_WRITE_MODE" in
@@ -525,7 +506,6 @@ ENV_VARS=(
   "TR_TWILIO_FROM_NUMBER=+15055313623"
   "TR_SPANNER_INSTANCE_ID=${SPANNER_INSTANCE_ID}"
   "TR_SPANNER_DATABASE_ID=${SPANNER_DATABASE_ID}"
-  "TR_BIGTABLE_MIRROR_WRITES_ENABLED=${BIGTABLE_MIRROR_WRITES_ENABLED}"
   "TR_GENERATION_RECORDS_ENABLED=${GENERATION_RECORDS_ENABLED}"
   "TR_BYOK_KMS_KEY_NAME=${BYOK_KMS_KEY_NAME}"
   "TR_GOOGLE_DATA_MANAGER_KMS_KEY_NAME=${GOOGLE_ADS_KMS_KEY_NAME}"
@@ -642,7 +622,6 @@ ENV_VARS=(
   # #853 are live so a dead sink can never again read as healthy.
   "TR_OPERATIONAL_ANALYTICS_SINK=outbox"
   "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_WRITE_USER=tr_ops_ingest"
-  "TR_ANALYTICS_READ_MODE=${ANALYTICS_READ_MODE}"
   # The first expand deployment defaults to legacy. After an explicit typed
   # cutover, preserve the primary region's live mode on later deploys unless an
   # operator overrides it. This prevents routine rollouts from reopening the
@@ -652,8 +631,7 @@ ENV_VARS=(
   # and no ledger table, app-profile map, or cluster map is rendered at all:
   # the store opens a Bigtable ledger client whenever a profile map is set,
   # capability or not, so their absence is what keeps the two ledger clients
-  # out of the process. The generation mirror client (spanner-bigtable) is
-  # the analytics cutover's business, not this change's.
+  # out of the process.
   "TR_REGIONAL_QUOTA_LEASES_ENABLED=${REGIONAL_QUOTA_LEASES_ENABLED}"
   "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED=${REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED}"
   # 2026-08-30 pilot: Joseph's own Personal Workspace (first-party, his account,

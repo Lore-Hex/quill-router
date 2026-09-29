@@ -357,25 +357,13 @@ print(containers[0]["image"])
 ' <<<"$LEGACY_REVISION_JSON")"
 
 # Bigtable analytics are retired (2026-09-28): this surface follows a
-# control-plane revision that already reads ClickHouse alone and mirrors
-# nothing. An older legacy revision means the control plane deploys first.
-ANALYTICS_READ_MODE="$(legacy_env_required TR_ANALYTICS_READ_MODE)"
-case "$ANALYTICS_READ_MODE" in
-  clickhouse-only) ;;
-  *) echo "ERROR: invalid TR_ANALYTICS_READ_MODE=${ANALYTICS_READ_MODE}" >&2; exit 1 ;;
-esac
+# control-plane revision that already runs spanner-clickhouse. An older
+# legacy revision means the control plane deploys first.
 STORAGE_BACKEND="$(legacy_env_required TR_STORAGE_BACKEND)"
 case "$STORAGE_BACKEND" in
   spanner-clickhouse) ;;
   *)
     echo "ERROR: active legacy revision still runs TR_STORAGE_BACKEND=${STORAGE_BACKEND}; Bigtable analytics are retired, deploy the control plane first" >&2
-    exit 1
-    ;;
-esac
-case "$(legacy_env_required TR_BIGTABLE_MIRROR_WRITES_ENABLED)" in
-  false) ;;
-  *)
-    echo "ERROR: active legacy revision still mirrors analytics to Bigtable; deploy the control plane first" >&2
     exit 1
     ;;
 esac
@@ -407,9 +395,7 @@ ENV_VARS=(
   # so run_in_transaction_with_retry rolls back deterministic API failures
   # itself (storage_gcp_io.py). Keep this a decision, not a client default.
   "GOOGLE_CLOUD_SPANNER_MULTIPLEXED_SESSIONS_FOR_RW=true"
-  "TR_BIGTABLE_MIRROR_WRITES_ENABLED=false"
   "TR_GENERATION_RECORDS_ENABLED=$(legacy_env_required TR_GENERATION_RECORDS_ENABLED)"
-  "TR_ANALYTICS_READ_MODE=${ANALYTICS_READ_MODE}"
   "TR_REQUEST_RECORD_WRITE_MODE=$(legacy_env_required TR_REQUEST_RECORD_WRITE_MODE)"
   "TR_SETTLE_OUTBOX_ENABLED=$(legacy_env_required TR_SETTLE_OUTBOX_ENABLED)"
   "TR_ANALYTICS_OUTBOX_ENABLED=$(legacy_env_required TR_ANALYTICS_OUTBOX_ENABLED)"
