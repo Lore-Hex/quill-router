@@ -2352,19 +2352,21 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
 
 def test_crusoe_provider_models_follow_authoritative_manifest() -> None:
     """Crusoe availability follows its generated, credential-aware manifest."""
+    from tests import catalog_vehicles
     from trusted_router.catalog_ingest import _authoritative_provider_model_ids
 
     assert "crusoe" in PROVIDERS
     assert "crusoe" in GATEWAY_PREPAID_PROVIDER_SLUGS
     expected = _authoritative_provider_model_ids("crusoe")
+    built = catalog_vehicles.registry_endpoints()
     credits = {
         endpoint.model_id
-        for endpoint in MODEL_ENDPOINTS.values()
+        for endpoint in built.values()
         if endpoint.provider == "crusoe" and endpoint.usage_type == "Credits"
     }
     byok = {
         endpoint.model_id
-        for endpoint in MODEL_ENDPOINTS.values()
+        for endpoint in built.values()
         if endpoint.provider == "crusoe" and endpoint.usage_type == "BYOK"
     }
     assert credits == expected
@@ -2373,6 +2375,7 @@ def test_crusoe_provider_models_follow_authoritative_manifest() -> None:
 
 def test_makora_provider_models_follow_live_manifest() -> None:
     """Makora routes track its generated catalog without freezing retirements."""
+    from tests import catalog_vehicles
     from trusted_router.catalog_ingest import (
         _PROVIDER_MODELS_DIR,
         _is_provider_deprecated_model,
@@ -2399,14 +2402,15 @@ def test_makora_provider_models_follow_live_manifest() -> None:
             continue
         expected[model_id] = upstream_id
 
+    built = catalog_vehicles.registry_endpoints()
     credits_model_ids = {
         endpoint.model_id
-        for endpoint in MODEL_ENDPOINTS.values()
+        for endpoint in built.values()
         if endpoint.provider == "makora" and str(endpoint.usage_type) == "Credits"
     }
     byok_model_ids = {
         endpoint.model_id
-        for endpoint in MODEL_ENDPOINTS.values()
+        for endpoint in built.values()
         if endpoint.provider == "makora" and str(endpoint.usage_type) == "BYOK"
     }
 
