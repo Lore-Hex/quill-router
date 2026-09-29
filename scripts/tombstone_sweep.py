@@ -270,7 +270,9 @@ def files_naming(ids: set[str]) -> dict[str, set[str]]:
         r"(?<![\w.-])(" + "|".join(re.escape(i) for i in sorted(ids, key=len, reverse=True)) + r")(?![\w.-])"
     )
     named: dict[str, set[str]] = defaultdict(set)
-    for path in sorted((ROOT / "tests").rglob("test_*.py")):
+    # The release suite's own files. tests/conformance is a separate suite with
+    # its own collection hooks, which reject the node ids of an xdist loadgroup run.
+    for path in sorted((ROOT / "tests").glob("test_*.py")):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
                 for model_id in pattern.findall(node.value):
