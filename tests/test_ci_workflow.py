@@ -81,6 +81,7 @@ def test_native_spanner_job_runs_both_focused_server_gates() -> None:
     assert "tests/conformance -k spanner-emulator" in steps[0]["run"]
     assert "tests/conformance/test_spanner_schema.py" in steps[1]["run"]
     assert "tests/conformance/test_spanner_sql_acceptance.py" in steps[1]["run"]
+    assert "tests/conformance/test_spanner_schema_audit.py" in steps[1]["run"]
     assert steps[1]["if"] == "${{ !cancelled() }}"
     assert "continue-on-error" not in job
     assert all("continue-on-error" not in step for step in job["steps"])
