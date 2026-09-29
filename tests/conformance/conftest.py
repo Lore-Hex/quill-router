@@ -236,10 +236,13 @@ _C1_LEGACY_MONEY = (
     "from the Store contract, not a gap in the fake — the typed path has its own "
     "tests (tests/test_billing_typed_*.py), but it is NOT this suite's assertions."
 )
-_NATIVE_ROLLUP_ORDERING = (
-    "Native store bug #1370 (Lore-Hex/quill-router): synthetic_rollups applies "
-    "limit to an ascending Bigtable row-key scan before sorting newest-first; "
-    "the real Bigtable emulator also returns the oldest periods."
+_NATIVE_ANALYTICS_IN_CLICKHOUSE = (
+    "native-Spanner store serves provider benchmark and synthetic analytics from "
+    "ClickHouse: samples leave through the operational analytics outbox and every "
+    "read goes to the ClickHouse control reader (Bigtable analytics retired "
+    "2026-09-29). Neither conformance backend has an outbox or a ClickHouse "
+    "reader, so the store raises by design; the ClickHouse reader has its own "
+    "tests (tests/test_operational_analytics.py) and the outbox its drain tests."
 )
 
 #: Tests the native STORE is KNOWN not to satisfy, each with the
@@ -255,7 +258,12 @@ _NATIVE_ROLLUP_ORDERING = (
 #: Anything not listed here is genuinely asserted against the native Spanner
 #: store, cross-plane credit transfer included.
 _NATIVE_STORE_KNOWN_GAPS: dict[tuple[str, str], str] = {
-    ("store", "test_store_semantics.py::test_synthetic_rollups_apply_ranges_order_limit_and_histogram_option"): _NATIVE_ROLLUP_ORDERING,
+    ("store", "test_store_semantics.py::test_synthetic_rollups_apply_ranges_order_limit_and_histogram_option"): _NATIVE_ANALYTICS_IN_CLICKHOUSE,
+    ("store", "test_store_semantics.py::test_synthetic_probe_samples_apply_status_reader_filters"): _NATIVE_ANALYTICS_IN_CLICKHOUSE,
+    ("store", "test_store_semantics.py::test_synthetic_probe_samples_return_newest_first_and_respect_limit"): _NATIVE_ANALYTICS_IN_CLICKHOUSE,
+    ("store", "test_store_semantics.py::test_benchmark_samples_respect_limit"): _NATIVE_ANALYTICS_IN_CLICKHOUSE,
+    ("store", "test_store_semantics.py::test_benchmark_samples_filter_by_route"): _NATIVE_ANALYTICS_IN_CLICKHOUSE,
+    ("store", "test_store_semantics.py::test_benchmark_samples_return_newest_first"): _NATIVE_ANALYTICS_IN_CLICKHOUSE,
     ("store", "test_store_semantics.py::test_reserve_then_settle_less_releases_unused_hold"): _C1_LEGACY_MONEY,
     ("store", "test_store_semantics.py::test_reserve_then_settle_more_books_full_actual"): _C1_LEGACY_MONEY,
     ("store", "test_store_semantics.py::test_reserve_then_refund_restores_exact_balance"): _C1_LEGACY_MONEY,
