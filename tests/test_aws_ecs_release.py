@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.deploy_script_harness import harness_timeout_scale
+
 ROOT = Path(__file__).resolve().parents[1]
 ENV_SENTINEL = "fixture-env-value-must-not-appear-in-errors"
 
@@ -321,7 +323,7 @@ def run_ecs_fixture(
              "ECS_REGISTRATIONS": str(tmp_path / "registrations"),
              "ECS_UNLOCK": str(unlock), "ECS_FAIL_REGION": failure,
              "HARNESS_VERIFIER_RC": str(verifier_rc), **(extra_env or {})},
-        capture_output=True, text=True, check=False, timeout=timeout,
+        capture_output=True, text=True, check=False, timeout=timeout * harness_timeout_scale(),
     )
     recorded = [json.loads(line) for line in calls.read_text().splitlines()]
     assert ENV_SENTINEL not in result.stdout + result.stderr
@@ -395,8 +397,12 @@ def test_ecs_verification_attempt_budget_rolls_back_only_active_region(
     env = {f"ECS_READER_{kind}": f"{key}=10000"}
     if timeout_seconds is not None:
         env.update(TR_ECS_VERIFY_TIMEOUT_SECONDS=timeout_seconds, TR_ECS_VERIFY_INTERVAL_SECONDS="15")
-    # A wall-clock loop with the no-op sleep must time out and fail this test.
-    result, recorded = run_ecs_fixture(tmp_path, extra_env=env, timeout=10)
+    # The exact counts below are what prove the loop is bounded by attempts:
+    # with the no-op sleep, a wall-clock loop reads until its real deadline,
+    # far more than `attempts` times, or for the 480-second default runs into
+    # the fixture's timeout. That timeout is a hang guard, not a speed budget:
+    # a loaded parallel run took over 10 s for these 92 stubbed calls.
+    result, recorded = run_ecs_fixture(tmp_path, extra_env=env)
     assert result.returncode != 0
     assert recorded.count(["reader", key, "rollout"]) == attempts
     assert [c for c in recorded if c[0] == "sleep"] == [["sleep", "15"]] * (attempts - 1)
@@ -412,7 +418,7 @@ def test_ecs_verification_attempt_budget_rolls_back_only_active_region(
 
 @pytest.mark.parametrize("failures", [1, 10000])
 def test_ecs_rollback_verification_retries_with_a_budget(tmp_path: Path, failures: int) -> None:
-    result, recorded = run_ecs_fixture(tmp_path, failure="eu-west-1", timeout=10, extra_env={
+    result, recorded = run_ecs_fixture(tmp_path, failure="eu-west-1", extra_env={
         "ECS_ROLLBACK_READER_UNREADABLE": f"aws-region:eu-west-1={failures}",
         "TR_ECS_VERIFY_TIMEOUT_SECONDS": "30", "TR_ECS_VERIFY_INTERVAL_SECONDS": "15",
     })
@@ -425,7 +431,7 @@ def test_ecs_rollback_verification_retries_with_a_budget(tmp_path: Path, failure
 
 
 def test_ecs_final_verification_exhaustion_does_not_roll_back(tmp_path: Path) -> None:
-    result, recorded = run_ecs_fixture(tmp_path, timeout=10, extra_env={
+    result, recorded = run_ecs_fixture(tmp_path, extra_env={
         "ECS_READER_WRONG": "aws=10000",
         "TR_ECS_VERIFY_TIMEOUT_SECONDS": "30", "TR_ECS_VERIFY_INTERVAL_SECONDS": "15",
     })
