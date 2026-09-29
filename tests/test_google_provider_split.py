@@ -76,7 +76,7 @@ def test_legacy_google_endpoint_ids_preserve_their_original_product(
     ):
         if model_id not in MODELS:
             monkeypatch.setitem(MODELS, model_id, Model(
-                id=model_id, name=model_id, provider="google", context_length=1_048_576,
+                id=model_id, name=model_id, provider="google-ai-studio", context_length=1_048_576,
                 supports_chat=not embeddings, supports_embeddings=embeddings,
             ))
         for provider in ("google-ai-studio", "google-vertex"):
