@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import pytest
 
+from tests.fixture_routes import bypass_catalog_caches
+from trusted_router.catalog import MODELS
+from trusted_router.catalog_data import Model
 from trusted_router.evals.fusion_micro import (
     BLOCKED_MODEL_SUBSTRINGS,
     DRACO_JUDGE_MODEL,
@@ -25,11 +28,47 @@ from trusted_router.evals.fusion_micro import (
     write_micro_artifacts,
 )
 
-# Plans are priced from today's catalog; whether they fit their caps at those
-# prices is provider state, checked below.
+# Whether a plan fits its cap at today's catalog prices is provider state,
+# checked by the provider_health tests below.
 _UNCAPPED = 10**12
 
+# Each model the eval configs name: its publisher, and its prompt and
+# completion prices in microdollars per million tokens, as the catalog listed
+# them on 2026-09-29.
+_EVAL_MODELS = {
+    "anthropic/claude-opus-4.8": ("anthropic", 5_275_000, 26_375_000),
+    "deepseek/deepseek-v4-flash": ("deepseek", 71_740, 177_240),
+    "deepseek/deepseek-v4-pro": ("deepseek", 158_250, 633_000),
+    "google/gemini-3-flash-preview": ("google-ai-studio", 527_500, 3_165_000),
+    "google/gemini-3.1-pro-preview": ("google-ai-studio", 2_110_000, 12_660_000),
+    "minimax/minimax-m3": ("deepinfra", 242_650, 1_012_800),
+    "mistralai/mistral-small-2603": ("mistral", 158_250, 633_000),
+    "moonshotai/kimi-k2.6": ("kimi", 501_125, 2_584_750),
+    "moonshotai/kimi-k2.7-code": ("kimi", 692_291, 3_481_500),
+    "openai/gpt-5.5": ("openai", 5_275_000, 31_650_000),
+    "z-ai/glm-4.7": ("zai", 422_000, 1_846_250),
+    "z-ai/glm-5.1": ("zai", 1_033_900, 3_249_400),
+}
 
+
+@pytest.fixture
+def eval_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The eval configs' models at their pinned prices, whichever of them the
+    catalog lists today: a plan or config rule holds on any catalog carrying
+    them. Whether a config may run without a member the catalog lost is a
+    product question, which test_default_configs_use_catalog_models_and_no_blocked_models
+    and test_frontier_draco_configs_include_solo_and_fusion_opt_ins still ask
+    of today's catalog."""
+    bypass_catalog_caches(monkeypatch)
+    for model_id, (publisher, prompt_price, completion_price) in _EVAL_MODELS.items():
+        monkeypatch.setitem(MODELS, model_id, Model(
+            id=model_id, name=model_id, provider=publisher, context_length=262_144,
+            prompt_price_microdollars_per_million_tokens=prompt_price,
+            completion_price_microdollars_per_million_tokens=completion_price,
+        ))
+
+
+@pytest.mark.usefixtures("eval_catalog")
 def test_micro_hybrid_plan_prices_offline_and_search_segments() -> None:
     plan = build_micro_run_plan(mode="micro-hybrid", max_cost_microdollars=_UNCAPPED)
 
@@ -50,6 +89,7 @@ def test_micro_hybrid_plan_stays_under_default_cap() -> None:
     assert offline.total_cost_microdollars < 700_000
 
 
+@pytest.mark.usefixtures("eval_catalog")
 def test_micro_offline_has_no_live_search_and_is_cheaper() -> None:
     offline = build_micro_run_plan(mode="micro-offline", max_cost_microdollars=_UNCAPPED)
     hybrid = build_micro_run_plan(mode="micro-hybrid", max_cost_microdollars=_UNCAPPED)
@@ -58,6 +98,7 @@ def test_micro_offline_has_no_live_search_and_is_cheaper() -> None:
     assert offline.total_cost_microdollars < hybrid.total_cost_microdollars
 
 
+@pytest.mark.usefixtures("eval_catalog")
 def test_search_smoke_is_fusion_only_and_search_cost_is_explicit() -> None:
     plan = build_micro_run_plan(mode="micro-search-smoke")
 
@@ -72,6 +113,7 @@ def test_search_smoke_is_fusion_only_and_search_cost_is_explicit() -> None:
     assert segment.search_cost_microdollars == expected_search
 
 
+@pytest.mark.usefixtures("eval_catalog")
 def test_budget_guard_rejects_plan_before_any_live_calls() -> None:
     with pytest.raises(BudgetExceededError):
         build_micro_run_plan(mode="micro-hybrid", max_cost_microdollars=10_000)
@@ -111,6 +153,7 @@ def test_task_selection_is_deterministic_and_domain_balanced() -> None:
         assert sum(1 for task in first if task.domain == domain) == 2
 
 
+@pytest.mark.usefixtures("eval_catalog")
 def test_cost_artifact_has_no_prompt_or_output_text() -> None:
     plan = build_micro_run_plan(mode="micro-offline")
     artifact = cost_artifact(plan)
@@ -122,6 +165,7 @@ def test_cost_artifact_has_no_prompt_or_output_text() -> None:
     assert artifact["tasks"][0].keys() == {"id", "domain"}
 
 
+@pytest.mark.usefixtures("eval_catalog")
 def test_artifact_writer_outputs_expected_files(tmp_path) -> None:  # type: ignore[no-untyped-def]
     plan = build_micro_run_plan(mode="micro-search-smoke")
 
@@ -146,6 +190,7 @@ def test_invalid_fusion_config_requires_final_model() -> None:
         call_estimates_for_config(config)
 
 
+@pytest.mark.usefixtures("eval_catalog")
 def test_full_draco_plan_is_costed_and_avoids_blocked_models() -> None:
     plan = build_draco_eval_plan(task_count=100)
 
@@ -163,6 +208,15 @@ def test_full_draco_plan_is_costed_and_avoids_blocked_models() -> None:
             assert blocked not in model_id
 
 
+@pytest.mark.provider_health
+def test_full_draco_plan_stays_under_cap_at_catalog_prices() -> None:
+    """Live provider state: a host delisting a model can raise the catalog
+    price the plan is estimated from. provider-catalog-health.yml reports it
+    hourly, and the price refresh does not wait on it."""
+    assert build_draco_eval_plan(task_count=100).total_cost_microdollars < 45_000_000
+
+
+@pytest.mark.usefixtures("eval_catalog")
 def test_default_draco_configs_use_openrouter_post_judge_model() -> None:
     configs = default_draco_configs()
 
@@ -170,6 +224,7 @@ def test_default_draco_configs_use_openrouter_post_judge_model() -> None:
     assert {config.judge_model for config in configs} == {DRACO_JUDGE_MODEL}
 
 
+@pytest.mark.usefixtures("eval_catalog")
 def test_frontier_solo_draco_configs_are_explicit_opt_in() -> None:
     defaults = {config.id for config in default_draco_configs()}
     frontier = {config.id: config for config in frontier_solo_draco_configs()}
@@ -186,6 +241,7 @@ def test_frontier_solo_draco_configs_are_explicit_opt_in() -> None:
     assert estimate.total_cost_microdollars > 0
 
 
+@pytest.mark.usefixtures("eval_catalog")
 def test_frontier_fusion_draco_configs_are_explicit_opt_in() -> None:
     defaults = {config.id for config in default_draco_configs()}
     frontier = {config.id: config for config in frontier_fusion_draco_configs()}
@@ -221,6 +277,7 @@ def test_frontier_draco_configs_include_solo_and_fusion_opt_ins() -> None:
     assert "fusion_mythos_candidate_7" in ids
 
 
+@pytest.mark.usefixtures("eval_catalog")
 def test_full_draco_pilot_scales_down_from_full_plan() -> None:
     full = build_draco_eval_plan(task_count=100)
     pilot = build_draco_eval_plan(task_count=10)
@@ -229,6 +286,7 @@ def test_full_draco_pilot_scales_down_from_full_plan() -> None:
     assert pilot.search_cost_microdollars * 10 == full.search_cost_microdollars
 
 
+@pytest.mark.usefixtures("eval_catalog")
 def test_draco_artifact_writer_outputs_expected_files(tmp_path) -> None:  # type: ignore[no-untyped-def]
     plan = build_draco_eval_plan(task_count=10)
 
