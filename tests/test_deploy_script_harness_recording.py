@@ -64,11 +64,17 @@ for pid in "${pids[@]}"; do wait "$pid"; done
     assert actual == expected
 
 
+@pytest.mark.parametrize("script", ["unused.sh", "scripts/deploy/aws_ecs_control_plane.sh"])
 @pytest.mark.parametrize("scale", [None, "2.5"])
 @pytest.mark.parametrize("budget", [None, 30])
 def test_timeout_scale_applies_to_default_and_explicit_budgets(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scale: str | None, budget: int | None
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    scale: str | None,
+    budget: int | None,
+    script: str,
 ) -> None:
+    # Once each, for the ECS fixture too, which the harness hands the budget to.
     isolated = DeployScriptHarness(tmp_path)
     if scale is None:
         monkeypatch.delenv("HARNESS_TIMEOUT_SCALE", raising=False)
@@ -82,9 +88,9 @@ def test_timeout_scale_applies_to_default_and_explicit_budgets(
 
     monkeypatch.setattr(subprocess, "run", record_run)
     if budget is None:
-        isolated.run("unused.sh")
+        isolated.run(script)
     else:
-        isolated.run("unused.sh", timeout=budget)
+        isolated.run(script, timeout=budget)
     assert timeouts == [(120 if budget is None else budget) * float(scale or "1")]
 
 

@@ -1958,6 +1958,16 @@ class HarnessRun:
         return after
 
 
+def harness_timeout_scale() -> float:
+    """``HARNESS_TIMEOUT_SCALE`` from the invoking environment: a finite,
+    positive multiplier for every deploy-script subprocess budget. It defaults
+    to 1; loaded runs (a parallel full suite, a tombstone sweep) opt into more."""
+    scale = float(os.environ.get("HARNESS_TIMEOUT_SCALE", "1"))
+    if not math.isfinite(scale) or scale <= 0:
+        raise ValueError("HARNESS_TIMEOUT_SCALE must be finite and positive")
+    return scale
+
+
 class DeployScriptHarness:
     """A throwaway checkout, a stub PATH, and one recorded run per invocation."""
 
@@ -2041,12 +2051,10 @@ class DeployScriptHarness:
         ``test_the_gate_status_survives_without_the_operator_attestation``.
 
         ``HARNESS_TIMEOUT_SCALE`` in the invoking environment multiplies every
-        subprocess budget (default 120 seconds, or the caller's override).
-        It defaults to 1; loaded runs can opt into a larger positive scale.
+        subprocess budget (default 120 seconds, or the caller's override); see
+        ``harness_timeout_scale``. The ECS fixture applies it itself.
         """
-        timeout_scale = float(os.environ.get("HARNESS_TIMEOUT_SCALE", "1"))
-        if not math.isfinite(timeout_scale) or timeout_scale <= 0:
-            raise ValueError("HARNESS_TIMEOUT_SCALE must be finite and positive")
+        timeout_scale = harness_timeout_scale()
         fixture = SCRIPT_FIXTURES.get(script, ScriptFixture())
         self._runs += 1
         run_dir = self.root / f"run-{self._runs:03d}"
