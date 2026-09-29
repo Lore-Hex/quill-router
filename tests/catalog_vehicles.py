@@ -45,7 +45,23 @@ VEHICLE_ENDPOINT_IDS = (
     "anthropic/claude-sonnet-4.6@anthropic/byok",
 )
 
-VEHICLE_MODEL_IDS: tuple[str, ...] = ()
+# Chosen from `scripts/tombstone_sweep.py models` (2026-09-29): the models whose
+# vanishing broke the most release tests that use them for rules not about them
+# (templates for fixture models, comparison peers, the model a settlement,
+# routing or streaming test drives).
+VEHICLE_MODEL_IDS: tuple[str, ...] = (
+    "deepseek/deepseek-v4-flash",
+    "google/gemini-2.5-flash",
+    "google/gemma-4-31b-it",
+    "meta-llama/llama-3.1-8b-instruct",
+    "minimax/minimax-m3",
+    "mistralai/mistral-small-2603",
+    "moonshotai/kimi-k2.6",
+    "openai/gpt-5.4-nano",
+    "openai/gpt-5.5",
+    "z-ai/glm-5.3",
+    "z-ai/glm-5.3-flash",
+)
 
 
 def _tiers(raw: list[dict[str, Any]]) -> tuple[PriceTier, ...]:
