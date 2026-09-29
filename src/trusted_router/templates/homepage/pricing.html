@@ -6,7 +6,16 @@
    <code class="ev"><span>budget_strict: true</span><span class="arr">→</span><span class="err">429 spending window exhausted</span></code>
    <a class="go" href="/docs/spend-controls">Set spend controls →</a></div>
   <div class="pt"><b>Every route priced before you call</b><p>Input, cached input and output rates are published for every provider, so a route change never hides in your bill.</p>
-   <code class="ev"><span>glm-5.3-flash input</span><span class="ok">$0.07385</span><span class="arr">to</span><span>$2.11</span><span class="arr">·</span><span class="big">28× spread</span></code>
-   <a class="go" href="/models">Compare route prices →</a></div>
+   {% if homepage_pricing %}
+   <div class="price-comparison">
+    <span class="price-model">{{ homepage_pricing.name }}</span>
+    <div class="ev"><span class="ok">{{ homepage_pricing.low }}</span>{% if homepage_pricing.has_range %}<span class="arr">to</span><span>{{ homepage_pricing.high }}</span>{% endif %}<span>USD / 1M input tokens</span>{% if homepage_pricing.ratio %}<span class="big">≈{{ homepage_pricing.ratio }}× price range</span>{% endif %}</div>
+    <p class="price-basis">Current catalog · Credits routes · standard fee included. Privacy and context limits vary by route.</p>
+   </div>
+   <a class="go" href="{{ homepage_pricing.href }}">Compare these routes →</a>
+   {% else %}
+   <p class="price-basis">See the model directory for current route prices.</p>
+   <a class="go" href="/models">Compare route prices →</a>
+   {% endif %}</div>
  </div>
 </div></section>

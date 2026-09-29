@@ -16,9 +16,9 @@ The original landscape PNG, responsive images, original colored lab assets and f
 | Catalog lab icons, privacy filters, routing-promise chips | Present | Restored before the port and retained |
 | Full model search and real catalog prices/counts/privacy | Connected to the application catalog; lite feed for search | Old handoff blocker resolved |
 | Popular ordering | Uses the approved editorial selection; labeled Featured | No claim of measured live popularity |
-| Navigation status dot and footer operational pill | Replaced by public status links | Visible UI still absent; requires trustworthy fresh status before making a health claim |
+| Navigation status dot and footer operational pill | Connected to `/status.json`, with freshness/error states | Restored; real public status on the remote review bridge |
 | Request attestation age, token counts, served/standby and cost | Present as an explicit illustrative example | Real captured evidence remains outstanding; no fabricated live result |
-| Pricing evidence line with $0.07385–$2.11 / 28× | Present but fixed supplied copy | Unlike the catalog table, this example is not yet connected to current prices |
+| Pricing evidence line | Calculated from the current Credits routes for GLM 5.3 Flash; units, standard fee basis and exact model link included | Connected; approximately 28.6× at review, with no hardcoded rates or ratio |
 | Four positioning-word interactions | Beside the below-hero request diagram; click/tap/keyboard highlight | Intentionally relocated; hero subtitle remains stable |
 | Sticky navigation, serif mock fonts, greyscale logos, theme control, animated connectors | Replaced by approved normal-flow header, shared fonts, colored logos and restrained motion | Intentional design changes, not port losses |
 | Optional automatic cycling through the four words | Not added | Optional mock suggestion, not an approved requirement |

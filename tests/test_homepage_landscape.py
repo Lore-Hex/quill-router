@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -10,7 +11,7 @@ from fastapi.testclient import TestClient
 from trusted_router import dashboard
 from trusted_router.catalog import MODELS, Model
 from trusted_router.config import Settings
-from trusted_router.homepage import homepage_context
+from trusted_router.homepage import _pricing_comparison, homepage_context
 
 
 def test_homepage_rollout_is_explicit_and_alternate_brands_unchanged() -> None:
@@ -88,3 +89,36 @@ def test_homepage_catalog_matches_model_directory() -> None:
     script = Path("src/trusted_router/static/homepage/homepage.js").read_text()
     assert "fetch('/v1/models/picker'" in script
     assert "AbortSignal.timeout" in script
+
+
+@pytest.mark.parametrize(
+    ("prices", "low", "high", "ratio"),
+    [([1_000_000, 3_000_000], "$1", "$3", "3.0"),
+     ([0, 2_000_000], "$0", "$2", None),
+     ([1_000_000, 1_000_000], "$1", "$1", None)],
+)
+def test_pricing_comparison_uses_current_credits_routes(
+    monkeypatch: pytest.MonkeyPatch, prices: list[int], low: str, high: str,
+    ratio: str | None,
+) -> None:
+    model_id = "z-ai/glm-5.3-flash"
+    original = dashboard.endpoints_for_model(model_id)[0]
+    routes = [replace(original, usage_type="Credits",
+                      prompt_price_microdollars_per_million_tokens=price) for price in prices]
+    # The parallel BYOK record must not create a fictitious free route.
+    routes.append(replace(original, usage_type="BYOK",
+                          prompt_price_microdollars_per_million_tokens=0))
+    monkeypatch.setattr(dashboard, "endpoints_for_model", lambda _: routes)
+    result = _pricing_comparison({model_id})
+    assert result is not None
+    assert (result["low"], result["high"], result["ratio"]) == (low, high, ratio)
+    assert result["has_range"] == (low != high)
+    assert result["href"] == f"/models/{model_id}"
+
+
+def test_pricing_comparison_does_not_reuse_a_removed_model_or_missing_prices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert _pricing_comparison(set()) is None
+    monkeypatch.setattr(dashboard, "endpoints_for_model", lambda _: [])
+    assert _pricing_comparison({"z-ai/glm-5.3-flash"}) is None

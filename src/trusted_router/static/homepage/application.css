@@ -5,3 +5,14 @@ body.homepage-production{--preview-bar-height:0px}
 .signin-close{position:absolute;top:10px;right:12px;background:none;border:0;color:var(--cream);font-size:22px;min-width:44px;min-height:44px}
 .signin-providers{display:flex;flex-direction:column;gap:10px}.signin-btn{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid #526859;border-radius:6px;background:#14251c;color:var(--cream);font-size:14px;min-height:44px}.signin-btn span{width:24px;text-align:center}.signin-foot{margin-top:18px}.signup-error{padding:12px;border:1px solid #F0B3A6;color:#F0B3A6}
 #search-retry{padding:10px 14px;border:1px solid #526859;background:#14251c;color:var(--cream);border-radius:6px}
+
+.homepage-status{display:inline-flex;align-items:center;gap:7px}
+.homepage-status-dot{flex:none;width:7px;height:7px;border-radius:50%;background:#adbbb2}
+.homepage-status[data-state="up"] .homepage-status-dot{background:#b8eecc}
+.homepage-status[data-state="degraded"] .homepage-status-dot{background:#edce88}
+.homepage-status[data-state="down"] .homepage-status-dot{background:#f0b3a6}
+.trft .homepage-status-pill{display:inline-flex;width:fit-content;min-height:36px;padding:7px 11px;border:1px solid #526859;border-radius:99px;color:#d6dcd6;font-size:12px;line-height:1.4}
+.homepage-status:focus-visible{outline:2px solid #c0e1ff;outline-offset:5px}
+.trp .price-model{display:block;margin-top:6px;color:#d6dcd6;font-size:13px}
+.trp .pt .price-basis{font-size:12px;line-height:1.5;color:#c3c9c3;margin-top:8px}
+.trp .price-comparison .ev{line-height:1.5}

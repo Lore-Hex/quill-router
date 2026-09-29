@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime
+from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -93,6 +94,7 @@ def homepage_context(api_base_url: str) -> dict[str, Any]:
             digest.update(asset.read_bytes())
     return {
         "homepage_version": digest.hexdigest()[:12],
+        "homepage_pricing": _pricing_comparison(public_ids),
         "homepage_catalog": {
             "total": len(public_ids),
             "lists": lists,
@@ -104,4 +106,27 @@ def homepage_context(api_base_url: str) -> dict[str, Any]:
             "catalog_total": len(public_ids),
             "publisher_icons": icons,
         },
+    }
+
+
+def _pricing_comparison(public_ids: set[str]) -> dict[str, Any] | None:
+    """Compare the approved example's current Credits routes, as /models does."""
+    from trusted_router.dashboard import _credits_endpoints, _price, endpoints_for_model
+
+    model_id = "z-ai/glm-5.3-flash"
+    if model_id not in public_ids or model_id not in MODELS:
+        return None
+    endpoints = _credits_endpoints(endpoints_for_model(model_id))
+    prices = [endpoint.prompt_price_microdollars_per_million_tokens for endpoint in endpoints]
+    if not prices or any(price < 0 for price in prices):
+        return None
+    low, high = min(prices), max(prices)
+    ratio = Decimal(high) / Decimal(low) if low > 0 and high > low else None
+    return {
+        "name": MODELS[model_id].name,
+        "href": f"/models/{model_id}",
+        "low": _price(low, include_zero=True).replace("/1M", ""),
+        "high": _price(high, include_zero=True).replace("/1M", ""),
+        "has_range": high > low,
+        "ratio": f"{ratio:.1f}" if ratio is not None and ratio >= Decimal("1.05") else None,
     }
