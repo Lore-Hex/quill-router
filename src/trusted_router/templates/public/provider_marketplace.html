@@ -58,20 +58,29 @@ Confidential compute: not claimed</code></pre>
     <span class="eyebrow">Marketplace application</span>
     <h2>Tell us who operates the service.</h2>
     <p>Email <a href="mailto:providers@trustedrouter.com">providers@trustedrouter.com</a> from your company domain. The application must identify the legal entity, responsible contacts, privacy terms, and service being offered.</p>
+    <p>Complete every section below. Use <strong>Unknown</strong>, <strong>Not applicable</strong>, or <strong>Available under NDA</strong> with an explanation instead of leaving blanks. Identify which claims apply to all routes and which apply only to named models, tiers, regions, or accounts. Date your answers and link to supporting evidence.</p>
     <ul class="check-list">
+      <li><strong>Service and supply chain.</strong> Describe the tasks and modalities you serve, whether you operate the inference hardware or resell another service, and every downstream inference operator.</li>
       <li><strong>Company identity.</strong> Legal name, brand or DBA, website, jurisdiction, entity type, and DUNS number.</li>
       <li><strong>Company details.</strong> Registered address, operating address if different, business phone, company registration number, EIN or VAT ID, and DUNS number. Never send a personal tax identifier.</li>
       <li><strong>Leadership.</strong> CEO name and title, authorized contract signer, and ownership or parent company where applicable.</li>
       <li><strong>Primary contact.</strong> Name, title, company email, and direct business phone for the person responsible for the application.</li>
       <li><strong>Operational contacts.</strong> Named technical, security and privacy, legal, billing, and incident-response contacts with titles, company email addresses, and phone numbers where available.</li>
       <li><strong>Policies.</strong> Privacy policy, terms, DPA, subprocessor list, security or trust center, and compliance reports or certifications.</li>
-      <li><strong>Data handling.</strong> Retention period, training use, zero-retention terms, serving regions, data residency, and confidential-compute or attestation evidence.</li>
+      <li><strong>Data handling and locations.</strong> Complete the privacy and inference-location questions below, including exceptions and downstream providers.</li>
+      <li><strong>Energy.</strong> Is the inference service powered by 100% renewable energy? Include the percentage, scope, reporting period, and evidence requested below.</li>
     </ul>
+    <p class="small-copy">Identify which company details and evidence links may appear on your public provider page. Named contacts, direct phone numbers, and non-public agreements are for onboarding review, not the public catalog.</p>
     <p class="small-copy"><strong>Do not email an API key or any other credential.</strong> After the application is reviewed, TrustedRouter will arrange a separate secure handoff for a dedicated, revocable inference key.</p>
   </div>
   <div class="copy-terminal" aria-label="Provider onboarding email template">
     <div class="code-head"><span>Application email</span><span>No credentials</span></div>
-    <pre><code>Legal company name:
+    <pre class="provider-application-template"><code>Service being offered:
+Tasks and input/output modalities:
+Own inference hardware or reseller:
+Downstream inference operators:
+
+Legal company name:
 Brand / DBA:
 Website:
 Jurisdiction and entity type:
@@ -83,6 +92,7 @@ Business phone:
 EIN / VAT / corporate tax ID:
 CEO:
 Authorized contract signer:
+Ownership / parent company:
 
 Primary contact name:
 Primary contact title:
@@ -103,18 +113,101 @@ Subprocessor list:
 Security / trust center:
 Compliance reports:
 
-Data retention:
-Training use:
-ZDR terms:
-Serving regions / residency:
+Data retention: prompts, outputs, files, caches, logs, backups:
+Operational metadata: fields and retention period:
+Training use: provider and downstream operators:
+ZDR terms: policy URL or applicable agreement:
+ZDR scope: models, tiers, regions, account opt-ins, exceptions:
+Deletion process and abuse-monitoring exceptions:
+Serving regions / residency: every inference country or region:
+Per-model/tier location differences:
+Dynamic placement and cross-region failover:
+Region pinning: exact parameter, values, and guarantee:
+Actual serving region: response field or header:
+Storage, logging, cache, and backup locations:
 Confidential compute evidence:
+Attestation verifier, source, releases, and measurements:
+Key binding, GPU/downstream coverage, operator access:
+
+Inference powered by 100% renewable energy? Yes / Partly / No / Unknown:
+Renewable electricity percentage:
+Covered models, regions, facilities, and downstream operators:
+Reporting period and measurement method:
+Hourly matching or annual matching:
+On-site generation, PPAs, RECs / Guarantees of Origin:
+Carbon offsets (report separately, not as renewable electricity):
+Public evidence URL or independent assurance report:
+Exceptions and next review date:
 
 API base URL:
 API documentation:
+Authentication format and available key scopes (no key):
 Catalog endpoint:
+Pricing page and machine-readable source:
+Chat and other supported API endpoints:
+Model IDs, revisions, quantization, and licenses:
+Context/output limits and capabilities per model/tier:
+Tool, reasoning, streaming, and usage semantics:
+Prompt caching: eligibility, TTL, isolation, and usage fields:
+Prices: input, output, cache read/write, request minimums:
+Non-token, batch, priority, and long-context charges:
+Currency, taxes, effective dates, and price-change notice:
+Billing: prepaid/postpaid, minimum spend, invoice reconciliation:
+Production entitlement, test credit, funding and quota requirements:
+Rate limits: RPM, TPM, concurrency, burst and account caps:
+Timeouts, cancellation, retry and overload behavior:
+Error codes, Retry-After, request ID and rate-limit headers:
+Status page, support escalation, and SLA if offered:
 Deprecation feed or contact:
+Notice period, retirement timestamps, and replacements:
+Redacted provider-checker JSON report and probe date:
+
+Information reviewed as of:
+Approved public company details and evidence links:
+Private/NDA materials (arrange secure delivery):
 
 API key: DO NOT INCLUDE</code></pre>
+  </div>
+</section>
+
+<section class="marketing-split" aria-labelledby="provider-evidence-heading">
+  <div class="marketing-copy">
+    <span class="eyebrow">Privacy evidence</span>
+    <h2 id="provider-evidence-heading">State what happens to request data.</h2>
+    <ul class="check-list">
+      <li><strong>Content and metadata.</strong> Give retention and deletion rules for prompts, outputs, uploaded files, prompt caches, logs, and backups separately. List retained operational metadata and its retention period.</li>
+      <li><strong>Training and exceptions.</strong> Cover your own service and all subprocessors, including abuse monitoring, human access, and opt-in or opt-out settings.</li>
+      <li><strong>Applicable ZDR terms.</strong> Link the inference-specific policy or provide the agreement for our account through an agreed secure channel. Identify covered models, tiers, regions, and required settings. No training is not the same as zero retention.</li>
+      <li><strong>Confidential inference.</strong> Supply verifier instructions, attestation endpoints, source and immutable releases, and expected measurements. Explain encryption-key binding, GPU and downstream verification, and whether operators can access workload memory or keys. SOC 2 or encryption in transit alone does not establish E2EE.</li>
+    </ul>
+  </div>
+  <div class="marketing-copy">
+    <span class="eyebrow">Inference locations</span>
+    <h2>Where can each route actually run?</h2>
+    <ul class="check-list">
+      <li><strong>All possible locations.</strong> List countries or broad cloud regions for each model and tier, including downstream hosts and failover destinations. A headquarters address is not an inference-location guarantee.</li>
+      <li><strong>Dynamic routing.</strong> Say whether placement can change per request or over time, and how customers are notified. If global or unknown, say so explicitly.</li>
+      <li><strong>Pinning and returned evidence.</strong> Document the exact region parameter and allowed values, whether failover stays within it, and the response field or header reporting the actual serving region. Say when either feature is unsupported.</li>
+      <li><strong>Data residency.</strong> Separately identify storage, logging, prompt-cache, and backup locations and link the applicable residency commitment.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="marketing-split" aria-labelledby="provider-energy-heading">
+  <div class="marketing-copy">
+    <span class="eyebrow">Energy and sustainability</span>
+    <h2 id="provider-energy-heading">Is your inference powered by 100% renewable energy?</h2>
+    <p>Answer <strong>Yes</strong>, <strong>Partly</strong>, <strong>No</strong>, or <strong>Unknown</strong>. If partly, give the renewable electricity percentage. Cover the infrastructure that will serve TrustedRouter requests, not just your offices or a company-wide target.</p>
+    <p>Include inference GPUs and supporting datacenter electricity, every applicable facility and region, downstream providers, and failover capacity. Name any exclusions or routes whose energy mix is unknown.</p>
+  </div>
+  <div class="marketing-copy">
+    <h3>Show the basis of the claim.</h3>
+    <ul class="check-list">
+      <li><strong>Scope and date.</strong> Specify covered models, regions and operators, the reporting period, measurement method, and next review date.</li>
+      <li><strong>Procurement and matching.</strong> Distinguish on-site renewable generation, power purchase agreements (PPAs), renewable energy certificates (RECs) or Guarantees of Origin, and hourly versus annual matching.</li>
+      <li><strong>Evidence.</strong> Link a facility or electricity-supplier disclosure, sustainability report, or independent assurance covering the declared scope. Arrange secure review of non-public evidence.</li>
+      <li><strong>No substitutions.</strong> Carbon offsets, carbon-neutral claims, and future targets do not establish 100% renewable electricity. Report them separately. A provider declaration is not independently verified certification.</li>
+    </ul>
   </div>
 </section>
 
@@ -127,7 +220,11 @@ API key: DO NOT INCLUDE</code></pre>
       <li><strong>Authentication format.</strong> Describe bearer authentication and supported credential scopes without including a live key.</li>
       <li><strong>Canonical catalog.</strong> Serve the exact response below from <code>GET /v1/models</code>.</li>
       <li><strong>Chat inference.</strong> Serve OpenAI-compatible requests from <code>POST /v1/chat/completions</code>.</li>
+      <li><strong>Exact models and features.</strong> Identify revisions, quantization, licenses, context/output limits, and per-tier support for tools, reasoning, streaming, structured output, and modalities. Exclude third-party BYOK passthrough models that our inference key cannot serve.</li>
+      <li><strong>Usage and caching.</strong> Document actual billed input/output tokens, cache-read/write counters, reasoning-token accounting, and final streaming usage. Include cache eligibility, TTL, isolation, and any required request fields.</li>
+      <li><strong>Prices and billing.</strong> Provide exact rates and units, all cache and request charges, minimums, batch/priority/long-context differences, effective dates, currency and taxes. Include prepaid or postpaid terms, funding and production-entitlement requirements, and how usage reconciles to invoices. Describe non-token APIs separately; do not force their prices into token fields.</li>
       <li><strong>Operational limits.</strong> Document rate limits, capacity tiers, timeout behavior, error contracts, maintenance notices, and support escalation.</li>
+      <li><strong>Production readiness.</strong> Include a status page, any offered SLA, request-ID and rate-limit headers, deprecation notice period and replacements, and a dated redacted provider-checker report. Confirm production access and enough test credit for the agreed probes.</li>
     </ul>
   </div>
   <div class="marketing-copy">
@@ -298,6 +395,7 @@ curl --fail --silent --show-error \
       <li>Data retention, training, and zero-retention policy links</li>
       <li>Confidential-compute or attestation documentation</li>
       <li>Serving regions and data-residency constraints</li>
+      <li>Renewable electricity percentage, covered inference routes, and supporting evidence</li>
       <li>Rate limits, capacity tiers, and expected error contracts</li>
       <li>A machine-readable deprecation feed, or an operations contact</li>
     </ul>

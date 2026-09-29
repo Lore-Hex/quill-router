@@ -1104,6 +1104,11 @@ pre {
   color: var(--code-ink);
 }
 
+.copy-terminal .provider-application-template {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .trust-diagram {
   gap: 0;
   padding: 0;
