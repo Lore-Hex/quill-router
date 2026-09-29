@@ -110,6 +110,24 @@ FEATHERLESS_QWEN38_FLASH_NEXT = {
     "cached_input_token_price_per_m": 30000,
 }
 
+# NEAR AI"s only routable row on 2026-09-29, GLM 5.3 Flash, as its feed listed it.
+NEAR_AI_GLM_53_FLASH = {
+    "display_name": "z-ai/glm-5.3-flash",
+    "title": "z-ai/glm-5.3-flash",
+    "model_type": "chat",
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "id": "z-ai/glm-5.3-flash",
+    "upstream_id": "z-ai/glm-5.3-flash",
+    "confidential_compute": True,
+    "context_length": 1048576,
+    "input_token_price_per_m": 150000,
+    "output_token_price_per_m": 500000,
+    "cached_input_token_price_per_m": 35000,
+}
+
 # Anthropic's Claude Opus 5 route as its manifest lists it.
 ANTHROPIC_CLAUDE_OPUS_5 = {
     "display_name": "Claude Opus 5",

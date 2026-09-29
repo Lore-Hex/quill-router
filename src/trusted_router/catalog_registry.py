@@ -975,10 +975,10 @@ for _model_id, _model in _SUPPLEMENTAL_MODELS.items():
 # Like a named decision model below, it is simply not offered while its backing
 # model is gone: indexing MODELS here stopped the whole control plane from
 # starting when a provider delisted one model.
-_archimedes_backing_model = MODELS.get(MISTRAL_LARGE_MODEL_ID)
-if _archimedes_backing_model is not None:
-    MODELS[ARCHIMEDES_1_0_MODEL_ID] = replace(
-        _archimedes_backing_model,
+def archimedes_model(backing: Model) -> Model:
+    """The catalog entry for Archimedes 1.0: Mistral Large under a private name."""
+    return replace(
+        backing,
         id=ARCHIMEDES_1_0_MODEL_ID,
         name="TrustedRouter Archimedes 1.0",
         provider="trustedrouter",
@@ -987,6 +987,11 @@ if _archimedes_backing_model is not None:
         byok_available=False,
         hidden_public_metadata=True,
     )
+
+
+_archimedes_backing_model = MODELS.get(MISTRAL_LARGE_MODEL_ID)
+if _archimedes_backing_model is not None:
+    MODELS[ARCHIMEDES_1_0_MODEL_ID] = archimedes_model(_archimedes_backing_model)
 # A named decision model is a one-model private proxy like Archimedes, but a
 # DECISION model: it answers POST /v1/decide only, and only on its pinned host
 # chain. Prices are filled in below, once endpoints exist, from that chain

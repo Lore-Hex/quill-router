@@ -19,11 +19,10 @@ def test_unavailable_nextbit_alias_is_not_routable() -> None:
         for endpoint in MODEL_ENDPOINTS.values()
     )
     assert provider_model_operator_held("nextbit", MODEL)
+    # The hold is this route's alone: the model elsewhere, and nextbit's other
+    # models, are not held.
     assert not provider_model_operator_held("novita", MODEL)
-    assert any(
-        endpoint.provider == "nextbit" and endpoint.model_id == "qwen/qwen3-14b"
-        for endpoint in MODEL_ENDPOINTS.values()
-    )
+    assert not provider_model_operator_held("nextbit", "qwen/qwen3-14b")
 
 
 def test_nextbit_manifest_records_alias_hold() -> None:

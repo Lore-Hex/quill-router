@@ -1876,7 +1876,11 @@ def test_mistral_alias_comparison_redirects_directly_to_canonical_order(
     assert client.get(target, follow_redirects=False).status_code == 200
 
 
-def test_native_mixed_case_model_page_remains_canonical(client: TestClient) -> None:
+def test_native_mixed_case_model_page_remains_canonical(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A provider's native mixed-case id, carried on a fixture route.
+    serve_on_fixture_route(monkeypatch, "Sao10K/L3-8B-Stheno-v3.2", "novita", author="novita")
     path = "/models/Sao10K/L3-8B-Stheno-v3.2"
     response = client.get(path, follow_redirects=False)
     assert response.status_code == 200

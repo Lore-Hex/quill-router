@@ -700,8 +700,12 @@ def test_public_kimi_k3_page_separates_router_attestation_from_provider_e2ee(
 
 
 def test_single_provider_model_shows_provider_posture_not_variation(
-    client: TestClient,
+    client: TestClient, monkeypatch: MonkeyPatch
 ) -> None:
+    # A model one provider serves, on a fixture route: Novita, whose privacy
+    # posture is unknown.
+    drop_routes(monkeypatch, "qwen/qwen-2.5-72b-instruct")
+    serve_on_fixture_route(monkeypatch, "qwen/qwen-2.5-72b-instruct", "novita", author="novita")
     detail = client.get("/models/qwen/qwen-2.5-72b-instruct")
 
     assert detail.status_code == 200

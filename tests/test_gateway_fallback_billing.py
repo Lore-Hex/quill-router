@@ -16,6 +16,8 @@ from trusted_router.catalog import (
     endpoint_for_id,
     endpoints_for_model,
 )
+from trusted_router.catalog_data import Model
+from trusted_router.catalog_registry import archimedes_model
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.money import token_cost_microdollars
@@ -48,7 +50,28 @@ def _client_and_key() -> tuple[TestClient, dict]:
     return client, created.json()["data"]
 
 
-def test_gateway_archimedes_authorizes_private_credits_route() -> None:
+def _serve_archimedes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Archimedes over Mistral Large on one fixture Credits route. Mistral
+    delisting Mistral Large takes Archimedes out of the catalog with it, and
+    the private-proxy rule holds whatever Mistral lists today."""
+    drop_routes(monkeypatch, MISTRAL_LARGE_MODEL_ID)
+    serve_on_fixture_route(
+        monkeypatch, MISTRAL_LARGE_MODEL_ID, "mistral", author="mistral",
+        model=Model(
+            id=MISTRAL_LARGE_MODEL_ID, name="Mistral Large", provider="mistral",
+            context_length=262_144, prepaid_available=True,
+        ),
+    )
+    if ARCHIMEDES_1_0_MODEL_ID not in MODELS:
+        monkeypatch.setitem(
+            MODELS, ARCHIMEDES_1_0_MODEL_ID, archimedes_model(MODELS[MISTRAL_LARGE_MODEL_ID])
+        )
+
+
+def test_gateway_archimedes_authorizes_private_credits_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_archimedes(monkeypatch)
     client, key = _client_and_key()
 
     response = client.post(
