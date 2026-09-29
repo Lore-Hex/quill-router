@@ -78,6 +78,7 @@ jobs:
           uv run pytest -q -rsx
           tests/conformance/test_spanner_schema.py
           tests/conformance/test_spanner_sql_acceptance.py
+          tests/conformance/test_spanner_schema_audit.py
       - name: Emulator logs
         if: failure()
         run: |
