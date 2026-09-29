@@ -29,6 +29,7 @@ this in a disposable worktree with no uncommitted data edits:
 
     # each model the tests name vanishing from every host at once
     python3 scripts/tombstone_sweep.py models /tmp/models-out [--workers 6] [--only z-ai/glm-5.2 ...]
+    python3 scripts/tombstone_sweep.py run - tests/test_x.py --vanish z-ai/glm-5.2
 
 A provider delisting is one event; a model vanishing is another: providers sunset
 a model one by one until none serves it (Fireworks retired GLM 5.2 on 2026-09-25),
@@ -385,6 +386,7 @@ def main() -> None:
     run_parser.add_argument("providers", help="comma-separated, or - for none")
     run_parser.add_argument("files", nargs="*")
     run_parser.add_argument("--workers", type=int, default=2)
+    run_parser.add_argument("--vanish", default="", help="comma-separated model ids to remove from every host")
     models_parser = commands.add_parser("models")
     models_parser.add_argument("out", type=Path)
     models_parser.add_argument("--workers", type=int, default=6)
@@ -403,6 +405,8 @@ def main() -> None:
     try:
         if providers:
             print("delisted:", providers, delist(providers))
+        for model_id in filter(None, args.vanish.split(",")):
+            print("vanished:", model_id, delist_model(model_id))
         failures, summary = run_pytest(args.files, args.workers, Path(tempfile.mkstemp(suffix=".log")[1]))
     finally:
         restore()
