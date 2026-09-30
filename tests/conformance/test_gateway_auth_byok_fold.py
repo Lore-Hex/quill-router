@@ -41,11 +41,13 @@ def folded_store(request):
 @pytest.mark.parametrize("config_state", [
     "absent", "present", "deleted", "several", "empty_providers", "encrypted",
     "legacy_disabled_flags", "missing_workspace", "deleted_workspace", "paused_workspace",
-    "colliding_workspace",
+    "colliding_workspace", "mixed_case_workspace",
 ])
 def test_folded_auth_byok_matches_two_queries(folded_store, key_type, config_state):
     store = folded_store
-    workspace_id = "fold-" + uuid.uuid4().hex
+    # Entity ids are case-sensitive: a mixed-case workspace must keep its credentials.
+    workspace_id = ("Fold-WS-" + uuid.uuid4().hex.upper() if config_state == "mixed_case_workspace"
+                    else "fold-" + uuid.uuid4().hex)
     workspace = Workspace(id=workspace_id, name="Fold", owner_user_id="fold-owner")
     store._write_entity("workspace", workspace_id, workspace)
     _, key = store.api_keys.create(
