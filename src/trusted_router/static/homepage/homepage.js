@@ -82,7 +82,8 @@ function renderCode(){
  pre.setAttribute('aria-labelledby','code-tab-'+lang);
  if(lang==='agent'){pre.className='mcode prompt';pre.textContent=AGENT;}
  else{pre.className='mcode';pre.innerHTML=migCode(lang,source);}
- $('.pf .hint').textContent=lang==='agent'?DATA.migration.agent_hint:DATA.migration.code_hint;
+ $('.pf .hint').textContent=lang==='agent'?DATA.migration.agent_hint:'';
+ $('.pf .hint').hidden=lang!=='agent';
 }
 function setLang(value){lang=value;renderCode();track('home.migration_tab',{tab:value,from:source});}
 $$('.tab').forEach((tab,index,tabs)=>{

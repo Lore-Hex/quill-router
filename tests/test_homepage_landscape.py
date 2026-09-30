@@ -45,8 +45,10 @@ def test_landscape_root_integrates_catalog_assets_csp_and_signin(
     assert runtime["catalog_total"] == len(client.get("/v1/models/picker").json()["data"])
     request = page.select_one("#request")
     assert "The capital of France is Paris." in request.get_text()
-    assert "not confidential provider compute" in request.get_text()
-    assert not request.select_one("details").has_attr("open")
+    assert "no confidential provider compute" in request.get_text()
+    assert "Captured request" in request.get_text()
+    assert request.select_one('a[href="/docs/receipts"]')
+    assert not request.select_one("details")
     assert "All systems operational" not in page.get_text()
     for image in page.select("img[src^='/static/homepage/']"):
         assert client.get(image["src"]).status_code == 200

@@ -111,18 +111,6 @@ body.homepage-production{--preview-bar-height:0px}
 .receipt-cost{color:#edf8f5;font:500 17px/1.4 var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
 .receipt-node .receipt-answer{font:400 17px/1.5 var(--sans);color:#edf8f5}
 .receipt-answer strong{font-weight:600}
-.request-technical{margin-top:18px;border-top:1px solid #33403a}
-.request-technical>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:48px;padding:12px 0;cursor:pointer;list-style:none;color:#c6e5d2;font-size:15px;line-height:1.5}
-.request-technical>summary::-webkit-details-marker{display:none}
-.receipt-details-label{color:#c0e1ff}
-.request-technical .disclosure-indicator{font-size:22px;line-height:1;color:#c0e1ff}
-.request-technical[open] .disclosure-indicator{transform:rotate(45deg)}
-.request-technical>summary:focus-visible{outline:2px solid #c0e1ff;outline-offset:4px}
-.request-technical-body{padding:8px 0 16px}
-.request-technical-body p,.request-proof-checks{font-size:16px;line-height:1.65;color:#c3c9c3;margin:0 0 16px}
-.request-proof-checks{padding-left:20px}
-.request-proof-checks li+li{margin-top:8px}
-.request-proof-checks li::marker{color:#b8eecc}
 @media(max-width:1000px){.request-layout{grid-template-columns:1fr;gap:36px}}
 @media(max-width:600px){
  .request-intro .request-lede{font-size:18px}
@@ -134,7 +122,6 @@ body.homepage-production{--preview-bar-height:0px}
  .receipt-prompt,.receipt-meta{font-size:13px}
  .receipt-tag{font-size:10px;padding-inline:5px}
  .receipt-cost{font-size:16px}
- .receipt-details-label{display:block}
 }
 
 /* Whole-page consistency: shared rhythm, restrained enclosures and action hierarchy. */
@@ -191,4 +178,85 @@ body.homepage-production{--preview-bar-height:0px}
  .trp .pt .price-range{font-size:25px}
  .trs .stat,.trs .q,.trs .press{padding:24px}
  .trf summary{padding-block:20px}
+}
+
+
+/* Final hierarchy: pricing terms and customer evidence lead; utilities recede. */
+#top .lab img{width:30px;height:30px}
+.receipt-caption{margin:18px 0 0;padding-top:16px;border-top:1px solid #33403a;color:#adbbb2;font-size:14px;line-height:1.6}
+.receipt-caption a{color:#c0e1ff;white-space:nowrap;text-underline-offset:4px}
+.trm .pf{justify-content:flex-end;min-height:52px}
+.trm .pf .hint:not([hidden]){margin-right:auto}
+.trp .terms{background:#d5e8f5;color:#142b38;border:0;padding:28px 12px;gap:0;grid-template-columns:repeat(4,minmax(0,1fr))}
+.trp .pricing-term{display:flex;flex-direction:column;gap:10px;padding:4px 24px;border-left:1px solid #9db8c9}
+.trp .pricing-term:first-child{border-left:0}
+.trp .pricing-term strong{font-size:25px;line-height:1.2;font-weight:600;letter-spacing:-.025em}
+.trp .pricing-term:first-child strong{font-size:38px;line-height:1}
+.trp .pricing-term span{font-size:16px;line-height:1.5;color:#294b60}
+.trp .pts{gap:0;border-top:1px solid #33403a}
+.trp .pt,.trp .pt+.pt{border:0;background:none;padding:24px 28px 0 0;gap:12px}
+.trp .pt+.pt{border-left:1px solid #33403a;padding-left:28px}
+.trp .pt h3{font-size:19px}
+.trp .pt p,.trp .pt .price-model{font-size:16px;line-height:1.55}
+.trp .pt .price-range{font-size:20px;letter-spacing:0}
+.trp .price-range span{display:inline;font-size:13px}
+.trp .pt .price-basis{font-size:14px;margin-top:6px}
+.trp .pt .go{font-size:15px;margin-top:4px;padding-top:0}
+.trs .sp{grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);background:#cce8d7;border:0}
+.trs .stat{padding:40px;gap:18px;border:0}
+.trs .stat .who{font-size:12px;line-height:1.5;letter-spacing:.06em}
+.trs .stat .nums{font-size:clamp(34px,3.2vw,46px);line-height:1.1;max-width:11ch}
+.trs .story-results{font-size:20px;line-height:1.5;font-weight:550;margin:0;max-width:29ch}
+.trs .stat .body{font-size:16px;line-height:1.6;max-width:48ch}
+.trs .stat .go{margin-top:8px;color:#10241a;font-size:16px}
+.trs .q{background:transparent;margin:40px 0;padding:0 40px;border-left:1px solid #9ebaa9;gap:18px}
+.trs .q blockquote{font-size:20px;line-height:1.6;color:#254b36;font-style:normal;text-wrap:pretty}
+.trs .q .qa{font-size:14px;color:#254b36}
+.trs .press{display:flex;justify-content:flex-end;gap:20px;padding:20px 0 0;border:0;background:none}
+.trs .press .src{font-size:14px;color:#adbbb2;font-weight:400}
+.trs .press .src strong{color:#edf8f5;font-weight:550}
+.trs .press a{font-size:14px}
+.trf h2{font-size:34px;max-width:320px}
+.trf summary{font-size:17px;min-height:56px;padding-block:18px}
+.trf details p{font-size:16px;line-height:1.6;padding-bottom:20px}
+footer{background:#070a08;border-top:1px solid #33403a}
+.trft{padding-top:40px;padding-bottom:24px}
+.trft .band{min-height:240px;padding:40px;gap:24px;border-radius:2px}
+.trft .band h2{font-size:36px;max-width:560px}
+.trft .cols{padding-block:32px 28px;gap:24px 28px}
+.trft .brand-link{font-size:18px}
+.trft .col h3{font-size:12px;letter-spacing:.08em;color:#8fa497}
+.trft .footer-links{gap:5px}
+.trft .col a{font-size:14px;line-height:1.45}
+.trft .base{font-size:12px;padding-block:18px 0}
+@media(max-width:1000px){
+ .trp .terms{grid-template-columns:repeat(2,minmax(0,1fr));padding:12px}
+ .trp .pricing-term{padding:20px}
+ .trp .pricing-term:nth-child(3){border-left:0;border-top:1px solid #9db8c9}
+ .trp .pricing-term:nth-child(4){border-top:1px solid #9db8c9}
+ .trs .stat{padding:28px}
+ .trs .q{padding:0 28px;margin-block:28px}
+}
+@media(max-width:700px){
+ #top .lab img{width:28px;height:28px}
+ .trp .pricing-term{padding:16px 12px}
+ .trp .pricing-term strong{font-size:21px}
+ .trp .pricing-term span{font-size:15px}
+ .trp .pt,.trp .pt+.pt{padding:20px 0;border-left:0}
+ .trp .pt+.pt{border-top:1px solid #33403a}
+ .trp .pts{gap:0}
+ .trs .sp{grid-template-columns:1fr}
+ .trs .stat{padding:28px 24px}
+ .trs .stat .nums{font-size:38px}
+ .trs .story-results{font-size:18px}
+ .trs .q{padding:24px 0;margin:0 24px;border-left:0;border-top:1px solid #9ebaa9}
+ .trs .q blockquote{font-size:17px}
+ .trs .press{justify-content:space-between;gap:12px;flex-direction:row;align-items:center}
+ .trf h2{font-size:30px}
+ .trf summary{font-size:16px}
+ .trft .band{min-height:280px;padding:32px 20px}
+ .trft .band h2{font-size:30px}
+ .trft .col h3{font-size:13px}
+ .trft .footer-links{gap:0}
+ .trft .footer-links a{min-height:44px;line-height:1.5}
 }

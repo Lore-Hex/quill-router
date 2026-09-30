@@ -4,7 +4,7 @@ The active implementation is in the application branch `jasmine/trustedrouter-ho
 
 ## Remote application review
 
-https://23e0-108-6-58-177.ngrok-free.app/
+https://fd8d-108-6-58-177.ngrok-free.app/
 
 This serves the actual application homepage from local port 3001 through a read-only bridge on 3002. The default view has no comparison toolbar. Catalog prices/privacy come from the application model directory; search uses the lightweight `/v1/models/picker` endpoint. Other destinations link to the existing public site. Local mutations and development sign-in are not exposed. No deployment, push, or merge occurred. The tunnel requires the local computer and processes to remain running.
 
@@ -130,3 +130,23 @@ Validation:
 - Existing contrast colors and reduced-motion rules remain. New links use the established blue palette and visible keyboard outlines. No new motion was introduced; OS reduced-motion preference was not changed.
 
 Remaining release work: complete repository checks and coverage in the supported environment, broader destination/production sign-in checks, and confirmation of inherited marketing claims. Raw evidence remains local and untracked. No main-checkout edits, dependency installation, push, merge or deployment.
+
+
+## Final UX priorities — September 30, latest direction
+
+Responded to the designer's final hierarchy review. This entry supersedes prior receipt-disclosure, pricing-card, customer-layout and footer-size directions.
+
+- Hero lab icons increased from 24px to 30px desktop / 28px phone, retaining the approved landscape and stable marquee placement.
+- Kept the request path as a product explanation. The marketing handoff's DECISIONS explicitly says the hero shows the four promises working on a request and replaces a demo video; SPEC section 5 describes rule-based provider selection, not decoration. The current captured request only demonstrates the observed request/response path, not standby/failover or confidential provider compute. Removed the technical expansion in favor of a brief captured-request/verified-receipt caption and `/docs/receipts` link. Raw evidence remains local and untracked.
+- Catalog note now reads: “Customer prices per 1M tokens. ‘From’ is the lowest-priced route. Privacy varies by route.” The previous extra detail was integration wording to distinguish route prices from privacy availability; the shorter wording keeps that distinction without Credits jargon.
+- Removed “Everything else stays as it is.” from markup, content JSON and runtime rendering. The useful agent-prompt paste hint still appears only on the agent tab. Code copying remains.
+- Four pricing terms now lead in a pale blue panel. Lower budget and route-price details are quieter, smaller and unboxed. Their prices and qualifiers remain application-backed.
+- Customer proof uses one mint panel: 170,974 legal documents is the dominant headline; token volume and delivery time are supporting results; the original quote is smaller. One primary case-study link remains. The competing Axios quotation and duplicate customer link were removed; Axios is a small press line below.
+- FAQ questions are 17px desktop / 16px phone, answers 16px. Footer uses a darker foundation, 14px desktop links, tighter spacing, and a 240px desktop landscape CTA instead of 420px. All destinations remain; mobile links retain 44px targets. Desktop footer measured approximately 700px total at 1440×900.
+- Editorial photo cards would fit a case-study/article destination, not routing controls. No stock images or new resources strip were added; the existing shorter landscape CTA already provides an image-backed action. The handoff deliberately cut the resources row.
+
+Validation: desktop 1440×900, tablet 768×1024 and phones 390×844 / 320×568 checked without horizontal overflow; 320px pricing cells also have no internal overflow. The short-phone hero still fits its CTA and larger logo ribbon inside 568px. Mobile migration/footer disclosures remain closed initially. Search opens and loads 646 models; Escape restores visible focus. Agent/Python tab switching correctly shows/hides the remaining hint. Rendered copy contains no em dashes. New blue-panel supporting text has 7.35:1 contrast and customer supporting text 7.53:1; main pricing text 11.65:1. No new motion; existing reduced-motion rules retained. QA screenshots use the `priority-` prefix.
+
+24 focused Python tests, 13 Node tests, full ruff and diff whitespace checks pass. All repository gates were attempted with the existing environment and no dependency installation: mypy still fails on the installed Bigtable `_RetryableMutateRowsWorker` mismatch; full pytest still stops at missing `jsonschema`. Coverage and release readiness remain unverified.
+
+The old `23e0` ngrok tunnel stopped during this review. Restarted ngrok against the unchanged read-only bridge on 3002; the new verified phone URL is https://fd8d-108-6-58-177.ngrok-free.app/. A first visit can show ngrok's Visit Site notice. Port 3001 still serves the isolated memory-store application; the bridge still blocks POST requests and forwards the public status feed. No production changes, push or deployment.

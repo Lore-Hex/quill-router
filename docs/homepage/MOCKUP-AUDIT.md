@@ -6,6 +6,10 @@ Compared the current application to `nyte-design-preview/dist/trustedrouter/inde
 
 All nine modules, catalog search/prices, status and captured request presentation are implemented. Verification now features Open source at upper left with three shorter propositions stacked beside it; all source links/checklist items remain. The September 30 consistency pass and name-only homepage analytics integration are complete locally. Remaining release work is broader destination/sign-in checks, inherited-claim confirmation and full release gates; see the latest README for environment blockers and the read-only review bridge limitation. Historical rows below describe prior passes; this status and the latest README entries supersede them.
 
+## Final UX hierarchy
+
+The latest README entry supersedes the historical rows below. Pricing now emphasizes the four terms with a pale blue band; customer proof is one mint story with a quieter quote and a small Axios link. The receipt disclosure was replaced with a compact captured-request caption/docs link. FAQ and footer typography are smaller, and the desktop closing landscape is 240px tall. The diagram's purpose is documented in the handoff as demonstrating the product promises; the observed capture remains narrower than the original illustrative policy-selection graphic.
+
 ## Latest request panel correction
 
 The latest README entry supersedes the request-path row below. A real DeepSeek response and verified receipt now populate a panel that restores the marketing mock’s enclosure, square nodes, dashed connectors, selected-provider outline and boxed response. Only the single observed provider is shown; synthetic standby/skipped providers remain excluded.

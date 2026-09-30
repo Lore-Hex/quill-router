@@ -497,7 +497,7 @@
         "k": "OPENROUTER_API_KEY"
       }
     },
-    "code_hint": "Everything else stays as it is.",
+    "code_hint": "",
     "agent_prompt": "Migrate this project's LLM calls to TrustedRouter.\n\n1. Read https://trustedrouter.com/llms.txt and\n   https://trustedrouter.com/docs/migrate-from-openrouter\n2. Point every OpenAI-compatible client at\n   https://api.trustedrouter.com/v1 and read the key from\n   TRUSTEDROUTER_API_KEY. Keep request and response handling as is.\n3. Check every model ID against https://trustedrouter.com/models\n   and flag any that are missing.\n4. List calls that handle sensitive data and suggest\n   provider.min_privacy \"zdr\" or \"confidential\" for each.\n5. Run the tests, then show me the diff before committing.",
     "agent_hint": "Paste into Claude Code, Cursor or Codex.",
     "copy_behavior": "Copy on the code panel copies the new version only (removed lines dropped, +/- markers stripped). Agent tab copies the prompt."
