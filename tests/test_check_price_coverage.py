@@ -768,6 +768,78 @@ def test_kimi_discovery_ignores_unpriced_auto_alias() -> None:
     assert check_price_coverage._kimi_model_id("kimi-k2.7-code") == "moonshotai/kimi-k2.7-code"
 
 
+def test_provider_glm_discovery_does_not_invent_routes_from_display_labels() -> None:
+    payload = {
+        "data": [
+            {"id": "zai-org/GLM-5.3-Flash", "name": "ZAI: GLM-5.3 Flash"},
+            {
+                "id": "zai-org/GLM-5.3-Flash",
+                "name": "GLM-5.3-Flash-H200-dev",
+                "title": "GLM-5.3-Flash-preview",
+                "model": "GLM-5.3-Flash-internal",
+            },
+        ]
+    }
+
+    assert check_price_coverage._provider_glm_model_ids(payload) == {"z-ai/glm-5.3-flash"}
+
+
+@pytest.mark.parametrize(
+    "row,expected",
+    [
+        ({"model": "zai-org/GLM-5.3", "name": "GLM-5.2"}, "z-ai/glm-5.3"),
+        ({"name": "zai-org/GLM-5.3"}, "z-ai/glm-5.3"),
+        ({"title": "GLM-5.3-Flash"}, "z-ai/glm-5.3-flash"),
+        ({"id": "opaque-123", "model": "zai-org/GLM-5.3"}, "z-ai/glm-5.3"),
+        ({"id": "zai-org/GLM-6", "name": "GLM-5.3"}, "z-ai/glm-6"),
+        (
+            {"id": "zai-org/GLM-5.3-Flash-H200-dev", "name": "GLM-5.3-Flash"},
+            "z-ai/glm-5.3-flash-h200-dev",
+        ),
+    ],
+)
+def test_provider_glm_discovery_keeps_native_fallbacks_and_real_new_ids(
+    row: dict[str, str], expected: str,
+) -> None:
+    assert check_price_coverage._provider_glm_model_ids({"data": [row]}) == {expected}
+
+
+@pytest.mark.parametrize("new_id", [False, True])
+def test_gmi_coverage_requires_new_ids_not_display_labels(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, new_id: bool,
+) -> None:
+    model_id = "z-ai/glm-5.3-flash"
+    (tmp_path / "gmi.json").write_text(
+        json.dumps({"models": [{"id": model_id, "upstream_id": "zai-org/GLM-5.3-Flash"}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_price_coverage, "MANIFEST_DIR", tmp_path)
+    monkeypatch.setattr(check_price_coverage, "_DISCOVERABLE_MANIFEST_PROVIDERS", ())
+    monkeypatch.setattr(
+        check_price_coverage, "_GLM_DISCOVERABLE_PROVIDER_APIS",
+        (("gmi", "https://api.gmi-serving.com/v1/models", ("GMI_API_KEY",)),),
+    )
+    warnings, info = check_price_coverage._model_discovery_audit(
+        fetch_text=lambda _url: "No model announcements",
+        fetch_json=lambda _url, _env: {
+            "data": [{
+                "id": "zai-org/GLM-5.3-Flash-H200-dev" if new_id else "zai-org/GLM-5.3-Flash",
+                "name": "GLM-5.3-Flash-H200-dev",
+            }],
+        },
+        published_model_ids={model_id},
+    )
+
+    gmi_warnings = [warning for warning in warnings if warning.startswith("gmi:")]
+    if new_id:
+        assert len(gmi_warnings) == 1
+        assert "live GLM current model API lists unpublished" in gmi_warnings[0]
+        assert "z-ai/glm-5.3-flash-h200-dev" in gmi_warnings[0]
+    else:
+        assert gmi_warnings == []
+        assert any(item.startswith("gmi: GLM model discovery matched catalog") for item in info)
+
+
 def test_cerebras_discovery_uses_canonical_ids_and_ignores_unknown_models() -> None:
     assert check_price_coverage._cerebras_model_id("gpt-oss-120b") == ("openai/gpt-oss-120b")
     assert check_price_coverage._cerebras_model_id("zai-glm-4.7") == "z-ai/glm-4.7"

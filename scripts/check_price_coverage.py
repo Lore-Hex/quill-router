@@ -831,13 +831,16 @@ def _provider_glm_model_ids(payload: Any) -> set[str]:
     for row in _json_model_rows(payload):
         if not _active_discovery_row(row):
             continue
-        for key in ("id", "name", "title", "model"):
+        # A display label can name an internal deployment, not another callable
+        # model (GMI exposes H200-dev labels under the standard Flash ID).
+        for key in ("id", "model", "name", "title"):
             raw_id = row.get(key)
             if not isinstance(raw_id, str):
                 continue
             normalized = _normalize_glm_model_id(raw_id)
             if normalized:
                 discovered.add(normalized)
+                break
     return discovered
 
 
