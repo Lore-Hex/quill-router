@@ -15,6 +15,7 @@ from functools import lru_cache
 from itertools import combinations
 from pathlib import Path
 from typing import Any, TypedDict, cast
+from urllib.parse import quote
 from xml.sax.saxutils import escape as xml_escape
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -3098,7 +3099,8 @@ def _render_public_page(
 
 
 def public_not_found_html(settings: Settings, requested_path: str) -> str:
-    safe_path = requested_path if requested_path.startswith("/") else f"/{requested_path}"
+    # ASGI paths are decoded user input, not the trusted paths of published pages.
+    safe_path = "/" + quote(requested_path.lstrip("/"), safe="/")
     return _render_public_page(
         settings,
         _NOT_FOUND_PAGE,

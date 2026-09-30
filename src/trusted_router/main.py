@@ -525,7 +525,7 @@ def create_app(
             headers = dict(exc.headers or {})
             headers["vary"] = "Accept"
             return HTMLResponse(
-                public_not_found_html(settings, request.url.path),
+                public_not_found_html(settings, request.scope["path"]),
                 status_code=404,
                 headers=headers,
             )
