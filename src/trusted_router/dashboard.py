@@ -84,6 +84,7 @@ from trusted_router.content.legal import (
     soc2_readiness_packet,
     subprocessor_packet,
 )
+from trusted_router.content.token_index import token_index_context
 from trusted_router.content_handling import CONTENT_HANDLING_CLAIM
 from trusted_router.domains import canonical_public_url
 from trusted_router.marketing_experiments import GoogleSearchExperimentCell
@@ -197,6 +198,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/benchmarks/reports/2026-06",
     "/benchmarks/reports/2026-07",
     "/rankings",
+    "/index",
     "/leaderboard",
     "/leaderboard/video",
     "/status",
@@ -1578,6 +1580,16 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "prompt traffic stays inside the attested API gateway."
         ),
     ),
+    "index": PublicPage(
+        template="public/token_index.html",
+        og_card="index.png",
+        og_alt="NYTE Token Index: what AI inference costs, per billion tokens",
+        title="NYTE Token Index: AI Inference Prices",
+        description=(
+            "The NYTE Token Index tracks what AI inference costs in US dollars per billion tokens, "
+            "with Frontier, Advanced, Professional and Efficient grade indices."
+        ),
+    ),
     "green-tokens": PublicPage(
         template="public/green_tokens.html",
         og_card="green-tokens.png",
@@ -2757,6 +2769,7 @@ def public_page_html(
         robots_meta=robots_meta,
         extra_context=(
             _green_tokens_context() if page_key == "green-tokens"
+            else token_index_context() if page_key == "index"
             else company_signin_context(page_key) if page_key in COMPANY_SIGNIN_PAGES else None
         ),
     )
