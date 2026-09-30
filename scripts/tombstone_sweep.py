@@ -60,7 +60,6 @@ import tempfile
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
 
 ROOT = Path.cwd()
 DATA_PATHS = ["src/trusted_router/data/provider_models", "src/trusted_router/data/openrouter_snapshot.json"]
@@ -327,9 +326,7 @@ def delist_model(model_id: str) -> dict[str, int]:
     return counts
 
 
-def models(out: Path, workers: int, only: list[str], batch: int = 1) -> None:
-    """Sweep each model; with batch > 1, vanish that many together over the union
-    of their files first, and sweep them one by one only if the batch fails."""
+def models(out: Path, workers: int, only: list[str]) -> None:
     out.mkdir(parents=True, exist_ok=True)
     (out / "logs").mkdir(exist_ok=True)
     state_path = out / "models.json"
@@ -355,55 +352,25 @@ def models(out: Path, workers: int, only: list[str], batch: int = 1) -> None:
         save()
         log(f"baseline over {len(union)} files: {summary}")
     state.setdefault("models", {})
-    state.setdefault("needs_several_models", {})
-
-    def sweep_one(model_id: str, files: list[str]) -> dict[str, Any]:
+    for model_id, files in sorted(to_sweep.items(), key=lambda item: (-len(item[1]), item[0])):
+        if model_id in state["models"]:
+            continue
         try:
             counts = delist_model(model_id)
             if not any(counts.values()):
-                return {"files": files, "counts": counts, "summary": "not served: nothing to delist", "failures": []}
-            failures, summary = run_pytest(
-                files, max(1, min(workers, len(files))), out / "logs" / (model_id.replace("/", "__") + ".log")
-            )
-            return {"files": files, "counts": counts, "summary": summary, "failures": sorted(failures)}
+                result = {"files": files, "counts": counts, "summary": "not served: nothing to delist",
+                          "failures": []}
+            else:
+                failures, summary = run_pytest(
+                    files, max(1, min(workers, len(files))),
+                    out / "logs" / (model_id.replace("/", "__") + ".log"),
+                )
+                result = {"files": files, "counts": counts, "summary": summary, "failures": sorted(failures)}
         finally:
             restore()
-
-    def record(model_id: str, result: dict[str, Any]) -> None:
         state["models"][model_id] = result
         save()
-        log(f"{model_id} ({len(result['files'])} files): {result['summary']}")
-
-    pending = [(model_id, files) for model_id, files in sorted(to_sweep.items(), key=lambda item: (-len(item[1]), item[0]))
-               if model_id not in state["models"]]
-    if batch > 1:
-        for start in range(0, len(pending), batch):
-            group = pending[start:start + batch]
-            union = sorted({file for _, files in group for file in files})
-            try:
-                counts = {model_id: delist_model(model_id) for model_id, _ in group}
-                failures, summary = run_pytest(union, max(1, min(workers, len(union))),
-                                               out / "logs" / f"batch-{start:04d}.log")
-            finally:
-                restore()
-            log(f"batch of {len(group)} ({len(union)} files): {summary}")
-            if not failures:
-                for model_id, files in group:
-                    record(model_id, {"files": files, "counts": counts[model_id],
-                                      "summary": f"clean in a batch of {len(group)}: {summary}", "failures": []})
-                continue
-            # A failing batch: each model alone, then what only the batch broke.
-            alone: set[str] = set()
-            for model_id, files in group:
-                record(model_id, sweep_one(model_id, files))
-                alone |= set(state["models"][model_id]["failures"])
-            together = sorted(failures - alone)
-            if together:
-                state["needs_several_models"][",".join(model_id for model_id, _ in group)] = together
-                save()
-    for model_id, files in pending:
-        if model_id not in state["models"]:
-            record(model_id, sweep_one(model_id, files))
+        log(f"{model_id} ({len(files)} files): {result['summary']}")
     failing = sorted(model_id for model_id, result in state["models"].items() if result["failures"])
     log(f"done: {len(failing)} of {len(state['models'])} models break a release test when every host delists them")
 
@@ -424,8 +391,6 @@ def main() -> None:
     models_parser.add_argument("out", type=Path)
     models_parser.add_argument("--workers", type=int, default=6)
     models_parser.add_argument("--only", nargs="*", default=[], help="sweep just these model ids")
-    models_parser.add_argument("--batch", type=int, default=1,
-                               help="vanish this many models together first; sweep a failing batch one by one")
     args = parser.parse_args()
     if not (ROOT / DATA_PATHS[1]).exists():
         raise SystemExit("run from the repository root of a disposable worktree")
@@ -433,7 +398,7 @@ def main() -> None:
         sweep(args.out, args.group_size, args.workers)
         return
     if args.command == "models":
-        models(args.out, args.workers, args.only, args.batch)
+        models(args.out, args.workers, args.only)
         return
     providers = [] if args.providers == "-" else args.providers.split(",")
     restore()
