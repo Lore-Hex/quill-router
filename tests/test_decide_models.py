@@ -61,7 +61,20 @@ AUTHORIZE = "/v1/internal/gateway/authorize"
 JEV_HOSTS = [("typesafe", "jev-latest"), ("vercel-ai-gateway", JEV)]
 
 
-def _serve_jev_as_built(monkeypatch: pytest.MonkeyPatch) -> None:
+def _jev_built_from_its_pinned_row(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Model:
+    """Jev as the catalog builds it from TypeSafe's pinned row, whatever TypeSafe
+    lists today; its relay is then priced at the spec's checked-in cost."""
+    from trusted_router import catalog_ingest
+
+    (tmp_path / "typesafe.json").write_text(
+        json.dumps({"provider": "typesafe", "price_scale": "microdollars_per_million", "models": [TYPESAFE_JEV]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    return catalog_ingest._decision_models()[JEV]
+
+
+def _serve_jev_as_built(monkeypatch: pytest.MonkeyPatch, model: Model | None = None) -> None:
     """Jev's routes as the builder makes them from its spec: the vendor's, then
     the relay's. The catalog drops a route whose host's manifest goes dark, and
     TypeSafe or Vercel delisting Jev must not fail a rule about what the spec
@@ -69,7 +82,7 @@ def _serve_jev_as_built(monkeypatch: pytest.MonkeyPatch) -> None:
     is test_every_decision_spec_route_is_still_served, a provider_health check."""
     from trusted_router import catalog, catalog_ingest
 
-    model = catalog.MODELS.get(JEV) or catalog_ingest._decision_models()[JEV]
+    model = model or catalog.MODELS.get(JEV) or catalog_ingest._decision_models()[JEV]
     monkeypatch.setitem(catalog.MODELS, JEV, model)
     for endpoint in (
         catalog_ingest._endpoint(model, usage_type="Credits"),
@@ -110,16 +123,7 @@ PRESENT_NATIVE_IDS = [model_id for model_id in NATIVE_DECISION_MODEL_IDS if mode
 
 
 def test_jev_is_an_input_only_decision_model(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    # Jev as the catalog builds it from TypeSafe's pinned row, whatever TypeSafe
-    # lists today.
-    from trusted_router import catalog_ingest
-
-    (tmp_path / "typesafe.json").write_text(
-        json.dumps({"provider": "typesafe", "price_scale": "microdollars_per_million", "models": [TYPESAFE_JEV]}),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
-    model = catalog_ingest._decision_models()[JEV]
+    model = _jev_built_from_its_pinned_row(monkeypatch, tmp_path)
     assert model.supports_decide and not model.supports_chat and not model.supports_embeddings
     assert model.provider == "typesafe"
     assert model.upstream_id == "jev-latest"
@@ -131,9 +135,9 @@ def test_jev_is_an_input_only_decision_model(monkeypatch: pytest.MonkeyPatch, tm
 
 
 def test_jev_runs_at_its_vendor_with_the_relay_as_a_priced_fallback(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    _serve_jev_as_built(monkeypatch)
+    _serve_jev_as_built(monkeypatch, _jev_built_from_its_pinned_row(monkeypatch, tmp_path))
     endpoints = endpoints_for_model(JEV)
     # Each host is called by ITS name for the model: the vendor's alias is not
     # the relay's id, and sending one to the other is a 404 on every request.
@@ -141,8 +145,9 @@ def test_jev_runs_at_its_vendor_with_the_relay_as_a_priced_fallback(
     for endpoint in endpoints:
         assert endpoint.usage_type == "Credits" and not endpoint.is_byok
         # The host that serves a request bills it, so EACH endpoint carries a
-        # real input price and meters no output.
-        assert endpoint.prompt_price_microdollars_per_million_tokens > 42_000, endpoint.id
+        # real input price and meters no output: TypeSafe's pinned $0.042 per
+        # million, and the relay's checked-in $0.042, each plus 5.5%.
+        assert endpoint.prompt_price_microdollars_per_million_tokens == 44_310, endpoint.id
         assert endpoint.completion_price_microdollars_per_million_tokens == 0, endpoint.id
         assert not PROVIDERS[endpoint.provider].supports_chat
         assert not PROVIDERS[endpoint.provider].supports_byok
