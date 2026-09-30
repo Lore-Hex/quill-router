@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+from typing import Any
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -19,7 +21,7 @@ from trusted_router.gateway_boot import (
 )
 from trusted_router.receipt_keys import b64url_encode, receipt_kid
 from trusted_router.routes.internal import gateway
-from trusted_router.schemas import SpendLeaseBootRegistrationRequest
+from trusted_router.schemas import GatewayAuthorizeRequest, SpendLeaseBootRegistrationRequest
 from trusted_router.storage import STORE
 
 
@@ -354,3 +356,46 @@ def test_boot_registration_wire_contract_accepts_literal_enclave_body(
     assert set(payload) == {"data"}
     assert set(payload["data"]) == {"verified"}
     assert isinstance(payload["data"]["verified"], bool)
+
+
+def test_authorize_gateway_forwards_exact_cached_body_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The boot signature covers the request bytes exactly as the enclave sent
+    # them. The async endpoint must hand those cached bytes, not a
+    # re-serialization of the parsed model, to the verifier.
+    raw_body = b'{ "api_key_lookup_hash" : "lookup", "model" : "model" }'
+    body = GatewayAuthorizeRequest(**json.loads(raw_body))
+    received = False
+
+    async def receive() -> dict[str, Any]:
+        nonlocal received
+        if received:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        received = True
+        return {"type": "http.request", "body": raw_body, "more_body": False}
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/v1/internal/gateway/authorize",
+            "headers": [],
+        },
+        receive,
+    )
+    captured: dict[str, bytes] = {}
+
+    def authorize_sync(
+        _request: Request,
+        _body: GatewayAuthorizeRequest,
+        _settings: Settings,
+        exact_body_bytes: bytes,
+    ) -> dict[str, Any]:
+        captured["body"] = exact_body_bytes
+        return {"data": {"authorization_id": "gwa-exact-body"}}
+
+    monkeypatch.setattr(gateway, "_authorize_gateway_sync", authorize_sync)
+    result = asyncio.run(gateway.authorize_gateway(request, body, Settings(environment="test")))
+    assert result["data"]["authorization_id"] == "gwa-exact-body"
+    assert captured["body"] == raw_body

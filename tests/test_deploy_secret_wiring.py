@@ -330,7 +330,12 @@ def test_all_attested_control_plane_regions_remain_warm() -> None:
 
 
 def test_rollout_preserves_operator_pins_from_the_active_traffic_revision() -> None:
-    library = (ROOT / "scripts/deploy/_lib.sh").read_text()
+    # The resolver helpers live in a side-effect-free file that _lib.sh sources;
+    # tests/shell/test_active_revision.sh executes them against a stubbed gcloud.
+    library = (ROOT / "scripts/deploy/_active_revision.sh").read_text()
+    assert 'source "${_TR_LIB_DIR}/_active_revision.sh"' in (
+        ROOT / "scripts/deploy/_lib.sh"
+    ).read_text()
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
     internal = (ROOT / "scripts/deploy/internal_surface.sh").read_text()
     public = (ROOT / "scripts/deploy/public_surface.sh").read_text()
