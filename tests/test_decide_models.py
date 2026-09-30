@@ -9,6 +9,7 @@ chat, pinned to one provider.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable
 from decimal import Decimal
@@ -20,6 +21,7 @@ import pytest
 
 from tests.fixture_routes import bypass_catalog_caches, serve_on_fixture_route
 from tests.lifecycle_clock import catalog_predates
+from tests.pinned_manifests import TYPESAFE_JEV
 from trusted_router.catalog import (
     MODELS,
     NATIVE_DECISION_MODEL_IDS,
@@ -107,12 +109,21 @@ OFFERED_NAMED_IDS = [model_id for model_id in PRESENT_NAMED_IDS if _serving_chai
 PRESENT_NATIVE_IDS = [model_id for model_id in NATIVE_DECISION_MODEL_IDS if model_id in MODELS]
 
 
-def test_jev_is_an_input_only_decision_model() -> None:
-    model = MODELS[JEV]
+def test_jev_is_an_input_only_decision_model(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # Jev as the catalog builds it from TypeSafe's pinned row, whatever TypeSafe
+    # lists today.
+    from trusted_router import catalog_ingest
+
+    (tmp_path / "typesafe.json").write_text(
+        json.dumps({"provider": "typesafe", "price_scale": "microdollars_per_million", "models": [TYPESAFE_JEV]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    model = catalog_ingest._decision_models()[JEV]
     assert model.supports_decide and not model.supports_chat and not model.supports_embeddings
     assert model.provider == "typesafe"
     assert model.upstream_id == "jev-latest"
-    assert model.prompt_price_microdollars_per_million_tokens > 42_000  # cost plus markup
+    assert model.prompt_price_microdollars_per_million_tokens == 44_310  # $0.042 per million, plus 5.5%
     assert model.completion_price_microdollars_per_million_tokens == 0
     assert all(
         tier.completion_price_microdollars_per_million_tokens == 0 for tier in model.price_tiers

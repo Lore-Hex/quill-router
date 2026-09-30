@@ -1063,6 +1063,19 @@ GLM_5_2_ROUTES: tuple[tuple[str, dict[str, Any]], ...] = (
     }),
 )
 
+# TypeSafe's Jev decision row as its models page listed it on 2026-09-30.
+TYPESAFE_JEV = {
+    "id": "typesafe-ai/jev",
+    "upstream_id": "jev-latest",
+    "display_name": "TypeSafe AI Jev",
+    "context_length": 32000,
+    "model_type": "decision",
+    "endpoints": ["decide"],
+    "input_token_price_per_m": 42000,
+    "output_token_price_per_m": 0,
+    "pricing_source": "https://docs.typesafe.ai/models.md",
+}
+
 # Run in the subprocess before the catalog is built.
 USE_PINNED_MANIFESTS = """
 from pathlib import Path as _Path

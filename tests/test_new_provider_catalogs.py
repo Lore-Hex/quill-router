@@ -196,8 +196,15 @@ def test_digitalocean_manifest_preserves_exact_upstream_ids() -> None:
     rows = {row["id"]: row for row in manifest["models"]}
 
     assert rows["deepseek/deepseek-v4-flash"]["upstream_id"] == "deepseek-4-flash"
-    glm = rows["z-ai/glm-5.2"]
-    assert glm["upstream_id"] == "glm-5.2"
+    assert rows["z-ai/glm-5.2"]["upstream_id"] == "glm-5.2"
+
+
+@pytest.mark.provider_health
+def test_digitalocean_prices_glm_52_with_a_paid_discounted_cache_read() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    manifest = json.loads(digitalocean.MANIFEST_PATH.read_text(encoding="utf-8"))
+    glm = next(row for row in manifest["models"] if row["id"] == "z-ai/glm-5.2")
     assert glm["input_token_price_per_m"] > 0
     assert glm["output_token_price_per_m"] > 0
     assert 0 < glm["cached_input_token_price_per_m"] < glm["input_token_price_per_m"]
