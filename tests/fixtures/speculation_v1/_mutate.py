@@ -1,6 +1,7 @@
 """Execute every rules.json mutation on disposable copies, never the worktree.
 
-A mutant is red only on a literal assertion. Compile/import/setup failures are
+Every mutant runs all protocol tests, including the entire literal corpus.
+A mutant is red only on a test failure. Compile/import/setup failures are
 build-broken, never evidence of a killed mutant. Equivalent survivors require
 an explicit, reviewable explanation in the pinned inventory and output table.
 """
@@ -44,11 +45,42 @@ def main() -> None:
         verdicts = {c['name']: c for c in tests.read('verdict-vectors.json')['vectors']}
         wire = target / 'tests/fixtures/speculation_v1/provider-wire.json'
         original_wire = wire.read_bytes()
-        # Confirm the literal harness before trying any mutants.
-        tests.test_fixture_pins()
-        for case in cases.values():
-            tests.test_literal(case)
+        original_protocol = tests.protocol
+        corpus = []
+        for name, test in vars(tests).items():
+            if not name.startswith('test_'):
+                continue
+            if name == 'test_literal':
+                corpus.extend((case['name'], test, (case,)) for case in cases.values())
+            elif name == 'test_verdict':
+                corpus.extend(('verdict:' + case['name'], test, (case,)) for case in verdicts.values())
+            else:
+                corpus.append((name, test, ()))
+
+        def run_corpus():
+            failures = []
+            for name, test, args in corpus:
+                mutant = tests.protocol
+                try:
+                    # Inventory completeness describes the original guards, not
+                    # intentionally edited predicates. Run this structural check
+                    # on the original module; all behavior tests use the mutant.
+                    if name == 'test_guard_inventory':
+                        tests.protocol = original_protocol
+                    test(*args)
+                except AssertionError as exc:
+                    failures.append(('red', name, str(exc)))
+                except Exception as exc:
+                    failures.append(('red', name, 'test raised ' + repr(exc)))
+                finally:
+                    tests.protocol = mutant
+            return failures
+
+        # Confirm ALL tests in the unmodified harness before trying any mutants.
+        assert not run_corpus()
         for rule in rules:
+            failures = []
+            tests_run = 0
             code = original
             wire.write_bytes(original_wire)
             try:
@@ -68,19 +100,13 @@ def main() -> None:
             except Exception as exc:
                 status, assertion = 'build-broken', repr(exc)
             else:
-                try:
-                    case_name = rule['literal_case']
-                    if case_name == 'fixture_pins':
-                        tests.test_fixture_pins()
-                    elif case_name.startswith('verdict:'):
-                        tests.test_verdict(verdicts[case_name.removeprefix('verdict:')])
-                    else:
-                        tests.test_literal(cases[case_name])
-                except AssertionError as exc:
-                    status, assertion = 'red', str(exc)
-                except Exception as exc:
-                    status, assertion = 'build-broken', repr(exc)
-            row = {'guard': rule['guard'], 'literal': rule['literal_case'], 'result': status, 'assertion': assertion}
+                failures = run_corpus()
+                tests_run = len(corpus)
+                if failures:
+                    status, failed_test, assertion = failures[0]
+                    assertion = failed_test + ': ' + assertion
+            row = {'guard': rule['guard'], 'literal': rule['literal_case'], 'result': status, 'assertion': assertion,
+                   'tests_run': tests_run}
             if 'equivalent' in rule:
                 row['equivalent'] = rule['equivalent']
             rows.append(row)

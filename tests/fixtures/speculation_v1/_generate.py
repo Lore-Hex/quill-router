@@ -274,18 +274,18 @@ def main():
     for name, value in [("quote", 'x"'), ("backslash", 'x\\'), ("less", "x<"), ("greater", "x>"),
                         ("ampersand", "x&"), ("control", "x\n"), ("unicode", "caf\u00e9"), ("del", "x\x7f"),
                         ("empty", ""), ("null", None)]:
-        grant_case("string_" + name, "string", {"grant_id": value})
+        grant_case("string_" + name, "json" if name in ("quote", "backslash", "control", "unicode", "del") else "string", {"grant_id": value})
     grant_case("safe_ascii", "allowed", {"grant_id": " !#$%'()*+,-./012:;=?@AZ[]^_`az{|}~"})
     for name, raw, expected in [
         ("payload_whitespace", json.dumps(grant, sort_keys=True).encode(), "canonical_payload"),
         ("payload_unsorted", json.dumps(dict(reversed(list(grant.items()))), separators=(",", ":")).encode(), "canonical_payload"),
-        ("payload_escaped_ascii", canonical(grant).replace(b'"w1"', b'"\\u00771"'), "canonical_payload"),
+        ("payload_escaped_ascii", canonical(grant).replace(b'"w1"', b'"\\u00771"'), "json"),
         ("payload_duplicate", canonical(grant).replace(b'"v":1', b'"v":1,"v":1'), "duplicate_key"),
         ("nested_duplicate", canonical(grant).replace(b'"count":20', b'"count":20,"count":20'), "duplicate_key"),
         ("nan", canonical(grant).replace(b'"v":1', b'"v":NaN'), "integer"),
         ("infinity", canonical(grant).replace(b'"v":1', b'"v":Infinity'), "integer"),
         ("negative_infinity", canonical(grant).replace(b'"v":1', b'"v":-Infinity'), "integer"),
-        ("raw_unicode", canonical(grant).replace(b'"g1"', '"caf\u00e9"'.encode("utf-8")), "string"),
+        ("raw_unicode", canonical(grant).replace(b'"g1"', '"caf\u00e9"'.encode("utf-8")), "json"),
         ("json_bad", b'{', "json"), ("json_utf8", b'\xff', "json"),
         ("json_scalar", b'1', "fields"),
         ("negative_zero", canonical(grant).replace(b'"v":1', b'"v":-0'), "canonical_payload"),
@@ -504,7 +504,7 @@ def main():
         ("whitespace", b'{ "alg":"EdDSA","kid":"issuer-fixture","typ":"speculation-eligibility+jws"}'),
         ("escaped", b'{"alg":"EdDSA","kid":"issuer-fixture","typ":"speculation-eligibility+\\u006aws"}'),
     ]:
-        grant_case("header_" + name, "canonical_header", header_raw=raw)
+        grant_case("header_" + name, "json" if name == "escaped" else "canonical_header", header_raw=raw)
     for name, number in [("huge", b"1" * 5000), ("20_digits", b"10000000000000000000"),
                           ("float", b"1.0"), ("infinity", b"Infinity"), ("minus_infinity", b"-Infinity")]:
         grant_case("payload_number_" + name, "integer", raw=canonical(grant).replace(b'"v":1', b'"v":' + number))
@@ -514,10 +514,10 @@ def main():
         ("depth17", b"[" * 17 + b"0" + b"]" * 17, "json"),
         ("depth_in_string", b'{"x":"[[[[[[[[[[[[[[[[["}', "fields"),
         ("invalid_utf8", b'{"x":"\xff"}', "json"),
-        ("surrogate", canonical(grant).replace(b'"g1"', b'"\\ud800"'), "string"),
+        ("surrogate", canonical(grant).replace(b'"g1"', b'"\\ud800"'), "json"),
         ("case_sensitive", canonical(grant).replace(b'"grant_id"', b'"Grant_id"'), "fields"),
-        ("trailing_newline", canonical(grant) + b"\n", "canonical_payload"),
-        ("escaped_duplicate", canonical(grant).replace(b'"v":1', b'"v":1,"\\u0076":1'), "duplicate_key"),
+        ("trailing_newline", canonical(grant) + b"\n", "json"),
+        ("escaped_duplicate", canonical(grant).replace(b'"v":1', b'"v":1,"\\u0076":1'), "json"),
     ]:
         grant_case(name, expected, raw=raw)
     grant_case("tier_four", "tier", {"tier": 4})
@@ -615,7 +615,7 @@ def main():
     grant_case("precedence_tier_ceiling_allowance", "integer", ctx={**context, "tier_ceiling_micro": False})
     for name, raw, expected in [
         ("depth_number", b"["*17+b"1.0"+b"]"*17, "json"),
-        ("number_duplicate", b'{"v":1,"v":1.0}', "integer"),
+        ("number_duplicate", b'{"v":1,"v":1.0}', "duplicate_key"),
         ("duplicate_schema", b'{"v":1,"v":1}', "duplicate_key"),
         ("syntax_duplicate", b'{"v":1,"v":1,}', "json"),
         ("nested_duplicate_number", b'{"x":{"v":1,"v":1},"y":1.0}', "duplicate_key"),
@@ -647,7 +647,7 @@ def main():
     add("input_boundary", "input", "input", value=[])
     grant_case("depth17_after_string", "json", raw=b'{"x":' + b'['*16 + b'0' + b']'*16 + b'}')
     grant_case("depth_siblings", "fields", raw=b'[' + b','.join([b'[]']*20) + b']')
-    grant_case("depth_escaped_quote", "fields", raw=b'{"x":"\\\"' + b'['*17 + b'"}')
+    grant_case("depth_escaped_quote", "json", raw=b'{"x":"\\\"' + b'['*17 + b'"}')
     grant_case("depth_escaped_backslash", "json", raw=b'{"x":"\\\\","y":' + b'['*16 + b'0' + b']'*16 + b'}')
     for reason in ("credit_exhausted", "billing_denied", "trust_ineligible", "trust_demoted", "abuse_latched", "payment_failed", "trust_reconciliation_stale", "workspace_paused", "billing_paused", "key_revoked", "key_disabled", "key_expired", "key_invalid", "key_limit_exceeded", "key_window_limit_exceeded", "key_strict_limit_exceeded", "key_spend_limit_imposed"):
         add("reason_" + reason, "verdict_extra", key_verdict if reason.startswith("key_") else workspace_verdict,
@@ -706,6 +706,43 @@ def main():
     ]:
         add("precedence_verdict_"+name, "verdict_extra", expected,
             input={"source":"authenticated_router", "status":403, "reason":"", "workspace_id":"w1", "key_id":"k1", "rate_scope":None, **inputs})
+    # Round 3: escape-free ASCII, whole-syntax precedence, malformed caller key.
+    add("key_zero_public", "grant", "signature", token=real,
+        keys=[{**trusted_keys[0], "public_key_b64url": 0}],
+        context=context, now=1700000000, shadow=False)
+    add("header_surrogate_names", "grant", "json",
+        token="eyJcdWQ4MDAiOjAsIlx1ZDgwMSI6MH0.AA.AA",  # noqa: S106 - public malformed review token
+        context=context, now=1700000000, shadow=False)
+    grant_case("payload_surrogate_names", "json", raw=b'{"\\ud800":0,"\\ud801":0}')
+    for name, number in [("exponent", b"1e"), ("float_exponent", b"1.0e"),
+                         ("minus", b"-"), ("leading_zero", b"01"),
+                         ("trailing_dot", b"1."), ("leading_dot", b".5")]:
+        raw = b'{"v":' + number + b'}'
+        grant_case("header_malformed_" + name, "json", header_raw=raw)
+        grant_case("payload_malformed_" + name, "json", raw=raw)
+    for name, raw in [("duplicate_trailing", b'{"v":1,"v":1}x'),
+                      ("duplicate_number_syntax", b'{"v":1,"v":1.0e}'),
+                      ("number_later_syntax", b'{"v":1.0,"x":}'),
+                      ("huge_later_syntax", b'{"v":'+b'1'*5000+b',"x":}'),
+                      ("constant_later_syntax", b'{"v":NaN,"x":}')]:
+        grant_case("header_" + name, "json", header_raw=raw)
+        grant_case("payload_" + name, "json", raw=raw)
+    for name, raw in [("raw_del", b'{"x":"\x7f"}'),
+                      ("raw_control", b'{"x":"\x1f"}'),
+                      ("raw_tab", b'{\t"x":0}')]:
+        grant_case(name, "json", raw=raw)
+    for name, value in [("control", "x\n"), ("unicode", "caf\u00e9")]:
+        ctx = copy.deepcopy(context)
+        ctx["route"]["endpoint_id"] = value
+        grant_case("context_string_" + name, "string", ctx=ctx)
+    h, p, sig = real.split(".")
+    for name, token in [
+        ("payload_bytes_signature", h+"."+b64(b'{"x":"\\u0061"}')+".AA"),
+        ("payload_bytes_signature_base64", h+"."+b64(b'\n')+".+"),
+        ("header_bytes_payload_base64", b64(b'\n')+".=.AA"),
+    ]:
+        add("precedence_"+name, "grant", "json", token=token,
+            context=context, now=1700000000, shadow=False)
     write("grant-permit-tokens.json", bundle)
     (ROOT / "verdict-vectors.json").write_text(VERDICTS)
     (ROOT / "provider-wire.json").write_text(WIRE)

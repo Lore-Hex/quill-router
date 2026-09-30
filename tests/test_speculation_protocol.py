@@ -11,7 +11,7 @@ import pytest
 from trusted_router import speculation_protocol as protocol
 
 FIXTURES = Path(__file__).parent / "fixtures" / "speculation_v1"
-MANIFEST_SHA256 = "bdb4ab08d410cf02b8b44e6e4326d7aa7800ab2a371965c5f0c07138d49dad6f"
+MANIFEST_SHA256 = "efcf82227d5edb22f90482e414ad6c54dba293166a9febd1a976e6a3c234769e"
 
 
 def read(name: str) -> Any:

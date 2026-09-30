@@ -1,9 +1,9 @@
 {
   "files": {
     "grant-permit-tokens.json": "0bc017b4ad0e55ad8bc13fcd61967a9ce36d942d0dd4e5cdaedeeaeb8e5f48db",
-    "protocol-vectors.json": "9da2d22e089fa86b7733236c59b28bc670d26f12210bade381d0a88e837d5f63",
+    "protocol-vectors.json": "b04ddf5f99f1eb23afa356ba780cd58d3be60cbd9a9415e0a05b61321c6def2d",
     "provider-wire.json": "5ad0733472da01485383c34554a027bf1e35876888b4c94c48469f51d3a95cd8",
-    "rules.json": "3c19e71743e8c31d075116b8e1e8836a28f1a54bbd367dd68f02f5b96e6fccb8",
+    "rules.json": "7f2a6421abc9dfa60fe94538401a8455d319961521d244bac19eb47d60dc6d09",
     "verdict-vectors.json": "f1cb95a0dafaad18da7e7633ddd2b38e6cbd5526ff1320e9b639e8eef927db3f"
   },
   "fixture_version": 1

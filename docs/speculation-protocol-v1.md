@@ -13,13 +13,14 @@ The protected header contains exactly `alg`, `kid`, `typ`; `alg` is `EdDSA`.
 Verification signs the received header/payload segments, never reconstructed
 ones. The protected header MUST be the canonical encoding of exactly
 `{alg, kid, typ}`: ASCII-sorted keys, compact separators, no whitespace, escapes
-or trailing newline. Noncanonical encoding fails `canonical_header` after
-header schema validation and before algorithm/type/key selection.
+or trailing newline. The byte rule below rejects escapes and nonprintable or
+non-ASCII bytes as `json` before parsing. Other noncanonical encodings fail
+`canonical_header` after header schema validation and before algorithm/type/key selection.
 After signature verification and exact schema/type/charset validation, payload
 bytes must equal sorted-key, compact JSON of the parsed claims. Canonicalization
 is defined only on the valid v1 value domain: never on language-specific float
 or Unicode encoder behavior. The exponent-number literal refuses as `integer`;
-the raw UTF-8 non-ASCII string literal refuses as `string`.
+the raw UTF-8 non-ASCII string literal refuses as `json`.
 
 All v1 objects have exact field sets, including nested route/history/permits.
 Integer claims require a JSON integer, not boolean or float, in `[0, 2^63)`.
@@ -154,16 +155,24 @@ schema completes before the next row. A failed check stops validation.
 |---|---|---|
 | 1 | Compact input is a string of at most 65,536 characters with exactly two dots | `compact` |
 | 2 | Decode protected-header segment using the base64url procedure below | `base64` |
-| 3 | Parse header with the JSON procedure below | `json`, `integer`, `duplicate_key` |
-| 4 | Header exact fields; strings in order `alg kid typ` | `fields`, `string` |
-| 5 | Received header bytes equal canonical encoding | `canonical_header` |
-| 6 | `alg == EdDSA` | `algorithm` |
-| 7 | `typ` equals the requested real/shadow/descriptor type | `type` |
-| 8 | Exactly one configured key has this `kid` | `key` |
-| 9 | Selected key purpose equals the requested purpose | `purpose` |
-| 10 | Decode payload, then signature segments | `base64` |
-| 11 | Decode configured public key; verify Ed25519 | `signature` |
-| 12 | Parse payload with the JSON procedure; require object root | `json`, `integer`, `duplicate_key`, `fields` |
+| 3 | Apply the byte rule to the entire header | `json` |
+| 4 | Header depth preflight and whole-segment syntax; then duplicates; then numeric tokens | `json`, `duplicate_key`, `integer` |
+| 5 | Header exact fields; strings in order `alg kid typ` | `fields`, `string` |
+| 6 | Received header bytes equal canonical encoding | `canonical_header` |
+| 7 | `alg == EdDSA` | `algorithm` |
+| 8 | `typ` equals the requested real/shadow/descriptor type | `type` |
+| 9 | Exactly one configured key has this `kid` | `key` |
+| 10 | Selected key purpose equals the requested purpose | `purpose` |
+| 11 | Decode payload segment | `base64` |
+| 12 | Apply the byte rule to the entire payload, before signature decoding/verification | `json` |
+| 13 | Decode signature segment | `base64` |
+| 14 | Decode configured public key; verify Ed25519 | `signature` |
+| 15 | Payload depth preflight and whole-segment syntax; then duplicates; then numeric tokens; require object root | `json`, `duplicate_key`, `integer`, `fields` |
+
+Within each JSON segment, precedence is base64 → byte rule (`json`) → depth
+and whole syntax (`json`) → `duplicate_key` → numeric/schema/type checks →
+canonical encoding → operation-specific checks. Payload signature verification
+still precedes payload syntax and semantics, but follows its byte rule.
 
 Base64url segments MUST be nonempty and match `[A-Za-z0-9_-]+`. CR and LF are
 forbidden, as are padding and whitespace. Decode and unpadded re-encode; the
@@ -175,36 +184,43 @@ Implementations MUST NOT panic.
 
 The JSON procedure is:
 
-1. Decode the entire byte sequence as strict UTF-8; invalid UTF-8 is `json`.
-2. Scan container nesting outside quoted strings, honoring backslash escapes.
-   Root counts as one container. Depth greater than 16 is `json`. This preflight
-   takes precedence over numeric, duplicate, or syntax errors anywhere in the
-   document; it does not interpret schema or validate JSON syntax.
-3. Decode JSON from left to right. At each numeric token, before schema
-   validation, refuse fractional/exponent forms, `NaN`, `Infinity`, and
-   `-Infinity` as `integer`. Integers have at most 19 digits excluding a minus
-   sign and value in `[0, 9223372036854775807]`; check token length BEFORE integer
-   conversion. Negative values fail `integer`; `-0` parses as zero and later
-   fails canonical equality. This must not depend on interpreter string limits.
-4. A duplicate check runs when an object finishes decoding, after all of its
-   member values, in member order. Reject duplicate **decoded** names at every
-   depth as `duplicate_key`. Thus a later numeric error in the same object wins
-   over its duplicate keys, but a completed nested duplicate wins over a later
-   outer numeric error. Invalid syntax encountered before object completion is
-   `json`; trailing input after a completed duplicate object cannot hide its
-   `duplicate_key`. Missing delimiters are `json`.
-5. Schema validation follows parsing. Member names are case-sensitive. Unknown
-   and missing fields fail `fields`; ignored fields and zero defaults are
-   forbidden. Booleans, nulls, strings and other nonintegers in integer schema
-   slots fail `integer`. A boolean never equals an integer or floating value.
+1. Immediately after base64url decoding, before ANY JSON parsing, require every
+   byte to lie in printable ASCII `0x20–0x7E`, excluding backslash `0x5C`.
+   Otherwise return `json`. This applies to both header and payload, including
+   member names, string values and whitespace. Tabs, newlines, DEL, UTF-8
+   non-ASCII, invalid UTF-8, and every escape spelling fail here. Valid canonical
+   tokens need no escapes and are unaffected.
+2. Scan container nesting outside quoted strings. Backslashes are already
+   forbidden, so there is no escape state. Root counts as one container; depth
+   greater than 16 is `json`. This bounded preflight precedes parsing.
+3. Validate the WHOLE segment's syntax before any value-level refusal. The first
+   pass retains raw numeric token text without integer/float conversion. Object
+   hooks record duplicates without raising. Malformed numbers (`1e`, `1.0e`,
+   `-`, `01`, `1.`, `.5`), missing delimiters and trailing input return `json`,
+   even after a duplicate object, huge integer, float or constant. As in prior
+   versions of this contract, the tokenizer recognizes `NaN`, `Infinity`, and
+   `-Infinity` as complete constant tokens, deferring their refusal to step 5;
+   this does not allow malformed syntax elsewhere in the segment.
+4. After successful whole-segment syntax validation, reject duplicate names at
+   any depth as `duplicate_key`. Names are escape-free ASCII, so their decoded
+   and literal identities agree. Duplicates precede all numeric/schema checks.
+5. Validate numeric tokens from left to right: fractional/exponent forms and
+   the three constants above fail `integer`. Integers have at most 19 digits
+   excluding a minus sign and value in `[0, 9223372036854775807]`. Check token
+   length BEFORE integer conversion, independent of interpreter string limits.
+   Negative values fail `integer`; `-0` becomes zero and later fails canonical
+   equality. Never convert numbers to float64.
+6. Schema validation follows. Names are case-sensitive; unknown and missing
+   fields fail `fields`. Ignored fields and zero defaults are forbidden.
+   Booleans, nulls, strings and other nonintegers in integer slots fail `integer`.
+   A boolean never equals an integer or floating value.
 
-Decoded strings must be nonempty and in the alphabet above. Non-ASCII and
-unpaired surrogate escapes fail `string`. ASCII escapes can decode successfully
-but fail canonical equality for both header and payload. After schema/type/
-charset validation, payload bytes MUST equal recursively ASCII-key-sorted
-compact JSON: preserve array order, decimal integers, lowercase booleans, no
-escapes for permitted strings, and no trailing newline. Numeric conversion to
-float64 is forbidden.
+Decoded strings must be nonempty and in the alphabet above. Escaped ASCII and
+surrogate names/values have already failed the byte rule as `json`. External
+caller strings still undergo the same string charset checks and fail `string`.
+After schema/type/charset validation, bytes MUST equal recursively
+ASCII-key-sorted compact JSON: preserve array order, decimal integers and
+lowercase booleans. No escapes or trailing newline are possible.
 
 External bindings use one recursive, type-sensitive equality: booleans,
 integers and floating values are distinct; objects have equal keys and
@@ -361,13 +377,13 @@ the contract rather than relying on library defaults:
 
 | Pitfall | Required implementation / fixture evidence |
 |---|---|
-| `encoding/json` interface numbers default to float64 | Retain raw number tokens, bounded integer conversion; `overflow_integer`, `payload_number_huge`, `float_integer`, `exponent`, `context_coercion_input_rate_micro_per_m` |
+| `encoding/json` interface numbers default to float64 | Use `Decoder.UseNumber` or `Decoder.Token` to retain raw number text before validation; validate whole syntax before bounded integer conversion; `overflow_integer`, `payload_number_huge`, `float_integer`, `exponent`, `context_coercion_input_rate_micro_per_m` |
 | Struct field matching is case-insensitive | Compare decoded exact names; `case_sensitive` |
 | Unknown fields are ignored | Exact field sets, including nested objects; `unknown_field`, `unknown_route_field`, `unknown_permit_field` |
-| Duplicate keys are accepted | Detect decoded duplicates per object; `header_duplicate` (also bad signature), `nested_duplicate`, `escaped_duplicate`, parser precedence literals |
-| Struct serialization is not automatically sorted; `Encoder.Encode` appends newline | Use explicit canonical encoding; `header_reordered`, `header_whitespace`, `header_escaped`, `payload_unsorted`, `payload_trailing_newline` (named `trailing_newline`) |
-| Invalid UTF-8 is replaced | Strict UTF-8 validation before JSON; `invalid_utf8` |
-| NaN syntax is normally a parser error | Numeric-token handling maps NaN/infinities to `integer`; `nan`, `header_number_infinity`, `payload_number_minus_infinity` |
+| Duplicate keys are accepted | Use a token-level pass (`json.Decoder.Token`) with a name set per object; record duplicates and defer refusal until whole syntax succeeds, before numeric checks; `header_duplicate`, `nested_duplicate`, parser precedence literals |
+| Struct serialization is not automatically sorted; `Encoder.Encode` appends newline | Use explicit canonical encoding; `header_reordered`, `header_whitespace`, `payload_unsorted`; `header_escaped` and `trailing_newline` now fail the byte rule |
+| Invalid UTF-8 and unpaired surrogate escapes are replaced | The byte rule makes UTF-8, escape and surrogate handling unreachable in `encoding/json`; `invalid_utf8`, `header_escaped`, `header_surrogate_names`, `payload_surrogate_names`, `surrogate` |
+| NaN syntax is normally a parser error | Recognize these raw constant tokens without raising, validate the entire segment, then duplicates, then map constants to `integer`; `nan`, `header_number_infinity`, `payload_number_minus_infinity` |
 | `RawURLEncoding.Strict()` still ignores CR/LF | Alphabet precheck before decode; `base64_cr`, `base64_lf`, `signature_padded`, `base64_trailing_bits` |
 | `ed25519.Verify` panics on wrong public-key length | Explicit size validation; `key_short_public`, `signature_bitflip` |
 | Decoder nesting limits differ | Root-counted 16-container preflight; `depth16`, `depth17`, `depth_in_string`, `depth_siblings` |
@@ -385,7 +401,10 @@ and the original 24 verdict vectors remain unchanged.
 function, and selected literal. `_mutate.py` runs the WHOLE inventory against
 disposable module/fixture copies and first confirms the unmodified harness.
 Compile/import failures count as build-broken, not red. A mutant is red only
-when its selected literal assertion fails. The test guard checks every require
+when a corpus test fails; all corpus tests run even after a failure. Only a
+whole-corpus pass can survive. The structural inventory-completeness test uses
+the original module, since deliberately changing a predicate must not count as
+behavioral evidence. Every other test uses the mutant. The test guard checks every require
 site and branch has an executable inventory entry; atomic comparisons, reason
 memberships, binding fields and monetary operations have additional entries.
 The complete run table is in [speculation-protocol-v1-mutations.md](speculation-protocol-v1-mutations.md).

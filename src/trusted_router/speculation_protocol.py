@@ -92,10 +92,10 @@ def _canonical(value: Any) -> bytes:
                       ensure_ascii=True, allow_nan=False).encode("ascii")
 
 
-def _pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+def _pairs(pairs: list[tuple[str, Any]], duplicates: list[bool]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
-        _require(key not in result, "duplicate_key")
+        duplicates.append(key in result)
         result[key] = value
     return result
 
@@ -115,14 +115,10 @@ def _parse_int(value: str) -> int:
 
 def _depth(text: str) -> None:
     depth = 0
-    quoted = escaped = False
+    quoted = False
     for char in text:
         if quoted:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
+            if char == '"':
                 quoted = False
         elif char == '"':
             quoted = True
@@ -133,13 +129,25 @@ def _depth(text: str) -> None:
             depth -= 1
 
 
+def _json_bytes(raw: bytes) -> None:
+    _require(all(0x20 <= byte <= 0x7E and byte != 0x5C for byte in raw), "json")
+
+
 def _json(raw: bytes) -> Any:
+    _json_bytes(raw)
+    text = raw.decode("ascii")
+    _depth(text)
     try:
-        text = raw.decode("utf-8")
-        _depth(text)
-        return json.loads(text, object_pairs_hook=_pairs, parse_int=_parse_int,
+        # Validate the WHOLE syntax without converting numbers or raising semantic
+        # errors in hooks. Record duplicates, but defer their refusal until EOF.
+        duplicates: list[bool] = []
+        json.loads(text, object_pairs_hook=lambda pairs: _pairs(pairs, duplicates),
+                   parse_int=str, parse_float=str, parse_constant=str)
+        _require(not any(duplicates), "duplicate_key")
+        # Syntax and duplicates are settled; bounded numeric validation may now fail.
+        return json.loads(text, parse_int=_parse_int,
                           parse_float=_constant, parse_constant=_constant)
-    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+    except (json.JSONDecodeError, RecursionError) as exc:
         raise ProtocolError("json") from exc
 
 
@@ -214,6 +222,7 @@ def _verify(token: str, keys: Sequence[TrustedKey], typ: str,
     key = matches[0]
     _require(key.purpose == purpose, "purpose")
     payload = _b64decode(p)
+    _json_bytes(payload)
     signature = _b64decode(s)
     try:
         Ed25519PublicKey.from_public_bytes(_b64decode(key.public_key_b64url)).verify(

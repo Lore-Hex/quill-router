@@ -31,9 +31,9 @@
     },
     {
       "after": "pass",
-      "before": "_require(key not in result, \"duplicate_key\")",
-      "function": "_pairs",
-      "guard": "_pairs:_require(key not in result, \"duplicate_key\") => pass",
+      "before": "_require(not any(duplicates), \"duplicate_key\")",
+      "function": "_json",
+      "guard": "_json:_require(not any(duplicates), \"duplicate_key\") => pass",
       "literal_case": "payload_duplicate"
     },
     {
@@ -53,10 +53,9 @@
     {
       "after": "pass",
       "before": "_require(bool(value) and re.fullmatch(r\"[A-Za-z0-9_-]+\", value) is not None, \"base64\")",
-      "equivalent": "Equivalent refusal: canonical unpadded re-encoding rejects every nonalphabet input (including CR/LF and padding) with the same base64 code; the explicit precheck remains normative for Go.",
       "function": "_b64decode",
       "guard": "_b64decode:_require(bool(value) and re.fullmatch(r\"[A-Za-z0-9_-]+\", value) is not None, \"base64\") => pass",
-      "literal_case": "signature_padded"
+      "literal_case": "base64_empty"
     },
     {
       "after": "pass",
@@ -452,6 +451,13 @@
       "literal_case": "success_status"
     },
     {
+      "after": "pass",
+      "before": "_require(all(0x20 <= byte <= 0x7E and byte != 0x5C for byte in raw), \"json\")",
+      "function": "_json_bytes",
+      "guard": "_json_bytes:_require(all(0x20 <= byte <= 0x7E and byte != 0x5C for byte in raw), \"json\") => pass",
+      "literal_case": "payload_escaped_ascii"
+    },
+    {
       "after": "isinstance(value, int)",
       "before": "type(value) is int",
       "function": "_integer",
@@ -491,14 +497,14 @@
       "before": "0x20 <= ord(c)",
       "function": "_string",
       "guard": "_string:0x20 <= ord(c) => True",
-      "literal_case": "string_control"
+      "literal_case": "context_string_control"
     },
     {
       "after": "0x20 <= ord(c)",
       "before": "0x20 <= ord(c) <= 0x7E",
       "function": "_string",
       "guard": "_string:ord(c) <= 0x7E => True",
-      "literal_case": "string_unicode"
+      "literal_case": "context_string_unicode"
     },
     {
       "after": "True",
@@ -551,26 +557,25 @@
       "literal_case": "json_bad"
     },
     {
-      "after": "raw.decode(\"utf-8\", errors=\"replace\")",
-      "before": "raw.decode(\"utf-8\")",
-      "function": "_json",
-      "guard": "_json:raw.decode(\"utf-8\") => raw.decode(\"utf-8\", errors=\"replace\")",
-      "literal_case": "invalid_utf8"
+      "after": "True",
+      "before": "byte != 0x5C",
+      "function": "_json_bytes",
+      "guard": "_json_bytes:byte != 0x5C => True",
+      "literal_case": "payload_escaped_ascii"
     },
     {
-      "after": "        pass",
-      "before": "        _depth(text)",
+      "after": "    pass",
+      "before": "    _depth(text)",
       "function": "_json",
-      "guard": "_json:        _depth(text) =>         pass",
+      "guard": "_json:    _depth(text) =>     pass",
       "literal_case": "depth17"
     },
     {
       "after": "True",
       "before": "bool(value)",
-      "equivalent": "Equivalent: regex uses +, so empty input already fails the same base64 predicate.",
       "function": "_b64decode",
       "guard": "_b64decode:bool(value) => True",
-      "literal_case": "base64_empty"
+      "literal_case": "key_zero_public"
     },
     {
       "after": "raise ProtocolError(\"input\") from exc",
@@ -1343,24 +1348,10 @@
       "literal_case": "depth_in_string"
     },
     {
-      "after": "if False:",
-      "before": "if escaped:",
+      "after": "if False:\n                quoted = False",
+      "before": "if char == '\"':\n                quoted = False",
       "function": "_depth",
-      "guard": "_depth:if escaped: => if False:",
-      "literal_case": "depth_escaped_quote"
-    },
-    {
-      "after": "elif False:",
-      "before": "elif char == \"\\\\\":",
-      "function": "_depth",
-      "guard": "_depth:elif char == \"\\\\\": => elif False:",
-      "literal_case": "depth_escaped_quote"
-    },
-    {
-      "after": "elif False:\n                quoted = False",
-      "before": "elif char == '\"':\n                quoted = False",
-      "function": "_depth",
-      "guard": "_depth:elif char == '\"':\n                quoted = False => elif False:\n                quoted = False",
+      "guard": "_depth:if char == '\"':\n                quoted = False => if False:\n                quoted = False",
       "literal_case": "depth17_after_string"
     },
     {
@@ -1709,6 +1700,41 @@
       "function": "verify_acceptance",
       "guard": "verify_acceptance:authorization.get(\"billing_mode\") == \"ordinary\" and => True and",
       "literal_case": "unmarked_spend_lease"
+    },
+    {
+      "after": "0 <= byte",
+      "before": "0x20 <= byte",
+      "function": "_json_bytes",
+      "guard": "_json_bytes:0x20 <= byte => 0 <= byte",
+      "literal_case": "trailing_newline"
+    },
+    {
+      "after": "0x20 <= byte <= 0xFF",
+      "before": "0x20 <= byte <= 0x7E",
+      "function": "_json_bytes",
+      "guard": "_json_bytes:0x20 <= byte <= 0x7E => 0x20 <= byte <= 0xFF",
+      "literal_case": "raw_del"
+    },
+    {
+      "after": "    pass",
+      "before": "    _json_bytes(payload)",
+      "function": "_verify",
+      "guard": "_verify:    _json_bytes(payload) =>     pass",
+      "literal_case": "precedence_payload_bytes_signature"
+    },
+    {
+      "after": "parse_int=_parse_int, parse_float=_constant, parse_constant=_constant",
+      "before": "parse_int=str, parse_float=str, parse_constant=str",
+      "function": "_json",
+      "guard": "_json:parse_int=str, parse_float=str, parse_constant=str => parse_int=_parse_int, parse_float=_constant, parse_constant=_constant",
+      "literal_case": "payload_malformed_float_exponent"
+    },
+    {
+      "after": "pass",
+      "before": "duplicates.append(key in result)",
+      "function": "_pairs",
+      "guard": "_pairs:duplicates.append(key in result) => pass",
+      "literal_case": "payload_duplicate"
     }
   ]
 }

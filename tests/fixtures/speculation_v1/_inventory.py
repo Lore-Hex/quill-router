@@ -12,9 +12,9 @@ SOURCE = Path(__file__).resolve().parents[3] / 'src/trusted_router/speculation_p
 # sites with one code are listed in source traversal order.
 SITES = {
     '_integer': ['bool_integer'], '_string': ['string_empty'], '_hash': ['invalid_hash'],
-    '_object': ['unknown_field'], '_pairs': ['payload_duplicate'],
+    '_object': ['unknown_field'], '_json': ['payload_duplicate'],
     '_parse_int': ['payload_number_huge'], '_depth': ['depth17'],
-    '_b64decode': ['signature_padded', 'base64_trailing_bits'],
+    '_b64decode': ['base64_empty', 'base64_trailing_bits'],
     '_verify': ['compact_extra', 'header_whitespace', 'algorithm_none', 'unknown_type',
                 'key_ambiguous', 'real_type_shadow_key', 'depth16'],
     '_check_canonical': ['payload_whitespace'], '_route_schema': ['precedence_stage_schema_version'],
@@ -34,6 +34,7 @@ SITES = {
     'renewal_verdict': ['renewal_domain_isolated', 'renewal_identity_workspace_id', 'renewal_same_generation'],
     'descriptor_replay': ['descriptor_permit_reuse'],
     'classify_verdict': ['provider_source', 'success_status'],
+    '_json_bytes': ['payload_escaped_ascii'],
 }
 
 
@@ -69,8 +70,8 @@ def inventory():
         ('_integer', 'value <= MAX_INT', 'True', 'overflow_integer'),
         ('_string', 'isinstance(value, str)', 'True', 'string_scalar'),
         ('_string', 'bool(value)', 'True', 'string_empty'),
-        ('_string', '0x20 <= ord(c)', 'True', 'string_control'),
-        ('_string', 'ord(c) <= 0x7E', 'True', 'string_unicode'),
+        ('_string', '0x20 <= ord(c)', 'True', 'context_string_control'),
+        ('_string', 'ord(c) <= 0x7E', 'True', 'context_string_unicode'),
         ('_string', "c not in '\\\\\"<>&'", 'True', 'string_less'),
         ('_hash', 'isinstance(value, str)', 'True', 'hash_type'),
         ('_object', 'isinstance(value, dict)', 'True', 'header_scalar'),
@@ -78,9 +79,9 @@ def inventory():
         ('_parse_int', '    _integer(number)', '    pass', 'header_number_negative'),
         ('_constant', 'raise ProtocolError("integer")', 'return 1', 'exponent'),
         ('_json', 'raise ProtocolError("json") from exc', 'raise ProtocolError("input") from exc', 'json_bad'),
-        ('_json', 'raw.decode("utf-8")', 'raw.decode("utf-8", errors="replace")', 'invalid_utf8'),
-        ('_json', '        _depth(text)', '        pass', 'depth17'),
-        ('_b64decode', 'bool(value)', 'True', 'base64_empty'),
+        ('_json_bytes', 'byte != 0x5C', 'True', 'payload_escaped_ascii'),
+        ('_json', '    _depth(text)', '    pass', 'depth17'),
+        ('_b64decode', 'bool(value)', 'True', 'key_zero_public'),
         ('_b64decode', 'raise ProtocolError("base64") from exc', 'raise ProtocolError("input") from exc', 'base64_length'),
         ('_verify', 'isinstance(token, str)', 'True', 'compact_nonstring'),
         ('_verify', 'len(token) <= 65536', 'True', 'compact_too_long'),
@@ -201,10 +202,8 @@ def inventory():
     ]:
         add('_equal', before, after, case)
     add('_depth', 'if quoted:', 'if False:', 'depth_in_string')
-    add('_depth', 'if escaped:', 'if False:', 'depth_escaped_quote')
-    add('_depth', 'elif char == "\\\\":', 'elif False:', 'depth_escaped_quote')
     # Closing quotes, opening quotes, opens and closes each have a distinguishing payload.
-    add('_depth', "elif char == '\"':\n                quoted = False", 'elif False:\n                quoted = False', 'depth17_after_string')
+    add('_depth', "if char == '\"':\n                quoted = False", 'if False:\n                quoted = False', 'depth17_after_string')
     add('_depth', "elif char == '\"':\n            quoted = True", 'elif False:\n            quoted = True', 'depth_in_string')
     add('_depth', 'elif char in "[{":', 'elif False:', 'depth17')
     add('_depth', 'elif char in "]}":', 'elif False:', 'depth_siblings')
@@ -244,10 +243,6 @@ def inventory():
     for row in rows:
         key = (row['function'], row['before'])
         equivalents = {
-            ('_b64decode', '_require(bool(value) and re.fullmatch(r"[A-Za-z0-9_-]+", value) is not None, "base64")'):
-                'Equivalent refusal: canonical unpadded re-encoding rejects every nonalphabet input (including CR/LF and padding) with the same base64 code; the explicit precheck remains normative for Go.',
-            ('_b64decode', 'bool(value)'):
-                'Equivalent: regex uses +, so empty input already fails the same base64 predicate.',
             ('_verify', '_require(isinstance(claims, dict), "fields")'):
                 'Equivalent: both callers immediately call exact-object schema validation, which rejects every nondict as fields before accessing members.',
             ('_hash', 'isinstance(value, str)'):
@@ -255,4 +250,11 @@ def inventory():
         }
         if key in equivalents:
             row['equivalent'] = equivalents[key]
+    add('_json_bytes', '0x20 <= byte', '0 <= byte', 'trailing_newline')
+    add('_json_bytes', '0x20 <= byte <= 0x7E', '0x20 <= byte <= 0xFF', 'raw_del')
+    add('_verify', '    _json_bytes(payload)', '    pass', 'precedence_payload_bytes_signature')
+    add('_json', 'parse_int=str, parse_float=str, parse_constant=str',
+        'parse_int=_parse_int, parse_float=_constant, parse_constant=_constant',
+        'payload_malformed_float_exponent')
+    add('_pairs', 'duplicates.append(key in result)', 'pass', 'payload_duplicate')
     return rows
