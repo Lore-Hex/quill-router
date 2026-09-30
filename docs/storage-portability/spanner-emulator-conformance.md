@@ -33,7 +33,7 @@ The round-15 audit found exactly two existing non-code text files with transport
 | File | Matches | Handling |
 |---|---:|---|
 | `.test_durations` | 6 | Exact-path data exemption above; matches are pytest node IDs, not programs. |
-| `.codex-review-1.md:22` | 1 | Occurrence-bound line exemption in `spanner_ddl_exemptions.json`; archived review prose about receipt-column deployment ordering, not a schema dispatch. The rest of the file remains scanned. |
+| `.codex-review-1.md:22` | 1 | Removed: the file was PR #1159's codex review transcript, committed with that PR, and its line exemption went with it. `test_review_note_line_exemption_is_occurrence_bound` keeps the occurrence binding covered on a synthetic note. |
 
 No other previously name-excluded text file contains a transport token. New ClickHouse SQL containing only statements and ordinary `middleware` imports also need no registry changes. A helper using `spanner_dbapi` is caught at its own transport token regardless of launchers such as `timeout`, `env`, `xargs`, subprocess calls, or working-directory changes; the guard does not model execution syntax.
 

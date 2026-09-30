@@ -6,12 +6,6 @@
     }
   },
   "lines": {
-    ".codex-review-1.md": {
-      "- **P2 — [docs/client-receipts.md:47]:** The documentation says the migration is safe after the compatible router, but the new writer immediately names physical `kid` and `att_sha256` columns and fails if they do not exist. Reproduce by starting this revision before applying DDL and collecting a key. Fix: state expli": {
-        "count": 1,
-        "reason": "Archived review prose about receipt-column deployment ordering; this line executes no schema command."
-      }
-    },
     ".github/workflows/ci.yml": {
       "# order-independent; grouping is what serializes the DDL.": {
         "count": 1,
