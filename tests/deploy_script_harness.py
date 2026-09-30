@@ -1439,14 +1439,14 @@ _ROLLOUT_ACTIVE_REVISION_JSON = json.dumps(
 
 
 #: The retired spend-lease soak job and its schedule are already gone:
-#: NOT_FOUND is the steady state, and both synthetic scripts delete only what
+#: An explicit not-found response is the steady state; scripts delete only what
 #: a describe still finds. Any other lookup failure aborts the deploy.
 _RETIRED_SOAK_ABSENT = (
     r"scheduler jobs describe trusted-router-spend-lease-soak-"
     "\tERROR: (gcloud.scheduler.jobs.describe) NOT_FOUND: Job not found.",
     r"run jobs describe trusted-router-spend-lease-soak-"
-    "\tERROR: (gcloud.run.jobs.describe) NOT_FOUND: Job "
-    "[trusted-router-spend-lease-soak-us-central1] could not be found.",
+    "\tERROR: (gcloud.run.jobs.describe) Cannot find job "
+    "[trusted-router-spend-lease-soak-us-central1].",
 )
 
 SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
