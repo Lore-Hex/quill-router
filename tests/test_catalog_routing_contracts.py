@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -544,9 +545,7 @@ def test_grok_45_uses_xai_native_model_id_and_pricing() -> None:
     assert byok.upstream_id == row["upstream_id"]
     assert prepaid.prompt_price_microdollars_per_million_tokens > 0
     assert prepaid.completion_price_microdollars_per_million_tokens > 0
-    cached_prompt = prepaid.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
-    assert cached_prompt is not None
-    assert 0 < cached_prompt < prepaid.prompt_price_microdollars_per_million_tokens
+    assert prepaid.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens is not None
 
 
 @pytest.mark.parametrize("native_id", ["grok-4.6", "grok-4.7"])
@@ -570,6 +569,18 @@ def test_grok_uses_xai_native_model_id_and_long_context_pricing(native_id: str) 
     for tier in prepaid.price_tiers:
         assert tier.prompt_price_microdollars_per_million_tokens > 0
         assert tier.completion_price_microdollars_per_million_tokens > 0
+        assert tier.prompt_cached_price_microdollars_per_million_tokens is not None
+
+
+@pytest.mark.provider_health
+@pytest.mark.parametrize("native_id", ["grok-4.5", "grok-4.6", "grok-4.7"])
+def test_xai_discounts_cached_input_on_grok(native_id: str) -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    endpoint_id = f"x-ai/{native_id}@grok/prepaid"
+    if endpoint_id not in MODEL_ENDPOINTS:
+        return
+    for tier in MODEL_ENDPOINTS[endpoint_id].price_tiers:
         assert tier.prompt_cached_price_microdollars_per_million_tokens is not None
         assert (
             0
@@ -1536,13 +1547,6 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
 
     if "thinkingmachines/inkling" in MODELS:
         inkling = MODELS["thinkingmachines/inkling"]
-        # Inkling's serverless hosts currently advertise different verified
-        # windows (256K, 512K, and 1M). The canonical row follows the largest
-        # live routed endpoint, so an hourly availability refresh may
-        # legitimately move it within this range. It must still satisfy
-        # Liberty 1.0's 256K contract and must never overstate the largest
-        # verified 1M route.
-        assert 262_144 <= inkling.context_length <= 1_048_576
         endpoints = endpoints_for_model(inkling.id)
         provider_ids = {endpoint.provider for endpoint in endpoints}
         assert inkling.provider in provider_ids
@@ -1567,10 +1571,6 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
         return
     inkling_small = MODELS["thinkingmachines/inkling-small"]
     inkling_small_shape = model_to_openrouter_shape(inkling_small)
-    # The first-party route is 256K, while independent hosts can expose a
-    # larger verified window for the same weights. The canonical model follows
-    # the largest live routed endpoint and must stay within the audited range.
-    assert 262_144 <= inkling_small.context_length <= 1_048_576
     assert inkling_small.input_modalities == ("text", "image")
     assert inkling_small.output_modalities == ("text",)
     assert inkling_small_shape["architecture"]["modality"] == "text+image->text"
@@ -2778,10 +2778,10 @@ def test_model_shape_publishes_cache_read_price_when_tiers_carry_one() -> None:
 
     shape = model_to_openrouter_shape(model)
 
-    cached = shape["pricing"]["input_cache_read"]
-    prompt = shape["pricing"]["prompt"]
-    assert float(cached) > 0
-    assert float(cached) < float(prompt)
+    # Dollars per token: the tier's microdollars per million tokens over 10**12.
+    assert Decimal(shape["pricing"]["input_cache_read"]) == (
+        Decimal(tiers[0].prompt_cached_price_microdollars_per_million_tokens) / Decimal(10**12)
+    )
 
 
 def test_model_shape_omits_cache_read_price_when_absent() -> None:
@@ -2912,6 +2912,18 @@ def test_current_orchestration_backups_have_zdr_routes(model_id: str) -> None:
         endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_ZERO_RETENTION
         for _model, endpoint in candidates
     )
+
+
+@pytest.mark.provider_health
+def test_inkling_windows_stay_within_their_hosts_verified_range() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it. Inkling's hosts advertise different
+    # verified windows (256K, 512K and 1M), and each canonical row follows its
+    # largest live routed endpoint: at least Liberty 1.0's 256K, and no more
+    # than the largest window a host is verified to serve.
+    for model_id in ("thinkingmachines/inkling", "thinkingmachines/inkling-small"):
+        if model_id in MODELS:
+            assert 262_144 <= MODELS[model_id].context_length <= 1_048_576, model_id
 
 
 @pytest.mark.provider_health

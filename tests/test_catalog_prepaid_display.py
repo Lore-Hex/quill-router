@@ -457,11 +457,6 @@ def test_gemini_native_supplement_publishes_missing_text_models() -> None:
         assert endpoint.upstream_id == (row.get("upstream_id") or model_id)
         assert endpoint.prompt_price_microdollars_per_million_tokens > 0
         assert endpoint.completion_price_microdollars_per_million_tokens > 0
-        if "cached_input_token_price_per_m" in row:
-            assert (
-                endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
-                < endpoint.prompt_price_microdollars_per_million_tokens
-            )
         if provider == "google-ai-studio":
             assert MODELS[model_id].context_length == row["context_length"]
             assert endpoint.prompt_price_microdollars_per_million_tokens == _customer_price(
@@ -514,6 +509,26 @@ def test_llama_33_70b_no_longer_credits_routes_to_cerebras(
         "meta-llama/llama-3.3-70b-instruct@parasail/prepaid",
         "openai/gpt-oss-120b@cerebras/prepaid",
     }
+
+
+@pytest.mark.provider_health
+def test_google_discounts_cached_input_on_its_native_gemini_rows() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    for provider, model_id in (
+        ("google-ai-studio", "google/gemini-3.5-flash"),
+        ("google-ai-studio", "google/gemini-3.6-flash"),
+        ("google-ai-studio", "google/gemini-3.1-flash-image-preview"),
+        ("google-vertex", "google/gemini-3.6-flash"),
+    ):
+        row = _listed_row(provider, model_id)
+        if row is None or "cached_input_token_price_per_m" not in row:
+            continue
+        endpoint = MODEL_ENDPOINTS[f"{model_id}@{provider}/prepaid"]
+        assert (
+            endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
+            < endpoint.prompt_price_microdollars_per_million_tokens
+        ), (provider, model_id)
 
 
 def test_novita_supplemental_prices_apply_manifest_scale(
