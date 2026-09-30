@@ -14,6 +14,24 @@ KNOWN_WIF_ALLOWLIST_EXCEPTIONS = {
         "an operator decision (Lore-Hex/quill-router#1416)."
     ),
 }
+# Fixed action identities, not prefixes or a list inferred at scan time. New
+# actions need review here; these do not authenticate to the GCP WIF provider.
+KNOWN_NON_GCP_AUTH_ACTIONS = {
+    "actions/checkout": "Checks out source using GitHub credentials.",
+    "actions/setup-java": "Installs the Java toolchain.",
+    "actions/setup-node": "Installs the Node.js toolchain.",
+    "actions/setup-python": "Installs the Python toolchain.",
+    "actions/cache": "Restores/saves GitHub Actions caches.",
+    "actions/download-artifact": "Downloads GitHub Actions artifacts.",
+    "actions/upload-artifact": "Uploads GitHub Actions artifacts.",
+    "astral-sh/setup-uv": "Installs uv and manages its cache.",
+    "aws-actions/configure-aws-credentials": "Obtains AWS credentials, not GCP credentials.",
+    "azure/login": "Authenticates to Azure, not GCP.",
+    "docker/setup-buildx-action": "Installs/configures the Docker Buildx builder.",
+    "google-github-actions/setup-gcloud": "Installs gcloud; GCP authentication is a separate action.",
+    "hashicorp/setup-terraform": "Installs the Terraform CLI.",
+    "oven-sh/setup-bun": "Installs the Bun toolchain.",
+}
 
 
 def test_schema_audit_workflow_pins_schedule_identity_permissions_and_emulator():
@@ -118,6 +136,52 @@ def _gcp_wif_consumers(root: Path) -> set[str]:
     consumers: set[str] = set()
     visited: set[str] = set()
 
+    def inspect_steps(steps, path, job_id, caller, context, stack=(), trail=()):
+        for index, step in enumerate(steps, start=1):
+            if "uses" not in step:
+                continue
+            uses = step["uses"]
+            label = step.get("name", step.get("id", f"#{index}"))
+            location = f"{path}, job {job_id}, step {label} (caller {caller})"
+            if trail:
+                location += f" via {' -> '.join(trail)}"
+            unresolved = f"UNRESOLVED uses {uses!r} in {location}"
+            assert isinstance(uses, str) and uses and "${{" not in uses, unresolved
+            step_context = context | {"env": context["env"] | step.get("env", {})}
+            if uses.startswith("./"):
+                directory = (root / uses).resolve()
+                assert directory.is_relative_to(root.resolve()), unresolved
+                definitions = [directory / name for name in ("action.yml", "action.yaml") if (directory / name).is_file()]
+                assert len(definitions) == 1, f"{unresolved}: expected one action.yml/action.yaml"
+                action_path = definitions[0].relative_to(root.resolve()).as_posix()
+                assert action_path not in stack, f"{unresolved}: recursive composite action {action_path}"
+                action = yaml.safe_load(definitions[0].read_text())
+                assert isinstance(action, dict), f"{unresolved}: invalid action metadata"
+                runs = action.get("runs", {})
+                assert isinstance(runs, dict) and runs.get("using") == "composite" and isinstance(runs.get("steps"), list), (
+                    f"{unresolved}: only local composite actions can be inspected"
+                )
+                inputs = {key: _resolve_static(spec.get("default"), step_context) for key, spec in action.get("inputs", {}).items()}
+                inputs.update(_resolve_static(step.get("with", {}), step_context))
+                # Freeze caller env references before replacing the inputs scope.
+                composite_context = step_context | {"inputs": inputs, "env": _resolve_static(step_context["env"], step_context)}
+                inspect_steps(
+                    runs["steps"], action_path, job_id, caller, composite_context,
+                    (*stack, action_path), (*trail, location),
+                )
+                continue
+            action_name, separator, ref = uses.partition("@")
+            assert separator and ref and "@" not in ref, unresolved
+            if action_name == "google-github-actions/auth":
+                provider = _resolve_static(step.get("with", {}).get("workload_identity_provider"), step_context)
+                assert isinstance(provider, str) and provider, (
+                    f"Cannot statically resolve GCP WIF provider in {location}"
+                )
+                if provider == WIF_PROVIDER:
+                    consumers.add(caller)
+            else:
+                assert action_name in KNOWN_NON_GCP_AUTH_ACTIONS, unresolved
+
     def inspect(path, caller, supplied_inputs, stack=()):
         assert path not in stack, f"Recursive reusable workflow call: {(*stack, path)}"
         assert path in workflows, f"Missing local reusable workflow {path}, called by {caller}"
@@ -129,29 +193,22 @@ def _gcp_wif_consumers(root: Path) -> set[str]:
         inputs.update(supplied_inputs)
         for job_id, job in workflow.get("jobs", {}).items():
             context = {"inputs": inputs, "env": workflow.get("env", {}) | job.get("env", {})}
-            for matrix in _matrix_rows(job, context):
+            for matrix in _matrix_rows(job, context) or [None]:
                 job_context = context | {"matrix": matrix}
-                callee = job.get("uses", "")
-                if callee.startswith("./.github/workflows/"):
-                    inspect(callee[2:], caller, _resolve_static(job.get("with", {}), job_context), (*stack, path))
-                for index, step in enumerate(job.get("steps", []), start=1):
-                    if not step.get("uses", "").startswith("google-github-actions/auth@"):
-                        continue
-                    step_context = job_context | {"env": context["env"] | step.get("env", {})}
-                    provider = _resolve_static(step.get("with", {}).get("workload_identity_provider"), step_context)
-                    label = step.get("name", step.get("id", f"#{index}"))
-                    assert isinstance(provider, str) and provider, (
-                        f"Cannot statically resolve GCP WIF provider in {path}, "
-                        f"job {job_id}, step {label} (caller {caller})"
+                if "uses" in job:
+                    callee = job["uses"]
+                    assert isinstance(callee, str) and callee.startswith("./.github/workflows/") and "${{" not in callee, (
+                        f"UNRESOLVED uses {callee!r} in {path}, job {job_id}, "
+                        f"step <reusable workflow> (caller {caller})"
                     )
-                    if provider == WIF_PROVIDER:
-                        consumers.add(caller)
+                    inspect(callee[2:], caller, _resolve_static(job.get("with", {}), job_context), (*stack, path))
+                inspect_steps(job.get("steps", []), path, job_id, caller, job_context)
 
     called = {
         job["uses"][2:]
         for workflow in workflows.values()
         for job in workflow.get("jobs", {}).values()
-        if job.get("uses", "").startswith("./.github/workflows/")
+        if isinstance(job.get("uses"), str) and job["uses"].startswith("./.github/workflows/")
     }
     for path, workflow in workflows.items():
         triggers = workflow.get("on", workflow.get(True, {}))
@@ -192,12 +249,15 @@ def _assert_workflows_using_gcp_wif_provider_are_allowlisted(root: Path) -> None
 
 
 def test_all_workflows_using_gcp_wif_provider_are_allowlisted():
+    assert set(KNOWN_WIF_ALLOWLIST_EXCEPTIONS) == {".github/workflows/deploy-growth-sync.yml"}
     _assert_workflows_using_gcp_wif_provider_are_allowlisted(ROOT)
 
 
 @pytest.fixture
 def wif_repository_copy(tmp_path: Path) -> Path:
     shutil.copytree(ROOT / ".github/workflows", tmp_path / ".github/workflows")
+    if (ROOT / ".github/actions").is_dir():
+        shutil.copytree(ROOT / ".github/actions", tmp_path / ".github/actions")
     (tmp_path / "infra").mkdir()
     shutil.copy2(ROOT / "infra/gcp_wif.tf", tmp_path / "infra/gcp_wif.tf")
     return tmp_path
@@ -237,6 +297,136 @@ def _auth_workflow(provider=WIF_PROVIDER):
             'with': {'workload_identity_provider': provider},
         }]}},
     }
+
+
+def _write_composite(root, name, steps, filename='action.yml', inputs=None):
+    directory = root / '.github/actions' / name
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / filename).write_text(yaml.safe_dump({
+        'inputs': inputs or {}, 'runs': {'using': 'composite', 'steps': steps},
+    }))
+
+
+@pytest.mark.parametrize('filename', ['action.yml', 'action.yaml'])
+@pytest.mark.parametrize('nested', [False, True])
+def test_wif_composite_wrapper_rejects_unlisted_workflow(wif_repository_copy: Path, filename, nested):
+    steps = _auth_workflow()['jobs']['audit']['steps']
+    _write_composite(wif_repository_copy, 'x', steps, filename)
+    if nested:
+        _write_composite(wif_repository_copy, 'wrapper', [{'uses': './.github/actions/x'}])
+    workflow = _auth_workflow()
+    workflow['jobs']['audit']['steps'] = [{'uses': './.github/actions/wrapper' if nested else './.github/actions/x'}]
+    _write_workflow(wif_repository_copy, 'unlisted-workflow.yml', workflow)
+    with pytest.raises(AssertionError, match=r'missing from .*unlisted-workflow\.yml'):
+        _assert_workflows_using_gcp_wif_provider_are_allowlisted(wif_repository_copy)
+
+
+@pytest.mark.parametrize('form', ['input', 'default', 'env', 'reusable'])
+def test_wif_composite_uses_callers_identity_and_context(wif_repository_copy: Path, form):
+    steps = _auth_workflow('${{ env.WIF }}' if form == 'env' else '${{ inputs.provider }}')['jobs']['audit']['steps']
+    _write_composite(wif_repository_copy, 'x', steps, inputs={'provider': {'default': WIF_PROVIDER}})
+    _write_composite(wif_repository_copy, 'wrapper', [{
+        'uses': './.github/actions/x', 'with': {'provider': '${{ inputs.provider }}'},
+    }], inputs={'provider': {'default': WIF_PROVIDER}})
+    workflow = _auth_workflow()
+    workflow['jobs']['audit']['steps'] = [{
+        'uses': './.github/actions/wrapper',
+        'env': {'WIF': WIF_PROVIDER},
+        'with': {} if form == 'default' else {'provider': '${{ env.WIF }}'},
+    }]
+    if form == 'reusable':
+        workflow['on'] = {'workflow_call': None}
+        _write_workflow(wif_repository_copy, 'reusable.yml', workflow)
+        workflow = {
+            'on': {'workflow_dispatch': None},
+            'jobs': {'call': {'uses': './.github/workflows/reusable.yml'}},
+        }
+    _write_workflow(wif_repository_copy, 'typed-audit.yml', workflow)
+    consumers = _gcp_wif_consumers(wif_repository_copy)
+    assert '.github/workflows/typed-audit.yml' in consumers
+    assert '.github/workflows/reusable.yml' not in consumers
+    _assert_workflows_using_gcp_wif_provider_are_allowlisted(wif_repository_copy)
+
+
+def test_wif_composite_resolves_inputs_per_call(wif_repository_copy: Path):
+    _write_composite(wif_repository_copy, 'x', _auth_workflow('${{ inputs.provider }}')['jobs']['audit']['steps'])
+    for name, provider in [('typed-audit.yml', 'another-provider'), ('unlisted-workflow.yml', WIF_PROVIDER)]:
+        workflow = _auth_workflow()
+        workflow['jobs']['audit']['steps'] = [{'uses': './.github/actions/x', 'with': {'provider': provider}}]
+        _write_workflow(wif_repository_copy, name, workflow)
+    with pytest.raises(AssertionError, match=r'missing from .*unlisted-workflow\.yml'):
+        _assert_workflows_using_gcp_wif_provider_are_allowlisted(wif_repository_copy)
+
+
+def test_wif_composite_does_not_rebind_caller_env_inputs(wif_repository_copy: Path):
+    _write_composite(wif_repository_copy, 'x', _auth_workflow('${{ env.WIF }}')['jobs']['audit']['steps'], inputs={'provider': {'default': 'another-provider'}})
+    callee = {
+        'on': {'workflow_call': {'inputs': {'provider': {'type': 'string'}}}},
+        'env': {'WIF': '${{ inputs.provider }}'},
+        'jobs': {'audit': {'steps': [{'uses': './.github/actions/x'}]}},
+    }
+    _write_workflow(wif_repository_copy, 'reusable.yml', callee)
+    _write_workflow(wif_repository_copy, 'unlisted-workflow.yml', {
+        'on': {'workflow_dispatch': None},
+        'jobs': {'call': {'uses': './.github/workflows/reusable.yml', 'with': {'provider': WIF_PROVIDER}}},
+    })
+    with pytest.raises(AssertionError, match=r'missing from .*unlisted-workflow\.yml'):
+        _assert_workflows_using_gcp_wif_provider_are_allowlisted(wif_repository_copy)
+
+
+def test_wif_composite_unresolved_provider_names_call_site(wif_repository_copy: Path):
+    _write_composite(wif_repository_copy, 'x', _auth_workflow('${{ inputs.provider }}')['jobs']['audit']['steps'])
+    workflow = _auth_workflow()
+    workflow['jobs']['audit']['steps'] = [{'id': 'wrapper', 'uses': './.github/actions/x', 'with': {'provider': '${{ secrets.WIF }}'}}]
+    _write_workflow(wif_repository_copy, 'typed-audit.yml', workflow)
+    with pytest.raises(AssertionError, match=r'Cannot statically resolve .*actions/x/action.yml, job audit, step Authenticate to GCP .*via .*typed-audit.yml, job audit, step wrapper'):
+        _assert_workflows_using_gcp_wif_provider_are_allowlisted(wif_repository_copy)
+
+
+@pytest.mark.parametrize('arguments', [{}, {'provider': WIF_PROVIDER}, {'provider': '${{ secrets.WIF }}'}])
+def test_wif_external_reusable_workflow_is_unresolved(wif_repository_copy: Path, arguments):
+    _write_workflow(wif_repository_copy, 'typed-audit.yml', {
+        'on': {'workflow_dispatch': None},
+        'jobs': {'call': {'uses': 'Lore-Hex/shared-ci/.github/workflows/gcp-auth.yml@main', 'with': arguments}},
+    })
+    with pytest.raises(AssertionError, match=r'UNRESOLVED uses .*gcp-auth.yml@main.*typed-audit.yml, job call, step <reusable workflow>'):
+        _assert_workflows_using_gcp_wif_provider_are_allowlisted(wif_repository_copy)
+
+
+@pytest.mark.parametrize('uses', [
+    'Lore-Hex/shared-ci/gcp-auth@main', 'actions/setup-unknown@v1',
+    'actions/checkout/wrapper@v4', 'actions/checkout', 'actions/checkout@${{ inputs.ref }}',
+    'google-github-actions/auth-wrapper@v3', 'docker://unknown/image:latest', None,
+])
+@pytest.mark.parametrize('composite', [False, True])
+def test_wif_unknown_action_is_unresolved(wif_repository_copy: Path, uses, composite):
+    step = {'name': 'Unknown action', 'uses': uses, 'with': {'provider': WIF_PROVIDER}}
+    workflow = _auth_workflow()
+    workflow['jobs']['audit']['steps'] = [step]
+    path = 'typed-audit.yml'
+    if composite:
+        _write_composite(wif_repository_copy, 'x', [step])
+        workflow['jobs']['audit']['steps'] = [{'uses': './.github/actions/x'}]
+        path = 'actions/x/action.yml'
+    _write_workflow(wif_repository_copy, 'typed-audit.yml', workflow)
+    with pytest.raises(AssertionError, match=rf'UNRESOLVED uses .*{re.escape(path)}, job audit, step Unknown action'):
+        _assert_workflows_using_gcp_wif_provider_are_allowlisted(wif_repository_copy)
+
+
+@pytest.mark.parametrize('form', ['missing', 'recursive', 'node24', 'docker', 'ambiguous'])
+def test_wif_uninspectable_local_action_is_unresolved(wif_repository_copy: Path, form):
+    if form != 'missing':
+        _write_composite(wif_repository_copy, 'x', [{'uses': './.github/actions/x'}])
+        path = wif_repository_copy / '.github/actions/x/action.yml'
+        if form in {'node24', 'docker'}:
+            path.write_text(yaml.safe_dump({'runs': {'using': form, 'main': 'index.js', 'image': 'Dockerfile'}}))
+        elif form == 'ambiguous':
+            shutil.copy2(path, path.with_suffix('.yaml'))
+    workflow = _auth_workflow()
+    workflow['jobs']['audit']['steps'] = [{'uses': './.github/actions/x'}]
+    _write_workflow(wif_repository_copy, 'typed-audit.yml', workflow)
+    with pytest.raises(AssertionError, match=r'UNRESOLVED uses .*job audit, step #1'):
+        _assert_workflows_using_gcp_wif_provider_are_allowlisted(wif_repository_copy)
 
 
 @pytest.mark.parametrize('form', ['matrix', 'matrix-include', 'matrix-object', 'workflow-env', 'job-env', 'step-env', 'interpolation'])
