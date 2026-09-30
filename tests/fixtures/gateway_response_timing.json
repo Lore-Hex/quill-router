@@ -1,0 +1,79 @@
+{
+  "authorize": {
+    "data": {
+      "authorization_id": "gwa-wire-timing",
+      "generation_id": "gen-029ba13b753c5e398863a80a63e65086",
+      "timing": {
+        "total_ms": 125,
+        "key_lookup_ms": 0,
+        "routing_ms": 0,
+        "store_ms": 125,
+        "post_commit_ms": 0,
+        "spanner_rpcs": 0
+      },
+      "idempotent_replay": false
+    }
+  },
+  "replay": {
+    "data": {
+      "authorization_id": "gwa-wire-timing",
+      "generation_id": "gen-029ba13b753c5e398863a80a63e65086",
+      "timing": {
+        "total_ms": 125,
+        "key_lookup_ms": 0,
+        "routing_ms": 0,
+        "store_ms": 125,
+        "post_commit_ms": 0,
+        "spanner_rpcs": 0
+      },
+      "idempotent_replay": true
+    }
+  },
+  "settle": {
+    "data": {
+      "authorization_id": "gwa-wire-timing",
+      "generation_id": "gen-029ba13b753c5e398863a80a63e65086",
+      "timing": {
+        "total_ms": 125,
+        "key_lookup_ms": 0,
+        "routing_ms": 0,
+        "store_ms": 125,
+        "post_commit_ms": 0,
+        "spanner_rpcs": 0
+      },
+      "settled": true,
+      "disposition": "finalized",
+      "finalization_outcome": "settled"
+    }
+  },
+  "openapi_required": {
+    "GatewayAuthorizeData": [
+      "authorization_id",
+      "generation_id",
+      "timing"
+    ],
+    "GatewaySettleData": [
+      "authorization_id",
+      "timing"
+    ],
+    "GatewayTimingData": [
+      "spanner_rpcs",
+      "total_ms",
+      "key_lookup_ms",
+      "routing_ms",
+      "store_ms",
+      "post_commit_ms"
+    ]
+  },
+  "origin_main_additions": {
+    "generation_id": "gen-3dabc3a7a9d35bffb78676619a043d87",
+    "timing": {
+      "total_ms": 0,
+      "key_lookup_ms": 0,
+      "routing_ms": 0,
+      "store_ms": 0,
+      "post_commit_ms": 0,
+      "spanner_rpcs": 0
+    }
+  }
+}

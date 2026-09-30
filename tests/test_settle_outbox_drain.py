@@ -1318,6 +1318,7 @@ def test_inline_finalize_false_leaves_outbox_pending(fake_store: tuple[Any, Any]
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["data"] == {
+        "timing": resp.json()["data"]["timing"],
         "authorization_id": auth.id,
         "settled": False,
         "already_settled": False,

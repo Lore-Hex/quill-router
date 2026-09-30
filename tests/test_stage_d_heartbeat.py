@@ -30,6 +30,7 @@ from trusted_router.app_markup_billing import (
     app_markup_owner_share_microdollars,
     app_markup_payout_event_id,
 )
+from trusted_router.catalog_data import Model, ModelEndpoint
 from trusted_router.config import Settings
 from trusted_router.gateway_boot import SpendLeaseBoot, boot_auth_digest
 from trusted_router.pricing import signed_receipt_price_microdollars
@@ -914,7 +915,30 @@ def test_reaper_atomic_release_approved_outbox_row_is_not_a_guard() -> None:
 
 
 def test_reaper_snapshot_books_the_frozen_pricing_function_and_generation() -> None:
-    db, _authorization = _seed()
+    db, authorization = _seed()
+    model = Model(id="model", name="Test", provider="anthropic", context_length=4096)
+    endpoint = ModelEndpoint(
+        id="anthropic/test", model_id=model.id, provider="anthropic", usage_type="Credits",
+    )
+    authorize_data = gateway._gateway_authorize_response(
+        authorization=authorization,
+        workspace_id=authorization.workspace_id,
+        key_hash=authorization.key_hash,
+        model=model,
+        endpoint=endpoint,
+        requested_model_id=model.id,
+        model_usage_type=UsageType.CREDITS,
+        limit_usage_type=UsageType.CREDITS,
+        estimate=authorization.estimated_microdollars,
+        credit_reservation_id=authorization.credit_reservation_id,
+        byok_config=None,
+        region="us-central1",
+        settings=Settings(environment="test"),
+        broadcast_destinations=[],
+        endpoint_candidates=[(model, endpoint)],
+        idempotent_replay=False,
+        custom_model=None,
+    )["data"]
     _seed_reaper_counters(db)
     assert _heartbeat(db).accepted
     reap_now = NOW + timedelta(seconds=301)
@@ -950,6 +974,7 @@ def test_reaper_snapshot_books_the_frozen_pricing_function_and_generation() -> N
     assert stored["payload"] is not None
     assert len(db.generation_records) == 1
     generation = json.loads(next(iter(db.generation_records.values()))["payload"])
+    assert generation["id"] == authorize_data["generation_id"]
     assert generation["settled_from"] == "heartbeat"
     assert generation["usage_estimated"] is True
     assert generation["tokens_prompt"] == 100
@@ -1007,6 +1032,7 @@ def test_reaper_flag_off_refunds_started_request_without_nulling_payload() -> No
     assert result.snapshot_bookings == 0
     assert result.refunded == 1
     assert result.outcome_counts["refunded"] == 1
+    assert db.generation_records == {}
     assert db.reservations["reservation"]["actual_micro"] == 0
     assert db.typed[CREDIT_BALANCE_TABLE][("workspace", 0)]["total_usage"] == 0
     stored = db.gateway_authorizations["gwa-stage-d-fixture"]

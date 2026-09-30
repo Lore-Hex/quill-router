@@ -388,7 +388,11 @@ def test_authorize_with_client_extra_has_unchanged_response_shape(client: TestCl
     with_client = _authorize(client, key, extra={"client": VALID_CLIENT_CONTEXT})
 
     for response in (without_client, with_client):
-        response.pop("authorization_id")
+        authorization_id = response.pop("authorization_id")
+        assert response.pop("generation_id") == generation_id_for_authorization(authorization_id)
+        timing = response.pop("timing")
+        assert all(type(value) is int and value >= 0 for value in timing.values())
+        assert timing["total_ms"] >= timing["store_ms"]
         response.pop("credit_reservation_id")
     assert with_client == without_client
 

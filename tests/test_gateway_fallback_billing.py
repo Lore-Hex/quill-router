@@ -904,6 +904,7 @@ def test_gateway_settle_ancient_legacy_reservation_missing_typed_row_is_clean() 
 
     assert settle.status_code == 200, settle.text
     assert settle.json()["data"] == {
+        "timing": settle.json()["data"]["timing"],
         "authorization_id": auth.id,
         "settled": False,
         "already_settled": True,
