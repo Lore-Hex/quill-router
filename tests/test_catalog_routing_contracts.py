@@ -416,12 +416,15 @@ def test_native_provider_catalog_preserves_live_model_ids(
     """Provider-native `/models` feeds can be ahead of OpenRouter's
     endpoint feed. TR should publish those routes with exact upstream
     IDs so the enclave can dispatch them without strip-author bugs."""
+    from tests import catalog_vehicles
+
+    built = catalog_vehicles.registry_endpoints()
     for model_id in sample_ids:
         row = _listed_row(provider, model_id)
         if row is None:
             continue
         for usage in ("prepaid", "byok"):
-            assert MODEL_ENDPOINTS[f"{model_id}@{provider}/{usage}"].upstream_id == (
+            assert built[f"{model_id}@{provider}/{usage}"].upstream_id == (
                 row.get("upstream_id") or model_id
             )
 
@@ -444,6 +447,7 @@ def test_native_provider_catalogs_still_serve_their_lineups(
 
 
 def test_novita_native_catalog_preserves_every_eligible_manifest_row() -> None:
+    from tests import catalog_vehicles
     from trusted_router.catalog_ingest import (
         _PROVIDER_MODELS_DIR,
         _is_provider_deprecated_model,
@@ -474,6 +478,7 @@ def test_novita_native_catalog_preserves_every_eligible_manifest_row() -> None:
             if endpoint.provider == "novita" and endpoint.usage_type == usage
         }
         assert actual == expected
+    built = catalog_vehicles.registry_endpoints()
     for model_id in (
         "moonshotai/kimi-k2.6", "deepseek/deepseek-ocr-2", "tencent/hy3",
         "xiaomimimo/mimo-v2.5-pro", "zai-org/glm-5.1", "Sao10K/L3-8B-Stheno-v3.2",
@@ -481,7 +486,7 @@ def test_novita_native_catalog_preserves_every_eligible_manifest_row() -> None:
         if model_id not in expected:
             continue
         for usage in ("prepaid", "byok"):
-            assert MODEL_ENDPOINTS[f"{model_id}@novita/{usage}"].upstream_id == expected[model_id]
+            assert built[f"{model_id}@novita/{usage}"].upstream_id == expected[model_id]
 
 
 def test_cerebras_native_catalog_preserves_every_live_model_id() -> None:
@@ -506,6 +511,9 @@ def test_non_chat_deepseek_ocr_is_not_routable_as_chat() -> None:
 def test_minimax_public_ids_map_to_exact_upstream_ids() -> None:
     # MiniMax's upstream ids are case-sensitive (MiniMax-M3): each route uses
     # the exact id MiniMax's own feed names.
+    from tests import catalog_vehicles
+
+    built = catalog_vehicles.registry_endpoints()
     for endpoint_id in (
         "minimax/minimax-m3@minimax/prepaid",
         "minimax/minimax-m3@minimax/byok",
@@ -515,7 +523,7 @@ def test_minimax_public_ids_map_to_exact_upstream_ids() -> None:
         model_id = endpoint_id.partition("@")[0]
         row = _listed_row("minimax", model_id)
         if row is not None:
-            assert MODEL_ENDPOINTS[endpoint_id].upstream_id == (row.get("upstream_id") or model_id)
+            assert built[endpoint_id].upstream_id == (row.get("upstream_id") or model_id)
 
 
 def test_grok_45_uses_xai_native_model_id_and_pricing() -> None:
@@ -699,20 +707,25 @@ def test_minimax_empty_operator_routes_are_not_prepaid() -> None:
 def test_operator_unavailable_provider_routes_are_not_prepaid(
     provider: str, model_ids: tuple[str, ...]
 ) -> None:
+    from tests import catalog_vehicles
+
+    built = catalog_vehicles.registry_endpoints()
     for model_id in model_ids:
-        if f"{model_id}@{provider}/byok" not in MODEL_ENDPOINTS:
+        if f"{model_id}@{provider}/byok" not in built:
             # Provider feeds may retire the route entirely. The suppression
             # contract applies only while the provider still advertises it.
             continue
-        assert f"{model_id}@{provider}/prepaid" not in MODEL_ENDPOINTS
-        assert f"{model_id}@{provider}/byok" in MODEL_ENDPOINTS
+        assert f"{model_id}@{provider}/prepaid" not in built
+        assert f"{model_id}@{provider}/byok" in built
 
 
 def test_minimax_m3_uses_provider_native_context_tiers() -> None:
+    from tests import catalog_vehicles
+
     row = _listed_row("minimax", "minimax/minimax-m3")
     if row is None:
         return
-    prepaid = MODEL_ENDPOINTS["minimax/minimax-m3@minimax/prepaid"]
+    prepaid = catalog_vehicles.registry_endpoints()["minimax/minimax-m3@minimax/prepaid"]
 
     # The model row can come from the OpenRouter snapshot when that snapshot
     # catches up, but the provider-native MiniMax endpoint must still carry
@@ -897,6 +910,9 @@ def test_closed_provider_zdr_claims_are_route_scoped(monkeypatch: pytest.MonkeyP
 
 
 def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
+    from tests import catalog_vehicles
+
+    built = catalog_vehicles.registry_endpoints()
     quarantined_routes = [
         ("xiaomi", "xiaomi/mimo-v2-flash"),
         ("xiaomi", "xiaomi/mimo-v2-pro"),
@@ -930,7 +946,7 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
     for provider, model_id in quarantined_routes:
         assert not [
             endpoint
-            for endpoint in MODEL_ENDPOINTS.values()
+            for endpoint in built.values()
             if endpoint.provider == provider and endpoint.model_id == model_id
         ], f"{provider}/{model_id} should be quarantined"
 
@@ -940,7 +956,7 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
     for kept_model in ("openai/gpt-4.1-mini", "openai/gpt-5.5", "openai/gpt-5.6-sol"):
         assert [
             endpoint
-            for endpoint in MODEL_ENDPOINTS.values()
+            for endpoint in built.values()
             if endpoint.provider == "atlas-cloud" and endpoint.model_id == kept_model
         ] or _listed_row("atlas-cloud", kept_model) is None, (
             f"atlas-cloud/{kept_model} should remain routable"
@@ -948,7 +964,7 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
 
     # Policy (2026-07-18): Anthropic-authored models route via Anthropic only
     # for Credits — the reseller prepaid route is gone, its BYOK route stays.
-    assert "anthropic/claude-fable-5@lightning/prepaid" not in MODEL_ENDPOINTS
+    assert "anthropic/claude-fable-5@lightning/prepaid" not in built
     # Residue quarantine is provider-scoped: healthy siblings survive while
     # their providers list them.
     for endpoint_id in (
@@ -957,10 +973,10 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
         "z-ai/glm-5@zai/prepaid",
         "deepseek/deepseek-v4-pro@deepseek/prepaid",
     ):
-        assert endpoint_id in MODEL_ENDPOINTS or _delisted(endpoint_id), endpoint_id
+        assert endpoint_id in built or _delisted(endpoint_id), endpoint_id
     assert [
         endpoint
-        for endpoint in MODEL_ENDPOINTS.values()
+        for endpoint in built.values()
         if endpoint.model_id == "google/gemini-2.5-flash-lite"
         and endpoint.provider != "google-ai-studio"
     ] or _delisted("google/gemini-2.5-flash-lite@google-vertex/prepaid"), (
@@ -2424,18 +2440,19 @@ def test_makora_provider_models_follow_live_manifest() -> None:
     assert byok_model_ids == set(expected)
     assert "qwen/qwen3.6-27b" not in credits_model_ids
     assert "openai/gpt-oss-120b" not in credits_model_ids
+    models = catalog_vehicles.registry_models()
     for model_id, upstream in expected.items():
-        model = MODELS.get(model_id)
+        model = models.get(model_id)
         assert model is not None, f"{model_id} missing from catalog"
         credits = [
             e
             for e in endpoints_for_model(model_id)
-            if str(e.usage_type) == "Credits" and e.provider == "makora"
+            if str(e.usage_type) == "Credits" and e.provider == "makora" and e.id in built
         ]
         byok = [
             e
             for e in endpoints_for_model(model_id)
-            if str(e.usage_type) == "BYOK" and e.provider == "makora"
+            if str(e.usage_type) == "BYOK" and e.provider == "makora" and e.id in built
         ]
         assert credits, f"{model_id} has no makora prepaid endpoint"
         assert byok, f"{model_id} has no makora BYOK endpoint"
@@ -2450,12 +2467,14 @@ def test_makora_provider_prices_follow_published_lineup() -> None:
     to the checked-in provider-native manifest rather than freezing a stale
     homepage price table into source code.
     """
+    from tests import catalog_vehicles
     from trusted_router.catalog_ingest import (
         _PROVIDER_MODELS_DIR,
         _is_provider_deprecated_model,
     )
     from trusted_router.pricing import _customer_price
 
+    built = catalog_vehicles.registry_endpoints()
     raw = json.loads((_PROVIDER_MODELS_DIR / "makora.json").read_text(encoding="utf-8"))
     expected_prices = {
         row["id"]: (
@@ -2475,7 +2494,7 @@ def test_makora_provider_prices_follow_published_lineup() -> None:
         credits = [
             e
             for e in endpoints_for_model(model_id)
-            if str(e.usage_type) == "Credits" and e.provider == "makora"
+            if str(e.usage_type) == "Credits" and e.provider == "makora" and e.id in built
         ]
         assert credits, f"{model_id} has no makora prepaid endpoint"
         endpoint = credits[0]
@@ -2653,11 +2672,14 @@ def test_glm_52_context_contract_rejects_smaller_windows(
 def _assert_parasail_route_follows_its_row(model_id: str) -> dict[str, Any] | None:
     """Parasail serves some models under its own deployment ids: each route it
     lists uses that exact id and its published price, marked up."""
+    from tests import catalog_vehicles
+
     row = _listed_row("parasail", model_id)
     if row is None:
         return None
-    prepaid = MODEL_ENDPOINTS[f"{model_id}@parasail/prepaid"]
-    byok = MODEL_ENDPOINTS[f"{model_id}@parasail/byok"]
+    built = catalog_vehicles.registry_endpoints()
+    prepaid = built[f"{model_id}@parasail/prepaid"]
+    byok = built[f"{model_id}@parasail/byok"]
     assert prepaid.upstream_id == row["upstream_id"]
     assert byok.upstream_id == row["upstream_id"]
     assert prepaid.prompt_price_microdollars_per_million_tokens == _customer_price(
