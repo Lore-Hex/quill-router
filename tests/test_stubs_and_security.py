@@ -405,6 +405,7 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
         if item["id"] == "trustedrouter"
         else 1
         if item["provider_confidential_compute"] is True and item["provider_e2ee"] is True
+        and (item["provider_zero_data_retention"] is True or item["prepaid_zero_data_retention"])
         else 2
         if item["provider_zero_data_retention"] is True
         or item["prepaid_zero_data_retention"] is True

@@ -68,6 +68,10 @@ def test_choose_catalog_is_compact_endpoint_scoped_and_cached(client: TestClient
             assert endpoint["provider"]
             assert endpoint["usage_type"] in {"BYOK", "Credits"}
             assert endpoint["privacy_tier"] in {0, 1, 2, 3}
+            if endpoint["privacy_tier"] == PRIVACY_TIER_CONFIDENTIAL:
+                assert endpoint["zero_data_retention"] is True
+                assert endpoint["confidential_compute"] is True
+                assert endpoint["e2ee"] is True
             if endpoint["performance"] is not None:
                 assert "p50_tokens_per_second" not in endpoint["performance"]
 

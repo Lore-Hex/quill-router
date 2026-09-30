@@ -111,7 +111,7 @@
     "card_version": 2,
     "model_count": 10,
     "name": "Chutes",
-    "privacy": "E2EE + confidential",
+    "privacy": "Confidential + ZDR",
     "route_count": 20,
     "route_mode": "Prepaid + BYOK",
     "slug": "chutes"
@@ -453,7 +453,7 @@
     "card_version": 2,
     "model_count": 1,
     "name": "NEAR AI",
-    "privacy": "E2EE + confidential",
+    "privacy": "Confidential + ZDR",
     "route_count": 1,
     "route_mode": "Prepaid",
     "slug": "near-ai"
@@ -597,7 +597,7 @@
     "card_version": 2,
     "model_count": 3,
     "name": "Privatemode",
-    "privacy": "E2EE + confidential",
+    "privacy": "Confidential + ZDR",
     "route_count": 3,
     "route_mode": "Prepaid",
     "slug": "privatemode"
@@ -768,7 +768,7 @@
     "card_version": 2,
     "model_count": 7,
     "name": "Tinfoil",
-    "privacy": "E2EE + confidential",
+    "privacy": "Confidential + ZDR",
     "route_count": 14,
     "route_mode": "Prepaid + BYOK",
     "slug": "tinfoil"
@@ -786,7 +786,7 @@
     "card_version": 2,
     "model_count": 0,
     "name": "TrustedRouter",
-    "privacy": "E2EE + confidential",
+    "privacy": "Confidential + ZDR",
     "route_count": 0,
     "route_mode": "Catalog profile",
     "slug": "trustedrouter"
@@ -885,7 +885,7 @@
     "card_version": 2,
     "model_count": 3,
     "name": "0G Private Computer",
-    "privacy": "Confidential compute",
+    "privacy": "Provider TEE claim",
     "route_count": 3,
     "route_mode": "Prepaid",
     "slug": "zero-g"

@@ -9,7 +9,7 @@
       <h2>Compare the providers running your models.</h2>
     </div>
     <div>
-      <p>Every label below describes the upstream provider. Verified confidential providers appear first, followed by ZDR providers and the rest. ZDR is a retention policy, not proof of confidential computing.</p>
+      <p>Every label below describes the upstream provider. Confidential requires verified provider compute, end-to-end encryption and explicit ZDR on the same route. Confidential providers appear first, followed by ZDR providers and the rest.</p>
       <a class="btn" href="/providers/marketplace">List your models <span aria-hidden="true">→</span></a>
     </div>
   </div>
@@ -94,7 +94,7 @@
   <div class="marketing-card">
     <span class="card-label">Routing</span>
     <h3>Choose privacy posture explicitly.</h3>
-    <p>Use <span class="mono">trustedrouter/zdr</span> for the zero-retention pool, <span class="mono">trustedrouter/eu</span> for EU-focused provider selection, or <span class="mono">trustedrouter/e2e</span> for the confidential + E2EE pool. When selecting a model or provider directly, set <span class="mono">provider.min_privacy = "zdr"</span> or the stronger <span class="mono">provider.min_privacy = "confidential"</span>; these hard filters fail closed if no eligible endpoint remains. Use <span class="mono">trustedrouter/auto</span> when breadth and health are the priority.</p>
+    <p>Use <span class="mono">trustedrouter/zdr</span> for the zero-retention pool, <span class="mono">trustedrouter/eu</span> for EU-focused provider selection, or <span class="mono">trustedrouter/e2e</span> for the verified compute + E2EE + ZDR pool. When selecting a model or provider directly, set <span class="mono">provider.min_privacy = "zdr"</span> or the stronger <span class="mono">provider.min_privacy = "confidential"</span>; these hard filters fail closed if no eligible endpoint remains. Use <span class="mono">trustedrouter/auto</span> when breadth and health are the priority.</p>
   </div>
 </section>
 {% endblock %}

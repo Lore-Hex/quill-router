@@ -47,7 +47,7 @@
           <td>{{ model.prompt_price }}</td>
           <td>{{ model.completion_price }}</td>
           <td>
-            {% if model.has_e2e %}<span class="pill good">E2EE</span>{% elif model.has_confidential %}<span class="pill good">confidential</span>{% elif model.has_zdr %}<span class="pill good">ZDR</span>{% else %}<span class="pill">varies</span>{% endif %}
+            {% if model.has_confidential %}<span class="pill good">Confidential + ZDR</span>{% elif model.has_zdr %}<span class="pill good">ZDR</span>{% elif model.has_e2e %}<span class="pill">Provider E2EE</span>{% else %}<span class="pill">varies</span>{% endif %}
             {% if model.benchmark_count %}<a class="table-note" href="{{ model.detail_href }}/benchmarks">{{ model.benchmark_count }} cited scores</a>{% endif %}
           </td>
           <td>
