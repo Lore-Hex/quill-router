@@ -22,7 +22,7 @@ jobs:
           - 9010:9010
           - 9020:9020
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v3
         with:
