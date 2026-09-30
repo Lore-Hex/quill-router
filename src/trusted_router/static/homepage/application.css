@@ -329,3 +329,28 @@ footer{background:#070a08;border-top:1px solid #33403a}
 }
 
 @media(max-width:700px){.trc .catalog-actions{margin:0;align-self:flex-start;justify-content:flex-start}}
+
+/* Keep actions in the reading path, with balanced hero choices. */
+.trc .chd,.trp .ph3{flex-direction:column;align-items:flex-start;gap:24px}
+.trc .catalog-actions{align-self:flex-start;margin:0}
+.trp .ph3 .section-cta{margin:0}
+#top .cta{display:flex;justify-content:center;gap:16px}
+#top .cta .button{min-width:180px}
+#top h1 em,.closing-cta h2 em{font-style:italic}
+.request-guide.button{align-self:flex-start;text-decoration:none}
+.proof-point>a.button{align-self:flex-start;text-decoration:none;margin-top:12px}
+.trs .stat .button{align-self:flex-start;margin-top:8px}
+.trs .customer-details>.disclosure-body>.body{margin:0;padding:0 48px 24px;max-width:850px;color:#234636;font-size:16px;line-height:1.6}
+.trs .q blockquote{font-style:italic}
+.trs .customer-details>summary{color:#10241a;padding:0 24px 20px;min-height:48px;font-size:15px}
+.trs .customer-details>summary .disclosure-indicator{color:#234636}
+.trft .back-top{display:flex;justify-content:flex-end;padding:0 0 20px}
+@media(max-width:600px){
+ #top .cta{width:100%;max-width:380px;gap:10px;flex-wrap:nowrap}
+ #top .cta .button{min-width:0;flex:1;padding:12px 8px;font-size:15px}
+ .trs .stat{padding-bottom:16px}
+ .trs .stat .nums{font-size:32px}
+ .trs .customer-details>.disclosure-body>.body{padding:0 24px 20px}
+ .trs .q{padding-bottom:24px}
+ .trft .back-top{justify-content:flex-start;padding:0 0 12px}
+}

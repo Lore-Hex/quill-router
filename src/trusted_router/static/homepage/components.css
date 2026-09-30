@@ -18,3 +18,9 @@
 .page .trs .action-link{color:#10241a}
 .page .trs .action-link:focus-visible{outline-color:#10241a}
 .page .closing-cta .action-link{color:#edf8f5}
+
+/* Secondary actions have a visible enclosure without the primary fill. */
+.button.button-secondary{border-color:#8cab99;background:#0b1814b3;color:#d4ecff}
+.trs .button.button-secondary{color:#10241a;border-color:#638573;background:#ffffff26}
+.trs .button.button-secondary:hover{background:#ffffff59}
+.trs .button.button-secondary:focus-visible{outline-color:#10241a}
