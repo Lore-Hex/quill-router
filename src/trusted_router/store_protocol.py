@@ -1,7 +1,7 @@
 """Static contract for the storage backend.
 
 `Store` enumerates every public method that route code, services, or auth
-relies on. `InMemoryStore` and `SpannerBigtableStore` both implement it,
+relies on. `InMemoryStore` and `SpannerStore` both implement it,
 which lets mypy verify that route code only touches the declared surface
 and that the two backends stay signature-compatible — a missing or
 drifted method on either implementation becomes a static-typing error
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
-from trusted_router.gateway_boot import SpendLeaseBoot
+from trusted_router.gateway_boot import GatewayBoot
 from trusted_router.operational_analytics_freshness import OutboxFreshness
 from trusted_router.spend_windows import KeyLimitReserveResult
 from trusted_router.storage_models import (
@@ -72,7 +72,7 @@ from trusted_router.types import UsageType
 
 @runtime_checkable
 class Store(Protocol):
-    """Public surface that both InMemoryStore and SpannerBigtableStore satisfy."""
+    """Public surface that both InMemoryStore and SpannerStore satisfy."""
 
     # Lifecycle ---------------------------------------------------------------
     def reset(self) -> None: ...
@@ -1092,8 +1092,8 @@ class Store(Protocol):
     ) -> list[ReceiptKey]: ...
 
     # Attested gateway boot identity (Stage D heartbeats) -------------------
-    def observe_spend_lease_boot(self, record: SpendLeaseBoot) -> SpendLeaseBoot: ...
-    def get_spend_lease_boot(self, kid: str) -> SpendLeaseBoot | None: ...
+    def observe_gateway_boot(self, record: GatewayBoot) -> GatewayBoot: ...
+    def get_gateway_boot(self, kid: str) -> GatewayBoot | None: ...
 
     # Rate limiting -----------------------------------------------------------
     def hit_rate_limit(

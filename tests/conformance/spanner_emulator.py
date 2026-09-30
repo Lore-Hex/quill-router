@@ -212,9 +212,9 @@ def emulator_store(instance_id: str) -> Iterator[Any]:
     from google.cloud.spanner_v1 import KeySet
 
     from tests.fakes.analytics_pipeline import OutboxAnalyticsReader
-    from trusted_router.storage_gcp import SpannerBigtableStore
+    from trusted_router.storage_gcp import SpannerStore
 
-    store = SpannerBigtableStore(
+    store = SpannerStore(
         project_id="tr-conformance", spanner_instance_id=instance_id,
         spanner_database_id="conformance",
         operational_analytics_outbox_enabled=True, analytics_outbox_enabled=True,

@@ -24,7 +24,7 @@ from trusted_router.storage_models import ApiKey, CreditAccount, Member, User, W
 
 if TYPE_CHECKING:
     from trusted_router.storage import InMemoryStore
-    from trusted_router.storage_gcp import SpannerBigtableStore
+    from trusted_router.storage_gcp import SpannerStore
     from trusted_router.storage_postgres import PostgresStore
 
 
@@ -109,7 +109,7 @@ def memory_bind(store: InMemoryStore, workspace_id: str, payment_hash: str, amou
         store.lightning_payments[payment_hash] = binding
 
 
-def spanner_key(store: SpannerBigtableStore, raw: str) -> ApiKey:
+def spanner_key(store: SpannerStore, raw: str) -> ApiKey:
     from trusted_router.storage_gcp_codec import member_id, workspace_key_id
     from trusted_router.storage_gcp_counters import (
         DEFAULT_NEW_BILLING_SHARDS,
@@ -151,7 +151,7 @@ def spanner_key(store: SpannerBigtableStore, raw: str) -> ApiKey:
     return store._run_in_transaction(txn)
 
 
-def spanner_bind(store: SpannerBigtableStore, workspace_id: str, payment_hash: str, amount: int) -> None:
+def spanner_bind(store: SpannerStore, workspace_id: str, payment_hash: str, amount: int) -> None:
     binding = payment_binding(workspace_id, payment_hash, amount)
 
     def txn(transaction: Any) -> None:

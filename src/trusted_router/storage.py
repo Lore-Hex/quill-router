@@ -23,7 +23,7 @@ from trusted_router.custom_model_billing import (
 from trusted_router.custom_model_markup_billing import (
     custom_model_markup_authorization_id_from_payout_event_id,
 )
-from trusted_router.gateway_boot import SpendLeaseBoot
+from trusted_router.gateway_boot import GatewayBoot
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
 from trusted_router.operational_analytics_freshness import (
     BACKEND_MEMORY,
@@ -217,7 +217,7 @@ class InMemoryStore:
         self.client_events_batches: list[dict[str, Any]] = []
         self.client_event_ids: set[str] = set()
         self.receipt_keys: dict[str, ReceiptKey] = {}
-        self.spend_lease_boots: dict[str, SpendLeaseBoot] = {}
+        self.gateway_boots: dict[str, GatewayBoot] = {}
         #: Federated settlement claims, keyed (source_plane, authorization_id).
         #: Insert-once: the recorded terms are the verdict for every replay.
         self.federated_settlement_claims: dict[tuple[str, str], dict[str, Any]] = {}
@@ -296,7 +296,7 @@ class InMemoryStore:
             self.client_events_batches.clear()
             self.client_event_ids.clear()
             self.receipt_keys.clear()
-            self.spend_lease_boots.clear()
+            self.gateway_boots.clear()
             self.api_keys.reset()
             self.acquisition_store.reset()
             self.bedrock_group_buy_store.reset()
@@ -396,9 +396,9 @@ class InMemoryStore:
             rows.sort(key=lambda row: (row.kid, row.att_sha256))
             return rows[:bounded]
 
-    def observe_spend_lease_boot(self, record: SpendLeaseBoot) -> SpendLeaseBoot:
+    def observe_gateway_boot(self, record: GatewayBoot) -> GatewayBoot:
         with self._lock:
-            existing = self.spend_lease_boots.get(record.kid)
+            existing = self.gateway_boots.get(record.kid)
             if existing is not None and (
                 existing.jwk != record.jwk
                 or existing.image_digest != record.image_digest
@@ -412,12 +412,12 @@ class InMemoryStore:
                     verified=existing.verified or record.verified,
                     image_digest=(record.image_digest or existing.image_digest),
                 )
-            self.spend_lease_boots[record.kid] = record
+            self.gateway_boots[record.kid] = record
             return record
 
-    def get_spend_lease_boot(self, kid: str) -> SpendLeaseBoot | None:
+    def get_gateway_boot(self, kid: str) -> GatewayBoot | None:
         with self._lock:
-            return self.spend_lease_boots.get(kid)
+            return self.gateway_boots.get(kid)
 
     def ensure_user(
         self,
@@ -3772,9 +3772,9 @@ class _StoreProxy:
     """Singleton that forwards method calls to the active backend.
 
     Tests build an `InMemoryStore` and call `configure_store(...)`;
-    production builds a `SpannerBigtableStore` from the same call site.
+    production builds a `SpannerStore` from the same call site.
     Both are siblings under the `Store` Protocol — there's no runtime
-    inheritance, so a method missing from `SpannerBigtableStore` is a
+    inheritance, so a method missing from `SpannerStore` is a
     static-typing error at the call site (where `STORE: Store` is
     consulted) rather than a silent in-process fallback.
 
@@ -3915,9 +3915,9 @@ def create_store(settings: Any, *, initialize_schema: bool = True) -> Store:
             store.apply_schema()
         return store
     if backend == "spanner-clickhouse":
-        from trusted_router.storage_gcp import SpannerBigtableStore
+        from trusted_router.storage_gcp import SpannerStore
 
-        return SpannerBigtableStore(
+        return SpannerStore(
             trust_settings=settings,
             project_id=settings.gcp_project_id,
             spanner_instance_id=settings.spanner_instance_id,

@@ -28,8 +28,8 @@ from tests.test_gateway_authorize_spanner_operations import (
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
 from trusted_router.config import Settings
 from trusted_router.gateway_boot import (
-    SPEND_LEASE_BOOT_KIND,
-    SpendLeaseBoot,
+    GATEWAY_BOOT_KIND,
+    GatewayBoot,
     boot_auth_digest,
     parse_boot_auth_header,
 )
@@ -37,7 +37,7 @@ from trusted_router.receipt_keys import b64url_encode, receipt_kid
 from trusted_router.routes.internal import gateway
 from trusted_router.storage_gcp import (
     _API_KEY_AUTH_CONTEXT_SQL,
-    SpannerBigtableStore,
+    SpannerStore,
     _auth_record,
 )
 from trusted_router.storage_models import ApiKey, ApiKeyAuthContext, CreditAccount, Workspace
@@ -53,12 +53,12 @@ def signed_request(store, key, *, idempotency_key="metadata-idem"):
     jwk = {"kty": "OKP", "crv": "Ed25519", "x": b64url_encode(private.public_key().public_bytes(
         serialization.Encoding.Raw, serialization.PublicFormat.Raw,
     ))}
-    boot = SpendLeaseBoot(
+    boot = GatewayBoot(
         receipt_kid(jwk), jwk, True, True, "sha256:" + "11" * 32,
         "gcp-cs-jwt", "2026-09-01T00:00:00Z",
     )
     _BOOT_KEYS[boot.kid] = private
-    store.observe_spend_lease_boot(boot)
+    store.observe_gateway_boot(boot)
     body = _lookup_body(key, idempotency_key=idempotency_key)
     body.stream = True
     body.route_type = "chat.completions"
@@ -108,7 +108,7 @@ def prepare_state(store, key, state):
         store._write_entity("byok", f"{key.workspace_id}#{config.provider}",
                             dataclasses.asdict(config) | {"encrypted_secret": {}})
     if state.startswith("malformed_boot_"):
-        store._write_entity(SPEND_LEASE_BOOT_KIND, boot.kid, {"kid": boot.kid})
+        store._write_entity(GATEWAY_BOOT_KIND, boot.kid, {"kid": boot.kid})
     state = {
         "malformed_boot_disabled": "invalid_key", "malformed_byok_disabled": "invalid_key",
         "malformed_byok_expired": "expired_key", "malformed_byok_scope": "scope",
@@ -129,14 +129,14 @@ def prepare_state(store, key, state):
         # Prime the new path before deleting; both absence and re-registration
         # must be observed rather than returning an earlier process-local row.
         store.gateway_api_key_auth_context(key.lookup_hash, boot_kid=boot.kid)
-        store._delete_entities(SPEND_LEASE_BOOT_KIND, [boot.kid])
+        store._delete_entities(GATEWAY_BOOT_KIND, [boot.kid])
         if state == "reregistered":
-            store.observe_spend_lease_boot(dataclasses.replace(boot, registered_at="2026-09-02T00:00:00Z"))
+            store.observe_gateway_boot(dataclasses.replace(boot, registered_at="2026-09-02T00:00:00Z"))
     elif state in {"unverified", "observation_merged"}:
-        store._write_entity(SPEND_LEASE_BOOT_KIND, boot.kid, dataclasses.replace(boot, verified=False))
+        store._write_entity(GATEWAY_BOOT_KIND, boot.kid, dataclasses.replace(boot, verified=False))
         store.gateway_api_key_auth_context(key.lookup_hash, boot_kid=boot.kid)
         if state == "observation_merged":
-            store.observe_spend_lease_boot(boot)
+            store.observe_gateway_boot(boot)
     elif state == "lookup_remap":
         workspace = Workspace(id=key.workspace_id + "-remap", name="Remapped", owner_user_id="owner")
         store._write_entity("workspace", workspace.id, workspace)
@@ -232,7 +232,7 @@ def test_complete_boot_authorize_differential(state, reason, usage, fixed_operat
         return eligibility(**(kwargs | overrides))
 
     monkeypatch.setattr(gateway, "_stage_d_eligibility_reason", eligibility_case)
-    folded = SpannerBigtableStore.gateway_api_key_auth_context
+    folded = SpannerStore.gateway_api_key_auth_context
     consume = gateway._byok_configs_for_candidates
     initial = {name: copy.deepcopy(value) for name, value in vars(database).items()
                if isinstance(value, dict)}
@@ -257,7 +257,7 @@ def test_complete_boot_authorize_differential(state, reason, usage, fixed_operat
 
         monkeypatch.setattr(gateway, "_byok_configs_for_candidates", consumed)
 
-        monkeypatch.setattr(SpannerBigtableStore, "gateway_api_key_auth_context", resolve)
+        monkeypatch.setattr(SpannerStore, "gateway_api_key_auth_context", resolve)
         headers = request.headers.getlist("X-TR-Boot-Auth")
         auth = parse_boot_auth_header(headers[0]) if len(headers) == 1 else None
         # Same shape as _authorize_gateway_sync's boot context (#1418 dropped the
@@ -306,11 +306,11 @@ def test_boot_and_policy_are_fresh_on_every_authorize():
     settings = Settings(environment="test", stage_d_eligibility_enabled=True, stage_d_pilot_workspace_ids="")
     for step, expected in enumerate(["ok", "boot_not_accepted", "boot_not_accepted", "ok", "boot_not_accepted", "ok"]):
         if step == 1:
-            store._delete_entities(SPEND_LEASE_BOOT_KIND, [boot.kid])
+            store._delete_entities(GATEWAY_BOOT_KIND, [boot.kid])
         elif step == 2:
-            store.observe_spend_lease_boot(dataclasses.replace(boot, verified=False))
+            store.observe_gateway_boot(dataclasses.replace(boot, verified=False))
         elif step == 3:
-            store.observe_spend_lease_boot(boot)  # Merge verification into an existing row.
+            store.observe_gateway_boot(boot)  # Merge verification into an existing row.
         elif step == 4:
             accepted.clear()
         elif step == 5:
@@ -334,25 +334,25 @@ def test_boot_removal_after_auth_snapshot_takes_effect_next_authorize(monkeypatc
     settings = Settings(environment="test", stage_d_eligibility_enabled=True,
                         stage_d_pilot_workspace_ids="",
                         spend_lease_accepted_gcp_image_digests=boot.image_digest)
-    folded = SpannerBigtableStore.gateway_api_key_auth_context
+    folded = SpannerStore.gateway_api_key_auth_context
     verdicts = []
     for joined in (False, True):
-        store.observe_spend_lease_boot(boot)
+        store.observe_gateway_boot(boot)
 
         def resolve(self, *args, joined=joined, **kwargs):
             context = (folded if joined else separate_context)(self, *args, **kwargs)
             # A separate commit lands between metadata and main's boot read.
-            self._delete_entities(SPEND_LEASE_BOOT_KIND, [boot.kid])
+            self._delete_entities(GATEWAY_BOOT_KIND, [boot.kid])
             return context
 
-        monkeypatch.setattr(SpannerBigtableStore, "gateway_api_key_auth_context", resolve)
+        monkeypatch.setattr(SpannerStore, "gateway_api_key_auth_context", resolve)
         body.idempotency_key = f"snapshot-race-{joined}"
         context = {"boot_auth": parse_boot_auth_header(request.headers["X-TR-Boot-Auth"]),
                    "boot_verified": False, "raw_body": raw}
         response = gateway._authorize_gateway_sync_impl(request, body, settings, context)
         verdicts.append((context["boot_verified"], response["data"]["stage_d"]["reason"]))
     assert verdicts == [(False, "boot_not_accepted"), (True, "ok")]
-    monkeypatch.setattr(SpannerBigtableStore, "gateway_api_key_auth_context", folded)
+    monkeypatch.setattr(SpannerStore, "gateway_api_key_auth_context", folded)
     body.idempotency_key = "snapshot-race-next"
     response = gateway._authorize_gateway_sync(request, body, settings, raw)
     assert response["data"]["stage_d"]["reason"] == "boot_not_accepted"

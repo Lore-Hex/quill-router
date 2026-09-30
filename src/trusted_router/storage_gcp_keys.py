@@ -4,7 +4,7 @@ Sibling of InMemoryApiKeys (storage_keys.py). Both expose the same public
 surface (create / get_by_hash / get_by_raw / list_for_workspace / delete /
 update / reserve_limit / settle_limit / refund_limit /
 create_gateway_authorization / get_gateway_authorization /
-mark_gateway_authorization_settled / add_usage); SpannerBigtableStore's
+mark_gateway_authorization_settled / add_usage); SpannerStore's
 public methods become thin one-line delegations.
 """
 

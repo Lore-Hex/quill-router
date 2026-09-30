@@ -8,7 +8,7 @@ from typing import Any
 
 from trusted_router.receipt_key_backfill_cli import run
 from trusted_router.receipt_keys import b64url_encode, receipt_attestation_sha256, receipt_kid
-from trusted_router.storage_gcp import SpannerBigtableStore
+from trusted_router.storage_gcp import SpannerStore
 from trusted_router.storage_models import ReceiptKey
 
 
@@ -54,8 +54,8 @@ class _Transaction:
         self.writes += 1
 
 
-def _store(transaction: _Transaction) -> SpannerBigtableStore:
-    store = SpannerBigtableStore.__new__(SpannerBigtableStore)
+def _store(transaction: _Transaction) -> SpannerStore:
+    store = SpannerStore.__new__(SpannerStore)
     store._param_types = SimpleNamespace(STRING="STRING", INT64="INT64")
     store._spanner = SimpleNamespace(COMMIT_TIMESTAMP="commit-timestamp")
     store._run_in_transaction = lambda operation: operation(transaction)  # type: ignore[method-assign]

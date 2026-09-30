@@ -7,7 +7,7 @@ from tests.fakes.spanner import make_fake_store
 from trusted_router.byok_crypto import decrypt_byok_secret, encrypt_byok_secret
 from trusted_router.config import Settings
 from trusted_router.storage import ApiKey, CreditAccount, Generation, ProviderBenchmarkSample
-from trusted_router.storage_gcp import SpannerBigtableStore
+from trusted_router.storage_gcp import SpannerStore
 from trusted_router.storage_gcp_codec import reverse_time_key as _reverse_time_key
 
 
@@ -116,7 +116,7 @@ def test_gcp_store_disables_spanner_builtin_metrics(monkeypatch: Any) -> None:
     monkeypatch.setattr(spanner_v1, "FixedSizePool", FakePool)
     monkeypatch.delenv("TR_SPANNER_POOL_SIZE", raising=False)
 
-    SpannerBigtableStore(
+    SpannerStore(
         project_id="project",
         spanner_instance_id="spanner",
         spanner_database_id="database",

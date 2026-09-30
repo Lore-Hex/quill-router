@@ -32,7 +32,7 @@ from trusted_router.client_events_schema import ClientEventsBatch
 from trusted_router.operational_analytics import (
     OperationalAnalyticsClient,
 )
-from trusted_router.storage_gcp import SpannerBigtableStore
+from trusted_router.storage_gcp import SpannerStore
 from trusted_router.storage_gcp_operational_analytics_outbox import (
     SpannerOperationalAnalyticsOutbox,
     activity_payload,
@@ -477,7 +477,7 @@ def test_gcp_route_health_batch_read_uses_clickhouse_directly() -> None:
             )
             return []
 
-    store = object.__new__(SpannerBigtableStore)
+    store = object.__new__(SpannerStore)
     analytics = FakeAnalytics()
     store._operational_analytics = analytics  # type: ignore[assignment]
 

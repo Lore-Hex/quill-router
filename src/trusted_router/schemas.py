@@ -284,7 +284,7 @@ class CreditTransferRequest(_Strict):
         return dollars_to_microdollars(self.amount)
 
 
-class SpendLeaseBootRegistrationRequest(_Strict):
+class GatewayBootRegistrationRequest(_Strict):
     kid: str = Field(min_length=1, max_length=128)
     receipt_public_key: dict[str, Any]
     attestation_evidence: str = Field(min_length=1, max_length=2 * 1024 * 1024)

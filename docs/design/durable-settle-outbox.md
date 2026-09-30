@@ -354,7 +354,7 @@ Read this first if you are continuing the outbox build.
     (lease-fenced), `mark` (backoff→`dead` at max_attempts), `has_intent`
     (the reaper-guard predicate: freezes on `pending`/`dead`, NOT
     `done`/`release_approved`), `get`.
-  - Wired as `self.settle_outbox` on `SpannerBigtableStore` only. **No live
+  - Wired as `self.settle_outbox` on `SpannerStore` only. **No live
     caller yet** — dormant.
   - Fake Spanner models the table AND asserts every load-bearing SQL predicate
     (`_require_pred`) so a dropped predicate FAILS a test (the MF6 guarantee).

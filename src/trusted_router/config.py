@@ -1997,7 +1997,7 @@ class Settings(BaseSettings):
         )
 
     @property
-    def spend_lease_accepted_gcp_digests(self) -> frozenset[str]:
+    def stage_d_accepted_gcp_digests(self) -> frozenset[str]:
         return frozenset(
             digest.strip()
             for digest in self.spend_lease_accepted_gcp_image_digests.split(",")
