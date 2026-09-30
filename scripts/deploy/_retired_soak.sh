@@ -3,7 +3,7 @@
 # 2026-09). Sourced by the synthetic scripts after _lib.sh (needs gc and log);
 # defines one function and runs nothing at source time.
 #
-# Absence is the goal state: only a NOT_FOUND answer means absent. Both
+# Absence is the goal state: only an explicit not-found answer means absent. Both
 # lookups run before either delete, and any other lookup failure (denied,
 # transient) aborts the deploy, so a schedule is never left pointing at a job
 # this run just removed. The schedule goes before the job for the same reason.
@@ -18,7 +18,7 @@ remove_retired_spend_lease_soak() {
   if gc scheduler jobs describe "$scheduler_name" \
       --location "$region" >/dev/null 2>"$error_file"; then
     scheduler_present=true
-  elif ! _retired_soak_not_found "$error_file"; then
+  elif ! _retired_soak_not_found "$error_file" scheduler "$scheduler_name"; then
     cat "$error_file" >&2
     echo "ERROR: cannot read retired spend-lease soak scheduler ${scheduler_name}" >&2
     rm -f "$error_file"
@@ -28,7 +28,7 @@ remove_retired_spend_lease_soak() {
   if gc run jobs describe "$job_name" \
       --region "$region" >/dev/null 2>"$error_file"; then
     job_present=true
-  elif ! _retired_soak_not_found "$error_file"; then
+  elif ! _retired_soak_not_found "$error_file" run "$job_name"; then
     cat "$error_file" >&2
     echo "ERROR: cannot read retired spend-lease soak job ${job_name}" >&2
     rm -f "$error_file"
@@ -51,5 +51,10 @@ remove_retired_spend_lease_soak() {
 }
 
 _retired_soak_not_found() {
-  grep -qE '(^|[[:space:]])NOT_FOUND([[:space:]:]|$)' "$1"
+  if grep -qE "^ERROR: \\(gcloud\\.${2}\\.jobs\\.describe\\) NOT_FOUND([[:space:]:]|$)" "$1"; then
+    return 0
+  fi
+  # Cloud Run formats HTTP 404 without NOT_FOUND; require its exact resource.
+  [ "$2" = run ] &&
+    [ "$(cat "$1")" = "ERROR: (gcloud.run.jobs.describe) Cannot find job [$3]." ]
 }

@@ -2471,11 +2471,32 @@ def _soak_calls(run: HarnessRun, *command: str) -> list[list[str]]:
 
 
 @pytest.mark.parametrize("script", _SYNTHETIC_SCRIPTS, ids=("synthetic", "image_refresh"))
-def test_synthetic_deploy_leaves_the_absent_soak_job_alone(tmp_path: Path, script: str) -> None:
+@pytest.mark.parametrize("typed_not_found", (False, True), ids=("actual_cli", "typed"))
+def test_synthetic_deploy_leaves_the_absent_soak_job_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script: str, typed_not_found: bool
+) -> None:
     # The spend-lease soak job and its schedule are retired with the pilot;
-    # NOT_FOUND is their steady state. The deploy looks for both and, finding
+    # Absence is their steady state. The deploy looks for both and, finding
     # neither, deploys, deletes, pauses and resumes nothing under that name.
     isolated = DeployScriptHarness(tmp_path / "synthetic-soak-absent")
+    if typed_not_found:
+        fixture = SCRIPT_FIXTURES[script]
+        monkeypatch.setitem(
+            SCRIPT_FIXTURES,
+            script,
+            replace(
+                fixture,
+                failures=tuple(
+                    pattern
+                    for pattern in fixture.failures
+                    if not pattern.startswith("run jobs describe trusted-router-spend-lease-soak-")
+                )
+                + (
+                    r"run jobs describe trusted-router-spend-lease-soak-"
+                    "\tERROR: (gcloud.run.jobs.describe) NOT_FOUND: Job not found.",
+                ),
+            ),
+        )
 
     run = _run_synthetic(isolated, script)
 
@@ -2558,6 +2579,43 @@ def test_synthetic_deploy_aborts_before_deleting_when_a_soak_lookup_fails(
     assert "cannot read retired spend-lease soak scheduler" in run.stderr
     assert "PERMISSION_DENIED" in run.stderr
     assert len(_soak_calls(run, "scheduler", "jobs", "describe")) == 1
+    assert not _soak_calls(run, "scheduler", "jobs", "delete")
+    assert not _soak_calls(run, "run", "jobs", "delete")
+
+
+@pytest.mark.parametrize("script", _SYNTHETIC_SCRIPTS, ids=("synthetic", "image_refresh"))
+@pytest.mark.parametrize(
+    "error",
+    (
+        "ERROR: (gcloud.run.jobs.describe) PERMISSION_DENIED: Caller lacks run.jobs.get",
+        "ERROR: (gcloud.run.jobs.describe) UNAVAILABLE: Retry later",
+        "ERROR: (gcloud.run.jobs.describe) Cannot find job [a-different-job].",
+        "ERROR: (gcloud.run.jobs.describe) PERMISSION_DENIED: not NOT_FOUND",
+        f"ERROR: (gcloud.scheduler.jobs.describe) Cannot find job [{_SOAK_JOB}].",
+    ),
+    ids=("denied", "transient", "wrong_job", "misleading_text", "wrong_service"),
+)
+def test_synthetic_deploy_aborts_before_deleting_when_soak_job_lookup_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script: str, error: str
+) -> None:
+    fixture = SCRIPT_FIXTURES[script]
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES,
+        script,
+        replace(
+            fixture,
+            failures=tuple(
+                pattern for pattern in fixture.failures if "spend-lease-soak" not in pattern
+            )
+            + (r"run jobs describe trusted-router-spend-lease-soak-" + "\t" + error,),
+        ),
+    )
+    run = _run_synthetic(DeployScriptHarness(tmp_path / "synthetic-soak-error"), script)
+
+    assert run.returncode != 0, summarise(run)
+    assert "cannot read retired spend-lease soak job" in run.stderr
+    assert len(_soak_calls(run, "scheduler", "jobs", "describe")) == 1
+    assert len(_soak_calls(run, "run", "jobs", "describe")) == 1
     assert not _soak_calls(run, "scheduler", "jobs", "delete")
     assert not _soak_calls(run, "run", "jobs", "delete")
 
