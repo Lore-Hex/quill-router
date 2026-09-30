@@ -125,27 +125,36 @@ FORMAT JSONEachRow
 def _evidence_samples(password: str) -> list[ProviderBenchmarkSample]:
     # Equal opportunity for quiet routes without extra paid probes. Keep
     # source-specific slots so long throughput calls cannot displace uptime.
+    # Rank only keys: carrying full telemetry rows through both window sorts
+    # exhausts the memory cap as the seven-day history grows.
     output = _query(
         password,
         """
-SELECT * EXCEPT (ingest_version, route_rank, provider_rank)
-FROM (
-  SELECT *, row_number() OVER (
-    PARTITION BY provider ORDER BY route_rank, created_at DESC, id DESC
-  ) AS provider_rank
+SELECT samples.* EXCEPT (ingest_version)
+FROM provider_benchmark_samples AS samples FINAL
+INNER JOIN (
+  SELECT provider, model, created_at, id, provider_rank
   FROM (
     SELECT *, row_number() OVER (
-      PARTITION BY provider, model, source ORDER BY created_at DESC, id DESC
-    ) AS route_rank
-    FROM provider_benchmark_samples FINAL
-    WHERE created_at >= now64(3) - INTERVAL 7 DAY
+      PARTITION BY provider ORDER BY route_rank, created_at DESC, id DESC
+    ) AS provider_rank
+    FROM (
+      SELECT provider, model, source, created_at, id, row_number() OVER (
+        PARTITION BY provider, model, source ORDER BY created_at DESC, id DESC
+      ) AS route_rank
+      FROM provider_benchmark_samples FINAL
+      WHERE created_at >= now64(3) - INTERVAL 7 DAY
+    )
+    WHERE route_rank <= 30
   )
-  WHERE route_rank <= 30
-)
-WHERE provider_rank <= 500
-ORDER BY provider_rank, created_at DESC, id DESC
-LIMIT 10000
-SETTINGS max_execution_time = 15, max_memory_usage = 268435456, max_threads = 2
+  WHERE provider_rank <= 500
+  ORDER BY provider_rank, created_at DESC, id DESC
+  LIMIT 10000
+) AS selected USING (provider, model, created_at, id)
+WHERE samples.created_at >= now64(3) - INTERVAL 7 DAY
+ORDER BY selected.provider_rank, samples.created_at DESC, samples.id DESC
+SETTINGS max_execution_time = 15, max_memory_usage = 268435456, max_threads = 2,
+  max_bytes_before_external_sort = 33554432, max_block_size = 8192
 FORMAT JSONEachRow
 """,
     )

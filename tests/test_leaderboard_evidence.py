@@ -81,10 +81,28 @@ def test_evidence_query_is_bounded_balanced_and_does_not_filter_failures(monkeyp
         "route_rank <= 30",
         "provider_rank <= 500",
         "LIMIT 10000",
+        "max_execution_time = 15",
+        "max_memory_usage = 268435456",
+        "max_threads = 2",
+        "max_bytes_before_external_sort = 33554432",
+        "max_block_size = 8192",
     ]:
         assert fragment in sql
     assert "status =" not in sql
     assert "error_type =" not in sql
+
+
+def test_evidence_query_ranks_only_keys_before_fetching_complete_rows(monkeypatch) -> None:
+    queries = []
+    monkeypatch.setattr(worker, "_query", lambda password, query: queries.append(query) or "")
+    worker._evidence_samples("unused")
+    sql = queries[0]
+    assert "SELECT provider, model, source, created_at, id, row_number()" in sql
+    assert "SELECT samples.* EXCEPT (ingest_version)" in sql
+    assert "USING (provider, model, created_at, id)" in sql
+    assert sql.count(" FINAL") == 2
+    assert "LIMIT 10000\n) AS selected" in sql
+    assert "ORDER BY selected.provider_rank, samples.created_at DESC, samples.id DESC" in sql
 
 
 def test_monthly_worker_query_uses_stored_months_and_preserves_histograms(monkeypatch) -> None:
