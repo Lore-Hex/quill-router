@@ -32,6 +32,14 @@ class InferenceLocations:
 _NO_TR_PIN = "Not supported by the current TrustedRouter integration."
 
 PROVIDER_INFERENCE_LOCATIONS = {
+    "lyceum": InferenceLocations(
+        scope="Lyceum documents model-specific serving locations; its German headquarters is not a fleet-wide EU residency guarantee.",
+        routing="Placement and cross-region failover depend on the model; an exhaustive country list is not verified.",
+        trustedrouter_pinning=_NO_TR_PIN,
+        evidence="Public provider model-roster documentation",
+        reviewed_on="2026-09-30",
+        sources=(("Model-specific hosting and pricing", "https://lyceum.technology/magazine/eu-hosted-llm-api-lyceum-model-roster-prices/"),),
+    ),
     "tencent": InferenceLocations(
         scope="The Singapore TokenHub ingress uses global resource scheduling. Ingress location is not GPU residency.",
         routing="Global scheduling; individual request location and country set are not verified.",

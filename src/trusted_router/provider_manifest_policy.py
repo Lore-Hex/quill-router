@@ -32,6 +32,7 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = frozenset(
         "perplexity",
         "scaleway",
         "regolo",
+        "lyceum",
         "privatemode",
         "featherless",
         "sakana",

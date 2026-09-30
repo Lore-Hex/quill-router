@@ -159,6 +159,7 @@ PROVIDER_SLUGS = [
     "tencent",
     "scaleway",
     "regolo",
+    "lyceum",
     "privatemode",
     "featherless",
     "sakana",

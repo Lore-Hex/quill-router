@@ -75,6 +75,7 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "sambanova": ProviderBrand("https://sambanova.ai/"),
     "scaleway": ProviderBrand("https://www.scaleway.com/"),
     "regolo": ProviderBrand("https://regolo.ai/"),
+    "lyceum": ProviderBrand("https://lyceum.technology/"),
     "privatemode": ProviderBrand("https://www.privatemode.ai/"),
     "upstage": ProviderBrand("https://www.upstage.ai/"),
     "alibaba": ProviderBrand("https://www.alibabacloud.com/"),

@@ -51,6 +51,7 @@ from scripts.pricing.providers import (
     io_net,
     jina,
     krea,
+    lyceum,
     mancer,
     near_ai,
     nextbit,
@@ -489,6 +490,7 @@ _DISCOVERABLE_MANIFEST_PROVIDERS_BASE: tuple[
         ("NSCALE_API_KEY",),
         nscale._canonical_id,
     ),
+    ("lyceum", lyceum.URL, ("LYCEUM_API_KEY",), lyceum.canonical_model_id),
 )
 
 # Providers on the direct OpenAI catalog adapter. Their credentials are
@@ -526,6 +528,7 @@ _STALE_MANIFEST_PROVIDER_MODULES = (
     fal,
     nscale,
     nvidia_nim,
+    lyceum,
     recraft,
     relace,
     stepfun,
