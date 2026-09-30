@@ -84,7 +84,7 @@ def test_confidential_compute_alone_does_not_grant_zdr(
     monkeypatch.setitem(PROVIDERS, "privatemode", replace(
         PROVIDERS["privatemode"], provider_zero_data_retention=zdr, stores_content=True,
     ))
-    assert endpoint_meets_privacy_requirement(privatemode_route, PRIVACY_TIER_CONFIDENTIAL)
+    assert not endpoint_meets_privacy_requirement(privatemode_route, PRIVACY_TIER_CONFIDENTIAL)
     assert not endpoint_meets_privacy_requirement(privatemode_route, PRIVACY_TIER_ZERO_RETENTION)
     assert not endpoint_meets_privacy_requirement(privatemode_route, PRIVACY_TIER_NO_STORE)
     assert endpoint_zero_data_retention(privatemode_route) is zdr

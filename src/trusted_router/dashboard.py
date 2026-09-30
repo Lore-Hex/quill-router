@@ -38,6 +38,7 @@ from trusted_router.catalog import (
     MODELS,
     MONITOR_MODEL_ID,
     NATIVE_DECISION_MODEL_IDS,
+    PRIVACY_TIER_CONFIDENTIAL,
     PROVIDERS,
     Model,
     ModelEndpoint,
@@ -46,6 +47,7 @@ from trusted_router.catalog import (
     decide_url,
     endpoint_confidential_compute,
     endpoint_e2ee,
+    endpoint_meets_privacy_requirement,
     endpoint_provider_policy,
     endpoint_zero_data_retention,
     endpoints_for_model,
@@ -56,6 +58,7 @@ from trusted_router.catalog import (
     offers_chat,
     orchestration_primitive,
     orchestration_role,
+    provider_confidential_inference,
     provider_is_routable,
     providers_for_display,
 )
@@ -1351,8 +1354,9 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
                 "What do the privacy tiers mean?",
                 "The TrustedRouter gateway hop is attested on every request. Open permits any "
                 "upstream posture. Zero-retention (ZDR) requires a provider endpoint whose "
-                "verified policy or contract retains nothing. TEE requires provider confidential "
-                "compute plus provider-side end-to-end encryption.",
+                "verified policy or contract retains no prompt or output content. Confidential "
+                "requires verified provider confidential compute, provider-side end-to-end "
+                "encryption, and explicit ZDR on the same route.",
             ),
             (
                 "Which models are fastest?",
@@ -5150,11 +5154,11 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
             endpoint_zero_data_retention(endpoint) is True for endpoint in route_endpoints
         ),
         "confidential_available": any(
-            endpoint_confidential_compute(endpoint) is True for endpoint in route_endpoints
+            endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL)
+            for endpoint in route_endpoints
         ),
         "e2e_available": any(
-            endpoint_confidential_compute(endpoint) is True
-            and endpoint_e2ee(endpoint) is True
+            endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL)
             for endpoint in route_endpoints
         ),
         "orchestration_primitive": orchestration_primitive(model.id),
@@ -5298,8 +5302,7 @@ def _endpoint_provider_views(
                 "slug": slug,
                 "logo_url": provider_logo_url(slug),
                 "confidential_available": any(
-                    endpoint_confidential_compute(endpoint) is True
-                    and endpoint_e2ee(endpoint) is True
+                    endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL)
                     for endpoint in provider_endpoints
                 ),
                 "zdr_available": any(
@@ -5318,8 +5321,7 @@ def _provider_view(provider: Provider) -> dict[str, object]:
     routing_status = "active" if provider_is_routable(provider) else "blocked"
     confidential_verified = (
         provider.slug != "trustedrouter"
-        and provider.provider_confidential_compute is True
-        and provider.provider_e2ee is True
+        and provider_confidential_inference(provider, prepaid=True)
     )
     return {
         "id": provider.slug,
@@ -5459,7 +5461,7 @@ def _provider_faq_items(
 def _provider_privacy_tier(provider: Provider) -> str:
     if provider.slug == "trustedrouter":
         return "TR gateway"
-    if provider.provider_e2ee and provider.provider_confidential_compute:
+    if provider_confidential_inference(provider, prepaid=True):
         return "Confidential"
     if provider.provider_zero_data_retention:
         return "ZDR"
@@ -6329,10 +6331,10 @@ def _cheapest_total_microdollars(model: Model) -> int:
 
 def _privacy_summary(model: Model) -> str:
     endpoints = _credits_endpoints(endpoints_for_model(model.id))
-    if any(endpoint_e2ee(endpoint) for endpoint in endpoints):
-        return "has provider E2EE route"
+    if any(endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL) for endpoint in endpoints):
+        return "has Confidential route (E2EE + ZDR)"
     if any(endpoint_confidential_compute(endpoint) for endpoint in endpoints):
-        return "has confidential-compute route"
+        return "has provider TEE claim"
     if any(endpoint_zero_data_retention(endpoint) is True for endpoint in endpoints):
         return "has ZDR route"
     return "provider posture varies"

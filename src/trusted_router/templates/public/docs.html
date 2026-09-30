@@ -16,7 +16,7 @@
       <li>✓ Use <code>trustedrouter/plato-pro-2.0</code> for GLM 5.2 advised by Prometheus 2.0</li>
       <li>✓ Use <code>trustedrouter/iris-code-1.0</code>, <code>trustedrouter/prometheus-code-1.0</code>, or <code>trustedrouter/zeus-code-1.0</code> for code-tuned Synth presets</li>
       <li>✓ Add <code>provider.min_privacy = "zdr"</code> for a hard zero-retention floor</li>
-      <li>✓ Add <code>provider.min_privacy = "confidential"</code> to require confidential compute + provider E2EE</li>
+      <li>✓ Add <code>provider.min_privacy = "confidential"</code> to require verified provider compute + E2EE + ZDR</li>
     </ul>
     <a class="btn" href="/docs/migrate-from-openrouter">Migration guide →</a>
   </div>
@@ -46,15 +46,16 @@ const r = await client.chat.completions.create({
       <p>This is a hard minimum. If no endpoint for the selected model and provider filters has a tracked ZDR guarantee, the request fails before inference.</p>
     </div>
     <div class="marketing-card">
-      <h3>Require confidential + E2EE</h3>
+      <h3>Require Confidential: verified compute + E2EE + ZDR</h3>
       <pre><code>{
   "model": "your/model",
   "provider": {"min_privacy": "confidential"}
 }</code></pre>
-      <p>This stronger hard minimum requires both provider-side confidential compute and end-to-end encryption. <code>e2e</code> and <code>e2ee</code> are accepted value aliases. Unsupported model/provider combinations fail closed.</p>
+      <p>Confidential requires all three on the same route: verified provider-side confidential compute, end-to-end encryption and explicit zero data retention. Missing or false ZDR makes a route ineligible even when its compute and encryption are verified. <code>e2e</code> and <code>e2ee</code> are accepted value aliases. Unsupported model/provider combinations fail closed.</p>
+      <p>Catalog fields <code>provider_confidential_compute</code> and <code>provider_e2ee</code> report individual technical properties. The Confidential label and endpoint <code>privacy_tier: 3</code> additionally require <code>provider_zero_data_retention: true</code> for that exact route.</p>
     </div>
   </div>
-  <p class="muted" style="margin-top:14px"><code>trustedrouter/e2e</code> and <code>trustedrouter/confidential</code> select the same confidential + E2EE pool. <code>provider.data_collection = "deny"</code> remains an OpenRouter-compatible routing preference; use <code>min_privacy</code> when the privacy floor must never be relaxed.</p>
+  <p class="muted" style="margin-top:14px"><code>trustedrouter/e2e</code> and <code>trustedrouter/confidential</code> select the same verified compute + E2EE + ZDR pool. A TR-funded ZDR agreement qualifies only the funded route, not BYOK. <code>provider.data_collection = "deny"</code> remains an OpenRouter-compatible routing preference; use <code>min_privacy</code> when the privacy floor must never be relaxed.</p>
 </section>
 
 <section style="margin-top:48px">

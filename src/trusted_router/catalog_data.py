@@ -63,7 +63,7 @@ PRIVACY_TIER_NO_STORE = 1  # does not store request/response content
 
 PRIVACY_TIER_ZERO_RETENTION = 2  # contractual / policy zero data retention
 
-PRIVACY_TIER_CONFIDENTIAL = 3  # confidential compute + provider-side e2ee
+PRIVACY_TIER_CONFIDENTIAL = 3  # verified compute + provider-side e2ee + explicit ZDR
 
 PRIVACY_TIER_ALIASES: dict[str, int] = {
     "standard": PRIVACY_TIER_STANDARD,
@@ -85,7 +85,7 @@ PRIVACY_TIER_LABELS: dict[int, str] = {
     PRIVACY_TIER_STANDARD: "Standard",
     PRIVACY_TIER_NO_STORE: "No-store",
     PRIVACY_TIER_ZERO_RETENTION: "Zero retention",
-    PRIVACY_TIER_CONFIDENTIAL: "Confidential + E2EE",
+    PRIVACY_TIER_CONFIDENTIAL: "Confidential + E2EE + ZDR",
 }
 
 # provider_headquarters_country records the legal home of the entity that

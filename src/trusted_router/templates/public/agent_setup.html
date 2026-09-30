@@ -56,7 +56,7 @@ export ANTHROPIC_BASE_URL="https://api.trustedrouter.com"</code></pre>
       <div class="panel-body">
         <ul class="plain-list">
           <li><span class="mono">trustedrouter/zdr</span>: zero-data-retention routes first. Good default for legal and sensitive work.</li>
-          <li><span class="mono">trustedrouter/e2e</span> or <span class="mono">trustedrouter/confidential</span>: end-to-end encrypted route pool, currently centered on confidential providers.</li>
+          <li><span class="mono">trustedrouter/e2e</span> or <span class="mono">trustedrouter/confidential</span>: verified confidential compute, provider-side E2EE, and explicit ZDR on every eligible route.</li>
           <li><span class="mono">trustedrouter/eu</span>: EU-focused routing. Use with <span class="mono">https://api-europe-west4.quillrouter.com/v1</span> for the EU regional gateway.</li>
           <li><span class="mono">trustedrouter/auto</span>: broad provider fallback when availability matters more than the strictest privacy filter.</li>
           <li><span class="mono">trustedrouter/cheap</span>: low-cost paid route pool for cost-sensitive tests.</li>
@@ -104,7 +104,7 @@ Run a PONG smoke test before editing app code.</code></pre>
     }
   }]
 }</code></pre>
-      <p class="muted">The advisor sees the same prompt context as the worker. Use <span class="mono">provider.min_privacy = "zdr"</span> for a hard zero-retention floor or <span class="mono">provider.min_privacy = "confidential"</span> to require both provider-side confidential compute and E2EE. The <span class="mono">trustedrouter/zdr</span> and <span class="mono">trustedrouter/e2e</span> aliases select those pools. If the advisor is itself a Synth model such as <span class="mono">trustedrouter/zeus-1.0</span>, TrustedRouter decrements orchestration depth automatically.</p>
+      <p class="muted">The advisor sees the same prompt context as the worker. Use <span class="mono">provider.min_privacy = "zdr"</span> for a hard zero-retention floor or <span class="mono">provider.min_privacy = "confidential"</span> to require verified provider compute, E2EE and explicit ZDR together. The <span class="mono">trustedrouter/zdr</span> and <span class="mono">trustedrouter/e2e</span> aliases select those pools. If the advisor is itself a Synth model such as <span class="mono">trustedrouter/zeus-1.0</span>, TrustedRouter decrements orchestration depth automatically.</p>
     </div>
   </div>
 

@@ -224,6 +224,7 @@ def test_confidential_ai_badge_is_embeddable_and_scoped(client: TestClient) -> N
     assert "Confidential AI" in response.text
     assert 'model="trustedrouter/confidential"' in response.text
     assert 'provider.min_privacy="confidential"' in response.text
+    assert "explicit ZDR on the same route" in response.text
     assert "not a SOC 2, ISO 27001, HIPAA, or product-wide certification" in response.text
     assert "https://trustedrouter.com/static/badges/confidential-ai-light.svg" in response.text
     assert "https://trustedrouter.com/static/badges/confidential-ai-dark.svg" in response.text
@@ -684,7 +685,7 @@ def test_public_kimi_k3_page_separates_router_attestation_from_provider_e2ee(
     assert catalog.status_code == 200
     assert detail.status_code == 200
     assert "TR router attested" not in catalog.text
-    assert "verified provider compute + E2EE" in catalog.text
+    assert "verified provider compute + E2EE + explicit ZDR" in catalog.text
     assert "TR router attestation verifies the\n      TrustedRouter gateway only" in detail.text
     assert "<th>TR router attested</th>" in detail.text
     assert "<th>Attested</th>" not in detail.text
@@ -926,7 +927,9 @@ def test_public_docs_explain_hard_confidential_e2ee_filter(client: TestClient) -
     assert "<title>API Docs: Quickstart and SDKs | TrustedRouter</title>" in docs.text
     assert '"min_privacy": "confidential"' in docs.text
     assert "<code>e2e</code> and <code>e2ee</code>" in docs.text
-    assert "requires both provider-side confidential compute and end-to-end encryption" in docs.text
+    assert "Confidential requires all three on the same route" in docs.text
+    assert "end-to-end encryption and explicit zero data retention" in docs.text
+    assert "Missing or false ZDR makes a route ineligible" in docs.text
     assert "Unsupported model/provider combinations fail closed" in docs.text
     assert 'provider.min_privacy = "confidential"' in providers.text
     assert "these hard filters fail closed" in providers.text

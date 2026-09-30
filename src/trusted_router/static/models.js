@@ -138,10 +138,10 @@
   function privacyCell(routes) {
     const postures = routes.map((route) => route.trustedrouter || {});
     const cell = routeCell("Available privacy", undefined, "catalog-privacy-summary");
-    if (postures.some((posture) => posture.provider_confidential_compute === true && posture.provider_e2ee === true)) {
+    if (postures.some((posture) => posture.provider_confidential_compute === true && posture.provider_e2ee === true && posture.provider_zero_data_retention === true)) {
       const badge = element("span", "privacy-badge privacy-confidential", "Confidential");
       badge.dataset.privacy = "confidential";
-      badge.title = "Available route with verified provider confidential compute and end-to-end encryption (E2EE).";
+      badge.title = "Available route with verified provider confidential compute, end-to-end encryption (E2EE), and explicit zero data retention (ZDR).";
       cell.append(badge);
     }
     if (postures.some((posture) => posture.provider_zero_data_retention === true)) {

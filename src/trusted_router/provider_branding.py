@@ -131,7 +131,7 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
             ("Cloud Terms: route-specific privacy (section 7.2)", "https://near.ai/terms-of-service"),
             ("Privacy policy: Cloud website and account data", "https://near.ai/privacy-policy"),
             ("Customer Data Processing Agreement", "https://near.ai/near-ai-data-processing-agreement-for-customers"),
-            ("Direct TLS attestation verification", "https://docs.near.ai/cloud/verification/tls/"),
+            ("Direct completions and TLS attestation verification", "https://docs.near.ai/cloud/experimental/direct-completions"),
         ),
     ),
     "openai": ProviderBrand("https://openai.com/"),

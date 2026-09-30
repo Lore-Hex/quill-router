@@ -370,9 +370,16 @@ def test_near_ai_attestation_alone_does_not_imply_zdr(
         PROVIDERS["near-ai"], stores_content=True, provider_zero_data_retention=zdr,
     ))
     endpoint = MODEL_ENDPOINTS["z-ai/glm-5.3-flash@near-ai/prepaid"]
-    assert endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL)
+    assert not endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL)
     assert not endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_ZERO_RETENTION)
     assert not endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_NO_STORE)
+    for privacy in ("confidential", "e2e", "e2ee", "max", "maximum"):
+        with pytest.raises(HTTPException) as exc_info:
+            chat_route_endpoint_candidates({
+                "model": endpoint.model_id,
+                "provider": {"only": ["near-ai"], "min_privacy": privacy, "allow_fallbacks": False},
+            }, Settings(environment="test"))
+        assert exc_info.value.status_code == 400
 
 
 def test_near_ai_public_metadata_has_zdr_and_links_to_scoped_evidence(
@@ -404,7 +411,7 @@ def test_near_ai_public_metadata_has_zdr_and_links_to_scoped_evidence(
     assert "https://near.ai/terms-of-service" in detail.text
     assert "https://near.ai/privacy-policy" in detail.text
     assert "https://near.ai/near-ai-data-processing-agreement-for-customers" in detail.text
-    assert "https://docs.near.ai/cloud/verification/tls/" in detail.text
+    assert "https://docs.near.ai/cloud/experimental/direct-completions" in detail.text
 
 
 def test_near_ai_hourly_refresh_secret_and_authority_wiring_are_complete() -> None:
