@@ -1,0 +1,1901 @@
+{
+  "fixture_version": 1,
+  "rules": [
+    {
+      "category": "grant",
+      "guard": "real_valid",
+      "literal_case": "real_valid",
+      "mutation": "remove or invert real_valid guard"
+    },
+    {
+      "category": "grant",
+      "guard": "shadow_valid",
+      "literal_case": "shadow_valid",
+      "mutation": "remove or invert shadow_valid guard"
+    },
+    {
+      "category": "grant",
+      "guard": "dry_run_type_as_real",
+      "literal_case": "dry_run_type_as_real",
+      "mutation": "remove or invert dry_run_type_as_real guard"
+    },
+    {
+      "category": "grant",
+      "guard": "real_type_as_shadow",
+      "literal_case": "real_type_as_shadow",
+      "mutation": "remove or invert real_type_as_shadow guard"
+    },
+    {
+      "category": "grant",
+      "guard": "shadow_type_grant_key",
+      "literal_case": "shadow_type_grant_key",
+      "mutation": "remove or invert shadow_type_grant_key guard"
+    },
+    {
+      "category": "grant",
+      "guard": "real_type_shadow_key",
+      "literal_case": "real_type_shadow_key",
+      "mutation": "remove or invert real_type_shadow_key guard"
+    },
+    {
+      "category": "grant",
+      "guard": "grant_descriptor_key",
+      "literal_case": "grant_descriptor_key",
+      "mutation": "remove or invert grant_descriptor_key guard"
+    },
+    {
+      "category": "grant",
+      "guard": "identity_iss",
+      "literal_case": "identity_iss",
+      "mutation": "remove or invert identity_iss guard"
+    },
+    {
+      "category": "grant",
+      "guard": "identity_aud",
+      "literal_case": "identity_aud",
+      "mutation": "remove or invert identity_aud guard"
+    },
+    {
+      "category": "grant",
+      "guard": "identity_environment",
+      "literal_case": "identity_environment",
+      "mutation": "remove or invert identity_environment guard"
+    },
+    {
+      "category": "grant",
+      "guard": "identity_plane",
+      "literal_case": "identity_plane",
+      "mutation": "remove or invert identity_plane guard"
+    },
+    {
+      "category": "grant",
+      "guard": "binding_workspace_id",
+      "literal_case": "binding_workspace_id",
+      "mutation": "remove or invert binding_workspace_id guard"
+    },
+    {
+      "category": "grant",
+      "guard": "binding_key_id",
+      "literal_case": "binding_key_id",
+      "mutation": "remove or invert binding_key_id guard"
+    },
+    {
+      "category": "grant",
+      "guard": "binding_lookup_digest",
+      "literal_case": "binding_lookup_digest",
+      "mutation": "remove or invert binding_lookup_digest guard"
+    },
+    {
+      "category": "grant",
+      "guard": "binding_boot_id",
+      "literal_case": "binding_boot_id",
+      "mutation": "remove or invert binding_boot_id guard"
+    },
+    {
+      "category": "grant",
+      "guard": "binding_stable_slot_id",
+      "literal_case": "binding_stable_slot_id",
+      "mutation": "remove or invert binding_stable_slot_id guard"
+    },
+    {
+      "category": "grant",
+      "guard": "binding_region",
+      "literal_case": "binding_region",
+      "mutation": "remove or invert binding_region guard"
+    },
+    {
+      "category": "grant",
+      "guard": "binding_generation",
+      "literal_case": "binding_generation",
+      "mutation": "remove or invert binding_generation guard"
+    },
+    {
+      "category": "grant",
+      "guard": "binding_workspace_epoch",
+      "literal_case": "binding_workspace_epoch",
+      "mutation": "remove or invert binding_workspace_epoch guard"
+    },
+    {
+      "category": "grant",
+      "guard": "binding_key_epoch",
+      "literal_case": "binding_key_epoch",
+      "mutation": "remove or invert binding_key_epoch guard"
+    },
+    {
+      "category": "grant",
+      "guard": "binding_image_policy_version",
+      "literal_case": "binding_image_policy_version",
+      "mutation": "remove or invert binding_image_policy_version guard"
+    },
+    {
+      "category": "grant",
+      "guard": "missing_context_binding",
+      "literal_case": "missing_context_binding",
+      "mutation": "remove or invert missing_context_binding guard"
+    },
+    {
+      "category": "grant",
+      "guard": "bool_context_binding",
+      "literal_case": "bool_context_binding",
+      "mutation": "remove or invert bool_context_binding guard"
+    },
+    {
+      "category": "grant",
+      "guard": "route_adapter_capability_version",
+      "literal_case": "route_adapter_capability_version",
+      "mutation": "remove or invert route_adapter_capability_version guard"
+    },
+    {
+      "category": "grant",
+      "guard": "route_catalog_hash",
+      "literal_case": "route_catalog_hash",
+      "mutation": "remove or invert route_catalog_hash guard"
+    },
+    {
+      "category": "grant",
+      "guard": "route_endpoint_id",
+      "literal_case": "route_endpoint_id",
+      "mutation": "remove or invert route_endpoint_id guard"
+    },
+    {
+      "category": "grant",
+      "guard": "route_input_bound",
+      "literal_case": "route_input_bound",
+      "mutation": "remove or invert route_input_bound guard"
+    },
+    {
+      "category": "grant",
+      "guard": "route_input_bound_method",
+      "literal_case": "route_input_bound_method",
+      "mutation": "remove or invert route_input_bound_method guard"
+    },
+    {
+      "category": "grant",
+      "guard": "route_input_rate_micro_per_m",
+      "literal_case": "route_input_rate_micro_per_m",
+      "mutation": "remove or invert route_input_rate_micro_per_m guard"
+    },
+    {
+      "category": "grant",
+      "guard": "route_maximum_request_fees_micro",
+      "literal_case": "route_maximum_request_fees_micro",
+      "mutation": "remove or invert route_maximum_request_fees_micro guard"
+    },
+    {
+      "category": "grant",
+      "guard": "route_output_limit",
+      "literal_case": "route_output_limit",
+      "mutation": "remove or invert route_output_limit guard"
+    },
+    {
+      "category": "grant",
+      "guard": "route_output_rate_micro_per_m",
+      "literal_case": "route_output_rate_micro_per_m",
+      "mutation": "remove or invert route_output_rate_micro_per_m guard"
+    },
+    {
+      "category": "grant",
+      "guard": "route_price_expires_at",
+      "literal_case": "route_price_expires_at",
+      "mutation": "remove or invert route_price_expires_at guard"
+    },
+    {
+      "category": "grant",
+      "guard": "route_privacy",
+      "literal_case": "route_privacy",
+      "mutation": "remove or invert route_privacy guard"
+    },
+    {
+      "category": "grant",
+      "guard": "route_provider",
+      "literal_case": "route_provider",
+      "mutation": "remove or invert route_provider guard"
+    },
+    {
+      "category": "grant",
+      "guard": "route_region",
+      "literal_case": "route_region",
+      "mutation": "remove or invert route_region guard"
+    },
+    {
+      "category": "grant",
+      "guard": "route_routing_policy_hash",
+      "literal_case": "route_routing_policy_hash",
+      "mutation": "remove or invert route_routing_policy_hash guard"
+    },
+    {
+      "category": "grant",
+      "guard": "route_stage_d",
+      "literal_case": "route_stage_d",
+      "mutation": "remove or invert route_stage_d guard"
+    },
+    {
+      "category": "grant",
+      "guard": "route_upstream_model",
+      "literal_case": "route_upstream_model",
+      "mutation": "remove or invert route_upstream_model guard"
+    },
+    {
+      "category": "grant",
+      "guard": "unknown_version",
+      "literal_case": "unknown_version",
+      "mutation": "remove or invert unknown_version guard"
+    },
+    {
+      "category": "grant",
+      "guard": "unknown_field",
+      "literal_case": "unknown_field",
+      "mutation": "remove or invert unknown_field guard"
+    },
+    {
+      "category": "grant",
+      "guard": "unknown_route_field",
+      "literal_case": "unknown_route_field",
+      "mutation": "remove or invert unknown_route_field guard"
+    },
+    {
+      "category": "grant",
+      "guard": "missing_history",
+      "literal_case": "missing_history",
+      "mutation": "remove or invert missing_history guard"
+    },
+    {
+      "category": "grant",
+      "guard": "missing_provenance",
+      "literal_case": "missing_provenance",
+      "mutation": "remove or invert missing_provenance guard"
+    },
+    {
+      "category": "grant",
+      "guard": "missing_nested_history",
+      "literal_case": "missing_nested_history",
+      "mutation": "remove or invert missing_nested_history guard"
+    },
+    {
+      "category": "grant",
+      "guard": "history_19",
+      "literal_case": "history_19",
+      "mutation": "remove or invert history_19 guard"
+    },
+    {
+      "category": "grant",
+      "guard": "history_retry_dedupe",
+      "literal_case": "history_retry_dedupe",
+      "mutation": "remove or invert history_retry_dedupe guard"
+    },
+    {
+      "category": "grant",
+      "guard": "stale_last_success",
+      "literal_case": "stale_last_success",
+      "mutation": "remove or invert stale_last_success guard"
+    },
+    {
+      "category": "grant",
+      "guard": "future_last_success",
+      "literal_case": "future_last_success",
+      "mutation": "remove or invert future_last_success guard"
+    },
+    {
+      "category": "grant",
+      "guard": "old_history_window",
+      "literal_case": "old_history_window",
+      "mutation": "remove or invert old_history_window guard"
+    },
+    {
+      "category": "grant",
+      "guard": "future_history_window",
+      "literal_case": "future_history_window",
+      "mutation": "remove or invert future_history_window guard"
+    },
+    {
+      "category": "grant",
+      "guard": "unclean_history",
+      "literal_case": "unclean_history",
+      "mutation": "remove or invert unclean_history guard"
+    },
+    {
+      "category": "grant",
+      "guard": "tier_one",
+      "literal_case": "tier_one",
+      "mutation": "remove or invert tier_one guard"
+    },
+    {
+      "category": "grant",
+      "guard": "unpaid",
+      "literal_case": "unpaid",
+      "mutation": "remove or invert unpaid guard"
+    },
+    {
+      "category": "grant",
+      "guard": "ttl_too_long",
+      "literal_case": "ttl_too_long",
+      "mutation": "remove or invert ttl_too_long guard"
+    },
+    {
+      "category": "grant",
+      "guard": "ttl_zero",
+      "literal_case": "ttl_zero",
+      "mutation": "remove or invert ttl_zero guard"
+    },
+    {
+      "category": "grant",
+      "guard": "start_before_issue",
+      "literal_case": "start_before_issue",
+      "mutation": "remove or invert start_before_issue guard"
+    },
+    {
+      "category": "grant",
+      "guard": "duplicate_ordinal",
+      "literal_case": "duplicate_ordinal",
+      "mutation": "remove or invert duplicate_ordinal guard"
+    },
+    {
+      "category": "grant",
+      "guard": "negative_money",
+      "literal_case": "negative_money",
+      "mutation": "remove or invert negative_money guard"
+    },
+    {
+      "category": "grant",
+      "guard": "over_cap_money",
+      "literal_case": "over_cap_money",
+      "mutation": "remove or invert over_cap_money guard"
+    },
+    {
+      "category": "grant",
+      "guard": "zero_ceiling",
+      "literal_case": "zero_ceiling",
+      "mutation": "remove or invert zero_ceiling guard"
+    },
+    {
+      "category": "grant",
+      "guard": "underfunded_permit",
+      "literal_case": "underfunded_permit",
+      "mutation": "remove or invert underfunded_permit guard"
+    },
+    {
+      "category": "grant",
+      "guard": "over_cap_permit",
+      "literal_case": "over_cap_permit",
+      "mutation": "remove or invert over_cap_permit guard"
+    },
+    {
+      "category": "grant",
+      "guard": "empty_permits",
+      "literal_case": "empty_permits",
+      "mutation": "remove or invert empty_permits guard"
+    },
+    {
+      "category": "grant",
+      "guard": "scalar_permits",
+      "literal_case": "scalar_permits",
+      "mutation": "remove or invert scalar_permits guard"
+    },
+    {
+      "category": "grant",
+      "guard": "unknown_permit_field",
+      "literal_case": "unknown_permit_field",
+      "mutation": "remove or invert unknown_permit_field guard"
+    },
+    {
+      "category": "grant",
+      "guard": "overflow_integer",
+      "literal_case": "overflow_integer",
+      "mutation": "remove or invert overflow_integer guard"
+    },
+    {
+      "category": "grant",
+      "guard": "bool_integer",
+      "literal_case": "bool_integer",
+      "mutation": "remove or invert bool_integer guard"
+    },
+    {
+      "category": "grant",
+      "guard": "float_integer",
+      "literal_case": "float_integer",
+      "mutation": "remove or invert float_integer guard"
+    },
+    {
+      "category": "grant",
+      "guard": "null_integer",
+      "literal_case": "null_integer",
+      "mutation": "remove or invert null_integer guard"
+    },
+    {
+      "category": "grant",
+      "guard": "invalid_hash",
+      "literal_case": "invalid_hash",
+      "mutation": "remove or invert invalid_hash guard"
+    },
+    {
+      "category": "grant",
+      "guard": "stage_d_false",
+      "literal_case": "stage_d_false",
+      "mutation": "remove or invert stage_d_false guard"
+    },
+    {
+      "category": "grant",
+      "guard": "stage_d_integer",
+      "literal_case": "stage_d_integer",
+      "mutation": "remove or invert stage_d_integer guard"
+    },
+    {
+      "category": "grant",
+      "guard": "short_expiry_before",
+      "literal_case": "short_expiry_before",
+      "mutation": "remove or invert short_expiry_before guard"
+    },
+    {
+      "category": "grant",
+      "guard": "short_expiry_at",
+      "literal_case": "short_expiry_at",
+      "mutation": "remove or invert short_expiry_at guard"
+    },
+    {
+      "category": "grant",
+      "guard": "short_key_before",
+      "literal_case": "short_key_before",
+      "mutation": "remove or invert short_key_before guard"
+    },
+    {
+      "category": "grant",
+      "guard": "short_key_at",
+      "literal_case": "short_key_at",
+      "mutation": "remove or invert short_key_at guard"
+    },
+    {
+      "category": "grant",
+      "guard": "short_price_before",
+      "literal_case": "short_price_before",
+      "mutation": "remove or invert short_price_before guard"
+    },
+    {
+      "category": "grant",
+      "guard": "short_price_at",
+      "literal_case": "short_price_at",
+      "mutation": "remove or invert short_price_at guard"
+    },
+    {
+      "category": "grant",
+      "guard": "short_trust_before",
+      "literal_case": "short_trust_before",
+      "mutation": "remove or invert short_trust_before guard"
+    },
+    {
+      "category": "grant",
+      "guard": "short_trust_at",
+      "literal_case": "short_trust_at",
+      "mutation": "remove or invert short_trust_at guard"
+    },
+    {
+      "category": "grant",
+      "guard": "short_explicit_before",
+      "literal_case": "short_explicit_before",
+      "mutation": "remove or invert short_explicit_before guard"
+    },
+    {
+      "category": "grant",
+      "guard": "short_explicit_at",
+      "literal_case": "short_explicit_at",
+      "mutation": "remove or invert short_explicit_at guard"
+    },
+    {
+      "category": "grant",
+      "guard": "start_plus_27",
+      "literal_case": "start_plus_27",
+      "mutation": "remove or invert start_plus_27 guard"
+    },
+    {
+      "category": "grant",
+      "guard": "start_plus_28",
+      "literal_case": "start_plus_28",
+      "mutation": "remove or invert start_plus_28 guard"
+    },
+    {
+      "category": "grant",
+      "guard": "late_receipt",
+      "literal_case": "late_receipt",
+      "mutation": "remove or invert late_receipt guard"
+    },
+    {
+      "category": "grant",
+      "guard": "future_iat",
+      "literal_case": "future_iat",
+      "mutation": "remove or invert future_iat guard"
+    },
+    {
+      "category": "grant",
+      "guard": "bool_now",
+      "literal_case": "bool_now",
+      "mutation": "remove or invert bool_now guard"
+    },
+    {
+      "category": "grant",
+      "guard": "history_20_boundary",
+      "literal_case": "history_20_boundary",
+      "mutation": "remove or invert history_20_boundary guard"
+    },
+    {
+      "category": "grant",
+      "guard": "string_quote",
+      "literal_case": "string_quote",
+      "mutation": "remove or invert string_quote guard"
+    },
+    {
+      "category": "grant",
+      "guard": "string_backslash",
+      "literal_case": "string_backslash",
+      "mutation": "remove or invert string_backslash guard"
+    },
+    {
+      "category": "grant",
+      "guard": "string_less",
+      "literal_case": "string_less",
+      "mutation": "remove or invert string_less guard"
+    },
+    {
+      "category": "grant",
+      "guard": "string_greater",
+      "literal_case": "string_greater",
+      "mutation": "remove or invert string_greater guard"
+    },
+    {
+      "category": "grant",
+      "guard": "string_ampersand",
+      "literal_case": "string_ampersand",
+      "mutation": "remove or invert string_ampersand guard"
+    },
+    {
+      "category": "grant",
+      "guard": "string_control",
+      "literal_case": "string_control",
+      "mutation": "remove or invert string_control guard"
+    },
+    {
+      "category": "grant",
+      "guard": "string_unicode",
+      "literal_case": "string_unicode",
+      "mutation": "remove or invert string_unicode guard"
+    },
+    {
+      "category": "grant",
+      "guard": "string_del",
+      "literal_case": "string_del",
+      "mutation": "remove or invert string_del guard"
+    },
+    {
+      "category": "grant",
+      "guard": "string_empty",
+      "literal_case": "string_empty",
+      "mutation": "remove or invert string_empty guard"
+    },
+    {
+      "category": "grant",
+      "guard": "string_null",
+      "literal_case": "string_null",
+      "mutation": "remove or invert string_null guard"
+    },
+    {
+      "category": "grant",
+      "guard": "safe_ascii",
+      "literal_case": "safe_ascii",
+      "mutation": "remove or invert safe_ascii guard"
+    },
+    {
+      "category": "grant",
+      "guard": "payload_whitespace",
+      "literal_case": "payload_whitespace",
+      "mutation": "remove or invert payload_whitespace guard"
+    },
+    {
+      "category": "grant",
+      "guard": "payload_unsorted",
+      "literal_case": "payload_unsorted",
+      "mutation": "remove or invert payload_unsorted guard"
+    },
+    {
+      "category": "grant",
+      "guard": "payload_escaped_ascii",
+      "literal_case": "payload_escaped_ascii",
+      "mutation": "remove or invert payload_escaped_ascii guard"
+    },
+    {
+      "category": "grant",
+      "guard": "payload_duplicate",
+      "literal_case": "payload_duplicate",
+      "mutation": "remove or invert payload_duplicate guard"
+    },
+    {
+      "category": "grant",
+      "guard": "nested_duplicate",
+      "literal_case": "nested_duplicate",
+      "mutation": "remove or invert nested_duplicate guard"
+    },
+    {
+      "category": "grant",
+      "guard": "nan",
+      "literal_case": "nan",
+      "mutation": "remove or invert nan guard"
+    },
+    {
+      "category": "grant",
+      "guard": "infinity",
+      "literal_case": "infinity",
+      "mutation": "remove or invert infinity guard"
+    },
+    {
+      "category": "grant",
+      "guard": "negative_infinity",
+      "literal_case": "negative_infinity",
+      "mutation": "remove or invert negative_infinity guard"
+    },
+    {
+      "category": "grant",
+      "guard": "raw_unicode",
+      "literal_case": "raw_unicode",
+      "mutation": "remove or invert raw_unicode guard"
+    },
+    {
+      "category": "grant",
+      "guard": "json_bad",
+      "literal_case": "json_bad",
+      "mutation": "remove or invert json_bad guard"
+    },
+    {
+      "category": "grant",
+      "guard": "json_utf8",
+      "literal_case": "json_utf8",
+      "mutation": "remove or invert json_utf8 guard"
+    },
+    {
+      "category": "grant",
+      "guard": "json_scalar",
+      "literal_case": "json_scalar",
+      "mutation": "remove or invert json_scalar guard"
+    },
+    {
+      "category": "grant",
+      "guard": "negative_zero",
+      "literal_case": "negative_zero",
+      "mutation": "remove or invert negative_zero guard"
+    },
+    {
+      "category": "grant",
+      "guard": "exponent",
+      "literal_case": "exponent",
+      "mutation": "remove or invert exponent guard"
+    },
+    {
+      "category": "grant",
+      "guard": "algorithm_none",
+      "literal_case": "algorithm_none",
+      "mutation": "remove or invert algorithm_none guard"
+    },
+    {
+      "category": "grant",
+      "guard": "algorithm_rs256",
+      "literal_case": "algorithm_rs256",
+      "mutation": "remove or invert algorithm_rs256 guard"
+    },
+    {
+      "category": "grant",
+      "guard": "unknown_kid",
+      "literal_case": "unknown_kid",
+      "mutation": "remove or invert unknown_kid guard"
+    },
+    {
+      "category": "grant",
+      "guard": "header_extra",
+      "literal_case": "header_extra",
+      "mutation": "remove or invert header_extra guard"
+    },
+    {
+      "category": "grant",
+      "guard": "header_missing",
+      "literal_case": "header_missing",
+      "mutation": "remove or invert header_missing guard"
+    },
+    {
+      "category": "grant",
+      "guard": "header_scalar",
+      "literal_case": "header_scalar",
+      "mutation": "remove or invert header_scalar guard"
+    },
+    {
+      "category": "grant",
+      "guard": "unknown_type",
+      "literal_case": "unknown_type",
+      "mutation": "remove or invert unknown_type guard"
+    },
+    {
+      "category": "grant",
+      "guard": "signature_bitflip",
+      "literal_case": "signature_bitflip",
+      "mutation": "remove or invert signature_bitflip guard"
+    },
+    {
+      "category": "grant",
+      "guard": "compact_missing",
+      "literal_case": "compact_missing",
+      "mutation": "remove or invert compact_missing guard"
+    },
+    {
+      "category": "grant",
+      "guard": "compact_extra",
+      "literal_case": "compact_extra",
+      "mutation": "remove or invert compact_extra guard"
+    },
+    {
+      "category": "grant",
+      "guard": "base64_empty",
+      "literal_case": "base64_empty",
+      "mutation": "remove or invert base64_empty guard"
+    },
+    {
+      "category": "grant",
+      "guard": "base64_length",
+      "literal_case": "base64_length",
+      "mutation": "remove or invert base64_length guard"
+    },
+    {
+      "category": "grant",
+      "guard": "base64_plus",
+      "literal_case": "base64_plus",
+      "mutation": "remove or invert base64_plus guard"
+    },
+    {
+      "category": "grant",
+      "guard": "base64_slash",
+      "literal_case": "base64_slash",
+      "mutation": "remove or invert base64_slash guard"
+    },
+    {
+      "category": "grant",
+      "guard": "base64_space",
+      "literal_case": "base64_space",
+      "mutation": "remove or invert base64_space guard"
+    },
+    {
+      "category": "grant",
+      "guard": "base64_trailing_bits",
+      "literal_case": "base64_trailing_bits",
+      "mutation": "remove or invert base64_trailing_bits guard"
+    },
+    {
+      "category": "grant",
+      "guard": "signature_padded",
+      "literal_case": "signature_padded",
+      "mutation": "remove or invert signature_padded guard"
+    },
+    {
+      "category": "grant",
+      "guard": "payload_padded",
+      "literal_case": "payload_padded",
+      "mutation": "remove or invert payload_padded guard"
+    },
+    {
+      "category": "grant",
+      "guard": "input_bound_over",
+      "literal_case": "input_bound_over",
+      "mutation": "remove or invert input_bound_over guard"
+    },
+    {
+      "category": "grant",
+      "guard": "output_bound_over",
+      "literal_case": "output_bound_over",
+      "mutation": "remove or invert output_bound_over guard"
+    },
+    {
+      "category": "grant",
+      "guard": "input_bound_zero",
+      "literal_case": "input_bound_zero",
+      "mutation": "remove or invert input_bound_zero guard"
+    },
+    {
+      "category": "grant",
+      "guard": "adapter_zero",
+      "literal_case": "adapter_zero",
+      "mutation": "remove or invert adapter_zero guard"
+    },
+    {
+      "category": "grant",
+      "guard": "route_region_disagrees",
+      "literal_case": "route_region_disagrees",
+      "mutation": "remove or invert route_region_disagrees guard"
+    },
+    {
+      "category": "grant",
+      "guard": "route_hash_bad",
+      "literal_case": "route_hash_bad",
+      "mutation": "remove or invert route_hash_bad guard"
+    },
+    {
+      "category": "grant",
+      "guard": "cost_overflow",
+      "literal_case": "cost_overflow",
+      "mutation": "remove or invert cost_overflow guard"
+    },
+    {
+      "category": "grant",
+      "guard": "cost_zero",
+      "literal_case": "cost_zero",
+      "mutation": "remove or invert cost_zero guard"
+    },
+    {
+      "category": "grant",
+      "guard": "cost_10000",
+      "literal_case": "cost_10000",
+      "mutation": "remove or invert cost_10000 guard"
+    },
+    {
+      "category": "grant",
+      "guard": "cost_10001",
+      "literal_case": "cost_10001",
+      "mutation": "remove or invert cost_10001 guard"
+    },
+    {
+      "category": "grant",
+      "guard": "allowance_exceeded",
+      "literal_case": "allowance_exceeded",
+      "mutation": "remove or invert allowance_exceeded guard"
+    },
+    {
+      "category": "grant",
+      "guard": "missing_tier_ceiling",
+      "literal_case": "missing_tier_ceiling",
+      "mutation": "remove or invert missing_tier_ceiling guard"
+    },
+    {
+      "category": "cost",
+      "guard": "money_seed",
+      "literal_case": "money_seed",
+      "mutation": "remove or invert money_seed guard"
+    },
+    {
+      "category": "cost",
+      "guard": "money_fractional",
+      "literal_case": "money_fractional",
+      "mutation": "remove or invert money_fractional guard"
+    },
+    {
+      "category": "cost",
+      "guard": "money_exact_10000",
+      "literal_case": "money_exact_10000",
+      "mutation": "remove or invert money_exact_10000 guard"
+    },
+    {
+      "category": "cost",
+      "guard": "money_above_10000",
+      "literal_case": "money_above_10000",
+      "mutation": "remove or invert money_above_10000 guard"
+    },
+    {
+      "category": "cost",
+      "guard": "money_fees",
+      "literal_case": "money_fees",
+      "mutation": "remove or invert money_fees guard"
+    },
+    {
+      "category": "cost",
+      "guard": "money_zero",
+      "literal_case": "money_zero",
+      "mutation": "remove or invert money_zero guard"
+    },
+    {
+      "category": "cost",
+      "guard": "money_product_overflow",
+      "literal_case": "money_product_overflow",
+      "mutation": "remove or invert money_product_overflow guard"
+    },
+    {
+      "category": "cost",
+      "guard": "money_sum_overflow",
+      "literal_case": "money_sum_overflow",
+      "mutation": "remove or invert money_sum_overflow guard"
+    },
+    {
+      "category": "cost",
+      "guard": "money_int_max",
+      "literal_case": "money_int_max",
+      "mutation": "remove or invert money_int_max guard"
+    },
+    {
+      "category": "cost",
+      "guard": "money_bool",
+      "literal_case": "money_bool",
+      "mutation": "remove or invert money_bool guard"
+    },
+    {
+      "category": "cost",
+      "guard": "money_negative",
+      "literal_case": "money_negative",
+      "mutation": "remove or invert money_negative guard"
+    },
+    {
+      "category": "allowance",
+      "guard": "allowance_tier2",
+      "literal_case": "allowance_tier2",
+      "mutation": "remove or invert allowance_tier2 guard"
+    },
+    {
+      "category": "allowance",
+      "guard": "allowance_tier3",
+      "literal_case": "allowance_tier3",
+      "mutation": "remove or invert allowance_tier3 guard"
+    },
+    {
+      "category": "allowance",
+      "guard": "allowance_odd_headroom",
+      "literal_case": "allowance_odd_headroom",
+      "mutation": "remove or invert allowance_odd_headroom guard"
+    },
+    {
+      "category": "allowance",
+      "guard": "allowance_odd_tier",
+      "literal_case": "allowance_odd_tier",
+      "mutation": "remove or invert allowance_odd_tier guard"
+    },
+    {
+      "category": "allowance",
+      "guard": "allowance_zero",
+      "literal_case": "allowance_zero",
+      "mutation": "remove or invert allowance_zero guard"
+    },
+    {
+      "category": "allowance",
+      "guard": "allowance_bool",
+      "literal_case": "allowance_bool",
+      "mutation": "remove or invert allowance_bool guard"
+    },
+    {
+      "category": "descriptor",
+      "guard": "descriptor_valid",
+      "literal_case": "descriptor_valid",
+      "mutation": "remove or invert descriptor_valid guard"
+    },
+    {
+      "category": "descriptor",
+      "guard": "dry_run_cannot_dispatch",
+      "literal_case": "dry_run_cannot_dispatch",
+      "mutation": "remove or invert dry_run_cannot_dispatch guard"
+    },
+    {
+      "category": "descriptor",
+      "guard": "descriptor_shadow_hash",
+      "literal_case": "descriptor_shadow_hash",
+      "mutation": "remove or invert descriptor_shadow_hash guard"
+    },
+    {
+      "category": "descriptor",
+      "guard": "descriptor_purpose",
+      "literal_case": "descriptor_purpose",
+      "mutation": "remove or invert descriptor_purpose guard"
+    },
+    {
+      "category": "descriptor",
+      "guard": "descriptor_wrong_boot_signer",
+      "literal_case": "descriptor_wrong_boot_signer",
+      "mutation": "remove or invert descriptor_wrong_boot_signer guard"
+    },
+    {
+      "category": "descriptor",
+      "guard": "descriptor_wrong_type",
+      "literal_case": "descriptor_wrong_type",
+      "mutation": "remove or invert descriptor_wrong_type guard"
+    },
+    {
+      "category": "descriptor",
+      "guard": "descriptor_version",
+      "literal_case": "descriptor_version",
+      "mutation": "remove or invert descriptor_version guard"
+    },
+    {
+      "category": "descriptor",
+      "guard": "descriptor_unknown_field",
+      "literal_case": "descriptor_unknown_field",
+      "mutation": "remove or invert descriptor_unknown_field guard"
+    },
+    {
+      "category": "descriptor",
+      "guard": "descriptor_grant_id",
+      "literal_case": "descriptor_grant_id",
+      "mutation": "remove or invert descriptor_grant_id guard"
+    },
+    {
+      "category": "descriptor",
+      "guard": "descriptor_workspace_id",
+      "literal_case": "descriptor_workspace_id",
+      "mutation": "remove or invert descriptor_workspace_id guard"
+    },
+    {
+      "category": "descriptor",
+      "guard": "descriptor_key_id",
+      "literal_case": "descriptor_key_id",
+      "mutation": "remove or invert descriptor_key_id guard"
+    },
+    {
+      "category": "descriptor",
+      "guard": "descriptor_boot_id",
+      "literal_case": "descriptor_boot_id",
+      "mutation": "remove or invert descriptor_boot_id guard"
+    },
+    {
+      "category": "descriptor",
+      "guard": "descriptor_workspace_epoch",
+      "literal_case": "descriptor_workspace_epoch",
+      "mutation": "remove or invert descriptor_workspace_epoch guard"
+    },
+    {
+      "category": "descriptor",
+      "guard": "descriptor_key_epoch",
+      "literal_case": "descriptor_key_epoch",
+      "mutation": "remove or invert descriptor_key_epoch guard"
+    },
+    {
+      "category": "descriptor",
+      "guard": "descriptor_grant_sha256",
+      "literal_case": "descriptor_grant_sha256",
+      "mutation": "remove or invert descriptor_grant_sha256 guard"
+    },
+    {
+      "category": "descriptor",
+      "guard": "descriptor_request_sha256",
+      "literal_case": "descriptor_request_sha256",
+      "mutation": "remove or invert descriptor_request_sha256 guard"
+    },
+    {
+      "category": "descriptor",
+      "guard": "descriptor_routing_policy_hash",
+      "literal_case": "descriptor_routing_policy_hash",
+      "mutation": "remove or invert descriptor_routing_policy_hash guard"
+    },
+    {
+      "category": "descriptor",
+      "guard": "descriptor_hash_malformed",
+      "literal_case": "descriptor_hash_malformed",
+      "mutation": "remove or invert descriptor_hash_malformed guard"
+    },
+    {
+      "category": "descriptor",
+      "guard": "descriptor_endpoint",
+      "literal_case": "descriptor_endpoint",
+      "mutation": "remove or invert descriptor_endpoint guard"
+    },
+    {
+      "category": "descriptor",
+      "guard": "descriptor_nonce",
+      "literal_case": "descriptor_nonce",
+      "mutation": "remove or invert descriptor_nonce guard"
+    },
+    {
+      "category": "descriptor",
+      "guard": "descriptor_execution",
+      "literal_case": "descriptor_execution",
+      "mutation": "remove or invert descriptor_execution guard"
+    },
+    {
+      "category": "descriptor",
+      "guard": "descriptor_wire_lf",
+      "literal_case": "descriptor_wire_lf",
+      "mutation": "remove or invert descriptor_wire_lf guard"
+    },
+    {
+      "category": "descriptor",
+      "guard": "descriptor_ordinal",
+      "literal_case": "descriptor_ordinal",
+      "mutation": "remove or invert descriptor_ordinal guard"
+    },
+    {
+      "category": "descriptor",
+      "guard": "descriptor_cost",
+      "literal_case": "descriptor_cost",
+      "mutation": "remove or invert descriptor_cost guard"
+    },
+    {
+      "category": "marker",
+      "guard": "marker_valid",
+      "literal_case": "marker_valid",
+      "mutation": "remove or invert marker_valid guard"
+    },
+    {
+      "category": "marker",
+      "guard": "marker_missing",
+      "literal_case": "marker_missing",
+      "mutation": "remove or invert marker_missing guard"
+    },
+    {
+      "category": "marker",
+      "guard": "marker_null",
+      "literal_case": "marker_null",
+      "mutation": "remove or invert marker_null guard"
+    },
+    {
+      "category": "marker",
+      "guard": "marker_scalar",
+      "literal_case": "marker_scalar",
+      "mutation": "remove or invert marker_scalar guard"
+    },
+    {
+      "category": "marker",
+      "guard": "marker_malformed",
+      "literal_case": "marker_malformed",
+      "mutation": "remove or invert marker_malformed guard"
+    },
+    {
+      "category": "marker",
+      "guard": "marker_version",
+      "literal_case": "marker_version",
+      "mutation": "remove or invert marker_version guard"
+    },
+    {
+      "category": "marker",
+      "guard": "marker_hash",
+      "literal_case": "marker_hash",
+      "mutation": "remove or invert marker_hash guard"
+    },
+    {
+      "category": "marker",
+      "guard": "marker_hash_format",
+      "literal_case": "marker_hash_format",
+      "mutation": "remove or invert marker_hash_format guard"
+    },
+    {
+      "category": "marker",
+      "guard": "marker_invocation_nonce",
+      "literal_case": "marker_invocation_nonce",
+      "mutation": "remove or invert marker_invocation_nonce guard"
+    },
+    {
+      "category": "marker",
+      "guard": "marker_endpoint_id",
+      "literal_case": "marker_endpoint_id",
+      "mutation": "remove or invert marker_endpoint_id guard"
+    },
+    {
+      "category": "marker",
+      "guard": "marker_routing_policy_hash",
+      "literal_case": "marker_routing_policy_hash",
+      "mutation": "remove or invert marker_routing_policy_hash guard"
+    },
+    {
+      "category": "marker",
+      "guard": "marker_authorization_id",
+      "literal_case": "marker_authorization_id",
+      "mutation": "remove or invert marker_authorization_id guard"
+    },
+    {
+      "category": "marker",
+      "guard": "authorization_authorization_id",
+      "literal_case": "authorization_authorization_id",
+      "mutation": "remove or invert authorization_authorization_id guard"
+    },
+    {
+      "category": "marker",
+      "guard": "authorization_invocation_nonce",
+      "literal_case": "authorization_invocation_nonce",
+      "mutation": "remove or invert authorization_invocation_nonce guard"
+    },
+    {
+      "category": "marker",
+      "guard": "authorization_endpoint_id",
+      "literal_case": "authorization_endpoint_id",
+      "mutation": "remove or invert authorization_endpoint_id guard"
+    },
+    {
+      "category": "marker",
+      "guard": "authorization_routing_policy_hash",
+      "literal_case": "authorization_routing_policy_hash",
+      "mutation": "remove or invert authorization_routing_policy_hash guard"
+    },
+    {
+      "category": "marker",
+      "guard": "authorization_workspace_id",
+      "literal_case": "authorization_workspace_id",
+      "mutation": "remove or invert authorization_workspace_id guard"
+    },
+    {
+      "category": "marker",
+      "guard": "authorization_key_id",
+      "literal_case": "authorization_key_id",
+      "mutation": "remove or invert authorization_key_id guard"
+    },
+    {
+      "category": "marker",
+      "guard": "authorization_billing_mode",
+      "literal_case": "authorization_billing_mode",
+      "mutation": "remove or invert authorization_billing_mode guard"
+    },
+    {
+      "category": "marker",
+      "guard": "authorization_stage_d",
+      "literal_case": "authorization_stage_d",
+      "mutation": "remove or invert authorization_stage_d guard"
+    },
+    {
+      "category": "marker",
+      "guard": "authorization_response_disagrees",
+      "literal_case": "authorization_response_disagrees",
+      "mutation": "remove or invert authorization_response_disagrees guard"
+    },
+    {
+      "category": "renewal",
+      "guard": "renewal_exact_replay",
+      "literal_case": "renewal_exact_replay",
+      "mutation": "remove or invert renewal_exact_replay guard"
+    },
+    {
+      "category": "renewal",
+      "guard": "renewal_forward",
+      "literal_case": "renewal_forward",
+      "mutation": "remove or invert renewal_forward guard"
+    },
+    {
+      "category": "renewal",
+      "guard": "renewal_same_generation",
+      "literal_case": "renewal_same_generation",
+      "mutation": "remove or invert renewal_same_generation guard"
+    },
+    {
+      "category": "renewal",
+      "guard": "renewal_older_generation",
+      "literal_case": "renewal_older_generation",
+      "mutation": "remove or invert renewal_older_generation guard"
+    },
+    {
+      "category": "renewal",
+      "guard": "renewal_same_grant_id",
+      "literal_case": "renewal_same_grant_id",
+      "mutation": "remove or invert renewal_same_grant_id guard"
+    },
+    {
+      "category": "renewal",
+      "guard": "renewal_old_workspace_epoch",
+      "literal_case": "renewal_old_workspace_epoch",
+      "mutation": "remove or invert renewal_old_workspace_epoch guard"
+    },
+    {
+      "category": "renewal",
+      "guard": "renewal_old_key_epoch",
+      "literal_case": "renewal_old_key_epoch",
+      "mutation": "remove or invert renewal_old_key_epoch guard"
+    },
+    {
+      "category": "renewal",
+      "guard": "renewal_boot_changed",
+      "literal_case": "renewal_boot_changed",
+      "mutation": "remove or invert renewal_boot_changed guard"
+    },
+    {
+      "category": "renewal",
+      "guard": "renewal_old_iat",
+      "literal_case": "renewal_old_iat",
+      "mutation": "remove or invert renewal_old_iat guard"
+    },
+    {
+      "category": "renewal",
+      "guard": "renewal_higher_epochs",
+      "literal_case": "renewal_higher_epochs",
+      "mutation": "remove or invert renewal_higher_epochs guard"
+    },
+    {
+      "category": "renewal",
+      "guard": "renewal_wrong_domain",
+      "literal_case": "renewal_wrong_domain",
+      "mutation": "remove or invert renewal_wrong_domain guard"
+    },
+    {
+      "category": "renewal",
+      "guard": "renewal_old_history_sequence",
+      "literal_case": "renewal_old_history_sequence",
+      "mutation": "remove or invert renewal_old_history_sequence guard"
+    },
+    {
+      "category": "replay",
+      "guard": "descriptor_exact_retry",
+      "literal_case": "descriptor_exact_retry",
+      "mutation": "remove or invert descriptor_exact_retry guard"
+    },
+    {
+      "category": "replay",
+      "guard": "descriptor_permit_reuse",
+      "literal_case": "descriptor_permit_reuse",
+      "mutation": "remove or invert descriptor_permit_reuse guard"
+    },
+    {
+      "category": "grant",
+      "guard": "key_missing",
+      "literal_case": "key_missing",
+      "mutation": "remove or invert key_missing guard"
+    },
+    {
+      "category": "grant",
+      "guard": "key_ambiguous",
+      "literal_case": "key_ambiguous",
+      "mutation": "remove or invert key_ambiguous guard"
+    },
+    {
+      "category": "grant",
+      "guard": "key_wrong_public",
+      "literal_case": "key_wrong_public",
+      "mutation": "remove or invert key_wrong_public guard"
+    },
+    {
+      "category": "grant",
+      "guard": "key_short_public",
+      "literal_case": "key_short_public",
+      "mutation": "remove or invert key_short_public guard"
+    },
+    {
+      "category": "grant",
+      "guard": "header_duplicate",
+      "literal_case": "header_duplicate",
+      "mutation": "remove or invert header_duplicate guard"
+    },
+    {
+      "category": "grant",
+      "guard": "header_padded",
+      "literal_case": "header_padded",
+      "mutation": "remove or invert header_padded guard"
+    },
+    {
+      "category": "marker",
+      "guard": "marker_missing_nonce",
+      "literal_case": "marker_missing_nonce",
+      "mutation": "remove or invert marker_missing_nonce guard"
+    },
+    {
+      "category": "marker",
+      "guard": "marker_missing_auth_id",
+      "literal_case": "marker_missing_auth_id",
+      "mutation": "remove or invert marker_missing_auth_id guard"
+    },
+    {
+      "category": "marker",
+      "guard": "marker_missing_valid_route_skew",
+      "literal_case": "marker_missing_valid_route_skew",
+      "mutation": "remove or invert marker_missing_valid_route_skew guard"
+    },
+    {
+      "category": "verdict_extra",
+      "guard": "provider_source",
+      "literal_case": "provider_source",
+      "mutation": "remove or invert provider_source guard"
+    },
+    {
+      "category": "verdict_extra",
+      "guard": "success_status",
+      "literal_case": "success_status",
+      "mutation": "remove or invert success_status guard"
+    },
+    {
+      "category": "verdict",
+      "guard": "verdict_credit",
+      "literal_case": "credit",
+      "mutation": "change scope/commit/breaker classification"
+    },
+    {
+      "category": "verdict",
+      "guard": "verdict_ambiguous_billing",
+      "literal_case": "ambiguous_billing",
+      "mutation": "change scope/commit/breaker classification"
+    },
+    {
+      "category": "verdict",
+      "guard": "verdict_trust",
+      "literal_case": "trust",
+      "mutation": "change scope/commit/breaker classification"
+    },
+    {
+      "category": "verdict",
+      "guard": "verdict_abuse",
+      "literal_case": "abuse",
+      "mutation": "change scope/commit/breaker classification"
+    },
+    {
+      "category": "verdict",
+      "guard": "verdict_payment",
+      "literal_case": "payment",
+      "mutation": "change scope/commit/breaker classification"
+    },
+    {
+      "category": "verdict",
+      "guard": "verdict_trust_stale",
+      "literal_case": "trust_stale",
+      "mutation": "change scope/commit/breaker classification"
+    },
+    {
+      "category": "verdict",
+      "guard": "verdict_paused",
+      "literal_case": "paused",
+      "mutation": "change scope/commit/breaker classification"
+    },
+    {
+      "category": "verdict",
+      "guard": "verdict_revoked",
+      "literal_case": "revoked",
+      "mutation": "change scope/commit/breaker classification"
+    },
+    {
+      "category": "verdict",
+      "guard": "verdict_disabled",
+      "literal_case": "disabled",
+      "mutation": "change scope/commit/breaker classification"
+    },
+    {
+      "category": "verdict",
+      "guard": "verdict_expired",
+      "literal_case": "expired",
+      "mutation": "change scope/commit/breaker classification"
+    },
+    {
+      "category": "verdict",
+      "guard": "verdict_invalid_resolved",
+      "literal_case": "invalid_resolved",
+      "mutation": "change scope/commit/breaker classification"
+    },
+    {
+      "category": "verdict",
+      "guard": "verdict_lifetime_limit",
+      "literal_case": "lifetime_limit",
+      "mutation": "change scope/commit/breaker classification"
+    },
+    {
+      "category": "verdict",
+      "guard": "verdict_window_limit",
+      "literal_case": "window_limit",
+      "mutation": "change scope/commit/breaker classification"
+    },
+    {
+      "category": "verdict",
+      "guard": "verdict_strict_limit",
+      "literal_case": "strict_limit",
+      "mutation": "change scope/commit/breaker classification"
+    },
+    {
+      "category": "verdict",
+      "guard": "verdict_new_limit",
+      "literal_case": "new_limit",
+      "mutation": "change scope/commit/breaker classification"
+    },
+    {
+      "category": "verdict",
+      "guard": "verdict_invalid_unresolved",
+      "literal_case": "invalid_unresolved",
+      "mutation": "change scope/commit/breaker classification"
+    },
+    {
+      "category": "verdict",
+      "guard": "verdict_rate_key",
+      "literal_case": "rate_key",
+      "mutation": "change scope/commit/breaker classification"
+    },
+    {
+      "category": "verdict",
+      "guard": "verdict_rate_workspace",
+      "literal_case": "rate_workspace",
+      "mutation": "change scope/commit/breaker classification"
+    },
+    {
+      "category": "verdict",
+      "guard": "verdict_rate_unknown",
+      "literal_case": "rate_unknown",
+      "mutation": "change scope/commit/breaker classification"
+    },
+    {
+      "category": "verdict",
+      "guard": "verdict_request_validation",
+      "literal_case": "request_validation",
+      "mutation": "change scope/commit/breaker classification"
+    },
+    {
+      "category": "verdict",
+      "guard": "verdict_request_policy",
+      "literal_case": "request_policy",
+      "mutation": "change scope/commit/breaker classification"
+    },
+    {
+      "category": "verdict",
+      "guard": "verdict_request_route",
+      "literal_case": "request_route",
+      "mutation": "change scope/commit/breaker classification"
+    },
+    {
+      "category": "verdict",
+      "guard": "verdict_infrastructure",
+      "literal_case": "infrastructure",
+      "mutation": "change scope/commit/breaker classification"
+    },
+    {
+      "category": "verdict",
+      "guard": "verdict_timeout",
+      "literal_case": "timeout",
+      "mutation": "change scope/commit/breaker classification"
+    },
+    {
+      "category": "pin",
+      "guard": "fixture_pin",
+      "literal_case": "fixture_pins",
+      "mutation": "change one fixture byte"
+    },
+    {
+      "category": "guard",
+      "guard": "integer",
+      "literal_case": "bool_integer",
+      "mutation": "replace type(v) is int with isinstance(v, int)"
+    },
+    {
+      "category": "guard",
+      "guard": "string",
+      "literal_case": "string_less",
+      "mutation": "allow the excluded printable-ASCII characters"
+    },
+    {
+      "category": "guard",
+      "guard": "hash",
+      "literal_case": "invalid_hash",
+      "mutation": "remove lowercase SHA-256 validation"
+    },
+    {
+      "category": "guard",
+      "guard": "fields",
+      "literal_case": "unknown_field",
+      "mutation": "ignore unknown v1 fields"
+    },
+    {
+      "category": "guard",
+      "guard": "duplicate_key",
+      "literal_case": "payload_duplicate",
+      "mutation": "last duplicate JSON key wins"
+    },
+    {
+      "category": "guard",
+      "guard": "json",
+      "literal_case": "json_bad",
+      "mutation": "treat malformed JSON as empty claims"
+    },
+    {
+      "category": "guard",
+      "guard": "base64_alphabet",
+      "literal_case": "signature_padded",
+      "mutation": "strip padding before decoding"
+    },
+    {
+      "category": "guard",
+      "guard": "base64_trailing_bits",
+      "literal_case": "base64_trailing_bits",
+      "mutation": "omit re-encode equality"
+    },
+    {
+      "category": "guard",
+      "guard": "compact",
+      "literal_case": "compact_extra",
+      "mutation": "ignore surplus compact segments"
+    },
+    {
+      "category": "guard",
+      "guard": "algorithm",
+      "literal_case": "algorithm_none",
+      "mutation": "skip alg allowlist"
+    },
+    {
+      "category": "guard",
+      "guard": "type",
+      "literal_case": "dry_run_type_as_real",
+      "mutation": "accept shadow typ in real verifier"
+    },
+    {
+      "category": "guard",
+      "guard": "trusted_key",
+      "literal_case": "key_ambiguous",
+      "mutation": "accept unknown or duplicate kid"
+    },
+    {
+      "category": "guard",
+      "guard": "purpose",
+      "literal_case": "real_type_shadow_key",
+      "mutation": "accept shadow-grant purpose for real grants"
+    },
+    {
+      "category": "guard",
+      "guard": "signature",
+      "literal_case": "signature_bitflip",
+      "mutation": "skip Ed25519 signature verification"
+    },
+    {
+      "category": "guard",
+      "guard": "canonical_payload",
+      "literal_case": "payload_whitespace",
+      "mutation": "skip canonical payload equality"
+    },
+    {
+      "category": "guard",
+      "guard": "version",
+      "literal_case": "unknown_version",
+      "mutation": "accept unknown version"
+    },
+    {
+      "category": "guard",
+      "guard": "product_overflow",
+      "literal_case": "money_product_overflow",
+      "mutation": "allow overflowing signed-int64 product"
+    },
+    {
+      "category": "guard",
+      "guard": "sum_overflow",
+      "literal_case": "money_sum_overflow",
+      "mutation": "allow overflowing signed-int64 total"
+    },
+    {
+      "category": "guard",
+      "guard": "cost_rounding",
+      "literal_case": "money_fractional",
+      "mutation": "floor token-component cost"
+    },
+    {
+      "category": "guard",
+      "guard": "allowance_rounding",
+      "literal_case": "allowance_odd_headroom",
+      "mutation": "ceil headroom divided by ten"
+    },
+    {
+      "category": "guard",
+      "guard": "stage_d",
+      "literal_case": "stage_d_false",
+      "mutation": "allow disabled Stage D"
+    },
+    {
+      "category": "guard",
+      "guard": "route_region",
+      "literal_case": "route_region_disagrees",
+      "mutation": "skip grant/route region equality"
+    },
+    {
+      "category": "guard",
+      "guard": "token_bound",
+      "literal_case": "output_bound_over",
+      "mutation": "allow unbounded output"
+    },
+    {
+      "category": "guard",
+      "guard": "adapter",
+      "literal_case": "adapter_zero",
+      "mutation": "accept zero adapter version"
+    },
+    {
+      "category": "guard",
+      "guard": "tier",
+      "literal_case": "tier_one",
+      "mutation": "admit tier one"
+    },
+    {
+      "category": "guard",
+      "guard": "paid_headroom",
+      "literal_case": "unpaid",
+      "mutation": "admit less than five paid dollars"
+    },
+    {
+      "category": "guard",
+      "guard": "history_count",
+      "literal_case": "history_19",
+      "mutation": "lower twenty-success minimum"
+    },
+    {
+      "category": "guard",
+      "guard": "history_sequence",
+      "literal_case": "history_retry_dedupe",
+      "mutation": "count replayed successes"
+    },
+    {
+      "category": "guard",
+      "guard": "history_time",
+      "literal_case": "stale_last_success",
+      "mutation": "ignore last-success freshness"
+    },
+    {
+      "category": "guard",
+      "guard": "lifetime",
+      "literal_case": "ttl_too_long",
+      "mutation": "allow grants longer than thirty seconds"
+    },
+    {
+      "category": "guard",
+      "guard": "iat",
+      "literal_case": "future_iat",
+      "mutation": "permit a start before issuance"
+    },
+    {
+      "category": "guard",
+      "guard": "start_expiry",
+      "literal_case": "start_plus_28",
+      "mutation": "include the exclusive start boundary"
+    },
+    {
+      "category": "guard",
+      "guard": "start_key",
+      "literal_case": "short_key_at",
+      "mutation": "ignore key expiry margin"
+    },
+    {
+      "category": "guard",
+      "guard": "start_price",
+      "literal_case": "short_price_at",
+      "mutation": "ignore signed pricing margin"
+    },
+    {
+      "category": "guard",
+      "guard": "start_trust",
+      "literal_case": "short_trust_at",
+      "mutation": "ignore trust freshness margin"
+    },
+    {
+      "category": "guard",
+      "guard": "start_explicit",
+      "literal_case": "short_explicit_at",
+      "mutation": "ignore explicit start_before"
+    },
+    {
+      "category": "guard",
+      "guard": "ceiling",
+      "literal_case": "over_cap_money",
+      "mutation": "allow per-request ceilings above 10000"
+    },
+    {
+      "category": "guard",
+      "guard": "cost",
+      "literal_case": "cost_10001",
+      "mutation": "admit B above ceiling"
+    },
+    {
+      "category": "guard",
+      "guard": "permits",
+      "literal_case": "empty_permits",
+      "mutation": "allow an empty grant"
+    },
+    {
+      "category": "guard",
+      "guard": "ordinal",
+      "literal_case": "duplicate_ordinal",
+      "mutation": "ignore duplicate permit ordinals"
+    },
+    {
+      "category": "guard",
+      "guard": "permit_cost",
+      "literal_case": "underfunded_permit",
+      "mutation": "allow underfunded permits"
+    },
+    {
+      "category": "guard",
+      "guard": "tier_ceiling",
+      "literal_case": "missing_tier_ceiling",
+      "mutation": "invent missing trusted tier ceiling"
+    },
+    {
+      "category": "guard",
+      "guard": "allowance",
+      "literal_case": "allowance_exceeded",
+      "mutation": "ignore summed permit allocation"
+    },
+    {
+      "category": "guard",
+      "guard": "dry_run_cannot_dispatch",
+      "literal_case": "dry_run_cannot_dispatch",
+      "mutation": "accept a descriptor referring to shadow rights"
+    },
+    {
+      "category": "guard",
+      "guard": "descriptor_boot",
+      "literal_case": "descriptor_wrong_boot_signer",
+      "mutation": "accept another boot signing key"
+    },
+    {
+      "category": "guard",
+      "guard": "grant_hash",
+      "literal_case": "descriptor_shadow_hash",
+      "mutation": "skip compact-grant digest binding"
+    },
+    {
+      "category": "guard",
+      "guard": "request_hash",
+      "literal_case": "descriptor_wire_lf",
+      "mutation": "rehash reserialized provider bytes"
+    },
+    {
+      "category": "guard",
+      "guard": "invocation",
+      "literal_case": "descriptor_nonce",
+      "mutation": "ignore existing invocation nonce"
+    },
+    {
+      "category": "guard",
+      "guard": "descriptor_route",
+      "literal_case": "descriptor_endpoint",
+      "mutation": "ignore descriptor endpoint"
+    },
+    {
+      "category": "guard",
+      "guard": "descriptor_permit",
+      "literal_case": "descriptor_ordinal",
+      "mutation": "accept an unallocated ordinal"
+    },
+    {
+      "category": "guard",
+      "guard": "authorization",
+      "literal_case": "authorization_key_id",
+      "mutation": "skip normal authorization identity binding"
+    },
+    {
+      "category": "guard",
+      "guard": "marker_presence",
+      "literal_case": "marker_null",
+      "mutation": "treat null marker as missing"
+    },
+    {
+      "category": "guard",
+      "guard": "descriptor_hash",
+      "literal_case": "marker_hash",
+      "mutation": "ignore full compact descriptor hash"
+    },
+    {
+      "category": "guard",
+      "guard": "marker_binding",
+      "literal_case": "marker_invocation_nonce",
+      "mutation": "ignore accepted marker nonce"
+    },
+    {
+      "category": "guard",
+      "guard": "renewal",
+      "literal_case": "renewal_old_key_epoch",
+      "mutation": "let an older key epoch replace newer rights"
+    },
+    {
+      "category": "guard",
+      "guard": "replay_conflict",
+      "literal_case": "descriptor_permit_reuse",
+      "mutation": "reuse ordinal for another execution"
+    },
+    {
+      "category": "guard",
+      "guard": "verdict_source",
+      "literal_case": "provider_source",
+      "mutation": "classify provider failures as router denials"
+    },
+    {
+      "category": "guard",
+      "guard": "verdict_status",
+      "literal_case": "success_status",
+      "mutation": "accept successes as denials"
+    },
+    {
+      "category": "guard",
+      "guard": "verdict_402_precedence",
+      "literal_case": "lifetime_limit",
+      "mutation": "classify every 402 as workspace"
+    },
+    {
+      "category": "guard",
+      "guard": "verdict_429_scope",
+      "literal_case": "rate_unknown",
+      "mutation": "classify every 429 as key"
+    }
+  ]
+}

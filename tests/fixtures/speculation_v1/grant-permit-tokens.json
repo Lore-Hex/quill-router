@@ -1,0 +1,178 @@
+{
+  "authorization": {
+    "authorization_id": "a1",
+    "billing_mode": "ordinary",
+    "endpoint_id": "ep1",
+    "invocation_nonce": "n1",
+    "key_id": "k1",
+    "routing_policy_hash": "a5593a324b738638e898a04cc2edb314973b0b5312742cb371db7df43d8e691c",
+    "stage_d": true,
+    "workspace_id": "w1"
+  },
+  "context": {
+    "boot_id": "boot-a",
+    "generation": 7,
+    "image_policy_version": 1,
+    "key_epoch": 5,
+    "key_id": "k1",
+    "lookup_digest": "853bab448f7a802bd58136ffc29727189a74eaac72025a76cdc9b11058a6e7d0",
+    "region": "us-central1",
+    "route": {
+      "adapter_capability_version": 1,
+      "catalog_hash": "7fc58396c2dcf1684849862201f847ad76a2efe04111a3224a2be7aa02d23e42",
+      "endpoint_id": "ep1",
+      "input_bound": 8192,
+      "input_bound_method": "certified-fixture-bound-v1",
+      "input_rate_micro_per_m": 500000,
+      "maximum_request_fees_micro": 0,
+      "output_limit": 512,
+      "output_rate_micro_per_m": 1000000,
+      "price_expires_at": 1700000120,
+      "privacy": "default",
+      "provider": "fixture-provider",
+      "region": "us-central1",
+      "routing_policy_hash": "a5593a324b738638e898a04cc2edb314973b0b5312742cb371db7df43d8e691c",
+      "stage_d": true,
+      "upstream_model": "fixture-text"
+    },
+    "stable_slot_id": "slot-a",
+    "tier_ceiling_micro": 25000000,
+    "workspace_epoch": 3,
+    "workspace_id": "w1"
+  },
+  "expected": {
+    "b_micro": 4608,
+    "customer_settlement_mode": "ordinary",
+    "descriptor_signature_valid": true,
+    "real_signature_valid": true,
+    "real_start_allowed": true,
+    "shadow_dispatch_allowed": false,
+    "shadow_signature_valid": true,
+    "start_at_1700000027": true,
+    "start_at_1700000028": false,
+    "workspace_allowance_micro": 250000
+  },
+  "fixture_version": 1,
+  "grant_claims": {
+    "aud": "fixture-speculation",
+    "boot_id": "boot-a",
+    "environment": "test",
+    "exp": 1700000030,
+    "generation": 7,
+    "grant_id": "g1",
+    "history": {
+      "clean_since": 1699999099,
+      "count": 20,
+      "last_success_at": 1699999999,
+      "sequence": 20,
+      "window_start": 1699999400
+    },
+    "iat": 1700000000,
+    "image_policy_version": 1,
+    "iss": "fixture-router",
+    "key_epoch": 5,
+    "key_expires_at": 1700003600,
+    "key_id": "k1",
+    "lookup_digest": "853bab448f7a802bd58136ffc29727189a74eaac72025a76cdc9b11058a6e7d0",
+    "paid_headroom_micro": 5000000,
+    "per_request_ceiling_micro": 10000,
+    "permits": [
+      {
+        "b_micro": 4608,
+        "ordinal": 0
+      },
+      {
+        "b_micro": 4608,
+        "ordinal": 1
+      }
+    ],
+    "plane": "gcp-fixture",
+    "region": "us-central1",
+    "route": {
+      "adapter_capability_version": 1,
+      "catalog_hash": "7fc58396c2dcf1684849862201f847ad76a2efe04111a3224a2be7aa02d23e42",
+      "endpoint_id": "ep1",
+      "input_bound": 8192,
+      "input_bound_method": "certified-fixture-bound-v1",
+      "input_rate_micro_per_m": 500000,
+      "maximum_request_fees_micro": 0,
+      "output_limit": 512,
+      "output_rate_micro_per_m": 1000000,
+      "price_expires_at": 1700000120,
+      "privacy": "default",
+      "provider": "fixture-provider",
+      "region": "us-central1",
+      "routing_policy_hash": "a5593a324b738638e898a04cc2edb314973b0b5312742cb371db7df43d8e691c",
+      "stage_d": true,
+      "upstream_model": "fixture-text"
+    },
+    "stable_slot_id": "slot-a",
+    "start_before": 1700000028,
+    "tier": 2,
+    "trust_fresh_until": 1700000120,
+    "v": 1,
+    "workspace_epoch": 3,
+    "workspace_id": "w1"
+  },
+  "now": 1700000000,
+  "permit_descriptor_claims": {
+    "b_micro": 4608,
+    "boot_id": "boot-a",
+    "endpoint_id": "ep1",
+    "execution_id": "x1",
+    "grant_id": "g1",
+    "grant_sha256": "ebace849f7d56f32eafee693310ba9cda13ab17f571b950e476aaeee13389055",
+    "invocation_nonce": "n1",
+    "key_epoch": 5,
+    "key_id": "k1",
+    "ordinal": 0,
+    "request_sha256": "75e9f95d9e202c66fcffb7d4c7aa7c88e3dfb80a51e2cddc7539a6e461188f88",
+    "routing_policy_hash": "a5593a324b738638e898a04cc2edb314973b0b5312742cb371db7df43d8e691c",
+    "v": 1,
+    "workspace_epoch": 3,
+    "workspace_id": "w1"
+  },
+  "permit_descriptor_jws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImJvb3QtYSIsInR5cCI6InNwZWN1bGF0aW9uLWRlc2NyaXB0b3IrandzIn0.eyJiX21pY3JvIjo0NjA4LCJib290X2lkIjoiYm9vdC1hIiwiZW5kcG9pbnRfaWQiOiJlcDEiLCJleGVjdXRpb25faWQiOiJ4MSIsImdyYW50X2lkIjoiZzEiLCJncmFudF9zaGEyNTYiOiJlYmFjZTg0OWY3ZDU2ZjMyZWFmZWU2OTMzMTBiYTljZGExM2FiMTdmNTcxYjk1MGU0NzZhYWVlZTEzMzg5MDU1IiwiaW52b2NhdGlvbl9ub25jZSI6Im4xIiwia2V5X2Vwb2NoIjo1LCJrZXlfaWQiOiJrMSIsIm9yZGluYWwiOjAsInJlcXVlc3Rfc2hhMjU2IjoiNzVlOWY5NWQ5ZTIwMmM2NmZjZmZiN2Q0YzdhYTdjODhlM2RmYjgwYTUxZTJjZGRjNzUzOWE2ZTQ2MTE4OGY4OCIsInJvdXRpbmdfcG9saWN5X2hhc2giOiJhNTU5M2EzMjRiNzM4NjM4ZTg5OGEwNGNjMmVkYjMxNDk3M2IwYjUzMTI3NDJjYjM3MWRiN2RmNDNkOGU2OTFjIiwidiI6MSwid29ya3NwYWNlX2Vwb2NoIjozLCJ3b3Jrc3BhY2VfaWQiOiJ3MSJ9.UZ6cdQpbXezCi_nrJtcrYgMdjAzlespZ32raRPLfSAv0nTr-K5WVNehe5bZC0y_YVGZWN_kzepV_xnsz6V_PAQ",
+  "provider_wire_exact_bytes": "UTF-8 file bytes excluding the single final LF",
+  "provider_wire_file": "provider-wire.json",
+  "real_grant_jws": "eyJhbGciOiJFZERTQSIsImtpZCI6Imlzc3Vlci1maXh0dXJlIiwidHlwIjoic3BlY3VsYXRpb24tZWxpZ2liaWxpdHkrandzIn0.eyJhdWQiOiJmaXh0dXJlLXNwZWN1bGF0aW9uIiwiYm9vdF9pZCI6ImJvb3QtYSIsImVudmlyb25tZW50IjoidGVzdCIsImV4cCI6MTcwMDAwMDAzMCwiZ2VuZXJhdGlvbiI6NywiZ3JhbnRfaWQiOiJnMSIsImhpc3RvcnkiOnsiY2xlYW5fc2luY2UiOjE2OTk5OTkwOTksImNvdW50IjoyMCwibGFzdF9zdWNjZXNzX2F0IjoxNjk5OTk5OTk5LCJzZXF1ZW5jZSI6MjAsIndpbmRvd19zdGFydCI6MTY5OTk5OTQwMH0sImlhdCI6MTcwMDAwMDAwMCwiaW1hZ2VfcG9saWN5X3ZlcnNpb24iOjEsImlzcyI6ImZpeHR1cmUtcm91dGVyIiwia2V5X2Vwb2NoIjo1LCJrZXlfZXhwaXJlc19hdCI6MTcwMDAwMzYwMCwia2V5X2lkIjoiazEiLCJsb29rdXBfZGlnZXN0IjoiODUzYmFiNDQ4ZjdhODAyYmQ1ODEzNmZmYzI5NzI3MTg5YTc0ZWFhYzcyMDI1YTc2Y2RjOWIxMTA1OGE2ZTdkMCIsInBhaWRfaGVhZHJvb21fbWljcm8iOjUwMDAwMDAsInBlcl9yZXF1ZXN0X2NlaWxpbmdfbWljcm8iOjEwMDAwLCJwZXJtaXRzIjpbeyJiX21pY3JvIjo0NjA4LCJvcmRpbmFsIjowfSx7ImJfbWljcm8iOjQ2MDgsIm9yZGluYWwiOjF9XSwicGxhbmUiOiJnY3AtZml4dHVyZSIsInJlZ2lvbiI6InVzLWNlbnRyYWwxIiwicm91dGUiOnsiYWRhcHRlcl9jYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNhdGFsb2dfaGFzaCI6IjdmYzU4Mzk2YzJkY2YxNjg0ODQ5ODYyMjAxZjg0N2FkNzZhMmVmZTA0MTExYTMyMjRhMmJlN2FhMDJkMjNlNDIiLCJlbmRwb2ludF9pZCI6ImVwMSIsImlucHV0X2JvdW5kIjo4MTkyLCJpbnB1dF9ib3VuZF9tZXRob2QiOiJjZXJ0aWZpZWQtZml4dHVyZS1ib3VuZC12MSIsImlucHV0X3JhdGVfbWljcm9fcGVyX20iOjUwMDAwMCwibWF4aW11bV9yZXF1ZXN0X2ZlZXNfbWljcm8iOjAsIm91dHB1dF9saW1pdCI6NTEyLCJvdXRwdXRfcmF0ZV9taWNyb19wZXJfbSI6MTAwMDAwMCwicHJpY2VfZXhwaXJlc19hdCI6MTcwMDAwMDEyMCwicHJpdmFjeSI6ImRlZmF1bHQiLCJwcm92aWRlciI6ImZpeHR1cmUtcHJvdmlkZXIiLCJyZWdpb24iOiJ1cy1jZW50cmFsMSIsInJvdXRpbmdfcG9saWN5X2hhc2giOiJhNTU5M2EzMjRiNzM4NjM4ZTg5OGEwNGNjMmVkYjMxNDk3M2IwYjUzMTI3NDJjYjM3MWRiN2RmNDNkOGU2OTFjIiwic3RhZ2VfZCI6dHJ1ZSwidXBzdHJlYW1fbW9kZWwiOiJmaXh0dXJlLXRleHQifSwic3RhYmxlX3Nsb3RfaWQiOiJzbG90LWEiLCJzdGFydF9iZWZvcmUiOjE3MDAwMDAwMjgsInRpZXIiOjIsInRydXN0X2ZyZXNoX3VudGlsIjoxNzAwMDAwMTIwLCJ2IjoxLCJ3b3Jrc3BhY2VfZXBvY2giOjMsIndvcmtzcGFjZV9pZCI6IncxIn0.zurKRV9KVHRszJpqHzq1nbL7LC1XoDuXmqbyHygB83eRbXyLbuEiNJOgkXBWqGAnFJfqnwF6uInH28BmMJQhCA",
+  "shadow_grant_jws": "eyJhbGciOiJFZERTQSIsImtpZCI6InNoYWRvdy1maXh0dXJlIiwidHlwIjoic3BlY3VsYXRpb24tZWxpZ2liaWxpdHktc2hhZG93K2p3cyJ9.eyJhdWQiOiJmaXh0dXJlLXNwZWN1bGF0aW9uIiwiYm9vdF9pZCI6ImJvb3QtYSIsImVudmlyb25tZW50IjoidGVzdCIsImV4cCI6MTcwMDAwMDAzMCwiZ2VuZXJhdGlvbiI6NywiZ3JhbnRfaWQiOiJnMSIsImhpc3RvcnkiOnsiY2xlYW5fc2luY2UiOjE2OTk5OTkwOTksImNvdW50IjoyMCwibGFzdF9zdWNjZXNzX2F0IjoxNjk5OTk5OTk5LCJzZXF1ZW5jZSI6MjAsIndpbmRvd19zdGFydCI6MTY5OTk5OTQwMH0sImlhdCI6MTcwMDAwMDAwMCwiaW1hZ2VfcG9saWN5X3ZlcnNpb24iOjEsImlzcyI6ImZpeHR1cmUtcm91dGVyIiwia2V5X2Vwb2NoIjo1LCJrZXlfZXhwaXJlc19hdCI6MTcwMDAwMzYwMCwia2V5X2lkIjoiazEiLCJsb29rdXBfZGlnZXN0IjoiODUzYmFiNDQ4ZjdhODAyYmQ1ODEzNmZmYzI5NzI3MTg5YTc0ZWFhYzcyMDI1YTc2Y2RjOWIxMTA1OGE2ZTdkMCIsInBhaWRfaGVhZHJvb21fbWljcm8iOjUwMDAwMDAsInBlcl9yZXF1ZXN0X2NlaWxpbmdfbWljcm8iOjEwMDAwLCJwZXJtaXRzIjpbeyJiX21pY3JvIjo0NjA4LCJvcmRpbmFsIjowfSx7ImJfbWljcm8iOjQ2MDgsIm9yZGluYWwiOjF9XSwicGxhbmUiOiJnY3AtZml4dHVyZSIsInJlZ2lvbiI6InVzLWNlbnRyYWwxIiwicm91dGUiOnsiYWRhcHRlcl9jYXBhYmlsaXR5X3ZlcnNpb24iOjEsImNhdGFsb2dfaGFzaCI6IjdmYzU4Mzk2YzJkY2YxNjg0ODQ5ODYyMjAxZjg0N2FkNzZhMmVmZTA0MTExYTMyMjRhMmJlN2FhMDJkMjNlNDIiLCJlbmRwb2ludF9pZCI6ImVwMSIsImlucHV0X2JvdW5kIjo4MTkyLCJpbnB1dF9ib3VuZF9tZXRob2QiOiJjZXJ0aWZpZWQtZml4dHVyZS1ib3VuZC12MSIsImlucHV0X3JhdGVfbWljcm9fcGVyX20iOjUwMDAwMCwibWF4aW11bV9yZXF1ZXN0X2ZlZXNfbWljcm8iOjAsIm91dHB1dF9saW1pdCI6NTEyLCJvdXRwdXRfcmF0ZV9taWNyb19wZXJfbSI6MTAwMDAwMCwicHJpY2VfZXhwaXJlc19hdCI6MTcwMDAwMDEyMCwicHJpdmFjeSI6ImRlZmF1bHQiLCJwcm92aWRlciI6ImZpeHR1cmUtcHJvdmlkZXIiLCJyZWdpb24iOiJ1cy1jZW50cmFsMSIsInJvdXRpbmdfcG9saWN5X2hhc2giOiJhNTU5M2EzMjRiNzM4NjM4ZTg5OGEwNGNjMmVkYjMxNDk3M2IwYjUzMTI3NDJjYjM3MWRiN2RmNDNkOGU2OTFjIiwic3RhZ2VfZCI6dHJ1ZSwidXBzdHJlYW1fbW9kZWwiOiJmaXh0dXJlLXRleHQifSwic3RhYmxlX3Nsb3RfaWQiOiJzbG90LWEiLCJzdGFydF9iZWZvcmUiOjE3MDAwMDAwMjgsInRpZXIiOjIsInRydXN0X2ZyZXNoX3VudGlsIjoxNzAwMDAwMTIwLCJ2IjoxLCJ3b3Jrc3BhY2VfZXBvY2giOjMsIndvcmtzcGFjZV9pZCI6IncxIn0.7IQttXcScRAdHjqoPQHoxFfsMOuTi9bjJFaqv5PMz0bjsobXpsQSyfxuwdLETOkt3c-CLtHaBjMFTCjf-KmZCA",
+  "speculation_accepted": {
+    "authorization_id": "a1",
+    "descriptor_sha256": "846aec09fd7b9e7e581a6b017e451a2e33ac941d7f4f3cd23f211beacaf5a8e5",
+    "endpoint_id": "ep1",
+    "invocation_nonce": "n1",
+    "routing_policy_hash": "a5593a324b738638e898a04cc2edb314973b0b5312742cb371db7df43d8e691c",
+    "v": 1
+  },
+  "trusted_test_keys": [
+    {
+      "aud": "fixture-speculation",
+      "environment": "test",
+      "iss": "fixture-router",
+      "kid": "issuer-fixture",
+      "plane": "gcp-fixture",
+      "public_key_b64url": "zRSzf5VulTGU_3-3Oz2B3MVh1hp1OAlLfD4aZD7l86o",
+      "purpose": "grant"
+    },
+    {
+      "aud": "fixture-speculation",
+      "environment": "test",
+      "iss": "fixture-router",
+      "kid": "shadow-fixture",
+      "plane": "gcp-fixture",
+      "public_key_b64url": "Kay64UG8yvCyLhqU000LxzYeUm0L_hLIl5S8kyKWbdc",
+      "purpose": "shadow-grant"
+    },
+    {
+      "kid": "boot-a",
+      "public_key_b64url": "JUO5L_EJVRFHatyDadtt3JM2ZaEZeN2hQE7hBmypVZ0",
+      "purpose": "descriptor"
+    },
+    {
+      "kid": "boot-other",
+      "public_key_b64url": "F0VTtFbd38aQjsqxwQH-arIeK6oGF3lbfUOmNIKZP9U",
+      "purpose": "descriptor"
+    }
+  ]
+}
