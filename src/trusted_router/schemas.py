@@ -284,23 +284,6 @@ class CreditTransferRequest(_Strict):
         return dollars_to_microdollars(self.amount)
 
 
-class SpendLeaseEcho(_Strict):
-    """Retired spend-lease wire field, kept only for idempotency fingerprints.
-
-    Deployed enclaves still echo it on every authorize (the pilot's shadow mode
-    stays on until the enclave fleet drops it), and it is part of the stored
-    idempotency fingerprint of every authorization written before the pilot's
-    removal. It must keep serializing exactly as before; nothing reads it.
-    """
-
-    lease_id: str | None = Field(default=None, max_length=64)
-    state: str = Field(min_length=1, max_length=64)
-    remaining_micro: int | None = Field(default=None, ge=0)
-    enclave_estimate_micro: int | None = Field(default=None, ge=0)
-    catalog_version: str | None = Field(default=None, max_length=128)
-    would_admit: bool | None = None
-
-
 class SpendLeaseBootRegistrationRequest(_Strict):
     kid: str = Field(min_length=1, max_length=128)
     receipt_public_key: dict[str, Any]
@@ -388,8 +371,6 @@ class GatewayAuthorizeRequest(_Lenient):
     # atomic hold as their planner model call. This is internal-only and is
     # accepted only for enclave-owned hosted tools and asynchronous media.
     additional_cost_reservation_microdollars: int = Field(default=0, ge=0, le=100_000_000)
-    # Retired; see SpendLeaseEcho. Never read, fingerprinted for compatibility.
-    spend_lease_echo: SpendLeaseEcho | None = None
     invocation_nonce: str | None = Field(default=None, max_length=64)
 
     @model_validator(mode="after")
