@@ -8,6 +8,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/_lib.sh
 source "${SCRIPT_DIR}/_lib.sh"
+# shellcheck source=scripts/deploy/_retired_soak.sh
+source "${SCRIPT_DIR}/_retired_soak.sh"
 
 [ -n "${IMAGE:-}" ] || {
   echo "ERROR: IMAGE is required" >&2
@@ -104,5 +106,10 @@ for entry in "${jobs[@]}"; do
     exit 1
   fi
 done
+
+# The deploy takes this path for every release until the split billing
+# service exists, so the retired soak schedule and job are removed here too;
+# they are pilot residue, not a refreshed job.
+remove_retired_spend_lease_soak
 
 log "synthetic image refresh complete; identities, networks, and secrets unchanged"
