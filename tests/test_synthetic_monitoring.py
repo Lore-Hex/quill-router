@@ -3808,7 +3808,10 @@ async def test_rotation_first_token_and_completion_deadlines_are_independent(
     from trusted_router.provider_reliability import ModelDeadlines
     from trusted_router.synthetic import probes as probes_module
 
-    now = 0.0  # virtual seconds since the request started
+    # Virtual loop time. It starts away from zero so an absolute deadline
+    # (start + 40) cannot pass for a bare duration (40).
+    start = 1_000.0
+    now = start
     extensions: list[float] = []
 
     class VirtualTimeout:
@@ -3859,7 +3862,7 @@ async def test_rotation_first_token_and_completion_deadlines_are_independent(
         async def __aiter__(self) -> AsyncIterator[bytes]:
             nonlocal now
             for elapsed, kind in events:
-                now = float(elapsed)
+                now = start + elapsed
                 if now > deadlines[-1].deadline:
                     raise TimeoutError("virtual stream deadline exceeded")
                 yield chunks[kind]
@@ -3885,7 +3888,7 @@ async def test_rotation_first_token_and_completion_deadlines_are_independent(
     assert len(extensions) == expected_extensions
     if extensions:
         # The absolute completion deadline: 40 virtual seconds after the request.
-        assert extensions[0] == 40
+        assert extensions[0] == start + 40
     if expected_status == "error":
         assert sample.error_type == ("provider_error" if events[-1][1] == "error" else "TimeoutError")
     assert closed
