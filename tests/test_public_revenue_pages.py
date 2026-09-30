@@ -737,6 +737,7 @@ def test_phala_pages_do_not_claim_verified_provider_e2ee(
     assert "provider E2EE not verified" in detail.text
 
 
+@pytest.mark.catalog_as_built
 def test_public_meta_model_detail_renders_orchestration_components(
     client: TestClient, monkeypatch: MonkeyPatch
 ) -> None:

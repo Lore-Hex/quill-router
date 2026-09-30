@@ -39,6 +39,7 @@ def test_documented_ladder_survives_catalog_filtering() -> None:
     assert len(auto_candidate_models(None)) >= 3
 
 
+@pytest.mark.catalog_as_built
 def test_auto_leads_with_glm53_flash_then_glm53() -> None:
     expected = ["z-ai/glm-5.3-flash", "z-ai/glm-5.3"]
     assert DEFAULT_AUTO_MODEL_ORDER[:2] == expected
