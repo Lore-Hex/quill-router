@@ -81,3 +81,12 @@ The designer clarified that the authorized DeepSeek capture was intended to powe
 The change is frontend presentation of a dated capture, not a live feed or new backend. Full release gates remain deferred under the existing direction; this is not a production-release claim.
 
 Validation: 8 focused homepage tests passed. The captured answer was verified in the rendered localhost and ngrok pages. Desktop 1440×900 and phone widths 390px/320px had no horizontal overflow, including expanded receipt details; Enter toggles the native disclosure with a visible focus outline. The request section has no animation, preserves reduced-motion styling and uses the existing high-contrast palette. Full repository gates remain deferred. The raw evidence directory remains local and uncommitted.
+
+
+## Request panel restored to the marketing mock — September 29, latest direction
+
+Compared the supplied screenshot and original `Downloads/trustedrouter-homepage-mock/index.html` / `styles.css` (route panel rules) with the generic cards from the prior pass. The prior pass had lost the enclosing panel, compact typographic hierarchy, connected node structure, provider emphasis and boxed response. Restored those visual elements with square borders, static dashed connectors, a monospace model header/metadata, a selected provider outline and a right-aligned cost inside the response node. The answer now belongs to the response, separate from the provider. Shared homepage fonts and readable supporting type remain.
+
+The original mock shows three provider states. The real capture only supports one served DeepSeek route, so this panel retains one selected provider and does not invent standby/rejected routes, confidential compute, cloud failover, SDK use or attestation age. Actual question, answer, response code, usage, cost and verified receipt summary are retained. A date labels the captured evidence; receipt details remain collapsed at all widths.
+
+Validation: localhost and ngrok both show the new panel. Checked 1440px desktop and 390px/320px phones, keyboard Enter/focus and expanded details without horizontal overflow. Muted metadata contrast is at least 8.96:1; proof badge text is 11.55:1. The connector is static and introduces no motion. Eight focused homepage tests and whitespace checks passed; full release gates remain deferred, not claimed passing. Screenshot: `qa/captured-request-panel-desktop.png`. Raw evidence is preserved locally and remains uncommitted. No dependency changes, production changes, push or deployment.

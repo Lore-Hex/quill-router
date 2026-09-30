@@ -2,6 +2,10 @@
 
 Compared the current application to `nyte-design-preview/dist/trustedrouter/index.html`, the original Downloads `trustedrouter-homepage-mock/index.html` and `app.js`, and the marketing handoff SPEC, DECISIONS, OPEN_QUESTIONS and supplied top/footer screenshots. Newer user-approved art direction supersedes the old mock's typography and composition. This audit is about UI presence and implementation; it does not revalidate every marketing claim.
 
+## Latest request panel correction
+
+The latest README entry supersedes the request-path row below. A real DeepSeek response and verified receipt now populate a panel that restores the marketing mock’s enclosure, square nodes, dashed connectors, selected-provider outline and boxed response. Only the single observed provider is shown; synthetic standby/skipped providers remain excluded.
+
 ## Latest approved simplification
 
 The September 29 copy-led pass in README.md supersedes the visual-preservation comparison below: the four verification graphics, footer status pill/taglines, catalog timestamp and duplicate catalog CTA were intentionally removed at the designer’s request. Value propositions, source checklist and evidence links remain. Pricing now presents the connected range without the ratio badge or budget code sample. Supporting type is larger. Seven mobile disclosures remain.

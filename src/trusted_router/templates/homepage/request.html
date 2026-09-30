@@ -5,30 +5,40 @@
    <p class="request-lede">Choose a model and set your privacy requirements. TrustedRouter selects a matching provider—or stops if none qualifies.</p>
    <a class="request-guide" href="/docs">Explore routing controls →</a>
   </div>
-  <div class="request-example">
-   <p class="request-capture-label">A real request <span>· <time datetime="2026-09-30T00:24:38Z">Sep 30, 2026 · UTC</time></span></p>
-   <ol class="request-path" aria-label="Captured request through TrustedRouter to DeepSeek Flash">
-    <li><h3>Your app</h3><p>What is the capital of France?</p></li>
-    <li><h3>TrustedRouter</h3><p>Routed to DeepSeek. Response bound to a signed receipt.</p></li>
-    <li><h3>DeepSeek Flash</h3><p class="request-answer">The capital of France is <strong>Paris</strong>.</p></li>
+  <figure class="request-receipt" aria-label="Captured request through TrustedRouter to DeepSeek Flash">
+   <figcaption class="receipt-header"><span>One request</span><span>deepseek/deepseek-flash</span></figcaption>
+   <ol class="receipt-path">
+    <li class="receipt-node">
+     <div class="receipt-node-heading"><h3>Your app</h3><span class="receipt-tag">Chat API</span></div>
+     <p class="receipt-prompt">What is the capital of France?</p>
+    </li>
+    <li class="receipt-node">
+     <div class="receipt-node-heading"><h3>TrustedRouter gateway</h3><span class="receipt-tag receipt-verified">✓ Attested</span></div>
+     <p class="receipt-meta">Build attestation verified · signed receipt</p>
+    </li>
+    <li class="receipt-node receipt-provider">
+     <div class="receipt-node-heading"><h3>DeepSeek</h3><span class="receipt-tag receipt-verified">Served</span></div>
+     <p class="receipt-meta">TLS connection · no confidential provider compute</p>
+    </li>
+    <li class="receipt-node receipt-response">
+     <div class="receipt-node-heading"><h3>Response · 200</h3><span class="receipt-cost">$0.000022</span></div>
+     <p class="receipt-answer">The capital of France is <strong>Paris</strong>.</p>
+     <p class="receipt-meta">37 input · 22 output tokens</p>
+    </li>
    </ol>
-   <div class="request-result" aria-label="Captured response usage">
-    <span>Response · 200 <span class="request-usage">37 input · 22 output tokens</span></span>
-    <span class="request-cost">$0.000022</span>
-   </div>
    <details class="request-technical" id="request-example">
-    <summary>View receipt details<span class="disclosure-indicator" aria-hidden="true">+</span></summary>
+    <summary><span>Receipt verified <span class="receipt-details-label">· View details</span></span><span class="disclosure-indicator" aria-hidden="true">+</span></summary>
     <div class="request-technical-body">
-     <p>This captured response passed verification:</p>
      <ul class="request-proof-checks">
       <li>Receipt signature and signing key matched the attested gateway.</li>
       <li>Request and response hashes matched the captured content.</li>
       <li>The receipt identified DeepSeek as the serving provider.</li>
      </ul>
-     <p>This route used a TLS connection to DeepSeek, not confidential provider compute. Token counts and cost are those reported for this request; this is a dated example, not a live feed.</p>
+     <p>This route used a TLS connection to DeepSeek, not confidential provider compute. Token counts and cost are those reported for this request.</p>
      <a href="/docs/receipts">How receipt verification works →</a>
     </div>
    </details>
-  </div>
+   <p class="receipt-capture">Captured <time datetime="2026-09-30T00:24:38Z">Sep 30, 2026 · 00:24 UTC</time>. Not a live feed.</p>
+  </figure>
  </div>
 </section>
