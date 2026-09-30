@@ -90,3 +90,10 @@ Compared the supplied screenshot and original `Downloads/trustedrouter-homepage-
 The original mock shows three provider states. The real capture only supports one served DeepSeek route, so this panel retains one selected provider and does not invent standby/rejected routes, confidential compute, cloud failover, SDK use or attestation age. Actual question, answer, response code, usage, cost and verified receipt summary are retained. A date labels the captured evidence; receipt details remain collapsed at all widths.
 
 Validation: localhost and ngrok both show the new panel. Checked 1440px desktop and 390px/320px phones, keyboard Enter/focus and expanded details without horizontal overflow. Muted metadata contrast is at least 8.96:1; proof badge text is 11.55:1. The connector is static and introduces no motion. Eight focused homepage tests and whitespace checks passed; full release gates remain deferred, not claimed passing. Screenshot: `qa/captured-request-panel-desktop.png`. Raw evidence is preserved locally and remains uncommitted. No dependency changes, production changes, push or deployment.
+
+
+## Connector motion and cleaner panel — September 29, latest direction
+
+Matched the original mock’s 2px dotted connectors, 4px dash/gap spacing and one-second linear flow. The final response connector reverses direction like the mock. Motion is enabled only with `prefers-reduced-motion: no-preference`; reduced motion keeps the lines static. Removed the visible capture timestamp/date and “Not a live feed” footer at the designer’s request. Receipt details identify this as a captured request; the original evidence files retain the exact timestamp.
+
+Verified progressing computed animation positions, one-second duration and reversed final connector on localhost; verified updated assets on ngrok. Desktop and 390px phone checks found no horizontal overflow. Reduced-motion CSS was inspected; OS preferences were not changed. Whitespace checks passed. This CSS/copy change adds no backend behavior; full release gates remain deferred.
