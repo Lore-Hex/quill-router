@@ -24,10 +24,6 @@ source "${SCRIPT_DIR}/_lib.sh"
 source "${SCRIPT_DIR}/deploy_mutex.sh"
 # shellcheck source=scripts/deploy/_cloud_run_revision_probe.sh
 source "${SCRIPT_DIR}/_cloud_run_revision_probe.sh"
-# shellcheck source=scripts/deploy/regional_quota_rollout.sh
-source "${SCRIPT_DIR}/regional_quota_rollout.sh"
-# shellcheck source=scripts/deploy/ledger_retirement.sh
-source "${SCRIPT_DIR}/ledger_retirement.sh"
 
 WARM_PROBE_TAG="staged-probe"
 WARM_PROBE_REGIONS=()
@@ -70,13 +66,6 @@ trap 'exit 143' TERM
 if [ -z "${TR_DEPLOY_MUTEX_OPERATION:-}" ]; then
   deploy_mutex_acquire
 fi
-
-# Every revision this script creates runs without the regional quota and
-# spend-lease ledgers (retired 2026-09-27). Whatever the entry point - the
-# release workflow, deploy-gcp.sh, break-glass, an analytics cutover - prove
-# first that nothing can still need them. Read-only; a recorded retirement
-# waives only the reconciler evidence, never the fleet or Spanner checks.
-ledger_retirement_gate
 
 TRUST_SOURCE_COMMIT=""
 TRUST_IMAGE_REFERENCE=""
@@ -311,113 +300,36 @@ if [ "$GENERATION_RECORDS_ENABLED" = "true" ]; then
   fi
 fi
 
-# Regional quota capability and traffic issuance are separate switches. Resolve
-# preserved values from the one revision receiving 100% of primary traffic,
-# never the latest candidate or service template: both still point at a rejected
-# revision after rollback. Only an exact missing-service response represents a
-# fresh environment; every other control-plane read error aborts the rollout.
-REGIONAL_QUOTA_PRIMARY_FRESH=false
-REGIONAL_QUOTA_PRIMARY_REVISION_JSON=""
-if REGIONAL_QUOTA_PRIMARY_REVISION_JSON="$(
-  regional_quota_active_revision_json "$TR_PRIMARY_REGION" true
-)"; then
+# Sticky operator values are preserved from the one revision receiving 100% of
+# primary traffic, never the latest candidate or service template: both still
+# point at a rejected revision after rollback. Only an exact missing-service
+# response represents a fresh environment; every other control-plane read error
+# aborts the rollout.
+PRIMARY_REVISION_FRESH=false
+PRIMARY_REVISION_JSON=""
+if PRIMARY_REVISION_JSON="$(active_revision_json "$TR_PRIMARY_REGION" true)"; then
   :
 else
-  regional_quota_primary_status=$?
-  if [ "$regional_quota_primary_status" -eq 3 ]; then
-    REGIONAL_QUOTA_PRIMARY_FRESH=true
+  primary_revision_status=$?
+  if [ "$primary_revision_status" -eq 3 ]; then
+    PRIMARY_REVISION_FRESH=true
   else
-    exit "$regional_quota_primary_status"
+    exit "$primary_revision_status"
   fi
 fi
 
-read_primary_regional_quota_env() {
+read_primary_revision_env() {
   local name="$1"
   local default_value="${2:-}"
-  if [ "$REGIONAL_QUOTA_PRIMARY_FRESH" = "true" ]; then
+  if [ "$PRIMARY_REVISION_FRESH" = "true" ]; then
     printf '%s\n' "$default_value"
     return 0
   fi
-  regional_quota_revision_env \
-    "$REGIONAL_QUOTA_PRIMARY_REVISION_JSON" \
-    "$name" \
-    "$default_value"
+  revision_env "$PRIMARY_REVISION_JSON" "$name" "$default_value"
 }
 
-# Lease capability is retired (2026-09-27, step 2 of the Bigtable retirement):
-# the regional escrow ledger no longer exists for a serving revision, so the
-# capability marker is a source pin, never live-primary state. Turning it on
-# would make the store open a Bigtable ledger client again, which is exactly
-# what this change removes, so an explicit request is refused.
-REGIONAL_QUOTA_LEASES_ENABLED=false
-if [ "${TR_REGIONAL_QUOTA_LEASES_ENABLED:-false}" != "false" ]; then
-  log "refusing rollout: TR_REGIONAL_QUOTA_LEASES_ENABLED=${TR_REGIONAL_QUOTA_LEASES_ENABLED} is retired; the regional escrow ledger is gone"
-  exit 1
-fi
-
-# workflow_dispatch passes one of preserve/false/true through unchanged. The
-# deploy shell, not GitHub's expression coercion, turns that raw operator intent
-# into the boolean written on the Cloud Run revision.
-# Retired 2026-09-27: the Bigtable ledger is being removed (Joseph's call:
-# switch the pilot off rather than port the ledger). The pin is false, and the
-# retirement override below forces the marker off whatever the dispatch input,
-# live marker, or stop latch say. Capability is pinned off above as well, and
-# ledger_retirement_gate proves the escrow is drained before any revision is
-# created. Re-arming is a source change through review
-# (docs/design/regional-quota-leases.md).
-REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED=false
-LIVE_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED="$(
-  read_primary_regional_quota_env \
-    "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" \
-    "false"
-)"
-REGIONAL_QUOTA_LEASE_ISSUANCE_CONTROL="${TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED:-$REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED}"
-REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED="$(
-  regional_quota_normalize_issuance_control \
-    "$REGIONAL_QUOTA_LEASE_ISSUANCE_CONTROL" \
-    "$LIVE_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED"
-)"
-REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED="$(
-  regional_quota_apply_stop_latch "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED"
-)"
-# Retirement override: no dispatch input (including an explicit true), no
-# live ON marker preserved by a dispatch, and no `allow` latch can mint a new
-# regional hold again. Say so instead of silently rendering false.
-case "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" in
-  true)
-    log "regional quota issuance is retired (Bigtable ledger retirement); forcing the marker off (requested ${REGIONAL_QUOTA_LEASE_ISSUANCE_CONTROL})"
-    REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED=false
-    ;;
-esac
-if [ "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" = "true" ] &&
-   [ "$REGIONAL_QUOTA_LEASES_ENABLED" != "true" ]; then
-  log "refusing rollout: regional quota issuance requires lease capability"
-  exit 1
-fi
-
-# The ledger settings (cohort, shards, TTL, tables, app profiles, cluster maps)
-# are no longer rendered: with capability off the store must not open a
-# Bigtable ledger client, and an app-profile map alone would make it do so.
-
-# Pin the image to its digest before any revision is created. The accounting
-# protocol floor that used to follow here guarded capability-on fleets; with
-# capability retired no revision settles regional holds any more.
-regional_quota_resolve_image
-# Issuance is retired above, so this fleet preflight is unreachable until the
-# machinery is deleted with the ledger.
-if [ "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" = "true" ]; then
-  regional_quota_require_image_protocol
-  regional_quota_preflight_issuance_fleet
-  regional_quota_preflight_reconciler
-fi
-
-# Spend-lease binding is retired with issuance (2026-09-27): config.py refuses
-# to boot a revision that binds without issuing, so an explicit request is
-# refused here rather than rendered into an unbootable revision.
-if [ "${TR_SPEND_LEASE_BINDING_ENABLED:-false}" != "false" ]; then
-  log "refusing rollout: TR_SPEND_LEASE_BINDING_ENABLED=${TR_SPEND_LEASE_BINDING_ENABLED} is retired; spend-lease issuance is pinned off"
-  exit 1
-fi
+# Pin the image to its digest before any revision is created.
+resolve_image_digest
 
 # Prefer the private three-replica ClickHouse load balancer once provisioned.
 # The direct node-1 address remains only as a migration fallback for projects
@@ -436,7 +348,7 @@ fi
 # Preserve the account pin from the serving revision across ordinary releases.
 # The explicit trust setup rollout resolves it through the same helper as the jobs.
 if [ -z "${TR_TRUST_STRIPE_ACCOUNT_ID}" ]; then
-  TR_TRUST_STRIPE_ACCOUNT_ID="$(read_primary_regional_quota_env TR_TRUST_STRIPE_ACCOUNT_ID "")"
+  TR_TRUST_STRIPE_ACCOUNT_ID="$(read_primary_revision_env TR_TRUST_STRIPE_ACCOUNT_ID "")"
 fi
 if [ "${TR_TRUST_JOBS_DEPLOY}" = "1" ]; then
   require_trust_stripe_account_id
@@ -453,7 +365,6 @@ ENV_VARS=(
   # split service's edge identity and independent capacity policy.
   "TR_RATE_LIMIT_ENABLED=false"
   "TR_SETTLE_PER_KEY_INFLIGHT_LIMIT=16"
-  "REGIONAL_QUOTA_ACCOUNTING_PROTOCOL=${IMAGE_ACCOUNTING_PROTOCOL}"
   "TR_RELEASE=${TR_DEPLOY_RELEASE_ID:-$(git rev-parse --short HEAD 2>/dev/null || echo local)}"
   # Request-based Cloud Run CPU can pause background coroutines. The scheduled
   # synthetic job invokes /internal/synthetic/remediate instead.
@@ -627,33 +538,6 @@ ENV_VARS=(
   # operator overrides it. This prevents routine rollouts from reopening the
   # unbounded generic write path.
   "TR_REQUEST_RECORD_WRITE_MODE=${REQUEST_RECORD_WRITE_MODE}"
-  # Regional escrow is retired (2026-09-27). Both markers are rendered false
-  # and no ledger table, app-profile map, or cluster map is rendered at all:
-  # the store opens a Bigtable ledger client whenever a profile map is set,
-  # capability or not, so their absence is what keeps the two ledger clients
-  # out of the process.
-  "TR_REGIONAL_QUOTA_LEASES_ENABLED=${REGIONAL_QUOTA_LEASES_ENABLED}"
-  "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED=${REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED}"
-  # 2026-08-30 pilot: Joseph's own Personal Workspace (first-party, his account,
-  # at his direction). The previous pilot, TrustedRouter Synthetic Monitoring
-  # (d385c399-b245-4147-a528-0a4f6f170c71), was structurally ineligible because
-  # it is the regional-quota pilot workspace and Stage A excludes regional-lease
-  # authorizations by design: no_lease_reason=regional_lease on 190 of 213 pilot
-  # events. Shadow grants are authoritative=false and escrow nothing. Revert by
-  # removing these three pins and redeploying.
-  # Deliberately non-sticky: pilot state is source-controlled; the sticky idiom
-  # is for operator-set values, and a source default cannot override an existing
-  # deployed marker.
-  # OFF since 2026-09-27: the spend-lease Bigtable ledger is being retired.
-  # The one pilot workspace minted a handful of leases a week (about a dozen
-  # non-empty reconciler passes in the seven days before this flip). Binding
-  # requires issuance (config.py), so it is off too; the guard above refuses an
-  # explicit request.
-  "TR_SPEND_LEASE_ISSUANCE_ENABLED=false"
-  "TR_SPEND_LEASE_BINDING_ENABLED=false"
-  # Stage C ships inert. This literal source-controlled default is the router
-  # kill switch; verification stays deployed so in-flight receipts fail closed.
-  "TR_SPEND_LEASE_ADMISSION_ACCEPT=false"
   "TR_STAGE_D_HEARTBEAT_ENABLED=true"
   # Re-enabled 2026-09-06 after decision 77's four preconditions landed:
   # signed accepted-digest policy with a durable Spanner watermark (plane gcp,
@@ -672,41 +556,16 @@ ENV_VARS=(
   # Rollback: restore the two pilot IDs below and redeploy:
   # 45819281-0ce9-4811-a0cd-c660ab3a116d,91d7810e-93b2-4c37-b1bd-ba9227585416
   "TR_STAGE_D_PILOT_WORKSPACE_IDS="
-  # Decisions 75-76. The first attempt at this flip (#1131) was reverted the same
-  # day: the arm gate evaluated the whole owner inventory inside the authorize
-  # transaction, hit the RPC bound and returned 503 at 20.02s. #1133 moved that
-  # fan-out into the tier job behind a persisted verdict, so admission now costs
-  # a handful of point reads once per 15s. Do not re-arm without it.
-  #
-  # Conditions verified against production immediately before this flip:
-  # typed Spanner settlement (TR_STORAGE_BACKEND=spanner-bigtable at the
-  # time, TR_REQUEST_RECORD_WRITE_MODE=typed) on the serving revision in all four
-  # regions; stripe and x402 markers complete, zero unmatched, zero semantic
-  # mismatches, 900 s consistency delay; the Stripe account pin reaching the
-  # router; the pilot workspace tier 2, unlatched, on all 16 shards with no null
-  # reconciliation; and the owner-budget verdict written by the tier job from
-  # this same image, scan_complete with no violating owners and a maximum
-  # fan-out of 420 against the 20,000 budget.
-  #
-  # NEW RUNTIME DEPENDENCY: the gate reads what the tier job persists. If that
-  # job stops running, the verdict goes stale after
-  # TR_TRUST_RECONCILE_MAX_AGE_SECONDS and admission fails closed, refusing
-  # leases rather than issuing them. TR_TRUST_JOBS_DEPLOY=1 keeps the job image
-  # in step with main so it cannot drift.
-  #
-  # Settings.spend_lease_trust_eligibility_enabled stays False so only a deployed
-  # router is armed. Rollback is the reverse one-line edit to false.
+  # Arms the authorize-time billing-pause gate (trust_eligibility
+  # .billing_paused_tx) on both the typed and legacy paths. The name predates
+  # the spend-lease pilot's removal (2026-09); Settings keeps it False so only
+  # a deployed router is armed. Rollback is the reverse one-line edit.
   "TR_SPEND_LEASE_TRUST_ELIGIBILITY_ENABLED=true"
   "TR_TRUST_STRIPE_ACCOUNT_ID=${TR_TRUST_STRIPE_ACCOUNT_ID}"
   "TR_TRUST_QUALIFYING_PROVIDERS=stripe,x402"
   "TR_TRUST_RECONCILE_INTERVAL_SECONDS=900"
   "TR_TRUST_RECONCILE_MAX_AGE_SECONDS=3600"
-  "TR_SPEND_LEASE_TIER1_CAP_MICRODOLLARS=5000000"
-  "TR_SPEND_LEASE_TIER2_CAP_MICRODOLLARS=25000000"
-  "TR_SPEND_LEASE_TIER3_CAP_MICRODOLLARS=100000000"
   "TR_HEARTBEAT_GRACE_SECONDS=${TR_HEARTBEAT_GRACE_SECONDS:-300}"
-  "TR_SPEND_LEASE_PILOT_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d"
-  "TR_SPEND_LEASE_SIGNING_SECRET_NAME=trustedrouter-spend-lease-signing-seed"
   "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS="
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"

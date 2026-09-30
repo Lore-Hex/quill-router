@@ -29,7 +29,6 @@ def test_stage_d_probe_provisioner_is_dry_run_and_documents_isolation(
     assert module.main([], store=_MissingStore()) == 0
     output = capsys.readouterr().out
     assert '"heartbeat_capable_local_typed_key": true' in output
-    assert '"regional_quota_pilot_membership_required": false' in output
     assert '"secret_name": "trustedrouter-stage-d-probe-api-key"' in output
     assert "DRY-RUN: no production state changed" in output
 

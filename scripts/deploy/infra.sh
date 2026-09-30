@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 1: enable GCP APIs and provision Spanner + Bigtable.
+# Phase 1: enable GCP APIs and provision Spanner.
 # Idempotent — skip-if-exists for every step. Safe to re-run.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,7 +15,6 @@ gc services enable \
   cloudkms.googleapis.com \
   datamanager.googleapis.com \
   spanner.googleapis.com \
-  bigtableadmin.googleapis.com \
   storage.googleapis.com \
   cloudbuild.googleapis.com
 

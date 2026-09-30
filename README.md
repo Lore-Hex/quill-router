@@ -261,9 +261,8 @@ unless it receives an SSE data event, a terminal chunk, and `[DONE]`. The
 recurring Stage D job adds `--expect-stage-d`, then looks up that request's
 typed authorization and requires a bound `stage_d_boot_kid` plus
 `heartbeat_seq > 0`. Its workspace is intentionally separate: provision it
-with `scripts/provision_stage_d_probe_workspace.py`, add its id to
-`TR_STAGE_D_PILOT_WORKSPACE_IDS`, and keep it out of
-`TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS`. The key must be a
+with `scripts/provision_stage_d_probe_workspace.py` and add its id to
+`TR_STAGE_D_PILOT_WORKSPACE_IDS`. The key must be a
 heartbeat-capable local-typed key; the deploy reads it from
 `trustedrouter-stage-d-probe-api-key` and uses `trustedrouter/cheap` so it is
 independent of the ordinary monitor-only key. The normal rollout leaves Stage D
@@ -441,11 +440,10 @@ there, and it has no entry in the warm-region or min-instances defaults.
 - Put `api.trustedrouter.com` behind latency/geo DNS or TCP passthrough that does
   not terminate TLS. Cloudflare orange-cloud proxying remains incompatible
   with the prompt-path trust claim.
-- Authorize through regional quota leases, not a synchronous global Spanner
-  counter mutation for every request. New workspaces and keys start with 16
-  exact billing shards; eligible allowlisted traffic can additionally use 16
-  independently fenced regional escrow rows whose combined grant is already
-  reserved in Spanner.
+- Authorize through sharded billing rows, not a single global Spanner counter
+  mutation for every request. New workspaces and keys start with 16 exact
+  billing shards. Regional quota leases remain future work: the 2026-09
+  regional-quota and spend-lease pilots were removed.
 - Write generation metadata to regional Bigtable clusters, then aggregate into
   global activity views asynchronously.
 - Keep provider routing regional, with provider-specific circuit breakers,

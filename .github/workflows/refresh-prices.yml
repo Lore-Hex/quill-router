@@ -182,6 +182,7 @@ jobs:
                       DECART_API_KEY:trustedrouter-decart-api-key \
                       NVIDIA_NIM_API_KEY:trustedrouter-nvidia-nim-api-key \
                       IONET_API_KEY:trustedrouter-io-net-api-key \
+                      TENCENT_API_KEY:trustedrouter-tencent-tokenhub-api-key \
                       SCALEWAY_SECRET_KEY:trustedrouter-scaleway-api-key \
                       REGOLO_API_KEY:trustedrouter-regolo-api-key \
                       PRIVATEMODE_API_KEY:trustedrouter-privatemode-api-key \

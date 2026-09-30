@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from tests.deploy_script_harness import SCRIPT_FIXTURES, DeployScriptHarness, ScriptFixture
-from tests.test_spend_lease_migration import _ddls
+from tests.migration_ddl import recorded_ddls as _ddls
 
 SCRIPT = "scripts/deploy/migrate_gateway_request_index.sh"
 

@@ -358,7 +358,7 @@
     }
   ],
   "source": "https://api.nextbit256.com/v1/models",
-  "generated_at": "2026-09-28T23:57:13Z",
+  "generated_at": "2026-09-30T02:36:36Z",
   "price_scale": "microdollars_per_million",
   "model_count": 9
 }

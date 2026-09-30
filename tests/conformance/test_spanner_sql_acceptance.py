@@ -278,7 +278,7 @@ def test_frozen_fragments_are_inside_fingerprinted_scopes():
     import ast
 
     sources = discover()
-    fragments = {"where", "arms", "sibling", "phase_sql", "suffix_sql", "tail", "suffix"}
+    fragments = {"where", "arms", "sibling", "suffix_sql", "tail", "suffix"}
     seen = set()
     for key, registration in load_manifest()["expressions"].items():
         source = sources[key]
@@ -306,13 +306,3 @@ def test_json_remove_reported_restriction_texts(message):
         assert re.search(pattern, unrelated) is None
 
 
-def test_register_claim_scenario_has_production_value_shapes():
-    from trusted_router.spend_leases import spend_lease_scope_salt
-
-    case = next(case for case in literal_cases() if case.name == "storage_gcp_spend_lease:register_claim:1/0")
-    _, params, _ = case.statements[0]
-    # DDL's CLAIM branch requires a non-null provisional_id; the global default
-    # is None for BOUND rows. Keep this override local to the inserting scenario.
-    assert isinstance(params["provisional_id"], str) and 0 < len(params["provisional_id"]) <= 64
-    assert 0 < len(params["scope"]) <= 256
-    assert params["scope_salt"] == spend_lease_scope_salt(params["scope"])

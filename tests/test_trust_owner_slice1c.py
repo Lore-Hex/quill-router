@@ -480,30 +480,16 @@ def test_spanner_abuse_is_idempotent_and_clear_never_unlatches() -> None:
     )
 
 
-def test_spanner_archive_excludes_inventory_latches_and_retires_leases() -> None:
+def test_spanner_archive_excludes_inventory_and_latches() -> None:
     store, database = make_fake_store()
     user = store.ensure_user("archive@example.com", trial_credit_microdollars=0)
     workspace = store.list_workspaces_for_user(user.id)[0]
-    store._write_entity(
-        "spend_lease",
-        "lease-1",
-        {"workspace_id": workspace.id, "state": "ACTIVE", "closing_at": None},
-    )
-    store._write_entity(
-        "regional_quota_lease",
-        "regional-1",
-        {"workspace_id": workspace.id, "state": "active", "last_error": None},
-    )
     assert store.update_workspace(workspace.id, deleted=True) is None
     assert (user.id, workspace.id) not in database.typed["tr_owner_workspace"]
     assert all(
         row["trust_tier"] == 0 and row["trust_latched_at"] is not None
         for row in _trust_rows(database, workspace.id)
     )
-    spend = store._read_entity("spend_lease", "lease-1", dict)
-    regional = store._read_entity("regional_quota_lease", "regional-1", dict)
-    assert spend["state"] == "TOMBSTONED"
-    assert regional["state"] == "quarantined"
 
 
 def test_operator_routes_require_token_identity_and_replay_abuse() -> None:

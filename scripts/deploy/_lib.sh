@@ -55,8 +55,8 @@ TR_SPANNER_POOL_SIZE="${TR_SPANNER_POOL_SIZE:-8}"
 #   post-fix:  ~150-250 MB at concurrency=2 → comfortable at 1Gi
 #
 # Where the bytes go (measured 2026-05-10 with tr_mem_profile2.py):
-#   ~85 MB    google-cloud SDK imports (Spanner gRPC stubs, Bigtable,
-#             KMS, protobuf descriptors) — unavoidable floor
+#   ~85 MB    google-cloud SDK imports (Spanner gRPC stubs, KMS,
+#             protobuf descriptors) — unavoidable floor
 #   ~50 MB    Spanner FixedSizePool(size=10) (SDK default) at first
 #             use, ~5 MB per gRPC session × 10 sessions; production pins
 #             eight sessions to match request concurrency without using 10
@@ -100,120 +100,14 @@ SPANNER_CONFIG="${TR_SPANNER_CONFIG:-nam6}"
 SPANNER_EDITION="${TR_SPANNER_EDITION:-ENTERPRISE_PLUS}"
 # 600 since 2026-09-25: at 400 PU a single customer burst of ~15 requests/s
 # sustained 25-34% high-priority CPU (60-second peaks to 47%) and opened the
-# high-priority CPU policy; the regional lease path still pays per-request
-# entity reads, finalize updates and outbox writes on Spanner.
+# high-priority CPU policy; every request pays entity reads, finalize updates
+# and outbox writes on Spanner.
 SPANNER_PROCESSING_UNITS="${TR_SPANNER_PROCESSING_UNITS:-600}"
-BIGTABLE_INSTANCE_ID="${TR_BIGTABLE_INSTANCE_ID:-trusted-router-logs}"
-# All regional profiles use c1: Bigtable refuses transactional writers on
-# different clusters without bypassing its split-brain guard. EU-local ledgers
-# require separate work; never bypass that guard here.
-REGIONAL_QUOTA_CLUSTER_MAP_PINNED="us-central1=trusted-router-logs-c1,us-east4=trusted-router-logs-c1,europe-west4=trusted-router-logs-c1,us-west1=trusted-router-logs-c1,southamerica-east1=trusted-router-logs-c1"
-TR_REGIONAL_QUOTA_CLUSTER_MAP="${TR_REGIONAL_QUOTA_CLUSTER_MAP-$REGIONAL_QUOTA_CLUSTER_MAP_PINNED}"
-# Decision 33: the spend ledger keeps one transactional writer independently
-# of the regional quota map. Unset or empty maps retain that writer.
-SPEND_LEASE_CLUSTER_MAP_PINNED="us-central1=trusted-router-logs-c1"
-TR_SPEND_LEASE_CLUSTER_MAP="${TR_SPEND_LEASE_CLUSTER_MAP:-$SPEND_LEASE_CLUSTER_MAP_PINNED}"
-REGIONAL_QUOTA_BIGTABLE_APP_PROFILES_PINNED="us-central1=tr-quota-us-central1,us-east4=tr-quota-us-east4,europe-west4=tr-quota-europe-west4,us-west1=tr-quota-us-west1,southamerica-east1=tr-quota-southamerica-east1"
-TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES="${TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES-$REGIONAL_QUOTA_BIGTABLE_APP_PROFILES_PINNED}"
-REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS_PINNED=4
-TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS="${TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS-$REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS_PINNED}"
-
-# Accounting compatibility contract (R1 tombstone-aware writers/reconciler).
-# Bump only for incompatible accounting changes, independently of git releases.
-REGIONAL_QUOTA_ACCOUNTING_PROTOCOL=2
-
-# Resolve mutable tags once and inspect only that immutable artifact. The
-# emitted marker describes its code, never the deployment checkout.
-regional_quota_resolve_image() {
-  local digest config
-  digest="$(gc artifacts docker images describe "$IMAGE" --format='value(image_summary.digest)')" || return 1
-  if ! [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
-    log "refusing regional quota deploy: selected image has no immutable digest"
-    return 1
-  fi
-  local repository="${IMAGE%%@*}"
-  # Strip a tag only from the final path component (registry ports are valid).
-  local basename="${repository##*/}"
-  IMAGE="${repository%/*}/${basename%%:*}@${digest}"
-  gcloud auth configure-docker "${IMAGE%%/*}" --quiet >/dev/null || return 1
-  config="$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Image}}')" || {
-    log "refusing regional quota deploy: cannot read selected image protocol label"
-    return 1
-  }
-  IMAGE_ACCOUNTING_PROTOCOL="$(python3 -c '
-import json, re, sys
-image = json.load(sys.stdin)
-# Multi-platform indexes expose configs keyed by platform.
-if "config" not in image:
-    image = image.get("linux/amd64", {})
-value = image.get("config", {}).get("Labels", {}).get("com.trustedrouter.accounting_protocol")
-if not isinstance(value, str) or not re.fullmatch(r"[1-9][0-9]*", value):
-    raise SystemExit("refusing regional quota deploy: missing or invalid selected image protocol label")
-print(value)
-' <<<"$config")" || return 1
-}
-
-regional_quota_require_image_protocol() {
-  if [ "$IMAGE_ACCOUNTING_PROTOCOL" -lt "$REGIONAL_QUOTA_ACCOUNTING_PROTOCOL" ]; then
-    log "refusing regional quota issuance: selected image accounting protocol ${IMAGE_ACCOUNTING_PROTOCOL} is below ${REGIONAL_QUOTA_ACCOUNTING_PROTOCOL}"
-    return 1
-  fi
-}
-
-# R4: resolve code pins once; an explicit empty cohort means no cohort.
-REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS_PINNED="358d80a4-2c9a-4479-92ea-a681f187477d,f46bf618-4c7c-4a35-afa0-8d48891bf7a5,1fa994e7-15b1-4e36-9c1c-51ba072d3060,c4ba9257-d212-4d7e-a5a1-989bceb7a1d8,45819281-0ce9-4811-a0cd-c660ab3a116d"
-TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS="${TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS-$REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS_PINNED}"
-REGIONAL_QUOTA_BIGTABLE_TABLE_PINNED=trustedrouter-regional-quota
-TR_REGIONAL_QUOTA_BIGTABLE_TABLE="${TR_REGIONAL_QUOTA_BIGTABLE_TABLE-$REGIONAL_QUOTA_BIGTABLE_TABLE_PINNED}"
-REGIONAL_QUOTA_LEASE_TTL_SECONDS_PINNED=300
-TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS="${TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS-$REGIONAL_QUOTA_LEASE_TTL_SECONDS_PINNED}"
-REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS_PINNED=10000000
-TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS="${TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS-$REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS_PINNED}"
-REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS_PINNED=1000
-TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS="${TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS-$REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS_PINNED}"
-REGIONAL_QUOTA_LEASE_SHARD_COUNT_PINNED=16
-TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT="${TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT-$REGIONAL_QUOTA_LEASE_SHARD_COUNT_PINNED}"
-
-# Provisioning and rollout must agree exactly, including order, even with
-# explicit operator overrides. Validate before any ledger or revision writes.
-regional_quota_validate_profile_map() {
-  local entry region cluster expected=""
-  local entries=()
-  IFS=',' read -r -a entries <<< "$TR_REGIONAL_QUOTA_CLUSTER_MAP"
-  for entry in "${entries[@]}"; do
-    region="${entry%%=*}"
-    cluster="${entry#*=}"
-    if [ -z "$region" ] || [ -z "$cluster" ] || [ "$region" = "$cluster" ]; then
-      log "invalid cluster-map entry: $entry"
-      return 1
-    fi
-    expected="${expected:+${expected},}${region}=tr-quota-${region}"
-  done
-  if [ -z "$expected" ] || [ "$expected" != "$TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES" ]; then
-    log "refusing regional quota profile list mismatch: map produces $expected; configured $TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES"
-    return 1
-  fi
-}
-
-# Call immediately after sourcing, before mutex, provisioning, or revision writes.
-regional_quota_validate_settings() {
-  local name
-  for name in \
-    TR_REGIONAL_QUOTA_BIGTABLE_TABLE \
-    TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS \
-    TR_REGIONAL_QUOTA_CLUSTER_MAP \
-    TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES \
-    TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS \
-    TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS \
-    TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS \
-    TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT; do
-    if [ -z "${!name}" ]; then
-      log "refusing empty regional quota setting: $name"
-      return 1
-    fi
-  done
-  regional_quota_validate_profile_map
-}
+# Cloud Run active-revision and image-digest helpers. They live in a file with
+# no top-level cloud calls so the shell contract test can source them alone.
+_TR_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/deploy/_active_revision.sh
+source "${_TR_LIB_DIR}/_active_revision.sh"
 
 KMS_KEYRING_ID="${TR_KMS_KEYRING_ID:-trusted-router}"
 BYOK_KMS_KEY_ID="${TR_BYOK_KMS_KEY_ID:-byok-envelope}"

@@ -195,7 +195,7 @@ def test_settlement_without_durable_outbox_leaves_no_activity_pending() -> None:
     assert database.operational_analytics_outbox == []
 
 
-def test_spanner_clickhouse_factory_passes_no_analytics_bigtable_settings(
+def test_spanner_clickhouse_factory_passes_no_bigtable_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, Any] = {}
@@ -213,7 +213,6 @@ def test_spanner_clickhouse_factory_passes_no_analytics_bigtable_settings(
         gcp_project_id="project",
         spanner_instance_id="instance",
         spanner_database_id="database",
-        bigtable_instance_id=None,
         generation_records_enabled=True,
         operational_analytics_outbox_enabled=True,
         operational_analytics_clickhouse_url="http://clickhouse",
@@ -223,11 +222,13 @@ def test_spanner_clickhouse_factory_passes_no_analytics_bigtable_settings(
     create_store(settings)
 
     assert captured["generation_records_enabled"] is True
-    assert captured["bigtable_instance_id"] is None
-    # Only the fixed-profile ledgers still name the instance; no analytics
-    # table, app profile, mirror flag or read mode reaches the store.
-    assert {name for name in captured if name.startswith("bigtable_")} == {"bigtable_instance_id"}
-    assert not {name for name in captured if name.startswith("analytics_read")}
+    # Nothing names a Bigtable instance, table, app profile, mirror flag, read
+    # mode or ledger any more: the analytics backend and both ledger pilots are gone.
+    assert not {
+        name
+        for name in captured
+        if name.startswith(("bigtable_", "analytics_read", "regional_quota_", "spend_lease_"))
+    }
 
 
 def test_create_store_rejects_the_retired_backend() -> None:

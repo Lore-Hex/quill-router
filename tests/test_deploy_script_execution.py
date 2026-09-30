@@ -286,94 +286,6 @@ def test_typed_counters_adds_terminal_at_before_index(tmp_path: Path) -> None:
     ], summarise(run)
 
 
-_REGIONAL_QUOTA_RECONCILER = "scripts/deploy/regional_quota_reconciler.sh"
-_RECONCILER_GCLOUD_STUB = r"""#!/usr/bin/env bash
-{ printf '%s' "${0##*/}"; for argument in "$@"; do
-    recorded="${argument//$'\n'/\\n}"
-    recorded="${recorded//$'\t'/\\t}"
-    printf '\t%s' "$recorded"
-  done
-  printf '\n'
-} >> "$HARNESS_ARGV_LOG"
-
-if [[ " $* " == *" scheduler jobs describe "* ]]; then
-  printf '%s' "${HARNESS_SCHEDULER_DESCRIBE_STDERR:-}" >&2
-  if [ -n "${HARNESS_SCHEDULER_STATE:-}" ]; then
-    printf '%s\n' "$HARNESS_SCHEDULER_STATE"
-  fi
-  exit "${HARNESS_SCHEDULER_DESCRIBE_RC:-0}"
-fi
-
-if [[ " $* " == *" run jobs list "* ]] && \
-   [ "${HARNESS_VERSIONED_JOB_EXISTS:-false}" = "true" ]; then
-  for argument in "$@"; do
-    case "$argument" in
-      --filter=metadata.name=*)
-        [ "$HARNESS_VERSIONED_JOB_NAME" = "${argument#--filter=metadata.name=}" ] || exit 0 ;;
-      --filter=metadata.name:*)
-        [[ "$HARNESS_VERSIONED_JOB_NAME" == *"${argument#--filter=metadata.name:}"* ]] || exit 0 ;;
-    esac
-  done
-  printf '%s\n' "$HARNESS_VERSIONED_JOB_NAME"
-fi
-
-if [[ " $* " == *" run jobs list "* ]] && \
-   [[ " $* " == *" --sort-by="* ]] && \
-   [ -n "${HARNESS_STALE_JOB_NAMES:-}" ]; then
-  printf '%s\n' "$HARNESS_STALE_JOB_NAMES"
-fi
-
-if [[ " $* " == *" image_summary.digest"* ]] || [[ " $* " == *"value(image_summary.digest)"* ]]; then
-  printf 'sha256:%064d\n' 0
-fi
-if [[ " $* " == *" projects describe "* ]]; then
-  printf '%s\n' '123456789'
-fi
-exit 0
-"""
-
-
-def _run_regional_quota_reconciler(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    state: str = "",
-    describe_rc: int = 0,
-    describe_stderr: str = "",
-    versioned_job_exists: bool = False,
-    stale_job_names: str = "",
-    reconcile_limit: str = "",
-    extra_env: dict[str, str] | None = None,
-) -> HarnessRun:
-    monkeypatch.setitem(
-        SCRIPT_FIXTURES,
-        _REGIONAL_QUOTA_RECONCILER,
-        ScriptFixture(
-            env={
-                "HARNESS_SCHEDULER_STATE": state,
-                "HARNESS_SCHEDULER_DESCRIBE_RC": str(describe_rc),
-                "HARNESS_SCHEDULER_DESCRIBE_STDERR": describe_stderr,
-                "HARNESS_VERSIONED_JOB_EXISTS": str(versioned_job_exists).lower(),
-                "HARNESS_VERSIONED_JOB_NAME": (
-                    "trusted-router-regional-quota-reconciler-existing"
-                ),
-                "HARNESS_STALE_JOB_NAMES": stale_job_names,
-                "TR_REGIONAL_QUOTA_RECONCILE_LIMIT": reconcile_limit,
-                "TR_REGIONAL_QUOTA_RECONCILER_JOB": (
-                    "trusted-router-regional-quota-reconciler-existing"
-                    if versioned_job_exists
-                    else ""
-                ),
-            }
-        ),
-    )
-    isolated = DeployScriptHarness(tmp_path / "regional-quota-reconciler")
-    gcloud = isolated.bin / "gcloud"
-    gcloud.write_text(_RECONCILER_GCLOUD_STUB)
-    gcloud.chmod(0o755)
-    return isolated.run(_REGIONAL_QUOTA_RECONCILER, extra_env=extra_env)
-
-
 def _gcloud_calls(run: HarnessRun, *command: str) -> list[list[str]]:
     return [
         call
@@ -408,23 +320,16 @@ if "--baseline-output" in sys.argv:
     output.write_text(json.dumps({"harness": "up"}) + "\\n")
 """,
     )
-    for relative, command_name in (
-        ("scripts/deploy/assert_no_billing_5xx.sh", "assert_no_billing_5xx.sh"),
-        ("scripts/deploy/regional_quota_reconciler.sh", "regional_quota_reconciler.sh"),
-        ("scripts/deploy/spend_lease_reconciler.sh", "spend_lease_reconciler.sh"),
-    ):
-        # The reconcilers launch concurrently, so append each invocation with
-        # one printf; separate name/newline writes can merge into one record.
-        isolated.write_script(
-            relative,
-            "#!/usr/bin/env bash\n"
-            "record='"
-            + command_name
-            + "'\n"
-            "for argument in \"$@\"; do "
-            "printf -v record '%s\\t%s' \"$record\" \"$argument\"; done\n"
-            "printf '%s\\n' \"$record\" >>\"$HARNESS_ARGV_LOG\"\n",
-        )
+    # Append each invocation of the billing gate with one printf; separate
+    # name/newline writes can merge into one record in the shared log.
+    isolated.write_script(
+        "scripts/deploy/assert_no_billing_5xx.sh",
+        "#!/usr/bin/env bash\n"
+        "record='assert_no_billing_5xx.sh'\n"
+        "for argument in \"$@\"; do "
+        "printf -v record '%s\\t%s' \"$record\" \"$argument\"; done\n"
+        "printf '%s\\n' \"$record\" >>\"$HARNESS_ARGV_LOG\"\n",
+    )
 
     env = {
         "PREV_EU": "trusted-router-01300-euold",
@@ -613,11 +518,9 @@ def test_secondary_already_on_new_still_runs_watchdog_and_billing_gate(
     )
 
 
-def test_secondary_ramp_never_launches_ledger_reconcilers(
+def test_secondary_hold_of_every_region_moves_no_traffic(
     tmp_path: Path,
 ) -> None:
-    # Both escrow ledgers are retired (2026-09-27): the ramp no longer deploys
-    # their workers in the background; retire_ledger_workers.sh removes them.
     run = _run_secondary_ramp(
         tmp_path,
         traffic=_default_secondary_traffic(),
@@ -625,8 +528,6 @@ def test_secondary_ramp_never_launches_ledger_reconcilers(
     )
 
     assert run.returncode == 0, summarise(run)
-    assert not [call for call in run.calls if call[0] == "regional_quota_reconciler.sh"]
-    assert not [call for call in run.calls if call[0] == "spend_lease_reconciler.sh"]
     assert all(
         not _regional_update_traffic_calls(run, region)
         for region in ("europe-west4", "us-east4", "southamerica-east1")
@@ -720,65 +621,17 @@ def test_gcp_no_traffic_warm_preprovisions_and_validates_private_candidate(
     )
 
 
-_QUOTA_REGIONS = ("us-central1", "us-east4", "europe-west4", "us-west1", "southamerica-east1")
-_QUOTA_CLUSTER_MAP = ",".join(f"{region}=trusted-router-logs-c1" for region in _QUOTA_REGIONS)
-_QUOTA_PROFILES = ",".join(f"{region}=tr-quota-{region}" for region in _QUOTA_REGIONS)
-_REGIONAL_QUOTA_PINS = {
-    "REGIONAL_QUOTA_ACCOUNTING_PROTOCOL": "2",
-    "TR_REGIONAL_QUOTA_CLUSTER_MAP": _QUOTA_CLUSTER_MAP,
-    "TR_SPEND_LEASE_CLUSTER_MAP": "us-central1=trusted-router-logs-c1",
-    "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES": _QUOTA_PROFILES,
-    "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS": (
-        "358d80a4-2c9a-4479-92ea-a681f187477d,f46bf618-4c7c-4a35-afa0-8d48891bf7a5,"
-        "1fa994e7-15b1-4e36-9c1c-51ba072d3060,c4ba9257-d212-4d7e-a5a1-989bceb7a1d8,"
-        "45819281-0ce9-4811-a0cd-c660ab3a116d"
-    ),
-    "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS": "300",
-    "TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS": "10000000",
-    "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS": "1000",
-    "TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT": "16",
-    "TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS": "4",
-    "TR_REGIONAL_QUOTA_BIGTABLE_TABLE": "trustedrouter-regional-quota",
-}
-
-
-# Every ledger setting a revision used to carry; none may be rendered now.
-_LEDGER_SETTING_NAMES = frozenset({
-    "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS",
-    "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS",
-    "TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS",
-    "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS",
-    "TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT",
-    "TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS",
-    "TR_REGIONAL_QUOTA_CLUSTER_MAP",
-    "TR_SPEND_LEASE_CLUSTER_MAP",
-    "TR_REGIONAL_QUOTA_BIGTABLE_TABLE",
-    "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES",
-    "TR_SPEND_LEASE_BIGTABLE_TABLE",
-    "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES",
-})
-_LIVE_REGIONAL_QUOTA_ENV = {
-    "REGIONAL_QUOTA_ACCOUNTING_PROTOCOL": "2",
+# A live primary revision that predates the Bigtable analytics retirement. The
+# rollout copies only its sticky operator pins; none of these may be copied.
+_LIVE_PRIMARY_ENV = {
     "TR_RELEASE": "abc12345",
-    "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true",
-    # A step-1 primary: issuance, spend issuance, binding and admission are
-    # already off, which the ledger retirement gate requires everywhere.
-    "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "false",
-    "TR_SPEND_LEASE_ISSUANCE_ENABLED": "false",
-    "TR_SPEND_LEASE_BINDING_ENABLED": "false",
-    "TR_SPEND_LEASE_ADMISSION_ACCEPT": "false",
-    "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS": "workspace-pilot,workspace-canary",
-    "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES": "us-central1=tr-quota-us-central1",
-    "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS": "60",
-    "TR_REGIONAL_QUOTA_BIGTABLE_TABLE": "live-old-table",
-    "TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS": "2",
-    "TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS": "5000000",
-    "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS": "2000",
-    "TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT": "8",
+    "TR_BIGTABLE_INSTANCE_ID": "trusted-router-logs",
+    "TR_BIGTABLE_GENERATION_TABLE": "trustedrouter-generations",
+    "TR_ANALYTICS_READ_MODE": "bigtable",
 }
 
 
-def _regional_quota_rollout_harness(
+def _rollout_harness_with_live_primary(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     live_env: dict[str, str],
@@ -798,117 +651,13 @@ def _regional_quota_rollout_harness(
         script,
         replace(
             fixture,
-            env={
-                key: value for key, value in fixture.env.items()
-                if not key.startswith("TR_REGIONAL_QUOTA_")
-            },
             responses=(
                 (r"run revisions describe trusted-router-active .*--format=json", active_revision),
                 *fixture.responses,
             ),
         ),
     )
-    return DeployScriptHarness(tmp_path / "regional-quota-rollout")
-
-
-@pytest.mark.parametrize(
-    ("control", "live", "expected"),
-    [
-        # Absent/empty control resolves to REGIONAL_QUOTA_LEASE_ISSUANCE_PINNED,
-        # which is OFF since the 2026-09-27 Bigtable ledger retirement.
-        # A live ON marker anywhere now refuses the rollout at the ledger
-        # retirement gate (tested below), so every case here serves OFF.
-        pytest.param(None, "false", "false", id="absent-pins-off"),
-        pytest.param("", "false", "false", id="empty-pins-off"),
-        pytest.param("preserve", "false", "false", id="dispatch-preserve-live-false"),
-        # Retirement override: an explicit true renders OFF and says so.
-        pytest.param("true", "false", "false", id="dispatch-true-forced-off"),
-        pytest.param("false", "false", "false", id="dispatch-false"),
-    ],
-)
-def test_rollout_regional_quota_issuance_control(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    control: str | None,
-    live: str,
-    expected: str,
-) -> None:
-    live_env = {**_LIVE_REGIONAL_QUOTA_ENV, "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": live}
-    isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, live_env)
-    run = isolated.run(
-        "scripts/deploy/rollout.sh",
-        extra_env={} if control is None else {"TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": control},
-    )
-
-    assert run.returncode == 0, summarise(run)
-    deploy = next(
-        call for call in run.calls
-        if call[0:6] == ["gcloud", "--project", "quill-cloud-proxy", "run", "deploy", "trusted-router"]
-    )
-    rendered_env = _cloud_run_job_env(deploy)
-    assert rendered_env["TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED"] == expected
-    # Capability is retired with the ledger; the live marker is never copied.
-    assert rendered_env["TR_REGIONAL_QUOTA_LEASES_ENABLED"] == "false"
-    forced_off = control == "true"
-    assert ("regional quota issuance is retired" in run.stderr) is forced_off
-    assert not _LEDGER_SETTING_NAMES & rendered_env.keys()
-    # Enabling (including preserve=true) must preflight every serving region
-    # before it creates a candidate; pausing does not need that preflight.
-    before_deploy = run.calls[:run.calls.index(deploy)]
-    for region in ("us-central1", "us-east4", "europe-west4", "southamerica-east1"):
-        fleet_checked = (
-            f"regional quota issuance compatibility: {region}=capable, marker={live}"
-            in run.stderr
-        )
-        assert fleet_checked is (expected == "true")
-        if expected == "true":
-            assert any(
-                "revisions" in call and "trusted-router-active" in call
-                and f"--region={region}" in call for call in before_deploy
-            )
-
-
-@pytest.mark.parametrize(
-    ("live_env", "control", "expected_issuance"),
-    [
-        # A fresh fleet must first deploy protocol-capable revisions with issuance off.
-        pytest.param({}, "false", "false", id="no-live-settings-forced-off"),
-        pytest.param(_LIVE_REGIONAL_QUOTA_ENV, None, "false", id="step-one-live-settings-dropped"),
-    ],
-)
-def test_rollout_renders_no_ledger_settings(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, live_env: dict[str, str],
-    control: str | None, expected_issuance: str,
-) -> None:
-    # The store opens a Bigtable ledger client whenever an app-profile map is
-    # rendered, capability or not, so retirement means none of the ledger
-    # settings reach a revision - not even from a live primary that had them.
-    isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, live_env)
-    run = isolated.run(
-        "scripts/deploy/rollout.sh",
-        extra_env={} if control is None else {"TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": control},
-    )
-    assert run.returncode == 0, summarise(run)
-    deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
-    rendered = _cloud_run_job_env(deploy)
-    assert rendered["TR_REGIONAL_QUOTA_LEASES_ENABLED"] == "false"
-    assert rendered["TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED"] == expected_issuance
-    assert rendered["REGIONAL_QUOTA_ACCOUNTING_PROTOCOL"] == "2"
-    assert not _LEDGER_SETTING_NAMES & rendered.keys()
-
-
-def test_rollout_gate_refuses_while_a_region_still_issues(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The revisions this rollout creates have no ledger, so a serving revision
-    # that can still mint a regional hold blocks it before anything changes.
-    live_env = {**_LIVE_REGIONAL_QUOTA_ENV, "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "true"}
-    isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, live_env)
-    run = isolated.run("scripts/deploy/rollout.sh")
-    assert run.returncode != 0
-    assert "still serves TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED=true" in run.stderr
-    assert not any(call[3:5] == ["run", "deploy"] for call in run.calls)
-    assert not any("spanner" in call for call in run.calls)
+    return DeployScriptHarness(tmp_path / "live-primary-rollout")
 
 
 def test_rollout_renders_no_bigtable_analytics_settings(
@@ -916,7 +665,7 @@ def test_rollout_renders_no_bigtable_analytics_settings(
 ) -> None:
     # Bigtable analytics are retired: every revision runs spanner-clickhouse and
     # renders none of the retired Bigtable settings, whatever the live primary carried.
-    isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, _LIVE_REGIONAL_QUOTA_ENV)
+    isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, _LIVE_PRIMARY_ENV)
     run = isolated.run("scripts/deploy/rollout.sh")
     assert run.returncode == 0, summarise(run)
     deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
@@ -944,290 +693,20 @@ def test_rollout_renders_no_bigtable_analytics_settings(
 def test_rollout_refuses_the_retired_storage_backend(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, value: str,
 ) -> None:
-    isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, _LIVE_REGIONAL_QUOTA_ENV)
+    isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, _LIVE_PRIMARY_ENV)
     run = isolated.run("scripts/deploy/rollout.sh", extra_env={name: value})
     assert run.returncode != 0
     assert f"{name}={value} is retired" in run.stderr
     assert not any(call[3:5] == ["run", "deploy"] for call in run.calls)
 
 
-def test_rollout_refuses_regional_quota_capability(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, _LIVE_REGIONAL_QUOTA_ENV)
-    run = isolated.run(
-        "scripts/deploy/rollout.sh",
-        extra_env={"TR_REGIONAL_QUOTA_LEASES_ENABLED": "true"},
-    )
-    assert run.returncode != 0
-    assert "TR_REGIONAL_QUOTA_LEASES_ENABLED=true is retired" in run.stderr
-    assert not any(call[3:5] == ["run", "deploy"] for call in run.calls)
-
-
-@pytest.mark.parametrize("script", [
-    "scripts/deploy/spend_lease_ledger.sh",
-    "scripts/deploy/spend_lease_reconciler.sh",
-])
-def test_empty_spend_lease_cluster_map_falls_back_to_independent_pin(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script: str,
-) -> None:
-    if script.endswith("/spend_lease_ledger.sh"):
-        monkeypatch.setitem(SCRIPT_FIXTURES, script, ScriptFixture(
-            failures=(r"bigtable instances tables describe ", r"bigtable app-profiles describe "),
-        ))
-    elif script.endswith("/spend_lease_reconciler.sh"):
-        monkeypatch.setitem(SCRIPT_FIXTURES, script, ScriptFixture(
-            responses=((r"scheduler jobs describe ", "ENABLED"),),
-        ))
-    isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, _LIVE_REGIONAL_QUOTA_ENV)
-    run = isolated.run(script, extra_env={"TR_SPEND_LEASE_CLUSTER_MAP": ""})
-    assert run.returncode == 0, summarise(run)
-    expected_profiles = "us-central1=tr-spend-us-central1"
-    if script.endswith("/spend_lease_ledger.sh"):
-        creates = [call for call in run.calls if call[1:4] == ["bigtable", "app-profiles", "create"]]
-        assert len(creates) == 1
-        assert creates[0][4] == "tr-spend-us-central1"
-        assert "--route-to=trusted-router-logs-c1" in creates[0]
-        assert "--transactional-writes" in creates[0]
-        assert f"set TR_SPEND_LEASE_BIGTABLE_APP_PROFILES={expected_profiles}\n" in run.stdout
-    else:
-        mutations = [call for call in run.calls if "--set-env-vars" in call]
-        assert len(mutations) == 1
-        rendered = _cloud_run_job_env(mutations[0])
-        assert rendered["TR_SPEND_LEASE_BIGTABLE_APP_PROFILES"] == expected_profiles
-        if script.endswith("/rollout.sh"):
-            assert rendered["TR_SPEND_LEASE_CLUSTER_MAP"] == "us-central1=trusted-router-logs-c1"
-
-
-@pytest.mark.parametrize("script", ["scripts/deploy/regional_quota_ledger.sh"])
-def test_regional_quota_profile_map_mismatch_refuses(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script: str,
-) -> None:
-    isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, _LIVE_REGIONAL_QUOTA_ENV)
-    run = isolated.run(script, extra_env={
-        "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES": "us-central1=tr-quota-us-central1",
-    })
-    assert run.returncode != 0, summarise(run)
-    assert "profile list mismatch" in run.stdout + run.stderr
-    assert not any("create" in call or "deploy" in call for call in run.calls)
-
-
-_QUOTA_LEDGER = "scripts/deploy/regional_quota_ledger.sh"
-
-
-@pytest.mark.parametrize("missing", [(), _QUOTA_REGIONS], ids=["idempotent", "create-missing"])
-def test_regional_quota_ledger_provisions_all_five_profiles(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: tuple[str, ...],
-) -> None:
-    monkeypatch.setitem(SCRIPT_FIXTURES, _QUOTA_LEDGER, ScriptFixture(
-        responses=((r"bigtable app-profiles describe .*--format=", "trusted-router-logs-c1\tTrue"),),
-        failures=tuple(rf"bigtable app-profiles describe tr-quota-{region} " for region in missing),
-    ))
-    run = DeployScriptHarness(tmp_path / "ledger").run(_QUOTA_LEDGER)
-    assert run.returncode == 0, summarise(run)
-    assert f"set TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES={_QUOTA_PROFILES}\n" in run.stdout
-    creates = [call for call in run.calls if call[1:4] == ["bigtable", "app-profiles", "create"]]
-    assert len(creates) == len(missing)
-    assert {call[4] for call in creates} == {f"tr-quota-{region}" for region in missing}
-    for call in creates:
-        assert "--route-to=trusted-router-logs-c1" in call
-        assert "--transactional-writes" in call
-    for region in _QUOTA_REGIONS:
-        describes = [call for call in run.calls if call[1:5] == [
-            "bigtable", "app-profiles", "describe", f"tr-quota-{region}",
-        ]]
-        assert describes
-        if region not in missing:
-            assert any("--format=value(singleClusterRouting.clusterId,singleClusterRouting.allowTransactionalWrites)" in call for call in describes)
-
-
-@pytest.mark.parametrize("config", ["trusted-router-logs-eu\tTrue", "trusted-router-logs-c1\tFalse"])
-def test_regional_quota_ledger_refuses_profile_drift(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, config: str,
-) -> None:
-    monkeypatch.setitem(SCRIPT_FIXTURES, _QUOTA_LEDGER, ScriptFixture(
-        responses=((r"bigtable app-profiles describe .*--format=", config),),
-    ))
-    run = DeployScriptHarness(tmp_path / "ledger").run(_QUOTA_LEDGER)
-    assert run.returncode != 0, summarise(run)
-    assert "refusing regional quota profile drift" in run.stdout
-    assert not any("create" in call for call in run.calls)
-
-
-def test_regional_quota_ledger_refuses_unknown_cluster(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setitem(SCRIPT_FIXTURES, _QUOTA_LEDGER, ScriptFixture(
-        failures=(r"bigtable clusters describe unknown-cluster ",),
-    ))
-    run = DeployScriptHarness(tmp_path / "ledger").run(_QUOTA_LEDGER, extra_env={
-        "TR_REGIONAL_QUOTA_CLUSTER_MAP": _QUOTA_CLUSTER_MAP.replace("trusted-router-logs-c1", "unknown-cluster"),
-    })
-    assert run.returncode != 0, summarise(run)
-    assert "unknown or unreadable cluster: unknown-cluster" in run.stdout
-    assert not any("app-profiles" in call for call in run.calls)
-
-
-# These are shared inputs even when a phase (the provisioner, for example)
-# only consumes a subset. Resolve them once, and reject empty values uniformly.
-_SHARED_QUOTA_OVERRIDES = {
-    "TR_REGIONAL_QUOTA_CLUSTER_MAP": "us-east4=trusted-router-logs-c1",
-    "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES": "us-east4=tr-quota-us-east4",
-    "TR_REGIONAL_QUOTA_BIGTABLE_TABLE": "override-quota-table",
-    "TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS": "3",
-    "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS": "workspace-override",
-    "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS": "90",
-    "TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS": "7000000",
-    "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS": "1500",
-    "TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT": "4",
-}
-# rollout.sh left this contract with the 2026-09-27 ledger retirement: it no
-# longer resolves or renders any of these. The provisioner and worker scripts
-# stay on disk (unwired) until the ledger code is deleted with them.
-_QUOTA_SCRIPTS = (_QUOTA_LEDGER, _REGIONAL_QUOTA_RECONCILER)
-
-
-@pytest.mark.parametrize("script", _QUOTA_SCRIPTS)
-def test_regional_quota_consumers_do_not_resolve_shared_settings_again(script: str) -> None:
-    # Early rejection can mask a reintroduced local fallback at runtime (q6).
-    # Enforce the single-resolution contract as well as testing execution below.
-    source = (ROOT / script).read_text()
-    for name in _SHARED_QUOTA_OVERRIDES:
-        assert not re.search(r"\$\{" + name + r"(?::?[-+=?])", source), name
-        assert not re.search(r"^" + name + r"=", source, re.MULTILINE), name
-
-
-@pytest.mark.parametrize("script", _QUOTA_SCRIPTS)
-@pytest.mark.parametrize("mode", ["absent", "empty", "nonempty"])
-@pytest.mark.parametrize("name", _SHARED_QUOTA_OVERRIDES)
-def test_regional_quota_shared_settings_agree_across_scripts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script: str, mode: str, name: str,
-) -> None:
-    isolated = _regional_quota_rollout_harness(tmp_path, monkeypatch, _LIVE_REGIONAL_QUOTA_ENV)
-    monkeypatch.setitem(SCRIPT_FIXTURES, _QUOTA_LEDGER, ScriptFixture(
-        responses=((r"bigtable app-profiles describe .*--format=", "trusted-router-logs-c1\tTrue"),),
-    ))
-    monkeypatch.setitem(SCRIPT_FIXTURES, _REGIONAL_QUOTA_RECONCILER, ScriptFixture(
-        responses=((r"scheduler jobs describe .*--format=value\(state\)", "ENABLED"),),
-    ))
-    overrides = {} if mode == "absent" else {
-        name: "" if mode == "empty" else _SHARED_QUOTA_OVERRIDES[name],
-    }
-    if mode == "nonempty" and name in {
-        "TR_REGIONAL_QUOTA_CLUSTER_MAP", "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES",
-    }:
-        overrides.update({key: _SHARED_QUOTA_OVERRIDES[key] for key in (
-            "TR_REGIONAL_QUOTA_CLUSTER_MAP", "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES",
-        )})
-    if (script == "scripts/deploy/rollout.sh" and mode == "empty"
-            and name == "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS"):
-        # Emptying the cohort is valid only while issuance is off.
-        overrides["TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED"] = "false"
-    expected = {**_REGIONAL_QUOTA_PINS, **overrides}
-    # The provisioner has no revision env. Observe its resolved inputs after
-    # successful execution, in addition to checking actual Bigtable argv below.
-    if script == _QUOTA_LEDGER:
-        ledger = isolated.mirror / script
-        with ledger.open("a") as out:
-            for key in _SHARED_QUOTA_OVERRIDES:
-                out.write(f'printf "RESOLVED_{key}=%s\\n" "${key}"\n')
-    run = isolated.run(script, extra_env=overrides)
-    if mode == "empty" and name != "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS":
-        assert run.returncode != 0, summarise(run)
-        assert f"refusing empty regional quota setting: {name}" in run.stdout + run.stderr
-        # Only _lib.sh's read-only project-number lookup may precede refusal.
-        # In particular, no mutex write, bucket update, table or revision write.
-        assert all(call[0] == "gcloud" and "projects" in call and "describe" in call
-                   for call in run.calls), run.calls
-        return
-    assert run.returncode == 0, summarise(run)
-    if script == _QUOTA_LEDGER:
-        resolved = dict(line.removeprefix("RESOLVED_").split("=", 1)
-                        for line in run.stdout.splitlines() if line.startswith("RESOLVED_"))
-        table_calls = [call for call in run.calls if call[1:5] == [
-            "bigtable", "instances", "tables", "describe",
-        ]]
-        assert len(table_calls) == 1
-        assert table_calls[0][5] == expected["TR_REGIONAL_QUOTA_BIGTABLE_TABLE"]
-        assert f"set TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES={expected['TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES']}\n" in run.stdout
-        cluster_calls = [call for call in run.calls if call[1:4] == [
-            "bigtable", "clusters", "describe",
-        ]]
-        assert [call[4] for call in cluster_calls] == [
-            entry.split("=")[1] for entry in expected["TR_REGIONAL_QUOTA_CLUSTER_MAP"].split(",")
-        ]
-    else:
-        command = ["run", "deploy"] if script.endswith("/rollout.sh") else ["run", "jobs", "create"]
-        deploy = next(call for call in run.calls if call[3:3 + len(command)] == command)
-        resolved = _cloud_run_job_env(deploy)
-    for key in _SHARED_QUOTA_OVERRIDES:
-        assert resolved[key] == expected[key], key
-
-
-def test_regional_quota_ledger_final_provisioned_list_guard(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setitem(SCRIPT_FIXTURES, _QUOTA_LEDGER, ScriptFixture(
-        responses=((r"bigtable app-profiles describe .*--format=", "trusted-router-logs-c1\tTrue"),),
-    ))
-    isolated = DeployScriptHarness(tmp_path / "ledger-final-guard")
-    ledger = isolated.mirror / _QUOTA_LEDGER
-    source = ledger.read_text()
-    # Fault injection after pre-validation and the complete provisioning loop:
-    # simulate a bug dropping one successfully provisioned profile from output.
-    marker = 'profile_csv="$(IFS=\',\'; printf \'%s\' "${profiles[*]}")"'
-    assert source.count(marker) == 1
-    ledger.write_text(source.replace(marker, 'unset \'profiles[4]\'\n' + marker))
-    run = isolated.run(_QUOTA_LEDGER)
-    assert run.returncode != 0, summarise(run)
-    assert "refusing regional quota provisioned profile list mismatch" in run.stdout
-    assert "set TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES=" not in run.stdout
-    for region in _QUOTA_REGIONS:
-        assert any(call[1:5] == [
-            "bigtable", "app-profiles", "describe", f"tr-quota-{region}",
-        ] for call in run.calls)
-
-
-@pytest.mark.parametrize("profiles", [None, "us-east4=tr-quota-us-east4"])
-def test_reconciler_receives_same_regional_quota_profiles(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, profiles: str | None,
-) -> None:
-    run = _run_regional_quota_reconciler(
-        tmp_path, monkeypatch, state="ENABLED",
-        extra_env={} if profiles is None else {
-            "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES": profiles,
-            "TR_REGIONAL_QUOTA_CLUSTER_MAP": "us-east4=trusted-router-logs-c1",
-        },
-    )
-    assert run.returncode == 0, summarise(run)
-    deploy = next(call for call in run.calls if call[3:6] == ["run", "jobs", "create"])
-    assert _cloud_run_job_env(deploy)["TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES"] == (profiles or _QUOTA_PROFILES)
-
-
-def test_rollout_refuses_explicit_spend_lease_binding(
+def test_rollout_renders_only_the_kept_spend_lease_settings(
     harness: DeployScriptHarness,
 ) -> None:
-    # config.py refuses a revision that binds spend leases without issuing
-    # them, and issuance is pinned off, so the request is refused before any
-    # revision exists instead of rendering an unbootable one.
-    run = harness.run(
-        "scripts/deploy/rollout.sh",
-        extra_env={"TR_SPEND_LEASE_BINDING_ENABLED": "true"},
-    )
-    assert run.returncode != 0
-    assert "TR_SPEND_LEASE_BINDING_ENABLED=true is retired" in run.stderr
-    assert not any(
-        call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
-        and call[4:6] == ["deploy", "trusted-router"]
-        for call in run.calls
-    )
-
-
-def test_rollout_defaults_spend_lease_issuance_and_binding_off(
-    harness: DeployScriptHarness,
-) -> None:
-    # Bigtable ledger retirement (2026-09-27): the revision mints no spend
-    # leases and binds none; there is no operator override for either.
+    # The regional-quota and spend-lease pilots are removed (2026-09): a
+    # revision carries none of their settings. Two names survive them: the
+    # authorize-time billing-pause gate (named before the removal) and the
+    # Stage D accepted-digest allowlist.
     run = harness.run("scripts/deploy/rollout.sh")
     assert run.returncode == 0, summarise(run)
 
@@ -1237,13 +716,46 @@ def test_rollout_defaults_spend_lease_issuance_and_binding_off(
         if call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
         and call[4:6] == ["deploy", "trusted-router"]
     )
-    serialized_env = deploy[deploy.index("--set-env-vars") + 1].split("|")
-    assert "TR_SPEND_LEASE_ISSUANCE_ENABLED=false" in serialized_env
-    assert "TR_SPEND_LEASE_BINDING_ENABLED=false" in serialized_env
-    assert "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED=false" in serialized_env
-    assert "TR_REGIONAL_QUOTA_LEASES_ENABLED=false" in serialized_env
-    rendered_names = {entry.split("=", 1)[0] for entry in serialized_env}
-    assert not _LEDGER_SETTING_NAMES & rendered_names
+    rendered = _cloud_run_job_env(deploy)
+    assert rendered["TR_SPEND_LEASE_TRUST_ELIGIBILITY_ENABLED"] == "true"
+    assert rendered["TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS"] == ""
+    pilot_names = {
+        name
+        for name in rendered
+        if name.startswith(("TR_SPEND_LEASE_", "TR_REGIONAL_QUOTA_", "REGIONAL_QUOTA_"))
+    }
+    assert pilot_names == {
+        "TR_SPEND_LEASE_TRUST_ELIGIBILITY_ENABLED",
+        "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS",
+    }
+
+
+def test_rollout_pins_the_image_digest_before_any_revision(
+    harness: DeployScriptHarness,
+) -> None:
+    # The mutable tag is resolved once, so every region deploys the same
+    # immutable artifact even if the tag moves mid-rollout.
+    run = harness.run("scripts/deploy/rollout.sh")
+    assert run.returncode == 0, summarise(run)
+
+    digest_reads = [
+        index
+        for index, call in enumerate(run.calls)
+        if call[3:6] == ["artifacts", "docker", "images"]
+        and "--format=value(image_summary.digest)" in call
+    ]
+    assert len(digest_reads) == 1
+    deploy_index, deploy = next(
+        (index, call)
+        for index, call in enumerate(run.calls)
+        if call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
+        and call[4:6] == ["deploy", "trusted-router"]
+    )
+    assert digest_reads[0] < deploy_index
+    image = deploy[deploy.index("--image") + 1]
+    assert image.endswith("/trusted-router@sha256:" + "0" * 64)
+    assert ":harness-candidate" not in image
+    assert not any(call[0] == "docker" for call in run.calls)
 
 
 def test_rollout_lists_optional_secrets_once_without_missing_secret_probes(
@@ -1667,123 +1179,6 @@ def test_azure_canary_app_cannot_target_production_side_door(
     assert run.returncode != 0
     assert "use scripts/deploy/azure_control_plane.sh" in run.stderr
     assert not any(call[0] == "az" for call in run.calls)
-
-
-def test_regional_quota_reconciler_preserves_a_paused_scheduler(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    run = _run_regional_quota_reconciler(tmp_path, monkeypatch, state="PAUSED")
-
-    assert run.returncode == 0, summarise(run)
-    assert not _gcloud_calls(run, "run", "jobs", "execute")
-    assert len(_gcloud_calls(run, "scheduler", "jobs", "update")) == 1
-    assert not _gcloud_calls(run, "scheduler", "jobs", "create")
-    assert not _gcloud_calls(run, "scheduler", "jobs", "resume")
-    assert "preserving intentional regional quota reconciler pause" in run.stderr
-
-
-def test_regional_quota_reconciler_verifies_updates_and_resumes_enabled_scheduler(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    run = _run_regional_quota_reconciler(tmp_path, monkeypatch, state="ENABLED")
-
-    assert run.returncode == 0, summarise(run)
-    assert len(_gcloud_calls(run, "run", "jobs", "execute")) == 1
-    assert len(_gcloud_calls(run, "scheduler", "jobs", "update")) == 1
-    assert not _gcloud_calls(run, "scheduler", "jobs", "create")
-    assert len(_gcloud_calls(run, "scheduler", "jobs", "resume")) == 1
-    assert len(_gcloud_calls(run, "run", "jobs", "create")) == 1
-    assert not _gcloud_calls(run, "run", "jobs", "deploy")
-    update = _gcloud_calls(run, "scheduler", "jobs", "update")[0]
-    assert "--max-retry-attempts=3" in update
-    assert "--max-retry-duration=45s" in update
-    assert "--min-backoff=5s" in update
-    assert "--max-backoff=15s" in update
-    assert "--max-doublings=1" in update
-
-
-def test_regional_quota_reconciler_updates_existing_version_without_get_probe(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    run = _run_regional_quota_reconciler(
-        tmp_path,
-        monkeypatch,
-        state="ENABLED",
-        versioned_job_exists=True,
-    )
-
-    assert run.returncode == 0, summarise(run)
-    assert len(_gcloud_calls(run, "run", "jobs", "list")) >= 1
-    assert len(_gcloud_calls(run, "run", "jobs", "update")) == 1
-    assert not _gcloud_calls(run, "run", "jobs", "create")
-    assert not _gcloud_calls(run, "run", "jobs", "deploy")
-
-
-def test_regional_quota_reconciler_deletes_stale_jobs_without_polling_get(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    current = "trusted-router-regional-quota-reconciler-existing"
-    previous = "trusted-router-regional-quota-reconciler-previous"
-    stale = "trusted-router-regional-quota-reconciler-stale"
-    run = _run_regional_quota_reconciler(
-        tmp_path,
-        monkeypatch,
-        state="ENABLED",
-        versioned_job_exists=True,
-        stale_job_names=f"{current}\n{previous}\n{stale}",
-    )
-
-    assert run.returncode == 0, summarise(run)
-    deletes = _gcloud_calls(run, "run", "jobs", "delete")
-    assert len(deletes) == 1
-    assert stale in deletes[0]
-    assert "--async" in deletes[0]
-    assert previous not in deletes[0]
-
-
-def test_regional_quota_reconciler_creates_only_when_scheduler_is_not_found(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    run = _run_regional_quota_reconciler(
-        tmp_path,
-        monkeypatch,
-        describe_rc=1,
-        describe_stderr=("ERROR: (gcloud.scheduler.jobs.describe) NOT_FOUND: Job not found.\n"),
-    )
-
-    assert run.returncode == 0, summarise(run)
-    assert len(_gcloud_calls(run, "scheduler", "jobs", "describe")) == 1
-    assert len(_gcloud_calls(run, "run", "jobs", "execute")) == 1
-    assert len(_gcloud_calls(run, "scheduler", "jobs", "create")) == 1
-    assert not _gcloud_calls(run, "scheduler", "jobs", "update")
-    assert not _gcloud_calls(run, "scheduler", "jobs", "resume")
-
-
-def test_regional_quota_reconciler_fails_closed_when_scheduler_state_read_fails(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    error = "ERROR: (gcloud.scheduler.jobs.describe) UNAVAILABLE: credential blip\n"
-    run = _run_regional_quota_reconciler(
-        tmp_path,
-        monkeypatch,
-        describe_rc=1,
-        describe_stderr=error,
-    )
-
-    assert run.returncode != 0
-    assert "cannot determine state of Cloud Scheduler job" in run.stderr
-    assert error.strip() in run.stderr
-    assert len(_gcloud_calls(run, "scheduler", "jobs", "describe")) == 1
-    assert not _gcloud_calls(run, "run", "jobs", "execute")
-    assert not _gcloud_calls(run, "scheduler", "jobs", "create")
-    assert not _gcloud_calls(run, "scheduler", "jobs", "update")
-    assert not _gcloud_calls(run, "scheduler", "jobs", "resume")
 
 
 def test_every_deploy_script_parses_in_this_machine_s_shell() -> None:
@@ -2938,16 +2333,13 @@ def test_synthetic_jobs_execute_private_ingress_preflight_in_their_own_region(
     run = isolated.run("scripts/deploy/synthetic.sh", verifier_rc=0)
 
     assert run.returncode == 0, summarise(run)
-    scheduler_pauses = _gcloud_calls(run, "scheduler", "jobs", "pause")
-    assert len(scheduler_pauses) == 1
-    assert "trusted-router-spend-lease-soak-us-central1-every-minute" in scheduler_pauses[0]
     deploys = [
         (index, call)
         for index, call in enumerate(run.calls)
         if call[:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
         and call[4:6] == ["jobs", "deploy"]
     ]
-    assert len(deploys) == 7
+    assert len(deploys) == 6
     subnet_updates = [
         (index, call)
         for index, call in enumerate(run.calls)
@@ -2962,7 +2354,7 @@ def test_synthetic_jobs_execute_private_ingress_preflight_in_their_own_region(
             "update",
         ]
     ]
-    assert len(subnet_updates) == 7
+    assert len(subnet_updates) == 6
     service_contract_reads = [
         (index, call)
         for index, call in enumerate(run.calls)
@@ -2977,7 +2369,7 @@ def test_synthetic_jobs_execute_private_ingress_preflight_in_their_own_region(
         ]
         and call[6] == "trusted-router-billing"
     ]
-    assert len(service_contract_reads) == 7
+    assert len(service_contract_reads) == 6
     previous_deploy_index = -1
     for deploy_index, deploy in deploys:
         region = deploy[deploy.index("--region") + 1]
@@ -3050,6 +2442,184 @@ def test_synthetic_jobs_execute_private_ingress_preflight_in_their_own_region(
         previous_deploy_index = deploy_index
 
 
+_SOAK_JOB = "trusted-router-spend-lease-soak-us-central1"
+_SOAK_SCHEDULER = f"{_SOAK_JOB}-every-minute"
+#: Both scripts remove the retired soak schedule and job: the deploy runs the
+#: image refresh for every release until the split billing service exists, so
+#: a cleanup that lived only in synthetic.sh never ran in production.
+_SYNTHETIC_SCRIPTS = (
+    "scripts/deploy/synthetic.sh",
+    "scripts/deploy/synthetic_image_refresh.sh",
+)
+
+
+def _run_synthetic(isolated: DeployScriptHarness, script: str) -> HarnessRun:
+    # synthetic.sh requires the split billing service; the image refresh
+    # refuses one (and the combined-surface bridge).
+    omit_env: tuple[str, ...] = ()
+    if script.endswith("synthetic_image_refresh.sh"):
+        omit_env = ("TR_BILLING_SERVICE", "TR_ALLOW_DEPLOYED_COMBINED_SURFACE")
+    return isolated.run(script, verifier_rc=0, omit_env=omit_env)
+
+
+def _soak_calls(run: HarnessRun, *command: str) -> list[list[str]]:
+    return [
+        call
+        for call in _gcloud_calls(run, *command)
+        if _SOAK_JOB in call or _SOAK_SCHEDULER in call
+    ]
+
+
+@pytest.mark.parametrize("script", _SYNTHETIC_SCRIPTS, ids=("synthetic", "image_refresh"))
+@pytest.mark.parametrize("typed_not_found", (False, True), ids=("actual_cli", "typed"))
+def test_synthetic_deploy_leaves_the_absent_soak_job_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script: str, typed_not_found: bool
+) -> None:
+    # The spend-lease soak job and its schedule are retired with the pilot;
+    # Absence is their steady state. The deploy looks for both and, finding
+    # neither, deploys, deletes, pauses and resumes nothing under that name.
+    isolated = DeployScriptHarness(tmp_path / "synthetic-soak-absent")
+    if typed_not_found:
+        fixture = SCRIPT_FIXTURES[script]
+        monkeypatch.setitem(
+            SCRIPT_FIXTURES,
+            script,
+            replace(
+                fixture,
+                failures=tuple(
+                    pattern
+                    for pattern in fixture.failures
+                    if not pattern.startswith("run jobs describe trusted-router-spend-lease-soak-")
+                )
+                + (
+                    r"run jobs describe trusted-router-spend-lease-soak-"
+                    "\tERROR: (gcloud.run.jobs.describe) NOT_FOUND: Job not found.",
+                ),
+            ),
+        )
+
+    run = _run_synthetic(isolated, script)
+
+    assert run.returncode == 0, summarise(run)
+    # Positive control: both existence checks ran, at the retired names.
+    assert len(_soak_calls(run, "scheduler", "jobs", "describe")) == 1
+    assert len(_soak_calls(run, "run", "jobs", "describe")) == 1
+    assert not _soak_calls(run, "scheduler", "jobs", "delete")
+    assert not _soak_calls(run, "run", "jobs", "delete")
+    assert not _soak_calls(run, "run", "jobs", "deploy")
+    assert not _gcloud_calls(run, "scheduler", "jobs", "pause")
+    assert not _gcloud_calls(run, "scheduler", "jobs", "resume")
+
+
+@pytest.mark.parametrize("script", _SYNTHETIC_SCRIPTS, ids=("synthetic", "image_refresh"))
+def test_synthetic_deploy_deletes_a_surviving_soak_job_and_its_schedule(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    script: str,
+) -> None:
+    fixture = SCRIPT_FIXTURES[script]
+    # Both describes succeed: the retired job and schedule still exist.
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES,
+        script,
+        replace(
+            fixture,
+            failures=tuple(
+                pattern for pattern in fixture.failures if "spend-lease-soak" not in pattern
+            ),
+        ),
+    )
+    isolated = DeployScriptHarness(tmp_path / "synthetic-soak-present")
+
+    run = _run_synthetic(isolated, script)
+
+    assert run.returncode == 0, summarise(run)
+    (scheduler_delete,) = _soak_calls(run, "scheduler", "jobs", "delete")
+    (job_delete,) = _soak_calls(run, "run", "jobs", "delete")
+    assert scheduler_delete[6] == _SOAK_SCHEDULER
+    assert scheduler_delete[scheduler_delete.index("--location") + 1] == "us-central1"
+    assert job_delete[6] == _SOAK_JOB
+    assert job_delete[job_delete.index("--region") + 1] == "us-central1"
+    # The schedule goes before the job so a live cron never invokes a job
+    # that has just been deleted.
+    assert run.calls.index(scheduler_delete) < run.calls.index(job_delete)
+    assert not _soak_calls(run, "run", "jobs", "deploy")
+    assert not _gcloud_calls(run, "scheduler", "jobs", "pause")
+    assert not _gcloud_calls(run, "scheduler", "jobs", "resume")
+
+
+@pytest.mark.parametrize("script", _SYNTHETIC_SCRIPTS, ids=("synthetic", "image_refresh"))
+def test_synthetic_deploy_aborts_before_deleting_when_a_soak_lookup_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    script: str,
+) -> None:
+    fixture = SCRIPT_FIXTURES[script]
+    # The schedule lookup is denied (no NOT_FOUND in its answer) while the job
+    # lookup succeeds. Nothing may be deleted: removing the job alone would
+    # leave a live schedule invoking a job that no longer exists.
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES,
+        script,
+        replace(
+            fixture,
+            failures=(
+                *(pattern for pattern in fixture.failures if "spend-lease-soak" not in pattern),
+                r"scheduler jobs describe trusted-router-spend-lease-soak-"
+                "\tERROR: (gcloud.scheduler.jobs.describe) PERMISSION_DENIED: "
+                "Caller lacks cloudscheduler.jobs.get",
+            ),
+        ),
+    )
+    isolated = DeployScriptHarness(tmp_path / "synthetic-soak-denied")
+
+    run = _run_synthetic(isolated, script)
+
+    assert run.returncode != 0, summarise(run)
+    assert "cannot read retired spend-lease soak scheduler" in run.stderr
+    assert "PERMISSION_DENIED" in run.stderr
+    assert len(_soak_calls(run, "scheduler", "jobs", "describe")) == 1
+    assert not _soak_calls(run, "scheduler", "jobs", "delete")
+    assert not _soak_calls(run, "run", "jobs", "delete")
+
+
+@pytest.mark.parametrize("script", _SYNTHETIC_SCRIPTS, ids=("synthetic", "image_refresh"))
+@pytest.mark.parametrize(
+    "error",
+    (
+        "ERROR: (gcloud.run.jobs.describe) PERMISSION_DENIED: Caller lacks run.jobs.get",
+        "ERROR: (gcloud.run.jobs.describe) UNAVAILABLE: Retry later",
+        "ERROR: (gcloud.run.jobs.describe) Cannot find job [a-different-job].",
+        "ERROR: (gcloud.run.jobs.describe) PERMISSION_DENIED: not NOT_FOUND",
+        f"ERROR: (gcloud.scheduler.jobs.describe) Cannot find job [{_SOAK_JOB}].",
+    ),
+    ids=("denied", "transient", "wrong_job", "misleading_text", "wrong_service"),
+)
+def test_synthetic_deploy_aborts_before_deleting_when_soak_job_lookup_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script: str, error: str
+) -> None:
+    fixture = SCRIPT_FIXTURES[script]
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES,
+        script,
+        replace(
+            fixture,
+            failures=tuple(
+                pattern for pattern in fixture.failures if "spend-lease-soak" not in pattern
+            )
+            + (r"run jobs describe trusted-router-spend-lease-soak-" + "\t" + error,),
+        ),
+    )
+    run = _run_synthetic(DeployScriptHarness(tmp_path / "synthetic-soak-error"), script)
+
+    assert run.returncode != 0, summarise(run)
+    assert "cannot read retired spend-lease soak job" in run.stderr
+    assert len(_soak_calls(run, "scheduler", "jobs", "describe")) == 1
+    assert len(_soak_calls(run, "run", "jobs", "describe")) == 1
+    assert not _soak_calls(run, "scheduler", "jobs", "delete")
+    assert not _soak_calls(run, "run", "jobs", "delete")
+
+
 def test_synthetic_deploy_requires_explicit_split_billing_service_before_any_gcloud_call(
     tmp_path: Path,
 ) -> None:
@@ -3087,7 +2657,6 @@ def test_combined_synthetic_refresh_preserves_security_boundaries(tmp_path: Path
         ("trusted-router-synthetic-us-central1", "us-central1"),
         ("trusted-router-synthetic-europe-west4", "europe-west4"),
         ("trusted-router-throughput-us-central1", "us-central1"),
-        ("trusted-router-spend-lease-soak-us-central1", "us-central1"),
         ("trusted-router-image-generation-us-central1", "us-central1"),
         ("trusted-router-video-generation-us-central1", "us-central1"),
     ]
@@ -3115,49 +2684,13 @@ def test_combined_synthetic_refresh_preserves_security_boundaries(tmp_path: Path
             "TR_SYNTHETIC_CONTROL_PLANE_HEALTH_URL=https://trustedrouter.com"
             in " ".join(update)
         )
-    scheduler_pauses = _gcloud_calls(run, "scheduler", "jobs", "pause")
-    assert len(scheduler_pauses) == 1
-    assert "trusted-router-spend-lease-soak-us-central1-every-minute" in scheduler_pauses[0]
-    assert not _gcloud_calls(run, "scheduler", "jobs", "resume")
-
-
-def test_combined_synthetic_refresh_resumes_enabled_spend_lease_probe(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    script = "scripts/deploy/synthetic_image_refresh.sh"
-    fixture = SCRIPT_FIXTURES[script]
-    job_json = json.loads(fixture.responses[0][1])
-    env = job_json["spec"]["template"]["spec"]["template"]["spec"]["containers"][0][
-        "env"
-    ]
-    next(
-        item for item in env if item["name"] == "TR_SPEND_LEASE_SOAK_PROBE_ENABLED"
-    )["value"] = "true"
-    monkeypatch.setitem(
-        SCRIPT_FIXTURES,
-        script,
-        replace(
-            fixture,
-            responses=(
-                (fixture.responses[0][0], json.dumps(job_json)),
-                (fixture.responses[1][0], "PAUSED"),
-            ),
-        ),
-    )
-    isolated = DeployScriptHarness(tmp_path / "synthetic-image-refresh-enabled-soak")
-
-    run = isolated.run(
-        script,
-        verifier_rc=0,
-        omit_env=("TR_BILLING_SERVICE", "TR_ALLOW_DEPLOYED_COMBINED_SURFACE"),
-    )
-
-    assert run.returncode == 0, summarise(run)
-    scheduler_resumes = _gcloud_calls(run, "scheduler", "jobs", "resume")
-    assert len(scheduler_resumes) == 1
-    assert "trusted-router-spend-lease-soak-us-central1-every-minute" in scheduler_resumes[0]
-    assert not _gcloud_calls(run, "scheduler", "jobs", "pause")
+    # An image-only refresh owns no schedule for the jobs it refreshes: the
+    # only scheduler it touches is the retired soak cron, and with that cron
+    # absent it only looks for it.
+    scheduler_calls = _gcloud_calls(run, "scheduler")
+    assert scheduler_calls == _soak_calls(run, "scheduler", "jobs", "describe")
+    assert len(scheduler_calls) == 1
+    assert not _soak_calls(run, "run", "jobs", "update")
 
 
 def test_combined_synthetic_refresh_is_a_visible_release_gate() -> None:
@@ -3207,7 +2740,6 @@ def test_synthetic_combined_bridge_restores_legacy_job_deploys(
         ("trusted-router-synthetic-europe-west4", "europe-west4"),
         ("trusted-router-stage-d-probe-us-central1", "us-central1"),
         ("trusted-router-throughput-us-central1", "us-central1"),
-        ("trusted-router-spend-lease-soak-us-central1", "us-central1"),
         ("trusted-router-image-generation-us-central1", "us-central1"),
         ("trusted-router-video-generation-us-central1", "us-central1"),
     ]
@@ -3289,7 +2821,7 @@ def test_synthetic_combined_bridge_job_environment_constructs_settings(
         if call[:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
         and call[4:6] == ["jobs", "deploy"]
     ]
-    assert len(deploys) == 7
+    assert len(deploys) == 6
     for deploy in deploys:
         settings_kwargs = _settings_kwargs_from_cloud_run_job(deploy)
         settings = Settings(**settings_kwargs)
@@ -4010,15 +3542,3 @@ def test_azure_deploy_masks_every_value_it_reads_when_running_in_github_actions(
     )
     for value in values:
         assert value not in unmasked_output
-
-
-@pytest.mark.parametrize("configured,expected", [("", "500"), ("157", "157")])
-def test_regional_reconciler_deploy_passes_capacity_budget(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configured: str, expected: str,
-) -> None:
-    run = _run_regional_quota_reconciler(
-        tmp_path, monkeypatch, state="ENABLED", reconcile_limit=configured,
-    )
-    assert run.returncode == 0, summarise(run)
-    create = _gcloud_calls(run, "run", "jobs", "create")[0]
-    assert any(f"TR_REGIONAL_QUOTA_RECONCILE_LIMIT={expected}|" in arg for arg in create)

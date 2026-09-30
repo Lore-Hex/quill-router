@@ -136,69 +136,6 @@ def test_gcp_store_disables_spanner_builtin_metrics(monkeypatch: Any) -> None:
     assert pool_sizes == [8]
 
 
-def test_gcp_store_opens_regional_ledger_when_local_issuance_is_disabled(
-    monkeypatch: Any,
-) -> None:
-    """Every control-plane region must settle leases issued by another region."""
-    from google.cloud import bigtable, spanner
-
-    monkeypatch.setattr(
-        "trusted_router.storage_gcp.configure_spanner_rpc_deadlines",
-        lambda _database: None,
-    )
-
-    class FakeSpannerClient:
-        def __init__(self, **_kwargs: Any) -> None:
-            pass
-
-        def instance(self, _instance_id: str) -> FakeSpannerClient:
-            return self
-
-        def database(self, _database_id: str, **_kwargs: Any) -> object:
-            return object()
-
-    class FakeBigtableClient:
-        def __init__(self, **_kwargs: Any) -> None:
-            pass
-
-        def instance(self, _instance_id: str) -> FakeBigtableClient:
-            return self
-
-        def table(self, _table_id: str, *, app_profile_id: str) -> object:
-            assert app_profile_id == "quota-us"
-            return object()
-
-    monkeypatch.setattr(spanner, "Client", FakeSpannerClient)
-    monkeypatch.setattr(bigtable, "Client", FakeBigtableClient)
-
-    store = SpannerBigtableStore(
-        project_id="project",
-        spanner_instance_id="spanner",
-        spanner_database_id="database",
-        bigtable_instance_id="bigtable",
-        regional_quota_leases_enabled=False,
-        regional_quota_bigtable_app_profiles={"us-central1": "quota-us"},
-    )
-
-    assert store._regional_quota_ledger is not None
-    assert store._regional_quota_ledger.supports_region("us-central1") is True
-    # Cross-region callbacks (a europe-west4 process reading the us-central1
-    # cluster) need more than the client's 1 s padded floor; the default
-    # budget is 4 s and the setting reaches the ledger unchanged.
-    assert store._regional_quota_ledger._operation_timeout_seconds == 4.0
-    tuned = SpannerBigtableStore(
-        project_id="project",
-        spanner_instance_id="spanner",
-        spanner_database_id="database",
-        bigtable_instance_id="bigtable",
-        regional_quota_leases_enabled=False,
-        regional_quota_bigtable_app_profiles={"us-central1": "quota-us"},
-        regional_quota_ledger_timeout_seconds=6.5,
-    )
-    assert tuned._regional_quota_ledger is not None
-    assert tuned._regional_quota_ledger._operation_timeout_seconds == 6.5
-
-
 def test_gcp_api_key_lookup_uses_index_and_never_stores_raw_key() -> None:
     store, db = make_fake_store()
     store._write_entity(

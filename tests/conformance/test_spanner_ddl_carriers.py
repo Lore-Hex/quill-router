@@ -487,7 +487,7 @@ def test_round_eight_helper_transport_fails_regardless_of_launcher(repo, command
 
 
 @pytest.mark.parametrize("relative", ["clickhouse/build_public_snapshots.py",
-                                      "src/trusted_router/regional_quota_reconcile_gate.py"])
+                                      "src/trusted_router/activity_delivery_repair_cli.py"])
 def test_deploy_program_transport_fails_but_statement_only_is_documented_non_goal(repo, relative):
     path = repo / relative
     path.parent.mkdir(parents=True, exist_ok=True)

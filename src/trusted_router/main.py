@@ -220,7 +220,7 @@ def create_app(
     validate_auto_model_order(settings.auto_model_order)
     if configure_store_arg:
         configure_store(create_store(settings))
-        # No-op unless TR_CLICKHOUSE_URL is set; Bigtable stays authoritative.
+        # No-op unless TR_CLICKHOUSE_URL is set; the store stays authoritative.
         configure_analytics_sink(create_analytics_sink(settings))
     if init_observability:
         init_sentry(settings)

@@ -1,5 +1,5 @@
 {% extends "public/_base.html" %}
-{% from "public/_provider_identity.html" import provider_identity %}
+{% from "public/_provider_identity.html" import provider_identity, publisher_identity %}
 {% block body %}
 <section class="public-proof-strip">
   <div><strong>Model pages</strong><span>Every public model links to benchmarks, pricing, providers, uptime, and API quickstarts.</span></div>
@@ -33,7 +33,7 @@
         {% for model in models %}
         <tr>
           <td><a href="{{ model.detail_href }}"><code>{{ model.id }}</code></a><br>{{ model.name }}</td>
-        <td>{{ provider_identity(model.publisher_slug, model.provider, "/providers/" ~ model.publisher_slug) }}</td>
+        <td>{{ publisher_identity(model) }}</td>
           <td>
             {% if model.ai_iq %}
             <a class="ai-iq-link" href="{{ model.ai_iq.url }}" rel="nofollow noopener"><strong>IQ {{ model.ai_iq.iq }}</strong><span>#{{ model.ai_iq.rank }}</span></a>

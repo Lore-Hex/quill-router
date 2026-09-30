@@ -101,7 +101,7 @@ def heartbeat_gateway_atomic(
                 return reject("stale_seq")
             stored_usage = delivered_usage_counts(authorization.delivered_usage)
             document = parse_pricing_snapshot(authorization.pricing_snapshot)
-            cap_micro = _cap_micro(authorization, credit_reserved_micro)
+            cap_micro = _cap_micro(credit_reserved_micro)
             stored_endpoint_id = str(authorization.selected_endpoint_id)
             return HeartbeatResult(
                 accepted=True,
@@ -137,7 +137,7 @@ def heartbeat_gateway_atomic(
             )
         except ValueError:
             return reject("endpoint_mismatch")
-        cap_micro = _cap_micro(authorization, credit_reserved_micro)
+        cap_micro = _cap_micro(credit_reserved_micro)
         if running_micro > cap_micro:
             return reject("usage_exceeds_cap")
         updated = transaction.execute_update(
@@ -285,11 +285,8 @@ def _usage_exceeds_authorized_tokens(authorization: Any, usage: dict[str, int]) 
     return total_prompt + int(usage["output_tokens"]) > int(prompt_limit) + int(output_limit)
 
 
-def _cap_micro(authorization: Any, credit_reserved_micro: Any) -> int:
-    cap = int(credit_reserved_micro)
-    if authorization.spend_lease_allocated_micro is not None:
-        cap = min(cap, int(authorization.spend_lease_allocated_micro))
-    return cap
+def _cap_micro(credit_reserved_micro: Any) -> int:
+    return int(credit_reserved_micro)
 
 
 def _selected_provider(authorization: Any, endpoint_id: str) -> str:

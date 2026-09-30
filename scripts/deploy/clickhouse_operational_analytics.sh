@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Expand ClickHouse to tenant activity and synthetic status metadata.
-# Bigtable remains authoritative until a separate dual-read soak passes.
+# ClickHouse is the only analytics store (the Bigtable shadow retired 2026-09-28).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

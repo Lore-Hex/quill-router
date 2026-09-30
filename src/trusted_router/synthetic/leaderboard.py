@@ -9,7 +9,7 @@ uptime %, error rate, and sample counts.
 This is the data layer behind the public ``/leaderboard`` page and the per-model
 performance subpages. The page builds it from a recent window of samples behind
 the same short cache the status page uses, so there is no per-view store read.
-(A future scale optimization can precompute these as Bigtable rollups; the
+(A future scale optimization can precompute these as ClickHouse rollups; the
 aggregation here is the reusable core either way.)
 """
 
