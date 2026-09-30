@@ -4,6 +4,7 @@ import json
 import re
 from pathlib import Path
 
+import pytest
 from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
@@ -716,9 +717,18 @@ def test_single_provider_model_shows_provider_posture_not_variation(
     assert "varies by route" not in detail.text
 
 
-def test_phala_pages_do_not_claim_verified_provider_e2ee(client: TestClient) -> None:
+def test_phala_pages_do_not_claim_verified_provider_e2ee(
+    client: TestClient, monkeypatch: MonkeyPatch
+) -> None:
+    # A model on a Phala Confidential AI route (the phala/* upstream namespace),
+    # a fixture route: Phala lists none today, and the pass-through routes it
+    # does list, GLM 5.2's among them, claim no privacy at all.
+    serve_on_fixture_route(
+        monkeypatch, "fixture/phala-confidential", "phala", author="phala",
+        upstream_id="phala/fixture-confidential",
+    )
     provider = client.get("/providers/phala")
-    detail = client.get("/models/z-ai/glm-5.2")
+    detail = client.get("/models/fixture/phala-confidential")
 
     assert provider.status_code == 200
     assert 'Verified confidential inference</th><td><span class="pill ">Not verified</span>' in provider.text
@@ -727,6 +737,7 @@ def test_phala_pages_do_not_claim_verified_provider_e2ee(client: TestClient) -> 
     assert "provider E2EE not verified" in detail.text
 
 
+@pytest.mark.catalog_as_built
 def test_public_meta_model_detail_renders_orchestration_components(
     client: TestClient, monkeypatch: MonkeyPatch
 ) -> None:
@@ -758,6 +769,7 @@ def test_public_meta_model_detail_renders_orchestration_components(
     assert 'Canonical: <a href="/models/trustedrouter/socrates-3.0"' in rolling.text
 
 
+@pytest.mark.catalog_as_built
 def test_public_k3_combo_pages_render_exact_graphs(
     client: TestClient,
 ) -> None:

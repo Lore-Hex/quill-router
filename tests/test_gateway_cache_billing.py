@@ -16,6 +16,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
+from tests import catalog_vehicles
 from tests.fixture_routes import serve_on_fixture_route
 from trusted_router.catalog import cache_token_prices_microdollars, endpoint_for_id
 from trusted_router.catalog_data import PriceTier
@@ -250,7 +251,7 @@ def test_glm_53_routes_publish_the_manifest_cached_input_rate(provider_slug: str
         for row in raw["models"]
         if row["id"] == "z-ai/glm-5.3" and row.get("routable") is not False
     }
-    endpoint = endpoint_for_id(f"z-ai/glm-5.3@{provider_slug}/prepaid")
+    endpoint = catalog_vehicles.registry_endpoints().get(f"z-ai/glm-5.3@{provider_slug}/prepaid")
     published = (
         {endpoint.model_id: endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens}
         if endpoint is not None

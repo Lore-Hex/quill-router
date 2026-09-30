@@ -15,6 +15,7 @@ from scripts.pricing.parsers import morph as morph_parser
 from scripts.pricing.parsers import streamlake as streamlake_parser
 from scripts.pricing.providers import atlas_cloud, inceptron, morph, streamlake
 from scripts.pricing.refresh import _PRICING_RESULT_PROVIDER_ALIASES, PROVIDER_SLUGS
+from tests import catalog_vehicles
 from trusted_router.catalog import (
     GATEWAY_PREPAID_PROVIDER_SLUGS,
     MODEL_ENDPOINTS,
@@ -153,7 +154,8 @@ def test_wave2_manifests_publish_only_live_eligible_routes() -> None:
         for row in atlas_image_rows
     )
     assert all(row["upstream_id"] for raw in manifests.values() for row in raw["models"])
-    route_providers = {endpoint.provider for endpoint in MODEL_ENDPOINTS.values()}
+    built = catalog_vehicles.registry_endpoints()
+    route_providers = {endpoint.provider for endpoint in built.values()}
     # A provider publishes routes while its manifest has a routable row; one
     # the refresh tombstoned entirely is simply not expected.
     for slug in ("inceptron", "morph", "atlas-cloud"):
@@ -161,7 +163,7 @@ def test_wave2_manifests_publish_only_live_eligible_routes() -> None:
         assert slug in route_providers or not live_rows, slug
     streamlake_route_models = {
         endpoint.model_id
-        for endpoint in MODEL_ENDPOINTS.values()
+        for endpoint in built.values()
         if endpoint.provider == "streamlake"
     }
     streamlake_manifest_models = {

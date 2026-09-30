@@ -8,9 +8,15 @@ from typing import Any
 
 import pytest
 
+from tests.fixture_routes import drop_routes
 from tests.lifecycle_clock import catalog_predates
-from tests.pinned_manifests import GROK_47, build_manifest_rows
-from trusted_router import provider_lifecycle
+from tests.pinned_manifests import (
+    GLM_5_2_ROUTES,
+    GROK_47,
+    OPENROUTER_GLM_5_2,
+    build_manifest_rows,
+)
+from trusted_router import catalog_ingest, provider_lifecycle
 from trusted_router.catalog import (
     ADVISOR_CATALOG_MODEL_ORDERS,
     ADVISOR_MODEL_ID,
@@ -286,6 +292,7 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
         )
 
 
+@pytest.mark.catalog_as_built
 def test_parasail_liberty_catalog_publishes_fixed_credits_only_price() -> None:
     model = MODELS[PARASAIL_LIBERTY_2_0_MODEL_ID]
     shape = model_to_openrouter_shape(model)
@@ -409,12 +416,15 @@ def test_native_provider_catalog_preserves_live_model_ids(
     """Provider-native `/models` feeds can be ahead of OpenRouter's
     endpoint feed. TR should publish those routes with exact upstream
     IDs so the enclave can dispatch them without strip-author bugs."""
+    from tests import catalog_vehicles
+
+    built = catalog_vehicles.registry_endpoints()
     for model_id in sample_ids:
         row = _listed_row(provider, model_id)
         if row is None:
             continue
         for usage in ("prepaid", "byok"):
-            assert MODEL_ENDPOINTS[f"{model_id}@{provider}/{usage}"].upstream_id == (
+            assert built[f"{model_id}@{provider}/{usage}"].upstream_id == (
                 row.get("upstream_id") or model_id
             )
 
@@ -437,6 +447,7 @@ def test_native_provider_catalogs_still_serve_their_lineups(
 
 
 def test_novita_native_catalog_preserves_every_eligible_manifest_row() -> None:
+    from tests import catalog_vehicles
     from trusted_router.catalog_ingest import (
         _PROVIDER_MODELS_DIR,
         _is_provider_deprecated_model,
@@ -467,6 +478,7 @@ def test_novita_native_catalog_preserves_every_eligible_manifest_row() -> None:
             if endpoint.provider == "novita" and endpoint.usage_type == usage
         }
         assert actual == expected
+    built = catalog_vehicles.registry_endpoints()
     for model_id in (
         "moonshotai/kimi-k2.6", "deepseek/deepseek-ocr-2", "tencent/hy3",
         "xiaomimimo/mimo-v2.5-pro", "zai-org/glm-5.1", "Sao10K/L3-8B-Stheno-v3.2",
@@ -474,7 +486,7 @@ def test_novita_native_catalog_preserves_every_eligible_manifest_row() -> None:
         if model_id not in expected:
             continue
         for usage in ("prepaid", "byok"):
-            assert MODEL_ENDPOINTS[f"{model_id}@novita/{usage}"].upstream_id == expected[model_id]
+            assert built[f"{model_id}@novita/{usage}"].upstream_id == expected[model_id]
 
 
 def test_cerebras_native_catalog_preserves_every_live_model_id() -> None:
@@ -499,6 +511,9 @@ def test_non_chat_deepseek_ocr_is_not_routable_as_chat() -> None:
 def test_minimax_public_ids_map_to_exact_upstream_ids() -> None:
     # MiniMax's upstream ids are case-sensitive (MiniMax-M3): each route uses
     # the exact id MiniMax's own feed names.
+    from tests import catalog_vehicles
+
+    built = catalog_vehicles.registry_endpoints()
     for endpoint_id in (
         "minimax/minimax-m3@minimax/prepaid",
         "minimax/minimax-m3@minimax/byok",
@@ -508,7 +523,7 @@ def test_minimax_public_ids_map_to_exact_upstream_ids() -> None:
         model_id = endpoint_id.partition("@")[0]
         row = _listed_row("minimax", model_id)
         if row is not None:
-            assert MODEL_ENDPOINTS[endpoint_id].upstream_id == (row.get("upstream_id") or model_id)
+            assert built[endpoint_id].upstream_id == (row.get("upstream_id") or model_id)
 
 
 def test_grok_45_uses_xai_native_model_id_and_pricing() -> None:
@@ -692,20 +707,25 @@ def test_minimax_empty_operator_routes_are_not_prepaid() -> None:
 def test_operator_unavailable_provider_routes_are_not_prepaid(
     provider: str, model_ids: tuple[str, ...]
 ) -> None:
+    from tests import catalog_vehicles
+
+    built = catalog_vehicles.registry_endpoints()
     for model_id in model_ids:
-        if f"{model_id}@{provider}/byok" not in MODEL_ENDPOINTS:
+        if f"{model_id}@{provider}/byok" not in built:
             # Provider feeds may retire the route entirely. The suppression
             # contract applies only while the provider still advertises it.
             continue
-        assert f"{model_id}@{provider}/prepaid" not in MODEL_ENDPOINTS
-        assert f"{model_id}@{provider}/byok" in MODEL_ENDPOINTS
+        assert f"{model_id}@{provider}/prepaid" not in built
+        assert f"{model_id}@{provider}/byok" in built
 
 
 def test_minimax_m3_uses_provider_native_context_tiers() -> None:
+    from tests import catalog_vehicles
+
     row = _listed_row("minimax", "minimax/minimax-m3")
     if row is None:
         return
-    prepaid = MODEL_ENDPOINTS["minimax/minimax-m3@minimax/prepaid"]
+    prepaid = catalog_vehicles.registry_endpoints()["minimax/minimax-m3@minimax/prepaid"]
 
     # The model row can come from the OpenRouter snapshot when that snapshot
     # catches up, but the provider-native MiniMax endpoint must still carry
@@ -890,6 +910,9 @@ def test_closed_provider_zdr_claims_are_route_scoped(monkeypatch: pytest.MonkeyP
 
 
 def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
+    from tests import catalog_vehicles
+
+    built = catalog_vehicles.registry_endpoints()
     quarantined_routes = [
         ("xiaomi", "xiaomi/mimo-v2-flash"),
         ("xiaomi", "xiaomi/mimo-v2-pro"),
@@ -923,7 +946,7 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
     for provider, model_id in quarantined_routes:
         assert not [
             endpoint
-            for endpoint in MODEL_ENDPOINTS.values()
+            for endpoint in built.values()
             if endpoint.provider == provider and endpoint.model_id == model_id
         ], f"{provider}/{model_id} should be quarantined"
 
@@ -933,7 +956,7 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
     for kept_model in ("openai/gpt-4.1-mini", "openai/gpt-5.5", "openai/gpt-5.6-sol"):
         assert [
             endpoint
-            for endpoint in MODEL_ENDPOINTS.values()
+            for endpoint in built.values()
             if endpoint.provider == "atlas-cloud" and endpoint.model_id == kept_model
         ] or _listed_row("atlas-cloud", kept_model) is None, (
             f"atlas-cloud/{kept_model} should remain routable"
@@ -941,7 +964,7 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
 
     # Policy (2026-07-18): Anthropic-authored models route via Anthropic only
     # for Credits — the reseller prepaid route is gone, its BYOK route stays.
-    assert "anthropic/claude-fable-5@lightning/prepaid" not in MODEL_ENDPOINTS
+    assert "anthropic/claude-fable-5@lightning/prepaid" not in built
     # Residue quarantine is provider-scoped: healthy siblings survive while
     # their providers list them.
     for endpoint_id in (
@@ -950,10 +973,10 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
         "z-ai/glm-5@zai/prepaid",
         "deepseek/deepseek-v4-pro@deepseek/prepaid",
     ):
-        assert endpoint_id in MODEL_ENDPOINTS or _delisted(endpoint_id), endpoint_id
+        assert endpoint_id in built or _delisted(endpoint_id), endpoint_id
     assert [
         endpoint
-        for endpoint in MODEL_ENDPOINTS.values()
+        for endpoint in built.values()
         if endpoint.model_id == "google/gemini-2.5-flash-lite"
         and endpoint.provider != "google-ai-studio"
     ] or _delisted("google/gemini-2.5-flash-lite@google-vertex/prepaid"), (
@@ -1044,15 +1067,18 @@ def test_deepseek_v4_pro_release_routes_are_keyed_and_credits_only() -> None:
     assert endpoint_privacy_tier(baseten) >= PRIVACY_TIER_ZERO_RETENTION
 
 
-@pytest.mark.parametrize(
-    "model_id",
-    [
-        "moonshotai/kimi-k3",
-        "z-ai/glm-5.2",
-        "minimax/minimax-m3",
-    ],
-)
-def test_current_orchestration_backups_have_zdr_routes(model_id: str) -> None:
+_ORCHESTRATION_BACKUP_IDS = ["moonshotai/kimi-k3", "z-ai/glm-5.2", "minimax/minimax-m3"]
+
+
+@pytest.mark.parametrize("model_id", _ORCHESTRATION_BACKUP_IDS)
+def test_a_zdr_floor_keeps_only_the_zdr_routes_of_orchestration_backups(
+    model_id: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Each backup on a ZDR host (Parasail) and on a host with no retention
+    # guarantee (Novita), fixture routes both, whoever lists it today. Whether
+    # each still has a ZDR route is test_current_orchestration_backups_have_zdr_routes.
+    drop_routes(monkeypatch, model_id)
+    _serve_on_fixture_routes(monkeypatch, model_id, ("parasail", "Credits"), ("novita", "Credits"))
     candidates = chat_route_endpoint_candidates(
         {
             "model": model_id,
@@ -1063,6 +1089,7 @@ def test_current_orchestration_backups_have_zdr_routes(model_id: str) -> None:
     )
 
     assert candidates
+    assert [endpoint.id for _model, endpoint in candidates] == [f"{model_id}@parasail/prepaid"]
     assert all(
         endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_ZERO_RETENTION
         for _model, endpoint in candidates
@@ -1452,6 +1479,7 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
     assert MODELS[ARISTOTLE_MODEL_ID].context_length == 1_048_576
 
 
+@pytest.mark.catalog_as_built
 def test_liberty_models_publish_verified_components_and_honest_context_limits() -> None:
     inkling_1m_available = catalog_predates(BASETEN_SEPTEMBER_2026_RETIREMENT_AT)
     expected = {
@@ -1705,6 +1733,7 @@ def test_zeus_versions_are_frozen_and_rolling_alias_uses_3_0() -> None:
     assert canonical_orchestration_model_id(ZEUS_MODEL_ID) == ZEUS_3_0_MODEL_ID
 
 
+@pytest.mark.catalog_as_built
 def test_openpatcher_s1_is_cataloged_as_custom_synth_preset() -> None:
     model = MODELS[OPEN_PATCHER_S1_MODEL_ID]
     shape = model_to_openrouter_shape(model)
@@ -1722,6 +1751,7 @@ def test_openpatcher_s1_is_cataloged_as_custom_synth_preset() -> None:
     ]
 
 
+@pytest.mark.catalog_as_built
 def test_openpatcher_s2_replaces_k2_with_k3_without_mutating_s1() -> None:
     s1_candidates = [model.id for model in meta_candidate_models(OPEN_PATCHER_S1_MODEL_ID)]
     s2 = MODELS[OPEN_PATCHER_S2_MODEL_ID]
@@ -1775,6 +1805,7 @@ def test_iris_versions_are_frozen_and_rolling_alias_uses_3_0() -> None:
     assert canonical_orchestration_model_id(IRIS_MODEL_ID) == IRIS_3_0_MODEL_ID
 
 
+@pytest.mark.catalog_as_built
 def test_prometheus_1m_uses_only_long_context_open_weight_components() -> None:
     model = MODELS[PROMETHEUS_1_0_1M_MODEL_ID]
     candidates = meta_candidate_models(PROMETHEUS_1_0_1M_MODEL_ID)
@@ -1868,6 +1899,7 @@ def test_trustedrouter_meta_models_are_credits_only_not_byok() -> None:
         PROMETHEUS_3_0_MODEL_ID,
     ],
 )
+@pytest.mark.catalog_as_built
 def test_trustedrouter_meta_route_expansion_is_credits_only(model_id: str) -> None:
     endpoints = chat_route_endpoint_candidates(
         {"model": model_id},
@@ -1929,6 +1961,7 @@ def test_openpatcher_and_athena_force_us_provider_routes(
     )
 
 
+@pytest.mark.catalog_as_built
 def test_openpatcher_g2_explicitly_uses_global_moonshot_k3_route() -> None:
     shape = model_to_openrouter_shape(MODELS[OPEN_PATCHER_G2_MODEL_ID])
 
@@ -1973,7 +2006,12 @@ def test_openpatcher_g1_and_g2_stay_frozen_while_g3_uses_prometheus_3() -> None:
     ])
 
 
-def test_provider_jurisdiction_filter_keeps_only_us_based_endpoints() -> None:
+def test_provider_jurisdiction_filter_keeps_only_us_based_endpoints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # GLM 5.2 on a US host and a Singapore host, fixture routes both, whoever
+    # lists it today.
+    _serve_on_fixture_routes(monkeypatch, "z-ai/glm-5.2", ("deepinfra", "Credits"), ("zai", "Credits"))
     endpoints = chat_route_endpoint_candidates(
         {"model": "z-ai/glm-5.2", "provider": {"jurisdiction": "us"}},
         Settings(environment="test"),
@@ -2336,19 +2374,21 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
 
 def test_crusoe_provider_models_follow_authoritative_manifest() -> None:
     """Crusoe availability follows its generated, credential-aware manifest."""
+    from tests import catalog_vehicles
     from trusted_router.catalog_ingest import _authoritative_provider_model_ids
 
     assert "crusoe" in PROVIDERS
     assert "crusoe" in GATEWAY_PREPAID_PROVIDER_SLUGS
     expected = _authoritative_provider_model_ids("crusoe")
+    built = catalog_vehicles.registry_endpoints()
     credits = {
         endpoint.model_id
-        for endpoint in MODEL_ENDPOINTS.values()
+        for endpoint in built.values()
         if endpoint.provider == "crusoe" and endpoint.usage_type == "Credits"
     }
     byok = {
         endpoint.model_id
-        for endpoint in MODEL_ENDPOINTS.values()
+        for endpoint in built.values()
         if endpoint.provider == "crusoe" and endpoint.usage_type == "BYOK"
     }
     assert credits == expected
@@ -2357,6 +2397,7 @@ def test_crusoe_provider_models_follow_authoritative_manifest() -> None:
 
 def test_makora_provider_models_follow_live_manifest() -> None:
     """Makora routes track its generated catalog without freezing retirements."""
+    from tests import catalog_vehicles
     from trusted_router.catalog_ingest import (
         _PROVIDER_MODELS_DIR,
         _is_provider_deprecated_model,
@@ -2383,14 +2424,15 @@ def test_makora_provider_models_follow_live_manifest() -> None:
             continue
         expected[model_id] = upstream_id
 
+    built = catalog_vehicles.registry_endpoints()
     credits_model_ids = {
         endpoint.model_id
-        for endpoint in MODEL_ENDPOINTS.values()
+        for endpoint in built.values()
         if endpoint.provider == "makora" and str(endpoint.usage_type) == "Credits"
     }
     byok_model_ids = {
         endpoint.model_id
-        for endpoint in MODEL_ENDPOINTS.values()
+        for endpoint in built.values()
         if endpoint.provider == "makora" and str(endpoint.usage_type) == "BYOK"
     }
 
@@ -2398,18 +2440,19 @@ def test_makora_provider_models_follow_live_manifest() -> None:
     assert byok_model_ids == set(expected)
     assert "qwen/qwen3.6-27b" not in credits_model_ids
     assert "openai/gpt-oss-120b" not in credits_model_ids
+    models = catalog_vehicles.registry_models()
     for model_id, upstream in expected.items():
-        model = MODELS.get(model_id)
+        model = models.get(model_id)
         assert model is not None, f"{model_id} missing from catalog"
         credits = [
             e
             for e in endpoints_for_model(model_id)
-            if str(e.usage_type) == "Credits" and e.provider == "makora"
+            if str(e.usage_type) == "Credits" and e.provider == "makora" and e.id in built
         ]
         byok = [
             e
             for e in endpoints_for_model(model_id)
-            if str(e.usage_type) == "BYOK" and e.provider == "makora"
+            if str(e.usage_type) == "BYOK" and e.provider == "makora" and e.id in built
         ]
         assert credits, f"{model_id} has no makora prepaid endpoint"
         assert byok, f"{model_id} has no makora BYOK endpoint"
@@ -2424,12 +2467,14 @@ def test_makora_provider_prices_follow_published_lineup() -> None:
     to the checked-in provider-native manifest rather than freezing a stale
     homepage price table into source code.
     """
+    from tests import catalog_vehicles
     from trusted_router.catalog_ingest import (
         _PROVIDER_MODELS_DIR,
         _is_provider_deprecated_model,
     )
     from trusted_router.pricing import _customer_price
 
+    built = catalog_vehicles.registry_endpoints()
     raw = json.loads((_PROVIDER_MODELS_DIR / "makora.json").read_text(encoding="utf-8"))
     expected_prices = {
         row["id"]: (
@@ -2449,7 +2494,7 @@ def test_makora_provider_prices_follow_published_lineup() -> None:
         credits = [
             e
             for e in endpoints_for_model(model_id)
-            if str(e.usage_type) == "Credits" and e.provider == "makora"
+            if str(e.usage_type) == "Credits" and e.provider == "makora" and e.id in built
         ]
         assert credits, f"{model_id} has no makora prepaid endpoint"
         endpoint = credits[0]
@@ -2575,10 +2620,24 @@ def test_wafer_manifest_drives_zdr_routing_and_gateway_enforcement(
     }
 
 
-def test_glm_52_supplements_publish_current_model_across_providers() -> None:
-    model_id = "z-ai/glm-5.2"
-    model = MODELS[model_id]
+def _glm_52_as_built(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> tuple[Model, dict[str, ModelEndpoint]]:
+    """GLM 5.2 as the catalog builds it from pinned data, whatever the hosts
+    list today: the model from OpenRouter's snapshot entry, and each host's
+    routes from its manifest row."""
+    snapshot = tmp_path / "openrouter_snapshot.json"
+    snapshot.write_text(json.dumps({"models": [OPENROUTER_GLM_5_2]}), encoding="utf-8")
+    with monkeypatch.context() as patch:
+        patch.setattr(catalog_ingest, "_INGEST_PATH", snapshot)
+        models, _ = catalog_ingest._ingested_models_and_endpoints()
+    endpoints: dict[str, ModelEndpoint] = {}
+    for provider, row in GLM_5_2_ROUTES:
+        endpoints |= build_manifest_rows(monkeypatch, tmp_path / provider, provider, [row])[1]
+    return models["z-ai/glm-5.2"], endpoints
 
+
+def _assert_glm_52_contract(model: Model, endpoints: dict[str, ModelEndpoint]) -> None:
     assert model.provider == "zai"
     # The context window comes from Z.AI's own endpoint, independent of
     # whichever reseller OpenRouter ranks as top_provider at refresh time.
@@ -2586,51 +2645,41 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     assert model.supports_chat
     # Each host that lists the model serves a priced prepaid route on the exact
     # upstream id its own manifest names; Z.AI's BYOK route uses Z.AI's id.
-    for endpoint_id in (
-        f"{model_id}@zai/prepaid",
-        f"{model_id}@zai/byok",
-        *(
-            f"{model_id}@{provider}/prepaid"
-            for provider in (
-                "gmi", "deepinfra", "fireworks", "novita", "phala", "siliconflow",
-                "together", "venice", "parasail", "friendli", "baseten",
-            )
-        ),
-    ):
-        row = _listed_row(endpoint_id.partition("@")[2].split("/")[0], model_id)
-        if row is None:
-            continue
-        endpoint = MODEL_ENDPOINTS[endpoint_id]
-        assert endpoint.upstream_id == row["upstream_id"], endpoint_id
-        assert endpoint.prompt_price_microdollars_per_million_tokens > 0, endpoint_id
-        assert endpoint.completion_price_microdollars_per_million_tokens > 0, endpoint_id
-    fireworks = [
-        endpoint for endpoint in endpoints_for_model(model_id)
-        if endpoint.provider == "fireworks" and endpoint.usage_type == "Credits"
-    ]
-    if not catalog_predates(FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT):
-        assert fireworks == []
+    for provider, row in GLM_5_2_ROUTES:
+        for usage in ("prepaid", "byok") if provider == "zai" else ("prepaid",):
+            endpoint_id = f"{model.id}@{provider}/{usage}"
+            endpoint = endpoints[endpoint_id]
+            assert endpoint.upstream_id == row["upstream_id"], endpoint_id
+            assert endpoint.prompt_price_microdollars_per_million_tokens > 0, endpoint_id
+            assert endpoint.completion_price_microdollars_per_million_tokens > 0, endpoint_id
+
+
+def test_glm_52_supplements_publish_current_model_across_providers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    _assert_glm_52_contract(*_glm_52_as_built(monkeypatch, tmp_path))
 
 
 @pytest.mark.parametrize("context_length", [131_072, 262_144, 1_000_000])
 def test_glm_52_context_contract_rejects_smaller_windows(
-    monkeypatch: pytest.MonkeyPatch, context_length: int
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, context_length: int
 ) -> None:
-    monkeypatch.setitem(
-        MODELS, "z-ai/glm-5.2", replace(MODELS["z-ai/glm-5.2"], context_length=context_length)
-    )
+    model, endpoints = _glm_52_as_built(monkeypatch, tmp_path)
     with pytest.raises(AssertionError):
-        test_glm_52_supplements_publish_current_model_across_providers()
+        _assert_glm_52_contract(replace(model, context_length=context_length), endpoints)
 
 
 def _assert_parasail_route_follows_its_row(model_id: str) -> dict[str, Any] | None:
     """Parasail serves some models under its own deployment ids: each route it
     lists uses that exact id and its published price, marked up."""
+    from tests import catalog_vehicles
+
     row = _listed_row("parasail", model_id)
     if row is None:
         return None
-    prepaid = MODEL_ENDPOINTS[f"{model_id}@parasail/prepaid"]
-    byok = MODEL_ENDPOINTS[f"{model_id}@parasail/byok"]
+    built = catalog_vehicles.registry_endpoints()
+    prepaid = built[f"{model_id}@parasail/prepaid"]
+    byok = built[f"{model_id}@parasail/byok"]
     assert prepaid.upstream_id == row["upstream_id"]
     assert byok.upstream_id == row["upstream_id"]
     assert prepaid.prompt_price_microdollars_per_million_tokens == _customer_price(
@@ -2788,6 +2837,25 @@ def test_the_combo_badges_still_follow_their_open_and_closed_components() -> Non
         assert model_open_weights(MODELS[model_id]), model_id
     for model_id in _CLOSED_WEIGHT_BADGE_IDS:
         assert not model_open_weights(MODELS[model_id]), model_id
+
+
+@pytest.mark.provider_health
+@pytest.mark.parametrize("model_id", _ORCHESTRATION_BACKUP_IDS)
+def test_current_orchestration_backups_have_zdr_routes(model_id: str) -> None:
+    candidates = chat_route_endpoint_candidates(
+        {
+            "model": model_id,
+            "messages": [{"role": "user", "content": "PONG"}],
+            "provider": {"min_privacy": "zdr"},
+        },
+        Settings(environment="test"),
+    )
+
+    assert candidates
+    assert all(
+        endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_ZERO_RETENTION
+        for _model, endpoint in candidates
+    )
 
 
 @pytest.mark.provider_health

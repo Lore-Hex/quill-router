@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
+from tests.fixture_routes import serve_on_fixture_route
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.storage import STORE, ProviderBenchmarkSample
@@ -41,7 +43,12 @@ def _seed(provider: str, model: str, *, ttft: int, ttfb: int, count: int = 4) ->
         )
 
 
-def test_model_performance_page_shows_measured() -> None:
+def test_model_performance_page_shows_measured(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The catalog carries the model on a fixture route, whoever lists it today
+    # (the catalog files Meta's Llama models under Cerebras).
+    serve_on_fixture_route(
+        monkeypatch, "meta-llama/llama-3.3-70b-instruct", "deepinfra", author="cerebras"
+    )
     client = TestClient(create_app(_settings(), init_observability=False))
     _seed("deepinfra", "meta-llama/llama-3.3-70b-instruct", ttft=150, ttfb=90, count=24)
     resp = client.get("/models/meta-llama/llama-3.3-70b-instruct/performance")

@@ -409,14 +409,14 @@ def test_disjoint_alias_and_request_provider_allowlists_fail_closed() -> None:
     ],
 )
 def test_allow_fallbacks_false_never_validates_or_routes_fallback_models(
-    fallback_control: dict[str, object],
+    fallback_control: dict[str, object], monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A disabled fallback list is inert, including stale model IDs.
 
     Validating the fallback array before applying the flag can reject a valid
     primary with an error naming a model the caller explicitly disabled.
     """
-
+    serve_on_fixture_route(monkeypatch, "openai/gpt-oss-20b", "deepinfra", author="openai")
     candidates = chat_route_endpoint_candidates(
         {
             "model": "openai/gpt-oss-20b",
@@ -504,7 +504,10 @@ def test_provider_route_preferences_accepts_top_level_allow_fallbacks_alias() ->
     assert prefs.allow_fallbacks is False
 
 
-def test_top_level_no_fallbacks_pins_exact_request_to_one_provider_route() -> None:
+def test_top_level_no_fallbacks_pins_exact_request_to_one_provider_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    serve_on_fixture_route(monkeypatch, "openai/gpt-oss-20b", "deepinfra", author="openai")
     candidates = chat_route_endpoint_candidates(
         {
             "model": "openai/gpt-oss-20b",
@@ -1047,7 +1050,18 @@ def test_glm_52_explicit_provider_preferences_override_parasail_default(
     )
 
 
-def test_glm_52_provider_preference_does_not_override_primary_model_order() -> None:
+def test_glm_52_provider_preference_does_not_override_primary_model_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Requested alone, GLM 5.2 prefers its Parasail route to every other host,
+    # and the primary model rides Novita, which ranks low by default: fixture
+    # routes both, whoever lists these models today.
+    for model_id, host, author in (
+        ("deepseek/deepseek-v4-flash", "novita", "deepseek"),
+        ("z-ai/glm-5.2", "parasail", "zai"),
+    ):
+        drop_routes(monkeypatch, model_id)
+        serve_on_fixture_route(monkeypatch, model_id, host, author=author)
     candidates = chat_route_endpoint_candidates(
         {
             "model": "deepseek/deepseek-v4-flash",
@@ -1058,6 +1072,10 @@ def test_glm_52_provider_preference_does_not_override_primary_model_order() -> N
     )
 
     assert candidates[0][0].id == "deepseek/deepseek-v4-flash"
+    assert [endpoint.id for _model, endpoint in candidates] == [
+        "deepseek/deepseek-v4-flash@novita/prepaid",
+        "z-ai/glm-5.2@parasail/prepaid",
+    ]
 
 
 def test_confidential_alias_uses_exact_e2e_endpoint_pool() -> None:

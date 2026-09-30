@@ -7,6 +7,7 @@ import pytest
 
 from scripts.pricing.base import ModelPrice
 from scripts.pricing.providers import telnyx
+from tests import catalog_vehicles
 
 
 def test_complete_native_prices_do_not_depend_on_secondary_sources(monkeypatch) -> None:  # noqa: ANN001
@@ -384,15 +385,14 @@ def test_telnyx_regions_follow_default_tier_and_clear_removed_declarations(
 
 
 def test_telnyx_manifest_is_loaded_as_prepaid_and_byok_catalog_routes() -> None:
-    from trusted_router.catalog import MODEL_ENDPOINTS
-
     manifest = json.loads(telnyx.MANIFEST_PATH.read_text(encoding="utf-8"))
     manifest_model_ids = {str(row["id"]) for row in manifest["models"]}
     # A row the refresh tombstoned is simply not routed.
     routable_ids = {
         str(row["id"]) for row in manifest["models"] if row.get("routable") is not False
     }
-    endpoints = [endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "telnyx"]
+    built = catalog_vehicles.registry_endpoints()
+    endpoints = [endpoint for endpoint in built.values() if endpoint.provider == "telnyx"]
     assert set(telnyx.EXPECTED_MODELS) <= manifest_model_ids
     assert {(endpoint.model_id, endpoint.usage_type) for endpoint in endpoints} == {
         (model_id, usage_type)
@@ -400,5 +400,5 @@ def test_telnyx_manifest_is_loaded_as_prepaid_and_byok_catalog_routes() -> None:
         for usage_type in ("Credits", "BYOK")
     }
     if "moonshotai/kimi-k3" in routable_ids:
-        kimi = MODEL_ENDPOINTS["moonshotai/kimi-k3@telnyx/prepaid"]
+        kimi = built["moonshotai/kimi-k3@telnyx/prepaid"]
         assert kimi.upstream_id == "moonshotai/Kimi-K3"

@@ -168,3 +168,124 @@ def test_a_group_failure_is_attributed_to_the_provider_that_causes_it(
     assert {provider: single["failures"] for provider, single in state["single"].items()} == {
         provider: ["tests/test_x.py"] if provider == providers[0] else [] for provider in providers[:8]
     }
+
+
+def _data(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Two providers' manifests and a snapshot, and a tests/ tree, under tmp_path."""
+    manifests = tmp_path / "provider_models"
+    manifests.mkdir()
+    rows = {
+        "alpha": [{"id": "maker/model-a", "routable": True}, {"id": "maker/model-b"}],
+        "beta": [
+            {"id": "maker/model-a"},
+            {"id": "maker/model-a-fast", "routable": True},
+            {"id": "maker/gone", "routable": False, "routable_reason": "delisted-upstream"},
+        ],
+    }
+    for provider, provider_rows in rows.items():
+        (manifests / f"{provider}.json").write_text(json.dumps({"models": provider_rows}), encoding="utf-8")
+    snapshot = tmp_path / "openrouter_snapshot.json"
+    snapshot.write_text(json.dumps({"models": [
+        {"id": "maker/model-a", "endpoints": [{"tr_provider_slug": "alpha"}]},
+        {"id": "maker/model-a-fast", "endpoints": [{"tr_provider_slug": "beta"}]},
+    ]}), encoding="utf-8")
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_a.py").write_text('MODEL = "maker/model-a"\n', encoding="utf-8")
+    (tests / "test_route.py").write_text('ROUTE = "maker/model-a@alpha/prepaid"\n', encoding="utf-8")
+    (tests / "test_page.py").write_text('PATH = "/models/maker/model-a-fast"\n', encoding="utf-8")
+    (tests / "test_preset.py").write_text('PRESET = "trustedrouter/preset"\n', encoding="utf-8")
+    monkeypatch.setattr(sweep, "MANIFESTS", manifests)
+    monkeypatch.setattr(sweep, "SNAPSHOT", snapshot)
+    monkeypatch.setattr(sweep, "ROOT", tmp_path)
+    monkeypatch.setattr(sweep, "restore", lambda: None)
+    monkeypatch.setattr(sweep, "catalog_dependents", lambda: {"maker/model-a": ["trustedrouter/preset"]})
+    return tmp_path
+
+
+def test_a_model_vanishing_tombstones_it_on_every_host_and_drops_it_from_the_snapshot(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _data(monkeypatch, tmp_path)
+
+    counts = sweep.delist_model("maker/model-a")
+
+    assert counts == {"rows": 2, "snapshot_models": 1}
+    for provider in ("alpha", "beta"):
+        rows = json.loads((root / "provider_models" / f"{provider}.json").read_text())["models"]
+        model_rows = [row for row in rows if row["id"] == "maker/model-a"]
+        assert [(row["routable"], row["routable_reason"]) for row in model_rows] == [
+            (False, "delisted-upstream")
+        ]
+    # A model with a longer id sharing the prefix is untouched.
+    snapshot = json.loads((root / "openrouter_snapshot.json").read_text())
+    assert [model["id"] for model in snapshot["models"]] == ["maker/model-a-fast"]
+    assert sweep.delist_model("maker/gone") == {"rows": 0, "snapshot_models": 0}
+
+
+def test_a_model_is_swept_over_the_files_naming_it_or_a_model_depending_on_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _data(monkeypatch, tmp_path)
+
+    assert sweep.models_to_sweep() == {
+        # The id, an endpoint id and a preset that depends on it; not the page
+        # of the longer id that shares its prefix.
+        "maker/model-a": ["tests/test_a.py", "tests/test_preset.py", "tests/test_route.py"],
+        "maker/model-a-fast": ["tests/test_page.py"],
+    }
+
+
+def test_the_models_sweep_attributes_each_failure_to_the_model_that_vanished(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _data(monkeypatch, tmp_path)
+    vanished: list[str] = []
+    monkeypatch.setattr(sweep, "delist_model", lambda model_id: vanished.append(model_id) or {"rows": 1})
+
+    def run(files: list[str], *_: Any) -> tuple[set[str], str]:
+        if vanished and vanished[-1] == "maker/model-a" and "tests/test_route.py" in files:
+            return {"tests/test_route.py::test_route"}, "1 failed"
+        return set(), "1 passed"
+
+    monkeypatch.setattr(sweep, "run_pytest", run)
+
+    sweep.models(root / "out", workers=2, only=[])
+
+    state = json.loads((root / "out" / "models.json").read_text(encoding="utf-8"))
+    assert {model_id: result["failures"] for model_id, result in state["models"].items()} == {
+        "maker/model-a": ["tests/test_route.py::test_route"],
+        "maker/model-a-fast": [],
+    }
+
+
+def test_the_models_sweep_starts_only_from_passing_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _data(monkeypatch, tmp_path)
+    vanished: list[str] = []
+    monkeypatch.setattr(sweep, "delist_model", lambda model_id: vanished.append(model_id) or {"rows": 1})
+    monkeypatch.setattr(sweep, "run_pytest", lambda *_: ({"tests/test_a.py::test_x"}, "1 failed"))
+
+    with pytest.raises(SystemExit, match="must pass before a sweep"):
+        sweep.models(root / "out", workers=2, only=[])
+    assert vanished == []
+
+
+def test_a_resumed_models_sweep_refuses_files_its_baseline_never_ran(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _data(monkeypatch, tmp_path)
+    runs: list[list[str]] = []
+    monkeypatch.setattr(sweep, "delist_model", lambda model_id: {"rows": 1})
+    monkeypatch.setattr(sweep, "run_pytest", lambda files, *_: runs.append(files) or (set(), "1 passed"))
+
+    sweep.models(root / "out", workers=2, only=["maker/model-a-fast"])
+    assert runs == [["tests/test_page.py"], ["tests/test_page.py"]]  # the baseline, then the model
+
+    with pytest.raises(SystemExit, match="baseline did not run"):
+        sweep.models(root / "out", workers=2, only=["maker/model-a"])
+    assert len(runs) == 2
+    # The selection the baseline covered resumes, with nothing left to run.
+    sweep.models(root / "out", workers=2, only=["maker/model-a-fast"])
+    assert len(runs) == 2

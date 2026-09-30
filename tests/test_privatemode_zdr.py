@@ -6,7 +6,8 @@ import pytest
 from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 
-from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS
+from tests.fixture_routes import serve_on_fixture_route
+from trusted_router.catalog import PROVIDERS
 from trusted_router.catalog_data import (
     PRIVACY_TIER_CONFIDENTIAL,
     PRIVACY_TIER_NO_STORE,
@@ -28,16 +29,11 @@ POLICY_URL = (
 
 @pytest.fixture
 def privatemode_route(monkeypatch: pytest.MonkeyPatch) -> ModelEndpoint:
-    # Privacy is independent of live catalog availability and price refreshes.
-    endpoint = ModelEndpoint(
-        id="openai/gpt-oss-120b@privatemode/prepaid",
-        model_id="openai/gpt-oss-120b",
-        provider="privatemode",
-        usage_type="Credits",
-        upstream_id="gpt-oss-120b",
+    # Privacy is independent of live catalog availability and price refreshes:
+    # a fixture route, and the model is carried even if every host delisted it.
+    return serve_on_fixture_route(
+        monkeypatch, "openai/gpt-oss-120b", "privatemode", author="openai", upstream_id="gpt-oss-120b"
     )
-    monkeypatch.setitem(MODEL_ENDPOINTS, endpoint.id, endpoint)
-    return endpoint
 
 
 def test_privatemode_zdr_is_explicit_and_scoped_to_content(privatemode_route: ModelEndpoint) -> None:

@@ -1155,8 +1155,11 @@ async def test_a_routing_variant_in_a_fallback_array_is_still_a_private_proxy() 
 
 
 @pytest.mark.asyncio
-async def test_ordinary_models_keep_their_variants_and_dated_spellings() -> None:
+async def test_ordinary_models_keep_their_variants_and_dated_spellings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # The refusal is for pinned models only. Everyone else's `:nitro` still works.
+    serve_on_fixture_route(monkeypatch, "openai/gpt-oss-20b", "deepinfra", author="openai")
     response = await _authorize(
         {
             "model": "openai/gpt-oss-20b:nitro",
@@ -1174,10 +1177,22 @@ def test_a_host_delisting_the_backing_model_never_stops_the_control_plane(
     """Chain pricing runs at import. It used to raise when the preferred host
     stopped serving the backing model, so one provider's hourly manifest refresh
     could keep the whole control plane from starting."""
-    from trusted_router import catalog_registry
+    from dataclasses import replace
 
-    backing = PRIVATE_PROXY_MODEL_TARGETS[TREV_1_0_MODEL_ID]
+    from trusted_router import catalog, catalog_registry
+
+    # Trev and the model behind it on fixture routes, one per chain host, each
+    # host at its own price and the preferred one dearest, whoever serves the
+    # model today.
+    backing = _serve_on_fixture_routes(monkeypatch, TREV_1_0_MODEL_ID)
     chain = NAMED_DECISION_MODEL_PROVIDERS[TREV_1_0_MODEL_ID]
+    prices = (4_000_000, 2_000_000, 3_000_000, 1_000_000)
+    for host, price in zip(chain, prices, strict=True):
+        route = catalog.MODEL_ENDPOINTS[f"{backing}@{host}/prepaid"]
+        monkeypatch.setitem(
+            catalog.MODEL_ENDPOINTS, route.id,
+            replace(route, prompt_price_microdollars_per_million_tokens=price),
+        )
     live = dict(catalog_registry.MODEL_ENDPOINTS)
 
     def without(*providers: str) -> dict[str, Any]:
@@ -1335,10 +1350,13 @@ def test_the_control_plane_starts_without_a_named_models_backing_model(model_id:
     assert "STARTED" in result.stdout
 
 
-def test_a_named_model_is_offered_only_where_it_can_be_used(client: Any) -> None:
+def test_a_named_model_is_offered_only_where_it_can_be_used(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The chat picker and the custom-model base list read the public shape. A
     name kept `supports_chat` there (it needs it internally, so authorize can
     route its chat model) and was offered in both, which then refused it."""
+    serve_on_fixture_route(monkeypatch, "openai/gpt-oss-20b", "deepinfra", author="openai")
     picker = {row["id"]: row for row in client.get("/v1/models/picker").json()["data"]}
     for model_id in PRESENT_NAMED_IDS:
         assert picker[model_id]["trustedrouter"]["supports_chat"] is False, model_id
@@ -1348,11 +1366,12 @@ def test_a_named_model_is_offered_only_where_it_can_be_used(client: Any) -> None
     assert picker["openai/gpt-oss-20b"]["trustedrouter"]["supports_chat"] is True
 
 
-def test_a_named_model_is_never_drawn_as_a_chat_candidate() -> None:
+def test_a_named_model_is_never_drawn_as_a_chat_candidate(monkeypatch: pytest.MonkeyPatch) -> None:
     """The meta-routers (auto, cheap, monitor...) draw from pools of regular chat
     models. A name is a chat model INTERNALLY, and the cheapest one (mev) took its
     provider's slot in the cheap pool -- out of sight only while the pool was cut
     at eight. Drawn, it would have been authorized on a chat route and refused."""
+    serve_on_fixture_route(monkeypatch, "openai/gpt-oss-20b", "deepinfra", author="openai")
     from trusted_router import routing_candidates
 
     everything = len(MODELS)
@@ -1379,9 +1398,12 @@ def test_a_named_model_reads_as_a_decision_model_everywhere_it_is_shown(
 
 
 @pytest.mark.parametrize("model_id", [*PRESENT_NAMED_IDS, "typesafe-ai/jev"])
-def test_a_decision_models_api_page_shows_the_decide_call(model_id: str, client: Any) -> None:
+def test_a_decision_models_api_page_shows_the_decide_call(
+    model_id: str, client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """/models/<id>/api ended in `client.chat.completions.create(model=<id>)` for
     every model in the catalog, decision models included."""
+    serve_on_fixture_route(monkeypatch, "openai/gpt-oss-20b", "deepinfra", author="openai")
     page = client.get(f"/models/{model_id}/api")
     assert page.status_code == 200, page.text[:200]
     assert "chat.completions.create" not in page.text

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from tests import catalog_vehicles
 from trusted_router import catalog_ingest
 from trusted_router.catalog import MODEL_ENDPOINTS
 from trusted_router.catalog_data import ModelEndpoint
@@ -14,7 +15,7 @@ from trusted_router.catalog_data import ModelEndpoint
 def test_deepseek_endpoints_match_authenticated_manifest(usage_type: str) -> None:
     expected = catalog_ingest._authoritative_provider_model_ids("deepseek")
     actual = {
-        endpoint.model_id for endpoint in MODEL_ENDPOINTS.values()
+        endpoint.model_id for endpoint in catalog_vehicles.registry_endpoints().values()
         if endpoint.provider == "deepseek" and endpoint.usage_type == usage_type
     }
     assert actual == expected

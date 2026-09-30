@@ -13,8 +13,9 @@ from scripts.pricing.refresh import (
     _PRICING_RESULT_PROVIDER_ALIASES,
     PROVIDER_SLUGS,
 )
+from tests import catalog_vehicles
 from trusted_router import catalog_ingest
-from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS
+from trusted_router.catalog import PROVIDERS
 from trusted_router.catalog_data import (
     GATEWAY_PREPAID_PROVIDER_SLUGS,
     PRIVACY_TIER_CONFIDENTIAL,
@@ -366,7 +367,7 @@ def test_zero_g_catalog_and_local_adapter_request_private_tee_without_e2ee() -> 
     }
     zero_g_endpoints = {
         endpoint.model_id: endpoint
-        for endpoint in MODEL_ENDPOINTS.values()
+        for endpoint in catalog_vehicles.registry_endpoints().values()
         if endpoint.provider == "zero-g"
     }
 

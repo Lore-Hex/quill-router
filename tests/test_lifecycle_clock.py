@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from tests import lifecycle_clock
+from tests import catalog_vehicles, lifecycle_clock
 from tests.lifecycle_freeze import freeze_lifecycle_clock
 from tests.pinned_manifests import (
     DEEPSEEK_V4_PRO_0813_ROUTES,
@@ -238,6 +238,7 @@ def test_a_retirement_the_catalog_clock_has_passed_is_absent_everywhere() -> Non
     # The registry's import-time filter and the request-time filter must give
     # the same answer as catalog_predates for every scheduled retirement.
     checked = 0
+    built = catalog_vehicles.registry_endpoints()
     for retirement in _RETIREMENTS:
         if lifecycle_clock.catalog_predates(retirement.effective_at):
             continue
@@ -247,14 +248,14 @@ def test_a_retirement_the_catalog_clock_has_passed_is_absent_everywhere() -> Non
             )
             live = [
                 endpoint
-                for endpoint in catalog_registry.MODEL_ENDPOINTS.values()
+                for endpoint in built.values()
                 if endpoint.model_id == model_id and endpoint.provider == retirement.provider
             ]
             assert live == [], (retirement.provider, model_id)
             served = [
                 endpoint
                 for endpoint in endpoints_for_model(model_id)
-                if endpoint.provider == retirement.provider
+                if endpoint.provider == retirement.provider and endpoint.id in built
             ]
             assert served == [], (retirement.provider, model_id)
             checked += 1

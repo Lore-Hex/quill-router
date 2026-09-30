@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests.fixture_routes import serve_on_fixture_route
+from trusted_router.catalog_data import Model
 from trusted_router.dashboard import (
     MODEL_COMPARE_PAGE_SIZE,
     OPENROUTER_PAID_LANDING_PATHS,
@@ -158,14 +159,22 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
 
     comparisons = client.get("/sitemap-comparisons.xml")
     assert comparisons.status_code == 200
-    assert (
-        "<loc>https://trustedrouter.com/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.2</loc>"
-        in comparisons.text
-    )
     assert "<loc>https://trustedrouter.com/compare/models/page/2</loc>" in comparisons.text
     combined = sitemap.text + core.text + models.text + providers.text + comparisons.text
     assert "trustedrouter/monitor" not in combined
     assert "openrouter.ai" not in combined
+
+
+@pytest.mark.provider_health
+def test_the_kimi_k26_glm_52_comparison_is_still_in_the_sitemap(client: TestClient) -> None:
+    # Live catalog state: the sitemap lists the pairs of the models with the
+    # most routes today. test_robots_and_sitemap_are_public checks the sitemaps.
+    comparisons = client.get("/sitemap-comparisons.xml")
+    assert comparisons.status_code == 200
+    assert (
+        "<loc>https://trustedrouter.com/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.2</loc>"
+        in comparisons.text
+    )
 
 
 def test_public_pages_are_gzip_compressed(client: TestClient) -> None:
@@ -546,7 +555,6 @@ def test_llms_text_files_are_public_and_do_not_leak_secret_material(
     catalog = client.get("/v1/models")
     assert catalog.status_code == 200
     catalog_ids = {row["id"] for row in catalog.json()["data"]}
-    assert "z-ai/glm-5.2" in catalog_ids
     assert "trustedrouter/confidential" in catalog_ids
 
     full_llms = client.get("/docs/llms-full.txt")
@@ -554,6 +562,15 @@ def test_llms_text_files_are_public_and_do_not_leak_secret_material(
     for model_id in catalog_ids:
         assert f"- {model_id}:" in full_llms.text
     assert "trustedrouter/monitor" not in full_llms.text
+
+
+@pytest.mark.provider_health
+def test_glm_52_is_still_in_the_public_catalog(client: TestClient) -> None:
+    # Live catalog state. test_llms_text_files_are_public_and_do_not_leak_secret_material
+    # checks the listing and llms-full.txt themselves.
+    catalog = client.get("/v1/models")
+    assert catalog.status_code == 200
+    assert "z-ai/glm-5.2" in {row["id"] for row in catalog.json()["data"]}
 
 
 def test_llms_indexes_link_official_cli_distributions(client: TestClient) -> None:
@@ -1362,7 +1379,23 @@ def test_model_seo_cluster_pages_are_public_and_not_openrouter_links(
     assert 'base_url="https://api.trustedrouter.com/v1"' in api.text
 
 
-def test_model_comparison_pages_are_public(client: TestClient) -> None:
+def _serve_glm_51(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The comparison peer, GLM 5.1, on Z.AI's and Friendli's routes as fixtures
+    (a model's providers page is linked once two hosts serve it): the catalog
+    carries it even if every host has delisted it."""
+    for host in ("zai", "friendli"):
+        serve_on_fixture_route(
+            monkeypatch, "z-ai/glm-5.1", host, author="zai",
+            model=Model(
+                id="z-ai/glm-5.1", name="Z.ai: GLM 5.1", provider="zai", context_length=204_800,
+            ),
+        )
+
+
+def test_model_comparison_pages_are_public(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_glm_51(monkeypatch)
     response = client.get("/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.1")
 
     assert response.status_code == 200
@@ -1411,6 +1444,16 @@ def test_model_comparison_surfaces_distinct_measured_route_metrics(
         ]
 
     monkeypatch.setattr(dashboard, "measured_for_model", measured)
+    _serve_glm_51(monkeypatch)
+    # The comparison directory holds this pair and one neighbour, whichever
+    # pairs the catalog's route counts rank into it today.
+    kimi, glm_51, glm_53 = (
+        dashboard.MODELS[model_id]
+        for model_id in ("moonshotai/kimi-k2.6", "z-ai/glm-5.1", "z-ai/glm-5.3")
+    )
+    monkeypatch.setattr(
+        dashboard, "_model_comparison_pairs", lambda: ((kimi, glm_51), (kimi, glm_53)),
+    )
     response = client.get("/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.1")
 
     assert response.status_code == 200
@@ -1428,8 +1471,9 @@ def test_model_comparison_surfaces_distinct_measured_route_metrics(
 
 
 def test_reversed_model_comparison_redirects_to_stable_canonical(
-    client: TestClient,
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _serve_glm_51(monkeypatch)
     canonical_path = "/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.1"
     canonical = client.get(canonical_path, follow_redirects=False)
     assert canonical.status_code == 200
@@ -1775,8 +1819,14 @@ def test_model_aliases_redirect_once_to_existing_pages(
 @pytest.mark.parametrize("method", ["GET", "HEAD"])
 def test_one_route_qwen_pricing_page_redirects_to_model_overview(
     client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
     method: str,
 ) -> None:
+    # The model on its one route, Venice's, a fixture route: the catalog
+    # carries it even if Venice has delisted it.
+    serve_on_fixture_route(
+        monkeypatch, "qwen/qwen-3-8-27b", "venice", author="venice", upstream_id="qwen-3-8-27b"
+    )
     response = client.request(
         method,
         "/models/qwen/qwen-3-8-27b/pricing",
@@ -1792,7 +1842,8 @@ def test_one_route_qwen_pricing_redirect_requires_live_overview(
 ) -> None:
     from trusted_router.routes import public
 
-    monkeypatch.delitem(public.MODELS, "qwen/qwen-3-8-27b")
+    # Absent from the catalog, whether it lists the model today or not.
+    monkeypatch.delitem(public.MODELS, "qwen/qwen-3-8-27b", raising=False)
     response = client.get(
         "/models/qwen/qwen-3-8-27b/pricing",
         follow_redirects=False,
