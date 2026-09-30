@@ -655,7 +655,7 @@ def test_min_privacy_parses_friendly_aliases() -> None:
     assert provider_route_preferences({"model": "x"}).min_privacy_rank == 0
 
 
-def test_confidential_privacy_tier_requires_compute_and_e2ee() -> None:
+def test_confidential_privacy_tier_requires_compute_e2ee_and_zdr() -> None:
     from trusted_router.catalog import (
         PRIVACY_TIER_CONFIDENTIAL,
         PRIVACY_TIER_STANDARD,
@@ -681,10 +681,18 @@ def test_confidential_privacy_tier_requires_compute_and_e2ee() -> None:
         provider_confidential_compute=True,
         provider_e2ee=True,
     )
+    all_three = Provider(
+        slug="all-three",
+        name="All three",
+        provider_confidential_compute=True,
+        provider_e2ee=True,
+        provider_zero_data_retention=True,
+    )
 
     assert provider_privacy_tier(confidential_compute_only) == PRIVACY_TIER_STANDARD
     assert provider_privacy_tier(e2ee_only) == PRIVACY_TIER_STANDARD
-    assert provider_privacy_tier(both) == PRIVACY_TIER_CONFIDENTIAL
+    assert provider_privacy_tier(both) == PRIVACY_TIER_STANDARD
+    assert provider_privacy_tier(all_three) == PRIVACY_TIER_CONFIDENTIAL
 
 
 def test_min_privacy_rejects_unknown_value() -> None:
