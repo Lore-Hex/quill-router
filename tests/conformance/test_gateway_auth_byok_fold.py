@@ -116,3 +116,24 @@ def test_folded_auth_byok_matches_two_queries(folded_store, key_type, config_sta
         assert actual.api_key.disabled is True
     if actual is not None:
         assert set(actual.byok_configs) == set(providers)
+
+
+def test_folded_byok_configs_skip_a_slug_the_fold_did_not_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A BYOK slug missing from the auth-time fold falls back to a direct read, never KeyError."""
+    from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
+    from trusted_router.routes.internal import gateway
+
+    endpoint = MODEL_ENDPOINTS["anthropic/claude-haiku-4.5@anthropic/byok"]
+    candidates = [(MODELS[endpoint.model_id], endpoint)]
+    reads: list[tuple[str, str]] = []
+
+    class _Store:
+        def get_byok_provider(self, workspace_id: str, provider: str) -> None:
+            reads.append((workspace_id, provider))
+            return None
+
+    monkeypatch.setattr(gateway, "STORE", _Store())
+    configs = gateway._byok_configs_for_candidates(candidates, "ws-fold", {})
+    assert configs == {}
+    assert gateway._get_byok_provider("ws-fold", endpoint.provider, configs) is None
+    assert reads and all(workspace == "ws-fold" for workspace, _ in reads)

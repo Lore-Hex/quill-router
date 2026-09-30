@@ -4277,7 +4277,10 @@ def _byok_configs_for_candidates(
         for slug in byok_storage_provider_candidates(endpoint.provider)
     })
     if folded_configs is not None:
-        return {provider: folded_configs[provider] for provider in providers}
+        # The fold fetched every catalog BYOK slug at authentication time. A slug
+        # it did not fetch (catalog changed mid-request) is left out, so
+        # _get_byok_provider reads it directly instead of raising KeyError.
+        return {provider: folded_configs[provider] for provider in providers if provider in folded_configs}
     batch = getattr(STORE, "get_byok_providers", None)
     if callable(batch):
         return cast(dict[str, Any], batch(workspace_id, providers))
