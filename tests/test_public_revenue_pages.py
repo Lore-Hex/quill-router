@@ -446,7 +446,7 @@ def test_choose_app_static_asset_is_served(client: TestClient) -> None:
     assert "Upstream privacy floor" in response.text
     assert 'id="providerCount"' in response.text
     assert "/static/choose-app.css?v=2" in response.text
-    assert "/static/choose-app.js?v=4" in response.text
+    assert "/static/choose-app.js?v=5" in response.text
     assert "fonts.googleapis.com" not in response.text
     # Privacy floor defaults to Open (any provider), not ZDR.
     assert '<option value="0" selected>' in response.text
