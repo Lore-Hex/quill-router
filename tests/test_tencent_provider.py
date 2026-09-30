@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -67,14 +68,16 @@ def test_tencent_capabilities_do_not_mix_media_or_retiring_models() -> None:
     assert "deepseek/deepseek-flash" not in models
 
 
-def test_tencent_manifest_routes_only_priced_canary_successes() -> None:
-    import json
-
+def test_tencent_manifest_credits_route_only_priced_canary_successes() -> None:
     from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS
 
     rows = json.loads(tencent.MANIFEST_PATH.read_text())["models"]
     eligible = {row["id"]: row for row in rows if row.get("routable") is True}
-    endpoints = [e for e in MODEL_ENDPOINTS.values() if e.provider == "tencent"]
+    # Account canaries gate our Credits key, not a customer's BYOK entitlement.
+    endpoints = [
+        e for e in MODEL_ENDPOINTS.values()
+        if e.provider == "tencent" and e.usage_type == "Credits"
+    ]
     assert eligible
     assert {e.model_id for e in endpoints} == set(eligible)
     for endpoint in endpoints:
@@ -87,6 +90,58 @@ def test_tencent_manifest_routes_only_priced_canary_successes() -> None:
     assert provider.provider_e2ee is not True
     assert provider.provider_confidential_compute is not True
     assert provider.provider_zero_data_retention is not True
+
+
+@pytest.mark.parametrize("canary_ok,operator_held,expected_usage", [
+    (True, False, {"Credits", "BYOK"}),
+    (False, False, {"BYOK"}),
+    (True, True, set()),
+    (False, True, set()),
+])
+def test_tencent_refreshed_snapshot_preserves_usage_scoped_canary_gate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    canary_ok: bool, operator_held: bool, expected_usage: set[str],
+) -> None:
+    from trusted_router import catalog_ingest, provider_contracts
+
+    model_id = "minimax/minimax-m3"
+    upstream_id = "minimax-m3"
+    manifest_dir = tmp_path / "provider_models"
+    manifest_dir.mkdir()
+    (manifest_dir / "tencent.json").write_text(json.dumps({
+        "provider": "tencent",
+        "models": [{
+            "id": model_id, "upstream_id": upstream_id, "routable": canary_ok,
+            **({"routable_reason": "provider-canary-failed"} if not canary_ok else {}),
+        }],
+    }))
+    snapshot = tmp_path / "snapshot.json"
+    # A refresh retains known prices even when our account's canary failed.
+    snapshot.write_text(json.dumps({"models": [{
+        "id": model_id,
+        "endpoints": [{
+            "tr_provider_slug": "tencent", "model_id": upstream_id,
+            "pricing": {"prompt": "0.0000003", "completion": "0.0000012"},
+        }],
+    }]}))
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", manifest_dir)
+    monkeypatch.setattr(catalog_ingest, "_INGEST_PATH", snapshot)
+    if operator_held:
+        monkeypatch.setattr(
+            provider_contracts, "OPERATOR_HELD_PROVIDER_MODELS",
+            provider_contracts.OPERATOR_HELD_PROVIDER_MODELS | {("tencent", model_id)},
+        )
+    _, endpoints = catalog_ingest._ingested_models_and_endpoints()
+    assert {endpoint.usage_type for endpoint in endpoints.values()} == {"Credits", "BYOK"}
+    retained = catalog_ingest._filter_unserved_provider_endpoints(endpoints)
+    assert {endpoint.usage_type for endpoint in retained.values()} == expected_usage
+    assert len(retained) == len(expected_usage)
+    assert all(endpoint.upstream_id == upstream_id for endpoint in retained.values())
+    assert all(
+        endpoint.prompt_price_microdollars_per_million_tokens > 0
+        and endpoint.completion_price_microdollars_per_million_tokens > 0
+        for endpoint in retained.values()
+    )
 
 
 def test_tencent_discovery_joins_exact_catalog_prices_and_canaries(
