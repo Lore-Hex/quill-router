@@ -813,6 +813,44 @@ def test_key_variants_consume_folded_byok(
     assert all(candidate["byok_secret_ref"] == config.secret_ref for candidate in candidates)
 
 
+def test_federated_refresh_to_another_workspace_reads_that_workspaces_credentials(
+    metadata_catalog: None, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Folded BYOK credentials belong to the workspace the lookup resolved.
+
+    When home revalidation maps a federated key to a different canonical
+    workspace, authorize reads that workspace's own credentials and never
+    reuses the fold (credentials stay local to their workspace).
+    """
+    store, database, key = _seed_typed_gateway_store()
+    key.federated_home = "https://home.invalid"
+    store._write_entity("api_key", key.hash, key)
+    store.upsert_byok_provider(
+        workspace_id=key.workspace_id, provider="anthropic",
+        secret_ref="fixture/shadow", key_hint="shadow",  # noqa: S106 - fixture reference
+    )
+    home = Workspace(id="ws-rpc-home", name="Home", owner_user_id="user-rpc")
+    store._write_entity("workspace", home.id, home)
+    store._write_entity("credit", home.id, CreditAccount(workspace_id=home.id))
+    database.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(home.id, 0)] = {
+        "workspace_id": home.id, "shard": 0, "total_credits": 50_000_000, "total_usage": 0,
+        "reserved": 0, "source_updated_at": None, "updated_at": None,
+    }
+    home_config = store.upsert_byok_provider(
+        workspace_id=home.id, provider="anthropic",
+        secret_ref="fixture/home", key_hint="home",  # noqa: S106 - fixture reference
+    )
+    refreshed = dataclasses.replace(key, workspace_id=home.id)
+    monkeypatch.setattr(gateway, "_federated_key_still_valid", lambda cached, _: refreshed)
+    response = gateway._authorize_gateway_sync(
+        _request(), _lookup_body(key), Settings(environment="test"),
+    )["data"]
+    candidates = [candidate for candidate in response["route_candidates"]
+                  if candidate["usage_type"] == "BYOK"]
+    assert candidates
+    assert {candidate["byok_secret_ref"] for candidate in candidates} == {home_config.secret_ref}
+
+
 @pytest.mark.parametrize("folded", [False, True], ids=["two-queries", "folded"])
 @pytest.mark.parametrize("misconfiguration", ["missing", "invalid_envelope"])
 def test_byok_misconfiguration_keeps_existing_error(
