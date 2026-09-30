@@ -55,18 +55,8 @@ async function copyText(text, button) {
   feedback('Clipboard unavailable. Select the text and copy it manually.'); return false;
  }
 }
-const route=$('.route');
-let activeWord=null;
-function requestWord(key,input) {
- activeWord=key;
- $$('.request-choice').forEach(b=>{b.classList.toggle('on',b.dataset.k===key);b.setAttribute('aria-pressed',String(b.dataset.k===key));});
- route.className='route'+(key?' hl hl-'+key:'');
- if(key)$('#request-example').open=true;
- if(key&&input) track('home.request_word_viewed',{word:key,input});
-}
-$$('.request-choice').forEach(button=>{
- button.addEventListener('click',e=>requestWord(activeWord===button.dataset.k?null:button.dataset.k,e.pointerType==='touch'?'touch':e.detail?'mouse':'keyboard'));
- button.addEventListener('keydown',e=>{if(e.key==='Escape')requestWord(null);});
+$('[data-copy-request]').addEventListener('click',async e=>{
+ await copyText($('#request-code').textContent,e.currentTarget);
 });
 $$('.trc .fl button').forEach(button=>button.addEventListener('click',()=>{
  $$('.trc .fl button').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));

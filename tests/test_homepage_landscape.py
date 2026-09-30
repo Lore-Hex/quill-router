@@ -34,7 +34,7 @@ def test_landscape_root_integrates_catalog_assets_csp_and_signin(
     page = BeautifulSoup(response.text, "html.parser")
     for section in ("top", "request", "models", "migrate", "verify", "pricing", "customers", "faq"):
         assert page.select_one(f"section#{section}")
-    assert len(page.select("[data-mobile-disclosure][open]")) == 7
+    assert len(page.select("[data-mobile-disclosure][open]")) == 6
     assert page.select_one("#signinModal")
     assert page.select_one('a[href="/console/api-keys"]')
     assert page.select_one('a[href="/models"]')

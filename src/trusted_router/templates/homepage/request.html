@@ -1,15 +1,32 @@
-<section id="request" class="request-section trh" aria-labelledby="request-title"><div class="request-layout"><div class="request-intro"><h2 id="request-title">One request.<br>Every decision visible.</h2><div class="request-controls" role="group" aria-label="Explore the request"><button class="request-choice" type="button" data-k="secure" aria-pressed="false" aria-controls="request-route"><span class="request-word">Secure</span><span class="request-description"><b>Attested gateway, open source.</b> Check any route yourself.</span></button><button class="request-choice" type="button" data-k="smart" aria-pressed="false" aria-controls="request-route"><span class="request-word">Smart</span><span class="request-description"><b>Routes to your rules:</b> model, provider, privacy level.</span></button><button class="request-choice" type="button" data-k="scalable" aria-pressed="false" aria-controls="request-route"><span class="request-word">Scalable</span><span class="request-description"><b>Three clouds, standby routes.</b> No silent fallback.</span></button><button class="request-choice" type="button" data-k="savings" aria-pressed="false" aria-controls="request-route"><span class="request-word">Savings</span><span class="request-description"><b>5.5% fee, budget caps,</b> and the cost of every request.</span></button></div></div><details class="mobile-disclosure request-disclosure" id="request-example" data-mobile-disclosure open><summary><span>Explore an example request</span><span class="disclosure-indicator" aria-hidden="true">+</span></summary><div class="disclosure-body"><div class="route" id="request-route" aria-label="Route of one request">
-   <p class="sample-note">Illustrative request · not a live attestation</p><div class="rhd"><span class="k">One request</span><span class="k">z-ai/glm-5.3-flash</span></div>
-   <div class="node" data-s="smart"><div class="col"><span class="t">Your app</span><span class="d">min_privacy: "confidential"</span></div><span class="tag">OpenAI SDK</span></div>
-   <div class="wire"></div>
-   <div class="node" data-s="secure scalable"><div class="col"><span class="t">TrustedRouter gateway</span><span class="d">Attested build · no content logs</span></div><div class="clouds"><span>GCP</span><span>AWS</span><span>AZURE</span></div></div>
-   <div class="wire"></div>
-   <div class="pv">
-    <div class="node sel" data-s="secure smart"><span class="t">Tinfoil</span><div class="row"><button type="button" class="tag tipt" data-tip="Zero data retention. The provider keeps no prompts or outputs.">ZDR</button><button type="button" class="tag tipt" data-tip="Confidential compute with end-to-end encryption. The prompt stays encrypted until it reaches verified provider hardware.">E2EE</button><span class="tag att">Example: attested 3m</span></div><span class="d">Served</span></div>
-    <div class="node" data-s="scalable"><span class="t">NEAR AI</span><div class="row"><button type="button" class="tag tipt" data-tip="Confidential compute with end-to-end encryption. The prompt stays encrypted until it reaches verified provider hardware.">E2EE</button></div><span class="d">Standby</span></div>
-    <div class="node skip" data-s="smart"><span class="t">Parasail</span><div class="row"><button type="button" class="tag tipt" data-tip="Zero data retention. The provider keeps no prompts or outputs.">ZDR</button></div><span class="d">Below your policy</span></div>
-   </div>
-   <div class="wire up"></div>
-   <div class="node" data-s="savings"><div class="col"><span class="t">Response · 200</span><span class="d">1,240 in · 380 out · $0.07385 / $0.2532 per 1M</span></div><span class="cost">$0.000188</span></div>
-   <p class="foot">Parasail, Together, Wafer and Baseten also serve this model, at ZDR only. They are skipped because the request asked for Confidential.</p>
-  </div></div></details></div></section>
+<section id="request" class="request-section trh" aria-labelledby="request-title">
+ <div class="request-layout">
+  <div class="request-intro">
+   <h2 id="request-title">Your request.<br>Your rules.</h2>
+   <p class="request-lede">Choose a model and set your privacy requirements. TrustedRouter selects a matching provider—or stops if none qualifies.</p>
+   <a class="request-guide" href="/docs">Explore routing controls →</a>
+  </div>
+  <div class="request-example">
+   <ol class="request-path" aria-label="Illustrative request path">
+    <li><h3>Your app</h3><p>Choose a model and privacy level.</p></li>
+    <li><h3>TrustedRouter</h3><p>Select a matching route.</p></li>
+    <li><h3>Model provider</h3><p>Run the model and return a response.</p></li>
+   </ol>
+   <details class="request-technical" id="request-example">
+    <summary>See an example request<span class="disclosure-indicator" aria-hidden="true">+</span></summary>
+    <div class="request-technical-body">
+     <p>Illustrative request. This example does not run inference.</p>
+     <pre id="request-code" tabindex="0" aria-label="Example request JSON"><code>{
+  "model": "z-ai/glm-5.3-flash",
+  "provider": { "min_privacy": "confidential" },
+  "messages": [
+    { "role": "user", "content": "Hello" }
+  ]
+}</code></pre>
+     <button class="request-copy" type="button" data-copy-request>Copy request</button>
+     <p>A captured response and signed receipt can show which model and provider served a real request.</p>
+     <a href="/docs/receipts">How to verify a receipt →</a>
+    </div>
+   </details>
+  </div>
+ </div>
+</section>

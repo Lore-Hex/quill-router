@@ -1,0 +1,18 @@
+[ok] negotiated TLSv1.3 (api.trustedrouter.com)
+[ok] GCP JWT signature validates against issuer JWKS kid=1be6ff7287d6...
+[ok] GCP issuer is https://confidentialcomputing.googleapis.com
+[ok] GCP audience contains quill-cloud
+[ok] image_digest sha256:980b5a97b392e07f3...
+[ok] live TLS cert fingerprint bound in GCP nonce (d44ea850320d2cca...)
+[ok] TLS exporter channel binding bound in GCP nonce (ea4f09d4b44b9a79...)
+[ok] caller nonce bound (4db084b2ed34a7f7...)
+[ok] GCP dbgstat not enabled (['disabled-since-boot'])
+[ok] GCP JWT signature validates against issuer JWKS kid=1be6ff7287d6...
+[ok] GCP issuer is https://confidentialcomputing.googleapis.com
+[ok] GCP audience contains quill-cloud
+[ok] image_digest sha256:980b5a97b392e07f3...
+[ok] live TLS cert fingerprint bound in GCP nonce (d44ea850320d2cca...)
+[ok] TLS exporter channel binding bound in GCP nonce (ea4f09d4b44b9a79...)
+[ok] caller nonce bound (5a36968317b2197b...)
+[ok] GCP dbgstat not enabled (['disabled-since-boot'])
+[ok] second attestation verified on the same TLS connection

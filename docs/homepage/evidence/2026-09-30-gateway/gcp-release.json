@@ -1,0 +1,64 @@
+{
+  "accepted_image_digests": [
+    "sha256:980b5a97b392e07f31838ad8699f5e4d1675bbe5f1263e6753b279da957b7af0",
+    "sha256:08137bda14e53401583785a37e619d64c5324a384eb3e2dd3b967c55e76eaaf8"
+  ],
+  "accepted_image_references": [
+    "us-central1-docker.pkg.dev/quill-cloud-proxy/quill/enclave-multi:gcp-release-31749ed5",
+    "us-central1-docker.pkg.dev/quill-cloud-proxy/quill/enclave-multi:gcp-release-7d2b9468"
+  ],
+  "api_base_url": "https://api.trustedrouter.com/v1",
+  "attestation_audience": "quill-cloud",
+  "attestation_issuer": "https://confidentialcomputing.googleapis.com",
+  "commit": "7d2b9468",
+  "compliance": {
+    "hipaa_readiness": "https://trustedrouter.com/legal/hipaa-readiness",
+    "hipaa_status": "readiness_documentation_prepared_baa_required_for_phi",
+    "legal_packet": "https://trustedrouter.com/legal",
+    "procurement_json": "https://trustedrouter.com/legal/procurement.json",
+    "soc2_readiness": "https://trustedrouter.com/legal/soc2-readiness",
+    "soc2_status": "readiness_documentation_prepared_report_pending",
+    "subprocessors": "https://trustedrouter.com/legal/subprocessors"
+  },
+  "data_policy": {
+    "client_telemetry_content_free": true,
+    "client_telemetry_disclosure": "https://trustedrouter.com/docs/telemetry",
+    "control_plane_prompt_access": false,
+    "prompt_output_storage": false
+  },
+  "image_digest": "sha256:08137bda14e53401583785a37e619d64c5324a384eb3e2dd3b967c55e76eaaf8",
+  "image_reference": "us-central1-docker.pkg.dev/quill-cloud-proxy/quill/enclave-multi:gcp-release-7d2b9468",
+  "platform": "gcp-confidential-space",
+  "receipts": {
+    "accepted_specs": [
+      "inference-receipt/1"
+    ],
+    "algorithms": [
+      "EdDSA"
+    ],
+    "delivery": {
+      "non_streaming": "x-inference-receipt response header (compact JWS)",
+      "streaming": "final chat.completion.chunk inference_receipt (flattened JWS)"
+    },
+    "documentation": "https://trustedrouter.com/docs/receipts",
+    "key_commitment": "attestation",
+    "key_log": "https://trustedrouter.com/.well-known/inference-receipt-keys",
+    "spec": "inference-receipt/1"
+  },
+  "release_state": "rolling",
+  "released_by": "github-actions:deploy-enclave-gcp",
+  "source_commit": "7d2b9468",
+  "source_repo": "https://github.com/Lore-Hex/quill-cloud-proxy",
+  "source_repositories": {
+    "attested_gateway": "https://github.com/Lore-Hex/quill-cloud-proxy",
+    "cloud_infra": "https://github.com/Lore-Hex/quill-cloud-infra",
+    "control_plane": "https://github.com/Lore-Hex/quill-router",
+    "javascript_sdk": "https://github.com/Lore-Hex/trusted-router-js",
+    "python_sdk": "https://github.com/Lore-Hex/trusted-router-py",
+    "quill": "https://github.com/Lore-Hex/quill"
+  },
+  "tls": {
+    "hostname": "api.trustedrouter.com",
+    "mode": "acme-inside-confidential-space"
+  }
+}

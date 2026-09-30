@@ -21,7 +21,7 @@ The original landscape PNG, responsive images, original colored lab assets and f
 | Full model search and real catalog prices/counts/privacy | Connected to the application catalog; lite feed for search | Old handoff blocker resolved |
 | Popular ordering | Uses the approved editorial selection; labeled Featured | No claim of measured live popularity |
 | Navigation status dot and footer operational pill | Connected to `/status.json`, with freshness/error states | Restored; real public status on the remote review bridge |
-| Request attestation age, token counts, served/standby and cost | Present as an explicit illustrative example | Real captured evidence remains outstanding; no fabricated live result |
+| Request path | Simplified to app → router → provider, with optional illustrative JSON; synthetic outcomes removed | Public gateway evidence captured separately; a real inference receipt remains outstanding |
 | Pricing evidence line | Calculated from the current Credits routes for GLM 5.3 Flash; units, standard fee basis and exact model link included | Connected; approximately 28.6× at review, with no hardcoded rates or ratio |
 | Four positioning-word interactions | Beside the below-hero request diagram; click/tap/keyboard highlight | Intentionally relocated; hero subtitle remains stable |
 | Sticky navigation, serif mock fonts, greyscale logos, theme control, animated connectors | Replaced by approved normal-flow header, shared fonts, colored logos and restrained motion | Intentional design changes, not port losses |

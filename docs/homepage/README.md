@@ -61,3 +61,14 @@ This entry supersedes the earlier requirement to retain all four verification di
 There are now seven mobile disclosures: request, migration and five footer groups. They close on phones and expand on desktop; verification copy and source checklist stay visible without disclosures. Desktop verification height measured 778px at 1440×900. Browser checks at 320×568, 390×844, 768×1024 and 1440×900 found no horizontal overflow. The short-phone hero still retains its CTA and marquee inside the first screen. Search dialog keyboard focus restoration passed. Existing contrast palette and reduced-motion behavior are preserved; removed visual panels introduced no new motion.
 
 Eight focused application tests and eight status tests passed; JavaScript syntax and diff whitespace checks passed. Full release gates remain deferred; no package installation, production modification, push or deployment.
+
+
+## Request path refinement — September 29, latest direction
+
+The request section now shows a simple, static path: Your app → TrustedRouter → Model provider. The heading and short explanation focus on model/privacy requirements and the fail-closed outcome. The four repeated positioning controls, named served/standby/skipped providers, made-up attestation age, token counts and sample charge were removed. The hero's Secure / Smart / Scalable / Savings line is preserved.
+
+An accessible native disclosure, closed at every viewport width, contains illustrative JSON, Copy request and receipt-verification documentation. The three steps remain visible on mobile. There are now six responsive disclosures elsewhere (migration plus five footer groups); this request disclosure is independent so resizing does not force technical details open. All example content stays in HTML.
+
+Desktop and 390px/320px phone checks verified layout, opening with Enter, copying and no horizontal overflow, including expanded JSON at 320px. Eight focused application tests passed; JavaScript syntax and whitespace checks passed. Full release gates remain deferred. No new animation was introduced.
+
+Real public gateway evidence was captured and strictly verified without credentials or billable inference; see `evidence/2026-09-30-gateway/README.md`. This is a dated gateway verification, not a captured model response or signed inference receipt. The homepage remains explanatory and does not present that record as live proof.
