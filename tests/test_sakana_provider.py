@@ -235,7 +235,13 @@ def test_sakana_manifest_keeps_region_restricted_namazu_visible_but_dark() -> No
     assert namazu["routable_reason"] == sakana.SAKANA_NAMAZU_ROUTE_HOLD_REASON
 
 
+@pytest.mark.provider_health
 def test_sakana_manifest_publishes_direct_fugu_with_exact_tiered_pricing() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it. The rules run on fixtures: the
+    # pricing page parses to these tiers
+    # (test_sakana_first_party_prices_are_exact_and_tiered), and the pinned row
+    # routes at them (test_sakana_routes_are_prepaid_only_and_use_the_operator_secret).
     manifest = json.loads(sakana.MANIFEST_PATH.read_text(encoding="utf-8"))
     fugu = next(
         row
