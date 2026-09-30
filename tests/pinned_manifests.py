@@ -110,6 +110,25 @@ FEATHERLESS_QWEN38_FLASH_NEXT = {
     "cached_input_token_price_per_m": 30000,
 }
 
+# Featherless's DeepSeek V4.1 Flash row as its feed listed it on 2026-09-30.
+FEATHERLESS_DEEPSEEK_V4_1_FLASH = {
+    "display_name": "deepseek-ai/DeepSeek-V4.1-Flash",
+    "title": "deepseek-ai/DeepSeek-V4.1-Flash",
+    "model_type": "chat",
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "id": "deepseek/deepseek-v4.1-flash",
+    "upstream_id": "deepseek-ai/DeepSeek-V4.1-Flash",
+    "context_length": 262144,
+    "max_output_tokens": 32768,
+    "routable": True,
+    "input_token_price_per_m": 300000,
+    "output_token_price_per_m": 1200000,
+    "cached_input_token_price_per_m": 30000,
+}
+
 # NEAR AI"s only routable row on 2026-09-29, GLM 5.3 Flash, as its feed listed it.
 NEAR_AI_GLM_53_FLASH = {
     "display_name": "z-ai/glm-5.3-flash",
