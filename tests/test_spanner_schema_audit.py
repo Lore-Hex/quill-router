@@ -68,7 +68,6 @@ def test_both_directions_dangerous_first():
     ("TABLES", "PARENT_TABLE_NAME", "parent"),
     ("TABLES", "ON_DELETE_ACTION", "CASCADE"),
     ("TABLES", "ROW_DELETION_POLICY_EXPRESSION", "OLDER_THAN(timestamp, INTERVAL 7 DAY)"),
-    ("COLUMNS", "ORDINAL_POSITION", 3),
     ("COLUMNS", "SPANNER_TYPE", "STRING(MAX)"),
     ("COLUMNS", "IS_NULLABLE", "YES"),
     ("COLUMNS", "IS_GENERATED", "ALWAYS"),
@@ -277,18 +276,19 @@ def test_summary_escapes_cells_and_includes_stale():
     assert "table/stale" in rendered
 
 
-def test_seed_allowlist_is_explicit_unverified_and_narrow():
+def test_production_allowlist_is_explicit_verified_and_narrow():
     entries = json.loads(audit.DEFAULT_ALLOWLIST.read_text())
     assert entries
     audit.apply_allowlist([], entries)
-    assert all(entry["verified_against_production"] is False for entry in entries)
+    assert all(entry["verified_against_production"] is True for entry in entries)
     assert all("*" not in entry["object"] for entry in entries)
     assert {entry["object"] for entry in entries} >= {
         "column/tr_key_limit/day_usage", "column/tr_reservation/credit_shard",
-        "column/tr_entities/ephemeral_expires_at",
-        "index/tr_gateway_authorization/tr_gateway_authorization_by_gateway_request_id",
+        "constraint/tr_key_limit/CK_IS_NOT_NULL_tr_key_limit_day_usage",
+        "constraint/tr_reservation/CK_IS_NOT_NULL_tr_reservation_credit_shard",
         "constraint/tr_trust_event/tr_trust_event_provider_lightning",
     }
+    assert not any(entry["attribute"] == "ROW_DELETION_POLICY_EXPRESSION" for entry in entries)
 
 
 def test_allowlist_requires_exact_json_types():

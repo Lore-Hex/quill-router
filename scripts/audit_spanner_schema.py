@@ -404,6 +404,11 @@ def differences(production: Schema, fixture: Schema) -> list[dict[str, Any]]:
     # transitional state, or an object exists only in production.
     for key, attrs in sorted(production.items()):
         for field, final in STATE_FIELDS.items():
+            # PRIMARY_KEY is a metadata pseudo-index, not a backfilled index.
+            if (field == "INDEX_STATE" and attrs.get(field) is None
+                    and key.startswith("index/") and key.endswith("/PRIMARY_KEY")
+                    and attrs.get("INDEX_TYPE") == "PRIMARY_KEY"):
+                continue
             if field in attrs and attrs[field] != final:
                 result.append(dict(object=key, attribute=field, production=attrs[field], fixture=fixture.get(key, {}).get(field), direction=NOT_READY, required_state=final))
     for key in sorted(production.keys() | fixture.keys()):
@@ -414,6 +419,10 @@ def differences(production: Schema, fixture: Schema) -> list[dict[str, Any]]:
         else:
             for attr in sorted(production[key].keys() | fixture[key].keys()):
                 if attr in STATE_FIELDS:
+                    continue
+                # Named table columns can be added in different migration order.
+                # Index/constraint key order lives in `columns` and stays strict.
+                if key.startswith("column/") and attr == "ORDINAL_POSITION":
                     continue
                 prod, expected = production[key].get(attr), fixture[key].get(attr)
                 if comparison_value(attr, prod) != comparison_value(attr, expected):

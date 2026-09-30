@@ -4,115 +4,32 @@
     "attribute": "IS_NULLABLE",
     "production": true,
     "fixture": false,
-    "reason": "Documented rolling upgrade in migrate_typed_counters.sh adds nullable INT64 DEFAULT (0); fresh installations require NOT NULL. Confirm on first production audit.",
-    "verified_against_production": false
+    "reason": "Verified in production run 36749042316 (2026-09-30): migrate_typed_counters.sh adds nullable INT64 DEFAULT (0) during rolling upgrades; fresh installations require NOT NULL.",
+    "verified_against_production": true
   },
   {
     "object": "column/tr_key_limit/week_usage",
     "attribute": "IS_NULLABLE",
     "production": true,
     "fixture": false,
-    "reason": "Documented rolling upgrade in migrate_typed_counters.sh adds nullable INT64 DEFAULT (0); fresh installations require NOT NULL. Confirm on first production audit.",
-    "verified_against_production": false
+    "reason": "Verified in production run 36749042316 (2026-09-30): migrate_typed_counters.sh adds nullable INT64 DEFAULT (0) during rolling upgrades; fresh installations require NOT NULL.",
+    "verified_against_production": true
   },
   {
     "object": "column/tr_key_limit/month_usage",
     "attribute": "IS_NULLABLE",
     "production": true,
     "fixture": false,
-    "reason": "Documented rolling upgrade in migrate_typed_counters.sh adds nullable INT64 DEFAULT (0); fresh installations require NOT NULL. Confirm on first production audit.",
-    "verified_against_production": false
+    "reason": "Verified in production run 36749042316 (2026-09-30): migrate_typed_counters.sh adds nullable INT64 DEFAULT (0) during rolling upgrades; fresh installations require NOT NULL.",
+    "verified_against_production": true
   },
   {
     "object": "column/tr_reservation/credit_shard",
     "attribute": "IS_NULLABLE",
     "production": true,
     "fixture": false,
-    "reason": "Documented rolling upgrade in migrate_typed_counters.sh adds nullable INT64 DEFAULT (0); fresh installations require NOT NULL. Confirm on first production audit.",
-    "verified_against_production": false
-  },
-  {
-    "object": "table/tr_entities",
-    "attribute": "ROW_DELETION_POLICY_EXPRESSION",
-    "production": null,
-    "fixture": "OLDER_THAN(ephemeral_expires_at, INTERVAL 1 DAY)",
-    "reason": "Documented optional --apply retention/generation migration; entity TTL also requires TR_HEAVY_DDL_ACK=tr_entities.ephemeral_expires_at. Confirm exact server expression or remove if already applied on first production audit.",
-    "verified_against_production": false
-  },
-  {
-    "object": "table/tr_gateway_authorization",
-    "attribute": "ROW_DELETION_POLICY_EXPRESSION",
-    "production": null,
-    "fixture": "OLDER_THAN(terminal_at, INTERVAL 30 DAY)",
-    "reason": "Documented optional --apply retention/generation migration; entity TTL also requires TR_HEAVY_DDL_ACK=tr_entities.ephemeral_expires_at. Confirm exact server expression or remove if already applied on first production audit.",
-    "verified_against_production": false
-  },
-  {
-    "object": "table/tr_reservation",
-    "attribute": "ROW_DELETION_POLICY_EXPRESSION",
-    "production": null,
-    "fixture": "OLDER_THAN(terminal_at, INTERVAL 30 DAY)",
-    "reason": "Documented optional --apply retention/generation migration; entity TTL also requires TR_HEAVY_DDL_ACK=tr_entities.ephemeral_expires_at. Confirm exact server expression or remove if already applied on first production audit.",
-    "verified_against_production": false
-  },
-  {
-    "object": "table/tr_settle_outbox",
-    "attribute": "ROW_DELETION_POLICY_EXPRESSION",
-    "production": null,
-    "fixture": "OLDER_THAN(terminal_at, INTERVAL 30 DAY)",
-    "reason": "Documented optional --apply retention/generation migration; entity TTL also requires TR_HEAVY_DDL_ACK=tr_entities.ephemeral_expires_at. Confirm exact server expression or remove if already applied on first production audit.",
-    "verified_against_production": false
-  },
-  {
-    "object": "table/tr_generation",
-    "attribute": "ROW_DELETION_POLICY_EXPRESSION",
-    "production": null,
-    "fixture": "OLDER_THAN(terminal_at, INTERVAL 30 DAY)",
-    "reason": "Documented optional --apply retention/generation migration; entity TTL also requires TR_HEAVY_DDL_ACK=tr_entities.ephemeral_expires_at. Confirm exact server expression or remove if already applied on first production audit.",
-    "verified_against_production": false
-  },
-  {
-    "object": "column/tr_entities/ephemeral_expires_at",
-    "attribute": "object",
-    "production": null,
-    "fixture": {
-      "ORDINAL_POSITION": 5,
-      "SPANNER_TYPE": "TIMESTAMP",
-      "IS_NULLABLE": true,
-      "IS_GENERATED": "ALWAYS",
-      "GENERATION_EXPRESSION": "CASE WHEN kind = 'rate_limit' THEN SAFE.TIMESTAMP_SECONDS(SAFE_CAST(JSON_QUERY(body, '$.expires_at') AS INT64)) END",
-      "IS_STORED": true,
-      "COLUMN_DEFAULT": null,
-      "SPANNER_STATE": "COMMITTED"
-    },
-    "reason": "Documented entity TTL generated column requires --apply plus the heavy schema-change acknowledgement; confirm exact server expression and ordinal on first production audit.",
-    "verified_against_production": false
-  },
-  {
-    "object": "index/tr_gateway_authorization/tr_gateway_authorization_by_gateway_request_id",
-    "attribute": "object",
-    "production": {
-      "INDEX_TYPE": "INDEX",
-      "IS_UNIQUE": true,
-      "IS_NULL_FILTERED": true,
-      "INDEX_STATE": "READ_WRITE",
-      "PARENT_TABLE_NAME": null,
-      "columns": [
-        {
-          "COLUMN_NAME": "gateway_request_id",
-          "ORDINAL_POSITION": 1,
-          "COLUMN_ORDERING": "ASC"
-        },
-        {
-          "COLUMN_NAME": "authorization_id",
-          "ORDINAL_POSITION": 2,
-          "COLUMN_ORDERING": "ASC"
-        }
-      ]
-    },
-    "fixture": null,
-    "reason": "Documented historical unique trace index retained until migrate_gateway_request_index.sh --retire-unique; confirm exact metadata or remove if retired on first production audit.",
-    "verified_against_production": false
+    "reason": "Verified in production run 36749042316 (2026-09-30): migrate_typed_counters.sh adds nullable INT64 DEFAULT (0) during rolling upgrades; fresh installations require NOT NULL.",
+    "verified_against_production": true
   },
   {
     "object": "constraint/tr_trust_event/tr_trust_event_provider_lightning",
@@ -127,8 +44,8 @@
       "SPANNER_STATE": "COMMITTED"
     },
     "fixture": null,
-    "reason": "Manual scripts/lightning/spanner_provenance.sql adds the Lightning provider check under a new name; confirm exact server clause on first production audit.",
-    "verified_against_production": false
+    "reason": "Verified exact provider check clause and constraint name in production run 36749042316 (2026-09-30); scripts/lightning/spanner_provenance.sql renames the equivalent check to tr_trust_event_provider_lightning.",
+    "verified_against_production": true
   },
   {
     "object": "constraint/tr_trust_event/tr_trust_event_provider",
@@ -143,7 +60,71 @@
       "CHECK_CLAUSE": "provider IN ('stripe','paypal','adyen','x402','lightning','operator','system')",
       "SPANNER_STATE": "COMMITTED"
     },
-    "reason": "Manual scripts/lightning/spanner_provenance.sql removes the old provider constraint; fresh installations retain its original name. Confirm on first production audit.",
-    "verified_against_production": false
+    "reason": "Verified exact provider check clause and constraint name in production run 36749042316 (2026-09-30); scripts/lightning/spanner_provenance.sql renames the equivalent check to tr_trust_event_provider_lightning.",
+    "verified_against_production": true
+  },
+  {
+    "object": "constraint/tr_key_limit/CK_IS_NOT_NULL_tr_key_limit_day_usage",
+    "attribute": "object",
+    "production": null,
+    "fixture": {
+      "CONSTRAINT_TYPE": "CHECK",
+      "IS_DEFERRABLE": false,
+      "INITIALLY_DEFERRED": false,
+      "ENFORCED": true,
+      "columns": [],
+      "CHECK_CLAUSE": "day_usage IS NOT NULL",
+      "SPANNER_STATE": "COMMITTED"
+    },
+    "reason": "Verified in production run 36749042316 (2026-09-30): this implicit NOT NULL check is absent for the corresponding documented nullable rolling-upgrade column; the column nullability difference is separately and exactly recorded.",
+    "verified_against_production": true
+  },
+  {
+    "object": "constraint/tr_key_limit/CK_IS_NOT_NULL_tr_key_limit_week_usage",
+    "attribute": "object",
+    "production": null,
+    "fixture": {
+      "CONSTRAINT_TYPE": "CHECK",
+      "IS_DEFERRABLE": false,
+      "INITIALLY_DEFERRED": false,
+      "ENFORCED": true,
+      "columns": [],
+      "CHECK_CLAUSE": "week_usage IS NOT NULL",
+      "SPANNER_STATE": "COMMITTED"
+    },
+    "reason": "Verified in production run 36749042316 (2026-09-30): this implicit NOT NULL check is absent for the corresponding documented nullable rolling-upgrade column; the column nullability difference is separately and exactly recorded.",
+    "verified_against_production": true
+  },
+  {
+    "object": "constraint/tr_key_limit/CK_IS_NOT_NULL_tr_key_limit_month_usage",
+    "attribute": "object",
+    "production": null,
+    "fixture": {
+      "CONSTRAINT_TYPE": "CHECK",
+      "IS_DEFERRABLE": false,
+      "INITIALLY_DEFERRED": false,
+      "ENFORCED": true,
+      "columns": [],
+      "CHECK_CLAUSE": "month_usage IS NOT NULL",
+      "SPANNER_STATE": "COMMITTED"
+    },
+    "reason": "Verified in production run 36749042316 (2026-09-30): this implicit NOT NULL check is absent for the corresponding documented nullable rolling-upgrade column; the column nullability difference is separately and exactly recorded.",
+    "verified_against_production": true
+  },
+  {
+    "object": "constraint/tr_reservation/CK_IS_NOT_NULL_tr_reservation_credit_shard",
+    "attribute": "object",
+    "production": null,
+    "fixture": {
+      "CONSTRAINT_TYPE": "CHECK",
+      "IS_DEFERRABLE": false,
+      "INITIALLY_DEFERRED": false,
+      "ENFORCED": true,
+      "columns": [],
+      "CHECK_CLAUSE": "credit_shard IS NOT NULL",
+      "SPANNER_STATE": "COMMITTED"
+    },
+    "reason": "Verified in production run 36749042316 (2026-09-30): this implicit NOT NULL check is absent for the corresponding documented nullable rolling-upgrade column; the column nullability difference is separately and exactly recorded.",
+    "verified_against_production": true
   }
 ]
