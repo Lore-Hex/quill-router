@@ -29,6 +29,7 @@ IMAGE = (
 )
 BASE_ENV = {
     "TR_ENVIRONMENT": "production",
+    "TR_HOMEPAGE_LANDSCAPE_ENABLED": "true",
     "TR_SERVICE_SURFACE": "public",
     "TR_RELEASE": "cb16dcc",
     "TR_TRUSTED_DOMAIN": "trustedrouter.com",
