@@ -1046,6 +1046,7 @@ def _supplemental_provider_models_and_endpoints(
         "arcee",
         "inception",
         "io-net",
+        "tencent",
         "scaleway",
         "regolo",
         "privatemode",

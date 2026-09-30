@@ -2036,13 +2036,13 @@ PROVIDERS: dict[str, Provider] = {
     "tencent": Provider(
         slug="tencent",
         name="Tencent Cloud TokenHub",
-        supports_prepaid=False,
-        supports_byok=False,
+        supports_prepaid=True,
+        supports_byok=True,
         provider_policy=(
-            "The TokenHub inference key authenticates and its provider-native "
-            "catalog is discoverable, but inference is blocked by insufficient "
-            "account balance. Routes remain dark until a paid canary succeeds "
-            "and exact first-party postpaid prices are joined."
+            "TokenHub's Singapore API uses global resource scheduling, not a "
+            "Singapore-only inference guarantee. Only canaried chat routes with "
+            "matching regional USD prices are enabled. No verified contractual "
+            "ZDR, confidential-compute, or upstream E2EE claim is tracked."
         ),
         provider_policy_url="https://www.tencentcloud.com/document/product/1300/80632",
     ),
@@ -2230,6 +2230,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "arcee",
         "inception",
         "io-net",
+        "tencent",
         "scaleway",
         "featherless",
         "sakana",
