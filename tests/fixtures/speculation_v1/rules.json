@@ -1306,39 +1306,123 @@
       "literal_case": "response_nested_bool_int"
     },
     {
-      "after": "False",
-      "before": "isinstance(left, dict)",
+      "after": "True",
+      "before": "type(left) not in (dict, list)",
       "function": "_equal",
-      "guard": "_equal:isinstance(left, dict) => False",
+      "guard": "_equal:type(left) not in (dict, list) => True",
       "literal_case": "response_nested_bool_int"
     },
     {
       "after": "False",
-      "before": "isinstance(left, list)",
+      "before": "type(left) not in (str, int, float, bool, type(None))",
       "function": "_equal",
-      "guard": "_equal:isinstance(left, list) => False",
-      "literal_case": "response_nested_int_float"
+      "guard": "_equal:type(left) not in (str, int, float, bool, type(None)) => False",
+      "literal_case": "test_equality_cycles_and_non_json_values"
     },
     {
-      "after": "True",
-      "before": "left.keys() == right.keys()",
+      "after": "False",
+      "before": "left != right",
       "function": "_equal",
-      "guard": "_equal:left.keys() == right.keys() => True",
+      "guard": "_equal:left != right => False",
+      "literal_case": "response_nested_order"
+    },
+    {
+      "after": "False",
+      "before": "pair in completed",
+      "function": "_equal",
+      "guard": "_equal:pair in completed => False",
+      "literal_case": "test_acceptance_shared_subtrees"
+    },
+    {
+      "after": "if False:",
+      "before": "if exiting:",
+      "function": "_equal",
+      "guard": "_equal:if exiting: => if False:",
+      "literal_case": "acceptance_depth_130_unmarked"
+    },
+    {
+      "after": "False",
+      "before": "pair in active",
+      "function": "_equal",
+      "guard": "_equal:pair in active => False",
+      "literal_case": "test_equality_cycles_and_non_json_values"
+    },
+    {
+      "after": "False",
+      "before": "type(left) is dict",
+      "function": "_equal",
+      "guard": "_equal:type(left) is dict => False",
+      "literal_case": "response_nested_bool_int"
+    },
+    {
+      "after": "False",
+      "before": "left.keys() != right.keys()",
+      "function": "_equal",
+      "guard": "_equal:left.keys() != right.keys() => False",
       "literal_case": "response_nested_keys"
     },
     {
-      "after": "True",
-      "before": "len(left) == len(right)",
+      "after": "False",
+      "before": "len(left) != len(right)",
       "function": "_equal",
-      "guard": "_equal:len(left) == len(right) => True",
+      "guard": "_equal:len(left) != len(right) => False",
       "literal_case": "response_nested_length"
     },
     {
-      "after": "return True",
-      "before": "return bool(left == right)",
+      "after": "pair = (id(left), id(left))",
+      "before": "pair = (id(left), id(right))",
       "function": "_equal",
-      "guard": "_equal:return bool(left == right) => return True",
+      "guard": "_equal:pair = (id(left), id(right)) => pair = (id(left), id(left))",
+      "literal_case": "test_acceptance_shared_subtrees"
+    },
+    {
+      "after": "pass",
+      "before": "completed.add(pair)",
+      "function": "_equal",
+      "guard": "_equal:completed.add(pair) => pass",
+      "literal_case": "test_acceptance_shared_subtrees"
+    },
+    {
+      "after": "pass",
+      "before": "active.remove(pair)",
+      "function": "_equal",
+      "guard": "_equal:active.remove(pair) => pass",
+      "literal_case": "test_acceptance_shared_subtrees"
+    },
+    {
+      "after": "pass",
+      "before": "active.add(pair)",
+      "function": "_equal",
+      "guard": "_equal:active.add(pair) => pass",
+      "literal_case": "test_equality_cycles_and_non_json_values"
+    },
+    {
+      "after": "pass",
+      "before": "stack.append((left, right, True))",
+      "function": "_equal",
+      "guard": "_equal:stack.append((left, right, True)) => pass",
+      "literal_case": "test_acceptance_shared_subtrees"
+    },
+    {
+      "after": "pass",
+      "before": "stack.extend((a, b, False) for a, b in children)",
+      "function": "_equal",
+      "guard": "_equal:stack.extend((a, b, False) for a, b in children) => pass",
+      "literal_case": "response_nested_bool_int"
+    },
+    {
+      "after": "while False:",
+      "before": "while stack:",
+      "function": "_equal",
+      "guard": "_equal:while stack: => while False:",
       "literal_case": "response_nested_order"
+    },
+    {
+      "after": "return False",
+      "before": "return True",
+      "function": "_equal",
+      "guard": "_equal:return True => return False",
+      "literal_case": "acceptance_depth_130_unmarked"
     },
     {
       "after": "if False:",

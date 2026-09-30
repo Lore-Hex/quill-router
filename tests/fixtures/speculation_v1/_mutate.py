@@ -17,6 +17,8 @@ from collections import Counter
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[3]
 MODULE = Path('src/trusted_router/speculation_protocol.py')
 
@@ -68,7 +70,7 @@ def main() -> None:
                     if name == 'test_guard_inventory':
                         tests.protocol = original_protocol
                     test(*args)
-                except AssertionError as exc:
+                except (AssertionError, pytest.fail.Exception) as exc:
                     failures.append(('red', name, str(exc)))
                 except Exception as exc:
                     failures.append(('red', name, 'test raised ' + repr(exc)))

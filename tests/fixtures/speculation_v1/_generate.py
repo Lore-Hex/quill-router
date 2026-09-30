@@ -743,6 +743,25 @@ def main():
     ]:
         add("precedence_"+name, "grant", "json", token=token,
             context=context, now=1700000000, shadow=False)
+    # Round 4: caller authorization comparison has no signed-JSON depth cutoff.
+    for depth in (130, 300):
+        for marked in (False, True):
+            for mismatch in (False, True):
+                left, right = 0, 0
+                for _ in range(depth):
+                    left, right = [left], [right]
+                auth = {**authorization, "extra": left}
+                response_auth = {**authorization, "extra": right}
+                if mismatch:
+                    response_auth["authorization_id"] = "different"
+                response = {"authorization": response_auth}
+                if marked:
+                    response["speculation_accepted"] = bundle["speculation_accepted"]
+                mode = "marked" if marked else "unmarked"
+                suffix = "_mismatch" if mismatch else ""
+                expected = "authorization" if mismatch else "accepted" if marked else "ordinary"
+                add(f"acceptance_depth_{depth}_{mode}{suffix}", "marker", expected,
+                    response=response, authorization=auth)
     write("grant-permit-tokens.json", bundle)
     (ROOT / "verdict-vectors.json").write_text(VERDICTS)
     (ROOT / "provider-wire.json").write_text(WIRE)

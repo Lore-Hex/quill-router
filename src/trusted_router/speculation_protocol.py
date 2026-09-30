@@ -10,7 +10,7 @@ import binascii
 import hashlib
 import json
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import wraps
 from typing import Any, ParamSpec, TypeVar
@@ -48,14 +48,43 @@ def _public(function: Callable[P, T]) -> Callable[P, T]:
 
 
 def _equal(left: Any, right: Any) -> bool:
-    """Exact recursive equality on the JSON value domain."""
-    if type(left) is not type(right):
-        return False
-    if isinstance(left, dict):
-        return left.keys() == right.keys() and all(_equal(left[k], right[k]) for k in left)
-    if isinstance(left, list):
-        return len(left) == len(right) and all(_equal(a, b) for a, b in zip(left, right, strict=True))
-    return bool(left == right)
+    """Depth-unbounded JSON equality, with cycles treated as unequal.
+
+    Exit frames memoize only completed container pairs. Active pairs detect
+    cycles separately, while shared acyclic subtrees are compared just once.
+    """
+    stack = [(left, right, False)]
+    active: set[tuple[int, int]] = set()
+    completed: set[tuple[int, int]] = set()
+    while stack:
+        left, right, exiting = stack.pop()
+        if type(left) is not type(right):
+            return False
+        if type(left) not in (dict, list):
+            if type(left) not in (str, int, float, bool, type(None)) or left != right:
+                return False
+            continue
+        pair = (id(left), id(right))
+        if exiting:
+            active.remove(pair)
+            completed.add(pair)
+            continue
+        if pair in active:
+            return False
+        if pair in completed:
+            continue
+        if type(left) is dict:
+            if left.keys() != right.keys():
+                return False
+            children: Iterable[tuple[Any, Any]] = ((left[key], right[key]) for key in left)
+        else:
+            if len(left) != len(right):
+                return False
+            children = zip(left, right, strict=True)
+        active.add(pair)
+        stack.append((left, right, True))
+        stack.extend((a, b, False) for a, b in children)
+    return True
 
 
 def _require(condition: bool, reason: str) -> None:

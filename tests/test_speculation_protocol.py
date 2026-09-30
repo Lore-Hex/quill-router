@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +14,7 @@ import pytest
 from trusted_router import speculation_protocol as protocol
 
 FIXTURES = Path(__file__).parent / "fixtures" / "speculation_v1"
-MANIFEST_SHA256 = "efcf82227d5edb22f90482e414ad6c54dba293166a9febd1a976e6a3c234769e"
+MANIFEST_SHA256 = "ef6cca49eecdea14f47e4419bc1e1543409a22cf715c6cbe1555c8a82701f603"
 
 
 def read(name: str) -> Any:
@@ -119,6 +122,7 @@ def test_guard_inventory() -> None:
 
     rules = read("rules.json")["rules"]
     cases = {c["name"] for c in CASES} | {"verdict:" + v["name"] for v in read("verdict-vectors.json")["vectors"]} | {"fixture_pins"}
+    cases |= {name for name in globals() if name.startswith("test_")}
     assert all(r["literal_case"] in cases for r in rules)
     assert all(r["before"] != r["after"] for r in rules)
     assert len({r["guard"] for r in rules}) == len(rules)
@@ -155,6 +159,105 @@ def test_numeric_limits_are_interpreter_independent() -> None:
                 test_literal(next(c for c in CASES if c['name'] == name))
     finally:
         sys.set_int_max_str_digits(original)
+
+
+@contextmanager
+def equality_work_budget(limit: int = 100_000) -> Iterator[None]:
+    """Bound comparison work deterministically, including under cycle/DAG mutants."""
+    previous = sys.gettrace()
+    lines = 0
+    code = protocol._equal.__code__
+
+    def trace(frame: Any, event: str, arg: Any) -> Any:
+        nonlocal lines
+        if frame.f_code is code:
+            if event == "call":
+                lines = 0
+            elif event == "line":
+                lines += 1
+                assert lines <= limit, "comparison exceeded its linear work budget"
+            return trace
+        return None
+
+    sys.settrace(trace)
+    try:
+        yield
+    finally:
+        sys.settrace(previous)
+
+
+def test_acceptance_depth_5000() -> None:
+    left: Any = 0
+    right: Any = 0
+    for _ in range(5000):
+        left, right = {"items": [left]}, {"items": [right]}
+    d = descriptor()
+    auth = {**BUNDLE["authorization"], "extra": left}
+    response_auth = {**BUNDLE["authorization"], "extra": right}
+    for marked in (False, True):
+        for reversed_order in (False, True):
+            response: dict[str, Any] = {"authorization": response_auth}
+            if marked:
+                response["speculation_accepted"] = BUNDLE["speculation_accepted"]
+            assert protocol.verify_acceptance(response, d, auth) == (
+                "accepted" if marked else "ordinary")
+            response_auth["authorization_id"] = "different"
+            with pytest.raises(protocol.ProtocolError, match="^authorization$"):
+                protocol.verify_acceptance(response, d, auth)
+            response_auth["authorization_id"] = auth["authorization_id"]
+            if not reversed_order:
+                response_auth = dict(reversed(list(response_auth.items())))
+
+
+def test_acceptance_shared_subtrees() -> None:
+    # Separate DAGs: identity equality cannot substitute for structural equality.
+    left: Any = 0
+    right: Any = 0
+    for _ in range(64):
+        left, right = [left, left], [right, right]
+        left, right = {"a": left, "b": left}, {"b": right, "a": right}
+    d = descriptor()
+    auth = {**BUNDLE["authorization"], "extra": left}
+    response_auth = {**BUNDLE["authorization"], "extra": right}
+    with equality_work_budget(20_000):
+        assert protocol.verify_acceptance({"authorization": response_auth}, d, auth) == "ordinary"
+        assert protocol.verify_acceptance({"authorization": auth}, d, auth) == "ordinary"
+        # Shared left child must still be compared to EACH distinct right child.
+        response_auth["extra"] = [{"a": [1], "b": [1]}, right]
+        auth["extra"] = [left, left]
+        with pytest.raises(protocol.ProtocolError, match="^authorization$"):
+            protocol.verify_acceptance({"authorization": response_auth}, d, auth)
+        with pytest.raises(protocol.ProtocolError, match="^authorization$"):
+            protocol.verify_acceptance({"authorization": auth}, d, response_auth)
+    # The budget trace temporarily replaces coverage's tracer; observe the hit too.
+    assert protocol._equal(left, right) is True
+
+
+def test_equality_cycles_and_non_json_values() -> None:
+    left: list[Any] = []
+    right: list[Any] = []
+    left.append(left)
+    right.append(right)
+    left_dict: dict[str, Any] = {}
+    right_dict: dict[str, Any] = {}
+    left_dict["self"] = left_dict
+    right_dict["self"] = right_dict
+    d = descriptor()
+    with equality_work_budget():
+        for a, b in ((left, right), (left_dict, right_dict), (left, left),
+                     (left_dict, left_dict), (left, []), (object(), object())):
+            assert protocol._equal(a, b) is False
+            auth = {**BUNDLE["authorization"], "extra": a}
+            response_auth = {**BUNDLE["authorization"], "extra": b}
+            with pytest.raises(protocol.ProtocolError, match="^authorization$"):
+                protocol.verify_acceptance({"authorization": response_auth}, d, auth)
+        unsupported = object()
+        assert protocol._equal(unsupported, unsupported) is False
+        assert protocol._equal(None, None) is True
+        assert protocol._equal({}, {}) is True
+        assert protocol._equal([], []) is True
+    # Observe cycle refusal with the coverage tracer restored, after bounding work.
+    assert protocol._equal(left, right) is False
 
 
 def test_public_input_fuzz() -> None:
@@ -204,10 +307,11 @@ def test_public_input_fuzz() -> None:
             except protocol.ProtocolError:
                 pass
         response = {'authorization': {**BUNDLE['authorization'], 'extra': value}}
-        try:
-            protocol.verify_acceptance(response, d, copy.deepcopy(response['authorization']))
-        except protocol.ProtocolError:
-            pass
+        with equality_work_budget():
+            try:
+                protocol.verify_acceptance(response, d, copy.deepcopy(response['authorization']))
+            except protocol.ProtocolError:
+                pass
 
 
 def test_signed_parser_fuzz() -> None:

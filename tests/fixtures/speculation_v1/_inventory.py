@@ -194,11 +194,23 @@ def inventory():
             add(function, loop, loop + '\n        if field == ' + repr(field) + ':\n            continue', prefix + field, function + ':identity:' + field)
     for before, after, case in [
         ('type(left) is not type(right)', 'False', 'response_nested_bool_int'),
-        ('isinstance(left, dict)', 'False', 'response_nested_bool_int'),
-        ('isinstance(left, list)', 'False', 'response_nested_int_float'),
-        ('left.keys() == right.keys()', 'True', 'response_nested_keys'),
-        ('len(left) == len(right)', 'True', 'response_nested_length'),
-        ('return bool(left == right)', 'return True', 'response_nested_order'),
+        ('type(left) not in (dict, list)', 'True', 'response_nested_bool_int'),
+        ('type(left) not in (str, int, float, bool, type(None))', 'False', 'test_equality_cycles_and_non_json_values'),
+        ('left != right', 'False', 'response_nested_order'),
+        ('pair in completed', 'False', 'test_acceptance_shared_subtrees'),
+        ('if exiting:', 'if False:', 'acceptance_depth_130_unmarked'),
+        ('pair in active', 'False', 'test_equality_cycles_and_non_json_values'),
+        ('type(left) is dict', 'False', 'response_nested_bool_int'),
+        ('left.keys() != right.keys()', 'False', 'response_nested_keys'),
+        ('len(left) != len(right)', 'False', 'response_nested_length'),
+        ('pair = (id(left), id(right))', 'pair = (id(left), id(left))', 'test_acceptance_shared_subtrees'),
+        ('completed.add(pair)', 'pass', 'test_acceptance_shared_subtrees'),
+        ('active.remove(pair)', 'pass', 'test_acceptance_shared_subtrees'),
+        ('active.add(pair)', 'pass', 'test_equality_cycles_and_non_json_values'),
+        ('stack.append((left, right, True))', 'pass', 'test_acceptance_shared_subtrees'),
+        ('stack.extend((a, b, False) for a, b in children)', 'pass', 'response_nested_bool_int'),
+        ('while stack:', 'while False:', 'response_nested_order'),
+        ('return True', 'return False', 'acceptance_depth_130_unmarked'),
     ]:
         add('_equal', before, after, case)
     add('_depth', 'if quoted:', 'if False:', 'depth_in_string')

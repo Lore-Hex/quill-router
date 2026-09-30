@@ -222,7 +222,9 @@ After schema/type/charset validation, bytes MUST equal recursively
 ASCII-key-sorted compact JSON: preserve array order, decimal integers and
 lowercase booleans. No escapes or trailing newline are possible.
 
-External bindings use one recursive, type-sensitive equality: booleans,
+Comparisons of caller-supplied values (bindings, route, authorization) are pure boolean, type-sensitive, depth-unbounded and independent of member order. They never produce an error code of their own.
+
+External bindings use one structural, type-sensitive equality: booleans,
 integers and floating values are distinct; objects have equal keys and
 recursively equal values; arrays have equal length and element order. Current
 context route is schema-validated before route equality. External data has the
@@ -311,7 +313,7 @@ history or lifetime semantics changed in round 2.
 
 | Order | Check | Error/result |
 |---|---|---|
-| 1 | Recursive typed equality of response authorization and independently supplied authorization | `authorization` |
+| 1 | Structural typed equality of response authorization and independently supplied authorization | `authorization` |
 | 2 | Authorization matches descriptor `invocation_nonce workspace_id key_id` | `authorization` |
 | 3 | Authorization ID string | `string` |
 | 4 | Ordinary billing mode | `authorization` |
@@ -387,6 +389,7 @@ the contract rather than relying on library defaults:
 | `RawURLEncoding.Strict()` still ignores CR/LF | Alphabet precheck before decode; `base64_cr`, `base64_lf`, `signature_padded`, `base64_trailing_bits` |
 | `ed25519.Verify` panics on wrong public-key length | Explicit size validation; `key_short_public`, `signature_bitflip` |
 | Decoder nesting limits differ | Root-counted 16-container preflight; `depth16`, `depth17`, `depth_in_string`, `depth_siblings` |
+| Caller comparisons inherit signed-JSON depth limits or map traversal errors | Never compare caller values with a depth cutoff or by map iteration that can short-circuit into different codes. Use an explicit stack, memoize completed container pairs by identity, and guard active cycles (compare false); `acceptance_depth_130_*`, `acceptance_depth_300_*`. The signed-JSON depth-16 rule does not apply to caller comparisons. |
 
 ## Frozen fixtures and mutation evidence
 
@@ -398,7 +401,7 @@ step and changes the manifest pin. Planning grant claims, provider-wire bytes,
 and the original 24 verdict vectors remain unchanged.
 
 `rules.json` is the guard inventory: each entry names a concrete source edit,
-function, and selected literal. `_mutate.py` runs the WHOLE inventory against
+function, and selected literal or Python-only case. `_mutate.py` runs the WHOLE inventory against
 disposable module/fixture copies and first confirms the unmodified harness.
 Compile/import failures count as build-broken, not red. A mutant is red only
 when a corpus test fails; all corpus tests run even after a failure. Only a
