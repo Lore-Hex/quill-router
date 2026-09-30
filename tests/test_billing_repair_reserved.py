@@ -9,7 +9,6 @@ from tests.fakes.spanner import make_fake_store
 from trusted_router.storage import Workspace
 from trusted_router.storage_gcp_counter_reconcile import repair_typed_reserved
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
-from trusted_router.storage_gcp_regional_quota import GlobalRegionalQuotaLease
 
 
 def _paused_ws(store, ws: str, *, paused: bool = True) -> None:
@@ -17,7 +16,7 @@ def _paused_ws(store, ws: str, *, paused: bool = True) -> None:
 
 
 def test_repair_sets_reserved_to_open_holds() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_repair"
     _paused_ws(store, ws)
     # clobbered: typed credit reserved=5M, but real open holds = 120k.
@@ -48,7 +47,7 @@ def test_repair_sets_reserved_to_open_holds() -> None:
 
 
 def test_repair_refuses_unpaused() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_live"
     _paused_ws(store, ws, paused=False)
     db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
@@ -64,7 +63,7 @@ def test_repair_refuses_unpaused() -> None:
 def test_repair_aborts_if_a_typed_key_row_is_missing() -> None:
     """codex P1: a key whose typed row is missing (deleted mid-repair) must ABORT
     with ZERO writes — never create a partial, uncapped tr_key_limit row."""
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_missing_key"
     _paused_ws(store, ws)
     db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
@@ -82,7 +81,7 @@ def test_repair_aborts_if_a_typed_key_row_is_missing() -> None:
 
 
 def test_repair_aborts_on_nonzero_shard_holds() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_sharded"
     _paused_ws(store, ws)
     db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
@@ -100,7 +99,7 @@ def test_repair_aborts_on_nonzero_shard_holds() -> None:
 def test_repair_aborts_on_nonzero_key_shard_holds() -> None:
     """codex round-2 P3: a key hold on a nonzero key_shard (workspace shard 0) would
     be silently omitted from the key reserved SUM and written low — must ABORT."""
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_key_sharded"
     _paused_ws(store, ws)
     db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
@@ -123,7 +122,7 @@ def test_repair_aborts_on_nonzero_key_shard_holds() -> None:
 
 
 def test_repair_zero_holds_zeroes_reserved() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_zero"
     _paused_ws(store, ws)
     db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
@@ -133,34 +132,3 @@ def test_repair_zero_holds_zeroes_reserved() -> None:
     result = repair_typed_reserved(store, ws, apply=True)
     assert result.ready and result.applied
     assert db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]["reserved"] == 0
-
-
-def test_repair_refuses_open_regional_lease_even_without_open_index() -> None:
-    store, db, _ = make_fake_store()
-    ws = "ws_regional_escrow"
-    _paused_ws(store, ws)
-    db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
-        "workspace_id": ws,
-        "shard": 0,
-        "total_credits": 1_000_000,
-        "total_usage": 0,
-        "reserved": 625_000,
-    }
-    lease = GlobalRegionalQuotaLease(
-        lease_id="lease-with-missing-index",
-        workspace_id=ws,
-        region="us-central1",
-        fencing_token=1,
-        granted_microdollars=625_000,
-        credit_shard=0,
-        expires_at="2026-08-22T01:00:00Z",
-        state="active",
-    )
-    store._write_entity("regional_quota_lease", lease.entity_id, lease)
-
-    result = repair_typed_reserved(store, ws, apply=True)
-
-    assert not result.ready
-    assert not result.applied
-    assert any("regional quota leases are open" in reason for reason in result.reasons)
-    assert db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]["reserved"] == 625_000

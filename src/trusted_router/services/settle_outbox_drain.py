@@ -21,7 +21,7 @@ from trusted_router.synthetic.alerts import ops_alert
 
 logger = logging.getLogger(__name__)
 
-# Six hours is long enough to ride out a real Bigtable outage on 60-second
+# Six hours is long enough to ride out a real analytics outage on 60-second
 # parks, but short enough that a permanently broken row cannot churn the drain
 # forever before an operator takes over.
 _ACTIVITY_REPAIR_MAX_AGE_SECONDS = 6 * 60 * 60
@@ -253,7 +253,7 @@ def _resolve_row(
             # authorization are repair evidence, so retention stays pinned only
             # until an operator responds. Freezing the hold costs nothing
             # because the reservation is already settled. After fixing
-            # Bigtable, the operator can set this row back to pending with
+            # delivery, the operator can set this row back to pending with
             # next_attempt_at in the past for due() to reclaim it.
             status = outbox.mark(
                 row.authorization_id,
@@ -281,9 +281,9 @@ def _resolve_row(
                 f"generation_id={generation_id_for_authorization(row.authorization_id)} "
                 f"request_id={_request_id(row)} "
                 f"reservation_id={row.reservation_id}; CHARGE IS ALREADY APPLIED and Spanner is "
-                "correct; only the per-request Bigtable activity row is missing; "
+                "correct; only the per-request ClickHouse activity row is missing; "
                 "row is now dead with settle_body PRESERVED for repair; fix "
-                "Bigtable, then set the row back to pending to let the drain retry",
+                "delivery, then set the row back to pending to let the drain retry",
                 fingerprint=["settle-outbox", "activity-repair-expired"],
                 tags={"authorization_id": row.authorization_id},
             )
@@ -324,7 +324,7 @@ def _resolve_row(
     if outcome == ApplyOutcome.RESOLVED_ZERO_COST_ELSEWHERE:
         outbox.mark(row.authorization_id, row.intent_kind, done=True, lease_owner=lease_owner)
         # Rare $0 race: the money path is unchanged and no alert is warranted.
-        # Apply verified the idempotent Bigtable activity write before resolving
+        # Apply verified the idempotent activity delivery before resolving
         # without creating a Spanner billing Generation.
         logger.warning(
             "settle outbox warning: settle intent found reservation already zero-resolved "

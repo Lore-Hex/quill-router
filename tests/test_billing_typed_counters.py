@@ -43,7 +43,7 @@ def _typed_key_rows(db, key_hash: str) -> list[dict]:
 
 
 def test_create_workspace_seeds_tr_credit_balance_row() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
 
     workspace = store.create_workspace(
         owner_user_id="owner",
@@ -63,7 +63,7 @@ def test_create_workspace_seeds_tr_credit_balance_row() -> None:
 
 
 def test_create_api_key_seeds_tr_key_limit_row() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     workspace = store.create_workspace(owner_user_id="owner", name="keys")
 
     _raw, key = store.create_api_key(
@@ -92,7 +92,7 @@ def test_create_api_key_seeds_tr_key_limit_row() -> None:
 
 
 def test_metadata_writes_never_reseed_or_clobber_typed_topups() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     workspace = store.create_workspace(
         owner_user_id="owner",
         name="metadata",
@@ -129,7 +129,7 @@ def test_metadata_writes_never_reseed_or_clobber_typed_topups() -> None:
 
 
 def test_brand_new_workspace_authorizes_immediately_after_topup() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     workspace = store.create_workspace(owner_user_id="owner", name="new")
     _raw, key = store.create_api_key(
         workspace_id=workspace.id,

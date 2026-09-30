@@ -320,7 +320,7 @@ def test_deployed_internal_surface_registers_nonblocking_policy_warm() -> None:
 
 
 def test_spanner_typed_watermark_is_strictly_monotonic() -> None:
-    store, db, _table = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     watermark = StorePolicyWatermark(store)
     now = datetime(2026, 9, 3, 22, tzinfo=UTC)
 
@@ -335,7 +335,7 @@ def test_spanner_typed_watermark_is_strictly_monotonic() -> None:
 
 def test_two_replicas_accept_same_verified_sequence_without_second_advance() -> None:
     verifier = FakeVerifier()
-    store, db, _table = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     documents = {
         POLICY_URL: _policy_document(852),
         POLICY_URL + ".bundle": b"bundle",

@@ -22,11 +22,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_lib.sh"
 # shellcheck source=scripts/deploy/_cloud_run_revision_probe.sh
 source "${SCRIPT_DIR}/_cloud_run_revision_probe.sh"
-# Reuse the active-traffic revision resolver and plain-env reader used by
-# rollout.sh.  Reading latest/template state here would copy a rejected
-# revision after rollback and let the two services silently diverge.
-# shellcheck source=scripts/deploy/regional_quota_rollout.sh
-source "${SCRIPT_DIR}/regional_quota_rollout.sh"
+# The active-traffic revision resolver and plain-env reader from _lib.sh are
+# the only permitted configuration source. Reading latest/template state here
+# would copy a rejected revision after rollback and let the two services
+# silently diverge.
 
 LEGACY_SERVICE="${TR_LEGACY_SERVICE:-trusted-router}"
 PUBLIC_SERVICE="${TR_PUBLIC_SERVICE:-trusted-router-public}"
@@ -353,13 +352,12 @@ trap cleanup_public_probe_tag EXIT
 trap 'handle_public_signal 130' INT
 trap 'handle_public_signal 143' TERM
 
-# regional_quota_active_revision_json uses SERVICE by design. Point it at the
-# legacy service only while capturing the exact 100%-traffic revision.
-# Consumed by sourced regional_quota_rollout.sh.
+# active_revision_json uses SERVICE by design. Point it at the legacy service
+# only while capturing the exact 100%-traffic revision.
 # shellcheck disable=SC2034
 SERVICE="$LEGACY_SERVICE"
 if ! LEGACY_REVISION_JSON="$(
-  regional_quota_active_revision_json "$TR_PRIMARY_REGION" false
+  active_revision_json "$TR_PRIMARY_REGION" false
 )"; then
   echo "ERROR: cannot derive public configuration from the active legacy revision" >&2
   exit 1
@@ -368,7 +366,7 @@ fi
 legacy_env_required() {
   local name="$1"
   local value
-  if ! value="$(regional_quota_revision_env "$LEGACY_REVISION_JSON" "$name" "__missing__")" || \
+  if ! value="$(revision_env "$LEGACY_REVISION_JSON" "$name" "__missing__")" || \
      [ "$value" = "__missing__" ] || [ -z "$value" ]; then
     echo "ERROR: active ${LEGACY_SERVICE} revision lacks required plain env ${name}" >&2
     return 1
@@ -419,28 +417,13 @@ if legacy_has_secret_binding TR_GITHUB_CLIENT_ID && \
 fi
 
 # Bigtable analytics are retired (2026-09-28): this surface follows a
-# control-plane revision that already reads ClickHouse alone and mirrors
-# nothing. An older legacy revision means the control plane deploys first.
-ANALYTICS_READ_MODE="$(legacy_env_required TR_ANALYTICS_READ_MODE)"
-case "$ANALYTICS_READ_MODE" in
-  clickhouse-only) ;;
-  *)
-    echo "ERROR: active legacy revision has invalid TR_ANALYTICS_READ_MODE=${ANALYTICS_READ_MODE}" >&2
-    exit 1
-    ;;
-esac
+# control-plane revision that already runs spanner-clickhouse. An older
+# legacy revision means the control plane deploys first.
 STORAGE_BACKEND="$(legacy_env_required TR_STORAGE_BACKEND)"
 case "$STORAGE_BACKEND" in
   spanner-clickhouse) ;;
   *)
     echo "ERROR: active legacy revision still runs TR_STORAGE_BACKEND=${STORAGE_BACKEND}; Bigtable analytics are retired, deploy the control plane first" >&2
-    exit 1
-    ;;
-esac
-case "$(legacy_env_required TR_BIGTABLE_MIRROR_WRITES_ENABLED)" in
-  false) ;;
-  *)
-    echo "ERROR: active legacy revision still mirrors analytics to Bigtable; deploy the control plane first" >&2
     exit 1
     ;;
 esac
@@ -480,8 +463,6 @@ ENV_VARS=(
   # so run_in_transaction_with_retry rolls back deterministic API failures
   # itself (storage_gcp_io.py). Keep this a decision, not a client default.
   "GOOGLE_CLOUD_SPANNER_MULTIPLEXED_SESSIONS_FOR_RW=true"
-  "TR_BIGTABLE_MIRROR_WRITES_ENABLED=false"
-  "TR_ANALYTICS_READ_MODE=${ANALYTICS_READ_MODE}"
   # spanner-clickhouse is validated together with typed generation records
   # and the analytics outboxes; the public store only reads them, but the
   # process refuses to boot without the same declaration as the control plane.
@@ -587,7 +568,7 @@ if [ "$STAGE" = "routed" ]; then
   # Resolve every serving revision before the first mutation. The existing
   # helper rejects split or ambiguous traffic and describes the traffic-taking
   # revision rather than trusting latestReady/latestCreated state.
-  # shellcheck disable=SC2034  # consumed by regional_quota_active_revision_json
+  # shellcheck disable=SC2034  # consumed by active_revision_json
   SERVICE="$PUBLIC_SERVICE"
   marker_status=0
   read_promotion_marker || marker_status=$?
@@ -601,7 +582,7 @@ if [ "$STAGE" = "routed" ]; then
     exit 1
   fi
   for target in "${TARGET_REGIONS[@]}"; do
-    if ! active_json="$(regional_quota_active_revision_json "$target" false)"; then
+    if ! active_json="$(active_revision_json "$target" false)"; then
       echo "ERROR: cannot capture the serving public revision in ${target}" >&2
       exit 1
     fi
@@ -618,7 +599,7 @@ print(name)
       exit 1
     fi
     ORIGINAL_REVISIONS+=("$active_revision")
-    if ! active_rate_limit_mode="$(regional_quota_revision_env \
+    if ! active_rate_limit_mode="$(revision_env \
         "$active_json" "TR_RATE_LIMIT_CLIENT_IP_MODE" "__missing__")"; then
       echo "ERROR: cannot identify the serving public client-IP mode in ${target}" >&2
       exit 1
@@ -758,7 +739,7 @@ fail_routed_region() {
     active_json=""
     active_revision=""
     service_json=""
-    active_json="$(regional_quota_active_revision_json "$region" false)" || restore_failed=1
+    active_json="$(active_revision_json "$region" false)" || restore_failed=1
     active_revision="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["metadata"]["name"])' \
       <<<"${active_json:-{}}")" || restore_failed=1
     [ "$active_revision" = "$old_revision" ] || restore_failed=1

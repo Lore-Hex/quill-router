@@ -36,7 +36,6 @@ from trusted_router.security import (
     new_key_id,
     verify_api_key,
 )
-from trusted_router.spend_leases import SpendLeaseArtifact
 from trusted_router.spend_windows import (
     KeyLimitExceeded,
     KeyLimitReserveResult,
@@ -463,7 +462,6 @@ class InMemoryApiKeys:
         settlement: str = "local",
         expires_at: str | None = None,
         deferred_cap_microdollars: int | None = None,
-        spend_lease: SpendLeaseArtifact | None = None,
         invocation_nonce: str | None = None,
     ) -> GatewayAuthorization:
         with self._lock:
@@ -530,16 +528,6 @@ class InMemoryApiKeys:
                 native_batch_eligible=native_batch_eligible,
                 settlement=settlement,
                 expires_at=expires_at,
-                spend_lease_token=spend_lease.token if spend_lease else None,
-                spend_lease_id=spend_lease.lease_id if spend_lease else None,
-                spend_lease_cap_micro=spend_lease.cap_micro if spend_lease else None,
-                spend_lease_gen=spend_lease.gen if spend_lease else None,
-                spend_lease_iat=spend_lease.iat if spend_lease else None,
-                spend_lease_exp=spend_lease.exp if spend_lease else None,
-                spend_lease_issuer_kid=spend_lease.issuer_kid if spend_lease else None,
-                spend_lease_boot_kid=spend_lease.boot_kid if spend_lease else None,
-                spend_lease_catalog_version=(spend_lease.catalog_version if spend_lease else None),
-                spend_lease_status=spend_lease.lease_status if spend_lease else None,
                 invocation_nonce=invocation_nonce,
             )
             self.gateway_authorizations[authorization.id] = authorization

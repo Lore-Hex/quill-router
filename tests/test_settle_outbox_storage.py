@@ -45,7 +45,7 @@ def _row(aid: str, *, kind: str = "settle", cost: int = 1000, origin: str = "typ
 
 
 def test_enqueue_inserts_and_get_returns_frozen_inputs() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     ob = _outbox(store)
     assert ob.enqueue(_row("gwa-1", cost=4200)) == ENQ_INSERTED
     got = ob.get("gwa-1", "settle")
@@ -59,7 +59,7 @@ def test_enqueue_inserts_and_get_returns_frozen_inputs() -> None:
 
 
 def test_enqueue_is_idempotent_and_refreshes_a_pending_row() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     ob = _outbox(store)
     assert ob.enqueue(_row("gwa-2", cost=1000)) == ENQ_INSERTED
     # A retry with corrected actuals updates the still-pending row (SF9), one row.
@@ -69,7 +69,7 @@ def test_enqueue_is_idempotent_and_refreshes_a_pending_row() -> None:
 
 
 def test_enqueue_does_not_clobber_a_terminal_row() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     ob = _outbox(store)
     ob.enqueue(_row("gwa-3", cost=1000))
     assert ob.mark("gwa-3", "settle", done=True) == "done"
@@ -80,7 +80,7 @@ def test_enqueue_does_not_clobber_a_terminal_row() -> None:
 
 
 def test_settle_and_refund_are_separate_rows_same_authorization() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     ob = _outbox(store)
     ob.enqueue(_row("gwa-4", kind="settle", cost=500))
     ob.enqueue(_row("gwa-4", kind="refund", cost=0))
@@ -89,7 +89,7 @@ def test_settle_and_refund_are_separate_rows_same_authorization() -> None:
 
 
 def test_due_then_claim_leases_and_second_claim_skips() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     ob = _outbox(store)
     ob.enqueue(_row("gwa-5"))
     assert [r.authorization_id for r in ob.due()] == ["gwa-5"]
@@ -100,7 +100,7 @@ def test_due_then_claim_leases_and_second_claim_skips() -> None:
 
 
 def test_mark_done_settles_and_drops_out_of_due() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     ob = _outbox(store)
     ob.enqueue(_row("gwa-6"))
     [job] = ob.claim(lease_seconds=300)
@@ -124,7 +124,7 @@ def test_mark_failure_backs_off_then_dies_at_max_attempts(monkeypatch: pytest.Mo
 
     # Exercise the retry boundaries without racing the runner's wall clock.
     monkeypatch.setattr(outbox_module, "datetime", FrozenDatetime)
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     ob = _outbox(store)
     ob.enqueue(_row("gwa-7"))
     # First failure -> pending, attempts=1, next_attempt in the future (not due now).
@@ -148,7 +148,7 @@ def test_mark_failure_backs_off_then_dies_at_max_attempts(monkeypatch: pytest.Mo
 
 
 def test_mark_rejects_a_lost_lease() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     ob = _outbox(store)
     ob.enqueue(_row("gwa-8"))
     ob.claim(lease_seconds=300)  # owned by worker A
@@ -158,7 +158,7 @@ def test_mark_rejects_a_lost_lease() -> None:
 
 
 def test_stale_mark_after_reclaim_and_park_is_rejected() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ob = _outbox(store)
     ob.enqueue(_row("gwa-stale-mark"))
     [job] = ob.claim(lease_seconds=300)
@@ -184,7 +184,7 @@ def test_stale_mark_after_reclaim_and_park_is_rejected() -> None:
 
 
 def test_stale_park_after_reclaim_and_park_is_rejected() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ob = _outbox(store)
     ob.enqueue(_row("gwa-stale-park"))
     [job] = ob.claim(lease_seconds=300)
@@ -213,7 +213,7 @@ def test_stale_park_after_reclaim_and_park_is_rejected() -> None:
 
 
 def test_anonymous_mark_requires_an_unleased_row() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ob = _outbox(store)
     ob.enqueue(_row("gwa-anonymous-fence"))
     [job] = ob.claim(lease_seconds=300)
@@ -231,7 +231,7 @@ def test_anonymous_mark_requires_an_unleased_row() -> None:
 
 
 def test_enqueue_initial_delay_defers_claim_until_default_row_is_due() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     ob = _outbox(store)
     assert ob.enqueue(_row("gwa-delayed"), initial_delay_seconds=60) == ENQ_INSERTED
     assert ob.claim() == []
@@ -248,7 +248,7 @@ def test_enqueue_initial_delay_defers_claim_until_default_row_is_due() -> None:
 def test_enqueue_refresh_does_not_overwrite_an_actively_leased_row() -> None:
     """codex #113 finding 2: a claimed row stays status='pending' while a drain
     applies it, so a retry-enqueue must NOT overwrite its frozen inputs mid-drain."""
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     ob = _outbox(store)
     ob.enqueue(_row("gwa-11", cost=1000))
     [job] = ob.claim(lease_seconds=300)  # a drain worker now owns it
@@ -262,7 +262,7 @@ def test_enqueue_refresh_does_not_overwrite_an_actively_leased_row() -> None:
 def test_fake_is_sql_sensitive_dropped_predicate_fails() -> None:
     """MF6 / codex #113 finding 1: the fake must FAIL when a load-bearing SQL
     predicate is dropped, not silently enforce the intended behavior in Python."""
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     _outbox(store).enqueue(_row("gwa-12"))
     # A has_intent query missing `authorization_id=@aid` must FAIL (not count).
     with pytest.raises(AssertionError, match="has_intent"):
@@ -325,7 +325,7 @@ def test_fake_is_sql_sensitive_dropped_predicate_fails() -> None:
 
 
 def test_has_intent_freezes_on_pending_and_dead_only() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ob = _outbox(store)
     assert ob.has_intent("absent") is False
     ob.enqueue(_row("gwa-9"))
@@ -379,7 +379,7 @@ def test_expired_lease_with_stale_owner_is_stolen_and_stale_worker_fenced() -> N
     lease EXPIRY, not owner nullability. A crashed worker's row (owner still
     set, lease expired) must be re-claimable, the steal must rewrite the owner,
     and the stale worker's late mark must then lose the exact-match fence."""
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ob = _outbox(store)
     ob.enqueue(_row("gwa-crash", cost=100))
     [job_a] = ob.claim(lease_seconds=300)

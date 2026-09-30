@@ -133,7 +133,7 @@
       "routable": true,
       "input_token_price_per_m": 600000,
       "output_token_price_per_m": 2400000,
-      "cached_input_token_price_per_m": 0
+      "cached_input_token_price_per_m": 60000
     },
     {
       "display_name": "gpt-oss-120b",
@@ -159,7 +159,7 @@
     }
   ],
   "source": "https://api.sambanova.ai/v1/models",
-  "generated_at": "2026-09-28T23:57:13Z",
+  "generated_at": "2026-09-30T02:36:36Z",
   "price_scale": "microdollars_per_million",
   "model_count": 7
 }

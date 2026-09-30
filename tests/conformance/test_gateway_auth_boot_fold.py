@@ -25,14 +25,14 @@ from tests.test_gateway_authorize_spanner_operations import (
 )
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
 from trusted_router.config import Settings
-from trusted_router.receipt_keys import b64url_encode, receipt_kid
-from trusted_router.routes.internal import gateway
-from trusted_router.spend_leases import (
+from trusted_router.gateway_boot import (
     SPEND_LEASE_BOOT_KIND,
     SpendLeaseBoot,
     boot_auth_digest,
     parse_boot_auth_header,
 )
+from trusted_router.receipt_keys import b64url_encode, receipt_kid
+from trusted_router.routes.internal import gateway
 from trusted_router.storage_gcp import (
     _API_KEY_AUTH_CONTEXT_SQL,
     SpannerBigtableStore,
@@ -226,8 +226,9 @@ def test_complete_boot_authorize_differential(state, reason, fixed_operation_cat
         monkeypatch.setattr(SpannerBigtableStore, "gateway_api_key_auth_context", resolve)
         headers = request.headers.getlist("X-TR-Boot-Auth")
         auth = parse_boot_auth_header(headers[0]) if len(headers) == 1 else None
-        context = {"boot_auth": auth, "boot_verified": False, "boot_failure_reason": None,
-                   "raw_body": raw, "echo": None}
+        # Same shape as _authorize_gateway_sync's boot context (#1418 dropped the
+        # Stage C failure reason and lease echo).
+        context = {"boot_auth": auth, "boot_verified": False, "raw_body": raw}
         try:
             response = gateway._authorize_gateway_sync_impl(request, body, settings, context)
             if reason == "replayed":
@@ -235,16 +236,15 @@ def test_complete_boot_authorize_differential(state, reason, fixed_operation_cat
             status = 200
         except HTTPException as exc:
             response, status = {"detail": exc.detail, "headers": exc.headers}, exc.status_code
-        outcomes.append((captured, context["boot_verified"], context["boot_failure_reason"],
+        outcomes.append((captured, context["boot_verified"],
                          status, response, list(resolver_calls)))
     assert outcomes[1] == outcomes[0]
-    _, verified, failure, status, response, calls = outcomes[1]
+    _, verified, status, response, calls = outcomes[1]
     if state in {"invalid_key", "missing_key", "scope"}:
         assert status == (403 if state == "scope" else 401)
         assert not calls and not verified  # No boot handling before key/scope checks.
     else:
         assert verified == (state in {"valid", "reregistered", "observation_merged", "missing_workspace"})
-        assert failure == ("boot_digest_not_accepted" if state == "rejected_digest" else None)
         if state == "missing_workspace":
             assert status == 403 and calls
         elif state == "valid":

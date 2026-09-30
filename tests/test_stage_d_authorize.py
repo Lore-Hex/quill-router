@@ -80,7 +80,7 @@ def test_stage_d_eligibility_has_each_closed_reason(
 
 
 def test_typed_authorize_inserts_cohort_sequence_zero_and_snapshot() -> None:
-    store, db, _table = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     workspace = Workspace(id="stage-d-workspace", name="Stage D", owner_user_id="user-1")
     store._write_entity("workspace", workspace.id, workspace)
     store._write_entity("credit", workspace.id, CreditAccount(workspace_id=workspace.id))
@@ -175,7 +175,7 @@ def test_typed_authorize_inserts_cohort_sequence_zero_and_snapshot() -> None:
     )] == [None] * 7
 
 
-def test_stage_d_authorize_payload_uses_snapshot_and_lease_allocation_cap() -> None:
+def test_stage_d_authorize_payload_uses_snapshot_and_estimate_cap() -> None:
     document = json.loads((FIXTURES / "pricing_document.json").read_bytes())
     authorization = GatewayAuthorization(
         id="gwa-stage-d-eligible",
@@ -184,11 +184,10 @@ def test_stage_d_authorize_payload_uses_snapshot_and_lease_allocation_cap() -> N
         model_id="model",
         provider="anthropic",
         usage_type=UsageType.CREDITS,
-        estimated_microdollars=500,
+        estimated_microdollars=300,
         pricing_snapshot=canonical_pricing_snapshot(document),
         heartbeat_seq=0,
         stage_d_reason="ok",
-        spend_lease_allocated_micro=300,
     )
     expected = json.loads((FIXTURES / "authorize_response_eligible.json").read_bytes())["data"]
     assert {
@@ -218,7 +217,7 @@ def test_stage_d_authorize_payload_uses_snapshot_and_lease_allocation_cap() -> N
 def test_app_markup_and_receipt_fee_remain_in_stage_d_cohort(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, db, _table = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     workspace = Workspace(id="stage-d-fees", name="Stage D fees", owner_user_id="user-1")
     store._write_entity("workspace", workspace.id, workspace)
     store._write_entity("credit", workspace.id, CreditAccount(workspace_id=workspace.id))
@@ -339,7 +338,7 @@ def test_stage_d_empty_cohort_admits_arbitrary_workspace(
 def test_stage_d_replay_is_always_ineligible_and_echoes_stored_nonce(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, db, _table = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     workspace = Workspace(id="stage-d-replay", name="Stage D replay", owner_user_id="user-1")
     store._write_entity("workspace", workspace.id, workspace)
     store._write_entity("credit", workspace.id, CreditAccount(workspace_id=workspace.id))

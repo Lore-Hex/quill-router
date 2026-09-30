@@ -23,7 +23,7 @@ def _seed(
     paused: bool = True,
     workspace_id: str = "ws-reshard",
 ) -> tuple[Any, Any]:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     shard_reserved = shard_reserved or [0] * len(shard_credits)
     store._write_entity(
         "workspace",

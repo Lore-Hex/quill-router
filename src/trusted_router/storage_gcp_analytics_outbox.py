@@ -2,8 +2,8 @@
 
 The outbox is deliberately separate from gateway settlement. Analytics must
 never make the money transaction slower or less reliable. A failed enqueue is
-logged and tolerated by ``SpannerGenerations``; the Bigtable reconciler is the
-completeness backstop.
+logged and tolerated by ``SpannerGenerations``; the durable-delivery repair is
+the completeness backstop.
 
 The primary key starts with a deterministic shard. A commit timestamp alone is
 a monotonically increasing key and would concentrate all writes on one Spanner

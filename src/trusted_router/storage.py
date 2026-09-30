@@ -23,6 +23,7 @@ from trusted_router.custom_model_billing import (
 from trusted_router.custom_model_markup_billing import (
     custom_model_markup_authorization_id_from_payout_event_id,
 )
+from trusted_router.gateway_boot import SpendLeaseBoot
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
 from trusted_router.operational_analytics_freshness import (
     BACKEND_MEMORY,
@@ -41,7 +42,6 @@ from trusted_router.routable_payouts import (
     ROUTABLE_PENDING_STATUSES,
     validate_routable_release_status,
 )
-from trusted_router.spend_leases import SpendLeaseArtifact, SpendLeaseBoot
 from trusted_router.spend_windows import KeyLimitReserveResult
 from trusted_router.storage_attribution import InMemoryAcquisitionAttribution
 from trusted_router.storage_auth_context import build_session_auth_context
@@ -146,11 +146,11 @@ from trusted_router.types import IdentityVerificationStatus, UsageType
 
 
 class InMemoryStore:
-    """Local/test implementation for the Spanner + Bigtable boundary.
+    """Local/test implementation of the Spanner + ClickHouse store boundary.
 
     The methods mirror the production responsibilities:
     - Spanner-like strongly consistent transactional state for accounts/credits.
-    - Bigtable-like append/query metadata for generation usage.
+    - ClickHouse-like append/query analytics for generation usage.
     """
 
     def __init__(
@@ -216,11 +216,8 @@ class InMemoryStore:
         self.credit_transfer_claims: dict[str, dict[str, Any]] = {}
         self.client_events_batches: list[dict[str, Any]] = []
         self.client_event_ids: set[str] = set()
-        self.spend_lease_shadow_events: dict[str, dict[str, Any]] = {}
         self.receipt_keys: dict[str, ReceiptKey] = {}
         self.spend_lease_boots: dict[str, SpendLeaseBoot] = {}
-        self.spend_lease_generations: dict[tuple[str, str], int] = {}
-        self.active_spend_leases: dict[tuple[str, str], SpendLeaseArtifact] = {}
         #: Federated settlement claims, keyed (source_plane, authorization_id).
         #: Insert-once: the recorded terms are the verdict for every replay.
         self.federated_settlement_claims: dict[tuple[str, str], dict[str, Any]] = {}
@@ -298,11 +295,8 @@ class InMemoryStore:
             self.credit_transfer_claims.clear()
             self.client_events_batches.clear()
             self.client_event_ids.clear()
-            self.spend_lease_shadow_events.clear()
             self.receipt_keys.clear()
             self.spend_lease_boots.clear()
-            self.spend_lease_generations.clear()
-            self.active_spend_leases.clear()
             self.api_keys.reset()
             self.acquisition_store.reset()
             self.bedrock_group_buy_store.reset()
@@ -424,33 +418,6 @@ class InMemoryStore:
     def get_spend_lease_boot(self, kid: str) -> SpendLeaseBoot | None:
         with self._lock:
             return self.spend_lease_boots.get(kid)
-
-    def next_spend_lease_generation(self, key_hash: str, boot_kid: str) -> int:
-        with self._lock:
-            key = (key_hash, boot_kid)
-            generation = self.spend_lease_generations.get(key, 0) + 1
-            self.spend_lease_generations[key] = generation
-            return generation
-
-    def get_active_spend_lease(self, key_hash: str, boot_kid: str) -> SpendLeaseArtifact | None:
-        with self._lock:
-            return self.active_spend_leases.get((key_hash, boot_kid))
-
-    def retain_spend_lease(
-        self,
-        key_hash: str,
-        boot_kid: str,
-        candidate: SpendLeaseArtifact,
-        *,
-        replace: bool,
-    ) -> SpendLeaseArtifact:
-        with self._lock:
-            key = (key_hash, boot_kid)
-            existing = self.active_spend_leases.get(key)
-            if existing is None or (replace and candidate.gen > existing.gen):
-                self.active_spend_leases[key] = candidate
-                return candidate
-            return existing
 
     def ensure_user(
         self,
@@ -863,14 +830,6 @@ class InMemoryStore:
                         if candidate_workspace_id == workspace.id:
                             row["trust_tier"] = 0
                             row["trust_latched_at"] = row["trust_latched_at"] or now
-                    self.active_spend_leases = {
-                        key: lease
-                        for key, lease in self.active_spend_leases.items()
-                        if (
-                            (api_key := self.api_keys.get_by_hash(key[0])) is None
-                            or api_key.workspace_id != workspace.id
-                        )
-                    }
                 workspace.deleted = deleted
             if billing_paused is not None:
                 causes = set(workspace.billing_pause_causes)
@@ -3263,7 +3222,6 @@ class InMemoryStore:
         settlement: str = "local",
         expires_at: str | None = None,
         deferred_cap_microdollars: int | None = None,
-        spend_lease: SpendLeaseArtifact | None = None,
         invocation_nonce: str | None = None,
         expected_pause_epoch: int | None = None,
     ) -> GatewayAuthorization:
@@ -3333,7 +3291,6 @@ class InMemoryStore:
                 settlement=settlement,
                 expires_at=expires_at,
                 deferred_cap_microdollars=deferred_cap_microdollars,
-                spend_lease=spend_lease,
                 invocation_nonce=invocation_nonce,
             )
 
@@ -3435,10 +3392,6 @@ class InMemoryStore:
             if len(self.client_events_batches) > 1_000:
                 removed = self.client_events_batches.pop(0)
                 self.client_event_ids.discard(f"{removed['tenant_id']}:{removed['batch_id']}")
-
-    def record_spend_lease_shadow(self, event_id: str, payload: dict[str, Any]) -> None:
-        with self._lock:
-            self.spend_lease_shadow_events.setdefault(event_id, dict(payload))
 
     def record_provider_benchmark(self, sample: ProviderBenchmarkSample) -> None:
         self.generation_store.record_benchmark(sample)
@@ -3961,21 +3914,14 @@ def create_store(settings: Any, *, initialize_schema: bool = True) -> Store:
         if initialize_schema:
             store.apply_schema()
         return store
-    if backend in {"spanner-bigtable", "spanner-clickhouse"}:
+    if backend == "spanner-clickhouse":
         from trusted_router.storage_gcp import SpannerBigtableStore
 
-        bigtable_enabled = backend == "spanner-bigtable"
         return SpannerBigtableStore(
             trust_settings=settings,
             project_id=settings.gcp_project_id,
             spanner_instance_id=settings.spanner_instance_id,
             spanner_database_id=settings.spanner_database_id,
-            bigtable_instance_id=settings.bigtable_instance_id,
-            generation_table=settings.bigtable_generation_table,
-            bigtable_app_profile_id=getattr(settings, "bigtable_app_profile_id", ""),
-            bigtable_enabled=bigtable_enabled,
-            bigtable_writes_enabled=bigtable_enabled
-            and getattr(settings, "bigtable_mirror_writes_enabled", True),
             generation_records_enabled=getattr(
                 settings,
                 "generation_records_enabled",
@@ -4008,34 +3954,6 @@ def create_store(settings: Any, *, initialize_schema: bool = True) -> Store:
             ),
             operational_analytics_clickhouse_database=getattr(
                 settings, "operational_analytics_clickhouse_database", "tr"
-            ),
-            analytics_read_mode=(
-                "clickhouse-only"
-                if backend == "spanner-clickhouse"
-                else getattr(settings, "analytics_read_mode", "bigtable")
-            ),
-            analytics_dual_read_grace_seconds=getattr(
-                settings, "analytics_dual_read_grace_seconds", 30
-            ),
-            regional_quota_leases_enabled=getattr(settings, "regional_quota_leases_enabled", False),
-            regional_quota_ledger_timeout_seconds=float(
-                getattr(settings, "regional_quota_ledger_timeout_seconds", 4.0)
-            ),
-            regional_quota_bigtable_table=getattr(
-                settings,
-                "regional_quota_bigtable_table",
-                "trustedrouter-regional-quota",
-            ),
-            regional_quota_bigtable_app_profiles=getattr(
-                settings,
-                "regional_quota_bigtable_app_profile_map",
-                {},
-            ),
-            spend_lease_bigtable_table=getattr(
-                settings, "spend_lease_bigtable_table", "trustedrouter-spend-lease"
-            ),
-            spend_lease_bigtable_app_profiles=getattr(
-                settings, "spend_lease_bigtable_app_profile_map", {}
             ),
             max_workspaces_per_owner=int(
                 getattr(settings, "max_workspaces_per_owner", 25)

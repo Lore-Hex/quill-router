@@ -335,14 +335,14 @@ def test_resolvers_expose_relaxed_policy_without_changing_normalized_inputs(
             "allow_fallbacks": False,
         },
     }, Settings(environment="test"))
-    original_hash = inputs.routing_policy_hash
+    original = replace(inputs)
     resolver = decide_route_endpoint_candidates if hosted else chat_route_endpoint_candidates
     candidates = resolver(inputs, defer_no_fallback_selection=defer_selection)
     assert isinstance(candidates, list)
     assert len(candidates) == 1
     assert candidates.effective_preferences == replace(inputs.preferences, data_collection=None)
     assert inputs.preferences.data_collection == "deny"
-    assert inputs.routing_policy_hash == original_hash
+    assert inputs == original
 
 
 def _assert_no_financial_side_effects() -> None:
@@ -491,6 +491,46 @@ async def _named_candidates(model_id: str, provider: dict[str, Any] | None) -> l
         c["provider"] for c in payload.get("route_candidates", []) if c["provider"] not in ordered
     ]
     return ordered
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("model_id", "host"),
+    [
+        (TREV_1_0_MODEL_ID, "cerebras"),
+        (ZEV_1_0_MODEL_ID, "baseten"),
+        ("trustedrouter/lev-1.0", "parasail"),
+    ],
+)
+@pytest.mark.parametrize("zdr_available", [True, False])
+async def test_blog_zdr_decision_examples_never_widen_to_an_ineligible_host(
+    model_id: str, host: str, zdr_available: bool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+
+    _serve_on_fixture_routes(monkeypatch, model_id)
+    assert PROVIDERS[host].provider_zero_data_retention is True
+    if not zdr_available:
+        monkeypatch.setitem(PROVIDERS, host, replace(
+            PROVIDERS[host], provider_zero_data_retention=False,
+            prepaid_zero_data_retention=False,
+        ))
+    response = await _authorize({
+        "model": model_id,
+        "route_type": "decide",
+        "provider": {"only": [host], "min_privacy": "zdr"},
+        "estimated_input_tokens": 480,
+        "max_output_tokens": 700,
+    })
+    if zdr_available:
+        assert response.status_code == 200, response.text
+        payload = response.json().get("data", response.json())
+        assert payload["provider"] == host
+        assert payload["response_model"] == model_id
+        assert {route["provider"] for route in payload["route_candidates"]} == {host}
+    else:
+        assert response.status_code == 400, response.text
+        _assert_no_financial_side_effects()
 
 
 def _serve_on_fixture_routes(

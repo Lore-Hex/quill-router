@@ -1,5 +1,5 @@
 {% extends "public/_base.html" %}
-{% from "public/_provider_identity.html" import provider_identity %}
+{% from "public/_provider_identity.html" import publisher_identity %}
 {% from "public/_decide_example.html" import decide_curl %}
 {% block body %}
 <section class="public-proof-strip">
@@ -30,7 +30,7 @@
     <span>Model id</span><span><code>{{ left.id }}</code></span><span><code>{{ right.id }}</code></span>
   </div>
   <div class="matrix-row">
-    <span>Publisher</span><span>{{ provider_identity(left.publisher_slug, left.provider, "/providers/" ~ left.publisher_slug) }}</span><span>{{ provider_identity(right.publisher_slug, right.provider, "/providers/" ~ right.publisher_slug) }}</span>
+    <span>Publisher</span><span>{{ publisher_identity(left) }}</span><span>{{ publisher_identity(right) }}</span>
   </div>
   <div class="matrix-row">
     <span>AI IQ</span>

@@ -69,6 +69,7 @@ from scripts.pricing.providers import (
     scaledown,
     scaleway,
     stepfun,
+    tencent,
     upstage,
     wandb,
 )
@@ -529,6 +530,7 @@ _STALE_MANIFEST_PROVIDER_MODULES = (
     relace,
     stepfun,
     scaledown,
+    tencent,
 )
 
 _STALE_MANIFEST_PROVIDER_MODULE_BY_SLUG = {

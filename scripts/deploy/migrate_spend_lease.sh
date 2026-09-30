@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Apply the inert Stage B spend-lease schema manifest (design decision 48).
+# Apply the retained spend-lease schema (design decision 48). The spend-lease
+# pilot was removed in 2026-09; its Spanner tables and columns are kept as
+# historical data and stay in the schema audit, so this migration remains in
+# every deploy. It adds nothing new on a converged database.
 #
 # Idempotent: every column, table, and index is guarded by an
 # INFORMATION_SCHEMA existence check. This migration adds schema only; no
-# reader, writer, reconciler, Bigtable resource, or feature flag is enabled.
+# reader, writer, reconciler, or feature flag is enabled.
 #
 # Operational sequencing: apply this only when no Cloud Run deploy is rolling
 # and prefer a low-traffic window. Spanner schema changes wound in-flight

@@ -475,7 +475,8 @@
       "routable": true,
       "input_token_price_per_m": 295000,
       "output_token_price_per_m": 1200000,
-      "cached_input_token_price_per_m": 59000
+      "cached_input_token_price_per_m": 59000,
+      "missing_since": "2026-09-30"
     },
     {
       "display_name": "moonshotai/Kimi-K2.5",
@@ -497,7 +498,8 @@
       "routable": true,
       "input_token_price_per_m": 800000,
       "output_token_price_per_m": 3400000,
-      "cached_input_token_price_per_m": 154000
+      "cached_input_token_price_per_m": 154000,
+      "missing_since": "2026-09-30"
     },
     {
       "display_name": "Qwen/Qwen3-Coder-Next",
@@ -519,7 +521,8 @@
       "routable": true,
       "input_token_price_per_m": 160000,
       "output_token_price_per_m": 1150000,
-      "cached_input_token_price_per_m": 36000
+      "cached_input_token_price_per_m": 36000,
+      "missing_since": "2026-09-30"
     },
     {
       "display_name": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
@@ -540,7 +543,8 @@
       "routable": false,
       "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 300000,
-      "output_token_price_per_m": 1200000
+      "output_token_price_per_m": 1200000,
+      "missing_since": "2026-09-30"
     },
     {
       "display_name": "Qwen/Qwen3.5-27B",
@@ -562,7 +566,8 @@
       "max_output_tokens": 32768,
       "routable": true,
       "input_token_price_per_m": 300000,
-      "output_token_price_per_m": 2400000
+      "output_token_price_per_m": 2400000,
+      "missing_since": "2026-09-30"
     },
     {
       "display_name": "Qwen/Qwen3.5-2B",
@@ -585,7 +590,8 @@
       "routable": true,
       "input_token_price_per_m": 80000,
       "output_token_price_per_m": 400000,
-      "cached_input_token_price_per_m": 16000
+      "cached_input_token_price_per_m": 16000,
+      "missing_since": "2026-09-30"
     },
     {
       "display_name": "Qwen/Qwen3.5-397B-A17B",
@@ -607,7 +613,8 @@
       "max_output_tokens": 32768,
       "routable": true,
       "input_token_price_per_m": 550000,
-      "output_token_price_per_m": 3500000
+      "output_token_price_per_m": 3500000,
+      "missing_since": "2026-09-30"
     },
     {
       "display_name": "Qwen/Qwen3.5-4B",
@@ -630,7 +637,8 @@
       "routable": true,
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 200000,
-      "cached_input_token_price_per_m": 20000
+      "cached_input_token_price_per_m": 20000,
+      "missing_since": "2026-09-30"
     },
     {
       "display_name": "Qwen/Qwen3.5-9B",
@@ -652,7 +660,8 @@
       "max_output_tokens": 32768,
       "routable": true,
       "input_token_price_per_m": 170000,
-      "output_token_price_per_m": 250000
+      "output_token_price_per_m": 250000,
+      "missing_since": "2026-09-30"
     },
     {
       "display_name": "Qwen/WebWorld-8B",
@@ -673,7 +682,8 @@
       "context_length": 32768,
       "routable": true,
       "input_token_price_per_m": 468000,
-      "output_token_price_per_m": 1820000
+      "output_token_price_per_m": 1820000,
+      "missing_since": "2026-09-30"
     },
     {
       "display_name": "zai-org/GLM-4.7-Flash",
@@ -695,7 +705,8 @@
       "routable": true,
       "input_token_price_per_m": 65300,
       "output_token_price_per_m": 400000,
-      "cached_input_token_price_per_m": 13100
+      "cached_input_token_price_per_m": 13100,
+      "missing_since": "2026-09-30"
     },
     {
       "display_name": "zai-org/GLM-5",
@@ -717,12 +728,13 @@
       "routable": true,
       "input_token_price_per_m": 950000,
       "output_token_price_per_m": 3150000,
-      "cached_input_token_price_per_m": 190000
+      "cached_input_token_price_per_m": 190000,
+      "missing_since": "2026-09-30"
     }
   ],
   "source": "https://api.featherless.ai/v1/models",
   "pricing_source": "https://featherless.ai/docs/request-pricing-and-credits",
-  "generated_at": "2026-09-28T23:57:13Z",
+  "generated_at": "2026-09-30T02:36:36Z",
   "price_scale": "microdollars_per_million",
   "model_count": 32
 }

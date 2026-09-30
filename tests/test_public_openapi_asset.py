@@ -50,7 +50,7 @@ def _component_refs(value: object) -> set[tuple[str, str]]:
 
 
 def test_generated_public_openapi_assets_are_deterministic_and_current(monkeypatch) -> None:
-    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-bigtable")
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
     monkeypatch.setenv("TR_SPANNER_INSTANCE_ID", "must-not-be-constructed")
     monkeypatch.setenv("TR_STRIPE_SECRET_KEY", "must-not-leak")
     monkeypatch.setenv("AXIOM_API_TOKEN", "must-not-connect")

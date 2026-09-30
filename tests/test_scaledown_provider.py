@@ -290,7 +290,6 @@ def test_gateway_settles_provider_preprocessing_exactly_once(client):
     assert auth.status_code == 200, auth.text
     authorization = auth.json()["data"]
     assert authorization["provider"] == "scaledown"
-    assert not authorization.get("spend_lease")
     payload = {
         "authorization_id": authorization["authorization_id"],
         "actual_input_tokens": 394,

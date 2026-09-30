@@ -74,7 +74,7 @@ def spanner_rpc_budget(max_seconds: float) -> Callable[[Callable[P, T]], Callabl
 
 
 def remaining_rpc_budget(max_seconds: float) -> float:
-    """Cap an operation (including regional Bigtable) to the caller's deadline."""
+    """Cap an operation to the caller's deadline."""
     from google.api_core.exceptions import DeadlineExceeded
 
     deadline = _SPANNER_RPC_DEADLINE.get()

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 1: enable GCP APIs and provision Spanner + Bigtable.
+# Phase 1: enable GCP APIs and provision Spanner.
 # Idempotent — skip-if-exists for every step. Safe to re-run.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,7 +15,6 @@ gc services enable \
   cloudkms.googleapis.com \
   datamanager.googleapis.com \
   spanner.googleapis.com \
-  bigtableadmin.googleapis.com \
   storage.googleapis.com \
   cloudbuild.googleapis.com
 
@@ -46,43 +45,6 @@ if [ "$(gc spanner databases describe "$SPANNER_DATABASE_ID" \
     --enable-drop-protection \
     --quiet
 fi
-
-log "ensuring Bigtable instance/table"
-if ! gc bigtable instances describe "$BIGTABLE_INSTANCE_ID" >/dev/null 2>&1; then
-  gc bigtable instances create "$BIGTABLE_INSTANCE_ID" \
-    --display-name="TrustedRouter logs" \
-    --instance-type="$BIGTABLE_INSTANCE_TYPE" \
-    --cluster="$BIGTABLE_CLUSTER_ID" \
-    --cluster-zone="${ZONE:-${REGION}-a}" \
-    --cluster-num-nodes=1
-fi
-if ! gc bigtable instances tables describe "$BIGTABLE_GENERATION_TABLE" --instance="$BIGTABLE_INSTANCE_ID" >/dev/null 2>&1; then
-  gc bigtable instances tables create "$BIGTABLE_GENERATION_TABLE" \
-    --instance="$BIGTABLE_INSTANCE_ID" \
-    --column-families=m
-fi
-
-# Retention migrations need only table-schema reads and column-family updates.
-# Keep that capability table-scoped and separate from row-data access.
-BIGTABLE_SCHEMA_ROLE_ID="${TR_BIGTABLE_SCHEMA_ROLE_ID:-trustedRouterBigtableSchemaManager}"
-BIGTABLE_SCHEMA_ROLE="projects/${PROJECT_ID}/roles/${BIGTABLE_SCHEMA_ROLE_ID}"
-DEPLOY_SERVICE_ACCOUNT="${TR_DEPLOY_SERVICE_ACCOUNT:-tr-deploy@${PROJECT_ID}.iam.gserviceaccount.com}"
-OPS_SERVICE_ACCOUNT="${TR_OPS_SERVICE_ACCOUNT:-tr-ops-local@${PROJECT_ID}.iam.gserviceaccount.com}"
-if ! gc iam roles describe "$BIGTABLE_SCHEMA_ROLE_ID" >/dev/null 2>&1; then
-  gc iam roles create "$BIGTABLE_SCHEMA_ROLE_ID" \
-    --title="TrustedRouter Bigtable Schema Manager" \
-    --description="May read table schema and update column-family GC policies; no row data access." \
-    --permissions=bigtable.tables.get,bigtable.tables.update \
-    --stage=GA \
-    --quiet
-fi
-for service_account in "$DEPLOY_SERVICE_ACCOUNT" "$OPS_SERVICE_ACCOUNT"; do
-  gc bigtable tables add-iam-policy-binding "$BIGTABLE_GENERATION_TABLE" \
-    --instance="$BIGTABLE_INSTANCE_ID" \
-    --member="serviceAccount:${service_account}" \
-    --role="$BIGTABLE_SCHEMA_ROLE" \
-    --quiet >/dev/null
-done
 
 log "ensuring production deployment mutex bucket"
 DEPLOY_MUTEX_BUCKET="${TR_DEPLOY_MUTEX_BUCKET:-tr-deploy-mutex-quill-cloud-proxy}"
@@ -170,12 +132,11 @@ gc kms keys add-iam-policy-binding "$GOOGLE_ADS_KMS_KEY_ID" \
 log "ensuring runtime IAM for ${RUN_SERVICE_ACCOUNT}"
 ensure_project_role "serviceAccount:${RUN_SERVICE_ACCOUNT}" "roles/secretmanager.secretAccessor"
 ensure_project_role "serviceAccount:${RUN_SERVICE_ACCOUNT}" "roles/spanner.databaseUser"
-ensure_project_role "serviceAccount:${RUN_SERVICE_ACCOUNT}" "roles/bigtable.user"
 ensure_project_role "serviceAccount:${RUN_SERVICE_ACCOUNT}" "roles/aiplatform.user"
 
 # Metadata-only Google Ads conversion worker. It can read the durable Spanner
 # outbox and unwrap only the dedicated Google-click envelope key. It has no
-# Bigtable, Secret Manager, provider-key, or BYOK-key decrypt permission.
+# Secret Manager, provider-key, or BYOK-key decrypt permission.
 GOOGLE_DATA_MANAGER_SERVICE_ACCOUNT_ID="${TR_GOOGLE_DATA_MANAGER_SERVICE_ACCOUNT_ID:-tr-google-data-manager}"
 GOOGLE_DATA_MANAGER_SERVICE_ACCOUNT="${GOOGLE_DATA_MANAGER_SERVICE_ACCOUNT_ID}@${PROJECT_ID}.iam.gserviceaccount.com"
 if ! gc iam service-accounts describe \

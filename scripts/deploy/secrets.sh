@@ -340,6 +340,7 @@ grant_tr_deploy_secret_access "trustedrouter-decart-api-key"
 grant_tr_deploy_secret_access "trustedrouter-nvidia-nim-api-key"
 grant_tr_deploy_secret_access "trustedrouter-wandb-api-key"
 grant_tr_deploy_secret_access "trustedrouter-io-net-api-key"
+grant_tr_deploy_secret_access "trustedrouter-tencent-tokenhub-api-key"
 grant_tr_deploy_secret_access "trustedrouter-scaleway-api-key"
 grant_tr_deploy_secret_access "trustedrouter-regolo-api-key"
 grant_tr_deploy_secret_access "trustedrouter-privatemode-api-key"
@@ -377,7 +378,7 @@ grant_tr_deploy_secret_access "trustedrouter-routable-withdraw-from-account-id"
 
 # Axiom logging — ship structured logs to a dedicated dataset for
 # slice-and-dice analysis (request_id correlation, rate-limit hits,
-# Bigtable write failures, etc.). The runtime SA reads
+# analytics write failures, etc.). The runtime SA reads
 # AXIOM_API_TOKEN from Secret Manager; the dataset name is plain
 # config and lives in env, not in Secret Manager.
 ensure_secret_from_env_file "AXIOM_API_TOKEN" "trustedrouter-axiom-api-token" "AXIOM_TOKEN" "AXIOM_API_KEY"

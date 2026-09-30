@@ -14,7 +14,7 @@ from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.storage import STORE, InMemoryStore, configure_store
 from trusted_router.storage_gcp_codec import json_body
-from trusted_router.storage_gcp_spend_lease import authorization_typed_columns
+from trusted_router.storage_gcp_request_records import authorization_typed_columns
 from trusted_router.storage_models import GatewayAuthorization
 from trusted_router.types import UsageType
 
@@ -44,7 +44,7 @@ def evidence_client() -> Iterator[TestClient]:
         stage_d_boot_kid=data["stage_d_boot_kid"],
         heartbeat_seq=data["heartbeat_seq"],
     )
-    store, database, _table = make_fake_store(request_record_write_mode="typed")
+    store, database = make_fake_store(request_record_write_mode="typed")
     payload = dataclasses.asdict(authorization)
     database.gateway_authorizations[authorization.id] = {
         "authorization_id": authorization.id,

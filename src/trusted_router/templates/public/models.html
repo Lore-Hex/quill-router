@@ -79,9 +79,11 @@
     >
       <div class="model-card-main">
         <div class="model-card-heading">
+          {% if model.publisher_slug %}
           <a class="model-publisher-logo" href="/providers/{{ model.publisher_slug }}" aria-label="{{ model.provider }} provider page">
             <img src="/static/provider-logos/{{ model.publisher_slug }}.png" alt="{{ model.provider }} logo" width="36" height="36" loading="lazy" decoding="async">
           </a>
+          {% endif %}
           <div class="model-card-title">
             <div class="model-card-title-line">
               <h2><a href="{{ model.detail_href }}">{{ model.name }}</a></h2>

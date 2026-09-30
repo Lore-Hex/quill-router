@@ -839,35 +839,6 @@ class GatewayAuthorization:
     # authorization before this field existed); "deferred_home" records the
     # spend as debt to the home plane's ledger, forwarded asynchronously.
     settlement: str = "local"
-    # Present only when a bounded regional escrow authorized this request.
-    # These are content-free routing facts used to settle/refund the durable
-    # regional hold before the global request record becomes terminal.
-    regional_lease_id: str | None = None
-    regional_fencing_token: int | None = None
-    regional_hold_id: str | None = None
-    # Missing version is the pre-migration inline key-accounting contract.
-    regional_accounting_version: int = 1
-    # Stage A spend-lease replay record. The compact token is immutable; the
-    # status beside it is authoritative and may advance independently in later
-    # stages. These fields live in the shared JSON payload used by Spanner's
-    # typed authorization table and the Postgres entity store.
-    spend_lease_token: str | None = None
-    spend_lease_id: str | None = None
-    spend_lease_cap_micro: int | None = None
-    spend_lease_gen: int | None = None
-    spend_lease_iat: int | None = None
-    spend_lease_exp: int | None = None
-    spend_lease_issuer_kid: str | None = None
-    spend_lease_boot_kid: str | None = None
-    spend_lease_catalog_version: str | None = None
-    spend_lease_status: str | None = None
-    # Per-request amount bound inside the lease.  Distinct from cap_micro,
-    # which is the lease-wide escrow ceiling.
-    spend_lease_allocated_micro: int | None = None
-    # Stage C wire evidence. The compact receipt is preserved byte-for-byte;
-    # its lowercase SHA-256 is the transactional replay discriminator.
-    spend_lease_admission_receipt: str | None = None
-    spend_lease_receipt_hash: str | None = None
     # Only deferred authorizations carry an expiry: it is what lets the reaper
     # reclaim the outstanding-counter estimate when the enclave dies between
     # authorize and settle. Local authorizations keep their pre-existing
@@ -898,9 +869,9 @@ class GatewayAuthorization:
     stage_d_prompt_tokens: int | None = None
     stage_d_max_output_tokens: int | None = None
     # Durable, content-free replay facts written in the same transaction that
-    # settles or refunds the billing reservation. Bigtable generation mirrors
+    # settles or refunds the billing reservation. Analytics generation rows
     # are deliberately not the source of truth for this outcome: a successful
-    # Spanner commit followed by a failed mirror must never look like a refund.
+    # Spanner commit followed by a failed delivery must never look like a refund.
     finalization_outcome: str | None = None
     finalized_cost_microdollars: int | None = None
     finalized_usage_type: str | None = None
@@ -1366,7 +1337,7 @@ def generation_id_for_authorization(authorization_id: str) -> str:
 
     Settlement can commit while its HTTP response is lost.  The durable outbox
     then rebuilds and re-indexes the same metadata.  A deterministic id makes
-    that repair idempotent in Bigtable instead of creating duplicate activity
+    that repair idempotent in ClickHouse instead of creating duplicate activity
     rows on every replay.
     """
     return f"gen-{uuid.uuid5(uuid.NAMESPACE_URL, f'trustedrouter:{authorization_id}').hex}"
@@ -1908,6 +1879,8 @@ class SessionAuthContext:
 
 @dataclass(frozen=True)
 class SpendLeaseBoot:
+    """One registered enclave boot: its receipt JWK and attestation facts."""
+
     kid: str
     jwk: dict[str, str]
     approved: bool  # At-registration observation only; never an authorization gate.

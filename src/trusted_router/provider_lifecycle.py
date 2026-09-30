@@ -92,6 +92,20 @@ class ProviderPrice:
     prompt_cached_microdollars_per_million_tokens: int | None = None
 
 
+# Tencent Singapore prices its own routes independently of DeepSeek direct.
+# The refresh adapter verifies these against the official regional table.
+TENCENT_OFF_PEAK_PRICES = {
+    "deepseek/deepseek-v4.1-flash": ProviderPrice(150_000, 600_000, 3_000),
+    "deepseek/deepseek-v4-flash-0731": ProviderPrice(220_000, 660_000, 7_000),
+    "deepseek/deepseek-v4-pro-0813": ProviderPrice(660_000, 1_980_000, 22_000),
+}
+
+
+def _tencent_period(at: datetime) -> str:
+    local = at.astimezone(_BEIJING_TIME)
+    return "peak" if local.weekday() < 5 and (9 <= local.hour < 12 or 14 <= local.hour < 18) else "off_peak"
+
+
 _DEEPSEEK_V4_FLASH_MODEL_IDS = frozenset(
     {
         "deepseek/deepseek-flash",
@@ -959,6 +973,15 @@ def provider_pricing_schedule(
     """Public timing metadata for a provider's variable token pricing."""
     effective_at = _effective_time(at)
 
+    if provider_slug == "tencent" and model_id in TENCENT_OFF_PEAK_PRICES:
+        return {
+            "kind": "time_of_day", "timezone": "Asia/Shanghai",
+            "current_period": _tencent_period(effective_at), "peak_multiplier": 2,
+            "peak_windows": [{"start": "09:00", "end": "12:00"}, {"start": "14:00", "end": "18:00"}],
+            "weekend_off_peak": {"timezone": "Asia/Shanghai", "days": ["Saturday", "Sunday"]},
+            "rate_locked_at": "authorization",
+        }
+
     if (
         provider_slug == "fireworks"
         and model_id == _FIREWORKS_DSV4_FLASH_0731_MODEL_ID
@@ -1031,6 +1054,14 @@ def provider_price_microdollars(
     early and makes the exact advertised transition deterministic.
     """
     effective_at = _effective_time(at)
+    if provider_slug == "tencent" and model_id in TENCENT_OFF_PEAK_PRICES:
+        price = TENCENT_OFF_PEAK_PRICES[model_id]
+        multiplier = 2 if _tencent_period(effective_at) == "peak" else 1
+        return ProviderPrice(
+            price.prompt_microdollars_per_million_tokens * multiplier,
+            price.completion_microdollars_per_million_tokens * multiplier,
+            None if price.prompt_cached_microdollars_per_million_tokens is None else price.prompt_cached_microdollars_per_million_tokens * multiplier,
+        )
     if provider_slug == "deepseek":
         prices = _deepseek_prices(model_id, effective_at)
         if prices is not None:

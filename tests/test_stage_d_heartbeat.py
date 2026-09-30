@@ -31,14 +31,11 @@ from trusted_router.app_markup_billing import (
     app_markup_payout_event_id,
 )
 from trusted_router.config import Settings
+from trusted_router.gateway_boot import SpendLeaseBoot, boot_auth_digest
 from trusted_router.pricing import signed_receipt_price_microdollars
+from trusted_router.receipt_keys import b64url_encode
 from trusted_router.routes.internal import gateway
 from trusted_router.schemas import GatewayHeartbeatRequest
-from trusted_router.spend_leases import (
-    SpendLeaseBoot,
-    b64url_encode,
-    boot_auth_digest,
-)
 from trusted_router.stage_d import endpoint_cost_microdollars_from_document
 from trusted_router.storage import configure_store
 from trusted_router.storage_gcp import SpannerBigtableStore
@@ -506,7 +503,7 @@ def _gateway_heartbeat_store(
     stage_d_boot_kid: str | None,
     *boots: SpendLeaseBoot,
 ) -> FakeSpannerDatabase:
-    store, db, _table = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     db.now = NOW
     configure_store(store)
     _seed(stage_d_boot_kid=stage_d_boot_kid, database=db)
@@ -524,7 +521,7 @@ def _assert_heartbeat_state_unchanged(db: FakeSpannerDatabase) -> None:
 def test_heartbeat_boot_auth_uses_exact_literal_bytes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, _db, _table = make_fake_store(request_record_write_mode="typed")
+    store, _db = make_fake_store(request_record_write_mode="typed")
     configure_store(store)
     private = Ed25519PrivateKey.generate()
     public = private.public_key().public_bytes_raw()
@@ -664,7 +661,7 @@ def test_heartbeat_flag_defaults_on_and_can_disable_endpoint() -> None:
 def test_disposition_lookup_uses_heartbeat_boot_verifier_and_literal_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, _db, _table = make_fake_store(request_record_write_mode="typed")
+    store, _db = make_fake_store(request_record_write_mode="typed")
     configure_store(store)
     private = Ed25519PrivateKey.generate()
     boot = SpendLeaseBoot(
@@ -993,37 +990,6 @@ def test_reaper_snapshot_preserves_downstream_fees_and_app_payout() -> None:
         "total_earned"
     ] == payout
 
-
-def test_reaper_snapshot_clamps_a_spend_lease_to_allocation_and_hold() -> None:
-    db, _authorization = _seed()
-    _seed_reaper_counters(db)
-    assert _heartbeat(db).accepted
-    stored = db.gateway_authorizations["gwa-stage-d-fixture"]
-    payload = json.loads(stored["payload"])
-    payload.update(
-        settlement="spend_lease",
-        spend_lease_allocated_micro=80,
-        spend_lease_id="lease",
-    )
-    stored["payload"] = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    stored["spend_lease_allocated_micro"] = 80
-    stored["spend_lease_id"] = "lease"
-
-    result = reap_expired_reservations_result(
-        db,
-        _ParamTypes,
-        now=NOW + timedelta(seconds=301),
-        snapshot_booking_enabled=True,
-    )
-
-    assert result.snapshot_bookings == 1
-    assert db.reservations["reservation"]["actual_micro"] == 80
-    assert db.typed[CREDIT_BALANCE_TABLE][("workspace", 0)]["total_usage"] == 80
-    assert db.gateway_authorizations["gwa-stage-d-fixture"][
-        "finalized_cost_microdollars"
-    ] == 80
-
-
 def test_reaper_flag_off_refunds_started_request_without_nulling_payload() -> None:
     db, _authorization = _seed()
     _seed_reaper_counters(db)
@@ -1184,7 +1150,7 @@ def test_finalize_preserves_heartbeat_committed_after_s1(
     # Independent list: dropping any one field from the SQL must fail this test.
     fields = ("heartbeat_seq", "heartbeat_at", "heartbeat_hash", "started_at",
               "selected_endpoint_id", "delivered_usage")
-    store, db, _table = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     _db, initial = _seed(database=db)
     _seed_reaper_counters(db)
     snapshot = store.get_gateway_authorization(initial.id)  # S1

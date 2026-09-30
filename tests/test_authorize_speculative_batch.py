@@ -19,7 +19,6 @@ from tests.fakes.spanner_order import record_statements
 from tests.test_spanner_batch_dml import NOW, _authorization, _database, _state
 from trusted_router import storage_gcp_authorize as current
 from trusted_router.storage_gcp_codec import json_body
-from trusted_router.storage_gcp_counter_dml import entity_insert_statement
 
 
 @pytest.fixture
@@ -44,7 +43,7 @@ SCENARIOS = [
     'accepted', 'insufficient', 'missing', 'uncapped', 'byok_excluded',
     'byok_included', 'byok_insufficient', 'skip', 'no_credit', 'zero_estimate',
     'later_shard', 'missing_first_shard', 'all_missing', 'mixed_missing_exhausted',
-    'rollover', 'usage_and_byok_cap', 'paused', 'receipt_unbound',
+    'rollover', 'usage_and_byok_cap', 'paused',
 ]
 
 
@@ -99,17 +98,7 @@ def test_frozen_sequential_equivalence(
             key.update(usage=400, byok_usage=450, reserved=100)
         elif scenario == 'paused':
             db.typed['tr_credit_balance'][('workspace', 0)]['billing_pause_causes'] = ['manual']
-        elif scenario == 'receipt_unbound':
-            opts['spend_lease_receipt_hash'] = 'receipt'
 
-        # Simulate transactional hook bookkeeping. Its row must disappear along
-        # with credit/reservation writes on rejection, and persist once on success.
-        def hook(tx: Any, shard: int) -> dict[str, Any]:
-            sql, params, types = entity_insert_statement(param_types, 'hook', 'id', '{}')
-            tx.execute_update(sql, params=params, param_types=types)
-            return {'bound': False, 'no_lease_reason': None, 'spend_lease_outcome': None}
-
-        opts['spend_lease_hook'] = hook
         result = module.authorize_atomic(db, param_types, **opts)
         # Replay must return the stored winner and preserve every hold and row.
         if result['outcome'] == current.AuthorizeOutcome.ACCEPTED:

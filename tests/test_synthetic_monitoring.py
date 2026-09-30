@@ -39,16 +39,6 @@ from trusted_router.main import create_app
 from trusted_router.routing import chat_route_candidates
 from trusted_router.security import lookup_hash_api_key
 from trusted_router.storage import STORE, SyntheticProbeSample
-from trusted_router.storage_gcp_codec import reverse_time_key as _reverse_time_key
-from trusted_router.storage_gcp_synthetic_index import (
-    synthetic_probe_samples as _bt_synthetic_probe_samples,
-)
-from trusted_router.storage_gcp_synthetic_index import (
-    write_synthetic_probe_sample as _bt_write_synthetic_probe_sample,
-)
-from trusted_router.storage_gcp_synthetic_rollups import (
-    synthetic_rollups as _bt_synthetic_rollups,
-)
 from trusted_router.storage_models import (
     SYNTHETIC_APP_NAME,
     ProviderBenchmarkSample,
@@ -1616,61 +1606,6 @@ def test_status_component_current_uses_latest_sample_per_probe() -> None:
     assert snapshot["recent_events"][0]["id"] == "syn_old_down_1"
 
 
-def test_gcp_synthetic_index_uses_privacy_safe_recency_keys() -> None:
-    sample = _sample(
-        id="syn_1",
-        probe_type="attestation_nonce",
-        status="up",
-        created_at="2026-05-05T12:00:00Z",
-    )
-    table = _FakeBigtable()
-
-    _bt_write_synthetic_probe_sample(table, "m", sample)
-
-    reverse = _reverse_time_key(sample.created_at)
-    raw_keys = [
-        f"synthetic_recent#{reverse}#syn_1".encode(),
-        f"synthetic_target_recent#canonical#{reverse}#syn_1".encode(),
-        f"synthetic_probe_target_recent#attestation_nonce#canonical#{reverse}#syn_1".encode(),
-        f"synthetic_monitor_recent#us-central1#{reverse}#syn_1".encode(),
-        f"synthetic_day#2026-05-05#canonical#attestation_nonce#{reverse}#syn_1".encode(),
-        f"synthetic_day_recent#2026-05-05#{reverse}#syn_1".encode(),
-    ]
-    assert table.committed[:6] == raw_keys
-    assert any(
-        key.startswith(b"synthetic_rollup#hour#2026-05-05T12:00:00Z#") for key in table.committed
-    )
-    assert any(
-        key.startswith(b"synthetic_rollup#day#2026-05-05T00:00:00Z#") for key in table.committed
-    )
-    assert any(
-        key.startswith(b"synthetic_rollup#month#2026-05-01T00:00:00Z#") for key in table.committed
-    )
-    assert b"sk-tr" not in b"".join(table.committed)
-    assert b"prompt" not in b"".join(table.committed)
-
-
-def test_synthetic_rollups_are_idempotent_and_monthly_queryable() -> None:
-    sample = _sample(
-        id="syn_rollup",
-        probe_type="tls_health",
-        status="up",
-        created_at="2026-05-05T12:00:00Z",
-        latency_milliseconds=123,
-    )
-    table = _FakeBigtable()
-
-    _bt_write_synthetic_probe_sample(table, "m", sample)
-    _bt_write_synthetic_probe_sample(table, "m", sample)
-    month = _bt_synthetic_rollups(table, "m", period="month", limit=20)
-    canonical = next(row for row in month if row.component == "canonical_api")
-
-    assert canonical.sample_count == 1
-    assert canonical.up_count == 1
-    # 123 ms lands in its 2-significant-digit bucket; see histogram_bucket.
-    assert canonical.latency_histogram == {"120": 1}
-
-
 def test_synthetic_rollup_retains_latency_phase_histograms() -> None:
     sample = _sample(
         id="syn_latency_phases",
@@ -1692,42 +1627,6 @@ def test_synthetic_rollup_retains_latency_phase_histograms() -> None:
     assert rollup.gateway_processing_histogram == {"1": 1}
 
 
-def test_gcp_synthetic_rollups_use_period_start_range() -> None:
-    old = _sample(
-        id="syn_rollup_old_range",
-        probe_type="tls_health",
-        status="up",
-        created_at="2026-05-05T11:10:00Z",
-        latency_milliseconds=80,
-    )
-    recent = _sample(
-        id="syn_rollup_recent_range",
-        probe_type="tls_health",
-        status="up",
-        created_at="2026-05-05T12:10:00Z",
-        latency_milliseconds=40,
-    )
-    table = _FakeBigtable()
-    _bt_write_synthetic_probe_sample(table, "m", old)
-    _bt_write_synthetic_probe_sample(table, "m", recent)
-
-    rows = _bt_synthetic_rollups(
-        table,
-        "m",
-        period="hour",
-        since="2026-05-05T12:00:00Z",
-        limit=20,
-    )
-
-    assert {row.period_start for row in rows} == {"2026-05-05T12:00:00Z"}
-    assert table.reads[-1] == (
-        b"synthetic_rollup#hour#2026-05-05T12:00:00Z",
-        b"synthetic_rollup#hour#~",
-        20,
-    )
-    assert table.read_filters[-1] == "CellsColumnLimitFilter"
-
-
 def test_raw_synthetic_samples_expire_before_rollups() -> None:
     old = _sample(
         id="syn_old_raw",
@@ -1743,38 +1642,6 @@ def test_raw_synthetic_samples_expire_before_rollups() -> None:
     monthly = STORE.synthetic_rollups(period="month", limit=10)
     assert monthly
     assert monthly[0].sample_count == 1
-
-
-def test_gcp_synthetic_reads_daily_probe_target_index() -> None:
-    now = utcnow()
-    created_at = now.isoformat().replace("+00:00", "Z")
-    date = created_at[:10]
-    sample = _sample(
-        id="syn_1",
-        probe_type="tls_health",
-        status="up",
-        created_at=created_at,
-    )
-    table = _FakeBigtable([_FakeReadRow(sample)])
-
-    rows = _bt_synthetic_probe_samples(
-        table,
-        "m",
-        date=date,
-        target="canonical",
-        probe_type="tls_health",
-        monitor_region=None,
-        limit=5,
-    )
-
-    assert [row.id for row in rows] == ["syn_1"]
-    assert table.reads == [
-        (
-            f"synthetic_day#{date}#canonical#tls_health#".encode(),
-            f"synthetic_day#{date}#canonical#tls_health#~".encode(),
-            5,
-        )
-    ]
 
 
 @pytest.mark.asyncio
@@ -3517,64 +3384,6 @@ async def test_image_generation_job_confirms_a_text_only_response(
     assert output["status"] == "up"
     assert output["attempts"] == 2
     assert output["generation_id"] == "chatcmpl-image-confirmed"
-
-
-class _FakeCell:
-    def __init__(self, value: Any) -> None:
-        if isinstance(value, bytes):
-            self.value = value
-        elif hasattr(value, "__dataclass_fields__"):
-            self.value = json.dumps(asdict(value), separators=(",", ":"), sort_keys=True).encode()
-        else:
-            self.value = json.dumps(value, separators=(",", ":"), sort_keys=True).encode()
-
-
-class _FakeReadRow:
-    def __init__(self, value: Any) -> None:
-        self.cells = {"m": {b"body": [_FakeCell(value)]}}
-
-
-class _FakeDirectRow:
-    def __init__(self, key: bytes, table: _FakeBigtable) -> None:
-        self.key = key
-        self.table = table
-        self.value: bytes | None = None
-
-    def set_cell(self, _family: str, _qualifier: bytes, value: bytes) -> None:
-        self.value = value
-        return None
-
-    def commit(self) -> None:
-        self.table.committed.append(self.key)
-        if self.value is not None:
-            self.table.rows_by_key[self.key] = _FakeReadRow(self.value)
-
-
-class _FakeBigtable:
-    def __init__(self, rows: list[_FakeReadRow] | None = None) -> None:
-        self.rows = rows or []
-        self.rows_by_key: dict[bytes, _FakeReadRow] = {}
-        self.reads: list[tuple[bytes, bytes, int]] = []
-        self.read_filters: list[str | None] = []
-        self.committed: list[bytes] = []
-
-    def read_rows(
-        self,
-        *,
-        start_key: bytes,
-        end_key: bytes,
-        limit: int,
-        filter_: Any | None = None,
-    ) -> list[_FakeReadRow]:
-        self.reads.append((start_key, end_key, limit))
-        self.read_filters.append(filter_.__class__.__name__ if filter_ is not None else None)
-        keyed_rows = [
-            row for key, row in sorted(self.rows_by_key.items()) if start_key <= key < end_key
-        ]
-        return (keyed_rows + self.rows)[:limit]
-
-    def direct_row(self, key: bytes) -> _FakeDirectRow:
-        return _FakeDirectRow(key, self)
 
 
 # ---------------------------------------------------------------------------

@@ -10,10 +10,10 @@
   },
   "akashml": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 7,
     "name": "AkashML",
     "privacy": "Policy documented",
-    "route_count": 6,
+    "route_count": 7,
     "route_mode": "Prepaid",
     "slug": "akashml"
   },
@@ -469,10 +469,10 @@
   },
   "neurometric": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 12,
     "name": "Neurometric AI",
     "privacy": "Policy documented",
-    "route_count": 11,
+    "route_count": 12,
     "route_mode": "Prepaid",
     "slug": "neurometric"
   },
@@ -487,10 +487,10 @@
   },
   "novita": {
     "card_version": 2,
-    "model_count": 103,
+    "model_count": 98,
     "name": "Novita AI",
     "privacy": "Policy documented",
-    "route_count": 201,
+    "route_count": 191,
     "route_mode": "Prepaid + BYOK",
     "slug": "novita"
   },
@@ -514,10 +514,10 @@
   },
   "openai": {
     "card_version": 2,
-    "model_count": 47,
+    "model_count": 48,
     "name": "OpenAI",
     "privacy": "Zero retention",
-    "route_count": 81,
+    "route_count": 83,
     "route_mode": "Prepaid + BYOK",
     "slug": "openai"
   },
@@ -748,11 +748,11 @@
   },
   "tencent": {
     "card_version": 2,
-    "model_count": 0,
+    "model_count": 20,
     "name": "Tencent Cloud TokenHub",
     "privacy": "Policy documented",
-    "route_count": 0,
-    "route_mode": "Catalog profile",
+    "route_count": 35,
+    "route_mode": "Prepaid + BYOK",
     "slug": "tencent"
   },
   "thinkingmachines": {

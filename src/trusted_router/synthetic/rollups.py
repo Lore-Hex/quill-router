@@ -283,7 +283,7 @@ def histogram_bucket(value: int) -> int:
     HISTOGRAM_SIGNIFICANT_DIGITS significant digits, rounded to nearest (ties up). Each decade contributes at most
     90 keys, so a histogram over 0..10^7 ms holds fewer than 600 keys
     instead of one per distinct millisecond — which on the Postgres/DSQL
-    and Bigtable backends is the size of the body re-read and re-written
+    backend is the size of the body re-read and re-written
     on EVERY sample for the rest of the period. The map is monotone
     (a <= b implies bucket(a) <= bucket(b)) and idempotent, so a percentile
     taken from bucketed counts is exactly bucket(exact percentile). Rounding
@@ -326,7 +326,7 @@ def compact_rollup(rollup: SyntheticRollup) -> None:
     """Fold a rollup's six histograms into bucket keys, in place.
 
     Call this where a persisted rollup enters memory for a read-modify-write
-    (the Postgres and Bigtable stores do): a row written before bucketing
+    (the Postgres store does): a row written before bucketing
     carries one key per distinct millisecond, and folding it there means the
     body shrinks on that very write instead of growing until the period
     rolls over. It is deliberately NOT inside apply_sample_to_rollup — batch

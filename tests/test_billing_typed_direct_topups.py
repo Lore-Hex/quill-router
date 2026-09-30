@@ -45,7 +45,7 @@ def _typed_credit_total(db, workspace_id: str) -> int:
 
 
 def test_credit_workspace_typed_direct_applies_once_in_one_transaction() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_b2_apply"
     event_id = "evt_b2_apply"
     _seed_credit(store, ws, 1_000_000)
@@ -68,7 +68,7 @@ def test_credit_workspace_typed_direct_applies_once_in_one_transaction() -> None
 
 
 def test_credit_workspace_typed_direct_refuses_missing_typed_row() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_b2_missing_typed"
     store._write_entity(
         "credit",
@@ -88,7 +88,7 @@ def test_credit_workspace_typed_direct_refuses_missing_typed_row() -> None:
 
 
 def test_credit_workspace_once_wrapper_cross_path_idempotency() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_b2_wrapper"
     _seed_credit(store, ws, 1_000_000)
 
@@ -109,7 +109,7 @@ def test_credit_workspace_once_wrapper_cross_path_idempotency() -> None:
 
 
 def test_gcp_signup_seeds_typed_starter_credit() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     grant_amount = 3_000_000
 
     result = store.signup(

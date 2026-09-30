@@ -27,10 +27,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from trusted_router.routes.internal.gateway import (
-    _BILLING_PATH_SPANNER_BUDGET_SECONDS,
-    _SPEND_LEASE_SHADOW_SPANNER_BUDGET_SECONDS,
-)
+from trusted_router.routes.internal.gateway import _BILLING_PATH_SPANNER_BUDGET_SECONDS
 
 ROOT = Path(__file__).resolve().parents[1]
 GATEWAY = ROOT / "src" / "trusted_router" / "routes" / "internal" / "gateway.py"
@@ -49,7 +46,6 @@ BILLING_PATH_FUNCTIONS = frozenset(
 )
 
 _BUDGET = "spanner_rpc_budget(_BILLING_PATH_SPANNER_BUDGET_SECONDS)"
-_SHADOW_BUDGET = "spanner_rpc_budget(_SPEND_LEASE_SHADOW_SPANNER_BUDGET_SECONDS)"
 
 
 def _functions_carrying_the_budget() -> frozenset[str]:
@@ -93,35 +89,3 @@ def test_billing_budget_finishes_before_enclave_header_timeout() -> None:
     """The enclave's direct control-plane client has a 25-second header cap."""
 
     assert _BILLING_PATH_SPANNER_BUDGET_SECONDS == 20.0
-
-
-def test_non_authoritative_spend_shadow_has_its_own_background_budget() -> None:
-    """Background evidence tolerates cross-region retries without client latency."""
-
-    tree = ast.parse(GATEWAY.read_text(encoding="utf-8"))
-    shadow_functions = {
-        node.name
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        for decorator in node.decorator_list
-        if ast.unparse(decorator) == _SHADOW_BUDGET
-    }
-
-    assert shadow_functions == {"_persist_spend_lease_shadow"}
-    assert _SPEND_LEASE_SHADOW_SPANNER_BUDGET_SECONDS == 5.0
-
-
-def test_spend_shadow_recording_is_not_decorated_as_a_spanner_call() -> None:
-    """The request-thread helper may enqueue only; it cannot call Spanner."""
-
-    tree = ast.parse(GATEWAY.read_text(encoding="utf-8"))
-    record = next(
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and node.name == "_record_spend_lease_shadow"
-    )
-    assert not record.decorator_list
-    calls = {ast.unparse(node.func) for node in ast.walk(record) if isinstance(node, ast.Call)}
-    assert "STORE.record_spend_lease_shadow" not in calls
-    assert "_SPEND_LEASE_SHADOW_DISPATCHER.submit" in calls

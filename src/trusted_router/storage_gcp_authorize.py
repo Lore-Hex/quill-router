@@ -42,8 +42,6 @@ from trusted_router.custom_model_billing import user_model_payout_event_id
 from trusted_router.custom_model_markup_billing import (
     custom_model_markup_payout_event_id,
 )
-from trusted_router.services.spend_lease_settlement import clamp_spend_lease_charge
-from trusted_router.spend_lease_admission import classify_receipt_replay
 from trusted_router.spend_windows import (
     KeyWindowLimitDecision,
     KeyWindowLimitExceeded,
@@ -84,13 +82,11 @@ from trusted_router.storage_gcp_request_records import (
     gateway_authorization_settled_statement,
     mark_gateway_authorization_settled,
     read_gateway_authorization,
-    read_gateway_authorization_admission_columns,
 )
 from trusted_router.storage_gcp_settle_outbox import (
     _GUARD_STATUS_SQL,
     GUARD_COUNT_SQL,
     mark_done_unleased_tx,
-    rewrite_frozen_settlement_tx,
     speculative_done_statements,
 )
 from trusted_router.storage_gcp_stage_d import (
@@ -132,7 +128,6 @@ class AuthorizeOutcome:
     KEY_LIMIT_EXCEEDED = "key_limit_exceeded"
     KEY_MISSING = "key_missing"  # typed key row absent -> fail closed
     IDEMPOTENCY_MISMATCH = "idempotency_mismatch"  # same key, different request body
-    ADMISSION_SCOPE_CONFLICT = "admission_scope_conflict"
     KEY_WINDOW_LIMIT_EXCEEDED = "key_window_limit_exceeded"  # a daily/weekly/monthly cap
 
 
@@ -140,24 +135,15 @@ class AuthorizeVerdict(str):
     """String-compatible typed-authorize outcome with its window decision."""
 
     rate_limit: KeyWindowLimitDecision | None
-    spend_lease_bound: bool
-    no_lease_reason: str | None
-    spend_lease_outcome: str | None
 
     def __new__(
         cls,
         outcome: str,
         *,
         rate_limit: KeyWindowLimitDecision | None = None,
-        spend_lease_bound: bool = False,
-        no_lease_reason: str | None = None,
-        spend_lease_outcome: str | None = None,
     ) -> AuthorizeVerdict:
         verdict = super().__new__(cls, outcome)
         verdict.rate_limit = rate_limit
-        verdict.spend_lease_bound = spend_lease_bound
-        verdict.no_lease_reason = no_lease_reason
-        verdict.spend_lease_outcome = spend_lease_outcome
         return verdict
 
 
@@ -412,14 +398,6 @@ def authorize_atomic(
     strict_budget: bool = False,
     enforce_strict_windows: bool = True,
     authorization_id: str | None = None,
-    spend_lease_hook: Callable[[Any, int], dict[str, Any]] | None = None,
-    build_authorization_for_lease: (
-        Callable[[str, str, bool], GatewayAuthorization] | None
-    ) = None,
-    also_retry: tuple[type[BaseException], ...] = (),
-    spend_lease_receipt_hash: str | None = None,
-    credit_escrowed_by_spend_lease: bool = False,
-    spend_lease_admission_replay_protection: bool = False,
     trust_settings: Any = None,
 ) -> dict:
     """Run the atomic authorize. Returns {outcome, reservation_id?, authorization_id?}.
@@ -477,10 +455,6 @@ def authorize_atomic(
         raise ValueError("credit_shard_candidates exceeds the hot-path transaction limit")
     if not has_credit_candidate and shard_candidates != (UNSHARDED,):
         raise ValueError("BYOK-only authorization must use credit shard zero")
-    if credit_escrowed_by_spend_lease and (
-        not has_credit_candidate or spend_lease_hook is None
-    ):
-        raise ValueError("lease-escrowed credit requires a Credits route and spend-lease hook")
     key_candidates = tuple(key_shard_candidates)
     if not key_candidates:
         raise ValueError("key_shard_candidates must not be empty")
@@ -505,28 +479,7 @@ def authorize_atomic(
     )
 
     def _replay(transaction: Any, existing: dict) -> dict:
-        receipt_verdict = "ordinary"
-        if spend_lease_admission_replay_protection:
-            admission = read_gateway_authorization_admission_columns(
-                transaction,
-                pt,
-                str(existing["authorization_id"]),
-            )
-            stored_receipt_hash = (
-                str(admission["spend_lease_receipt_hash"])
-                if admission is not None
-                and admission["spend_lease_receipt_hash"] is not None
-                else None
-            )
-            receipt_verdict = classify_receipt_replay(
-                spend_lease_receipt_hash,
-                stored_receipt_hash,
-            )
-        if receipt_verdict == "scope_conflict":
-            raise _Reject(AuthorizeOutcome.ADMISSION_SCOPE_CONFLICT)
-        if receipt_verdict == "ordinary" and (
-            existing["idempotency_fingerprint"] != idempotency_fingerprint
-        ):
+        if existing["idempotency_fingerprint"] != idempotency_fingerprint:
             raise _Reject(AuthorizeOutcome.IDEMPOTENCY_MISMATCH)
         return {
             "outcome": AuthorizeOutcome.REPLAY,
@@ -557,7 +510,7 @@ def authorize_atomic(
         # Reservation/authorization INSERTs below consume the selected shards and holds.
         credit_hold = 0
         selected_credit_shard = UNSHARDED
-        if has_credit_candidate and not credit_escrowed_by_spend_lease:
+        if has_credit_candidate:
             for candidate in shard_candidates:
                 if reserve_credit(transaction, pt, workspace_id, estimate, shard=candidate):
                     selected_credit_shard = candidate
@@ -573,32 +526,12 @@ def authorize_atomic(
             # Pause state is replicated atomically across the credit shards. Read
             # only the selected shard, whose balance DML already joined this txn's
             # read set; a workspace-wide scan couples otherwise independent holds
-            # and can exhaust the retry budget under contention. BYOK / lease-
-            # escrowed requests use shard zero. A pause still conflicts on this
-            # shard and rejection rolls back every staged credit hold.
+            # and can exhaust the retry budget under contention. BYOK requests
+            # use shard zero. A pause still conflicts on this shard and
+            # rejection rolls back every staged credit hold.
             from trusted_router.trust_eligibility import billing_paused_tx
             if billing_paused_tx(transaction, pt, workspace_id, shard=selected_credit_shard):
                 raise _Reject("billing_paused")
-
-        lease_result: dict[str, Any] = {
-            "bound": False,
-            "no_lease_reason": None,
-            "spend_lease_outcome": None,
-        }
-        # The hook may escrow or release credit, including recovery/pause work.
-        # Its writes share this transaction and roll back if the key rejects;
-        # regional binding happens only after commit. Keep credit before key.
-        if spend_lease_hook is not None:
-            lease_result = spend_lease_hook(transaction, selected_credit_shard)
-        if spend_lease_receipt_hash is not None and not lease_result.get("bound"):
-            no_lease_reason = lease_result.get("no_lease_reason")
-            if no_lease_reason == "scope_arbitrated":
-                reason = "scope_conflict"
-            elif no_lease_reason == "unpaid_workspace":
-                reason = "hold_refused"
-            else:
-                reason = "reuse_lost"
-            raise _Reject(f"admission_rejected:{reason}")
 
         # Bounded lifetime-cap TOCTOU: a cap committed after the gateway's
         # entity read can miss only requests already in flight at that commit,
@@ -670,20 +603,10 @@ def authorize_atomic(
             created_at=created_at,
         )
         if request_record_write_mode == "typed":
-            selected_authorization = authorization
-            if build_authorization_for_lease is not None:
-                selected_authorization = build_authorization_for_lease(
-                    authorization_id,
-                    reservation_id,
-                    bool(lease_result.get("bound")),
-                )
-                selected_authorization.created_at = created_at.isoformat().replace(
-                    "+00:00", "Z"
-                )
-            assert selected_authorization is not None
+            assert authorization is not None
             authorization_statement = gateway_authorization_insert_statement(
                 pt,
-                selected_authorization,
+                authorization,
                 created_at=created_at,
             )
         else:
@@ -695,7 +618,7 @@ def authorize_atomic(
                 legacy_auth_body,
             )
         if speculative:
-            # Ordered server execution: credit (and lease work) precedes key,
+            # Ordered server execution: credit precedes key,
             # and key precedes these new rows. A zero does NOT stop Batch DML.
             execute_batch_dml(
                 transaction,
@@ -715,13 +638,12 @@ def authorize_atomic(
             "authorization_id": authorization_id,
             "credit_shard": selected_credit_shard,
             "key_shard": selected_key_shard,
-            **lease_result,
         }
 
     try:
         try:
             return run_in_transaction_with_retry(
-                database, txn, transaction_tag="tr_authorize", also_retry=also_retry,
+                database, txn, transaction_tag="tr_authorize",
             )
         except _RetrySequentialKeyReserve:
             # Protected API-error cleanup attempted rollback before the SDK
@@ -731,7 +653,7 @@ def authorize_atomic(
             # IDs, created_at, and candidate order remain stable across attempts.
             speculative = False
             return run_in_transaction_with_retry(
-                database, txn, transaction_tag="tr_authorize", also_retry=also_retry,
+                database, txn, transaction_tag="tr_authorize",
             )
     except KeyWindowLimitExceeded as exceeded:
         return {"outcome": AuthorizeVerdict(
@@ -832,7 +754,6 @@ def _release_key_or_skip_deleted(
     actual_micro: int,
     *,
     book_to_byok: bool,
-    settled_at: datetime | None = None,
 ) -> tuple[int, dict[str, Any] | None]:
     """Shared key-release classification for settle, reaper, and drain paths.
 
@@ -844,18 +765,11 @@ def _release_key_or_skip_deleted(
     Held/deleted keys and zero-usage refunds retain their historical behavior.
     """
     from trusted_router.storage_gcp_counter_dml import key_limit_exists, release_key
-    from trusted_router.storage_gcp_regional_quota import _check_regional_key_windows
 
     key_hash = str(res["key_hash"])
     key_hold = int(res["key_reserved_micro"])
     key_shard = int(res.get("key_shard", 0) or 0)
     floors = window_floors(utcnow())
-    amounts = (
-        {period: actual_micro if settled_at >= floor else 0 for period, floor in floors.items()}
-        if settled_at is not None else None
-    )
-    if settled_at is not None:
-        _check_regional_key_windows(transaction, param_types, key_hash, key_shard, floors)
     count = release_key(
         transaction,
         param_types,
@@ -863,7 +777,7 @@ def _release_key_or_skip_deleted(
         key_hold,
         int(actual_micro),
         book_to_byok=book_to_byok,
-        window_floors=floors, window_amounts=amounts,
+        window_floors=floors,
         shard=key_shard,
     )
     if count == 1:
@@ -871,11 +785,9 @@ def _release_key_or_skip_deleted(
     # Pre-migration credit-only reservations can legitimately have no key.
     if res["key_hash"] is not None and key_hold == 0 and actual_micro > 0:
         if key_shard != 0:
-            if settled_at is not None:
-                _check_regional_key_windows(transaction, param_types, key_hash, 0, floors)
             recovered = release_key(
                 transaction, param_types, key_hash, 0, int(actual_micro),
-                book_to_byok=book_to_byok, window_floors=floors, window_amounts=amounts,
+                book_to_byok=book_to_byok, window_floors=floors,
                 shard=0,
             )
             if recovered == 1:
@@ -982,10 +894,9 @@ def settle_atomic(
         if not won:
             return {"outcome": SettleOutcome.ALREADY_SETTLED}  # replay, no double-apply
 
-        # A regional authorization spent from an already escrowed lease. The
-        # regional ledger is settled/refunded before this transaction and the
-        # lease reconciler imports aggregate spend later. Releasing counters
-        # here would double-release the grant and recreate the hot global row.
+        # A "RegionalCredits" hold belongs to a retired regional-quota lease
+        # (pilot removed 2026-09): its escrow lived in the retired ledger, so
+        # releasing counters here would double-release the grant.
         if res.get("hold_usage_type") == "RegionalCredits":
             return {
                 "outcome": SettleOutcome.SETTLED,
@@ -1426,11 +1337,6 @@ def _finalize_reaped_reservation_atomic(
                 authorization.selected_endpoint_id,
                 usage,
             )
-            if authorization.settlement == "spend_lease":
-                actual_micro = min(
-                    clamp_spend_lease_charge(authorization, actual_micro),
-                    int(res["credit_reserved_micro"]),
-                )
             _uncached_input, total_input = normalized_delivered_prompt(
                 selected_provider,
                 usage,
@@ -1542,6 +1448,9 @@ def _finalize_reaped_reservation_atomic(
         ):
             raise _ReapGuardLost("authorization retention guard lost")
         # Release credit first and key last, after all other transaction DML.
+        # A "RegionalCredits" hold belongs to a retired regional-quota lease
+        # (pilot removed 2026-09): its escrow lived in the retired ledger, so
+        # nothing on the counters is released for it.
         missing_key_releases = []
         if res.get("hold_usage_type") != "RegionalCredits":
             if res["credit_reserved_micro"] > 0:
@@ -1635,11 +1544,7 @@ def typed_finalize_atomic(
     user_model_payout: UserModelPayout | None = None,
     app_markup_payout: AppMarkupPayout | None = None,
     custom_model_markup_payout: CustomModelMarkupPayout | None = None,
-    regional_hold_unknown: bool = False,
-    regional_global_micro: int = 0,
-    finalize_regional_hold: Callable[[], tuple[bool, int, datetime | None]] | None = None,
     settle_outbox_done: tuple[str, str] | None = None,
-    settle_outbox_rewrite: tuple[str, str, str, int, str] | None = None,
 ) -> dict:
     """Full DML-only finalize for the typed path (codex 3e, Option B).
 
@@ -1667,8 +1572,6 @@ def typed_finalize_atomic(
         release_credit,
         update_entity_body_dml,
     )
-    from trusted_router.storage_gcp_regional_quota import _RegionalWindowAdvanced
-
     pt = param_types
     book_actual = actual_micro if success else 0
     book_to_byok = settled_usage_type == "BYOK"
@@ -1677,11 +1580,9 @@ def typed_finalize_atomic(
         _outbox_table_available(database, pt) if outbox_available is None else outbox_available
     )
 
-    # Corrective lease rewrites retain their original ordering/fence. Known
-    # legacy inputs and custom outbox callbacks also keep the sequential path.
+    # Known legacy inputs and custom outbox callbacks keep the sequential path.
     speculate = (
         authorization is not None
-        and settle_outbox_rewrite is None
         and (operational_analytics_outbox is None or callable(
             getattr(operational_analytics_outbox, "activity_insert_statement", None)
         ))
@@ -1746,7 +1647,7 @@ def typed_finalize_atomic(
         res = read_reservation(transaction, pt, reservation_id)
         if res is None:
             return {"outcome": SettleOutcome.NOT_FOUND}
-        if speculate and finalize_regional_hold is None:
+        if speculate:
             speculative_batch(transaction, include_claim=True)
         else:
             won = claim_reservation(
@@ -1760,36 +1661,7 @@ def typed_finalize_atomic(
                 outbox_available=resolved_outbox_available,
             )
             if not won:
-                return {
-                    "outcome": SettleOutcome.ALREADY_SETTLED,
-                    "regional_terminal_zero": (
-                        finalize_regional_hold is not None and res.get("actual_micro") == 0
-                    ),
-                }
-
-        # Resolve the terminal winner BEFORE any external local CAS. The
-        # reservation claim serializes us with the reaper; a durable frozen
-        # intent protects a local commit if this transaction later aborts.
-        hold_unknown, global_micro, settled_at = regional_hold_unknown, regional_global_micro, None
-        if finalize_regional_hold is not None:
-            hold_unknown, global_micro, settled_at = finalize_regional_hold()
-
-        if settle_outbox_rewrite is not None:
-            rewrite_aid, rewrite_kind, lease_owner, rewrite_cost, rewrite_body = (
-                settle_outbox_rewrite
-            )
-            rewritten = rewrite_frozen_settlement_tx(
-                transaction,
-                pt,
-                authorization_id=rewrite_aid,
-                intent_kind=rewrite_kind,
-                lease_owner=lease_owner,
-                actual_cost_micro=rewrite_cost,
-                settle_body=rewrite_body,
-                now=now,
-            )
-            if rewritten != 1:
-                raise _SettleError("corrective settle-outbox rewrite lost its lease fence")
+                return {"outcome": SettleOutcome.ALREADY_SETTLED}
 
         if success and user_model_payout is not None and user_model_payout.amount_microdollars > 0:
             # Deliberately NOT wrapped in a swallow. The payout is two DML
@@ -1830,8 +1702,6 @@ def typed_finalize_atomic(
             )
 
         if speculate:
-            if finalize_regional_hold is not None:
-                speculative_batch(transaction, include_claim=False)
             request_record_typed = True
             outbox_marked: bool | None = True if mark_done else None
         else:
@@ -1927,44 +1797,14 @@ def typed_finalize_atomic(
             )
             if credit_count != 1:
                 raise _SettleError("credit release row-count != 1")
-        elif (hold_unknown or global_micro > 0) and res.get("hold_usage_type") == "RegionalCredits":
-            # Healthy overruns book ONLY the unbacked excess here. The local
-            # component remains in escrow until reconciliation. If a stale CAS
-            # erased the hold, book the entire charge under this same claim;
-            # closing reconciliation releases the missing hold's unused escrow.
-            credit_actual = (book_actual if hold_unknown else global_micro) if settled_usage_type == "Credits" else 0
-            credit_count = release_credit(
-                transaction,
-                pt,
-                res["workspace_id"],
-                0,
-                credit_actual,
-                shard=res["credit_shard"],
-            )
-            if credit_count != 1:
-                raise _SettleError("regional fallback credit booking row-count != 1")
 
-        # Authorization is already loaded for finalization. No lease read belongs
-        # in this transaction. Missing versions retain the V1 inline contract;
-        # a missing Bigtable hold always uses the existing claimed recovery path.
-        regional_reconciler_owns_key = (
-            res.get("hold_usage_type") == "RegionalCredits"
-            and authorization is not None
-            and authorization.regional_accounting_version == 2
-            and not hold_unknown
+        key_count, warning = _release_key_or_skip_deleted(
+            transaction, pt, res, book_actual, book_to_byok=book_to_byok,
         )
-        # V2 imports the local component with the lease; only its excess is
-        # inline. V1 and missing-hold recovery still own the entire key charge.
-        key_actual = global_micro if regional_reconciler_owns_key else book_actual
-        if not regional_reconciler_owns_key or key_actual > 0:
-            key_count, warning = _release_key_or_skip_deleted(
-                transaction, pt, res, key_actual, book_to_byok=book_to_byok,
-                settled_at=settled_at,
-            )
-            if warning is not None:
-                missing_key_releases.append(warning)
-            if res["key_reserved_micro"] > 0 and key_count != 1:
-                raise _SettleError("key release row-count != 1")
+        if warning is not None:
+            missing_key_releases.append(warning)
+        if res["key_reserved_micro"] > 0 and key_count != 1:
+            raise _SettleError("key release row-count != 1")
 
         return {
             "outcome": SettleOutcome.SETTLED,
@@ -1978,7 +1818,6 @@ def typed_finalize_atomic(
         return run_in_transaction_with_retry(
             database, txn,
             transaction_tag="tr_finalize" if success else "tr_refund_finalize",
-            also_retry=(_RegionalWindowAdvanced,),
         )
 
     try:

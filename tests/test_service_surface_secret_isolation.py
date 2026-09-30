@@ -6,6 +6,7 @@ import datetime as dt
 import pytest
 from pydantic import ValidationError
 
+from tests.fakes.production_storage import PRODUCTION_SPANNER_STORAGE
 from tests.route_inventory import route_paths
 from trusted_router.acquisition import (
     AttributionContext,
@@ -21,10 +22,7 @@ _GATEWAY_SECRET = "gateway-only-" + "g" * 32
 _OPERATOR_SECRET = "operator-only-" + "p" * 32
 _PRODUCTION_STORAGE = {
     "environment": "production",
-    "storage_backend": "spanner-bigtable",
-    "spanner_instance_id": "trusted-router",
-    "spanner_database_id": "trusted-router",
-    "bigtable_instance_id": "trusted-router-logs",
+    **PRODUCTION_SPANNER_STORAGE,
 }
 _CONTROL_SECRETS = {
     "attribution_cookie_secret": _ATTRIBUTION_SECRET,
@@ -367,14 +365,13 @@ def _full_combined_bridge_production() -> dict[str, object]:
 def test_production_internal_surface_requires_durable_settle_outbox() -> None:
     with pytest.raises(ValidationError, match="TR_SETTLE_OUTBOX_ENABLED=true"):
         Settings(
-            **_PRODUCTION_STORAGE,
+            **{**_PRODUCTION_STORAGE, "settle_outbox_enabled": False},
             service_surface="internal",
             internal_gateway_token=_GATEWAY_SECRET,
             operator_token=_OPERATOR_SECRET,
             operator_identities="ops@example.com",
             observer_internal_token=_SENSITIVE_TEST_VALUES["observer_internal_token"],
             sentry_dsn="https://example@example.ingest.sentry.io/1",
-            settle_outbox_enabled=False,
         )
 
 
@@ -601,7 +598,7 @@ def test_actions_production_has_no_store_or_private_plane_credentials() -> None:
     assert settings.byok_kms_key_name is None
 
 
-@pytest.mark.parametrize("storage_backend", ("postgres", "spanner-bigtable"))
+@pytest.mark.parametrize("storage_backend", ("postgres", "spanner-clickhouse"))
 def test_actions_production_requires_memory_storage(storage_backend: str) -> None:
     values: dict[str, object] = {
         "environment": "production",
@@ -617,7 +614,6 @@ def test_actions_production_requires_memory_storage(storage_backend: str) -> Non
         values.update(
             spanner_instance_id="trusted-router",
             spanner_database_id="trusted-router",
-            bigtable_instance_id="trusted-router-logs",
         )
 
     with pytest.raises(ValidationError, match="TR_STORAGE_BACKEND=memory"):
