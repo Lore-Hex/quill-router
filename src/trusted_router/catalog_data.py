@@ -813,16 +813,24 @@ PROVIDERS: dict[str, Provider] = {
         name="Privatemode",
         supports_prepaid=True,
         supports_byok=False,
+        stores_content=False,
+        provider_zero_data_retention=True,
         provider_confidential_compute=True,
         provider_e2ee=True,
         provider_policy=(
             "Requests and responses are encrypted between TrustedRouter's enclave "
             "and release-pinned Privatemode workloads after attestation verification. "
             "Verification failures reject the request; there is no plaintext fallback. "
-            "Cache-routing metadata is visible to the provider edge. No separate "
-            "ZDR commitment is inferred from encryption."
+            "Privatemode explicitly states that prompts and responses are not stored "
+            "after a request completes and are not used for training. Transient "
+            "inference state may remain in a tenant-isolated, in-memory prompt cache. "
+            "Operational metadata is retained for up to 90 days; per-key token usage "
+            "is retained permanently for billing. Cache-routing metadata is visible "
+            "to the provider edge. ZDR describes prompt/output retention, not metadata."
         ),
-        provider_policy_url="https://docs.privatemode.ai/security/attestation/overview/",
+        provider_policy_url=(
+            "https://docs.privatemode.ai/security/trust-and-compliance/#data-processing-and-retention"
+        ),
         provider_headquarters_country=PROVIDER_JURISDICTION_DE,
     ),
     # NEAR AI direct endpoints terminate TLS inside the measured model TEE.
