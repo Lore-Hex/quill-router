@@ -48,6 +48,7 @@ def test_privatemode_zdr_is_explicit_and_scoped_to_content(privatemode_route: Mo
     assert provider.provider_policy_url == POLICY_URL
     assert "not used for training" in provider.provider_policy
     assert "in-memory prompt cache" in provider.provider_policy
+    assert "until eviction" in provider.provider_policy
     assert "up to 90 days" in provider.provider_policy
     assert "permanently for billing" in provider.provider_policy
     assert "not metadata" in provider.provider_policy
