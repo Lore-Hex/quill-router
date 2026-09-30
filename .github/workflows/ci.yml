@@ -350,6 +350,8 @@ jobs:
         run: node --test tests/js/homepage_*.test.cjs
       - name: Browser smoke
         run: npm run test:browser
+      - name: Redesigned homepage browser smoke
+        run: npx playwright test --config playwright.homepage.config.js
 
   # The BYOK envelope ordering constraint, checked against the DIFF rather than
   # against a deploy.

@@ -368,3 +368,14 @@ footer{background:#070a08;border-top:1px solid #33403a}
 @media(max-width:600px){.trft .base .r{width:100%;gap:14px}.trft .base .r .back-top-control{margin-left:auto}}
 
 @media(max-width:360px){.trft .base .r{gap:8px;font-size:11px}}
+
+/* Phones: reveal the river while retaining local contrast behind the copy. */
+@media(max-width:600px){
+ .trh .hero{
+  --hero-scrim:linear-gradient(180deg,#05070666 0%,#05070666 42%,#05070624 58%,#05070600 74%,#05070645 88%,#050706b3 100%);
+  --hero-compact-scrim:linear-gradient(180deg,#05070673 0%,#05070666 43%,#0507061a 65%,#05070600 80%,#05070680 100%);
+ }
+ .landscape-image,.closing-cta .closing-landscape{filter:brightness(1.4)}
+ .closing-cta::before{background:linear-gradient(180deg,#05070670 0%,#05070659 48%,#05070626 100%)}
+ #top h1,#top .sub,.closing-cta h2{text-shadow:0 2px 12px #050706b3}
+}
