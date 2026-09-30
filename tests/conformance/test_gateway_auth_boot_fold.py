@@ -42,9 +42,14 @@ from trusted_router.storage_gcp import (
 )
 from trusted_router.storage_models import ApiKey, ApiKeyAuthContext, CreditAccount, Workspace
 
+# Private boot keys by kid, for tests that re-sign a later request with the same boot.
+_BOOT_KEYS: dict[str, Ed25519PrivateKey] = {}
+
 
 def signed_request(store, key, *, idempotency_key="metadata-idem"):
-    private = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
+    # A fresh boot key (so a fresh kid) per call: the native emulator store is shared
+    # across tests, and a fixed kid let one case's malformed boot row break the next.
+    private = Ed25519PrivateKey.generate()
     jwk = {"kty": "OKP", "crv": "Ed25519", "x": b64url_encode(private.public_key().public_bytes(
         serialization.Encoding.Raw, serialization.PublicFormat.Raw,
     ))}
@@ -52,6 +57,7 @@ def signed_request(store, key, *, idempotency_key="metadata-idem"):
         receipt_kid(jwk), jwk, True, True, "sha256:" + "11" * 32,
         "gcp-cs-jwt", "2026-09-01T00:00:00Z",
     )
+    _BOOT_KEYS[boot.kid] = private
     store.observe_spend_lease_boot(boot)
     body = _lookup_body(key, idempotency_key=idempotency_key)
     body.stream = True
@@ -311,8 +317,7 @@ def test_boot_and_policy_are_fresh_on_every_authorize():
             accepted.add(boot.image_digest)
         body.idempotency_key = f"fresh-{step}"
         raw = body.model_dump_json().encode()
-        private = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
-        signature = b64url_encode(private.sign(boot_auth_digest("POST", "/", raw)))
+        signature = b64url_encode(_BOOT_KEYS[boot.kid].sign(boot_auth_digest("POST", "/", raw)))
         request = Request(request.scope | {"headers": [
             (b"x-tr-boot-auth", f"kid={boot.kid},sig={signature}".encode()),
         ]})
