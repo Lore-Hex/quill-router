@@ -103,3 +103,16 @@ body.homepage-production{--preview-bar-height:0px}
  .request-path h3{font-size:22px}
  .request-path li:not(:last-child)::after{left:20px}
 }
+
+/* The request diagram uses a dated, verified capture rather than simulated routing. */
+.request-capture-label{margin:0 0 18px;font-size:15px;line-height:1.6;color:#edf8f5}
+.request-capture-label span{color:#c3c9c3}
+.request-path .request-answer{font-size:20px;color:#edf8f5}
+.request-result{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:24px;padding:20px 0 0;color:#edf8f5;font-size:17px;line-height:1.6}
+.request-usage{display:block;font-size:15px;color:#c3c9c3}
+.request-cost{font:500 18px/1.5 var(--mono);white-space:nowrap}
+.request-proof-checks{margin:0 0 20px;padding-left:22px;color:#c3c9c3;font-size:16px;line-height:1.65}
+.request-proof-checks li+li{margin-top:8px}
+.request-proof-checks li::marker{color:#b8eecc}
+.request-technical>summary:focus-visible{outline:2px solid #c0e1ff;outline-offset:5px;border-radius:3px}
+@media(max-width:600px){.request-capture-label span{display:block}.request-result{align-items:flex-start;flex-wrap:wrap}.request-path .request-answer{font-size:19px}}

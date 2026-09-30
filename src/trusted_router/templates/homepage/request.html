@@ -6,25 +6,27 @@
    <a class="request-guide" href="/docs">Explore routing controls →</a>
   </div>
   <div class="request-example">
-   <ol class="request-path" aria-label="Illustrative request path">
-    <li><h3>Your app</h3><p>Choose a model and privacy level.</p></li>
-    <li><h3>TrustedRouter</h3><p>Select a matching route.</p></li>
-    <li><h3>Model provider</h3><p>Run the model and return a response.</p></li>
+   <p class="request-capture-label">A real request <span>· <time datetime="2026-09-30T00:24:38Z">Sep 30, 2026 · UTC</time></span></p>
+   <ol class="request-path" aria-label="Captured request through TrustedRouter to DeepSeek Flash">
+    <li><h3>Your app</h3><p>What is the capital of France?</p></li>
+    <li><h3>TrustedRouter</h3><p>Routed to DeepSeek. Response bound to a signed receipt.</p></li>
+    <li><h3>DeepSeek Flash</h3><p class="request-answer">The capital of France is <strong>Paris</strong>.</p></li>
    </ol>
+   <div class="request-result" aria-label="Captured response usage">
+    <span>Response · 200 <span class="request-usage">37 input · 22 output tokens</span></span>
+    <span class="request-cost">$0.000022</span>
+   </div>
    <details class="request-technical" id="request-example">
-    <summary>See an example request<span class="disclosure-indicator" aria-hidden="true">+</span></summary>
+    <summary>View receipt details<span class="disclosure-indicator" aria-hidden="true">+</span></summary>
     <div class="request-technical-body">
-     <p>Illustrative request. This example does not run inference.</p>
-     <pre id="request-code" tabindex="0" aria-label="Example request JSON"><code>{
-  "model": "z-ai/glm-5.3-flash",
-  "provider": { "min_privacy": "confidential" },
-  "messages": [
-    { "role": "user", "content": "Hello" }
-  ]
-}</code></pre>
-     <button class="request-copy" type="button" data-copy-request>Copy request</button>
-     <p>A captured response and signed receipt can show which model and provider served a real request.</p>
-     <a href="/docs/receipts">How to verify a receipt →</a>
+     <p>This captured response passed verification:</p>
+     <ul class="request-proof-checks">
+      <li>Receipt signature and signing key matched the attested gateway.</li>
+      <li>Request and response hashes matched the captured content.</li>
+      <li>The receipt identified DeepSeek as the serving provider.</li>
+     </ul>
+     <p>This route used a TLS connection to DeepSeek, not confidential provider compute. Token counts and cost are those reported for this request; this is a dated example, not a live feed.</p>
+     <a href="/docs/receipts">How receipt verification works →</a>
     </div>
    </details>
   </div>

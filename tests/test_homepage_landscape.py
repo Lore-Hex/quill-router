@@ -43,7 +43,10 @@ def test_landscape_root_integrates_catalog_assets_csp_and_signin(
     runtime = json.loads(page.select_one("#homepage-data").string)
     assert "catalog" not in runtime  # no fixture prices in the browser payload
     assert runtime["catalog_total"] == len(client.get("/v1/models/picker").json()["data"])
-    assert "Illustrative request" in page.get_text()
+    request = page.select_one("#request")
+    assert "The capital of France is Paris." in request.get_text()
+    assert "not confidential provider compute" in request.get_text()
+    assert not request.select_one("details").has_attr("open")
     assert "All systems operational" not in page.get_text()
     for image in page.select("img[src^='/static/homepage/']"):
         assert client.get(image["src"]).status_code == 200

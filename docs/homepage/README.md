@@ -72,3 +72,12 @@ An accessible native disclosure, closed at every viewport width, contains illust
 Desktop and 390px/320px phone checks verified layout, opening with Enter, copying and no horizontal overflow, including expanded JSON at 320px. Eight focused application tests passed; JavaScript syntax and whitespace checks passed. Full release gates remain deferred. No new animation was introduced.
 
 Real public gateway evidence was captured and strictly verified without credentials or billable inference; see `evidence/2026-09-30-gateway/README.md`. This is a dated gateway verification, not a captured model response or signed inference receipt. The homepage remains explanatory and does not present that record as live proof.
+
+
+## Captured request in the homepage — September 29, latest direction
+
+The designer clarified that the authorized DeepSeek capture was intended to power the diagram. The visible three-step path now shows the actual France question, TrustedRouter routing, and DeepSeek Flash's Paris answer. The response status, token counts and reported cost come from the saved response, with the UTC capture date displayed. An initially collapsed native disclosure summarizes the verified signature, content hashes and selected provider, and clearly distinguishes this TLS route from confidential provider compute. This supersedes the earlier illustrative Hello request. No new inference was made. The API key, internal identifiers, reasoning content and full downloadable evidence bundle are not published. Full capture files remain in the local evidence directory.
+
+The change is frontend presentation of a dated capture, not a live feed or new backend. Full release gates remain deferred under the existing direction; this is not a production-release claim.
+
+Validation: 8 focused homepage tests passed. The captured answer was verified in the rendered localhost and ngrok pages. Desktop 1440×900 and phone widths 390px/320px had no horizontal overflow, including expanded receipt details; Enter toggles the native disclosure with a visible focus outline. The request section has no animation, preserves reduced-motion styling and uses the existing high-contrast palette. Full repository gates remain deferred. The raw evidence directory remains local and uncommitted.
