@@ -331,3 +331,36 @@ def test_storage_error_handler_preserves_gateway_timing(
     assert response.headers["Retry-After"] == "1"
     assert response.json()["error"]["type"] == "service_unavailable"
     assert_timing(response.json()["data"])
+
+
+@pytest.mark.usefixtures("fixed_operation_catalog")
+def test_folded_auth_snapshot_latency_lands_in_key_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#1428 reads key, workspace, BYOK range and boot row in one snapshot; its latency
+    belongs to key_lookup_ms, never routing_ms or store_ms."""
+    store, _db = make_fake_store(request_record_write_mode="typed", generation_records_enabled=True)
+    ws = store.create_workspace("owner", "fold-timing", trial_credit_microdollars=100_000_000)
+    _, key = store.create_api_key(workspace_id=ws.id, name="fold-timing", creator_user_id="owner")
+    configure_store(store)
+    clock = [10.0]
+    monkeypatch.setattr(gateway_timing, "perf_counter", lambda: clock[0])
+    original = type(store).gateway_api_key_auth_context
+    calls = []
+
+    def folded(self: Any, *args: Any, **kwargs: Any) -> Any:
+        calls.append(kwargs.get("boot_kid"))
+        clock[0] += 0.25  # exactly representable, so int(ms) is exact
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(store), "gateway_api_key_auth_context", folded)
+    client = TestClient(create_app(Settings(environment="test"), configure_store_arg=False, init_observability=False))
+    response = client.post("/v1/internal/gateway/authorize", json={
+        "api_key_lookup_hash": key.lookup_hash, "model": "anthropic/claude-haiku-4.5",
+        "estimated_input_tokens": 100, "max_output_tokens": 100, "idempotency_key": "fold-timing",
+        "region": "us-central1", "provider": {"usage": "credits"},
+    })
+    assert response.status_code == 200, response.text
+    assert calls == [None]  # the folded lookup-hash path ran, once
+    timing = response.json()["data"]["timing"]
+    assert timing["key_lookup_ms"] == 250
+    assert timing["routing_ms"] == 0
+    assert timing["store_ms"] == 0
