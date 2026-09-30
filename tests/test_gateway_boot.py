@@ -3,8 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 
+import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
+from starlette.requests import Request
 
+from trusted_router.config import Settings
 from trusted_router.gateway_boot import (
     BootAuthHeader,
     SpendLeaseBoot,
@@ -12,7 +17,10 @@ from trusted_router.gateway_boot import (
     parse_boot_auth_header,
     verify_boot_auth,
 )
-from trusted_router.receipt_keys import b64url_encode
+from trusted_router.receipt_keys import b64url_encode, receipt_kid
+from trusted_router.routes.internal import gateway
+from trusted_router.schemas import SpendLeaseBootRegistrationRequest
+from trusted_router.storage import STORE
 
 
 def _boot_auth_fixture() -> tuple[Ed25519PrivateKey, SpendLeaseBoot, bytes, BootAuthHeader]:
@@ -160,3 +168,189 @@ def test_boot_auth_header_parser_rejects_ambiguous_values() -> None:
     assert parse_boot_auth_header("kid=boot,sig=abc,extra=value") is None
     assert parse_boot_auth_header("kid=boot") is None
     assert parse_boot_auth_header(None) is None
+
+
+# ---- boot registration: the attested enclave's one-time identity handshake --
+
+REGISTER_PATH = "/v1/internal/gateway/spend-lease/register-boot"
+
+
+def _request(path: str = REGISTER_PATH) -> Request:
+    return Request({"type": "http", "method": "POST", "path": path, "headers": []})
+
+
+def _jwk(private: Ed25519PrivateKey) -> dict[str, str]:
+    return {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": b64url_encode(private.public_key().public_bytes_raw()),
+    }
+
+
+def _registration_settings(digest: str) -> Settings:
+    return Settings(environment="test", spend_lease_accepted_gcp_image_digests=digest)
+
+
+def test_boot_registration_accepts_verified_gcp_approved_digest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    STORE.reset()
+    digest = "sha256:" + "11" * 32
+    jwk = _jwk(Ed25519PrivateKey.generate())
+    monkeypatch.setattr(gateway, "attestation_commits_to_jwk", lambda *_args: True)
+    monkeypatch.setattr(gateway, "verify_gcp_attestation_chain", lambda _att: None)
+    monkeypatch.setattr(gateway, "gcp_attestation_image_digest", lambda _att: digest)
+    response = gateway._register_spend_lease_boot_sync(  # noqa: SLF001
+        _request(),
+        SpendLeaseBootRegistrationRequest(
+            kid=receipt_kid(jwk),
+            receipt_public_key=jwk,
+            attestation_evidence="signed-gcp-evidence",
+            attestation_kind="gcp",
+        ),
+        _registration_settings(digest),
+    )
+    assert response == {"data": {"verified": True}}
+    stored = STORE.get_spend_lease_boot(receipt_kid(jwk))
+    assert stored is not None and stored.verified is True and stored.approved is True
+    assert stored.image_digest == digest
+
+
+def test_boot_registration_kid_must_match_the_receipt_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    STORE.reset()
+    jwk = _jwk(Ed25519PrivateKey.generate())
+    monkeypatch.setattr(gateway, "attestation_commits_to_jwk", lambda *_args: True)
+    with pytest.raises(HTTPException, match="kid does not match"):
+        gateway._register_spend_lease_boot_sync(  # noqa: SLF001
+            _request(),
+            SpendLeaseBootRegistrationRequest(
+                kid="someone-else",
+                receipt_public_key=jwk,
+                attestation_evidence="signed-gcp-evidence",
+                attestation_kind="gcp",
+            ),
+            _registration_settings("sha256:" + "11" * 32),
+        )
+    assert STORE.get_spend_lease_boot(receipt_kid(jwk)) is None
+
+
+def test_boot_registration_rejects_evidence_that_does_not_commit_to_the_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    STORE.reset()
+    jwk = _jwk(Ed25519PrivateKey.generate())
+    monkeypatch.setattr(gateway, "attestation_commits_to_jwk", lambda *_args: False)
+    with pytest.raises(HTTPException, match="does not commit"):
+        gateway._register_spend_lease_boot_sync(  # noqa: SLF001
+            _request(),
+            SpendLeaseBootRegistrationRequest(
+                kid=receipt_kid(jwk),
+                receipt_public_key=jwk,
+                attestation_evidence="unbound",
+                attestation_kind="gcp",
+            ),
+            _registration_settings("sha256:" + "11" * 32),
+        )
+    assert STORE.get_spend_lease_boot(receipt_kid(jwk)) is None
+
+
+def test_boot_registration_records_wrong_gcp_image_digest_as_unapproved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    STORE.reset()
+    configured = "sha256:" + "11" * 32
+    observed = "sha256:" + "22" * 32
+    jwk = _jwk(Ed25519PrivateKey.generate())
+    monkeypatch.setattr(gateway, "attestation_commits_to_jwk", lambda *_args: True)
+    monkeypatch.setattr(gateway, "verify_gcp_attestation_chain", lambda _att: None)
+    monkeypatch.setattr(gateway, "gcp_attestation_image_digest", lambda _att: observed)
+    response = gateway._register_spend_lease_boot_sync(  # noqa: SLF001
+        _request(),
+        SpendLeaseBootRegistrationRequest(
+            kid=receipt_kid(jwk),
+            receipt_public_key=jwk,
+            attestation_evidence="signed-gcp-evidence",
+            attestation_kind="gcp",
+        ),
+        _registration_settings(configured),
+    )
+    # Verified (the chain is good) but not approved: acceptance is decided at
+    # authorize time against the live digest set, never at registration.
+    assert response == {"data": {"verified": True}}
+    stored = STORE.get_spend_lease_boot(receipt_kid(jwk))
+    assert stored is not None and stored.approved is False and stored.image_digest == observed
+
+
+def test_boot_registration_rejects_bad_gcp_chain_without_storing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    STORE.reset()
+    jwk = _jwk(Ed25519PrivateKey.generate())
+    monkeypatch.setattr(gateway, "attestation_commits_to_jwk", lambda *_args: True)
+
+    def bad_chain(_att: str) -> None:
+        raise ValueError("bad chain")
+
+    monkeypatch.setattr(gateway, "verify_gcp_attestation_chain", bad_chain)
+    with pytest.raises(HTTPException, match="bad chain"):
+        gateway._register_spend_lease_boot_sync(  # noqa: SLF001
+            _request(),
+            SpendLeaseBootRegistrationRequest(
+                kid=receipt_kid(jwk),
+                receipt_public_key=jwk,
+                attestation_evidence="forged",
+                attestation_kind="gcp",
+            ),
+            _registration_settings("sha256:" + "11" * 32),
+        )
+    assert STORE.get_spend_lease_boot(receipt_kid(jwk)) is None
+
+
+def test_boot_registration_records_aws_as_unverified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    STORE.reset()
+    jwk = _jwk(Ed25519PrivateKey.generate())
+    monkeypatch.setattr(gateway, "attestation_commits_to_jwk", lambda *_args: True)
+    response = gateway._register_spend_lease_boot_sync(  # noqa: SLF001
+        _request(),
+        SpendLeaseBootRegistrationRequest(
+            kid=receipt_kid(jwk),
+            receipt_public_key=jwk,
+            attestation_evidence="bound-aws-cose",
+            attestation_kind="aws",
+        ),
+        _registration_settings("sha256:" + "11" * 32),
+    )
+    assert response == {"data": {"verified": False}}
+    stored = STORE.get_spend_lease_boot(receipt_kid(jwk))
+    assert stored is not None and stored.verified is False and stored.approved is False
+
+
+def test_boot_registration_wire_contract_accepts_literal_enclave_body(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wire_fixture = (
+        '{"kid":"testkid","receipt_public_key":{"kty":"OKP","crv":"Ed25519",'
+        '"x":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="},'
+        '"attestation_evidence":"<...>","attestation_kind":"gcp"}'
+    )
+    monkeypatch.setattr(gateway, "receipt_kid", lambda _jwk: "testkid")
+    monkeypatch.setattr(gateway, "attestation_commits_to_jwk", lambda *_args: True)
+    monkeypatch.setattr(gateway, "verify_gcp_attestation_chain", lambda _att: None)
+    monkeypatch.setattr(gateway, "gcp_attestation_image_digest", lambda _att: "")
+
+    response = client.post(
+        "/internal/gateway/spend-lease/register-boot",
+        content=wire_fixture,
+        headers={"content-type": "application/json"},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert set(payload) == {"data"}
+    assert set(payload["data"]) == {"verified"}
+    assert isinstance(payload["data"]["verified"], bool)

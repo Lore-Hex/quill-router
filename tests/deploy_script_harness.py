@@ -750,9 +750,12 @@ PY
 fi
 
 if [ -n "${HARNESS_FAILURES:-}" ] && [ -f "$HARNESS_FAILURES" ]; then
-  while IFS= read -r pattern; do
-    [ -n "$pattern" ] || continue
+  while IFS= read -r failure; do
+    [ -n "$failure" ] || continue
+    pattern="${failure%%$'\t'*}"
+    message="${failure#*$'\t'}"
     if printf '%s' "$joined" | grep -Eq -- "$pattern"; then
+      [ "$message" = "$failure" ] || printf '%s\n' "$message" >&2
       exit 1
     fi
   done < "$HARNESS_FAILURES"
@@ -1396,6 +1399,8 @@ class ScriptFixture:
     #: ``(extended-regex over "<command> <argv...>", stdout)`` in priority order.
     responses: tuple[tuple[str, str], ...] = ()
     #: Extended regexes whose matching command must exit 1 instead of succeeding.
+    #: A regex may be followed by a TAB and the text the failing command prints
+    #: on stderr, for scripts that classify a failure by its message.
     failures: tuple[str, ...] = ()
     #: Files to create under ``$HOME`` before the run, path -> contents.
     home_files: dict[str, str] = field(default_factory=dict)
@@ -1769,11 +1774,14 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
     "scripts/deploy/synthetic.sh": ScriptFixture(
         env={"TR_BILLING_SERVICE": "trusted-router-billing"},
         # The retired spend-lease soak job and its schedule are already gone:
-        # NOT_FOUND (a failing describe) is the steady state, and synthetic.sh
-        # deletes only what a describe still finds.
+        # NOT_FOUND is the steady state, and synthetic.sh deletes only what a
+        # describe still finds. Any other lookup failure aborts the deploy.
         failures=(
-            r"scheduler jobs describe trusted-router-spend-lease-soak-",
-            r"run jobs describe trusted-router-spend-lease-soak-",
+            r"scheduler jobs describe trusted-router-spend-lease-soak-"
+            "\tERROR: (gcloud.scheduler.jobs.describe) NOT_FOUND: Job not found.",
+            r"run jobs describe trusted-router-spend-lease-soak-"
+            "\tERROR: (gcloud.run.jobs.describe) NOT_FOUND: Job "
+            "[trusted-router-spend-lease-soak-us-central1] could not be found.",
         ),
         responses=(
             (

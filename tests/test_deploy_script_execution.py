@@ -2509,6 +2509,40 @@ def test_synthetic_deploy_deletes_a_surviving_soak_job_and_its_schedule(
     assert not _gcloud_calls(run, "scheduler", "jobs", "resume")
 
 
+def test_synthetic_deploy_aborts_before_deleting_when_a_soak_lookup_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = "scripts/deploy/synthetic.sh"
+    fixture = SCRIPT_FIXTURES[script]
+    # The schedule lookup is denied (no NOT_FOUND in its answer) while the job
+    # lookup succeeds. Nothing may be deleted: removing the job alone would
+    # leave a live schedule invoking a job that no longer exists.
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES,
+        script,
+        replace(
+            fixture,
+            failures=(
+                *(pattern for pattern in fixture.failures if "spend-lease-soak" not in pattern),
+                r"scheduler jobs describe trusted-router-spend-lease-soak-"
+                "\tERROR: (gcloud.scheduler.jobs.describe) PERMISSION_DENIED: "
+                "Caller lacks cloudscheduler.jobs.get",
+            ),
+        ),
+    )
+    isolated = DeployScriptHarness(tmp_path / "synthetic-soak-denied")
+
+    run = isolated.run(script, verifier_rc=0)
+
+    assert run.returncode != 0, summarise(run)
+    assert "cannot read retired spend-lease soak scheduler" in run.stderr
+    assert "PERMISSION_DENIED" in run.stderr
+    assert len(_soak_calls(run, "scheduler", "jobs", "describe")) == 1
+    assert not _soak_calls(run, "scheduler", "jobs", "delete")
+    assert not _soak_calls(run, "run", "jobs", "delete")
+
+
 def test_synthetic_deploy_requires_explicit_split_billing_service_before_any_gcloud_call(
     tmp_path: Path,
 ) -> None:

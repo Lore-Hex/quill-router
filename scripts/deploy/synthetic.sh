@@ -474,18 +474,44 @@ done
 
 # The spend-lease soak job and its schedule are retired with the pilot
 # (2026-09). Remove them where they still exist; absence is the goal state.
+# Only a NOT_FOUND answer means absent. Both lookups run before either delete,
+# and any other lookup failure (denied, transient) aborts the deploy, so a
+# schedule is never left pointing at a job this run just removed.
 legacy_soak_region="us-central1"
 legacy_soak_job_name="trusted-router-spend-lease-soak-${legacy_soak_region}"
 legacy_soak_scheduler_name="${legacy_soak_job_name}-every-minute"
+legacy_soak_error="$(mktemp "${TMPDIR:-/tmp}/spend-lease-soak.XXXXXX")"
+legacy_soak_not_found() {
+  grep -qE '(^|[[:space:]])NOT_FOUND([[:space:]:]|$)' "$legacy_soak_error"
+}
+legacy_soak_scheduler_present=false
 if gc scheduler jobs describe "$legacy_soak_scheduler_name" \
-    --location "$legacy_soak_region" >/dev/null 2>&1; then
+    --location "$legacy_soak_region" >/dev/null 2>"$legacy_soak_error"; then
+  legacy_soak_scheduler_present=true
+elif ! legacy_soak_not_found; then
+  cat "$legacy_soak_error" >&2
+  echo "ERROR: cannot read retired spend-lease soak scheduler ${legacy_soak_scheduler_name}" >&2
+  rm -f "$legacy_soak_error"
+  exit 1
+fi
+legacy_soak_job_present=false
+if gc run jobs describe "$legacy_soak_job_name" \
+    --region "$legacy_soak_region" >/dev/null 2>"$legacy_soak_error"; then
+  legacy_soak_job_present=true
+elif ! legacy_soak_not_found; then
+  cat "$legacy_soak_error" >&2
+  echo "ERROR: cannot read retired spend-lease soak job ${legacy_soak_job_name}" >&2
+  rm -f "$legacy_soak_error"
+  exit 1
+fi
+rm -f "$legacy_soak_error"
+if [ "$legacy_soak_scheduler_present" = true ]; then
   log "deleting retired spend-lease soak scheduler ${legacy_soak_scheduler_name}"
   gc scheduler jobs delete "$legacy_soak_scheduler_name" \
     --location "$legacy_soak_region" \
     --quiet >/dev/null
 fi
-if gc run jobs describe "$legacy_soak_job_name" \
-    --region "$legacy_soak_region" >/dev/null 2>&1; then
+if [ "$legacy_soak_job_present" = true ]; then
   log "deleting retired spend-lease soak job ${legacy_soak_job_name}"
   gc run jobs delete "$legacy_soak_job_name" \
     --region "$legacy_soak_region" \
