@@ -344,10 +344,6 @@ def test_tinfoil_glm53_routes_use_live_prices_and_capabilities(
     glm = MODEL_ENDPOINTS["z-ai/glm-5.3@tinfoil/prepaid"]
     flash = MODEL_ENDPOINTS["z-ai/glm-5.3-flash@tinfoil/prepaid"]
     provider = PROVIDERS["tinfoil"]
-    rows = {
-        row["id"]: row
-        for row in json.loads(tinfoil.MANIFEST_PATH.read_text(encoding="utf-8"))["models"]
-    }
 
     assert glm.upstream_id == "glm-5-3"
     assert glm.prompt_price_microdollars_per_million_tokens == 1_899_000
@@ -357,13 +353,24 @@ def test_tinfoil_glm53_routes_use_live_prices_and_capabilities(
     assert flash.prompt_price_microdollars_per_million_tokens == 422_000
     assert flash.completion_price_microdollars_per_million_tokens == 1_318_750
     assert flash.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 105_500
-    # Global model limits and modalities are a union across providers, not
-    # Tinfoil's contract: Baseten's GLM 5.3 also accepts images (live-verified
-    # 2026-09-14). Tinfoil's contract is its manifest rows.
-    assert rows[glm.model_id]["context_length"] == 1_048_576
-    assert rows[glm.model_id]["input_modalities"] == ["text"]
-    assert rows[flash.model_id]["context_length"] == 1_048_576
-    assert rows[flash.model_id]["input_modalities"] == ["text", "image"]
     assert provider.provider_zero_data_retention is True
     assert provider.provider_confidential_compute is True
     assert provider.provider_e2ee is True
+
+
+@pytest.mark.provider_health
+def test_tinfoil_lists_glm53_with_its_window_and_modalities() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it. Global model limits and modalities
+    # are a union across providers, not Tinfoil's contract: Baseten's GLM 5.3
+    # also accepts images (live-verified 2026-09-14). Tinfoil's contract is its
+    # manifest rows; discovery writes them from its feed as
+    # test_tinfoil_fetch_discovers_glm_53_variants checks on a fixture feed.
+    rows = {
+        row["id"]: row
+        for row in json.loads(tinfoil.MANIFEST_PATH.read_text(encoding="utf-8"))["models"]
+    }
+    assert rows["z-ai/glm-5.3"]["context_length"] == 1_048_576
+    assert rows["z-ai/glm-5.3"]["input_modalities"] == ["text"]
+    assert rows["z-ai/glm-5.3-flash"]["context_length"] == 1_048_576
+    assert rows["z-ai/glm-5.3-flash"]["input_modalities"] == ["text", "image"]

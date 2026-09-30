@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,11 @@ from tests.lifecycle_clock import catalog_predates
 from tests.pinned_manifests import (
     GLM_5_2_ROUTES,
     GROK_47,
+    NOVITA_TENCENT_HY3,
     OPENROUTER_GLM_5_2,
+    OPENROUTER_QWEN_3_5_397B,
+    OPENROUTER_TENCENT_HY3,
+    PARASAIL_QWEN_3_5_397B,
     build_manifest_rows,
 )
 from trusted_router import catalog_ingest, provider_lifecycle
@@ -540,9 +545,7 @@ def test_grok_45_uses_xai_native_model_id_and_pricing() -> None:
     assert byok.upstream_id == row["upstream_id"]
     assert prepaid.prompt_price_microdollars_per_million_tokens > 0
     assert prepaid.completion_price_microdollars_per_million_tokens > 0
-    cached_prompt = prepaid.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
-    assert cached_prompt is not None
-    assert 0 < cached_prompt < prepaid.prompt_price_microdollars_per_million_tokens
+    assert prepaid.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens is not None
 
 
 @pytest.mark.parametrize("native_id", ["grok-4.6", "grok-4.7"])
@@ -566,6 +569,18 @@ def test_grok_uses_xai_native_model_id_and_long_context_pricing(native_id: str) 
     for tier in prepaid.price_tiers:
         assert tier.prompt_price_microdollars_per_million_tokens > 0
         assert tier.completion_price_microdollars_per_million_tokens > 0
+        assert tier.prompt_cached_price_microdollars_per_million_tokens is not None
+
+
+@pytest.mark.provider_health
+@pytest.mark.parametrize("native_id", ["grok-4.5", "grok-4.6", "grok-4.7"])
+def test_xai_discounts_cached_input_on_grok(native_id: str) -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    endpoint_id = f"x-ai/{native_id}@grok/prepaid"
+    if endpoint_id not in MODEL_ENDPOINTS:
+        return
+    for tier in MODEL_ENDPOINTS[endpoint_id].price_tiers:
         assert tier.prompt_cached_price_microdollars_per_million_tokens is not None
         assert (
             0
@@ -639,33 +654,25 @@ def test_qwen_38_routes_only_through_hosts_with_verified_pricing() -> None:
     assert f"{model_id}@alibaba/byok" not in MODEL_ENDPOINTS
 
 
-def test_novita_hy3_uses_live_provider_id_and_price_floor() -> None:
-    row = _listed_row("novita", "tencent/hy3")
-    if row is None:
-        return
-    model = MODELS["tencent/hy3"]
-    prepaid = MODEL_ENDPOINTS["tencent/hy3@novita/prepaid"]
-    byok = MODEL_ENDPOINTS["tencent/hy3@novita/byok"]
-    # Novita's feed prices 100x below its public table; its manifest's scale
-    # restores them before the markup.
-    scale = json.loads((_PROVIDER_MODELS_DIR / "novita.json").read_text(encoding="utf-8"))[
-        "price_scale_to_microdollars_per_million_tokens"
-    ]
+def test_novita_hy3_uses_live_provider_id_and_price_floor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    # Novita's routes built from its pinned manifest row, whatever Novita lists
+    # today. Tencent has several independent hosts, so this checks the Novita
+    # endpoint itself; the model's window is its first host's (see
+    # test_a_model_whose_author_has_no_route_advertises_its_first_hosts_window).
+    _models, endpoints = build_manifest_rows(monkeypatch, tmp_path, "novita", [NOVITA_TENCENT_HY3])
+    prepaid = endpoints["tencent/hy3@novita/prepaid"]
+    byok = endpoints["tencent/hy3@novita/byok"]
 
-    # Tencent has several independent hosts. Validate the Novita endpoint
-    # itself rather than whichever host happens to sort first on the model.
-    assert model.context_length == row["context_length"]
-    assert prepaid.upstream_id == row["upstream_id"]
-    assert byok.upstream_id == row["upstream_id"]
-    assert prepaid.prompt_price_microdollars_per_million_tokens == _customer_price(
-        row["input_token_price_per_m"] * scale
-    )
-    assert prepaid.completion_price_microdollars_per_million_tokens == _customer_price(
-        row["output_token_price_per_m"] * scale
-    )
-    assert prepaid.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == (
-        _customer_price(row["cached_input_token_price_per_m"] * scale)
-    )
+    assert prepaid.upstream_id == "tencent/hy3"
+    assert byok.upstream_id == "tencent/hy3"
+    # Novita's feed prices 100x below its public table ($0.14, $0.58 and
+    # $0.035 per million); its manifest's scale restores them before the 5.5%
+    # markup, instead of the $0.01/M floor.
+    assert prepaid.prompt_price_microdollars_per_million_tokens == 147_700
+    assert prepaid.completion_price_microdollars_per_million_tokens == 611_900
+    assert prepaid.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 36_925
 
 
 def test_minimax_empty_operator_routes_are_not_prepaid() -> None:
@@ -1540,13 +1547,6 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
 
     if "thinkingmachines/inkling" in MODELS:
         inkling = MODELS["thinkingmachines/inkling"]
-        # Inkling's serverless hosts currently advertise different verified
-        # windows (256K, 512K, and 1M). The canonical row follows the largest
-        # live routed endpoint, so an hourly availability refresh may
-        # legitimately move it within this range. It must still satisfy
-        # Liberty 1.0's 256K contract and must never overstate the largest
-        # verified 1M route.
-        assert 262_144 <= inkling.context_length <= 1_048_576
         endpoints = endpoints_for_model(inkling.id)
         provider_ids = {endpoint.provider for endpoint in endpoints}
         assert inkling.provider in provider_ids
@@ -1571,10 +1571,6 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
         return
     inkling_small = MODELS["thinkingmachines/inkling-small"]
     inkling_small_shape = model_to_openrouter_shape(inkling_small)
-    # The first-party route is 256K, while independent hosts can expose a
-    # larger verified window for the same weights. The canonical model follows
-    # the largest live routed endpoint and must stay within the audited range.
-    assert 262_144 <= inkling_small.context_length <= 1_048_576
     assert inkling_small.input_modalities == ("text", "image")
     assert inkling_small.output_modalities == ("text",)
     assert inkling_small_shape["architecture"]["modality"] == "text+image->text"
@@ -2357,11 +2353,6 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
         )
         xiaomi_credits[model_id] = xiaomi
 
-    if "xiaomi/mimo-v2.5-pro" in xiaomi_credits:
-        # Xiaomi documents this as a 1M context window. Live catalogs use both
-        # the binary 1,048,576 value and a rounded 1,050,000 value, so guard
-        # the public capability rather than freezing one representation.
-        assert 1_000_000 <= MODELS["xiaomi/mimo-v2.5-pro"].context_length <= 1_050_000
     # UltraSpeed is the 1T-param speed-serving tier with its own ¥9/¥18
     # ($1.305/$2.61) cost: a regen must not collapse it onto V2.5 Pro's price.
     if {"xiaomi/mimo-v2.5-pro", "xiaomi/mimo-v2.5-pro-ultraspeed"} <= xiaomi_credits.keys():
@@ -2370,6 +2361,16 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
             .completion_price_microdollars_per_million_tokens
             != xiaomi_credits["xiaomi/mimo-v2.5-pro"].completion_price_microdollars_per_million_tokens
         )
+
+
+@pytest.mark.provider_health
+def test_xiaomi_mimo_v25_pro_advertises_a_1m_context() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    # Xiaomi documents this as a 1M context window. Live catalogs use both
+    # the binary 1,048,576 value and a rounded 1,050,000 value, so guard
+    # the public capability rather than freezing one representation.
+    assert 1_000_000 <= MODELS["xiaomi/mimo-v2.5-pro"].context_length <= 1_050_000
 
 
 def test_crusoe_provider_models_follow_authoritative_manifest() -> None:
@@ -2669,14 +2670,58 @@ def test_glm_52_context_contract_rejects_smaller_windows(
         _assert_glm_52_contract(replace(model, context_length=context_length), endpoints)
 
 
-def _assert_parasail_route_follows_its_row(model_id: str) -> dict[str, Any] | None:
+def _model_built_from_snapshot_entry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, entry: dict[str, Any],
+) -> Model:
+    """The model the catalog builds from one pinned OpenRouter snapshot entry."""
+    snapshot = tmp_path / "openrouter_snapshot.json"
+    snapshot.write_text(json.dumps({"models": [entry]}), encoding="utf-8")
+    with monkeypatch.context() as patch:
+        patch.setattr(catalog_ingest, "_INGEST_PATH", snapshot)
+        models, _ = catalog_ingest._ingested_models_and_endpoints()
+    return models[entry["id"]]
+
+
+@pytest.mark.parametrize(
+    ("entry", "host"),
+    [(OPENROUTER_TENCENT_HY3, "novita"), (OPENROUTER_QWEN_3_5_397B, "parasail")],
+    ids=["tencent/hy3", "qwen/qwen3.5-397b-a17b"],
+)
+def test_a_model_whose_author_has_no_route_advertises_its_first_hosts_window(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, entry: dict[str, Any], host: str,
+) -> None:
+    """Neither tencent nor qwen has a route mapping of its own
+    (catalog_ingest._AUTHOR_TO_PROVIDER_SLUG), so the model's default route is
+    the first host OpenRouter lists, DeepInfra here, and the model advertises
+    that host's window (#966), not the window of another host that serves it,
+    such as Novita or Parasail, whose routes other tests here check."""
+
+    def built_with(slug: str, window: int) -> Model:
+        endpoints = [
+            {**endpoint, "context_length": window}
+            if endpoint["tr_provider_slug"] == slug
+            else endpoint
+            for endpoint in entry["endpoints"]
+        ]
+        return _model_built_from_snapshot_entry(
+            monkeypatch, tmp_path, {**entry, "endpoints": endpoints}
+        )
+
+    model = _model_built_from_snapshot_entry(monkeypatch, tmp_path, entry)
+    assert model.provider == "deepinfra"
+    assert model.context_length == 262_144
+    assert built_with(host, 131_072).context_length == 262_144
+    assert built_with("deepinfra", 131_072).context_length == 131_072
+
+
+def _assert_parasail_route_follows_its_row(model_id: str) -> None:
     """Parasail serves some models under its own deployment ids: each route it
     lists uses that exact id and its published price, marked up."""
     from tests import catalog_vehicles
 
     row = _listed_row("parasail", model_id)
     if row is None:
-        return None
+        return
     built = catalog_vehicles.registry_endpoints()
     prepaid = built[f"{model_id}@parasail/prepaid"]
     byok = built[f"{model_id}@parasail/byok"]
@@ -2688,13 +2733,24 @@ def _assert_parasail_route_follows_its_row(model_id: str) -> dict[str, Any] | No
     assert prepaid.completion_price_microdollars_per_million_tokens == _customer_price(
         row["output_token_price_per_m"]
     )
-    return row
 
 
-def test_parasail_qwen_397b_uses_working_native_upstream_id() -> None:
-    row = _assert_parasail_route_follows_its_row("qwen/qwen3.5-397b-a17b")
-    if row is not None:
-        assert MODELS["qwen/qwen3.5-397b-a17b"].context_length == row["context_length"]
+def test_parasail_qwen_397b_uses_working_native_upstream_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    # Parasail's routes built from its pinned manifest row, whatever Parasail
+    # lists today: its own deployment id, at its published $0.50/$3.60 per
+    # million plus the 5.5% markup. The model's window is its first host's (see
+    # test_a_model_whose_author_has_no_route_advertises_its_first_hosts_window).
+    _models, endpoints = build_manifest_rows(
+        monkeypatch, tmp_path, "parasail", [PARASAIL_QWEN_3_5_397B]
+    )
+    prepaid = endpoints["qwen/qwen3.5-397b-a17b@parasail/prepaid"]
+    byok = endpoints["qwen/qwen3.5-397b-a17b@parasail/byok"]
+    assert prepaid.upstream_id == "parasail-qwen35-397b-a17b"
+    assert byok.upstream_id == "parasail-qwen35-397b-a17b"
+    assert prepaid.prompt_price_microdollars_per_million_tokens == 527_500
+    assert prepaid.completion_price_microdollars_per_million_tokens == 3_798_000
 
 
 def test_parasail_glm_53_routes_publish_verified_prices() -> None:
@@ -2722,10 +2778,10 @@ def test_model_shape_publishes_cache_read_price_when_tiers_carry_one() -> None:
 
     shape = model_to_openrouter_shape(model)
 
-    cached = shape["pricing"]["input_cache_read"]
-    prompt = shape["pricing"]["prompt"]
-    assert float(cached) > 0
-    assert float(cached) < float(prompt)
+    # Dollars per token: the tier's microdollars per million tokens over 10**12.
+    assert Decimal(shape["pricing"]["input_cache_read"]) == (
+        Decimal(tiers[0].prompt_cached_price_microdollars_per_million_tokens) / Decimal(10**12)
+    )
 
 
 def test_model_shape_omits_cache_read_price_when_absent() -> None:
@@ -2856,6 +2912,18 @@ def test_current_orchestration_backups_have_zdr_routes(model_id: str) -> None:
         endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_ZERO_RETENTION
         for _model, endpoint in candidates
     )
+
+
+@pytest.mark.provider_health
+def test_inkling_windows_stay_within_their_hosts_verified_range() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it. Inkling's hosts advertise different
+    # verified windows (256K, 512K and 1M), and each canonical row follows its
+    # largest live routed endpoint: at least Liberty 1.0's 256K, and no more
+    # than the largest window a host is verified to serve.
+    for model_id in ("thinkingmachines/inkling", "thinkingmachines/inkling-small"):
+        if model_id in MODELS:
+            assert 262_144 <= MODELS[model_id].context_length <= 1_048_576, model_id
 
 
 @pytest.mark.provider_health

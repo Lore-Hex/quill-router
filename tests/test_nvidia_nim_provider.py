@@ -9,6 +9,7 @@ import pytest
 from scripts.pricing import openai_catalog
 from scripts.pricing.providers import nvidia_nim
 from tests import catalog_vehicles
+from tests.pinned_manifests import NVIDIA_NIM_LLAMA_3_2_11B_VISION, build_manifest_rows
 from trusted_router.catalog_data import (
     DEEPSEEK_V4_PRO_0813_MODEL_ID,
     GATEWAY_PREPAID_PROVIDER_SLUGS,
@@ -271,6 +272,10 @@ def test_nvidia_nim_is_a_standard_prepaid_provider() -> None:
 
 
 def test_routable_nvidia_manifest_rows_create_prepaid_endpoints() -> None:
+    # Each routable chat row is routed once, at its exact upstream id. What a
+    # route bills is test_an_nvidia_route_bills_its_row_price_plus_markup, on a
+    # pinned row; what today's routes bill is
+    # test_routable_nvidia_routes_bill_the_conservative_price.
     from trusted_router.catalog import endpoints_for_model
 
     built = catalog_vehicles.registry_endpoints()
@@ -295,8 +300,6 @@ def test_routable_nvidia_manifest_rows_create_prepaid_endpoints() -> None:
         ]
         assert len(endpoints) == 1
         assert endpoints[0].upstream_id == row["upstream_id"]
-        assert endpoints[0].prompt_price_microdollars_per_million_tokens == 2_110_000
-        assert endpoints[0].completion_price_microdollars_per_million_tokens == 10_550_000
 
     assert not any(
         endpoint.provider == "nvidia-nim" and endpoint.id in built
@@ -315,3 +318,36 @@ def test_routable_nvidia_manifest_rows_create_prepaid_endpoints() -> None:
         )
         for model_id in unroutable_ids
     )
+
+
+def test_an_nvidia_route_bills_its_row_price_plus_markup(monkeypatch, tmp_path) -> None:
+    # NVIDIA publishes no per-token price, so every row carries the refresh's
+    # conservative $2/$10 accounting rate; its route bills that plus the 5.5%
+    # markup, at the row's exact upstream id. The row as NVIDIA listed it on
+    # 2026-09-30.
+    _models, endpoints = build_manifest_rows(
+        monkeypatch, tmp_path, "nvidia-nim", [NVIDIA_NIM_LLAMA_3_2_11B_VISION]
+    )
+    endpoint = endpoints["meta-llama/llama-3.2-11b-vision-instruct@nvidia-nim/prepaid"]
+    assert endpoint.usage_type == "Credits"
+    assert endpoint.upstream_id == "meta/llama-3.2-11b-vision-instruct"
+    assert endpoint.prompt_price_microdollars_per_million_tokens == 2_110_000
+    assert endpoint.completion_price_microdollars_per_million_tokens == 10_550_000
+
+
+@pytest.mark.provider_health
+def test_routable_nvidia_routes_bill_the_conservative_price() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    from trusted_router.catalog import endpoints_for_model
+
+    raw = json.loads(nvidia_nim.MANIFEST_PATH.read_text())
+    for row in raw["models"]:
+        if row.get("model_type") != "chat" or row.get("routable") is False:
+            continue
+        if row["id"] == DEEPSEEK_V4_PRO_0813_MODEL_ID:
+            continue
+        for endpoint in endpoints_for_model(row["id"]):
+            if endpoint.provider == "nvidia-nim" and str(endpoint.usage_type) == "Credits":
+                assert endpoint.prompt_price_microdollars_per_million_tokens == 2_110_000
+                assert endpoint.completion_price_microdollars_per_million_tokens == 10_550_000

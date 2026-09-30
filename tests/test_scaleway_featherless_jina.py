@@ -10,9 +10,12 @@ from fastapi.testclient import TestClient
 
 from scripts.pricing.base import ModelPrice
 from scripts.pricing.providers import featherless, jina, scaleway
-from tests.pinned_manifests import FEATHERLESS_QWEN38_FLASH_NEXT, build_manifest_rows
+from tests.pinned_manifests import (
+    FEATHERLESS_DEEPSEEK_V4_1_FLASH,
+    FEATHERLESS_QWEN38_FLASH_NEXT,
+    build_manifest_rows,
+)
 from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS, providers_for_display
-from trusted_router.pricing import _customer_price
 from trusted_router.provider_manifest_policy import (
     EXPIRING_PROVIDER_MANIFEST_SLUGS,
 )
@@ -68,28 +71,44 @@ def test_featherless_uses_shared_canonical_model_ids() -> None:
     } <= set(featherless.CURATED_NATIVE_MODELS)
 
 
-def test_featherless_deepseek_v41_route_preserves_provider_limits_and_prices() -> None:
+def test_featherless_deepseek_v41_route_preserves_provider_prices(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # A row the refresh tombstoned is dark; a live one is routed at its exact
+    # upstream ID and the provider's prices plus markup. The row is pinned as
+    # Featherless listed it on 2026-09-30; what it lists today is
+    # test_featherless_lists_deepseek_v41_flash_with_its_limits_and_cache_price.
+    _models, endpoints = build_manifest_rows(
+        monkeypatch, tmp_path, "featherless", [FEATHERLESS_DEEPSEEK_V4_1_FLASH]
+    )
+    endpoint = endpoints["deepseek/deepseek-v4.1-flash@featherless/prepaid"]
+    assert endpoint.upstream_id == "deepseek-ai/DeepSeek-V4.1-Flash"
+    assert endpoint.published_prompt_price_microdollars_per_million_tokens == 316_500
+    assert endpoint.published_completion_price_microdollars_per_million_tokens == 1_266_000
+    assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 31_650
+
+    tombstoned = {
+        **FEATHERLESS_DEEPSEEK_V4_1_FLASH,
+        "routable": False,
+        "routable_reason": "delisted-upstream",
+    }
+    _models, endpoints = build_manifest_rows(
+        monkeypatch, tmp_path, "featherless", [tombstoned, FEATHERLESS_QWEN38_FLASH_NEXT]
+    )
+    assert "deepseek/deepseek-v4.1-flash@featherless/prepaid" not in endpoints
+    assert "qwen/qwen3.8-flash-next@featherless/prepaid" in endpoints
+
+
+@pytest.mark.provider_health
+def test_featherless_lists_deepseek_v41_flash_with_its_limits_and_cache_price() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
     manifest = json.loads(featherless.MANIFEST_PATH.read_text())
     row = next(row for row in manifest["models"] if row["id"] == "deepseek/deepseek-v4.1-flash")
     assert row["context_length"] == 262144
     assert row["cached_input_token_price_per_m"] == 30_000
     assert row["max_output_tokens"] == 32768
     assert row["input_modalities"] == ["text", "image"]
-    # A row the refresh tombstoned is dark; a live one is routed at its exact
-    # upstream ID and the provider's prices plus markup.
-    endpoint = MODEL_ENDPOINTS.get("deepseek/deepseek-v4.1-flash@featherless/prepaid")
-    if row.get("routable") is False:
-        assert endpoint is None
-    else:
-        assert endpoint is not None
-        assert endpoint.upstream_id == "deepseek-ai/DeepSeek-V4.1-Flash"
-        assert endpoint.published_prompt_price_microdollars_per_million_tokens == _customer_price(
-            row["input_token_price_per_m"]
-        )
-        assert (
-            endpoint.published_completion_price_microdollars_per_million_tokens
-            == _customer_price(row["output_token_price_per_m"])
-        )
 
 
 @pytest.mark.provider_health

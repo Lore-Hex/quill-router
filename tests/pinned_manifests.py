@@ -110,6 +110,25 @@ FEATHERLESS_QWEN38_FLASH_NEXT = {
     "cached_input_token_price_per_m": 30000,
 }
 
+# Featherless's DeepSeek V4.1 Flash row as its feed listed it on 2026-09-30.
+FEATHERLESS_DEEPSEEK_V4_1_FLASH = {
+    "display_name": "deepseek-ai/DeepSeek-V4.1-Flash",
+    "title": "deepseek-ai/DeepSeek-V4.1-Flash",
+    "model_type": "chat",
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "id": "deepseek/deepseek-v4.1-flash",
+    "upstream_id": "deepseek-ai/DeepSeek-V4.1-Flash",
+    "context_length": 262144,
+    "max_output_tokens": 32768,
+    "routable": True,
+    "input_token_price_per_m": 300000,
+    "output_token_price_per_m": 1200000,
+    "cached_input_token_price_per_m": 30000,
+}
+
 # NEAR AI"s only routable row on 2026-09-29, GLM 5.3 Flash, as its feed listed it.
 NEAR_AI_GLM_53_FLASH = {
     "display_name": "z-ai/glm-5.3-flash",
@@ -372,6 +391,24 @@ ALIBABA_QWEN_3_7_FLASH = tuple(
     )
 )
 
+# NVIDIA NIM's Llama 3.2 11B Vision row as its feed listed it on 2026-09-30.
+# NVIDIA publishes no per-token price; the refresh writes its conservative
+# accounting rate (nvidia_nim._CONSERVATIVE_HOSTED_PRICE) into every row.
+NVIDIA_NIM_LLAMA_3_2_11B_VISION = {
+    "display_name": "meta/llama-3.2-11b-vision-instruct",
+    "title": "meta/llama-3.2-11b-vision-instruct",
+    "model_type": "chat",
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "id": "meta-llama/llama-3.2-11b-vision-instruct",
+    "upstream_id": "meta/llama-3.2-11b-vision-instruct",
+    "routable": True,
+    "input_token_price_per_m": 2000000,
+    "output_token_price_per_m": 10000000,
+}
+
 # Tinfoil's confidential routes as its manifest lists them.
 TINFOIL_DEEPSEEK_V4_1_FLASH = {
     "display_name": "DeepSeek V4.1 Flash",
@@ -537,6 +574,47 @@ PEARL_GLM_5_3 = {
     "input_token_price_per_m": 1100000,
     "output_token_price_per_m": 3500000,
     "cached_input_token_price_per_m": 230000,
+}
+
+# Novita's Hy3 row as its feed listed it on 2026-09-30. Novita's feed prices
+# 100x below its public table; its manifest header's scale restores them.
+NOVITA_TENCENT_HY3 = {
+    "id": "tencent/hy3",
+    "display_name": "Hy3",
+    "title": "tencent/hy3",
+    "created": 1782798401,
+    "context_length": 262144,
+    "max_output_tokens": 262144,
+    "input_token_price_per_m": 1400,
+    "output_token_price_per_m": 5800,
+    "model_type": "chat",
+    "features": ["serverless", "function-calling", "structured-outputs", "reasoning"],
+    "input_modalities": ["text"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "upstream_id": "tencent/hy3",
+    "cached_input_token_price_per_m": 350,
+}
+
+# Parasail's Qwen3.5 397B row, under its own deployment id, as its feed listed
+# it on 2026-09-30.
+PARASAIL_QWEN_3_5_397B = {
+    "id": "qwen/qwen3.5-397b-a17b",
+    "upstream_id": "parasail-qwen35-397b-a17b",
+    "display_name": "Parasail Qwen3.5 397B A17B",
+    "title": "qwen/qwen3.5-397b-a17b",
+    "context_length": 262144,
+    "max_output_tokens": 65536,
+    "input_token_price_per_m": 500000,
+    "output_token_price_per_m": 3600000,
+    "cached_input_token_price_per_m": 300000,
+    "model_type": "chat",
+    "features": ["reasoning", "function-calling", "serverless"],
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
 }
 
 # OpenAI's own routes as its manifest lists them, for rules of OpenAI's
@@ -711,6 +789,78 @@ OPENROUTER_GLM_5_2: dict[str, Any] = {
             ("Together", "together", "zai-org/GLM-5.2", 1048575, 943717),
             ("Venice", "venice", "zai-org-glm-5-2", 1000000, 131072),
             ("Z.AI", "zai", "glm-5.2", 1048576, 131072),
+        )
+    ],
+    "pricing_source": "provider_direct",
+}
+
+# Hy3 as OpenRouter's snapshot listed it on 2026-09-30, trimmed to DeepInfra,
+# the first host it lists, and Novita, without parameter lists and uptimes.
+# Every host listed a 262144 window.
+OPENROUTER_TENCENT_HY3: dict[str, Any] = {
+    "id": "tencent/hy3",
+    "name": "Tencent: Hy3",
+    "created": 1783344048,
+    "context_length": 262144,
+    "architecture": {
+        "modality": "text->text",
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "tokenizer": "Other",
+        "instruct_type": None,
+    },
+    "pricing": {"prompt": "0.00000013", "completion": "0.00000053", "input_cache_read": "0.000000033"},
+    "top_provider": {"context_length": 262144, "max_completion_tokens": 128000, "is_moderated": False},
+    "endpoints": [
+        {
+            "name": f"{name} | tencent/hy3-20260706",
+            "model_id": upstream_id,
+            "provider_name": name,
+            "tr_provider_slug": slug,
+            "context_length": 262144,
+            "pricing": {"prompt": prompt, "completion": completion, "input_cache_read": cache_read},
+            "max_completion_tokens": max_completion_tokens,
+            "pricing_source": "provider_direct",
+        }
+        for name, slug, upstream_id, prompt, completion, cache_read, max_completion_tokens in (
+            ("DeepInfra", "deepinfra", "tencent/Hy3", "0.00000013", "0.00000053", "0.000000033", 131072),
+            ("Novita", "novita", "tencent/hy3", "0.00000014", "0.00000058", "0.000000035", 235929),
+        )
+    ],
+    "pricing_source": "provider_direct",
+}
+
+# Qwen3.5 397B as OpenRouter's snapshot listed it on 2026-09-30, trimmed to
+# DeepInfra, the first host it lists, and Parasail, without parameter lists and
+# uptimes. Both listed a 262144 window.
+OPENROUTER_QWEN_3_5_397B: dict[str, Any] = {
+    "id": "qwen/qwen3.5-397b-a17b",
+    "name": "Qwen: Qwen3.5 397B A17B",
+    "created": 1771223018,
+    "context_length": 262144,
+    "architecture": {
+        "modality": "text+image+video->text",
+        "input_modalities": ["text", "image", "video"],
+        "output_modalities": ["text"],
+        "tokenizer": "Qwen3",
+        "instruct_type": None,
+    },
+    "pricing": {"prompt": "0.00000045", "completion": "0.000003", "input_cache_read": "0.000000045"},
+    "top_provider": {"context_length": 262144, "max_completion_tokens": 235929, "is_moderated": False},
+    "endpoints": [
+        {
+            "name": f"{name} | qwen/qwen3.5-397b-a17b-20260216",
+            "model_id": "Qwen/Qwen3.5-397B-A17B",
+            "provider_name": name,
+            "tr_provider_slug": slug,
+            "context_length": 262144,
+            "pricing": {"prompt": prompt, "completion": completion, "input_cache_read": cache_read},
+            "max_completion_tokens": max_completion_tokens,
+            "pricing_source": "provider_direct",
+        }
+        for name, slug, prompt, completion, cache_read, max_completion_tokens in (
+            ("DeepInfra", "deepinfra", "0.00000045", "0.000003", "0.00000022", 81920),
+            ("Parasail", "parasail", "0.0000005", "0.0000036", "0.0000003", 235929),
         )
     ],
     "pricing_source": "provider_direct",
@@ -912,6 +1062,19 @@ GLM_5_2_ROUTES: tuple[tuple[str, dict[str, Any]], ...] = (
         "max_output_tokens": 262144,
     }),
 )
+
+# TypeSafe's Jev decision row as its models page listed it on 2026-09-30.
+TYPESAFE_JEV = {
+    "id": "typesafe-ai/jev",
+    "upstream_id": "jev-latest",
+    "display_name": "TypeSafe AI Jev",
+    "context_length": 32000,
+    "model_type": "decision",
+    "endpoints": ["decide"],
+    "input_token_price_per_m": 42000,
+    "output_token_price_per_m": 0,
+    "pricing_source": "https://docs.typesafe.ai/models.md",
+}
 
 # Run in the subprocess before the catalog is built.
 USE_PINNED_MANIFESTS = """

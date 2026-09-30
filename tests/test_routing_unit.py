@@ -281,7 +281,20 @@ def test_provider_require_parameters_filters_incompatible_endpoints() -> None:
     )
 
 
-def test_provider_max_price_filters_prompt_and_completion_prices() -> None:
+def test_provider_max_price_filters_prompt_and_completion_prices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Fixture routes, whatever the hosts charge today: one within both caps,
+    # one over the prompt cap and one over the completion cap.
+    drop_routes(monkeypatch, "google/gemma-4-31b-it")
+    for host, prompt, completion in (
+        ("deepinfra", 100_000, 300_000), ("novita", 200_000, 300_000), ("parasail", 100_000, 500_000),
+    ):
+        serve_on_fixture_route(
+            monkeypatch, "google/gemma-4-31b-it", host, author="google-ai-studio",
+            prompt_price_microdollars_per_million_tokens=prompt,
+            completion_price_microdollars_per_million_tokens=completion,
+        )
     candidates = chat_route_endpoint_candidates(
         {
             "model": "google/gemma-4-31b-it",
@@ -292,7 +305,7 @@ def test_provider_max_price_filters_prompt_and_completion_prices() -> None:
         _settings(),
     )
 
-    assert candidates
+    assert [endpoint.provider for _model, endpoint in candidates] == ["deepinfra"]
     assert all(
         endpoint.prompt_price_microdollars_per_million_tokens <= 150_000
         and endpoint.completion_price_microdollars_per_million_tokens <= 400_000

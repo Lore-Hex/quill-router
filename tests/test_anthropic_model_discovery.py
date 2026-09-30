@@ -9,7 +9,11 @@ from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.parsers import anthropic as anthropic_parser
 from scripts.pricing.providers import anthropic
 from tests import catalog_vehicles
-from tests.pinned_manifests import ANTHROPIC_CLAUDE_OPUS_5, serve_manifest_rows
+from tests.pinned_manifests import (
+    ANTHROPIC_CLAUDE_OPUS_5,
+    build_manifest_rows,
+    serve_manifest_rows,
+)
 from trusted_router import catalog_ingest
 from trusted_router.catalog import (
     MODELS,
@@ -338,10 +342,11 @@ def test_anthropic_manifest_writer_publishes_discovered_opus_5(
 def test_opus_5_catalog_is_routable_for_chat_and_messages_but_not_zdr(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    # Opus 5's routes built from its pinned manifest row: how the catalog
-    # publishes a Claude row holds whatever Anthropic lists today.
+    # Opus 5's model and routes built from its pinned manifest row: how the
+    # catalog publishes a Claude row holds whatever Anthropic lists today.
+    models, _ = build_manifest_rows(monkeypatch, tmp_path, "anthropic", [ANTHROPIC_CLAUDE_OPUS_5])
     serve_manifest_rows(monkeypatch, tmp_path, "anthropic", [ANTHROPIC_CLAUDE_OPUS_5])
-    model = MODELS["anthropic/claude-opus-5"]
+    model = models["anthropic/claude-opus-5"]
     endpoints = endpoints_for_model(model.id)
     anthropic_endpoints = [
         endpoint for endpoint in endpoints if endpoint.provider == "anthropic"
@@ -381,6 +386,13 @@ def test_anthropic_serves_claude_opus_5() -> None:
         for endpoint in endpoints_for_model("anthropic/claude-opus-5")
         if endpoint.provider == "anthropic"
     } == {"Credits", "BYOK"}
+
+
+@pytest.mark.provider_health
+def test_the_catalog_advertises_claude_opus_5_with_a_1m_context() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    assert MODELS["anthropic/claude-opus-5"].context_length == 1_000_000
 
 
 def test_anthropic_rotation_uses_authenticated_manifest_not_snapshot_only_models() -> None:
