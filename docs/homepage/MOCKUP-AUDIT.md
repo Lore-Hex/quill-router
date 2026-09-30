@@ -4,7 +4,7 @@ Compared the current application to `nyte-design-preview/dist/trustedrouter/inde
 
 ## Current implementation status
 
-All nine modules, catalog search/prices, status and captured request presentation are implemented. Verification now features Open source at upper left with three shorter propositions stacked beside it; all source links/checklist items remain. Current remaining work is visual consistency, homepage-specific analytics integration, broader destination/sign-in checks and full release gates. Historical rows below describe prior passes; this status and the latest README entries supersede them.
+All nine modules, catalog search/prices, status and captured request presentation are implemented. Verification now features Open source at upper left with three shorter propositions stacked beside it; all source links/checklist items remain. The September 30 consistency pass and name-only homepage analytics integration are complete locally. Remaining release work is broader destination/sign-in checks, inherited-claim confirmation and full release gates; see the latest README for environment blockers and the read-only review bridge limitation. Historical rows below describe prior passes; this status and the latest README entries supersede them.
 
 ## Latest request panel correction
 

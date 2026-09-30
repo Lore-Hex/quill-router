@@ -35,10 +35,15 @@ mobileDisclosures.forEach(detail=>detail.addEventListener('toggle',()=>{
 }));
 compactContent.addEventListener('change',syncDisclosures);
 syncDisclosures();
-// Homepage-specific events remain local hooks pending the analytics contract.
-// Existing dashboard.js retains the application acquisition/sign-in events.
+// Share the existing first-party acquisition pipeline. Only event names leave
+// the page; search terms, model IDs, clipboard text and properties remain local.
 function track(name, properties={}) {
  document.dispatchEvent(new CustomEvent('trustedrouter:analytics', {detail:{name, properties}}));
+ if(navigator.globalPrivacyControl || navigator.doNotTrack==='1')return;
+ Promise.resolve().then(()=>fetch('/analytics/events',{
+  method:'POST',headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({event:name}),credentials:'same-origin',keepalive:true,
+ })).catch(()=>{}); // Telemetry must never interrupt navigation or interaction.
 }
 let feedbackTimer;
 function feedback(message) {
@@ -151,8 +156,14 @@ $$('[data-tip]').forEach(element=>{
 document.addEventListener('keydown',e=>{if(e.key==='Escape')hideTip();});
 document.addEventListener('pointerdown',e=>{if(tipOwner&&!tipOwner.contains(e.target))hideTip();});
 addEventListener('scroll',hideTip,{passive:true});addEventListener('resize',hideTip);
-$$('#faq details').forEach((el,index)=>el.addEventListener('toggle',()=>{if(el.open)track('home.faq_opened',{question_index:index});}));
+$$('#faq details').forEach((el,index)=>{
+ let wasOpen=el.open;
+ el.addEventListener('toggle',()=>{
+  if(el.open&&!wasOpen)track('home.faq_opened',{question_index:index});
+  wasOpen=el.open;
+ });
+});
 $$('.trc .m a').forEach(a=>a.addEventListener('click',()=>track('home.catalog_row_clicked',{model_id:a.href.split('/models/')[1]})));
-$$('.btnp,.agent,.signin').forEach(a=>a.addEventListener('click',()=>track('home.cta_clicked',{module:a.closest('footer')?'footer':a.closest('#migrate')?'migration':'hero',cta:'api_key'})));
+$$('a.btnp,a.agent,a.signin').forEach(a=>a.addEventListener('click',()=>track('home.cta_clicked',{module:a.closest('footer')?'footer':a.closest('#migrate')?'migration':'hero',cta:'api_key'})));
 
 })();
