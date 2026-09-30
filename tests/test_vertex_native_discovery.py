@@ -264,8 +264,6 @@ def test_vertex_retry_machine_holds_but_never_clear_operator_hold(
 
 
 def test_vertex_current_chat_manifest_routes_are_published() -> None:
-    from trusted_router.catalog import MODEL_ENDPOINTS
-
     manifest = vertex._manifest_rows(vertex.MANIFEST_PATH)
     built = catalog_vehicles.registry_endpoints()
     for model_id, row in manifest.items():
@@ -277,7 +275,7 @@ def test_vertex_current_chat_manifest_routes_are_published() -> None:
             assert endpoint.upstream_id == row["upstream_id"]
             assert endpoint.prompt_price_microdollars_per_million_tokens > 0
             assert endpoint.completion_price_microdollars_per_million_tokens > 0
-    assert "google/gemini-3.8-flash-cyber@google-vertex/prepaid" not in MODEL_ENDPOINTS
+    assert "google/gemini-3.8-flash-cyber@google-vertex/prepaid" not in built
 
 
 @pytest.mark.provider_health

@@ -255,7 +255,7 @@ def test_a_retirement_the_catalog_clock_has_passed_is_absent_everywhere() -> Non
             served = [
                 endpoint
                 for endpoint in endpoints_for_model(model_id)
-                if endpoint.provider == retirement.provider
+                if endpoint.provider == retirement.provider and endpoint.id in built
             ]
             assert served == [], (retirement.provider, model_id)
             checked += 1

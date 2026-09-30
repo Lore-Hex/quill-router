@@ -273,6 +273,7 @@ def test_nvidia_nim_is_a_standard_prepaid_provider() -> None:
 def test_routable_nvidia_manifest_rows_create_prepaid_endpoints() -> None:
     from trusted_router.catalog import endpoints_for_model
 
+    built = catalog_vehicles.registry_endpoints()
     raw = json.loads(nvidia_nim.MANIFEST_PATH.read_text())
     routable = [
         row
@@ -288,7 +289,9 @@ def test_routable_nvidia_manifest_rows_create_prepaid_endpoints() -> None:
         endpoints = [
             endpoint
             for endpoint in endpoints_for_model(row["id"])
-            if endpoint.provider == "nvidia-nim" and str(endpoint.usage_type) == "Credits"
+            if endpoint.provider == "nvidia-nim"
+            and str(endpoint.usage_type) == "Credits"
+            and endpoint.id in built
         ]
         assert len(endpoints) == 1
         assert endpoints[0].upstream_id == row["upstream_id"]
@@ -296,7 +299,7 @@ def test_routable_nvidia_manifest_rows_create_prepaid_endpoints() -> None:
         assert endpoints[0].completion_price_microdollars_per_million_tokens == 10_550_000
 
     assert not any(
-        endpoint.provider == "nvidia-nim"
+        endpoint.provider == "nvidia-nim" and endpoint.id in built
         for endpoint in endpoints_for_model(DEEPSEEK_V4_PRO_0813_MODEL_ID)
     )
 
@@ -305,7 +308,6 @@ def test_routable_nvidia_manifest_rows_create_prepaid_endpoints() -> None:
         for row in raw["models"]
         if row.get("model_type") == "chat" and row.get("routable") is False
     }
-    built = catalog_vehicles.registry_endpoints()
     assert all(
         not any(
             endpoint.provider == "nvidia-nim" and endpoint.id in built

@@ -131,7 +131,9 @@ def test_wave3_ready_and_pending_providers_are_fail_closed() -> None:
 
 
 def test_wave3_manifests_publish_only_canaried_priced_chat_routes() -> None:
-    endpoint_providers = {endpoint.provider for endpoint in MODEL_ENDPOINTS.values()}
+    endpoint_providers = {
+        endpoint.provider for endpoint in catalog_vehicles.registry_endpoints().values()
+    }
     assert "krea" not in endpoint_providers
     # A ready provider publishes routes while its manifest has a canaried,
     # priced row; one the refresh tombstoned entirely is simply not expected.

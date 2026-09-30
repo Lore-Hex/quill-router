@@ -123,7 +123,7 @@ def _assert_a_listed_route_is_prepaid_at_its_price(provider: str, model_id: str)
     row = _listed_row(provider, model_id)
     if row is None:
         return
-    endpoint = MODEL_ENDPOINTS[f"{model_id}@{provider}/prepaid"]
+    endpoint = catalog_vehicles.registry_endpoints()[f"{model_id}@{provider}/prepaid"]
     assert endpoint.upstream_id == (row.get("upstream_id") or model_id)
     assert endpoint.prompt_price_microdollars_per_million_tokens == _customer_price(
         row["input_token_price_per_m"]
@@ -239,15 +239,16 @@ def test_anthropic_models_credits_route_first_party_only() -> None:
     # Policy: Anthropic-authored (anthropic/*) models route via Anthropic
     # directly for Credits, never resellers (which list Claude ids they mostly
     # don't serve). BYOK is untouched — a customer's own reseller key is theirs.
+    built = catalog_vehicles.registry_endpoints()
     credits_providers = {
         e.provider
-        for e in MODEL_ENDPOINTS.values()
+        for e in built.values()
         if e.model_id.startswith("anthropic/") and e.usage_type == "Credits"
     }
     assert credits_providers <= {"anthropic"}
     # Anthropic-direct Credits lineup stays fully routable.
     for model_id in _authoritative_provider_model_ids("anthropic"):
-        assert f"{model_id}@anthropic/prepaid" in MODEL_ENDPOINTS, model_id
+        assert f"{model_id}@anthropic/prepaid" in built, model_id
     # A reseller that lists Claude keeps its BYOK route but loses Credits.
     claude = "anthropic/claude-fixture"
     routes = {
@@ -286,7 +287,9 @@ def test_cerebras_native_routes_use_verified_upstream_ids() -> None:
 def test_nebius_deprecated_june_2026_models_are_not_routable() -> None:
     deprecated = _PROVIDER_DEPRECATED_UPSTREAM_MODELS["nebius"]
     nebius_endpoints = [
-        endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "nebius"
+        endpoint
+        for endpoint in catalog_vehicles.registry_endpoints().values()
+        if endpoint.provider == "nebius"
     ]
 
     for endpoint in nebius_endpoints:
@@ -297,19 +300,21 @@ def test_nebius_deprecated_june_2026_models_are_not_routable() -> None:
 def test_nebius_deprecation_does_not_remove_other_provider_routes() -> None:
     # Nebius's retirements name these model families' upstream ids. A host
     # that still lists the model keeps its route.
+    built = catalog_vehicles.registry_endpoints()
     for endpoint_id in (
         "minimax/minimax-m2.5@minimax/byok",
         "moonshotai/kimi-k2.6@kimi/prepaid",
         "openai/gpt-oss-120b@cerebras/prepaid",
         "z-ai/glm-5@zai/prepaid",
     ):
-        assert endpoint_id in MODEL_ENDPOINTS or _delisted(endpoint_id), endpoint_id
+        assert endpoint_id in built or _delisted(endpoint_id), endpoint_id
 
 
 def test_tinfoil_june_2026_deprecations_and_replacements_are_routable() -> None:
     deprecated = _PROVIDER_DEPRECATED_UPSTREAM_MODELS["tinfoil"]
+    built = catalog_vehicles.registry_endpoints()
     tinfoil_endpoints = [
-        endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "tinfoil"
+        endpoint for endpoint in built.values() if endpoint.provider == "tinfoil"
     ]
 
     for endpoint in tinfoil_endpoints:
@@ -320,39 +325,40 @@ def test_tinfoil_june_2026_deprecations_and_replacements_are_routable() -> None:
     for model_id in ("z-ai/glm-5.3", "google/gemma-4-31b-it"):
         _assert_a_listed_route_is_prepaid_at_its_price("tinfoil", model_id)
 
-    assert "z-ai/glm-5.1@tinfoil/prepaid" not in MODEL_ENDPOINTS
-    assert "z-ai/glm-5.1@tinfoil/byok" not in MODEL_ENDPOINTS
-    assert "qwen/qwen3-vl-30b-a3b-instruct@tinfoil/prepaid" not in MODEL_ENDPOINTS
-    assert "qwen/qwen3-vl-30b-a3b-instruct@tinfoil/byok" not in MODEL_ENDPOINTS
+    assert "z-ai/glm-5.1@tinfoil/prepaid" not in built
+    assert "z-ai/glm-5.1@tinfoil/byok" not in built
+    assert "qwen/qwen3-vl-30b-a3b-instruct@tinfoil/prepaid" not in built
+    assert "qwen/qwen3-vl-30b-a3b-instruct@tinfoil/byok" not in built
     # Provider-scoped deprecation: non-Tinfoil routes for these model families
     # remain available when their provider still serves them.
     for endpoint_id in (
         "z-ai/glm-5.1@zai/prepaid",
         "qwen/qwen3-vl-30b-a3b-instruct@novita/prepaid",
     ):
-        assert endpoint_id in MODEL_ENDPOINTS or _delisted(endpoint_id), endpoint_id
+        assert endpoint_id in built or _delisted(endpoint_id), endpoint_id
 
 
 def test_novita_july_2026_retirements_and_replacements_are_routable() -> None:
     deprecated = _PROVIDER_DEPRECATED_UPSTREAM_MODELS["novita"]
+    built = catalog_vehicles.registry_endpoints()
     novita_endpoints = [
-        endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "novita"
+        endpoint for endpoint in built.values() if endpoint.provider == "novita"
     ]
 
     for endpoint in novita_endpoints:
         assert endpoint.model_id not in deprecated
         assert endpoint.upstream_id not in deprecated
 
-    assert "deepseek/deepseek-r1-distill-qwen-14b@novita/prepaid" not in MODEL_ENDPOINTS
-    assert "deepseek/deepseek-r1-distill-qwen-14b@novita/byok" not in MODEL_ENDPOINTS
-    assert "deepseek/deepseek-r1-distill-qwen-32b@novita/prepaid" not in MODEL_ENDPOINTS
-    assert "deepseek/deepseek-r1-distill-qwen-32b@novita/byok" not in MODEL_ENDPOINTS
-    assert "qwen/qwen3-next-80b-a3b-thinking@novita/prepaid" not in MODEL_ENDPOINTS
-    assert "qwen/qwen3-next-80b-a3b-thinking@novita/byok" not in MODEL_ENDPOINTS
-    assert "qwen/qwen3-vl-30b-a3b-thinking@novita/prepaid" not in MODEL_ENDPOINTS
-    assert "qwen/qwen3-vl-30b-a3b-thinking@novita/byok" not in MODEL_ENDPOINTS
-    assert "qwen/qwen3-vl-8b-instruct@novita/prepaid" not in MODEL_ENDPOINTS
-    assert "qwen/qwen3-vl-8b-instruct@novita/byok" not in MODEL_ENDPOINTS
+    assert "deepseek/deepseek-r1-distill-qwen-14b@novita/prepaid" not in built
+    assert "deepseek/deepseek-r1-distill-qwen-14b@novita/byok" not in built
+    assert "deepseek/deepseek-r1-distill-qwen-32b@novita/prepaid" not in built
+    assert "deepseek/deepseek-r1-distill-qwen-32b@novita/byok" not in built
+    assert "qwen/qwen3-next-80b-a3b-thinking@novita/prepaid" not in built
+    assert "qwen/qwen3-next-80b-a3b-thinking@novita/byok" not in built
+    assert "qwen/qwen3-vl-30b-a3b-thinking@novita/prepaid" not in built
+    assert "qwen/qwen3-vl-30b-a3b-thinking@novita/byok" not in built
+    assert "qwen/qwen3-vl-8b-instruct@novita/prepaid" not in built
+    assert "qwen/qwen3-vl-8b-instruct@novita/byok" not in built
 
     # The replacements are routable while Novita lists them.
     for model_id in (
@@ -361,21 +367,22 @@ def test_novita_july_2026_retirements_and_replacements_are_routable() -> None:
         "qwen/qwen3.6-35b-a3b",
     ):
         for endpoint_id in (f"{model_id}@novita/prepaid", f"{model_id}@novita/byok"):
-            assert endpoint_id in MODEL_ENDPOINTS or _delisted(endpoint_id), endpoint_id
+            assert endpoint_id in built or _delisted(endpoint_id), endpoint_id
 
 
 def test_friendli_july_2026_glm_5_deprecation_does_not_remove_glm_52() -> None:
     deprecated = _PROVIDER_DEPRECATED_UPSTREAM_MODELS["friendli"]
+    built = catalog_vehicles.registry_endpoints()
     friendli_endpoints = [
-        endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "friendli"
+        endpoint for endpoint in built.values() if endpoint.provider == "friendli"
     ]
 
     for endpoint in friendli_endpoints:
         assert endpoint.model_id not in deprecated
         assert endpoint.upstream_id not in deprecated
 
-    assert "z-ai/glm-5@friendli/prepaid" not in MODEL_ENDPOINTS
-    assert "z-ai/glm-5@friendli/byok" not in MODEL_ENDPOINTS
+    assert "z-ai/glm-5@friendli/prepaid" not in built
+    assert "z-ai/glm-5@friendli/byok" not in built
     # Provider-scoped deprecation: GLM 5.2 on Friendli and other GLM-5 routes
     # remain available if their providers still serve them.
     for endpoint_id in (
@@ -383,7 +390,7 @@ def test_friendli_july_2026_glm_5_deprecation_does_not_remove_glm_52() -> None:
         "z-ai/glm-5.2@friendli/byok",
         "z-ai/glm-5@zai/prepaid",
     ):
-        assert endpoint_id in MODEL_ENDPOINTS or _delisted(endpoint_id), endpoint_id
+        assert endpoint_id in built or _delisted(endpoint_id), endpoint_id
 
 
 def test_route_health_first_sweep_dead_routes_are_not_routable() -> None:
@@ -416,10 +423,11 @@ def test_route_health_first_sweep_dead_routes_are_not_routable() -> None:
 
 def test_glm_53_flash_publishes_all_verified_provider_routes() -> None:
     model_id = "z-ai/glm-5.3-flash"
+    built = catalog_vehicles.registry_endpoints()
     credits = {
         endpoint.provider: endpoint.upstream_id
         for endpoint in endpoints_for_model(model_id)
-        if endpoint.usage_type == "Credits"
+        if endpoint.usage_type == "Credits" and endpoint.id in built
     }
 
     # Each verified host that lists the model has a Credits route on the exact
@@ -467,14 +475,15 @@ def test_gemini_native_supplement_publishes_missing_text_models() -> None:
 def test_google_products_have_distinct_capabilities() -> None:
     # Vertex routes are prepaid-only; AI Studio routes offer prepaid and BYOK,
     # while each product lists the model.
+    built = catalog_vehicles.registry_endpoints()
     for model_id in ("google/gemini-2.5-flash", "google/gemini-3.6-flash"):
-        assert f"{model_id}@google-vertex/byok" not in MODEL_ENDPOINTS
+        assert f"{model_id}@google-vertex/byok" not in built
         for endpoint_id in (
             f"{model_id}@google-vertex/prepaid",
             f"{model_id}@google-ai-studio/prepaid",
             f"{model_id}@google-ai-studio/byok",
         ):
-            assert endpoint_id in MODEL_ENDPOINTS or _delisted(endpoint_id), endpoint_id
+            assert endpoint_id in built or _delisted(endpoint_id), endpoint_id
 
 
 def test_llama_33_70b_no_longer_credits_routes_to_cerebras(

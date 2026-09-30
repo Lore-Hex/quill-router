@@ -1846,8 +1846,8 @@ def test_azure_manifest_registers_prepaid_only_gateway_routes() -> None:
     assert all(not row["id"].startswith("anthropic/") for row in rows)
     assert all(row["id"] != "openai/gpt-5.4-mini" for row in rows)
     assert all(row["id"] != "x-ai/grok-4.3" for row in rows)
-    assert "x-ai/grok-4.3@azure/prepaid" not in MODEL_ENDPOINTS
     built = catalog_vehicles.registry_endpoints()
+    assert "x-ai/grok-4.3@azure/prepaid" not in built
     for row in rows:
         model_id = row["id"]
         if row.get("routable") is False:

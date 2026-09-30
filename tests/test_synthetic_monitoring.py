@@ -3392,6 +3392,7 @@ async def test_image_generation_job_confirms_a_text_only_response(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.catalog_as_built
 def test_rotation_candidates_cover_credits_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
     from trusted_router.catalog import _PROVIDER_DEPRECATED_UPSTREAM_MODELS
 
