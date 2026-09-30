@@ -8,6 +8,14 @@ inserting a new helper between `@spanner_rpc_budget(...)` and
 function that writes billing state unguarded -- while still compiling, still
 importing, and still passing every behavioural test in the suite.
 
+Warm lookup authorize now spends five sequential Spanner operations (six with
+trust armed): one strong auth-context/BYOK/boot snapshot, the idempotency read,
+credit reserve, the key/reservation/authorization batch, and commit. Trust adds
+the pause-state read. Both header-less and boot-header requests have this budget:
+from 6/7 to 5/6 without a header and 7/8 to 5/6 with one (unarmed/armed).
+The exact sequence is pinned in
+``test_gateway_authorize_spanner_operations.py``; the 20-second deadline stays.
+
 That is exactly what happened on the settle-failover-Sentry branch: the budget
 landed on an observability helper. A behavioural test cannot catch it, because
 the budget only changes what happens under RPC pressure. So this asserts the

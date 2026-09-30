@@ -3928,6 +3928,95 @@
           "types": {}
         }
       ]
+    },
+    "storage_gcp:constants:3": {
+      "fingerprint": "7b54f603579bb90731d17197da95a2f7815fe7f62aad799257dd47e835e69cb2",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "lookup_hash": "STRING",
+            "providers": "ARRAY<STRING>",
+            "boot_kid": "STRING"
+          },
+          "values": {
+            "providers": [],
+            "boot_kid": null
+          }
+        },
+        {
+          "bindings": {},
+          "types": {
+            "lookup_hash": "STRING",
+            "providers": "ARRAY<STRING>",
+            "boot_kid": "STRING"
+          },
+          "values": {
+            "providers": [],
+            "boot_kid": "fixture-boot-kid"
+          }
+        },
+        {
+          "bindings": {},
+          "types": {
+            "lookup_hash": "STRING",
+            "providers": "ARRAY<STRING>",
+            "boot_kid": "STRING"
+          },
+          "values": {
+            "providers": [
+              "anthropic"
+            ],
+            "boot_kid": null
+          }
+        },
+        {
+          "bindings": {},
+          "types": {
+            "lookup_hash": "STRING",
+            "providers": "ARRAY<STRING>",
+            "boot_kid": "STRING"
+          },
+          "values": {
+            "providers": [
+              "anthropic"
+            ],
+            "boot_kid": "fixture-boot-kid"
+          }
+        },
+        {
+          "bindings": {},
+          "types": {
+            "lookup_hash": "STRING",
+            "providers": "ARRAY<STRING>",
+            "boot_kid": "STRING"
+          },
+          "values": {
+            "providers": [
+              "anthropic",
+              "gemini",
+              "google-ai-studio"
+            ],
+            "boot_kid": null
+          }
+        },
+        {
+          "bindings": {},
+          "types": {
+            "lookup_hash": "STRING",
+            "providers": "ARRAY<STRING>",
+            "boot_kid": "STRING"
+          },
+          "values": {
+            "providers": [
+              "anthropic",
+              "gemini",
+              "google-ai-studio"
+            ],
+            "boot_kid": "fixture-boot-kid"
+          }
+        }
+      ]
     }
   },
   "sinks": {
@@ -3960,7 +4049,7 @@
     "storage_gcp:SpannerBigtableStore.backfill_owner_inventory.txn": "154bb298464bdc8cbc241fb69c784a168d9221877465632758442a69823d8040",
     "storage_gcp:SpannerBigtableStore.process_trust_demotion_remainders": "2eaa77fe0f06dab5095648f2052cea02247fa3723f6e207ed1abda8ebcae2e20",
     "storage_gcp:SpannerBigtableStore._demote_owner_trust_tx": "3735ec2b15cfed0435caf727abd7634a1d8041ee62f5354ff07a06e26b2f9c53",
-    "storage_gcp:SpannerBigtableStore.gateway_api_key_auth_context": "2d834741576b171241d60bb29782ef5c4339a92004733e807ba113ddcfc9dd99",
+    "storage_gcp:SpannerBigtableStore.gateway_api_key_auth_context": "807548e250b75f7de99b97459a6dbc475f60631cd4453fa44023d13a47cf0257",
     "storage_gcp:SpannerBigtableStore.api_key_auth_context": "00bbec2cdc8b0d46e1f86a2db2b9014f2c5add8829401d276cb83a74db08f996",
     "storage_gcp:SpannerBigtableStore.workspace_owner_usernames.batch": "beb26aae4436137f6613743edbc2476607aaa0874457e122489a7554df57ff26",
     "storage_gcp:SpannerBigtableStore.mark_earnings_cashout.txn": "446039cd7c42b0b03d335359e589f28eefa2697b2cb5b6a231cc775b997c6d33",

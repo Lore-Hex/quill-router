@@ -340,6 +340,32 @@ _API_KEY_AUTH_CONTEXT_SQL = """
 """
 
 
+_GATEWAY_API_KEY_AUTH_CONTEXT_SQL = """
+    /* api_key_auth_context_with_byok */
+    SELECT key_record.body, workspace_record.body,
+      ARRAY(
+        SELECT AS STRUCT provider, byok_record.body
+        FROM UNNEST(@providers) AS provider
+        LEFT JOIN tr_entities AS byok_record
+          ON byok_record.kind='byok'
+         AND byok_record.id=CONCAT(JSON_VALUE(key_record.body, '$.workspace_id'), '#', provider)
+      ) AS byok_configs,
+      boot_record.body
+    FROM tr_entities AS lookup_record
+    JOIN tr_entities AS key_record
+      ON key_record.kind='api_key'
+     AND key_record.id=JSON_VALUE(lookup_record.body, '$.key_id')
+    LEFT JOIN tr_entities AS workspace_record
+      ON workspace_record.kind='workspace'
+     AND workspace_record.id=JSON_VALUE(key_record.body, '$.workspace_id')
+    LEFT JOIN tr_entities AS boot_record
+      ON boot_record.kind='spend_lease_boot'
+     AND boot_record.id=@boot_kid
+    WHERE lookup_record.kind='api_key_lookup'
+      AND lookup_record.id=@lookup_hash
+"""
+
+
 def _auth_record(raw: str, cls: type[T]) -> T:
     data = json.loads(raw)
     known = {field.name for field in dataclasses.fields(cast(Any, cls))}
@@ -2726,7 +2752,10 @@ class SpannerBigtableStore:
     def get_key_by_raw(self, raw_key: str) -> ApiKey | None:
         return self.api_keys.get_by_raw(raw_key)
 
-    def gateway_api_key_auth_context(self, lookup_hash: str) -> ApiKeyAuthContext | None:
+    def gateway_api_key_auth_context(
+        self, lookup_hash: str, providers: list[str] | None = None,
+        boot_kid: str | None = None,
+    ) -> ApiKeyAuthContext | None:
         """Resolve enclave metadata in one strong, primary-key-bounded query.
 
         Every join constrains both (kind, id), the existing tr_entities primary
@@ -2736,9 +2765,12 @@ class SpannerBigtableStore:
         """
         with self._database.snapshot() as snapshot:
             rows = list(snapshot.execute_sql(
-                _API_KEY_AUTH_CONTEXT_SQL,
-                params={"lookup_hash": lookup_hash},
-                param_types={"lookup_hash": self._param_types.STRING},
+                _GATEWAY_API_KEY_AUTH_CONTEXT_SQL,
+                params={"lookup_hash": lookup_hash, "providers": sorted(set(providers or [])),
+                        "boot_kid": boot_kid},
+                param_types={"lookup_hash": self._param_types.STRING,
+                             "providers": self._param_types.Array(self._param_types.STRING),
+                             "boot_kid": self._param_types.STRING},
             ))
         if not rows:
             return None
@@ -2746,7 +2778,16 @@ class SpannerBigtableStore:
         workspace = _auth_record(str(rows[0][1]), Workspace) if rows[0][1] is not None else None
         if workspace is not None and workspace.deleted:
             workspace = None
-        return ApiKeyAuthContext(api_key=api_key, workspace=workspace)
+        configs = {
+            str(provider): _auth_record(str(body), ByokProviderConfig) if body is not None else None
+            for provider, body in rows[0][2]
+        }
+        return ApiKeyAuthContext(
+            api_key=api_key, workspace=workspace,
+            byok_configs=configs if providers is not None else None,
+            boot_record=_auth_record(str(rows[0][3]), SpendLeaseBoot) if rows[0][3] is not None else None,
+            boot_record_loaded=boot_kid is not None,
+        )
 
     def api_key_auth_context(self, raw_key: str) -> ApiKeyAuthContext | None:
         """Resolve and verify an API key with its workspace in one strong RPC."""

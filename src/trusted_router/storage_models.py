@@ -1907,11 +1907,27 @@ class SessionAuthContext:
 
 
 @dataclass(frozen=True)
+class SpendLeaseBoot:
+    kid: str
+    jwk: dict[str, str]
+    approved: bool  # At-registration observation only; never an authorization gate.
+    verified: bool
+    image_digest: str
+    attestation_kind: str
+    registered_at: str
+
+
+@dataclass(frozen=True)
 class ApiKeyAuthContext:
     """Strong, point-in-time view used to authenticate an API key."""
 
     api_key: ApiKey
     workspace: Workspace | None
+    # None means credentials were not requested; {} is a complete empty result.
+    byok_configs: dict[str, ByokProviderConfig | None] | None = None
+    boot_record: SpendLeaseBoot | None = None
+    # Distinguish a completed missing-row lookup from an unfetched boot.
+    boot_record_loaded: bool = False
 
 
 @dataclass

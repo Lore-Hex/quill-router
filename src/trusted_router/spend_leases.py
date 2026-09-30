@@ -36,6 +36,7 @@ from trusted_router.openai_service_tiers import (
 )
 from trusted_router.pricing import PriceTier
 from trusted_router.receipt_keys import b64url_decode, b64url_encode, normalize_receipt_jwk
+from trusted_router.storage_models import SpendLeaseBoot as SpendLeaseBoot
 from trusted_router.types import UsageType
 
 SPEND_LEASE_TYP = "spend-lease+jws"
@@ -123,17 +124,6 @@ def spend_lease_scope_salt(idempotency_scope: str) -> str:
     """Return the stable four-hex-character Spanner arbitration key prefix."""
 
     return hashlib.sha256(idempotency_scope.encode("utf-8")).hexdigest()[:4]
-
-
-@dataclass(frozen=True)
-class SpendLeaseBoot:
-    kid: str
-    jwk: dict[str, str]
-    approved: bool  # At-registration observation only; never an authorization gate.
-    verified: bool
-    image_digest: str
-    attestation_kind: str
-    registered_at: str
 
 
 @dataclass(frozen=True)

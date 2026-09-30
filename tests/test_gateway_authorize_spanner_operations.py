@@ -27,12 +27,12 @@ from trusted_router.config import Settings
 from trusted_router.routes.internal import gateway
 from trusted_router.schemas import GatewayAuthorizeRequest
 from trusted_router.storage import CreditAccount, Workspace, configure_store
-from trusted_router.storage_gcp import _API_KEY_AUTH_CONTEXT_SQL, SpannerBigtableStore
+from trusted_router.storage_gcp import _GATEWAY_API_KEY_AUTH_CONTEXT_SQL, SpannerBigtableStore
 from trusted_router.storage_gcp_authorize import AuthorizeOutcome
 from trusted_router.storage_gcp_counter_dml import RESERVATION_COLUMNS
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
 from trusted_router.storage_gcp_request_records import _INSERT_GATEWAY_AUTHORIZATION_SQL
-from trusted_router.storage_models import ApiKey, ApiKeyAuthContext, CreditProvenance
+from trusted_router.storage_models import ApiKey, ApiKeyAuthContext, CreditProvenance, OAuthApp
 
 
 def _request() -> Request:
@@ -474,21 +474,34 @@ def spanner_operations(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, 
 
 
 @pytest.mark.parametrize("armed", [False, True])
+@pytest.mark.parametrize("with_boot", [False, True])
 def test_warm_lookup_authorize_exact_sequence_and_contents(
-    armed: bool, metadata_catalog: None, spanner_operations: list[tuple[str, str, dict]],
+    armed: bool, with_boot: bool, metadata_catalog: None, spanner_operations: list[tuple[str, str, dict]],
 ) -> None:
     store, database, key = _seed_typed_gateway_store()
     store.trust_settings = Settings(environment="test", spend_lease_trust_eligibility_enabled=armed)
     settings = Settings(environment="test")
     # Warm both the empty-broadcast and credit-configuration caches through authorize.
     gateway._authorize_gateway_sync(_request(), _lookup_body(key, idempotency_key="warmup"), settings)
+    from tests.conformance.test_gateway_auth_boot_fold import signed_request
+
+    request, body, raw_body, boot = signed_request(store, key)
+    settings = Settings(
+        environment="test", stage_d_eligibility_enabled=True, stage_d_pilot_workspace_ids="",
+        spend_lease_accepted_gcp_image_digests=boot.image_digest,
+    )
+    if not with_boot:
+        request = _request()
     spanner_operations.clear()
     database.snapshot_calls.clear()
-    response = gateway._authorize_gateway_sync(_request(), _lookup_body(key), settings)["data"]
+    response = gateway._authorize_gateway_sync(request, body, settings, raw_body)["data"]
+    assert response["stage_d"] == {
+        "eligible": with_boot, "reason": "ok" if with_boot else "boot_not_accepted",
+    }
     operations = spanner_operations
-    # Warm lookup: 2 metadata reads + idempotency + credit + batch + commit.
+    # Warm lookup: auth + BYOK together, idempotency + credit + batch + commit.
     # Trust adds its selected-shard read; pre-6a had one extra key RPC.
-    assert len(operations) == 6 + int(armed)
+    assert len(operations) == 5 + int(armed)
     assert operations[-2][0] == "T1 BATCH"
     batch = operations[-2][2]["statements"]
     assert len(batch) == 3
@@ -497,10 +510,18 @@ def test_warm_lookup_authorize_exact_sequence_and_contents(
     operations = [*operations[:-2], *[
         ("T1 DML", " ".join(sql.split()), params) for sql, params, _ in batch
     ], operations[-1]]
-    assert operations[:2] == [
+    assert operations[:1] == [
         ("RO", " ".join("""
-            /* api_key_auth_context */
-            SELECT key_record.body, workspace_record.body
+            /* api_key_auth_context_with_byok */
+            SELECT key_record.body, workspace_record.body,
+              ARRAY(
+                SELECT AS STRUCT provider, byok_record.body
+                FROM UNNEST(@providers) AS provider
+                LEFT JOIN tr_entities AS byok_record
+                  ON byok_record.kind='byok'
+                 AND byok_record.id=CONCAT(JSON_VALUE(key_record.body, '$.workspace_id'), '#', provider)
+              ) AS byok_configs,
+              boot_record.body
             FROM tr_entities AS lookup_record
             JOIN tr_entities AS key_record
               ON key_record.kind='api_key'
@@ -508,27 +529,31 @@ def test_warm_lookup_authorize_exact_sequence_and_contents(
             LEFT JOIN tr_entities AS workspace_record
               ON workspace_record.kind='workspace'
              AND workspace_record.id=JSON_VALUE(key_record.body, '$.workspace_id')
+            LEFT JOIN tr_entities AS boot_record
+              ON boot_record.kind='spend_lease_boot'
+             AND boot_record.id=@boot_kid
             WHERE lookup_record.kind='api_key_lookup'
               AND lookup_record.id=@lookup_hash
-        """.split()), {"lookup_hash": key.lookup_hash}),
-        ("RO", "SELECT id, body FROM tr_entities WHERE kind=@kind AND id IN UNNEST(@ids)",
-         {"kind": "byok", "ids": ["ws-rpc#anthropic", "ws-rpc#gemini", "ws-rpc#google-ai-studio"]}),
+        """.split()), {"lookup_hash": key.lookup_hash, "boot_kid": boot.kid if with_boot else None, "providers": sorted({
+            slug for endpoint in MODEL_ENDPOINTS.values() if endpoint.is_byok
+            for slug in gateway.byok_storage_provider_candidates(endpoint.provider)
+        })}),
     ]
-    # No staleness (nor multi-use) option, for either authentication or credentials.
-    assert database.snapshot_calls == [{}, {}]
-    assert operations[2][0:2] == ("T1 SELECT",
+    # Authentication and credentials share one strong, single-use snapshot.
+    assert database.snapshot_calls == [{}]
+    assert operations[1][0:2] == ("T1 SELECT",
         "SELECT reservation_id, credit_reserved_micro, key_reserved_micro, "
         "hold_usage_type, authorization_id, idempotency_fingerprint, settled, "
         "credit_shard, ws_shard, key_shard FROM tr_reservation WHERE idempotency_scope=@scope")
     reservation = operations[-3][2]
-    assert operations[2][2] == {"scope": reservation["idempotency_scope"]}
-    assert operations[3] == ("T1 DML",
+    assert operations[1][2] == {"scope": reservation["idempotency_scope"]}
+    assert operations[2] == ("T1 DML",
         "UPDATE tr_credit_balance SET reserved = reserved + @est "
         "WHERE workspace_id=@ws AND shard=@shard "
         "AND (total_credits - total_usage - reserved) >= @est",
         {"est": reservation["credit_reserved_micro"], "ws": key.workspace_id, "shard": 0})
     if armed:
-        assert operations[4] == ("T1 SELECT",
+        assert operations[3] == ("T1 SELECT",
             "SELECT billing_pause_causes, pause_epoch FROM tr_credit_balance "
             "WHERE workspace_id=@ws AND shard=@shard", {"ws": key.workspace_id, "shard": 0})
     assert operations[-4] == ("T1 DML",
@@ -676,8 +701,7 @@ def test_byok_batch_covers_candidates_aliases_and_removal(
         "secret-anthropic", "secret-google-ai-studio",
     }
     assert [op[1] for op in spanner_operations if op[0] == "RO"] == [
-        " ".join(_API_KEY_AUTH_CONTEXT_SQL.split()),
-        "SELECT id, body FROM tr_entities WHERE kind=@kind AND id IN UNNEST(@ids)",
+        " ".join(_GATEWAY_API_KEY_AUTH_CONTEXT_SQL.split()),
     ]
     # Removing the preferred Google alias must expose the legacy envelope;
     # removing anthropic excludes BOTH candidates on the very next authorize.
@@ -788,3 +812,84 @@ def test_gateway_selects_speculation_from_authenticated_key(
     # The exclusion hint keeps the parent's conditional UPDATE and point-read.
     assert database.transaction_execute_update_calls == int(metadata == 'byok_excluded')
     assert database.transaction_execute_sql_calls == (2 if metadata == 'byok_excluded' else 1)
+
+
+@pytest.mark.parametrize("key_type", ["management", "oauth", "strict", "federated"])
+def test_key_variants_consume_folded_byok(
+    key_type: str, metadata_catalog: None, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, _database, key = _seed_typed_gateway_store()
+    key.management = key_type == "management"
+    key.budget_strict = key_type == "strict"
+    if key_type == "oauth":
+        key.app_id = "fold-app"
+        key.scopes = ["inference"]
+        store.create_oauth_app(OAuthApp(
+            id=key.app_id, owner_user_id="fold-owner", name="Fold", redirect_uris=[],
+        ))
+    if key_type == "federated":
+        key.federated_home = "https://home.invalid"
+        monkeypatch.setattr(gateway, "_federated_key_still_valid", lambda cached, _: cached)
+    store._write_entity("api_key", key.hash, key)
+    config = store.upsert_byok_provider(
+        workspace_id=key.workspace_id, provider="anthropic",
+        secret_ref="fixture/anthropic", key_hint="fixture",  # noqa: S106 - fixture reference
+    )
+
+    def forbidden(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("authorize must consume folded credentials without a second read")
+
+    monkeypatch.setattr(SpannerBigtableStore, "get_byok_providers", forbidden)
+    monkeypatch.setattr(SpannerBigtableStore, "get_byok_provider", forbidden)
+    response = gateway._authorize_gateway_sync(
+        _request(), _lookup_body(key), Settings(environment="test"),
+    )["data"]
+    candidates = [candidate for candidate in response["route_candidates"]
+                  if candidate["usage_type"] == "BYOK"]
+    assert candidates
+    assert all(candidate["byok_secret_ref"] == config.secret_ref for candidate in candidates)
+
+
+@pytest.mark.parametrize("folded", [False, True], ids=["two-queries", "folded"])
+@pytest.mark.parametrize("misconfiguration", ["missing", "invalid_envelope"])
+def test_byok_misconfiguration_keeps_existing_error(
+    folded: bool, misconfiguration: str, metadata_catalog: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.storage_gcp import _API_KEY_AUTH_CONTEXT_SQL, _auth_record
+    from trusted_router.storage_models import EncryptedSecretEnvelope
+
+    store, _database, key = _seed_typed_gateway_store()
+    if not folded:
+        def old_context(self: Any, lookup_hash: str, providers: list[str], boot_kid: str | None = None) -> ApiKeyAuthContext:
+            with self._database.snapshot() as snapshot:
+                rows = list(snapshot.execute_sql(
+                    _API_KEY_AUTH_CONTEXT_SQL, params={"lookup_hash": lookup_hash},
+                    param_types={"lookup_hash": self._param_types.STRING},
+                ))
+            return ApiKeyAuthContext(
+                _auth_record(rows[0][0], ApiKey), _auth_record(rows[0][1], Workspace),
+            )
+        monkeypatch.setattr(SpannerBigtableStore, "gateway_api_key_auth_context", old_context)
+    if misconfiguration == "invalid_envelope":
+        store.upsert_byok_provider(
+            workspace_id=key.workspace_id, provider="anthropic",
+            secret_ref="fixture/anthropic", key_hint="fixture",  # noqa: S106 - fixture reference
+            encrypted_secret=EncryptedSecretEnvelope(
+                algorithm="unsupported", key_ref="fixture", encrypted_dek="dek",
+                dek_nonce="nonce", ciphertext="cipher", nonce="nonce",
+            ),
+        )
+    body = _lookup_body(key)
+    body.provider = {"only": ["anthropic"], "usage": "byok", "allow_fallbacks": False}
+    if misconfiguration == "invalid_envelope":
+        with pytest.raises(ValueError, match="^unsupported encrypted secret envelope algorithm$"):
+            gateway._authorize_gateway_sync(_request(), body, Settings(environment="test"))
+    else:
+        with pytest.raises(HTTPException) as raised:
+            gateway._authorize_gateway_sync(_request(), body, Settings(environment="test"))
+        assert raised.value.status_code == 400
+        assert raised.value.detail == {"error": {
+            "code": 400, "type": "provider_not_supported", "source": "router",
+            "message": "No authorized route candidates are available for this workspace",
+        }}
