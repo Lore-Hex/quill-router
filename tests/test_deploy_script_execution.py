@@ -2444,6 +2444,22 @@ def test_synthetic_jobs_execute_private_ingress_preflight_in_their_own_region(
 
 _SOAK_JOB = "trusted-router-spend-lease-soak-us-central1"
 _SOAK_SCHEDULER = f"{_SOAK_JOB}-every-minute"
+#: Both scripts remove the retired soak schedule and job: the deploy runs the
+#: image refresh for every release until the split billing service exists, so
+#: a cleanup that lived only in synthetic.sh never ran in production.
+_SYNTHETIC_SCRIPTS = (
+    "scripts/deploy/synthetic.sh",
+    "scripts/deploy/synthetic_image_refresh.sh",
+)
+
+
+def _run_synthetic(isolated: DeployScriptHarness, script: str) -> HarnessRun:
+    # synthetic.sh requires the split billing service; the image refresh
+    # refuses one (and the combined-surface bridge).
+    omit_env: tuple[str, ...] = ()
+    if script.endswith("synthetic_image_refresh.sh"):
+        omit_env = ("TR_BILLING_SERVICE", "TR_ALLOW_DEPLOYED_COMBINED_SURFACE")
+    return isolated.run(script, verifier_rc=0, omit_env=omit_env)
 
 
 def _soak_calls(run: HarnessRun, *command: str) -> list[list[str]]:
@@ -2454,13 +2470,14 @@ def _soak_calls(run: HarnessRun, *command: str) -> list[list[str]]:
     ]
 
 
-def test_synthetic_deploy_leaves_the_absent_soak_job_alone(tmp_path: Path) -> None:
+@pytest.mark.parametrize("script", _SYNTHETIC_SCRIPTS, ids=("synthetic", "image_refresh"))
+def test_synthetic_deploy_leaves_the_absent_soak_job_alone(tmp_path: Path, script: str) -> None:
     # The spend-lease soak job and its schedule are retired with the pilot;
     # NOT_FOUND is their steady state. The deploy looks for both and, finding
     # neither, deploys, deletes, pauses and resumes nothing under that name.
     isolated = DeployScriptHarness(tmp_path / "synthetic-soak-absent")
 
-    run = isolated.run("scripts/deploy/synthetic.sh", verifier_rc=0)
+    run = _run_synthetic(isolated, script)
 
     assert run.returncode == 0, summarise(run)
     # Positive control: both existence checks ran, at the retired names.
@@ -2473,11 +2490,12 @@ def test_synthetic_deploy_leaves_the_absent_soak_job_alone(tmp_path: Path) -> No
     assert not _gcloud_calls(run, "scheduler", "jobs", "resume")
 
 
+@pytest.mark.parametrize("script", _SYNTHETIC_SCRIPTS, ids=("synthetic", "image_refresh"))
 def test_synthetic_deploy_deletes_a_surviving_soak_job_and_its_schedule(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    script: str,
 ) -> None:
-    script = "scripts/deploy/synthetic.sh"
     fixture = SCRIPT_FIXTURES[script]
     # Both describes succeed: the retired job and schedule still exist.
     monkeypatch.setitem(
@@ -2492,7 +2510,7 @@ def test_synthetic_deploy_deletes_a_surviving_soak_job_and_its_schedule(
     )
     isolated = DeployScriptHarness(tmp_path / "synthetic-soak-present")
 
-    run = isolated.run(script, verifier_rc=0)
+    run = _run_synthetic(isolated, script)
 
     assert run.returncode == 0, summarise(run)
     (scheduler_delete,) = _soak_calls(run, "scheduler", "jobs", "delete")
@@ -2509,11 +2527,12 @@ def test_synthetic_deploy_deletes_a_surviving_soak_job_and_its_schedule(
     assert not _gcloud_calls(run, "scheduler", "jobs", "resume")
 
 
+@pytest.mark.parametrize("script", _SYNTHETIC_SCRIPTS, ids=("synthetic", "image_refresh"))
 def test_synthetic_deploy_aborts_before_deleting_when_a_soak_lookup_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    script: str,
 ) -> None:
-    script = "scripts/deploy/synthetic.sh"
     fixture = SCRIPT_FIXTURES[script]
     # The schedule lookup is denied (no NOT_FOUND in its answer) while the job
     # lookup succeeds. Nothing may be deleted: removing the job alone would
@@ -2533,7 +2552,7 @@ def test_synthetic_deploy_aborts_before_deleting_when_a_soak_lookup_fails(
     )
     isolated = DeployScriptHarness(tmp_path / "synthetic-soak-denied")
 
-    run = isolated.run(script, verifier_rc=0)
+    run = _run_synthetic(isolated, script)
 
     assert run.returncode != 0, summarise(run)
     assert "cannot read retired spend-lease soak scheduler" in run.stderr
@@ -2607,10 +2626,13 @@ def test_combined_synthetic_refresh_preserves_security_boundaries(tmp_path: Path
             "TR_SYNTHETIC_CONTROL_PLANE_HEALTH_URL=https://trustedrouter.com"
             in " ".join(update)
         )
-    # An image-only refresh owns no schedule: it neither touches the cadence
-    # of the jobs it refreshes nor looks for the retired soak schedule.
-    assert not _gcloud_calls(run, "scheduler")
-    assert not any(_SOAK_JOB in " ".join(call) for call in run.calls)
+    # An image-only refresh owns no schedule for the jobs it refreshes: the
+    # only scheduler it touches is the retired soak cron, and with that cron
+    # absent it only looks for it.
+    scheduler_calls = _gcloud_calls(run, "scheduler")
+    assert scheduler_calls == _soak_calls(run, "scheduler", "jobs", "describe")
+    assert len(scheduler_calls) == 1
+    assert not _soak_calls(run, "run", "jobs", "update")
 
 
 def test_combined_synthetic_refresh_is_a_visible_release_gate() -> None:

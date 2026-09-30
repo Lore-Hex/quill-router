@@ -1438,6 +1438,17 @@ _ROLLOUT_ACTIVE_REVISION_JSON = json.dumps(
 )
 
 
+#: The retired spend-lease soak job and its schedule are already gone:
+#: NOT_FOUND is the steady state, and both synthetic scripts delete only what
+#: a describe still finds. Any other lookup failure aborts the deploy.
+_RETIRED_SOAK_ABSENT = (
+    r"scheduler jobs describe trusted-router-spend-lease-soak-"
+    "\tERROR: (gcloud.scheduler.jobs.describe) NOT_FOUND: Job not found.",
+    r"run jobs describe trusted-router-spend-lease-soak-"
+    "\tERROR: (gcloud.run.jobs.describe) NOT_FOUND: Job "
+    "[trusted-router-spend-lease-soak-us-central1] could not be found.",
+)
+
 SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
     "scripts/deploy/ramp_secondaries.sh": ScriptFixture(
         env={
@@ -1773,16 +1784,7 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
     ),
     "scripts/deploy/synthetic.sh": ScriptFixture(
         env={"TR_BILLING_SERVICE": "trusted-router-billing"},
-        # The retired spend-lease soak job and its schedule are already gone:
-        # NOT_FOUND is the steady state, and synthetic.sh deletes only what a
-        # describe still finds. Any other lookup failure aborts the deploy.
-        failures=(
-            r"scheduler jobs describe trusted-router-spend-lease-soak-"
-            "\tERROR: (gcloud.scheduler.jobs.describe) NOT_FOUND: Job not found.",
-            r"run jobs describe trusted-router-spend-lease-soak-"
-            "\tERROR: (gcloud.run.jobs.describe) NOT_FOUND: Job "
-            "[trusted-router-spend-lease-soak-us-central1] could not be found.",
-        ),
+        failures=_RETIRED_SOAK_ABSENT,
         responses=(
             (
                 r"run services describe trusted-router-billing.*--format=json",
@@ -1804,6 +1806,7 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
             ),
             "SHA": "1234567890abcdef",
         },
+        failures=_RETIRED_SOAK_ABSENT,
         responses=(
             (r"run jobs describe .*--format=json", _SYNTHETIC_COMBINED_JOB_JSON),
         ),
