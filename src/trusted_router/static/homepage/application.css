@@ -354,3 +354,17 @@ footer{background:#070a08;border-top:1px solid #33403a}
  .trs .q{padding-bottom:24px}
  .trft .back-top{justify-content:flex-start;padding:0 0 12px}
 }
+
+/* Desktop section actions sit beside, rather than across from, the heading. */
+@media(min-width:701px){
+ .trc .chd,.trp .ph3{flex-direction:row;align-items:center;justify-content:flex-start;flex-wrap:wrap;gap:24px}
+ .trc .chd h2,.trp .ph3 h2{flex-basis:auto;max-width:none}
+ .trc .catalog-actions{align-self:center}
+}
+.trft .base .r{align-items:center}
+.trft .base .r .back-top-control{order:5;display:inline-flex;align-items:center;justify-content:center;width:44px;min-width:44px;height:44px;padding:0;border:1px solid #33403a;border-radius:50%;color:#adbbb2;text-decoration:none}
+.trft .back-top-control:hover{border-color:#8cab99;color:#edf8f5}
+.trft .back-top-control:focus-visible{outline:3px solid #c0e1ff;outline-offset:3px}
+@media(max-width:600px){.trft .base .r{width:100%;gap:14px}.trft .base .r .back-top-control{margin-left:auto}}
+
+@media(max-width:360px){.trft .base .r{gap:8px;font-size:11px}}
