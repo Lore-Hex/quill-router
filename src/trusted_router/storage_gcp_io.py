@@ -1,12 +1,12 @@
-"""Spanner IO adapter for SpannerBigtableStore feature classes.
+"""Spanner IO adapter for SpannerStore feature classes.
 
 The composed feature stores (SpannerWalletChallenges,
 SpannerVerificationTokens, SpannerEmailBlocks) need a small set of Spanner
 primitives — read/write/batch + transaction runner. Pulling them into a
 typed adapter lets each feature class declare exactly what it depends on
-without importing SpannerBigtableStore (which would be a cycle).
+without importing SpannerStore (which would be a cycle).
 
-The adapter is a plain dataclass holding callables; SpannerBigtableStore
+The adapter is a plain dataclass holding callables; SpannerStore
 wires it up once in __init__ from its own bound methods. There's no logic
 here, just plumbing.
 """

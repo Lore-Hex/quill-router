@@ -1889,7 +1889,7 @@ class SessionAuthContext:
 
 
 @dataclass(frozen=True)
-class SpendLeaseBoot:
+class GatewayBoot:
     """One registered enclave boot: its receipt JWK and attestation facts."""
 
     kid: str

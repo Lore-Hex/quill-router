@@ -22,7 +22,7 @@ from trusted_router.custom_model_billing import (
 from trusted_router.custom_model_markup_billing import (
     custom_model_markup_authorization_id_from_payout_event_id,
 )
-from trusted_router.gateway_boot import SPEND_LEASE_BOOT_KIND, SpendLeaseBoot
+from trusted_router.gateway_boot import GATEWAY_BOOT_KIND, GatewayBoot
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
 from trusted_router.operational_analytics import OperationalAnalyticsClient
 from trusted_router.operational_analytics_freshness import (
@@ -241,7 +241,7 @@ class _AuthorizationReplay(Exception):
 
 #: Whole-call budget for the /status.json outbox-lag read. Same 3s as
 #: `readiness_check`, and the same rule: a public page degrades rather than
-#: waits. See `SpannerBigtableStore.operational_analytics_outbox_freshness`.
+#: waits. See `SpannerStore.operational_analytics_outbox_freshness`.
 OUTBOX_FRESHNESS_TIMEOUT_SECONDS = 3.0
 
 #: How old the Spanner poller's heartbeat may be before /status.json stops
@@ -377,7 +377,7 @@ def _iso_timestamp(value: dt.datetime) -> str:
     return value.astimezone(dt.UTC).isoformat().replace("+00:00", "Z")
 
 
-class SpannerBigtableStore:
+class SpannerStore:
     """Production Spanner store with ClickHouse analytics.
 
     Spanner owns strongly consistent control-plane state: users, orgs, API
@@ -491,7 +491,7 @@ class SpannerBigtableStore:
         )
         configure_spanner_rpc_deadlines(self._database)
         # Composed feature stores. Each owns its own logic and is importable
-        # on its own — keeps the core SpannerBigtableStore body focused on
+        # on its own — keeps the core SpannerStore body focused on
         # identity + credit ledger. Mirrors the InMemoryStore pattern.
 
         from trusted_router.storage_gcp_authorize import ExhaustedKeyCache
@@ -6465,10 +6465,10 @@ class SpannerBigtableStore:
             ],
         )
 
-    def observe_spend_lease_boot(self, record: SpendLeaseBoot) -> SpendLeaseBoot:
-        def txn(transaction: Any) -> SpendLeaseBoot:
+    def observe_gateway_boot(self, record: GatewayBoot) -> GatewayBoot:
+        def txn(transaction: Any) -> GatewayBoot:
             existing = self._read_entity_tx(
-                transaction, SPEND_LEASE_BOOT_KIND, record.kid, SpendLeaseBoot
+                transaction, GATEWAY_BOOT_KIND, record.kid, GatewayBoot
             )
             if existing is not None and (
                 existing.jwk != record.jwk
@@ -6484,13 +6484,13 @@ class SpannerBigtableStore:
                     verified=existing.verified or record.verified,
                     image_digest=record.image_digest or existing.image_digest,
                 )
-            self._write_entity_tx(transaction, SPEND_LEASE_BOOT_KIND, record.kid, merged)
+            self._write_entity_tx(transaction, GATEWAY_BOOT_KIND, record.kid, merged)
             return merged
 
-        return cast(SpendLeaseBoot, self._run_in_transaction(txn))
+        return cast(GatewayBoot, self._run_in_transaction(txn))
 
-    def get_spend_lease_boot(self, kid: str) -> SpendLeaseBoot | None:
-        return self._read_entity(SPEND_LEASE_BOOT_KIND, kid, SpendLeaseBoot)
+    def get_gateway_boot(self, kid: str) -> GatewayBoot | None:
+        return self._read_entity(GATEWAY_BOOT_KIND, kid, GatewayBoot)
 
     def advance_stage_d_policy_watermark(
         self,

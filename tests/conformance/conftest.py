@@ -85,7 +85,7 @@ def _backend(request: pytest.FixtureRequest) -> Store:
 
 
 def _spanner_fake_store() -> Store:
-    """The REAL `SpannerBigtableStore`, over the in-process Spanner fake.
+    """The REAL `SpannerStore`, over the in-process Spanner fake.
 
     This backend executes `storage_gcp.py` without an external service and
     runs unconditionally in CI. That combination is the

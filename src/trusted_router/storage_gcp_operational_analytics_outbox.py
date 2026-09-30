@@ -129,7 +129,7 @@ class SpannerOperationalAnalyticsOutbox:
         days of deleted-row versions and cost 823-957 ms of Spanner CPU per
         execution in production (2026-09-05) when /status.json ran it from
         every instance every minute. /status.json now reads the VM poller's
-        heartbeat instead (``SpannerBigtableStore.operational_analytics_outbox_freshness``).
+        heartbeat instead (``SpannerStore.operational_analytics_outbox_freshness``).
 
         Spanner's column is ``commit_ts``, not ``enqueued_at`` -- the method is
         named for the contract it once fed (``analytics.oldest_enqueued_at`` in

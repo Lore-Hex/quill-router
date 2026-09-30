@@ -205,7 +205,7 @@ def test_spanner_clickhouse_factory_passes_no_bigtable_settings(
         return SimpleNamespace()
 
     monkeypatch.setattr(
-        "trusted_router.storage_gcp.SpannerBigtableStore",
+        "trusted_router.storage_gcp.SpannerStore",
         fake_store,
     )
     settings = SimpleNamespace(

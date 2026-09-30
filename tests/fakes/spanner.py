@@ -166,7 +166,7 @@ class FakeAlreadyExists(_AlreadyExists):
 
 class FakeSpannerDatabase:
     """In-process Spanner replacement that simulates snapshot-isolation
-    conflict-abort. Implements only the surface used by SpannerBigtableStore:
+    conflict-abort. Implements only the surface used by SpannerStore:
     run_in_transaction, batch, snapshot, with execute_sql / insert_or_update /
     delete underneath. Each row carries a monotonic version; on commit, if any
     row in the transaction's read-set has been modified since it was read, the
@@ -4016,7 +4016,7 @@ def make_fake_store(
     generation_records_enabled: bool = False,
     analytics_outbox_enabled: bool = False,
 ) -> tuple[Any, FakeSpannerDatabase]:
-    from trusted_router.storage_gcp import SpannerBigtableStore
+    from trusted_router.storage_gcp import SpannerStore
     from trusted_router.storage_gcp_analytics_outbox import SpannerAnalyticsOutbox
     from trusted_router.storage_gcp_attribution import SpannerAcquisitionAttribution
     from trusted_router.storage_gcp_auth_sessions import SpannerAuthSessions
@@ -4041,7 +4041,7 @@ def make_fake_store(
     from trusted_router.storage_gcp_wallet_challenges import SpannerWalletChallenges
 
     db = FakeSpannerDatabase(ready_barrier=ready_barrier)
-    store = object.__new__(SpannerBigtableStore)
+    store = object.__new__(SpannerStore)
     store._spanner = _SpannerModule
     store._param_types = _ParamTypes
     store._database = db

@@ -84,7 +84,7 @@ from trusted_router.custom_model_markup_billing import (
 from trusted_router.errors import api_error, assert_workspace_billing_active
 from trusted_router.gateway_boot import (
     BootAuthHeader,
-    SpendLeaseBoot,
+    GatewayBoot,
     parse_boot_auth_header,
     verify_boot_auth,
 )
@@ -157,12 +157,12 @@ from trusted_router.routing_state import ROUTING_STATE
 from trusted_router.schemas import (
     GatewayAuthorizeRequest,
     GatewayAuthorizeResponse,
+    GatewayBootRegistrationRequest,
     GatewayHeartbeatRequest,
     GatewayResolveCustomModelRequest,
     GatewaySettleRequest,
     GatewaySettleResponse,
     GatewayValidateRequest,
-    SpendLeaseBootRegistrationRequest,
 )
 from trusted_router.scopes import SCOPE_INFERENCE
 from trusted_router.security import lookup_hash_api_key
@@ -295,7 +295,7 @@ _BROADCAST_EMPTY_CACHE: OrderedDict[str, float] = OrderedDict()
 _BROADCAST_EMPTY_CACHE_LOCK = threading.Lock()
 _STAGE_D_OVERRIDE_LOG_LOCK = threading.Lock()
 _STAGE_D_OVERRIDE_LOGGED = False
-_SPEND_LEASE_WIRE_ATTESTATION_KINDS = {
+_BOOT_WIRE_ATTESTATION_KINDS = {
     "aws": AWS_ATTESTATION_KIND,
     "azure": AZURE_ATTESTATION_KIND,
     "gcp": GCP_ATTESTATION_KIND,
@@ -388,7 +388,7 @@ def _stage_d_accepted_image_digests(
         resolver.kick()
         accepted = resolver.accepted_image_digests()
 
-    override = settings.spend_lease_accepted_gcp_digests
+    override = settings.stage_d_accepted_gcp_digests
     if override:
         global _STAGE_D_OVERRIDE_LOGGED
         with _STAGE_D_OVERRIDE_LOG_LOCK:
@@ -402,9 +402,9 @@ def _stage_d_accepted_image_digests(
     return accepted
 
 
-def _register_spend_lease_boot_sync(
+def _register_gateway_boot_sync(
     request: Request,
-    body: SpendLeaseBootRegistrationRequest,
+    body: GatewayBootRegistrationRequest,
     settings: Settings,
 ) -> dict[str, Any]:
     require_internal_gateway(request, settings)
@@ -413,7 +413,7 @@ def _register_spend_lease_boot_sync(
         kid = receipt_kid(jwk)
         if body.kid != kid:
             raise ValueError("kid does not match the receipt public key")
-        attestation_kind = _SPEND_LEASE_WIRE_ATTESTATION_KINDS.get(
+        attestation_kind = _BOOT_WIRE_ATTESTATION_KINDS.get(
             body.attestation_kind,
             body.attestation_kind,
         )
@@ -434,7 +434,7 @@ def _register_spend_lease_boot_sync(
                 request,
                 settings,
             )
-        record = SpendLeaseBoot(
+        record = GatewayBoot(
             kid=kid,
             jwk=jwk,
             approved=approved_at_registration,
@@ -443,7 +443,7 @@ def _register_spend_lease_boot_sync(
             attestation_kind=attestation_kind,
             registered_at=iso_now(),
         )
-        stored = STORE.observe_spend_lease_boot(record)
+        stored = STORE.observe_gateway_boot(record)
     except ValueError as exc:
         raise api_error(400, str(exc), ErrorType.BAD_REQUEST) from exc
     return {"data": {"verified": stored.verified}}
@@ -605,7 +605,7 @@ def _gateway_boot_auth_accepted(
         return False
     if not authorization.stage_d_boot_kid or boot_auth.kid != authorization.stage_d_boot_kid:
         return False
-    boot = STORE.get_spend_lease_boot(boot_auth.kid)
+    boot = STORE.get_gateway_boot(boot_auth.kid)
     return verify_boot_auth(
         boot=boot,
         auth=boot_auth,
@@ -787,9 +787,9 @@ def _authorize_gateway_sync_impl(
     if boot_auth is not None:
         if auth_context is not None and auth_context.boot_record_loaded:
             raw_boot = auth_context.boot_record_body
-            boot = decode_auth_record(raw_boot, SpendLeaseBoot) if raw_boot is not None else None
+            boot = decode_auth_record(raw_boot, GatewayBoot) if raw_boot is not None else None
         else:
-            boot = STORE.get_spend_lease_boot(boot_auth.kid)
+            boot = STORE.get_gateway_boot(boot_auth.kid)
         accepted_image_digests = _stage_d_accepted_image_digests(request, settings)
         boot_context["boot_verified"] = verify_boot_auth(
             boot=boot,
@@ -2084,13 +2084,13 @@ def register(router: APIRouter) -> None:
         )
 
     @router.post("/internal/gateway/spend-lease/register-boot")
-    async def gateway_spend_lease_boot_register(
+    async def gateway_boot_register(
         request: Request,
-        body: SpendLeaseBootRegistrationRequest,
+        body: GatewayBootRegistrationRequest,
         settings: SettingsDep,
     ) -> dict[str, Any]:
         return await run_in_threadpool(
-            _register_spend_lease_boot_sync,
+            _register_gateway_boot_sync,
             request,
             body,
             settings,

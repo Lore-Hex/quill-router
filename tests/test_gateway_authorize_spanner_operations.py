@@ -21,7 +21,7 @@ from trusted_router.config import Settings
 from trusted_router.routes.internal import gateway
 from trusted_router.schemas import GatewayAuthorizeRequest
 from trusted_router.storage import CreditAccount, Workspace, configure_store
-from trusted_router.storage_gcp import _GATEWAY_API_KEY_AUTH_CONTEXT_SQL, SpannerBigtableStore
+from trusted_router.storage_gcp import _GATEWAY_API_KEY_AUTH_CONTEXT_SQL, SpannerStore
 from trusted_router.storage_gcp_authorize import AuthorizeOutcome
 from trusted_router.storage_gcp_counter_dml import RESERVATION_COLUMNS
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
@@ -33,7 +33,7 @@ def _request() -> Request:
     return Request({"type": "http", "method": "POST", "path": "/", "headers": []})
 
 
-def _seed_typed_gateway_store() -> tuple[SpannerBigtableStore, object, object]:
+def _seed_typed_gateway_store() -> tuple[SpannerStore, object, object]:
     store, database = make_fake_store(request_record_write_mode="typed")
     workspace = Workspace(id="ws-rpc", name="RPC", owner_user_id="user-rpc")
     store._write_entity("workspace", workspace.id, workspace)
@@ -101,7 +101,7 @@ def test_typed_authorize_route_does_not_call_legacy_idempotency_probe(
         raise AssertionError("typed authorize must never probe the legacy entity index")
 
     monkeypatch.setattr(
-        SpannerBigtableStore,
+        SpannerStore,
         "get_gateway_authorization_by_idempotency_key",
         forbidden,
     )
@@ -124,7 +124,7 @@ def test_typed_authorize_route_does_not_call_typed_pretransaction_probe(
         raise AssertionError("typed fresh authorize must rely on its in-transaction probe")
 
     monkeypatch.setattr(
-        SpannerBigtableStore,
+        SpannerStore,
         "get_typed_authorization_by_idempotency",
         forbidden,
     )
@@ -234,7 +234,7 @@ def test_typed_accepted_authorization_is_returned_without_post_commit_read(
     def forbidden(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("accepted authorize already has the exact inserted record")
 
-    monkeypatch.setattr(SpannerBigtableStore, "get_gateway_authorization", forbidden)
+    monkeypatch.setattr(SpannerStore, "get_gateway_authorization", forbidden)
     outcome, authorization = store.authorize_gateway_typed(
         workspace_id=key.workspace_id,
         key_hash=key.hash,
@@ -332,7 +332,7 @@ def test_broadcast_empty_results_are_cached_until_ttl(
         return []
 
     monkeypatch.setattr(gateway.time, "monotonic", lambda: now[0])
-    monkeypatch.setattr(SpannerBigtableStore, "list_broadcast_destinations", list_empty)
+    monkeypatch.setattr(SpannerStore, "list_broadcast_destinations", list_empty)
 
     assert gateway._broadcast_destinations_for_authorize(key.workspace_id) == []
     assert gateway._broadcast_destinations_for_authorize(key.workspace_id) == []
@@ -357,7 +357,7 @@ def test_positive_broadcast_results_are_never_cached(
         calls += 1
         return [destination]
 
-    monkeypatch.setattr(SpannerBigtableStore, "list_broadcast_destinations", list_positive)
+    monkeypatch.setattr(SpannerStore, "list_broadcast_destinations", list_positive)
 
     assert gateway._broadcast_destinations_for_authorize(key.workspace_id) == [destination]
     assert gateway._broadcast_destinations_for_authorize(key.workspace_id) == [destination]
@@ -372,7 +372,7 @@ def test_broadcast_empty_cache_evicts_oldest_workspace(
     gateway._BROADCAST_EMPTY_CACHE.clear()
     monkeypatch.setattr(gateway, "_BROADCAST_EMPTY_CACHE_MAX_ENTRIES", 2)
     monkeypatch.setattr(
-        SpannerBigtableStore,
+        SpannerStore,
         "list_broadcast_destinations",
         lambda _self, _workspace_id: [],
     )
@@ -801,8 +801,8 @@ def test_key_variants_consume_folded_byok(
     def forbidden(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("authorize must consume folded credentials without a second read")
 
-    monkeypatch.setattr(SpannerBigtableStore, "get_byok_providers", forbidden)
-    monkeypatch.setattr(SpannerBigtableStore, "get_byok_provider", forbidden)
+    monkeypatch.setattr(SpannerStore, "get_byok_providers", forbidden)
+    monkeypatch.setattr(SpannerStore, "get_byok_provider", forbidden)
     response = gateway._authorize_gateway_sync(
         _request(), _lookup_body(key), Settings(environment="test"),
     )["data"]
@@ -870,7 +870,7 @@ def test_byok_misconfiguration_keeps_existing_error(
             return ApiKeyAuthContext(
                 _auth_record(rows[0][0], ApiKey), _auth_record(rows[0][1], Workspace),
             )
-        monkeypatch.setattr(SpannerBigtableStore, "gateway_api_key_auth_context", old_context)
+        monkeypatch.setattr(SpannerStore, "gateway_api_key_auth_context", old_context)
     if misconfiguration == "invalid_envelope":
         store.upsert_byok_provider(
             workspace_id=key.workspace_id, provider="anthropic",

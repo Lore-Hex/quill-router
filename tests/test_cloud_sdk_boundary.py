@@ -33,7 +33,7 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "trusted_router"
 
 #: Modules permitted to import a cloud SDK, and why.
 ALLOWED = {
-    # The GCP storage adapter: implementing SpannerBigtableStore is exactly
+    # The GCP storage adapter: implementing SpannerStore is exactly
     # what these exist to do.
     "storage_gcp.py",
     "storage_gcp_authorize.py",

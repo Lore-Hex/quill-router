@@ -3,14 +3,14 @@
 from collections.abc import Callable
 from typing import Any
 
-from trusted_router.storage_gcp import SpannerBigtableStore
+from trusted_router.storage_gcp import SpannerStore
 from trusted_router.storage_gcp_counter_dml import release_credit, reserve_credit
 from trusted_router.storage_gcp_counters import credit_shard_count
 from trusted_router.storage_models import CreditAccount
 
 
 def reserve_for_transfer(store: Any, workspace_id: str, amount: int) -> Callable[[], None]:
-    if isinstance(store, SpannerBigtableStore):
+    if isinstance(store, SpannerStore):
 
         def reserve(tx: Any) -> list[tuple[int, int]]:
             account = store._read_entity_tx(tx, "credit", workspace_id, CreditAccount)
