@@ -11,7 +11,10 @@ Stage D's ordinary pre-header handoff remains a later integration requirement.
 Compact Ed25519 JWS uses exactly three unpadded canonical base64url segments.
 The protected header contains exactly `alg`, `kid`, `typ`; `alg` is `EdDSA`.
 Verification signs the received header/payload segments, never reconstructed
-ones. Header JSON need not be sorted, but duplicate/extra/missing fields fail.
+ones. The protected header MUST be the canonical encoding of exactly
+`{alg, kid, typ}`: ASCII-sorted keys, compact separators, no whitespace, escapes
+or trailing newline. Noncanonical encoding fails `canonical_header` after
+header schema validation and before algorithm/type/key selection.
 After signature verification and exact schema/type/charset validation, payload
 bytes must equal sorted-key, compact JSON of the parsed claims. Canonicalization
 is defined only on the valid v1 value domain: never on language-specific float
@@ -138,95 +141,257 @@ The 24 planning verdict vectors remain byte-identical. Actual gateway-error
 normalization, durable latches, retry sequencing and rights applicability are
 future integration work.
 
-## Frozen fixtures and review notes
+## Normative decoding and first-error order
 
-`tests/fixtures/speculation_v1/_generate.py` contains fixed public test-only
-Ed25519 seeds, literal claims, literal expectations and the original verdict
-and provider-wire bytes. It imports no production module. Tests never execute
-or import it. Run it manually only for a deliberate two-repository contract
-update. `manifest.json` pins all wire/vector/rule files; the test hard-codes
-its SHA-256. PR 2 must copy the exact final JSON bytes, not independently mint
-an equivalent bundle. Provider-wire file's single final LF is excluded from
-the request hash.
+Return the first failure below. Never derive field traversal order from JSON
+member order, a language map iterator, or struct layout. Tables are sequential;
+within a row, checks and fields run left to right. A call to a shared parser or
+schema completes before the next row. A failed check stops validation.
 
-The planning seed manifest was
-`a76e70236e2c97e83eaf2ca4a24d1d7633a6a8aa1b7eb91bb1444b0c22b36362`.
-The final manifest, precise seed differences, literal counts, mutation evidence
-and gate output are recorded below after verification. No git writes or deploy
-are part of this PR. `grep -rn speculation_protocol src/` must show only the
-module itself.
+### JSON and compact parsing
 
-### Final fixture pin and seed byte differences
+| Order | Check | Error |
+|---|---|---|
+| 1 | Compact input is a string of at most 65,536 characters with exactly two dots | `compact` |
+| 2 | Decode protected-header segment using the base64url procedure below | `base64` |
+| 3 | Parse header with the JSON procedure below | `json`, `integer`, `duplicate_key` |
+| 4 | Header exact fields; strings in order `alg kid typ` | `fields`, `string` |
+| 5 | Received header bytes equal canonical encoding | `canonical_header` |
+| 6 | `alg == EdDSA` | `algorithm` |
+| 7 | `typ` equals the requested real/shadow/descriptor type | `type` |
+| 8 | Exactly one configured key has this `kid` | `key` |
+| 9 | Selected key purpose equals the requested purpose | `purpose` |
+| 10 | Decode payload, then signature segments | `base64` |
+| 11 | Decode configured public key; verify Ed25519 | `signature` |
+| 12 | Parse payload with the JSON procedure; require object root | `json`, `integer`, `duplicate_key`, `fields` |
 
-Final manifest SHA-256:
-`cf4961055cc4d7944a16b6160860b34fab05d4c8966ce3b19cfd041a601da648`.
+Base64url segments MUST be nonempty and match `[A-Za-z0-9_-]+`. CR and LF are
+forbidden, as are padding and whitespace. Decode and unpadded re-encode; the
+result MUST reproduce the received segment exactly, including unused bits.
+The configured public-key encoding is checked the same way, but any failure
+there is `signature`. Use pure Ed25519 without prehash or context. Invalid
+public-key length, signature length, or verification fails `signature`.
+Implementations MUST NOT panic.
 
-| File | Seed bytes | Final bytes | Byte comparison |
-|---|---:|---:|---|
-| provider-wire.json | 105 | 105 | Identical; SHA `5ad0733472da01485383c34554a027bf1e35876888b4c94c48469f51d3a95cd8` |
-| verdict-vectors.json | 13621 | 13621 | Identical; SHA `f1cb95a0dafaad18da7e7633ddd2b38e6cbd5526ff1320e9b639e8eef927db3f` |
-| grant-permit-tokens.json | 8416 | 10221 | SHA changed from `fa8e67dd1278ba569586a3b97d551cc31c755c64ff13da643459ef9d4146fad5` to `0bc017b4ad0e55ad8bc13fcd61967a9ce36d942d0dd4e5cdaedeeaeb8e5f48db` |
-| manifest.json | 334 | 517 | Token-file pin replaced; protocol-vectors.json and rules.json pins added |
+The JSON procedure is:
 
-All `grant_claims` and all seed `expected` values are identical. The real grant's
-99-byte header segment and 1763-byte payload segment are unchanged; its 86-byte
-signature changes. The shadow's 108-byte header changes `kid` from
-`issuer-fixture` to `shadow-fixture`; its 1763-byte payload is unchanged and its
-86-byte signature changes. The descriptor's 87-byte header is unchanged; its
-608-byte payload changes only `grant_sha256`, and its 86-byte signature changes.
-The outer JSON repeats these compact bytes and updated descriptor claims.
+1. Decode the entire byte sequence as strict UTF-8; invalid UTF-8 is `json`.
+2. Scan container nesting outside quoted strings, honoring backslash escapes.
+   Root counts as one container. Depth greater than 16 is `json`. This preflight
+   takes precedence over numeric, duplicate, or syntax errors anywhere in the
+   document; it does not interpret schema or validate JSON syntax.
+3. Decode JSON from left to right. At each numeric token, before schema
+   validation, refuse fractional/exponent forms, `NaN`, `Infinity`, and
+   `-Infinity` as `integer`. Integers have at most 19 digits excluding a minus
+   sign and value in `[0, 9223372036854775807]`; check token length BEFORE integer
+   conversion. Negative values fail `integer`; `-0` parses as zero and later
+   fails canonical equality. This must not depend on interpreter string limits.
+4. A duplicate check runs when an object finishes decoding, after all of its
+   member values, in member order. Reject duplicate **decoded** names at every
+   depth as `duplicate_key`. Thus a later numeric error in the same object wins
+   over its duplicate keys, but a completed nested duplicate wins over a later
+   outer numeric error. Invalid syntax encountered before object completion is
+   `json`; trailing input after a completed duplicate object cannot hide its
+   `duplicate_key`. Missing delimiters are `json`.
+5. Schema validation follows parsing. Member names are case-sensitive. Unknown
+   and missing fields fail `fields`; ignored fields and zero defaults are
+   forbidden. Booleans, nulls, strings and other nonintegers in integer schema
+   slots fail `integer`. A boolean never equals an integer or floating value.
 
-The dependent compact-grant hash changes from
-`39578719b2dd0a0e3928f4dd7326f7a7f3e7368df5d22463a864a4fe83364ee7` to
-`ebace849f7d56f32eafee693310ba9cda13ab17f571b950e476aaeee13389055`.
-The accepted marker's compact-descriptor hash changes from
-`58204c390d5a2684a72c09648857abfdaaa9a52cb4cf2e12bde02c2580c26d77` to
-`846aec09fd7b9e7e581a6b017e451a2e33ac941d7f4f3cd23f211beacaf5a8e5`.
-The request hash remains
-`75e9f95d9e202c66fcffb7d4c7aa7c88e3dfb80a51e2cddc7539a6e461188f88`.
+Decoded strings must be nonempty and in the alphabet above. Non-ASCII and
+unpaired surrogate escapes fail `string`. ASCII escapes can decode successfully
+but fail canonical equality for both header and payload. After schema/type/
+charset validation, payload bytes MUST equal recursively ASCII-key-sorted
+compact JSON: preserve array order, decimal integers, lowercase booleans, no
+escapes for permitted strings, and no trailing newline. Numeric conversion to
+float64 is forbidden.
 
-The trusted issuer and boot public keys are replaced to match the recorded
-seeds; `shadow-fixture` (`shadow-grant`) and `boot-other` (`descriptor`, negative
-binding tests) are added. The bundle also adds literal `context` and
-`authorization` inputs. These are the only added top-level fields. Outer JSON
-remains sorted, two-space-indented UTF-8 with one final LF. New files are the
-protocol vectors, guard rules and the two standalone maintainer scripts.
+External bindings use one recursive, type-sensitive equality: booleans,
+integers and floating values are distinct; objects have equal keys and
+recursively equal values; arrays have equal length and element order. Current
+context route is schema-validated before route equality. External data has the
+JSON value domain; malformed caller types or invalid process-local verified
+objects that otherwise cause runtime errors refuse `input`. This fallback
+never replaces a more specific check already reached. Public APIs must return
+normally or raise `ProtocolError`, never leak parser/runtime exceptions for
+malformed data. Resource exhaustion of the host and arbitrary executable
+Python objects are outside the wire contract.
 
-| Literal category | Count |
-|---|---:|
-| Grant / strict parser / context / deadline | 150 |
-| Descriptor | 24 |
-| Acceptance marker / ordinary authorization | 24 |
-| Renewal ordering | 12 |
-| Cost arithmetic | 11 |
-| Allowance arithmetic | 6 |
-| Descriptor replay | 2 |
-| Additional taxonomy refusals | 2 |
-| Unchanged planning verdicts | 24 |
-| **Total independently expected vectors** | **255** |
+### Schema field traversal
 
-Four additional tests check manifest/file pins, the complete seed contract,
-rule coverage and absence of runtime call sites: **259 tests** total.
+Every object first checks its exact field set (`fields`), then ALL strings in
+the listed order (`string`), then ALL integers in the listed order (`integer`),
+then the nested checks. Hash syntax is checked later, where specified.
 
-### Mutation gate
-
-`_mutate.py` makes a temporary copy of the module, tests and fixture bundle for
-each run; it never checks out or modifies worktree code. All temporary copies
-are removed. An initial run timed out during pytest startup; the final run
-disables unrelated plugin autoload for these pure tests. All 12 mutants are red,
-none survived and none is build-broken.
-
-| Mutant | Named test | Result | Failing assertion text |
+| Object | String order | Integer order | Nested order |
 |---|---|---|---|
-| dry-run accepted as real | `test_literal[dry_run_cannot_dispatch]` | red | `E       AssertionError: dry_run_cannot_dispatch: expected 'dry_run_cannot_dispatch', got 'allowed'` |
-| ignore key epoch | `test_literal[binding_key_epoch]` | red | `E       AssertionError: binding_key_epoch: expected 'binding', got 'allowed'` |
-| ignore boot binding | `test_literal[binding_boot_id]` | red | `E       AssertionError: binding_boot_id: expected 'binding', got 'allowed'` |
-| ignore route binding | `test_literal[route_endpoint_id]` | red | `E       AssertionError: route_endpoint_id: expected 'route', got 'allowed'` |
-| classify every 402 as workspace | `test_verdict[lifetime_limit]` | red | `E           AssertionError: lifetime_limit.durable_scope: expected 'key', got 'workspace'` |
-| classify every 429 as key | `test_verdict[rate_unknown]` | red | `E           AssertionError: rate_unknown.durable_scope: expected 'workspace', got 'key'` |
-| round B down | `test_literal[money_fractional]` | red | `E       AssertionError: money_fractional: expected 2, got 0` |
-| accept shadow-purpose key for real grant | `test_literal[real_type_shadow_key]` | red | `E       AssertionError: real_type_shadow_key: expected 'purpose', got 'allowed'` |
-| skip canonical-payload check | `test_literal[payload_whitespace]` | red | `E       AssertionError: payload_whitespace: expected 'canonical_payload', got 'allowed'` |
-| accept padded base64 | `test_literal[signature_padded]` | red | `E       AssertionError: signature_padded: expected 'base64', got 'allowed'` |
-| allow bool as int | `test_literal[bool_integer]` | red | `E       AssertionError: bool_integer: expected 'integer', got 'allowed'` |
-| change one fixture byte | `test_fixture_pins` | red | `E           AssertionError: fixture pin mismatch: provider-wire.json` |
+| Header | `alg kid typ` | — | — |
+| Grant | `iss aud environment plane workspace_id key_id lookup_digest boot_id stable_slot_id region grant_id` | `v generation workspace_epoch key_epoch image_policy_version tier paid_headroom_micro iat exp start_before key_expires_at trust_fresh_until per_request_ceiling_micro` | route, history, permits |
+| Route (signed and context) | `endpoint_id provider upstream_model region routing_policy_hash catalog_hash privacy input_bound_method` | `adapter_capability_version input_bound output_limit input_rate_micro_per_m output_rate_micro_per_m maximum_request_fees_micro price_expires_at` | `stage_d` must be boolean (`stage_d`) |
+| History | — | `clean_since count last_success_at sequence window_start` | — |
+| Permit | — | `ordinal b_micro` | — |
+| Descriptor | `grant_id grant_sha256 execution_id invocation_nonce request_sha256 routing_policy_hash endpoint_id workspace_id key_id boot_id` | `v ordinal b_micro workspace_epoch key_epoch` | — |
+| Acceptance marker | `descriptor_sha256 invocation_nonce authorization_id endpoint_id routing_policy_hash` | `v` | — |
+
+Grant permits must be a nonempty array (`permits`); schema-check each element
+in array order. The ordered schema field names also define each exact field
+set, together with the named nested fields. The entire grant schema finishes
+before canonical, version or semantic checks.
+
+### Grant validation
+
+| Order | Check | Error |
+|---|---|---|
+| 1 | `now` is bounded integer | `integer` |
+| 2 | Shared compact/header/signature/payload procedure | as above |
+| 3 | Entire grant schema | as above |
+| 4 | Canonical payload | `canonical_payload` |
+| 5 | `v == 1` | `version` |
+| 6 | Issuer-key pins in order `iss aud environment plane` | `identity` |
+| 7 | Lookup digest lowercase SHA-256 syntax | `hash` |
+| 8 | Context contains and exactly matches `workspace_id key_id lookup_digest boot_id stable_slot_id region generation workspace_epoch key_epoch image_policy_version` | `binding` |
+| 9 | Route hashes in order `routing_policy_hash catalog_hash` | `hash` |
+| 10 | Signed route Stage D is true | `stage_d` |
+| 11 | Entire context-route schema | `fields`, `string`, `integer`, `stage_d` |
+| 12 | Exact route equality, then route region equals grant region | `route` |
+| 13 | Positive input bound ≤8192, then positive output limit ≤512 | `token_bound` |
+| 14 | Adapter version positive | `adapter` |
+| 15 | Tier is 2 or 3 | `tier` |
+| 16 | Paid headroom ≥5,000,000 | `paid_headroom` |
+| 17 | History count ≥20, sequence ≥count | `history_count` |
+| 18 | Window start ≥iat−600; window start ≤last success ≤iat; last success ≥iat−30; clean since ≤iat−900 | `history_time` |
+| 19 | `0 < exp−iat ≤30`, then `iat < start_before` | `lifetime` |
+| 20 | `iat ≤ now < min(start_before, exp−2, key_expiry−2, price_expiry−2, trust_fresh_until−2)` | `start_window` |
+| 21 | `0 < per_request_ceiling ≤10000` | `ceiling` |
+| 22 | Cost arguments in signature order; input product/total then output product/total fit int64 | `integer`, `overflow` |
+| 23 | `0 < B ≤ per_request_ceiling` | `cost` |
+| 24 | Each permit in array order: ordinal unique, then `B ≤ b_micro ≤ ceiling` | `ordinal`, `permit_cost` |
+| 25 | Context contains trusted tier ceiling | `tier_ceiling` |
+| 26 | Tier ceiling then headroom are bounded integers; calculate W | `integer` |
+| 27 | SUM of permit ceilings ≤W | `allowance` |
+
+The arithmetic helpers validate arguments in function signature order. B checks
+product then accumulated total for each component, input before output. W uses
+integer floors and the independent $1 cap. No frozen money, tier, headroom,
+history or lifetime semantics changed in round 2.
+
+### Descriptor validation
+
+| Order | Check | Error |
+|---|---|---|
+| 1 | Verified grant is real | `dry_run_cannot_dispatch` |
+| 2 | Shared compact/header/signature/payload procedure | as above |
+| 3 | Descriptor schema, canonical payload, version | schema codes, `canonical_payload`, `version` |
+| 4 | Hash syntax in order `grant_sha256 request_sha256 routing_policy_hash` | `hash` |
+| 5 | Signer kid equals grant boot | `descriptor_boot` |
+| 6 | Exact `grant_id workspace_id key_id boot_id workspace_epoch key_epoch` | `descriptor_binding` |
+| 7 | Hash of exact compact grant bytes | `grant_hash` |
+| 8 | Hash of exact request bytes | `request_hash` |
+| 9 | Execution ID, then invocation nonce | `invocation` |
+| 10 | Endpoint, then routing policy hash | `descriptor_route` |
+| 11 | One allocated permit matches ordinal AND cost | `descriptor_permit` |
+
+### Acceptance validation
+
+| Order | Check | Error/result |
+|---|---|---|
+| 1 | Recursive typed equality of response authorization and independently supplied authorization | `authorization` |
+| 2 | Authorization matches descriptor `invocation_nonce workspace_id key_id` | `authorization` |
+| 3 | Authorization ID string | `string` |
+| 4 | Ordinary billing mode | `authorization` |
+| 5 | Marker key absent | return `ordinary` |
+| 6 | Marker schema, then version | schema codes, `version` |
+| 7 | Hash syntax `descriptor_sha256 routing_policy_hash` | `hash` |
+| 8 | Hash of exact compact descriptor | `descriptor_hash` |
+| 9 | Marker equals descriptor `invocation_nonce endpoint_id routing_policy_hash` | `marker_binding` |
+| 10 | Authorization matches marker (or descriptor when field absent from marker) in order `authorization_id invocation_nonce endpoint_id routing_policy_hash workspace_id key_id` | `authorization` |
+| 11 | Ordinary billing and Stage D exactly true | `authorization` |
+| 12 | All checks passed | return `accepted` |
+
+Missing markers do not bypass steps 1–4. Marker null/scalar/empty object fails
+schema; it is not absence. Acceptance does not grant output or billing authority.
+
+### Renewal and descriptor replay
+
+| Order | Check | Error/result |
+|---|---|---|
+| 1 | Exact previous/candidate compact grant equality | return `replay` |
+| 2 | Same real/shadow domain | `renewal` |
+| 3 | Exact identity in order `workspace_id key_id lookup_digest boot_id stable_slot_id iss aud environment plane region` | `renewal` |
+| 4 | Distinct grant ID, higher generation, nondecreasing iat, workspace epoch, key epoch, history sequence (in that order) | `renewal` |
+| 5 | All checks passed | return `renewed` |
+
+Inputs are already verified grants. Exact replay changes no rights. Descriptor
+replay has one check: byte-identical compact descriptor → `replay`, otherwise
+`replay_conflict`. The fixtures verify both grants before exercising renewal;
+identity-change fixtures independently match the candidate context and issuer
+pins, so no earlier verification error masks renewal.
+
+### Verdict classification and normalization
+
+The classifier consumes one normalized reason, never a list of simultaneous
+reasons. Upstream normalization MUST choose a resolved workspace state reason
+before a resolved key state reason, then rate limiting, then infrastructure or
+request-only reasons. Generic status and `rate_scope` are secondary hints,
+not an additional authenticated state reason. For example, key revoked +
+workspace rate scope on 429 is key; billing paused + key rate scope is workspace.
+If two authenticated state reasons apply, the caller passes the workspace
+reason. The caller must not disguise the workspace state as a generic status.
+
+| Order | Check/decision | Error/result |
+|---|---|---|
+| 1 | Source equals `authenticated_router` | `verdict_source` |
+| 2 | Status is bounded integer, then 400–599 inclusive | `integer`, `verdict_status` |
+| 3 | Key reason with resolved workspace AND key | key scope |
+| 4 | Resolved workspace and workspace reason OR generic 402 | workspace scope |
+| 5 | 429 and resolved workspace: explicit key rate scope AND resolved key | key scope; otherwise workspace |
+| 6 | Otherwise | no durable scope |
+| 7 | Only with no durable scope: status ≥500 OR reason `authorize_timeout`, `transport_error`, `infrastructure_error` | local key/boot breaker; otherwise none |
+
+All outputs discard the current execution. Any durable scope requires commit
+for real rights and substitutes 503 on storage failure; no scope preserves
+status. Shadow-only commit requirement is always false. Unresolved identities
+cannot select their missing scope. State reasons override generic 5xx and
+rate-scope hints. Conflicting-hint literals pin each direction of this rule.
+
+## Go implementation notes
+
+These standard-library pitfalls were verified in review; PR 2 must preserve
+the contract rather than relying on library defaults:
+
+| Pitfall | Required implementation / fixture evidence |
+|---|---|
+| `encoding/json` interface numbers default to float64 | Retain raw number tokens, bounded integer conversion; `overflow_integer`, `payload_number_huge`, `float_integer`, `exponent`, `context_coercion_input_rate_micro_per_m` |
+| Struct field matching is case-insensitive | Compare decoded exact names; `case_sensitive` |
+| Unknown fields are ignored | Exact field sets, including nested objects; `unknown_field`, `unknown_route_field`, `unknown_permit_field` |
+| Duplicate keys are accepted | Detect decoded duplicates per object; `header_duplicate` (also bad signature), `nested_duplicate`, `escaped_duplicate`, parser precedence literals |
+| Struct serialization is not automatically sorted; `Encoder.Encode` appends newline | Use explicit canonical encoding; `header_reordered`, `header_whitespace`, `header_escaped`, `payload_unsorted`, `payload_trailing_newline` (named `trailing_newline`) |
+| Invalid UTF-8 is replaced | Strict UTF-8 validation before JSON; `invalid_utf8` |
+| NaN syntax is normally a parser error | Numeric-token handling maps NaN/infinities to `integer`; `nan`, `header_number_infinity`, `payload_number_minus_infinity` |
+| `RawURLEncoding.Strict()` still ignores CR/LF | Alphabet precheck before decode; `base64_cr`, `base64_lf`, `signature_padded`, `base64_trailing_bits` |
+| `ed25519.Verify` panics on wrong public-key length | Explicit size validation; `key_short_public`, `signature_bitflip` |
+| Decoder nesting limits differ | Root-counted 16-container preflight; `depth16`, `depth17`, `depth_in_string`, `depth_siblings` |
+
+## Frozen fixtures and mutation evidence
+
+The fixture signer `_generate.py` never imports `trusted_router`; expected
+verdicts, costs and boundaries are literal authoring inputs. Tests never import
+or run it or `_inventory.py`. The latter inspects source only to locate mutation
+edits, never to calculate expectations. Regeneration is a deliberate offline
+step and changes the manifest pin. Planning grant claims, provider-wire bytes,
+and the original 24 verdict vectors remain unchanged.
+
+`rules.json` is the guard inventory: each entry names a concrete source edit,
+function, and selected literal. `_mutate.py` runs the WHOLE inventory against
+disposable module/fixture copies and first confirms the unmodified harness.
+Compile/import failures count as build-broken, not red. A mutant is red only
+when its selected literal assertion fails. The test guard checks every require
+site and branch has an executable inventory entry; atomic comparisons, reason
+memberships, binding fields and monetary operations have additional entries.
+The complete run table is in [speculation-protocol-v1-mutations.md](speculation-protocol-v1-mutations.md).
+
+Protocol fuzzing exercises every public API parameter, nested/cyclic external
+values, signed arbitrary parser bytes, huge numbers and deep JSON. Integer-limit
+checks run with Python limits 640, 4300 and disabled. These assert crash freedom;
+they do not infer expected verdicts for the frozen bundle. A separate test
+continues to prohibit production imports/call sites.

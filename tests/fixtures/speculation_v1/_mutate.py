@@ -1,86 +1,93 @@
-"""Run the requested mutations on disposable COPIES; never edits the worktree.
+"""Execute every rules.json mutation on disposable copies, never the worktree.
 
-Invoke with the repository Python environment. Report assertions verbatim.
+A mutant is red only on a literal assertion. Compile/import/setup failures are
+build-broken, never evidence of a killed mutant. Equivalent survivors require
+an explicit, reviewable explanation in the pinned inventory and output table.
 """
 from __future__ import annotations
 
+import ast
+import importlib.util
 import json
-import os
 import shutil
-import subprocess
 import sys
 import tempfile
+from collections import Counter
 from pathlib import Path
+from types import ModuleType
 
 ROOT = Path(__file__).resolve().parents[3]
-MODULE = Path("src/trusted_router/speculation_protocol.py")
-TEST = Path("tests/test_speculation_protocol.py")
-MUTATIONS = [
-    ("dry-run accepted as real", "dry_run_cannot_dispatch",
-     '_require(not grant.shadow, "dry_run_cannot_dispatch")', 'pass'),
-    ("ignore key epoch", "binding_key_epoch", 'for field in BINDINGS:',
-     'for field in BINDINGS:\n        if field == "key_epoch":\n            continue'),
-    ("ignore boot binding", "binding_boot_id", 'for field in BINDINGS:',
-     'for field in BINDINGS:\n        if field == "boot_id":\n            continue'),
-    ("ignore route binding", "route_endpoint_id",
-     '_require(route == context.get("route"), "route")', 'pass'),
-    ("classify every 402 as workspace", "verdict:lifetime_limit",
-     '    breaker = "key_boot"', '    if status == 402:\n        scope = "workspace"\n    breaker = "key_boot"'),
-    ("classify every 429 as key", "verdict:rate_unknown",
-     '    breaker = "key_boot"', '    if status == 429:\n        scope = "key"\n    breaker = "key_boot"'),
-    ("round B down", "money_fractional",
-     'product // 1_000_000 + int(product % 1_000_000 != 0)', 'product // 1_000_000'),
-    ("accept shadow-purpose key for real grant", "real_type_shadow_key",
-     'key.purpose == purpose', '(key.purpose == purpose or key.purpose == "shadow-grant")'),
-    ("skip canonical-payload check", "payload_whitespace",
-     '_require(payload == _canonical(claims), "canonical_payload")', 'pass'),
-    ("accept padded base64", "signature_padded", 'def _b64decode(value: str) -> bytes:',
-     'def _b64decode(value: str) -> bytes:\n    value = value.rstrip("=")'),
-    ("allow bool as int", "bool_integer", 'type(value) is int', 'isinstance(value, int)'),
-    ("change one fixture byte", "fixture_pins", None, None),
-]
+MODULE = Path('src/trusted_router/speculation_protocol.py')
+
+
+def load(name: str, path: Path) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def main() -> None:
     original = (ROOT / MODULE).read_text()
+    rules = json.loads((ROOT / 'tests/fixtures/speculation_v1/rules.json').read_text())['rules']
     rows = []
-    with tempfile.TemporaryDirectory(prefix="sol-spec-mutations-", dir="/private/tmp") as tmp:
+    sys.dont_write_bytecode = True
+    with tempfile.TemporaryDirectory(prefix='astra-spec-mutations-', dir='/private/tmp') as tmp:
         target = Path(tmp)
         (target / MODULE).parent.mkdir(parents=True)
-        (target / "src/trusted_router/__init__.py").write_text("")
-        shutil.copytree(ROOT / "tests/fixtures/speculation_v1", target / "tests/fixtures/speculation_v1")
-        shutil.copyfile(ROOT / TEST, target / TEST)
-        (target / "pytest.ini").write_text("[pytest]\npythonpath = src\n")
-        for label, case, before, after in MUTATIONS:
+        shutil.copytree(ROOT / 'tests/fixtures/speculation_v1', target / 'tests/fixtures/speculation_v1')
+        shutil.copyfile(ROOT / 'tests/test_speculation_protocol.py', target / 'tests/test_speculation_protocol.py')
+        tests = load('speculation_mutation_tests', target / 'tests/test_speculation_protocol.py')
+        cases = {c['name']: c for c in tests.CASES}
+        verdicts = {c['name']: c for c in tests.read('verdict-vectors.json')['vectors']}
+        wire = target / 'tests/fixtures/speculation_v1/provider-wire.json'
+        original_wire = wire.read_bytes()
+        # Confirm the literal harness before trying any mutants.
+        tests.test_fixture_pins()
+        for case in cases.values():
+            tests.test_literal(case)
+        for rule in rules:
             code = original
-            if before is not None:
-                assert code.count(before) == 1, (label, code.count(before))
-                code = code.replace(before, after)
-            (target / MODULE).write_text(code)
-            shutil.rmtree(target / "src/trusted_router/__pycache__", ignore_errors=True)
-            wire = target / "tests/fixtures/speculation_v1/provider-wire.json"
-            original_wire = (ROOT / "tests/fixtures/speculation_v1/provider-wire.json").read_bytes()
-            wire.write_bytes(original_wire.replace(b"fixture", b"fixturf", 1) if before is None else original_wire)
-            test = "test_literal[" + case + "]"
-            if case.startswith("verdict:"):
-                test = "test_verdict[" + case.split(":")[1] + "]"
-            if case == "fixture_pins":
-                test = "test_fixture_pins"
-            env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"}
-            result = subprocess.run(  # noqa: S603 - fixed executable and locally constructed args
-                [sys.executable, "-m", "pytest", "--noconftest", "-q", "-p", "no:cacheprovider",
-                 "-c", str(target / "pytest.ini"), str(TEST) + "::" + test],
-                cwd=target, env=env, capture_output=True, text=True, timeout=300,
-            )
-            assertion = next((line.strip() for line in result.stdout.splitlines()
-                              if "AssertionError:" in line), "")
-            status = "red" if result.returncode == 1 and assertion else "survived" if result.returncode == 0 else "build-broken"
-            rows.append({"mutant": label, "test": test, "result": status, "assertion": assertion})
-            print(json.dumps(rows[-1]), flush=True)
-            if status != "red":
-                print(result.stdout, result.stderr, flush=True)
-    assert all(row["result"] == "red" for row in rows), rows
+            wire.write_bytes(original_wire)
+            try:
+                if rule['function'] == '<fixture>':
+                    wire.write_bytes(original_wire.replace(b'fixture', b'fixturf', 1))
+                else:
+                    node = next((n for n in ast.parse(original).body if isinstance(n, ast.FunctionDef) and n.name == rule['function']), None)
+                    body = ast.get_source_segment(original, node) if node else original
+                    assert body is not None and body.count(rule['before']) == 1, rule
+                    changed = body.replace(rule['before'], rule['after'], 1)
+                    code = original.replace(body, changed, 1)
+                # Compile and import are separately classified from test assertions.
+                compile(code, str(target / MODULE), 'exec')
+                (target / MODULE).write_text(code)
+                tests.protocol = load('speculation_mutant', target / MODULE)
+                status, assertion = 'survived', ''
+            except Exception as exc:
+                status, assertion = 'build-broken', repr(exc)
+            else:
+                try:
+                    case_name = rule['literal_case']
+                    if case_name == 'fixture_pins':
+                        tests.test_fixture_pins()
+                    elif case_name.startswith('verdict:'):
+                        tests.test_verdict(verdicts[case_name.removeprefix('verdict:')])
+                    else:
+                        tests.test_literal(cases[case_name])
+                except AssertionError as exc:
+                    status, assertion = 'red', str(exc)
+                except Exception as exc:
+                    status, assertion = 'build-broken', repr(exc)
+            row = {'guard': rule['guard'], 'literal': rule['literal_case'], 'result': status, 'assertion': assertion}
+            if 'equivalent' in rule:
+                row['equivalent'] = rule['equivalent']
+            rows.append(row)
+            print(json.dumps(row), flush=True)
+    print(json.dumps({'inventory_size': len(rows), 'summary': dict(Counter(r['result'] for r in rows))}), flush=True)
+    assert all(r['result'] == 'red' or (r['result'] == 'survived' and r.get('equivalent')) for r in rows)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

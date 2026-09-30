@@ -2,1900 +2,1713 @@
   "fixture_version": 1,
   "rules": [
     {
-      "category": "grant",
-      "guard": "real_valid",
-      "literal_case": "real_valid",
-      "mutation": "remove or invert real_valid guard"
+      "after": "pass",
+      "before": "_require(type(value) is int and 0 <= value <= MAX_INT, \"integer\")",
+      "function": "_integer",
+      "guard": "_integer:_require(type(value) is int and 0 <= value <= MAX_INT, \"integer\") => pass",
+      "literal_case": "bool_integer"
     },
     {
-      "category": "grant",
-      "guard": "shadow_valid",
-      "literal_case": "shadow_valid",
-      "mutation": "remove or invert shadow_valid guard"
+      "after": "pass",
+      "before": "_require(isinstance(value, str) and bool(value) and all(\n        0x20 <= ord(c) <= 0x7E and c not in '\\\\\"<>&' for c in value\n    ), \"string\")",
+      "function": "_string",
+      "guard": "_string:_require(isinstance(value, str) and bool(value) and all(\n        0x20 <= ord(c) <= 0x7E and c not in '\\\\\"<>&' for c in value\n    ), \"string\") => pass",
+      "literal_case": "string_empty"
     },
     {
-      "category": "grant",
-      "guard": "dry_run_type_as_real",
-      "literal_case": "dry_run_type_as_real",
-      "mutation": "remove or invert dry_run_type_as_real guard"
+      "after": "pass",
+      "before": "_require(isinstance(value, str) and re.fullmatch(\"[0-9a-f]{64}\", value) is not None,\n             \"hash\")",
+      "function": "_hash",
+      "guard": "_hash:_require(isinstance(value, str) and re.fullmatch(\"[0-9a-f]{64}\", value) is not None,\n             \"hash\") => pass",
+      "literal_case": "invalid_hash"
     },
     {
-      "category": "grant",
-      "guard": "real_type_as_shadow",
-      "literal_case": "real_type_as_shadow",
-      "mutation": "remove or invert real_type_as_shadow guard"
+      "after": "pass",
+      "before": "_require(isinstance(value, dict) and set(value) == set(\n        (strings + \" \" + integers + \" \" + nested).split()), \"fields\")",
+      "function": "_object",
+      "guard": "_object:_require(isinstance(value, dict) and set(value) == set(\n        (strings + \" \" + integers + \" \" + nested).split()), \"fields\") => pass",
+      "literal_case": "unknown_field"
     },
     {
-      "category": "grant",
-      "guard": "shadow_type_grant_key",
-      "literal_case": "shadow_type_grant_key",
-      "mutation": "remove or invert shadow_type_grant_key guard"
+      "after": "pass",
+      "before": "_require(key not in result, \"duplicate_key\")",
+      "function": "_pairs",
+      "guard": "_pairs:_require(key not in result, \"duplicate_key\") => pass",
+      "literal_case": "payload_duplicate"
     },
     {
-      "category": "grant",
-      "guard": "real_type_shadow_key",
-      "literal_case": "real_type_shadow_key",
-      "mutation": "remove or invert real_type_shadow_key guard"
+      "after": "pass",
+      "before": "_require(len(digits) <= 19, \"integer\")",
+      "function": "_parse_int",
+      "guard": "_parse_int:_require(len(digits) <= 19, \"integer\") => pass",
+      "literal_case": "payload_number_huge"
     },
     {
-      "category": "grant",
-      "guard": "grant_descriptor_key",
-      "literal_case": "grant_descriptor_key",
-      "mutation": "remove or invert grant_descriptor_key guard"
+      "after": "pass",
+      "before": "_require(depth <= 16, \"json\")",
+      "function": "_depth",
+      "guard": "_depth:_require(depth <= 16, \"json\") => pass",
+      "literal_case": "depth17"
     },
     {
-      "category": "grant",
-      "guard": "identity_iss",
-      "literal_case": "identity_iss",
-      "mutation": "remove or invert identity_iss guard"
+      "after": "pass",
+      "before": "_require(bool(value) and re.fullmatch(r\"[A-Za-z0-9_-]+\", value) is not None, \"base64\")",
+      "equivalent": "Equivalent refusal: canonical unpadded re-encoding rejects every nonalphabet input (including CR/LF and padding) with the same base64 code; the explicit precheck remains normative for Go.",
+      "function": "_b64decode",
+      "guard": "_b64decode:_require(bool(value) and re.fullmatch(r\"[A-Za-z0-9_-]+\", value) is not None, \"base64\") => pass",
+      "literal_case": "signature_padded"
     },
     {
-      "category": "grant",
-      "guard": "identity_aud",
-      "literal_case": "identity_aud",
-      "mutation": "remove or invert identity_aud guard"
+      "after": "pass",
+      "before": "_require(_b64encode(raw) == value, \"base64\")",
+      "function": "_b64decode",
+      "guard": "_b64decode:_require(_b64encode(raw) == value, \"base64\") => pass",
+      "literal_case": "base64_trailing_bits"
     },
     {
-      "category": "grant",
-      "guard": "identity_environment",
-      "literal_case": "identity_environment",
-      "mutation": "remove or invert identity_environment guard"
+      "after": "pass",
+      "before": "_require(isinstance(token, str) and len(token) <= 65536 and token.count(\".\") == 2,\n             \"compact\")",
+      "function": "_verify",
+      "guard": "_verify:_require(isinstance(token, str) and len(token) <= 65536 and token.count(\".\") == 2,\n             \"compact\") => pass",
+      "literal_case": "compact_extra"
     },
     {
-      "category": "grant",
-      "guard": "identity_plane",
-      "literal_case": "identity_plane",
-      "mutation": "remove or invert identity_plane guard"
+      "after": "pass",
+      "before": "_require(header_bytes == _canonical(header), \"canonical_header\")",
+      "function": "_verify",
+      "guard": "_verify:_require(header_bytes == _canonical(header), \"canonical_header\") => pass",
+      "literal_case": "header_whitespace"
     },
     {
-      "category": "grant",
-      "guard": "binding_workspace_id",
-      "literal_case": "binding_workspace_id",
-      "mutation": "remove or invert binding_workspace_id guard"
+      "after": "pass",
+      "before": "_require(header[\"alg\"] == \"EdDSA\", \"algorithm\")",
+      "function": "_verify",
+      "guard": "_verify:_require(header[\"alg\"] == \"EdDSA\", \"algorithm\") => pass",
+      "literal_case": "algorithm_none"
     },
     {
-      "category": "grant",
-      "guard": "binding_key_id",
-      "literal_case": "binding_key_id",
-      "mutation": "remove or invert binding_key_id guard"
+      "after": "pass",
+      "before": "_require(header[\"typ\"] == typ, \"type\")",
+      "function": "_verify",
+      "guard": "_verify:_require(header[\"typ\"] == typ, \"type\") => pass",
+      "literal_case": "unknown_type"
     },
     {
-      "category": "grant",
-      "guard": "binding_lookup_digest",
-      "literal_case": "binding_lookup_digest",
-      "mutation": "remove or invert binding_lookup_digest guard"
+      "after": "pass",
+      "before": "_require(len(matches) == 1, \"key\")",
+      "function": "_verify",
+      "guard": "_verify:_require(len(matches) == 1, \"key\") => pass",
+      "literal_case": "key_ambiguous"
     },
     {
-      "category": "grant",
-      "guard": "binding_boot_id",
-      "literal_case": "binding_boot_id",
-      "mutation": "remove or invert binding_boot_id guard"
+      "after": "pass",
+      "before": "_require(key.purpose == purpose, \"purpose\")",
+      "function": "_verify",
+      "guard": "_verify:_require(key.purpose == purpose, \"purpose\") => pass",
+      "literal_case": "real_type_shadow_key"
     },
     {
-      "category": "grant",
-      "guard": "binding_stable_slot_id",
-      "literal_case": "binding_stable_slot_id",
-      "mutation": "remove or invert binding_stable_slot_id guard"
+      "after": "pass",
+      "before": "_require(isinstance(claims, dict), \"fields\")",
+      "equivalent": "Equivalent: both callers immediately call exact-object schema validation, which rejects every nondict as fields before accessing members.",
+      "function": "_verify",
+      "guard": "_verify:_require(isinstance(claims, dict), \"fields\") => pass",
+      "literal_case": "depth16"
     },
     {
-      "category": "grant",
-      "guard": "binding_region",
-      "literal_case": "binding_region",
-      "mutation": "remove or invert binding_region guard"
+      "after": "pass",
+      "before": "_require(payload == _canonical(claims), \"canonical_payload\")",
+      "function": "_check_canonical",
+      "guard": "_check_canonical:_require(payload == _canonical(claims), \"canonical_payload\") => pass",
+      "literal_case": "payload_whitespace"
     },
     {
-      "category": "grant",
-      "guard": "binding_generation",
-      "literal_case": "binding_generation",
-      "mutation": "remove or invert binding_generation guard"
+      "after": "pass",
+      "before": "_require(type(route[\"stage_d\"]) is bool, \"stage_d\")",
+      "function": "_route_schema",
+      "guard": "_route_schema:_require(type(route[\"stage_d\"]) is bool, \"stage_d\") => pass",
+      "literal_case": "precedence_stage_schema_version"
     },
     {
-      "category": "grant",
-      "guard": "binding_workspace_epoch",
-      "literal_case": "binding_workspace_epoch",
-      "mutation": "remove or invert binding_workspace_epoch guard"
+      "after": "pass",
+      "before": "_require(isinstance(claims[\"permits\"], list) and bool(claims[\"permits\"]), \"permits\")",
+      "function": "_grant_schema",
+      "guard": "_grant_schema:_require(isinstance(claims[\"permits\"], list) and bool(claims[\"permits\"]), \"permits\") => pass",
+      "literal_case": "empty_permits"
     },
     {
-      "category": "grant",
-      "guard": "binding_key_epoch",
-      "literal_case": "binding_key_epoch",
-      "mutation": "remove or invert binding_key_epoch guard"
+      "after": "pass",
+      "before": "_require(product <= MAX_INT, \"overflow\")",
+      "function": "cost_ceiling",
+      "guard": "cost_ceiling:_require(product <= MAX_INT, \"overflow\") => pass",
+      "literal_case": "money_product_overflow"
     },
     {
-      "category": "grant",
-      "guard": "binding_image_policy_version",
-      "literal_case": "binding_image_policy_version",
-      "mutation": "remove or invert binding_image_policy_version guard"
+      "after": "pass",
+      "before": "_require(total <= MAX_INT, \"overflow\")",
+      "function": "cost_ceiling",
+      "guard": "cost_ceiling:_require(total <= MAX_INT, \"overflow\") => pass",
+      "literal_case": "money_sum_overflow"
     },
     {
-      "category": "grant",
-      "guard": "missing_context_binding",
-      "literal_case": "missing_context_binding",
-      "mutation": "remove or invert missing_context_binding guard"
+      "after": "pass",
+      "before": "_require(claims[\"v\"] == 1, \"version\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(claims[\"v\"] == 1, \"version\") => pass",
+      "literal_case": "unknown_version"
     },
     {
-      "category": "grant",
-      "guard": "bool_context_binding",
-      "literal_case": "bool_context_binding",
-      "mutation": "remove or invert bool_context_binding guard"
+      "after": "pass",
+      "before": "_require(_equal(claims[field], getattr(key, field)), \"identity\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(_equal(claims[field], getattr(key, field)), \"identity\") => pass",
+      "literal_case": "identity_iss"
     },
     {
-      "category": "grant",
-      "guard": "route_adapter_capability_version",
-      "literal_case": "route_adapter_capability_version",
-      "mutation": "remove or invert route_adapter_capability_version guard"
+      "after": "pass",
+      "before": "_require(field in context and _equal(claims[field], context[field]), \"binding\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(field in context and _equal(claims[field], context[field]), \"binding\") => pass",
+      "literal_case": "binding_key_id"
     },
     {
-      "category": "grant",
-      "guard": "route_catalog_hash",
-      "literal_case": "route_catalog_hash",
-      "mutation": "remove or invert route_catalog_hash guard"
+      "after": "pass",
+      "before": "_require(route[\"stage_d\"] is True, \"stage_d\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(route[\"stage_d\"] is True, \"stage_d\") => pass",
+      "literal_case": "stage_d_false"
     },
     {
-      "category": "grant",
-      "guard": "route_endpoint_id",
-      "literal_case": "route_endpoint_id",
-      "mutation": "remove or invert route_endpoint_id guard"
+      "after": "pass",
+      "before": "_require(_equal(route, context.get(\"route\")), \"route\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(_equal(route, context.get(\"route\")), \"route\") => pass",
+      "literal_case": "route_endpoint_id"
     },
     {
-      "category": "grant",
-      "guard": "route_input_bound",
-      "literal_case": "route_input_bound",
-      "mutation": "remove or invert route_input_bound guard"
+      "after": "pass",
+      "before": "_require(route[\"region\"] == claims[\"region\"], \"route\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(route[\"region\"] == claims[\"region\"], \"route\") => pass",
+      "literal_case": "route_region_disagrees"
     },
     {
-      "category": "grant",
-      "guard": "route_input_bound_method",
-      "literal_case": "route_input_bound_method",
-      "mutation": "remove or invert route_input_bound_method guard"
+      "after": "pass",
+      "before": "_require(0 < route[\"input_bound\"] <= 8192 and 0 < route[\"output_limit\"] <= 512,\n             \"token_bound\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(0 < route[\"input_bound\"] <= 8192 and 0 < route[\"output_limit\"] <= 512,\n             \"token_bound\") => pass",
+      "literal_case": "output_bound_over"
     },
     {
-      "category": "grant",
-      "guard": "route_input_rate_micro_per_m",
-      "literal_case": "route_input_rate_micro_per_m",
-      "mutation": "remove or invert route_input_rate_micro_per_m guard"
+      "after": "pass",
+      "before": "_require(route[\"adapter_capability_version\"] > 0, \"adapter\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(route[\"adapter_capability_version\"] > 0, \"adapter\") => pass",
+      "literal_case": "adapter_zero"
     },
     {
-      "category": "grant",
-      "guard": "route_maximum_request_fees_micro",
-      "literal_case": "route_maximum_request_fees_micro",
-      "mutation": "remove or invert route_maximum_request_fees_micro guard"
+      "after": "pass",
+      "before": "_require(claims[\"tier\"] in (2, 3), \"tier\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(claims[\"tier\"] in (2, 3), \"tier\") => pass",
+      "literal_case": "tier_one"
     },
     {
-      "category": "grant",
-      "guard": "route_output_limit",
-      "literal_case": "route_output_limit",
-      "mutation": "remove or invert route_output_limit guard"
+      "after": "pass",
+      "before": "_require(claims[\"paid_headroom_micro\"] >= 5_000_000, \"paid_headroom\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(claims[\"paid_headroom_micro\"] >= 5_000_000, \"paid_headroom\") => pass",
+      "literal_case": "unpaid"
     },
     {
-      "category": "grant",
-      "guard": "route_output_rate_micro_per_m",
-      "literal_case": "route_output_rate_micro_per_m",
-      "mutation": "remove or invert route_output_rate_micro_per_m guard"
+      "after": "pass",
+      "before": "_require(history[\"count\"] >= 20 and history[\"sequence\"] >= history[\"count\"], \"history_count\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(history[\"count\"] >= 20 and history[\"sequence\"] >= history[\"count\"], \"history_count\") => pass",
+      "literal_case": "history_19"
     },
     {
-      "category": "grant",
-      "guard": "route_price_expires_at",
-      "literal_case": "route_price_expires_at",
-      "mutation": "remove or invert route_price_expires_at guard"
+      "after": "pass",
+      "before": "_require(issued - 600 <= history[\"window_start\"] <= history[\"last_success_at\"] <= issued\n             and history[\"last_success_at\"] >= issued - 30\n             and history[\"clean_since\"] <= issued - 900, \"history_time\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(issued - 600 <= history[\"window_start\"] <= history[\"last_success_at\"] <= issued\n             and history[\"last_success_at\"] >= issued - 30\n             and history[\"clean_since\"] <= issued - 900, \"history_time\") => pass",
+      "literal_case": "stale_last_success"
     },
     {
-      "category": "grant",
-      "guard": "route_privacy",
-      "literal_case": "route_privacy",
-      "mutation": "remove or invert route_privacy guard"
+      "after": "pass",
+      "before": "_require(0 < claims[\"exp\"] - issued <= 30 and issued < claims[\"start_before\"], \"lifetime\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(0 < claims[\"exp\"] - issued <= 30 and issued < claims[\"start_before\"], \"lifetime\") => pass",
+      "literal_case": "ttl_too_long"
     },
     {
-      "category": "grant",
-      "guard": "route_provider",
-      "literal_case": "route_provider",
-      "mutation": "remove or invert route_provider guard"
+      "after": "pass",
+      "before": "_require(issued <= now < deadline, \"start_window\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(issued <= now < deadline, \"start_window\") => pass",
+      "literal_case": "start_plus_28"
     },
     {
-      "category": "grant",
-      "guard": "route_region",
-      "literal_case": "route_region",
-      "mutation": "remove or invert route_region guard"
+      "after": "pass",
+      "before": "_require(0 < ceiling <= 10_000, \"ceiling\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(0 < ceiling <= 10_000, \"ceiling\") => pass",
+      "literal_case": "over_cap_money"
     },
     {
-      "category": "grant",
-      "guard": "route_routing_policy_hash",
-      "literal_case": "route_routing_policy_hash",
-      "mutation": "remove or invert route_routing_policy_hash guard"
+      "after": "pass",
+      "before": "_require(0 < b_micro <= ceiling, \"cost\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(0 < b_micro <= ceiling, \"cost\") => pass",
+      "literal_case": "cost_10001"
     },
     {
-      "category": "grant",
-      "guard": "route_stage_d",
-      "literal_case": "route_stage_d",
-      "mutation": "remove or invert route_stage_d guard"
+      "after": "pass",
+      "before": "_require(permit[\"ordinal\"] not in ordinals, \"ordinal\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(permit[\"ordinal\"] not in ordinals, \"ordinal\") => pass",
+      "literal_case": "duplicate_ordinal"
     },
     {
-      "category": "grant",
-      "guard": "route_upstream_model",
-      "literal_case": "route_upstream_model",
-      "mutation": "remove or invert route_upstream_model guard"
+      "after": "pass",
+      "before": "_require(b_micro <= permit[\"b_micro\"] <= ceiling, \"permit_cost\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(b_micro <= permit[\"b_micro\"] <= ceiling, \"permit_cost\") => pass",
+      "literal_case": "underfunded_permit"
     },
     {
-      "category": "grant",
-      "guard": "unknown_version",
-      "literal_case": "unknown_version",
-      "mutation": "remove or invert unknown_version guard"
+      "after": "pass",
+      "before": "_require(\"tier_ceiling_micro\" in context, \"tier_ceiling\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(\"tier_ceiling_micro\" in context, \"tier_ceiling\") => pass",
+      "literal_case": "missing_tier_ceiling"
     },
     {
-      "category": "grant",
-      "guard": "unknown_field",
-      "literal_case": "unknown_field",
-      "mutation": "remove or invert unknown_field guard"
+      "after": "pass",
+      "before": "_require(sum(p[\"b_micro\"] for p in permits) <= allowance, \"allowance\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(sum(p[\"b_micro\"] for p in permits) <= allowance, \"allowance\") => pass",
+      "literal_case": "allowance_sum_not_max"
     },
     {
-      "category": "grant",
-      "guard": "unknown_route_field",
-      "literal_case": "unknown_route_field",
-      "mutation": "remove or invert unknown_route_field guard"
+      "after": "pass",
+      "before": "_require(not grant.shadow, \"dry_run_cannot_dispatch\")",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:_require(not grant.shadow, \"dry_run_cannot_dispatch\") => pass",
+      "literal_case": "dry_run_cannot_dispatch"
     },
     {
-      "category": "grant",
-      "guard": "missing_history",
-      "literal_case": "missing_history",
-      "mutation": "remove or invert missing_history guard"
+      "after": "pass",
+      "before": "_require(claims[\"v\"] == 1, \"version\")",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:_require(claims[\"v\"] == 1, \"version\") => pass",
+      "literal_case": "descriptor_version"
     },
     {
-      "category": "grant",
-      "guard": "missing_provenance",
-      "literal_case": "missing_provenance",
-      "mutation": "remove or invert missing_provenance guard"
+      "after": "pass",
+      "before": "_require(key.kid == g[\"boot_id\"], \"descriptor_boot\")",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:_require(key.kid == g[\"boot_id\"], \"descriptor_boot\") => pass",
+      "literal_case": "descriptor_wrong_boot_signer"
     },
     {
-      "category": "grant",
-      "guard": "missing_nested_history",
-      "literal_case": "missing_nested_history",
-      "mutation": "remove or invert missing_nested_history guard"
+      "after": "pass",
+      "before": "_require(_equal(claims[field], g[field]), \"descriptor_binding\")",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:_require(_equal(claims[field], g[field]), \"descriptor_binding\") => pass",
+      "literal_case": "descriptor_key_id"
     },
     {
-      "category": "grant",
-      "guard": "history_19",
-      "literal_case": "history_19",
-      "mutation": "remove or invert history_19 guard"
+      "after": "pass",
+      "before": "_require(claims[\"grant_sha256\"] == sha256(grant.compact.encode(\"ascii\")), \"grant_hash\")",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:_require(claims[\"grant_sha256\"] == sha256(grant.compact.encode(\"ascii\")), \"grant_hash\") => pass",
+      "literal_case": "descriptor_shadow_hash"
     },
     {
-      "category": "grant",
-      "guard": "history_retry_dedupe",
-      "literal_case": "history_retry_dedupe",
-      "mutation": "remove or invert history_retry_dedupe guard"
+      "after": "pass",
+      "before": "_require(claims[\"request_sha256\"] == sha256(request_bytes), \"request_hash\")",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:_require(claims[\"request_sha256\"] == sha256(request_bytes), \"request_hash\") => pass",
+      "literal_case": "descriptor_wire_lf"
     },
     {
-      "category": "grant",
-      "guard": "stale_last_success",
-      "literal_case": "stale_last_success",
-      "mutation": "remove or invert stale_last_success guard"
+      "after": "pass",
+      "before": "_require(_equal(claims[\"execution_id\"], execution_id) and _equal(claims[\"invocation_nonce\"], invocation_nonce),\n             \"invocation\")",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:_require(_equal(claims[\"execution_id\"], execution_id) and _equal(claims[\"invocation_nonce\"], invocation_nonce),\n             \"invocation\") => pass",
+      "literal_case": "descriptor_nonce"
     },
     {
-      "category": "grant",
-      "guard": "future_last_success",
-      "literal_case": "future_last_success",
-      "mutation": "remove or invert future_last_success guard"
+      "after": "pass",
+      "before": "_require(_equal(claims[field], g[\"route\"][field]), \"descriptor_route\")",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:_require(_equal(claims[field], g[\"route\"][field]), \"descriptor_route\") => pass",
+      "literal_case": "descriptor_endpoint"
     },
     {
-      "category": "grant",
-      "guard": "old_history_window",
-      "literal_case": "old_history_window",
-      "mutation": "remove or invert old_history_window guard"
+      "after": "pass",
+      "before": "_require(any(p[\"ordinal\"] == claims[\"ordinal\"] and p[\"b_micro\"] == claims[\"b_micro\"]\n                 for p in g[\"permits\"]), \"descriptor_permit\")",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:_require(any(p[\"ordinal\"] == claims[\"ordinal\"] and p[\"b_micro\"] == claims[\"b_micro\"]\n                 for p in g[\"permits\"]), \"descriptor_permit\") => pass",
+      "literal_case": "descriptor_ordinal"
     },
     {
-      "category": "grant",
-      "guard": "future_history_window",
-      "literal_case": "future_history_window",
-      "mutation": "remove or invert future_history_window guard"
+      "after": "pass",
+      "before": "_require(_equal(response.get(\"authorization\"), authorization), \"authorization\")",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:_require(_equal(response.get(\"authorization\"), authorization), \"authorization\") => pass",
+      "literal_case": "response_stage_d_integer"
     },
     {
-      "category": "grant",
-      "guard": "unclean_history",
-      "literal_case": "unclean_history",
-      "mutation": "remove or invert unclean_history guard"
+      "after": "pass",
+      "before": "_require(_equal(authorization.get(field), d[field]), \"authorization\")",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:_require(_equal(authorization.get(field), d[field]), \"authorization\") => pass",
+      "literal_case": "marker_unmarked_key"
     },
     {
-      "category": "grant",
-      "guard": "tier_one",
-      "literal_case": "tier_one",
-      "mutation": "remove or invert tier_one guard"
+      "after": "pass",
+      "before": "_require(authorization.get(\"billing_mode\") == \"ordinary\", \"authorization\")",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:_require(authorization.get(\"billing_mode\") == \"ordinary\", \"authorization\") => pass",
+      "literal_case": "unmarked_spend_lease"
     },
     {
-      "category": "grant",
-      "guard": "unpaid",
-      "literal_case": "unpaid",
-      "mutation": "remove or invert unpaid guard"
+      "after": "pass",
+      "before": "_require(marker[\"v\"] == 1, \"version\")",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:_require(marker[\"v\"] == 1, \"version\") => pass",
+      "literal_case": "marker_version"
     },
     {
-      "category": "grant",
-      "guard": "ttl_too_long",
-      "literal_case": "ttl_too_long",
-      "mutation": "remove or invert ttl_too_long guard"
+      "after": "pass",
+      "before": "_require(marker[\"descriptor_sha256\"] == sha256(descriptor.compact.encode(\"ascii\")), \"descriptor_hash\")",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:_require(marker[\"descriptor_sha256\"] == sha256(descriptor.compact.encode(\"ascii\")), \"descriptor_hash\") => pass",
+      "literal_case": "marker_hash"
     },
     {
-      "category": "grant",
-      "guard": "ttl_zero",
-      "literal_case": "ttl_zero",
-      "mutation": "remove or invert ttl_zero guard"
+      "after": "pass",
+      "before": "_require(_equal(marker[field], d[field]), \"marker_binding\")",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:_require(_equal(marker[field], d[field]), \"marker_binding\") => pass",
+      "literal_case": "marker_invocation_nonce"
     },
     {
-      "category": "grant",
-      "guard": "start_before_issue",
-      "literal_case": "start_before_issue",
-      "mutation": "remove or invert start_before_issue guard"
+      "after": "pass",
+      "before": "_require(_equal(authorization.get(field), expected), \"authorization\")",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:_require(_equal(authorization.get(field), expected), \"authorization\") => pass",
+      "literal_case": "marker_authorization_id"
     },
     {
-      "category": "grant",
-      "guard": "duplicate_ordinal",
-      "literal_case": "duplicate_ordinal",
-      "mutation": "remove or invert duplicate_ordinal guard"
+      "after": "pass",
+      "before": "_require(authorization.get(\"billing_mode\") == \"ordinary\" and\n             authorization.get(\"stage_d\") is True, \"authorization\")",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:_require(authorization.get(\"billing_mode\") == \"ordinary\" and\n             authorization.get(\"stage_d\") is True, \"authorization\") => pass",
+      "literal_case": "authorization_stage_d"
     },
     {
-      "category": "grant",
-      "guard": "negative_money",
-      "literal_case": "negative_money",
-      "mutation": "remove or invert negative_money guard"
+      "after": "pass",
+      "before": "_require(previous.shadow == candidate.shadow, \"renewal\")",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:_require(previous.shadow == candidate.shadow, \"renewal\") => pass",
+      "literal_case": "renewal_domain_isolated"
     },
     {
-      "category": "grant",
-      "guard": "over_cap_money",
-      "literal_case": "over_cap_money",
-      "mutation": "remove or invert over_cap_money guard"
+      "after": "pass",
+      "before": "_require(_equal(old[field], new[field]), \"renewal\")",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:_require(_equal(old[field], new[field]), \"renewal\") => pass",
+      "literal_case": "renewal_identity_workspace_id"
     },
     {
-      "category": "grant",
-      "guard": "zero_ceiling",
-      "literal_case": "zero_ceiling",
-      "mutation": "remove or invert zero_ceiling guard"
+      "after": "pass",
+      "before": "_require(new[\"grant_id\"] != old[\"grant_id\"] and new[\"generation\"] > old[\"generation\"]\n             and new[\"iat\"] >= old[\"iat\"] and new[\"workspace_epoch\"] >= old[\"workspace_epoch\"]\n             and new[\"key_epoch\"] >= old[\"key_epoch\"]\n             and new[\"history\"][\"sequence\"] >= old[\"history\"][\"sequence\"], \"renewal\")",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:_require(new[\"grant_id\"] != old[\"grant_id\"] and new[\"generation\"] > old[\"generation\"]\n             and new[\"iat\"] >= old[\"iat\"] and new[\"workspace_epoch\"] >= old[\"workspace_epoch\"]\n             and new[\"key_epoch\"] >= old[\"key_epoch\"]\n             and new[\"history\"][\"sequence\"] >= old[\"history\"][\"sequence\"], \"renewal\") => pass",
+      "literal_case": "renewal_same_generation"
     },
     {
-      "category": "grant",
-      "guard": "underfunded_permit",
-      "literal_case": "underfunded_permit",
-      "mutation": "remove or invert underfunded_permit guard"
+      "after": "pass",
+      "before": "_require(previous.compact == candidate.compact, \"replay_conflict\")",
+      "function": "descriptor_replay",
+      "guard": "descriptor_replay:_require(previous.compact == candidate.compact, \"replay_conflict\") => pass",
+      "literal_case": "descriptor_permit_reuse"
     },
     {
-      "category": "grant",
-      "guard": "over_cap_permit",
-      "literal_case": "over_cap_permit",
-      "mutation": "remove or invert over_cap_permit guard"
+      "after": "pass",
+      "before": "_require(source == \"authenticated_router\", \"verdict_source\")",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:_require(source == \"authenticated_router\", \"verdict_source\") => pass",
+      "literal_case": "provider_source"
     },
     {
-      "category": "grant",
-      "guard": "empty_permits",
-      "literal_case": "empty_permits",
-      "mutation": "remove or invert empty_permits guard"
+      "after": "pass",
+      "before": "_require(400 <= status <= 599, \"verdict_status\")",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:_require(400 <= status <= 599, \"verdict_status\") => pass",
+      "literal_case": "success_status"
     },
     {
-      "category": "grant",
-      "guard": "scalar_permits",
-      "literal_case": "scalar_permits",
-      "mutation": "remove or invert scalar_permits guard"
+      "after": "isinstance(value, int)",
+      "before": "type(value) is int",
+      "function": "_integer",
+      "guard": "_integer:type(value) is int => isinstance(value, int)",
+      "literal_case": "bool_integer"
     },
     {
-      "category": "grant",
-      "guard": "unknown_permit_field",
-      "literal_case": "unknown_permit_field",
-      "mutation": "remove or invert unknown_permit_field guard"
+      "after": "value",
+      "before": "0 <= value",
+      "function": "_integer",
+      "guard": "_integer:0 <= value => True",
+      "literal_case": "money_negative"
     },
     {
-      "category": "grant",
-      "guard": "overflow_integer",
-      "literal_case": "overflow_integer",
-      "mutation": "remove or invert overflow_integer guard"
+      "after": "0 <= value",
+      "before": "0 <= value <= MAX_INT",
+      "function": "_integer",
+      "guard": "_integer:value <= MAX_INT => True",
+      "literal_case": "overflow_integer"
     },
     {
-      "category": "grant",
-      "guard": "bool_integer",
-      "literal_case": "bool_integer",
-      "mutation": "remove or invert bool_integer guard"
+      "after": "True",
+      "before": "isinstance(value, str)",
+      "function": "_string",
+      "guard": "_string:isinstance(value, str) => True",
+      "literal_case": "string_scalar"
     },
     {
-      "category": "grant",
-      "guard": "float_integer",
-      "literal_case": "float_integer",
-      "mutation": "remove or invert float_integer guard"
+      "after": "True",
+      "before": "bool(value)",
+      "function": "_string",
+      "guard": "_string:bool(value) => True",
+      "literal_case": "string_empty"
     },
     {
-      "category": "grant",
-      "guard": "null_integer",
-      "literal_case": "null_integer",
-      "mutation": "remove or invert null_integer guard"
+      "after": "ord(c)",
+      "before": "0x20 <= ord(c)",
+      "function": "_string",
+      "guard": "_string:0x20 <= ord(c) => True",
+      "literal_case": "string_control"
     },
     {
-      "category": "grant",
-      "guard": "invalid_hash",
-      "literal_case": "invalid_hash",
-      "mutation": "remove or invert invalid_hash guard"
+      "after": "0x20 <= ord(c)",
+      "before": "0x20 <= ord(c) <= 0x7E",
+      "function": "_string",
+      "guard": "_string:ord(c) <= 0x7E => True",
+      "literal_case": "string_unicode"
     },
     {
-      "category": "grant",
-      "guard": "stage_d_false",
-      "literal_case": "stage_d_false",
-      "mutation": "remove or invert stage_d_false guard"
+      "after": "True",
+      "before": "c not in '\\\\\"<>&'",
+      "function": "_string",
+      "guard": "_string:c not in '\\\\\"<>&' => True",
+      "literal_case": "string_less"
     },
     {
-      "category": "grant",
-      "guard": "stage_d_integer",
-      "literal_case": "stage_d_integer",
-      "mutation": "remove or invert stage_d_integer guard"
+      "after": "True",
+      "before": "isinstance(value, str)",
+      "equivalent": "Equivalent: every public path validates these claims with _string before _hash. Nonstrings cannot reach the redundant hash type conjunct.",
+      "function": "_hash",
+      "guard": "_hash:isinstance(value, str) => True",
+      "literal_case": "hash_type"
     },
     {
-      "category": "grant",
-      "guard": "short_expiry_before",
-      "literal_case": "short_expiry_before",
-      "mutation": "remove or invert short_expiry_before guard"
+      "after": "True",
+      "before": "isinstance(value, dict)",
+      "function": "_object",
+      "guard": "_object:isinstance(value, dict) => True",
+      "literal_case": "header_scalar"
     },
     {
-      "category": "grant",
-      "guard": "short_expiry_at",
-      "literal_case": "short_expiry_at",
-      "mutation": "remove or invert short_expiry_at guard"
+      "after": "set(value) <= set(",
+      "before": "set(value) == set(",
+      "function": "_object",
+      "guard": "_object:set(value) == set( => set(value) <= set(",
+      "literal_case": "missing_provenance"
     },
     {
-      "category": "grant",
-      "guard": "short_key_before",
-      "literal_case": "short_key_before",
-      "mutation": "remove or invert short_key_before guard"
+      "after": "    pass",
+      "before": "    _integer(number)",
+      "function": "_parse_int",
+      "guard": "_parse_int:    _integer(number) =>     pass",
+      "literal_case": "header_number_negative"
     },
     {
-      "category": "grant",
-      "guard": "short_key_at",
-      "literal_case": "short_key_at",
-      "mutation": "remove or invert short_key_at guard"
+      "after": "return 1",
+      "before": "raise ProtocolError(\"integer\")",
+      "function": "_constant",
+      "guard": "_constant:raise ProtocolError(\"integer\") => return 1",
+      "literal_case": "exponent"
     },
     {
-      "category": "grant",
-      "guard": "short_price_before",
-      "literal_case": "short_price_before",
-      "mutation": "remove or invert short_price_before guard"
+      "after": "raise ProtocolError(\"input\") from exc",
+      "before": "raise ProtocolError(\"json\") from exc",
+      "function": "_json",
+      "guard": "_json:raise ProtocolError(\"json\") from exc => raise ProtocolError(\"input\") from exc",
+      "literal_case": "json_bad"
     },
     {
-      "category": "grant",
-      "guard": "short_price_at",
-      "literal_case": "short_price_at",
-      "mutation": "remove or invert short_price_at guard"
+      "after": "raw.decode(\"utf-8\", errors=\"replace\")",
+      "before": "raw.decode(\"utf-8\")",
+      "function": "_json",
+      "guard": "_json:raw.decode(\"utf-8\") => raw.decode(\"utf-8\", errors=\"replace\")",
+      "literal_case": "invalid_utf8"
     },
     {
-      "category": "grant",
-      "guard": "short_trust_before",
-      "literal_case": "short_trust_before",
-      "mutation": "remove or invert short_trust_before guard"
+      "after": "        pass",
+      "before": "        _depth(text)",
+      "function": "_json",
+      "guard": "_json:        _depth(text) =>         pass",
+      "literal_case": "depth17"
     },
     {
-      "category": "grant",
-      "guard": "short_trust_at",
-      "literal_case": "short_trust_at",
-      "mutation": "remove or invert short_trust_at guard"
+      "after": "True",
+      "before": "bool(value)",
+      "equivalent": "Equivalent: regex uses +, so empty input already fails the same base64 predicate.",
+      "function": "_b64decode",
+      "guard": "_b64decode:bool(value) => True",
+      "literal_case": "base64_empty"
     },
     {
-      "category": "grant",
-      "guard": "short_explicit_before",
-      "literal_case": "short_explicit_before",
-      "mutation": "remove or invert short_explicit_before guard"
+      "after": "raise ProtocolError(\"input\") from exc",
+      "before": "raise ProtocolError(\"base64\") from exc",
+      "function": "_b64decode",
+      "guard": "_b64decode:raise ProtocolError(\"base64\") from exc => raise ProtocolError(\"input\") from exc",
+      "literal_case": "base64_length"
     },
     {
-      "category": "grant",
-      "guard": "short_explicit_at",
-      "literal_case": "short_explicit_at",
-      "mutation": "remove or invert short_explicit_at guard"
+      "after": "True",
+      "before": "isinstance(token, str)",
+      "function": "_verify",
+      "guard": "_verify:isinstance(token, str) => True",
+      "literal_case": "compact_nonstring"
     },
     {
-      "category": "grant",
-      "guard": "start_plus_27",
-      "literal_case": "start_plus_27",
-      "mutation": "remove or invert start_plus_27 guard"
+      "after": "True",
+      "before": "len(token) <= 65536",
+      "function": "_verify",
+      "guard": "_verify:len(token) <= 65536 => True",
+      "literal_case": "compact_too_long"
     },
     {
-      "category": "grant",
-      "guard": "start_plus_28",
-      "literal_case": "start_plus_28",
-      "mutation": "remove or invert start_plus_28 guard"
+      "after": "True",
+      "before": "token.count(\".\") == 2",
+      "function": "_verify",
+      "guard": "_verify:token.count(\".\") == 2 => True",
+      "literal_case": "compact_extra"
     },
     {
-      "category": "grant",
-      "guard": "late_receipt",
-      "literal_case": "late_receipt",
-      "mutation": "remove or invert late_receipt guard"
+      "after": "True",
+      "before": "key.kid == header[\"kid\"]",
+      "function": "_verify",
+      "guard": "_verify:key.kid == header[\"kid\"] => True",
+      "literal_case": "real_valid"
     },
     {
-      "category": "grant",
-      "guard": "future_iat",
-      "literal_case": "future_iat",
-      "mutation": "remove or invert future_iat guard"
+      "after": "signature, b\"wrong\"",
+      "before": "signature, (h + \".\" + p).encode(\"ascii\")",
+      "function": "_verify",
+      "guard": "_verify:signature, (h + \".\" + p).encode(\"ascii\") => signature, b\"wrong\"",
+      "literal_case": "real_valid"
     },
     {
-      "category": "grant",
-      "guard": "bool_now",
-      "literal_case": "bool_now",
-      "mutation": "remove or invert bool_now guard"
+      "after": "pass",
+      "before": "raise ProtocolError(\"signature\") from exc",
+      "function": "_verify",
+      "guard": "_verify:raise ProtocolError(\"signature\") from exc => pass",
+      "literal_case": "signature_bitflip"
     },
     {
-      "category": "grant",
-      "guard": "history_20_boundary",
-      "literal_case": "history_20_boundary",
-      "mutation": "remove or invert history_20_boundary guard"
+      "after": "True",
+      "before": "isinstance(claims[\"permits\"], list)",
+      "function": "_grant_schema",
+      "guard": "_grant_schema:isinstance(claims[\"permits\"], list) => True",
+      "literal_case": "scalar_permits"
     },
     {
-      "category": "grant",
-      "guard": "string_quote",
-      "literal_case": "string_quote",
-      "mutation": "remove or invert string_quote guard"
+      "after": "True",
+      "before": "bool(claims[\"permits\"])",
+      "function": "_grant_schema",
+      "guard": "_grant_schema:bool(claims[\"permits\"]) => True",
+      "literal_case": "empty_permits"
     },
     {
-      "category": "grant",
-      "guard": "string_backslash",
-      "literal_case": "string_backslash",
-      "mutation": "remove or invert string_backslash guard"
+      "after": "False",
+      "before": "product % 1_000_000 != 0",
+      "function": "cost_ceiling",
+      "guard": "cost_ceiling:product % 1_000_000 != 0 => False",
+      "literal_case": "money_fractional"
     },
     {
-      "category": "grant",
-      "guard": "string_less",
-      "literal_case": "string_less",
-      "mutation": "remove or invert string_less guard"
+      "after": "total = 0",
+      "before": "total = maximum_request_fees_micro",
+      "function": "cost_ceiling",
+      "guard": "cost_ceiling:total = maximum_request_fees_micro => total = 0",
+      "literal_case": "money_fees"
     },
     {
-      "category": "grant",
-      "guard": "string_greater",
-      "literal_case": "string_greater",
-      "mutation": "remove or invert string_greater guard"
+      "after": "(tier_ceiling_micro + 99) // 100",
+      "before": "tier_ceiling_micro // 100",
+      "function": "workspace_allowance",
+      "guard": "workspace_allowance:tier_ceiling_micro // 100 => (tier_ceiling_micro + 99) // 100",
+      "literal_case": "allowance_odd_tier"
     },
     {
-      "category": "grant",
-      "guard": "string_ampersand",
-      "literal_case": "string_ampersand",
-      "mutation": "remove or invert string_ampersand guard"
+      "after": "(paid_headroom_micro + 9) // 10",
+      "before": "paid_headroom_micro // 10",
+      "function": "workspace_allowance",
+      "guard": "workspace_allowance:paid_headroom_micro // 10 => (paid_headroom_micro + 9) // 10",
+      "literal_case": "allowance_odd_headroom"
     },
     {
-      "category": "grant",
-      "guard": "string_control",
-      "literal_case": "string_control",
-      "mutation": "remove or invert string_control guard"
+      "after": ")",
+      "before": ", 1_000_000)",
+      "function": "workspace_allowance",
+      "guard": "workspace_allowance:, 1_000_000) => )",
+      "literal_case": "allowance_dollar_cap"
     },
     {
-      "category": "grant",
-      "guard": "string_unicode",
-      "literal_case": "string_unicode",
-      "mutation": "remove or invert string_unicode guard"
+      "after": "",
+      "before": "field in context and ",
+      "function": "verify_grant",
+      "guard": "verify_grant:field in context and  => ",
+      "literal_case": "missing_context_binding"
     },
     {
-      "category": "grant",
-      "guard": "string_del",
-      "literal_case": "string_del",
-      "mutation": "remove or invert string_del guard"
+      "after": "    pass",
+      "before": "    _route_schema(context.get(\"route\"))",
+      "function": "verify_grant",
+      "guard": "verify_grant:    _route_schema(context.get(\"route\")) =>     pass",
+      "literal_case": "context_coercion_stage_d"
     },
     {
-      "category": "grant",
-      "guard": "string_empty",
-      "literal_case": "string_empty",
-      "mutation": "remove or invert string_empty guard"
+      "after": "route[\"input_bound\"]",
+      "before": "0 < route[\"input_bound\"]",
+      "function": "verify_grant",
+      "guard": "verify_grant:0 < route[\"input_bound\"] => True",
+      "literal_case": "input_bound_zero"
     },
     {
-      "category": "grant",
-      "guard": "string_null",
-      "literal_case": "string_null",
-      "mutation": "remove or invert string_null guard"
+      "after": "0 < route[\"input_bound\"]",
+      "before": "0 < route[\"input_bound\"] <= 8192",
+      "function": "verify_grant",
+      "guard": "verify_grant:route[\"input_bound\"] <= 8192 => True",
+      "literal_case": "input_bound_over"
     },
     {
-      "category": "grant",
-      "guard": "safe_ascii",
-      "literal_case": "safe_ascii",
-      "mutation": "remove or invert safe_ascii guard"
+      "after": "route[\"output_limit\"]",
+      "before": "0 < route[\"output_limit\"]",
+      "function": "verify_grant",
+      "guard": "verify_grant:0 < route[\"output_limit\"] => True",
+      "literal_case": "output_bound_zero"
     },
     {
-      "category": "grant",
-      "guard": "payload_whitespace",
-      "literal_case": "payload_whitespace",
-      "mutation": "remove or invert payload_whitespace guard"
+      "after": "0 < route[\"output_limit\"]",
+      "before": "0 < route[\"output_limit\"] <= 512",
+      "function": "verify_grant",
+      "guard": "verify_grant:route[\"output_limit\"] <= 512 => True",
+      "literal_case": "output_bound_over"
     },
     {
-      "category": "grant",
-      "guard": "payload_unsorted",
-      "literal_case": "payload_unsorted",
-      "mutation": "remove or invert payload_unsorted guard"
+      "after": "claims[\"tier\"] >= 2",
+      "before": "claims[\"tier\"] in (2, 3)",
+      "function": "verify_grant",
+      "guard": "verify_grant:claims[\"tier\"] in (2, 3) => claims[\"tier\"] >= 2",
+      "literal_case": "tier_four"
     },
     {
-      "category": "grant",
-      "guard": "payload_escaped_ascii",
-      "literal_case": "payload_escaped_ascii",
-      "mutation": "remove or invert payload_escaped_ascii guard"
+      "after": "True",
+      "before": "history[\"count\"] >= 20",
+      "function": "verify_grant",
+      "guard": "verify_grant:history[\"count\"] >= 20 => True",
+      "literal_case": "history_19"
     },
     {
-      "category": "grant",
-      "guard": "payload_duplicate",
-      "literal_case": "payload_duplicate",
-      "mutation": "remove or invert payload_duplicate guard"
+      "after": "True",
+      "before": "history[\"sequence\"] >= history[\"count\"]",
+      "function": "verify_grant",
+      "guard": "verify_grant:history[\"sequence\"] >= history[\"count\"] => True",
+      "literal_case": "history_retry_dedupe"
     },
     {
-      "category": "grant",
-      "guard": "nested_duplicate",
-      "literal_case": "nested_duplicate",
-      "mutation": "remove or invert nested_duplicate guard"
+      "after": "history[\"window_start\"]",
+      "before": "issued - 600 <= history[\"window_start\"]",
+      "function": "verify_grant",
+      "guard": "verify_grant:issued - 600 <= history[\"window_start\"] => True",
+      "literal_case": "old_history_window"
     },
     {
-      "category": "grant",
-      "guard": "nan",
-      "literal_case": "nan",
-      "mutation": "remove or invert nan guard"
+      "after": "issued - 600 <= history[\"window_start\"] and history[\"last_success_at\"] <= issued",
+      "before": "issued - 600 <= history[\"window_start\"] <= history[\"last_success_at\"] <= issued",
+      "function": "verify_grant",
+      "guard": "verify_grant:history[\"window_start\"] <= history[\"last_success_at\"] => True",
+      "literal_case": "future_history_window"
     },
     {
-      "category": "grant",
-      "guard": "infinity",
-      "literal_case": "infinity",
-      "mutation": "remove or invert infinity guard"
+      "after": "issued - 600 <= history[\"window_start\"] <= history[\"last_success_at\"]",
+      "before": "issued - 600 <= history[\"window_start\"] <= history[\"last_success_at\"] <= issued",
+      "function": "verify_grant",
+      "guard": "verify_grant:history[\"last_success_at\"] <= issued => True",
+      "literal_case": "future_last_success"
     },
     {
-      "category": "grant",
-      "guard": "negative_infinity",
-      "literal_case": "negative_infinity",
-      "mutation": "remove or invert negative_infinity guard"
+      "after": "True",
+      "before": "history[\"last_success_at\"] >= issued - 30",
+      "function": "verify_grant",
+      "guard": "verify_grant:history[\"last_success_at\"] >= issued - 30 => True",
+      "literal_case": "stale_last_success"
     },
     {
-      "category": "grant",
-      "guard": "raw_unicode",
-      "literal_case": "raw_unicode",
-      "mutation": "remove or invert raw_unicode guard"
+      "after": "True",
+      "before": "history[\"clean_since\"] <= issued - 900",
+      "function": "verify_grant",
+      "guard": "verify_grant:history[\"clean_since\"] <= issued - 900 => True",
+      "literal_case": "unclean_history"
     },
     {
-      "category": "grant",
-      "guard": "json_bad",
-      "literal_case": "json_bad",
-      "mutation": "remove or invert json_bad guard"
+      "after": "claims[\"exp\"] - issued",
+      "before": "0 < claims[\"exp\"] - issued",
+      "function": "verify_grant",
+      "guard": "verify_grant:0 < claims[\"exp\"] - issued => True",
+      "literal_case": "ttl_zero"
     },
     {
-      "category": "grant",
-      "guard": "json_utf8",
-      "literal_case": "json_utf8",
-      "mutation": "remove or invert json_utf8 guard"
+      "after": "0 < claims[\"exp\"] - issued",
+      "before": "0 < claims[\"exp\"] - issued <= 30",
+      "function": "verify_grant",
+      "guard": "verify_grant:claims[\"exp\"] - issued <= 30 => True",
+      "literal_case": "ttl_too_long"
     },
     {
-      "category": "grant",
-      "guard": "json_scalar",
-      "literal_case": "json_scalar",
-      "mutation": "remove or invert json_scalar guard"
+      "after": "True",
+      "before": "issued < claims[\"start_before\"]",
+      "function": "verify_grant",
+      "guard": "verify_grant:issued < claims[\"start_before\"] => True",
+      "literal_case": "start_before_issue"
     },
     {
-      "category": "grant",
-      "guard": "negative_zero",
-      "literal_case": "negative_zero",
-      "mutation": "remove or invert negative_zero guard"
+      "after": "MAX_INT, claims[\"exp\"] - MARGIN",
+      "before": "claims[\"start_before\"], claims[\"exp\"] - MARGIN",
+      "function": "verify_grant",
+      "guard": "verify_grant:claims[\"start_before\"], claims[\"exp\"] - MARGIN => MAX_INT, claims[\"exp\"] - MARGIN",
+      "literal_case": "short_explicit_at"
     },
     {
-      "category": "grant",
-      "guard": "exponent",
-      "literal_case": "exponent",
-      "mutation": "remove or invert exponent guard"
+      "after": "MAX_INT",
+      "before": "claims[\"exp\"] - MARGIN",
+      "function": "verify_grant",
+      "guard": "verify_grant:claims[\"exp\"] - MARGIN => MAX_INT",
+      "literal_case": "short_expiry_at"
     },
     {
-      "category": "grant",
-      "guard": "algorithm_none",
-      "literal_case": "algorithm_none",
-      "mutation": "remove or invert algorithm_none guard"
+      "after": "MAX_INT",
+      "before": "claims[\"key_expires_at\"] - MARGIN",
+      "function": "verify_grant",
+      "guard": "verify_grant:claims[\"key_expires_at\"] - MARGIN => MAX_INT",
+      "literal_case": "short_key_at"
     },
     {
-      "category": "grant",
-      "guard": "algorithm_rs256",
-      "literal_case": "algorithm_rs256",
-      "mutation": "remove or invert algorithm_rs256 guard"
+      "after": "MAX_INT",
+      "before": "route[\"price_expires_at\"] - MARGIN",
+      "function": "verify_grant",
+      "guard": "verify_grant:route[\"price_expires_at\"] - MARGIN => MAX_INT",
+      "literal_case": "short_price_at"
     },
     {
-      "category": "grant",
-      "guard": "unknown_kid",
-      "literal_case": "unknown_kid",
-      "mutation": "remove or invert unknown_kid guard"
+      "after": "MAX_INT",
+      "before": "claims[\"trust_fresh_until\"] - MARGIN",
+      "function": "verify_grant",
+      "guard": "verify_grant:claims[\"trust_fresh_until\"] - MARGIN => MAX_INT",
+      "literal_case": "short_trust_at"
     },
     {
-      "category": "grant",
-      "guard": "header_extra",
-      "literal_case": "header_extra",
-      "mutation": "remove or invert header_extra guard"
+      "after": "now",
+      "before": "issued <= now",
+      "function": "verify_grant",
+      "guard": "verify_grant:issued <= now => True",
+      "literal_case": "future_iat"
     },
     {
-      "category": "grant",
-      "guard": "header_missing",
-      "literal_case": "header_missing",
-      "mutation": "remove or invert header_missing guard"
+      "after": "issued <= now <= deadline",
+      "before": "issued <= now < deadline",
+      "function": "verify_grant",
+      "guard": "verify_grant:now < deadline => now <= deadline",
+      "literal_case": "start_plus_28"
     },
     {
-      "category": "grant",
-      "guard": "header_scalar",
-      "literal_case": "header_scalar",
-      "mutation": "remove or invert header_scalar guard"
+      "after": "ceiling",
+      "before": "0 < ceiling",
+      "function": "verify_grant",
+      "guard": "verify_grant:0 < ceiling => True",
+      "literal_case": "zero_ceiling"
     },
     {
-      "category": "grant",
-      "guard": "unknown_type",
-      "literal_case": "unknown_type",
-      "mutation": "remove or invert unknown_type guard"
+      "after": "0 < ceiling",
+      "before": "0 < ceiling <= 10_000",
+      "function": "verify_grant",
+      "guard": "verify_grant:ceiling <= 10_000 => True",
+      "literal_case": "over_cap_money"
     },
     {
-      "category": "grant",
-      "guard": "signature_bitflip",
-      "literal_case": "signature_bitflip",
-      "mutation": "remove or invert signature_bitflip guard"
+      "after": "b_micro",
+      "before": "0 < b_micro",
+      "function": "verify_grant",
+      "guard": "verify_grant:0 < b_micro => True",
+      "literal_case": "cost_zero"
     },
     {
-      "category": "grant",
-      "guard": "compact_missing",
-      "literal_case": "compact_missing",
-      "mutation": "remove or invert compact_missing guard"
+      "after": "0 < b_micro",
+      "before": "0 < b_micro <= ceiling",
+      "function": "verify_grant",
+      "guard": "verify_grant:b_micro <= ceiling => True",
+      "literal_case": "cost_10001"
     },
     {
-      "category": "grant",
-      "guard": "compact_extra",
-      "literal_case": "compact_extra",
-      "mutation": "remove or invert compact_extra guard"
+      "after": "permit[\"b_micro\"]",
+      "before": "b_micro <= permit[\"b_micro\"]",
+      "function": "verify_grant",
+      "guard": "verify_grant:b_micro <= permit[\"b_micro\"] => True",
+      "literal_case": "underfunded_permit"
     },
     {
-      "category": "grant",
-      "guard": "base64_empty",
-      "literal_case": "base64_empty",
-      "mutation": "remove or invert base64_empty guard"
+      "after": "b_micro <= permit[\"b_micro\"]",
+      "before": "b_micro <= permit[\"b_micro\"] <= ceiling",
+      "function": "verify_grant",
+      "guard": "verify_grant:permit[\"b_micro\"] <= ceiling => True",
+      "literal_case": "over_cap_permit"
     },
     {
-      "category": "grant",
-      "guard": "base64_length",
-      "literal_case": "base64_length",
-      "mutation": "remove or invert base64_length guard"
+      "after": "max(p[\"b_micro\"] for p in permits)",
+      "before": "sum(p[\"b_micro\"] for p in permits)",
+      "function": "verify_grant",
+      "guard": "verify_grant:sum(p[\"b_micro\"] for p in permits) => max(p[\"b_micro\"] for p in permits)",
+      "literal_case": "allowance_sum_not_max"
     },
     {
-      "category": "grant",
-      "guard": "base64_plus",
-      "literal_case": "base64_plus",
-      "mutation": "remove or invert base64_plus guard"
+      "after": "True",
+      "before": "_equal(claims[\"execution_id\"], execution_id)",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:_equal(claims[\"execution_id\"], execution_id) => True",
+      "literal_case": "descriptor_execution"
     },
     {
-      "category": "grant",
-      "guard": "base64_slash",
-      "literal_case": "base64_slash",
-      "mutation": "remove or invert base64_slash guard"
+      "after": "True",
+      "before": "_equal(claims[\"invocation_nonce\"], invocation_nonce)",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:_equal(claims[\"invocation_nonce\"], invocation_nonce) => True",
+      "literal_case": "descriptor_nonce"
     },
     {
-      "category": "grant",
-      "guard": "base64_space",
-      "literal_case": "base64_space",
-      "mutation": "remove or invert base64_space guard"
+      "after": "True",
+      "before": "p[\"ordinal\"] == claims[\"ordinal\"]",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:p[\"ordinal\"] == claims[\"ordinal\"] => True",
+      "literal_case": "descriptor_ordinal"
     },
     {
-      "category": "grant",
-      "guard": "base64_trailing_bits",
-      "literal_case": "base64_trailing_bits",
-      "mutation": "remove or invert base64_trailing_bits guard"
+      "after": "True",
+      "before": "p[\"b_micro\"] == claims[\"b_micro\"]",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:p[\"b_micro\"] == claims[\"b_micro\"] => True",
+      "literal_case": "descriptor_cost"
     },
     {
-      "category": "grant",
-      "guard": "signature_padded",
-      "literal_case": "signature_padded",
-      "mutation": "remove or invert signature_padded guard"
+      "after": "response.get(\"speculation_accepted\") is None",
+      "before": "\"speculation_accepted\" not in response",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:\"speculation_accepted\" not in response => response.get(\"speculation_accepted\") is None",
+      "literal_case": "marker_null"
     },
     {
-      "category": "grant",
-      "guard": "payload_padded",
-      "literal_case": "payload_padded",
-      "mutation": "remove or invert payload_padded guard"
+      "after": "True",
+      "before": "authorization.get(\"stage_d\") is True",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:authorization.get(\"stage_d\") is True => True",
+      "literal_case": "authorization_stage_d"
     },
     {
-      "category": "grant",
-      "guard": "input_bound_over",
-      "literal_case": "input_bound_over",
-      "mutation": "remove or invert input_bound_over guard"
+      "after": "False",
+      "before": "previous.compact == candidate.compact",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:previous.compact == candidate.compact => False",
+      "literal_case": "renewal_exact_replay"
     },
     {
-      "category": "grant",
-      "guard": "output_bound_over",
-      "literal_case": "output_bound_over",
-      "mutation": "remove or invert output_bound_over guard"
+      "after": "True",
+      "before": "new[\"grant_id\"] != old[\"grant_id\"]",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:new[\"grant_id\"] != old[\"grant_id\"] => True",
+      "literal_case": "renewal_same_grant_id"
     },
     {
-      "category": "grant",
-      "guard": "input_bound_zero",
-      "literal_case": "input_bound_zero",
-      "mutation": "remove or invert input_bound_zero guard"
+      "after": "True",
+      "before": "new[\"generation\"] > old[\"generation\"]",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:new[\"generation\"] > old[\"generation\"] => True",
+      "literal_case": "renewal_same_generation"
     },
     {
-      "category": "grant",
-      "guard": "adapter_zero",
-      "literal_case": "adapter_zero",
-      "mutation": "remove or invert adapter_zero guard"
+      "after": "True",
+      "before": "new[\"iat\"] >= old[\"iat\"]",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:new[\"iat\"] >= old[\"iat\"] => True",
+      "literal_case": "renewal_old_iat"
     },
     {
-      "category": "grant",
-      "guard": "route_region_disagrees",
-      "literal_case": "route_region_disagrees",
-      "mutation": "remove or invert route_region_disagrees guard"
+      "after": "True",
+      "before": "new[\"workspace_epoch\"] >= old[\"workspace_epoch\"]",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:new[\"workspace_epoch\"] >= old[\"workspace_epoch\"] => True",
+      "literal_case": "renewal_old_workspace_epoch"
     },
     {
-      "category": "grant",
-      "guard": "route_hash_bad",
-      "literal_case": "route_hash_bad",
-      "mutation": "remove or invert route_hash_bad guard"
+      "after": "True",
+      "before": "new[\"key_epoch\"] >= old[\"key_epoch\"]",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:new[\"key_epoch\"] >= old[\"key_epoch\"] => True",
+      "literal_case": "renewal_old_key_epoch"
     },
     {
-      "category": "grant",
-      "guard": "cost_overflow",
-      "literal_case": "cost_overflow",
-      "mutation": "remove or invert cost_overflow guard"
+      "after": "True",
+      "before": "new[\"history\"][\"sequence\"] >= old[\"history\"][\"sequence\"]",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:new[\"history\"][\"sequence\"] >= old[\"history\"][\"sequence\"] => True",
+      "literal_case": "renewal_old_history_sequence"
     },
     {
-      "category": "grant",
-      "guard": "cost_zero",
-      "literal_case": "cost_zero",
-      "mutation": "remove or invert cost_zero guard"
+      "after": "status",
+      "before": "400 <= status",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:400 <= status => True",
+      "literal_case": "success_status"
     },
     {
-      "category": "grant",
-      "guard": "cost_10000",
-      "literal_case": "cost_10000",
-      "mutation": "remove or invert cost_10000 guard"
+      "after": "400 <= status",
+      "before": "400 <= status <= 599",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:status <= 599 => True",
+      "literal_case": "verdict_status_upper"
     },
     {
-      "category": "grant",
-      "guard": "cost_10001",
-      "literal_case": "cost_10001",
-      "mutation": "remove or invert cost_10001 guard"
+      "after": "False",
+      "before": "reason in KEY_REASONS",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:reason in KEY_REASONS => False",
+      "literal_case": "verdict:lifetime_limit"
     },
     {
-      "category": "grant",
-      "guard": "allowance_exceeded",
-      "literal_case": "allowance_exceeded",
-      "mutation": "remove or invert allowance_exceeded guard"
+      "after": "reason in KEY_REASONS and key_id",
+      "before": "reason in KEY_REASONS and workspace_id and key_id",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:reason in KEY_REASONS and workspace_id and key_id => reason in KEY_REASONS and key_id",
+      "literal_case": "verdict_key_without_workspace"
     },
     {
-      "category": "grant",
-      "guard": "missing_tier_ceiling",
-      "literal_case": "missing_tier_ceiling",
-      "mutation": "remove or invert missing_tier_ceiling guard"
+      "after": "reason in KEY_REASONS and workspace_id",
+      "before": "reason in KEY_REASONS and workspace_id and key_id",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:reason in KEY_REASONS and workspace_id and key_id => reason in KEY_REASONS and workspace_id",
+      "literal_case": "verdict_key_without_key"
     },
     {
-      "category": "cost",
-      "guard": "money_seed",
-      "literal_case": "money_seed",
-      "mutation": "remove or invert money_seed guard"
+      "after": "(reason in WORKSPACE_REASONS or status == 402)",
+      "before": "workspace_id and (reason in WORKSPACE_REASONS or status == 402)",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:workspace_id and (reason in WORKSPACE_REASONS or status == 402) => (reason in WORKSPACE_REASONS or status == 402)",
+      "literal_case": "verdict_workspace_without_workspace"
     },
     {
-      "category": "cost",
-      "guard": "money_fractional",
-      "literal_case": "money_fractional",
-      "mutation": "remove or invert money_fractional guard"
+      "after": "False",
+      "before": "reason in WORKSPACE_REASONS",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:reason in WORKSPACE_REASONS => False",
+      "literal_case": "verdict_billing_paused"
     },
     {
-      "category": "cost",
-      "guard": "money_exact_10000",
-      "literal_case": "money_exact_10000",
-      "mutation": "remove or invert money_exact_10000 guard"
+      "after": "False",
+      "before": "status == 402",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:status == 402 => False",
+      "literal_case": "verdict_reasonless_402"
     },
     {
-      "category": "cost",
-      "guard": "money_above_10000",
-      "literal_case": "money_above_10000",
-      "mutation": "remove or invert money_above_10000 guard"
+      "after": "False",
+      "before": "status == 429",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:status == 429 => False",
+      "literal_case": "verdict:rate_unknown"
     },
     {
-      "category": "cost",
-      "guard": "money_fees",
-      "literal_case": "money_fees",
-      "mutation": "remove or invert money_fees guard"
+      "after": "status == 429",
+      "before": "status == 429 and workspace_id",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:status == 429 and workspace_id => status == 429",
+      "literal_case": "verdict_rate_without_workspace"
     },
     {
-      "category": "cost",
-      "guard": "money_zero",
-      "literal_case": "money_zero",
-      "mutation": "remove or invert money_zero guard"
+      "after": "rate_scope == \"key\"",
+      "before": "rate_scope == \"key\" and key_id",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:rate_scope == \"key\" and key_id => rate_scope == \"key\"",
+      "literal_case": "verdict_rate_key_missing_id"
     },
     {
-      "category": "cost",
-      "guard": "money_product_overflow",
-      "literal_case": "money_product_overflow",
-      "mutation": "remove or invert money_product_overflow guard"
+      "after": "True",
+      "before": "rate_scope == \"key\"",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:rate_scope == \"key\" => True",
+      "literal_case": "verdict:rate_unknown"
     },
     {
-      "category": "cost",
-      "guard": "money_sum_overflow",
-      "literal_case": "money_sum_overflow",
-      "mutation": "remove or invert money_sum_overflow guard"
+      "after": "",
+      "before": "scope == \"none\" and ",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:scope == \"none\" and  => ",
+      "literal_case": "verdict_workspace_reason_500"
     },
     {
-      "category": "cost",
-      "guard": "money_int_max",
-      "literal_case": "money_int_max",
-      "mutation": "remove or invert money_int_max guard"
+      "after": "False",
+      "before": "status >= 500",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:status >= 500 => False",
+      "literal_case": "verdict_generic_500"
     },
     {
-      "category": "cost",
-      "guard": "money_bool",
-      "literal_case": "money_bool",
-      "mutation": "remove or invert money_bool guard"
+      "after": "\"commit_required_with_real_rights\": False",
+      "before": "\"commit_required_with_real_rights\": scope != \"none\"",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:\"commit_required_with_real_rights\": scope != \"none\" => \"commit_required_with_real_rights\": False",
+      "literal_case": "verdict:credit"
     },
     {
-      "category": "cost",
-      "guard": "money_negative",
-      "literal_case": "money_negative",
-      "mutation": "remove or invert money_negative guard"
+      "after": "for field in (\"iss\", \"aud\", \"environment\", \"plane\"):\n        if field == 'iss':\n            continue",
+      "before": "for field in (\"iss\", \"aud\", \"environment\", \"plane\"):",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:iss",
+      "literal_case": "identity_iss"
     },
     {
-      "category": "allowance",
-      "guard": "allowance_tier2",
-      "literal_case": "allowance_tier2",
-      "mutation": "remove or invert allowance_tier2 guard"
+      "after": "for field in (\"iss\", \"aud\", \"environment\", \"plane\"):\n        if field == 'aud':\n            continue",
+      "before": "for field in (\"iss\", \"aud\", \"environment\", \"plane\"):",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:aud",
+      "literal_case": "identity_aud"
     },
     {
-      "category": "allowance",
-      "guard": "allowance_tier3",
-      "literal_case": "allowance_tier3",
-      "mutation": "remove or invert allowance_tier3 guard"
+      "after": "for field in (\"iss\", \"aud\", \"environment\", \"plane\"):\n        if field == 'environment':\n            continue",
+      "before": "for field in (\"iss\", \"aud\", \"environment\", \"plane\"):",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:environment",
+      "literal_case": "identity_environment"
     },
     {
-      "category": "allowance",
-      "guard": "allowance_odd_headroom",
-      "literal_case": "allowance_odd_headroom",
-      "mutation": "remove or invert allowance_odd_headroom guard"
+      "after": "for field in (\"iss\", \"aud\", \"environment\", \"plane\"):\n        if field == 'plane':\n            continue",
+      "before": "for field in (\"iss\", \"aud\", \"environment\", \"plane\"):",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:plane",
+      "literal_case": "identity_plane"
     },
     {
-      "category": "allowance",
-      "guard": "allowance_odd_tier",
-      "literal_case": "allowance_odd_tier",
-      "mutation": "remove or invert allowance_odd_tier guard"
+      "after": "for field in BINDINGS:\n        if field == 'workspace_id':\n            continue",
+      "before": "for field in BINDINGS:",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:workspace_id",
+      "literal_case": "binding_workspace_id"
     },
     {
-      "category": "allowance",
-      "guard": "allowance_zero",
-      "literal_case": "allowance_zero",
-      "mutation": "remove or invert allowance_zero guard"
+      "after": "for field in BINDINGS:\n        if field == 'key_id':\n            continue",
+      "before": "for field in BINDINGS:",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:key_id",
+      "literal_case": "binding_key_id"
     },
     {
-      "category": "allowance",
-      "guard": "allowance_bool",
-      "literal_case": "allowance_bool",
-      "mutation": "remove or invert allowance_bool guard"
+      "after": "for field in BINDINGS:\n        if field == 'lookup_digest':\n            continue",
+      "before": "for field in BINDINGS:",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:lookup_digest",
+      "literal_case": "binding_lookup_digest"
     },
     {
-      "category": "descriptor",
-      "guard": "descriptor_valid",
-      "literal_case": "descriptor_valid",
-      "mutation": "remove or invert descriptor_valid guard"
+      "after": "for field in BINDINGS:\n        if field == 'boot_id':\n            continue",
+      "before": "for field in BINDINGS:",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:boot_id",
+      "literal_case": "binding_boot_id"
     },
     {
-      "category": "descriptor",
-      "guard": "dry_run_cannot_dispatch",
-      "literal_case": "dry_run_cannot_dispatch",
-      "mutation": "remove or invert dry_run_cannot_dispatch guard"
+      "after": "for field in BINDINGS:\n        if field == 'stable_slot_id':\n            continue",
+      "before": "for field in BINDINGS:",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:stable_slot_id",
+      "literal_case": "binding_stable_slot_id"
     },
     {
-      "category": "descriptor",
-      "guard": "descriptor_shadow_hash",
-      "literal_case": "descriptor_shadow_hash",
-      "mutation": "remove or invert descriptor_shadow_hash guard"
+      "after": "for field in BINDINGS:\n        if field == 'region':\n            continue",
+      "before": "for field in BINDINGS:",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:region",
+      "literal_case": "binding_region"
     },
     {
-      "category": "descriptor",
-      "guard": "descriptor_purpose",
-      "literal_case": "descriptor_purpose",
-      "mutation": "remove or invert descriptor_purpose guard"
+      "after": "for field in BINDINGS:\n        if field == 'generation':\n            continue",
+      "before": "for field in BINDINGS:",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:generation",
+      "literal_case": "binding_generation"
     },
     {
-      "category": "descriptor",
-      "guard": "descriptor_wrong_boot_signer",
-      "literal_case": "descriptor_wrong_boot_signer",
-      "mutation": "remove or invert descriptor_wrong_boot_signer guard"
+      "after": "for field in BINDINGS:\n        if field == 'workspace_epoch':\n            continue",
+      "before": "for field in BINDINGS:",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:workspace_epoch",
+      "literal_case": "binding_workspace_epoch"
     },
     {
-      "category": "descriptor",
-      "guard": "descriptor_wrong_type",
-      "literal_case": "descriptor_wrong_type",
-      "mutation": "remove or invert descriptor_wrong_type guard"
+      "after": "for field in BINDINGS:\n        if field == 'key_epoch':\n            continue",
+      "before": "for field in BINDINGS:",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:key_epoch",
+      "literal_case": "binding_key_epoch"
     },
     {
-      "category": "descriptor",
-      "guard": "descriptor_version",
-      "literal_case": "descriptor_version",
-      "mutation": "remove or invert descriptor_version guard"
+      "after": "for field in BINDINGS:\n        if field == 'image_policy_version':\n            continue",
+      "before": "for field in BINDINGS:",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:image_policy_version",
+      "literal_case": "binding_image_policy_version"
     },
     {
-      "category": "descriptor",
-      "guard": "descriptor_unknown_field",
-      "literal_case": "descriptor_unknown_field",
-      "mutation": "remove or invert descriptor_unknown_field guard"
+      "after": "for field in (\"grant_id\", \"workspace_id\", \"key_id\", \"boot_id\", \"workspace_epoch\", \"key_epoch\"):\n        if field == 'grant_id':\n            continue",
+      "before": "for field in (\"grant_id\", \"workspace_id\", \"key_id\", \"boot_id\", \"workspace_epoch\", \"key_epoch\"):",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:identity:grant_id",
+      "literal_case": "descriptor_grant_id"
     },
     {
-      "category": "descriptor",
-      "guard": "descriptor_grant_id",
-      "literal_case": "descriptor_grant_id",
-      "mutation": "remove or invert descriptor_grant_id guard"
+      "after": "for field in (\"grant_id\", \"workspace_id\", \"key_id\", \"boot_id\", \"workspace_epoch\", \"key_epoch\"):\n        if field == 'workspace_id':\n            continue",
+      "before": "for field in (\"grant_id\", \"workspace_id\", \"key_id\", \"boot_id\", \"workspace_epoch\", \"key_epoch\"):",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:identity:workspace_id",
+      "literal_case": "descriptor_workspace_id"
     },
     {
-      "category": "descriptor",
-      "guard": "descriptor_workspace_id",
-      "literal_case": "descriptor_workspace_id",
-      "mutation": "remove or invert descriptor_workspace_id guard"
+      "after": "for field in (\"grant_id\", \"workspace_id\", \"key_id\", \"boot_id\", \"workspace_epoch\", \"key_epoch\"):\n        if field == 'key_id':\n            continue",
+      "before": "for field in (\"grant_id\", \"workspace_id\", \"key_id\", \"boot_id\", \"workspace_epoch\", \"key_epoch\"):",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:identity:key_id",
+      "literal_case": "descriptor_key_id"
     },
     {
-      "category": "descriptor",
-      "guard": "descriptor_key_id",
-      "literal_case": "descriptor_key_id",
-      "mutation": "remove or invert descriptor_key_id guard"
+      "after": "for field in (\"grant_id\", \"workspace_id\", \"key_id\", \"boot_id\", \"workspace_epoch\", \"key_epoch\"):\n        if field == 'boot_id':\n            continue",
+      "before": "for field in (\"grant_id\", \"workspace_id\", \"key_id\", \"boot_id\", \"workspace_epoch\", \"key_epoch\"):",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:identity:boot_id",
+      "literal_case": "descriptor_boot_id"
     },
     {
-      "category": "descriptor",
-      "guard": "descriptor_boot_id",
-      "literal_case": "descriptor_boot_id",
-      "mutation": "remove or invert descriptor_boot_id guard"
+      "after": "for field in (\"grant_id\", \"workspace_id\", \"key_id\", \"boot_id\", \"workspace_epoch\", \"key_epoch\"):\n        if field == 'workspace_epoch':\n            continue",
+      "before": "for field in (\"grant_id\", \"workspace_id\", \"key_id\", \"boot_id\", \"workspace_epoch\", \"key_epoch\"):",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:identity:workspace_epoch",
+      "literal_case": "descriptor_workspace_epoch"
     },
     {
-      "category": "descriptor",
-      "guard": "descriptor_workspace_epoch",
-      "literal_case": "descriptor_workspace_epoch",
-      "mutation": "remove or invert descriptor_workspace_epoch guard"
+      "after": "for field in (\"grant_id\", \"workspace_id\", \"key_id\", \"boot_id\", \"workspace_epoch\", \"key_epoch\"):\n        if field == 'key_epoch':\n            continue",
+      "before": "for field in (\"grant_id\", \"workspace_id\", \"key_id\", \"boot_id\", \"workspace_epoch\", \"key_epoch\"):",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:identity:key_epoch",
+      "literal_case": "descriptor_key_epoch"
     },
     {
-      "category": "descriptor",
-      "guard": "descriptor_key_epoch",
-      "literal_case": "descriptor_key_epoch",
-      "mutation": "remove or invert descriptor_key_epoch guard"
+      "after": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):\n        if field == 'workspace_id':\n            continue",
+      "before": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:identity:workspace_id",
+      "literal_case": "renewal_identity_workspace_id"
     },
     {
-      "category": "descriptor",
-      "guard": "descriptor_grant_sha256",
-      "literal_case": "descriptor_grant_sha256",
-      "mutation": "remove or invert descriptor_grant_sha256 guard"
+      "after": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):\n        if field == 'key_id':\n            continue",
+      "before": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:identity:key_id",
+      "literal_case": "renewal_identity_key_id"
     },
     {
-      "category": "descriptor",
-      "guard": "descriptor_request_sha256",
-      "literal_case": "descriptor_request_sha256",
-      "mutation": "remove or invert descriptor_request_sha256 guard"
+      "after": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):\n        if field == 'lookup_digest':\n            continue",
+      "before": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:identity:lookup_digest",
+      "literal_case": "renewal_identity_lookup_digest"
     },
     {
-      "category": "descriptor",
-      "guard": "descriptor_routing_policy_hash",
-      "literal_case": "descriptor_routing_policy_hash",
-      "mutation": "remove or invert descriptor_routing_policy_hash guard"
+      "after": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):\n        if field == 'boot_id':\n            continue",
+      "before": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:identity:boot_id",
+      "literal_case": "renewal_identity_boot_id"
     },
     {
-      "category": "descriptor",
-      "guard": "descriptor_hash_malformed",
-      "literal_case": "descriptor_hash_malformed",
-      "mutation": "remove or invert descriptor_hash_malformed guard"
+      "after": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):\n        if field == 'stable_slot_id':\n            continue",
+      "before": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:identity:stable_slot_id",
+      "literal_case": "renewal_identity_stable_slot_id"
     },
     {
-      "category": "descriptor",
-      "guard": "descriptor_endpoint",
-      "literal_case": "descriptor_endpoint",
-      "mutation": "remove or invert descriptor_endpoint guard"
+      "after": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):\n        if field == 'iss':\n            continue",
+      "before": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:identity:iss",
+      "literal_case": "renewal_identity_iss"
     },
     {
-      "category": "descriptor",
-      "guard": "descriptor_nonce",
-      "literal_case": "descriptor_nonce",
-      "mutation": "remove or invert descriptor_nonce guard"
+      "after": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):\n        if field == 'aud':\n            continue",
+      "before": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:identity:aud",
+      "literal_case": "renewal_identity_aud"
     },
     {
-      "category": "descriptor",
-      "guard": "descriptor_execution",
-      "literal_case": "descriptor_execution",
-      "mutation": "remove or invert descriptor_execution guard"
+      "after": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):\n        if field == 'environment':\n            continue",
+      "before": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:identity:environment",
+      "literal_case": "renewal_identity_environment"
     },
     {
-      "category": "descriptor",
-      "guard": "descriptor_wire_lf",
-      "literal_case": "descriptor_wire_lf",
-      "mutation": "remove or invert descriptor_wire_lf guard"
+      "after": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):\n        if field == 'plane':\n            continue",
+      "before": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:identity:plane",
+      "literal_case": "renewal_identity_plane"
     },
     {
-      "category": "descriptor",
-      "guard": "descriptor_ordinal",
-      "literal_case": "descriptor_ordinal",
-      "mutation": "remove or invert descriptor_ordinal guard"
+      "after": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):\n        if field == 'region':\n            continue",
+      "before": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:identity:region",
+      "literal_case": "renewal_identity_region"
     },
     {
-      "category": "descriptor",
-      "guard": "descriptor_cost",
-      "literal_case": "descriptor_cost",
-      "mutation": "remove or invert descriptor_cost guard"
+      "after": "False",
+      "before": "type(left) is not type(right)",
+      "function": "_equal",
+      "guard": "_equal:type(left) is not type(right) => False",
+      "literal_case": "response_nested_bool_int"
     },
     {
-      "category": "marker",
-      "guard": "marker_valid",
-      "literal_case": "marker_valid",
-      "mutation": "remove or invert marker_valid guard"
+      "after": "False",
+      "before": "isinstance(left, dict)",
+      "function": "_equal",
+      "guard": "_equal:isinstance(left, dict) => False",
+      "literal_case": "response_nested_bool_int"
     },
     {
-      "category": "marker",
-      "guard": "marker_missing",
-      "literal_case": "marker_missing",
-      "mutation": "remove or invert marker_missing guard"
+      "after": "False",
+      "before": "isinstance(left, list)",
+      "function": "_equal",
+      "guard": "_equal:isinstance(left, list) => False",
+      "literal_case": "response_nested_int_float"
     },
     {
-      "category": "marker",
-      "guard": "marker_null",
-      "literal_case": "marker_null",
-      "mutation": "remove or invert marker_null guard"
+      "after": "True",
+      "before": "left.keys() == right.keys()",
+      "function": "_equal",
+      "guard": "_equal:left.keys() == right.keys() => True",
+      "literal_case": "response_nested_keys"
     },
     {
-      "category": "marker",
-      "guard": "marker_scalar",
-      "literal_case": "marker_scalar",
-      "mutation": "remove or invert marker_scalar guard"
+      "after": "True",
+      "before": "len(left) == len(right)",
+      "function": "_equal",
+      "guard": "_equal:len(left) == len(right) => True",
+      "literal_case": "response_nested_length"
     },
     {
-      "category": "marker",
-      "guard": "marker_malformed",
-      "literal_case": "marker_malformed",
-      "mutation": "remove or invert marker_malformed guard"
+      "after": "return True",
+      "before": "return bool(left == right)",
+      "function": "_equal",
+      "guard": "_equal:return bool(left == right) => return True",
+      "literal_case": "response_nested_order"
     },
     {
-      "category": "marker",
-      "guard": "marker_version",
-      "literal_case": "marker_version",
-      "mutation": "remove or invert marker_version guard"
+      "after": "if False:",
+      "before": "if quoted:",
+      "function": "_depth",
+      "guard": "_depth:if quoted: => if False:",
+      "literal_case": "depth_in_string"
     },
     {
-      "category": "marker",
-      "guard": "marker_hash",
-      "literal_case": "marker_hash",
-      "mutation": "remove or invert marker_hash guard"
+      "after": "if False:",
+      "before": "if escaped:",
+      "function": "_depth",
+      "guard": "_depth:if escaped: => if False:",
+      "literal_case": "depth_escaped_quote"
     },
     {
-      "category": "marker",
-      "guard": "marker_hash_format",
-      "literal_case": "marker_hash_format",
-      "mutation": "remove or invert marker_hash_format guard"
+      "after": "elif False:",
+      "before": "elif char == \"\\\\\":",
+      "function": "_depth",
+      "guard": "_depth:elif char == \"\\\\\": => elif False:",
+      "literal_case": "depth_escaped_quote"
     },
     {
-      "category": "marker",
-      "guard": "marker_invocation_nonce",
-      "literal_case": "marker_invocation_nonce",
-      "mutation": "remove or invert marker_invocation_nonce guard"
+      "after": "elif False:\n                quoted = False",
+      "before": "elif char == '\"':\n                quoted = False",
+      "function": "_depth",
+      "guard": "_depth:elif char == '\"':\n                quoted = False => elif False:\n                quoted = False",
+      "literal_case": "depth17_after_string"
     },
     {
-      "category": "marker",
-      "guard": "marker_endpoint_id",
-      "literal_case": "marker_endpoint_id",
-      "mutation": "remove or invert marker_endpoint_id guard"
+      "after": "elif False:\n            quoted = True",
+      "before": "elif char == '\"':\n            quoted = True",
+      "function": "_depth",
+      "guard": "_depth:elif char == '\"':\n            quoted = True => elif False:\n            quoted = True",
+      "literal_case": "depth_in_string"
     },
     {
-      "category": "marker",
-      "guard": "marker_routing_policy_hash",
-      "literal_case": "marker_routing_policy_hash",
-      "mutation": "remove or invert marker_routing_policy_hash guard"
+      "after": "elif False:",
+      "before": "elif char in \"[{\":",
+      "function": "_depth",
+      "guard": "_depth:elif char in \"[{\": => elif False:",
+      "literal_case": "depth17"
     },
     {
-      "category": "marker",
-      "guard": "marker_authorization_id",
-      "literal_case": "marker_authorization_id",
-      "mutation": "remove or invert marker_authorization_id guard"
+      "after": "elif False:",
+      "before": "elif char in \"]}\":",
+      "function": "_depth",
+      "guard": "_depth:elif char in \"]}\": => elif False:",
+      "literal_case": "depth_siblings"
     },
     {
-      "category": "marker",
-      "guard": "authorization_authorization_id",
-      "literal_case": "authorization_authorization_id",
-      "mutation": "remove or invert authorization_authorization_id guard"
+      "after": "raise",
+      "before": "raise ProtocolError(\"input\") from exc",
+      "function": "_public",
+      "guard": "_public:raise ProtocolError(\"input\") from exc => raise",
+      "literal_case": "input_boundary"
     },
     {
-      "category": "marker",
-      "guard": "authorization_invocation_nonce",
-      "literal_case": "authorization_invocation_nonce",
-      "mutation": "remove or invert authorization_invocation_nonce guard"
+      "after": "\"unused_credit_exhausted\"",
+      "before": "\"credit_exhausted\"",
+      "function": "<module>",
+      "guard": "WORKSPACE_REASONS:credit_exhausted",
+      "literal_case": "reason_credit_exhausted"
     },
     {
-      "category": "marker",
-      "guard": "authorization_endpoint_id",
-      "literal_case": "authorization_endpoint_id",
-      "mutation": "remove or invert authorization_endpoint_id guard"
+      "after": "\"unused_billing_denied\"",
+      "before": "\"billing_denied\"",
+      "function": "<module>",
+      "guard": "WORKSPACE_REASONS:billing_denied",
+      "literal_case": "reason_billing_denied"
     },
     {
-      "category": "marker",
-      "guard": "authorization_routing_policy_hash",
-      "literal_case": "authorization_routing_policy_hash",
-      "mutation": "remove or invert authorization_routing_policy_hash guard"
+      "after": "\"unused_trust_ineligible\"",
+      "before": "\"trust_ineligible\"",
+      "function": "<module>",
+      "guard": "WORKSPACE_REASONS:trust_ineligible",
+      "literal_case": "reason_trust_ineligible"
     },
     {
-      "category": "marker",
-      "guard": "authorization_workspace_id",
-      "literal_case": "authorization_workspace_id",
-      "mutation": "remove or invert authorization_workspace_id guard"
+      "after": "\"unused_trust_demoted\"",
+      "before": "\"trust_demoted\"",
+      "function": "<module>",
+      "guard": "WORKSPACE_REASONS:trust_demoted",
+      "literal_case": "reason_trust_demoted"
     },
     {
-      "category": "marker",
-      "guard": "authorization_key_id",
-      "literal_case": "authorization_key_id",
-      "mutation": "remove or invert authorization_key_id guard"
+      "after": "\"unused_abuse_latched\"",
+      "before": "\"abuse_latched\"",
+      "function": "<module>",
+      "guard": "WORKSPACE_REASONS:abuse_latched",
+      "literal_case": "reason_abuse_latched"
     },
     {
-      "category": "marker",
-      "guard": "authorization_billing_mode",
-      "literal_case": "authorization_billing_mode",
-      "mutation": "remove or invert authorization_billing_mode guard"
+      "after": "\"unused_payment_failed\"",
+      "before": "\"payment_failed\"",
+      "function": "<module>",
+      "guard": "WORKSPACE_REASONS:payment_failed",
+      "literal_case": "reason_payment_failed"
     },
     {
-      "category": "marker",
-      "guard": "authorization_stage_d",
-      "literal_case": "authorization_stage_d",
-      "mutation": "remove or invert authorization_stage_d guard"
+      "after": "\"unused_trust_reconciliation_stale\"",
+      "before": "\"trust_reconciliation_stale\"",
+      "function": "<module>",
+      "guard": "WORKSPACE_REASONS:trust_reconciliation_stale",
+      "literal_case": "reason_trust_reconciliation_stale"
     },
     {
-      "category": "marker",
-      "guard": "authorization_response_disagrees",
-      "literal_case": "authorization_response_disagrees",
-      "mutation": "remove or invert authorization_response_disagrees guard"
+      "after": "\"unused_workspace_paused\"",
+      "before": "\"workspace_paused\"",
+      "function": "<module>",
+      "guard": "WORKSPACE_REASONS:workspace_paused",
+      "literal_case": "reason_workspace_paused"
     },
     {
-      "category": "renewal",
-      "guard": "renewal_exact_replay",
-      "literal_case": "renewal_exact_replay",
-      "mutation": "remove or invert renewal_exact_replay guard"
+      "after": "\"unused_billing_paused\"",
+      "before": "\"billing_paused\"",
+      "function": "<module>",
+      "guard": "WORKSPACE_REASONS:billing_paused",
+      "literal_case": "reason_billing_paused"
     },
     {
-      "category": "renewal",
-      "guard": "renewal_forward",
-      "literal_case": "renewal_forward",
-      "mutation": "remove or invert renewal_forward guard"
+      "after": "\"unused_key_revoked\"",
+      "before": "\"key_revoked\"",
+      "function": "<module>",
+      "guard": "KEY_REASONS:key_revoked",
+      "literal_case": "reason_key_revoked"
     },
     {
-      "category": "renewal",
-      "guard": "renewal_same_generation",
-      "literal_case": "renewal_same_generation",
-      "mutation": "remove or invert renewal_same_generation guard"
+      "after": "\"unused_key_disabled\"",
+      "before": "\"key_disabled\"",
+      "function": "<module>",
+      "guard": "KEY_REASONS:key_disabled",
+      "literal_case": "reason_key_disabled"
     },
     {
-      "category": "renewal",
-      "guard": "renewal_older_generation",
-      "literal_case": "renewal_older_generation",
-      "mutation": "remove or invert renewal_older_generation guard"
+      "after": "\"unused_key_expired\"",
+      "before": "\"key_expired\"",
+      "function": "<module>",
+      "guard": "KEY_REASONS:key_expired",
+      "literal_case": "reason_key_expired"
     },
     {
-      "category": "renewal",
-      "guard": "renewal_same_grant_id",
-      "literal_case": "renewal_same_grant_id",
-      "mutation": "remove or invert renewal_same_grant_id guard"
+      "after": "\"unused_key_invalid\"",
+      "before": "\"key_invalid\"",
+      "function": "<module>",
+      "guard": "KEY_REASONS:key_invalid",
+      "literal_case": "reason_key_invalid"
     },
     {
-      "category": "renewal",
-      "guard": "renewal_old_workspace_epoch",
-      "literal_case": "renewal_old_workspace_epoch",
-      "mutation": "remove or invert renewal_old_workspace_epoch guard"
+      "after": "\"unused_key_limit_exceeded\"",
+      "before": "\"key_limit_exceeded\"",
+      "function": "<module>",
+      "guard": "KEY_REASONS:key_limit_exceeded",
+      "literal_case": "reason_key_limit_exceeded"
     },
     {
-      "category": "renewal",
-      "guard": "renewal_old_key_epoch",
-      "literal_case": "renewal_old_key_epoch",
-      "mutation": "remove or invert renewal_old_key_epoch guard"
+      "after": "\"unused_key_window_limit_exceeded\"",
+      "before": "\"key_window_limit_exceeded\"",
+      "function": "<module>",
+      "guard": "KEY_REASONS:key_window_limit_exceeded",
+      "literal_case": "reason_key_window_limit_exceeded"
     },
     {
-      "category": "renewal",
-      "guard": "renewal_boot_changed",
-      "literal_case": "renewal_boot_changed",
-      "mutation": "remove or invert renewal_boot_changed guard"
+      "after": "\"unused_key_strict_limit_exceeded\"",
+      "before": "\"key_strict_limit_exceeded\"",
+      "function": "<module>",
+      "guard": "KEY_REASONS:key_strict_limit_exceeded",
+      "literal_case": "reason_key_strict_limit_exceeded"
     },
     {
-      "category": "renewal",
-      "guard": "renewal_old_iat",
-      "literal_case": "renewal_old_iat",
-      "mutation": "remove or invert renewal_old_iat guard"
+      "after": "\"unused_key_spend_limit_imposed\"",
+      "before": "\"key_spend_limit_imposed\"",
+      "function": "<module>",
+      "guard": "KEY_REASONS:key_spend_limit_imposed",
+      "literal_case": "reason_key_spend_limit_imposed"
     },
     {
-      "category": "renewal",
-      "guard": "renewal_higher_epochs",
-      "literal_case": "renewal_higher_epochs",
-      "mutation": "remove or invert renewal_higher_epochs guard"
+      "after": "\"unused_authorize_timeout\"",
+      "before": "\"authorize_timeout\"",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:\"authorize_timeout\" => \"unused_authorize_timeout\"",
+      "literal_case": "breaker_authorize_timeout"
     },
     {
-      "category": "renewal",
-      "guard": "renewal_wrong_domain",
-      "literal_case": "renewal_wrong_domain",
-      "mutation": "remove or invert renewal_wrong_domain guard"
+      "after": "\"unused_transport_error\"",
+      "before": "\"transport_error\"",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:\"transport_error\" => \"unused_transport_error\"",
+      "literal_case": "breaker_transport_error"
     },
     {
-      "category": "renewal",
-      "guard": "renewal_old_history_sequence",
-      "literal_case": "renewal_old_history_sequence",
-      "mutation": "remove or invert renewal_old_history_sequence guard"
+      "after": "\"unused_infrastructure_error\"",
+      "before": "\"infrastructure_error\"",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:\"infrastructure_error\" => \"unused_infrastructure_error\"",
+      "literal_case": "breaker_infrastructure_error"
     },
     {
-      "category": "replay",
-      "guard": "descriptor_exact_retry",
-      "literal_case": "descriptor_exact_retry",
-      "mutation": "remove or invert descriptor_exact_retry guard"
+      "after": "status",
+      "before": "503 if scope != \"none\" else status",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:503 if scope != \"none\" else status => status",
+      "literal_case": "verdict:credit"
     },
     {
-      "category": "replay",
-      "guard": "descriptor_permit_reuse",
-      "literal_case": "descriptor_permit_reuse",
-      "mutation": "remove or invert descriptor_permit_reuse guard"
-    },
-    {
-      "category": "grant",
-      "guard": "key_missing",
-      "literal_case": "key_missing",
-      "mutation": "remove or invert key_missing guard"
-    },
-    {
-      "category": "grant",
-      "guard": "key_ambiguous",
-      "literal_case": "key_ambiguous",
-      "mutation": "remove or invert key_ambiguous guard"
-    },
-    {
-      "category": "grant",
-      "guard": "key_wrong_public",
-      "literal_case": "key_wrong_public",
-      "mutation": "remove or invert key_wrong_public guard"
-    },
-    {
-      "category": "grant",
-      "guard": "key_short_public",
-      "literal_case": "key_short_public",
-      "mutation": "remove or invert key_short_public guard"
-    },
-    {
-      "category": "grant",
-      "guard": "header_duplicate",
-      "literal_case": "header_duplicate",
-      "mutation": "remove or invert header_duplicate guard"
-    },
-    {
-      "category": "grant",
-      "guard": "header_padded",
-      "literal_case": "header_padded",
-      "mutation": "remove or invert header_padded guard"
-    },
-    {
-      "category": "marker",
-      "guard": "marker_missing_nonce",
-      "literal_case": "marker_missing_nonce",
-      "mutation": "remove or invert marker_missing_nonce guard"
-    },
-    {
-      "category": "marker",
-      "guard": "marker_missing_auth_id",
-      "literal_case": "marker_missing_auth_id",
-      "mutation": "remove or invert marker_missing_auth_id guard"
-    },
-    {
-      "category": "marker",
-      "guard": "marker_missing_valid_route_skew",
-      "literal_case": "marker_missing_valid_route_skew",
-      "mutation": "remove or invert marker_missing_valid_route_skew guard"
-    },
-    {
-      "category": "verdict_extra",
-      "guard": "provider_source",
-      "literal_case": "provider_source",
-      "mutation": "remove or invert provider_source guard"
-    },
-    {
-      "category": "verdict_extra",
-      "guard": "success_status",
-      "literal_case": "success_status",
-      "mutation": "remove or invert success_status guard"
-    },
-    {
-      "category": "verdict",
-      "guard": "verdict_credit",
-      "literal_case": "credit",
-      "mutation": "change scope/commit/breaker classification"
-    },
-    {
-      "category": "verdict",
-      "guard": "verdict_ambiguous_billing",
-      "literal_case": "ambiguous_billing",
-      "mutation": "change scope/commit/breaker classification"
-    },
-    {
-      "category": "verdict",
-      "guard": "verdict_trust",
-      "literal_case": "trust",
-      "mutation": "change scope/commit/breaker classification"
-    },
-    {
-      "category": "verdict",
-      "guard": "verdict_abuse",
-      "literal_case": "abuse",
-      "mutation": "change scope/commit/breaker classification"
-    },
-    {
-      "category": "verdict",
-      "guard": "verdict_payment",
-      "literal_case": "payment",
-      "mutation": "change scope/commit/breaker classification"
-    },
-    {
-      "category": "verdict",
-      "guard": "verdict_trust_stale",
-      "literal_case": "trust_stale",
-      "mutation": "change scope/commit/breaker classification"
-    },
-    {
-      "category": "verdict",
-      "guard": "verdict_paused",
-      "literal_case": "paused",
-      "mutation": "change scope/commit/breaker classification"
-    },
-    {
-      "category": "verdict",
-      "guard": "verdict_revoked",
-      "literal_case": "revoked",
-      "mutation": "change scope/commit/breaker classification"
-    },
-    {
-      "category": "verdict",
-      "guard": "verdict_disabled",
-      "literal_case": "disabled",
-      "mutation": "change scope/commit/breaker classification"
-    },
-    {
-      "category": "verdict",
-      "guard": "verdict_expired",
-      "literal_case": "expired",
-      "mutation": "change scope/commit/breaker classification"
-    },
-    {
-      "category": "verdict",
-      "guard": "verdict_invalid_resolved",
-      "literal_case": "invalid_resolved",
-      "mutation": "change scope/commit/breaker classification"
-    },
-    {
-      "category": "verdict",
-      "guard": "verdict_lifetime_limit",
-      "literal_case": "lifetime_limit",
-      "mutation": "change scope/commit/breaker classification"
-    },
-    {
-      "category": "verdict",
-      "guard": "verdict_window_limit",
-      "literal_case": "window_limit",
-      "mutation": "change scope/commit/breaker classification"
-    },
-    {
-      "category": "verdict",
-      "guard": "verdict_strict_limit",
-      "literal_case": "strict_limit",
-      "mutation": "change scope/commit/breaker classification"
-    },
-    {
-      "category": "verdict",
-      "guard": "verdict_new_limit",
-      "literal_case": "new_limit",
-      "mutation": "change scope/commit/breaker classification"
-    },
-    {
-      "category": "verdict",
-      "guard": "verdict_invalid_unresolved",
-      "literal_case": "invalid_unresolved",
-      "mutation": "change scope/commit/breaker classification"
-    },
-    {
-      "category": "verdict",
-      "guard": "verdict_rate_key",
-      "literal_case": "rate_key",
-      "mutation": "change scope/commit/breaker classification"
-    },
-    {
-      "category": "verdict",
-      "guard": "verdict_rate_workspace",
-      "literal_case": "rate_workspace",
-      "mutation": "change scope/commit/breaker classification"
-    },
-    {
-      "category": "verdict",
-      "guard": "verdict_rate_unknown",
-      "literal_case": "rate_unknown",
-      "mutation": "change scope/commit/breaker classification"
-    },
-    {
-      "category": "verdict",
-      "guard": "verdict_request_validation",
-      "literal_case": "request_validation",
-      "mutation": "change scope/commit/breaker classification"
-    },
-    {
-      "category": "verdict",
-      "guard": "verdict_request_policy",
-      "literal_case": "request_policy",
-      "mutation": "change scope/commit/breaker classification"
-    },
-    {
-      "category": "verdict",
-      "guard": "verdict_request_route",
-      "literal_case": "request_route",
-      "mutation": "change scope/commit/breaker classification"
-    },
-    {
-      "category": "verdict",
-      "guard": "verdict_infrastructure",
-      "literal_case": "infrastructure",
-      "mutation": "change scope/commit/breaker classification"
-    },
-    {
-      "category": "verdict",
-      "guard": "verdict_timeout",
-      "literal_case": "timeout",
-      "mutation": "change scope/commit/breaker classification"
-    },
-    {
-      "category": "pin",
+      "after": "fixturf",
+      "before": "fixture",
+      "function": "<fixture>",
       "guard": "fixture_pin",
-      "literal_case": "fixture_pins",
-      "mutation": "change one fixture byte"
+      "literal_case": "fixture_pins"
     },
     {
-      "category": "guard",
-      "guard": "integer",
-      "literal_case": "bool_integer",
-      "mutation": "replace type(v) is int with isinstance(v, int)"
+      "after": "False",
+      "before": "not condition",
+      "function": "_require",
+      "guard": "_require:not condition => False",
+      "literal_case": "bool_integer"
     },
     {
-      "category": "guard",
-      "guard": "string",
-      "literal_case": "string_less",
-      "mutation": "allow the excluded printable-ASCII characters"
+      "after": "REAL_TYP",
+      "before": "SHADOW_TYP if shadow else REAL_TYP",
+      "function": "verify_grant",
+      "guard": "verify_grant:SHADOW_TYP if shadow else REAL_TYP => REAL_TYP",
+      "literal_case": "shadow_valid"
     },
     {
-      "category": "guard",
-      "guard": "hash",
-      "literal_case": "invalid_hash",
-      "mutation": "remove lowercase SHA-256 validation"
+      "after": "\"grant\"",
+      "before": "\"shadow-grant\" if shadow else \"grant\"",
+      "function": "verify_grant",
+      "guard": "verify_grant:\"shadow-grant\" if shadow else \"grant\" => \"grant\"",
+      "literal_case": "shadow_valid"
     },
     {
-      "category": "guard",
-      "guard": "fields",
-      "literal_case": "unknown_field",
-      "mutation": "ignore unknown v1 fields"
+      "after": "for field in (\"routing_policy_hash\", \"catalog_hash\"):\n        if field == 'routing_policy_hash':\n            continue",
+      "before": "for field in (\"routing_policy_hash\", \"catalog_hash\"):",
+      "function": "verify_grant",
+      "guard": "verify_grant:field:routing_policy_hash:for field in (\"routing_policy_hash\", \"catalog_hash\"):",
+      "literal_case": "route_policy_hash_format"
     },
     {
-      "category": "guard",
-      "guard": "duplicate_key",
-      "literal_case": "payload_duplicate",
-      "mutation": "last duplicate JSON key wins"
+      "after": "for field in (\"routing_policy_hash\", \"catalog_hash\"):\n        if field == 'catalog_hash':\n            continue",
+      "before": "for field in (\"routing_policy_hash\", \"catalog_hash\"):",
+      "function": "verify_grant",
+      "guard": "verify_grant:field:catalog_hash:for field in (\"routing_policy_hash\", \"catalog_hash\"):",
+      "literal_case": "route_hash_bad"
     },
     {
-      "category": "guard",
-      "guard": "json",
-      "literal_case": "json_bad",
-      "mutation": "treat malformed JSON as empty claims"
+      "after": "for field in (\"grant_sha256\", \"request_sha256\", \"routing_policy_hash\"):\n        if field == 'grant_sha256':\n            continue",
+      "before": "for field in (\"grant_sha256\", \"request_sha256\", \"routing_policy_hash\"):",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:field:grant_sha256:for field in (\"grant_sha256\", \"request_sha256\", \"routing_policy_hash\"):",
+      "literal_case": "descriptor_grant_hash_format"
     },
     {
-      "category": "guard",
-      "guard": "base64_alphabet",
-      "literal_case": "signature_padded",
-      "mutation": "strip padding before decoding"
+      "after": "for field in (\"grant_sha256\", \"request_sha256\", \"routing_policy_hash\"):\n        if field == 'request_sha256':\n            continue",
+      "before": "for field in (\"grant_sha256\", \"request_sha256\", \"routing_policy_hash\"):",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:field:request_sha256:for field in (\"grant_sha256\", \"request_sha256\", \"routing_policy_hash\"):",
+      "literal_case": "descriptor_hash_malformed"
     },
     {
-      "category": "guard",
-      "guard": "base64_trailing_bits",
-      "literal_case": "base64_trailing_bits",
-      "mutation": "omit re-encode equality"
+      "after": "for field in (\"grant_sha256\", \"request_sha256\", \"routing_policy_hash\"):\n        if field == 'routing_policy_hash':\n            continue",
+      "before": "for field in (\"grant_sha256\", \"request_sha256\", \"routing_policy_hash\"):",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:field:routing_policy_hash:for field in (\"grant_sha256\", \"request_sha256\", \"routing_policy_hash\"):",
+      "literal_case": "descriptor_route_hash_format"
     },
     {
-      "category": "guard",
-      "guard": "compact",
-      "literal_case": "compact_extra",
-      "mutation": "ignore surplus compact segments"
+      "after": "for field in (\"endpoint_id\", \"routing_policy_hash\"):\n        if field == 'endpoint_id':\n            continue",
+      "before": "for field in (\"endpoint_id\", \"routing_policy_hash\"):",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:field:endpoint_id:for field in (\"endpoint_id\", \"routing_policy_hash\"):",
+      "literal_case": "descriptor_endpoint"
     },
     {
-      "category": "guard",
-      "guard": "algorithm",
-      "literal_case": "algorithm_none",
-      "mutation": "skip alg allowlist"
+      "after": "for field in (\"endpoint_id\", \"routing_policy_hash\"):\n        if field == 'routing_policy_hash':\n            continue",
+      "before": "for field in (\"endpoint_id\", \"routing_policy_hash\"):",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:field:routing_policy_hash:for field in (\"endpoint_id\", \"routing_policy_hash\"):",
+      "literal_case": "descriptor_routing_policy_hash"
     },
     {
-      "category": "guard",
-      "guard": "type",
-      "literal_case": "dry_run_type_as_real",
-      "mutation": "accept shadow typ in real verifier"
+      "after": "for field in (\"invocation_nonce\", \"workspace_id\", \"key_id\"):\n        if field == 'invocation_nonce':\n            continue",
+      "before": "for field in (\"invocation_nonce\", \"workspace_id\", \"key_id\"):",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:field:invocation_nonce:for field in (\"invocation_nonce\", \"workspace_id\", \"key_id\"):",
+      "literal_case": "unmarked_invocation_nonce"
     },
     {
-      "category": "guard",
-      "guard": "trusted_key",
-      "literal_case": "key_ambiguous",
-      "mutation": "accept unknown or duplicate kid"
+      "after": "for field in (\"invocation_nonce\", \"workspace_id\", \"key_id\"):\n        if field == 'workspace_id':\n            continue",
+      "before": "for field in (\"invocation_nonce\", \"workspace_id\", \"key_id\"):",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:field:workspace_id:for field in (\"invocation_nonce\", \"workspace_id\", \"key_id\"):",
+      "literal_case": "unmarked_workspace_id"
     },
     {
-      "category": "guard",
-      "guard": "purpose",
-      "literal_case": "real_type_shadow_key",
-      "mutation": "accept shadow-grant purpose for real grants"
+      "after": "for field in (\"invocation_nonce\", \"workspace_id\", \"key_id\"):\n        if field == 'key_id':\n            continue",
+      "before": "for field in (\"invocation_nonce\", \"workspace_id\", \"key_id\"):",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:field:key_id:for field in (\"invocation_nonce\", \"workspace_id\", \"key_id\"):",
+      "literal_case": "unmarked_key_id"
     },
     {
-      "category": "guard",
-      "guard": "signature",
-      "literal_case": "signature_bitflip",
-      "mutation": "skip Ed25519 signature verification"
+      "after": "for field in (\"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\"):\n        if field == 'invocation_nonce':\n            continue",
+      "before": "for field in (\"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\"):",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:field:invocation_nonce:for field in (\"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\"):",
+      "literal_case": "marker_invocation_nonce"
     },
     {
-      "category": "guard",
-      "guard": "canonical_payload",
-      "literal_case": "payload_whitespace",
-      "mutation": "skip canonical payload equality"
+      "after": "for field in (\"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\"):\n        if field == 'endpoint_id':\n            continue",
+      "before": "for field in (\"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\"):",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:field:endpoint_id:for field in (\"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\"):",
+      "literal_case": "marker_endpoint_id"
     },
     {
-      "category": "guard",
-      "guard": "version",
-      "literal_case": "unknown_version",
-      "mutation": "accept unknown version"
+      "after": "for field in (\"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\"):\n        if field == 'routing_policy_hash':\n            continue",
+      "before": "for field in (\"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\"):",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:field:routing_policy_hash:for field in (\"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\"):",
+      "literal_case": "marker_routing_policy_hash"
     },
     {
-      "category": "guard",
-      "guard": "product_overflow",
-      "literal_case": "money_product_overflow",
-      "mutation": "allow overflowing signed-int64 product"
+      "after": "for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):\n        if field == 'authorization_id':\n            continue",
+      "before": "for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:field:authorization_id:for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):",
+      "literal_case": "authorization_authorization_id"
     },
     {
-      "category": "guard",
-      "guard": "sum_overflow",
-      "literal_case": "money_sum_overflow",
-      "mutation": "allow overflowing signed-int64 total"
+      "after": "for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):\n        if field == 'invocation_nonce':\n            continue",
+      "before": "for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):",
+      "equivalent": "Equivalent: the pre-marker loop already binds authorization invocation_nonce to the descriptor; marker nonce also binds to that descriptor before this loop.",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:field:invocation_nonce:for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):",
+      "literal_case": "authorization_invocation_nonce"
     },
     {
-      "category": "guard",
-      "guard": "cost_rounding",
-      "literal_case": "money_fractional",
-      "mutation": "floor token-component cost"
+      "after": "for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):\n        if field == 'endpoint_id':\n            continue",
+      "before": "for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:field:endpoint_id:for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):",
+      "literal_case": "authorization_endpoint_id"
     },
     {
-      "category": "guard",
-      "guard": "allowance_rounding",
-      "literal_case": "allowance_odd_headroom",
-      "mutation": "ceil headroom divided by ten"
+      "after": "for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):\n        if field == 'routing_policy_hash':\n            continue",
+      "before": "for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:field:routing_policy_hash:for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):",
+      "literal_case": "authorization_routing_policy_hash"
     },
     {
-      "category": "guard",
-      "guard": "stage_d",
-      "literal_case": "stage_d_false",
-      "mutation": "allow disabled Stage D"
+      "after": "for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):\n        if field == 'workspace_id':\n            continue",
+      "before": "for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):",
+      "equivalent": "Equivalent: the pre-marker loop already binds authorization workspace_id to the descriptor; marker nonce also binds to that descriptor before this loop.",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:field:workspace_id:for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):",
+      "literal_case": "authorization_workspace_id"
     },
     {
-      "category": "guard",
-      "guard": "route_region",
-      "literal_case": "route_region_disagrees",
-      "mutation": "skip grant/route region equality"
+      "after": "for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):\n        if field == 'key_id':\n            continue",
+      "before": "for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):",
+      "equivalent": "Equivalent: the pre-marker loop already binds authorization key_id to the descriptor; marker nonce also binds to that descriptor before this loop.",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:field:key_id:for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):",
+      "literal_case": "authorization_key_id"
     },
     {
-      "category": "guard",
-      "guard": "token_bound",
-      "literal_case": "output_bound_over",
-      "mutation": "allow unbounded output"
-    },
-    {
-      "category": "guard",
-      "guard": "adapter",
-      "literal_case": "adapter_zero",
-      "mutation": "accept zero adapter version"
-    },
-    {
-      "category": "guard",
-      "guard": "tier",
-      "literal_case": "tier_one",
-      "mutation": "admit tier one"
-    },
-    {
-      "category": "guard",
-      "guard": "paid_headroom",
-      "literal_case": "unpaid",
-      "mutation": "admit less than five paid dollars"
-    },
-    {
-      "category": "guard",
-      "guard": "history_count",
-      "literal_case": "history_19",
-      "mutation": "lower twenty-success minimum"
-    },
-    {
-      "category": "guard",
-      "guard": "history_sequence",
-      "literal_case": "history_retry_dedupe",
-      "mutation": "count replayed successes"
-    },
-    {
-      "category": "guard",
-      "guard": "history_time",
-      "literal_case": "stale_last_success",
-      "mutation": "ignore last-success freshness"
-    },
-    {
-      "category": "guard",
-      "guard": "lifetime",
-      "literal_case": "ttl_too_long",
-      "mutation": "allow grants longer than thirty seconds"
-    },
-    {
-      "category": "guard",
-      "guard": "iat",
-      "literal_case": "future_iat",
-      "mutation": "permit a start before issuance"
-    },
-    {
-      "category": "guard",
-      "guard": "start_expiry",
-      "literal_case": "start_plus_28",
-      "mutation": "include the exclusive start boundary"
-    },
-    {
-      "category": "guard",
-      "guard": "start_key",
-      "literal_case": "short_key_at",
-      "mutation": "ignore key expiry margin"
-    },
-    {
-      "category": "guard",
-      "guard": "start_price",
-      "literal_case": "short_price_at",
-      "mutation": "ignore signed pricing margin"
-    },
-    {
-      "category": "guard",
-      "guard": "start_trust",
-      "literal_case": "short_trust_at",
-      "mutation": "ignore trust freshness margin"
-    },
-    {
-      "category": "guard",
-      "guard": "start_explicit",
-      "literal_case": "short_explicit_at",
-      "mutation": "ignore explicit start_before"
-    },
-    {
-      "category": "guard",
-      "guard": "ceiling",
-      "literal_case": "over_cap_money",
-      "mutation": "allow per-request ceilings above 10000"
-    },
-    {
-      "category": "guard",
-      "guard": "cost",
-      "literal_case": "cost_10001",
-      "mutation": "admit B above ceiling"
-    },
-    {
-      "category": "guard",
-      "guard": "permits",
-      "literal_case": "empty_permits",
-      "mutation": "allow an empty grant"
-    },
-    {
-      "category": "guard",
-      "guard": "ordinal",
-      "literal_case": "duplicate_ordinal",
-      "mutation": "ignore duplicate permit ordinals"
-    },
-    {
-      "category": "guard",
-      "guard": "permit_cost",
-      "literal_case": "underfunded_permit",
-      "mutation": "allow underfunded permits"
-    },
-    {
-      "category": "guard",
-      "guard": "tier_ceiling",
-      "literal_case": "missing_tier_ceiling",
-      "mutation": "invent missing trusted tier ceiling"
-    },
-    {
-      "category": "guard",
-      "guard": "allowance",
-      "literal_case": "allowance_exceeded",
-      "mutation": "ignore summed permit allocation"
-    },
-    {
-      "category": "guard",
-      "guard": "dry_run_cannot_dispatch",
-      "literal_case": "dry_run_cannot_dispatch",
-      "mutation": "accept a descriptor referring to shadow rights"
-    },
-    {
-      "category": "guard",
-      "guard": "descriptor_boot",
-      "literal_case": "descriptor_wrong_boot_signer",
-      "mutation": "accept another boot signing key"
-    },
-    {
-      "category": "guard",
-      "guard": "grant_hash",
-      "literal_case": "descriptor_shadow_hash",
-      "mutation": "skip compact-grant digest binding"
-    },
-    {
-      "category": "guard",
-      "guard": "request_hash",
-      "literal_case": "descriptor_wire_lf",
-      "mutation": "rehash reserialized provider bytes"
-    },
-    {
-      "category": "guard",
-      "guard": "invocation",
-      "literal_case": "descriptor_nonce",
-      "mutation": "ignore existing invocation nonce"
-    },
-    {
-      "category": "guard",
-      "guard": "descriptor_route",
-      "literal_case": "descriptor_endpoint",
-      "mutation": "ignore descriptor endpoint"
-    },
-    {
-      "category": "guard",
-      "guard": "descriptor_permit",
-      "literal_case": "descriptor_ordinal",
-      "mutation": "accept an unallocated ordinal"
-    },
-    {
-      "category": "guard",
-      "guard": "authorization",
-      "literal_case": "authorization_key_id",
-      "mutation": "skip normal authorization identity binding"
-    },
-    {
-      "category": "guard",
-      "guard": "marker_presence",
-      "literal_case": "marker_null",
-      "mutation": "treat null marker as missing"
-    },
-    {
-      "category": "guard",
-      "guard": "descriptor_hash",
-      "literal_case": "marker_hash",
-      "mutation": "ignore full compact descriptor hash"
-    },
-    {
-      "category": "guard",
-      "guard": "marker_binding",
-      "literal_case": "marker_invocation_nonce",
-      "mutation": "ignore accepted marker nonce"
-    },
-    {
-      "category": "guard",
-      "guard": "renewal",
-      "literal_case": "renewal_old_key_epoch",
-      "mutation": "let an older key epoch replace newer rights"
-    },
-    {
-      "category": "guard",
-      "guard": "replay_conflict",
-      "literal_case": "descriptor_permit_reuse",
-      "mutation": "reuse ordinal for another execution"
-    },
-    {
-      "category": "guard",
-      "guard": "verdict_source",
-      "literal_case": "provider_source",
-      "mutation": "classify provider failures as router denials"
-    },
-    {
-      "category": "guard",
-      "guard": "verdict_status",
-      "literal_case": "success_status",
-      "mutation": "accept successes as denials"
-    },
-    {
-      "category": "guard",
-      "guard": "verdict_402_precedence",
-      "literal_case": "lifetime_limit",
-      "mutation": "classify every 402 as workspace"
-    },
-    {
-      "category": "guard",
-      "guard": "verdict_429_scope",
-      "literal_case": "rate_unknown",
-      "mutation": "classify every 429 as key"
+      "after": "True and",
+      "before": "authorization.get(\"billing_mode\") == \"ordinary\" and",
+      "equivalent": "Equivalent: ordinary billing was already required before the marker-presence branch; no mutation or external call intervenes.",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:authorization.get(\"billing_mode\") == \"ordinary\" and => True and",
+      "literal_case": "unmarked_spend_lease"
     }
   ]
 }

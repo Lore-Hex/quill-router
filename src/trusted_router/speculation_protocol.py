@@ -10,9 +10,10 @@ import binascii
 import hashlib
 import json
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from functools import wraps
+from typing import Any, ParamSpec, TypeVar
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -26,6 +27,35 @@ MARGIN = 2
 
 class ProtocolError(ValueError):
     """Stable refusal code shared with the Go consumer."""
+
+
+P = ParamSpec("P")
+T = TypeVar("T")
+
+
+def _public(function: Callable[P, T]) -> Callable[P, T]:
+    """Turn malformed caller values into a stable refusal, never a runtime crash."""
+    @wraps(function)
+    def checked(*args: P.args, **kwargs: P.kwargs) -> T:
+        try:
+            return function(*args, **kwargs)
+        except ProtocolError:
+            raise
+        except (ValueError, TypeError, AttributeError, KeyError, IndexError,
+                RecursionError, OverflowError) as exc:
+            raise ProtocolError("input") from exc
+    return checked
+
+
+def _equal(left: Any, right: Any) -> bool:
+    """Exact recursive equality on the JSON value domain."""
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(_equal(left[k], right[k]) for k in left)
+    if isinstance(left, list):
+        return len(left) == len(right) and all(_equal(a, b) for a, b in zip(left, right, strict=True))
+    return bool(left == right)
 
 
 def _require(condition: bool, reason: str) -> None:
@@ -74,9 +104,41 @@ def _constant(value: str) -> Any:
     raise ProtocolError("integer")
 
 
+def _parse_int(value: str) -> int:
+    # Bound BEFORE int(): independent of sys.set_int_max_str_digits().
+    digits = value.removeprefix("-")
+    _require(len(digits) <= 19, "integer")
+    number = int(value)
+    _integer(number)
+    return number
+
+
+def _depth(text: str) -> None:
+    depth = 0
+    quoted = escaped = False
+    for char in text:
+        if quoted:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quoted = False
+        elif char == '"':
+            quoted = True
+        elif char in "[{":
+            depth += 1
+            _require(depth <= 16, "json")
+        elif char in "]}":
+            depth -= 1
+
+
 def _json(raw: bytes) -> Any:
     try:
-        return json.loads(raw.decode("utf-8"), object_pairs_hook=_pairs, parse_constant=_constant)
+        text = raw.decode("utf-8")
+        _depth(text)
+        return json.loads(text, object_pairs_hook=_pairs, parse_int=_parse_int,
+                          parse_float=_constant, parse_constant=_constant)
     except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
         raise ProtocolError("json") from exc
 
@@ -114,9 +176,10 @@ class VerifiedGrant:
     start_deadline: int
 
     @property
+    @_public
     def claims(self) -> dict[str, Any]:
         # A fresh copy keeps callers from mutating verified authority in place.
-        return json.loads(self.payload)
+        return _json(self.payload)
 
 
 @dataclass(frozen=True)
@@ -125,10 +188,12 @@ class VerifiedDescriptor:
     payload: bytes
 
     @property
+    @_public
     def claims(self) -> dict[str, Any]:
-        return json.loads(self.payload)
+        return _json(self.payload)
 
 
+@_public
 def sha256(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
@@ -138,8 +203,10 @@ def _verify(token: str, keys: Sequence[TrustedKey], typ: str,
     _require(isinstance(token, str) and len(token) <= 65536 and token.count(".") == 2,
              "compact")
     h, p, s = token.split(".")
-    header = _json(_b64decode(h))
+    header_bytes = _b64decode(h)
+    header = _json(header_bytes)
     _object(header, "alg kid typ")
+    _require(header_bytes == _canonical(header), "canonical_header")
     _require(header["alg"] == "EdDSA", "algorithm")
     _require(header["typ"] == typ, "type")
     matches = [key for key in keys if key.kid == header["kid"]]
@@ -177,16 +244,21 @@ def _check_canonical(claims: dict[str, Any], payload: bytes) -> None:
     _require(payload == _canonical(claims), "canonical_payload")
 
 
+def _route_schema(route: Any) -> None:
+    _object(route, ROUTE_STRINGS, ROUTE_INTEGERS, "stage_d")
+    _require(type(route["stage_d"]) is bool, "stage_d")
+
+
 def _grant_schema(claims: dict[str, Any]) -> None:
     _object(claims, GRANT_STRINGS, GRANT_INTEGERS, "history route permits")
-    _object(claims["route"], ROUTE_STRINGS, ROUTE_INTEGERS, "stage_d")
-    _require(type(claims["route"]["stage_d"]) is bool, "stage_d")
+    _route_schema(claims["route"])
     _object(claims["history"], integers="clean_since count last_success_at sequence window_start")
     _require(isinstance(claims["permits"], list) and bool(claims["permits"]), "permits")
     for permit in claims["permits"]:
         _object(permit, integers="ordinal b_micro")
 
 
+@_public
 def cost_ceiling(input_bound: int, input_rate_micro_per_m: int, output_limit: int,
                  output_rate_micro_per_m: int, maximum_request_fees_micro: int) -> int:
     """Design §3: separately ceil each token component, then add mandatory fees.
@@ -207,12 +279,14 @@ def cost_ceiling(input_bound: int, input_rate_micro_per_m: int, output_limit: in
     return total
 
 
+@_public
 def workspace_allowance(tier_ceiling_micro: int, paid_headroom_micro: int) -> int:
     _integer(tier_ceiling_micro)
     _integer(paid_headroom_micro)
     return min(tier_ceiling_micro // 100, paid_headroom_micro // 10, 1_000_000)
 
 
+@_public
 def verify_grant(token: str, keys: Sequence[TrustedKey], context: Mapping[str, Any],
                  now: int, *, shadow: bool = False) -> VerifiedGrant:
     """Verify eligibility at physical-start time against current trusted context.
@@ -227,16 +301,16 @@ def verify_grant(token: str, keys: Sequence[TrustedKey], context: Mapping[str, A
     _check_canonical(claims, payload)
     _require(claims["v"] == 1, "version")
     for field in ("iss", "aud", "environment", "plane"):
-        _require(claims[field] == getattr(key, field), "identity")
+        _require(_equal(claims[field], getattr(key, field)), "identity")
     _hash(claims["lookup_digest"])
     for field in BINDINGS:
-        _require(field in context and type(context[field]) is type(claims[field])
-                 and claims[field] == context[field], "binding")
+        _require(field in context and _equal(claims[field], context[field]), "binding")
     route = claims["route"]
     for field in ("routing_policy_hash", "catalog_hash"):
         _hash(route[field])
-    _require(type(route["stage_d"]) is bool and route["stage_d"], "stage_d")
-    _require(route == context.get("route"), "route")
+    _require(route["stage_d"] is True, "stage_d")
+    _route_schema(context.get("route"))
+    _require(_equal(route, context.get("route")), "route")
     _require(route["region"] == claims["region"], "route")
     _require(0 < route["input_bound"] <= 8192 and 0 < route["output_limit"] <= 512,
              "token_bound")
@@ -277,6 +351,7 @@ DESCRIPTOR_STRINGS = ("grant_id grant_sha256 execution_id invocation_nonce reque
 DESCRIPTOR_INTEGERS = "v ordinal b_micro workspace_epoch key_epoch"
 
 
+@_public
 def verify_descriptor(token: str, keys: Sequence[TrustedKey], grant: VerifiedGrant,
                       request_bytes: bytes, execution_id: str,
                       invocation_nonce: str) -> VerifiedDescriptor:
@@ -290,18 +365,19 @@ def verify_descriptor(token: str, keys: Sequence[TrustedKey], grant: VerifiedGra
     g = grant.claims
     _require(key.kid == g["boot_id"], "descriptor_boot")
     for field in ("grant_id", "workspace_id", "key_id", "boot_id", "workspace_epoch", "key_epoch"):
-        _require(claims[field] == g[field], "descriptor_binding")
+        _require(_equal(claims[field], g[field]), "descriptor_binding")
     _require(claims["grant_sha256"] == sha256(grant.compact.encode("ascii")), "grant_hash")
     _require(claims["request_sha256"] == sha256(request_bytes), "request_hash")
-    _require(claims["execution_id"] == execution_id and claims["invocation_nonce"] == invocation_nonce,
+    _require(_equal(claims["execution_id"], execution_id) and _equal(claims["invocation_nonce"], invocation_nonce),
              "invocation")
     for field in ("endpoint_id", "routing_policy_hash"):
-        _require(claims[field] == g["route"][field], "descriptor_route")
+        _require(_equal(claims[field], g["route"][field]), "descriptor_route")
     _require(any(p["ordinal"] == claims["ordinal"] and p["b_micro"] == claims["b_micro"]
                  for p in g["permits"]), "descriptor_permit")
     return VerifiedDescriptor(token, payload)
 
 
+@_public
 def verify_acceptance(response: Mapping[str, Any], descriptor: VerifiedDescriptor,
                       authorization: Mapping[str, Any]) -> str:
     """Caller authenticates response AND supplies durable ordinary authorization.
@@ -310,11 +386,11 @@ def verify_acceptance(response: Mapping[str, Any], descriptor: VerifiedDescripto
     error. Normal fields must equal that authorization, including route/billing.
     This result does not open the Stage D output gate.
     """
-    _require(response.get("authorization") == authorization, "authorization")
+    _require(_equal(response.get("authorization"), authorization), "authorization")
     d = descriptor.claims
     # Even an unmarked success must carry a valid ordinary invocation claim.
     for field in ("invocation_nonce", "workspace_id", "key_id"):
-        _require(authorization.get(field) == d[field], "authorization")
+        _require(_equal(authorization.get(field), d[field]), "authorization")
     _string(authorization.get("authorization_id"))
     _require(authorization.get("billing_mode") == "ordinary", "authorization")
     if "speculation_accepted" not in response:
@@ -327,16 +403,17 @@ def verify_acceptance(response: Mapping[str, Any], descriptor: VerifiedDescripto
     d = descriptor.claims
     _require(marker["descriptor_sha256"] == sha256(descriptor.compact.encode("ascii")), "descriptor_hash")
     for field in ("invocation_nonce", "endpoint_id", "routing_policy_hash"):
-        _require(marker[field] == d[field], "marker_binding")
+        _require(_equal(marker[field], d[field]), "marker_binding")
     for field in ("authorization_id", "invocation_nonce", "endpoint_id", "routing_policy_hash",
                   "workspace_id", "key_id"):
         expected = marker.get(field, d.get(field))
-        _require(authorization.get(field) == expected, "authorization")
+        _require(_equal(authorization.get(field), expected), "authorization")
     _require(authorization.get("billing_mode") == "ordinary" and
              authorization.get("stage_d") is True, "authorization")
     return "accepted"
 
 
+@_public
 def renewal_verdict(previous: VerifiedGrant, candidate: VerifiedGrant) -> str:
     """Pure ordering check; never restores permits or clears any deny latch."""
     if previous.compact == candidate.compact:
@@ -345,7 +422,7 @@ def renewal_verdict(previous: VerifiedGrant, candidate: VerifiedGrant) -> str:
     _require(previous.shadow == candidate.shadow, "renewal")
     for field in ("workspace_id", "key_id", "lookup_digest", "boot_id", "stable_slot_id",
                   "iss", "aud", "environment", "plane", "region"):
-        _require(old[field] == new[field], "renewal")
+        _require(_equal(old[field], new[field]), "renewal")
     _require(new["grant_id"] != old["grant_id"] and new["generation"] > old["generation"]
              and new["iat"] >= old["iat"] and new["workspace_epoch"] >= old["workspace_epoch"]
              and new["key_epoch"] >= old["key_epoch"]
@@ -353,6 +430,7 @@ def renewal_verdict(previous: VerifiedGrant, candidate: VerifiedGrant) -> str:
     return "renewed"
 
 
+@_public
 def descriptor_replay(previous: VerifiedDescriptor, candidate: VerifiedDescriptor) -> str:
     _require(previous.compact == candidate.compact, "replay_conflict")
     return "replay"
@@ -366,9 +444,14 @@ KEY_REASONS = frozenset({"key_revoked", "key_disabled", "key_expired", "key_inva
     "key_spend_limit_imposed"})
 
 
+@_public
 def classify_verdict(*, source: str, status: int, reason: str, workspace_id: str | None,
                      key_id: str | None, rate_scope: str | None) -> dict[str, Any]:
-    """Only normalized authenticated authorize denials belong in this taxonomy."""
+    """One normalized reason: state reason wins over generic status/rate scope.
+
+    Upstream multi-reason normalization must choose workspace state before key
+    state, then rate limits, then infrastructure/request reasons.
+    """
     _require(source == "authenticated_router", "verdict_source")
     _integer(status)
     _require(400 <= status <= 599, "verdict_status")

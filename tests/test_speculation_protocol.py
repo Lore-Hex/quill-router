@@ -11,7 +11,7 @@ import pytest
 from trusted_router import speculation_protocol as protocol
 
 FIXTURES = Path(__file__).parent / "fixtures" / "speculation_v1"
-MANIFEST_SHA256 = "cf4961055cc4d7944a16b6160860b34fab05d4c8966ce3b19cfd041a601da648"
+MANIFEST_SHA256 = "bdb4ab08d410cf02b8b44e6e4326d7aa7800ab2a371965c5f0c07138d49dad6f"
 
 
 def read(name: str) -> Any:
@@ -66,6 +66,8 @@ def test_seed_contract() -> None:
 
 def evaluate(case: dict[str, Any]) -> Any:
     category = case["category"]
+    if category == "input":
+        return protocol.sha256(case["value"])
     if category == "verdict_extra":
         return protocol.classify_verdict(**case["input"])
     if category == "grant":
@@ -83,7 +85,7 @@ def evaluate(case: dict[str, Any]) -> Any:
         return protocol.workspace_allowance(*case["args"])
     if category == "renewal":
         previous = protocol.verify_grant(case["previous"], KEYS, case["previous_context"], 1700000000)
-        candidate = protocol.verify_grant(case["candidate"], KEYS, case["candidate_context"],
+        candidate = protocol.verify_grant(case["candidate"], tuple(protocol.TrustedKey(**k) for k in case["candidate_keys"]) if "candidate_keys" in case else KEYS, case["candidate_context"],
                                           1700000000, shadow=case["shadow"])
         return protocol.renewal_verdict(previous, candidate)
     if category == "replay":
@@ -99,6 +101,8 @@ def test_literal(case: dict[str, Any]) -> None:
         actual = evaluate(case)
     except protocol.ProtocolError as exc:
         actual = str(exc)
+    except Exception as exc:
+        raise AssertionError(f"unexpected runtime exception: {type(exc).__name__}: {exc}") from exc
     assert actual == case["expected"], f"{case['name']}: expected {case['expected']!r}, got {actual!r}"
 
 
@@ -109,14 +113,28 @@ def test_verdict(vector: dict[str, Any]) -> None:
         assert actual[field] == expected, f"{vector['name']}.{field}: expected {expected!r}, got {actual[field]!r}"
 
 
-def test_rules_cover_every_literal() -> None:
+def test_guard_inventory() -> None:
+    import ast
+    import inspect
+
     rules = read("rules.json")["rules"]
-    named = {r["literal_case"] for r in rules}
-    assert {c["name"] for c in CASES} <= named
-    assert {v["name"] for v in read("verdict-vectors.json")["vectors"]} <= named
-    assert "fixture_pins" in named
-    assert all(r["guard"] and r["mutation"] for r in rules)
+    cases = {c["name"] for c in CASES} | {"verdict:" + v["name"] for v in read("verdict-vectors.json")["vectors"]} | {"fixture_pins"}
+    assert all(r["literal_case"] in cases for r in rules)
+    assert all(r["before"] != r["after"] for r in rules)
+    assert len({r["guard"] for r in rules}) == len(rules)
     assert len({c["name"] for c in CASES}) == len(CASES)
+    source = inspect.getsource(protocol)
+    # A new require or branch cannot silently escape the executable inventory.
+    for function in ast.parse(source).body:
+        if not isinstance(function, ast.FunctionDef):
+            continue
+        anchors = [r["before"] for r in rules if r["function"] == function.name]
+        for node in ast.walk(function):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_require":
+                assert ast.get_source_segment(source, node) in anchors
+            if isinstance(node, (ast.If, ast.IfExp)):
+                predicate = ast.get_source_segment(source, node.test)
+                assert any(predicate in anchor or anchor in predicate for anchor in anchors), (function.name, predicate)
 
 
 def test_no_runtime_call_sites() -> None:
@@ -124,3 +142,92 @@ def test_no_runtime_call_sites() -> None:
     for path in root.rglob("*.py"):
         if path.name != "speculation_protocol.py":
             assert "speculation_protocol" not in path.read_text(), str(path)
+
+
+def test_numeric_limits_are_interpreter_independent() -> None:
+    import sys
+
+    original = sys.get_int_max_str_digits()
+    try:
+        for limit in (640, 4300, 0):
+            sys.set_int_max_str_digits(limit)
+            for name in ('header_number_huge', 'payload_number_huge'):
+                test_literal(next(c for c in CASES if c['name'] == name))
+    finally:
+        sys.set_int_max_str_digits(original)
+
+
+def test_public_input_fuzz() -> None:
+    """Deterministic, bounded fuzz across every public function and parameter.
+
+    The oracle is only crash freedom: valid return or ProtocolError. Frozen
+    literals, never this fuzz corpus, define acceptance and refusal outcomes.
+    """
+    import copy
+    import random
+
+    rng = random.Random(29092026)  # noqa: S311 - reproducible adversarial inputs
+    atoms: list[Any] = [None, True, False, 0, -1, 1, 1.0, float('nan'), float('inf'),
+                        2**63, '', '\ud800', b'\xff', {}, [], object()]
+    values = list(atoms)
+    for _ in range(300):
+        value = rng.choice(atoms)
+        for _ in range(rng.randrange(5)):
+            value = [value, rng.choice(atoms)] if rng.randrange(2) else {'x': value}
+        values.append(value)
+    cyclic: list[Any] = []
+    cyclic.append(cyclic)
+    values.append(cyclic)
+    g, d = grant(), descriptor()
+    calls: list[tuple[Any, dict[str, Any]]] = [
+        (protocol.sha256, {'raw': WIRE}),
+        (protocol.cost_ceiling, dict(zip(('input_bound', 'input_rate_micro_per_m', 'output_limit', 'output_rate_micro_per_m', 'maximum_request_fees_micro'), (8192, 500000, 512, 1000000, 0), strict=True))),
+        (protocol.workspace_allowance, {'tier_ceiling_micro': 25000000, 'paid_headroom_micro': 5000000}),
+        (protocol.verify_grant, {'token': BUNDLE['real_grant_jws'], 'keys': KEYS, 'context': BUNDLE['context'], 'now': BUNDLE['now'], 'shadow': False}),
+        (protocol.verify_descriptor, {'token': BUNDLE['permit_descriptor_jws'], 'keys': KEYS, 'grant': g, 'request_bytes': WIRE, 'execution_id': 'x1', 'invocation_nonce': 'n1'}),
+        (protocol.verify_acceptance, {'response': {'authorization': BUNDLE['authorization'], 'speculation_accepted': BUNDLE['speculation_accepted']}, 'descriptor': d, 'authorization': BUNDLE['authorization']}),
+        (protocol.renewal_verdict, {'previous': g, 'candidate': g}),
+        (protocol.descriptor_replay, {'previous': d, 'candidate': d}),
+        (protocol.classify_verdict, {'source': 'authenticated_router', 'status': 403, 'reason': '', 'workspace_id': 'w1', 'key_id': 'k1', 'rate_scope': None}),
+    ]
+    for function, defaults in calls:
+        for field in defaults:
+            for value in values:
+                try:
+                    function(**{**defaults, field: value})
+                except protocol.ProtocolError:
+                    pass
+    for value in values:
+        for verified in (protocol.VerifiedGrant('', value, False, 0), protocol.VerifiedDescriptor('', value)):
+            try:
+                _ = verified.claims
+            except protocol.ProtocolError:
+                pass
+        response = {'authorization': {**BUNDLE['authorization'], 'extra': value}}
+        try:
+            protocol.verify_acceptance(response, d, copy.deepcopy(response['authorization']))
+        except protocol.ProtocolError:
+            pass
+
+
+def test_signed_parser_fuzz() -> None:
+    import base64
+    import random
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    rng = random.Random(30092026)  # noqa: S311 - deterministic fuzz, public test seed
+    signer = Ed25519PrivateKey.from_private_bytes(bytes(range(128, 160)))
+    header, payload, _ = BUNDLE['real_grant_jws'].split('.')
+    raws = [rng.randbytes(rng.randrange(256)) for _ in range(1000)]
+    raws += [b'[' * n + b'0' + b']' * n for n in (15, 16, 17, 1000)]
+    raws += [b'{"v":' + b'9' * n + b'}' for n in (19, 20, 639, 640, 4300, 5000)]
+    for raw in raws:
+        segment = base64.urlsafe_b64encode(raw).rstrip(b'=').decode('ascii')
+        for h, p in ((segment, payload), (header, segment)):
+            message = (h + '.' + p).encode('ascii')
+            signature = base64.urlsafe_b64encode(signer.sign(message)).rstrip(b'=')
+            try:
+                protocol.verify_grant((message + b'.' + signature).decode('ascii'), KEYS, BUNDLE['context'], BUNDLE['now'])
+            except protocol.ProtocolError:
+                pass

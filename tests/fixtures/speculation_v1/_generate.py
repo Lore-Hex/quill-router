@@ -35,8 +35,8 @@ def b64(raw):
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 
-def sign(claims, kid="issuer-fixture", typ=REAL, header=None, raw=None, segment=None):
-    h = b64(canonical(header if header is not None else {"alg": "EdDSA", "kid": kid, "typ": typ}))
+def sign(claims, kid="issuer-fixture", typ=REAL, header=None, raw=None, segment=None, header_raw=None):
+    h = b64(header_raw if header_raw is not None else canonical(header if header is not None else {"alg": "EdDSA", "kid": kid, "typ": typ}))
     p = segment if segment is not None else b64(raw if raw is not None else canonical(claims))
     message = h + "." + p
     return message + "." + b64(KEYS[kid].sign(message.encode("ascii")))
@@ -214,7 +214,7 @@ def main():
     for field in grant["route"]:
         ctx = copy.deepcopy(context)
         ctx["route"][field] = "wrong"
-        grant_case("route_" + field, "route", ctx=ctx)
+        grant_case("route_" + field, "stage_d" if field == "stage_d" else "integer" if type(grant["route"][field]) is int else "route", ctx=ctx)
     for name, changes, expected in [
         ("unknown_version", {"v": 2}, "version"),
         ("unknown_field", {"extra": 1}, "fields"),
@@ -365,10 +365,10 @@ def main():
         add("allowance_" + name, "allowance", expected, args=args)
 
     def descriptor_case(name, expected, changes=None, *, kid="boot-a", typ=DESCRIPTOR,
-                        use_shadow=False, wire=None, nonce="n1", execution="x1"):
+                        use_shadow=False, wire=None, nonce="n1", execution="x1", **encoding):
         d = copy.deepcopy(descriptor)
         d.update(changes or {})
-        add(name, "descriptor", expected, token=sign(d, kid, typ),
+        add(name, "descriptor", expected, token=sign(d, kid, typ, **encoding),
             grant="shadow" if use_shadow else "real", wire=WIRE[:-1] if wire is None else wire,
             nonce=nonce, execution=execution)
     descriptor_case("descriptor_valid", "allowed")
@@ -475,82 +475,243 @@ def main():
     ]:
         add(name, "verdict_extra", expected, input=inputs)
 
+
+    # Round 2: independently authored boundary, parser and precedence oracles.
+    for field, value, expected in [
+        ("adapter_capability_version", True, "integer"),
+        ("stage_d", 1, "stage_d"),
+        ("input_rate_micro_per_m", 500000.0, "integer"),
+    ]:
+        ctx = copy.deepcopy(context)
+        ctx["route"][field] = value
+        grant_case("context_coercion_" + field, expected, ctx=ctx)
+    add("response_stage_d_integer", "marker", "authorization",
+        response={**response, "authorization": {**authorization, "stage_d": 1}}, authorization=authorization)
+    # Recursive mapping/list equality, including order, length and nested scalar types.
+    for name, left, right, expected in [
+        ("equal", [{"x": [True, 1, 1.0]}], [{"x": [True, 1, 1.0]}], "accepted"),
+        ("bool_int", [{"x": True}], [{"x": 1}], "authorization"),
+        ("int_float", [{"x": 1}], [{"x": 1.0}], "authorization"),
+        ("keys", [{"x": 1}], [{"y": 1}], "authorization"),
+        ("length", [1], [1, 2], "authorization"),
+        ("order", [1, 2], [2, 1], "authorization"),
+    ]:
+        add("response_nested_" + name, "marker", expected,
+            response={**response, "authorization": {**authorization, "extra": left}},
+            authorization={**authorization, "extra": right})
+    for name, raw in [
+        ("reordered", b'{"typ":"speculation-eligibility+jws","kid":"issuer-fixture","alg":"EdDSA"}'),
+        ("whitespace", b'{ "alg":"EdDSA","kid":"issuer-fixture","typ":"speculation-eligibility+jws"}'),
+        ("escaped", b'{"alg":"EdDSA","kid":"issuer-fixture","typ":"speculation-eligibility+\\u006aws"}'),
+    ]:
+        grant_case("header_" + name, "canonical_header", header_raw=raw)
+    for name, number in [("huge", b"1" * 5000), ("20_digits", b"10000000000000000000"),
+                          ("float", b"1.0"), ("infinity", b"Infinity"), ("minus_infinity", b"-Infinity")]:
+        grant_case("payload_number_" + name, "integer", raw=canonical(grant).replace(b'"v":1', b'"v":' + number))
+        grant_case("header_number_" + name, "integer", header_raw=b'{"alg":' + number + b',"kid":"issuer-fixture","typ":"speculation-eligibility+jws"}')
+    for name, raw, expected in [
+        ("depth16", b"[" * 16 + b"0" + b"]" * 16, "fields"),
+        ("depth17", b"[" * 17 + b"0" + b"]" * 17, "json"),
+        ("depth_in_string", b'{"x":"[[[[[[[[[[[[[[[[["}', "fields"),
+        ("invalid_utf8", b'{"x":"\xff"}', "json"),
+        ("surrogate", canonical(grant).replace(b'"g1"', b'"\\ud800"'), "string"),
+        ("case_sensitive", canonical(grant).replace(b'"grant_id"', b'"Grant_id"'), "fields"),
+        ("trailing_newline", canonical(grant) + b"\n", "canonical_payload"),
+        ("escaped_duplicate", canonical(grant).replace(b'"v":1', b'"v":1,"\\u0076":1'), "duplicate_key"),
+    ]:
+        grant_case(name, expected, raw=raw)
+    grant_case("tier_four", "tier", {"tier": 4})
+    ctx = copy.deepcopy(context)
+    ctx["route"]["output_limit"] = 0
+    grant_case("output_bound_zero", "token_bound", {"route.output_limit": 0}, ctx=ctx)
+    grant_case("allowance_sum_not_max", "allowance", ctx={**context, "tier_ceiling_micro": 500000})
+    add("allowance_dollar_cap", "allowance", 1000000, args=[200000000, 20000000])
+    auth = {**authorization, "billing_mode": "spend_lease"}
+    add("unmarked_spend_lease", "marker", "authorization", response={"authorization": auth}, authorization=auth)
+    for name, token in [("compact_too_long", "a" * 65535 + ".AA.AA"),
+                         ("base64_cr", real + "\r"), ("base64_lf", real + "\n")]:
+        add(name, "grant", "compact" if name == "compact_too_long" else "base64",
+            token=token, context=context, now=1700000000, shadow=False)
+    # Every renewal identity changes independently; issuer pins match the candidate.
+    for field in ("workspace_id", "key_id", "lookup_digest", "boot_id", "stable_slot_id",
+                  "iss", "aud", "environment", "plane", "region"):
+        c = copy.deepcopy(newer)
+        c[field] = "0" * 64 if field == "lookup_digest" else "other"
+        if field == "region":
+            c["route"]["region"] = "other"
+        ctx = copy.deepcopy(context)
+        ctx.update({k: c[k] for k in context if k in c})
+        candidate_keys = copy.deepcopy(trusted_keys)
+        if field in ("iss", "aud", "environment", "plane"):
+            candidate_keys[0][field] = "other"
+        add("renewal_identity_" + field, "renewal", "renewal", previous=real, candidate=sign(c),
+            previous_context=context, candidate_context=ctx, shadow=False, candidate_keys=candidate_keys)
+    add("renewal_domain_isolated", "renewal", "renewal", previous=real,
+        candidate=sign(newer, "shadow-fixture", SHADOW), previous_context=context,
+        candidate_context={**context, "generation": 8}, shadow=True)
+    workspace_verdict = {"discard_this_execution": True, "durable_scope": "workspace",
+        "local_infrastructure_breaker": "none", "commit_required_with_real_rights": True,
+        "commit_required_shadow_only": False, "storage_failure_status_with_real_rights": 503}
+    key_verdict = {**workspace_verdict, "durable_scope": "key"}
+    none_verdict = {**workspace_verdict, "durable_scope": "none",
+        "commit_required_with_real_rights": False, "storage_failure_status_with_real_rights": 403}
+    for name, changes, expected in [
+        ("reasonless_402", {"status": 402}, workspace_verdict),
+        ("rate_key_missing_id", {"status": 429, "rate_scope": "key", "key_id": None}, workspace_verdict),
+        ("billing_paused", {"reason": "billing_paused"}, workspace_verdict),
+        ("trust_demoted", {"reason": "trust_demoted"}, workspace_verdict),
+        ("status_upper", {"status": 600}, "verdict_status"),
+        ("key_without_workspace", {"reason": "key_revoked", "workspace_id": None}, none_verdict),
+        ("key_without_key", {"reason": "key_revoked", "key_id": None}, none_verdict),
+        ("workspace_without_workspace", {"reason": "billing_paused", "workspace_id": None}, none_verdict),
+        ("rate_without_workspace", {"status": 429, "workspace_id": None}, {**none_verdict, "storage_failure_status_with_real_rights": 429}),
+        ("generic_500", {"status": 500}, {**none_verdict, "local_infrastructure_breaker": "key_boot", "storage_failure_status_with_real_rights": 500}),
+        ("key_reason_workspace_rate", {"status": 429, "reason": "key_revoked", "rate_scope": "workspace"}, key_verdict),
+        ("workspace_reason_key_rate", {"status": 429, "reason": "billing_paused", "rate_scope": "key"}, workspace_verdict),
+        ("workspace_reason_500", {"status": 500, "reason": "trust_demoted"}, workspace_verdict),
+        ("key_reason_500", {"status": 500, "reason": "key_revoked"}, key_verdict),
+        ("unresolved_key_402", {"status": 402, "reason": "key_revoked", "key_id": None}, workspace_verdict),
+    ]:
+        inputs = {"source": "authenticated_router", "status": 403, "reason": "", "workspace_id": "w1", "key_id": "k1", "rate_scope": None, **changes}
+        add("verdict_" + name, "verdict_extra", expected, input=inputs)
+    for reason in ("authorize_timeout", "transport_error", "infrastructure_error"):
+        add("breaker_" + reason, "verdict_extra", {**none_verdict, "local_infrastructure_breaker": "key_boot"},
+            input={"source": "authenticated_router", "status": 403, "reason": reason, "workspace_id": "w1", "key_id": "k1", "rate_scope": None})
+
+    # Multiple faults pin adjacent validation stages, independent of member order.
+    for name, changes, expected in [
+        ("tier_headroom", {"tier": 1, "paid_headroom_micro": 0}, "tier"),
+        ("schema_float", {"grant_id": "", "v": 1.0}, "integer"),
+        ("schema_types", {"grant_id": "", "v": True}, "string"),
+        ("version_identity", {"v": 2, "iss": "wrong"}, "version"),
+        ("identity_hash", {"iss": "wrong", "lookup_digest": "bad"}, "identity"),
+        ("hash_binding", {"lookup_digest": "bad", "key_id": "wrong"}, "hash"),
+        ("binding_route_hash", {"key_id": "wrong", "route.catalog_hash": "bad"}, "binding"),
+        ("route_hash_stage", {"route.catalog_hash": "bad", "route.stage_d": False}, "hash"),
+        ("stage_route", {"route.stage_d": False, "route.endpoint_id": "other"}, "stage_d"),
+        ("route_bounds", {"route.output_limit": 513}, "route"),
+        ("headroom_history", {"paid_headroom_micro": 0, "history.count": 19}, "paid_headroom"),
+        ("history_count_time", {"history.count": 19, "history.clean_since": 1700000000}, "history_count"),
+        ("history_lifetime", {"history.count": 19, "exp": 1700000000}, "history_count"),
+        ("history_time_lifetime", {"history.clean_since": 1700000000, "exp": 1700000000}, "history_time"),
+        ("lifetime_window", {"exp": 1700000031, "key_expires_at": 0}, "lifetime"),
+        ("window_ceiling", {"key_expires_at": 0, "per_request_ceiling_micro": 0}, "start_window"),
+        ("ceiling_cost", {"per_request_ceiling_micro": 0}, "ceiling"),
+        ("ordinal_funding", {"permits": [{"ordinal": 0, "b_micro": 4608}, {"ordinal": 0, "b_micro": 0}]}, "ordinal"),
+    ]:
+        grant_case("precedence_" + name, expected, changes)
+    grant_case("precedence_now_compact", "integer", now=True, segment="")
+    grant_case("precedence_schema_canonical", "fields", raw=b'{ "v":1}')
+    grant_case("precedence_canonical_version", "canonical_payload", raw=canonical({**grant, "v": 2}) + b" ")
+    for name, changes, expected in [
+        ("bounds_adapter", {"output_limit": 0, "adapter_capability_version": 0}, "token_bound"),
+        ("adapter_tier", {"adapter_capability_version": 0}, "adapter"),
+        ("cost_permit", {"maximum_request_fees_micro": 6000}, "cost"),
+    ]:
+        ctx = copy.deepcopy(context)
+        ctx["route"].update(changes)
+        grant_case("precedence_" + name, expected, {**{"route."+k: v for k,v in changes.items()}, "tier": 1} if name == "adapter_tier" else {"route."+k: v for k,v in changes.items()}, ctx=ctx)
+    grant_case("precedence_funding_tier_ceiling", "permit_cost", {"permits": [{"ordinal": 0, "b_micro": 0}]}, ctx={k:v for k,v in context.items() if k != "tier_ceiling_micro"})
+    grant_case("precedence_tier_ceiling_allowance", "integer", ctx={**context, "tier_ceiling_micro": False})
+    for name, raw, expected in [
+        ("depth_number", b"["*17+b"1.0"+b"]"*17, "json"),
+        ("number_duplicate", b'{"v":1,"v":1.0}', "integer"),
+        ("duplicate_schema", b'{"v":1,"v":1}', "duplicate_key"),
+        ("syntax_duplicate", b'{"v":1,"v":1,}', "json"),
+        ("nested_duplicate_number", b'{"x":{"v":1,"v":1},"y":1.0}', "duplicate_key"),
+    ]:
+        grant_case("precedence_parser_" + name, expected, raw=raw)
+    for name, changes, expected in [
+        ("version_hash", {"v": 2, "request_sha256": "bad"}, "version"),
+        ("hash_binding", {"request_sha256": "bad", "grant_id": "other"}, "hash"),
+        ("binding_grant_hash", {"grant_id": "other", "grant_sha256": "0"*64}, "descriptor_binding"),
+        ("grant_request_hash", {"grant_sha256": "0"*64, "request_sha256": "0"*64}, "grant_hash"),
+        ("request_invocation", {"request_sha256": "0"*64, "execution_id": "other"}, "request_hash"),
+        ("invocation_route", {"execution_id": "other", "endpoint_id": "other"}, "invocation"),
+        ("route_permit", {"endpoint_id": "other", "ordinal": 99}, "descriptor_route"),
+    ]:
+        descriptor_case("precedence_descriptor_"+name, expected, changes)
+    descriptor_case("precedence_descriptor_domain_type", "dry_run_cannot_dispatch", typ=REAL, use_shadow=True)
+    descriptor_case("precedence_descriptor_boot_binding", "descriptor_boot", {"grant_id": "other"}, kid="boot-other")
+    for name, marker, auth, expected in [
+        ("auth_schema", None, {**authorization, "key_id": "other"}, "authorization"),
+        ("auth_string_billing", None, {**authorization, "authorization_id": None, "billing_mode": "spend_lease"}, "string"),
+        ("version_hash", {**bundle["speculation_accepted"], "v": 2, "descriptor_sha256": "bad"}, authorization, "version"),
+        ("hash_binding", {**bundle["speculation_accepted"], "descriptor_sha256": "0"*64, "invocation_nonce": "other"}, authorization, "descriptor_hash"),
+        ("binding_auth", {**bundle["speculation_accepted"], "invocation_nonce": "other", "authorization_id": "other"}, authorization, "marker_binding"),
+    ]:
+        add("precedence_marker_"+name, "marker", expected, response={"authorization": auth, "speculation_accepted": marker}, authorization=auth)
+
+    grant_case("hash_type", "hash", {"lookup_digest": "bad"})
+    add("compact_nonstring", "grant", "compact", token=1, context=context, now=1700000000, shadow=False)
+    add("input_boundary", "input", "input", value=[])
+    grant_case("depth17_after_string", "json", raw=b'{"x":' + b'['*16 + b'0' + b']'*16 + b'}')
+    grant_case("depth_siblings", "fields", raw=b'[' + b','.join([b'[]']*20) + b']')
+    grant_case("depth_escaped_quote", "fields", raw=b'{"x":"\\\"' + b'['*17 + b'"}')
+    grant_case("depth_escaped_backslash", "json", raw=b'{"x":"\\\\","y":' + b'['*16 + b'0' + b']'*16 + b'}')
+    for reason in ("credit_exhausted", "billing_denied", "trust_ineligible", "trust_demoted", "abuse_latched", "payment_failed", "trust_reconciliation_stale", "workspace_paused", "billing_paused", "key_revoked", "key_disabled", "key_expired", "key_invalid", "key_limit_exceeded", "key_window_limit_exceeded", "key_strict_limit_exceeded", "key_spend_limit_imposed"):
+        add("reason_" + reason, "verdict_extra", key_verdict if reason.startswith("key_") else workspace_verdict,
+            input={"source": "authenticated_router", "status": 403, "reason": reason, "workspace_id": "w1", "key_id": "k1", "rate_scope": None})
+
+    grant_case("string_scalar", "string", {"grant_id": 123})
+    grant_case("header_number_negative", "integer", header_raw=b'{"alg":-1,"kid":"issuer-fixture","typ":"speculation-eligibility+jws"}')
+    grant_case("precedence_stage_schema_version", "stage_d", {"route.stage_d": 1, "v": 2})
+    auth = {**authorization, "key_id": "other"}
+    add("marker_unmarked_key", "marker", "authorization", response={"authorization": auth}, authorization=auth)
+
+    # Remaining compact/parser/schema and operation stage boundaries.
+    for name, header, segment, expected in [
+        ("algorithm_type", {"alg":"none", "kid":"issuer-fixture", "typ":"other"}, None, "algorithm"),
+        ("type_key", {"alg":"EdDSA", "kid":"missing", "typ":"other"}, None, "type"),
+        ("key_payload", {"alg":"EdDSA", "kid":"missing", "typ":REAL}, "=", "key"),
+    ]:
+        grant_case("precedence_"+name, expected, header=header, segment=segment)
+    grant_case("precedence_purpose_payload", "purpose", kid="shadow-fixture", segment="=")
+    grant_case("precedence_header_schema_canonical", "fields", header_raw=b'{ "alg":"EdDSA"}')
+    grant_case("precedence_header_canonical_algorithm", "canonical_header", header_raw=b'{ "alg":"none","kid":"issuer-fixture","typ":"speculation-eligibility+jws"}')
+    h, p, sig = real.split(".")
+    for name, token, now, expected in [
+        ("compact_header", "."+p+".AA"+"a"*65536, 1700000000, "compact"),
+        ("header_payload", "+.=.AA", 1700000000, "base64"),
+        ("header_json_signature", b64(b'{')+"."+p+".AA", 1700000000, "json"),
+        ("payload_signature_base64", h+".=.+", 1700000000, "base64"),
+        ("signature_payload_json", h+"."+b64(b'{')+".AA", 1700000000, "signature"),
+        ("header_number_signature", b64(b'{"alg":'+b'1'*5000+b'}')+"."+p+".AA", 1700000000, "integer"),
+    ]:
+        add("precedence_"+name, "grant", expected, token=token, context=context, now=now, shadow=False)
+    ctx = copy.deepcopy(context)
+    ctx["route"]["stage_d"] = 1
+    ctx["route"]["endpoint_id"] = "other"
+    grant_case("precedence_context_schema_route", "stage_d", ctx=ctx)
+    grant_case("precedence_grant_route_history_schema", "stage_d", {"route.stage_d":1, "history.count":True})
+    grant_case("precedence_grant_history_permit_schema", "integer", {"history.count":True, "permits":[]})
+    descriptor_case("precedence_descriptor_schema_canonical", "string", raw=canonical({**descriptor, "grant_id":""})+b' ')
+    descriptor_case("precedence_descriptor_canonical_version", "canonical_payload", raw=canonical({**descriptor, "v":2})+b' ')
+    descriptor_case("descriptor_route_hash_format", "hash", {"routing_policy_hash":"bad"})
+    descriptor_case("descriptor_grant_hash_format", "hash", {"grant_sha256":"bad"})
+    grant_case("route_policy_hash_format", "hash", {"route.routing_policy_hash":"bad"})
+    for name, marker, auth, expected in [
+        ("schema_version", {**bundle["speculation_accepted"], "authorization_id":"", "v":2}, authorization, "string"),
+        ("hash_format_digest", {**bundle["speculation_accepted"], "routing_policy_hash":"bad", "descriptor_sha256":"0"*64}, authorization, "hash"),
+        ("auth_stage", {**bundle["speculation_accepted"], "authorization_id":"other"}, {**authorization,"stage_d":False}, "authorization"),
+    ]:
+        add("precedence_marker_"+name, "marker", expected, response={"authorization":auth,"speculation_accepted":marker}, authorization=auth)
+    for field in ("invocation_nonce", "workspace_id", "key_id"):
+        auth = {**authorization, field:"other"}
+        add("unmarked_"+field, "marker", "authorization", response={"authorization":auth}, authorization=auth)
+    for name, inputs, expected in [
+        ("source_status", {"source":"provider", "status":600}, "verdict_source"),
+        ("integer_scope", {"status":True, "reason":"billing_paused"}, "integer"),
+        ("status_scope", {"status":600, "reason":"billing_paused"}, "verdict_status"),
+    ]:
+        add("precedence_verdict_"+name, "verdict_extra", expected,
+            input={"source":"authenticated_router", "status":403, "reason":"", "workspace_id":"w1", "key_id":"k1", "rate_scope":None, **inputs})
     write("grant-permit-tokens.json", bundle)
     (ROOT / "verdict-vectors.json").write_text(VERDICTS)
     (ROOT / "provider-wire.json").write_text(WIRE)
     write("protocol-vectors.json", {"fixture_version": 1, "cases": cases})
-    # Every vector names a concrete guard mutation; verdict guards include the
-    # seed names verbatim. The executable gate exercises the requested subset.
-    rules = [{"guard": c["name"], "mutation": "remove or invert " + c["name"] + " guard",
-              "literal_case": c["name"], "category": c["category"]} for c in cases]
-    rules += [{"guard": "verdict_" + v["name"], "mutation": "change scope/commit/breaker classification",
-               "literal_case": v["name"], "category": "verdict"} for v in json.loads(VERDICTS)["vectors"]]
-    rules.append({"guard": "fixture_pin", "mutation": "change one fixture byte", "literal_case": "fixture_pins", "category": "pin"})
-    guard_rules = [
-        ("integer", "replace type(v) is int with isinstance(v, int)", "bool_integer"),
-        ("string", "allow the excluded printable-ASCII characters", "string_less"),
-        ("hash", "remove lowercase SHA-256 validation", "invalid_hash"),
-        ("fields", "ignore unknown v1 fields", "unknown_field"),
-        ("duplicate_key", "last duplicate JSON key wins", "payload_duplicate"),
-        ("json", "treat malformed JSON as empty claims", "json_bad"),
-        ("base64_alphabet", "strip padding before decoding", "signature_padded"),
-        ("base64_trailing_bits", "omit re-encode equality", "base64_trailing_bits"),
-        ("compact", "ignore surplus compact segments", "compact_extra"),
-        ("algorithm", "skip alg allowlist", "algorithm_none"),
-        ("type", "accept shadow typ in real verifier", "dry_run_type_as_real"),
-        ("trusted_key", "accept unknown or duplicate kid", "key_ambiguous"),
-        ("purpose", "accept shadow-grant purpose for real grants", "real_type_shadow_key"),
-        ("signature", "skip Ed25519 signature verification", "signature_bitflip"),
-        ("canonical_payload", "skip canonical payload equality", "payload_whitespace"),
-        ("version", "accept unknown version", "unknown_version"),
-        ("product_overflow", "allow overflowing signed-int64 product", "money_product_overflow"),
-        ("sum_overflow", "allow overflowing signed-int64 total", "money_sum_overflow"),
-        ("cost_rounding", "floor token-component cost", "money_fractional"),
-        ("allowance_rounding", "ceil headroom divided by ten", "allowance_odd_headroom"),
-        ("stage_d", "allow disabled Stage D", "stage_d_false"),
-        ("route_region", "skip grant/route region equality", "route_region_disagrees"),
-        ("token_bound", "allow unbounded output", "output_bound_over"),
-        ("adapter", "accept zero adapter version", "adapter_zero"),
-        ("tier", "admit tier one", "tier_one"),
-        ("paid_headroom", "admit less than five paid dollars", "unpaid"),
-        ("history_count", "lower twenty-success minimum", "history_19"),
-        ("history_sequence", "count replayed successes", "history_retry_dedupe"),
-        ("history_time", "ignore last-success freshness", "stale_last_success"),
-        ("lifetime", "allow grants longer than thirty seconds", "ttl_too_long"),
-        ("iat", "permit a start before issuance", "future_iat"),
-        ("start_expiry", "include the exclusive start boundary", "start_plus_28"),
-        ("start_key", "ignore key expiry margin", "short_key_at"),
-        ("start_price", "ignore signed pricing margin", "short_price_at"),
-        ("start_trust", "ignore trust freshness margin", "short_trust_at"),
-        ("start_explicit", "ignore explicit start_before", "short_explicit_at"),
-        ("ceiling", "allow per-request ceilings above 10000", "over_cap_money"),
-        ("cost", "admit B above ceiling", "cost_10001"),
-        ("permits", "allow an empty grant", "empty_permits"),
-        ("ordinal", "ignore duplicate permit ordinals", "duplicate_ordinal"),
-        ("permit_cost", "allow underfunded permits", "underfunded_permit"),
-        ("tier_ceiling", "invent missing trusted tier ceiling", "missing_tier_ceiling"),
-        ("allowance", "ignore summed permit allocation", "allowance_exceeded"),
-        ("dry_run_cannot_dispatch", "accept a descriptor referring to shadow rights", "dry_run_cannot_dispatch"),
-        ("descriptor_boot", "accept another boot signing key", "descriptor_wrong_boot_signer"),
-        ("grant_hash", "skip compact-grant digest binding", "descriptor_shadow_hash"),
-        ("request_hash", "rehash reserialized provider bytes", "descriptor_wire_lf"),
-        ("invocation", "ignore existing invocation nonce", "descriptor_nonce"),
-        ("descriptor_route", "ignore descriptor endpoint", "descriptor_endpoint"),
-        ("descriptor_permit", "accept an unallocated ordinal", "descriptor_ordinal"),
-        ("authorization", "skip normal authorization identity binding", "authorization_key_id"),
-        ("marker_presence", "treat null marker as missing", "marker_null"),
-        ("descriptor_hash", "ignore full compact descriptor hash", "marker_hash"),
-        ("marker_binding", "ignore accepted marker nonce", "marker_invocation_nonce"),
-        ("renewal", "let an older key epoch replace newer rights", "renewal_old_key_epoch"),
-        ("replay_conflict", "reuse ordinal for another execution", "descriptor_permit_reuse"),
-        ("verdict_source", "classify provider failures as router denials", "provider_source"),
-        ("verdict_status", "accept successes as denials", "success_status"),
-        ("verdict_402_precedence", "classify every 402 as workspace", "lifetime_limit"),
-        ("verdict_429_scope", "classify every 429 as key", "rate_unknown"),
-    ]
-    rules += [{"guard": guard, "mutation": mutation, "literal_case": case, "category": "guard"}
-              for guard, mutation, case in guard_rules]
-    write("rules.json", {"fixture_version": 1, "rules": rules})
+    from _inventory import inventory
+    write("rules.json", {"fixture_version": 1, "rules": inventory()})
     files = ["grant-permit-tokens.json", "verdict-vectors.json", "provider-wire.json", "protocol-vectors.json", "rules.json"]
     write("manifest.json", {"fixture_version": 1,
                            "files": {f: hashlib.sha256((ROOT / f).read_bytes()).hexdigest() for f in files}})
