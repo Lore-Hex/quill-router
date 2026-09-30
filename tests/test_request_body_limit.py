@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import json
 import threading
 from collections.abc import Iterable
@@ -11,6 +12,7 @@ from fastapi.testclient import TestClient
 from starlette.responses import StreamingResponse
 from starlette.types import Message, Receive, Scope, Send
 
+from trusted_router import storage_rate_limits
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.request_body_limit import (
@@ -944,7 +946,16 @@ def test_authenticated_mcp_streamed_body_still_enforces_body_limit() -> None:
     assert response.headers["connection"] == "close"
 
 
-def test_malformed_framing_is_still_counted_by_source_admission() -> None:
+def test_malformed_framing_is_still_counted_by_source_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Both requests must share a wall-clock minute: the limiter's window
+    # tumbles on the minute (see test_x402_billing.py).
+    monkeypatch.setattr(
+        storage_rate_limits,
+        "utcnow",
+        lambda: dt.datetime(2026, 9, 28, 12, 0, 30, tzinfo=dt.UTC),
+    )
     client = TestClient(
         create_app(
             Settings(environment="test", rate_limit_ip_per_window=1),

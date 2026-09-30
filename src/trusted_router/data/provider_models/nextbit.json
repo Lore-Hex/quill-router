@@ -153,9 +153,9 @@
         "top_logprobs"
       ],
       "routable": true,
-      "input_token_price_per_m": 67500,
-      "output_token_price_per_m": 225000,
-      "cached_input_token_price_per_m": 37500
+      "input_token_price_per_m": 76500,
+      "output_token_price_per_m": 255000,
+      "cached_input_token_price_per_m": 42500
     },
     {
       "display_name": "mythomax:13b",
@@ -192,10 +192,11 @@
         "logprobs",
         "top_logprobs"
       ],
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 60000,
       "output_token_price_per_m": 60000,
-      "missing_since": "2026-09-27"
+      "missing_since": "2026-09-27",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "qwen3:14b",
@@ -357,7 +358,7 @@
     }
   ],
   "source": "https://api.nextbit256.com/v1/models",
-  "generated_at": "2026-09-27T23:04:50Z",
+  "generated_at": "2026-09-30T02:36:36Z",
   "price_scale": "microdollars_per_million",
   "model_count": 9
 }

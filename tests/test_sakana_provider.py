@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 
 from scripts.pricing.base import ModelPrice, PriceTier
 from scripts.pricing.providers import sakana
+from tests.pinned_manifests import SAKANA_FUGU_ULTRA_V1_1, serve_manifest_rows
 from trusted_router import catalog_ingest
 from trusted_router.catalog import (
     GATEWAY_PREPAID_PROVIDER_SLUGS,
@@ -139,7 +140,12 @@ def test_sakana_pricing_keeps_namazu_available_after_fugu_retirement() -> None:
     }
 
 
-def test_sakana_routes_are_prepaid_only_and_use_the_operator_secret() -> None:
+def test_sakana_routes_are_prepaid_only_and_use_the_operator_secret(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    # Fugu's direct route built from its pinned manifest row: how the catalog
+    # prices it holds whatever Sakana lists today.
+    serve_manifest_rows(monkeypatch, tmp_path, "sakana", [SAKANA_FUGU_ULTRA_V1_1])
     assert "sakana" in GATEWAY_PREPAID_PROVIDER_SLUGS
     assert PROVIDERS["sakana"].supports_prepaid is True
     assert PROVIDERS["sakana"].supports_byok is False
@@ -237,8 +243,6 @@ def test_sakana_manifest_publishes_direct_fugu_with_exact_tiered_pricing() -> No
         if row["id"] == sakana.SAKANA_FUGU_MODEL_ID
     )
 
-    assert fugu["routable"] is True
-    assert "routable_reason" not in fugu
     assert fugu["input_token_price_per_m"] == 5_000_000
     assert fugu["output_token_price_per_m"] == 30_000_000
     assert fugu["cached_input_token_price_per_m"] == 500_000
@@ -256,3 +260,17 @@ def test_sakana_manifest_publishes_direct_fugu_with_exact_tiered_pricing() -> No
             "cached_input_token_price_per_m": 1_000_000,
         },
     ]
+
+
+@pytest.mark.provider_health
+def test_sakana_serves_direct_fugu() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    manifest = json.loads(sakana.MANIFEST_PATH.read_text(encoding="utf-8"))
+    fugu = next(row for row in manifest["models"] if row["id"] == sakana.SAKANA_FUGU_MODEL_ID)
+    assert fugu["routable"] is True
+    assert "routable_reason" not in fugu
+    assert any(
+        endpoint.provider == "sakana"
+        for endpoint in endpoints_for_model(sakana.SAKANA_FUGU_MODEL_ID)
+    )

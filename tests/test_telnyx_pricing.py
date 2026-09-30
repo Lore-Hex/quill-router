@@ -388,11 +388,17 @@ def test_telnyx_manifest_is_loaded_as_prepaid_and_byok_catalog_routes() -> None:
 
     manifest = json.loads(telnyx.MANIFEST_PATH.read_text(encoding="utf-8"))
     manifest_model_ids = {str(row["id"]) for row in manifest["models"]}
+    # A row the refresh tombstoned is simply not routed.
+    routable_ids = {
+        str(row["id"]) for row in manifest["models"] if row.get("routable") is not False
+    }
     endpoints = [endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "telnyx"]
     assert set(telnyx.EXPECTED_MODELS) <= manifest_model_ids
     assert {(endpoint.model_id, endpoint.usage_type) for endpoint in endpoints} == {
         (model_id, usage_type)
-        for model_id in manifest_model_ids
+        for model_id in routable_ids
         for usage_type in ("Credits", "BYOK")
     }
-    assert MODEL_ENDPOINTS["moonshotai/kimi-k3@telnyx/prepaid"].upstream_id == "moonshotai/Kimi-K3"
+    if "moonshotai/kimi-k3" in routable_ids:
+        kimi = MODEL_ENDPOINTS["moonshotai/kimi-k3@telnyx/prepaid"]
+        assert kimi.upstream_id == "moonshotai/Kimi-K3"

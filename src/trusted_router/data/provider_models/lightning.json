@@ -40,7 +40,9 @@
       "context_length": 200000,
       "input_token_price_per_m": 1000000,
       "output_token_price_per_m": 5000000,
-      "missing_since": "2026-09-27"
+      "missing_since": "2026-09-27",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Claude Opus 4.1",
@@ -84,7 +86,9 @@
       "context_length": 200000,
       "input_token_price_per_m": 5000000,
       "output_token_price_per_m": 25000000,
-      "missing_since": "2026-09-27"
+      "missing_since": "2026-09-27",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Claude Opus 4.6",
@@ -105,7 +109,9 @@
       "context_length": 200000,
       "input_token_price_per_m": 5000000,
       "output_token_price_per_m": 25000000,
-      "missing_since": "2026-09-27"
+      "missing_since": "2026-09-27",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Claude Opus 4.7",
@@ -126,7 +132,9 @@
       "context_length": 1000000,
       "input_token_price_per_m": 5000000,
       "output_token_price_per_m": 25000000,
-      "missing_since": "2026-09-27"
+      "missing_since": "2026-09-27",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Claude Opus 4.8",
@@ -167,7 +175,9 @@
       "context_length": 1048576,
       "input_token_price_per_m": 5000000,
       "output_token_price_per_m": 25000000,
-      "missing_since": "2026-09-27"
+      "missing_since": "2026-09-27",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Claude Sonnet 4.5",
@@ -188,7 +198,9 @@
       "context_length": 200000,
       "input_token_price_per_m": 3000000,
       "output_token_price_per_m": 15000000,
-      "missing_since": "2026-09-27"
+      "missing_since": "2026-09-27",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Claude Sonnet 4.6",
@@ -209,7 +221,9 @@
       "context_length": 200000,
       "input_token_price_per_m": 3000000,
       "output_token_price_per_m": 15000000,
-      "missing_since": "2026-09-27"
+      "missing_since": "2026-09-27",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Claude Sonnet 5",
@@ -230,7 +244,9 @@
       "context_length": 1048576,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 15000000,
-      "missing_since": "2026-09-27"
+      "missing_since": "2026-09-27",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Gemini 2.5 Flash",
@@ -411,7 +427,9 @@
       "context_length": 1048576,
       "input_token_price_per_m": 890000,
       "output_token_price_per_m": 3000000,
-      "missing_since": "2026-09-27"
+      "missing_since": "2026-09-27",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "gpt-oss-120b",
@@ -1007,7 +1025,7 @@
     }
   ],
   "source": "https://lightning.ai/api/v1/models",
-  "generated_at": "2026-09-27T23:04:50Z",
+  "generated_at": "2026-09-30T02:36:36Z",
   "price_scale": "microdollars_per_million",
   "model_count": 49
 }

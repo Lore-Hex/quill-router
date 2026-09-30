@@ -4,8 +4,10 @@ import json
 from collections.abc import Iterator, Mapping
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
+from tests.fixture_routes import drop_routes, serve_on_fixture_route
 from trusted_router.catalog import (
     ADVISOR_MODEL_ID,
     AUTO_MODEL_ID,
@@ -82,8 +84,15 @@ def test_choose_catalog_is_compact_endpoint_scoped_and_cached(client: TestClient
 
 
 def test_choose_catalog_never_inherits_privacy_from_another_provider(
-    client: TestClient,
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # DeepSeek V4 Pro on a standard gmi route and a zero-retention route, as
+    # fixtures: which hosts serve it today is provider state.
+    model_id = "deepseek/deepseek-v4-pro"
+    drop_routes(monkeypatch, model_id)
+    standard = serve_on_fixture_route(monkeypatch, model_id, "gmi", author="deepseek")
+    zdr = serve_on_fixture_route(monkeypatch, model_id, "together", author="deepseek")
+    assert (endpoint_privacy_tier(standard), endpoint_privacy_tier(zdr)) == (0, 2), "fixture"
     payload = client.get("/choose/catalog.json").json()
     gmi_endpoints = [
         endpoint

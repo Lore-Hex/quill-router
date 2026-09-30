@@ -21,8 +21,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_lib.sh"
 # shellcheck source=scripts/deploy/_cloud_run_revision_probe.sh
 source "${SCRIPT_DIR}/_cloud_run_revision_probe.sh"
-# shellcheck source=scripts/deploy/regional_quota_rollout.sh
-source "${SCRIPT_DIR}/regional_quota_rollout.sh"
 
 LEGACY_SERVICE="${TR_LEGACY_SERVICE:-trusted-router}"
 INTERNAL_SERVICE="${TR_INTERNAL_SERVICE:-trusted-router-internal}"
@@ -305,14 +303,14 @@ trap 'handle_internal_signal 143' TERM
 # The 100%-traffic legacy revision is the only permitted image/config source.
 # shellcheck disable=SC2034
 SERVICE="$LEGACY_SERVICE"
-if ! LEGACY_REVISION_JSON="$(regional_quota_active_revision_json "$TR_PRIMARY_REGION" false)"; then
+if ! LEGACY_REVISION_JSON="$(active_revision_json "$TR_PRIMARY_REGION" false)"; then
   echo "ERROR: cannot derive internal configuration from the active legacy revision" >&2
   exit 1
 fi
 
 legacy_env_required() {
   local value
-  value="$(regional_quota_revision_env "$LEGACY_REVISION_JSON" "$1" __missing__)" || return 1
+  value="$(revision_env "$LEGACY_REVISION_JSON" "$1" __missing__)" || return 1
   if [ "$value" = __missing__ ] || [ -z "$value" ]; then
     echo "ERROR: active ${LEGACY_SERVICE} revision lacks required plain env $1" >&2
     return 1
@@ -322,7 +320,7 @@ legacy_env_required() {
 
 legacy_env_optional() {
   local value
-  value="$(regional_quota_revision_env "$LEGACY_REVISION_JSON" "$1" __missing__)" || return 1
+  value="$(revision_env "$LEGACY_REVISION_JSON" "$1" __missing__)" || return 1
   [ "$value" != __missing__ ] || return 1
   printf '%s\n' "$value"
 }
@@ -356,10 +354,16 @@ if len(containers) != 1 or not containers[0].get("image"):
 print(containers[0]["image"])
 ' <<<"$LEGACY_REVISION_JSON")"
 
-ANALYTICS_READ_MODE="$(legacy_env_required TR_ANALYTICS_READ_MODE)"
-case "$ANALYTICS_READ_MODE" in
-  bigtable|dual|clickhouse|clickhouse-only) ;;
-  *) echo "ERROR: invalid TR_ANALYTICS_READ_MODE=${ANALYTICS_READ_MODE}" >&2; exit 1 ;;
+# Bigtable analytics are retired (2026-09-28): this surface follows a
+# control-plane revision that already runs spanner-clickhouse. An older
+# legacy revision means the control plane deploys first.
+STORAGE_BACKEND="$(legacy_env_required TR_STORAGE_BACKEND)"
+case "$STORAGE_BACKEND" in
+  spanner-clickhouse) ;;
+  *)
+    echo "ERROR: active legacy revision still runs TR_STORAGE_BACKEND=${STORAGE_BACKEND}; Bigtable analytics are retired, deploy the control plane first" >&2
+    exit 1
+    ;;
 esac
 
 if [ "$STAGE" = companion ]; then
@@ -379,7 +383,7 @@ ENV_VARS=(
   "TR_GCP_PROJECT_ID=$(legacy_env_required TR_GCP_PROJECT_ID)"
   "TR_REGIONS=$(legacy_env_required TR_REGIONS)"
   "TR_PRIMARY_REGION=$(legacy_env_required TR_PRIMARY_REGION)"
-  "TR_STORAGE_BACKEND=$(legacy_env_required TR_STORAGE_BACKEND)"
+  "TR_STORAGE_BACKEND=${STORAGE_BACKEND}"
   "TR_SPANNER_INSTANCE_ID=$(legacy_env_required TR_SPANNER_INSTANCE_ID)"
   "TR_SPANNER_DATABASE_ID=$(legacy_env_required TR_SPANNER_DATABASE_ID)"
   "TR_SPANNER_POOL_SIZE=$(legacy_env_required TR_SPANNER_POOL_SIZE)"
@@ -389,11 +393,7 @@ ENV_VARS=(
   # so run_in_transaction_with_retry rolls back deterministic API failures
   # itself (storage_gcp_io.py). Keep this a decision, not a client default.
   "GOOGLE_CLOUD_SPANNER_MULTIPLEXED_SESSIONS_FOR_RW=true"
-  "TR_BIGTABLE_INSTANCE_ID=$(legacy_env_required TR_BIGTABLE_INSTANCE_ID)"
-  "TR_BIGTABLE_GENERATION_TABLE=$(legacy_env_required TR_BIGTABLE_GENERATION_TABLE)"
-  "TR_BIGTABLE_MIRROR_WRITES_ENABLED=$(legacy_env_required TR_BIGTABLE_MIRROR_WRITES_ENABLED)"
   "TR_GENERATION_RECORDS_ENABLED=$(legacy_env_required TR_GENERATION_RECORDS_ENABLED)"
-  "TR_ANALYTICS_READ_MODE=${ANALYTICS_READ_MODE}"
   "TR_REQUEST_RECORD_WRITE_MODE=$(legacy_env_required TR_REQUEST_RECORD_WRITE_MODE)"
   "TR_SETTLE_OUTBOX_ENABLED=$(legacy_env_required TR_SETTLE_OUTBOX_ENABLED)"
   "TR_ANALYTICS_OUTBOX_ENABLED=$(legacy_env_required TR_ANALYTICS_OUTBOX_ENABLED)"
@@ -413,23 +413,8 @@ ENV_VARS=(
   "TR_OPERATOR_IDENTITIES=$(legacy_env_required TR_OPERATOR_IDENTITIES)"
 )
 
-# Preserve the money-path and federation feature switches exactly. Missing
-# values are a refusal, never an invitation to silently fall back to defaults.
-# The regional escrow ledger is retired (2026-09-27): a legacy service that
-# still serves lease capability carries the app-profile maps this surface no
-# longer copies, and a revision with capability but no map cannot boot. Refuse
-# that source rather than inherit half of it; the markers render false.
-for plain_name in \
-  TR_REGIONAL_QUOTA_LEASES_ENABLED \
-  TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED; do
-  legacy_marker="$(legacy_env_required "$plain_name")"
-  if [ "$legacy_marker" != "false" ]; then
-    echo "ERROR: active ${LEGACY_SERVICE} revision still serves ${plain_name}=${legacy_marker}; retire the ledger on the legacy service first" >&2
-    exit 1
-  fi
-  ENV_VARS+=("${plain_name}=false")
-done
-
+# Preserve the federation and synthetic switches exactly as the legacy
+# revision carries them; an absent optional value is simply not rendered.
 for optional_plain_name in \
   TR_FEDERATION_HOME_BASE_URL \
   TR_FEDERATION_CREDIT_PEER_BASE_URL \
@@ -481,39 +466,37 @@ for federation_env in "${FEDERATION_SECRET_ENVS[@]}"; do
   fi
 done
 
-NETWORK_ARGS=()
-if [ "$ANALYTICS_READ_MODE" != bigtable ]; then
-  ENV_VARS+=(
-    "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL=$(legacy_env_required TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL)"
-    "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER=$(legacy_env_required TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER)"
-    "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE=$(legacy_env_required TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE)"
-  )
-  if ! secret_reference="$(legacy_secret_reference TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD)"; then
-    echo "ERROR: active ${LEGACY_SERVICE} revision lacks required ClickHouse password binding" >&2
-    exit 1
-  fi
-  SECRET_ENVS+=("TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD=${secret_reference}")
-  NETWORK_ARGS=(
-    --network "${TR_CLOUD_RUN_NETWORK:-default}"
-    --subnet "${TR_CLOUD_RUN_SUBNET:-default}"
-    --vpc-egress private-ranges-only
-  )
+# Analytics reads come from ClickHouse alone (Bigtable retired 2026-09-28):
+# the read credentials and the VPC egress that reaches the private ClickHouse
+# address are unconditional.
+ENV_VARS+=(
+  "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL=$(legacy_env_required TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL)"
+  "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER=$(legacy_env_required TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER)"
+  "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE=$(legacy_env_required TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE)"
+)
+if ! secret_reference="$(legacy_secret_reference TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD)"; then
+  echo "ERROR: active ${LEGACY_SERVICE} revision lacks required ClickHouse password binding" >&2
+  exit 1
 fi
+SECRET_ENVS+=("TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD=${secret_reference}")
+NETWORK_ARGS=(
+  --network "${TR_CLOUD_RUN_NETWORK:-default}"
+  --subnet "${TR_CLOUD_RUN_SUBNET:-default}"
+  --vpc-egress private-ranges-only
+)
 
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 SET_SECRETS="$(IFS=,; echo "${SECRET_ENVS[*]}")"
 SA_MEMBER="serviceAccount:${INTERNAL_RUNTIME_SA}"
 
 print_runtime_sa_bootstrap() {
-  local spanner_instance spanner_database bigtable_instance
+  local spanner_instance spanner_database
   spanner_instance="$(legacy_env_required TR_SPANNER_INSTANCE_ID)"
   spanner_database="$(legacy_env_required TR_SPANNER_DATABASE_ID)"
-  bigtable_instance="$(legacy_env_required TR_BIGTABLE_INSTANCE_ID)"
   cat >&2 <<EOF
 Owner action required (the deploy script never grants runtime authority):
   gcloud iam service-accounts create tr-internal --project=${PROJECT_ID}
   gcloud spanner databases add-iam-policy-binding ${spanner_database} --instance=${spanner_instance} --project=${PROJECT_ID} --member=${SA_MEMBER} --role=roles/spanner.databaseUser
-  gcloud bigtable instances add-iam-policy-binding ${bigtable_instance} --project=${PROJECT_ID} --member=${SA_MEMBER} --role=roles/bigtable.user
 EOF
   local binding secret_ref secret_name
   for binding in "${SECRET_ENVS[@]}"; do
@@ -545,17 +528,10 @@ if ! gc iam service-accounts describe "$INTERNAL_RUNTIME_SA" >/dev/null 2>&1; th
 fi
 SPANNER_INSTANCE="$(legacy_env_required TR_SPANNER_INSTANCE_ID)"
 SPANNER_DATABASE="$(legacy_env_required TR_SPANNER_DATABASE_ID)"
-BIGTABLE_INSTANCE="$(legacy_env_required TR_BIGTABLE_INSTANCE_ID)"
 if ! gc spanner databases get-iam-policy "$SPANNER_DATABASE" \
     --instance "$SPANNER_INSTANCE" --format=json | \
     policy_has_binding "$SA_MEMBER" roles/spanner.databaseUser; then
   echo "ERROR: ${INTERNAL_RUNTIME_SA} lacks roles/spanner.databaseUser on ${SPANNER_INSTANCE}/${SPANNER_DATABASE}" >&2
-  print_runtime_sa_bootstrap
-  exit 1
-fi
-if ! gc bigtable instances get-iam-policy "$BIGTABLE_INSTANCE" --format=json | \
-    policy_has_binding "$SA_MEMBER" roles/bigtable.user; then
-  echo "ERROR: ${INTERNAL_RUNTIME_SA} lacks roles/bigtable.user on ${BIGTABLE_INSTANCE}" >&2
   print_runtime_sa_bootstrap
   exit 1
 fi
@@ -602,12 +578,12 @@ if [ "$STAGE" = routed ]; then
     exit 1
   fi
   for target in "${TARGET_REGIONS[@]}"; do
-    if ! active_json="$(regional_quota_active_revision_json "$target" false)"; then
+    if ! active_json="$(active_revision_json "$target" false)"; then
       echo "ERROR: cannot capture serving internal revision in ${target}" >&2
       exit 1
     fi
     active_revision="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["metadata"]["name"])' <<<"$active_json")"
-    active_mode="$(regional_quota_revision_env "$active_json" TR_RATE_LIMIT_CLIENT_IP_MODE __missing__)"
+    active_mode="$(revision_env "$active_json" TR_RATE_LIMIT_CLIENT_IP_MODE __missing__)"
     service_json="$(gc run services describe "$INTERNAL_SERVICE" --region "$target" --format=json)" || exit 1
     state="$(python3 -c '
 import json
@@ -639,7 +615,7 @@ verify_internal_restore() {
   region="${TARGET_REGIONS[$index]}"
   old_revision="${ORIGINAL_REVISIONS[$index]}"
   old_ingress="${ORIGINAL_INGRESSES[$index]}"
-  active_json="$(regional_quota_active_revision_json "$region" false)" || return 1
+  active_json="$(active_revision_json "$region" false)" || return 1
   active_revision="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["metadata"]["name"])' \
     <<<"$active_json")" || return 1
   [ "$active_revision" = "$old_revision" ] || return 1

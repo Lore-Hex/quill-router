@@ -4,16 +4,16 @@ Regenerate: python -m tests.conformance.spanner_schema_source
 Do not remove emulator-incompatible DDL; provisioning must report it.
 """
 
-SOURCE_DIGESTS = {'scripts/deploy/infra.sh': 'd45d94bc8133ac3279d458624966e8cedf7d9228891590585cb6c843cc4a18a2',
- 'scripts/deploy/migrate_analytics_outbox.sh': '945b54b4d2f81d271f935c3360f14bb26aa52c19a823d61215ebe5cd0a478605',
+SOURCE_DIGESTS = {'scripts/deploy/infra.sh': '6ff0cbe8eee1d6e78adef622d8dfa06c4a2a2e26e0945ce0b942c643eb53d685',
+ 'scripts/deploy/migrate_analytics_outbox.sh': 'ae244118bf4d3266e286e663f99e4907289be8e24dea76d05f4bc0814fd4167a',
  'scripts/deploy/migrate_entity_ttl.sh': 'ad4f59b3608ff39a158244b71405ed427b5e47542665afb85370afd2cbebaa9f',
  'scripts/deploy/migrate_gateway_request_index.sh': '5b9a4b18007649f3108214ab2274d216b989909a5098cf38944cad7c7ad480f2',
  'scripts/deploy/migrate_generation_records.sh': 'de31377ce0ddc13926509564bf93426edb3f5fe897072ef9886db160864c0951',
  'scripts/deploy/migrate_money_primitives.sh': 'a35e4012706fa88f48be8f8d6b5abc7a3f828d36bceea59191784b58007d7e41',
  'scripts/deploy/migrate_operational_analytics_outbox.sh': 'ff4a7d8cdcfcf616065bec75a2da5927534ebde9d57e63c47c636227d78e4970',
  'scripts/deploy/migrate_receipt_key_versions.sh': '37c46050906d7f5fe50bc45e732ec1ba99059b916efc659aef1bb6882d437ef6',
- 'scripts/deploy/migrate_request_retention.sh': '3d6bcf6b543a866b157c02c5abf5b4403f07aaf8e84da7a5dbccf802adc7e1dd',
- 'scripts/deploy/migrate_spend_lease.sh': '407c5e4338e7ad327ccd673782d715f0777eba2f49d51a4ad6f9b0f85361dbe6',
+ 'scripts/deploy/migrate_request_retention.sh': '6817965c0ae1c836553aa4e94124d13e6d3cd98bf891fa11948ed5a0d156f510',
+ 'scripts/deploy/migrate_spend_lease.sh': '198790ab42b43f20306431e386db98188a0c0ad88f948afbc7232f072a7c2798',
  'scripts/deploy/migrate_trust_reconciliation.sh': '7864237a2a0a187f5db14da4812e96481f105b28c4737bc2cfc83b481321140c',
  'scripts/deploy/migrate_typed_counters.sh': 'd1f3dc7eaa4fc383bcea7ce75846b92dd71532296d4773c3aa9cc818c24fc909',
  'scripts/deploy/retire_settle_outbox_hot_index.sh': 'ce6bac93d3c5442eccfe88aa74eeff151033905161b2d6c87489b4ec9c08cd45'}

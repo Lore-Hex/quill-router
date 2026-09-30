@@ -20,19 +20,15 @@ def main() -> int:
     parser.add_argument("--project", default="quill-cloud-proxy")
     parser.add_argument("--spanner-instance", default="trusted-router-nam6")
     parser.add_argument("--spanner-database", default="trusted-router")
-    parser.add_argument("--bigtable-instance", default="trusted-router-logs")
-    parser.add_argument("--bigtable-table", default="trustedrouter-generations")
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()
 
     settings = Settings(
         environment="local",
-        storage_backend="spanner-bigtable",
+        storage_backend="spanner-clickhouse",
         gcp_project_id=args.project,
         spanner_instance_id=args.spanner_instance,
         spanner_database_id=args.spanner_database,
-        bigtable_instance_id=args.bigtable_instance,
-        bigtable_generation_table=args.bigtable_table,
         signup_trial_credit_microdollars=0,
     )
     store = create_store(settings)

@@ -116,9 +116,9 @@
         "response_format"
       ],
       "routable": true,
-      "input_token_price_per_m": 30000,
-      "output_token_price_per_m": 170000,
-      "cached_input_token_price_per_m": 30000
+      "input_token_price_per_m": 37000,
+      "output_token_price_per_m": 187000,
+      "cached_input_token_price_per_m": 37000
     },
     {
       "display_name": "GPT OSS 20B",
@@ -231,8 +231,8 @@
         "seed"
       ],
       "routable": true,
-      "input_token_price_per_m": 250000,
-      "output_token_price_per_m": 2200000,
+      "input_token_price_per_m": 225000,
+      "output_token_price_per_m": 1980000,
       "cached_input_token_price_per_m": 50000
     },
     {
@@ -309,13 +309,52 @@
         "seed"
       ],
       "routable": true,
-      "input_token_price_per_m": 1300000,
-      "output_token_price_per_m": 4400000,
+      "input_token_price_per_m": 1170000,
+      "output_token_price_per_m": 3960000,
       "cached_input_token_price_per_m": 260000
+    },
+    {
+      "display_name": "Kimi K3",
+      "title": "moonshotai/Kimi-K3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k3",
+      "upstream_id": "moonshotai/Kimi-K3",
+      "context_length": 1048576,
+      "max_output_tokens": 1048576,
+      "supported_features": [
+        "tools",
+        "reasoning",
+        "structured_outputs"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "repetition_penalty",
+        "frequency_penalty",
+        "presence_penalty",
+        "stop",
+        "seed"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 300000
     }
   ],
   "source": "https://api.akashml.com/v1/models",
-  "generated_at": "2026-09-27T23:04:50Z",
+  "generated_at": "2026-09-30T02:36:36Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 8
+  "model_count": 9
 }

@@ -7,8 +7,8 @@ from trusted_router.storage import configure_store
 from trusted_router.strict_budget import strict_budget_slot
 
 
-def test_strict_gateway_holds_refund_backpressure_and_no_regional_lease():
-    store, db, _ = make_fake_store()
+def test_strict_gateway_holds_refund_and_backpressure():
+    store, db = make_fake_store()
     workspace = store.create_workspace("owner", "strict", trial_credit_microdollars=1_000_000)
     _, key = store.create_api_key(
         workspace_id=workspace.id,
@@ -21,12 +21,7 @@ def test_strict_gateway_holds_refund_backpressure_and_no_regional_lease():
     configure_store(store)
     client = TestClient(
         create_app(
-            Settings(
-                environment="test",
-                regional_quota_leases_enabled=True,
-                regional_quota_lease_issuance_enabled=True,
-                regional_quota_lease_pilot_workspace_ids=workspace.id,
-            ),
+            Settings(environment="test"),
             configure_store_arg=False,
             init_observability=False,
         )

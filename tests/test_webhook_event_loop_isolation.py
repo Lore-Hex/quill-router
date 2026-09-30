@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import threading
 from collections.abc import Awaitable, Callable
 
@@ -7,6 +8,7 @@ import pytest
 from fastapi import HTTPException, Request, Response
 from fastapi.testclient import TestClient
 
+from trusted_router import storage_rate_limits
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.services.paypal_billing import verify_paypal_webhook_signature
@@ -161,6 +163,13 @@ def test_paypal_webhook_postback_has_a_process_wide_cost_ceiling(
         return {"verification_status": "SUCCESS"}
 
     monkeypatch.setattr(paypal, "_paypal_post", accepted)
+    # Every call must share a wall-clock minute: the limiter's window tumbles
+    # on the minute (see test_x402_billing.py).
+    monkeypatch.setattr(
+        storage_rate_limits,
+        "utcnow",
+        lambda: dt.datetime(2026, 9, 28, 12, 0, 30, tzinfo=dt.UTC),
+    )
     paypal._PAYPAL_WEBHOOK_VERIFY_LIMITER.reset()
     settings = Settings(
         environment="test",

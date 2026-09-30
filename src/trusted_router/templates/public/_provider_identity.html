@@ -4,3 +4,12 @@
   <span class="provider-identity-copy"><strong>{{ name }}</strong>{% if subtitle %}<small>{{ subtitle }}</small>{% endif %}</span>
 {% if href %}</a>{% else %}</span>{% endif %}
 {%- endmacro %}
+
+{# A model's publisher: its maker's own provider entry, with logo and page; a
+   maker without one by name alone; "Not stated" when the model id names no
+   maker. model.provider is the publisher's name, model.publisher_slug its entry. #}
+{% macro publisher_identity(model, subtitle=None) -%}
+{% if model.publisher_slug %}{{ provider_identity(model.publisher_slug, model.provider, "/providers/" ~ model.publisher_slug, subtitle=subtitle) }}
+{%- elif model.provider %}<span class="provider-identity provider-identity-default"><span class="provider-identity-copy"><strong>{{ model.provider }}</strong></span></span>
+{%- else %}<span class="muted-copy">Not stated</span>{% endif %}
+{%- endmacro %}

@@ -569,9 +569,11 @@
       "retirement_at": "2026-09-28T00:00:00Z",
       "replacement_model_id": "openai/gpt-5.6-terra",
       "created": 1698959748,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 1000000,
-      "output_token_price_per_m": 2000000
+      "output_token_price_per_m": 2000000,
+      "missing_since": "2026-09-28",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "gpt-3.5-turbo-instruct",
@@ -975,25 +977,47 @@
       "routable": true,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "cached_input_token_price_per_m": 200000,
+      "cached_input_token_price_per_m": 200000
+    },
+    {
+      "display_name": "gpt-6.1-sol",
+      "title": "gpt-6.1-sol",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-6.1-sol",
+      "upstream_id": "gpt-6.1-sol",
+      "created": 1790552874,
+      "routable": true,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 100000,
       "price_tiers": [
         {
           "max_prompt_tokens": 272000,
           "input_token_price_per_m": 2000000,
           "output_token_price_per_m": 10000000,
-          "cached_input_token_price_per_m": 200000
+          "cached_input_token_price_per_m": 100000
         },
         {
           "max_prompt_tokens": null,
           "input_token_price_per_m": 4000000,
           "output_token_price_per_m": 15000000,
-          "cached_input_token_price_per_m": 400000
+          "cached_input_token_price_per_m": 200000
         }
       ]
     }
   ],
   "source": "https://api.openai.com/v1/models",
-  "generated_at": "2026-09-27T23:04:50Z",
+  "generated_at": "2026-09-30T02:36:36Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 39
+  "model_count": 40
 }

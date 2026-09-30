@@ -15,12 +15,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-os.environ.setdefault("TR_STORAGE_BACKEND", "spanner-bigtable")
+os.environ.setdefault("TR_STORAGE_BACKEND", "spanner-clickhouse")
 os.environ.setdefault("TR_GCP_PROJECT_ID", "quill-cloud-proxy")
 os.environ.setdefault("TR_SPANNER_INSTANCE_ID", "trusted-router-nam6")
 os.environ.setdefault("TR_SPANNER_DATABASE_ID", "trusted-router")
-os.environ.setdefault("TR_BIGTABLE_INSTANCE_ID", "trusted-router-logs")
-os.environ.setdefault("TR_BIGTABLE_GENERATION_TABLE", "trustedrouter-generations")
 
 from trusted_router.config import Settings
 from trusted_router.money import dollars_to_microdollars
@@ -294,8 +292,8 @@ def main(argv: list[str] | None = None, *, store: Any | None = None) -> int:
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
 
-    if args.apply and os.environ.get("TR_STORAGE_BACKEND") != "spanner-bigtable":
-        print("ERROR: --apply requires TR_STORAGE_BACKEND=spanner-bigtable", file=sys.stderr)
+    if args.apply and os.environ.get("TR_STORAGE_BACKEND") != "spanner-clickhouse":
+        print("ERROR: --apply requires TR_STORAGE_BACKEND=spanner-clickhouse", file=sys.stderr)
         return 2
     if args.target_shards < 1 or args.target_shards > 64:
         print("ERROR: --target-shards must be between 1 and 64", file=sys.stderr)

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Expand ClickHouse to tenant activity and synthetic status metadata.
-# Bigtable remains authoritative until a separate dual-read soak passes.
+# ClickHouse is the only analytics store (the Bigtable shadow retired 2026-09-28).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,7 +15,6 @@ ZONES=(us-central1-a us-central1-b us-central1-c)
 SCHEMA="${ROOT}/clickhouse/004_operational_analytics_replicated.sql"
 CLIENT_SCHEMA="${ROOT}/clickhouse/008_client_events_replicated.sql"
 BENCHMARK_WORKSPACE_SCHEMA="${ROOT}/clickhouse/007_benchmark_samples_workspace_id.sql"
-BENCHMARK_WORKSPACE_BACKFILL_LIMIT="${TR_CLICKHOUSE_BENCHMARK_WORKSPACE_BACKFILL_LIMIT:-200000}"
 CONTROL_SECRET="trustedrouter-clickhouse-control-read-password"
 APPLY=0
 
@@ -30,15 +29,10 @@ if [ "$APPLY" -eq 0 ]; then
   log "dry-run: would create the bounded Spanner operational analytics queue"
   log "dry-run: would create three-replica activity and synthetic tables"
   log "dry-run: would create client telemetry, rollup, and quarantine tables"
-  log "dry-run: would backfill bounded Bigtable history and verify replica parity"
+  log "dry-run: would verify replica parity"
   log "dry-run: would install the ingester, rollup worker, and private reader"
-  log "dry-run: would migrate and replay bounded benchmark workspace attribution"
+  log "dry-run: would migrate benchmark workspace attribution"
   exit 0
-fi
-
-if ! [[ "$BENCHMARK_WORKSPACE_BACKFILL_LIMIT" =~ ^[1-9][0-9]*$ ]]; then
-  echo "TR_CLICKHOUSE_BENCHMARK_WORKSPACE_BACKFILL_LIMIT must be a positive integer" >&2
-  exit 2
 fi
 
 node_ssh() {
@@ -128,18 +122,21 @@ node_ssh 0 --command="sudo sh -c '
     /etc/systemd/system/tr-clickhouse-synthetic-rollup.service
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-synthetic-rollup.timer \
     /etc/systemd/system/tr-clickhouse-synthetic-rollup.timer
-  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-synthetic-reconcile.service \
-    /etc/systemd/system/tr-clickhouse-synthetic-reconcile.service
-  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-synthetic-reconcile.timer \
-    /etc/systemd/system/tr-clickhouse-synthetic-reconcile.timer
+  # The synthetic-reconcile and operational-parity units repaired ClickHouse
+  # from the Bigtable shadow. Bigtable receives no writes any more
+  # (2026-09-28), so they are retired: stopped, disabled and removed.
+  systemctl disable --now tr-clickhouse-synthetic-reconcile.timer \
+    tr-clickhouse-synthetic-reconcile.service \
+    tr-clickhouse-operational-parity.timer \
+    tr-clickhouse-operational-parity.service >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/tr-clickhouse-synthetic-reconcile.service \
+    /etc/systemd/system/tr-clickhouse-synthetic-reconcile.timer \
+    /etc/systemd/system/tr-clickhouse-operational-parity.service \
+    /etc/systemd/system/tr-clickhouse-operational-parity.timer
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-client-rollup.service \
     /etc/systemd/system/tr-clickhouse-client-rollup.service
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-client-rollup.timer \
     /etc/systemd/system/tr-clickhouse-client-rollup.timer
-  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-operational-parity.service \
-    /etc/systemd/system/tr-clickhouse-operational-parity.service
-  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-operational-parity.timer \
-    /etc/systemd/system/tr-clickhouse-operational-parity.timer
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-public-snapshots.service \
     /etc/systemd/system/tr-clickhouse-public-snapshots.service
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-public-snapshots.timer \
@@ -172,41 +169,6 @@ log "resuming live operational ingest after parser/schema cutover"
 node_ssh 0 --command="sudo systemctl start tr-clickhouse-operational-ingest.service"
 ingester_stopped=0
 
-log "replaying bounded benchmark history with workspace attribution"
-node_ssh 0 --command="sudo sh -c '
-  set -eu
-  set -a
-  . /etc/tr-clickhouse-ingest.env
-  set +a
-  cd /opt/tr-clickhouse
-  PYTHONPATH=/opt/tr-clickhouse/src \
-    /opt/tr-clickhouse/venv/bin/python -m clickhouse.backfill_benchmark_samples \
-      --limit ${BENCHMARK_WORKSPACE_BACKFILL_LIMIT} --batch 20000
-'"
-
-log "backfilling bounded Bigtable history"
-node_ssh 0 --command="sudo sh -c '
-  set -eu
-  set -a
-  . /etc/tr-clickhouse-ingest.env
-  set +a
-  cd /opt/tr-clickhouse
-  PYTHONPATH=/opt/tr-clickhouse/src \
-    /opt/tr-clickhouse/venv/bin/python -m clickhouse.backfill_operational_analytics --apply
-'"
-
-log "backfilling and verifying the bounded generation lookup window"
-node_ssh 0 --command="sudo sh -c '
-  set -eu
-  set -a
-  . /etc/tr-clickhouse-ingest.env
-  set +a
-  cd /opt/tr-clickhouse
-  PYTHONPATH=/opt/tr-clickhouse/src \
-    /opt/tr-clickhouse/venv/bin/python -m clickhouse.backfill_generation_records \
-      --apply --verify
-'"
-
 log "building initial synthetic status rollups"
 node_ssh 0 --command="sudo sh -c '
   set -eu
@@ -218,7 +180,7 @@ node_ssh 0 --command="sudo sh -c '
     /opt/tr-clickhouse/venv/bin/python -m clickhouse.rollup_synthetic
 '"
 
-node_ssh 0 --command="sudo systemctl enable tr-clickhouse-operational-ingest.service tr-clickhouse-synthetic-rollup.timer tr-clickhouse-synthetic-reconcile.timer tr-clickhouse-client-rollup.timer tr-clickhouse-operational-parity.timer tr-clickhouse-public-snapshots.timer tr-clickhouse-archive-restore.timer tr-clickhouse-spanner-delivery.timer"
+node_ssh 0 --command="sudo systemctl enable tr-clickhouse-operational-ingest.service tr-clickhouse-synthetic-rollup.timer tr-clickhouse-client-rollup.timer tr-clickhouse-public-snapshots.timer tr-clickhouse-archive-restore.timer tr-clickhouse-spanner-delivery.timer"
 
 log "verifying exact replica identity after synchronization"
 PARITY_TABLES="activity_generations synthetic_probe_samples spend_lease_shadow synthetic_status_rollups public_analytics_snapshots client_request_events client_minute_counters client_availability_rollups operational_outbox_quarantine"
@@ -275,7 +237,6 @@ for index in 0 1 2; do
 done
 
 node_ssh 0 --command="sudo systemctl is-active --quiet tr-clickhouse-operational-ingest.service"
-node_ssh 0 --command="sudo systemctl start tr-clickhouse-synthetic-reconcile.timer tr-clickhouse-client-rollup.timer tr-clickhouse-public-snapshots.timer tr-clickhouse-public-snapshots.service tr-clickhouse-archive-restore.timer tr-clickhouse-spanner-delivery.timer tr-clickhouse-spanner-delivery.service"
+node_ssh 0 --command="sudo systemctl start tr-clickhouse-client-rollup.timer tr-clickhouse-public-snapshots.timer tr-clickhouse-public-snapshots.service tr-clickhouse-archive-restore.timer tr-clickhouse-spanner-delivery.timer tr-clickhouse-spanner-delivery.service"
 
-log "operational analytics infrastructure is ready; Bigtable is still authoritative"
-log "deploy the operational outbox producer, then run clickhouse_operational_analytics_finalize.sh --apply"
+log "operational analytics infrastructure is ready; ClickHouse is authoritative and the Bigtable repair units are retired"

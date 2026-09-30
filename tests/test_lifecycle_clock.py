@@ -7,11 +7,17 @@ import sys
 import textwrap
 import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
 from tests import lifecycle_clock
 from tests.lifecycle_freeze import freeze_lifecycle_clock
+from tests.pinned_manifests import (
+    DEEPSEEK_V4_PRO_0813_ROUTES,
+    USE_PINNED_MANIFESTS,
+    pinned_manifests,
+)
 from trusted_router import catalog_registry, provider_lifecycle
 from trusted_router.catalog import endpoints_for_model
 from trusted_router.provider_lifecycle import (
@@ -21,13 +27,25 @@ from trusted_router.provider_lifecycle import (
 )
 
 
+@pytest.fixture
+def pre_retirement_manifests(tmp_path: Path) -> dict[str, str]:
+    """Today's provider manifests, with the DeepSeek V4 Pro 0813 release routes
+    pinned as they were before Fireworks' 2026-09-25 retirement, as a
+    subprocess environment. The tests below build the catalog at an instant
+    before that retirement, which needs those routes whatever the hosts list
+    today."""
+    return pinned_manifests(tmp_path, DEEPSEEK_V4_PRO_0813_ROUTES)
+
+
 @pytest.mark.parametrize("start_at_cutoff", [False, True])
-def test_registry_import_crossing_fireworks_retirement(start_at_cutoff: bool) -> None:
-    environ = dict(os.environ)
+def test_registry_import_crossing_fireworks_retirement(
+    start_at_cutoff: bool, pre_retirement_manifests: dict[str, str]
+) -> None:
+    environ = pre_retirement_manifests
     environ.pop(LIFECYCLE_CLOCK_OVERRIDE_ENV, None)
     environ.pop("PYTEST_CURRENT_TEST", None)
     result = subprocess.run(  # noqa: S603 - fixed Python regression script
-        [sys.executable, "-c", textwrap.dedent("""
+        [sys.executable, "-c", USE_PINNED_MANIFESTS + textwrap.dedent("""
             import sys
             from datetime import UTC, datetime
             from trusted_router import provider_lifecycle
@@ -69,12 +87,14 @@ def test_registry_import_crossing_fireworks_retirement(start_at_cutoff: bool) ->
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_early_catalog_import_crossing_retirement_matches_release_contract() -> None:
-    environ = dict(os.environ)
+def test_early_catalog_import_crossing_retirement_matches_release_contract(
+    pre_retirement_manifests: dict[str, str],
+) -> None:
+    environ = pre_retirement_manifests
     environ.pop(LIFECYCLE_CLOCK_OVERRIDE_ENV, None)
     environ.pop("PYTEST_CURRENT_TEST", None)
     result = subprocess.run(  # noqa: S603 - fixed Python regression script
-        [sys.executable, "-c", textwrap.dedent("""
+        [sys.executable, "-c", USE_PINNED_MANIFESTS + textwrap.dedent("""
             from datetime import UTC, datetime
             from trusted_router import provider_lifecycle
 
@@ -153,12 +173,14 @@ def test_freeze_reuses_an_early_catalog_timestamp_without_losing_precision(
     assert provider_lifecycle._effective_time(environ[LIFECYCLE_CLOCK_OVERRIDE_ENV]) == before
 
 
-def test_early_lifecycle_plugin_uses_the_same_clock_as_conftest() -> None:
-    environ = dict(os.environ)
+def test_early_lifecycle_plugin_uses_the_same_clock_as_conftest(
+    pre_retirement_manifests: dict[str, str],
+) -> None:
+    environ = pre_retirement_manifests
     environ.pop(LIFECYCLE_CLOCK_OVERRIDE_ENV, None)
     result = subprocess.run(  # noqa: S603 - fixed Python regression script
         [
-            sys.executable, "-c", textwrap.dedent("""
+            sys.executable, "-c", USE_PINNED_MANIFESTS + textwrap.dedent("""
                 from datetime import UTC, datetime
                 import pytest
                 from trusted_router import provider_lifecycle

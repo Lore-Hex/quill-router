@@ -74,14 +74,14 @@ def test_native_spanner_job_runs_both_focused_server_gates() -> None:
     job = jobs["spanner-emulator"]
     assert job["env"]["TR_CONFORMANCE_EMULATOR_SCHEMA"] == "1"
     assert job["env"]["SPANNER_EMULATOR_HOST"] == "127.0.0.1:9010"
-    assert job["env"]["BIGTABLE_EMULATOR_HOST"] == "127.0.0.1:8086"
     assert job["services"]["spanner"]["image"] == "gcr.io/cloud-spanner-emulator/emulator@sha256:c6f3402f2599684f295a0fdefb6fbbbfb18a0e43e309ff5456ccb452a4570a79"
-    assert job["services"]["bigtable"]["image"] == "gcr.io/google.com/cloudsdktool/google-cloud-cli@sha256:7617d937e9360d769de4ef66266a8caae503c1dbbd050c93404d3f30045c5125"
+    assert "bigtable" not in job["services"]
     steps = [step for step in job["steps"] if "uv run pytest" in step.get("run", "")]
     assert len(steps) == 2
     assert "tests/conformance -k spanner-emulator" in steps[0]["run"]
     assert "tests/conformance/test_spanner_schema.py" in steps[1]["run"]
     assert "tests/conformance/test_spanner_sql_acceptance.py" in steps[1]["run"]
+    assert "tests/conformance/test_spanner_schema_audit.py" in steps[1]["run"]
     assert steps[1]["if"] == "${{ !cancelled() }}"
     assert "continue-on-error" not in job
     assert all("continue-on-error" not in step for step in job["steps"])
@@ -93,10 +93,16 @@ def test_provider_health_is_monitored_separately_from_release_correctness() -> N
         encoding="utf-8",
     )
     deploy = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    refresh = (ROOT / ".github/workflows/refresh-prices.yml").read_text(encoding="utf-8")
     assert ci.count('-m "not provider_health"') == 2
+    # The price refresh validates its catalog like CI does: a provider delisting
+    # one model must not stop every other provider's prices from publishing.
+    assert refresh.count('-m "not provider_health"') == 1
     assert "schedule:" in monitor
     assert "workflow_dispatch:" in monitor
     assert "-m provider_health" in monitor
+    # Every provider_health check, wherever it lives.
+    assert "uv run pytest -q -m provider_health\n" in monitor
     assert "continue-on-error" not in monitor
     assert "provider-catalog-health.yml" not in deploy
     assert "--workflow ci.yml" in deploy

@@ -198,6 +198,11 @@ LEGACY_MODEL_PAGE_REDIRECTS: dict[str, str] = {
     # backlink by sending readers to the current open-weight catalog.
     "meta/muse-spark-1.1": "/models?filter=open",
 }
+LEGACY_MODEL_SECTION_REDIRECTS: dict[tuple[str, str], str] = {
+    # This one-route model answers its only pricing question on the overview.
+    # Consolidate the historical facet instead of serving a duplicate thin page.
+    ("qwen/qwen-3-8-27b", "pricing"): "/models/qwen/qwen-3-8-27b",
+}
 
 
 def _canonical_public_provider_slug(provider_slug: str) -> str:
@@ -767,11 +772,12 @@ async def _handle_support_inquiry(settings: Settings, request: Request) -> JSONR
 _ENTERPRISE_BRIEF = (
     Path(__file__).parents[1] / "data" / "enterprise" / "TrustedRouter-Token-Exchange-Brochure.pdf"
 )
+_SECURITY_PACK = _ENTERPRISE_BRIEF.with_name("TrustedRouter-Security-Pack.zip")
 _BRIEF_HEADERS = {"Cache-Control": "private, no-store", "X-Robots-Tag": "noindex, nofollow"}
 
 
 async def _handle_enterprise_brief(settings: Settings, request: Request) -> Response:
-    """Deliver the brochure only after SES has accepted the sales inquiry."""
+    """Deliver an allowlisted resource only after SES accepts the inquiry."""
     def error(code: str, status: int) -> JSONResponse:
         return JSONResponse({"ok": False, "error": code}, status_code=status, headers=_BRIEF_HEADERS)
 
@@ -805,6 +811,17 @@ async def _handle_enterprise_brief(settings: Settings, request: Request) -> Resp
         return error("invalid_request", 400)
     if payload.get("website"):
         return JSONResponse({"ok": True}, headers=_BRIEF_HEADERS)
+    resource = payload.get("resource", "brochure")
+    if resource == "brochure":
+        asset, media_type = _ENTERPRISE_BRIEF, "application/pdf"
+        label, page = "brochure", "/token-exchange"
+        event = "enterprise_brief_delivered"
+    elif resource == "security":
+        asset, media_type = _SECURITY_PACK, "application/zip"
+        label, page = "security pack", "/token-exchange/security"
+        event = "enterprise_security_pack_delivered"
+    else:
+        return error("invalid_resource", 422)
     email = payload.get("email")
     if not isinstance(email, str) or len(email) > 320:
         return error("invalid_email", 422)
@@ -819,18 +836,18 @@ async def _handle_enterprise_brief(settings: Settings, request: Request) -> Resp
     client_ip = _inquiry_client_identity(request, settings)
     if not _inquiry_rate_ok(f"enterprise-brief:{client_ip}"):
         return error("rate_limited", 429)
-    if not _ENTERPRISE_BRIEF.is_file():
+    if not asset.is_file():
         log.error("enterprise_brief.asset_unavailable")
         return error("delivery_unavailable", 503)
 
     message = EmailMessage(
         to=settings.partner_inquiry_email or "enterprise@trustedrouter.com",
         reply_to=email,
-        subject="Token Exchange brochure requested | TrustedRouter token exchange",
+        subject=f"Token Exchange {label} requested | TrustedRouter token exchange",
         text_body=(
-            "An enterprise visitor requested the Token Exchange brochure.\n\n"
+            f"An enterprise visitor requested the Token Exchange {label}.\n\n"
             f"Email: {email}\n"
-            "Page: https://trustedrouter.com/token-exchange\n\n"
+            f"Page: https://trustedrouter.com{page}\n\n"
             "The form permits follow-up about enterprise AI. It does not subscribe "
             "the visitor to a newsletter. Reply directly to discuss their requirements.\n"
         ),
@@ -843,11 +860,11 @@ async def _handle_enterprise_brief(settings: Settings, request: Request) -> Resp
     if not sent:
         log.error("enterprise_brief.delivery_unavailable")
         return error("delivery_unavailable", 503)
-    log_browser_funnel_event(request, "enterprise_brief_delivered")
+    log_browser_funnel_event(request, event)
     return FileResponse(
-        _ENTERPRISE_BRIEF,
-        media_type="application/pdf",
-        filename="TrustedRouter-Token-Exchange-Brochure.pdf",
+        asset,
+        media_type=media_type,
+        filename=asset.name,
         headers=_BRIEF_HEADERS,
     )
 
@@ -1653,6 +1670,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def token_exchange_savings() -> str:
         return public_page_html(settings, "token-exchange/savings")
 
+    @public_html_route("/token-exchange/security")
+    async def token_exchange_security() -> str:
+        return public_page_html(settings, "token-exchange/security")
+
     @public_html_route("/green-tokens")
     async def green_tokens() -> str:
         return public_page_html(settings, "green-tokens")
@@ -2254,6 +2275,9 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             maybe_base_model_id if separator and maybe_section in MODEL_SEO_SECTIONS else cleaned
         )
         canonical_model_id = _canonical_public_model_id(legacy_model_id)
+        section_redirect = LEGACY_MODEL_SECTION_REDIRECTS.get((canonical_model_id, maybe_section))
+        if section_redirect and canonical_model_id in MODELS:
+            return RedirectResponse(url=section_redirect, status_code=301)
         if canonical_model_id != legacy_model_id:
             section_suffix = (
                 f"/{maybe_section}" if separator and maybe_section in MODEL_SEO_SECTIONS else ""

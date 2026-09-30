@@ -1,18 +1,19 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 
 import pytest
 
 from trusted_router.catalog import (
-    MODEL_ENDPOINTS,
-    MODELS,
     ModelEndpoint,
     cache_token_prices_microdollars,
     endpoint_for_id,
 )
+from trusted_router.catalog_data import Model, PriceTier
+from trusted_router.catalog_ingest import _PROVIDER_MODELS_DIR
 from trusted_router.money import token_cost_microdollars
-from trusted_router.pricing import _read_pricing_tiers
+from trusted_router.pricing import _read_pricing_tiers, customer_fixed_price_microdollars
 from trusted_router.routes.helpers import cost_microdollars
 from trusted_router.routes.internal.gateway import (
     _endpoint_cost_microdollars,
@@ -21,38 +22,71 @@ from trusted_router.routes.internal.gateway import (
 
 
 def _tiered_credits_endpoint() -> ModelEndpoint:
-    """Any google-ai-studio Credits endpoint with tiered pricing.
+    """A google-ai-studio Credits route with Gemini-Pro-shape tiered pricing.
 
-    Deliberately NOT pinned to a model id. These tests exercise tiered-pricing
-    arithmetic, and the expected values are derived from whichever endpoint is
-    returned, so the specific model is irrelevant to what is being tested.
-    Hardcoding one turns an ordinary vendor retirement into an unrelated test
-    failure — which is exactly what happened when Google retired
-    gemini-2.5-pro on AI Studio and it left the catalog.
-
-    Sorted for determinism so a catalog addition cannot silently change which
-    endpoint the suite runs against.
+    A fixture: the tiered-pricing arithmetic holds for any tiered route, and
+    which tiered models AI Studio lists today is provider state.
     """
-    candidates = sorted(
-        (
-            endpoint
-            for endpoint in MODEL_ENDPOINTS.values()
-            if endpoint.provider == "google-ai-studio"
-            and endpoint.usage_type == "Credits"
-            and len(getattr(endpoint, "price_tiers", ()) or ()) >= 2
+    tiers = (
+        PriceTier(
+            max_prompt_tokens=200_000,
+            prompt_price_microdollars_per_million_tokens=2_110_000,
+            completion_price_microdollars_per_million_tokens=12_660_000,
+            prompt_cached_price_microdollars_per_million_tokens=211_000,
         ),
-        key=lambda endpoint: endpoint.model_id,
+        PriceTier(
+            max_prompt_tokens=None,
+            prompt_price_microdollars_per_million_tokens=4_220_000,
+            completion_price_microdollars_per_million_tokens=18_990_000,
+            prompt_cached_price_microdollars_per_million_tokens=422_000,
+        ),
     )
-    assert candidates, "catalog has no multi-tier google-ai-studio Credits endpoint"
-    return candidates[0]
+    return ModelEndpoint(
+        id="google/tiered-fixture@google-ai-studio/prepaid",
+        model_id="google/tiered-fixture",
+        provider="google-ai-studio",
+        usage_type="Credits",
+        upstream_id="tiered-fixture",
+        prompt_price_microdollars_per_million_tokens=2_110_000,
+        completion_price_microdollars_per_million_tokens=12_660_000,
+        published_prompt_price_microdollars_per_million_tokens=2_110_000,
+        published_completion_price_microdollars_per_million_tokens=12_660_000,
+        price_tiers=tiers,
+        published_price_tiers=tiers,
+    )
 
 
 def _sakana_fugu_pricing_fixture() -> ModelEndpoint:
-    """Return the live direct Fugu route with its pass-through retail tiers."""
+    """The direct Fugu route with its pass-through retail tiers, as a fixture:
+    whether Sakana lists Fugu today is provider state."""
 
-    endpoint = endpoint_for_id("sakana-ai/fugu-ultra-v1.1@sakana/prepaid")
-    assert endpoint is not None
-    return endpoint
+    tiers = (
+        PriceTier(
+            max_prompt_tokens=272_000,
+            prompt_price_microdollars_per_million_tokens=5_000_000,
+            completion_price_microdollars_per_million_tokens=30_000_000,
+            prompt_cached_price_microdollars_per_million_tokens=500_000,
+        ),
+        PriceTier(
+            max_prompt_tokens=None,
+            prompt_price_microdollars_per_million_tokens=10_000_000,
+            completion_price_microdollars_per_million_tokens=45_000_000,
+            prompt_cached_price_microdollars_per_million_tokens=1_000_000,
+        ),
+    )
+    return ModelEndpoint(
+        id="sakana-ai/fugu-ultra-v1.1@sakana/prepaid",
+        model_id="sakana-ai/fugu-ultra-v1.1",
+        provider="sakana",
+        usage_type="Credits",
+        upstream_id="fugu-ultra-v1.1",
+        prompt_price_microdollars_per_million_tokens=5_000_000,
+        completion_price_microdollars_per_million_tokens=30_000_000,
+        published_prompt_price_microdollars_per_million_tokens=5_000_000,
+        published_completion_price_microdollars_per_million_tokens=30_000_000,
+        price_tiers=tiers,
+        published_price_tiers=tiers,
+    )
 
 
 def test_provider_tier_basis_is_scoped_to_sakana_fugu() -> None:
@@ -332,15 +366,19 @@ def test_endpoint_cost_flat_and_empty_tiers_match_headline_math_with_cache() -> 
 
 def test_endpoint_cost_matches_model_helper_for_multitier_no_cache() -> None:
     endpoint = _tiered_credits_endpoint()
-    model = MODELS[endpoint.model_id]
-    assert endpoint.price_tiers == model.price_tiers
-    assert (
-        endpoint.prompt_price_microdollars_per_million_tokens
-        == model.prompt_price_microdollars_per_million_tokens
-    )
-    assert (
-        endpoint.completion_price_microdollars_per_million_tokens
-        == model.completion_price_microdollars_per_million_tokens
+    model = Model(
+        id=endpoint.model_id,
+        name=endpoint.model_id,
+        provider=endpoint.provider,
+        context_length=1_048_576,
+        prompt_price_microdollars_per_million_tokens=(
+            endpoint.prompt_price_microdollars_per_million_tokens
+        ),
+        completion_price_microdollars_per_million_tokens=(
+            endpoint.completion_price_microdollars_per_million_tokens
+        ),
+        price_tiers=endpoint.price_tiers,
+        published_price_tiers=endpoint.published_price_tiers,
     )
 
     for prompt_tokens in (100_000, 300_000):
@@ -364,15 +402,43 @@ def test_endpoint_cost_reserves_one_microdollar_for_positive_fractional_cost() -
 
 
 def test_perplexity_sonar_charges_fixed_request_fee_and_tokens_once() -> None:
-    endpoint = endpoint_for_id("perplexity/sonar@perplexity/prepaid")
-    assert endpoint is not None
-    assert endpoint.upstream_id == "sonar"
-    assert endpoint.request_price_microdollars == 5_275
+    # A fixture priced like Sonar; the published route is checked below.
+    prices = {
+        "prompt_price_microdollars_per_million_tokens": 263_750,
+        "completion_price_microdollars_per_million_tokens": 2_637_500,
+        "request_price_microdollars": 5_275,
+    }
+    endpoint = ModelEndpoint(
+        id="perplexity/sonar@perplexity/prepaid",
+        model_id="perplexity/sonar",
+        provider="perplexity",
+        usage_type="Credits",
+        upstream_id="sonar",
+        **prices,
+    )
+    model = Model(
+        id="perplexity/sonar", name="Sonar", provider="perplexity", context_length=127_072,
+        **prices,
+    )
     expected = (
         5_275
         + token_cost_microdollars(1_000, endpoint.prompt_price_microdollars_per_million_tokens)
         + token_cost_microdollars(100, endpoint.completion_price_microdollars_per_million_tokens)
     )
     assert _endpoint_cost_microdollars(endpoint, 1_000, 100) == expected
-    assert cost_microdollars(MODELS[endpoint.model_id], 1_000, 100) == expected
+    assert cost_microdollars(model, 1_000, 100) == expected
     assert _endpoint_cost_microdollars(endpoint, 0, 0) == 5_275
+
+
+def test_perplexity_routes_publish_the_manifest_request_fee() -> None:
+    # Every routable row of the committed manifest; a delisted one is not expected.
+    raw = json.loads((_PROVIDER_MODELS_DIR / "perplexity.json").read_text(encoding="utf-8"))
+    for row in raw["models"]:
+        if row.get("routable") is False:
+            continue
+        endpoint = endpoint_for_id(f"{row['id']}@perplexity/prepaid")
+        assert endpoint is not None, row["id"]
+        assert endpoint.upstream_id == row["upstream_id"]
+        assert endpoint.request_price_microdollars == customer_fixed_price_microdollars(
+            row["fixed_request_price_microdollars"]
+        )

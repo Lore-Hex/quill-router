@@ -97,7 +97,7 @@ def credit_before_key(
 def authorize_credit_before_key(statements: list[str]) -> None:
     credit_before_key(statements)
     first_key = next(i for i, sql in enumerate(statements) if "tr_key_limit" in sql)
-    # The spend-lease hook now precedes the key too. Only request INSERTs remain.
+    # Only request INSERTs may follow the key.
     assert all("tr_key_limit" in sql or sql.startswith((
         "insert into tr_reservation ", "insert into tr_gateway_authorization ",
         "insert into tr_entities ", "insert into tr_operational_analytics_outbox ",

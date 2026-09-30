@@ -206,6 +206,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/trustedos",
     "/token-exchange",
     "/token-exchange/savings",
+    "/token-exchange/security",
     "/legal",
     "/privacy",
     "/terms",
@@ -2099,6 +2100,16 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         ),
         og_card="token-exchange.png",
         og_alt="Token Exchange by TrustedRouter: compare your enterprise AI costs",
+    ),
+    "token-exchange/security": PublicPage(
+        template="public/token_exchange_security.html",
+        title="Token Exchange Security Resources",
+        description=(
+            "Download the TrustedRouter security deck and whitepaper for your Token Exchange "
+            "review. Explore architecture, data handling, attestation and verification steps."
+        ),
+        og_card="token-exchange.png",
+        og_alt="TrustedRouter security: attestation, data handling and verification",
     ),
     "resources": PublicPage(
         template="public/resources.html",
@@ -4915,11 +4926,121 @@ def docs_llms_full_txt(settings: Settings) -> str:
     return "\n".join(lines)
 
 
-def _model_publisher(model: Model) -> Provider:
-    # A TrustedRouter orchestration's publisher is not its internal selector host.
-    if model.id in META_MODEL_IDS and model.id.startswith("trustedrouter/"):
-        return PROVIDERS["trustedrouter"]
-    return PROVIDERS[model.provider]
+# A model's publisher is its maker, named by the author prefix of its id (`qwen`
+# in `qwen/qwen3.7-max`) and never by Model.provider: that is the default route,
+# which for an author without a routing mapping is whichever host lists the
+# model first. Routing reads catalog_ingest._AUTHOR_TO_PROVIDER_SLUG, which is a
+# different map: it sends meta-llama to Cerebras.
+#
+# An author is listed here only when a PROVIDERS entry is its maker's own API.
+# Hosts and resellers are not, including a multi-lab hosting catalog that a
+# maker's own company runs (NVIDIA NIM, Microsoft Azure AI Foundry) and "Meta via
+# OpenRouter", which is OpenRouter reselling Meta. A TrustedRouter orchestration
+# is published by TrustedRouter, not by its internal selector host.
+_PUBLISHER_PROVIDER_BY_AUTHOR: dict[str, str] = {
+    # The maker's API under the author's own name.
+    "aion-labs": "aion-labs",
+    "alibaba": "alibaba",
+    "anthropic": "anthropic",
+    "baidu": "baidu",
+    "cohere": "cohere",
+    "decart": "decart",
+    "deepseek": "deepseek",
+    "inception": "inception",
+    "kling": "kling",
+    "krea": "krea",
+    "minimax": "minimax",
+    "mistral": "mistral",
+    "morph": "morph",
+    "neurometric": "neurometric",
+    "openai": "openai",
+    "parasail": "parasail",
+    "perplexity": "perplexity",
+    "poolside": "poolside",
+    "recraft": "recraft",
+    "reka": "reka",
+    "runway": "runway",
+    "scaledown": "scaledown",
+    "stepfun": "stepfun",
+    "tencent": "tencent",
+    "thinkingmachines": "thinkingmachines",
+    "trustedrouter": "trustedrouter",
+    "upstage": "upstage",
+    "voyage": "voyage",
+    "xiaomi": "xiaomi",
+    "zero-g": "zero-g",
+    # The maker's API under another name.
+    "arcee-ai": "arcee",
+    "black-forest-labs": "bfl",
+    "bytedance": "byteplus",
+    "bytedance-seed": "byteplus",
+    "deepseek-ai": "deepseek",
+    # Alibaba's Tongyi labs (Fun-Audio, Z-Image, Wan) publish through Model Studio.
+    "funaudiollm": "alibaba",
+    "google": "google-ai-studio",
+    "jina-ai": "jina",
+    # Kuaishou's own platform for its Kwaipilot KAT models, under their native ids.
+    "kwaipilot": "streamlake",
+    "lightricks": "ltx",
+    "minimaxai": "minimax",
+    "mistralai": "mistral",
+    "moonshot": "kimi",
+    "moonshotai": "kimi",
+    # Mistral NeMo, built with NVIDIA, is on Mistral's own API.
+    "nv-mistralai": "mistral",
+    # Baidu's PaddlePaddle models (PaddleOCR-VL) are on Baidu's Qianfan API.
+    "paddlepaddle": "baidu",
+    "qwen": "alibaba",
+    "sakana-ai": "sakana",
+    "stepfun-ai": "stepfun",
+    # GLM's original Tsinghua organisation; Z.ai now publishes GLM.
+    "thudm": "zai",
+    "tongyi-mai": "alibaba",
+    "typesafe-ai": "typesafe",
+    "wan-ai": "alibaba",
+    "x-ai": "grok",
+    "xai": "grok",
+    "xiaomimimo": "xiaomi",
+    "z-ai": "zai",
+    "zai-org": "zai",
+    "zhipu": "zai",
+    "zhipuai": "zai",
+}
+
+# Author prefixes that name no maker: a host's namespace for other labs' weights
+# (cerebras/gpt-oss-120b is OpenAI's model, fal/flux-1-schnell Black Forest
+# Labs', lightning-ai/glm-5.3 Z.ai's; phala/* ids select Phala's hosted tier),
+# and stealth/*, whose maker is unannounced.
+_AUTHORS_NAMING_NO_MAKER = frozenset({"cerebras", "fal", "lightning-ai", "phala", "stealth"})
+
+
+@dataclass(frozen=True)
+class _ModelPublisher:
+    """A model's maker as public pages name it.
+
+    `provider` is the maker's own PROVIDERS entry, with a logo and a
+    /providers page; a maker without one is named by `name` alone, with no link
+    and no logo. `name` is None when the model id names no maker.
+    """
+
+    name: str | None
+    provider: Provider | None = None
+
+    @property
+    def slug(self) -> str | None:
+        return self.provider.slug if self.provider is not None else None
+
+
+def _model_publisher(model: Model) -> _ModelPublisher:
+    author = model.id.split("/", 1)[0]
+    key = author.lower()
+    if key in _AUTHORS_NAMING_NO_MAKER:
+        return _ModelPublisher(None)
+    slug = _PUBLISHER_PROVIDER_BY_AUTHOR.get(key)
+    provider = PROVIDERS.get(slug) if slug is not None else None
+    if provider is not None:
+        return _ModelPublisher(provider.name, provider)
+    return _ModelPublisher(_BRAND_DISPLAY_NAMES.get(key, author))
 
 
 def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
@@ -5048,6 +5169,7 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
             (
                 model.id,
                 model.name,
+                publisher.name or "",
                 model.provider,
                 provider.name,
                 *provider_search_terms,
@@ -5879,9 +6001,12 @@ def _model_faq_items(
             fallback_provider=model.provider,
         )
     ] if credits_endpoints else []
-    publisher = _model_publisher(model)
-    if provider_names and publisher.slug != model.provider:
-        provider_names = [publisher.name]
+    # An orchestration's host is its internal selector, so its publisher is
+    # named instead. Every other model lists the hosts that serve it, which
+    # need not include its maker.
+    publisher_name = _model_publisher(model).name
+    if provider_names and model.id in META_MODEL_IDS and publisher_name is not None:
+        provider_names = [publisher_name]
     if not provider_names:
         provider_answer = "no Credits provider route"
     elif len(provider_names) == 1:
@@ -6254,6 +6379,9 @@ def _provider_model_rows(provider_slug: str, *, test_mode: bool = False) -> list
     return sorted(rows, key=lambda row: str(row["id"]))
 
 
+# Makers' names, keyed by the author prefix of the model id. A maker without its
+# own provider entry is published under this name, or under its prefix as the
+# id spells it.
 _BRAND_DISPLAY_NAMES: dict[str, str] = {
     "trustedrouter": "TrustedRouter",
     "anthropic": "Anthropic",
@@ -6273,7 +6401,26 @@ _BRAND_DISPLAY_NAMES: dict[str, str] = {
     "bytedance": "ByteDance",
     "xiaomi": "Xiaomi",
     "nousresearch": "Nous Research",
-    "phala": "Phala",
+    "aisingapore": "AI Singapore",
+    "baichuan": "Baichuan",
+    "bsc-lt": "BSC-LT",
+    "gryphe": "Gryphe",
+    "ibm-granite": "IBM",
+    "inclusionai": "inclusionAI",
+    "intel": "Intel",
+    "jetbrains": "JetBrains",
+    "meituan-longcat": "Meituan LongCat",
+    "meta": "Meta",
+    "microsoft": "Microsoft",
+    "nvidia": "NVIDIA",
+    "openbmb": "OpenBMB",
+    "openpipe": "OpenPipe",
+    "pixverse": "PixVerse",
+    "sao10k": "Sao10K",
+    "shengshu": "ShengShu",
+    "swiss-ai": "Swiss AI",
+    "undi95": "Undi95",
+    "yutori": "Yutori",
 }
 
 
@@ -6315,8 +6462,12 @@ def _model_service_node(settings: Settings, model: Model, site_url: str) -> dict
     else:
         cheapest_micro_per_m = min(prompt_prices)
     cheapest_usd_per_m = cheapest_micro_per_m / MICRODOLLARS_PER_DOLLAR
-    brand_slug = _model_publisher(model).slug
-    brand_name = _BRAND_DISPLAY_NAMES.get(brand_slug, brand_slug.title())
+    # The brand is the publisher the page names; its logo only comes with the
+    # maker's own provider entry, and a model id that names no maker has none.
+    publisher = _model_publisher(model)
+    brand: dict[str, object] = {"@type": "Brand", "name": publisher.name}
+    if publisher.slug is not None:
+        brand["logo"] = _absolute_url(settings, provider_logo_url(publisher.slug))
     return {
         "@type": "Service",
         "name": model.name,
@@ -6332,11 +6483,7 @@ def _model_service_node(settings: Settings, model: Model, site_url: str) -> dict
             "name": "TrustedRouter",
             "url": f"https://{settings.trusted_domain}/",
         },
-        "brand": {
-            "@type": "Brand",
-            "name": brand_name,
-            "logo": _absolute_url(settings, provider_logo_url(brand_slug)),
-        },
+        **({"brand": brand} if publisher.name is not None else {}),
         "areaServed": "Worldwide",
         "offers": {
             "@type": "Offer",

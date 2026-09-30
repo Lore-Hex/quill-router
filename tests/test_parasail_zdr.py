@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from trusted_router.catalog import (
+    MODEL_ENDPOINTS,
     PRIVACY_TIER_ZERO_RETENTION,
     PROVIDERS,
     ZDR_MODEL_ID,
@@ -11,11 +13,26 @@ from trusted_router.catalog import (
     endpoints_for_model,
     provider_privacy_tier,
 )
+from trusted_router.catalog_data import ModelEndpoint
 from trusted_router.config import Settings
 from trusted_router.routing import chat_route_endpoint_candidates
+from trusted_router.routing_candidates import zdr_candidate_models
 
 
-def test_parasail_serverless_and_dedicated_routes_are_zdr() -> None:
+def _serve_on_parasail(monkeypatch: pytest.MonkeyPatch, model_id: str) -> None:
+    """Parasail serves the model on a fixture route: its ZDR posture is a rule
+    of Parasail's routes, whatever Parasail lists today."""
+    route = ModelEndpoint(
+        id=f"{model_id}@parasail/prepaid", model_id=model_id,
+        provider="parasail", usage_type="Credits", upstream_id=model_id,
+    )
+    monkeypatch.setitem(MODEL_ENDPOINTS, route.id, route)
+
+
+def test_parasail_serverless_and_dedicated_routes_are_zdr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_on_parasail(monkeypatch, "z-ai/glm-5.2")
     provider = PROVIDERS["parasail"]
     endpoints = [
         endpoint
@@ -36,7 +53,12 @@ def test_parasail_serverless_and_dedicated_routes_are_zdr() -> None:
     assert "batch" in provider.provider_policy
 
 
-def test_parasail_can_satisfy_direct_and_alias_zdr_routing() -> None:
+def test_parasail_can_satisfy_direct_and_alias_zdr_routing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_on_parasail(monkeypatch, "z-ai/glm-5.2")
+    # And one model of the ZDR alias's ladder, whichever models it holds today.
+    _serve_on_parasail(monkeypatch, zdr_candidate_models()[0].id)
     settings = Settings(environment="test")
     direct = chat_route_endpoint_candidates(
         {
@@ -54,6 +76,13 @@ def test_parasail_can_satisfy_direct_and_alias_zdr_routing() -> None:
     assert alias
     assert all(endpoint.provider == "parasail" for _model, endpoint in direct)
     assert all(endpoint.provider == "parasail" for _model, endpoint in alias)
+
+
+@pytest.mark.provider_health
+def test_parasail_serves_glm_5_2() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    assert any(endpoint.provider == "parasail" for endpoint in endpoints_for_model("z-ai/glm-5.2"))
 
 
 def test_parasail_zdr_is_published_with_policy_source(client: TestClient) -> None:

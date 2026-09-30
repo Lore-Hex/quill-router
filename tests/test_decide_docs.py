@@ -1,5 +1,8 @@
+import pytest
 from fastapi.testclient import TestClient
 
+from tests.fixture_routes import bypass_catalog_caches
+from tests.test_decide_models import _serve_on_fixture_routes
 from trusted_router.catalog import MODELS, NATIVE_DECISION_MODEL_IDS
 
 
@@ -19,10 +22,12 @@ def test_decide_docs_publish_the_contract(client: TestClient) -> None:
 
 def test_decide_docs_list_exactly_the_models_the_catalog_advertises(client: TestClient) -> None:
     """The model table is hand-written; this keeps it from drifting from the
-    catalog, which is what /v1/models and the gateway actually serve."""
+    lineup the gateway is built to serve. A name whose host has dropped it for
+    now stays in the table: that is live provider state, reported by the
+    provider_health checks in test_decide_models.py."""
     text = client.get("/docs/decide").text
     for model_id in (*NATIVE_DECISION_MODEL_IDS, "typesafe-ai/jev"):
-        assert MODELS[model_id].supports_decide or model_id in NATIVE_DECISION_MODEL_IDS
+        assert model_id in NATIVE_DECISION_MODEL_IDS or MODELS[model_id].supports_decide
         assert f'<span class="mono">{model_id}</span>' in text, (
             f"{model_id} missing from the docs table"
         )
@@ -102,7 +107,14 @@ def test_decide_docs_lead_with_the_alpha_path_and_promise_every_alias(client: Te
     assert "typesafe/jev-1.13" in text
 
 
-def test_every_page_that_shows_a_decide_call_uses_the_default_path(client: TestClient) -> None:
+def test_every_page_that_shows_a_decide_call_uses_the_default_path(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The two names below are offered here on fixture routes, whether or not
+    # their hosts serve their backing models today.
+    bypass_catalog_caches(monkeypatch)
+    for model_id in ("trustedrouter/mev-1.0", "trustedrouter/trev-1.0"):
+        _serve_on_fixture_routes(monkeypatch, model_id)
     for path in (
         "/docs",
         "/models/trustedrouter/mev-1.0/api",

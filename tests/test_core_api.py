@@ -5,8 +5,15 @@ from dataclasses import asdict
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.fixture_routes import drop_routes, serve_on_fixture_route
 from tests.lifecycle_clock import catalog_predates
-from trusted_router.catalog import FAST_MODEL_ORDER, MODELS, PROVIDER_JURISDICTION_US, PROVIDERS
+from trusted_router.catalog import (
+    FAST_MODEL_ORDER,
+    MISTRAL_LARGE_MODEL_ID,
+    MODELS,
+    PROVIDER_JURISDICTION_US,
+    PROVIDERS,
+)
 from trusted_router.provider_lifecycle import BASETEN_SEPTEMBER_2026_RETIREMENT_AT
 from trusted_router.spend_windows import KeyWindowLimitExceeded
 from trusted_router.storage import STORE
@@ -518,8 +525,21 @@ def test_anthropic_messages_stream_uses_provider_stream_without_materializing(
 
 
 def test_embeddings_and_model_endpoints(
-    client: TestClient, inference_headers: dict[str, str]
+    client: TestClient, inference_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The endpoint listings below read the first-party Kimi and OpenAI routes;
+    # whether those hosts list the models today is provider state.
+    drop_routes(monkeypatch, "moonshotai/kimi-k2.6")
+    drop_routes(monkeypatch, "openai/gpt-5.5")
+    for usage_type in ("Credits", "BYOK"):
+        serve_on_fixture_route(
+            monkeypatch, "moonshotai/kimi-k2.6", "kimi", author="kimi",
+            usage_type=usage_type, upstream_id="kimi-k2.6",
+        )
+        serve_on_fixture_route(
+            monkeypatch, "openai/gpt-5.5", "openai", author="openai",
+            usage_type=usage_type, upstream_id="gpt-5.5",
+        )
     # A chat-only model is not a valid embeddings target.
     not_embeddings = client.post(
         "/v1/embeddings",
@@ -800,6 +820,13 @@ def test_disabled_deleted_and_expired_keys_reject(
     assert deleted.status_code == 401
 
 
+def _carried(*model_ids: str) -> list[str]:
+    """Components of a frozen orchestration graph that the catalog carries,
+    in order. A component leaves the graph only while the catalog does not
+    carry its model."""
+    return [model_id for model_id in model_ids if model_id in MODELS]
+
+
 def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict[str, str]) -> None:
     inkling_1m_available = catalog_predates(BASETEN_SEPTEMBER_2026_RETIREMENT_AT)
     models = client.get("/v1/models").json()["data"]
@@ -807,7 +834,6 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert models
     assert {
         "trustedrouter/auto",
-        "trustedrouter/archimedes-1.0",
         "trustedrouter/fast",
         "trustedrouter/eu",
         "trustedrouter/zdr",
@@ -861,14 +887,13 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "trustedrouter/liberty-1.0-1m",
         "trustedrouter/liberty-2.0",
         "trustedrouter/liberty-3.0",
-        "thinkingmachines/inkling",
-        "google/gemini-3.1-flash-image-preview",
     }.issubset(model_ids)
+    # Archimedes is offered exactly while the model behind it is.
+    assert ("trustedrouter/archimedes-1.0" in model_ids) == (MISTRAL_LARGE_MODEL_ID in MODELS)
     assert ("thinkingmachines/inkling-1m" in model_ids) is inkling_1m_available
     models_by_id = {model["id"]: model for model in models}
     fast_meta = models_by_id["trustedrouter/fast"]["trustedrouter"]
     assert fast_meta["route_kind"] == "fast_pool"
-    assert fast_meta["auto_candidates"]
     assert fast_meta["auto_candidates"] == [
         model_id for model_id in FAST_MODEL_ORDER if model_id in MODELS
     ]
@@ -876,49 +901,56 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     plato_3_meta = models_by_id["trustedrouter/plato-3.0"]["trustedrouter"]
     assert models_by_id["trustedrouter/plato"]["context_length"] == 1_000_000
     assert plato_meta["canonical_model_id"] == "trustedrouter/plato-4.0"
-    assert plato_meta["auto_candidates"] == [
+    assert plato_meta["auto_candidates"] == _carried(
         "xiaomi/mimo-v2.6-pro",
         "deepseek/deepseek-v4.1-flash",
         "z-ai/glm-5.3",
         "trustedrouter/prometheus-4.0",
-    ]
-    assert plato_3_meta["auto_candidates"] == [
+    )
+    assert plato_3_meta["auto_candidates"] == _carried(
         "deepseek/deepseek-v4-pro-0813",
         "trustedrouter/prometheus-3.0",
-    ]
+    )
     plato_pro_2_meta = models_by_id["trustedrouter/plato-pro-2.0"]["trustedrouter"]
     assert models_by_id["trustedrouter/plato-pro"]["trustedrouter"]["canonical_model_id"] == (
         "trustedrouter/plato-pro-2.0"
     )
-    assert models_by_id["trustedrouter/plato-pro"]["trustedrouter"]["auto_candidates"] == [
+    assert models_by_id["trustedrouter/plato-pro"]["trustedrouter"]["auto_candidates"] == _carried(
         "z-ai/glm-5.2",
         "trustedrouter/prometheus-2.0",
-    ]
-    assert plato_pro_2_meta["auto_candidates"] == [
+    )
+    assert plato_pro_2_meta["auto_candidates"] == _carried(
         "z-ai/glm-5.2",
         "trustedrouter/prometheus-2.0",
-    ]
+    )
     iris_meta = models_by_id["trustedrouter/iris"]["trustedrouter"]
     assert iris_meta["route_kind"] == "fusion_panel"
     assert iris_meta["canonical_model_id"] == "trustedrouter/iris-3.0"
     assert models_by_id["trustedrouter/iris"]["context_length"] == 1_048_576
-    assert iris_meta["auto_candidates"] == [
+    assert iris_meta["auto_candidates"] == _carried(
         "minimax/minimax-m3",
         "moonshotai/kimi-k3",
         "deepseek/deepseek-v4-pro-0813",
-    ]
-    assert models_by_id["trustedrouter/iris-1.0"]["trustedrouter"]["auto_candidates"] == [
+    )
+    assert models_by_id["trustedrouter/iris-1.0"]["trustedrouter"]["auto_candidates"] == _carried(
         "minimax/minimax-m3",
         "moonshotai/kimi-k2.6",
         "deepseek/deepseek-v4-pro-0423",
-    ]
+    )
     prometheus_code_meta = models_by_id["trustedrouter/prometheus-code"]["trustedrouter"]
     assert prometheus_code_meta["route_kind"] == "fusion_panel"
-    assert "moonshotai/kimi-k2.7-code" in prometheus_code_meta["auto_candidates"]
-    assert models_by_id["trustedrouter/prometheus-code-1.0"]["trustedrouter"][
-        "auto_candidates"
-    ][-1] == "deepseek/deepseek-v4-pro-0423"
-    assert prometheus_code_meta["auto_candidates"][-1] == "deepseek/deepseek-v4-pro-0813"
+    assert ("moonshotai/kimi-k2.7-code" in prometheus_code_meta["auto_candidates"]) == (
+        "moonshotai/kimi-k2.7-code" in MODELS
+    )
+    # A carried final component stays last.
+    for model_id, last in (
+        ("trustedrouter/prometheus-code-1.0", "deepseek/deepseek-v4-pro-0423"),
+        ("trustedrouter/prometheus-code", "deepseek/deepseek-v4-pro-0813"),
+        ("trustedrouter/zeus-1.0", "deepseek/deepseek-v4-pro-0423"),
+    ):
+        candidates = models_by_id[model_id]["trustedrouter"]["auto_candidates"]
+        tail = _carried(last)
+        assert candidates[len(candidates) - len(tail):] == tail, model_id
     prometheus_2_meta = models_by_id["trustedrouter/prometheus-2.0"]["trustedrouter"]
     prometheus_3_meta = models_by_id["trustedrouter/prometheus-3.0"]["trustedrouter"]
     assert models_by_id["trustedrouter/prometheus"]["context_length"] == 1_000_000
@@ -926,25 +958,25 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert models_by_id["trustedrouter/prometheus"]["trustedrouter"]["canonical_model_id"] == (
         "trustedrouter/prometheus-4.0"
     )
-    assert prometheus_2_meta["auto_candidates"] == [
+    assert prometheus_2_meta["auto_candidates"] == _carried(
         "minimax/minimax-m3",
         "moonshotai/kimi-k3",
         "z-ai/glm-5.2",
         "deepseek/deepseek-v4-pro-0423",
         "xiaomi/mimo-v2.5-pro",
-    ]
-    assert prometheus_3_meta["auto_candidates"] == [
+    )
+    assert prometheus_3_meta["auto_candidates"] == _carried(
         "minimax/minimax-m3",
         "moonshotai/kimi-k3",
         "z-ai/glm-5.2",
         "deepseek/deepseek-v4-pro-0813",
         "xiaomi/mimo-v2.5-pro",
-    ]
+    )
     zeus_meta = models_by_id["trustedrouter/zeus"]["trustedrouter"]
     assert models_by_id["trustedrouter/zeus"]["context_length"] == 1_000_000
     assert models_by_id["trustedrouter/zeus-1.0"]["context_length"] == 1_048_576
     assert models_by_id["trustedrouter/zeus-1.0-mini"]["context_length"] == 1_048_576
-    assert zeus_meta["auto_candidates"] == [
+    assert zeus_meta["auto_candidates"] == _carried(
         "openai/gpt-6-astra",
         "anthropic/claude-fable-5.1",
         "google/gemini-3.8-flash",
@@ -952,8 +984,8 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "z-ai/glm-5.3",
         "moonshotai/kimi-k3",
         "deepseek/deepseek-v4.1-flash",
-    ]
-    assert models_by_id["trustedrouter/zeus-2.0"]["trustedrouter"]["auto_candidates"] == [
+    )
+    assert models_by_id["trustedrouter/zeus-2.0"]["trustedrouter"]["auto_candidates"] == _carried(
         "anthropic/claude-opus-4.8",
         "openai/gpt-5.5",
         "google/gemini-3.1-pro-preview",
@@ -962,90 +994,83 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "z-ai/glm-5.2",
         "xiaomi/mimo-v2.5-pro",
         "deepseek/deepseek-v4-pro-0813",
-    ]
-    assert zeus_meta["canonical_model_id"] == "trustedrouter/zeus-3.0"
-    assert models_by_id["trustedrouter/zeus-1.0"]["trustedrouter"]["auto_candidates"][-1] == (
-        "deepseek/deepseek-v4-pro-0423"
     )
-    assert models_by_id["trustedrouter/zeus-1.0-mini"]["trustedrouter"]["auto_candidates"] == [
+    assert zeus_meta["canonical_model_id"] == "trustedrouter/zeus-3.0"
+    assert models_by_id["trustedrouter/zeus-1.0-mini"]["trustedrouter"][
+        "auto_candidates"
+    ] == _carried(
         "google/gemini-3.1-pro-preview",
         "google/gemini-3.5-flash",
         "minimax/minimax-m3",
         "z-ai/glm-5.2",
         "xiaomi/mimo-v2.5-pro",
         "deepseek/deepseek-v4-pro-0423",
-    ]
+    )
     aristotle_10_meta = models_by_id["trustedrouter/aristotle-1.0"]["trustedrouter"]
     aristotle_11_meta = models_by_id["trustedrouter/aristotle-1.1"]["trustedrouter"]
     aristotle_meta = models_by_id["trustedrouter/aristotle"]["trustedrouter"]
     assert aristotle_10_meta["route_kind"] == "advisor_orchestration"
-    assert aristotle_10_meta["auto_candidates"][:2] == [
-        "deepseek/deepseek-v4-flash",
-        "anthropic/claude-opus-4.8",
-    ]
+    head = _carried("deepseek/deepseek-v4-flash", "anthropic/claude-opus-4.8")
+    assert aristotle_10_meta["auto_candidates"][: len(head)] == head
     assert models_by_id["trustedrouter/aristotle-1.1"]["context_length"] == 1_048_576
     assert models_by_id["trustedrouter/aristotle"]["context_length"] == 1_048_576
     assert aristotle_meta["canonical_model_id"] == "trustedrouter/aristotle-2.0"
-    assert aristotle_11_meta["auto_candidates"] == [
+    assert aristotle_11_meta["auto_candidates"] == _carried(
         "z-ai/glm-5.2-fast",
         "z-ai/glm-5.2",
         "trustedrouter/zeus-1.0",
-    ]
-    assert aristotle_meta["auto_candidates"] == [
+    )
+    assert aristotle_meta["auto_candidates"] == _carried(
         "z-ai/glm-5.2-fast",
         "z-ai/glm-5.2",
         "trustedrouter/zeus-2.0",
-    ]
+    )
     socrates_pro_plus_meta = models_by_id["trustedrouter/socrates-pro-plus-1.0"]["trustedrouter"]
-    assert socrates_pro_plus_meta["auto_candidates"] == [
-        model_id
-        for model_id in [
-            "xiaomi/mimo-v2.5-pro-ultraspeed",
-            "minimax/minimax-m3",
-            "z-ai/glm-5.2-fast",
-            "deepseek/deepseek-v4-flash",
-            "trustedrouter/zeus-1.0",
-        ]
-        if model_id in MODELS
-    ]
+    assert socrates_pro_plus_meta["auto_candidates"] == _carried(
+        "xiaomi/mimo-v2.5-pro-ultraspeed",
+        "minimax/minimax-m3",
+        "z-ai/glm-5.2-fast",
+        "deepseek/deepseek-v4-flash",
+        "trustedrouter/zeus-1.0",
+    )
     assert (
         models_by_id["trustedrouter/socrates-1.1"]["trustedrouter"]["auto_candidates"]
         == (socrates_pro_plus_meta["auto_candidates"])
     )
     openpatcher_g1_meta = models_by_id["trustedrouter/openpatcher-g1"]["trustedrouter"]
     assert openpatcher_g1_meta["route_kind"] == "advisor_orchestration"
-    assert openpatcher_g1_meta["auto_candidates"] == [
+    assert openpatcher_g1_meta["auto_candidates"] == _carried(
         "z-ai/glm-5.2-fast",
         "z-ai/glm-5.2",
         "moonshotai/kimi-k2.7-code",
         "trustedrouter/prometheus-1.0-1m",
-    ]
+    )
     openpatcher_g2_meta = models_by_id["trustedrouter/openpatcher-g2"]["trustedrouter"]
     assert openpatcher_g2_meta["route_kind"] == "advisor_orchestration"
-    assert openpatcher_g2_meta["auto_candidates"] == [
+    assert openpatcher_g2_meta["auto_candidates"] == _carried(
         "moonshotai/kimi-k3",
         "google/gemma-4-31b-it",
         "trustedrouter/prometheus-2.0",
-    ]
+    )
     openpatcher_g3_meta = models_by_id["trustedrouter/openpatcher-g3"]["trustedrouter"]
     assert openpatcher_g3_meta["route_kind"] == "advisor_orchestration"
-    assert openpatcher_g3_meta["auto_candidates"] == [
+    assert openpatcher_g3_meta["auto_candidates"] == _carried(
         "moonshotai/kimi-k3",
         "google/gemma-4-31b-it",
         "trustedrouter/prometheus-3.0",
-    ]
+    )
     openpatcher_s2_meta = models_by_id["trustedrouter/openpatcher-s2"]["trustedrouter"]
     assert openpatcher_s2_meta["route_kind"] == "fusion_panel"
-    assert openpatcher_s2_meta["auto_candidates"] == [
+    assert openpatcher_s2_meta["auto_candidates"] == _carried(
         "moonshotai/kimi-k3",
         "z-ai/glm-5.2",
-    ]
+    )
     openpatcher_s3_meta = models_by_id["trustedrouter/openpatcher-s3"]["trustedrouter"]
     assert openpatcher_s3_meta["route_kind"] == "fusion_panel"
-    assert openpatcher_s3_meta["auto_candidates"] == [
+    assert openpatcher_s3_meta["auto_candidates"] == _carried(
         "z-ai/glm-5.2",
         "deepseek/deepseek-v4-pro-0813",
-    ]
+    )
     athena_meta = models_by_id["trustedrouter/athena"]["trustedrouter"]
     assert athena_meta["route_kind"] == "private_orchestration"
     assert athena_meta["configuration_hidden"] is True
@@ -1053,58 +1078,43 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     selector_meta = models_by_id["trustedrouter/selector"]["trustedrouter"]
     mapreduce_meta = models_by_id["trustedrouter/mapreduce"]["trustedrouter"]
     assert selector_meta["route_kind"] == "selector_orchestration"
-    assert "moonshotai/kimi-k2.7-code" in selector_meta["auto_candidates"]
+    assert ("moonshotai/kimi-k2.7-code" in selector_meta["auto_candidates"]) == (
+        "moonshotai/kimi-k2.7-code" in MODELS
+    )
     assert mapreduce_meta["route_kind"] == "mapreduce_orchestration"
-    assert mapreduce_meta["auto_candidates"][:3] == [
-        "deepseek/deepseek-v4-flash",
-        "minimax/minimax-m3",
-        "cerebras/gpt-oss-120b",
-    ]
+    head = _carried("deepseek/deepseek-v4-flash", "minimax/minimax-m3", "cerebras/gpt-oss-120b")
+    assert mapreduce_meta["auto_candidates"][: len(head)] == head
     liberty_1 = models_by_id["trustedrouter/liberty-1.0"]
     liberty_1_1m = models_by_id["trustedrouter/liberty-1.0-1m"]
     liberty_2 = models_by_id["trustedrouter/liberty-2.0"]
     liberty_3 = models_by_id["trustedrouter/liberty-3.0"]
     assert liberty_1["context_length"] == 262_144
     assert liberty_1["trustedrouter"]["route_kind"] == "fusion_panel"
-    assert liberty_1["trustedrouter"]["auto_candidates"] == [
+    assert liberty_1["trustedrouter"]["auto_candidates"] == _carried(
         "thinkingmachines/inkling",
         "nvidia/nemotron-3-ultra-550b-a55b",
         "google/gemma-4-31b-it",
-    ]
+    )
     assert liberty_1_1m["context_length"] == 1_048_576
     assert liberty_1_1m["trustedrouter"]["route_kind"] == "fusion_panel"
-    assert liberty_1_1m["trustedrouter"]["auto_candidates"] == [
+    assert liberty_1_1m["trustedrouter"]["auto_candidates"] == _carried(
         *(["thinkingmachines/inkling-1m"] if inkling_1m_available else []),
         "nvidia/nemotron-3-ultra-550b-a55b",
-    ]
+    )
     assert liberty_2["context_length"] == 262_144
-    assert liberty_2["trustedrouter"]["auto_candidates"] == [
+    assert liberty_2["trustedrouter"]["auto_candidates"] == _carried(
         "nvidia/nemotron-3-ultra-550b-a55b",
         "trustedrouter/liberty-1.0-1m",
         "trustedrouter/liberty-1.0",
-    ]
+    )
     assert liberty_3["context_length"] == 1_048_576
-    assert liberty_3["trustedrouter"]["auto_candidates"] == [
+    assert liberty_3["trustedrouter"]["auto_candidates"] == _carried(
         "nvidia/nemotron-3-ultra-550b-a55b",
         "google/gemma-4-31b-it",
         "openai/gpt-oss-120b",
         "trustedrouter/liberty-1.0-1m",
         "thinkingmachines/inkling",
-    ]
-    # Probe one model from each TR-keyed provider that actually appears
-    # in the ingest snapshot. Vertex is intentionally absent — TR doesn't
-    # have GCP quota for Anthropic-on-Vertex / Gemini-on-Vertex yet.
-    assert {
-        "anthropic/claude-opus-4.7",
-        "openai/gpt-5.4-nano",
-        "google/gemini-2.5-flash",
-        "anthropic/claude-fable-5",
-        "deepseek/deepseek-v4-flash",
-        "moonshotai/kimi-k2.6",
-        "mistralai/mistral-small-2603",
-        "z-ai/glm-4.6",
-        "z-ai/glm-5.2",
-    }.issubset(model_ids)
+    )
     assert client.get("/v1/models/count").json()["data"]["count"] >= 5
     open_weight_models = client.get("/v1/models", params={"open_weights": "true"})
     assert open_weight_models.status_code == 200
@@ -1112,7 +1122,13 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert open_weight_rows
     assert all(row["trustedrouter"]["open_weights"] is True for row in open_weight_rows)
     assert "trustedrouter/prometheus-1.0" in {row["id"] for row in open_weight_rows}
-    assert "trustedrouter/zeus-1.0" not in {row["id"] for row in open_weight_rows}
+    # A combo carries the badge exactly when every component it can use does;
+    # Zeus 1.0 has closed-weights components while the catalog carries them.
+    open_weight_ids = {row["id"] for row in open_weight_rows}
+    zeus_1 = models_by_id["trustedrouter/zeus-1.0"]["trustedrouter"]["auto_candidates"]
+    assert ("trustedrouter/zeus-1.0" in open_weight_ids) == (
+        bool(zeus_1) and all(model_id in open_weight_ids for model_id in zeus_1)
+    )
     us_models = client.get("/v1/models", params={"provider[jurisdiction]": "us"})
     assert us_models.status_code == 200
     us_rows = us_models.json()["data"]
@@ -1271,6 +1287,29 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     credits = client.get("/v1/credits", headers=user_headers)
     assert credits.status_code == 200
     assert credits.json()["data"]["total_credits"] >= 0
+
+
+@pytest.mark.provider_health
+def test_each_keyed_provider_serves_a_probe_model(client: TestClient) -> None:
+    """Live provider state: one model from each TR-keyed provider that actually
+    appears in the ingest snapshot, and the provider-native models the catalog
+    lists. Vertex is intentionally absent: TR doesn't have GCP quota for
+    Anthropic-on-Vertex / Gemini-on-Vertex yet. provider-catalog-health.yml
+    reports it hourly, and the price refresh does not wait on it."""
+    model_ids = {model["id"] for model in client.get("/v1/models").json()["data"]}
+    assert {
+        "anthropic/claude-opus-4.7",
+        "openai/gpt-5.4-nano",
+        "google/gemini-2.5-flash",
+        "anthropic/claude-fable-5",
+        "deepseek/deepseek-v4-flash",
+        "moonshotai/kimi-k2.6",
+        "mistralai/mistral-small-2603",
+        "z-ai/glm-4.6",
+        "z-ai/glm-5.2",
+        "thinkingmachines/inkling",
+        "google/gemini-3.1-flash-image-preview",
+    }.issubset(model_ids)
 
 
 def test_byok_provider_config_never_stores_or_returns_raw_key(

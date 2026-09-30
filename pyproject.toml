@@ -13,7 +13,6 @@ dependencies = [
   "email-validator>=2.0.0",
   "eth-account>=0.13.7",
   "fastapi>=0.115.0",
-  "google-cloud-bigtable>=2.26.0",
   "google-cloud-kms>=3.0.0",
   "google-cloud-spanner>=3.50.0",
   "google-auth>=2.38.0",

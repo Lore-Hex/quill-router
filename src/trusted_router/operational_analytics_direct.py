@@ -46,7 +46,6 @@ from trusted_router.storage_models import Generation, SyntheticProbeSample
 from trusted_router.storage_operational_analytics import (
     ACTIVITY_EVENT_KIND,
     CLIENT_EVENTS_EVENT_KIND,
-    SPEND_LEASE_SHADOW_EVENT_KIND,
     SYNTHETIC_EVENT_KIND,
     activity_payload,
     synthetic_payload,
@@ -160,39 +159,6 @@ SYNTHETIC_COLUMNS = (
     "output_match",
     "created_at",
 )
-REGIONAL_SHADOW_COLUMNS = (
-    "authorization_id",
-    "regional_predicate_reason",
-    "regional_predicate_mask",
-    "regional_outcome",
-    "regional_unavailable_reason",
-    "regional_selected_shard",
-    "regional_sibling_served",
-    "regional_requested_region",
-    "regional_resolved_region",
-    "regional_actual_microdollars",
-    "regional_local_microdollars",
-    "regional_global_microdollars",
-    "regional_overrun_microdollars",
-)
-SPEND_LEASE_SHADOW_COLUMNS = (
-    "event_id",
-    "created_at",
-    "workspace_id",
-    "key_hash",
-    "boot_kid",
-    "boot_verified",
-    "lease_id",
-    "no_lease_reason",
-    "echo_state",
-    "would_admit",
-    "enclave_estimate_micro",
-    "server_estimate_micro",
-    "server_verdict",
-    "catalog_version",
-    "divergence",
-    "schema_version",
-) + REGIONAL_SHADOW_COLUMNS
 
 CLIENT_REQUEST_COLUMNS = (
     "event_id",
@@ -277,7 +243,6 @@ CLIENT_COUNTER_COLUMNS = (
 EVENT_TABLES = {
     "activity": "activity_generations",
     "synthetic": "synthetic_probe_samples",
-    "spend_lease_shadow": "spend_lease_shadow",
     "client_events": ("client_request_events", "client_minute_counters"),
     "client_request": "client_request_events",
     "client_counter": "client_minute_counters",
@@ -497,15 +462,6 @@ def normalise_operational_event(
     elif row.event_kind == "synthetic":
         allowed = SYNTHETIC_COLUMNS
         required = SYNTHETIC_COLUMNS
-    elif row.event_kind == "spend_lease_shadow":
-        allowed = SPEND_LEASE_SHADOW_COLUMNS
-        required = tuple(
-            column for column in SPEND_LEASE_SHADOW_COLUMNS if column != "no_lease_reason" and column not in REGIONAL_SHADOW_COLUMNS
-        )
-        if raw.get("schema_version") != 1:
-            raise ValueError("spend_lease_shadow schema_version must be 1")
-        if raw.get("event_id") != row.event_id:
-            raise ValueError("spend_lease_shadow event_id does not match its outbox key")
     else:
         raise ValueError(f"unsupported operational event kind: {row.event_kind}")
     missing = [column for column in required if column not in raw]
@@ -519,13 +475,6 @@ def normalise_operational_event(
             if default is not None:
                 value = default
         if row.event_kind == "activity" and column in ACTIVITY_BOOLEAN_COLUMNS:
-            if value is not None:
-                value = int(bool(value))
-        if row.event_kind == "spend_lease_shadow" and column in {
-            "boot_verified",
-            "would_admit",
-            "regional_sibling_served",
-        }:
             if value is not None:
                 value = int(bool(value))
         canonical[column] = value
@@ -658,9 +607,6 @@ class DirectOperationalAnalyticsSink:
             f"{payload['tenant_id']}:{payload['batch_id']}",
             payload,
         )
-
-    def enqueue_spend_lease_shadow(self, event_id: str, payload: dict[str, Any]) -> None:
-        self._publish(SPEND_LEASE_SHADOW_EVENT_KIND, event_id, payload)
 
     def oldest_enqueued_at(self, *, timeout: float | None = None) -> dt.datetime | None:
         """Age of the oldest UNDELIVERED row, or None when the buffer is empty.

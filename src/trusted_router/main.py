@@ -26,6 +26,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from trusted_router.analytics_sink import create_analytics_sink
 from trusted_router.axiom_config import init_axiom
 from trusted_router.catalog import validate_auto_model_order
+from trusted_router.catalog_ingest import report_refused_manifest_rows
 from trusted_router.config import Settings, get_settings
 from trusted_router.dashboard import public_not_found_html, public_not_found_markdown
 from trusted_router.errors import error_response
@@ -219,13 +220,15 @@ def create_app(
     validate_auto_model_order(settings.auto_model_order)
     if configure_store_arg:
         configure_store(create_store(settings))
-        # No-op unless TR_CLICKHOUSE_URL is set; Bigtable stays authoritative.
+        # No-op unless TR_CLICKHOUSE_URL is set; the store stays authoritative.
         configure_analytics_sink(create_analytics_sink(settings))
     if init_observability:
         init_sentry(settings)
         init_axiom(settings)
     # Trust admission populates its fail-closed global cache lazily on requests.
     _configure_application_logging()
+    # The catalog was ingested at import, before Sentry started.
+    report_refused_manifest_rows()
     # Swagger UI moves to /api/reference so the public docs hub can own
     # /docs (the marketing nav points "Docs" there). ReDoc stays at /redoc.
     app = FastAPI(

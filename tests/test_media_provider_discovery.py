@@ -4,10 +4,12 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.manifest import guard_fixed_output_prices
-from scripts.pricing.providers import bfl, decart, fal, krea, recraft
+from scripts.pricing.providers import bfl, fal, krea, recraft
 from trusted_router.catalog_data import GATEWAY_PREPAID_PROVIDER_SLUGS
 from trusted_router.catalog_ingest import _supplemental_provider_models_and_endpoints
 from trusted_router.image_generation import (
@@ -17,6 +19,12 @@ from trusted_router.image_generation import (
 
 MANIFEST_DIR = (
     Path(__file__).resolve().parents[1] / "src" / "trusted_router" / "data" / "provider_models"
+)
+_MEDIA_ROUTES = (
+    ("recraft/recraftv4_1", "recraft"),
+    ("black-forest-labs/flux-2-klein-4b", "bfl"),
+    ("decart/lucy-image-2", "decart"),
+    (fal.MODEL_ID, fal.SLUG),
 )
 
 
@@ -65,28 +73,6 @@ def test_bfl_pricing_parser_ignores_unrecognized_models() -> None:
     assert bfl._parse_pricing(html) == {
         "black-forest-labs/flux-2-klein-4b": 14_000,
         "black-forest-labs/flux-2-max": 70_000,
-    }
-
-
-def test_decart_pricing_parser_maps_native_resolutions() -> None:
-    html = """
-    <table>
-      <tr><th>Model</th><th>ID</th><th>720p</th><th>Best for</th></tr>
-      <tr><td>Lucy 2.5</td><td>lucy-2.5</td><td>$0.02/sec</td><td>Realtime</td></tr>
-    </table>
-    <table>
-      <tr><th>Model</th><th>ID</th><th>480p</th><th>720p</th><th>Best for</th></tr>
-      <tr><td>Lucy 2.5</td><td>lucy-2.5</td><td>-</td><td>$0.04/sec</td><td>Video</td></tr>
-      <tr><td>Lucy VTON 3.5</td><td>lucy-vton-3.5</td><td>-</td><td>$0.04/sec</td><td>Video</td></tr>
-      <tr><td>Lucy Restyle 2</td><td>lucy-restyle-2</td><td>-</td><td>$0.01/sec</td><td>Video</td></tr>
-      <tr><td>Lucy Image 2</td><td>lucy-image-2</td><td>$0.01</td><td>$0.02</td><td>Image</td></tr>
-    </table>
-    """
-    assert decart._parse_pricing(html) == {
-        "decart/lucy-image-2": {"480p": 10_000, "720p": 20_000},
-        "decart/lucy-2.5": 40_000,
-        "decart/lucy-vton-3.5": 40_000,
-        "decart/lucy-restyle-2": 10_000,
     }
 
 
@@ -178,14 +164,14 @@ def test_media_providers_are_refreshable_prepaid_gateway_routes() -> None:
     assert expected <= GATEWAY_PREPAID_PROVIDER_SLUGS
 
     models, endpoints = _supplemental_provider_models_and_endpoints()
-    for model_id, provider in (
-        ("recraft/recraftv4_1", "recraft"),
-        ("black-forest-labs/flux-2-klein-4b", "bfl"),
-        ("decart/lucy-image-2", "decart"),
-        (fal.MODEL_ID, fal.SLUG),
-    ):
-        assert model_id in models
-        assert f"{model_id}@{provider}/prepaid" in endpoints
+    for model_id, provider in _MEDIA_ROUTES:
+        manifest = json.loads((MANIFEST_DIR / f"{provider}.json").read_text())
+        row = next(row for row in manifest["models"] if row["id"] == model_id)
+        if row.get("routable") is False:
+            assert f"{model_id}@{provider}/prepaid" not in endpoints
+        else:
+            assert model_id in models
+            assert f"{model_id}@{provider}/prepaid" in endpoints
 
     # Video routes are installed from the audited enclave registry, not the
     # generic chat/image manifest ingester.
@@ -213,6 +199,15 @@ def test_media_providers_are_refreshable_prepaid_gateway_routes() -> None:
     else:
         assert krea_model in models
         assert f"{krea_model}@krea/prepaid" in endpoints
+
+
+@pytest.mark.provider_health
+@pytest.mark.parametrize(("model_id", "provider"), _MEDIA_ROUTES)
+def test_media_provider_serves_its_route(model_id: str, provider: str) -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    _models, endpoints = _supplemental_provider_models_and_endpoints()
+    assert f"{model_id}@{provider}/prepaid" in endpoints
 
 
 def test_fixed_media_price_change_fails_before_manifest_write(tmp_path: Path) -> None:

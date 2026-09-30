@@ -33,7 +33,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from clickhouse.backfill_benchmark_samples import normalise
+from clickhouse.benchmark_rows import normalise
 
 PROJECT = "quill-cloud-proxy"
 SPANNER_INSTANCE = "trusted-router-nam6"

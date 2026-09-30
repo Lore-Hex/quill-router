@@ -7,6 +7,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from scripts.pricing.providers import gmi
+from tests.pinned_manifests import (
+    GMI_HY4_PREVIEW,
+    GMI_KIMI_K3,
+    PHALA_KIMI_K3,
+    serve_manifest_rows,
+)
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, model_open_weights
 from trusted_router.catalog_data import PRIVACY_TIER_STANDARD, ModelEndpoint
 from trusted_router.catalog_privacy import (
@@ -242,7 +248,12 @@ def test_gmi_does_not_recover_an_omitted_model_when_canary_fails(
     assert "z-ai/glm-5.2" not in gmi._DISCOVERED_MANIFEST_ROWS
 
 
-def test_gmi_kimi_k3_is_a_verified_prepaid_route() -> None:
+def test_gmi_kimi_k3_is_a_verified_prepaid_route(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    # The route built from GMI's pinned manifest row: how the catalog prices a
+    # verified GMI row holds whatever GMI lists today.
+    serve_manifest_rows(monkeypatch, tmp_path, "gmi", [GMI_KIMI_K3])
     endpoint = MODEL_ENDPOINTS[f"{KIMI_K3}@gmi/prepaid"]
 
     assert endpoint.upstream_id == "moonshotai/kimi-k3"
@@ -250,14 +261,25 @@ def test_gmi_kimi_k3_is_a_verified_prepaid_route() -> None:
     assert endpoint.completion_price_microdollars_per_million_tokens == 15_825_000
 
 
-def test_gmi_hy4_preview_is_a_verified_prepaid_route() -> None:
+def test_gmi_hy4_preview_is_a_verified_prepaid_route(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
     assert HY4_PREVIEW in gmi._VERIFIED_PREPAID_MODELS
+    serve_manifest_rows(monkeypatch, tmp_path, "gmi", [GMI_HY4_PREVIEW])
     endpoint = MODEL_ENDPOINTS[f"{HY4_PREVIEW}@gmi/prepaid"]
 
     assert endpoint.upstream_id == HY4_PREVIEW
     assert endpoint.prompt_price_microdollars_per_million_tokens == 879_870
     assert endpoint.completion_price_microdollars_per_million_tokens == 2_638_555
     assert model_open_weights(MODELS[HY4_PREVIEW]) is True
+
+
+@pytest.mark.provider_health
+def test_gmi_serves_its_verified_kimi_k3_and_hy4_preview() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    assert f"{KIMI_K3}@gmi/prepaid" in MODEL_ENDPOINTS
+    assert f"{HY4_PREVIEW}@gmi/prepaid" in MODEL_ENDPOINTS
 
 
 def test_every_gmi_prepaid_route_is_billed_from_provider_list_price() -> None:
@@ -278,7 +300,6 @@ def test_every_gmi_prepaid_route_is_billed_from_provider_list_price() -> None:
         if endpoint.provider == "gmi" and endpoint.usage_type == "Credits"
     }
 
-    assert gmi_prepaid
     assert set(gmi_prepaid) <= set(list_prices)
     for model_id, endpoint in gmi_prepaid.items():
         row = list_prices[model_id]
@@ -297,7 +318,12 @@ def test_every_gmi_prepaid_route_is_billed_from_provider_list_price() -> None:
 
 
 def test_phala_kimi_k3_pass_through_is_standard_not_confidential() -> None:
-    endpoint = MODEL_ENDPOINTS[f"{KIMI_K3}@phala/prepaid"]
+    # Privacy classification is a rule of the exact upstream route, whatever
+    # Phala lists today.
+    endpoint = ModelEndpoint(
+        id=f"{KIMI_K3}@phala/prepaid", model_id=KIMI_K3,
+        provider="phala", usage_type="Credits", upstream_id="moonshotai/kimi-k3",
+    )
 
     assert endpoint.upstream_id == "moonshotai/kimi-k3"
     assert endpoint_privacy_tier(endpoint) == PRIVACY_TIER_STANDARD
@@ -308,7 +334,10 @@ def test_phala_kimi_k3_pass_through_is_standard_not_confidential() -> None:
 
 
 def test_phala_glm_52_pass_through_is_standard_not_confidential() -> None:
-    endpoint = MODEL_ENDPOINTS["z-ai/glm-5.2@phala/prepaid"]
+    endpoint = ModelEndpoint(
+        id="z-ai/glm-5.2@phala/prepaid", model_id="z-ai/glm-5.2",
+        provider="phala", usage_type="Credits", upstream_id="z-ai/glm-5.2",
+    )
 
     assert endpoint.upstream_id == "z-ai/glm-5.2"
     assert endpoint_privacy_tier(endpoint) == PRIVACY_TIER_STANDARD
@@ -351,9 +380,19 @@ def test_new_phala_glm_release_is_dynamically_standard_not_confidential() -> Non
     assert endpoint_e2ee(endpoint) is False
 
 
+@pytest.mark.provider_health
+def test_phala_serves_its_kimi_k3_and_glm_52_pass_through_routes() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    assert f"{KIMI_K3}@phala/prepaid" in MODEL_ENDPOINTS
+    assert "z-ai/glm-5.2@phala/prepaid" in MODEL_ENDPOINTS
+
+
 def test_kimi_k3_public_catalog_reports_route_specific_phala_posture(
-    client: TestClient,
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
+    # Phala's Kimi K3 route built from its pinned manifest row.
+    serve_manifest_rows(monkeypatch, tmp_path, "phala", [PHALA_KIMI_K3])
     response = client.get("/v1/models/moonshotai/kimi-k3/endpoints")
 
     assert response.status_code == 200

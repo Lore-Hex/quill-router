@@ -40,21 +40,11 @@ on:
         description: "Skip synthetic-watchdog + CI-green gating (ship aggressively when prod is sick)"
         type: boolean
         default: false
-      regional_quota_lease_issuance:
-        description: "Regional quota issuance: preserve active state, force off, or enable after fleet compatibility preflight"
-        type: choice
-        default: preserve
-        options:
-          - preserve
-          - "false"
-          - "true"
 
-# Ordinary deploys share one running and one replaceable pending slot. OFF
-# persistence bypasses that queue; the GCS mutex still serializes traffic.
+# Deploys share one running and one replaceable pending slot; the GCS mutex
+# still serializes traffic.
 concurrency:
-  # OFF requests must persist even when an ordinary deploy is running/pending.
-  # OFF runs only persist the latch and enqueue a normal serialized deploy.
-  group: ${{ inputs.regional_quota_lease_issuance == 'false' && format('regional-quota-off-{0}', github.run_id) || 'deploy-trusted-router' }}
+  group: deploy-trusted-router
   cancel-in-progress: false
 
 permissions:
@@ -63,43 +53,8 @@ permissions:
   actions: read     # for the CI-green gate (gh run list)
 
 jobs:
-  persist-regional-quota-stop:
-    if: github.repository == 'Lore-Hex/quill-router'
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
-      actions: write  # enqueue the ordinary deployment after persisting OFF
-    steps:
-      - uses: actions/checkout@v4
-      - name: Authenticate OFF request to GCP
-        if: github.event_name == 'workflow_dispatch' && inputs.regional_quota_lease_issuance == 'false'
-        uses: google-github-actions/auth@v3
-        with:
-          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
-          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
-      - uses: google-github-actions/setup-gcloud@v3
-        if: github.event_name == 'workflow_dispatch' && inputs.regional_quota_lease_issuance == 'false'
-      - name: Persist regional quota OFF before any deploy queue or gate
-        if: github.event_name == 'workflow_dispatch' && inputs.regional_quota_lease_issuance == 'false'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HOTFIX: ${{ inputs.hotfix }}
-        run: |
-          source scripts/deploy/_lib.sh
-          source scripts/deploy/regional_quota_rollout.sh
-          regional_quota_persist_stop
-          # The child can be replaced by a newer push: both read the durable
-          # latch. Never run deployment jobs in this queue-bypassing parent.
-          # GITHUB_TOKEN permits workflow_dispatch/repository_dispatch to start runs:
-          # https://docs.github.com/en/actions/concepts/security/github_token#when-github_token-triggers-workflow-runs
-          gh workflow run deploy.yml --repo "$GITHUB_REPOSITORY" \
-            --ref "$GITHUB_REF_NAME" \
-            -f regional_quota_lease_issuance=preserve -f hotfix="$HOTFIX"
-
   gate-on-ci:
-    needs: [persist-regional-quota-stop]
-    if: github.repository == 'Lore-Hex/quill-router' && inputs.regional_quota_lease_issuance != 'false'
+    if: github.repository == 'Lore-Hex/quill-router'
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -151,8 +106,7 @@ jobs:
           done
 
   build-image:
-    needs: [persist-regional-quota-stop]
-    if: github.repository == 'Lore-Hex/quill-router' && inputs.regional_quota_lease_issuance != 'false'
+    if: github.repository == 'Lore-Hex/quill-router'
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.set-vars.outputs.sha }}
@@ -211,7 +165,6 @@ jobs:
                   docker pull "${_CACHE_IMAGE}" || true
                   docker build \
                     --network=cloudbuild \
-                    --build-arg "REGIONAL_QUOTA_ACCOUNTING_PROTOCOL=${_ACCOUNTING_PROTOCOL}" \
                     --cache-from "${_CACHE_IMAGE}" \
                     --tag "${_IMAGE}" \
                     --tag "${_CACHE_IMAGE}" \
@@ -227,7 +180,7 @@ jobs:
           EOF
           BUILD_ID=$(gcloud builds submit \
             --config=/tmp/cloudbuild-control-plane.yaml \
-            --substitutions="_IMAGE=${IMAGE},_CACHE_IMAGE=${CACHE_IMAGE},_ACCOUNTING_PROTOCOL=${REGIONAL_QUOTA_ACCOUNTING_PROTOCOL}" \
+            --substitutions="_IMAGE=${IMAGE},_CACHE_IMAGE=${CACHE_IMAGE}" \
             --project="${PROJECT_ID}" \
             --region="${REGION}" \
             --async \
@@ -294,10 +247,8 @@ jobs:
           TR_GCP_PROJECT_ID: quill-cloud-proxy
           TR_SPANNER_INSTANCE_ID: trusted-router-nam6
           TR_SPANNER_DATABASE_ID: trusted-router
-          TR_BIGTABLE_INSTANCE_ID: trusted-router-logs
-          TR_BIGTABLE_GENERATION_TABLE: trustedrouter-generations
         run: scripts/deploy/migrate_request_retention.sh --apply
-      - name: Apply inert spend-lease schema
+      - name: Apply the retained spend-lease schema (pilot removed; rows kept)
         env:
           GCP_PROJECT_ID: quill-cloud-proxy
           SPANNER_INSTANCE_ID: trusted-router-nam6
@@ -363,16 +314,6 @@ jobs:
           echo "::warning::Public snapshot worker was not updated. Control-plane deployment continues independently; inspect the snapshot-sync log before declaring publication repaired."
           echo '### Public snapshot worker not updated' >> "$GITHUB_STEP_SUMMARY"
           echo 'The worker sync failed. The previous worker was retained or rollback was attempted; check its service and five snapshot products before declaring it healthy. Control-plane success is not worker-publication success.' >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Assert the regional quota and spend-lease ledgers are drained
-        # Changes nothing but the drain observation record, and rollout.sh
-        # runs the same gate again before it creates any revision. It proves
-        # every reachable revision already has issuance off, the fleet has
-        # been in that state for the drain interval, Spanner holds no ledger
-        # work, and (while a schedule exists) the reconcilers report recent
-        # empty passes. Only the retirement marker a verified teardown writes
-        # stands it down; see ledger_retirement.sh.
-        run: bash scripts/deploy/regional_quota_drain_gate.sh
 
   sync-runtime-secrets:
     # Validate the small set of runtime credentials while the image build and
@@ -472,9 +413,6 @@ jobs:
       SHA: ${{ needs.build-image.outputs.sha }}
       IMAGE: ${{ needs.build-image.outputs.image }}
       TR_DEPLOY_HOLD_REGIONS: ${{ vars.TR_DEPLOY_HOLD_REGIONS }}
-      # Keep the workflow value raw. rollout.sh normalizes preserve/false/true
-      # only after reading the actual 100%-traffic primary revision.
-      TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED: ${{ inputs.regional_quota_lease_issuance }}
       # Temporary explicit opt-in for the pre-split all-routes service. Remove
       # with the six-service production cutover in #712.
       TR_ALLOW_DEPLOYED_COMBINED_SURFACE: "true"
@@ -547,14 +485,6 @@ jobs:
             echo "${key}=${rev}" >> "$GITHUB_OUTPUT"
             echo "  pre-deploy ${region}: ${rev}"
           done
-
-      - name: Prove the ledgers are drained before any region changes
-        # The four warms below run in parallel under this job's mutex
-        # operation, and each runs rollout.sh's own gate. This single pass,
-        # recorded under the same operation, is what they stand on, so no
-        # sibling reads a fleet another sibling is already changing. See
-        # ledger_retirement.sh.
-        run: bash scripts/deploy/regional_quota_drain_gate.sh
 
       - name: Warm all four regions in parallel (no traffic)
         id: warm_all
@@ -992,12 +922,6 @@ jobs:
           TR_STAGED_WATCHDOG_SKIP_BASELINE: ${{ inputs.hotfix == true && '1' || '0' }}
           TR_BILLING_5XX_GATE_SKIP: ${{ inputs.hotfix == true && 'true' || 'false' }}
         run: bash scripts/deploy/ramp_secondaries.sh
-
-      - name: Retire the regional quota and spend-lease reconciler workers
-        # Every region now serves (or holds) a revision without ledger
-        # capability, so the once-a-minute workers have nothing left to drain.
-        # Idempotent: a schedule or job that is already gone is the goal state.
-        run: bash scripts/deploy/retire_ledger_workers.sh
 
       - name: Deploy synthetic monitor Cloud Run Job
         # Re-deploys the synthetic monitor Cloud Run Job + Cloud Scheduler

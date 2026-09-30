@@ -29,18 +29,11 @@ from trusted_router.custom_model_markup_billing import (
     CUSTOM_MODEL_MARKUP_ID_SETTLE_FIELD,
     CUSTOM_MODEL_MARKUP_OWNER_SETTLE_FIELD,
     CUSTOM_MODEL_MARKUP_PAYOUT_SETTLE_FIELD,
-    collected_custom_model_markup_microdollars,
     custom_model_markup_owner_share_microdollars,
     custom_model_markup_payout_event_id,
 )
 from trusted_router.partner_billing import PARTNER_OPERATOR_COST_SETTLE_FIELD
-from trusted_router.regional_quota_ledger import RegionalLeaseLedgerError
 from trusted_router.schemas import GatewaySettleRequest
-from trusted_router.services.regional_quota_leases import LeaseSettlementError
-from trusted_router.services.spend_lease_settlement import (
-    derive_spend_lease_repair_amounts,
-    mirror_finalized_spend_lease_best_effort,
-)
 from trusted_router.storage import STORE, Generation, typed_billing_store
 from trusted_router.storage_errors import transient_store_error_types
 from trusted_router.storage_gcp_authorize import SettleOutcome
@@ -69,15 +62,15 @@ logger = logging.getLogger(__name__)
 # ResourceExhausted (session-pool and admission-control overload)/RetryError/
 # ServiceUnavailable, plus the backend-neutral StoreConflict/StoreUnavailable.
 _TRANSIENT_STORE_EXCS = transient_store_error_types()
-_REGIONAL_SETTLE_RETRY_EXCS: tuple[type[Exception], ...] = (
-    *_TRANSIENT_STORE_EXCS,
-    RegionalLeaseLedgerError,
-    LeaseSettlementError,
-)
+#: Settlement kinds written by the regional-quota and spend-lease pilots
+#: (removed 2026-09). Their escrow lived in a ledger that no longer exists, so
+#: nothing can apply them; every such reservation had expired before this code
+#: shipped. A surviving row is dead-lettered for operator review.
+_RETIRED_SETTLEMENTS = frozenset({"regional_lease", "spend_lease"})
 
-# Rolling legacy rows can still carry this historical marker. New typed rows
-# atomically enqueue ClickHouse delivery in the settlement transaction and do
-# not park on the optional Bigtable migration mirror.
+# Rolling legacy rows can still carry this historical marker (its literal text
+# is persisted in outbox rows and must not change). New typed rows atomically
+# enqueue ClickHouse delivery in the settlement transaction and never park.
 _ACTIVITY_PARK_NOTE = "bigtable activity index pending"
 
 
@@ -134,8 +127,8 @@ def apply_frozen_settle(row: SettleOutboxRow) -> str:
     handler. It must not import or call pricing, auto-refill, budget alert, or
     metadata broadcast code. A new typed settlement atomically writes the
     bounded generation record and ClickHouse delivery intent. Post-commit work
-    is limited to loss-tolerant benchmark delivery and an optional migration
-    mirror; rolling legacy rows still use index_after_commit repair. Increment
+    is limited to loss-tolerant benchmark delivery; rolling legacy rows still
+    use index_after_commit repair. Increment
     4's drain interprets the rich §3 outcome and decides row status/alerting.
     """
     parsed_body = _parse_settle_body(row.settle_body)
@@ -164,48 +157,11 @@ def apply_frozen_settle(row: SettleOutboxRow) -> str:
         return ApplyOutcome.RESERVATION_MISSING
 
     # Decision 70: a heartbeat snapshot is already the charged winner. Resolve
-    # a late settle/refund intent before any spend-lease corrective rewrite or
-    # generation indexing. Those repair steps use the late terminal payload
-    # and would overwrite the heartbeat generation even though money is fixed.
+    # a late settle/refund intent before any generation indexing. That repair
+    # step uses the late terminal payload and would overwrite the heartbeat
+    # generation even though money is fixed.
     if auth.settled and auth.finalization_outcome == "reaped_snapshot":
         return ApplyOutcome.REAPED_SNAPSHOT
-
-    corrective_rewrite: tuple[str, str, str, int, str] | None = None
-    if (
-        success
-        and auth.settlement == "spend_lease"
-        and auth.spend_lease_id is not None
-        and auth.spend_lease_gen is not None
-        and auth.spend_lease_allocated_micro is not None
-        and row.actual_cost_micro > auth.spend_lease_allocated_micro
-    ):
-        if row.lease_owner is None:
-            return ApplyOutcome.ERROR
-        repair = derive_spend_lease_repair_amounts(auth, row.actual_cost_micro, parsed_body)
-        rewritten_body = json.dumps(repair.settle_body, separators=(",", ":"))
-        original_cost = row.actual_cost_micro
-        row.actual_cost_micro = repair.actual_cost_micro
-        row.settle_body = rewritten_body
-        body = GatewaySettleRequest(**repair.settle_body)
-        body_dict = body.model_dump(exclude_none=True)
-        corrective_rewrite = (
-            row.authorization_id,
-            row.intent_kind,
-            row.lease_owner,
-            repair.actual_cost_micro,
-            rewritten_body,
-        )
-        logger.error(
-            "spend_lease.frozen_charge_capped_at_allocation",
-            extra={
-                "authorization_id": auth.id,
-                "spend_lease_id": auth.spend_lease_id,
-                "spend_lease_gen": auth.spend_lease_gen,
-                "spend_lease_allocated_micro": auth.spend_lease_allocated_micro,
-                "original_actual_microdollars": original_cost,
-                "booked_actual_microdollars": repair.actual_cost_micro,
-            },
-        )
 
     # Do not short-circuit auth.settled here. The claim/finalize layer is the
     # authority; this pre-read is only for body construction and is TOCTOU-prone.
@@ -282,9 +238,7 @@ def apply_frozen_settle(row: SettleOutboxRow) -> str:
             generation,
             user_model_payout,
             app_markup_payout,
-            corrective_rewrite,
             custom_model_markup_payout,
-            body.additional_cost_microdollars,
         )
     elif row.settle_origin == "legacy":
         outcome = _apply_legacy(
@@ -513,9 +467,7 @@ def _apply_typed(
     generation: Generation | None,
     user_model_payout: UserModelPayout | None,
     app_markup_payout: AppMarkupPayout | None,
-    corrective_rewrite: tuple[str, str, str, int, str] | None,
     custom_model_markup_payout: CustomModelMarkupPayout | None,
-    additional_cost_microdollars: int,
 ) -> str:
     typed_store = typed_billing_store()
     if typed_store is None:
@@ -525,57 +477,12 @@ def _apply_typed(
     if auth.credit_reservation_id is None:
         return ApplyOutcome.RESERVATION_MISSING
 
-    # A regional request must settle/refund its durable local hold before the
-    # typed Spanner request record becomes terminal. Calling the lower-level
-    # typed primitive directly would skip that step; the reconciler could then
-    # release the grant as unused and turn an outbox-recovered request into a
-    # free request. The wrapper is idempotent at both boundaries.
-    if auth.settlement == "regional_lease":
-        regional_finalize = getattr(
-            typed_store,
-            "typed_finalize_gateway_authorization_result",
-            None,
+    if auth.settlement in _RETIRED_SETTLEMENTS:
+        logger.error(
+            "settle_outbox.retired_settlement",
+            extra={"authorization_id": auth.id, "settlement": auth.settlement},
         )
-        if not callable(regional_finalize):
-            return ApplyOutcome.PARK_TYPED_UNAVAILABLE
-        from trusted_router.regional_billing import frozen_regional_charge
-
-        try:
-            charge = frozen_regional_charge(auth, row.actual_cost_micro, success, _parse_settle_body(row.settle_body) or {})
-        except ValueError:
-            return ApplyOutcome.INVALID_ROW
-        try:
-            existing_reservation = typed_store.read_typed_reservation(auth.credit_reservation_id)
-            if existing_reservation is not None and existing_reservation.get("settled"):
-                finalize_result = None
-            else:
-                finalize_result = regional_finalize(
-                    auth.id,
-                    success=success,
-                    actual_microdollars=row.actual_cost_micro,
-                    regional_charge_parts=(charge.local, charge.global_),
-                    selected_usage_type=usage_type,
-                    generation=generation,
-                    user_model_payout=user_model_payout,
-                    app_markup_payout=app_markup_payout,
-                    custom_model_markup_payout=custom_model_markup_payout,
-                )
-        except _REGIONAL_SETTLE_RETRY_EXCS:
-            # An opposing settle/refund can win the local row just before its
-            # Spanner transaction. Park until that transaction commits, then
-            # the replay classifier below can report the exact terminal result.
-            return ApplyOutcome.PARK_TYPED_UNAVAILABLE
-        if finalize_result is not None and finalize_result.finalized:
-            return (
-                ApplyOutcome.SETTLED_NOW
-                if finalize_result.activity_indexed
-                else ApplyOutcome.ACTIVITY_PENDING
-            )
-        # The wrapper returns false for an already-terminal request. Continue
-        # through the existing exact replay classifier below.
-        result: dict[str, Any] = {"outcome": SettleOutcome.ALREADY_SETTLED}
-    else:
-        result = {}
+        return ApplyOutcome.INVALID_ROW
 
     generation_writes: list[tuple[str, str, str]] = []
     if success and generation is not None:
@@ -594,46 +501,35 @@ def _apply_typed(
         selected_usage_type=usage_type,
         generation=generation,
     )
-    if auth.settlement != "regional_lease":
-        try:
-            result = typed_store.typed_finalize_gateway(
-                reservation_id=auth.credit_reservation_id,
-                authorization_id=auth.id,
-                success=success,
-                actual_micro=row.actual_cost_micro,
-                settled_usage_type=str(usage_type),
-                now=dt.datetime.now(dt.UTC),
-                authorization=auth_settled,
-                auth_body_settled=_json_body(auth_settled),
-                generation_writes=generation_writes,
-                generation=generation,
-                user_model_payout=user_model_payout,
-                app_markup_payout=app_markup_payout,
-                settle_outbox_rewrite=corrective_rewrite,
-                custom_model_markup_payout=custom_model_markup_payout,
-            )
-        except _TRANSIENT_STORE_EXCS:
-            return ApplyOutcome.PARK_TYPED_UNAVAILABLE
+    try:
+        result = typed_store.typed_finalize_gateway(
+            reservation_id=auth.credit_reservation_id,
+            authorization_id=auth.id,
+            success=success,
+            actual_micro=row.actual_cost_micro,
+            settled_usage_type=str(usage_type),
+            now=dt.datetime.now(dt.UTC),
+            authorization=auth_settled,
+            auth_body_settled=_json_body(auth_settled),
+            generation_writes=generation_writes,
+            generation=generation,
+            user_model_payout=user_model_payout,
+            app_markup_payout=app_markup_payout,
+            custom_model_markup_payout=custom_model_markup_payout,
+        )
+    except _TRANSIENT_STORE_EXCS:
+        return ApplyOutcome.PARK_TYPED_UNAVAILABLE
     outcome = result.get("outcome")
     if outcome == SettleOutcome.SETTLED:
         # The typed transaction atomically persisted the bounded generation
-        # record and operational analytics outbox row. Bigtable is only an
-        # optional migration mirror and cannot keep settlement work pending.
+        # record and operational analytics outbox row. Post-commit analytics
+        # are loss-tolerant and cannot keep settlement work pending.
         if success and generation is not None:
             generation_store = cast(Any, typed_store).generation_store
             if result.get("activity_durable"):
-                generation_store.mirror_after_commit(generation)
+                generation_store.post_commit_analytics(generation)
             elif not _index_generation_after_commit(typed_store, generation):
                 return ApplyOutcome.ACTIVITY_PENDING
-        if auth.settlement == "spend_lease":
-            committed = cast(Any, typed_store).get_gateway_authorization(auth.id)
-            if committed is None:
-                logger.error(
-                    "spend_lease.eager_mirror_read_missing",
-                    extra={"authorization_id": auth.id},
-                )
-            else:
-                mirror_finalized_spend_lease_best_effort(typed_store, committed)
         return ApplyOutcome.SETTLED_NOW
     if outcome == SettleOutcome.NOT_FOUND:
         return ApplyOutcome.RESERVATION_MISSING
@@ -647,21 +543,6 @@ def _apply_typed(
         if reservation is None:
             return ApplyOutcome.RESERVATION_MISSING
         actual_micro = int(reservation.get("actual_micro") or 0)
-        if (
-            auth.settlement == "spend_lease"
-            and auth.spend_lease_allocated_micro is not None
-            and actual_micro > auth.spend_lease_allocated_micro
-        ):
-            logger.error(
-                "spend_lease.historical_overcharge",
-                extra={
-                    "authorization_id": auth.id,
-                    "spend_lease_id": auth.spend_lease_id,
-                    "spend_lease_gen": auth.spend_lease_gen,
-                    "spend_lease_allocated_micro": auth.spend_lease_allocated_micro,
-                    "finalized_cost_microdollars": actual_micro,
-                },
-            )
         if actual_micro > 0:
             # Refunds never carry a generation, so requiring one here made the
             # benign charged-settle-beats-refund replay unreachable and
@@ -670,27 +551,7 @@ def _apply_typed(
                 return ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
             if generation is None:
                 return ApplyOutcome.INVALID_ROW
-            replay_generation = generation
-            if corrective_rewrite is not None:
-                replay_custom_markup = collected_custom_model_markup_microdollars(
-                    actual_micro,
-                    auth.custom_model_markup_basis_points,
-                    app_markup_basis_points=auth.app_markup_basis_points,
-                    additional_cost_microdollars=additional_cost_microdollars,
-                )
-                replay_generation = replace(
-                    generation,
-                    total_cost_microdollars=actual_micro,
-                    app_markup_microdollars=(
-                        app_markup_microdollars_from_charge(
-                            actual_micro, auth.app_markup_basis_points
-                        )
-                        if auth.app_markup_basis_points > 0
-                        else 0
-                    ),
-                    custom_model_markup_microdollars=replay_custom_markup,
-                )
-            if not _index_generation_after_commit(typed_store, replay_generation):
+            if not _index_generation_after_commit(typed_store, generation):
                 return ApplyOutcome.ACTIVITY_PENDING
             return ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
         if row.actual_cost_micro == 0:

@@ -18,7 +18,6 @@ from tests.test_gateway_authorize_spanner_operations import fixed_operation_cata
 from trusted_router import gateway_timing
 from trusted_router.config import Settings
 from trusted_router.main import create_app
-from trusted_router.regional_quota_ledger import InMemoryRegionalQuotaLedger
 from trusted_router.routes.internal import gateway
 from trusted_router.schemas import GatewayAuthorizeResponse, GatewaySettleResponse
 from trusted_router.storage import configure_store
@@ -34,7 +33,7 @@ def assert_timing(data: dict[str, Any]) -> None:
 
 
 @pytest.mark.usefixtures("fixed_operation_catalog")
-@pytest.mark.parametrize("mode", ["global", "regional", "byok"])
+@pytest.mark.parametrize("mode", ["global", "byok"])
 @pytest.mark.parametrize("store_seconds", [0.125, 0.250])
 @pytest.mark.parametrize("refund", [False, True])
 def test_authorize_settle_identity_and_measured_store_time(
@@ -47,24 +46,19 @@ def test_authorize_settle_identity_and_measured_store_time(
     authorizations, including refunding reaps. Consumers must check the terminal
     authorization disposition before expecting a generation.
     """
-    store, db, bt = make_fake_store(request_record_write_mode="typed", generation_records_enabled=True)
-    store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
+    store, db = make_fake_store(request_record_write_mode="typed", generation_records_enabled=True)
     ws = store.create_workspace("owner", "timing", trial_credit_microdollars=100_000_000)
     _, key = store.create_api_key(workspace_id=ws.id, name="timing", creator_user_id="owner")
     if mode == "byok":
         store.upsert_byok_provider(workspace_id=ws.id, provider="anthropic",
                                    secret_ref="test-secret", key_hint="test")  # noqa: S106 - fake secret reference
     configure_store(store)
-    settings = Settings(
-        environment="test", regional_quota_leases_enabled=mode == "regional",
-        regional_quota_lease_issuance_enabled=mode == "regional",
-        regional_quota_lease_pilot_workspace_ids=ws.id,
-    )
+    settings = Settings(environment="test")
     clock = [10.0]
     monkeypatch.setattr(gateway_timing, "perf_counter", lambda: clock[0])
     authorization_ids = iter(["gwa-wire-timing", "gwa-wire-retry"])
     monkeypatch.setattr(gateway, "_new_gateway_authorization_id", lambda: next(authorization_ids))
-    authorize_name = "authorize_gateway_regional" if mode == "regional" else "authorize_gateway_typed"
+    authorize_name = "authorize_gateway_typed"
     original_authorize = getattr(type(store), authorize_name)
     original_finalize = type(store).typed_finalize_gateway_authorization_result
 
@@ -94,7 +88,7 @@ def test_authorize_settle_identity_and_measured_store_time(
     assert "settled" not in data
     auth = store.get_gateway_authorization(data["authorization_id"])
     assert auth is not None and not auth.settled
-    assert auth.settlement == ("regional_lease" if mode == "regional" else "local")
+    assert auth.settlement == "local"
     if mode == "byok":
         assert data["usage_type"] == "BYOK"
     assert not db.generation_records  # identity does not materialize activity
@@ -131,7 +125,6 @@ def test_authorize_settle_identity_and_measured_store_time(
     assert set(db.generation_records) == {data["generation_id"]}
     generation = store.get_generation(data["generation_id"])
     assert generation is not None and generation.id == data["generation_id"]
-    assert any(data["generation_id"].encode() in key for key in bt.rows)
     settled_auth = store.get_gateway_authorization(auth.id)
     assert settled_auth.finalized_generation_id == data["generation_id"]
     settle_replay = client.post("/v1/internal/gateway/settle", json={"authorization_id": auth.id})

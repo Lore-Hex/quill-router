@@ -8,7 +8,10 @@ from typing import Any
 import httpx
 import pytest
 
+from trusted_router.catalog import MODEL_ENDPOINTS
+from trusted_router.catalog_data import ModelEndpoint
 from trusted_router.config import Settings
+from trusted_router.money import token_cost_microdollars
 from trusted_router.storage_models import ProviderBenchmarkSample
 from trusted_router.synthetic import cli as cli_module
 from trusted_router.synthetic.probes import (
@@ -76,7 +79,24 @@ def test_top_200_monthly_full_cap_cost_stays_inside_reviewed_budget() -> None:
 
 
 @pytest.mark.asyncio
-async def test_throughput_probe_measures_effective_end_to_end_speed() -> None:
+async def test_throughput_probe_measures_effective_end_to_end_speed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A sample is priced at the served route's Credits price. The route is a
+    # fixture: whether Cerebras lists the model today is provider state.
+    route = ModelEndpoint(
+        id="cerebras/gpt-oss-120b@cerebras/prepaid",
+        model_id="cerebras/gpt-oss-120b",
+        provider="cerebras",
+        usage_type="Credits",
+        upstream_id="gpt-oss-120b",
+        prompt_price_microdollars_per_million_tokens=400_000,
+        completion_price_microdollars_per_million_tokens=800_000,
+    )
+    for endpoint_id, endpoint in list(MODEL_ENDPOINTS.items()):
+        if (endpoint.provider, endpoint.model_id) == (route.provider, route.model_id):
+            monkeypatch.delitem(MODEL_ENDPOINTS, endpoint_id)
+    monkeypatch.setitem(MODEL_ENDPOINTS, route.id, route)
     captured: list[dict[str, Any]] = []
     chunks = [
         b'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n',
@@ -126,7 +146,9 @@ async def test_throughput_probe_measures_effective_end_to_end_speed() -> None:
     assert sample.ttfb_milliseconds == 100
     assert sample.elapsed_milliseconds == 1000
     assert sample.speed_tokens_per_second == 251.0
-    assert sample.total_cost_microdollars > 0
+    assert sample.total_cost_microdollars == (
+        token_cost_microdollars(19, 400_000) + token_cost_microdollars(251, 800_000)
+    )
     assert sample.finish_reason == "length"
     assert captured[0]["max_tokens"] == 512
     assert captured[0]["stream_options"] == {"include_usage": True}

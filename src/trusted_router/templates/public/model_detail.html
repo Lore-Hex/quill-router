@@ -1,6 +1,6 @@
 {% extends "public/_base.html" %}
 {% from "public/_provider_privacy_badges.html" import provider_privacy_badges %}
-{% from "public/_provider_identity.html" import provider_identity %}
+{% from "public/_provider_identity.html" import provider_identity, publisher_identity %}
 {% from "public/_catalog_privacy.html" import serving_provider_chip %}
 {% block body %}
 <section class="panel">
@@ -10,7 +10,8 @@
       {% if model.open_weights %}<span class="pill good">open weights</span>{% endif %}
       {% if model.us_provider_available %}<span class="pill">US providers</span>{% endif %}
       {% if model.eu_focused_provider_available %}<span class="pill">EU-focused</span>{% endif %}
-      <a class="pill provider-chip" href="/providers/{{ model.publisher_slug }}"><img class="provider-logo" src="{{ provider_logo_url(model.publisher_slug) }}" alt="{{ model.provider }} logo" aria-hidden="true" width="22" height="22"><span>{{ model.provider }}</span></a>
+      {% if model.publisher_slug %}<a class="pill provider-chip" href="/providers/{{ model.publisher_slug }}"><img class="provider-logo" src="{{ provider_logo_url(model.publisher_slug) }}" alt="{{ model.provider }} logo" aria-hidden="true" width="22" height="22"><span>{{ model.provider }}</span></a>
+      {%- elif model.provider %}<span class="pill provider-chip"><span>{{ model.provider }}</span></span>{% endif %}
     </div>
   </div>
   <div class="panel-body">
@@ -22,7 +23,7 @@
     </nav>
     <table>
       <tbody>
-        <tr><th>Publisher</th><td>{{ provider_identity(model.publisher_slug, model.provider, "/providers/" ~ model.publisher_slug, subtitle=model.publisher_slug) }}</td></tr>
+        <tr><th>Publisher</th><td>{{ publisher_identity(model, subtitle=model.publisher_slug) }}</td></tr>
         <tr><th>AI IQ</th><td>
           {% if model.ai_iq %}
           <a class="ai-iq-link" href="{{ model.ai_iq.url }}" rel="nofollow noopener">
@@ -157,7 +158,7 @@
       <thead>
         <tr>
           <th>Component</th>
-          <th>Provider</th>
+          <th>Publisher</th>
           <th>Prompt</th>
           <th>Cached input</th>
           <th>Completion</th>
@@ -167,7 +168,7 @@
         {% for candidate in model.candidate_models %}
         <tr>
           <td><a href="{{ candidate.detail_href }}">{{ candidate.id }}</a>{% if candidate.open_weights %} <span class="pill good">open weights</span>{% endif %}<br><span class="muted-copy">{{ candidate.name }}</span></td>
-          <td>{{ provider_identity(candidate.publisher_slug, candidate.provider, "/providers/" ~ candidate.publisher_slug) }}</td>
+          <td>{{ publisher_identity(candidate) }}</td>
           <td>{{ candidate.prompt_price }}</td>
           <td>{{ candidate.cached_prompt_price }}</td>
           <td>{{ candidate.completion_price }}</td>

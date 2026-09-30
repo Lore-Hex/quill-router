@@ -14,13 +14,14 @@ from scripts.pricing.provider_contract_catalog import (
     discover_provider_contract_catalog,
 )
 from scripts.pricing.providers import neurometric
+from tests.fixture_routes import bypass_catalog_caches
+from tests.pinned_manifests import build_manifest_rows
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, PROVIDERS, model_open_weights
 from trusted_router.catalog_data import ModelDocumentation
 from trusted_router.provider_contract import (
     PROVIDER_CATALOG_V2_EXAMPLE,
     PROVIDER_MODEL_DOCUMENTATION_EXAMPLE,
 )
-from trusted_router.routes import catalog as catalog_routes
 
 
 def _model_row(
@@ -68,13 +69,28 @@ def _payload(*rows: dict[str, Any]) -> dict[str, Any]:
     return {"object": "list", "data": list(rows)}
 
 
+# Neurometric's routable rows as its feed listed them on 2026-09-29. The
+# catalog, API and page rules below run on the routes the catalog's own
+# ingestion builds from these, whatever Neurometric lists today.
+PINNED_ROWS: list[dict[str, Any]] = json.loads(
+    (Path(__file__).parent / "fixtures" / "neurometric_rows.json").read_text(encoding="utf-8")
+)
+
+
+@pytest.fixture
+def neurometric_routes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Neurometric's models and routes built from PINNED_ROWS, in place of the
+    live ones, so neither today's inventory nor today's wording is read."""
+    models, endpoints = build_manifest_rows(monkeypatch, tmp_path, "neurometric", PINNED_ROWS)
+    for model_id, model in models.items():
+        monkeypatch.setitem(MODELS, model_id, model)
+    for endpoint_id, endpoint in endpoints.items():
+        monkeypatch.setitem(MODEL_ENDPOINTS, endpoint_id, endpoint)
+    bypass_catalog_caches(monkeypatch)
+
+
 def _published_task_documentation() -> dict[str, dict[str, str]]:
-    manifest = json.loads(neurometric.MANIFEST_PATH.read_text(encoding="utf-8"))
-    return {
-        row["id"]: row["documentation"]
-        for row in manifest["models"]
-        if row.get("documentation") and row.get("routable", True)
-    }
+    return {row["id"]: row["documentation"] for row in PINNED_ROWS if row.get("documentation")}
 
 
 def test_canonical_contract_parser_preserves_exact_price_and_capabilities() -> None:
@@ -216,10 +232,21 @@ def test_neurometric_fetch_discovers_new_models_and_runs_canary(
     ]
     for row in task_rows:
         row["pricing"].update({"input": "0.010000", "output": "0.100000"})
+    structured_decisions = _model_row("neurometric/structured-decisions")
+    structured_decisions["pricing"].update({"input": "0.030000", "output": "0.000000"})
+    structured_decisions["capabilities"]["tools"] = False
+    structured_decisions["documentation"] = {
+        "description": "Choose one caller-supplied label.",
+        "input_format": "Supply state, question and options as JSON in a user message.",
+        "output_format": 'A JSON object with an answer label; output tokens are free.',
+        "example_input": '{"state":"Duplicate invoice","question":"Team?","options":["billing","sales"]}',
+        "example_output": '{"answer":"billing"}',
+    }
     rows = [
         _model_row(),
         document_extraction,
         *task_rows,
+        structured_decisions,
         _model_row("neurometric/tool-choice"),
         _model_row("qwen/qwen3-vl-8b-instruct"),
     ]
@@ -271,6 +298,7 @@ def test_neurometric_fetch_discovers_new_models_and_runs_canary(
         neurometric.CONVERSATION_SUMMARY_MODEL,
         neurometric.CLASSIFICATION_ROUTER_MODEL,
         "neurometric/tool-choice",
+        "neurometric/structured-decisions",
         "qwen/qwen3-vl-8b-instruct",
     }
     assert set(canaried) == set(result.prices)
@@ -298,6 +326,19 @@ def test_neurometric_fetch_discovers_new_models_and_runs_canary(
             documentation
         )
     assert neurometric._LIVE_CANARY_OK is True
+    # A new task needs no hard-coded model registration, including input-only pricing.
+    model_id = structured_decisions["id"]
+    assert model_id not in neurometric.EXPECTED_MODELS
+    assert result.prices[model_id].prompt_micro_per_m == 30_000
+    assert result.prices[model_id].completion_micro_per_m == 0
+    neurometric.write_provider_manifest(result)
+    manifest = json.loads(neurometric.MANIFEST_PATH.read_text(encoding="utf-8"))
+    published = next(row for row in manifest["models"] if row["id"] == model_id)
+    assert published["routable"] is True
+    assert published["input_token_price_per_m"] == 30_000
+    assert published["output_token_price_per_m"] == 0
+    assert published["documentation"] == structured_decisions["documentation"]
+    assert "tools" not in published["supported_features"]
 
 
 def test_neurometric_manifest_tombstones_only_after_repeated_fresh_miss(
@@ -306,6 +347,7 @@ def test_neurometric_manifest_tombstones_only_after_repeated_fresh_miss(
 ) -> None:
     manifest_path = tmp_path / "neurometric.json"
     raw = json.loads(neurometric.MANIFEST_PATH.read_text(encoding="utf-8"))
+    raw["models"] = copy.deepcopy(PINNED_ROWS)
     manifest_path.write_text(json.dumps(raw) + "\n", encoding="utf-8")
     target_id = "qwen/qwen3-vl-8b-thinking"
     existing_ids = {
@@ -361,6 +403,7 @@ def test_neurometric_manifest_tombstones_only_after_repeated_fresh_miss(
     assert second_rows[target_id]["routable_reason"] == "delisted-upstream"
 
 
+@pytest.mark.usefixtures("neurometric_routes")
 def test_neurometric_catalog_routes_are_prepaid_only_and_no_store() -> None:
     provider = PROVIDERS["neurometric"]
     assert provider.supports_prepaid is True
@@ -400,6 +443,7 @@ def test_neurometric_catalog_routes_are_prepaid_only_and_no_store() -> None:
     assert "tool_choice" in tool_choice.supported_parameters
 
 
+@pytest.mark.usefixtures("neurometric_routes")
 def test_neurometric_public_api_exposes_provider_and_exact_endpoint(client: Any) -> None:
     providers = {
         row["id"]: row for row in client.get("/v1/providers").json()["data"]
@@ -475,6 +519,7 @@ def test_neurometric_public_api_exposes_provider_and_exact_endpoint(client: Any)
         assert route["pricing"]["completion"] == "0.0000001055"
 
 
+@pytest.mark.usefixtures("neurometric_routes")
 def test_neurometric_task_model_page_shows_usage_guidance(client: Any) -> None:
     for model_id, documentation in _published_task_documentation().items():
         response = client.get(f"/models/{model_id}")
@@ -486,6 +531,7 @@ def test_neurometric_task_model_page_shows_usage_guidance(client: Any) -> None:
             assert str(escape(value)) in response.text
 
 
+@pytest.mark.usefixtures("neurometric_routes")
 def test_neurometric_page_and_api_follow_updated_guidance(client, monkeypatch) -> None:
     model_id = neurometric.GROUNDED_DOCUMENT_QA_MODEL
     documentation = ModelDocumentation(
@@ -495,12 +541,9 @@ def test_neurometric_page_and_api_follow_updated_guidance(client, monkeypatch) -
         example_input='{"question":"What changed?", "chunks":[]}',
         example_output='{"answer":null,"citations":[]}',
     )
+    # Model edits are deployed in a new process; neurometric_routes computes
+    # the public projection uncached for this test-only catalog.
     monkeypatch.setitem(MODELS, model_id, replace(MODELS[model_id], documentation=documentation))
-    # Model edits are deployed in a new process; bypass the old projection
-    # without caching this test-only catalog in the shared test process.
-    monkeypatch.setattr(
-        catalog_routes, "_public_catalog_payload", catalog_routes._public_catalog_payload.__wrapped__
-    )
     page = client.get(f"/models/{model_id}")
     assert page.status_code == 200
     for value in documentation.to_dict().values():
@@ -511,6 +554,7 @@ def test_neurometric_page_and_api_follow_updated_guidance(client, monkeypatch) -
     assert models[model_id]["trustedrouter"]["documentation"] == documentation.to_dict()
 
 
+@pytest.mark.usefixtures("neurometric_routes")
 def test_neurometric_text_to_sql_is_published_with_exact_pricing(client: Any) -> None:
     model_id = "neurometric/text-to-sql"
     endpoint = MODEL_ENDPOINTS[f"{model_id}@neurometric/prepaid"]
@@ -533,6 +577,37 @@ def test_neurometric_text_to_sql_is_published_with_exact_pricing(client: Any) ->
     assert "SCHEMA" in page.text
     assert "QUESTION" in page.text
     assert "enterprise_customer_count" in page.text
+
+
+@pytest.mark.usefixtures("neurometric_routes")
+def test_structured_decisions_public_catalog_applies_existing_retail_policy_and_guidance(
+    client: Any,
+) -> None:
+    model_id = "neurometric/structured-decisions"
+    endpoint = MODEL_ENDPOINTS[f"{model_id}@neurometric/prepaid"]
+    assert endpoint.upstream_id == model_id
+    assert endpoint.usage_type == "Credits"
+    assert MODELS[model_id].context_length == 65536
+    assert endpoint.prompt_price_microdollars_per_million_tokens == 31650
+    # Preserve the platform's existing retail floor; the upstream price stays zero.
+    assert endpoint.completion_price_microdollars_per_million_tokens == 10000
+    response = client.get(f"/v1/models/{model_id}/endpoints")
+    assert response.status_code == 200
+    assert len(response.json()["data"]) == 1
+    published = response.json()["data"][0]
+    assert published["pricing"]["prompt"] == "0.00000003165"
+    assert published["pricing"]["completion"] == "0.00000001"
+    assert "response_format" in published["supported_parameters"]
+    assert "tools" not in published["supported_parameters"]
+    listing = client.get("/v1/models")
+    assert listing.status_code == 200
+    assert model_id in {row["id"] for row in listing.json()["data"]}
+    page = client.get(f"/models/{model_id}")
+    assert page.status_code == 200
+    assert "Structured Decisions" in page.text
+    assert "options" in page.text
+    assert "billing" in page.text
+    assert "only input tokens are billed" in page.text
 
 
 def test_neurometric_hourly_refresh_and_secret_wiring_are_complete() -> None:

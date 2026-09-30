@@ -7,11 +7,9 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
-import hashlib
 import json
 import re
-import struct
-from typing import Any, TypeVar, cast
+from typing import Any, TypeVar
 
 import httpx
 
@@ -22,7 +20,6 @@ from trusted_router.storage_models import (
     SyntheticProbeSample,
     SyntheticRollup,
 )
-from trusted_router.synthetic.rollups import ROLLUP_HISTOGRAM_FIELDS, compact_histogram
 from trusted_router.types import UsageType
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -516,60 +513,3 @@ def _client_event(row: dict[str, Any]) -> dict[str, Any]:
 
 def _optional_int(value: Any) -> int | None:
     return int(value) if value is not None else None
-
-
-def stable_rows_fingerprint(rows: list[Any], *, grace_seconds: int = 30) -> tuple[int, str]:
-    """Fingerprint only rows old enough to have drained from the outbox."""
-    cutoff = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=max(0, grace_seconds))
-    stable: list[dict[str, Any]] = []
-    for row in rows:
-        payload = (
-            dataclasses.asdict(cast(Any, row))
-            if dataclasses.is_dataclass(row)
-            else dict(row)
-        )
-        # Rebuild timestamps are expected to differ across stores. Raw tenant
-        # and key identifiers are intentionally replaced by opaque surrogates
-        # in ClickHouse, so they are not parity fields either.
-        for volatile in ("updated_at", "workspace_id", "key_hash"):
-            payload.pop(volatile, None)
-        # Synthetic rollup histograms are bucketed on write, but a Bigtable
-        # row for an already-closed period keeps its pre-bucketing exact keys
-        # (it is never rewritten) while the ClickHouse rebuild of the same
-        # period is bucketed. Fold both to the same shape before comparing.
-        for field in ROLLUP_HISTOGRAM_FIELDS:
-            histogram = payload.get(field)
-            if not isinstance(histogram, dict):
-                continue
-            try:
-                payload[field] = compact_histogram(histogram)
-            except (TypeError, ValueError):
-                # A count that is not an integer cannot be folded; compare the
-                # row as stored rather than turning a shadow read into a raise.
-                continue
-        speed = payload.get("speed_tokens_per_second")
-        if speed is not None and "input_tokens" in payload:
-            # The long-lived provider benchmark table intentionally stores
-            # this one metric as Float32. Canonicalize the Bigtable value to
-            # the same representation before comparing the two stores.
-            payload["speed_tokens_per_second"] = struct.unpack(
-                "!f",
-                struct.pack("!f", float(speed)),
-            )[0]
-        created_at = payload.get("created_at") or payload.get("period_start")
-        if created_at:
-            try:
-                parsed = dt.datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
-            except ValueError:
-                parsed = cutoff
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=dt.UTC)
-            if parsed > cutoff:
-                continue
-        stable.append(payload)
-    canonical_rows = sorted(
-        json.dumps(row, sort_keys=True, separators=(",", ":"), default=str)
-        for row in stable
-    )
-    encoded = "\n".join(canonical_rows)
-    return len(stable), hashlib.sha256(encoded.encode("utf-8")).hexdigest()

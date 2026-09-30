@@ -156,6 +156,7 @@ PROVIDER_SLUGS = [
     "arcee",
     "inception",
     "io_net",
+    "tencent",
     "scaleway",
     "regolo",
     "privatemode",
@@ -197,6 +198,7 @@ _PRICING_RESULT_PROVIDER_ALIASES: dict[str, tuple[str, ...]] = {
     "aion_labs": ("aion-labs",),
     "vercel_ai_gateway": ("vercel-ai-gateway",),
     "io_net": ("io-net",),
+    "tencent": ("tencent",),
     "near_ai": ("near-ai",),
 }
 
@@ -320,8 +322,17 @@ def _held_route(model: dict[str, Any], endpoint: Any, held: dict[str, list[str]]
     return f"{model.get('id')} [{provider}:{endpoint.get('tag') or ''}:{endpoint.get('model_id')}]"
 
 
+# The keys a provider's own price sets in an endpoint block (see
+# _price_to_pricing_block). Snapshots published before 2026-09-28 also carry
+# OpenRouter's other keys (discount, web_search, input_cache_write, ...), which
+# nothing reads and the merge no longer publishes; a hold compares prices only.
+_PROVIDER_PRICING_KEYS = frozenset(
+    {"prompt", "completion", "input_cache_read", "prompt_tiers", "completion_tiers"}
+)
+
+
 def _held_endpoint_pricing(snapshot: Any, held: dict[str, list[str]]) -> dict[str, list[str]]:
-    """Every held provider's snapshot endpoint pricing block, grouped by route.
+    """Every held provider's snapshot endpoint prices, grouped by route.
 
     Nothing stops two endpoints from sharing a route key, so each key keeps
     all of its pricing blocks rather than the last one.
@@ -333,8 +344,12 @@ def _held_endpoint_pricing(snapshot: Any, held: dict[str, list[str]]) -> dict[st
             continue
         for endpoint in model.get("endpoints") or []:
             route = _held_route(model, endpoint, held)
-            if route is not None:
-                out.setdefault(route, []).append(json.dumps(endpoint.get("pricing"), sort_keys=True))
+            if route is None:
+                continue
+            pricing = endpoint.get("pricing")
+            if isinstance(pricing, dict):
+                pricing = {key: pricing[key] for key in sorted(pricing) if key in _PROVIDER_PRICING_KEYS}
+            out.setdefault(route, []).append(json.dumps(pricing, sort_keys=True))
     return {route: sorted(blocks) for route, blocks in out.items()}
 
 
@@ -397,19 +412,66 @@ def _drop_unpublished_held_routes(
     return refused
 
 
+def _published_disabled_held_routes(
+    baseline: Path, snapshot: dict[str, Any], held: dict[str, list[str]]
+) -> set[str]:
+    """Prove which published snapshot routes were already excluded at runtime.
+
+    Use the baseline manifest, never fresh discovery: a new canary failure
+    must not authorize a change to an otherwise exact price hold. Absence or
+    unreadable evidence is not proof that a previously published route is dark.
+    """
+    disabled_models: dict[str, set[str]] = {}
+    for slug in held:
+        manifest = getattr(_import_provider(slug), "MANIFEST_PATH", None)
+        if manifest is None:
+            continue
+        try:
+            raw = json.loads((baseline / PROVIDER_MANIFEST_DIR.name / Path(manifest).name).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        provider_slugs = _PRICING_RESULT_PROVIDER_ALIASES.get(slug, (slug,))
+        rows = raw.get("models") if isinstance(raw, dict) and raw.get("provider") in provider_slugs else None
+        if isinstance(rows, list):
+            disabled_models[slug] = {
+                row["id"] for row in rows
+                if isinstance(row, dict) and isinstance(row.get("id"), str) and row.get("routable") is False
+            }
+
+    disabled_routes: set[str] = set()
+    for model in snapshot.get("models") or []:
+        if not isinstance(model, dict) or not isinstance(model.get("id"), str):
+            continue
+        for endpoint in model.get("endpoints") or []:
+            route = _held_route(model, endpoint, held)
+            if route is None:
+                continue
+            provider = endpoint["tr_provider_slug"]
+            if model["id"] in disabled_models.get(_result_slug_for_provider(provider), set()) or provider_model_retired(
+                provider, model["id"], endpoint.get("model_id")
+            ):
+                disabled_routes.add(route)
+    return disabled_routes
+
+
 def _held_routes_changed(baseline: Path, held: dict[str, list[str]]) -> list[str]:
     """Held providers' routes that differ from what was published, if any.
 
     A hold may only publish when it kept every held provider exactly as
-    published: the same snapshot endpoints with the same full pricing blocks
-    (cached input and tiers included), and byte-identical manifests. Anything
-    else is reported so the run can fall back to publishing nothing.
+    published: the same snapshot endpoints with the same prices (prompt,
+    completion, cached input and tiers), and byte-identical manifests. Only
+    removal of an already disabled/retired route is safe: runtime had already
+    excluded it, and stale recovery must not revive it to satisfy this guard.
+    Anything else is reported so the run can fall back to publishing nothing.
     """
-    published = _held_endpoint_pricing(
-        json.loads((baseline / SNAPSHOT_PATH.name).read_text(encoding="utf-8")), held
-    )
+    snapshot = json.loads((baseline / SNAPSHOT_PATH.name).read_text(encoding="utf-8"))
+    published = _held_endpoint_pricing(snapshot, held)
     now = _held_endpoint_pricing(json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8")), held)
-    changed = [route for route in sorted(set(published) | set(now)) if published.get(route) != now.get(route)]
+    disabled = _published_disabled_held_routes(baseline, snapshot, held)
+    changed = [
+        route for route in sorted(set(published) | set(now))
+        if published.get(route) != now.get(route) and not (route in disabled and route not in now)
+    ]
     for slug in held:
         manifest_path_value = getattr(_import_provider(slug), "MANIFEST_PATH", None)
         if manifest_path_value is None:
@@ -1143,11 +1205,13 @@ def _merge_snapshot(
         # tier, a single spurious $0 would otherwise win `min()` and zero
         # the model, freezing the whole refresh via the spike watchdog.
         priced_by_slug = {slug: price for slug, price in by_slug.items() if not _is_unpriced(price)}
-        new_pricing = dict(new_model.get("pricing") or {})
         if priced_by_slug:
             # Model-level headline pricing = the cheapest *positively-priced*
             # provider-direct tier (matches OR's convention and what
-            # /v1/models top-level pricing should show).
+            # /v1/models top-level pricing should show). It is that
+            # provider's block and nothing else: OpenRouter's aggregate also
+            # carries rates (cache writes, web search, time-of-day overrides)
+            # set by providers TR does not route to.
             cheapest_slug, cheapest = min(
                 priced_by_slug.items(),
                 key=lambda item: (
@@ -1156,8 +1220,7 @@ def _merge_snapshot(
                     item[0],
                 ),
             )
-            new_pricing.update(_price_to_pricing_block(cheapest))
-            new_model["pricing"] = new_pricing
+            new_model["pricing"] = _price_to_pricing_block(cheapest)
             # Tag pricing_source as self-healed if ANY of the slugs that
             # priced this model went through the LLM rewrite.
             new_model["pricing_source"] = _endpoint_pricing_source(cheapest_slug, healed_slugs)
@@ -1171,6 +1234,7 @@ def _merge_snapshot(
             or_price = _or_pricing_to_micro_per_m(or_model.get("pricing") or {})
             if or_price is None or _is_unpriced(or_price):
                 continue
+            new_pricing = dict(new_model.get("pricing") or {})
             new_pricing.update(_price_to_pricing_block(or_price))
             new_model["pricing"] = new_pricing
             new_model["pricing_source"] = "openrouter_fallback"
@@ -1204,9 +1268,13 @@ def _merge_snapshot(
                 # provider-direct price we can't bill the route, so listing
                 # it is misleading (and a $0 here would understate cost).
                 continue
-            new_ep_pricing = dict(new_ep.get("pricing") or {})
-            new_ep_pricing.update(_price_to_pricing_block(ep_price))
-            new_ep["pricing"] = new_ep_pricing
+            # The provider's block and nothing else, as for the headline above.
+            # OpenRouter's listing of this endpoint can carry rates the
+            # provider's own price does not state -- a cached-input discount
+            # most of all -- and ingest bills `input_cache_read` from this
+            # block, as does the stale-snapshot fallback when the provider's
+            # next refresh fails.
+            new_ep["pricing"] = _price_to_pricing_block(ep_price)
             new_ep["pricing_source"] = _endpoint_pricing_source(ep_slug, healed_slugs)
             # If this provider's config module exports an
             # UPSTREAM_ID_MAP, override the endpoint's model_id with

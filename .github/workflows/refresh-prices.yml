@@ -1,4 +1,4 @@
-# Hourly upstream-price refresh.
+# Upstream-price refresh.
 #
 # Pulls each keyed provider's published prices, runs a self-healing
 # parser layer (LLM-rewrites the parser when validation fails), and
@@ -14,19 +14,25 @@
 #     LLM-generated parser before it's persisted to disk.
 #   * The runtime (TR control plane / enclave) does NOT call any
 #     pricing endpoint. It reads prices from the committed snapshot
-#     at startup. If every upstream is down for an hour, last hour's
-#     prices stay live.
+#     at startup. If every upstream is down, the last published prices
+#     stay live.
 
 name: Refresh upstream prices
 
 on:
   schedule:
-    # Top of every hour, UTC.
-    - cron: "0 * * * *"
+    # Hourly at :37. GitHub delays schedule events under load, names the
+    # start of every hour as a high-load time, and may discard queued runs.
+    # Moving the minute does not restore an hourly cadence: from 2026-09-21
+    # to 09-27 this cron (at :00) and provider-catalog-health.yml's (at :17)
+    # each started 5 or 6 scheduled runs a day.
+    - cron: "37 * * * *"
   workflow_dispatch: {}
 
-# Belt-and-suspenders: cron once-per-hour scheduling already prevents
-# overlap, but if a manual run kicks off mid-cron-fire, this serializes.
+# One run at a time: a successful run takes about 30-45 minutes, and a run
+# re-dispatches this workflow when main advances. GitHub keeps one pending
+# run per group; a newer run replaces an older pending one, never the one
+# in progress.
 concurrency:
   group: refresh-prices
   cancel-in-progress: false
@@ -176,6 +182,7 @@ jobs:
                       DECART_API_KEY:trustedrouter-decart-api-key \
                       NVIDIA_NIM_API_KEY:trustedrouter-nvidia-nim-api-key \
                       IONET_API_KEY:trustedrouter-io-net-api-key \
+                      TENCENT_API_KEY:trustedrouter-tencent-tokenhub-api-key \
                       SCALEWAY_SECRET_KEY:trustedrouter-scaleway-api-key \
                       REGOLO_API_KEY:trustedrouter-regolo-api-key \
                       PRIVATEMODE_API_KEY:trustedrouter-privatemode-api-key \
@@ -313,7 +320,11 @@ jobs:
           uv run mypy
           # Match CI's file-grouped workers: keep the full suite, avoid a
           # 35-minute serial pass that makes publication miss its main head.
-          uv run pytest -q -n 4 --dist loadgroup
+          # Like CI, leave out provider_health: live provider state (a host
+          # still serving a model) is reported hourly by
+          # provider-catalog-health.yml. One provider delisting a model must
+          # not stop every other provider's prices from publishing.
+          uv run pytest -q -n 4 --dist loadgroup -m "not provider_health"
 
       - name: Commit, verify, and push if changed
         run: |

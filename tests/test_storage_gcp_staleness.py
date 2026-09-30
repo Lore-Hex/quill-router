@@ -57,7 +57,7 @@ def test_read_only_views_request_their_exact_bounded_staleness(
     read: Callable[[Any], Any],
     expected: dict[str, Any],
 ) -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
 
     read(store)
 
@@ -65,7 +65,7 @@ def test_read_only_views_request_their_exact_bounded_staleness(
 
 
 def test_earnings_summary_defaults_to_strong_for_transfer_results() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
 
     store.earnings_summary("user-transfer")
 
@@ -73,7 +73,7 @@ def test_earnings_summary_defaults_to_strong_for_transfer_results() -> None:
 
 
 def test_lifetime_topup_defaults_to_strong_for_write_verification() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
 
     store.get_lifetime_topup_microdollars("user-backfill")
 
@@ -81,7 +81,7 @@ def test_lifetime_topup_defaults_to_strong_for_write_verification() -> None:
 
 
 def test_non_display_and_correctness_sensitive_reads_remain_strong() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
 
     cases: list[tuple[Callable[[], Any], list[dict[str, Any]]]] = [
         # The missing typed authorization falls back to the legacy entity row;

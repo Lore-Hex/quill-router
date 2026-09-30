@@ -537,6 +537,7 @@ def trust_html(
         <h1>Verify that the hosted API runs the published open-source workload.</h1>
         <p><code>{api_hostname}</code> is the prompt path. Public TLS terminates inside the measured GCP Confidential Space workload. The TrustedRouter control plane does not serve production inference routes and does not receive prompt or output bodies.</p>
         <p>Clients can fetch the live attestation, verify issuer/audience/digest, and compare the measured image digest with the release data published here.</p>
+        <p>Preparing a security review? <a href="{control_origin}/token-exchange/security">Get the Token Exchange security deck and whitepaper.</a></p>
       </div>
       <aside class="panel">
         <h2>Current GCP Workload</h2>

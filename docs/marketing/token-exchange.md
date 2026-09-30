@@ -2,6 +2,27 @@
 
 Public page: https://trustedrouter.com/token-exchange
 
+Security resources: https://trustedrouter.com/token-exchange/security
+
+The security page uses the same email gate and POST endpoint with
+`resource: "security"` (the default remains `"brochure"`). Its prebuilt ZIP
+contains the owner's original 18-slide security deck and 19-page whitepaper,
+supplied September 28, 2026. No PDF text is rewritten. SHA-256 values:
+
+- `TrustedRouter-Security-Deck.pdf`: `8108d1381a5ad0ff18936e1e55b0c332db829857c8d9fd21545f1befb079f55d`
+- `TrustedRouter-Security-Whitepaper.pdf`: `1681a6726fa753f89a4630cf9065c3c414070a2a06c222e0b21cae12769a7232`
+
+Only cover previews are static assets. The ZIP stays under `data/enterprise`;
+downloads are private/no-store and require an accepted inquiry. The form is
+explicit about security-review follow-up. Syntax validation does not verify
+mailbox ownership. No email is sent to the visitor. The allowlist and shared
+rate limit prevent arbitrary file selection or a per-resource limit bypass.
+`acquisition.enterprise_security_pack_delivered` records delivery separately
+from the existing brochure funnel, without the submitted address. The security
+page is linked from Token Exchange, Security, Trust, and the core sitemap.
+This is a marketing gate, not an NDA or private document vault; the documents
+are included in the public source, as is the existing brochure.
+
 The primary conversion is a request for the nine-page Token Exchange
 brochure. Secondary calls to action open Joseph's existing sales calendar and
 `enterprise@trustedrouter.com`. The page is in the core sitemap, resource hub

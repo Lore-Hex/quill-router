@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import datetime as dt
 import hashlib
 from typing import Any
 from unittest.mock import patch
@@ -9,6 +10,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from fastapi.testclient import TestClient
 
+from trusted_router import storage_rate_limits
 from trusted_router.scopes import DEFAULT_DELEGATED_SCOPES
 from trusted_router.storage import STORE, OAuthApp
 
@@ -160,16 +162,23 @@ def test_stripe_round_trip_contains_only_consent_authority(client: TestClient) -
 def test_token_rate_limit_has_retry_after(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Lower the cap instead of reaching it.
+    """Lower the cap instead of reaching it, at one pinned instant.
 
-    Two earlier versions of this test were flaky for different reasons: 30
+    Earlier versions of this test were flaky for different reasons: 30
     sequential HTTP calls raced the limiter's own 60s window on a loaded CI
     shard, and pre-filling the bucket in-process depended on reconstructing
     the route's subject string, which is derived from the app object's id.
-    Lowering the cap needs neither the wall clock nor the subject.
+    Lowering the cap avoids the subject, but even two calls straddle a
+    wall-clock minute sometimes: the window tumbles on the minute, so the
+    limiter's clock is pinned too.
     """
     from trusted_router.routes import helpers, oauth_keys
 
+    monkeypatch.setattr(
+        storage_rate_limits,
+        "utcnow",
+        lambda: dt.datetime(2026, 9, 28, 12, 0, 30, tzinfo=dt.UTC),
+    )
     helpers._CLIENT_EVENT_RATE_LIMITS.reset()
     monkeypatch.setattr(oauth_keys, "OAUTH_TOKEN_RATE_LIMIT", 1)
 

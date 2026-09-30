@@ -8,6 +8,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/_lib.sh
 source "${SCRIPT_DIR}/_lib.sh"
+# shellcheck source=scripts/deploy/_retired_soak.sh
+source "${SCRIPT_DIR}/_retired_soak.sh"
 
 [ -n "${IMAGE:-}" ] || {
   echo "ERROR: IMAGE is required" >&2
@@ -39,12 +41,9 @@ jobs=(
   "us-central1:trusted-router-synthetic-us-central1:health"
   "europe-west4:trusted-router-synthetic-europe-west4:health"
   "us-central1:trusted-router-throughput-us-central1:worker"
-  "us-central1:trusted-router-spend-lease-soak-us-central1:worker"
   "us-central1:trusted-router-image-generation-us-central1:worker"
   "us-central1:trusted-router-video-generation-us-central1:worker"
 )
-
-spend_lease_probe_enabled=""
 
 for entry in "${jobs[@]}"; do
   IFS=: read -r job_region job_name job_kind <<<"$entry"
@@ -67,18 +66,6 @@ for entry in "${jobs[@]}"; do
     exit 1
   fi
 
-  if [ "$job_name" = "trusted-router-spend-lease-soak-us-central1" ]; then
-    spend_lease_probe_enabled="$(jq -r '
-      [.spec.template.spec.template.spec.containers[0].env[]?
-        | select(.name == "TR_SPEND_LEASE_SOAK_PROBE_ENABLED") | .value][0] // "false"
-    ' <<<"$before")"
-    if [ "$spend_lease_probe_enabled" != "true" ] && \
-       [ "$spend_lease_probe_enabled" != "false" ]; then
-      echo "ERROR: ${job_name} has invalid TR_SPEND_LEASE_SOAK_PROBE_ENABLED=${spend_lease_probe_enabled}" >&2
-      exit 1
-    fi
-  fi
-
   sensitive_before="$(jq -cS '{
     serviceAccountName: (.spec.template.spec.template.spec.serviceAccountName // null),
     vpcAccess: (.spec.template.spec.template.spec.vpcAccess // null),
@@ -90,7 +77,9 @@ for entry in "${jobs[@]}"; do
 
   # Image-only refreshes still reconcile non-secret routing configuration.
   # Otherwise retired gateways survive indefinitely in an old job env var.
-  env_updates="^|^TR_RELEASE=${release}|TR_REGIONS=${TR_REGIONS}"
+  # Bigtable analytics are retired: every job runs spanner-clickhouse and
+  # carries none of the retired generation-table or read-mode settings.
+  env_updates="^|^TR_RELEASE=${release}|TR_REGIONS=${TR_REGIONS}|TR_STORAGE_BACKEND=spanner-clickhouse"
   if [ "$job_kind" = "health" ]; then
     env_updates="${env_updates}|TR_SYNTHETIC_CONTROL_PLANE_HEALTH_URL=https://trustedrouter.com"
   fi
@@ -100,6 +89,7 @@ for entry in "${jobs[@]}"; do
     --region "$job_region" \
     --image "$IMAGE" \
     --update-env-vars "$env_updates" \
+    --remove-env-vars TR_BIGTABLE_INSTANCE_ID,TR_BIGTABLE_GENERATION_TABLE,TR_BIGTABLE_APP_PROFILE_ID,TR_ANALYTICS_READ_MODE,TR_BIGTABLE_MIRROR_WRITES_ENABLED \
     --quiet >/dev/null
 
   after="$(gc run jobs describe "$job_name" --region "$job_region" --format=json)"
@@ -117,38 +107,9 @@ for entry in "${jobs[@]}"; do
   fi
 done
 
-[ -n "$spend_lease_probe_enabled" ] || {
-  echo "ERROR: spend-lease soak job was not inspected" >&2
-  exit 1
-}
-
-# Keep scheduler state aligned with the inherited job configuration. A
-# disabled worker that exits immediately still consumes a Cloud Run execution
-# every minute and can emit platform startup failures during overlapping cold
-# starts. This is the only scheduler mutation allowed by the legacy image-only
-# refresh path.
-spend_lease_scheduler_name="trusted-router-spend-lease-soak-us-central1-every-minute"
-spend_lease_scheduler_state="$(
-  gc scheduler jobs describe "$spend_lease_scheduler_name" \
-    --location us-central1 \
-    --format='value(state)'
-)"
-if [ "$spend_lease_probe_enabled" = "true" ]; then
-  if [ "$spend_lease_scheduler_state" = "PAUSED" ]; then
-    gc scheduler jobs resume "$spend_lease_scheduler_name" \
-      --location us-central1 \
-      --quiet >/dev/null
-  elif [ "$spend_lease_scheduler_state" != "ENABLED" ]; then
-    echo "ERROR: unexpected spend-lease scheduler state: ${spend_lease_scheduler_state:-empty}" >&2
-    exit 1
-  fi
-elif [ "$spend_lease_scheduler_state" = "ENABLED" ]; then
-  gc scheduler jobs pause "$spend_lease_scheduler_name" \
-    --location us-central1 \
-    --quiet >/dev/null
-elif [ "$spend_lease_scheduler_state" != "PAUSED" ]; then
-  echo "ERROR: unexpected spend-lease scheduler state: ${spend_lease_scheduler_state:-empty}" >&2
-  exit 1
-fi
+# The deploy takes this path for every release until the split billing
+# service exists, so the retired soak schedule and job are removed here too;
+# they are pilot residue, not a refreshed job.
+remove_retired_spend_lease_soak
 
 log "synthetic image refresh complete; identities, networks, and secrets unchanged"

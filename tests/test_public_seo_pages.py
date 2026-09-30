@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.fixture_routes import serve_on_fixture_route
 from trusted_router.dashboard import (
     MODEL_COMPARE_PAGE_SIZE,
     OPENROUTER_PAID_LANDING_PATHS,
@@ -1146,7 +1147,14 @@ def test_public_soc2_and_hipaa_readiness_pages_are_explicitly_not_reports(
     assert "signed" in hipaa_payload["agent_instruction"]
 
 
-def test_provider_detail_page_links_served_models(client: TestClient) -> None:
+def test_provider_detail_page_links_served_models(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A provider page links the models the provider serves; MiniMax serves M3
+    # here on a fixture route, whatever it lists today.
+    serve_on_fixture_route(
+        monkeypatch, "minimax/minimax-m3", "minimax", author="minimax", upstream_id="MiniMax-M3"
+    )
     response = client.get("/providers/minimax")
 
     assert response.status_code == 200
@@ -1742,6 +1750,7 @@ def test_retired_model_pages_redirect_to_current_catalog_entries(client: TestCli
         ("zai-org/glm-4.5", "z-ai/glm-4.5"),
         ("nvidia/nemotron-120b-a12b", "nvidia/nemotron-3-120b-a12b"),
         ("lightning-ai/nemotron-3-nano-omni-30b-a3b-reasoning", "nvidia/nemotron-3-nano-omni-reasoning-30b-a3b"),
+        ("MiniMaxAI/MiniMax-M2.5/providers", "minimax/minimax-m2.5/providers"),
     ],
 )
 def test_model_aliases_redirect_once_to_existing_pages(
@@ -1764,16 +1773,53 @@ def test_model_aliases_redirect_once_to_existing_pages(
 
 
 @pytest.mark.parametrize("method", ["GET", "HEAD"])
-@pytest.mark.parametrize("suffix", ["", "/pricing"])
-@pytest.mark.usefixtures("isolated_comparison_catalog")
-def test_model_alias_does_not_redirect_to_a_missing_target(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, method: str, suffix: str,
+def test_one_route_qwen_pricing_page_redirects_to_model_overview(
+    client: TestClient,
+    method: str,
+) -> None:
+    response = client.request(
+        method,
+        "/models/qwen/qwen-3-8-27b/pricing",
+        follow_redirects=False,
+    )
+    assert response.status_code == 301
+    assert response.headers["location"] == "/models/qwen/qwen-3-8-27b"
+    assert client.request(method, response.headers["location"]).status_code == 200
+
+
+def test_one_route_qwen_pricing_redirect_requires_live_overview(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from trusted_router.routes import public
 
-    monkeypatch.delitem(public.MODELS, "xiaomimimo/mimo-v2-flash", raising=False)
+    monkeypatch.delitem(public.MODELS, "qwen/qwen-3-8-27b")
+    response = client.get(
+        "/models/qwen/qwen-3-8-27b/pricing",
+        follow_redirects=False,
+    )
+    assert response.status_code == 404
+    assert "location" not in response.headers
+
+
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+@pytest.mark.parametrize("suffix", ["", "/pricing"])
+@pytest.mark.parametrize(
+    ("requested", "canonical"),
+    [
+        ("xiaomi/mimo-v2-flash", "xiaomimimo/mimo-v2-flash"),
+        ("MiniMaxAI/MiniMax-M2.5", "minimax/minimax-m2.5"),
+    ],
+)
+@pytest.mark.usefixtures("isolated_comparison_catalog")
+def test_model_alias_does_not_redirect_to_a_missing_target(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, method: str, suffix: str,
+    requested: str, canonical: str,
+) -> None:
+    from trusted_router.routes import public
+
+    monkeypatch.delitem(public.MODELS, canonical, raising=False)
     response = client.request(
-        method, f"/models/xiaomi/mimo-v2-flash{suffix}", follow_redirects=False,
+        method, f"/models/{requested}{suffix}", follow_redirects=False,
     )
     assert response.status_code == 404
     assert "location" not in response.headers
@@ -1795,8 +1841,13 @@ def test_model_normalization_preserves_unknown_and_invalid_pair_404s(
 
 
 def test_model_comparison_normalizes_alias_case_and_order_in_one_redirect(
-    client: TestClient,
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Both models are carried here on fixture routes, whoever lists them today.
+    serve_on_fixture_route(monkeypatch, "z-ai/glm-4.5", "zai", author="zai")
+    serve_on_fixture_route(
+        monkeypatch, "nvidia/nemotron-3-ultra-550b-a55b", "baseten", author="baseten"
+    )
     response = client.get(
         "/compare/models/Zai-Org/GLM-4.5/vs/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B",
         follow_redirects=False,
@@ -1863,7 +1914,11 @@ def test_mistral_alias_comparison_redirects_directly_to_canonical_order(
     assert client.get(target, follow_redirects=False).status_code == 200
 
 
-def test_native_mixed_case_model_page_remains_canonical(client: TestClient) -> None:
+def test_native_mixed_case_model_page_remains_canonical(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A provider's native mixed-case id, carried on a fixture route.
+    serve_on_fixture_route(monkeypatch, "Sao10K/L3-8B-Stheno-v3.2", "novita", author="novita")
     path = "/models/Sao10K/L3-8B-Stheno-v3.2"
     response = client.get(path, follow_redirects=False)
     assert response.status_code == 200

@@ -42,6 +42,7 @@ from trusted_router.catalog import (
     endpoints_for_model,
     provider_to_openrouter_shape,
 )
+from trusted_router.catalog_data import ModelEndpoint
 from trusted_router.catalog_ingest import (
     _EXPIRED_PROVIDER_MANIFEST,
     _provider_manifest_valid_until,
@@ -130,9 +131,13 @@ def test_wave3_ready_and_pending_providers_are_fail_closed() -> None:
 
 def test_wave3_manifests_publish_only_canaried_priced_chat_routes() -> None:
     endpoint_providers = {endpoint.provider for endpoint in MODEL_ENDPOINTS.values()}
-    assert ROUTABLE_READY <= endpoint_providers
-    assert "sakana" in endpoint_providers
     assert "krea" not in endpoint_providers
+    # A ready provider publishes routes while its manifest has a canaried,
+    # priced row; one the refresh tombstoned entirely is simply not expected.
+    for module in (*MODULES, perplexity):
+        rows = json.loads(module.MANIFEST_PATH.read_text(encoding="utf-8"))["models"]
+        live_rows = [row for row in rows if row.get("routable") is not False]
+        assert module.SLUG in endpoint_providers or not live_rows, module.SLUG
     for module in MODULES:
         manifest = json.loads(module.MANIFEST_PATH.read_text(encoding="utf-8"))
         assert manifest["provider"] == module.SLUG
@@ -154,44 +159,81 @@ def test_wave3_manifests_publish_only_canaried_priced_chat_routes() -> None:
             assert row["output_token_price_per_m"] > 0
 
 
-def test_public_routing_status_requires_a_callable_endpoint() -> None:
+@pytest.mark.provider_health
+def test_every_ready_wave3_provider_serves_a_route() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    endpoint_providers = {endpoint.provider for endpoint in MODEL_ENDPOINTS.values()}
+    assert ROUTABLE_READY <= endpoint_providers, ROUTABLE_READY - endpoint_providers
+
+
+def test_public_routing_status_requires_a_callable_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The rule on a fixture route: which providers list a model today is not it.
+    for endpoint_id, endpoint in tuple(MODEL_ENDPOINTS.items()):
+        if endpoint.provider == "perplexity":
+            monkeypatch.delitem(MODEL_ENDPOINTS, endpoint_id)
+    assert provider_to_openrouter_shape(PROVIDERS["perplexity"])["routing_status"] == "blocked"
+    route = ModelEndpoint(
+        id="perplexity/sonar@perplexity/prepaid",
+        model_id="perplexity/sonar",
+        provider="perplexity",
+        usage_type="Credits",
+    )
+    monkeypatch.setitem(MODEL_ENDPOINTS, route.id, route)
     assert provider_to_openrouter_shape(PROVIDERS["perplexity"])["routing_status"] == "active"
     assert provider_to_openrouter_shape(PROVIDERS["krea"])["routing_status"] == "blocked"
 
 
-def test_failed_live_canaries_stay_dark() -> None:
-    nextbit_rows = {
-        row["id"]: row
-        for row in json.loads(nextbit.MANIFEST_PATH.read_text(encoding="utf-8"))["models"]
+def test_a_route_held_by_a_failed_live_canary_stays_dark(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Which routes fail their live canary changes hour to hour: the refresh
+    # re-checks every held route, and SambaNova's minimax-m3 passed again on
+    # 2026-09-28. So the rule is checked on a fixture, not on today's holds.
+    row = {
+        "id": "minimax/minimax-m3",
+        "upstream_id": "MiniMax-M3",
+        "model_type": "chat",
+        "endpoints": ["chat/completions"],
+        "input_token_price_per_m": 600_000,
+        "output_token_price_per_m": 2_400_000,
     }
-    samba_rows = {
-        row["id"]: row
-        for row in json.loads(sambanova.MANIFEST_PATH.read_text(encoding="utf-8"))["models"]
-    }
-    assert nextbit_rows["google/gemma-2-27b-it"]["routable"] is False
-    assert samba_rows["minimax/minimax-m3"]["routable"] is False
-    assert not any(
-        endpoint.provider == "nextbit" and endpoint.model_id == "google/gemma-2-27b-it"
-        for endpoint in MODEL_ENDPOINTS.values()
-    )
-    assert not any(
-        endpoint.provider == "sambanova" and endpoint.model_id == "minimax/minimax-m3"
-        for endpoint in MODEL_ENDPOINTS.values()
-    )
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+
+    def routes(**state: object) -> set[tuple[str, str]]:
+        manifest = {"provider": "sambanova", "models": [{**row, **state}]}
+        (tmp_path / "sambanova.json").write_text(json.dumps(manifest), encoding="utf-8")
+        _models, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
+        return {(endpoint.provider, endpoint.model_id) for endpoint in endpoints.values()}
+
+    assert routes(routable=False, routable_reason="provider-canary-failed") == set()
+    # Control: the same row, once its canary passes, is routed.
+    assert ("sambanova", "minimax/minimax-m3") in routes()
 
 
 def test_akash_missing_deepseek_route_stays_dark_without_disabling_other_routes() -> None:
     # Direct /models plus an SSE model_not_found response confirmed the removal
     # on September 8. Do not confuse HTTP 200 transport with a working model.
-    assert not any(
-        endpoint.provider == "akashml" and endpoint.model_id == "deepseek/deepseek-v4-flash-0731"
-        for endpoint in MODEL_ENDPOINTS.values()
-    )
+    routed = {
+        endpoint.model_id for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "akashml"
+    }
+    assert "deepseek/deepseek-v4-flash-0731" not in routed
+    # Every other route AkashML's manifest lists stays routed.
+    rows = json.loads(akashml.MANIFEST_PATH.read_text(encoding="utf-8"))["models"]
+    assert routed == {row["id"] for row in rows if row.get("routable") is not False}
+    assert "deepseek/deepseek-v4-flash-0731" not in akashml.CATALOG.spec.expected_models
+
+
+@pytest.mark.provider_health
+def test_akash_serves_routes_and_another_host_deepseek_v4_flash_0731() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
     assert any(endpoint.provider == "akashml" for endpoint in MODEL_ENDPOINTS.values())
     assert any(
         endpoint.provider != "akashml" for endpoint in endpoints_for_model("deepseek/deepseek-v4-flash-0731")
     )
-    assert "deepseek/deepseek-v4-flash-0731" not in akashml.CATALOG.spec.expected_models
 
 
 def test_upstage_parser_reads_all_three_first_party_price_axes() -> None:
@@ -804,8 +846,14 @@ def test_former_runtime_only_secrets_join_the_hourly_refresh_block() -> None:
 def test_runtime_only_provider_routes_expire_without_freezing_other_catalogs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sample = next(
-        endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "upstage"
+    # A fixture route of a runtime-only provider: expiry is a rule of the
+    # route's deadline, whatever Upstage lists today.
+    sample = ModelEndpoint(
+        id="upstage/solar-pro4@upstage/prepaid",
+        model_id="upstage/solar-pro4",
+        provider="upstage",
+        usage_type="Credits",
+        upstream_id="solar-pro4",
     )
     # The catalog's own clock, which judges every route's freshness.
     now = catalog_data._utc_now()
@@ -825,7 +873,12 @@ def test_runtime_only_provider_routes_expire_without_freezing_other_catalogs(
     endpoint_ids = {endpoint.id for endpoint in endpoints_for_model(sample.model_id)}
     assert expired.id not in endpoint_ids
     assert current.id in endpoint_ids
-    assert sample.catalog_valid_until is not None
+    # Every route Upstage's expiring manifest publishes carries its deadline.
+    assert all(
+        endpoint.catalog_valid_until is not None
+        for endpoint in MODEL_ENDPOINTS.values()
+        if endpoint.provider == "upstage"
+    )
 
 
 def test_malformed_runtime_only_manifest_expires_every_route() -> None:
@@ -1039,14 +1092,25 @@ def test_media_fallback_manifests_receive_provider_scoped_expiry() -> None:
         )
         deadline = _provider_manifest_valid_until(provider_slug, raw)
         assert deadline is not None
-        assert deadline != _EXPIRED_PROVIDER_MANIFEST
+        # A manifest with no routable row left (the refresh tombstoned every
+        # one) has expired; one with a routable row has a live deadline.
+        live = any(row.get("routable", True) for row in raw["models"])
+        assert (deadline != _EXPIRED_PROVIDER_MANIFEST) is live
 
     decart_endpoints = [
         endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "decart"
     ]
-    assert decart_endpoints
-    assert any(endpoint.model_id == "decart/lucy-2.5" for endpoint in decart_endpoints)
     assert all(endpoint.catalog_valid_until is not None for endpoint in decart_endpoints)
+
+
+@pytest.mark.provider_health
+def test_decart_serves_lucy_2_5() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    assert any(
+        endpoint.provider == "decart" and endpoint.model_id == "decart/lucy-2.5"
+        for endpoint in MODEL_ENDPOINTS.values()
+    )
 
 
 def test_malformed_media_price_expires_entire_provider_manifest() -> None:

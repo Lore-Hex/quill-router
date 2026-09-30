@@ -7,7 +7,6 @@ from typing import Any
 
 from google.api_core.exceptions import AlreadyExists
 
-from trusted_router.spend_lease_admission import classify_receipt_replay
 from trusted_router.spend_windows import utcnow
 from trusted_router.storage_gcp_authorize import (
     MAX_CREDIT_SHARD_ATTEMPTS_PER_TRANSACTION,
@@ -29,7 +28,6 @@ from trusted_router.storage_gcp_counters import UNSHARDED
 from trusted_router.storage_gcp_io import run_in_transaction_with_retry
 from trusted_router.storage_gcp_request_records import (
     gateway_authorization_insert_statement,
-    read_gateway_authorization_admission_columns,
 )
 from trusted_router.storage_models import GatewayAuthorization
 
@@ -109,14 +107,6 @@ def authorize_atomic(
     key_shard_candidates: tuple[int, ...] = (UNSHARDED,),
     skip_key_limit: bool = False,
     authorization_id: str | None = None,
-    spend_lease_hook: Callable[[Any, int], dict[str, Any]] | None = None,
-    build_authorization_for_lease: (
-        Callable[[str, str, bool], GatewayAuthorization] | None
-    ) = None,
-    also_retry: tuple[type[BaseException], ...] = (),
-    spend_lease_receipt_hash: str | None = None,
-    credit_escrowed_by_spend_lease: bool = False,
-    spend_lease_admission_replay_protection: bool = False,
     trust_settings: Any = None,
 ) -> dict:
     """Run the atomic authorize. Returns {outcome, reservation_id?, authorization_id?}.
@@ -169,10 +159,6 @@ def authorize_atomic(
         raise ValueError("credit_shard_candidates exceeds the hot-path transaction limit")
     if not has_credit_candidate and shard_candidates != (UNSHARDED,):
         raise ValueError("BYOK-only authorization must use credit shard zero")
-    if credit_escrowed_by_spend_lease and (
-        not has_credit_candidate or spend_lease_hook is None
-    ):
-        raise ValueError("lease-escrowed credit requires a Credits route and spend-lease hook")
     key_candidates = tuple(key_shard_candidates)
     if not key_candidates:
         raise ValueError("key_shard_candidates must not be empty")
@@ -197,28 +183,7 @@ def authorize_atomic(
     )
 
     def _replay(transaction: Any, existing: dict) -> dict:
-        receipt_verdict = "ordinary"
-        if spend_lease_admission_replay_protection:
-            admission = read_gateway_authorization_admission_columns(
-                transaction,
-                pt,
-                str(existing["authorization_id"]),
-            )
-            stored_receipt_hash = (
-                str(admission["spend_lease_receipt_hash"])
-                if admission is not None
-                and admission["spend_lease_receipt_hash"] is not None
-                else None
-            )
-            receipt_verdict = classify_receipt_replay(
-                spend_lease_receipt_hash,
-                stored_receipt_hash,
-            )
-        if receipt_verdict == "scope_conflict":
-            raise _Reject(AuthorizeOutcome.ADMISSION_SCOPE_CONFLICT)
-        if receipt_verdict == "ordinary" and (
-            existing["idempotency_fingerprint"] != idempotency_fingerprint
-        ):
+        if existing["idempotency_fingerprint"] != idempotency_fingerprint:
             raise _Reject(AuthorizeOutcome.IDEMPOTENCY_MISMATCH)
         return {
             "outcome": AuthorizeOutcome.REPLAY,
@@ -238,7 +203,7 @@ def authorize_atomic(
         # Reservation/authorization INSERTs below consume the selected shards and holds.
         credit_hold = 0
         selected_credit_shard = UNSHARDED
-        if has_credit_candidate and not credit_escrowed_by_spend_lease:
+        if has_credit_candidate:
             for candidate in shard_candidates:
                 if reserve_credit(transaction, pt, workspace_id, estimate, shard=candidate):
                     selected_credit_shard = candidate
@@ -254,32 +219,12 @@ def authorize_atomic(
             # Pause state is replicated atomically across the credit shards. Read
             # only the selected shard, whose balance DML already joined this txn's
             # read set; a workspace-wide scan couples otherwise independent holds
-            # and can exhaust the retry budget under contention. BYOK / lease-
-            # escrowed requests use shard zero. A pause still conflicts on this
-            # shard and rejection rolls back every staged credit hold.
+            # and can exhaust the retry budget under contention. BYOK requests
+            # use shard zero. A pause still conflicts on this shard and
+            # rejection rolls back every staged credit hold.
             from trusted_router.trust_eligibility import billing_paused_tx
             if billing_paused_tx(transaction, pt, workspace_id, shard=selected_credit_shard):
                 raise _Reject("billing_paused")
-
-        lease_result: dict[str, Any] = {
-            "bound": False,
-            "no_lease_reason": None,
-            "spend_lease_outcome": None,
-        }
-        # The hook may escrow or release credit, including recovery/pause work.
-        # Its writes share this transaction and roll back if the key rejects;
-        # regional binding happens only after commit. Keep credit before key.
-        if spend_lease_hook is not None:
-            lease_result = spend_lease_hook(transaction, selected_credit_shard)
-        if spend_lease_receipt_hash is not None and not lease_result.get("bound"):
-            no_lease_reason = lease_result.get("no_lease_reason")
-            if no_lease_reason == "scope_arbitrated":
-                reason = "scope_conflict"
-            elif no_lease_reason == "unpaid_workspace":
-                reason = "hold_refused"
-            else:
-                reason = "reuse_lost"
-            raise _Reject(f"admission_rejected:{reason}")
 
         # Bounded lifetime-cap TOCTOU: a cap committed after the gateway's
         # entity read can miss only requests already in flight at that commit,
@@ -334,20 +279,10 @@ def authorize_atomic(
             created_at=created_at,
         )
         if request_record_write_mode == "typed":
-            selected_authorization = authorization
-            if build_authorization_for_lease is not None:
-                selected_authorization = build_authorization_for_lease(
-                    authorization_id,
-                    reservation_id,
-                    bool(lease_result.get("bound")),
-                )
-                selected_authorization.created_at = created_at.isoformat().replace(
-                    "+00:00", "Z"
-                )
-            assert selected_authorization is not None
+            assert authorization is not None
             authorization_statement = gateway_authorization_insert_statement(
                 pt,
-                selected_authorization,
+                authorization,
                 created_at=created_at,
             )
         else:
@@ -368,7 +303,6 @@ def authorize_atomic(
             "authorization_id": authorization_id,
             "credit_shard": selected_credit_shard,
             "key_shard": selected_key_shard,
-            **lease_result,
         }
 
     try:
@@ -376,7 +310,6 @@ def authorize_atomic(
             database,
             txn,
             transaction_tag="tr_authorize",
-            also_retry=also_retry,
         )
     except _Reject as reject:
         return {"outcome": reject.outcome}

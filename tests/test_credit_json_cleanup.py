@@ -68,7 +68,7 @@ def _raw_credit(db: Any, workspace_id: str) -> dict[str, Any]:
 
 
 def test_cleanup_dry_run_reports_fields_without_mutating() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     _seed_credit(store, db, "ws_dry")
     before = db.rows[("credit", "ws_dry")].body
 
@@ -81,7 +81,7 @@ def test_cleanup_dry_run_reports_fields_without_mutating() -> None:
 
 
 def test_cleanup_apply_strips_only_retired_money_fields() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     _seed_credit(store, db, "ws_apply")
     typed_before = dict(db.typed[CREDIT_BALANCE_TABLE][("ws_apply", 0)])
 
@@ -98,7 +98,7 @@ def test_cleanup_apply_strips_only_retired_money_fields() -> None:
 
 
 def test_cleanup_is_idempotent_for_an_already_clean_row() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     _seed_credit(store, db, "ws_clean", with_legacy_money=False)
     before = db.rows[("credit", "ws_clean")].body
 
@@ -111,7 +111,7 @@ def test_cleanup_is_idempotent_for_an_already_clean_row() -> None:
 
 
 def test_cleanup_accepts_complete_sharded_ledger() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     _seed_credit(store, db, "ws_sharded", shard_count=3)
 
     result = cleanup_credit_json(store, "ws_sharded", apply=True)
@@ -122,7 +122,7 @@ def test_cleanup_accepts_complete_sharded_ledger() -> None:
 
 
 def test_cleanup_refuses_incomplete_typed_shard_set() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     _seed_credit(store, db, "ws_incomplete", shard_count=3, complete_typed=False)
     before = db.rows[("credit", "ws_incomplete")].body
 
@@ -137,7 +137,7 @@ def test_cleanup_refuses_incomplete_typed_shard_set() -> None:
 
 
 def test_inspection_rejects_row_id_body_mismatch() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     _seed_credit(store, db, "ws_mismatch")
     body = _raw_credit(db, "ws_mismatch")
     body["workspace_id"] = "different"
@@ -150,7 +150,7 @@ def test_inspection_rejects_row_id_body_mismatch() -> None:
 
 
 def test_legacy_workspace_scan_returns_only_stale_rows() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     _seed_credit(store, db, "ws_stale")
     _seed_credit(store, db, "ws_clean", with_legacy_money=False)
 
@@ -158,7 +158,7 @@ def test_legacy_workspace_scan_returns_only_stale_rows() -> None:
 
 
 def test_legacy_workspace_scan_uses_row_id_not_untrusted_body_id() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     _seed_credit(store, db, "ws_row_id")
     body = _raw_credit(db, "ws_row_id")
     body["workspace_id"] = "wrong-body-id"
@@ -170,8 +170,8 @@ def test_legacy_workspace_scan_uses_row_id_not_untrusted_body_id() -> None:
 def test_cli_preflights_every_row_before_applying(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-bigtable")
-    store, db, _ = make_fake_store()
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
+    store, db = make_fake_store()
     _seed_credit(store, db, "a_ready")
     _seed_credit(store, db, "z_blocked", shard_count=2, complete_typed=False)
     ready_before = db.rows[("credit", "a_ready")].body
@@ -185,8 +185,8 @@ def test_cli_preflights_every_row_before_applying(
 def test_cli_apply_cleans_all_stale_rows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-bigtable")
-    store, db, _ = make_fake_store()
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
+    store, db = make_fake_store()
     _seed_credit(store, db, "ws_one")
     _seed_credit(store, db, "ws_two", shard_count=2)
 

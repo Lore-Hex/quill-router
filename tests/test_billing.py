@@ -811,9 +811,10 @@ def test_internal_gateway_byok_uses_configured_secret_ref_and_refunds_key_limit(
     user_headers: dict[str, str],
     client,
 ) -> None:
-    env_ref = "env://" + "CEREBRAS_API_KEY"
+    # BYOK rides the Anthropic Haiku vehicle (tests/catalog_vehicles.py).
+    env_ref = "env://" + "ANTHROPIC_API_KEY"
     byok = client.put(
-        "/v1/byok/providers/cerebras",
+        "/v1/byok/providers/anthropic",
         headers=user_headers,
         json={"secret_ref": env_ref, "key_hint": "****9999"},
     )
@@ -829,7 +830,7 @@ def test_internal_gateway_byok_uses_configured_secret_ref_and_refunds_key_limit(
         "/v1/internal/gateway/authorize",
         json={
             "api_key_hash": key_hash,
-            "model": "openai/gpt-oss-120b",
+            "model": "anthropic/claude-haiku-4.5",
             "provider": {"usage": "byok"},
             "estimated_input_tokens": 20,
             "max_output_tokens": 4,
@@ -859,9 +860,9 @@ def test_internal_gateway_byok_returns_envelope_for_uploaded_raw_key(
     from trusted_router.byok_crypto import decrypt_byok_secret
     from trusted_router.storage_models import EncryptedSecretEnvelope
 
-    raw_key = "csk-live-user-owned-key-9999"
+    raw_key = "sk-ant-live-user-owned-key-9999"
     byok = client.put(
-        "/v1/byok/providers/cerebras",
+        "/v1/byok/providers/anthropic",
         headers=user_headers,
         json={"api_key": raw_key},
     )
@@ -876,7 +877,7 @@ def test_internal_gateway_byok_returns_envelope_for_uploaded_raw_key(
         "/v1/internal/gateway/authorize",
         json={
             "api_key_hash": created["data"]["hash"],
-            "model": "openai/gpt-oss-120b",
+            "model": "anthropic/claude-haiku-4.5",
             "provider": {"usage": "byok"},
             "estimated_input_tokens": 20,
             "max_output_tokens": 4,
@@ -887,7 +888,7 @@ def test_internal_gateway_byok_returns_envelope_for_uploaded_raw_key(
     data = authorize.json()["data"]
     assert data["usage_type"] == "BYOK"
     assert data["byok_secret_ref"].startswith("byok://")
-    assert data["byok_key_hint"] == "csk-li...9999"
+    assert data["byok_key_hint"] == "sk-ant...9999"
     assert data["byok_cache_key"].startswith("byokcache:v1:")
     assert data["byok_encrypted_secret"]["algorithm"].startswith("TR-BYOK-ENVELOPE")
     assert data["byok_encrypted_secret"]["ciphertext"]
@@ -898,7 +899,7 @@ def test_internal_gateway_byok_returns_envelope_for_uploaded_raw_key(
             EncryptedSecretEnvelope(**data["byok_encrypted_secret"]),
             test_settings,
             workspace_id=data["workspace_id"],
-            provider="cerebras",
+            provider="anthropic",
         )
         == raw_key
     )
@@ -908,11 +909,11 @@ def test_internal_gateway_byok_cache_key_changes_on_rotation(
     user_headers: dict[str, str],
     client,
 ) -> None:
-    first_key = "csk-live-user-owned-key-1111"
-    rotated_key = "csk-live-user-owned-key-2222"
+    first_key = "sk-ant-live-user-owned-key-1111"
+    rotated_key = "sk-ant-live-user-owned-key-2222"
     assert (
         client.put(
-            "/v1/byok/providers/cerebras",
+            "/v1/byok/providers/anthropic",
             headers=user_headers,
             json={"api_key": first_key},
         ).status_code
@@ -929,7 +930,7 @@ def test_internal_gateway_byok_cache_key_changes_on_rotation(
             "/v1/internal/gateway/authorize",
             json={
                 "api_key_hash": created["data"]["hash"],
-                "model": "openai/gpt-oss-120b",
+                "model": "anthropic/claude-haiku-4.5",
                 "provider": {"usage": "byok"},
                 "estimated_input_tokens": 1,
                 "max_output_tokens": 1,
@@ -945,7 +946,7 @@ def test_internal_gateway_byok_cache_key_changes_on_rotation(
     first_cache_key = authorize_cache_key()
     assert (
         client.put(
-            "/v1/byok/providers/cerebras",
+            "/v1/byok/providers/anthropic",
             headers=user_headers,
             json={"api_key": rotated_key},
         ).status_code
@@ -953,12 +954,12 @@ def test_internal_gateway_byok_cache_key_changes_on_rotation(
     )
 
     assert authorize_cache_key() != first_cache_key
-    assert client.delete("/v1/byok/providers/cerebras", headers=user_headers).status_code == 200
+    assert client.delete("/v1/byok/providers/anthropic", headers=user_headers).status_code == 200
     deleted = client.post(
         "/v1/internal/gateway/authorize",
         json={
             "api_key_hash": created["data"]["hash"],
-            "model": "openai/gpt-oss-120b",
+            "model": "anthropic/claude-haiku-4.5",
             "provider": {"usage": "byok"},
             "estimated_input_tokens": 1,
             "max_output_tokens": 1,

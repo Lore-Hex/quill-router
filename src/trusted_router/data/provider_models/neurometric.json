@@ -24,7 +24,6 @@
       "supported_features": [
         "chat",
         "completion",
-        "tools",
         "json_mode",
         "structured_outputs"
       ],
@@ -183,7 +182,8 @@
         "completion",
         "tools",
         "json_mode",
-        "structured_outputs"
+        "structured_outputs",
+        "reasoning"
       ],
       "lifecycle_status": "active",
       "deprecation_at": null,
@@ -323,7 +323,8 @@
         "completion",
         "tools",
         "json_mode",
-        "structured_outputs"
+        "structured_outputs",
+        "reasoning"
       ],
       "lifecycle_status": "active",
       "deprecation_at": null,
@@ -437,7 +438,8 @@
         "completion",
         "tools",
         "json_mode",
-        "structured_outputs"
+        "structured_outputs",
+        "reasoning"
       ],
       "lifecycle_status": "active",
       "deprecation_at": null,
@@ -612,6 +614,7 @@
       "supported_features": [
         "chat",
         "completion",
+        "tools",
         "json_mode",
         "structured_outputs"
       ],
@@ -648,8 +651,66 @@
       },
       "input_token_price_per_m": 50000,
       "output_token_price_per_m": 120000
+    },
+    {
+      "display_name": "Structured Decisions",
+      "title": "neurometric/structured-decisions",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "neurometric/structured-decisions",
+      "upstream_id": "neurometric/structured-decisions",
+      "context_length": 65536,
+      "max_output_tokens": 1024,
+      "supported_features": [
+        "chat",
+        "completion",
+        "json_mode",
+        "structured_outputs"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "documentation": {
+        "description": "Structured Decisions answers one bounded decision about the facts you supply, choosing from labels you define: yes/no, one of several options, or an ordered level. Instead of generating text, it reads the answer from the model's probabilities over your labels, so the result is always exactly one of them, even if the prompt asks for something else. Put rubrics or policies in a system message or in the question. Good for routing, triage, eligibility checks and policy decisions.",
+        "input_format": "OpenAI chat completions. Give the labels in one of two ways:\n1) A user message whose content is a JSON object: {\"state\": <facts: string or object>, \"question\": <string>, \"options\": [labels] or {label: description}}. Use \"levels\": [ordered labels] instead of \"options\" for a scale (e.g. [\"low\",\"medium\",\"high\"]).\n2) response_format {\"type\":\"json_schema\"} whose schema has an \"answer\" property with an \"enum\" of labels; the whole conversation is used as the facts.\nSystem messages (rubric, policy, definitions) are included with the facts. Up to about 120 labels per decision. Sampling parameters (temperature, top_p, seed) are accepted and ignored. A request with no labels is answered by text generation instead.",
+        "output_format": "choices[0].message.content is exactly {\"answer\":\"<one of your labels>\"}. A top-level \"decision\" object adds: \"type\" (\"choice\" or \"score\"), \"answer\", \"confidence\" (0-1, how decisively the model applied your question as worded; not a calibrated probability), and \"probabilities\" (label -> probability). For levels, \"score\" is the expected level index (0 = first level). usage.completion_tokens is 0: only input tokens are billed. Streaming returns the same answer in one content chunk.",
+        "example_input": "{\"model\": \"neurometric/structured-decisions\", \"messages\": [{\"role\": \"user\", \"content\": \"{\\\"state\\\": \\\"Customer: I was charged twice for my March invoice and need one charge reversed.\\\", \\\"question\\\": \\\"Which team should handle this ticket?\\\", \\\"options\\\": {\\\"billing\\\": \\\"Charges, refunds, invoices\\\", \\\"technical\\\": \\\"Bugs, outages, integrations\\\", \\\"sales\\\": \\\"Pricing, plans, upgrades\\\"}}\"}]}",
+        "example_output": "{\"choices\": [{\"message\": {\"role\": \"assistant\", \"content\": \"{\\\"answer\\\":\\\"billing\\\"}\"}}], \"decision\": {\"type\": \"choice\", \"answer\": \"billing\", \"confidence\": 0.984, \"probabilities\": {\"billing\": 0.997, \"technical\": 0.003, \"sales\": 0.0}}, \"usage\": {\"prompt_tokens\": 179, \"completion_tokens\": 0, \"total_tokens\": 179}}"
+      },
+      "reliability": {
+        "first_token_timeout_seconds": 15.0,
+        "completion_timeout_seconds": 30.0,
+        "stream_idle_timeout_seconds": 10.0,
+        "capacity_scope": "model"
+      },
+      "provider_reliability": {
+        "provider_id": "neurometric",
+        "status_url": "https://status.neurometric.ai",
+        "support_contact": "mailto:support@neurometric.ai",
+        "incident_contact": "mailto:support@neurometric.ai",
+        "regions": [
+          "us-west"
+        ],
+        "request_id_header": "x-request-id",
+        "account_quota_error_codes": [
+          "account_quota_exceeded"
+        ]
+      },
+      "input_token_price_per_m": 30000,
+      "output_token_price_per_m": 0
     }
   ],
-  "generated_at": "2026-09-27T23:04:50Z",
-  "model_count": 12
+  "generated_at": "2026-09-30T02:36:36Z",
+  "model_count": 13
 }

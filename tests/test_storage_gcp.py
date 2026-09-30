@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, is_dataclass
-from types import SimpleNamespace
 from typing import Any
 
 from tests.fakes.spanner import make_fake_store
@@ -10,18 +8,6 @@ from trusted_router.byok_crypto import decrypt_byok_secret, encrypt_byok_secret
 from trusted_router.config import Settings
 from trusted_router.storage import ApiKey, CreditAccount, Generation, ProviderBenchmarkSample
 from trusted_router.storage_gcp import SpannerBigtableStore
-from trusted_router.storage_gcp_activity_index import (
-    activity_generations as _bt_activity_generations,
-)
-from trusted_router.storage_gcp_activity_index import (
-    write_generation as _bt_write_generation,
-)
-from trusted_router.storage_gcp_benchmark_index import (
-    provider_benchmark_samples as _bt_provider_benchmark_samples,
-)
-from trusted_router.storage_gcp_benchmark_index import (
-    write_provider_benchmark as _bt_write_provider_benchmark,
-)
 from trusted_router.storage_gcp_codec import reverse_time_key as _reverse_time_key
 
 
@@ -101,7 +87,7 @@ def test_gcp_list_keys_uses_workspace_index() -> None:
 
 
 def test_gcp_store_disables_spanner_builtin_metrics(monkeypatch: Any) -> None:
-    from google.cloud import bigtable, spanner, spanner_v1
+    from google.cloud import spanner, spanner_v1
 
     spanner_calls: list[dict[str, Any]] = []
     pool_sizes: list[int] = []
@@ -126,27 +112,14 @@ def test_gcp_store_disables_spanner_builtin_metrics(monkeypatch: Any) -> None:
         def __init__(self, *, size: int) -> None:
             pool_sizes.append(size)
 
-    class FakeBigtableClient:
-        def __init__(self, **_kwargs: Any) -> None:
-            pass
-
-        def instance(self, _instance_id: str) -> FakeBigtableClient:
-            return self
-
-        def table(self, _table_id: str) -> object:
-            return object()
-
     monkeypatch.setattr(spanner, "Client", FakeSpannerClient)
     monkeypatch.setattr(spanner_v1, "FixedSizePool", FakePool)
-    monkeypatch.setattr(bigtable, "Client", FakeBigtableClient)
     monkeypatch.delenv("TR_SPANNER_POOL_SIZE", raising=False)
 
     SpannerBigtableStore(
         project_id="project",
         spanner_instance_id="spanner",
         spanner_database_id="database",
-        bigtable_instance_id="bigtable",
-        generation_table="generations",
     )
 
     # credentials=None is the GCP-default ADC path (Cloud Run / GCE);
@@ -163,75 +136,8 @@ def test_gcp_store_disables_spanner_builtin_metrics(monkeypatch: Any) -> None:
     assert pool_sizes == [8]
 
 
-def test_gcp_store_opens_regional_ledger_when_local_issuance_is_disabled(
-    monkeypatch: Any,
-) -> None:
-    """Every control-plane region must settle leases issued by another region."""
-    from google.cloud import bigtable, spanner
-
-    monkeypatch.setattr(
-        "trusted_router.storage_gcp.configure_spanner_rpc_deadlines",
-        lambda _database: None,
-    )
-
-    class FakeSpannerClient:
-        def __init__(self, **_kwargs: Any) -> None:
-            pass
-
-        def instance(self, _instance_id: str) -> FakeSpannerClient:
-            return self
-
-        def database(self, _database_id: str, **_kwargs: Any) -> object:
-            return object()
-
-    class FakeBigtableClient:
-        def __init__(self, **_kwargs: Any) -> None:
-            pass
-
-        def instance(self, _instance_id: str) -> FakeBigtableClient:
-            return self
-
-        def table(self, _table_id: str, *, app_profile_id: str) -> object:
-            assert app_profile_id == "quota-us"
-            return object()
-
-    monkeypatch.setattr(spanner, "Client", FakeSpannerClient)
-    monkeypatch.setattr(bigtable, "Client", FakeBigtableClient)
-
-    store = SpannerBigtableStore(
-        project_id="project",
-        spanner_instance_id="spanner",
-        spanner_database_id="database",
-        bigtable_instance_id="bigtable",
-        bigtable_enabled=False,
-        analytics_read_mode="clickhouse-only",
-        regional_quota_leases_enabled=False,
-        regional_quota_bigtable_app_profiles={"us-central1": "quota-us"},
-    )
-
-    assert store._regional_quota_ledger is not None
-    assert store._regional_quota_ledger.supports_region("us-central1") is True
-    # Cross-region callbacks (a europe-west4 process reading the us-central1
-    # cluster) need more than the client's 1 s padded floor; the default
-    # budget is 4 s and the setting reaches the ledger unchanged.
-    assert store._regional_quota_ledger._operation_timeout_seconds == 4.0
-    tuned = SpannerBigtableStore(
-        project_id="project",
-        spanner_instance_id="spanner",
-        spanner_database_id="database",
-        bigtable_instance_id="bigtable",
-        bigtable_enabled=False,
-        analytics_read_mode="clickhouse-only",
-        regional_quota_leases_enabled=False,
-        regional_quota_bigtable_app_profiles={"us-central1": "quota-us"},
-        regional_quota_ledger_timeout_seconds=6.5,
-    )
-    assert tuned._regional_quota_ledger is not None
-    assert tuned._regional_quota_ledger._operation_timeout_seconds == 6.5
-
-
 def test_gcp_api_key_lookup_uses_index_and_never_stores_raw_key() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     store._write_entity(
         "credit",
         "ws_1",
@@ -254,7 +160,7 @@ def test_gcp_api_key_lookup_uses_index_and_never_stores_raw_key() -> None:
 
 
 def test_gcp_read_gateway_authorization_ignores_unknown_dataclass_fields() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     auth = store.create_gateway_authorization(
         workspace_id="ws_1",
         key_hash="key_1",
@@ -289,7 +195,7 @@ def test_gcp_read_gateway_authorization_ignores_unknown_dataclass_fields() -> No
 
 
 def test_gcp_byok_upsert_updates_secret_ref_and_hint() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
 
     first = store.upsert_byok_provider(
         workspace_id="ws_1",
@@ -313,7 +219,7 @@ def test_gcp_byok_upsert_updates_secret_ref_and_hint() -> None:
 
 
 def test_gcp_byok_upsert_persists_encrypted_envelope_without_raw_key() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     settings = Settings(environment="test")
     raw_key = "sk-storage-gcp-byok-secret-1111"
     envelope = encrypt_byok_secret(
@@ -351,7 +257,7 @@ def test_gcp_byok_upsert_persists_encrypted_envelope_without_raw_key() -> None:
 
 
 def test_gcp_verification_tokens_are_one_time_wrong_purpose_safe_and_hash_only() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
 
     raw, token = store.create_verification_token(user_id="user_1", purpose="signup", ttl_seconds=60)
 
@@ -369,7 +275,7 @@ def test_gcp_verification_tokens_are_one_time_wrong_purpose_safe_and_hash_only()
 
 
 def test_gcp_wallet_challenge_is_one_time_and_hash_only() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
 
     raw, challenge = store.create_wallet_challenge(
         address="0x" + "a" * 40,
@@ -390,7 +296,7 @@ def test_gcp_wallet_challenge_is_one_time_and_hash_only() -> None:
 
 
 def test_gcp_wallet_challenge_reuse_is_bounded_per_normalized_scope() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     address = "0x" + "a" * 40
     nonces: list[str] = []
     challenge_ids: list[str] = []
@@ -423,7 +329,7 @@ def test_gcp_wallet_challenge_reuse_is_bounded_per_normalized_scope() -> None:
 def test_gcp_rate_limit_counts_in_same_window_and_resets_later() -> None:
     import datetime as dt
 
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     now = dt.datetime(2026, 5, 2, 12, 0, 1, tzinfo=dt.UTC)
 
     first = store.hit_rate_limit(namespace="ip", subject="1.2.3.4", limit=2, window_seconds=60, now=now)
@@ -441,224 +347,6 @@ def test_gcp_rate_limit_counts_in_same_window_and_resets_later() -> None:
     assert second.allowed is True and second.remaining == 0
     assert third.allowed is False and third.retry_after_seconds > 0
     assert next_window.allowed is True and next_window.remaining == 1
-
-
-class _FakeCell:
-    def __init__(self, value: Any) -> None:
-        body = asdict(value) if is_dataclass(value) else value
-        self.value = json.dumps(body, separators=(",", ":"), sort_keys=True).encode()
-
-
-class _FakeReadRow:
-    def __init__(self, value: Any) -> None:
-        self.cells = {"m": {b"body": [_FakeCell(value)]}}
-
-
-class _FakeDirectRow:
-    def __init__(self, key: bytes, committed: list[bytes]) -> None:
-        self.key = key
-        self.committed = committed
-
-    def set_cell(self, *_args: Any) -> None:
-        return None
-
-    def commit(self) -> None:
-        self.committed.append(self.key)
-
-
-class _FakeBigtable:
-    def __init__(
-        self,
-        rows: list[_FakeReadRow] | None = None,
-        read_batches: list[list[_FakeReadRow]] | None = None,
-    ) -> None:
-        self.rows = rows or []
-        self.read_batches = read_batches or []
-        self.reads: list[tuple[bytes, bytes, int]] = []
-        self.committed: list[bytes] = []
-
-    def read_rows(self, *, start_key: bytes, end_key: bytes, limit: int):
-        self.reads.append((start_key, end_key, limit))
-        if self.read_batches:
-            return self.read_batches.pop(0)[:limit]
-        return self.rows[:limit]
-
-    def direct_row(self, key: bytes) -> _FakeDirectRow:
-        return _FakeDirectRow(key, self.committed)
-
-    def mutate_rows(self, rows: list[_FakeDirectRow], **_kwargs: Any) -> list[Any]:
-        for row in rows:
-            row.commit()
-        return [SimpleNamespace(code=0) for _row in rows]
-
-
-def test_gcp_bigtable_activity_without_date_uses_recent_multi_day_index() -> None:
-    newer = _generation("gen_new", "ws_1", "2026-05-02T12:00:00Z")
-    older = _generation("gen_old", "ws_1", "2026-04-30T12:00:00Z")
-    table = _FakeBigtable([_FakeReadRow(older), _FakeReadRow(newer)])
-
-    rows = _bt_activity_generations(table, "m", "ws_1", api_key_hash=None, date=None, limit=100)
-
-    assert [row.id for row in rows] == ["gen_new", "gen_old"]
-    assert table.reads == [(b"ws_recent#ws_1#", b"ws_recent#ws_1#~", 100)]
-
-
-def test_gcp_bigtable_activity_with_date_uses_daily_index() -> None:
-    generation = _generation("gen_1", "ws_1", "2026-05-02T12:00:00Z")
-    table = _FakeBigtable([_FakeReadRow(generation)])
-
-    rows = _bt_activity_generations(
-        table, "m", "ws_1", api_key_hash=None, date="2026-05-02", limit=50
-    )
-
-    assert [row.id for row in rows] == ["gen_1"]
-    assert table.reads == [(b"ws#ws_1#2026-05-02#", b"ws#ws_1#2026-05-02#~", 50)]
-
-
-def test_gcp_bigtable_activity_falls_back_to_legacy_workspace_index() -> None:
-    generation = _generation("gen_legacy", "ws_1", "2026-05-02T12:00:00Z")
-    table = _FakeBigtable([])
-
-    def read_rows(*, start_key: bytes, end_key: bytes, limit: int):
-        table.reads.append((start_key, end_key, limit))
-        if start_key == b"ws#ws_1#":
-            return [_FakeReadRow(generation)]
-        return []
-
-    table.read_rows = read_rows  # type: ignore[method-assign]
-
-    rows = _bt_activity_generations(table, "m", "ws_1", api_key_hash=None, date=None, limit=25)
-
-    assert [row.id for row in rows] == ["gen_legacy"]
-    assert table.reads == [
-        (b"ws_recent#ws_1#", b"ws_recent#ws_1#~", 25),
-        (b"ws#ws_1#", b"ws#ws_1#~", 25),
-    ]
-
-
-def test_gcp_bigtable_activity_filters_key_and_sorts_recent_rows() -> None:
-    newest = _generation("gen_newest", "ws_1", "2026-05-03T12:00:00Z")
-    middle_other_key = _generation("gen_other", "ws_1", "2026-05-02T12:00:00Z")
-    middle_other_key.key_hash = "key_2"
-    oldest = _generation("gen_oldest", "ws_1", "2026-05-01T12:00:00Z")
-    table = _FakeBigtable(
-        [
-            _FakeReadRow(oldest),
-            _FakeReadRow(middle_other_key),
-            _FakeReadRow(newest),
-        ]
-    )
-
-    rows = _bt_activity_generations(table, "m", "ws_1", api_key_hash="key_1", date=None, limit=10)
-
-    assert [row.id for row in rows] == ["gen_newest", "gen_oldest"]
-
-
-def test_gcp_bigtable_activity_respects_limit_after_sorting() -> None:
-    newest = _generation("gen_newest", "ws_1", "2026-05-03T12:00:00Z")
-    oldest = _generation("gen_oldest", "ws_1", "2026-05-01T12:00:00Z")
-    table = _FakeBigtable([_FakeReadRow(newest), _FakeReadRow(oldest)])
-
-    rows = _bt_activity_generations(table, "m", "ws_1", api_key_hash=None, date=None, limit=1)
-
-    assert [row.id for row in rows] == ["gen_newest"]
-    assert table.reads == [(b"ws_recent#ws_1#", b"ws_recent#ws_1#~", 1)]
-
-
-def test_gcp_generation_write_indexes_recent_and_daily_bigtable_rows() -> None:
-    generation = _generation("gen_1", "ws_1", "2026-05-02T12:00:00Z")
-    table = _FakeBigtable()
-
-    _bt_write_generation(table, "m", generation)
-
-    assert table.committed == [
-        b"gen#gen_1",
-        b"ws#ws_1#2026-05-02#2026-05-02T12:00:00Z#gen_1",
-        f"ws_recent#ws_1#{_reverse_time_key(generation.created_at)}#gen_1".encode(),
-    ]
-
-
-def test_gcp_provider_benchmark_write_uses_privacy_safe_indexes() -> None:
-    sample = ProviderBenchmarkSample(
-        id="bench_1",
-        model="openai/gpt-5.4-nano",
-        provider="openai",
-        provider_name="OpenAI",
-        status="success",
-        usage_type="Credits",
-        streamed=False,
-        input_tokens=10,
-        output_tokens=5,
-        total_cost_microdollars=100,
-        speed_tokens_per_second=25.0,
-        elapsed_milliseconds=200,
-        created_at="2026-05-02T12:00:00Z",
-    )
-    table = _FakeBigtable()
-
-    _bt_write_provider_benchmark(table, "m", sample)
-
-    assert table.committed == [
-        f"benchmark#2026-05-02#openai#openai/gpt-5.4-nano#{_reverse_time_key(sample.created_at)}#bench_1".encode(),
-        f"benchmark_day_recent#2026-05-02#{_reverse_time_key(sample.created_at)}#bench_1".encode(),
-        f"benchmark_provider_day#2026-05-02#openai#{_reverse_time_key(sample.created_at)}#bench_1".encode(),
-        f"benchmark_recent#{_reverse_time_key(sample.created_at)}#bench_1".encode(),
-        f"benchmark_provider_recent#openai#{_reverse_time_key(sample.created_at)}#bench_1".encode(),
-        f"benchmark_model_recent#openai#openai/gpt-5.4-nano#{_reverse_time_key(sample.created_at)}#bench_1".encode(),
-    ]
-    assert b"ws_" not in b"".join(table.committed)
-    assert b"key_" not in b"".join(table.committed)
-
-
-def test_gcp_provider_benchmark_round_trips_ttfb_and_source() -> None:
-    sample = ProviderBenchmarkSample(
-        id="bench_ttfb",
-        model="openai/gpt-5.4-nano",
-        provider="openai",
-        provider_name="OpenAI",
-        status="success",
-        usage_type="Credits",
-        streamed=True,
-        elapsed_milliseconds=300,
-        first_token_milliseconds=180,
-        ttfb_milliseconds=120,
-        source="synthetic",
-        created_at="2026-05-02T12:00:00Z",
-    )
-    table = _FakeBigtable([_FakeReadRow(sample)])
-
-    rows = _bt_provider_benchmark_samples(
-        table, "m", date="2026-05-02", provider="openai", model="openai/gpt-5.4-nano", limit=10
-    )
-
-    assert len(rows) == 1
-    # TTFB (first byte) is distinct from TTFT (first content token) and both
-    # survive the serialize/deserialize round trip, as does the internal source.
-    assert rows[0].ttfb_milliseconds == 120
-    assert rows[0].first_token_milliseconds == 180
-    assert rows[0].source == "synthetic"
-
-
-def test_gcp_provider_benchmark_read_ignores_unknown_future_fields() -> None:
-    body = {
-        "id": "bench_future",
-        "model": "openai/gpt-5.4-nano",
-        "provider": "openai",
-        "provider_name": "OpenAI",
-        "status": "success",
-        "usage_type": "Credits",
-        "streamed": True,
-        "created_at": "2026-05-02T12:00:00Z",
-        "future_field": "reader does not know this yet",
-    }
-    table = _FakeBigtable([_FakeReadRow(body)])
-
-    rows = _bt_provider_benchmark_samples(
-        table, "m", date="2026-05-02", provider="openai", model="openai/gpt-5.4-nano", limit=10
-    )
-
-    assert [row.id for row in rows] == ["bench_future"]
-    assert not hasattr(rows[0], "future_field")
 
 
 def test_provider_benchmark_from_generation_carries_ttfb_default_organic() -> None:
@@ -693,157 +381,8 @@ def test_provider_benchmark_from_generation_carries_ttfb_default_organic() -> No
     assert sample.source == "organic"
 
 
-def test_gcp_provider_benchmark_read_filters_without_workspace_scope() -> None:
-    openai = ProviderBenchmarkSample(
-        id="bench_openai",
-        model="openai/gpt-5.4-nano",
-        provider="openai",
-        provider_name="OpenAI",
-        status="success",
-        usage_type="Credits",
-        streamed=False,
-        created_at="2026-05-02T12:00:00Z",
-    )
-    mistral = ProviderBenchmarkSample(
-        id="bench_mistral",
-        model="mistralai/mistral-small-2603",
-        provider="mistral",
-        provider_name="Mistral",
-        status="error",
-        usage_type="BYOK",
-        streamed=True,
-        created_at="2026-05-02T12:01:00Z",
-    )
-    table = _FakeBigtable([_FakeReadRow(mistral), _FakeReadRow(openai)])
-
-    rows = _bt_provider_benchmark_samples(
-        table, "m", date="2026-05-02", provider="openai", model=None, limit=10
-    )
-
-    assert [row.id for row in rows] == ["bench_openai"]
-    assert table.reads == [
-        (
-            b"benchmark_provider_day#2026-05-02#openai#",
-            b"benchmark_provider_day#2026-05-02#openai#~",
-            10,
-        )
-    ]
-
-
-def test_gcp_provider_benchmark_date_only_uses_daily_recent_index() -> None:
-    older_openai = ProviderBenchmarkSample(
-        id="bench_openai",
-        model="openai/gpt-5.4-nano",
-        provider="openai",
-        provider_name="OpenAI",
-        status="success",
-        usage_type="Credits",
-        streamed=False,
-        created_at="2026-05-02T12:00:00Z",
-    )
-    newer_mistral = ProviderBenchmarkSample(
-        id="bench_mistral",
-        model="mistralai/mistral-small-2603",
-        provider="mistral",
-        provider_name="Mistral",
-        status="success",
-        usage_type="BYOK",
-        streamed=True,
-        created_at="2026-05-02T12:01:00Z",
-    )
-    table = _FakeBigtable([_FakeReadRow(newer_mistral), _FakeReadRow(older_openai)])
-
-    rows = _bt_provider_benchmark_samples(
-        table, "m", date="2026-05-02", provider=None, model=None, limit=1
-    )
-
-    assert [row.id for row in rows] == ["bench_mistral"]
-    assert table.reads == [
-        (b"benchmark_day_recent#2026-05-02#", b"benchmark_day_recent#2026-05-02#~", 1)
-    ]
-
-
-def test_gcp_provider_benchmark_date_only_falls_back_to_legacy_overread() -> None:
-    openai = ProviderBenchmarkSample(
-        id="bench_openai",
-        model="openai/gpt-5.4-nano",
-        provider="openai",
-        provider_name="OpenAI",
-        status="success",
-        usage_type="Credits",
-        streamed=False,
-        created_at="2026-05-02T12:00:00Z",
-    )
-    table = _FakeBigtable(read_batches=[[], [_FakeReadRow(openai)]])
-
-    rows = _bt_provider_benchmark_samples(
-        table, "m", date="2026-05-02", provider=None, model=None, limit=10
-    )
-
-    assert [row.id for row in rows] == ["bench_openai"]
-    assert table.reads == [
-        (b"benchmark_day_recent#2026-05-02#", b"benchmark_day_recent#2026-05-02#~", 10),
-        (b"benchmark#2026-05-02#", b"benchmark#2026-05-02#~", 1000),
-    ]
-
-
-def test_gcp_provider_benchmark_read_uses_recent_provider_index_without_date() -> None:
-    openai = ProviderBenchmarkSample(
-        id="bench_openai",
-        model="openai/gpt-5.4-nano",
-        provider="openai",
-        provider_name="OpenAI",
-        status="success",
-        usage_type="Credits",
-        streamed=False,
-        created_at="2026-05-02T12:00:00Z",
-    )
-    table = _FakeBigtable([_FakeReadRow(openai)])
-
-    rows = _bt_provider_benchmark_samples(
-        table, "m", date=None, provider="openai", model=None, limit=10
-    )
-
-    assert [row.id for row in rows] == ["bench_openai"]
-    assert table.reads == [
-        (b"benchmark_provider_recent#openai#", b"benchmark_provider_recent#openai#~", 10)
-    ]
-
-
-def test_gcp_provider_benchmark_read_uses_recent_model_index_without_date() -> None:
-    openai = ProviderBenchmarkSample(
-        id="bench_openai",
-        model="openai/gpt-5.4-nano",
-        provider="openai",
-        provider_name="OpenAI",
-        status="success",
-        usage_type="Credits",
-        streamed=False,
-        created_at="2026-05-02T12:00:00Z",
-    )
-    table = _FakeBigtable([_FakeReadRow(openai)])
-
-    rows = _bt_provider_benchmark_samples(
-        table,
-        "m",
-        date=None,
-        provider="openai",
-        model="openai/gpt-5.4-nano",
-        limit=5,
-    )
-
-    assert [row.id for row in rows] == ["bench_openai"]
-    assert table.reads == [
-        (
-            b"benchmark_model_recent#openai#openai/gpt-5.4-nano#",
-            b"benchmark_model_recent#openai#openai/gpt-5.4-nano#~",
-            5,
-        )
-    ]
-
-
 def test_gcp_workspace_update_persists_name_and_deleted_state() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     user = store.ensure_user("alice@example.com")
     workspace = store.list_workspaces_for_user(user.id)[0]
 
@@ -859,183 +398,75 @@ def test_gcp_workspace_update_persists_name_and_deleted_state() -> None:
     assert workspace_row["deleted"] is True
 
 
-def test_gcp_reconcile_generation_activity_rewrites_existing_generations(monkeypatch) -> None:
-    from trusted_router.storage_gcp_keys import SpannerApiKeys
+def test_gcp_reconcile_generation_activity_re_enqueues_durable_delivery() -> None:
+    from trusted_router.storage_gcp_codec import generation_workspace_id
 
+    store, db = make_fake_store(operational_analytics_outbox_enabled=True)
     existing = _generation("gen_existing", "ws_1", "2026-05-02T12:00:00Z")
     newer = _generation("gen_newer", "ws_1", "2026-05-03T12:00:00Z")
-    store = object.__new__(SpannerBigtableStore)
-    store.generation_family = "m"
-    written: list[str] = []
-
-    def list_entities(kind: str, *, cls: type[Any], prefix: str | None = None, suffix: str | None = None, limit: int | None = None):
-        assert limit == 1001
-        assert kind == "generation_by_workspace"
-        assert cls is dict
-        assert prefix == "ws_1#"
-        assert suffix is None
-        return [
-            {"generation_id": existing.id},
-            {"generation_id": "missing"},
-            {"generation_id": newer.id},
-        ]
-
-    def get_generation(generation_id: str) -> Generation | None:
-        return {existing.id: existing, newer.id: newer}.get(generation_id)
-
-    def write_generation_bigtable(_table: Any, _family: str, generation: Generation) -> None:
-        written.append(generation.id)
-
-    monkeypatch.setattr(
-        "trusted_router.storage_gcp_generations._bt_write_generation",
-        write_generation_bigtable,
+    for generation in (existing, newer):
+        store._write_entity("generation", generation.id, generation)
+        store._write_entity(
+            "generation_by_workspace",
+            generation_workspace_id(generation),
+            {"generation_id": generation.id},
+        )
+    store._write_entity(
+        "generation_by_workspace",
+        "ws_1#2026-05-02#2026-05-02T13:00:00Z#missing",
+        {"generation_id": "missing"},
     )
-
-    store._list_entities = list_entities  # type: ignore[method-assign]
-    store.get_generation = get_generation  # type: ignore[method-assign]
-    # generation_store is what reconcile_generation_activity delegates to.
-    from trusted_router.storage_gcp_generations import SpannerGenerations
-    from trusted_router.storage_gcp_io import SpannerIO
-
-    io = SpannerIO(
-        database=None,
-        spanner_module=None,
-        write_entity_batch=lambda *_a, **_kw: None,
-        read_entity_tx=lambda *_a, **_kw: None,
-        write_entity_tx=lambda *_a, **_kw: None,
-        write_entity=lambda *_a, **_kw: None,
-        read_entity=lambda *_a, **_kw: None,
-        list_entities=list_entities,
-        delete_entities=lambda *_a, **_kw: None,
-        delete_entities_tx=lambda *_a, **_kw: None,
-    )
-    store.api_keys = SpannerApiKeys(io)
-    store.generation_store = SpannerGenerations(
-        io,
-        bt_table=object(),
-        generation_family="m",
-        add_usage_to_key=store.api_keys.add_usage,
-    )
-    # reconcile uses get() which we override on the generation_store.
-    store.generation_store.get = get_generation  # type: ignore[method-assign]
 
     assert store.reconcile_generation_activity("ws_1") == 2
-    assert written == ["gen_existing", "gen_newer"]
+    delivered = [
+        event["event_id"]
+        for event in db.operational_analytics_outbox
+        if event["event_kind"] == "activity"
+    ]
+    assert sorted(delivered) == [existing.id, newer.id]
 
 
-def test_gcp_exhausted_mirror_retry_logs_a_warning_without_a_traceback(
-    caplog, monkeypatch
-) -> None:
-    import logging
+def test_reconcile_without_durable_outbox_repairs_nothing() -> None:
+    store, db = make_fake_store()
+    generation = _generation("gen_outbox_off", "ws_off", "2026-05-02T12:00:00Z")
+    store._write_entity("generation", generation.id, generation)
 
-    from trusted_router.storage_gcp_mirror import MirrorWriteIncomplete
+    result = store.generation_store.reconcile_activity(generation_id=generation.id, detailed=True)
 
-    store, db, _ = make_fake_store()
-    key = _api_key("key_1", "ws_1", "2026-05-02T10:00:00Z")
-    generation = _generation("gen_transient", "ws_1", "2026-05-02T12:00:00Z")
-    store._write_entity("api_key", key.hash, key)
+    assert result.scanned == 1
+    assert result.durable_repaired == 0
+    assert result.durable_failed == []
+    assert result.missing == []
+    assert db.operational_analytics_outbox == []
 
-    def transient(_table: Any, _family: str, _generation: Generation) -> None:
-        raise MirrorWriteIncomplete(attempts=2, total=3, codes=[14])
 
-    monkeypatch.setattr(
-        "trusted_router.storage_gcp_generations._bt_write_generation",
-        transient,
+def test_reconcile_reports_durable_outcomes(monkeypatch) -> None:
+    store, db = make_fake_store(
+        operational_analytics_outbox_enabled=True, generation_records_enabled=True,
     )
+    generation = _generation("gen_outcomes", "ws_outcomes", "2026-09-24T00:00:00Z")
+    store._write_entity("generation", generation.id, generation)
 
-    with caplog.at_level(logging.INFO, logger="trusted_router.storage_gcp_generations"):
-        store.add_generation(generation)
+    def unavailable(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("Spanner outbox unavailable")
 
-    assert ("generation", generation.id) in db.rows
-    records = [r for r in caplog.records if "bigtable.activity_index_write_failed" in r.getMessage()]
-    assert len(records) == 1
-    record = records[0]
-    # Bounded retries already ran: a warning with the codes, not an error traceback.
-    assert record.levelno == logging.WARNING
-    assert record.exc_info is None
-    message = record.getMessage()
-    assert "MirrorWriteIncomplete" in message
-    assert "status codes 14" in message
-    assert "after 2 attempt" in message
-    assert f"generation_id={generation.id}" in message
-    assert "workspace_id=ws_1" in message
-    assert "day=2026-05-02" in message
-    assert "activity_mirror_reconcile_cli --generation-id" in message
-    assert record.repairable_via.endswith("--generation-id <generation_id>")
+    with monkeypatch.context() as patch:
+        patch.setattr(store._operational_analytics_outbox, "enqueue_activity_tx", unavailable)
+        failed = store.generation_store.reconcile_activity(
+            generation_id=generation.id, detailed=True,
+        )
+    assert failed.durable_repaired == 0
+    assert failed.durable_failed == [generation.id]
+    assert db.operational_analytics_outbox == []
 
-
-def test_gcp_exhausted_benchmark_mirror_retry_logs_a_warning_without_a_traceback(
-    caplog, monkeypatch
-) -> None:
-    import logging
-
-    from trusted_router.storage_gcp_mirror import MirrorWriteIncomplete
-    from trusted_router.storage_models import ProviderBenchmarkSample
-
-    store, _db, _ = make_fake_store()
-    generation = _generation("gen_bench", "ws_1", "2026-05-02T12:00:00Z")
-
-    def transient(_table: Any, _family: str, _sample: ProviderBenchmarkSample) -> None:
-        raise MirrorWriteIncomplete(attempts=2, total=6, codes=[14, 14])
-
-    monkeypatch.setattr(
-        "trusted_router.storage_gcp_generations._bt_write_provider_benchmark",
-        transient,
-    )
-
-    with caplog.at_level(logging.INFO, logger="trusted_router.storage_gcp_generations"):
-        store.generation_store.record_benchmark(ProviderBenchmarkSample.from_generation(generation))
-
-    records = [r for r in caplog.records if "bigtable.benchmark_mirror_write_failed" in r.getMessage()]
-    assert len(records) == 1
-    assert records[0].levelno == logging.WARNING
-    assert records[0].exc_info is None
-    assert "status codes 14,14" in records[0].getMessage()
-    assert "2 of 6 rows failed" in records[0].getMessage()
-
-
-def test_gcp_bigtable_failure_after_spanner_commit_is_repairable(caplog, monkeypatch) -> None:
-    store, db, _ = make_fake_store()
-    key = _api_key("key_1", "ws_1", "2026-05-02T10:00:00Z")
-    generation = _generation("gen_repair", "ws_1", "2026-05-02T12:00:00Z")
-    store._write_entity("api_key", key.hash, key)
-
-    def fail_bigtable(_table: Any, _family: str, _generation: Generation) -> None:
-        raise RuntimeError("bigtable unavailable")
-
-    monkeypatch.setattr(
-        "trusted_router.storage_gcp_generations._bt_write_generation",
-        fail_bigtable,
-    )
-
-    store.add_generation(generation)
-
-    assert ("generation", generation.id) in db.rows
-    assert ("generation_by_workspace", f"ws_1#2026-05-02#2026-05-02T12:00:00Z#{generation.id}") in db.rows
-    key_row = json.loads(db.rows[("api_key", key.hash)].body)
-    assert key_row["usage_microdollars"] == generation.total_cost_microdollars
-    assert "bigtable.activity_index_write_failed" in caplog.text
-    # Enriched log extras: error_class + error_message + repairable_via.
-    assert "RuntimeError" in caplog.text
-    assert "bigtable unavailable" in caplog.text
-
-    repaired: list[str] = []
-
-    def repair_bigtable(_table: Any, _family: str, repaired_generation: Generation) -> None:
-        repaired.append(repaired_generation.id)
-
-    monkeypatch.setattr(
-        "trusted_router.storage_gcp_generations._bt_write_generation",
-        repair_bigtable,
-    )
-    assert store.reconcile_generation_activity("ws_1", date="2026-05-02") == 1
-    assert repaired == [generation.id]
-    key_after_repair = json.loads(db.rows[("api_key", key.hash)].body)
-    assert key_after_repair["usage_microdollars"] == generation.total_cost_microdollars
+    repaired = store.generation_store.reconcile_activity(generation_id=generation.id, detailed=True)
+    assert repaired.durable_repaired == 1
+    assert repaired.durable_failed == []
+    assert [event["event_id"] for event in db.operational_analytics_outbox] == [generation.id]
 
 
 def test_gcp_broadcast_claims_due_jobs_with_lease() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     destination = store.create_broadcast_destination(
         workspace_id="ws_1",
         type="webhook",
@@ -1071,7 +502,7 @@ def test_gcp_broadcast_claims_due_jobs_with_lease() -> None:
 
 
 def test_gcp_broadcast_expired_lease_is_due_again() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     destination = store.create_broadcast_destination(
         workspace_id="ws_1",
         type="webhook",
@@ -1112,48 +543,10 @@ def test_reverse_time_key_sorts_newer_generations_first() -> None:
     assert len(newer) == len(older) == 13
 
 
-def test_reconcile_reports_actual_mirror_outcomes_and_disabled_writes(monkeypatch) -> None:
-    from trusted_router.storage_gcp_mirror import MirrorWriteIncomplete
-
-    store, _, table = make_fake_store(
-        operational_analytics_outbox_enabled=True, generation_records_enabled=True,
-    )
-    generation = _generation("gen_outcomes", "ws_outcomes", "2026-09-24T00:00:00Z")
-    store._write_entity("generation", generation.id, generation)
-
-    def unavailable(*args: Any, **kwargs: Any) -> None:
-        raise MirrorWriteIncomplete(attempts=2, total=3, codes=[14])
-
-    with monkeypatch.context() as patch:
-        patch.setattr("trusted_router.storage_gcp_generations._bt_write_generation", unavailable)
-        failed = store.generation_store.reconcile_activity(
-            generation_id=generation.id, detailed=True,
-        )
-    assert failed.mirror_repaired == 0
-    assert failed.durable_repaired == 1
-    assert failed.mirror_failed == [generation.id]
-    assert not table.committed
-
-    store.generation_store._bigtable_writes_enabled = False
-    skipped = store.generation_store.reconcile_activity(generation_id=generation.id, detailed=True)
-    assert skipped.mirror_repaired == 0
-    assert skipped.durable_repaired == 1
-    assert skipped.mirror_skipped == 1
-    assert skipped.mirror_failed == []
-    assert not table.committed
-
-    store.generation_store._bigtable_writes_enabled = True
-    repaired = store.generation_store.reconcile_activity(generation_id=generation.id, detailed=True)
-    assert repaired.mirror_repaired == 1
-    assert repaired.durable_repaired == 1
-    assert repaired.mirror_failed == []
-    assert len(table.committed) == 3
-
-
 def test_reconcile_pages_bound_spanner_reads_and_continue_past_missing_records(monkeypatch) -> None:
     from trusted_router.storage_gcp_codec import generation_workspace_id
 
-    store, db, table = make_fake_store()
+    store, db = make_fake_store(operational_analytics_outbox_enabled=True)
     generations = [_generation(f"gen_{i}", "ws_page", f"2026-09-2{i}T00:00:00Z") for i in range(3)]
     refs = [(generation_workspace_id(g), json.dumps({"generation_id": g.id})) for g in generations]
     for generation in generations[1:]:
@@ -1181,21 +574,22 @@ def test_reconcile_pages_bound_spanner_reads_and_continue_past_missing_records(m
     monkeypatch.setattr(snapshot_type, "execute_sql", execute_sql)
     first = store.generation_store.reconcile_activity("ws_page", limit=1, detailed=True)
     assert first.scanned == 1
-    assert first.mirror_repaired == 0
+    assert first.durable_repaired == 0
     assert first.missing == [generations[0].id]
     assert first.truncated is True
     assert first.next_after_id == refs[0][0]
     second = store.generation_store.reconcile_activity(
         "ws_page", limit=1, detailed=True, after_id=first.next_after_id,
     )
-    assert second.mirror_repaired == 1
+    assert second.durable_repaired == 1
     assert second.truncated is True
     assert second.next_after_id == refs[1][0]
     last = store.generation_store.reconcile_activity(
         "ws_page", limit=1, detailed=True, after_id=second.next_after_id,
     )
-    assert last.mirror_repaired == 1
+    assert last.durable_repaired == 1
     assert last.truncated is False
     assert last.next_after_id is None
     assert [call["after_id"] for call in calls] == ["", refs[0][0], refs[1][0]]
-    assert len(table.committed) == 6
+    delivered = sorted(event["event_id"] for event in db.operational_analytics_outbox)
+    assert delivered == [generations[1].id, generations[2].id]

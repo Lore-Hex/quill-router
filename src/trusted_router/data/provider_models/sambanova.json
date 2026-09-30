@@ -130,11 +130,10 @@
       "upstream_id": "MiniMax-M3",
       "context_length": 1048576,
       "max_output_tokens": 1048576,
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 600000,
       "output_token_price_per_m": 2400000,
-      "cached_input_token_price_per_m": 0
+      "cached_input_token_price_per_m": 60000
     },
     {
       "display_name": "gpt-oss-120b",
@@ -160,7 +159,7 @@
     }
   ],
   "source": "https://api.sambanova.ai/v1/models",
-  "generated_at": "2026-09-27T23:04:50Z",
+  "generated_at": "2026-09-30T02:36:36Z",
   "price_scale": "microdollars_per_million",
   "model_count": 7
 }

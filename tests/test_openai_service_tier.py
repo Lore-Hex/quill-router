@@ -1,12 +1,25 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
 from fastapi.testclient import TestClient
 
 from scripts.pricing.parsers.openai import parse as parse_openai_pricing
+from tests.pinned_manifests import OPENAI_GPT_4O_MINI, OPENAI_GPT_5_6_SOL, serve_manifest_rows
 from trusted_router.catalog import endpoint_for_id
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.money import token_cost_microdollars
+
+
+@pytest.fixture(autouse=True)
+def openai_routes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """OpenAI's routes for the models below, built from their pinned manifest
+    rows: service tiers are rules of OpenAI's own routes whatever it lists today."""
+    serve_manifest_rows(
+        monkeypatch, tmp_path, "openai", [OPENAI_GPT_5_6_SOL, OPENAI_GPT_4O_MINI]
+    )
 
 
 def _client_and_key() -> tuple[TestClient, dict[str, object]]:

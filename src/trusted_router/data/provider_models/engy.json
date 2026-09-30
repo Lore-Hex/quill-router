@@ -67,7 +67,8 @@
       "title": "glm-5.3-flash",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -237,6 +238,6 @@
       "cached_input_token_price_per_m": 8000
     }
   ],
-  "generated_at": "2026-09-27T23:04:50Z",
+  "generated_at": "2026-09-30T02:36:36Z",
   "model_count": 8
 }

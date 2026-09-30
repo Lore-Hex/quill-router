@@ -60,10 +60,6 @@ ssh_node --command="sudo sh -c '
     -r /opt/tr-clickhouse/clickhouse/requirements-live.txt
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-ingest.service \
     /etc/systemd/system/tr-clickhouse-ingest.service
-  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-reconcile.service \
-    /etc/systemd/system/tr-clickhouse-reconcile.service
-  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-reconcile.timer \
-    /etc/systemd/system/tr-clickhouse-reconcile.timer
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-workspace-directory.service \
     /etc/systemd/system/tr-clickhouse-workspace-directory.service
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-workspace-directory.timer \
@@ -101,6 +97,14 @@ ssh_node --command="sudo sh -c '
     --multiquery < /opt/tr-clickhouse/clickhouse/012_activity_generations_workspace_id.sql
   clickhouse-client --user tr --password \"\$CH_PASSWORD\" --database tr \
     --multiquery < /opt/tr-clickhouse/clickhouse/014_reservation_overruns.sql
+  # The benchmark reconciler replayed Bigtable history into ClickHouse. The
+  # Bigtable analytics backend is retired (2026-09-29) and the archive
+  # extraction above never deletes files, so an already-provisioned node
+  # keeps the old unit files and modules: stop, disable and remove them.
+  systemctl disable --now tr-clickhouse-reconcile.timer \
+    tr-clickhouse-reconcile.service >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/tr-clickhouse-reconcile.service \
+    /etc/systemd/system/tr-clickhouse-reconcile.timer
   systemctl daemon-reload
   systemctl enable tr-clickhouse-ingest.service
   systemctl restart tr-clickhouse-ingest.service
@@ -121,13 +125,11 @@ ssh_node --command="sudo sh -c '
   done
   systemctl enable --now tr-clickhouse-workspace-directory.timer
   systemctl enable --now tr-clickhouse-overrun-rollup.timer
-  systemctl enable --now tr-clickhouse-reconcile.timer
   systemctl enable --now tr-clickhouse-archive.timer
   systemctl enable --now tr-clickhouse-archive-restore.timer
   systemctl enable --now tr-clickhouse-rollup-hourly.timer
   systemctl enable --now tr-clickhouse-rollup-daily.timer
   systemctl is-active tr-clickhouse-ingest.service
-  systemctl is-active tr-clickhouse-reconcile.timer
   systemctl is-active tr-clickhouse-overrun-rollup.timer
   systemctl is-active tr-clickhouse-archive.timer
   systemctl is-active tr-clickhouse-archive-restore.timer

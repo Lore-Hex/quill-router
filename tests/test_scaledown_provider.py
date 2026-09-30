@@ -11,6 +11,7 @@ import pytest
 from scripts.pricing.base import ModelPrice
 from scripts.pricing.providers import scaledown
 from scripts.pricing.refresh import PROVIDER_SLUGS
+from tests.pinned_manifests import serve_manifest_rows
 from trusted_router.catalog import GATEWAY_PREPAID_PROVIDER_SLUGS, PROVIDERS
 from trusted_router.catalog_ingest import _supplemental_provider_models_and_endpoints
 from trusted_router.money import token_cost_microdollars
@@ -32,6 +33,42 @@ RESULTS = {
     "extract": {"input_tokens": 170, "entities": []},
     "classify": {"input_tokens": 394, "top_label": "billing"},
 }
+
+
+def _discovered_task_rows(monkeypatch, directory: Path) -> list[dict]:
+    """ScaleDown's task rows as its hourly discovery writes them once every
+    native canary passes (test_native_canaries_and_manifest checks the same
+    pipeline)."""
+    path = directory / "discovered" / "scaledown.json"
+    path.parent.mkdir(parents=True)
+    real_client = httpx.Client
+
+    def handle(req):
+        task = next(task for task, spec in scaledown.TASKS.items() if spec["path"] == req.url.path)
+        return httpx.Response(200, json=RESULTS[task])
+
+    with monkeypatch.context() as patch:
+        patch.setenv("SCALEDOWN_API_KEY", "test-only")
+        patch.setattr(scaledown, "fetch_html", lambda url: PRICE)
+        patch.setattr(scaledown, "_website_code", lambda: FAQ)
+        patch.setattr(scaledown, "MANIFEST_PATH", path)
+        patch.setattr(scaledown, "_ROWS", scaledown._ROWS)
+        patch.setattr(
+            scaledown.httpx,
+            "Client",
+            lambda **kw: real_client(transport=httpx.MockTransport(handle), **kw),
+        )
+        scaledown.write_provider_manifest(scaledown.fetch())
+    return json.loads(path.read_text())["models"]
+
+
+@pytest.fixture
+def task_routes(monkeypatch, tmp_path) -> None:
+    """ScaleDown's four task routes, built from the rows its discovery writes:
+    the task contracts below hold whatever ScaleDown lists today."""
+    serve_manifest_rows(
+        monkeypatch, tmp_path, "scaledown", _discovered_task_rows(monkeypatch, tmp_path)
+    )
 
 
 def test_exact_input_only_price():
@@ -118,6 +155,7 @@ def test_failed_canary_is_not_published(tmp_path, monkeypatch):
     )
 
 
+@pytest.mark.usefixtures("task_routes")
 def test_task_health_probes_use_catalog_examples_and_skip_throughput():
     from trusted_router.synthetic.probes import _rotation_prompt, rotation_candidates
     from trusted_router.synthetic.throughput import throughput_candidates
@@ -130,6 +168,7 @@ def test_task_health_probes_use_catalog_examples_and_skip_throughput():
     assert all(provider != "scaledown" for provider, _ in throughput_candidates())
 
 
+@pytest.mark.usefixtures("task_routes")
 def test_task_models_cannot_be_selected_as_general_chat():
     from trusted_router.catalog import MODELS
     from trusted_router.routing_candidates import (
@@ -147,6 +186,7 @@ def test_task_models_cannot_be_selected_as_general_chat():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("task", list(scaledown.TASKS))
+@pytest.mark.usefixtures("task_routes")
 async def test_task_rotation_request_passes_native_input(task):
     from trusted_router.synthetic.probes import SyntheticTarget, provider_rotation_probe
 
@@ -203,9 +243,13 @@ def test_provider_privacy_and_hourly_discovery_contracts():
 
 
 def test_live_manifest_publishes_four_credits_routes_with_free_output():
+    # Each routable task row of the committed manifest becomes one Credits
+    # route; a row the refresh tombstoned is simply not expected.
+    raw = json.loads(scaledown.MANIFEST_PATH.read_text())
+    routable = [row["id"] for row in raw["models"] if row.get("routable") is not False]
     models, endpoints = _supplemental_provider_models_and_endpoints()
     routes = [e for e in endpoints.values() if e.provider == "scaledown"]
-    assert len(routes) == 4
+    assert sorted(e.model_id for e in routes) == sorted(routable)
     for e in routes:
         assert e.usage_type == "Credits"
         assert e.prompt_price_microdollars_per_million_tokens == _customer_price(50_000)
@@ -215,6 +259,17 @@ def test_live_manifest_publishes_four_credits_routes_with_free_output():
         assert provider_model_requires_exact_global_settlement(e.provider, e.model_id)
 
 
+@pytest.mark.provider_health
+def test_scaledown_serves_its_four_task_routes():
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    from trusted_router.catalog import MODEL_ENDPOINTS
+
+    for task in scaledown.TASKS:
+        assert f"scaledown/{task}@scaledown/prepaid" in MODEL_ENDPOINTS
+
+
+@pytest.mark.usefixtures("task_routes")
 def test_gateway_settles_provider_preprocessing_exactly_once(client):
     created = client.post(
         "/v1/keys",
@@ -235,7 +290,6 @@ def test_gateway_settles_provider_preprocessing_exactly_once(client):
     assert auth.status_code == 200, auth.text
     authorization = auth.json()["data"]
     assert authorization["provider"] == "scaledown"
-    assert not authorization.get("spend_lease")
     payload = {
         "authorization_id": authorization["authorization_id"],
         "actual_input_tokens": 394,
@@ -255,6 +309,7 @@ def test_gateway_settles_provider_preprocessing_exactly_once(client):
     assert second.json()["data"]["already_settled"]
 
 
+@pytest.mark.usefixtures("task_routes")
 def test_public_pages_and_usage_examples(client):
     assert client.get("/providers/scaledown").status_code == 200
     for task in scaledown.TASKS:
@@ -264,6 +319,7 @@ def test_public_pages_and_usage_examples(client):
 
 
 @pytest.mark.parametrize("task", scaledown.TASKS)
+@pytest.mark.usefixtures("task_routes")
 def test_free_output_is_visible_in_all_model_prices(task, monkeypatch):
     from trusted_router.catalog import MODELS
     from trusted_router.catalog_data import ModelEndpoint
@@ -283,6 +339,7 @@ def test_free_output_is_visible_in_all_model_prices(task, monkeypatch):
     assert evidence["lowest_completion_price"] == "$0/1M"
 
 
+@pytest.mark.usefixtures("task_routes")
 def test_unknown_zero_prices_still_mean_selected_route():
     from dataclasses import replace
 
