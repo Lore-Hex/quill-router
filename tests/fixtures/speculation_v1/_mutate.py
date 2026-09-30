@@ -1,4 +1,4 @@
-"""Execute every rules.json mutation on disposable copies, never the worktree.
+"""Execute the combined mutation inventory on disposable copies, never the worktree.
 
 Every mutant runs all protocol tests, including the entire literal corpus.
 A mutant is red only on a test failure. Compile/import/setup failures are
@@ -34,7 +34,6 @@ def load(name: str, path: Path) -> ModuleType:
 
 def main() -> None:
     original = (ROOT / MODULE).read_text()
-    rules = json.loads((ROOT / 'tests/fixtures/speculation_v1/rules.json').read_text())['rules']
     rows = []
     sys.dont_write_bytecode = True
     with tempfile.TemporaryDirectory(prefix='astra-spec-mutations-', dir='/private/tmp') as tmp:
@@ -42,7 +41,9 @@ def main() -> None:
         (target / MODULE).parent.mkdir(parents=True)
         shutil.copytree(ROOT / 'tests/fixtures/speculation_v1', target / 'tests/fixtures/speculation_v1')
         shutil.copyfile(ROOT / 'tests/test_speculation_protocol.py', target / 'tests/test_speculation_protocol.py')
+        shutil.copyfile(ROOT / 'tests/speculation_equality_rules.json', target / 'tests/speculation_equality_rules.json')
         tests = load('speculation_mutation_tests', target / 'tests/test_speculation_protocol.py')
+        rules = tests.RULES
         cases = {c['name']: c for c in tests.CASES}
         verdicts = {c['name']: c for c in tests.read('verdict-vectors.json')['vectors']}
         wire = target / 'tests/fixtures/speculation_v1/provider-wire.json'

@@ -48,31 +48,30 @@ def _public(function: Callable[P, T]) -> Callable[P, T]:
 
 
 def _equal(left: Any, right: Any) -> bool:
-    """Depth-unbounded JSON equality, with cycles treated as unequal.
+    """Iterative, linear-time equality of JSON trees, with exact scalar types.
 
-    Exit frames memoize only completed container pairs. Active pairs detect
-    cycles separately, while shared acyclic subtrees are compared just once.
+    Each input has its own container identities: sharing or cycles in either
+    input compare false. Each container's children are scheduled at most once.
     """
-    stack = [(left, right, False)]
-    active: set[tuple[int, int]] = set()
-    completed: set[tuple[int, int]] = set()
+    stack = [(left, right)]
+    seen_left: set[int] = set()
+    seen_right: set[int] = set()
     while stack:
-        left, right, exiting = stack.pop()
+        left, right = stack.pop()
         if type(left) is not type(right):
             return False
         if type(left) not in (dict, list):
             if type(left) not in (str, int, float, bool, type(None)) or left != right:
                 return False
             continue
-        pair = (id(left), id(right))
-        if exiting:
-            active.remove(pair)
-            completed.add(pair)
-            continue
-        if pair in active:
+        # Empty containers have no children, so they carry no identity (Go's
+        # decoder gives every empty array one shared address; parity needs this).
+        if (left and id(left) in seen_left) or (right and id(right) in seen_right):
             return False
-        if pair in completed:
-            continue
+        if left:
+            seen_left.add(id(left))
+        if right:
+            seen_right.add(id(right))
         if type(left) is dict:
             if left.keys() != right.keys():
                 return False
@@ -81,9 +80,7 @@ def _equal(left: Any, right: Any) -> bool:
             if len(left) != len(right):
                 return False
             children = zip(left, right, strict=True)
-        active.add(pair)
-        stack.append((left, right, True))
-        stack.extend((a, b, False) for a, b in children)
+        stack.extend(children)
     return True
 
 

@@ -7,6 +7,7 @@ import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 import pytest
@@ -25,6 +26,9 @@ BUNDLE = read("grant-permit-tokens.json")
 CASES = read("protocol-vectors.json")["cases"]
 KEYS = tuple(protocol.TrustedKey(**key) for key in BUNDLE["trusted_test_keys"])
 WIRE = (FIXTURES / "provider-wire.json").read_bytes()[:-1]
+# Preserve the frozen inventory bytes; replace only the retired pair comparator edits.
+RULES = [r for r in read("rules.json")["rules"] if r["function"] != "_equal"]
+RULES += json.loads((Path(__file__).with_name("speculation_equality_rules.json")).read_bytes())
 
 
 def grant(shadow: bool = False) -> protocol.VerifiedGrant:
@@ -120,7 +124,7 @@ def test_guard_inventory() -> None:
     import ast
     import inspect
 
-    rules = read("rules.json")["rules"]
+    rules = RULES
     cases = {c["name"] for c in CASES} | {"verdict:" + v["name"] for v in read("verdict-vectors.json")["vectors"]} | {"fixture_pins"}
     cases |= {name for name in globals() if name.startswith("test_")}
     assert all(r["literal_case"] in cases for r in rules)
@@ -166,6 +170,7 @@ def equality_work_budget(limit: int = 100_000) -> Iterator[None]:
     """Bound comparison work deterministically, including under cycle/DAG mutants."""
     previous = sys.gettrace()
     lines = 0
+    deadline = perf_counter() + 5
     code = protocol._equal.__code__
 
     def trace(frame: Any, event: str, arg: Any) -> Any:
@@ -175,6 +180,7 @@ def equality_work_budget(limit: int = 100_000) -> Iterator[None]:
                 lines = 0
             elif event == "line":
                 lines += 1
+                assert perf_counter() < deadline, "comparison exceeded five seconds"
                 assert lines <= limit, "comparison exceeded its linear work budget"
             return trace
         return None
@@ -210,7 +216,6 @@ def test_acceptance_depth_5000() -> None:
 
 
 def test_acceptance_shared_subtrees() -> None:
-    # Separate DAGs: identity equality cannot substitute for structural equality.
     left: Any = 0
     right: Any = 0
     for _ in range(64):
@@ -220,17 +225,99 @@ def test_acceptance_shared_subtrees() -> None:
     auth = {**BUNDLE["authorization"], "extra": left}
     response_auth = {**BUNDLE["authorization"], "extra": right}
     with equality_work_budget(20_000):
-        assert protocol.verify_acceptance({"authorization": response_auth}, d, auth) == "ordinary"
-        assert protocol.verify_acceptance({"authorization": auth}, d, auth) == "ordinary"
-        # Shared left child must still be compared to EACH distinct right child.
-        response_auth["extra"] = [{"a": [1], "b": [1]}, right]
-        auth["extra"] = [left, left]
-        with pytest.raises(protocol.ProtocolError, match="^authorization$"):
-            protocol.verify_acceptance({"authorization": response_auth}, d, auth)
-        with pytest.raises(protocol.ProtocolError, match="^authorization$"):
-            protocol.verify_acceptance({"authorization": auth}, d, response_auth)
-    # The budget trace temporarily replaces coverage's tracer; observe the hit too.
+        for a, b in ((auth, response_auth), (auth, auth)):
+            for marked in (False, True):
+                response = {"authorization": a}
+                if marked:
+                    response["speculation_accepted"] = BUNDLE["speculation_accepted"]
+                with pytest.raises(protocol.ProtocolError, match="^authorization$"):
+                    protocol.verify_acceptance(response, d, b)
+    assert protocol._equal(left, right) is False
+
+
+def test_equality_one_sided_sharing() -> None:
+    # Distinguish independent per-input identity sets from pair tracking, and
+    # cover each side even if the other side is a perfectly valid tree.
+    # Non-empty containers: empty ones carry no identity (see the test below).
+    for shared, tree in (([[1], [1]], [[1], [1]]), ({"a": {"x": 1}, "b": {"x": 1}}, {"b": {"x": 1}, "a": {"x": 1}})):
+        if isinstance(shared, list):
+            shared[1] = shared[0]
+        else:
+            shared["b"] = shared["a"]
+        assert protocol._equal(shared, tree) is False
+        assert protocol._equal(tree, shared) is False
+        assert protocol._equal(shared, shared) is False
+    # Sharing across inputs is fine: each input individually remains a tree.
+    child = {"value": []}
+    assert protocol._equal([child], [child]) is True
+    # Identities may also cross positions without repetition WITHIN either tree.
+    a: list[Any] = []
+    b: list[Any] = []
+    assert protocol._equal([a, b], [b, a]) is True
+
+
+def test_equality_rings() -> None:
+    def ring(size: int) -> list[Any]:
+        nodes: list[list[Any]] = [[None] for _ in range(size)]
+        for index, node in enumerate(nodes):
+            node[0] = nodes[(index + 1) % size]
+        return nodes[0]
+
+    for right_size in (801, 800):
+        left, right = ring(800), ring(right_size)
+        # A missing identity guard fails within bounded work AND wall time,
+        # including when the mutation harness calls this test without pytest.
+        with equality_work_budget(30_000):
+            assert protocol._equal(left, right) is False
+
+
+def test_equality_cross_dag() -> None:
+    def tree(depth: int) -> Any:
+        return [tree(depth - 1), tree(depth - 1)] if depth else 0
+
+    def left_tree(depth: int) -> Any:
+        if depth:
+            return [left_tree(depth - 1), left_tree(depth - 1)]
+        node: Any = 0
+        for _ in range(10):
+            node = [node, node]
+        return node
+
+    left, right = left_tree(10), tree(10)
+    for _ in range(10):
+        right = [right, right]
+    with equality_work_budget(2_000):
+        assert protocol._equal(left, right) is False
+        assert protocol._equal(right, left) is False
+
+
+def test_equality_wide_million_nodes() -> None:
+    # One million distinct containers per input, including the root.
+    left = [[] for _ in range(999_999)]
+    right = [[] for _ in range(999_999)]
+    started = perf_counter()
     assert protocol._equal(left, right) is True
+    assert perf_counter() - started < 30
+
+
+def test_equality_depth_100000() -> None:
+    left: Any = 0
+    right: Any = 0
+    for _ in range(100_000):
+        left, right = [left], [right]
+    started = perf_counter()
+    assert protocol._equal(left, right) is True
+    assert perf_counter() - started < 10
+
+
+def test_equality_member_order_and_scalar_types() -> None:
+    left = {"a": [1, {"x": True, "y": None}], "b": {"c": 1.0}}
+    right = {"b": {"c": 1.0}, "a": [1, {"y": None, "x": True}]}
+    assert protocol._equal(left, right) is True
+    assert protocol._equal(left, left) is True
+    for a, b in ((True, 1), (False, 0), (1, 1.0), (True, 1.0)):
+        assert protocol._equal({"value": [a]}, {"value": [b]}) is False
+        assert protocol._equal({"value": [b]}, {"value": [a]}) is False
 
 
 def test_equality_cycles_and_non_json_values() -> None:
@@ -335,3 +422,15 @@ def test_signed_parser_fuzz() -> None:
                 protocol.verify_grant((message + b'.' + signature).decode('ascii'), KEYS, BUNDLE['context'], BUNDLE['now'])
             except protocol.ProtocolError:
                 pass
+
+
+def test_shared_empty_containers_compare_by_value() -> None:
+    """Empty containers carry no identity (parity with Go, whose decoder shares them)."""
+    empty_list: list[Any] = []
+    empty_dict: dict[str, Any] = {}
+    shared = {"a": empty_list, "b": empty_list, "c": empty_dict, "d": empty_dict}
+    fresh = {"a": [], "b": [], "c": {}, "d": {}}
+    assert protocol._equal(shared, fresh)
+    assert protocol._equal(fresh, shared)
+    child = [1]
+    assert not protocol._equal({"a": child, "b": child}, {"a": [1], "b": [1]})

@@ -222,7 +222,18 @@ After schema/type/charset validation, bytes MUST equal recursively
 ASCII-key-sorted compact JSON: preserve array order, decimal integers and
 lowercase booleans. No escapes or trailing newline are possible.
 
-Comparisons of caller-supplied values (bindings, route, authorization) are pure boolean, type-sensitive, depth-unbounded and independent of member order. They never produce an error code of their own.
+Caller-supplied values (bindings, route, authorization) MUST be JSON trees.
+A caller value in which any container (object or array) is reachable more than once, whether by sharing or by a cycle, is not a JSON tree and never compares equal. Empty containers carry no identity for this rule (they have no children, and Go's decoder gives every empty array one shared address), so a shared empty object or array compares by value.
+
+Comparisons are pure boolean, type-sensitive, depth-unbounded and independent
+of member order. They never produce an error code of their own. Implementations
+MUST use one iterative lockstep walk with a separate visited-container identity
+set for each input. The first repeated container in either input returns false.
+Otherwise compare exact scalar types and values, object key sets and their
+corresponding values, and array lengths and elements in order. Each container
+is expanded at most once, giving O(size of the two inputs) work and space;
+there is no comparison-depth limit. Sharing between the two inputs is allowed
+when each input individually is a tree.
 
 External bindings use one structural, type-sensitive equality: booleans,
 integers and floating values are distinct; objects have equal keys and
@@ -389,7 +400,7 @@ the contract rather than relying on library defaults:
 | `RawURLEncoding.Strict()` still ignores CR/LF | Alphabet precheck before decode; `base64_cr`, `base64_lf`, `signature_padded`, `base64_trailing_bits` |
 | `ed25519.Verify` panics on wrong public-key length | Explicit size validation; `key_short_public`, `signature_bitflip` |
 | Decoder nesting limits differ | Root-counted 16-container preflight; `depth16`, `depth17`, `depth_in_string`, `depth_siblings` |
-| Caller comparisons inherit signed-JSON depth limits or map traversal errors | Never compare caller values with a depth cutoff or by map iteration that can short-circuit into different codes. Use an explicit stack, memoize completed container pairs by identity, and guard active cycles (compare false); `acceptance_depth_130_*`, `acceptance_depth_300_*`. The signed-JSON depth-16 rule does not apply to caller comparisons. |
+| Caller comparisons inherit signed-JSON depth limits or map traversal errors | Never compare caller values with a depth cutoff or by map iteration that can short-circuit into different codes. Use an explicit stack and separate per-input visited-container identity sets; any repeated container (sharing or cycle) compares false; `acceptance_depth_130_*`, `acceptance_depth_300_*`. The signed-JSON depth-16 rule does not apply to caller comparisons. |
 
 ## Frozen fixtures and mutation evidence
 
@@ -400,8 +411,10 @@ edits, never to calculate expectations. Regeneration is a deliberate offline
 step and changes the manifest pin. Planning grant claims, provider-wire bytes,
 and the original 24 verdict vectors remain unchanged.
 
-`rules.json` is the guard inventory: each entry names a concrete source edit,
-function, and selected literal or Python-only case. `_mutate.py` runs the WHOLE inventory against
+The guard inventory combines frozen `rules.json` entries outside `_equal` with
+`tests/speculation_equality_rules.json`, which replaces the retired pair-based
+comparator edits without changing any fixture bytes. Each entry names a concrete
+source edit, function, and selected literal or Python-only case. `_mutate.py` runs the WHOLE inventory against
 disposable module/fixture copies and first confirms the unmodified harness.
 Compile/import failures count as build-broken, not red. A mutant is red only
 when a corpus test fails; all corpus tests run even after a failure. Only a
