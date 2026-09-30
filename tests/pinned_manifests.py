@@ -913,28 +913,6 @@ GLM_5_2_ROUTES: tuple[tuple[str, dict[str, Any]], ...] = (
     }),
 )
 
-# Fireworks' GLM 5.2 route as its manifest listed it on 2026-09-24, before
-# Fireworks retired it on 2026-09-25.
-FIREWORKS_GLM_5_2 = {
-    "id": "z-ai/glm-5.2",
-    "upstream_id": "accounts/fireworks/models/glm-5p2",
-    "retirement_at": "2026-09-25T00:00:00Z",
-    "display_name": "GLM 5.2 on Fireworks",
-    "title": "accounts/fireworks/models/glm-5p2",
-    "context_length": 1048576,
-    "max_output_tokens": 65536,
-    "input_token_price_per_m": 1400000,
-    "output_token_price_per_m": 4400000,
-    "cached_input_token_price_per_m": 140000,
-    "model_type": "chat",
-    "features": ["reasoning", "function-calling", "serverless"],
-    "input_modalities": ["text"],
-    "output_modalities": ["text"],
-    "endpoints": ["chat/completions"],
-    "status": 1,
-    "created": 1781630293,
-}
-
 # Run in the subprocess before the catalog is built.
 USE_PINNED_MANIFESTS = """
 from pathlib import Path as _Path

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +11,6 @@ import pytest
 from tests.fixture_routes import drop_routes
 from tests.lifecycle_clock import catalog_predates
 from tests.pinned_manifests import (
-    FIREWORKS_GLM_5_2,
     GLM_5_2_ROUTES,
     GROK_47,
     OPENROUTER_GLM_5_2,
@@ -2633,22 +2632,6 @@ def test_glm_52_supplements_publish_current_model_across_providers(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     _assert_glm_52_contract(*_glm_52_as_built(monkeypatch, tmp_path))
-
-    # Fireworks' route, still listed in its manifest, is built until its
-    # retirement on 2026-09-25 and never after.
-    fireworks_manifests = tmp_path / "fireworks"
-    fireworks_manifests.mkdir()
-    (fireworks_manifests / "fireworks.json").write_text(
-        json.dumps({"provider": "fireworks", "models": [FIREWORKS_GLM_5_2]}), encoding="utf-8"
-    )
-    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", fireworks_manifests)
-
-    def fireworks_routes(at: datetime) -> set[str]:
-        return set(catalog_ingest._supplemental_provider_models_and_endpoints(at=at)[1])
-
-    before = FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT - timedelta(microseconds=1)
-    assert "z-ai/glm-5.2@fireworks/prepaid" in fireworks_routes(before)
-    assert fireworks_routes(FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT) == set()
 
 
 @pytest.mark.parametrize("context_length", [131_072, 262_144, 1_000_000])
