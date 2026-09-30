@@ -3,12 +3,10 @@ from __future__ import annotations
 import copy
 import dataclasses
 import datetime as dt
-import hashlib
 import hmac
 import json
 import logging
 import os
-import random
 import threading
 import time
 import uuid
@@ -24,6 +22,7 @@ from trusted_router.custom_model_billing import (
 from trusted_router.custom_model_markup_billing import (
     custom_model_markup_authorization_id_from_payout_event_id,
 )
+from trusted_router.gateway_boot import SPEND_LEASE_BOOT_KIND, SpendLeaseBoot
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
 from trusted_router.operational_analytics import OperationalAnalyticsClient
 from trusted_router.operational_analytics_freshness import (
@@ -59,14 +58,6 @@ from trusted_router.routable_payouts import (
     validate_routable_release_status,
 )
 from trusted_router.security import lookup_hash_api_key, verify_api_key
-from trusted_router.spend_leases import (
-    SPEND_LEASE_ACTIVE_GRANT_KIND,
-    SPEND_LEASE_BOOT_KIND,
-    SPEND_LEASE_GENERATION_KIND,
-    FrozenSpendLeaseCatalog,
-    SpendLeaseArtifact,
-    SpendLeaseBoot,
-)
 from trusted_router.spend_windows import KeyLimitReserveResult
 from trusted_router.storage import (
     AcquisitionAttribution,
@@ -125,7 +116,6 @@ from trusted_router.storage_errors import (
     StoreUnavailable,
     is_duplicate_key_error,
     is_transient_store_error,
-    transient_store_error_types,
 )
 from trusted_router.storage_gcp_analytics_outbox import SpannerAnalyticsOutbox
 from trusted_router.storage_gcp_attribution import SpannerAcquisitionAttribution
@@ -174,7 +164,6 @@ from trusted_router.storage_gcp_io import (
     SpannerIO,
     configure_spanner_rpc_deadlines,
     run_in_transaction_with_retry,
-    spanner_rpc_budget,
 )
 from trusted_router.storage_gcp_keys import SpannerApiKeys
 from trusted_router.storage_gcp_oauth_apps import SpannerOAuthApps
@@ -387,7 +376,6 @@ class SpannerBigtableStore:
         project_id: str,
         spanner_instance_id: str,
         spanner_database_id: str,
-        bigtable_instance_id: str | None = None,
         generation_records_enabled: bool = False,
         request_record_write_mode: str = "legacy",
         analytics_outbox_enabled: bool = False,
@@ -399,12 +387,6 @@ class SpannerBigtableStore:
         operational_analytics_clickhouse_user: str = "tr_control_read",
         operational_analytics_clickhouse_password: str = "",
         operational_analytics_clickhouse_database: str = "tr",
-        regional_quota_leases_enabled: bool = False,
-        regional_quota_bigtable_table: str = "trustedrouter-regional-quota",
-        regional_quota_bigtable_app_profiles: dict[str, str] | None = None,
-        regional_quota_ledger_timeout_seconds: float = 4.0,
-        spend_lease_bigtable_table: str = "trustedrouter-spend-lease",
-        spend_lease_bigtable_app_profiles: dict[str, str] | None = None,
         max_workspaces_per_owner: int = 25,
         trust_settings: Any = None,
         trust_qualifying_providers: frozenset[str] = frozenset({"stripe", "x402"}),
@@ -484,73 +466,6 @@ class SpannerBigtableStore:
             )
         )
         configure_spanner_rpc_deadlines(self._database)
-        self._regional_quota_ledger = None
-        self._spend_lease_ledger = None
-        self._regional_quota_lease_cache: dict[tuple[str, str, int], Any] = {}
-        self._regional_quota_lease_cache_lock = threading.Lock()
-        profiles = dict(regional_quota_bigtable_app_profiles or {})
-        if regional_quota_leases_enabled:
-            if not bigtable_instance_id or not profiles:
-                raise ValueError(
-                    "regional quota leases require a Bigtable instance and fixed app profiles"
-                )
-        # Issuance is region-local, but settlement and refund callbacks may land
-        # on any control-plane region. Every serving process with the fixed
-        # profile map therefore opens the ledger even when local issuance is off.
-        if profiles:
-            if not bigtable_instance_id:
-                raise ValueError("regional quota app profiles require a Bigtable instance")
-            try:
-                from google.cloud import bigtable
-            except ImportError as exc:  # pragma: no cover - production image.
-                raise RuntimeError(
-                    "Install google-cloud-bigtable when regional quota access is configured"
-                ) from exc
-            from trusted_router.regional_quota_ledger import (
-                BigtableRegionalQuotaLedger,
-            )
-
-            quota_instance = bigtable.Client(
-                project=project_id,
-                credentials=credentials,
-                admin=False,
-            ).instance(bigtable_instance_id)
-            self._regional_quota_ledger = BigtableRegionalQuotaLedger(
-                {
-                    region: quota_instance.table(
-                        regional_quota_bigtable_table,
-                        app_profile_id=profile,
-                    )
-                    for region, profile in profiles.items()
-                },
-                operation_timeout_seconds=regional_quota_ledger_timeout_seconds,
-            )
-        spend_profiles = dict(spend_lease_bigtable_app_profiles or {})
-        if spend_profiles:
-            if not bigtable_instance_id:
-                raise ValueError("spend lease app profiles require a Bigtable instance")
-            try:
-                from google.cloud import bigtable
-            except ImportError as exc:  # pragma: no cover - production image.
-                raise RuntimeError(
-                    "Install google-cloud-bigtable when spend lease access is configured"
-                ) from exc
-            from trusted_router.spend_lease_ledger import BigtableSpendLeaseLedger
-
-            spend_instance = bigtable.Client(
-                project=project_id,
-                credentials=credentials,
-                admin=False,
-            ).instance(bigtable_instance_id)
-            self._spend_lease_ledger = BigtableSpendLeaseLedger(
-                {
-                    profile_region: spend_instance.table(
-                        spend_lease_bigtable_table,
-                        app_profile_id=profile,
-                    )
-                    for profile_region, profile in spend_profiles.items()
-                }
-            )
         # Composed feature stores. Each owns its own logic and is importable
         # on its own — keeps the core SpannerBigtableStore body focused on
         # identity + credit ledger. Mirrors the InMemoryStore pattern.
@@ -562,9 +477,6 @@ class SpannerBigtableStore:
             ttl_seconds=float(os.environ.get("TR_CREDIT_SHARD_COUNT_CACHE_SECONDS", "60")),
             max_entries=int(os.environ.get("TR_CREDIT_SHARD_COUNT_CACHE_ENTRIES", "10000")),
         )
-        # Protected by the regional lease cache lock; (deadline, unjittered window, generation).
-        self._regional_ledger_cooldowns: dict[tuple[str, str], tuple[float, float, int]] = {}
-        self._regional_ledger_generation = 0
         self._rebalance_last_attempt: dict[str, float] = {}
         self._rebalance_last_attempt_lock = threading.Lock()
         io = SpannerIO(
@@ -649,7 +561,7 @@ class SpannerBigtableStore:
             )
 
     def reset(self) -> None:
-        raise RuntimeError("refusing to reset production Spanner/Bigtable store")
+        raise RuntimeError("refusing to reset production Spanner store")
 
     def create_acquisition_attribution(self, record: AcquisitionAttribution) -> bool:
         return self.acquisition_store.create(record)
@@ -1197,35 +1109,6 @@ class SpannerBigtableStore:
                     if len(shard_rows) != credit_shard_count(account):
                         raise RuntimeError(
                             "configured tr_credit_balance shard set is incomplete"
-                        )
-                    lease_rows = list(
-                        transaction.execute_sql(
-                            "SELECT kind, id, body FROM tr_entities WHERE "
-                            "kind IN ('spend_lease','regional_quota_lease') "
-                            "AND JSON_VALUE(body, '$.workspace_id')=@pk ORDER BY kind, id",
-                            params={"pk": workspace_id},
-                            param_types={"pk": self._param_types.STRING},
-                        )
-                    )
-                    for lease_kind, lease_id, raw_body in lease_rows:
-                        body = json.loads(str(raw_body))
-                        if lease_kind == "spend_lease" and body.get("state") != "CLOSED":
-                            body["state"] = "TOMBSTONED"
-                            body["closing_at"] = now.isoformat()
-                        elif (
-                            lease_kind == "regional_quota_lease"
-                            and body.get("state") != "closed"
-                        ):
-                            body["state"] = "quarantined"
-                            body["last_error"] = "workspace_archived"
-                            body["updated_at"] = now.isoformat()
-                        else:
-                            continue
-                        self._write_entity_tx(
-                            transaction,
-                            str(lease_kind),
-                            str(lease_id),
-                            body,
                         )
                     transaction.insert_or_update(
                         table=CREDIT_BALANCE_TABLE,
@@ -4662,7 +4545,6 @@ class SpannerBigtableStore:
         settlement: str = "local",
         expires_at: str | None = None,
         deferred_cap_microdollars: int | None = None,
-        spend_lease: SpendLeaseArtifact | None = None,
         invocation_nonce: str | None = None,
         expected_pause_epoch: int | None = None,
     ) -> GatewayAuthorization:
@@ -4704,7 +4586,6 @@ class SpannerBigtableStore:
             settlement=settlement,
             expires_at=expires_at,
             deferred_cap_microdollars=deferred_cap_microdollars,
-            spend_lease=spend_lease,
             invocation_nonce=invocation_nonce,
             expected_pause_epoch=expected_pause_epoch,
             trust_eligibility_enabled=bool(self.trust_settings is not None and self.trust_settings.spend_lease_trust_eligibility_enabled),
@@ -4824,7 +4705,6 @@ class SpannerBigtableStore:
         custom_model_markup_payout: CustomModelMarkupPayout | None = None,
         settle_outbox_done: tuple[str, str] | None = None,
         authorization_snapshot: GatewayAuthorization | None = None,
-        regional_charge_parts: tuple[int, int] | None = None,
         defer_post_commit: Callable[..., None] | None = None,
     ) -> TypedFinalizeResult:
         """Route-facing typed settle: same contract as
@@ -4851,71 +4731,6 @@ class SpannerBigtableStore:
             raise ValueError("authorization inputs do not match authorization_id")
         if authorization is None or authorization.credit_reservation_id is None:
             return TypedFinalizeResult(finalized=False, activity_indexed=False)
-        regional_hold_unknown = False
-        regional_global_micro = 0
-
-        def finalize_regional_hold() -> tuple[bool, int, dt.datetime | None]:
-            nonlocal regional_hold_unknown, regional_global_micro
-            if authorization.settlement == "regional_lease":
-                from trusted_router.regional_billing import regional_charge
-                from trusted_router.services.regional_quota_leases import (
-                    LeaseState,
-                    UnknownRegionalReservationError,
-                )
-
-                charge = regional_charge(authorization, actual_microdollars, success)
-                if regional_charge_parts is not None and regional_charge_parts != (charge.local, charge.global_):
-                    raise ValueError("regional frozen charge does not match authorization")
-                regional_global_micro = charge.global_
-                try:
-                    settled_at = self._finalize_regional_quota_hold(
-                        authorization,
-                        success=success,
-                        actual_microdollars=charge.local,
-                    )
-                    return regional_hold_unknown, regional_global_micro, settled_at
-                except UnknownRegionalReservationError:
-                    # A pre-CAS-fix stale Bigtable writer could erase a newer hold
-                    # while the request's Spanner reservation remained durable.
-                    # Disable further issuance from the damaged lease before the
-                    # direct booking; otherwise its erased capacity could be spent
-                    # again during the remaining TTL. The Spanner reservation
-                    # claim is the exactly-once boundary. Every failure to durably
-                    # drain remains retryable/fail-closed.
-                    ledger = self._regional_quota_ledger
-                    assert ledger is not None
-                    local = ledger.get(
-                        str(authorization.regional_lease_id),
-                        region=str(authorization.region),
-                    )
-                    if local is None:
-                        from trusted_router.regional_quota_ledger import (
-                            RegionalLeaseNotFound,
-                        )
-
-                        raise RegionalLeaseNotFound("regional lease was not found") from None
-                    if local.state == LeaseState.ACTIVE:
-                        local = ledger.begin_drain(
-                            local.lease_id,
-                            region=local.region,
-                            fencing_token=local.fencing_token,
-                        )
-                    if local.state not in {
-                        LeaseState.DRAINING,
-                        LeaseState.CLOSED,
-                        LeaseState.QUARANTINED,
-                    }:
-                        raise RuntimeError("damaged regional lease remained available") from None
-                    regional_hold_unknown = True
-                    log.error(
-                        "regional quota hold missing; using typed reservation fallback "
-                        "authorization_id=%s lease_id=%s",
-                        authorization.id,
-                        authorization.regional_lease_id,
-                    )
-                return regional_hold_unknown, regional_global_micro, None
-            return False, 0, None
-
         actual_usage_type = UsageType.coerce(selected_usage_type)
         generation_writes: list[tuple[str, str, str]] = []
         if success and generation is not None:
@@ -4960,23 +4775,12 @@ class SpannerBigtableStore:
             user_model_payout=user_model_payout,
             app_markup_payout=app_markup_payout,
             custom_model_markup_payout=custom_model_markup_payout,
-            finalize_regional_hold=(
-                finalize_regional_hold if authorization.settlement == "regional_lease" else None
-            ),
             settle_outbox_done=settle_outbox_done,
         )
         spanner_ms = (time.perf_counter() - spanner_start) * 1000
         if result["outcome"] == SettleOutcome.ERROR:
             raise RuntimeError("typed finalize failed: release row-count != 1")
-        if result.get("regional_terminal_zero"):
-            # A terminal free release is also authority to refund escrow. A
-            # pending/dead late intent must not strand the unused local hold.
-            self._refund_regional_quota_hold_safely(authorization)
         if result["outcome"] == SettleOutcome.SETTLED:
-            if authorization.settlement == "regional_lease":
-                from trusted_router.regional_billing import record_regional_settlement
-
-                record_regional_settlement(self, authorization, actual_microdollars, success, hold_unknown=regional_hold_unknown)
             post_commit_ms = 0.0
             activity_indexed = bool(result.get("activity_durable", generation is None))
             if success and generation is not None:
@@ -5024,825 +4828,6 @@ class SpannerBigtableStore:
             activity_indexed=False,
         )  # already_settled / not_found
 
-    def _regional_ledger_cooldown_active(self, workspace_id: str, region: str) -> bool:
-        with self._regional_quota_lease_cache_lock:
-            cooldowns = getattr(self, "_regional_ledger_cooldowns", {})
-            deadline, _, _ = cooldowns.get((workspace_id, region), (0.0, 0.0, 0))
-            return time.monotonic() < deadline
-
-    def _claim_regional_ledger_probe(self, workspace_id: str, region: str) -> int | None:
-        """Atomically admit one half-open probe; healthy keys stay concurrent."""
-        with self._regional_quota_lease_cache_lock:
-            cooldowns = getattr(self, "_regional_ledger_cooldowns", {})
-            key = (workspace_id, region)
-            if key not in cooldowns:
-                return getattr(self, "_regional_ledger_generation", 0)
-            deadline, window, _ = cooldowns[key]
-            now = time.monotonic()
-            if now < deadline:
-                return None
-            # The deadline doubles as a probe-in-flight marker. The regional
-            # attempt has a shared four-second budget; allow one second of
-            # margin, then permit recovery even if its caller never returns.
-            self._regional_ledger_generation = getattr(self, "_regional_ledger_generation", 0) + 1
-            cooldowns[key] = (now + 5.0, window, self._regional_ledger_generation)
-            return self._regional_ledger_generation
-
-    def _arm_regional_ledger_cooldown(self, workspace_id: str, region: str) -> None:
-        settings = self.trust_settings
-        base = settings.regional_quota_ledger_cooldown_seconds if settings is not None else 10.0
-        with self._regional_quota_lease_cache_lock:
-            # Some store adapters construct without __init__, like the rebalance helper.
-            if not hasattr(self, "_regional_ledger_cooldowns"):
-                self._regional_ledger_cooldowns = {}
-            cooldowns = self._regional_ledger_cooldowns
-            key = (workspace_id, region)
-            _, previous, _ = cooldowns.get(key, (0.0, 0.0, 0))
-            window = min(60.0, max(base, previous * 2.0))
-            now = time.monotonic()
-            delay = min(60.0, window * random.uniform(0.75, 1.25))  # noqa: S311
-            # Never reuse a token, even after clearing or pruning an entry.
-            self._regional_ledger_generation = getattr(self, "_regional_ledger_generation", 0) + 1
-            cooldowns[key] = (now + delay, window, self._regional_ledger_generation)
-            # Preserve consecutive-failure history across expiry. As with the
-            # rebalance map, prune cold entries only when the map grows large.
-            if len(cooldowns) > 10_000:
-                stale = [key for key, (deadline, _, _) in cooldowns.items() if deadline < now - 60.0]
-                for key in stale:
-                    cooldowns.pop(key, None)
-
-    def _clear_regional_ledger_cooldown(
-        self, workspace_id: str, region: str, generation: int,
-    ) -> None:
-        with self._regional_quota_lease_cache_lock:
-            cooldowns = getattr(self, "_regional_ledger_cooldowns", {})
-            key = (workspace_id, region)
-            # Recording can outlive the claim; only its current owner may reset backoff.
-            if key in cooldowns and cooldowns[key][2] == generation:
-                cooldowns.pop(key)
-
-    def authorize_gateway_regional(
-        self,
-        *,
-        authorization_id: str,
-        workspace_id: str,
-        key_hash: str,
-        key_usage_shards: int,
-        estimate: int,
-        model_id: str,
-        provider: str,
-        requested_model_id: str | None,
-        candidate_model_ids: list[str],
-        region: str,
-        endpoint_id: str | None,
-        candidate_endpoint_ids: list[str],
-        idempotency_key: str | None,
-        idempotency_fingerprint: str | None,
-        tags: dict[str, str] | None,
-        expires_at: dt.datetime,
-        lease_ttl_seconds: int,
-        lease_max_microdollars: int,
-        lease_max_available_basis_points: int,
-        lease_shard_count: int,
-        app_id: str = "",
-        app_markup_basis_points: int = 0,
-        receipt_fee_basis_points: int = 0,
-        app_owner_user_id: str = "",
-        invocation_nonce: str | None = None,
-        observation: dict[str, Any] | None = None,
-    ) -> tuple[str, GatewayAuthorization | None]:
-        """Authorize from bounded regional escrow without touching hot counters."""
-
-        from google.api_core.exceptions import GoogleAPICallError, RetryError
-
-        from trusted_router.storage_gcp_io import remaining_rpc_budget, spanner_rpc_budget
-
-        evidence = observation if observation is not None else {}
-
-        def unavailable(reason: str) -> tuple[str, None]:
-            evidence["regional_unavailable_reason"] = reason
-            return "unavailable", None
-
-        ledger = self._regional_quota_ledger
-        # Do not reserve global Spanner escrow for a region that has no fixed
-        # transactional Bigtable app profile. Unsupported regions remain on
-        # the exact Spanner path without creating a lease to quarantine later.
-        if ledger is None or not ledger.supports_region(region):
-            return unavailable("unmapped_region")
-        probe_generation = self._claim_regional_ledger_probe(workspace_id, region)
-        if probe_generation is None:
-            return unavailable("ledger_cooldown")
-        from trusted_router.regional_quota_ledger import (
-            RegionalLeaseLedgerError,
-            RegionalLeaseNotFound,
-        )
-        from trusted_router.services.regional_quota_leases import (
-            LeaseExhaustedError,
-            LeaseUnavailableError,
-        )
-        from trusted_router.storage_gcp_keys import (
-            _gateway_authorization_idempotency_index_id,
-        )
-        from trusted_router.storage_gcp_regional_quota import (
-            activate_regional_quota_lease,
-            active_regional_quota_leases,
-            grant_regional_quota_lease,
-            quarantine_regional_quota_lease,
-            record_regional_gateway_authorization,
-            regional_lease_from_global,
-            regional_quota_fences,
-            retire_regional_quota_lease,
-        )
-
-        scope = (
-            _gateway_authorization_idempotency_index_id(
-                workspace_id,
-                key_hash,
-                idempotency_key,
-            )
-            if idempotency_key is not None
-            else None
-        )
-        if lease_shard_count <= 0:
-            return unavailable("other")
-        shard_source = idempotency_fingerprint or authorization_id
-        quota_shard = (
-            int.from_bytes(
-                hashlib.sha256(shard_source.encode("utf-8")).digest()[:4],
-                "big",
-            )
-            % lease_shard_count
-        )
-        evidence["regional_selected_shard"] = quota_shard
-        evidence["regional_sibling_served"] = False
-        cache_key = (workspace_id, region, quota_shard)
-        candidate_failure = None
-
-        def funded_candidates() -> Any:
-            # Lazy: the healthy hash-selected path does no sibling reads.
-            # At most 64 slots, one stale-cache refresh per slot, and four
-            # funded sibling attempts. No shared counter mutations.
-            funded_siblings = 0
-            fences = None
-            for offset in range(min(lease_shard_count, 64)):
-                remaining_rpc_budget(4.0)
-                shard = (quota_shard + offset) % lease_shard_count
-                if offset == 1:
-                    fences = regional_quota_fences(
-                        self, workspace_id=workspace_id, region=region,
-                        quota_shards=[(quota_shard + n) % lease_shard_count
-                                      for n in range(1, min(lease_shard_count, 64))],
-                    )
-                key = (workspace_id, region, shard)
-                with self._regional_quota_lease_cache_lock:
-                    cached = self._regional_quota_lease_cache.get(key)
-                seen = set()
-                for attempt in range(2 if cached is not None else 1):
-                    leases = [cached] if cached is not None and attempt == 0 else active_regional_quota_leases(
-                        self, workspace_id=workspace_id, region=region, quota_shard=shard,
-                        include_expired=True, include_pending=True, fences=fences,
-                    )
-                    for candidate in leases:
-                        if candidate.lease_id in seen:
-                            continue
-                        seen.add(candidate.lease_id)
-                        if offset:
-                            if funded_siblings >= 4:
-                                return
-                            funded_siblings += 1
-                        yield candidate
-
-        def candidates() -> Any:
-            for candidate in funded_candidates():
-                yield candidate, False
-            # Sizing is workspace-wide and transactional; never divide the
-            # configured budget independently for each region.
-            remaining_rpc_budget(4.0)
-            global_lease = grant_regional_quota_lease(
-                self,
-                workspace_id=workspace_id,
-                region=region,
-                quota_shard=quota_shard,
-                requested_microdollars=lease_max_microdollars,
-                per_lease_cap_microdollars=lease_max_microdollars,
-                max_available_basis_points=lease_max_available_basis_points,
-                ttl_seconds=lease_ttl_seconds,
-                minimum_grant_microdollars=estimate,
-                observation=evidence,
-                adaptive=True,
-            )
-            if global_lease is not None:
-                yield global_lease, True
-                # The live issuer may resume after recovery has retired its
-                # grant. Refresh this slot once, without issuing again or
-                # restarting the bounded sibling scan.
-                for candidate in active_regional_quota_leases(
-                    self, workspace_id=workspace_id, region=region, quota_shard=quota_shard,
-                    include_expired=True, include_pending=True,
-                ):
-                    if candidate.lease_id != global_lease.lease_id:
-                        yield candidate, False
-
-        def retire(candidate: Any, local: Any) -> None:
-            remaining_rpc_budget(4.0)
-            if local.state.value == "active":
-                local = ledger.begin_drain(
-                    candidate.lease_id, region=region, fencing_token=candidate.fencing_token,
-                )
-            # False means non-retirable (e.g. quarantined): preserve escrow
-            # and its fence, evict the stale candidate, and keep discovering.
-            remaining_rpc_budget(4.0)
-            retire_regional_quota_lease(self, candidate, local)
-            with self._regional_quota_lease_cache_lock:
-                self._regional_quota_lease_cache.pop(
-                    (workspace_id, region, candidate.quota_shard), None,
-                )
-
-        selected_global = None
-        selected_local = None
-        key_shard = randomized_credit_shards(
-            key_usage_shard_count({"usage_shard_count": key_usage_shards})
-        )[0]
-        # Four seconds for discovery, grants and ledger work leaves room for
-        # the exact global path (Spanner retains its bounded rollback cleanup).
-        # Recording a successful hold below must not inherit an exhausted
-        # regional budget.
-        @spanner_rpc_budget(4.0)
-        def select_candidate() -> tuple[str, None] | None:
-            nonlocal selected_global, selected_local, candidate_failure
-            for candidate, newly_granted in candidates():
-                try:
-                    remaining_rpc_budget(4.0)
-                    local = ledger.get(candidate.lease_id, region=region)
-                    remaining_rpc_budget(4.0)
-                    if candidate.state == "pending":
-                        # Both a recovering worker and a suspended live issuer can
-                        # arrive here. Initialize preserves the generation's holds.
-                        try:
-                            local = ledger.initialize(regional_lease_from_global(candidate))
-                            remaining_rpc_budget(4.0)
-                            candidate = activate_regional_quota_lease(self, candidate)
-                        except (GoogleAPICallError, RetryError):
-                            # Recovery will resume any pending grant; do not start
-                            # another transaction after the shared deadline.
-                            raise
-                        except Exception as exc:
-                            remaining_rpc_budget(4.0)
-                            quarantine_regional_quota_lease(
-                                self, candidate,
-                                reason=f"regional initialization ambiguity: {type(exc).__name__}",
-                            )
-                            from trusted_router.storage_gcp_regional_quota import (
-                                ledger_unavailable_reason,
-                            )
-                            self._arm_regional_ledger_cooldown(workspace_id, region)
-                            return unavailable(ledger_unavailable_reason(exc))
-                        if candidate.state != "active":
-                            with self._regional_quota_lease_cache_lock:
-                                self._regional_quota_lease_cache.pop(
-                                    (workspace_id, region, candidate.quota_shard), None,
-                                )
-                            candidate_failure = "other"
-                            continue
-                    if local is None:
-                        quarantine_regional_quota_lease(
-                            self,
-                            candidate,
-                            reason="active global lease has no regional row",
-                        )
-                        continue
-                    if local.state.value not in {"active", "draining"}:
-                        with self._regional_quota_lease_cache_lock:
-                            self._regional_quota_lease_cache.pop(
-                                (workspace_id, region, candidate.quota_shard), None,
-                            )
-                        candidate_failure = "other"
-                        continue
-                    replaying = any(hold.hold_id == authorization_id for hold in local.holds)
-                    near_expiry = (candidate.expires_datetime - dt.datetime.now(dt.UTC)).total_seconds() <= min(5, lease_ttl_seconds / 10)
-                    if not replaying and (
-                        local.state.value == "draining" or near_expiry
-                        or (not newly_granted and local.available_microdollars < max(2 * estimate, local.granted_microdollars // 10))
-                    ):
-                        retire(candidate, local)
-                        candidate_failure = "expired_lease" if near_expiry else "exhausted_lease"
-                        continue
-                    try:
-                        selected_local = ledger.reserve(
-                            candidate.lease_id,
-                            region=region,
-                            hold_id=authorization_id,
-                            fingerprint=idempotency_fingerprint or authorization_id,
-                            amount_microdollars=estimate,
-                            fencing_token=candidate.fencing_token,
-                            key_hash=key_hash,
-                            key_shard=key_shard,
-                            hold_expires_at=expires_at,
-                        )
-                    except LeaseExhaustedError:
-                        retire(candidate, ledger.begin_drain(
-                            candidate.lease_id, region=region, fencing_token=candidate.fencing_token,
-                        ))
-                        candidate_failure = "exhausted_lease"
-                        continue
-                    selected_global = candidate
-                    break
-                except LeaseUnavailableError:
-                    candidate_failure = (
-                        "expired_lease" if candidate.expires_datetime <= dt.datetime.now(dt.UTC)
-                        else "other"
-                    )
-                    continue
-                except RegionalLeaseNotFound:
-                    # The row was readable a moment ago and is gone at reserve
-                    # time: ledger inconsistency, not latency. Keep the traceback.
-                    log.warning(
-                        "regional quota lease vanished between read and reserve "
-                        "workspace_id=%s region=%s",
-                        workspace_id,
-                        region,
-                        exc_info=True,
-                    )
-                    return unavailable("other")
-                except RegionalLeaseLedgerError as exc:
-                    # Expected under cross-region latency or row contention: the
-                    # request continues on the exact Spanner path. One line, no
-                    # traceback — a traceback here is what fed Error Reporting.
-                    log.warning(
-                        "regional quota lease read/reserve failed workspace_id=%s region=%s "
-                        "error=%s cause=%s",
-                        workspace_id,
-                        region,
-                        exc,
-                        type(exc.__cause__).__name__ if exc.__cause__ else "-",
-                    )
-                    from trusted_router.storage_gcp_regional_quota import ledger_unavailable_reason
-                    self._arm_regional_ledger_cooldown(workspace_id, region)
-                    return unavailable(ledger_unavailable_reason(exc))
-
-            if selected_global is None:
-                settings = self.trust_settings
-                if settings is not None and settings.spend_lease_trust_eligibility_enabled:
-                    from trusted_router.trust_eligibility import lease_eligibility
-                    remaining_rpc_budget(4.0)
-                    _tier, reason = lease_eligibility(self, settings, workspace_id)
-                    remaining_rpc_budget(4.0)
-                    if reason:
-                        return reason, None
-                return unavailable(evidence.get("regional_unavailable_reason") or candidate_failure or "sibling_exhausted")
-
-            return None
-
-        try:
-            failure = select_candidate()
-        except (GoogleAPICallError, RetryError) as exc:
-            from trusted_router.storage_gcp_regional_quota import ledger_unavailable_reason
-            self._arm_regional_ledger_cooldown(workspace_id, region)
-            return unavailable(ledger_unavailable_reason(exc))
-        if failure is not None:
-            return failure
-
-        evidence.pop("regional_unavailable_reason", None)
-        assert selected_global is not None and selected_local is not None
-        evidence["regional_selected_shard"] = selected_global.quota_shard
-        cache_key = (workspace_id, region, selected_global.quota_shard)
-        with self._regional_quota_lease_cache_lock:
-            self._regional_quota_lease_cache[cache_key] = selected_global
-        authorization = GatewayAuthorization(
-            id=authorization_id,
-            workspace_id=workspace_id,
-            key_hash=key_hash,
-            model_id=model_id,
-            provider=provider,
-            usage_type=UsageType.CREDITS,
-            estimated_microdollars=estimate,
-            requested_model_id=requested_model_id,
-            candidate_model_ids=list(candidate_model_ids),
-            region=region,
-            endpoint_id=endpoint_id,
-            candidate_endpoint_ids=list(candidate_endpoint_ids),
-            idempotency_key=idempotency_key,
-            tags=dict(tags or {}),
-            idempotency_fingerprint=idempotency_fingerprint,
-            app_id=app_id,
-            receipt_fee_basis_points=receipt_fee_basis_points,
-            settlement="regional_lease",
-            regional_lease_id=selected_global.lease_id,
-            regional_fencing_token=selected_global.fencing_token,
-            regional_hold_id=authorization_id,
-            regional_accounting_version=selected_global.accounting_version,
-            stage_d_reason="pricing_kind",
-            invocation_nonce=invocation_nonce,
-        )
-        try:
-            result = record_regional_gateway_authorization(
-                self,
-                authorization=authorization,
-                idempotency_scope=scope,
-                idempotency_fingerprint=idempotency_fingerprint,
-                expires_at=expires_at,
-            )
-        except Exception:
-            self._refund_regional_quota_hold_safely(authorization)
-            raise
-        if result["outcome"] == "accepted":
-            self._clear_regional_ledger_cooldown(workspace_id, region, probe_generation)
-            evidence["regional_sibling_served"] = selected_global.quota_shard != quota_shard
-            authorization.credit_reservation_id = str(result["reservation_id"])
-            return "accepted", authorization
-        self._refund_regional_quota_hold_safely(authorization)
-        if result["outcome"] == "cancelled":
-            return "unavailable", None  # gateway retries through typed authorization
-        if result["outcome"] in {"billing_paused", "unpaid_workspace", "reconciliation_stale", "trust_gate_unarmed"}:
-            with self._regional_quota_lease_cache_lock:
-                self._regional_quota_lease_cache.pop(cache_key, None)
-            log.info("regional_quota.no_lease_reason=%s workspace_id=%s", result["outcome"], workspace_id)
-            return str(result["outcome"]), None
-        if result["outcome"] == "idempotency_mismatch":
-            return "idempotency_mismatch", None
-        replay = self.get_gateway_authorization(str(result["authorization_id"]))
-        return "replay", replay
-
-    def _finalize_regional_quota_hold(
-        self,
-        authorization: GatewayAuthorization,
-        *,
-        success: bool,
-        actual_microdollars: int,
-    ) -> dt.datetime | None:
-        ledger = self._regional_quota_ledger
-        if ledger is None:
-            from trusted_router.regional_quota_ledger import (
-                RegionalLeaseLedgerError,
-            )
-
-            raise RegionalLeaseLedgerError("regional quota ledger is unavailable")
-        lease_id = authorization.regional_lease_id
-        fencing_token = authorization.regional_fencing_token
-        hold_id = authorization.regional_hold_id
-        region = authorization.region
-        if not lease_id or not fencing_token or not hold_id or not region:
-            raise RuntimeError("regional authorization is missing lease identity")
-        if not 0 <= actual_microdollars <= authorization.estimated_microdollars:
-            raise RuntimeError("regional settlement exceeds its exact reservation")
-        if success:
-            settled = ledger.settle(
-                lease_id,
-                region=region,
-                hold_id=hold_id,
-                actual_microdollars=actual_microdollars,
-                fencing_token=fencing_token,
-            )
-            return next(hold.settled_at for hold in settled.holds if hold.hold_id == hold_id)
-        else:
-            ledger.refund(
-                lease_id,
-                region=region,
-                hold_id=hold_id,
-                fencing_token=fencing_token,
-            )
-        return None
-
-    def _refund_regional_quota_hold_safely(
-        self,
-        authorization: GatewayAuthorization,
-    ) -> None:
-        try:
-            self._finalize_regional_quota_hold(
-                authorization,
-                success=False,
-                actual_microdollars=0,
-            )
-        except Exception:
-            log.error(
-                "regional quota hold compensation failed authorization_id=%s lease_id=%s",
-                authorization.id,
-                authorization.regional_lease_id,
-                exc_info=True,
-            )
-
-    @spanner_rpc_budget(70)
-    def reconcile_regional_quota_leases(
-        self,
-        *,
-        limit: int = 500,
-        max_seconds: float = 45.0,
-        now: dt.datetime | None = None,
-    ) -> dict[str, int]:
-        """Process a fair page of open escrow within a 45-second work budget."""
-
-        ledger = self._regional_quota_ledger
-        if ledger is None:
-            return {"inspected": 0, "reconciled": 0, "closed": 0, "errors": 0,
-                    "backlog": 0, "processed": 0, "remaining": 0,
-                    "completed": 0, "abandoned": 0, "budget_exhausted": 0}
-        from trusted_router.services.regional_quota_leases import HoldState
-        from trusted_router.storage_gcp_regional_quota import (
-            GlobalRegionalQuotaLease,
-            OpenRegionalQuotaLease,
-            RegionalReconcileCursor,
-            close_expired_uninitialized_regional_quota_lease,
-            delete_closed_regional_quota_open_index,
-            reconcile_regional_quota_lease,
-            terminal_regional_hold_amount,
-        )
-
-        deadline = time.monotonic() + max(0.0, min(max_seconds, 45.0))
-        now = dt.datetime.now(dt.UTC) if now is None else now
-        bounded_limit = max(1, min(limit, 1000))
-        open_leases = self._list_entities(
-            "regional_quota_lease_open",
-            cls=OpenRegionalQuotaLease,
-        )
-        cursor = self._read_entity(
-            "regional_quota_reconciler_cursor", "singleton", RegionalReconcileCursor,
-        ) or RegionalReconcileCursor()
-        # Drop retired groups so the cursor grows with active leases, not history.
-        groups = {f"{lease.workspace_id}#{lease.region}" for lease in open_leases}
-        workspaces = {lease.workspace_id for lease in open_leases}
-        cursor.leases = {key: value for key, value in cursor.leases.items() if key in groups}
-        cursor.regions = {key: value for key, value in cursor.regions.items() if key in workspaces}
-        lease_ids = {lease.lease_entity_id for lease in open_leases}
-        cursor.holds = {key: value for key, value in cursor.holds.items() if key in lease_ids}
-        result = {"inspected": 0, "reconciled": 0, "closed": 0, "errors": 0,
-                  "backlog": len(open_leases), "processed": 0, "remaining": len(open_leases),
-                  "completed": 0, "abandoned": 0, "budget_exhausted": 0}
-        longest_visit_seconds = 0.0
-        for open_lease in cursor.page(open_leases)[:bounded_limit]:
-            visit_started = time.monotonic()
-            # Do not repeatedly admit the last lease with less time than a
-            # preceding visit took. Leave its lease cursor untouched so the
-            # next invocation starts there with a fresh budget.
-            if visit_started + longest_visit_seconds >= deadline:
-                result["budget_exhausted"] = 1
-                break
-            cursor.advance(open_lease)
-            result["inspected"] += 1
-            try:
-                record = self._read_entity(
-                    "regional_quota_lease",
-                    open_lease.lease_entity_id,
-                    GlobalRegionalQuotaLease,
-                )
-                if record is None:
-                    raise RuntimeError("indexed global regional lease is missing")
-                if record.state == "closed":
-                    if not delete_closed_regional_quota_open_index(
-                        self,
-                        record,
-                        open_lease,
-                    ):
-                        raise RuntimeError("closed regional lease index cleanup lost its fence")
-                    result["closed"] += 1
-                    result["completed"] += 1
-                    continue
-                if time.monotonic() >= deadline:
-                    result["abandoned"] += 1
-                    result["budget_exhausted"] = 1
-                    continue
-                local = ledger.get(record.lease_id, region=record.region)
-                if time.monotonic() >= deadline:
-                    result["abandoned"] += 1
-                    result["budget_exhausted"] = 1
-                    continue
-                if local is None:
-                    # Granting is intentionally two-phase: Spanner first
-                    # reserves the bounded escrow and publishes a pending
-                    # lease, then the regional ledger row is initialized and
-                    # the global lease becomes active. The reconciler can
-                    # observe that short, valid gap. Leave live pending leases
-                    # alone so the initializer can finish; only expired or
-                    # quarantined missing rows belong to recovery.
-                    if record.state == "pending" and record.expires_datetime > now:
-                        continue
-                    closed = close_expired_uninitialized_regional_quota_lease(
-                        self,
-                        record,
-                        now=now,
-                    )
-                    result["reconciled"] += 1
-                    if closed.closed:
-                        with self._regional_quota_lease_cache_lock:
-                            self._regional_quota_lease_cache.pop(
-                                (
-                                    record.workspace_id,
-                                    record.region,
-                                    record.quota_shard,
-                                ),
-                                None,
-                            )
-                        result["closed"] += 1
-                    result["completed"] += 1
-                    continue
-                # Bound each visit independently, leaving half the remaining
-                # budget for drain/import and other leases. Slow unresolved
-                # lookups advance just like terminal ones, including failures.
-                hold_start = time.monotonic()
-                hold_deadline = hold_start + min(10.0, (deadline - hold_start) / 2)
-                after = cursor.holds.get(record.entity_id, "")
-                holds = sorted(
-                    (hold for hold in local.holds if hold.state == HoldState.RESERVED
-                     and hold.expires_at is not None and hold.expires_at <= now),
-                    key=lambda hold: (hold.hold_id <= after, hold.hold_id),
-                )
-                for hold in holds[:8]:
-                    if time.monotonic() >= hold_deadline:
-                        break
-                    cursor.holds[record.entity_id] = hold.hold_id
-                    try:
-                        actual = terminal_regional_hold_amount(
-                            self, record, hold.hold_id, hold_expires_at=hold.expires_at, now=now, hold=hold,
-                        )
-                    except transient_store_error_types():
-                        result["errors"] += 1
-                        log.warning(
-                            "regional quota hold lookup failed lease_id=%s hold_id=%s",
-                            record.lease_id, hold.hold_id, exc_info=True,
-                        )
-                        # Keep this reservation intact and use the remaining
-                        # budget for other holds and the lease's drain/import.
-                        continue
-                    if actual is None:
-                        continue
-                    if time.monotonic() >= deadline:
-                        break
-                    if actual == 0:
-                        local = ledger.refund(
-                            record.lease_id, region=record.region,
-                            hold_id=hold.hold_id, fencing_token=record.fencing_token,
-                        )
-                    else:
-                        local = ledger.settle(
-                            record.lease_id, region=record.region,
-                            hold_id=hold.hold_id, fencing_token=record.fencing_token,
-                            actual_microdollars=actual,
-                        )
-                if time.monotonic() >= deadline:
-                    result["abandoned"] += 1
-                    result["budget_exhausted"] = 1
-                    continue
-                if (local.expires_at <= now or record.state == "retiring") and local.state.value == "active":
-                    local = ledger.begin_drain(
-                        record.lease_id,
-                        region=record.region,
-                        fencing_token=record.fencing_token,
-                    )
-                if time.monotonic() >= deadline:
-                    result["abandoned"] += 1
-                    result["budget_exhausted"] = 1
-                    continue
-                should_close = local.state.value == "draining" and local.reserved_microdollars == 0
-                reconcile_regional_quota_lease(
-                    self,
-                    record,
-                    local,
-                    close=should_close,
-                    now=now,
-                )
-                result["reconciled"] += 1
-                result["completed"] += 1
-                if should_close:
-                    ledger.close(
-                        record.lease_id,
-                        region=record.region,
-                        fencing_token=record.fencing_token,
-                    )
-                    with self._regional_quota_lease_cache_lock:
-                        self._regional_quota_lease_cache.pop(
-                            (
-                                record.workspace_id,
-                                record.region,
-                                record.quota_shard,
-                            ),
-                            None,
-                        )
-                    result["closed"] += 1
-            except Exception:
-                result["errors"] += 1
-                log.error(
-                    "regional quota reconciliation failed lease_id=%s workspace_id=%s",
-                    open_lease.lease_id,
-                    open_lease.workspace_id,
-                    exc_info=True,
-                )
-            finally:
-                longest_visit_seconds = max(
-                    longest_visit_seconds, time.monotonic() - visit_started,
-                )
-        self._write_entity("regional_quota_reconciler_cursor", "singleton", cursor)
-        result["processed"] = result["inspected"]
-        result["remaining"] = result["backlog"] - result["processed"]
-        return result
-
-    def acquire_regional_quota_reconciler_lock(
-        self,
-        *,
-        owner: str,
-        ttl_seconds: int,
-        now: dt.datetime | None = None,
-    ) -> Any | None:
-        from trusted_router.storage_gcp_regional_quota import (
-            acquire_regional_quota_reconciler_lock,
-        )
-
-        return acquire_regional_quota_reconciler_lock(
-            self,
-            owner=owner,
-            ttl_seconds=ttl_seconds,
-            now=now,
-        )
-
-    def release_regional_quota_reconciler_lock(
-        self,
-        *,
-        owner: str,
-        fencing_token: int,
-        now: dt.datetime | None = None,
-    ) -> bool:
-        from trusted_router.storage_gcp_regional_quota import (
-            release_regional_quota_reconciler_lock,
-        )
-
-        return release_regional_quota_reconciler_lock(
-            self,
-            owner=owner,
-            fencing_token=fencing_token,
-            now=now,
-        )
-
-    def verify_regional_quota_ledger(self) -> tuple[str, ...]:
-        """Prove conditional writes and reads through every fixed app profile."""
-
-        ledger = self._regional_quota_ledger
-        if ledger is None:
-            raise RuntimeError("regional quota ledger is disabled")
-        return ledger.health_check()
-
-    def verify_spend_lease_ledger(self) -> tuple[str, ...]:
-        """Prove conditional writes and reads through every fixed app profile."""
-
-        ledger = self._spend_lease_ledger
-        if ledger is None:
-            raise RuntimeError("spend lease ledger is disabled")
-        return ledger.health_check()
-
-    def acquire_spend_lease_reconciler_lock(
-        self,
-        *,
-        owner: str,
-        ttl_seconds: int,
-        now: dt.datetime | None = None,
-    ) -> Any | None:
-        from trusted_router.storage_gcp_spend_lease_reconcile import (
-            acquire_spend_lease_reconciler_lock,
-        )
-
-        return acquire_spend_lease_reconciler_lock(
-            self, owner=owner, ttl_seconds=ttl_seconds, now=now
-        )
-
-    def release_spend_lease_reconciler_lock(
-        self,
-        *,
-        owner: str,
-        fencing_token: int,
-        now: dt.datetime | None = None,
-    ) -> bool:
-        from trusted_router.storage_gcp_spend_lease_reconcile import (
-            release_spend_lease_reconciler_lock,
-        )
-
-        return release_spend_lease_reconciler_lock(
-            self, owner=owner, fencing_token=fencing_token, now=now
-        )
-
-    def reconcile_spend_leases(
-        self,
-        *,
-        limit: int = 25,
-        max_attempts: int = 12,
-        now: dt.datetime | None = None,
-    ) -> dict[str, int | float]:
-        from trusted_router.storage_gcp_spend_lease_reconcile import (
-            reconcile_spend_leases,
-        )
-
-        return reconcile_spend_leases(
-            self, limit=limit, max_attempts=max_attempts, now=now
-        )
-
-    def requeue_dead_spend_leases(
-        self,
-        *,
-        lease_ids: tuple[str, ...] = (),
-        limit: int = 1000,
-    ) -> int:
-        from trusted_router.storage_gcp_spend_lease_reconcile import (
-            requeue_dead_spend_leases,
-        )
-
-        return requeue_dead_spend_leases(self, lease_ids=lease_ids, limit=limit)
-
     def authorize_gateway_typed(
         self,
         *,
@@ -5884,16 +4869,10 @@ class SpannerBigtableStore:
         native_batch_eligible: bool = False,
         expires_at: Any = None,
         window_limits: dict[str, int] | None = None,
-        spend_lease: SpendLeaseArtifact | None = None,
-        spend_lease_binding_plan: Any = None,
         pricing_snapshot: str | None = None,
         stage_d_reason: str | None = None,
         stage_d_prompt_tokens: int | None = None,
         stage_d_max_output_tokens: int | None = None,
-        spend_lease_admission_receipt: str | None = None,
-        spend_lease_receipt_hash: str | None = None,
-        credit_escrowed_by_spend_lease: bool = False,
-        spend_lease_admission_replay_protection: bool = False,
         stage_d_boot_kid: str | None = None,
         invocation_nonce: str | None = None,
     ) -> tuple[str, GatewayAuthorization | None]:
@@ -5925,7 +4904,6 @@ class SpannerBigtableStore:
         )
 
         built_authorizations: dict[str, GatewayAuthorization] = {}
-        base_authorizations: dict[str, GatewayAuthorization] = {}
 
         def build_authorization(
             authorization_id: str,
@@ -5978,74 +4956,16 @@ class SpannerBigtableStore:
                 user_model_owner_user_id=user_model_owner_user_id,
                 additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
                 native_batch_eligible=native_batch_eligible,
-                spend_lease_token=spend_lease.token if spend_lease else None,
-                spend_lease_id=spend_lease.lease_id if spend_lease else None,
-                spend_lease_cap_micro=spend_lease.cap_micro if spend_lease else None,
-                spend_lease_gen=spend_lease.gen if spend_lease else None,
-                spend_lease_iat=spend_lease.iat if spend_lease else None,
-                spend_lease_exp=spend_lease.exp if spend_lease else None,
-                spend_lease_issuer_kid=spend_lease.issuer_kid if spend_lease else None,
-                spend_lease_boot_kid=spend_lease.boot_kid if spend_lease else None,
-                spend_lease_catalog_version=(spend_lease.catalog_version if spend_lease else None),
-                spend_lease_status=spend_lease.lease_status if spend_lease else None,
                 heartbeat_seq=0 if pricing_snapshot is not None else None,
                 pricing_snapshot=pricing_snapshot,
                 stage_d_reason=stage_d_reason,
                 stage_d_prompt_tokens=stage_d_prompt_tokens,
                 stage_d_max_output_tokens=stage_d_max_output_tokens,
-                spend_lease_admission_receipt=spend_lease_admission_receipt,
-                spend_lease_receipt_hash=spend_lease_receipt_hash,
                 stage_d_boot_kid=stage_d_boot_kid,
                 invocation_nonce=invocation_nonce,
             )
             built_authorizations[authorization_id] = built
-            base_authorizations[authorization_id] = built
             return built
-
-        def build_authorization_for_lease(
-            authorization_id: str,
-            reservation_id: str,
-            bound: bool,
-        ) -> GatewayAuthorization:
-            base = base_authorizations.get(authorization_id)
-            if base is None:
-                base = build_authorization(authorization_id, reservation_id)
-            if not bound:
-                selected = dataclasses.replace(
-                    base,
-                    spend_lease_token=None,
-                    spend_lease_id=None,
-                    spend_lease_cap_micro=None,
-                    spend_lease_gen=None,
-                    spend_lease_iat=None,
-                    spend_lease_exp=None,
-                    spend_lease_issuer_kid=None,
-                    spend_lease_boot_kid=None,
-                    spend_lease_catalog_version=None,
-                    spend_lease_status=None,
-                    spend_lease_allocated_micro=None,
-                )
-            else:
-                artifact = spend_lease_binding_plan.artifact
-                selected = dataclasses.replace(
-                    base,
-                    settlement="spend_lease",
-                    spend_lease_token=artifact.token,
-                    spend_lease_id=artifact.lease_id,
-                    spend_lease_cap_micro=artifact.cap_micro,
-                    spend_lease_gen=artifact.gen,
-                    spend_lease_iat=artifact.iat,
-                    spend_lease_exp=artifact.exp,
-                    spend_lease_issuer_kid=artifact.issuer_kid,
-                    spend_lease_boot_kid=artifact.boot_kid,
-                    spend_lease_catalog_version=artifact.catalog_version,
-                    spend_lease_status=artifact.lease_status,
-                    spend_lease_allocated_micro=spend_lease_binding_plan.allocation_micro,
-                    spend_lease_admission_receipt=spend_lease_admission_receipt,
-                    spend_lease_receipt_hash=spend_lease_receipt_hash,
-                )
-            built_authorizations[authorization_id] = selected
-            return selected
 
         def build_body(authorization_id: str, reservation_id: str) -> str:
             return _json_body(build_authorization(authorization_id, reservation_id))
@@ -6109,22 +5029,7 @@ class SpannerBigtableStore:
         )
 
         def run_authorize(candidates: tuple[int, ...]) -> dict[str, Any]:
-            def invoke(*, use_binding: bool = True) -> dict[str, Any]:
-                spend_hook = None
-                retry_types: tuple[type[BaseException], ...] = ()
-                if spend_lease_binding_plan is not None and use_binding:
-                    from trusted_router.spend_lease_authorize import (
-                        SpendLeaseArbitrationConflict,
-                    )
-
-                    def spend_hook(transaction: Any, shard: int) -> dict[str, Any]:
-                        return spend_lease_binding_plan.transaction_hook(
-                            transaction,
-                            self._param_types,
-                            workspace_id,
-                            shard,
-                        )
-                    retry_types = (SpendLeaseArbitrationConflict,)
+            def invoke() -> dict[str, Any]:
                 return authorize_atomic(
                     self._database,
                     self._param_types,
@@ -6151,18 +5056,6 @@ class SpannerBigtableStore:
                     strict_budget=strict_budget,
                     enforce_strict_windows=not strict_budget_alert_only,
                     authorization_id=authorization_id,
-                    spend_lease_hook=spend_hook,
-                    build_authorization_for_lease=(
-                        build_authorization_for_lease
-                        if spend_lease_binding_plan is not None and use_binding
-                        else None
-                    ),
-                    also_retry=retry_types,
-                    spend_lease_receipt_hash=spend_lease_receipt_hash,
-                    credit_escrowed_by_spend_lease=credit_escrowed_by_spend_lease,
-                    spend_lease_admission_replay_protection=(
-                        spend_lease_admission_replay_protection
-                    ),
                 )
 
             try:
@@ -6174,58 +5067,6 @@ class SpannerBigtableStore:
                 # read, so a winner replays before any new key/credit hold DML.
                 built_authorizations.pop(replay.authorization_id, None)
                 return invoke()
-            except Exception as exc:
-                if spend_lease_binding_plan is None:
-                    raise
-                from trusted_router.storage_gcp_spend_lease_authorize import (
-                    SpendLeaseMintLost,
-                    SpendLeaseReuseLost,
-                )
-
-                if isinstance(exc, SpendLeaseMintLost):
-                    built_authorizations.pop(
-                        spend_lease_binding_plan.provisional_id, None
-                    )
-                    base_authorizations.pop(
-                        spend_lease_binding_plan.provisional_id, None
-                    )
-                    result = invoke(use_binding=False)
-                    result.update(
-                        bound=False,
-                        no_lease_reason="mint_lost",
-                        spend_lease_outcome="mint_lost",
-                    )
-                    return result
-                if isinstance(exc, SpendLeaseReuseLost):
-                    if spend_lease_receipt_hash is not None:
-                        return {
-                            "outcome": "admission_rejected:reuse_lost",
-                            "bound": False,
-                        }
-                    built_authorizations.pop(
-                        spend_lease_binding_plan.provisional_id, None
-                    )
-                    base_authorizations.pop(
-                        spend_lease_binding_plan.provisional_id, None
-                    )
-                    result = invoke(use_binding=False)
-                    result.update(
-                        bound=False,
-                        no_lease_reason=exc.reason,
-                        spend_lease_outcome="ordinary",
-                        compensate_reuse=True,
-                    )
-                    return result
-                from trusted_router.spend_lease_authorize import (
-                    SpendLeaseArbitrationConflict,
-                )
-                from trusted_router.storage_errors import StoreConflict
-
-                if isinstance(exc, SpendLeaseArbitrationConflict):
-                    raise StoreConflict(
-                        "spend-lease scope arbitration remained contended"
-                    ) from exc
-                raise
 
         # The key repair below must retry on the credit shards that last held
         # funds. After a "retry that exact funded shard" credit fix, the original
@@ -6459,480 +5300,8 @@ class SpannerBigtableStore:
         verdict = AuthorizeVerdict(
             outcome,
             rate_limit=getattr(outcome, "rate_limit", None) or window_decision,
-            spend_lease_bound=bool(result.get("bound")),
-            no_lease_reason=result.get("no_lease_reason"),
-            spend_lease_outcome=result.get("spend_lease_outcome"),
         )
-        if outcome == AuthorizeOutcome.REPLAY and authorization is not None:
-            verdict.spend_lease_bound = bool(
-                authorization.spend_lease_token
-                and authorization.spend_lease_id
-                and authorization.spend_lease_gen
-                and authorization.spend_lease_allocated_micro
-            )
-        if spend_lease_binding_plan is not None and outcome == AuthorizeOutcome.ACCEPTED:
-            if verdict.spend_lease_bound:
-                spend_lease_binding_plan.bind_after_commit()
-            elif result.get("compensate_reuse") or (
-                result.get("spend_lease_outcome")
-                in {
-                    "escrow_refused",
-                    "scope_claimed",
-                    "fence_lost_race",
-                    "fence_stale_advisory",
-                    "fence_count_exhausted",
-                    "fence_window_open",
-                }
-            ):
-                spend_lease_binding_plan.compensate_with_claim(
-                    self._database,
-                    self._param_types,
-                )
         return verdict, authorization
-
-    def prepare_gateway_spend_lease_binding(
-        self,
-        *,
-        workspace_id: str,
-        key_hash: str,
-        authorization_id: str,
-        idempotency_key: str | None,
-        idempotency_fingerprint: str,
-        estimate: int,
-        boot_kid: str,
-        region: str,
-        signer: Any,
-        catalog: dict[str, Any],
-        ttl_seconds: int,
-        skew_seconds: int,
-        max_microdollars: int,
-        max_available_basis_points: int,
-        echo_lease_id: str | None,
-        echo_state: str | None,
-        local_admission_allowed: bool = False,
-        routing_policy_hash: str | None = None,
-        trust_eligibility_enabled: bool = False,
-    ) -> tuple[Any | None, str | None]:
-        """Decision 31/46 preparation, called only behind the binding flag."""
-        from trusted_router.spend_lease_ledger import SpendLeaseLedgerError
-        from trusted_router.spend_lease_state import (
-            Created,
-            ExistingLocal,
-            SpendLeaseUnavailableError,
-            is_authoritative_exhaustion,
-        )
-        from trusted_router.storage_gcp_keys import (
-            _gateway_authorization_idempotency_index_id,
-        )
-        from trusted_router.storage_gcp_spend_lease_authorize import (
-            BindingPlan,
-            prepare_candidate,
-            reservation_exists,
-        )
-
-        trust_eligibility_enabled = trust_eligibility_enabled or bool(
-            self.trust_settings is not None and self.trust_settings.spend_lease_trust_eligibility_enabled
-        )
-        if idempotency_key is None:
-            return None, "no_idempotency_key"
-        scope = _gateway_authorization_idempotency_index_id(
-            workspace_id, key_hash, idempotency_key
-        )
-        if reservation_exists(self._database, self._param_types, scope):
-            return None, None
-        expected_trust_tier: int | None = None
-        if trust_eligibility_enabled:
-            from trusted_router.trust_eligibility import (
-                global_trust_verdict,
-                lease_eligibility,
-                spend_cap,
-            )
-            trust_settings = self.trust_settings
-            if trust_settings is None or not trust_settings.spend_lease_trust_eligibility_enabled:
-                return None, "trust_gate_unarmed"
-            global_verdict = global_trust_verdict(self, trust_settings)
-            expected_trust_tier, reason = lease_eligibility(
-                self, trust_settings, workspace_id, global_verdict=global_verdict
-            )
-            if reason:
-                return None, reason
-            max_microdollars = spend_cap(trust_settings, expected_trust_tier)
-        ledger = self._spend_lease_ledger
-        if ledger is None or not ledger.supports_region(region):
-            return None, "ledger_unavailable"
-        now = dt.datetime.now(dt.UTC)
-        active = self.get_active_spend_lease(key_hash, boot_kid)
-        if trust_eligibility_enabled and active is not None:
-            from trusted_router.trust_eligibility import artifact_trust_tier
-
-            if artifact_trust_tier(active) != expected_trust_tier:
-                # Its escrow stays held until normal expiry/reconciliation.
-                return None, "unpaid_workspace"
-        if (
-            active is not None
-            and echo_lease_id is not None
-            and echo_lease_id != active.lease_id
-        ):
-            return None, "lease_transferred"
-        authoritative_exhaustion = bool(
-            active is not None
-            and echo_lease_id == active.lease_id
-            and echo_state in {"exhausted", "terminal"}
-        )
-        window_closed = active is None or now >= dt.datetime.fromtimestamp(
-            active.exp + skew_seconds, tz=dt.UTC
-        )
-        if active is not None and not window_closed and not authoritative_exhaustion:
-            try:
-                result = ledger.allocate(
-                    None,
-                    active.lease_id,
-                    region=region,
-                    idempotency_scope=scope,
-                    provisional_authorization_id=authorization_id,
-                    request_fingerprint=idempotency_fingerprint,
-                    allocated_micro=estimate,
-                    abandon_after=dt.datetime.fromtimestamp(
-                        active.exp + skew_seconds, tz=dt.UTC
-                    ),
-                    now=now,
-                )
-            except SpendLeaseLedgerError:
-                global_lease = self._read_entity(
-                    "spend_lease", active.lease_id, dict
-                )
-                if global_lease is None:
-                    log.error(
-                        "spend_lease.local_missing_without_global_record",
-                        extra={"workspace_id": workspace_id, "region": region},
-                    )
-                    return None, "ledger_unavailable"
-                raw_global_exp = global_lease.get("expires_at")
-                if isinstance(raw_global_exp, str):
-                    try:
-                        global_deadline = dt.datetime.fromisoformat(
-                            raw_global_exp.replace("Z", "+00:00")
-                        )
-                    except ValueError:
-                        return None, "ledger_unavailable"
-                else:
-                    global_deadline = dt.datetime.fromtimestamp(
-                        int(global_lease.get("exp", 0)), tz=dt.UTC
-                    )
-                global_skew = int(global_lease.get("skew_seconds", skew_seconds))
-                global_state = str(global_lease.get("state") or "")
-                if now >= global_deadline + dt.timedelta(seconds=global_skew):
-                    window_closed = True
-                    authoritative_exhaustion = True
-                elif global_state in {"CLOSED", "TOMBSTONED"}:
-                    window_closed = True
-                    authoritative_exhaustion = True
-                else:
-                    log.error(
-                        "spend_lease.local_global_inconsistency",
-                        extra={"workspace_id": workspace_id, "region": region},
-                    )
-                    return None, "ledger_unavailable"
-            except SpendLeaseUnavailableError as exc:
-                authoritative_exhaustion = is_authoritative_exhaustion(exc)
-                window_closed = exc.reason.value in {
-                    "frozen_draining", "frozen_tombstoned", "closed", "window_expired"
-                }
-                if not window_closed and not authoritative_exhaustion:
-                    return None, "window_open"
-            else:
-                if isinstance(result, ExistingLocal):
-                    return None, None
-                if isinstance(result, Created):
-                    return (
-                        BindingPlan(
-                            ledger=ledger,
-                            scope=scope,
-                            fence_id=self._spend_lease_pair_id(key_hash, boot_kid),
-                            region=region,
-                            provisional_id=authorization_id,
-                            artifact=active,
-                            allocation_micro=estimate,
-                            admission_deadline=dt.datetime.fromtimestamp(
-                                active.exp + skew_seconds, tz=dt.UTC
-                            ),
-                            mode="reuse",
-                            candidate=None,
-                            observed_gen=active.gen,
-                            incumbent_lease_id=active.lease_id,
-                            incumbent_window_closed=False,
-                            authoritative_exhaustion=False,
-                            trust_eligibility_enabled=trust_eligibility_enabled,
-                            expected_trust_tier=expected_trust_tier,
-                            trust_max_age_seconds=(self.trust_settings.trust_reconcile_max_age_seconds
-                                                   if trust_eligibility_enabled else 3600),
-                            trust_gate=(lambda tx: lease_eligibility(self, self.trust_settings,
-                                        workspace_id, reader=tx, global_verdict=global_verdict)[1]) if trust_eligibility_enabled else None,
-                        ),
-                        None,
-                    )
-                return None, None
-
-        snapshot = self.typed_credit_snapshot(workspace_id)
-        if snapshot is None:
-            return None, "ledger_unavailable"
-        available = max(0, int(snapshot[0]) - int(snapshot[1]) - int(snapshot[2]))
-        cap_micro = min(
-            max_microdollars,
-            max(0, available - estimate) * max_available_basis_points // 10_000,
-        )
-        if cap_micro <= 0:
-            return None, "escrow_headroom"
-        observed_gen = active.gen if active is not None else 0
-        if active is None:
-            from trusted_router.storage_gcp_spend_lease_authorize import ensure_initial_fence
-
-            ensure_initial_fence(
-                self._database,
-                self._param_types,
-                self._spend_lease_pair_id(key_hash, boot_kid),
-            )
-        return (
-            prepare_candidate(
-                database=self._database,
-                param_types=self._param_types,
-                ledger=ledger,
-                signer=signer,
-                scope=scope,
-                fence_id=self._spend_lease_pair_id(key_hash, boot_kid),
-                provisional_id=authorization_id,
-                workspace_id=workspace_id,
-                key_hash=key_hash,
-                boot_kid=boot_kid,
-                region=region,
-                gen=observed_gen + 1,
-                cap_micro=cap_micro,
-                allocation_micro=estimate,
-                ttl_seconds=ttl_seconds,
-                skew_seconds=skew_seconds,
-                request_fingerprint=idempotency_fingerprint,
-                catalog=catalog,
-                observed_gen=observed_gen,
-                observed_predecessor_count=(
-                    active.open_predecessor_count if active is not None else 0
-                ),
-                incumbent_lease_id=active.lease_id if active is not None else None,
-                incumbent_window_closed=window_closed,
-                authoritative_exhaustion=authoritative_exhaustion,
-                local_admission_allowed=local_admission_allowed,
-                routing_policy_hash=routing_policy_hash,
-                trust_eligibility_enabled=trust_eligibility_enabled,
-                expected_trust_tier=expected_trust_tier,
-                            trust_max_age_seconds=(self.trust_settings.trust_reconcile_max_age_seconds
-                                                   if trust_eligibility_enabled else 3600),
-                            trust_gate=(lambda tx: lease_eligibility(self, self.trust_settings,
-                                        workspace_id, reader=tx, global_verdict=global_verdict)[1]) if trust_eligibility_enabled else None,
-            ),
-            None,
-        )
-
-    def get_spend_lease_for_admission(
-        self,
-        lease_id: str,
-        workspace_id: str,
-        key_hash: str,
-    ) -> SpendLeaseArtifact | None:
-        """Return the immutable Stage C lease token while ACTIVE or DRAINING."""
-
-        payload = self._read_entity("spend_lease", lease_id, dict)
-        if payload is None or payload.get("state") not in {"ACTIVE", "DRAINING"}:
-            return None
-        required = {
-            "token",
-            "lease_id",
-            "cap_micro",
-            "gen",
-            "iat",
-            "exp",
-            "issuer_kid",
-            "boot_kid",
-            "key_hash",
-            "workspace_id",
-            "catalog_version",
-            "routing_policy_hash",
-            "catalog",
-        }
-        if (
-            not required.issubset(payload)
-            or payload.get("local_admission_allowed") is not True
-            or payload.get("workspace_id") != workspace_id
-            or payload.get("key_hash") != key_hash
-        ):
-            return None
-        try:
-            return SpendLeaseArtifact(
-                token=str(payload["token"]),
-                lease_id=str(payload["lease_id"]),
-                cap_micro=int(payload["cap_micro"]),
-                gen=int(payload["gen"]),
-                iat=int(payload["iat"]),
-                exp=int(payload["exp"]),
-                issuer_kid=str(payload["issuer_kid"]),
-                boot_kid=str(payload["boot_kid"]),
-                catalog_version=str(payload["catalog_version"]),
-                lease_status=cast(Any, str(payload["state"]).lower()),
-                local_admission_allowed=True,
-                routing_policy_hash=str(payload["routing_policy_hash"]),
-                catalog=cast(FrozenSpendLeaseCatalog, dict(payload["catalog"])),
-            )
-        except (TypeError, ValueError):
-            return None
-
-    def prepare_gateway_spend_lease_admission(
-        self,
-        *,
-        artifact: SpendLeaseArtifact,
-        workspace_id: str,
-        key_hash: str,
-        authorization_id: str,
-        idempotency_key: str,
-        idempotency_fingerprint: str,
-        estimate: int,
-        region: str,
-        receipt_hash: str,
-        skew_seconds: int,
-        trust_eligibility_enabled: bool = False,
-    ) -> tuple[Any | None, str | None, GatewayAuthorization | None]:
-        """Prepare only direct reuse of the exact presented Stage C lease."""
-
-        from trusted_router.spend_lease_admission import classify_receipt_replay
-        from trusted_router.spend_lease_ledger import SpendLeaseLedgerError
-        from trusted_router.spend_lease_state import (
-            Created,
-            ExistingLocal,
-            SpendLeaseExhaustedError,
-            SpendLeaseUnavailableError,
-        )
-        from trusted_router.storage_gcp_counter_dml import read_reservation_by_idempotency
-        from trusted_router.storage_gcp_keys import _gateway_authorization_idempotency_index_id
-        from trusted_router.storage_gcp_request_records import (
-            read_gateway_authorization,
-            read_gateway_authorization_admission_columns,
-        )
-        from trusted_router.storage_gcp_spend_lease_authorize import BindingPlan
-
-        trust_eligibility_enabled = trust_eligibility_enabled or bool(
-            self.trust_settings is not None and self.trust_settings.spend_lease_trust_eligibility_enabled
-        )
-        scope = _gateway_authorization_idempotency_index_id(
-            workspace_id,
-            key_hash,
-            idempotency_key,
-        )
-        # Replay site one: authorization id and receipt hash share one strong
-        # snapshot. This prevents a local allocation before replay truth is known.
-        with self._database.snapshot(multi_use=True) as snapshot:
-            existing = read_reservation_by_idempotency(snapshot, self._param_types, scope)
-            if existing is not None:
-                existing_id = str(existing["authorization_id"])
-                admission = read_gateway_authorization_admission_columns(
-                    snapshot,
-                    self._param_types,
-                    existing_id,
-                )
-                stored_hash = (
-                    str(admission["spend_lease_receipt_hash"])
-                    if admission is not None
-                    and admission["spend_lease_receipt_hash"] is not None
-                    else None
-                )
-                replay = classify_receipt_replay(receipt_hash, stored_hash)
-                if replay != "replay":
-                    return None, "scope_conflict", None
-                authorization = read_gateway_authorization(
-                    snapshot,
-                    self._param_types,
-                    existing_id,
-                )
-                return None, None, authorization
-
-        expected_trust_tier: int | None = None
-        if trust_eligibility_enabled:
-            from trusted_router.trust_eligibility import global_trust_verdict, lease_eligibility
-            if self.trust_settings is None:
-                return None, "hold_refused", None
-            global_verdict = global_trust_verdict(self, self.trust_settings)
-            expected_trust_tier, reason = lease_eligibility(
-                self, self.trust_settings, workspace_id, global_verdict=global_verdict
-            )
-            if reason:
-                return None, "hold_refused", None
-            from trusted_router.trust_eligibility import artifact_trust_tier
-
-            if artifact_trust_tier(artifact) != expected_trust_tier:
-                return None, "hold_refused", None
-        ledger = self._spend_lease_ledger
-        if ledger is None or not ledger.supports_region(region):
-            return None, "reuse_lost", None
-        now = dt.datetime.now(dt.UTC)
-        try:
-            result = ledger.allocate(
-                None,
-                artifact.lease_id,
-                region=region,
-                idempotency_scope=scope,
-                provisional_authorization_id=authorization_id,
-                request_fingerprint=idempotency_fingerprint,
-                allocated_micro=estimate,
-                abandon_after=dt.datetime.fromtimestamp(
-                    artifact.exp + skew_seconds,
-                    tz=dt.UTC,
-                ),
-                now=now,
-                admission_receipt=True,
-            )
-        except SpendLeaseExhaustedError:
-            return None, "capacity", None
-        except SpendLeaseUnavailableError:
-            return None, "lease_not_open", None
-        except SpendLeaseLedgerError:
-            return None, "reuse_lost", None
-        if isinstance(result, ExistingLocal):
-            return None, "reuse_lost", None
-        if not isinstance(result, Created):
-            return None, "scope_conflict", None
-        return (
-            BindingPlan(
-                ledger=ledger,
-                scope=scope,
-                fence_id=self._spend_lease_pair_id(key_hash, artifact.boot_kid),
-                region=region,
-                provisional_id=authorization_id,
-                artifact=artifact,
-                allocation_micro=estimate,
-                admission_deadline=dt.datetime.fromtimestamp(
-                    artifact.exp + skew_seconds,
-                    tz=dt.UTC,
-                ),
-                mode="reuse",
-                candidate=None,
-                observed_gen=artifact.gen,
-                incumbent_lease_id=artifact.lease_id,
-                incumbent_window_closed=False,
-                authoritative_exhaustion=False,
-                remaining_micro=result.lease.available_micro,
-                trust_eligibility_enabled=trust_eligibility_enabled,
-                expected_trust_tier=expected_trust_tier,
-                trust_max_age_seconds=(self.trust_settings.trust_reconcile_max_age_seconds
-                                       if trust_eligibility_enabled else 3600),
-                trust_gate=(lambda tx: lease_eligibility(self, self.trust_settings,
-                            workspace_id, reader=tx, global_verdict=global_verdict)[1]) if trust_eligibility_enabled else None,
-            ),
-            None,
-            None,
-        )
-
-    def spend_lease_remaining_micro(self, lease_id: str, region: str) -> int | None:
-        ledger = self._spend_lease_ledger
-        if ledger is None or not ledger.supports_region(region):
-            return None
-        lease = ledger.get(lease_id, region=region)
-        return lease.available_micro if lease is not None else None
 
     def reap_expired_reservations(self, *, now: Any, limit: int = 100) -> int:
         from trusted_router.storage_gcp_authorize import (
@@ -7235,13 +5604,6 @@ class SpannerBigtableStore:
             )
             raise
 
-    def record_spend_lease_shadow(self, event_id: str, payload: dict[str, Any]) -> None:
-        outbox = self._operational_analytics_outbox
-        if outbox is None:
-            log.warning("spanner.spend_lease_shadow_outbox_disabled_drop")
-            return
-        outbox.enqueue_spend_lease_shadow(event_id, payload)
-
     def get_generation(self, generation_id: str) -> Generation | None:
         return self.generation_store.get(generation_id)
 
@@ -7285,8 +5647,8 @@ class SpannerBigtableStore:
     ) -> list[ProviderBenchmarkSample]:
         # This is one derived monitoring sweep, not a customer read. Exact
         # parity is owned by the background verifier; synchronously shadowing
-        # every route to Bigtable recreated the N x 2 fanout this method exists
-        # to remove.
+        # every route in a second store recreated the N x 2 fanout this method
+        # exists to remove.
         return self._require_operational_analytics().route_benchmark_samples(
             cutoff=cutoff,
             per_route_limit=per_route_limit,
@@ -8126,70 +6488,6 @@ class SpannerBigtableStore:
             self._param_types,
             plane=plane,
         )
-
-    def next_spend_lease_generation(self, key_hash: str, boot_kid: str) -> int:
-        entity_id = hashlib.sha256(f"{key_hash}\0{boot_kid}".encode()).hexdigest()
-
-        def txn(transaction: Any) -> int:
-            existing = self._read_entity_tx(
-                transaction, SPEND_LEASE_GENERATION_KIND, entity_id, dict
-            )
-            generation = int((existing or {}).get("generation", 0)) + 1
-            self._write_entity_tx(
-                transaction,
-                SPEND_LEASE_GENERATION_KIND,
-                entity_id,
-                {"key_hash": key_hash, "boot_kid": boot_kid, "generation": generation},
-            )
-            return generation
-
-        return int(self._run_in_transaction(txn))
-
-    @staticmethod
-    def _spend_lease_pair_id(key_hash: str, boot_kid: str) -> str:
-        return hashlib.sha256(f"{key_hash}\0{boot_kid}".encode()).hexdigest()
-
-    def get_active_spend_lease(self, key_hash: str, boot_kid: str) -> SpendLeaseArtifact | None:
-        payload = self._read_entity(
-            SPEND_LEASE_ACTIVE_GRANT_KIND,
-            self._spend_lease_pair_id(key_hash, boot_kid),
-            dict,
-        )
-        if payload is None or not payload.get("token"):
-            return None
-        known = {field.name for field in dataclasses.fields(SpendLeaseArtifact)}
-        return SpendLeaseArtifact(
-            **{key: value for key, value in payload.items() if key in known}
-        )
-
-    def retain_spend_lease(
-        self,
-        key_hash: str,
-        boot_kid: str,
-        candidate: SpendLeaseArtifact,
-        *,
-        replace: bool,
-    ) -> SpendLeaseArtifact:
-        entity_id = self._spend_lease_pair_id(key_hash, boot_kid)
-
-        def txn(transaction: Any) -> SpendLeaseArtifact:
-            existing = self._read_entity_tx(
-                transaction,
-                SPEND_LEASE_ACTIVE_GRANT_KIND,
-                entity_id,
-                SpendLeaseArtifact,
-            )
-            if existing is None or (replace and candidate.gen > existing.gen):
-                self._write_entity_tx(
-                    transaction,
-                    SPEND_LEASE_ACTIVE_GRANT_KIND,
-                    entity_id,
-                    candidate,
-                )
-                return candidate
-            return existing
-
-        return cast(SpendLeaseArtifact, self._run_in_transaction(txn))
 
     def get_company_affiliation_document(self, document_id: str) -> dict[str, Any] | None:
         from trusted_router.company_affiliations import ENTITY_KIND

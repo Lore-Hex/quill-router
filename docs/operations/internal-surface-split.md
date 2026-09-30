@@ -111,7 +111,6 @@ and provider analytics are read from ClickHouse alone.
 | `POST /internal/gateway/settle` | Credit settlement, generation/analytics writes, settlement outbox, and durable auto-refill sub-request; no payment credential | Storage; gateway token |
 | `POST /internal/gateway/refund` | Credit/key refund and settlement outbox | Storage; gateway token |
 | `POST /internal/gateway/settle-outbox/drain` | Idempotent settlement recovery and activity repair | Storage; gateway token |
-| `POST /internal/gateway/regional-quota/reconcile` | Regional lease ledger reconciliation | Storage; gateway token |
 | `POST /internal/gateway/home-settlement/drain` | Deferred-debt reads/writes and outbound HTTPS to the configured home plane | Storage; gateway token; conditional settlement-home token |
 | `POST /internal/gateway/deferred/reap` | Expired deferred-authorization cleanup | Storage; gateway token |
 | `POST /internal/gateway/video/jobs/prepare` | Durable video-job and authorization writes | Storage; gateway token |

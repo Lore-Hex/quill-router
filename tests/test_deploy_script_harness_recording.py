@@ -32,7 +32,7 @@ for ((worker=0; worker<8; worker++)); do
 done
 (
   for ((i=0; i<10000; i++)); do
-    printf '%s\n' $'regional_quota_reconciler.sh\t--once' >> "$HARNESS_ARGV_LOG"
+    printf '%s\n' $'parallel-writer.sh\t--once' >> "$HARNESS_ARGV_LOG"
   done
 ) &
 pids+=("$!")
@@ -55,7 +55,7 @@ for pid in "${pids[@]}"; do wait "$pid"; done
         r"tab\tvalue",
         r"literal\n\t",
     )
-    expected = Counter({expected_gcloud: 200, ("regional_quota_reconciler.sh", "--once"): 10000})
+    expected = Counter({expected_gcloud: 200, ("parallel-writer.sh", "--once"): 10000})
     # Use run.calls: these are parsed by the production harness's tab splitter.
     # Exact record equality catches missing fields, merged names, and torn tails.
     actual = Counter(tuple(call) for call in run.calls)

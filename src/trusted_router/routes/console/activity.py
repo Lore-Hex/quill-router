@@ -250,7 +250,7 @@ def register(app: FastAPI) -> None:
         )
         result["latest_activity_at"] = latest[0].get("created_at") if latest else None
         # A shared cache (Redis) is deferred; this per-worker TTL covers
-        # occasional console reads and protects Bigtable from refresh bursts.
+        # occasional console reads and protects ClickHouse from refresh bursts.
         _USAGE_CACHE.put(
             cache_key,
             result,

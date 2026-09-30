@@ -1290,7 +1290,7 @@ def test_trust_jobs_wiring_deploys_both_jobs_when_armed(
     assert not _job_calls(run, "run", "jobs", "execute")
 
 
-def test_release_wiring_runs_trust_jobs_after_synthetic_and_after_spend_lease_reconciler() -> None:
+def test_release_wiring_runs_trust_jobs_after_synthetic_refresh_and_rollout() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text()
     orchestrator = (ROOT / "scripts/deploy-gcp.sh").read_text()
     assert "run: bash scripts/deploy/trust_jobs.sh" in workflow
@@ -1302,8 +1302,7 @@ def test_release_wiring_runs_trust_jobs_after_synthetic_and_after_spend_lease_re
     assert "TR_TRUST_JOBS_DEPLOY: ${{ vars.TR_TRUST_JOBS_DEPLOY || '0' }}" in step
     assert "TR_TRUST_STRIPE_ACCOUNT_ID: ${{ vars.TR_TRUST_STRIPE_ACCOUNT_ID || '' }}" in step
     assert 'bash "${SCRIPT_DIR}/deploy/trust_jobs.sh"' in orchestrator
-    # The spend-lease reconciler is retired (2026-09-27); trust jobs still run
-    # after the rollout and before the synthetic monitor.
+    # Trust jobs run after the rollout and before the synthetic monitor.
     assert orchestrator.index('deploy/rollout.sh"') < orchestrator.index(
         'deploy/trust_jobs.sh"'
     ) < orchestrator.index('deploy/synthetic.sh"')

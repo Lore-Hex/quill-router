@@ -439,9 +439,6 @@ class Settings(BaseSettings):
     gcp_project_id: str = "quill-cloud-proxy"
     spanner_instance_id: str | None = None
     spanner_database_id: str | None = None
-    # Only the fixed-profile Bigtable ledgers (regional quota, spend lease)
-    # still open this instance; the generation analytics table is retired.
-    bigtable_instance_id: str | None = None
     generation_records_enabled: bool = False
     # Legacy in-process ClickHouse mirror. Empty URL keeps it disabled.
     clickhouse_url: str = ""
@@ -532,7 +529,7 @@ class Settings(BaseSettings):
     # handler threshold and the `trusted_router` package logger level;
     # root stays at uvicorn's WARNING, so third-party loggers are
     # unaffected and their INFO does not ship. INFO captures rate-limit
-    # decisions, structured business events, and the Bigtable swallowed-
+    # decisions, structured business events, and the analytics swallowed-
     # error log lines we just enriched. DEBUG would flood; ERROR alone
     # would miss the request_id correlation in 429s.
     axiom_log_level: str = "INFO"
@@ -771,11 +768,6 @@ class Settings(BaseSettings):
     x402_settle_rate_limit_per_window: int = 30
     x402_settle_workspace_per_window: int = 120
     multi_region_enabled: bool = True
-    # Regional quota leases remove hot global counter mutations from eligible
-    # prepaid authorization. Global Spanner still reserves every bounded grant
-    # and remains the source of truth; a fixed-cluster Bigtable row is only the
-    # regional escrow ledger. Production activation is workspace-allowlisted
-    # and validated fail-closed below.
     # ---- notifications (email / sms / voice to the account owner) ----------
     # Delivery credentials. TrustedRouter is the registered A2P 10DLC brand and
     # every customer's notification sends from these numbers, so a customer
@@ -864,76 +856,12 @@ class Settings(BaseSettings):
     notify_max_per_hour: int = 30
     notify_max_voice_per_hour: int = 4
 
-    # Fleet capability: initialize and retain the regional ledger so any
-    # revision can settle/refund/reconcile leases created elsewhere.
-    regional_quota_leases_enabled: bool = False
-    # Observation never authorizes leases or initializes a ledger.
-    regional_quota_observation_enabled: bool = False
-    # Traffic mutation: authorize new requests from bounded regional escrow.
-    # This is deliberately independent and default-off for two-phase rollouts.
-    regional_quota_lease_issuance_enabled: bool = False
-    regional_quota_lease_pilot_workspace_ids: str = ""
-    regional_quota_lease_ttl_seconds: int = 60
-    regional_quota_lease_max_microdollars: int = 10_000_000
-    regional_quota_lease_max_available_basis_points: int = 1_000
-    # Aggregate global liquidity retained after regional grants (not per grant).
-    regional_quota_global_floor_basis_points: int = 5_000
-    regional_quota_lease_shard_count: int = 16
-    regional_quota_bigtable_table: str = "trustedrouter-regional-quota"
-    spend_lease_bigtable_table: str = "trustedrouter-spend-lease"
-    # True only in the one-shot reconciliation Cloud Run Job. Serving
-    # processes must never set this: it exempts the worker from duplicating the
-    # traffic-issuance allowlist because the worker can only drain leases that
-    # already exist.
-    regional_quota_reconciler_worker: bool = False
-    # 5 workspaces x 5 regions x 16 shards = 400 open leases / 80 closures per minute.
-    regional_quota_reconcile_limit: int = 500
-    # Comma-separated region=single-cluster-app-profile pairs. A fixed profile
-    # is required because one lease has exactly one regional writer authority.
-    regional_quota_bigtable_app_profiles: str = ""
-    # Bigtable budget for one ledger read or compare-and-swap, in seconds.
-    # Settlement and refund callbacks may land on any control-plane region,
-    # so a europe-west4 process legitimately reads the us-central1 cluster.
-    # The old 2.0 s default left a 1.0 s retry deadline (the client pads one
-    # second) that cross-continent reads exceeded whenever the primary was
-    # busy; each miss degraded to the exact Spanner path but logged a full
-    # traceback. The gateway's own request budget is 25 s.
-    regional_quota_ledger_timeout_seconds: float = 4.0
-    # Process-local admission cooldown per (workspace, region) after ledger failure.
-    # Consecutive failures double this base up to 60 s; +/-25% jitter, hard cap 60 s.
-    # Success resets the backoff. Settlement and reconciliation always use the ledger.
-    regional_quota_ledger_cooldown_seconds: float = 10.0
-    spend_lease_bigtable_app_profiles: str = ""
-    # Reconciliation is deployed before binding and remains active when the
-    # traffic flag is off. Only the one-shot Cloud Run Job sets worker=True.
-    spend_lease_reconciler_worker: bool = False
-    spend_lease_reconcile_limit: int = 25
-    spend_lease_reconcile_max_attempts: int = 12
-    # Stage A spend leases are signed advisory artifacts only. This one flag
-    # gates minting; observation is independent. Default-off deploys never touch
-    # Secret Manager. Runtime boot acceptance comes from the separately signed
-    # Stage D policy; the CSV below is only an explicit break-glass addition.
-    spend_lease_issuance_enabled: bool = False
-    spend_lease_observation_enabled: bool = False
-    # Stage B traffic mutation.  Keep independent from Stage A issuance so a
-    # deployed revision can continue shadowing while binding remains inert.
-    spend_lease_binding_enabled: bool = False
-    # Stage C router-side acceptance. Receipt verification remains available
-    # while this is off, but every new admission reserve is refused with the
-    # closed ``not_accepting`` reason and newly minted leases do not advertise
-    # local admission.
-    spend_lease_admission_accept: bool = False
-    spend_lease_pilot_workspace_ids: str = ""
-    spend_lease_signing_secret_name: str = ""
     # Audited break-glass addition to the signed Stage D runtime policy. This
     # is deliberately empty and rollout.sh never inherits it from a revision.
     spend_lease_accepted_gcp_image_digests: str = ""
-    spend_lease_ttl_seconds: int = 60
-    spend_lease_skew_seconds: int = 10
-    spend_lease_max_microdollars: int = 1_000_000
-    spend_lease_max_available_basis_points: int = 1_000
-    # Converged trust-tier policy. The eligibility flag is intentionally
-    # independent and defaults off; the other values can ship inertly first.
+    # Arms the authorize-time billing-pause gate (trust_eligibility
+    # .billing_paused_tx). The name predates the spend-lease pilot's removal;
+    # production renders it true.
     spend_lease_trust_eligibility_enabled: bool = False
     trust_qualifying_providers: str = "stripe,x402"
     # Same account pin used by the deployed backfill and reconciliation jobs.
@@ -946,9 +874,6 @@ class Settings(BaseSettings):
     operator_identities: str = ""
     trust_reconcile_interval_seconds: int = 900
     trust_reconcile_max_age_seconds: int = 3_600
-    spend_lease_tier1_cap_microdollars: int = 5_000_000
-    spend_lease_tier2_cap_microdollars: int = 25_000_000
-    spend_lease_tier3_cap_microdollars: int = 100_000_000
     # Stage D is inert until an attested enclave calls the new endpoint. Keep a
     # runtime kill switch so heartbeat writes can be stopped independently of a
     # code rollout while authorize continues to expose cohort metadata.
@@ -967,13 +892,6 @@ class Settings(BaseSettings):
     # first; only an explicit rollout may book a crashed request's last durable
     # usage snapshot.
     reap_snapshot_booking_enabled: bool = False
-    # Dedicated Stage A traffic. The key belongs to a Credits-only pilot
-    # workspace and is loaded lazily from Secret Manager by the isolated
-    # once-a-minute synthetic job; it is never placed in an environment
-    # variable. Default-off keeps deploying this code behavior-neutral until
-    # an operator deliberately starts the soak.
-    spend_lease_soak_probe_enabled: bool = False
-    spend_lease_probe_key_secret: str = "trustedrouter-spend-lease-probe-key"  # noqa: S105
     # Operational read-only flag. When set, write paths (credit
     # reservations, gateway authorize, signup, etc.) return 503 with
     # `Retry-After`; reads keep working. Used for the Spanner →
@@ -1430,48 +1348,6 @@ class Settings(BaseSettings):
             )
         if self.request_record_write_mode not in {"legacy", "typed"}:
             raise ValueError("TR_REQUEST_RECORD_WRITE_MODE must be 'legacy' or 'typed'")
-        if not 5 <= self.regional_quota_lease_ttl_seconds <= 300:
-            raise ValueError("TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS must be between 5 and 300")
-        if self.regional_quota_lease_max_microdollars <= 0:
-            raise ValueError("TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS must be positive")
-        if not 1 <= self.regional_quota_lease_max_available_basis_points <= 5_000:
-            raise ValueError(
-                "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS must be between 1 and 5000"
-            )
-        if not 1 <= self.regional_quota_global_floor_basis_points <= 10_000:
-            raise ValueError("TR_REGIONAL_QUOTA_GLOBAL_FLOOR_BASIS_POINTS must be between 1 and 10000")
-        if not 1.1 <= self.regional_quota_ledger_timeout_seconds <= 10.0:
-            raise ValueError("TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS must be between 1.1 and 10")
-        if not 1 <= self.regional_quota_ledger_cooldown_seconds <= 60:
-            raise ValueError("TR_REGIONAL_QUOTA_LEDGER_COOLDOWN_SECONDS must be between 1 and 60")
-        if not 1 <= self.regional_quota_lease_shard_count <= 64:
-            raise ValueError("TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT must be between 1 and 64")
-        if not 1 <= self.regional_quota_reconcile_limit <= 1_000:
-            raise ValueError("TR_REGIONAL_QUOTA_RECONCILE_LIMIT must be between 1 and 1000")
-        if self.regional_quota_reconciler_worker and environment != "worker":
-            raise ValueError(
-                "TR_REGIONAL_QUOTA_RECONCILER_WORKER is valid only in worker processes"
-            )
-        if self.regional_quota_lease_issuance_enabled and not self.regional_quota_leases_enabled:
-            raise ValueError(
-                "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED requires TR_REGIONAL_QUOTA_LEASES_ENABLED"
-            )
-        if self.regional_quota_lease_issuance_enabled:
-            if not self.regional_quota_lease_pilot_workspace_ids.strip():
-                raise ValueError(
-                    "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED requires "
-                    "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS"
-                )
-        if not 5 <= self.spend_lease_ttl_seconds <= 300:
-            raise ValueError("TR_SPEND_LEASE_TTL_SECONDS must be between 5 and 300")
-        if not 0 <= self.spend_lease_skew_seconds <= 30:
-            raise ValueError("TR_SPEND_LEASE_SKEW_SECONDS must be between 0 and 30")
-        if self.spend_lease_max_microdollars <= 0:
-            raise ValueError("TR_SPEND_LEASE_MAX_MICRODOLLARS must be positive")
-        if not 1 <= self.spend_lease_max_available_basis_points <= 5_000:
-            raise ValueError(
-                "TR_SPEND_LEASE_MAX_AVAILABLE_BASIS_POINTS must be between 1 and 5000"
-            )
         if not self.trust_qualifying_provider_set:
             raise ValueError("TR_TRUST_QUALIFYING_PROVIDERS must not be empty")
         if not self.trust_qualifying_provider_set <= {"stripe", "paypal", "adyen", "x402"}:
@@ -1519,13 +1395,6 @@ class Settings(BaseSettings):
                 f"delay={enabled_consistency_delay}, minimum={minimum_reconcile_age}; "
                 "the default 3600 is invalid when PayPal is enabled"
             )
-        trust_caps = (
-            self.spend_lease_tier1_cap_microdollars,
-            self.spend_lease_tier2_cap_microdollars,
-            self.spend_lease_tier3_cap_microdollars,
-        )
-        if any(cap <= 0 for cap in trust_caps) or trust_caps != tuple(sorted(trust_caps)):
-            raise ValueError("TR_SPEND_LEASE_TIER*_CAP_MICRODOLLARS must be positive and ordered")
         configured_spend_digests = self.spend_lease_accepted_gcp_image_digests.split(",")
         for digest in configured_spend_digests:
             digest = digest.strip()
@@ -1539,63 +1408,6 @@ class Settings(BaseSettings):
             raise ValueError("TR_STAGE_D_POLICY_CERT_IDENTITY must not be empty")
         if not self.stage_d_policy_oidc_issuer.strip():
             raise ValueError("TR_STAGE_D_POLICY_OIDC_ISSUER must not be empty")
-        if self.spend_lease_issuance_enabled:
-            if not self.spend_lease_pilot_workspace_ids.strip():
-                raise ValueError(
-                    "TR_SPEND_LEASE_ISSUANCE_ENABLED requires "
-                    "TR_SPEND_LEASE_PILOT_WORKSPACE_IDS"
-                )
-            if not self.spend_lease_signing_secret_name.strip():
-                raise ValueError(
-                    "TR_SPEND_LEASE_ISSUANCE_ENABLED requires "
-                    "TR_SPEND_LEASE_SIGNING_SECRET_NAME"
-                )
-            if not (
-                self.operational_analytics_outbox_enabled
-                or self.operational_analytics_sink == "direct"
-            ):
-                raise ValueError(
-                    "TR_SPEND_LEASE_ISSUANCE_ENABLED requires the operational "
-                    "analytics outbox or direct sink"
-                )
-        if self.spend_lease_binding_enabled and not self.spend_lease_issuance_enabled:
-            raise ValueError(
-                "TR_SPEND_LEASE_BINDING_ENABLED requires TR_SPEND_LEASE_ISSUANCE_ENABLED"
-            )
-        if self.spend_lease_binding_enabled and not self.spend_lease_bigtable_app_profile_map:
-            raise ValueError(
-                "TR_SPEND_LEASE_BINDING_ENABLED requires TR_SPEND_LEASE_BIGTABLE_APP_PROFILES"
-            )
-        if self.spend_lease_admission_accept and not self.spend_lease_binding_enabled:
-            raise ValueError(
-                "TR_SPEND_LEASE_ADMISSION_ACCEPT requires TR_SPEND_LEASE_BINDING_ENABLED"
-            )
-        if self.spend_lease_soak_probe_enabled and not self.spend_lease_probe_key_secret.strip():
-            raise ValueError(
-                "TR_SPEND_LEASE_SOAK_PROBE_ENABLED requires "
-                "TR_SPEND_LEASE_PROBE_KEY_SECRET"
-            )
-        if self.regional_quota_leases_enabled:
-            if environment not in {"local", "test"}:
-                if self.storage_backend != "spanner-clickhouse":
-                    raise ValueError(
-                        "TR_REGIONAL_QUOTA_LEASES_ENABLED requires a Spanner GCP backend"
-                    )
-                if self.request_record_write_mode != "typed":
-                    raise ValueError(
-                        "TR_REGIONAL_QUOTA_LEASES_ENABLED requires typed request records"
-                    )
-                if not self.settle_outbox_enabled:
-                    raise ValueError("TR_REGIONAL_QUOTA_LEASES_ENABLED requires the settle outbox")
-                if not self.bigtable_instance_id:
-                    raise ValueError(
-                        "TR_REGIONAL_QUOTA_LEASES_ENABLED requires a Bigtable instance"
-                    )
-                if not self.regional_quota_bigtable_app_profile_map:
-                    raise ValueError(
-                        "TR_REGIONAL_QUOTA_LEASES_ENABLED requires fixed regional "
-                        "Bigtable app profiles"
-                    )
         # Parse for effect: a malformed entry must fail the process at
         # construction, not degrade into "no extra targets" that nobody
         # notices until a dead enclave goes unreported.
@@ -2169,22 +1981,6 @@ class Settings(BaseSettings):
         )
 
     @property
-    def regional_quota_lease_pilot_workspaces(self) -> frozenset[str]:
-        return frozenset(
-            workspace_id.strip()
-            for workspace_id in self.regional_quota_lease_pilot_workspace_ids.split(",")
-            if workspace_id.strip()
-        )
-
-    @property
-    def spend_lease_pilot_workspaces(self) -> frozenset[str]:
-        return frozenset(
-            workspace_id.strip()
-            for workspace_id in self.spend_lease_pilot_workspace_ids.split(",")
-            if workspace_id.strip()
-        )
-
-    @property
     def trust_qualifying_provider_set(self) -> frozenset[str]:
         return frozenset(
             provider.strip().lower()
@@ -2215,48 +2011,6 @@ class Settings(BaseSettings):
             for workspace_id in self.stage_d_pilot_workspace_ids.split(",")
             if workspace_id.strip()
         )
-
-    @property
-    def regional_quota_bigtable_app_profile_map(self) -> dict[str, str]:
-        profiles: dict[str, str] = {}
-        for raw_entry in self.regional_quota_bigtable_app_profiles.split(","):
-            entry = raw_entry.strip()
-            if not entry:
-                continue
-            region, separator, profile = entry.partition("=")
-            region = region.strip()
-            profile = profile.strip()
-            if not separator or not region or not profile:
-                raise ValueError(
-                    "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES entries must be region=app-profile"
-                )
-            if region in profiles:
-                raise ValueError(
-                    "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES contains a duplicate region"
-                )
-            profiles[region] = profile
-        return profiles
-
-    @property
-    def spend_lease_bigtable_app_profile_map(self) -> dict[str, str]:
-        profiles: dict[str, str] = {}
-        for raw_entry in self.spend_lease_bigtable_app_profiles.split(","):
-            entry = raw_entry.strip()
-            if not entry:
-                continue
-            region, separator, profile = entry.partition("=")
-            region = region.strip()
-            profile = profile.strip()
-            if not separator or not region or not profile:
-                raise ValueError(
-                    "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES entries must be region=app-profile"
-                )
-            if region in profiles:
-                raise ValueError(
-                    "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES contains a duplicate region"
-                )
-            profiles[region] = profile
-        return profiles
 
     @property
     def ses_enabled(self) -> bool:

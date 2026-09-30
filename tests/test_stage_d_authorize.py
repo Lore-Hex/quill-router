@@ -175,7 +175,7 @@ def test_typed_authorize_inserts_cohort_sequence_zero_and_snapshot() -> None:
     )] == [None] * 7
 
 
-def test_stage_d_authorize_payload_uses_snapshot_and_lease_allocation_cap() -> None:
+def test_stage_d_authorize_payload_uses_snapshot_and_estimate_cap() -> None:
     document = json.loads((FIXTURES / "pricing_document.json").read_bytes())
     authorization = GatewayAuthorization(
         id="gwa-stage-d-eligible",
@@ -184,11 +184,10 @@ def test_stage_d_authorize_payload_uses_snapshot_and_lease_allocation_cap() -> N
         model_id="model",
         provider="anthropic",
         usage_type=UsageType.CREDITS,
-        estimated_microdollars=500,
+        estimated_microdollars=300,
         pricing_snapshot=canonical_pricing_snapshot(document),
         heartbeat_seq=0,
         stage_d_reason="ok",
-        spend_lease_allocated_micro=300,
     )
     expected = json.loads((FIXTURES / "authorize_response_eligible.json").read_bytes())["data"]
     assert {

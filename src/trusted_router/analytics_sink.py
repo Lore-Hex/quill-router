@@ -1,8 +1,8 @@
 """Analytics fan-out: a second, non-authoritative home for benchmark samples.
 
 Phase 2 of the storage-portability plan (docs/storage-portability/README.md).
-Bigtable stays authoritative; this mirrors the same rows into ClickHouse so the
-two can be compared continuously before anything reads from ClickHouse.
+The store stays authoritative; this mirrors the same rows into ClickHouse so
+the two can be compared continuously before anything reads from ClickHouse.
 
 Three properties matter more than throughput here:
 

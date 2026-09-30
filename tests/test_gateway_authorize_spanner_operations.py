@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import copy
 import dataclasses
-import inspect
 import json
 from typing import Any
 
@@ -16,12 +15,7 @@ from tests.fakes.spanner import (
     _FakeTransaction,
     make_fake_store,
 )
-from trusted_router import (
-    spend_lease_authorize,
-    storage_gcp_authorize,
-    storage_gcp_key_escrow,
-    storage_gcp_spend_lease_authorize,
-)
+from trusted_router import storage_gcp_authorize, storage_gcp_key_escrow
 from trusted_router.catalog import MODEL_ENDPOINTS, ModelEndpoint
 from trusted_router.config import Settings
 from trusted_router.routes.internal import gateway
@@ -143,34 +137,6 @@ def test_typed_authorize_route_does_not_call_typed_pretransaction_probe(
     assert response["data"]["idempotent_replay"] is False
 
 
-def test_spend_lease_binding_flag_off_never_calls_prepare_hook(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _store, _database, key = _seed_typed_gateway_store()
-
-    def forbidden(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("flag-off authorize touched the unit-2 binding path")
-
-    for module in (spend_lease_authorize, storage_gcp_spend_lease_authorize):
-        for name, value in vars(module).items():
-            if (
-                not name.startswith("_")
-                and inspect.isfunction(value)
-                and value.__module__ == module.__name__
-            ):
-                monkeypatch.setattr(module, name, forbidden)
-    monkeypatch.setattr(
-        SpannerBigtableStore,
-        "prepare_gateway_spend_lease_binding",
-        forbidden,
-    )
-
-    response = gateway._authorize_gateway_sync(
-        _request(), _body(key.hash), Settings(environment="test")
-    )
-    assert response["data"]["authorization_id"]
-
-
 def test_typed_authorize_replay_and_mismatch_still_come_from_transaction() -> None:
     _store, _database, key = _seed_typed_gateway_store()
     settings = Settings(environment="test")
@@ -256,11 +222,8 @@ def test_typed_replay_has_exact_sequential_spanner_operation_count(
     )
     operation_count = sum(end - start for start, end in zip(before, after, strict=True))
     assert replay["data"]["idempotent_replay"] is True
-    # Stage C adds one same-transaction read of the nullable receipt columns.
-    # It is unconditional on replay so rollback cannot let a receipt-less
-    # request reuse a historical locally admitted authorization.
     # One provider BYOK lookup; no dependence on optional live catalog routes.
-    assert operation_count == 6
+    assert operation_count == 5
 
 
 def test_typed_accepted_authorization_is_returned_without_post_commit_read(

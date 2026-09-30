@@ -167,6 +167,12 @@ REVIEWED_SOURCES = {
     name: {"${SCRIPT_DIR}/_lib.sh": "scripts/deploy/_lib.sh"}
     for name in ("infra.sh", "migrate_generation_records.sh", "migrate_request_retention.sh")
 }
+# _lib.sh keeps its Cloud Run active-revision helpers in a sibling file with no
+# top-level cloud calls so tests/shell/test_active_revision.sh can source them
+# alone; the library sources that file back in.
+REVIEWED_SOURCES["_lib.sh"] = {
+    "${_TR_LIB_DIR}/_active_revision.sh": "scripts/deploy/_active_revision.sh",
+}
 REVIEWED_GC_WRAPPER = 'gc() { gcloud --project "$PROJECT_ID" "$@"; }'
 # The unchanged infra script also supplies DDL when bootstrapping the database.
 # This exact command is a reviewed exception to the ddl-update-only sink rule.

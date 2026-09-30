@@ -319,11 +319,6 @@ def test_secondaries_ramp_serially() -> None:
     billing_gate = script.index("assert_no_billing_5xx.sh")
     assert stamp < staged_call < billing_gate
 
-    # The ledger reconciler workers are retired (2026-09-27): nothing runs in
-    # the background alongside the ramp any more.
-    assert "regional_quota_reconciler.sh" not in script
-    assert "spend_lease_reconciler.sh" not in script
-    assert "reconciler_pid" not in script
     assert "Later regions remain warm at zero traffic and never received traffic" in script
     assert "#695 (billing 5xx, 2026-08-20)" in script
     assert "--slo-class router_core" in script

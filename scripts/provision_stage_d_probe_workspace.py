@@ -2,9 +2,9 @@
 """Provision the dedicated workspace/key for the recurring Stage D probe.
 
 The key must be heartbeat-capable and use local typed authorization. After the
-dry-run/apply, put the emitted workspace id in TR_STAGE_D_PILOT_WORKSPACE_IDS,
-keep it out of TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS, and store the raw
-key as Secret Manager secret ``trustedrouter-stage-d-probe-api-key``.
+dry-run/apply, put the emitted workspace id in TR_STAGE_D_PILOT_WORKSPACE_IDS
+and store the raw key as Secret Manager secret
+``trustedrouter-stage-d-probe-api-key``.
 """
 
 from __future__ import annotations
@@ -76,7 +76,6 @@ def main(argv: list[str] | None = None, *, store: Any | None = None) -> int:
         {
             "heartbeat_capable_local_typed_key": True,
             "stage_d_pilot_workspace_id": workspace_id,
-            "regional_quota_pilot_membership_required": False,
             "secret_name": "trustedrouter-stage-d-probe-api-key",
         }
     )

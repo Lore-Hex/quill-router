@@ -1,7 +1,7 @@
 """Daily read-only typed-billing invariant audit.
 
 Runs the typed-side reserved invariant auditor against the production
-Spanner/Bigtable store. Exit codes are intentionally distinct for scheduled
+Spanner store. Exit codes are intentionally distinct for scheduled
 workflow alerting:
 
   0: invariant report clean

@@ -1040,7 +1040,6 @@ def test_production_config_fails_closed() -> None:
             storage_backend="spanner-bigtable",
             spanner_instance_id=None,
             spanner_database_id=None,
-            bigtable_instance_id=None,
             byok_kms_key_name=TEST_BYOK_KMS_KEY_NAME,
         )
 

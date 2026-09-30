@@ -614,7 +614,6 @@ def test_actions_production_requires_memory_storage(storage_backend: str) -> Non
         values.update(
             spanner_instance_id="trusted-router",
             spanner_database_id="trusted-router",
-            bigtable_instance_id="trusted-router-logs",
         )
 
     with pytest.raises(ValidationError, match="TR_STORAGE_BACKEND=memory"):

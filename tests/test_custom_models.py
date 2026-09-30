@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
 from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
@@ -13,7 +12,6 @@ from trusted_router.custom_model_markup_billing import (
 )
 from trusted_router.main import create_app
 from trusted_router.provider_types import estimate_tokens_from_text
-from trusted_router.routes.internal import gateway
 from trusted_router.storage import STORE
 from trusted_router.storage_models import generation_id_for_authorization
 
@@ -383,64 +381,6 @@ def test_custom_model_markup_is_frozen_charged_and_paid_exactly_once(
     assert len(matching) == 1
     assert matching[0].kind == "custom_model_markup_payout"
     assert matching[0].custom_model_id == marked["id"]
-
-
-def test_spend_lease_clamp_pays_only_collected_custom_markup(
-    client: TestClient,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    owner = STORE.ensure_user("alice@example.com")
-    payer_key = _create_key(client, email="spend-payer@example.com")
-    custom = _create_custom_model(
-        client,
-        slug="spend-markup",
-        markup_basis_points=30_000,
-    )
-    authorize = client.post(
-        "/v1/internal/gateway/authorize",
-        json={
-            "api_key_hash": payer_key["hash"],
-            "model": custom["id"],
-            "estimated_input_tokens": 1_000,
-            "max_output_tokens": 100,
-        },
-    )
-    assert authorize.status_code == 200, authorize.text
-    authorization_id = authorize.json()["data"]["authorization_id"]
-    authorization = STORE.get_gateway_authorization(authorization_id)
-    assert authorization is not None
-    authorization.estimated_microdollars = 400
-    # Regional settlement is exact and custom models remain excluded there.
-    # Preserve the payout-after-cap contract on the spend-lease path.
-    authorization.settlement = "spend_lease"
-    authorization.spend_lease_allocated_micro = 400
-    before = STORE.credit_money_snapshot(authorization.workspace_id)
-    assert before is not None
-    monkeypatch.setattr(
-        gateway,
-        "_endpoint_cost_microdollars",
-        lambda *_args, **_kwargs: 200,
-    )
-
-    settled = client.post(
-        "/v1/internal/gateway/settle",
-        json={
-            "authorization_id": authorization_id,
-            "actual_input_tokens": 1_000,
-            "actual_output_tokens": 100,
-            "elapsed_seconds": 0.25,
-        },
-    )
-    assert settled.status_code == 200, settled.text
-
-    generation = STORE.get_generation(generation_id_for_authorization(authorization_id))
-    assert generation is not None
-    after = STORE.credit_money_snapshot(authorization.workspace_id)
-    assert after is not None
-    assert generation.total_cost_microdollars == 400
-    assert generation.custom_model_markup_microdollars == 300
-    assert STORE.earnings_summary(owner.id)["total_earned"] == 210
-    assert after[1] - before[1] == 400
 
 
 def test_custom_model_refund_creates_no_markup_payout(client: TestClient) -> None:

@@ -93,7 +93,7 @@ else
     *DATA_READ*)
       # Not merely unexpected — expensive. DATA_READ was enabled and removed
       # the same day on measured cost: ingestion went ~0.07 -> ~0.80 GiB/hour,
-      # about $236/month, because Spanner and Bigtable serve the inference
+      # about $236/month, because Spanner served the inference
       # path so every metering read becomes a log line. If it is back, someone
       # re-ran the old hardening script.
       drift "DATA_READ is enabled — ~\$236/month regression; removed deliberately 2026-08-15 (got: $TYPES)" ;;

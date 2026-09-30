@@ -472,95 +472,50 @@ for legacy_throughput_scheduler_name in "${legacy_throughput_scheduler_names[@]}
   fi
 done
 
-# Stage A spend-lease soak: one tiny Credits chat completion every minute.
-# This is isolated from the regional health jobs so its cadence does not
-# multiply their paid model checks. The worker exits before secret access while
-# disabled; its API key is fetched by NAME from Secret Manager at run time.
-spend_lease_region="us-central1"
-spend_lease_ingest_base="$(synthetic_ingest_base_for_region "$spend_lease_region")"
-spend_lease_job_name="trusted-router-spend-lease-soak-${spend_lease_region}"
-spend_lease_scheduler_name="${spend_lease_job_name}-every-minute"
-spend_lease_probe_enabled="${TR_SPEND_LEASE_SOAK_PROBE_ENABLED:-false}"
-spend_lease_probe_key_secret="${TR_SPEND_LEASE_PROBE_KEY_SECRET:-trustedrouter-spend-lease-probe-key}"
-if [ "$spend_lease_probe_enabled" = "true" ]; then
-  if ! gc secrets describe "$spend_lease_probe_key_secret" >/dev/null 2>&1; then
-    echo "ERROR: spend-lease soak key secret ${spend_lease_probe_key_secret} is required" >&2
-    exit 1
-  fi
+# The spend-lease soak job and its schedule are retired with the pilot
+# (2026-09). Remove them where they still exist; absence is the goal state.
+# Only a NOT_FOUND answer means absent. Both lookups run before either delete,
+# and any other lookup failure (denied, transient) aborts the deploy, so a
+# schedule is never left pointing at a job this run just removed.
+legacy_soak_region="us-central1"
+legacy_soak_job_name="trusted-router-spend-lease-soak-${legacy_soak_region}"
+legacy_soak_scheduler_name="${legacy_soak_job_name}-every-minute"
+legacy_soak_error="$(mktemp "${TMPDIR:-/tmp}/spend-lease-soak.XXXXXX")"
+legacy_soak_not_found() {
+  grep -qE '(^|[[:space:]])NOT_FOUND([[:space:]:]|$)' "$legacy_soak_error"
+}
+legacy_soak_scheduler_present=false
+if gc scheduler jobs describe "$legacy_soak_scheduler_name" \
+    --location "$legacy_soak_region" >/dev/null 2>"$legacy_soak_error"; then
+  legacy_soak_scheduler_present=true
+elif ! legacy_soak_not_found; then
+  cat "$legacy_soak_error" >&2
+  echo "ERROR: cannot read retired spend-lease soak scheduler ${legacy_soak_scheduler_name}" >&2
+  rm -f "$legacy_soak_error"
+  exit 1
 fi
-spend_lease_env_vars=(
-  "${BASE_ENV_VARS[@]}"
-  "TR_SYNTHETIC_MONITOR_REGION=${spend_lease_region}"
-  "TR_SYNTHETIC_INGEST_URL=${spend_lease_ingest_base}/v1/internal/synthetic/samples"
-  "TR_SPEND_LEASE_SOAK_PROBE_ENABLED=${spend_lease_probe_enabled}"
-  "TR_SPEND_LEASE_PROBE_KEY_SECRET=${spend_lease_probe_key_secret}"
-)
-spend_lease_set_env_vars="$(IFS='|'; echo "^|^${spend_lease_env_vars[*]}")"
-
-prepare_synthetic_ingest_target "$spend_lease_region"
-log "deploying isolated spend-lease soak Cloud Run job ${spend_lease_job_name}"
-gc run jobs deploy "$spend_lease_job_name" \
-  --region "$spend_lease_region" \
-  --image "$IMAGE" \
-  --command="/app/.venv/bin/python" \
-  --args="-m,trusted_router.synthetic.spend_lease_soak" \
-  --service-account "$RUN_SERVICE_ACCOUNT" \
-  "${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]+"${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]}"}" \
-  --set-env-vars "$spend_lease_set_env_vars" \
-  "$JOB_SECRET_FLAG" "$JOB_SECRETS" \
-  --max-retries 0 \
-  --task-timeout 60s \
-  --cpu 1 \
-  --memory 512Mi \
-  --quiet >/dev/null
-
-if [ "$spend_lease_probe_enabled" = "true" ]; then
-  upsert_scheduler \
-    "$spend_lease_scheduler_name" \
-    "$spend_lease_job_name" \
-    "$spend_lease_region" \
-    "* * * * *"
-
-  # Updating a paused scheduler preserves its paused state. Enabling the
-  # probe must therefore explicitly resume a previously disabled schedule.
-  spend_lease_scheduler_state="$(
-    gc scheduler jobs describe "$spend_lease_scheduler_name" \
-      --location "$spend_lease_region" \
-      --format='value(state)'
-  )"
-  if [ "$spend_lease_scheduler_state" = "PAUSED" ]; then
-    gc scheduler jobs resume "$spend_lease_scheduler_name" \
-      --location "$spend_lease_region" \
-      --quiet >/dev/null
-  elif [ "$spend_lease_scheduler_state" != "ENABLED" ]; then
-    echo "ERROR: unexpected spend-lease scheduler state: ${spend_lease_scheduler_state:-empty}" >&2
-    exit 1
-  fi
-else
-  # A disabled probe must not keep launching a no-op container every minute.
-  # Besides wasting control-plane capacity, overlapping cold starts can emit
-  # Cloud Run startup failures even though the application never runs.
-  scheduler_error="$(mktemp "${TMPDIR:-/tmp}/spend-lease-scheduler.XXXXXX")"
-  if spend_lease_scheduler_state="$(
-    gc scheduler jobs describe "$spend_lease_scheduler_name" \
-      --location "$spend_lease_region" \
-      --format='value(state)' 2>"$scheduler_error"
-  )"; then
-    if [ "$spend_lease_scheduler_state" = "ENABLED" ]; then
-      gc scheduler jobs pause "$spend_lease_scheduler_name" \
-        --location "$spend_lease_region" \
-        --quiet >/dev/null
-    elif [ "$spend_lease_scheduler_state" != "PAUSED" ]; then
-      echo "ERROR: unexpected spend-lease scheduler state: ${spend_lease_scheduler_state:-empty}" >&2
-      rm -f "$scheduler_error"
-      exit 1
-    fi
-  elif ! grep -qE '(^|[[:space:]])NOT_FOUND([[:space:]:]|$)' "$scheduler_error"; then
-    cat "$scheduler_error" >&2
-    rm -f "$scheduler_error"
-    exit 1
-  fi
-  rm -f "$scheduler_error"
+legacy_soak_job_present=false
+if gc run jobs describe "$legacy_soak_job_name" \
+    --region "$legacy_soak_region" >/dev/null 2>"$legacy_soak_error"; then
+  legacy_soak_job_present=true
+elif ! legacy_soak_not_found; then
+  cat "$legacy_soak_error" >&2
+  echo "ERROR: cannot read retired spend-lease soak job ${legacy_soak_job_name}" >&2
+  rm -f "$legacy_soak_error"
+  exit 1
+fi
+rm -f "$legacy_soak_error"
+if [ "$legacy_soak_scheduler_present" = true ]; then
+  log "deleting retired spend-lease soak scheduler ${legacy_soak_scheduler_name}"
+  gc scheduler jobs delete "$legacy_soak_scheduler_name" \
+    --location "$legacy_soak_region" \
+    --quiet >/dev/null
+fi
+if [ "$legacy_soak_job_present" = true ]; then
+  log "deleting retired spend-lease soak job ${legacy_soak_job_name}"
+  gc run jobs delete "$legacy_soak_job_name" \
+    --region "$legacy_soak_region" \
+    --quiet >/dev/null
 fi
 
 # Image generation is materially more expensive than text PONG probes. Keep it

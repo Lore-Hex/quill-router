@@ -38,16 +38,13 @@ MONITOR_CONFIGURATION_ERROR_TYPES = frozenset(
 # Liveness/ops and internal-soak probe types. They ride the synthetic-sample
 # pipeline for storage and streak alerts but are NOT evidence for a published
 # service component, so they must stay out of every component, every SLO, and
-# — most importantly — the monitor-freshness clock. The spend-lease soak has
-# its own scheduler; letting it refresh that clock would mask a dead main probe
-# fleet for the full 14-day soak.
+# — most importantly — the monitor-freshness clock.
 OPS_PROBE_TYPES = frozenset(
     {
         "client_telemetry_ingest",
         "heartbeat",
         "peer_monitor",
         "remediation",
-        "spend_lease_soak",
     }
 )
 # Deep end-to-end model calls: a real OpenAI-SDK chat completion and a real

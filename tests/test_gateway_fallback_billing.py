@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import logging
-
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -26,11 +23,6 @@ from trusted_router.partner_billing import (
     PARASAIL_LIBERTY_2_0_INTERNAL_ROUTE_PREFIX,
     PARASAIL_LIBERTY_2_0_TOP_LEVEL_ROUTE,
     PARTNER_OPERATOR_COST_SETTLE_FIELD,
-)
-from trusted_router.regional_quota_ledger import (
-    InMemoryRegionalQuotaLedger,
-    RegionalLeaseLedgerError,
-    RegionalLeaseNotFound,
 )
 from trusted_router.routes.helpers import cost_microdollars
 from trusted_router.routes.internal import gateway as gateway_routes
@@ -241,256 +233,7 @@ def test_gateway_authorize_fake_spanner_uses_typed_without_allowlist_settings() 
     assert ("reservation", data["credit_reservation_id"]) not in db.rows
 
 
-def test_allowlisted_uncapped_key_authorizes_from_bounded_regional_escrow() -> None:
-    store, db = make_fake_store(request_record_write_mode="typed")
-    store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
-    workspace = store.create_workspace(
-        "owner",
-        "regional-pilot",
-        trial_credit_microdollars=100_000_000,
-    )
-    _raw, api_key = store.create_api_key(
-        workspace_id=workspace.id,
-        name="regional",
-        creator_user_id="owner",
-    )
-    configure_store(store)
-    settings = Settings(
-        environment="test",
-        regional_quota_leases_enabled=True,
-        regional_quota_lease_issuance_enabled=True,
-        regional_quota_lease_pilot_workspace_ids=workspace.id,
-    )
-    client = TestClient(
-        create_app(
-            settings,
-            configure_store_arg=False,
-            init_observability=False,
-        )
-    )
-
-    response = client.post(
-        "/v1/internal/gateway/authorize",
-        json={
-            "api_key_hash": api_key.hash,
-            "model": "anthropic/claude-opus-4.7",
-            "estimated_input_tokens": 1_000,
-            "max_output_tokens": 100,
-            "route_type": "chat.completions",
-            "idempotency_key": "regional-pilot-request",
-        },
-    )
-
-    assert response.status_code == 200, response.text
-    authorization = store.get_gateway_authorization(response.json()["data"]["authorization_id"])
-    assert authorization is not None
-    assert authorization.settlement == "regional_lease"
-    reservation = db.reservations[str(authorization.credit_reservation_id)]
-    assert reservation["hold_usage_type"] == "RegionalCredits"
-    assert reservation["credit_reserved_micro"] == 0
-    assert sum(row["reserved"] for row in db.typed[CREDIT_BALANCE_TABLE].values()) > 0
-
-
-def test_regional_ledger_failure_falls_back_to_exact_global_authorization() -> None:
-    class UnavailableRegionalLedger(InMemoryRegionalQuotaLedger):
-        def initialize(self, lease: object) -> object:
-            del lease
-            raise RegionalLeaseLedgerError("regional ledger unavailable")
-
-    store, db = make_fake_store(request_record_write_mode="typed")
-    store._regional_quota_ledger = UnavailableRegionalLedger()
-    workspace = store.create_workspace(
-        "owner",
-        "regional-fallback",
-        trial_credit_microdollars=100_000_000,
-    )
-    _raw, api_key = store.create_api_key(
-        workspace_id=workspace.id,
-        name="regional-fallback",
-        creator_user_id="owner",
-    )
-    configure_store(store)
-    client = TestClient(
-        create_app(
-            Settings(
-                environment="test",
-                regional_quota_leases_enabled=True,
-                regional_quota_lease_issuance_enabled=True,
-                regional_quota_lease_pilot_workspace_ids=workspace.id,
-            ),
-            configure_store_arg=False,
-            init_observability=False,
-        )
-    )
-
-    response = client.post(
-        "/v1/internal/gateway/authorize",
-        json={
-            "api_key_hash": api_key.hash,
-            "model": "anthropic/claude-opus-4.7",
-            "estimated_input_tokens": 1_000,
-            "max_output_tokens": 100,
-            "route_type": "chat.completions",
-            "idempotency_key": "regional-ledger-global-fallback",
-        },
-    )
-
-    assert response.status_code == 200, response.text
-    authorization = store.get_gateway_authorization(response.json()["data"]["authorization_id"])
-    assert authorization is not None
-    assert authorization.settlement == "local"
-    reservation = db.reservations[str(authorization.credit_reservation_id)]
-    assert reservation["credit_reserved_micro"] > 0
-
-
-def test_regional_ledger_read_failure_degrades_with_one_warning_and_no_traceback(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """A europe-west4 process legitimately reads the us-central1 ledger for
-    callbacks; a cross-region timeout there is expected and the request must
-    continue on the exact path with a single warning line, not a traceback
-    that Error Reporting files as a crash."""
-    store, db = make_fake_store(request_record_write_mode="typed")
-    ledger = InMemoryRegionalQuotaLedger()
-    store._regional_quota_ledger = ledger
-    workspace = store.create_workspace(
-        "owner",
-        "regional-read-failure",
-        trial_credit_microdollars=100_000_000,
-    )
-    _raw, api_key = store.create_api_key(
-        workspace_id=workspace.id,
-        name="regional-read-failure",
-        creator_user_id="owner",
-    )
-    configure_store(store)
-    client = TestClient(
-        create_app(
-            Settings(
-                environment="test",
-                regional_quota_leases_enabled=True,
-                regional_quota_lease_issuance_enabled=True,
-                regional_quota_lease_pilot_workspace_ids=workspace.id,
-            ),
-            configure_store_arg=False,
-            init_observability=False,
-        )
-    )
-
-    def authorize(idempotency_key: str) -> httpx.Response:
-        return client.post(
-            "/v1/internal/gateway/authorize",
-            json={
-                "api_key_hash": api_key.hash,
-                "model": "anthropic/claude-opus-4.7",
-                "estimated_input_tokens": 1_000,
-                "max_output_tokens": 100,
-                "route_type": "chat.completions",
-                "idempotency_key": idempotency_key,
-            },
-        )
-
-    first = authorize("regional-read-failure-1")
-    assert first.status_code == 200, first.text
-    seeded = store.get_gateway_authorization(first.json()["data"]["authorization_id"])
-    assert seeded is not None and seeded.settlement == "regional_lease"
-
-    def failing_get(lease_id: str, *, region: str) -> object:
-        del lease_id, region
-        raise RegionalLeaseLedgerError("regional lease read failed") from TimeoutError(
-            "504 Deadline Exceeded"
-        )
-
-    ledger.get = failing_get  # type: ignore[method-assign]
-    caplog.set_level(logging.WARNING)
-    second = authorize("regional-read-failure-2")
-
-    assert second.status_code == 200, second.text
-    degraded = store.get_gateway_authorization(second.json()["data"]["authorization_id"])
-    assert degraded is not None and degraded.settlement == "local"
-    assert db.reservations[str(degraded.credit_reservation_id)]["credit_reserved_micro"] > 0
-    warnings = [
-        record
-        for record in caplog.records
-        if "regional quota lease read/reserve failed" in record.getMessage()
-    ]
-    assert len(warnings) == 1
-    assert warnings[0].levelno == logging.WARNING
-    assert warnings[0].exc_info is None
-    assert "cause=TimeoutError" in warnings[0].getMessage()
-    assert "Traceback" not in caplog.text
-
-
-def test_regional_lease_vanishing_at_reserve_keeps_its_traceback(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """A row that read fine and is gone at reserve time is an inconsistency,
-    not latency: still degrade to the exact path, but keep the traceback."""
-    store, db = make_fake_store(request_record_write_mode="typed")
-    ledger = InMemoryRegionalQuotaLedger()
-    store._regional_quota_ledger = ledger
-    workspace = store.create_workspace(
-        "owner",
-        "regional-reserve-vanished",
-        trial_credit_microdollars=100_000_000,
-    )
-    _raw, api_key = store.create_api_key(
-        workspace_id=workspace.id,
-        name="regional-reserve-vanished",
-        creator_user_id="owner",
-    )
-    configure_store(store)
-    client = TestClient(
-        create_app(
-            Settings(
-                environment="test",
-                regional_quota_leases_enabled=True,
-                regional_quota_lease_issuance_enabled=True,
-                regional_quota_lease_pilot_workspace_ids=workspace.id,
-            ),
-            configure_store_arg=False,
-            init_observability=False,
-        )
-    )
-
-    def authorize(idempotency_key: str) -> httpx.Response:
-        return client.post(
-            "/v1/internal/gateway/authorize",
-            json={
-                "api_key_hash": api_key.hash,
-                "model": "anthropic/claude-opus-4.7",
-                "estimated_input_tokens": 1_000,
-                "max_output_tokens": 100,
-                "route_type": "chat.completions",
-                "idempotency_key": idempotency_key,
-            },
-        )
-
-    first = authorize("regional-reserve-vanished-1")
-    assert first.status_code == 200, first.text
-
-    def vanishing_reserve(*_args: object, **_kwargs: object) -> object:
-        raise RegionalLeaseNotFound("regional lease row is gone")
-
-    ledger.reserve = vanishing_reserve  # type: ignore[method-assign]
-    caplog.set_level(logging.WARNING)
-    second = authorize("regional-reserve-vanished-2")
-
-    assert second.status_code == 200, second.text
-    degraded = store.get_gateway_authorization(second.json()["data"]["authorization_id"])
-    assert degraded is not None and degraded.settlement == "local"
-    assert db.reservations[str(degraded.credit_reservation_id)]["credit_reserved_micro"] > 0
-    vanished = [
-        record
-        for record in caplog.records
-        if "regional quota lease vanished between read and reserve" in record.getMessage()
-    ]
-    assert len(vanished) == 1
-    assert vanished[0].exc_info is not None
-    assert "Traceback" in caplog.text
-
-
-def test_sakana_fugu_uses_exact_global_settlement_not_regional_escrow(
+def test_sakana_fugu_uses_exact_global_settlement(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     serve_on_fixture_route(
@@ -500,7 +243,6 @@ def test_sakana_fugu_uses_exact_global_settlement_not_regional_escrow(
         completion_price_microdollars_per_million_tokens=30_000_000,
     )
     store, _db = make_fake_store(request_record_write_mode="typed")
-    store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
     workspace = store.create_workspace(
         "owner",
         "sakana-fugu-global-settlement",
@@ -514,12 +256,7 @@ def test_sakana_fugu_uses_exact_global_settlement_not_regional_escrow(
     configure_store(store)
     client = TestClient(
         create_app(
-            Settings(
-                environment="test",
-                regional_quota_leases_enabled=True,
-                regional_quota_lease_issuance_enabled=True,
-                regional_quota_lease_pilot_workspace_ids=workspace.id,
-            ),
+            Settings(environment="test"),
             configure_store_arg=False,
             init_observability=False,
         )
@@ -590,28 +327,22 @@ def test_sakana_fugu_fails_closed_from_unsupported_europe_gateway(
     assert response.json()["error"]["type"] == "provider_not_supported"
 
 
-def test_capability_only_revision_keeps_uncapped_key_on_exact_global_path() -> None:
-    store, _db = make_fake_store(request_record_write_mode="typed")
-    store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
+def test_uncapped_key_authorizes_on_exact_global_path() -> None:
+    store, db = make_fake_store(request_record_write_mode="typed")
     workspace = store.create_workspace(
         "owner",
-        "regional-capability-only",
+        "uncapped-exact-global",
         trial_credit_microdollars=100_000_000,
     )
     _raw, api_key = store.create_api_key(
         workspace_id=workspace.id,
-        name="capability-only",
+        name="uncapped",
         creator_user_id="owner",
     )
     configure_store(store)
     client = TestClient(
         create_app(
-            Settings(
-                environment="test",
-                regional_quota_leases_enabled=True,
-                regional_quota_lease_issuance_enabled=False,
-                regional_quota_lease_pilot_workspace_ids=workspace.id,
-            ),
+            Settings(environment="test"),
             configure_store_arg=False,
             init_observability=False,
         )
@@ -625,7 +356,7 @@ def test_capability_only_revision_keeps_uncapped_key_on_exact_global_path() -> N
             "estimated_input_tokens": 1_000,
             "max_output_tokens": 100,
             "route_type": "chat.completions",
-            "idempotency_key": "regional-capability-only",
+            "idempotency_key": "uncapped-exact-global",
         },
     )
 
@@ -633,92 +364,16 @@ def test_capability_only_revision_keeps_uncapped_key_on_exact_global_path() -> N
     authorization = store.get_gateway_authorization(response.json()["data"]["authorization_id"])
     assert authorization is not None
     assert authorization.settlement == "local"
-    assert store._list_entities("regional_quota_lease", cls=dict) == []
-
-
-@pytest.mark.parametrize("finalize_kind", ["settle", "refund"])
-def test_capability_only_peer_finalizes_lease_issued_by_enabled_peer(
-    finalize_kind: str,
-) -> None:
-    store, _db = make_fake_store(request_record_write_mode="typed")
-    store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
-    workspace = store.create_workspace(
-        "owner",
-        f"regional-mixed-revision-{finalize_kind}",
-        trial_credit_microdollars=100_000_000,
-    )
-    _raw, api_key = store.create_api_key(
-        workspace_id=workspace.id,
-        name="mixed-revision",
-        creator_user_id="owner",
-    )
-    configure_store(store)
-    issuing_peer = TestClient(
-        create_app(
-            Settings(
-                environment="test",
-                regional_quota_leases_enabled=True,
-                regional_quota_lease_issuance_enabled=True,
-                regional_quota_lease_pilot_workspace_ids=workspace.id,
-            ),
-            configure_store_arg=False,
-            init_observability=False,
-        )
-    )
-
-    authorize = issuing_peer.post(
-        "/v1/internal/gateway/authorize",
-        json={
-            "api_key_hash": api_key.hash,
-            "model": "anthropic/claude-opus-4.7",
-            "estimated_input_tokens": 1_000,
-            "max_output_tokens": 100,
-            "route_type": "chat.completions",
-            "idempotency_key": f"regional-mixed-{finalize_kind}",
-        },
-    )
-    assert authorize.status_code == 200, authorize.text
-    authorization_id = authorize.json()["data"]["authorization_id"]
-    authorization = store.get_gateway_authorization(authorization_id)
-    assert authorization is not None
-    assert authorization.settlement == "regional_lease"
-
-    # This app represents a different active revision: it retains the ledger
-    # capability, but its traffic-issuance switch is intentionally off.
-    settlement_peer = TestClient(
-        create_app(
-            Settings(
-                environment="test",
-                regional_quota_leases_enabled=True,
-                regional_quota_lease_issuance_enabled=False,
-            ),
-            configure_store_arg=False,
-            init_observability=False,
-        )
-    )
-    finalized = settlement_peer.post(
-        f"/v1/internal/gateway/{finalize_kind}",
-        json={
-            "authorization_id": authorization_id,
-            "actual_input_tokens": 900,
-            "actual_output_tokens": 50,
-            "route_type": "chat.completions",
-            "elapsed_seconds": 0.2,
-        },
-    )
-
-    assert finalized.status_code == 200, finalized.text
-    expected = "settled" if finalize_kind == "settle" else "refunded"
-    assert finalized.json()["data"]["finalization_outcome"] == expected
+    reservation = db.reservations[str(authorization.credit_reservation_id)]
+    assert reservation["credit_reserved_micro"] == authorization.estimated_microdollars
+    assert reservation["credit_reserved_micro"] > 0
 
 
 def test_capped_key_stays_on_exact_global_authorization_path() -> None:
     store, db = make_fake_store(request_record_write_mode="typed")
-    ledger = InMemoryRegionalQuotaLedger()
-    store._regional_quota_ledger = ledger
     workspace = store.create_workspace(
         "owner",
-        "regional-ineligible",
+        "capped-exact-global",
         trial_credit_microdollars=100_000_000,
     )
     _raw, api_key = store.create_api_key(
@@ -730,12 +385,7 @@ def test_capped_key_stays_on_exact_global_authorization_path() -> None:
     configure_store(store)
     client = TestClient(
         create_app(
-            Settings(
-                environment="test",
-                regional_quota_leases_enabled=True,
-                regional_quota_lease_issuance_enabled=True,
-                regional_quota_lease_pilot_workspace_ids=workspace.id,
-            ),
+            Settings(environment="test"),
             configure_store_arg=False,
             init_observability=False,
         )
@@ -749,7 +399,7 @@ def test_capped_key_stays_on_exact_global_authorization_path() -> None:
             "estimated_input_tokens": 1_000,
             "max_output_tokens": 100,
             "route_type": "chat.completions",
-            "idempotency_key": "regional-capped-key",
+            "idempotency_key": "capped-exact-global",
         },
     )
 
@@ -757,30 +407,9 @@ def test_capped_key_stays_on_exact_global_authorization_path() -> None:
     authorization = store.get_gateway_authorization(response.json()["data"]["authorization_id"])
     assert authorization is not None
     assert authorization.settlement == "local"
-    assert store._list_entities("regional_quota_lease", cls=dict) == []
-
-
-def test_regional_reconciler_fails_scheduler_tick_when_any_lease_errors() -> None:
-    store, _db = make_fake_store(request_record_write_mode="typed")
-    store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
-    store.reconcile_regional_quota_leases = lambda **_kwargs: {
-        "inspected": 2,
-        "reconciled": 1,
-        "closed": 0,
-        "errors": 1,
-    }
-    configure_store(store)
-    settings = Settings(
-        environment="test",
-        regional_quota_leases_enabled=True,
-        regional_quota_lease_pilot_workspace_ids="pilot",
-    )
-    client = TestClient(create_app(settings, configure_store_arg=False, init_observability=False))
-
-    response = client.post("/v1/internal/gateway/regional-quota/reconcile")
-
-    assert response.status_code == 503
-    assert response.json()["error"]["type"] == "service_unavailable"
+    reservation = db.reservations[str(authorization.credit_reservation_id)]
+    assert reservation["credit_reserved_micro"] == authorization.estimated_microdollars
+    assert reservation["credit_reserved_micro"] > 0
 
 
 def test_gateway_web_search_cost_uses_typed_reservation_and_finalize() -> None:
