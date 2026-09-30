@@ -409,14 +409,14 @@ def test_disjoint_alias_and_request_provider_allowlists_fail_closed() -> None:
     ],
 )
 def test_allow_fallbacks_false_never_validates_or_routes_fallback_models(
-    fallback_control: dict[str, object],
+    fallback_control: dict[str, object], monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A disabled fallback list is inert, including stale model IDs.
 
     Validating the fallback array before applying the flag can reject a valid
     primary with an error naming a model the caller explicitly disabled.
     """
-
+    serve_on_fixture_route(monkeypatch, "openai/gpt-oss-20b", "deepinfra", author="openai")
     candidates = chat_route_endpoint_candidates(
         {
             "model": "openai/gpt-oss-20b",
@@ -504,7 +504,10 @@ def test_provider_route_preferences_accepts_top_level_allow_fallbacks_alias() ->
     assert prefs.allow_fallbacks is False
 
 
-def test_top_level_no_fallbacks_pins_exact_request_to_one_provider_route() -> None:
+def test_top_level_no_fallbacks_pins_exact_request_to_one_provider_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    serve_on_fixture_route(monkeypatch, "openai/gpt-oss-20b", "deepinfra", author="openai")
     candidates = chat_route_endpoint_candidates(
         {
             "model": "openai/gpt-oss-20b",
