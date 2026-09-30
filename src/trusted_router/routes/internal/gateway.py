@@ -218,12 +218,14 @@ from trusted_router.storage_models import (
     SYNTHETIC_APP_NAME,
     AmbiguousGatewayRequestId,
     AppMarkupPayout,
+    ByokProviderConfig,
     CustomModelMarkupPayout,
     GatewayAuthorization,
     SettleOutboxRow,
     TypedFinalizeResult,
     UserModelPayout,
     UserProvidedModel,
+    decode_auth_record,
     iso_now,
     workspace_billing_paused,
 )
@@ -760,13 +762,19 @@ def _authorize_gateway_sync_impl(
     named, directly unit-testable function (#40). The registered route handler is
     a thin wrapper; behavior is byte-identical to the prior inline handler."""
     require_internal_gateway(request, settings)
-    api_key, metadata = _gateway_authorize_metadata(body)
+    boot_auth = cast(BootAuthHeader | None, boot_context["boot_auth"])
+    api_key, metadata, folded_byok, auth_context = _gateway_authorize_metadata(
+        body, boot_kid=boot_auth.kid if boot_auth is not None else None,
+    )
     if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
         raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
     _assert_gateway_key_scope(api_key)
-    boot_auth = cast(BootAuthHeader | None, boot_context["boot_auth"])
     if boot_auth is not None:
-        boot = STORE.get_spend_lease_boot(boot_auth.kid)
+        if auth_context is not None and auth_context.boot_record_loaded:
+            raw_boot = auth_context.boot_record_body
+            boot = decode_auth_record(raw_boot, SpendLeaseBoot) if raw_boot is not None else None
+        else:
+            boot = STORE.get_spend_lease_boot(boot_auth.kid)
         accepted_image_digests = _stage_d_accepted_image_digests(request, settings)
         boot_context["boot_verified"] = verify_boot_auth(
             boot=boot,
@@ -1086,7 +1094,10 @@ def _authorize_gateway_sync_impl(
             region,
         )
     ]
-    byok_configs = _byok_configs_for_candidates(endpoint_candidates, workspace.id)
+    byok_configs = _byok_configs_for_candidates(
+        endpoint_candidates, workspace.id,
+        folded_rows=folded_byok,
+    )
     endpoint_candidates = _eligible_gateway_endpoint_candidates(
         endpoint_candidates, workspace.id, byok_configs,
     )
@@ -2178,21 +2189,29 @@ def register(router: APIRouter) -> None:
         return {"data": await run_in_threadpool(lambda: reap(limit=limit))}
 
 
-def _gateway_authorize_metadata(body: GatewayAuthorizeRequest) -> tuple[Any, Any]:
+def _gateway_authorize_metadata(
+    body: GatewayAuthorizeRequest, *, boot_kid: str | None = None,
+) -> tuple[Any, Any, dict[str, Any] | None, Any]:
     # Hash-based callers retain their existing precedence/fallback semantics.
     # Enclaves send lookup hashes; Spanner can hydrate that entire chain at once.
     resolve = getattr(STORE, "gateway_api_key_auth_context", None)
     if not body.api_key_hash and body.api_key_lookup_hash and callable(resolve):
-        context = resolve(body.api_key_lookup_hash)
+        context = resolve(body.api_key_lookup_hash, boot_kid=boot_kid)
         api_key = context.api_key if context is not None else None
         if api_key is not None and not getattr(api_key, "federated_home", ""):
-            return api_key, context
+            return api_key, context, context.byok_rows, context
         # Home revalidation may replace the key AND the shadow workspace.
         # Read the workspace after that refresh, exactly as the old path did.
         api_key = _federated_key_still_valid(api_key, body.api_key_lookup_hash)
+        if context is not None and api_key is not None and api_key.workspace_id == context.api_key.workspace_id:
+            # Federation can refresh workspace billing state, but credentials
+            # remain local. Reuse them only for the same canonical workspace.
+            return api_key, None, context.byok_rows, context
+        # The boot row is independent of any refreshed workspace mapping.
+        return api_key, None, None, context
     else:
         api_key = _api_key_for_gateway_authorization(body)
-    return api_key, None
+    return api_key, None, None, None
 
 
 def _api_key_for_gateway_authorization(body: GatewayAuthorizeRequest) -> Any | None:
@@ -4245,6 +4264,7 @@ def _authorized_user_model_pair(
 
 def _byok_configs_for_candidates(
     candidates: list[tuple[Model, ModelEndpoint]], workspace_id: str,
+    *, folded_rows: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     # Preserve alias preference in _get_byok_provider, deduplicate only the IO.
     providers = sorted({
@@ -4253,6 +4273,15 @@ def _byok_configs_for_candidates(
         if UsageType.for_endpoint(endpoint).is_byok()
         for slug in byok_storage_provider_candidates(endpoint.provider)
     })
+    if folded_rows is not None:
+        # Imported workspace ids can contain '#'. Match the COMPLETE entity id
+        # before decoding so ws#other cannot contribute credentials to ws.
+        # The range is complete: even a newly resolved slug has explicit absence.
+        return {
+            provider: decode_auth_record(raw, ByokProviderConfig) if raw is not None else None
+            for provider in providers
+            for raw in [folded_rows.get(f"{workspace_id}#{provider}")]
+        }
     batch = getattr(STORE, "get_byok_providers", None)
     if callable(batch):
         return cast(dict[str, Any], batch(workspace_id, providers))

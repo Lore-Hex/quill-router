@@ -2979,7 +2979,7 @@ def _execute_sql(
                 ]
             )
         return rows
-    if "/* api_key_auth_context */" in sql:
+    if "/* api_key_auth_context */" in sql or "/* api_key_auth_context_with_byok */" in sql:
         _require_pred(
             sql,
             "lookup_record.kind='api_key_lookup'",
@@ -3009,12 +3009,25 @@ def _execute_sql(
             return []
         workspace_id = str(json.loads(api_key.body)["workspace_id"])
         workspace = db.rows.get(("workspace", workspace_id))
-        return [
-            [
-                api_key.body,
-                workspace.body if workspace is not None else None,
-            ]
-        ]
+        result = [api_key.body, workspace.body if workspace is not None else None]
+        if "/* api_key_auth_context_with_byok */" in sql:
+            _require_pred(sql, "byok_record.kind='byok'", "BYOK kind")
+            for operator, suffix in ((">=", "#"), ("<", "$")):
+                _require_pred(
+                    sql,
+                    f"byok_record.id {operator} CONCAT(JSON_VALUE(key_record.body, '$.workspace_id'), '{suffix}')",
+                    "BYOK canonical workspace primary-key range",
+                )
+            result.append([
+                [entity_id, row.body] for (kind, entity_id), row in db.rows.items()
+                if kind == "byok" and f"{workspace_id}#" <= entity_id < f"{workspace_id}$"
+            ])
+            _require_pred(sql, "boot_record.kind='spend_lease_boot'", "boot kind")
+            _require_pred(sql, "boot_record.id=@boot_kid", "bounded boot primary key")
+            boot = db.rows.get(("spend_lease_boot", params["boot_kid"]))
+            result.append(boot.body if boot is not None else None)
+        return [result]
+
     if (
         "FROM tr_credit_movement WHERE account_id=@account_id "
         "AND movement_id=@movement_id" in sql
