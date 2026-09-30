@@ -3,7 +3,7 @@
  <div class="fl" role="toolbar" aria-label="Filter models">
   <button type="button" data-f="all" aria-pressed="true">All</button><button type="button" data-f="z" aria-pressed="false">Private</button><button type="button" data-f="c" aria-pressed="false">Confidential</button>
   <span class="cnt" role="status" aria-live="polite" aria-atomic="true">Featured · {{ homepage_catalog.lists.all|length }} of {{ homepage_catalog.total }}</span></div>
- <table aria-label="Model catalog — current application data"><thead><tr><th>Model</th><th>Routes</th><th>Input / 1M</th><th>Output / 1M</th><th>Context</th><th></th></tr></thead>
+ <table aria-label="Model catalog: current application data"><thead><tr><th>Model</th><th>Routes</th><th>Input / 1M</th><th>Output / 1M</th><th>Context</th><th></th></tr></thead>
  {% for key, models in homepage_catalog.lists.items() %}
 <tbody data-f="{{ key }}"{% if key != 'all' %} hidden{% endif %}>
 {% for model in models %}<tr><td><div class="m"><img class="model-lab-icon" src="{{ model.icon }}" width="30" height="30" alt="" decoding="async"><div><a href="{{ model.detail_href }}">{{ model.name }}</a><code>{{ model.id }}</code></div></div></td>

@@ -97,3 +97,16 @@ Validation: localhost and ngrok both show the new panel. Checked 1440px desktop 
 Matched the original mock’s 2px dotted connectors, 4px dash/gap spacing and one-second linear flow. The final response connector reverses direction like the mock. Motion is enabled only with `prefers-reduced-motion: no-preference`; reduced motion keeps the lines static. Removed the visible capture timestamp/date and “Not a live feed” footer at the designer’s request. Receipt details identify this as a captured request; the original evidence files retain the exact timestamp.
 
 Verified progressing computed animation positions, one-second duration and reversed final connector on localhost; verified updated assets on ngrok. Desktop and 390px phone checks found no horizontal overflow. Reduced-motion CSS was inspected; OS preferences were not changed. Whitespace checks passed. This CSS/copy change adds no backend behavior; full release gates remain deferred.
+
+
+## Verification balance and punctuation — September 29, latest direction
+
+Removed em dashes from homepage copy, attribution, accessible catalog label, page/social titles, optional font-comparison label and backing content JSON. Source comments are not marketing copy. The request explanation now uses two sentences.
+
+Open source now leads at the upper left and spans the three shorter verification panels on desktop. Its four checklist items and all five repository links remain visible. The other propositions stack to the right; panels use the original mock's restrained enclosure treatment, consistent padding and readable type without restoring the removed graphics. Mobile stacks all four in source order. Screenshot: `qa/verification-balanced-desktop.png`.
+
+Audit found an obsolete unguarded Copy request event handler after the earlier removal of its button. Removed that handler; it had prevented the remainder of homepage.js from initializing. Verified model search (Qwen: 119 matches), Escape focus restoration, catalog filtering and TypeScript migration-tab rendering after the fix.
+
+Validation: desktop 1440px and phones 390px/320px have no horizontal overflow; all five repository destinations remain. Rendered localhost/ngrok body copy contains no em dashes. Eight focused homepage tests and whitespace checks passed. Existing contrast palette and reduced-motion handling remain. Full release gates remain deferred, not claimed passing.
+
+Current remaining work: (1) a final visual consistency pass across section spacing, supporting type and actions; (2) connect homepage-specific analytics hooks to the existing event pipeline, whose allowlist/schema currently accepts acquisition/onboarding events only; (3) broader destination/sign-in checks, marketing-claim confirmation and full repository release gates in the supported environment. All nine sections, real catalog search/prices, status feed and captured response presentation are implemented. No new catalog/status/receipt backend is required for this design.

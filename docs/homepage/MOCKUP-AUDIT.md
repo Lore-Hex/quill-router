@@ -2,6 +2,10 @@
 
 Compared the current application to `nyte-design-preview/dist/trustedrouter/index.html`, the original Downloads `trustedrouter-homepage-mock/index.html` and `app.js`, and the marketing handoff SPEC, DECISIONS, OPEN_QUESTIONS and supplied top/footer screenshots. Newer user-approved art direction supersedes the old mock's typography and composition. This audit is about UI presence and implementation; it does not revalidate every marketing claim.
 
+## Current implementation status
+
+All nine modules, catalog search/prices, status and captured request presentation are implemented. Verification now features Open source at upper left with three shorter propositions stacked beside it; all source links/checklist items remain. Current remaining work is visual consistency, homepage-specific analytics integration, broader destination/sign-in checks and full release gates. Historical rows below describe prior passes; this status and the latest README entries supersede them.
+
 ## Latest request panel correction
 
 The latest README entry supersedes the request-path row below. A real DeepSeek response and verified receipt now populate a panel that restores the marketing mock’s enclosure, square nodes, dashed connectors, selected-provider outline and boxed response. Only the single observed provider is shown; synthetic standby/skipped providers remain excluded.

@@ -55,9 +55,6 @@ async function copyText(text, button) {
   feedback('Clipboard unavailable. Select the text and copy it manually.'); return false;
  }
 }
-$('[data-copy-request]').addEventListener('click',async e=>{
- await copyText($('#request-code').textContent,e.currentTarget);
-});
 $$('.trc .fl button').forEach(button=>button.addEventListener('click',()=>{
  $$('.trc .fl button').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));
  $$('.trc tbody').forEach(t=>t.hidden=t.dataset.f!==button.dataset.f);
