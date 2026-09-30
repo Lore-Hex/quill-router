@@ -169,3 +169,16 @@ This entry supersedes the prior five-repository presentation, receipt caption, t
 Validation: 24 focused Python checks, 14 Node checks and full ruff passed. All full gates were attempted: mypy still fails on the installed Bigtable _RetryableMutateRowsWorker API mismatch; full pytest collection is blocked by missing jsonschema. Coverage and release readiness remain unverified; no dependency installation. Final browser review at 320px verified equal 48px primary buttons, 44px copy controls, expanded migration without horizontal overflow and the separate closing section. Desktop verification/customer/closing screenshots are saved with the hierarchy- prefix. A 1024px header check found no horizontal overflow. Existing contrast palette and reduced-motion behavior remain.
 
 Remaining work is release validation in the supported environment, final inherited-claim confirmation and broader destination/production sign-in checks. The existing read-only ngrok preview remains https://fd8d-108-6-58-177.ngrok-free.app/. Raw capture evidence stays local/untracked. No push, merge, deployment or main-checkout changes.
+
+
+## Mobile action alignment, quote and footer polish — September 30
+
+Latest designer direction supersedes the first-open FAQ and underlined action styles. Request copy now leads with benefit and control: “Use the models you need through one API. Control which providers handle your requests and the privacy standards they must meet.”
+
+Catalog search and pricing use the shared secondary button primitive; on phones they follow the heading and align left. Primary API-key buttons remain mint. Standalone reading actions use the shared action-link primitive (16px, 44px target, arrow, underline on hover, visible keyboard outline); navigation, inline prose and functional tabs/filters retain their respective roles. The customer quote has a vertical rule instead of the long horizontal divider; the case-study action no longer has its inherited border underline.
+
+All seven FAQs start collapsed. SPEC section 11 explicitly specified the first open, but neither that section nor DECISIONS provides a research justification for that default. The designer preferred collapsed. Keep the homepage dark for now: SPEC line 49 says dark only, while line 67 lists a theme toggle, an unresolved inconsistency in the original handoff. No unfinished theme selector is added. OpenRouter's official brand-refresh article describes both light and dark experiences; this is context, not a requirement to add an untested second homepage theme.
+
+Mobile footer gaps and padding reduced: at 390px the collapsed utility footer measured 420px, down from 620px. Groups still have 48px summaries and expanded links retain 44px targets. Verified desktop 1440px quote layout and matching secondary button styles; phone 390px catalog/pricing alignment, footer/FAQ Enter toggles and focus; 320px hero and pricing without horizontal overflow. QA screenshots have the polish- prefix. No new motion or palette introduced.
+
+24 focused Python tests and full ruff pass. Required full gates attempted again: mypy remains blocked by the installed Bigtable _RetryableMutateRowsWorker mismatch; pytest collection remains blocked by missing jsonschema. Coverage is unverified. No dependency changes, push, deployment, production edits or raw evidence publication.
