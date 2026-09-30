@@ -1678,6 +1678,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def green_tokens() -> str:
         return public_page_html(settings, "green-tokens")
 
+    @public_html_route("/index")
+    async def token_index() -> str:
+        return public_page_html(settings, "index")
+
     @public_html_route("/customers/robot-robot-human")
     async def customer_robot_robot_human() -> str:
         return public_page_html(settings, "customers/robot-robot-human")
