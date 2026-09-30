@@ -613,8 +613,6 @@ def register_catalog_routes(router: APIRouter) -> None:
                 for provider in providers_for_display()
                 if provider.provider_zero_data_retention is True
                 or provider.prepaid_zero_data_retention
-                or provider.provider_confidential_compute is True
-                or provider.provider_e2ee is True
             ]
         }
 
