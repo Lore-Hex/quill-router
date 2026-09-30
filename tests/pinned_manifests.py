@@ -576,6 +576,47 @@ PEARL_GLM_5_3 = {
     "cached_input_token_price_per_m": 230000,
 }
 
+# Novita's Hy3 row as its feed listed it on 2026-09-30. Novita's feed prices
+# 100x below its public table; its manifest header's scale restores them.
+NOVITA_TENCENT_HY3 = {
+    "id": "tencent/hy3",
+    "display_name": "Hy3",
+    "title": "tencent/hy3",
+    "created": 1782798401,
+    "context_length": 262144,
+    "max_output_tokens": 262144,
+    "input_token_price_per_m": 1400,
+    "output_token_price_per_m": 5800,
+    "model_type": "chat",
+    "features": ["serverless", "function-calling", "structured-outputs", "reasoning"],
+    "input_modalities": ["text"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "upstream_id": "tencent/hy3",
+    "cached_input_token_price_per_m": 350,
+}
+
+# Parasail's Qwen3.5 397B row, under its own deployment id, as its feed listed
+# it on 2026-09-30.
+PARASAIL_QWEN_3_5_397B = {
+    "id": "qwen/qwen3.5-397b-a17b",
+    "upstream_id": "parasail-qwen35-397b-a17b",
+    "display_name": "Parasail Qwen3.5 397B A17B",
+    "title": "qwen/qwen3.5-397b-a17b",
+    "context_length": 262144,
+    "max_output_tokens": 65536,
+    "input_token_price_per_m": 500000,
+    "output_token_price_per_m": 3600000,
+    "cached_input_token_price_per_m": 300000,
+    "model_type": "chat",
+    "features": ["reasoning", "function-calling", "serverless"],
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+}
+
 # OpenAI's own routes as its manifest lists them, for rules of OpenAI's
 # routes: its prepaid ZDR contract, Priority processing, image billing.
 OPENAI_GPT_4O_MINI = {
@@ -748,6 +789,78 @@ OPENROUTER_GLM_5_2: dict[str, Any] = {
             ("Together", "together", "zai-org/GLM-5.2", 1048575, 943717),
             ("Venice", "venice", "zai-org-glm-5-2", 1000000, 131072),
             ("Z.AI", "zai", "glm-5.2", 1048576, 131072),
+        )
+    ],
+    "pricing_source": "provider_direct",
+}
+
+# Hy3 as OpenRouter's snapshot listed it on 2026-09-30, trimmed to DeepInfra,
+# the first host it lists, and Novita, without parameter lists and uptimes.
+# Every host listed a 262144 window.
+OPENROUTER_TENCENT_HY3: dict[str, Any] = {
+    "id": "tencent/hy3",
+    "name": "Tencent: Hy3",
+    "created": 1783344048,
+    "context_length": 262144,
+    "architecture": {
+        "modality": "text->text",
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "tokenizer": "Other",
+        "instruct_type": None,
+    },
+    "pricing": {"prompt": "0.00000013", "completion": "0.00000053", "input_cache_read": "0.000000033"},
+    "top_provider": {"context_length": 262144, "max_completion_tokens": 128000, "is_moderated": False},
+    "endpoints": [
+        {
+            "name": f"{name} | tencent/hy3-20260706",
+            "model_id": upstream_id,
+            "provider_name": name,
+            "tr_provider_slug": slug,
+            "context_length": 262144,
+            "pricing": {"prompt": prompt, "completion": completion, "input_cache_read": cache_read},
+            "max_completion_tokens": max_completion_tokens,
+            "pricing_source": "provider_direct",
+        }
+        for name, slug, upstream_id, prompt, completion, cache_read, max_completion_tokens in (
+            ("DeepInfra", "deepinfra", "tencent/Hy3", "0.00000013", "0.00000053", "0.000000033", 131072),
+            ("Novita", "novita", "tencent/hy3", "0.00000014", "0.00000058", "0.000000035", 235929),
+        )
+    ],
+    "pricing_source": "provider_direct",
+}
+
+# Qwen3.5 397B as OpenRouter's snapshot listed it on 2026-09-30, trimmed to
+# DeepInfra, the first host it lists, and Parasail, without parameter lists and
+# uptimes. Both listed a 262144 window.
+OPENROUTER_QWEN_3_5_397B: dict[str, Any] = {
+    "id": "qwen/qwen3.5-397b-a17b",
+    "name": "Qwen: Qwen3.5 397B A17B",
+    "created": 1771223018,
+    "context_length": 262144,
+    "architecture": {
+        "modality": "text+image+video->text",
+        "input_modalities": ["text", "image", "video"],
+        "output_modalities": ["text"],
+        "tokenizer": "Qwen3",
+        "instruct_type": None,
+    },
+    "pricing": {"prompt": "0.00000045", "completion": "0.000003", "input_cache_read": "0.000000045"},
+    "top_provider": {"context_length": 262144, "max_completion_tokens": 235929, "is_moderated": False},
+    "endpoints": [
+        {
+            "name": f"{name} | qwen/qwen3.5-397b-a17b-20260216",
+            "model_id": "Qwen/Qwen3.5-397B-A17B",
+            "provider_name": name,
+            "tr_provider_slug": slug,
+            "context_length": 262144,
+            "pricing": {"prompt": prompt, "completion": completion, "input_cache_read": cache_read},
+            "max_completion_tokens": max_completion_tokens,
+            "pricing_source": "provider_direct",
+        }
+        for name, slug, prompt, completion, cache_read, max_completion_tokens in (
+            ("DeepInfra", "deepinfra", "0.00000045", "0.000003", "0.00000022", 81920),
+            ("Parasail", "parasail", "0.0000005", "0.0000036", "0.0000003", 235929),
         )
     ],
     "pricing_source": "provider_direct",
