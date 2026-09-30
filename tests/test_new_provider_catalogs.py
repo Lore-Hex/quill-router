@@ -86,6 +86,13 @@ def test_cloudflare_committed_manifest_exposes_only_funded_priced_routes() -> No
         or row["upstream_id"] == "moonshotai/kimi-k3"
         for row in rows
     )
+
+
+@pytest.mark.provider_health
+def test_cloudflare_lists_kimi_k3_at_its_native_id_with_a_1m_window() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    rows = json.loads(cloudflare_workers_ai.MANIFEST_PATH.read_text(encoding="utf-8"))["models"]
     kimi_k3 = next(row for row in rows if row["id"] == "moonshotai/kimi-k3")
     assert kimi_k3["upstream_id"] == "moonshotai/kimi-k3"
     assert kimi_k3["context_length"] == 1_048_576
