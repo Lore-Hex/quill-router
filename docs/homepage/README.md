@@ -234,3 +234,17 @@ Brightened the river images only at phone widths and reduced the mobile overlays
 Added a separate flag-enabled desktop/mobile Playwright smoke configuration to the existing CI browser job, preserving legacy homepage coverage. It covers model search, sign-in entry, mobile navigation/customer disclosure, layout overflow and returning-user labels. The new browser suite is pending CI execution; manual mobile search, sign-in entry and menu/search checks passed, along with 17 Node tests and Ruff. CI run 36749421098 passed the earlier failure repairs.
 
 Current release checklist supersedes the longer recommendations above: latest-commit CI must pass, the owner completes the reviewed merge/deployment, then real sign-in, analytics ingestion and public status are checked in the release environment. Analytics/status are already implemented. Pricing/payment wording is explicitly deferred unchanged by the user. Broader typography/navigation work is outside this homepage PR; any later shared-font adoption needs representative page/layout checks rather than a blanket global override. Feature-flag rollback requires configuration rollout.
+
+
+## Homepage style baseline
+
+This is the implemented homepage baseline, not a sitewide migration. Keep these styles within the homepage until other pages are deliberately reviewed. The live CSS is authoritative; earlier mockup token references are not a separate maintained design system.
+
+- **Typography:** Archivo for default headings and body, using `--font`, `--sans` and `--heading-font` from `homepage-landscape.css`; system monospace for code. Use italic emphasis sparingly in signature headlines and customer quotations, not entire paragraphs. Preview font alternatives are not production defaults.
+- **Color:** near-black `#050706` canvas, off-white `#edf8f5` headings, mint `#cce8d7` primary actions. Use light blue pricing and mint customer-story panels selectively to break up the page. Retain readable contrast in every state.
+- **Actions:** reuse `components.css` `.button.button-primary`, `.button.button-secondary`, `.action-link` and `.icon-button`. Main buttons share 48px minimum height and 6px radius; supporting controls retain 44px touch targets. Primary action is API-key/console entry. Secondary actions retain a visible box; tertiary evidence links stay subordinate. Do not add decorative arrows inside boxed buttons. Icon-only controls require accessible names and visible focus.
+- **Hierarchy:** one clear leading action per section. Catalog/pricing actions sit beside headings on desktop and below them on mobile. Avoid duplicate links, decorative pseudo-tabs and competing card headings.
+- **Responsive behavior:** maintain equal-weight hero button geometry, collapsed mobile customer detail and compact footer groups; FAQs start collapsed. Check 320px and 390px phones plus desktop before extending components.
+- **Imagery:** keep river imagery in the hero and closing CTA, with local dark overlays behind text. Mobile hero brightness is 1.3; closing image stays at 1.4. Decorative images have empty alt text. New imagery should retain the cool green/blue palette and quiet space behind copy.
+
+Expand this baseline into shared tokens and component examples with the next marketing-page adoption PR. Do not globally replace console, billing, form or code typography as part of the homepage release.
