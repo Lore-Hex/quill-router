@@ -244,7 +244,10 @@ def test_provider_privacy_and_hourly_discovery_contracts():
 
 def test_live_manifest_publishes_four_credits_routes_with_free_output():
     # Each routable task row of the committed manifest becomes one Credits
-    # route; a row the refresh tombstoned is simply not expected.
+    # route; a row the refresh tombstoned is simply not expected. The input
+    # price a route bills is checked on the rows discovery writes
+    # (test_task_routes_bill_the_listed_input_price_plus_markup); the price
+    # ScaleDown lists today is test_scaledown_still_charges_its_input_price.
     raw = json.loads(scaledown.MANIFEST_PATH.read_text())
     routable = [row["id"] for row in raw["models"] if row.get("routable") is not False]
     models, endpoints = _supplemental_provider_models_and_endpoints()
@@ -252,11 +255,32 @@ def test_live_manifest_publishes_four_credits_routes_with_free_output():
     assert sorted(e.model_id for e in routes) == sorted(routable)
     for e in routes:
         assert e.usage_type == "Credits"
-        assert e.prompt_price_microdollars_per_million_tokens == _customer_price(50_000)
         assert e.completion_price_microdollars_per_million_tokens == 0
         assert e.price_tiers[0].completion_price_microdollars_per_million_tokens == 0
         assert models[e.model_id].documentation.example_input
         assert provider_model_requires_exact_global_settlement(e.provider, e.model_id)
+
+
+@pytest.mark.usefixtures("task_routes")
+def test_task_routes_bill_the_listed_input_price_plus_markup():
+    # Discovery read $0.05 per million input tokens off the pricing page: each
+    # task route bills that plus the 5.5% markup, and nothing for output.
+    from trusted_router.catalog import MODEL_ENDPOINTS
+
+    for task in scaledown.TASKS:
+        route = MODEL_ENDPOINTS[f"scaledown/{task}@scaledown/prepaid"]
+        assert route.prompt_price_microdollars_per_million_tokens == 52_750
+        assert route.completion_price_microdollars_per_million_tokens == 0
+
+
+@pytest.mark.provider_health
+def test_scaledown_still_charges_its_input_price():
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    _models, endpoints = _supplemental_provider_models_and_endpoints()
+    routes = [e for e in endpoints.values() if e.provider == "scaledown"]
+    for e in routes:
+        assert e.prompt_price_microdollars_per_million_tokens == _customer_price(50_000)
 
 
 @pytest.mark.provider_health
