@@ -391,6 +391,24 @@ ALIBABA_QWEN_3_7_FLASH = tuple(
     )
 )
 
+# NVIDIA NIM's Llama 3.2 11B Vision row as its feed listed it on 2026-09-30.
+# NVIDIA publishes no per-token price; the refresh writes its conservative
+# accounting rate (nvidia_nim._CONSERVATIVE_HOSTED_PRICE) into every row.
+NVIDIA_NIM_LLAMA_3_2_11B_VISION = {
+    "display_name": "meta/llama-3.2-11b-vision-instruct",
+    "title": "meta/llama-3.2-11b-vision-instruct",
+    "model_type": "chat",
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "id": "meta-llama/llama-3.2-11b-vision-instruct",
+    "upstream_id": "meta/llama-3.2-11b-vision-instruct",
+    "routable": True,
+    "input_token_price_per_m": 2000000,
+    "output_token_price_per_m": 10000000,
+}
+
 # Tinfoil's confidential routes as its manifest lists them.
 TINFOIL_DEEPSEEK_V4_1_FLASH = {
     "display_name": "DeepSeek V4.1 Flash",
