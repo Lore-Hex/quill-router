@@ -51,12 +51,19 @@ function feedback(message) {
  clearTimeout(feedbackTimer); feedbackTimer=setTimeout(()=>el.textContent='',2400);
 }
 async function copyText(text, button) {
- const original=button.textContent;
+ button.disabled=true;
+ const original=button.innerHTML;
+ const originalLabel=button.getAttribute('aria-label');
  try {
   await navigator.clipboard.writeText(text);
-  button.textContent='Copied'; feedback('Copied to clipboard');
-  setTimeout(()=>button.textContent=original,1600); return true;
+  if(button.classList.contains('icon-button')){
+   button.innerHTML='<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>';
+   button.setAttribute('aria-label','Copied');
+  }else button.textContent='Copied';
+  feedback('Copied to clipboard');
+  setTimeout(()=>{button.innerHTML=original;button.disabled=false;if(originalLabel)button.setAttribute('aria-label',button.title||originalLabel);},1600); return true;
  } catch {
+  button.disabled=false;
   feedback('Clipboard unavailable. Select the text and copy it manually.'); return false;
  }
 }
@@ -84,6 +91,8 @@ function renderCode(){
  else{pre.className='mcode';pre.innerHTML=migCode(lang,source);}
  $('.pf .hint').textContent=lang==='agent'?DATA.migration.agent_hint:'';
  $('.pf .hint').hidden=lang!=='agent';
+ $('[data-copycode]').setAttribute('aria-label',lang==='agent'?'Copy agent prompt':'Copy code');
+ $('[data-copycode]').title=lang==='agent'?'Copy agent prompt':'Copy code';
 }
 function setLang(value){lang=value;renderCode();track('home.migration_tab',{tab:value,from:source});}
 $$('.tab').forEach((tab,index,tabs)=>{
@@ -97,7 +106,6 @@ $$('.tab').forEach((tab,index,tabs)=>{
  });
 });
 $$('.from button').forEach(button=>button.addEventListener('click',()=>{source=button.dataset.src;renderCode();track('home.migration_tab',{tab:lang,from:source});}));
-$('[data-agent]').addEventListener('click',()=>{$('#migration-example').open=true;setLang('agent');$('#code-tab-agent').focus();track('home.agent_prompt_opened',{source:'link'});});
 $('[data-copy]').addEventListener('click',async e=>{if(await copyText(TRB,e.currentTarget))track('home.base_url_copied');});
 $('[data-copycode]').addEventListener('click',async e=>{
  const clean=pre.cloneNode(true);$$('.del',clean).forEach(n=>n.remove());$$('.add',clean).forEach(n=>n.append('\n'));
@@ -165,6 +173,6 @@ $$('#faq details').forEach((el,index)=>{
  });
 });
 $$('.trc .m a').forEach(a=>a.addEventListener('click',()=>track('home.catalog_row_clicked',{model_id:a.href.split('/models/')[1]})));
-$$('a.btnp,a.agent,a.signin').forEach(a=>a.addEventListener('click',()=>track('home.cta_clicked',{module:a.closest('footer')?'footer':a.closest('#migrate')?'migration':'hero',cta:'api_key'})));
+$$('[data-homepage-cta]').forEach(a=>a.addEventListener('click',()=>track('home.cta_clicked',{module:a.closest('#get-started')?'closing':a.closest('#migrate')?'migration':'hero',cta:'api_key'})));
 
 })();

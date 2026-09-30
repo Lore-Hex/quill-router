@@ -150,3 +150,22 @@ Validation: desktop 1440×900, tablet 768×1024 and phones 390×844 / 320×568 c
 24 focused Python tests, 13 Node tests, full ruff and diff whitespace checks pass. All repository gates were attempted with the existing environment and no dependency installation: mypy still fails on the installed Bigtable `_RetryableMutateRowsWorker` mismatch; full pytest still stops at missing `jsonschema`. Coverage and release readiness remain unverified.
 
 The old `23e0` ngrok tunnel stopped during this review. Restarted ngrok against the unchanged read-only bridge on 3002; the new verified phone URL is https://fd8d-108-6-58-177.ngrok-free.app/. A first visit can show ngrok's Visit Site notice. Port 3001 still serves the isolated memory-store application; the bridge still blocks POST requests and forwards the public status feed. No production changes, push or deployment.
+
+
+## Reduced choices and reusable actions — September 30, latest direction
+
+This entry supersedes the prior five-repository presentation, receipt caption, two-column customer story, lower pricing panels and landscape-inside-footer directions.
+
+- Header model search remains a catalog shortcut, with a magnifier and existing keyboard shortcut. Marketing's DECISIONS nav row and SPEC section 4 explicitly explain its purpose. No extra instructional copy. Search hides when desktop navigation needs the room; mobile menu and catalog search remain available.
+- Request panel now has one “Captured request” caption. Removed the mixed-style receipt summary/link outside the graphic. The observed gateway/provider metadata stays accurate. Intro explains matching model/privacy requirements without weakening privacy; no invented failover evidence.
+- Migration drops the three noninteractive fact chips and duplicate agent/MCP/guide actions. Get your API key is primary; Migration guide is secondary. Agent prompt remains a functional code tab.
+- Clipboard icons replace Copy text for URL and code, with 44px targets, accessible labels, visible keyboard focus, checkmark confirmation and live feedback. A regression test checks clipboard payload and restoration of icon/label/enabled state.
+- Shared action primitives live in static/homepage/components.css. Import after page styles; use class="button button-primary" for the main action, "button button-secondary" for outlined actions and "icon-button" for familiar icon controls with aria-label/title. All API-key buttons use the same label, 48px minimum height, padding, color and focus treatment. Other pages are not changed.
+- Verification retains four propositions and the source checklist. Five repository buttons are consolidated into one View source code destination; source is the lead column and the other claims use quieter ruled rows.
+- Pricing retains four prominent pale-blue terms and one short strict-budget sentence/link. Removed the repeated route-price comparison. Marketing SPEC section 9 and DECISIONS explain budgets/cost visibility as buyer concerns; current route prices remain available through the catalog.
+- Customer story has one vertical reading path: headline result, supporting metrics/body, one case-study link, then a smaller quote. Removed the extra press line and duplicate attribution.
+- A separate closing.html section inside main now owns the full-width landscape CTA (440px desktop, 400px phone). The darker utility footer follows it.
+
+Validation: 24 focused Python checks, 14 Node checks and full ruff passed. All full gates were attempted: mypy still fails on the installed Bigtable _RetryableMutateRowsWorker API mismatch; full pytest collection is blocked by missing jsonschema. Coverage and release readiness remain unverified; no dependency installation. Final browser review at 320px verified equal 48px primary buttons, 44px copy controls, expanded migration without horizontal overflow and the separate closing section. Desktop verification/customer/closing screenshots are saved with the hierarchy- prefix. A 1024px header check found no horizontal overflow. Existing contrast palette and reduced-motion behavior remain.
+
+Remaining work is release validation in the supported environment, final inherited-claim confirmation and broader destination/production sign-in checks. The existing read-only ngrok preview remains https://fd8d-108-6-58-177.ngrok-free.app/. Raw capture evidence stays local/untracked. No push, merge, deployment or main-checkout changes.

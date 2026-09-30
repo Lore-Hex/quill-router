@@ -6,20 +6,5 @@
   <div class="pricing-term"><strong>Bring your own keys</strong><span>Use your provider accounts</span></div>
   <div class="pricing-term"><strong>Flexible payments</strong><span>Card, ACH, PayPal or cryptocurrency</span></div>
  </div>
- <div class="pts">
-  <div class="pt"><h3>Budgets that count what's in flight</h3><p>Strict budgets count in-flight requests toward daily, weekly or monthly limits per key.</p>
-   <a class="go" href="/docs/spend-controls">Set spend controls →</a></div>
-  <div class="pt"><h3>Compare prices before you call</h3>
-   {% if homepage_pricing %}
-   <div class="price-comparison">
-    <p class="price-model">{{ homepage_pricing.name }}</p>
-    <p class="price-range">{{ homepage_pricing.low }}{% if homepage_pricing.has_range %}–{{ homepage_pricing.high }}{% endif %} <span>USD / 1M input tokens</span></p>
-    <p class="price-basis">Standard fee included. Privacy and context limits vary by route.</p>
-   </div>
-   <a class="go" href="{{ homepage_pricing.href }}">Compare these routes →</a>
-   {% else %}
-   <p>See current input, cached input and output rates for each provider.</p>
-   <a class="go" href="/models">Compare route prices →</a>
-   {% endif %}</div>
- </div>
+ <p class="pricing-support">Strict budgets count requests still running toward daily, weekly or monthly limits per key. <a href="/docs/spend-controls">Spend controls →</a></p>
 </div></section>

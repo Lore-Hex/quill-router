@@ -1,0 +1,12 @@
+/* Shared action primitives. Import after page styles when adopting elsewhere. */
+:root{--action-primary-bg:#cce8d7;--action-primary-ink:#10241a;--action-secondary-ink:#c0e1ff;--action-radius:6px;--action-height:48px}
+.button.button-primary,.button.button-secondary{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:var(--action-height);padding:12px 22px;border:1px solid transparent;border-radius:var(--action-radius);font:550 16px/1.4 var(--sans,system-ui,sans-serif);text-decoration:none;cursor:pointer;white-space:nowrap}
+.button.button-primary{background:var(--action-primary-bg);color:var(--action-primary-ink)}
+.button.button-primary:hover{background:#e5fff2;color:var(--action-primary-ink)}
+.button.button-secondary{background:transparent;color:var(--action-secondary-ink);border-color:#526859}
+.button.button-secondary:hover{background:#14251c;border-color:#8cab99}
+.button.button-primary:focus-visible,.button.button-secondary:focus-visible,.icon-button:focus-visible{outline:3px solid #c0e1ff;outline-offset:4px}
+.icon-button.icon-button{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;flex:none;width:44px;height:44px;min-width:44px;min-height:44px;padding:0;border:1px solid #526859;border-radius:4px;background:transparent;color:#c0e1ff;cursor:pointer}
+.icon-button:hover{background:#203c2c;border-color:#cce8d7}
+.icon-button svg{display:block;flex:none}
+@media(max-width:360px){.trnav .signin.button{display:none}}

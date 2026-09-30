@@ -47,7 +47,6 @@ def test_landscape_root_integrates_catalog_assets_csp_and_signin(
     assert "The capital of France is Paris." in request.get_text()
     assert "no confidential provider compute" in request.get_text()
     assert "Captured request" in request.get_text()
-    assert request.select_one('a[href="/docs/receipts"]')
     assert not request.select_one("details")
     assert "All systems operational" not in page.get_text()
     for image in page.select("img[src^='/static/homepage/']"):

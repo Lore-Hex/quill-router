@@ -4,6 +4,7 @@
 <script nonce="{{ csp_nonce() }}">window.__TR__ = {{ tr_config|safe }};</script>
 <script defer src="/static/dashboard.js?v={{ static_version }}"></script>
 <link rel="stylesheet" href="/static/homepage/application.css?v={{ homepage_version }}">
+<link rel="stylesheet" href="/static/homepage/components.css?v={{ homepage_version }}">
 <script nonce="{{ csp_nonce() }}">
 (() => {
   const root = document.documentElement;
@@ -37,5 +38,6 @@
 {% include "homepage/pricing.html" %}
 {% include "homepage/customers.html" %}
 {% include "homepage/faq.html" %}
+{% include "homepage/closing.html" %}
 </main>{% include "homepage/footer.html" %}
 </div><dialog id="model-search" aria-labelledby="search-title"><div class="search-head"><h2 id="search-title">Find a model</h2><button type="button" data-close-search aria-label="Close model search">×</button></div><label for="model-query">Search the model catalog</label><input id="model-query" type="search" placeholder="Model name or ID" autocomplete="off"><p class="search-note"><a class="" href="/models">Browse the full catalog →</a></p><p id="search-count" role="status"></p><button type="button" class="catalog-search" id="search-retry" hidden>Try again</button><div id="search-results"></div></dialog><div class="copy-feedback" role="status" aria-live="polite"></div><script id="homepage-data" type="application/json" nonce="{{ csp_nonce() }}">{{ homepage_data|tojson }}</script>{% include "public/_signin.html" %}</body></html>

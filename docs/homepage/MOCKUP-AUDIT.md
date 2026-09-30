@@ -49,3 +49,8 @@ Confirm privacy terminology across homepage and `/models`, fee and payment wordi
 ## Visual refinement in this pass
 
 The phone overlay is lighter, especially below the copy in the compact-height variant. Original image/crop/foreground placement remain unchanged. Desktop ribbon bottom margin now leaves 88px at 1440×900 and about 74px at 1280×720, instead of 16px. Compact landscape keeps its existing fit. Verified 390×700, 390×844, 320×568, 1440×900 and 1280×720 without horizontal overflow; all eleven disclosures closed on phones and open on desktop. Photo/text contrast checked against the decoded responsive image and CSS gradient, with the subtitle protection adjusted after measurement. This is targeted visual QA; deferred repository release gates remain deferred.
+
+
+## September 30 hierarchy refinement
+
+The designer requested fewer choices and a reusable action style. Latest README entry records the superseding decisions: model search retained as documented catalog shortcut; migration fact chips and duplicate agent links removed; five repository actions consolidated; pricing evidence compressed to one strict-budget line; customer story changed to one vertical reading path/link; closing landscape moved above the footer. Shared action CSS is prepared for later adoption outside the homepage. These are authorized refinements of the supplied mock, not additions to its marketing research.

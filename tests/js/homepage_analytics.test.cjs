@@ -56,3 +56,23 @@ test('initially open FAQ is not counted until a visitor reopens it', () => {
  toggle();
  assert.deepEqual(events, ['home.faq_opened']);
 });
+test('clipboard icons keep accessible feedback and restore without losing SVG', async () => {
+ const callbacks = [], copied = [], feedback = [];
+ const button = {innerHTML:'<svg>clipboard</svg>', disabled:false, title:'Copy base URL',
+  classList:{contains:()=>true}, attrs:{'aria-label':'Copy base URL'},
+  getAttribute(name){return this.attrs[name];},setAttribute(name,value){this.attrs[name]=value;}};
+ const context=vm.createContext({navigator:{clipboard:{writeText:async text=>copied.push(text)}},
+  feedback:text=>feedback.push(text),setTimeout:fn=>callbacks.push(fn)});
+ const start=source.indexOf('async function copyText(');
+ const end=source.indexOf("$$('.trc .fl button')",start);
+ vm.runInContext(source.slice(start,end),context);
+ assert.equal(await context.copyText('https://api.trustedrouter.com/v1',button),true);
+ assert.deepEqual(copied,['https://api.trustedrouter.com/v1']);
+ assert.equal(button.attrs['aria-label'],'Copied');
+ assert.equal(button.disabled,true);
+ assert.match(button.innerHTML,/<svg/);
+ callbacks[0]();
+ assert.equal(button.innerHTML,'<svg>clipboard</svg>');
+ assert.equal(button.attrs['aria-label'],'Copy base URL');
+ assert.equal(button.disabled,false);
+});
