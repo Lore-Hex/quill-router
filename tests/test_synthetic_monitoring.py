@@ -3800,16 +3800,20 @@ async def test_rotation_first_token_and_completion_deadlines_are_independent(
     expected_status: str,
     expected_extensions: int,
 ) -> None:
-    """Advance a virtual stream clock, without slow or timing-sensitive sleeps."""
+    """Advance a virtual stream clock, without slow or timing-sensitive sleeps.
+
+    probes.py reads its deadlines from that clock too (the loop time behind its
+    completion deadline, and its timeouts), so real time, however slow the
+    machine, never moves them."""
     from trusted_router.provider_reliability import ModelDeadlines
     from trusted_router.synthetic import probes as probes_module
 
-    start = asyncio.get_running_loop().time()
+    now = 0.0  # virtual seconds since the request started
     extensions: list[float] = []
 
     class VirtualTimeout:
         def __init__(self, delay: float) -> None:
-            self.deadline = start + delay
+            self.deadline = now + delay
 
         async def __aenter__(self) -> VirtualTimeout:
             return self
@@ -3823,10 +3827,23 @@ async def test_rotation_first_token_and_completion_deadlines_are_independent(
 
     deadlines: list[VirtualTimeout] = []
 
-    def timeout(delay: float) -> VirtualTimeout:
-        deadline = VirtualTimeout(delay)
-        deadlines.append(deadline)
-        return deadline
+    class VirtualAsyncio:
+        """asyncio as probes.py sees it: its timeouts and its loop clock are
+        virtual, and everything else is the real module."""
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(asyncio, name)
+
+        def timeout(self, delay: float) -> VirtualTimeout:
+            deadline = VirtualTimeout(delay)
+            deadlines.append(deadline)
+            return deadline
+
+        def get_running_loop(self) -> VirtualAsyncio:
+            return self
+
+        def time(self) -> float:
+            return now
 
     chunks = {
         "content": b'data: {"choices":[{"delta":{"content":"PONG"}}]}\n\n',
@@ -3840,8 +3857,10 @@ async def test_rotation_first_token_and_completion_deadlines_are_independent(
 
     class TimedStream(httpx.AsyncByteStream):
         async def __aiter__(self) -> AsyncIterator[bytes]:
+            nonlocal now
             for elapsed, kind in events:
-                if start + elapsed > deadlines[-1].deadline:
+                now = float(elapsed)
+                if now > deadlines[-1].deadline:
                     raise TimeoutError("virtual stream deadline exceeded")
                 yield chunks[kind]
 
@@ -3849,7 +3868,7 @@ async def test_rotation_first_token_and_completion_deadlines_are_independent(
             nonlocal closed
             closed = True
 
-    monkeypatch.setattr(probes_module.asyncio, "timeout", timeout)
+    monkeypatch.setattr(probes_module, "asyncio", VirtualAsyncio())
     monkeypatch.setattr(
         probes_module, "model_deadlines", lambda *_args, **_kwargs: ModelDeadlines(10, 40)
     )
@@ -3865,7 +3884,8 @@ async def test_rotation_first_token_and_completion_deadlines_are_independent(
     assert sample.status == expected_status
     assert len(extensions) == expected_extensions
     if extensions:
-        assert extensions[0] == pytest.approx(start + 40, abs=0.1)
+        # The absolute completion deadline: 40 virtual seconds after the request.
+        assert extensions[0] == 40
     if expected_status == "error":
         assert sample.error_type == ("provider_error" if events[-1][1] == "error" else "TimeoutError")
     assert closed
