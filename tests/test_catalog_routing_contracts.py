@@ -2357,11 +2357,6 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
         )
         xiaomi_credits[model_id] = xiaomi
 
-    if "xiaomi/mimo-v2.5-pro" in xiaomi_credits:
-        # Xiaomi documents this as a 1M context window. Live catalogs use both
-        # the binary 1,048,576 value and a rounded 1,050,000 value, so guard
-        # the public capability rather than freezing one representation.
-        assert 1_000_000 <= MODELS["xiaomi/mimo-v2.5-pro"].context_length <= 1_050_000
     # UltraSpeed is the 1T-param speed-serving tier with its own ¥9/¥18
     # ($1.305/$2.61) cost: a regen must not collapse it onto V2.5 Pro's price.
     if {"xiaomi/mimo-v2.5-pro", "xiaomi/mimo-v2.5-pro-ultraspeed"} <= xiaomi_credits.keys():
@@ -2370,6 +2365,16 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
             .completion_price_microdollars_per_million_tokens
             != xiaomi_credits["xiaomi/mimo-v2.5-pro"].completion_price_microdollars_per_million_tokens
         )
+
+
+@pytest.mark.provider_health
+def test_xiaomi_mimo_v25_pro_advertises_a_1m_context() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    # Xiaomi documents this as a 1M context window. Live catalogs use both
+    # the binary 1,048,576 value and a rounded 1,050,000 value, so guard
+    # the public capability rather than freezing one representation.
+    assert 1_000_000 <= MODELS["xiaomi/mimo-v2.5-pro"].context_length <= 1_050_000
 
 
 def test_crusoe_provider_models_follow_authoritative_manifest() -> None:
