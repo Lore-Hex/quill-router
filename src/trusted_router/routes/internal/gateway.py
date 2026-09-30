@@ -4264,7 +4264,6 @@ def _authorized_user_model_pair(
 
 def _byok_configs_for_candidates(
     candidates: list[tuple[Model, ModelEndpoint]], workspace_id: str,
-    folded_configs: dict[str, Any] | None = None,
     *, folded_rows: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     # Preserve alias preference in _get_byok_provider, deduplicate only the IO.
@@ -4283,9 +4282,6 @@ def _byok_configs_for_candidates(
             for provider in providers
             for raw in [folded_rows.get(f"{workspace_id}#{provider}")]
         }
-    if folded_configs is not None:
-        # Legacy partial contexts retain the direct-read fallback for missing slugs.
-        return {provider: folded_configs[provider] for provider in providers if provider in folded_configs}
     batch = getattr(STORE, "get_byok_providers", None)
     if callable(batch):
         return cast(dict[str, Any], batch(workspace_id, providers))

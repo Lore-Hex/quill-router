@@ -140,25 +140,22 @@ def test_folded_auth_byok_matches_two_queries(folded_store, key_type, config_sta
     assert consumed == store.get_byok_providers(workspace_id, ["anthropic"] if providers else [])
 
 
-def test_folded_byok_configs_skip_a_slug_the_fold_did_not_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A BYOK slug missing from the auth-time fold falls back to a direct read, never KeyError."""
+def test_a_candidate_slug_absent_from_the_fetched_range_is_explicitly_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fetched range is complete for its workspace: an absent slug is None, with no extra read."""
     from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
     from trusted_router.routes.internal import gateway
 
     endpoint = MODEL_ENDPOINTS["anthropic/claude-haiku-4.5@anthropic/byok"]
     candidates = [(MODELS[endpoint.model_id], endpoint)]
-    reads: list[tuple[str, str]] = []
 
-    class _Store:
-        def get_byok_provider(self, workspace_id: str, provider: str) -> None:
-            reads.append((workspace_id, provider))
-            return None
+    class _NoReads:
+        def __getattr__(self, name: str) -> object:
+            raise AssertionError(f"unexpected store read: {name}")
 
-    monkeypatch.setattr(gateway, "STORE", _Store())
-    configs = gateway._byok_configs_for_candidates(candidates, "ws-fold", {})
-    assert configs == {}
+    monkeypatch.setattr(gateway, "STORE", _NoReads())
+    configs = gateway._byok_configs_for_candidates(candidates, "ws-fold", folded_rows={"ws-fold#other": "{}"})
+    assert configs and all(value is None for value in configs.values())
     assert gateway._get_byok_provider("ws-fold", endpoint.provider, configs) is None
-    assert reads and all(workspace == "ws-fold" for workspace, _ in reads)
 
 
 @pytest.mark.parametrize("scenario_index", range(6))

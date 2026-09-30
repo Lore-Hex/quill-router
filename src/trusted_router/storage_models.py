@@ -1907,8 +1907,6 @@ class ApiKeyAuthContext:
 
     api_key: ApiKey
     workspace: Workspace | None
-    # None means credentials were not requested; {} is a complete empty result.
-    byok_configs: dict[str, ByokProviderConfig | None] | None = None
     # Raw complete primary-key range; None means this context did not fetch it.
     byok_rows: dict[str, str] | None = None
     # Decode only after key validation and inference-scope checks.
