@@ -77,8 +77,7 @@ $$('.trc .fl button').forEach(button=>button.addEventListener('click',()=>{
 }));
 $$('[data-alias]').forEach(button=>button.addEventListener('click',async()=>{
  if(await copyText(button.dataset.alias,button)){
-  $('.alh').textContent='Copied '+button.dataset.alias;
-  setTimeout(()=>$('.alh').textContent='Click to copy',1600);
+  feedback('Copied '+button.dataset.alias);
   track('home.alias_copied',{alias:button.dataset.alias});
  }
 }));

@@ -1,20 +1,19 @@
 <section id="pricing"><div class="trv trp">
- <div class="ph3"><h2>See what your AI bill is made of.</h2><a class="alllnk" href="/pricing">See pricing →</a></div>
+ <div class="ph3"><h2>See what your AI bill is made of.</h2><a class="section-cta" href="/pricing">See pricing →</a></div>
  <p class="terms"><span><b>Provider cost + 5.5%</b></span><span>No monthly plan or seat fees</span><span>Bring your own provider keys</span><span>Card, ACH, PayPal or cryptocurrency</span></p>
  <div class="pts">
-  <div class="pt"><b>Budgets that count what's in flight</b><p>Daily, weekly or monthly limits per key. Strict mode counts requests still running, so parallel agents can't overrun the window.</p>
-   <code class="ev"><span>budget_strict: true</span><span class="arr">→</span><span class="err">429 spending window exhausted</span></code>
+  <div class="pt"><h3>Budgets that count what's in flight</h3><p>Strict budgets count in-flight requests toward daily, weekly or monthly limits per key.</p>
    <a class="go" href="/docs/spend-controls">Set spend controls →</a></div>
-  <div class="pt"><b>Every route priced before you call</b><p>Input, cached input and output rates are published for every provider, so a route change never hides in your bill.</p>
+  <div class="pt"><h3>Compare prices before you call</h3>
    {% if homepage_pricing %}
    <div class="price-comparison">
-    <span class="price-model">{{ homepage_pricing.name }}</span>
-    <div class="ev"><span class="ok">{{ homepage_pricing.low }}</span>{% if homepage_pricing.has_range %}<span class="arr">to</span><span>{{ homepage_pricing.high }}</span>{% endif %}<span>USD / 1M input tokens</span>{% if homepage_pricing.ratio %}<span class="big">≈{{ homepage_pricing.ratio }}× price range</span>{% endif %}</div>
-    <p class="price-basis">Current catalog · Credits routes · standard fee included. Privacy and context limits vary by route.</p>
+    <p class="price-model">{{ homepage_pricing.name }}</p>
+    <p class="price-range">{{ homepage_pricing.low }}{% if homepage_pricing.has_range %}–{{ homepage_pricing.high }}{% endif %} <span>USD / 1M input tokens</span></p>
+    <p class="price-basis">Standard fee included. Privacy and context limits vary by route.</p>
    </div>
    <a class="go" href="{{ homepage_pricing.href }}">Compare these routes →</a>
    {% else %}
-   <p class="price-basis">See the model directory for current route prices.</p>
+   <p>See current input, cached input and output rates for each provider.</p>
    <a class="go" href="/models">Compare route prices →</a>
    {% endif %}</div>
  </div>

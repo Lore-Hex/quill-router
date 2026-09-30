@@ -2,7 +2,11 @@
 
 Compared the current application to `nyte-design-preview/dist/trustedrouter/index.html`, the original Downloads `trustedrouter-homepage-mock/index.html` and `app.js`, and the marketing handoff SPEC, DECISIONS, OPEN_QUESTIONS and supplied top/footer screenshots. Newer user-approved art direction supersedes the old mock's typography and composition. This audit is about UI presence and implementation; it does not revalidate every marketing claim.
 
-## Preserved from the approved pre-port design
+## Latest approved simplification
+
+The September 29 copy-led pass in README.md supersedes the visual-preservation comparison below: the four verification graphics, footer status pill/taglines, catalog timestamp and duplicate catalog CTA were intentionally removed at the designer’s request. Value propositions, source checklist and evidence links remain. Pricing now presents the connected range without the ratio badge or budget code sample. Supporting type is larger. Seven mobile disclosures remain.
+
+## Preserved from the approved pre-port design (before simplification)
 
 All nine marketing modules remain: navigation, landscape hero, catalog, migration, four verification/reliability cards, pricing, customer/press proof, FAQ and footer. The request demo remains its own section below the hero. Seven FAQs, five footer groups, three catalog filters, five routing aliases, four migration tabs, OpenAI/OpenRouter switching, copy actions, search and tooltips remain. Comparison found no missing link labels in migration, verification, pricing, customers, FAQ or footer. Text in those five non-footer sections matches the pre-port HTML exactly. The approved content JSON remains byte-identical.
 

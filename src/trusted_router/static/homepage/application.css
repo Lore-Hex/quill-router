@@ -11,8 +11,68 @@ body.homepage-production{--preview-bar-height:0px}
 .homepage-status[data-state="up"] .homepage-status-dot{background:#b8eecc}
 .homepage-status[data-state="degraded"] .homepage-status-dot{background:#edce88}
 .homepage-status[data-state="down"] .homepage-status-dot{background:#f0b3a6}
-.trft .homepage-status-pill{display:inline-flex;width:fit-content;min-height:36px;padding:7px 11px;border:1px solid #526859;border-radius:99px;color:#d6dcd6;font-size:12px;line-height:1.4}
 .homepage-status:focus-visible{outline:2px solid #c0e1ff;outline-offset:5px}
-.trp .price-model{display:block;margin-top:6px;color:#d6dcd6;font-size:13px}
-.trp .pt .price-basis{font-size:12px;line-height:1.5;color:#c3c9c3;margin-top:8px}
-.trp .price-comparison .ev{line-height:1.5}
+
+/* Copy-led marketing sections and a consistent, readable supporting scale. */
+.proof-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:40px 64px}
+.proof-point{min-width:0;border-top:1px solid #33403a;padding-top:28px}
+.proof-point h3,.trp .pt h3{font-size:24px;font-weight:550;letter-spacing:-.025em;line-height:1.3;margin:0 0 14px;color:#edf8f5}
+.proof-point p{font-size:18px;line-height:1.65;color:#c3c9c3;margin:0 0 20px;max-width:54ch}
+.proof-point a{color:#c0e1ff;font-size:16px;line-height:1.6;text-underline-offset:5px}
+.proof-point a:hover{text-decoration:underline}
+.proof-checklist{display:grid;grid-template-columns:1fr 1fr;gap:10px 28px;margin:0 0 20px;padding-left:20px;color:#d6dcd6;font-size:16px;line-height:1.5}
+.proof-checklist li::marker{color:#cce8d7}
+.proof-repositories{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:16px}
+.proof-repositories a{font-size:15px;color:#c3c9c3;text-decoration:underline}
+.trc .chd,.trp .ph3{align-items:flex-start;gap:24px}
+.trc .catalog-actions{flex-shrink:0}
+.page .section-cta{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;min-height:48px;padding:12px 20px;border:1px solid #8cab99;border-radius:6px;background:#14251c;color:#edf8f5;font:550 16px/1.4 var(--sans);text-decoration:none;white-space:nowrap}
+.page .section-cta:hover{background:#203c2c;border-color:#cce8d7}
+.trp .ph3{display:flex;justify-content:space-between}
+.trp .ph3 h2{max-width:760px;margin:0}
+.trp .terms{font-size:18px;line-height:1.65;gap:10px 0;margin:0}
+.trp .terms b{font-size:22px;font-weight:600}
+.trp .pts{gap:32px}
+.trp .pt{padding-top:28px;gap:14px}
+.trp .pt h3{margin:0;font-size:22px}
+.trp .pt p{font-size:18px;line-height:1.6}
+.trp .pt .go{font-size:16px;line-height:1.5}
+.trp .pt .price-model{font-size:17px;margin:0 0 6px}
+.trp .pt .price-range{font-size:21px;color:#edf8f5;line-height:1.5;font-variant-numeric:tabular-nums}
+.trp .price-range span{font-size:16px;color:#c3c9c3;white-space:nowrap}
+.trp .pt .price-basis{font-size:15px;line-height:1.6;margin-top:10px}
+.trnav nav a,.trnav .signin{font-size:15px}
+.trh .sub{font-size:20px}
+.request-description{font-size:17px;line-height:1.6}
+.trc .m a{font-size:18px}.trc .m code{font-size:13px}
+.trc th,.trc .pc,.trc .fl .cnt{font-size:14px}
+.trc .num{font-size:15px}.trc .num small,.trc .num:before{font-size:12px}
+.trc .tg{font-size:13px}.trc .fl button{font-size:15px;min-height:44px}
+.trc .cft{font-size:15px;line-height:1.6}.trc .alk,.trc .alp,.trc .alc{font-size:14px}
+.trm .lede,.trf details p{font-size:18px;line-height:1.65}
+.trm .facts span{font-size:13px;line-height:1.5}
+.trm .docs,.trm .lnk,.trm .agent{font-size:16px}
+.trm .field .k,.trm .val code,.trm .cp,.trm .tab,.trm .from,.trm .from button,.trm .pf .hint{font-size:14px}
+.trm .mcode{font-size:14px;line-height:1.6}
+.trs .stat .body,.trs .press p{font-size:18px;line-height:1.65}
+.trs .stat .who,.trs .stat .go,.trs .q .by,.trs .press a{font-size:15px;line-height:1.6}
+.trf summary{font-size:20px}
+.trft .col a{font-size:16px;line-height:1.6}.trft .col h3{font-size:15px}
+.trft .base{font-size:14px}.trft .brand{padding-bottom:0}
+.mobile-disclosure>summary{font-size:16px}
+@media(max-width:700px){
+ .proof-grid{grid-template-columns:1fr;gap:32px}
+ .proof-point{padding-top:24px}
+ .proof-point h3{font-size:23px}
+ .proof-point p{font-size:17px}
+ .proof-checklist{grid-template-columns:1fr;gap:8px}
+ .trc .chd,.trp .ph3{flex-wrap:wrap}
+ .trc .chd h2,.trp .ph3 h2{flex-basis:100%}
+ .trp .ph3 .section-cta{margin-left:auto}
+ .trp .terms{display:grid;gap:12px;font-size:17px}
+ .trp .terms span:not(:last-child)::after{content:none}
+ .trp .pt p,.trm .lede,.trf details p{font-size:17px}
+ .trh .sub{font-size:18px}
+ .trf summary{font-size:18px}
+ .trc .m a{font-size:18px}
+}
