@@ -270,3 +270,22 @@ def test_the_models_sweep_starts_only_from_passing_files(
     with pytest.raises(SystemExit, match="must pass before a sweep"):
         sweep.models(root / "out", workers=2, only=[])
     assert vanished == []
+
+
+def test_a_resumed_models_sweep_refuses_files_its_baseline_never_ran(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _data(monkeypatch, tmp_path)
+    runs: list[list[str]] = []
+    monkeypatch.setattr(sweep, "delist_model", lambda model_id: {"rows": 1})
+    monkeypatch.setattr(sweep, "run_pytest", lambda files, *_: runs.append(files) or (set(), "1 passed"))
+
+    sweep.models(root / "out", workers=2, only=["maker/model-a-fast"])
+    assert runs == [["tests/test_page.py"], ["tests/test_page.py"]]  # the baseline, then the model
+
+    with pytest.raises(SystemExit, match="baseline did not run"):
+        sweep.models(root / "out", workers=2, only=["maker/model-a"])
+    assert len(runs) == 2
+    # The selection the baseline covered resumes, with nothing left to run.
+    sweep.models(root / "out", workers=2, only=["maker/model-a-fast"])
+    assert len(runs) == 2

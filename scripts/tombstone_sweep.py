@@ -348,9 +348,12 @@ def models(out: Path, workers: int, only: list[str]) -> None:
         failures, summary = run_pytest(union, workers, out / "baseline.log")
         if failures:
             raise SystemExit(f"these test files must pass before a sweep: {summary}; see {out / 'baseline.log'}")
-        state["baseline"] = {"files": len(union), "summary": summary}
+        state["baseline"] = {"files": union, "summary": summary}
         save()
         log(f"baseline over {len(union)} files: {summary}")
+    elif not set(union) <= set(state["baseline"]["files"]):
+        missing = sorted(set(union) - set(state["baseline"]["files"]))
+        raise SystemExit(f"{state_path}: its baseline did not run {missing}; sweep this selection into a new OUT")
     state.setdefault("models", {})
     for model_id, files in sorted(to_sweep.items(), key=lambda item: (-len(item[1]), item[0])):
         if model_id in state["models"]:
