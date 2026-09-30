@@ -78,6 +78,7 @@ from trusted_router.routes.internal import (
 from trusted_router.routes.keys import register_key_routes
 from trusted_router.routes.lightning_support import register_lightning_support_routes
 from trusted_router.routes.mcp import register_mcp_routes
+from trusted_router.routes.mcp_advisor import register_advisor_mcp_routes
 from trusted_router.routes.notify import register_notify_public_routes, register_notify_routes
 from trusted_router.routes.oauth import register_oauth_routes
 from trusted_router.routes.oauth_apps import register_oauth_app_routes
@@ -622,6 +623,7 @@ def create_app(
         register_public_routes(app, settings)
     if surface in {"combined", "public"}:
         register_bedrock_group_buy_public_routes(app, settings)
+        register_advisor_mcp_routes(app, settings)
     if surface in {"combined", "actions"}:
         register_public_action_routes(app, settings)
     if surface in {"combined", "control"}:

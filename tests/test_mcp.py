@@ -268,7 +268,9 @@ def test_mcp_credits_get_uses_api_key_workspace(
 def test_mcp_docs_page_is_public(client: TestClient) -> None:
     response = client.get("/docs/mcp")
     assert response.status_code == 200
-    assert "Every MCP request requires" in response.text
+    assert "Every request to <code>/mcp</code> requires" in response.text
+    assert "https://trustedrouter.com/mcp/advisor" in response.text
+    assert "public and read-only" in response.text
     assert "Public lookup tools work without a key" not in response.text
     assert "https://trustedrouter.com/mcp" in response.text
 
