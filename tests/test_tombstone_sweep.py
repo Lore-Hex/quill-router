@@ -346,7 +346,7 @@ def test_the_values_sweep_changes_values_not_listings(
     changed: list[list[str]] = []
     monkeypatch.setattr(sweep, "restore", lambda: None)
     monkeypatch.setattr(sweep, "delist", lambda group: pytest.fail("a value sweep delisted"))
-    monkeypatch.setattr(sweep, "perturb", lambda group: changed.append(group) or {})
+    monkeypatch.setattr(sweep, "perturb", lambda group, down=False: changed.append(group) or {})
     monkeypatch.setattr(sweep, "run_pytest", lambda *_: (set(), "1 passed"))
 
     sweep.sweep(tmp_path / "out", group_size=8, workers=1, values=True, thorough=True)
@@ -357,6 +357,73 @@ def test_the_values_sweep_changes_values_not_listings(
     assert not (tmp_path / "out" / "state.json").exists()
 
 
+def test_a_value_change_moves_snapshot_price_tiers_and_runs_either_way(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifests = tmp_path / "provider_models"
+    manifests.mkdir()
+    (manifests / "alpha.json").write_text(json.dumps({"models": []}), encoding="utf-8")
+    endpoint = {
+        "tr_provider_slug": "alpha",
+        "context_length": 1_000_000,
+        "pricing": {
+            "prompt": "0.00000125",
+            "prompt_tiers": [
+                {"max_prompt_tokens": 200_000, "prompt": "0.00000125", "input_cache_read": "0.000000125"},
+                {"max_prompt_tokens": None, "prompt": "0.0000025"},
+            ],
+            "completion_tiers": [{"max_prompt_tokens": 200_000, "completion": "0.00001"}],
+        },
+    }
+    snapshot = tmp_path / "openrouter_snapshot.json"
+    monkeypatch.setattr(sweep, "MANIFESTS", manifests)
+    monkeypatch.setattr(sweep, "SNAPSHOT", snapshot)
+
+    def changed(**direction: bool) -> dict[str, Any]:
+        snapshot.write_text(json.dumps({"models": [{"id": "maker/m", "endpoints": [endpoint]}]}), encoding="utf-8")
+        sweep.perturb(["alpha"], **direction)
+        return json.loads(snapshot.read_text())["models"][0]["endpoints"][0]
+
+    # Prices x1.07 and limits x0.9, tier prices and thresholds too; an open-ended tier stays open.
+    assert changed() == {
+        "tr_provider_slug": "alpha",
+        "context_length": 900_000,
+        "pricing": {
+            "prompt": "0.0000013375",
+            "prompt_tiers": [
+                {"max_prompt_tokens": 180_000, "prompt": "0.0000013375", "input_cache_read": "0.00000013375"},
+                {"max_prompt_tokens": None, "prompt": "0.000002675"},
+            ],
+            "completion_tiers": [{"max_prompt_tokens": 180_000, "completion": "0.0000107"}],
+        },
+    }
+    # Down: prices x0.93 and limits x1.1.
+    down = changed(down=True)
+    assert down["context_length"] == 1_100_000
+    assert down["pricing"]["prompt"] == "0.0000011625"
+    assert down["pricing"]["prompt_tiers"][0]["max_prompt_tokens"] == 220_000
+    assert down["pricing"]["completion_tiers"][0]["completion"] == "0.0000093"
+
+
+def test_a_values_sweep_resumes_only_in_the_mode_it_was_written_in(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runs: list[list[str]] = []
+    monkeypatch.setattr(sweep, "restore", lambda: None)
+    monkeypatch.setattr(sweep, "perturb", lambda group, down=False: {})
+    monkeypatch.setattr(sweep, "run_pytest", lambda files, *_: runs.append(files) or (set(), "1 passed"))
+
+    sweep.sweep(tmp_path / "out", group_size=8, workers=1, values=True)
+    ran = len(runs)
+    for other_mode in ({"thorough": True}, {"down": True}):
+        with pytest.raises(SystemExit, match="sweep into a new OUT"):
+            sweep.sweep(tmp_path / "out", group_size=8, workers=1, values=True, **other_mode)
+    assert len(runs) == ran
+    # The mode it was written in resumes, with nothing left to run.
+    sweep.sweep(tmp_path / "out", group_size=8, workers=1, values=True)
+    assert len(runs) == ran
+
+
 def test_the_values_sweep_changes_everything_once_then_attributes_on_the_failed_files(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -364,7 +431,7 @@ def test_the_values_sweep_changes_everything_once_then_attributes_on_the_failed_
     changed: list[list[str]] = []
     runs: list[list[str]] = []
     monkeypatch.setattr(sweep, "restore", lambda: None)
-    monkeypatch.setattr(sweep, "perturb", lambda group: changed.append(group) or {})
+    monkeypatch.setattr(sweep, "perturb", lambda group, down=False: changed.append(group) or {})
 
     def run(files: list[str], *_: Any) -> tuple[set[str], str]:
         runs.append(files)
@@ -389,7 +456,7 @@ def test_a_values_sweep_with_nothing_pinned_stops_after_one_run(
 ) -> None:
     changed: list[list[str]] = []
     monkeypatch.setattr(sweep, "restore", lambda: None)
-    monkeypatch.setattr(sweep, "perturb", lambda group: changed.append(group) or {})
+    monkeypatch.setattr(sweep, "perturb", lambda group, down=False: changed.append(group) or {})
     monkeypatch.setattr(sweep, "run_pytest", lambda *_: (set(), "1 passed"))
 
     sweep.sweep(tmp_path / "out", group_size=8, workers=1, values=True)
