@@ -153,6 +153,7 @@ def test_catalog_exposes_free_cheap_and_monitor_meta_models() -> None:
     assert monitor_shape["trustedrouter"]["auto_candidates"]
 
 
+@pytest.mark.catalog_as_built
 def test_monitor_alias_expands_to_paid_rollover_candidates() -> None:
     candidates = chat_route_candidates(
         {"model": MONITOR_MODEL_ID},

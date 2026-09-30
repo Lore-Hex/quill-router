@@ -74,6 +74,7 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
   "provider_health: time-sensitive external provider/catalog state; monitored separately from release correctness",
+  "catalog_as_built: reads the catalog the data built, without the vehicles tests/catalog_vehicles.py put back",
 ]
 
 [tool.coverage.run]

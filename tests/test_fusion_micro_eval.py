@@ -130,6 +130,7 @@ def test_expensive_and_blocked_models_are_rejected() -> None:
             assert_model_allowed(model_id)
 
 
+@pytest.mark.catalog_as_built
 def test_default_configs_use_catalog_models_and_no_blocked_models() -> None:
     configs = default_micro_configs(include_kimi_2_6=True)
 
@@ -269,6 +270,7 @@ def test_frontier_fusion_draco_configs_are_explicit_opt_in() -> None:
     assert estimate.total_cost_microdollars > 0
 
 
+@pytest.mark.catalog_as_built
 def test_frontier_draco_configs_include_solo_and_fusion_opt_ins() -> None:
     ids = {config.id for config in frontier_draco_configs()}
 

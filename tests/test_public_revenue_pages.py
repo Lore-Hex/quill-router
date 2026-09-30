@@ -4,6 +4,7 @@ import json
 import re
 from pathlib import Path
 
+import pytest
 from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
@@ -767,6 +768,7 @@ def test_public_meta_model_detail_renders_orchestration_components(
     assert 'Canonical: <a href="/models/trustedrouter/socrates-3.0"' in rolling.text
 
 
+@pytest.mark.catalog_as_built
 def test_public_k3_combo_pages_render_exact_graphs(
     client: TestClient,
 ) -> None:

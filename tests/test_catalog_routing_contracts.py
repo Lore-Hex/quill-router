@@ -292,6 +292,7 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
         )
 
 
+@pytest.mark.catalog_as_built
 def test_parasail_liberty_catalog_publishes_fixed_credits_only_price() -> None:
     model = MODELS[PARASAIL_LIBERTY_2_0_MODEL_ID]
     shape = model_to_openrouter_shape(model)
@@ -1462,6 +1463,7 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
     assert MODELS[ARISTOTLE_MODEL_ID].context_length == 1_048_576
 
 
+@pytest.mark.catalog_as_built
 def test_liberty_models_publish_verified_components_and_honest_context_limits() -> None:
     inkling_1m_available = catalog_predates(BASETEN_SEPTEMBER_2026_RETIREMENT_AT)
     expected = {
@@ -1715,6 +1717,7 @@ def test_zeus_versions_are_frozen_and_rolling_alias_uses_3_0() -> None:
     assert canonical_orchestration_model_id(ZEUS_MODEL_ID) == ZEUS_3_0_MODEL_ID
 
 
+@pytest.mark.catalog_as_built
 def test_openpatcher_s1_is_cataloged_as_custom_synth_preset() -> None:
     model = MODELS[OPEN_PATCHER_S1_MODEL_ID]
     shape = model_to_openrouter_shape(model)
@@ -1732,6 +1735,7 @@ def test_openpatcher_s1_is_cataloged_as_custom_synth_preset() -> None:
     ]
 
 
+@pytest.mark.catalog_as_built
 def test_openpatcher_s2_replaces_k2_with_k3_without_mutating_s1() -> None:
     s1_candidates = [model.id for model in meta_candidate_models(OPEN_PATCHER_S1_MODEL_ID)]
     s2 = MODELS[OPEN_PATCHER_S2_MODEL_ID]
@@ -1785,6 +1789,7 @@ def test_iris_versions_are_frozen_and_rolling_alias_uses_3_0() -> None:
     assert canonical_orchestration_model_id(IRIS_MODEL_ID) == IRIS_3_0_MODEL_ID
 
 
+@pytest.mark.catalog_as_built
 def test_prometheus_1m_uses_only_long_context_open_weight_components() -> None:
     model = MODELS[PROMETHEUS_1_0_1M_MODEL_ID]
     candidates = meta_candidate_models(PROMETHEUS_1_0_1M_MODEL_ID)
@@ -1878,6 +1883,7 @@ def test_trustedrouter_meta_models_are_credits_only_not_byok() -> None:
         PROMETHEUS_3_0_MODEL_ID,
     ],
 )
+@pytest.mark.catalog_as_built
 def test_trustedrouter_meta_route_expansion_is_credits_only(model_id: str) -> None:
     endpoints = chat_route_endpoint_candidates(
         {"model": model_id},
@@ -1939,6 +1945,7 @@ def test_openpatcher_and_athena_force_us_provider_routes(
     )
 
 
+@pytest.mark.catalog_as_built
 def test_openpatcher_g2_explicitly_uses_global_moonshot_k3_route() -> None:
     shape = model_to_openrouter_shape(MODELS[OPEN_PATCHER_G2_MODEL_ID])
 
