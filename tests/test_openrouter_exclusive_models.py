@@ -10,6 +10,7 @@ from scripts.pricing.providers import openrouter
 from tests.pinned_manifests import (
     OPENROUTER_SEED_2_1_TURBO,
     OPENROUTER_UNION_ALPHA,
+    build_manifest_rows,
     serve_manifest_rows,
 )
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, PROVIDERS, endpoints_for_model
@@ -137,10 +138,11 @@ def test_delisted_preview_respects_existing_mass_prune_guard(
 def test_union_route_uses_existing_billing_and_standard_privacy(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    # The route built from its pinned manifest row: how a free OpenRouter-only
-    # row is billed holds whatever OpenRouter lists today.
+    # The model and route built from its pinned manifest row: how a free
+    # OpenRouter-only row is billed holds whatever OpenRouter lists today.
+    models, _ = build_manifest_rows(monkeypatch, tmp_path, "openrouter", [OPENROUTER_UNION_ALPHA])
     serve_manifest_rows(monkeypatch, tmp_path, "openrouter", [OPENROUTER_UNION_ALPHA])
-    model = MODELS[_UNION]
+    model = models[_UNION]
     assert model.supports_chat
     assert model.context_length == 262144
     assert model.input_modalities == ("text", "image")
@@ -164,3 +166,13 @@ def test_openrouter_serves_the_union_preview() -> None:
     # Live provider state: provider-catalog-health.yml reports it hourly, and
     # the price refresh does not wait on it.
     assert f"{_UNION}@openrouter/prepaid" in MODEL_ENDPOINTS
+
+
+@pytest.mark.provider_health
+def test_openrouter_lists_the_union_preview_as_a_262k_text_and_image_chat_model() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    model = MODELS[_UNION]
+    assert model.supports_chat
+    assert model.context_length == 262144
+    assert model.input_modalities == ("text", "image")
