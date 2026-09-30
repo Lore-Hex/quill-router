@@ -4658,9 +4658,12 @@ def _endpoint_cost_microdollars(
     are passed — cached reads/writes bill at the provider-specific
     multiple of the prompt price (see catalog.cache_token_prices_microdollars)."""
     endpoint = effective_endpoint(endpoint, at=effective_at)
-    if service_tier == "priority" or (service_tier == "auto" and reserve_auto):
-        if endpoint.provider != "openai":
-            raise ValueError("OpenAI service tiers require an OpenAI endpoint")
+    # A reseller may echo its upstream's tier; it does not change the
+    # reseller's authorized catalog tariff. Only direct OpenAI routes use
+    # OpenAI Priority prices, regardless of the publisher in model_id.
+    if endpoint.provider == "openai" and (
+        service_tier == "priority" or (service_tier == "auto" and reserve_auto)
+    ):
         return openai_priority_cost_microdollars(
             endpoint.model_id,
             input_tokens,
