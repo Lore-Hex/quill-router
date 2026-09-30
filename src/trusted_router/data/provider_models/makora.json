@@ -3,7 +3,7 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://inference.makora.com/v1/models",
-  "generated_at": "2026-09-30T02:36:36Z",
+  "generated_at": "2026-09-30T12:23:53Z",
   "price_scale": "microdollars_per_million",
   "model_count": 16,
   "models": [
@@ -556,8 +556,8 @@
         "max_tokens",
         "seed"
       ],
-      "input_token_price_per_m": 1050000,
-      "output_token_price_per_m": 4200000,
+      "input_token_price_per_m": 850000,
+      "output_token_price_per_m": 3930000,
       "cached_input_token_price_per_m": 190000
     },
     {

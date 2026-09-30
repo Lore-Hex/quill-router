@@ -265,7 +265,7 @@
   ],
   "source": "https://completions.near.ai/endpoints",
   "pricing_source": "https://cloud-api.near.ai/v1/models",
-  "generated_at": "2026-09-30T02:36:36Z",
+  "generated_at": "2026-09-30T12:23:53Z",
   "price_scale": "microdollars_per_million",
   "model_count": 11
 }

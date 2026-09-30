@@ -21,8 +21,8 @@
       "supports_tools": true,
       "supports_reasoning": true,
       "routable": true,
-      "input_token_price_per_m": 512679,
-      "output_token_price_per_m": 2026868,
+      "input_token_price_per_m": 238455,
+      "output_token_price_per_m": 774979,
       "cached_input_token_price_per_m": 47691
     },
     {
@@ -46,7 +46,7 @@
       "supports_reasoning": true,
       "routable": true,
       "input_token_price_per_m": 1848027,
-      "output_token_price_per_m": 9228209,
+      "output_token_price_per_m": 6843659,
       "cached_input_token_price_per_m": 178842
     },
     {
@@ -77,7 +77,7 @@
   ],
   "source": "https://docs.privatemode.ai/models/overview/",
   "pricing_source": "https://docs.privatemode.ai/pricing/",
-  "generated_at": "2026-09-30T02:36:36Z",
+  "generated_at": "2026-09-30T12:23:53Z",
   "price_scale": "microdollars_per_million",
   "model_count": 3
 }

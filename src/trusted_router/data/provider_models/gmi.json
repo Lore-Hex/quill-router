@@ -2,7 +2,7 @@
   "_about": "Provider-native GMI Cloud catalog. Account-visible models are intersected with GMI's official billing feed; explicitly approved routes omitted from /v1/models remain current only after an exact visible-content PONG canary succeeds.",
   "provider": "gmi",
   "source": "https://console.gmicloud.ai/api/v1/billing/model_prices",
-  "generated_at": "2026-09-30T02:36:36Z",
+  "generated_at": "2026-09-30T12:23:53Z",
   "model_count": 104,
   "models": [
     {
@@ -2169,7 +2169,7 @@
       "cached_input_token_price_per_m": 16000
     },
     {
-      "display_name": "ZAI: GLM-5.3 Flash",
+      "display_name": "GLM-5.3-Flash-H200-dev",
       "title": "zai-org/GLM-5.3-Flash",
       "model_type": "chat",
       "input_modalities": [

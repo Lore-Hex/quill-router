@@ -73,10 +73,10 @@
   },
   "baseten": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 12,
     "name": "Baseten",
     "privacy": "Zero retention",
-    "route_count": 21,
+    "route_count": 23,
     "route_mode": "Prepaid + BYOK",
     "slug": "baseten"
   },
@@ -487,10 +487,10 @@
   },
   "novita": {
     "card_version": 2,
-    "model_count": 98,
+    "model_count": 99,
     "name": "Novita AI",
     "privacy": "Policy documented",
-    "route_count": 191,
+    "route_count": 193,
     "route_mode": "Prepaid + BYOK",
     "slug": "novita"
   },
