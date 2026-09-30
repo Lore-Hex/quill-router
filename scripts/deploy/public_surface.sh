@@ -441,6 +441,7 @@ fi
 
 ENV_VARS=(
   "TR_ENVIRONMENT=production"
+  "TR_HOMEPAGE_LANDSCAPE_ENABLED=true"
   "TR_SERVICE_SURFACE=public"
   "TR_RELEASE=$(legacy_env_required TR_RELEASE)"
   "TR_TRUSTED_DOMAIN=$(legacy_env_required TR_TRUSTED_DOMAIN)"
