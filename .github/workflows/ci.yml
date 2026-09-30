@@ -346,6 +346,8 @@ jobs:
         run: npx playwright install --with-deps chromium
       # playwright.config.js starts the app itself (uv run uvicorn, memory
       # backend) and waits on /health — no DB service containers needed.
+      - name: Homepage JavaScript regression checks
+        run: node --test tests/js/homepage_*.test.cjs
       - name: Browser smoke
         run: npm run test:browser
 

@@ -173,6 +173,11 @@ $$('#faq details').forEach((el,index)=>{
  });
 });
 $$('.trc .m a').forEach(a=>a.addEventListener('click',()=>track('home.catalog_row_clicked',{model_id:a.href.split('/models/')[1]})));
-$$('[data-homepage-cta]').forEach(a=>a.addEventListener('click',()=>track('home.cta_clicked',{module:a.closest('#get-started')?'closing':a.closest('#migrate')?'migration':'hero',cta:'api_key'})));
+// Shared auth-aware chrome replaces signed-in links; delegate so tracking survives.
+function trackHomepageCta(event){
+ const a=event.target.closest('.button-primary[href="/console/api-keys"]');
+ if(a)track('home.cta_clicked',{module:a.closest('#get-started')?'closing':a.closest('#migrate')?'migration':'hero',cta:'api_key'});
+}
+document.addEventListener('click',trackHomepageCta);
 
 })();
