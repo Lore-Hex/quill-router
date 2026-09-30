@@ -124,7 +124,16 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "nscale": ProviderBrand("https://www.nscale.com/"),
     "confidential-ai": ProviderBrand("https://confidential.ai/"),
     "scaledown": ProviderBrand("https://scaledown.ai/"),
-    "near-ai": ProviderBrand("https://near.ai/"),
+    "near-ai": ProviderBrand(
+        "https://near.ai/",
+        resources=(
+            ("Confidential inference and zero-retention declaration", "https://near.ai/"),
+            ("Cloud Terms: route-specific privacy (section 7.2)", "https://near.ai/terms-of-service"),
+            ("Privacy policy: Cloud website and account data", "https://near.ai/privacy-policy"),
+            ("Customer Data Processing Agreement", "https://near.ai/near-ai-data-processing-agreement-for-customers"),
+            ("Direct TLS attestation verification", "https://docs.near.ai/cloud/verification/tls/"),
+        ),
+    ),
     "openai": ProviderBrand("https://openai.com/"),
     "ovhcloud": ProviderBrand("https://www.ovhcloud.com/"),
     "parasail": ProviderBrand("https://www.parasail.io/"),

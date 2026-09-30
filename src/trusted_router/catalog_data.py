@@ -828,23 +828,32 @@ PROVIDERS: dict[str, Provider] = {
     # NEAR AI direct endpoints terminate TLS inside the measured model TEE.
     # TrustedRouter verifies the live TLS SPKI, fresh nonce, Intel TDX quote,
     # NVIDIA GPU evidence, compose-manager action log, and release-pinned
-    # workload before sending prompt bytes. No ZDR/no-store claim is inferred
-    # from confidential compute alone.
+    # workload before sending prompt bytes. ZDR comes from NEAR AI's explicit
+    # confidential-inference declaration, not from attestation alone. Its
+    # Cloud Terms section 7.2 limits privacy claims to the relevant route.
     "near-ai": Provider(
         slug="near-ai",
         name="NEAR AI",
         supports_prepaid=True,
         supports_byok=False,
+        stores_content=False,
+        provider_zero_data_retention=True,
         provider_confidential_compute=True,
         provider_e2ee=True,
         provider_policy=(
+            "NEAR AI declares zero data retention for its hosted confidential "
+            "inference. On TrustedRouter this covers only release-pinned direct "
+            "Private TEE routes, not NEAR AI's Incognito or Attested Third-Party "
+            "routes. ZDR describes inference content, not account, billing or "
+            "operational metadata. Cloud Terms section 7.2 makes retention "
+            "route-specific; the general privacy policy covers Cloud website "
+            "and account-administration data, not an all-services ZDR guarantee. "
             "TrustedRouter connects directly to the model workload and verifies "
             "the live TLS key, Intel TDX quote, NVIDIA GPUs, deployment action "
             "log, and pinned workload inside the TrustedRouter enclave before "
-            "sending content. Verification fails closed. No separate ZDR claim "
-            "is currently tracked."
+            "sending content. Verification fails closed."
         ),
-        provider_policy_url="https://docs.near.ai/cloud/verification/tls/",
+        provider_policy_url="https://near.ai/",
         # Jasnah, Inc. d/b/a NEAR AI identifies itself as a Delaware
         # corporation in its first-party Acceptable Use Policy.
         # https://near.ai/acceptable-use-policy
