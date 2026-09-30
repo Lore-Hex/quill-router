@@ -135,6 +135,16 @@ def registry_endpoints() -> dict[str, ModelEndpoint]:
     }
 
 
+def registry_models() -> dict[str, Model]:
+    """MODELS without the vehicle models this session put back: the models the
+    catalog built from the data, for the same tests as registry_endpoints()."""
+    return {
+        model_id: model
+        for model_id, model in catalog_registry.MODELS.items()
+        if model_id not in VEHICLES_ADDED
+    }
+
+
 def _freeze() -> None:
     endpoints = [catalog_registry.MODEL_ENDPOINTS[endpoint_id] for endpoint_id in VEHICLE_ENDPOINT_IDS]
     model_ids = sorted({endpoint.model_id for endpoint in endpoints})
@@ -166,7 +176,7 @@ if __name__ == "__main__" and sys.argv[1:] == ["--freeze"]:
 else:
     # What this session added, which the registry did not build: a test of the
     # registry's own output against the manifests leaves these out
-    # (registry_endpoints).
+    # (registry_endpoints, registry_models).
     _FROZEN_VEHICLES = json.loads(FROZEN.read_text(encoding="utf-8"))
     VEHICLES_ADDED = frozenset(
         install_missing(catalog_registry.MODELS, catalog_registry.MODEL_ENDPOINTS, _FROZEN_VEHICLES)

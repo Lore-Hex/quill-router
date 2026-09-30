@@ -112,3 +112,18 @@ def test_registry_endpoints_leave_out_only_what_this_session_put_back(
 
     assert built.keys() == MODEL_ENDPOINTS.keys() - {vehicle_id}
     assert built[gained.id] is gained
+
+
+def test_registry_models_leave_out_only_what_this_session_put_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vehicle_id = catalog_vehicles.VEHICLE_MODEL_IDS[0]
+    # A model the registry gained that is not a vehicle stays in.
+    gained = replace(MODELS[vehicle_id], id="fixture/gained-model")
+    monkeypatch.setitem(MODELS, gained.id, gained)
+    monkeypatch.setattr(catalog_vehicles, "VEHICLES_ADDED", frozenset({vehicle_id}))
+
+    built = catalog_vehicles.registry_models()
+
+    assert built.keys() == MODELS.keys() - {vehicle_id}
+    assert built[gained.id] is gained
