@@ -54,6 +54,8 @@ test("expanded provider privacy shows both dimensions and never combines differe
       route("phala", { provider_confidential_compute: true, provider_e2ee: false }),
       route("phala", { provider_confidential_compute: false, provider_e2ee: true }),
       route("openai", { provider_zero_data_retention: true }),
+      route("unknown-zdr", { provider_confidential_compute: true, provider_e2ee: true, provider_zero_data_retention: null }),
+      route("retained", { provider_confidential_compute: true, provider_e2ee: true, provider_zero_data_retention: false }),
       route("novita", { stores_content: false, attested_gateway: true }),
       route("novita", { provider_confidential_compute: true, provider_e2ee: true, provider_zero_data_retention: true }, "BYOK"),
     ] },
@@ -62,10 +64,10 @@ test("expanded provider privacy shows both dimensions and never combines differe
   const card = page.locator('[data-model-id="z-ai/glm-5.3-flash"]');
   await card.locator("summary").click();
   const rows = card.locator(".model-route-row");
-  await expect(rows).toHaveCount(4);
+  await expect(rows).toHaveCount(6);
   await expect(rows.filter({ hasText: "tinfoil" }).locator("[data-privacy]")).toHaveCount(2);
   await expect(rows.filter({ hasText: "openai" }).locator('[data-privacy="zdr"]')).toBeVisible();
-  for (const slug of ["phala", "novita"]) {
+  for (const slug of ["phala", "novita", "unknown-zdr", "retained"]) {
     await expect(rows.filter({ hasText: slug }).locator("[data-privacy]")).toHaveCount(0);
     await expect(rows.filter({ hasText: slug })).toContainText("Not verified");
   }

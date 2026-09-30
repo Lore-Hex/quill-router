@@ -19,7 +19,7 @@ The law, quantified over the whole catalog:
 
     for every ModelEndpoint e,
         meets(e, ZERO_RETENTION)        <=>  zero_data_retention(e) is True
-        meets(e, CONFIDENTIAL)           =>  confidential compute AND e2ee
+        meets(e, CONFIDENTIAL)          <=>  confidential compute AND e2ee AND ZDR
         meets(e, NO_STORE)               <=> not stores_content(e)
 
 The catalog is finite — 51 providers, ~1500 endpoints — so this enumerates
@@ -44,16 +44,22 @@ from hypothesis import strategies as st
 
 from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS
 from trusted_router.catalog_data import (
+    _MODEL_PROVIDER_PRIVACY_OVERRIDES,
     PRIVACY_TIER_CONFIDENTIAL,
     PRIVACY_TIER_NO_STORE,
     PRIVACY_TIER_STANDARD,
     PRIVACY_TIER_ZERO_RETENTION,
+    ModelEndpoint,
+    ModelProviderPrivacyOverride,
 )
 from trusted_router.catalog_privacy import (
+    endpoint_confidential_compute,
+    endpoint_e2ee,
     endpoint_meets_privacy_requirement,
     endpoint_privacy_tier,
     endpoint_stores_content,
     endpoint_zero_data_retention,
+    model_provider_privacy_tier,
     provider_privacy_tier,
 )
 
@@ -101,10 +107,17 @@ def test_zero_data_retention_is_exactly_the_zdr_tier() -> None:
     )
 
 
-def test_confidential_tier_requires_both_confidential_flags() -> None:
+def test_confidential_tier_requires_all_three_flags() -> None:
     """CONFIDENTIAL is the strongest claim the catalog makes. It must never be
-    reachable without both underlying flags actually being set."""
+    reachable without all three underlying flags actually being set."""
     for endpoint in ALL_ENDPOINTS:
+        expected = (
+            endpoint_confidential_compute(endpoint) is True
+            and endpoint_e2ee(endpoint) is True
+            and endpoint_zero_data_retention(endpoint) is True
+        )
+        assert endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL) is expected
+        assert (endpoint_privacy_tier(endpoint) == PRIVACY_TIER_CONFIDENTIAL) is expected
         if not endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL):
             continue
         provider = PROVIDERS[endpoint.provider]
@@ -225,17 +238,19 @@ def test_provider_tier_is_monotone_in_its_flags(provider: object) -> None:
     assert provider_privacy_tier(zdr) >= PRIVACY_TIER_ZERO_RETENTION
 
     confidential = dataclasses.replace(
-        provider, provider_confidential_compute=True, provider_e2ee=True
+        provider, provider_confidential_compute=True, provider_e2ee=True,
+        provider_zero_data_retention=True,
     )
     assert provider_privacy_tier(confidential) == PRIVACY_TIER_CONFIDENTIAL
 
 
 @given(provider=synthetic_providers())
 @settings(max_examples=500)
-def test_confidential_requires_both_flags_by_construction(provider: object) -> None:
-    """One flag alone must never reach CONFIDENTIAL — the pair is the claim."""
+def test_confidential_requires_all_three_flags_by_construction(provider: object) -> None:
+    """Unknown or false on any prerequisite disqualifies Confidential."""
     if provider_privacy_tier(provider) == PRIVACY_TIER_CONFIDENTIAL:
         assert provider.provider_confidential_compute and provider.provider_e2ee
+        assert provider.provider_zero_data_retention is True
 
 
 @given(provider=synthetic_providers())
@@ -251,9 +266,13 @@ def test_tier_is_always_within_the_declared_ladder(provider: object) -> None:
         ({"stores_content": False}, PRIVACY_TIER_NO_STORE),
         ({"provider_zero_data_retention": True}, PRIVACY_TIER_ZERO_RETENTION),
         (
-            {"provider_confidential_compute": True, "provider_e2ee": True},
+            {"provider_confidential_compute": True, "provider_e2ee": True,
+             "provider_zero_data_retention": True},
             PRIVACY_TIER_CONFIDENTIAL,
         ),
+        ({"provider_confidential_compute": True, "provider_e2ee": True}, PRIVACY_TIER_STANDARD),
+        ({"provider_confidential_compute": True, "provider_e2ee": True,
+          "provider_zero_data_retention": False}, PRIVACY_TIER_STANDARD),
         # One confidential flag alone is NOT confidential.
         ({"provider_confidential_compute": True}, PRIVACY_TIER_STANDARD),
         ({"provider_e2ee": True}, PRIVACY_TIER_STANDARD),
@@ -278,50 +297,60 @@ def test_the_flag_ladder_is_pinned(flags: dict[str, object], expected: int) -> N
 # ---------------------------------------------------------------------------
 
 
-def test_the_contradictory_combination_is_forbidden_not_resolved() -> None:
-    """Why this module forbids a flag combination instead of interpreting it.
-
-    A provider with confidential compute + e2ee AND an explicit
-    provider_zero_data_retention=False resolves to tier CONFIDENTIAL, which the
-    router admits for a `min_privacy=zdr` request, while
-    endpoint_zero_data_retention reports False.
-
-    An earlier fix derived ZDR from the tier to make them agree. Review
-    rejected it: confidential compute means the provider cannot READ content
-    and says nothing about whether it RETAINS ciphertext. Deriving would
-    publish a stronger claim than the provider makes.
-
-    So neither function guesses. The combination is forbidden by the test
-    below, which fails loudly if a catalog edit ever introduces it.
-    """
+@pytest.mark.parametrize("zdr", [None, False])
+def test_tee_and_e2ee_without_zdr_remain_accurate_but_not_confidential(zdr: bool | None) -> None:
     template = next(iter(PROVIDERS.values()))
-    contradictory = dataclasses.replace(
+    provider = dataclasses.replace(
         template,
         stores_content=True,
-        provider_zero_data_retention=False,
+        provider_zero_data_retention=zdr,
         provider_confidential_compute=True,
         provider_e2ee=True,
         prepaid_zero_data_retention=False,
     )
-    assert provider_privacy_tier(contradictory) == PRIVACY_TIER_CONFIDENTIAL
-    assert contradictory.provider_zero_data_retention is False, (
-        "the two genuinely disagree for this combination — which is why it is "
-        "forbidden rather than interpreted"
-    )
+    assert provider_privacy_tier(provider) == PRIVACY_TIER_STANDARD
+    assert provider.provider_zero_data_retention is zdr
+    assert provider.provider_confidential_compute is True
+    assert provider.provider_e2ee is True
 
 
-def test_no_shipped_provider_has_the_contradictory_flag_combination() -> None:
-    """The reason the gap above is latent rather than live. If a future catalog
-    edit introduces this combination, this fails before the biconditional does,
-    and points at the cause rather than the symptom."""
+def test_no_shipped_provider_has_confidential_tier_without_zdr() -> None:
     offenders = [
         slug
         for slug, provider in PROVIDERS.items()
-        if provider.provider_confidential_compute
-        and provider.provider_e2ee
-        and provider.provider_zero_data_retention is False
+        if provider_privacy_tier(provider) == PRIVACY_TIER_CONFIDENTIAL
+        and provider.provider_zero_data_retention is not True
     ]
     assert not offenders, (
-        f"providers {offenders} claim confidential compute + e2ee but explicitly "
-        "deny zero data retention; the router and the published claim will disagree"
+        f"providers {offenders} have the Confidential label without explicit ZDR"
     )
+
+
+@pytest.mark.parametrize("zdr", [None, False, True])
+@pytest.mark.parametrize("usage", ["Credits", "BYOK"])
+def test_confidential_prepaid_zdr_is_credential_scoped(
+    monkeypatch: pytest.MonkeyPatch, zdr: bool | None, usage: str,
+) -> None:
+    monkeypatch.setitem(PROVIDERS, "tinfoil", dataclasses.replace(
+        PROVIDERS["tinfoil"], provider_zero_data_retention=zdr,
+        prepaid_zero_data_retention=True, stores_content=True,
+    ))
+    endpoint = ModelEndpoint(id="test", model_id="test/model", provider="tinfoil", usage_type=usage)
+    expected = zdr is True or usage == "Credits"
+    assert endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL) is expected
+    assert (endpoint_privacy_tier(endpoint) == PRIVACY_TIER_CONFIDENTIAL) is expected
+
+
+@pytest.mark.parametrize("zdr", [False, True])
+def test_confidential_override_cannot_bypass_retention_gate(
+    monkeypatch: pytest.MonkeyPatch, zdr: bool,
+) -> None:
+    monkeypatch.setitem(_MODEL_PROVIDER_PRIVACY_OVERRIDES, ("test/model", "tinfoil"),
+        ModelProviderPrivacyOverride(
+            privacy_tier=PRIVACY_TIER_CONFIDENTIAL, provider_zero_data_retention=zdr,
+            provider_confidential_compute=True, provider_e2ee=True, stores_content=not zdr,
+        ))
+    endpoint = ModelEndpoint(id="test", model_id="test/model", provider="tinfoil", usage_type="Credits")
+    assert endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL) is zdr
+    assert (endpoint_privacy_tier(endpoint) == PRIVACY_TIER_CONFIDENTIAL) is zdr
+    assert (model_provider_privacy_tier("test/model", "tinfoil") == PRIVACY_TIER_CONFIDENTIAL) is zdr

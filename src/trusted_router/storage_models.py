@@ -1,14 +1,25 @@
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
+import json
 import re
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TypeVar, cast
 
 from trusted_router.client_context import parse_client_context, parse_gateway_request_id
 from trusted_router.money import microdollars_to_float
 from trusted_router.types import UsageType
+
+T = TypeVar("T")
+
+
+def decode_auth_record(raw: str, cls: type[T]) -> T:
+    """Decode a stored auth record, preserving the entity reader's unknown-field policy."""
+    data = json.loads(raw)
+    known = {item.name for item in dataclasses.fields(cast(Any, cls))}
+    return cls(**{key: value for key, value in data.items() if key in known})
 
 
 class AmbiguousGatewayRequestId(ValueError):
@@ -1878,11 +1889,30 @@ class SessionAuthContext:
 
 
 @dataclass(frozen=True)
+class SpendLeaseBoot:
+    """One registered enclave boot: its receipt JWK and attestation facts."""
+
+    kid: str
+    jwk: dict[str, str]
+    approved: bool  # At-registration observation only; never an authorization gate.
+    verified: bool
+    image_digest: str
+    attestation_kind: str
+    registered_at: str
+
+
+@dataclass(frozen=True)
 class ApiKeyAuthContext:
     """Strong, point-in-time view used to authenticate an API key."""
 
     api_key: ApiKey
     workspace: Workspace | None
+    # Raw complete primary-key range; None means this context did not fetch it.
+    byok_rows: dict[str, str] | None = None
+    # Decode only after key validation and inference-scope checks.
+    boot_record_body: str | None = None
+    # Distinguish a completed missing-row lookup from an unfetched boot.
+    boot_record_loaded: bool = False
 
 
 @dataclass

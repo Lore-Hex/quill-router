@@ -193,6 +193,7 @@ from trusted_router.catalog_privacy import (  # noqa: F401 - re-exported for bac
     model_provider_policy_url,
     model_provider_privacy_tier,
     model_provider_zero_data_retention,
+    provider_confidential_inference,
     provider_privacy_tier,
 )
 from trusted_router.catalog_registry import (  # noqa: F401 - built there, re-exported
@@ -956,7 +957,7 @@ def providers_for_display() -> tuple[Provider, ...]:
     def display_key(provider: Provider) -> tuple[int, int, str, str]:
         if provider.slug == "trustedrouter":
             posture_rank = 0
-        elif provider.provider_confidential_compute is True and provider.provider_e2ee is True:
+        elif provider_confidential_inference(provider, prepaid=True):
             posture_rank = 1
         elif (
             provider.provider_zero_data_retention is True

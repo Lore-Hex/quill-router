@@ -54,7 +54,7 @@
     <a class="pill {% if active_filter == item.id %}good{% endif %}" href="{{ item.href }}">{{ item.label }}</a>
     {% endfor %}
   </nav>
-  <p class="catalog-privacy-legend"><strong>Confidential</strong> = verified provider compute + E2EE. <strong>ZDR</strong> = zero data retention. Labels describe available provider routes, not every route. <a href="/docs#privacy-filters">Privacy routing</a></p>
+  <p class="catalog-privacy-legend"><strong>Confidential</strong> = verified provider compute + E2EE + explicit ZDR. <strong>ZDR</strong> = zero data retention. Labels describe available provider routes, not every route. <a href="/docs#privacy-filters">Privacy routing</a></p>
 
   <div class="model-explorer-status">
     <p><strong data-model-result-count>{{ models|length }} models</strong><span data-model-result-detail> in the public catalog</span></p>

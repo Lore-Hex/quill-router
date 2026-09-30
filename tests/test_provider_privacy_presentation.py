@@ -10,7 +10,7 @@ from trusted_router.dashboard import _endpoint_provider_views, _provider_view
 
 
 @pytest.mark.parametrize("compute,e2ee,zdr", tuple(product((True, False, None), repeat=3)))
-def test_confidential_verification_requires_both_provider_flags(
+def test_confidential_verification_requires_all_three_provider_flags(
     compute: bool | None, e2ee: bool | None, zdr: bool | None
 ) -> None:
     provider = replace(
@@ -21,7 +21,7 @@ def test_confidential_verification_requires_both_provider_flags(
         attested_gateway=True,
     )
     view = _provider_view(provider)
-    verified = compute is True and e2ee is True
+    verified = compute is True and e2ee is True and zdr is True
     assert view["confidential_inference_verified"] is verified
     assert view["confidential_inference_label"] == (
         "Verified" if verified else "Not verified"
@@ -47,7 +47,9 @@ def test_provider_cards_compare_upstream_verification_not_gateway(client: TestCl
         assert "Confidential compute" not in facts
         assert "Provider E2EE" not in facts
         assert "Zero data retention" in facts
-        verified = provider.provider_confidential_compute is True and provider.provider_e2ee is True
+        verified = provider.provider_confidential_compute is True and provider.provider_e2ee is True and (
+            provider.provider_zero_data_retention is True or provider.prepaid_zero_data_retention is True
+        )
         assert facts["Verified confidential inference"] == ("Verified" if verified else "Not verified")
 
 
@@ -63,7 +65,9 @@ def test_provider_details_use_the_same_verification_rule(client: TestClient, slu
     assert "Confidential compute" not in facts
     assert "Provider E2EE" not in facts
     provider = PROVIDERS[slug]
-    verified = provider.provider_confidential_compute is True and provider.provider_e2ee is True
+    verified = provider.provider_confidential_compute is True and provider.provider_e2ee is True and (
+        provider.provider_zero_data_retention is True or provider.prepaid_zero_data_retention is True
+    )
     assert facts["Verified confidential inference"] == ("Verified" if verified else "Not verified")
 
 
@@ -83,8 +87,8 @@ def test_provider_cards_show_independent_scoped_privacy_badges(client: TestClien
     assert soup.select_one("select[data-provider-privacy]") is not None
     for card in soup.select("[data-provider-row]"):
         provider = PROVIDERS[str(card["data-provider-id"])]
-        confidential = provider.provider_confidential_compute is True and provider.provider_e2ee is True
         zdr = provider.provider_zero_data_retention is True or provider.prepaid_zero_data_retention
+        confidential = provider.provider_confidential_compute is True and provider.provider_e2ee is True and zdr
         badges = card.select_one(".provider-card-trust")
         assert bool(badges.select('[data-privacy="confidential"]')) is confidential
         assert bool(badges.select('[data-privacy="zdr"]')) is zdr
@@ -147,7 +151,7 @@ def test_serving_provider_badges_keep_byok_separate(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.parametrize("compute,e2ee,zdr", tuple(product((True, False, None), repeat=3)))
-def test_detail_route_badges_use_both_verification_flags(
+def test_detail_route_badges_require_all_three_flags(
     compute: bool | None, e2ee: bool | None, zdr: bool | None
 ) -> None:
     from trusted_router.dashboard import _env
@@ -160,7 +164,7 @@ def test_detail_route_badges_use_both_verification_flags(
     })
     soup = BeautifulSoup(html, "html.parser")
     assert soup.get_text(strip=True)
-    assert bool(soup.select('[data-privacy="confidential"]')) is (compute is True and e2ee is True)
+    assert bool(soup.select('[data-privacy="confidential"]')) is (compute is True and e2ee is True and zdr is True)
     assert bool(soup.select('[data-privacy="zdr"]')) is (zdr is True)
 
 

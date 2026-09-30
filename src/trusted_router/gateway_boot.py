@@ -19,22 +19,10 @@ from typing import Literal
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from trusted_router.receipt_keys import b64url_decode, normalize_receipt_jwk
+from trusted_router.storage_models import SpendLeaseBoot as SpendLeaseBoot
 
 BOOT_AUTH_DOMAIN = b"tr-authorize-v1"
 SPEND_LEASE_BOOT_KIND = "spend_lease_boot"
-
-
-@dataclass(frozen=True)
-class SpendLeaseBoot:
-    """One registered enclave boot: its receipt JWK and attestation facts."""
-
-    kid: str
-    jwk: dict[str, str]
-    approved: bool  # At-registration observation only; never an authorization gate.
-    verified: bool
-    image_digest: str
-    attestation_kind: str
-    registered_at: str
 
 
 @dataclass(frozen=True)

@@ -1,5 +1,5 @@
 {% macro privacy_badges(confidential, zdr, zdr_label='ZDR') -%}
-{% if confidential %}<span class="privacy-badge privacy-confidential" data-privacy="confidential" title="Verified provider confidential compute and end-to-end encryption (E2EE).">Confidential</span>{% endif %}
+{% if confidential and zdr %}<span class="privacy-badge privacy-confidential" data-privacy="confidential" title="Verified provider confidential compute, end-to-end encryption (E2EE), and explicit zero data retention (ZDR).">Confidential</span>{% endif %}
 {% if zdr %}<span class="privacy-badge privacy-zdr" data-privacy="zdr" title="Zero data retention is a provider retention commitment, separate from confidential compute.">{{ zdr_label }}</span>{% endif %}
 {%- endmacro %}
 

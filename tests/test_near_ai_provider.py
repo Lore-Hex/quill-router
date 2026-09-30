@@ -8,7 +8,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from bs4 import BeautifulSoup
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
 from scripts.check_price_coverage import _DISCOVERABLE_MANIFEST_PROVIDERS
 from scripts.pricing.providers import near_ai
@@ -26,6 +28,7 @@ from trusted_router.catalog_ingest import _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS
 from trusted_router.catalog_privacy import (
     endpoint_meets_privacy_requirement,
     endpoint_stores_content,
+    endpoint_zero_data_retention,
 )
 from trusted_router.config import Settings
 from trusted_router.routing import chat_route_endpoint_candidates
@@ -68,15 +71,17 @@ def test_near_ai_fetch_intersects_catalog_direct_registry_and_release_policy(
     monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: datetime(2026, 9, 5, tzinfo=UTC))
     dsv4 = "deepseek-ai/DeepSeek-V4-Flash"
     glm = "z-ai/glm-5.2"
+    third_party = "openai/gpt-oss-120b"
     catalog = {
         "data": [
             _catalog_row(dsv4),
             _catalog_row(glm, prompt="0.0000014", completion="0.0000044"),
+            _catalog_row(third_party, owner="third-party"),
             _catalog_row("anthropic/claude-opus-5"),
             _catalog_row("unreviewed/new-model"),
         ]
     }
-    endpoint_payload = _endpoints(dsv4, glm)
+    endpoint_payload = _endpoints(dsv4, glm, third_party)
 
     class FakeResponse:
         def __init__(self, payload: object) -> None:
@@ -112,6 +117,8 @@ def test_near_ai_fetch_intersects_catalog_direct_registry_and_release_policy(
     assert near_ai._DISCOVERED_MANIFEST_ROWS["z-ai/glm-5.2"]["upstream_id"] == glm
     assert "anthropic/claude-opus-5" not in near_ai._DISCOVERED_MANIFEST_ROWS
     assert "unreviewed/new-model" not in near_ai._DISCOVERED_MANIFEST_ROWS
+    assert third_party not in result.prices
+    assert near_ai._DISCOVERED_MANIFEST_ROWS[third_party]["routable"] is False
 
 
 def test_near_ai_fetch_fails_closed_on_direct_domain_drift(
@@ -244,11 +251,16 @@ def test_near_ai_is_attested_prepaid_only_and_its_catalog_follows_the_manifest()
     provider = PROVIDERS["near-ai"]
     assert provider.supports_prepaid is True
     assert provider.supports_byok is False
-    assert provider.stores_content is True
-    assert provider.provider_zero_data_retention is None
+    assert provider.stores_content is False
+    assert provider.provider_zero_data_retention is True
     assert provider.provider_confidential_compute is True
     assert provider.provider_e2ee is True
     assert provider.provider_headquarters_country == "US"
+    assert provider.provider_policy_url == "https://near.ai/"
+    assert "release-pinned direct Private TEE routes" in provider.provider_policy
+    assert "not NEAR AI's Incognito or Attested Third-Party routes" in provider.provider_policy
+    assert "not account, billing or operational metadata" in provider.provider_policy
+    assert "section 7.2" in provider.provider_policy
 
     raw = json.loads(near_ai.MANIFEST_PATH.read_text(encoding="utf-8"))
     manifest_ids = {row["id"] for row in raw["models"]}
@@ -281,14 +293,15 @@ def test_near_ai_routes_are_attested_prepaid_only(
         for endpoint in endpoints
     )
     assert all(
-        not endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_ZERO_RETENTION)
+        endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_ZERO_RETENTION)
         for endpoint in endpoints
     )
     assert all(
-        not endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_NO_STORE)
+        endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_NO_STORE)
         for endpoint in endpoints
     )
-    assert all(endpoint_stores_content(endpoint) for endpoint in endpoints)
+    assert all(not endpoint_stores_content(endpoint) for endpoint in endpoints)
+    assert all(endpoint_zero_data_retention(endpoint) is True for endpoint in endpoints)
 
 
 @pytest.mark.provider_health
@@ -299,7 +312,7 @@ def test_near_ai_serves_a_verified_model() -> None:
 
 
 @pytest.mark.parametrize("expired", [False, True])
-def test_near_ai_is_e2e_eligible_but_never_satisfies_zdr_or_deny(
+def test_near_ai_satisfies_scoped_zdr_and_e2e_only_with_fresh_catalog_evidence(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, expired: bool,
 ) -> None:
     model_id = "z-ai/glm-5.3-flash"
@@ -334,14 +347,71 @@ def test_near_ai_is_e2e_eligible_but_never_satisfies_zdr_or_deny(
 
     for provider_filter in (
         {"only": ["near-ai"], "min_privacy": "zdr"},
+        {"only": ["near-ai"], "min_privacy": "no_store"},
         {"only": ["near-ai"], "data_collection": "deny", "min_privacy": "e2e"},
     ):
+        request = {"model": model_id, "provider": provider_filter}
+        if expired:
+            with pytest.raises(HTTPException) as exc_info:
+                chat_route_endpoint_candidates(request, settings)
+            assert exc_info.value.status_code == 400
+        else:
+            candidates = chat_route_endpoint_candidates(request, settings)
+            assert {endpoint.provider for _model, endpoint in candidates} == {"near-ai"}
+            assert all(endpoint_zero_data_retention(endpoint) is True for _model, endpoint in candidates)
+
+
+@pytest.mark.parametrize("zdr", [None, False])
+def test_near_ai_attestation_alone_does_not_imply_zdr(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, zdr: bool | None,
+) -> None:
+    serve_manifest_rows(monkeypatch, tmp_path, "near-ai", [NEAR_AI_GLM_53_FLASH])
+    monkeypatch.setitem(PROVIDERS, "near-ai", replace(
+        PROVIDERS["near-ai"], stores_content=True, provider_zero_data_retention=zdr,
+    ))
+    endpoint = MODEL_ENDPOINTS["z-ai/glm-5.3-flash@near-ai/prepaid"]
+    assert not endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL)
+    assert not endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_ZERO_RETENTION)
+    assert not endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_NO_STORE)
+    for privacy in ("confidential", "e2e", "e2ee", "max", "maximum"):
         with pytest.raises(HTTPException) as exc_info:
-            chat_route_endpoint_candidates(
-                {"model": model_id, "provider": provider_filter},
-                settings,
-            )
-        assert getattr(exc_info.value, "status_code", None) == 400
+            chat_route_endpoint_candidates({
+                "model": endpoint.model_id,
+                "provider": {"only": ["near-ai"], "min_privacy": privacy, "allow_fallbacks": False},
+            }, Settings(environment="test"))
+        assert exc_info.value.status_code == 400
+
+
+def test_near_ai_public_metadata_has_zdr_and_links_to_scoped_evidence(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    serve_manifest_rows(monkeypatch, tmp_path, "near-ai", [NEAR_AI_GLM_53_FLASH])
+    providers = {row["id"]: row for row in client.get("/v1/providers").json()["data"]}
+    provider = providers["near-ai"]
+    assert provider["provider_zero_data_retention"] is True
+    assert provider["stores_content"] is False
+    assert provider["provider_e2ee"] is True
+    assert provider["provider_policy_url"] == "https://near.ai/"
+    zdr = client.get("/v1/endpoints/zdr").json()["data"]
+    assert "near-ai" in {row["provider"] for row in zdr}
+
+    endpoints = client.get("/v1/models/z-ai/glm-5.3-flash/endpoints").json()["data"]
+    endpoint = next(row for row in endpoints if row["endpoint_id"] == "z-ai/glm-5.3-flash@near-ai/prepaid")
+    assert endpoint["trustedrouter"]["provider_zero_data_retention"] is True
+    assert endpoint["trustedrouter"]["provider_e2ee"] is True
+
+    soup = BeautifulSoup(client.get("/providers").text, "html.parser")
+    card = soup.select_one('[data-provider-id="near-ai"]')
+    assert card is not None
+    assert card.select_one('[data-privacy="confidential"]') is not None
+    assert card.select_one('[data-privacy="zdr"]') is not None
+    detail = client.get("/providers/near-ai")
+    assert detail.status_code == 200
+    assert "Private TEE routes" in detail.text
+    assert "https://near.ai/terms-of-service" in detail.text
+    assert "https://near.ai/privacy-policy" in detail.text
+    assert "https://near.ai/near-ai-data-processing-agreement-for-customers" in detail.text
+    assert "https://docs.near.ai/cloud/experimental/direct-completions" in detail.text
 
 
 def test_near_ai_hourly_refresh_secret_and_authority_wiring_are_complete() -> None:
