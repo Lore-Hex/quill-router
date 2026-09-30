@@ -71,7 +71,7 @@ def test_featherless_uses_shared_canonical_model_ids() -> None:
     } <= set(featherless.CURATED_NATIVE_MODELS)
 
 
-def test_featherless_deepseek_v41_route_preserves_provider_limits_and_prices(
+def test_featherless_deepseek_v41_route_preserves_provider_prices(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     # A row the refresh tombstoned is dark; a live one is routed at its exact
