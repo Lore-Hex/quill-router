@@ -478,12 +478,12 @@ def test_warm_lookup_authorize_exact_sequence_and_contents(
             /* api_key_auth_context_with_byok */
             SELECT key_record.body, workspace_record.body,
               ARRAY(
-                SELECT AS STRUCT provider, byok_record.body
-                FROM UNNEST(@providers) AS provider
-                LEFT JOIN tr_entities AS byok_record
-                  ON byok_record.kind='byok'
-                 AND byok_record.id=CONCAT(JSON_VALUE(key_record.body, '$.workspace_id'), '#', provider)
-              ) AS byok_configs,
+                SELECT AS STRUCT byok_record.id, byok_record.body
+                FROM tr_entities AS byok_record
+                WHERE byok_record.kind='byok'
+                  AND byok_record.id >= CONCAT(JSON_VALUE(key_record.body, '$.workspace_id'), '#')
+                  AND byok_record.id < CONCAT(JSON_VALUE(key_record.body, '$.workspace_id'), '$')
+              ) AS byok_rows,
               boot_record.body
             FROM tr_entities AS lookup_record
             JOIN tr_entities AS key_record
@@ -497,10 +497,7 @@ def test_warm_lookup_authorize_exact_sequence_and_contents(
              AND boot_record.id=@boot_kid
             WHERE lookup_record.kind='api_key_lookup'
               AND lookup_record.id=@lookup_hash
-        """.split()), {"lookup_hash": key.lookup_hash, "boot_kid": boot.kid if with_boot else None, "providers": sorted({
-            slug for endpoint in MODEL_ENDPOINTS.values() if endpoint.is_byok
-            for slug in gateway.byok_storage_provider_candidates(endpoint.provider)
-        })}),
+        """.split()), {"lookup_hash": key.lookup_hash, "boot_kid": boot.kid if with_boot else None}),
     ]
     # Authentication and credentials share one strong, single-use snapshot.
     assert database.snapshot_calls == [{}]
@@ -615,7 +612,7 @@ def test_joined_metadata_matches_separate_parsers_and_canonical_workspace() -> N
     expected_workspace = store.get_workspace(key.workspace_id)
     database.snapshot_calls.clear()
     context = store.gateway_api_key_auth_context(key.lookup_hash)
-    assert context == ApiKeyAuthContext(expected_key, expected_workspace)
+    assert context == ApiKeyAuthContext(expected_key, expected_workspace, byok_rows={})
     assert type(context.api_key) is ApiKey
     assert type(context.workspace) is Workspace
     assert database.snapshot_calls == [{}]
@@ -655,6 +652,7 @@ def test_byok_batch_covers_candidates_aliases_and_removal(
     gateway._authorize_gateway_sync(_request(), _lookup_body(key, idempotency_key="warm"), settings)
     spanner_operations.clear()
     first = gateway._authorize_gateway_sync(_request(), _lookup_body(key), settings)["data"]
+    assert len(spanner_operations) == 5
     # Even with all BYOK credentials, Credits wins the reservation semantics.
     assert first["limit_usage_type"] == "Credits"
     assert first["credit_reservation_id"]
@@ -862,7 +860,7 @@ def test_byok_misconfiguration_keeps_existing_error(
 
     store, _database, key = _seed_typed_gateway_store()
     if not folded:
-        def old_context(self: Any, lookup_hash: str, providers: list[str], boot_kid: str | None = None) -> ApiKeyAuthContext:
+        def old_context(self: Any, lookup_hash: str, boot_kid: str | None = None) -> ApiKeyAuthContext:
             with self._database.snapshot() as snapshot:
                 rows = list(snapshot.execute_sql(
                     _API_KEY_AUTH_CONTEXT_SQL, params={"lookup_hash": lookup_hash},

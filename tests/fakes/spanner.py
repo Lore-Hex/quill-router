@@ -3011,16 +3011,16 @@ def _execute_sql(
         workspace = db.rows.get(("workspace", workspace_id))
         result = [api_key.body, workspace.body if workspace is not None else None]
         if "/* api_key_auth_context_with_byok */" in sql:
-            _require_pred(sql, "FROM UNNEST(@providers) AS provider", "bounded BYOK providers")
             _require_pred(sql, "byok_record.kind='byok'", "BYOK kind")
-            _require_pred(
-                sql,
-                "byok_record.id=CONCAT(JSON_VALUE(key_record.body, '$.workspace_id'), '#', provider)",
-                "BYOK canonical workspace/provider key",
-            )
+            for operator, suffix in ((">=", "#"), ("<", "$")):
+                _require_pred(
+                    sql,
+                    f"byok_record.id {operator} CONCAT(JSON_VALUE(key_record.body, '$.workspace_id'), '{suffix}')",
+                    "BYOK canonical workspace primary-key range",
+                )
             result.append([
-                [provider, row.body if (row := db.rows.get(("byok", f"{workspace_id}#{provider}"))) else None]
-                for provider in params["providers"]
+                [entity_id, row.body] for (kind, entity_id), row in db.rows.items()
+                if kind == "byok" and f"{workspace_id}#" <= entity_id < f"{workspace_id}$"
             ])
             _require_pred(sql, "boot_record.kind='spend_lease_boot'", "boot kind")
             _require_pred(sql, "boot_record.id=@boot_kid", "bounded boot primary key")

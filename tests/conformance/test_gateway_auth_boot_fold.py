@@ -3,6 +3,8 @@
 Storage cases also run against native GoogleSQL in CI. Route cases exercise the
 real signature verifier and resolver, comparing the entire response plus auth,
 credentials, boot verdict, error status/detail and Stage D outcome.
+The folded contract is ONE strong snapshot; registration/removal or rotation
+committed after it is observed next authorize, not midway through this request.
 """
 from __future__ import annotations
 
@@ -63,8 +65,8 @@ def signed_request(store, key, *, idempotency_key="metadata-idem"):
     return request, body, raw, boot
 
 
-def separate_context(store, lookup_hash, providers=None, boot_kid=None):
-    """Pre-fold A1 and BYOK; route still performs standalone A2 after key checks."""
+def separate_context(store, lookup_hash, boot_kid=None):
+    """Main oracle: metadata only; route reads BYOK/boot at their original locations."""
     with store._database.snapshot() as snapshot:
         rows = list(snapshot.execute_sql(
             _API_KEY_AUTH_CONTEXT_SQL, params={"lookup_hash": lookup_hash},
@@ -76,21 +78,36 @@ def separate_context(store, lookup_hash, providers=None, boot_kid=None):
     workspace = _auth_record(str(rows[0][1]), Workspace) if rows[0][1] is not None else None
     if workspace is not None and workspace.deleted:
         workspace = None
-    return ApiKeyAuthContext(
-        key, workspace,
-        store.get_byok_providers(key.workspace_id, providers) if providers is not None else None,
-    )
+    return ApiKeyAuthContext(key, workspace)
 
 
 BOOT_STATES = [
     "no_header", "valid", "unknown", "removed", "reregistered", "observation_merged",
     "lookup_remap", "invalid_key", "missing_key", "scope", "missing_workspace",
+    "expired_key", "malformed_boot_disabled", "malformed_boot_needed",
+    "malformed_byok_valid", "malformed_byok_disabled", "malformed_byok_expired",
+    "malformed_byok_scope", "malformed_byok_missing_workspace", "malformed_byok_needed",
     "rejected_digest", "bad_signature", "unverified", "malformed_header", "duplicate_header",
 ]
 
 
 def prepare_state(store, key, state):
     request, body, raw, boot = signed_request(store, key)
+    if state.startswith("malformed_byok_"):
+        config = store.upsert_byok_provider(
+            workspace_id=key.workspace_id,
+            provider="anthropic" if state.endswith("needed") else "openai",
+            secret_ref="fixture/malformed", key_hint="fixture",  # noqa: S106
+        )
+        store._write_entity("byok", f"{key.workspace_id}#{config.provider}",
+                            dataclasses.asdict(config) | {"encrypted_secret": {}})
+    if state.startswith("malformed_boot_"):
+        store._write_entity(SPEND_LEASE_BOOT_KIND, boot.kid, {"kid": boot.kid})
+    state = {
+        "malformed_boot_disabled": "invalid_key", "malformed_byok_disabled": "invalid_key",
+        "malformed_byok_expired": "expired_key", "malformed_byok_scope": "scope",
+        "malformed_byok_missing_workspace": "missing_workspace",
+    }.get(state, state)
     headers = request.scope["headers"]
     if state == "no_header":
         headers.clear()
@@ -121,6 +138,8 @@ def prepare_state(store, key, state):
         # Remap to another authenticated key; signature's lookup hash no longer binds.
         store._write_entity("api_key_lookup", key.lookup_hash,
                             {"key_id": other.hash, "workspace_id": key.workspace_id})
+    elif state == "expired_key":
+        store._write_entity("api_key", key.hash, dataclasses.replace(key, expires_at="2020-01-01T00:00:00Z"))
     elif state == "invalid_key":
         store._write_entity("api_key", key.hash, dataclasses.replace(key, disabled=True))
     elif state == "missing_key":
@@ -144,14 +163,18 @@ def test_boot_storage_differential(folded_store, state):  # noqa: F811 - fixture
     headers = request.headers.getlist("X-TR-Boot-Auth")
     auth = parse_boot_auth_header(headers[0]) if len(headers) == 1 else None
     kid = auth.kid if auth else None
-    expected = separate_context(store, key.lookup_hash, ["anthropic"])
+    expected = separate_context(store, key.lookup_hash)
+    actual = store.gateway_api_key_auth_context(key.lookup_hash, boot_kid=kid)
+    assert (actual is None) == (expected is None)
     if expected is not None:
-        expected = dataclasses.replace(expected,
-            boot_record=store.get_spend_lease_boot(kid) if kid else None,
-            boot_record_loaded=kid is not None,
-        )
-    actual = store.gateway_api_key_auth_context(key.lookup_hash, providers=["anthropic"], boot_kid=kid)
-    assert actual == expected
+        assert actual.api_key == expected.api_key
+        assert actual.workspace == expected.workspace
+        assert actual.boot_record_loaded == (kid is not None)
+        # Storage must preserve even malformed records without decoding them.
+        if kid and state not in {"unknown", "removed"}:
+            assert isinstance(actual.boot_record_body, str)
+        else:
+            assert actual.boot_record_body is None
 
 
 REASONS = [
@@ -163,7 +186,8 @@ REASONS = [
 
 @pytest.mark.parametrize("state", BOOT_STATES)
 @pytest.mark.parametrize("reason", REASONS)
-def test_complete_boot_authorize_differential(state, reason, fixed_operation_catalog, monkeypatch):  # noqa: F811 - fixture
+@pytest.mark.parametrize("usage", ["credits", "byok"])
+def test_complete_boot_authorize_differential(state, reason, usage, fixed_operation_catalog, monkeypatch):  # noqa: F811 - fixture
     store, database, key = _seed_typed_gateway_store()
     store.upsert_byok_provider(workspace_id=key.workspace_id, provider="anthropic",
                                secret_ref="fixture/anthropic", key_hint="fixture")  # noqa: S106 - fixture
@@ -173,8 +197,7 @@ def test_complete_boot_authorize_differential(state, reason, fixed_operation_cat
         store._write_entity("credit", workspace_id, CreditAccount(workspace_id=workspace_id))
         balance = database.typed["tr_credit_balance"][(key.workspace_id, 0)]
         database.typed["tr_credit_balance"][(workspace_id, 0)] = balance | {"workspace_id": workspace_id}
-    # Default route is Credits only; credentials are still fetched and compared.
-    body.provider = {"usage": "credits"}
+    body.provider = {"usage": usage}
     settings = Settings(environment="test", stage_d_eligibility_enabled=True, stage_d_pilot_workspace_ids="")
     accepted = {boot.image_digest} if state != "rejected_digest" else set()
     resolver_calls = []
@@ -204,6 +227,7 @@ def test_complete_boot_authorize_differential(state, reason, fixed_operation_cat
 
     monkeypatch.setattr(gateway, "_stage_d_eligibility_reason", eligibility_case)
     folded = SpannerBigtableStore.gateway_api_key_auth_context
+    consume = gateway._byok_configs_for_candidates
     initial = {name: copy.deepcopy(value) for name, value in vars(database).items()
                if isinstance(value, dict)}
     outcomes = []
@@ -218,10 +242,14 @@ def test_complete_boot_authorize_differential(state, reason, fixed_operation_cat
 
         def resolve(self, *args, joined=joined, captured=captured, **kwargs):
             context = (folded if joined else separate_context)(self, *args, **kwargs)
-            captured.append(None if context is None else (
-                context.api_key, context.workspace, context.byok_configs,
-            ))
             return context
+
+        def consumed(*args, captured=captured, **kwargs):
+            configs = consume(*args, **kwargs)
+            captured.append(copy.deepcopy(configs))
+            return configs
+
+        monkeypatch.setattr(gateway, "_byok_configs_for_candidates", consumed)
 
         monkeypatch.setattr(SpannerBigtableStore, "gateway_api_key_auth_context", resolve)
         headers = request.headers.getlist("X-TR-Boot-Auth")
@@ -236,20 +264,28 @@ def test_complete_boot_authorize_differential(state, reason, fixed_operation_cat
             status = 200
         except HTTPException as exc:
             response, status = {"detail": exc.detail, "headers": exc.headers}, exc.status_code
+        except TypeError as exc:
+            response, status = {"exception": type(exc).__name__, "message": str(exc)}, 500
         outcomes.append((captured, context["boot_verified"],
                          status, response, list(resolver_calls)))
     assert outcomes[1] == outcomes[0]
     _, verified, status, response, calls = outcomes[1]
-    if state in {"invalid_key", "missing_key", "scope"}:
-        assert status == (403 if state == "scope" else 401)
+    if state in {"invalid_key", "missing_key", "scope", "expired_key", "malformed_boot_disabled",
+                 "malformed_byok_disabled", "malformed_byok_expired", "malformed_byok_scope"}:
+        assert status == (403 if state in {"scope", "malformed_byok_scope"} else 401)
         assert not calls and not verified  # No boot handling before key/scope checks.
+    elif state == "malformed_boot_needed":
+        assert status == 500 and not verified
     else:
-        assert verified == (state in {"valid", "reregistered", "observation_merged", "missing_workspace"})
-        if state == "missing_workspace":
+        assert verified == (state in {"valid", "reregistered", "observation_merged", "missing_workspace",
+                                     "malformed_byok_valid", "malformed_byok_missing_workspace",
+                                     "malformed_byok_needed"})
+        if state in {"missing_workspace", "malformed_byok_missing_workspace"}:
             assert status == 403 and calls
-        elif state == "valid":
-            assert status == 200
-            assert response["data"]["stage_d"]["reason"] == reason
+        elif state in {"valid", "malformed_byok_valid", "malformed_byok_needed"}:
+            assert status == (500 if state == "malformed_byok_needed" and usage == "byok" else 200)
+            if status == 200 and usage == "credits":
+                assert response["data"]["stage_d"]["reason"] == reason
 
 
 @pytest.mark.usefixtures("fixed_operation_catalog")
@@ -283,3 +319,35 @@ def test_boot_and_policy_are_fresh_on_every_authorize():
         response = gateway._authorize_gateway_sync(request, body, settings, raw)["data"]
         assert response["stage_d"]["reason"] == expected
         assert len(calls) == step + 1
+
+
+@pytest.mark.usefixtures("fixed_operation_catalog")
+def test_boot_removal_after_auth_snapshot_takes_effect_next_authorize(monkeypatch):
+    """ONE strong snapshot pins boot state, unlike main's later standalone read."""
+    store, _, key = _seed_typed_gateway_store()
+    request, body, raw, boot = signed_request(store, key)
+    settings = Settings(environment="test", stage_d_eligibility_enabled=True,
+                        stage_d_pilot_workspace_ids="",
+                        spend_lease_accepted_gcp_image_digests=boot.image_digest)
+    folded = SpannerBigtableStore.gateway_api_key_auth_context
+    verdicts = []
+    for joined in (False, True):
+        store.observe_spend_lease_boot(boot)
+
+        def resolve(self, *args, joined=joined, **kwargs):
+            context = (folded if joined else separate_context)(self, *args, **kwargs)
+            # A separate commit lands between metadata and main's boot read.
+            self._delete_entities(SPEND_LEASE_BOOT_KIND, [boot.kid])
+            return context
+
+        monkeypatch.setattr(SpannerBigtableStore, "gateway_api_key_auth_context", resolve)
+        body.idempotency_key = f"snapshot-race-{joined}"
+        context = {"boot_auth": parse_boot_auth_header(request.headers["X-TR-Boot-Auth"]),
+                   "boot_verified": False, "raw_body": raw}
+        response = gateway._authorize_gateway_sync_impl(request, body, settings, context)
+        verdicts.append((context["boot_verified"], response["data"]["stage_d"]["reason"]))
+    assert verdicts == [(False, "boot_not_accepted"), (True, "ok")]
+    monkeypatch.setattr(SpannerBigtableStore, "gateway_api_key_auth_context", folded)
+    body.idempotency_key = "snapshot-race-next"
+    response = gateway._authorize_gateway_sync(request, body, settings, raw)
+    assert response["data"]["stage_d"]["reason"] == "boot_not_accepted"
