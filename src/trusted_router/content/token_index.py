@@ -9,23 +9,23 @@ AS_OF_ISO = "2026-09-29"
 QUOTES: dict[str, dict[str, object]] = {
     "ALL": {
         "label": "NYTE Token Index",
-        "value": 375,
-        "change_7d": -6.1
+        "value": 376,
+        "change_7d": -5.8
     },
     "AAA": {
         "label": "AAA Frontier",
-        "value": 2982,
-        "change_7d": -24.5
+        "value": 2984,
+        "change_7d": -13.7
     },
     "A": {
         "label": "A Advanced",
-        "value": 1121,
-        "change_7d": -12.9
+        "value": 1122,
+        "change_7d": -8.9
     },
     "B": {
         "label": "B Professional",
         "value": 204,
-        "change_7d": -4.1
+        "change_7d": 2.6
     },
     "C": {
         "label": "C Efficient",
@@ -81,8 +81,8 @@ GRADES: list[dict[str, object]] = [
     }
 ]
 CHART_ALT: dict[str, str] = {
-    "nyte": "Line chart of the NYTE Token Index in US dollars per billion tokens from May to September 2026, peaking near $1,238 in June and ending near $375.",
-    "grades": "Log-scale chart of the four NYTE grade indices in US dollars per billion tokens from May to September 2026, ending with Frontier near $2,982, Advanced near $1,121, Professional near $204, Efficient near $40."
+    "nyte": "Line chart of the NYTE Token Index in US dollars per billion tokens from January to September 2026, peaking near $899 in June and ending near $376.",
+    "grades": "Log-scale chart of the four NYTE grade indices in US dollars per billion tokens from January to September 2026, ending with Frontier near $2,984, Advanced near $1,122, Professional near $204, Efficient near $40."
 }
 
 
