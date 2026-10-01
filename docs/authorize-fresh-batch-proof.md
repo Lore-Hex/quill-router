@@ -1,4 +1,10 @@
-# Fresh-authorize speculative batch proof
+# Fresh-authorize speculative batch proof — historical round 1
+
+**Superseded counts and verification:** the current implementation uses sequential
+explicit begin. See [round-4 proof and gates](design/rpc-fresh-authorize-batch-pr-notes.md)
+for 4/6 fresh operations and stages, 7/9 replay operations and stages, the session
+model, skip-path identity, transport-loss controls and sixteen mutations. The
+round-1 record below is retained as historical evidence, not current counts.
 
 Base: `7fc31bd5008d21bb8176edc3c8ddc9222d02114c` (HEAD and origin/main at implementation).
 Changes are uncommitted; no git writes or deployment were performed.

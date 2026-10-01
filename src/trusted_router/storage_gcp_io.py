@@ -367,17 +367,34 @@ def run_speculative_transaction(
     database: Any, func: Callable[..., T], *, statement_deadline: float,
     transaction_tag: str,
 ) -> T:
-    """Bound statements across ABORTED reruns, but commit with the original budget.
+    """Explicitly begin before statements; commit with the original budget.
 
+    Begin and statements across ABORTED reruns share one absolute deadline.
     Convert commit failures before the SDK can retry them as fresh speculation.
     A sent commit is uncertain unless Spanner explicitly reports ABORTED. The
     caller must resolve it using a new strong snapshot before any fallback.
+
+    These are RPC budgets, not unconditional wall-clock bounds: SDK 3.69.1's
+    internal RST_STREAM retry sleeps can overrun them (also on the original
+    sequential path). Changing those SDK sleeps is outside this optimization.
     """
     from google.api_core.exceptions import Aborted
 
     original_deadline = time.monotonic() + remaining_rpc_budget(TXN_BUDGET_SECONDS)
 
     def statements(transaction: Any) -> T:
+        # Await an explicit ID before any lock-taking statement. With inline
+        # begin, a lost first Batch DML response leaves the SDK with no ID and
+        # rollback silently sends no RPC. Begin alone takes no row locks.
+        # Keep checkout, begin, statements and completion on the SDK-owned
+        # calling thread; Database.run_in_transaction returns its session in
+        # finally on success and every failure (including begin failure).
+        try:
+            remaining_rpc_budget(TXN_BUDGET_SECONDS)
+            transaction.begin()
+        except Exception as exc:
+            _rollback_discarded_transaction(transaction)
+            raise SpeculationFailure("begin") from exc
         commit = getattr(transaction, "commit", None)
         if callable(commit):
             def guarded_commit(*args: Any, **kwargs: Any) -> Any:

@@ -208,6 +208,7 @@ def test_typed_replay_has_exact_sequential_spanner_operation_count(
         database.transaction_execute_sql_calls,
         database.transaction_execute_update_calls,
         database.transaction_batch_update_calls,
+        database.transaction_begin_calls,
     )
 
     replay = gateway._authorize_gateway_sync(
@@ -219,11 +220,12 @@ def test_typed_replay_has_exact_sequential_spanner_operation_count(
         database.transaction_execute_sql_calls,
         database.transaction_execute_update_calls,
         database.transaction_batch_update_calls,
+        database.transaction_begin_calls,
     )
     operation_count = sum(end - start for start, end in zip(before, after, strict=True))
     assert replay["data"]["idempotent_replay"] is True
     # Includes failed speculation and replay reads; excludes rollback/commit.
-    assert operation_count == 6
+    assert operation_count == 7
 
 
 def test_typed_accepted_authorization_is_returned_without_post_commit_read(
@@ -296,6 +298,7 @@ def test_fresh_typed_gateway_authorize_has_exact_sequential_spanner_operation_co
         database.transaction_execute_sql_calls,
         database.transaction_execute_update_calls,
         database.transaction_batch_update_calls,
+        database.transaction_begin_calls,
     )
 
     response = gateway._authorize_gateway_sync(
@@ -307,14 +310,15 @@ def test_fresh_typed_gateway_authorize_has_exact_sequential_spanner_operation_co
         database.transaction_execute_sql_calls,
         database.transaction_execute_update_calls,
         database.transaction_batch_update_calls,
+        database.transaction_begin_calls,
     )
     operation_count = sum(end - start for start, end in zip(before, after, strict=True))
     assert response["data"]["authorization_id"]
     # Representative steady-state fresh request: the workspace's observed-empty
     # broadcast cache is warm, while this idempotency key and authorization are new.
     # Hash-based lookup has additional authentication reads; the warm lookup
-    # fixture below pins the 3-op fast path. Armed keeps separate credit/pause RPCs.
-    assert operation_count == 5 + 2 * int(armed)
+    # fixture below pins the 4-op fast path. Armed keeps separate credit/pause RPCs.
+    assert operation_count == 6 + 2 * int(armed)
 
 
 def test_broadcast_empty_results_are_cached_until_ttl(
@@ -425,6 +429,13 @@ def spanner_operations(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, 
         return original_batch(self, statements, **kwargs)
 
     monkeypatch.setattr(_FakeTransaction, "batch_update", batched)
+    original_begin = _FakeTransaction.begin
+
+    def began(self: Any) -> Any:
+        operations.append(("BEGIN", "", {}))
+        return original_begin(self)
+
+    monkeypatch.setattr(_FakeTransaction, "begin", began)
     original_rollback = _FakeTransaction.rollback
 
     def rolled_back(self: Any) -> Any:
@@ -469,9 +480,10 @@ def test_warm_lookup_authorize_exact_sequence_and_contents(
         "eligible": with_boot, "reason": "ok" if with_boot else "boot_not_accepted",
     }
     operations = spanner_operations
-    # Warm scoped lookup: auth snapshot + speculative batch + commit.
+    # Warm scoped lookup: auth snapshot + explicit begin + speculative batch + commit.
     # Armed keeps credit UPDATE and its pause SELECT ahead of the key batch.
-    assert len(operations) == 3 + 2 * int(armed)
+    assert len(operations) == 4 + 2 * int(armed)
+    assert operations[1] == ("BEGIN", "", {})
     assert operations[-2][0] == "T1 BATCH"
     batch = operations[-2][2]["statements"]
     assert len(batch) == (3 if armed else 4)
@@ -510,13 +522,13 @@ def test_warm_lookup_authorize_exact_sequence_and_contents(
     assert database.snapshot_calls == [{}]
     reservation = operations[-3][2]
     assert reservation["idempotency_scope"] is not None
-    assert operations[1] == ("T1 DML",
+    assert operations[2] == ("T1 DML",
         "UPDATE tr_credit_balance SET reserved = reserved + @est "
         "WHERE workspace_id=@ws AND shard=@shard "
         "AND (total_credits - total_usage - reserved) >= @est",
         {"est": reservation["credit_reserved_micro"], "ws": key.workspace_id, "shard": 0})
     if armed:
-        assert operations[2] == ("T1 SELECT",
+        assert operations[3] == ("T1 SELECT",
             "SELECT billing_pause_causes, pause_epoch FROM tr_credit_balance "
             "WHERE workspace_id=@ws AND shard=@shard", {"ws": key.workspace_id, "shard": 0})
     assert operations[-4] == ("T1 DML",
@@ -656,7 +668,7 @@ def test_byok_batch_covers_candidates_aliases_and_removal(
     gateway._authorize_gateway_sync(_request(), _lookup_body(key, idempotency_key="warm"), settings)
     spanner_operations.clear()
     first = gateway._authorize_gateway_sync(_request(), _lookup_body(key), settings)["data"]
-    assert len(spanner_operations) == 3
+    assert len(spanner_operations) == 4
     # Even with all BYOK credentials, Credits wins the reservation semantics.
     assert first["limit_usage_type"] == "Credits"
     assert first["credit_reservation_id"]

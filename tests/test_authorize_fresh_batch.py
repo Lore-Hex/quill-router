@@ -165,7 +165,8 @@ def test_sdk_abort_rerun_keeps_speculation_and_shared_deadline(configured_sdk, m
         request = kwargs['request']
         batches.append(request)
         assert len(request.statements) == 4, 'SDK rerun bypassed speculation'
-        assert request.transaction.begin.read_write is not None
+        assert request.transaction.id == f'tx-{len(batches)}'.encode()
+        assert not request.transaction.begin
         attempt = len(batches)
         sdk.clock[0] += 2
         code = code_pb2.ABORTED if attempt == 1 else code_pb2.ALREADY_EXISTS if winner else 0
@@ -436,11 +437,11 @@ def test_warm_lookup_replay_exact_sequence(armed, fixed_operation_catalog, spann
     assert replay['data']['idempotent_replay']
     assert replay['data']['authorization_id'] == first['data']['authorization_id']
     assert [op[0] for op in spanner_operations] == (
-        ['RO'] + (['T1 DML', 'T1 SELECT'] if armed else [])
+        ['RO', 'BEGIN'] + (['T1 DML', 'T1 SELECT'] if armed else [])
         + ['T1 BATCH', 'ROLLBACK', 'T1 SELECT', 'COMMIT', 'RO']
     )
     assert db.rollback_calls == before + 1
-    assert len(spanner_operations) == 6 + 2 * int(armed)
+    assert len(spanner_operations) == 7 + 2 * int(armed)
     assert 'tr_reservation' in spanner_operations[-3][1]
     assert 'tr_gateway_authorization' in spanner_operations[-1][1]
 
@@ -459,7 +460,7 @@ def test_sdk_fresh_timing_counts_batch_and_commit(configured_sdk):  # noqa: F811
     )
     with count_spanner_rpcs() as counter:
         assert current.authorize_atomic(sdk.db, param_types, **_options())['outcome'] == 'accepted'
-    assert counter.count == 2  # gateway's preceding strong auth snapshot adds one
+    assert counter.count == 3  # explicit begin, batch, commit; gateway's preceding strong auth snapshot adds one
     assert sdk.rpcs.execute_streaming_sql.call_count == sdk.rpcs.execute_sql.call_count == 0
 
 
@@ -478,7 +479,6 @@ def test_deadline_cleanup_failure_still_classifies_in_new_transaction(configured
         assert kwargs['timeout'] == 14
         sdk.clock[0] += kwargs['timeout']
         if transport_error:
-            sdk.transactions[-1]._transaction_id = b'tx-1'
             raise DeadlineExceeded('injected transport timeout after staging credit')
         # A staged credit prefix and transaction ID really exist at the failure.
         return ExecuteBatchDmlResponse(status=Status(code=code_pb2.DEADLINE_EXCEEDED), result_sets=[
@@ -554,7 +554,6 @@ def test_sdk_statement_deadline_leaves_commit_original_budget(configured_sdk, cl
             waits.append(boundary + (0.01 if after else -0.01))
             sdk.clock[0] += waits[-1]
             if after:
-                sdk.transactions[-1]._transaction_id = b'tx-1'
                 raise DeadlineExceeded('key still waiting after statement deadline')
         return ExecuteBatchDmlResponse(status=Status(), result_sets=[
             ResultSet(metadata={'transaction': {'id': f'tx-{len(sdk.transactions)}'.encode()}},
@@ -729,7 +728,7 @@ def test_definite_commit_failure_cleans_up_before_fallback(configured_sdk, monke
     assert sdk.rpcs.commit.call_count == (2 if failure == 'aborted' else 1)
 
 
-@pytest.mark.parametrize('remaining,expected', [(8.99, [2]), (9.0, [4])])
+@pytest.mark.parametrize('remaining,expected', [(2.99, [3]), (8.99, [3]), (9.0, [4])])
 def test_tiny_remaining_budget_skips_speculation(monkeypatch, remaining, expected):
     from trusted_router import storage_gcp_io as io
 
@@ -761,3 +760,203 @@ def test_classification_allowance_setting(monkeypatch):
     for invalid in (0, -1, float('inf'), float('nan')):
         with pytest.raises(ValidationError):
             Settings(authorize_speculation_classify_seconds=invalid)
+
+
+@pytest.mark.parametrize('classify,boundary', [(4, 14), (2, 16)])
+@pytest.mark.parametrize('funded', [False, True], ids=['zero-credit', 'funded'])
+def test_lost_first_batch_response_releases_retained_locks(configured_sdk, classify, boundary, funded):  # noqa: F811
+    """No batch response/metadata, hence no ID assignment from that RPC.
+
+    If begin is removed, the server locks belong to an unreturned ID and real
+    SDK rollback is a no-op. Fallback then times out behind those locks.
+    """
+    from google.cloud.spanner_v1.types import ExecuteBatchDmlResponse, ResultSet, ResultSetStats
+
+    sdk = configured_sdk
+    retained = set()
+    committed = []
+    events = []
+    begin = sdk.rpcs.begin_transaction.side_effect
+
+    def begin_rpc(**kwargs):
+        assert sdk.transactions[-1]._transaction_id is None
+        events.append('begin')
+        return begin(**kwargs)
+
+    def batch(**kwargs):
+        request = kwargs['request']
+        if len(request.statements) == 4:
+            events.append('batch-lost')
+            retained.add(request.transaction.id or b'unreturned-inline-id')
+            sdk.clock[0] += kwargs['timeout']
+            # Do not assign _transaction_id or return result-set metadata.
+            raise DeadlineExceeded('first batch response lost with exclusive locks retained')
+        return ExecuteBatchDmlResponse(status=Status(), result_sets=[
+            ResultSet(stats=ResultSetStats(row_count_exact=1)) for _ in request.statements
+        ])
+
+    def rollback(**kwargs):
+        events.append('rollback')
+        retained.discard(kwargs['transaction_id'])
+
+    def update(**kwargs):
+        if retained:
+            sdk.clock[0] += kwargs['timeout']
+            raise DeadlineExceeded('fallback blocked behind orphaned exclusive locks')
+        # Reviewer boundary: funded key becomes available just after speculation.
+        sdk.clock[0] = max(sdk.clock[0], 100 + boundary + 0.01)
+        return ResultSet(stats=ResultSetStats(row_count_exact=int(funded)))
+
+    response = sdk.rpcs.commit.return_value
+
+    def commit(**kwargs):
+        committed.append(kwargs['request'].transaction_id)
+        return response
+
+    sdk.rpcs.begin_transaction.side_effect = begin_rpc
+    sdk.rpcs.execute_batch_dml.side_effect = batch
+    sdk.rpcs.rollback.side_effect = rollback
+    sdk.rpcs.execute_sql.side_effect = update
+    sdk.rpcs.commit.side_effect = commit
+    result = current.authorize_atomic(sdk.db, param_types, **(_options() | {
+        'trust_settings': Settings(authorize_speculation_classify_seconds=classify),
+    }))
+    assert result['outcome'] == ('accepted' if funded else 'insufficient_credits')
+    assert events[:3] == ['begin', 'batch-lost', 'rollback']
+    assert sdk.rpcs.rollback.call_args_list[0].kwargs['transaction_id'] == b'tx-1'
+    assert sdk.rpcs.execute_batch_dml.call_args_list[0].kwargs['request'].transaction.id == b'tx-1'
+    assert not retained
+    assert len(committed) == int(funded)
+    assert len(sdk.transactions) == 2
+    assert sdk.clock[0] < 120
+
+
+@pytest.mark.parametrize('failure', ['unavailable', 'timeout'])
+def test_begin_failure_never_speculates(configured_sdk, failure):  # noqa: F811
+    from google.api_core.exceptions import ServiceUnavailable
+
+    sdk = configured_sdk
+
+    def failed_begin(**kwargs):
+        assert sdk.transactions[-1]._transaction_id is None
+        if failure == 'timeout':
+            sdk.clock[0] += kwargs['timeout']
+            raise DeadlineExceeded('begin reply lost; no row locks acquired')
+        raise ServiceUnavailable('begin failed')
+
+    sdk.rpcs.begin_transaction.side_effect = failed_begin
+    assert current.authorize_atomic(sdk.db, param_types, **_options())['outcome'] == 'accepted'
+    assert [len(c.kwargs['request'].statements)
+            for c in sdk.rpcs.execute_batch_dml.call_args_list] == [2]
+    sdk.rpcs.begin_transaction.assert_called_once()
+    # SDK has no ID, but this transaction has executed no lock-taking statement.
+    sdk.rpcs.rollback.assert_not_called()
+    assert sdk.transactions[0]._transaction_id is None
+    assert sdk.transactions[0].rolled_back
+    assert len(sdk.transactions) == 2 and sdk.clock[0] < 120
+
+
+def test_begin_completed_before_lock_taking_batch(configured_sdk):  # noqa: F811
+    from google.cloud.spanner_v1.types import ExecuteBatchDmlResponse, ResultSet, ResultSetStats
+
+    sdk = configured_sdk
+    completed = []
+    begin = sdk.rpcs.begin_transaction.side_effect
+
+    def begin_rpc(**kwargs):
+        sdk.clock[0] += 0.25
+        response = begin(**kwargs)
+        completed.append(True)
+        return response
+
+    def batch(**kwargs):
+        assert completed == [True], 'begin must be awaited before batch'
+        assert kwargs['request'].transaction.id == b'tx-1'
+        assert not kwargs['request'].transaction.begin
+        assert kwargs['timeout'] == 13.75, 'begin spends the same statement budget'
+        return ExecuteBatchDmlResponse(status=Status(), result_sets=[
+            ResultSet(stats=ResultSetStats(row_count_exact=1)) for _ in range(4)
+        ])
+
+    sdk.rpcs.begin_transaction.side_effect = begin_rpc
+    sdk.rpcs.execute_batch_dml.side_effect = batch
+    assert current.authorize_atomic(sdk.db, param_types, **_options())['outcome'] == 'accepted'
+    assert len(sdk.transactions) == 1
+    sdk.rpcs.rollback.assert_not_called()
+
+
+@pytest.mark.parametrize('outcome', ['success', 'begin-failure', 'batch-loss', 'rejection', 'commit-loss'])
+def test_explicit_begin_session_pool_accounting(configured_sdk, outcome):  # noqa: F811
+    """Real Database/Session runner and session manager, one regular pool slot."""
+    from threading import get_ident
+
+    from google.api_core.exceptions import ServiceUnavailable
+    from google.cloud.spanner_v1.types import ExecuteBatchDmlResponse, ResultSet, ResultSetStats
+
+    sdk = configured_sdk
+    sdk.rpcs.execute_batch_dml.side_effect = lambda **kw: ExecuteBatchDmlResponse(
+        status=Status(), result_sets=[ResultSet(stats=ResultSetStats(row_count_exact=1))
+                                     for _ in kw['request'].statements],
+    )
+    if outcome == 'begin-failure':
+        sdk.rpcs.begin_transaction.side_effect = ServiceUnavailable('begin failure')
+    elif outcome == 'batch-loss':
+        batch = sdk.rpcs.execute_batch_dml.side_effect
+        sdk.rpcs.execute_batch_dml.side_effect = lambda **kw: (
+            batch(**kw) if len(sdk.transactions) > 1 else (_ for _ in ()).throw(
+                DeadlineExceeded('batch reply lost'))
+        )
+    elif outcome == 'rejection':
+        sdk.rpcs.execute_batch_dml.side_effect = None
+        sdk.rpcs.execute_batch_dml.return_value = ExecuteBatchDmlResponse(
+            status=Status(), result_sets=[ResultSet(stats=ResultSetStats(row_count_exact=n))
+                                         for n in [0, 1, 1, 1]],
+        )
+        sdk.rpcs.execute_sql.return_value = ResultSet(stats=ResultSetStats(row_count_exact=0))
+    elif outcome == 'commit-loss':
+        sdk.rpcs.commit.side_effect = [DeadlineExceeded('commit reply lost'), sdk.rpcs.commit.return_value]
+    result = current.authorize_atomic(sdk.db, param_types, **_options())
+    assert result['outcome'] == ('insufficient_credits' if outcome == 'rejection' else 'accepted')
+    assert not sdk.checked_out
+    assert sdk.db._local.transaction_running is False
+    transactions = 1 if outcome == 'success' else 2
+    assert len(sdk.transactions) == transactions
+    assert sdk.pool_events == ([] if sdk.multiplexed else
+                               [('get', get_ident()), ('put', get_ident())] * transactions)
+
+
+@pytest.mark.parametrize('remaining', [2.99, 8.99])
+@pytest.mark.parametrize('hint', [False, True])
+@pytest.mark.parametrize('armed', [False, True])
+@pytest.mark.parametrize('scenario', ['fresh', 'replay', 'zero-credit', 'zero-key', 'uncapped', 'paused'])
+def test_skip_path_is_byte_identical_to_main(
+    monkeypatch, spanner_operations, remaining, hint, armed, scenario,  # noqa: F811
+):
+    from trusted_router import storage_gcp_io as io
+
+    monkeypatch.setattr(uuid, 'uuid4', lambda: uuid.UUID(int=1))
+    monkeypatch.setattr(current, 'utcnow', lambda: NOW)
+    monkeypatch.setattr(main, 'utcnow', lambda: NOW)
+    monkeypatch.setattr(io.time, 'monotonic', lambda: 100.0)
+    results = []
+    for implementation in (main.authorize_atomic, current.authorize_atomic):
+        db = _database()
+        opts = _options() | {'speculate_key_limit': hint,
+                             'trust_settings': Settings(spend_lease_trust_eligibility_enabled=armed)}
+        if scenario == 'replay':
+            main.authorize_atomic(db, param_types, **opts)
+        if scenario == 'zero-credit':
+            db.typed['tr_credit_balance'][('workspace', 0)]['total_credits'] = 0
+        if scenario in ('zero-key', 'uncapped'):
+            db.typed['tr_key_limit'][('key', 0)]['limit_micro'] = 0 if scenario == 'zero-key' else None
+        if scenario == 'paused':
+            db.typed['tr_credit_balance'][('workspace', 0)]['billing_pause_causes'] = ['manual']
+        spanner_operations.clear()
+        token = io._SPANNER_RPC_DEADLINE.set(100 + remaining)
+        try:
+            result = implementation(db, param_types, **opts)
+        finally:
+            io._SPANNER_RPC_DEADLINE.reset(token)
+        results.append((result, _state(db), copy.deepcopy(spanner_operations)))
+    assert results[0] == results[1], 'skip must preserve main SQL, parameters, order and state'
+    assert 'BEGIN' not in [op[0] for op in spanner_operations]

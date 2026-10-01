@@ -510,6 +510,7 @@ def authorize_atomic(
         idempotency_scope is not None and not strict_budget
         and not skip_key_limit and speculate_key_limit
     )
+    original_key_batch = False
 
     trust_armed = (
         trust_settings is not None and trust_settings.spend_lease_trust_eligibility_enabled
@@ -525,6 +526,11 @@ def authorize_atomic(
         expected = 4 if has_credit_candidate and batch_credit else 3
         if len(counts) != expected or any(count != 1 for count in counts):
             raise _RetrySequentialAuthorize("speculative authorize row-count mismatch")
+
+    def check_key_prefix(counts: Sequence[int]) -> None:
+        # Main's original key-plus-inserts batch on the budget skip path.
+        if counts and counts[0] == 0:
+            raise _RetrySequentialAuthorize("speculative key hold missed")
 
     def check_pause(transaction: Any, selected_credit_shard: int) -> None:
         # Preserve #1119: flag-off never enforces pause. Read only the selected
@@ -585,7 +591,7 @@ def authorize_atomic(
                     AuthorizeOutcome.KEY_MISSING if key_result == KEY_MISSING else AuthorizeOutcome.KEY_LIMIT_EXCEEDED,
                     rate_limit=strict_decision,
                 ))
-        elif speculative:
+        elif speculative or original_key_batch:
             key_result = KEY_ACCEPTED
             selected_key_shard = key_candidates[0]
         elif skip_key_limit:
@@ -666,6 +672,15 @@ def authorize_atomic(
                 )
             except AlreadyExists as conflict:
                 raise _RetrySequentialAuthorize("speculative authorize collision") from conflict
+        elif original_key_batch:
+            execute_batch_dml(
+                transaction,
+                [reserve_key_statement(
+                    pt, key_hash, estimate, is_byok=is_byok, shard=selected_key_shard,
+                ), reservation_statement, authorization_statement],
+                [(1,), (1,), (1,)],
+                check_prefix=check_key_prefix,
+            )
         else:
             execute_batch_dml(
                 transaction, [reservation_statement, authorization_statement], [(1,), (1,)]
@@ -689,7 +704,13 @@ def authorize_atomic(
                     remaining_rpc_budget(TXN_BUDGET_SECONDS) - reserve_seconds,
                 )
                 if speculation_seconds < _AUTHORIZE_SPECULATION_FLOOR_SECONDS:
-                    raise _RetrySequentialAuthorize("no speculative budget remaining")
+                    # Preserve main byte-for-byte, including its key batch.
+                    # Default reserve is 6s, so this skips below 9s overall.
+                    speculative = False
+                    original_key_batch = True
+                    return run_in_transaction_with_retry(
+                        database, txn, transaction_tag="tr_authorize",
+                    )
                 try:
                     return run_speculative_transaction(
                         database, txn,
@@ -718,6 +739,7 @@ def authorize_atomic(
             # all shard candidates, and terminal rejection without speculation.
             # IDs, created_at, and candidate order remain stable across attempts.
             speculative = False
+            original_key_batch = False
             return run_in_transaction_with_retry(
                 database, txn, transaction_tag="tr_authorize",
             )

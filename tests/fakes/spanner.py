@@ -249,6 +249,7 @@ class FakeSpannerDatabase:
         self.transaction_execute_sql_calls = 0
         self.transaction_execute_update_calls = 0
         self.transaction_batch_update_calls = 0
+        self.transaction_begin_calls = 0
         self.rollback_calls = 0
         self.now = now
 
@@ -474,6 +475,10 @@ class _FakeTransaction:
         self._did_dml = False
         self._in_batch = False
         self.rolled_back = False
+
+    def begin(self) -> bytes:
+        self.db.transaction_begin_calls += 1
+        return b"fake-explicit-transaction"
 
     def execute_sql(
         self,

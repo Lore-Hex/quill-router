@@ -291,25 +291,30 @@ def configured_sdk(
 ) -> Any:
     """Real SDK Session/Transaction methods; only RPCs and telemetry are mocked."""
     from contextlib import nullcontext
+    from threading import get_ident, local
+    from types import MethodType
     from unittest.mock import Mock
 
-    from google.cloud.spanner_v1 import session, snapshot, transaction
+    from google.cloud.spanner_v1 import database, session, snapshot, transaction
+    from google.cloud.spanner_v1.database_sessions_manager import DatabaseSessionsManager
     from google.cloud.spanner_v1.types import (
         CommitResponse,
         ExecuteBatchDmlResponse,
         PartialResultSet,
         ResultSet,
         ResultSetStats,
+        Transaction,
     )
 
     from trusted_router import storage_gcp_io as io
 
     clock = [100.0]
     monkeypatch.setattr(io.time, 'monotonic', lambda: clock[0])
-    for module in (session, snapshot, transaction):
+    for module in (database, session, snapshot, transaction):
         monkeypatch.setattr(module, 'trace_call', lambda *a, **kw: nullcontext(Mock()))
         monkeypatch.setattr(module, 'MetricsCapture', lambda *a, **kw: nullcontext())
     api = SimpleNamespace(
+        begin_transaction=Mock(),
         execute_sql=Mock(return_value=ResultSet(stats=ResultSetStats(row_count_exact=1))),
         execute_batch_dml=Mock(),
         execute_streaming_sql=Mock(),
@@ -340,7 +345,26 @@ def configured_sdk(
         return tx
 
     monkeypatch.setattr(sdk_session, 'transaction', new_transaction)
-    db.run_in_transaction = sdk_session.run_in_transaction
+    pool_events = []
+    checked_out = []
+
+    def get_session():
+        assert not checked_out, 'regular pool has exactly one session'
+        checked_out.append(sdk_session)
+        pool_events.append(('get', get_ident()))
+        return sdk_session
+
+    def put_session(returned):
+        assert checked_out.pop() is returned
+        pool_events.append(('put', get_ident()))
+
+    manager = DatabaseSessionsManager(db, SimpleNamespace(get=get_session, put=put_session))
+    monkeypatch.setattr(manager, '_use_multiplexed', lambda _: request.param)
+    manager._multiplexed_session = sdk_session
+    db._sessions_manager = manager
+    db._local = local()
+    db._resource_info = {}
+    db.run_in_transaction = MethodType(database.Database.run_in_transaction, db)
     db.snapshot = lambda **kw: nullcontext(sdk_session.snapshot(**kw))
 
     def read(**kwargs: Any) -> Any:
@@ -360,6 +384,7 @@ def configured_sdk(
                          for n in ([1, 0, 1, 1] if size == 4 else [1, 1])],
         )
 
+    api.begin_transaction.side_effect = lambda **kw: Transaction(id=f"tx-{len(transactions)}".encode())
     api.execute_streaming_sql.side_effect = read
     api.execute_batch_dml.side_effect = batch
     # Retain the underlying mocks: assertions count RPCs actually sent, not
@@ -367,7 +392,8 @@ def configured_sdk(
     rpcs = SimpleNamespace(**vars(api))
     io.configure_spanner_rpc_deadlines(db)
     return SimpleNamespace(db=db, rpcs=rpcs, clock=clock, transactions=transactions,
-                           multiplexed=request.param)
+                           multiplexed=request.param, pool_events=pool_events,
+                           checked_out=checked_out)
 
 
 @pytest.mark.parametrize('elapsed', [6, 21], ids=['remaining-budget', 'exhausted-budget'])
@@ -475,14 +501,15 @@ def test_aborted_during_sequential_fallback(configured_sdk: Any, monkeypatch: py
 
 
 def _operation_count(db: Any) -> int:
-    # T1 RPCs, excluding transaction/session acquisition, including cleanup.
+    # T1 RPCs, including explicit begin and cleanup; excluding session acquisition.
     return (db.transaction_execute_sql_calls + db.transaction_execute_update_calls
-            + db.transaction_batch_update_calls + db.rollback_calls + db.commits)
+            + db.transaction_batch_update_calls + db.transaction_begin_calls
+            + db.rollback_calls + db.commits)
 
 
 @pytest.mark.parametrize(('scenario', 'parent_count', 'round2_count'), [
-    ('accepted', 5, 2), ('byok_excluded', 5, 5), ('uncapped_direct', 6, 6),
-    ('key_rejection', 5, 7), ('credit_rejection', 3, 5), ('skip', 4, 4),
+    ('accepted', 5, 3), ('byok_excluded', 5, 5), ('uncapped_direct', 6, 6),
+    ('key_rejection', 5, 8), ('credit_rejection', 3, 6), ('skip', 4, 4),
 ])
 def test_operation_counts_with_metadata_hint(
     stable_ids: None, scenario: str, parent_count: int, round2_count: int,
