@@ -934,11 +934,11 @@ def test_operator_control_plane_holds_fleet_mutex_through_its_deploy(
     release = next(
         index
         for index, call in enumerate(run.calls)
-        if call[0:3] == ["gcloud", "storage", "rm"]
+        if call[0:3] == ["gcloud", "storage", "cp"] and "--if-generation-match=1" in call
     )
 
     assert create < mutation < gate < release
-    assert f"deploy_mutex.acquired cloud={cloud}" in run.stderr
+    assert f"TR_DEPLOY_MUTEX_CLOUD={cloud}" in run.stdout
 
 
 @pytest.mark.parametrize(
@@ -948,7 +948,7 @@ def test_operator_control_plane_holds_fleet_mutex_through_its_deploy(
         ("scripts/deploy/azure_control_plane.sh", ("az", "acr", "build")),
     ),
 )
-def test_operator_bake_gate_refusal_aborts_and_releases_mutex(
+def test_operator_bake_gate_refusal_aborts_and_retains_failed_reservation(
     harness: DeployScriptHarness,
     script: str,
     mutation_prefix: tuple[str, ...],
@@ -971,7 +971,9 @@ def test_operator_bake_gate_refusal_aborts_and_releases_mutex(
         )
         for call in run.calls
     )
-    assert any(call[:3] == ["gcloud", "storage", "rm"] for call in run.calls)
+    assert not any(call[:3] == ["gcloud", "storage", "rm"] for call in run.calls)
+    assert any(call[:3] == ["gcloud", "storage", "cp"] and "--if-generation-match=1" in call
+               for call in run.calls)
 
 
 def test_harness_git_discovery_stops_at_the_harness_root(tmp_path: Path) -> None:
@@ -1094,7 +1096,8 @@ def test_operator_deploy_refuses_dirty_tree_after_gate(
     assert not any(
         tuple(call[: len(mutation_prefix)]) == mutation_prefix for call in run.calls
     )
-    assert any(call[:3] == ["gcloud", "storage", "rm"] for call in run.calls)
+    assert not any(call[:3] == ["gcloud", "storage", "rm"] for call in run.calls)
+    assert any("--if-generation-match=1" in call for call in run.calls)
 
 
 @pytest.mark.parametrize(
@@ -1136,7 +1139,8 @@ def test_operator_deploy_refuses_tag_that_does_not_match_validated_head(
     assert not any(
         tuple(call[: len(mutation_prefix)]) == mutation_prefix for call in run.calls
     )
-    assert any(call[:3] == ["gcloud", "storage", "rm"] for call in run.calls)
+    assert not any(call[:3] == ["gcloud", "storage", "rm"] for call in run.calls)
+    assert any("--if-generation-match=1" in call for call in run.calls)
 
 
 @pytest.mark.parametrize(

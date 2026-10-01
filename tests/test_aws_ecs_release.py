@@ -18,7 +18,7 @@ ENV_SENTINEL = "fixture-env-value-must-not-appear-in-errors"
 
 def test_aws_workflow_deploys_ecs_not_retired_apprunner() -> None:
     workflow = (ROOT / ".github/workflows/deploy-aws-control-plane.yml").read_text()
-    assert "run: bash scripts/deploy/aws_ecs_control_plane.sh" in workflow
+    assert "run: bash ../ops/scripts/deploy/aws_ecs_control_plane.sh" in workflow
     assert "run: bash scripts/deploy/aws_eu_control_plane.sh" not in workflow
 
 
@@ -290,10 +290,12 @@ def run_ecs_fixture(
         shutil.copy2(source_root / "scripts/deploy" / name, scripts / name)
     (scripts / "deploy_mutex.sh").write_text(
         'deploy_mutex_acquire() { DEPLOY_MUTEX_SCOPE_OWNS_LOCK=1; }; '
-        'deploy_mutex_release() { echo released > "$ECS_UNLOCK"; }\n'
+        'deploy_mutex_assert() { :; }; '
+        'deploy_mutex_finish() { echo "$1" > "$ECS_UNLOCK"; }\n'
     )
     (scripts / "cloud_bake_gate.sh").write_text(
-        'cloud_bake_gate() { [ "${ECS_FAIL_REGION:-}" != gate ]; }\n'
+        'cloud_bake_gate() { [ "${ECS_SUPERSEDED:-}" != 1 ] || return 75; '
+        '[ "${ECS_FAIL_REGION:-}" != gate ]; }\n'
     )
     # Keep the real shared gate library, so its status and diagnostic wording
     # are exercised by the common completeness harness too.
@@ -339,11 +341,19 @@ def assert_registrations_preserve_regional_configuration(tmp_path: Path) -> None
         assert registered == expected_registration(definitions[region], image)
 
 
+def test_superseded_queued_promotion_is_clean_noop(tmp_path: Path) -> None:
+    result, recorded = run_ecs_fixture(tmp_path, extra_env={"ECS_SUPERSEDED": "1"})
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "unlock").read_text().strip() == "0"
+    assert not any(c[0] == "docker" for c in recorded)
+    assert all(c[:3] == ["aws", "sts", "get-caller-identity"] for c in recorded if c[0] == "aws")
+
+
 @pytest.mark.parametrize("failure", ["", "gate", "eu-west-1", "eu-west-3"])
 def test_ecs_rollout_is_gated_sequential_and_rolls_back_failed_region(tmp_path: Path, failure: str) -> None:
     result, recorded = run_ecs_fixture(tmp_path, failure=failure)
     assert (result.returncode == 0) == (failure == ""), result.stderr
-    assert (tmp_path / "unlock").read_text().strip() == "released"
+    assert (tmp_path / "unlock").read_text().strip() == str(result.returncode)
     updates = [c for c in recorded if c[:3] == ["aws", "ecs", "update-service"]]
     regions = [c[c.index("--region") + 1] for c in updates]
     expected = {"": ["eu-west-1", "eu-west-3"], "gate": [],
@@ -380,7 +390,7 @@ def test_ecs_verification_retries_until_exact_success(
         assert max(i for i, c in enumerate(recorded) if c == ["reader", key, "rollout"]) < recorded.index(updates[1])
     else:
         assert recorded.index(updates[-1]) < recorded.index(["reader", key, "rollout"])
-    assert (tmp_path / "unlock").read_text().strip() == "released"
+    assert (tmp_path / "unlock").read_text().strip() == str(result.returncode)
 
 
 @pytest.mark.parametrize(("region", "kind", "timeout_seconds", "attempts"), [
@@ -413,7 +423,7 @@ def test_ecs_verification_attempt_budget_rolls_back_only_active_region(
     )
     assert [c[c.index("--region") + 1] for c in updates if c[c.index("--task-definition") + 1] == "old:19"] == [region]
     assert f"rollback stabilized in {region}" in result.stderr
-    assert (tmp_path / "unlock").read_text().strip() == "released"
+    assert (tmp_path / "unlock").read_text().strip() == str(result.returncode)
 
 
 @pytest.mark.parametrize("failures", [1, 10000])
@@ -427,7 +437,7 @@ def test_ecs_rollback_verification_retries_with_a_budget(tmp_path: Path, failure
     assert [c for c in recorded if c[0] == "sleep"] == [["sleep", "15"]]
     assert ("rollback stabilized" in result.stderr) == (failures == 1)
     assert ("needs operator attention" in result.stderr) == (failures != 1)
-    assert (tmp_path / "unlock").read_text().strip() == "released"
+    assert (tmp_path / "unlock").read_text().strip() == str(result.returncode)
 
 
 def test_ecs_final_verification_exhaustion_does_not_roll_back(tmp_path: Path) -> None:
@@ -442,7 +452,7 @@ def test_ecs_final_verification_exhaustion_does_not_roll_back(tmp_path: Path) ->
     updates = [c for c in recorded if c[:3] == ["aws", "ecs", "update-service"]]
     assert len(updates) == 2
     assert all(c[c.index("--task-definition") + 1] != "old:19" for c in updates)
-    assert (tmp_path / "unlock").read_text().strip() == "released"
+    assert (tmp_path / "unlock").read_text().strip() == str(result.returncode)
 
 
 @pytest.mark.parametrize("setting", ["TR_ECS_VERIFY_TIMEOUT_SECONDS", "TR_ECS_VERIFY_INTERVAL_SECONDS"])
@@ -465,7 +475,7 @@ def test_ecs_completeness_exit_code_is_preserved(tmp_path: Path, verifier_rc: in
     updates = [c for c in recorded if c[:3] == ["aws", "ecs", "update-service"]]
     assert len(updates) == 2
     assert all(c[c.index("--task-definition") + 1] != "old:19" for c in updates)
-    assert (tmp_path / "unlock").read_text().strip() == "released"
+    assert (tmp_path / "unlock").read_text().strip() == str(result.returncode)
 
 
 @pytest.mark.parametrize("region", ["eu-west-1", "eu-west-3"])
@@ -486,7 +496,7 @@ def test_ecs_rollout_refuses_outbox_drift_without_rolling_back_healthy_region(
     assert "Cannot safely clone the ECS workload; no runtime configuration printed" in result.stderr
     # The refusal names the setting (never a value) so the CI log explains itself.
     assert "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED" in result.stderr
-    assert (tmp_path / "unlock").read_text().strip() == "released"
+    assert (tmp_path / "unlock").read_text().strip() == str(result.returncode)
     mutations = [c for c in recorded if c[:3] in (
         ["aws", "ecs", "register-task-definition"], ["aws", "ecs", "update-service"],
     )]

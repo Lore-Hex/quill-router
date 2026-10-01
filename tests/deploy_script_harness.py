@@ -176,6 +176,10 @@ joined="${0##*/} $*"
 # The operator-run AWS and Azure control-plane scripts share the real
 # generation-fenced GCS mutex. Model that one object instead of letting the
 # generic success fallback invent an invalid generation or unreadable record.
+if [ "${0##*/}" = "gcloud" ] && [ "$1 $2 $3" = "storage buckets describe" ]; then
+  printf '{"name":"tr-deploy-mutex-quill-cloud-proxy","lifecycle_config":{"rule":[]}}\n'
+  exit 0
+fi
 if [ "${0##*/}" = "gcloud" ] \
     && [[ " $* " == *"trusted-router-production.json"* ]]; then
   case "$1 $2 $3" in
@@ -183,10 +187,11 @@ if [ "${0##*/}" = "gcloud" ] \
       source_path="$3"
       destination_path="$4"
       if [[ "$destination_path" == gs://* ]]; then
-        if [ -f "$HARNESS_DEPLOY_MUTEX_STATE" ]; then
-          exit 1
-        fi
+        generation=0
+        [ ! -f "${HARNESS_DEPLOY_MUTEX_STATE}.generation" ] || generation="$(cat "${HARNESS_DEPLOY_MUTEX_STATE}.generation")"
+        [[ " $* " == *" --if-generation-match=${generation}"* ]] || { echo '412 precondition failed' >&2; exit 1; }
         cp "$source_path" "$HARNESS_DEPLOY_MUTEX_STATE"
+        printf '%s\n' "$((generation + 1))" > "${HARNESS_DEPLOY_MUTEX_STATE}.generation"
       else
         [ -f "$HARNESS_DEPLOY_MUTEX_STATE" ] || exit 1
         cp "$HARNESS_DEPLOY_MUTEX_STATE" "$destination_path"
@@ -194,8 +199,8 @@ if [ "${0##*/}" = "gcloud" ] \
       exit 0
       ;;
     "storage objects describe")
-      [ -f "$HARNESS_DEPLOY_MUTEX_STATE" ] || exit 1
-      printf '1\n'
+      [ -f "$HARNESS_DEPLOY_MUTEX_STATE" ] || { echo '404 not found' >&2; exit 1; }
+      cat "${HARNESS_DEPLOY_MUTEX_STATE}.generation"
       exit 0
       ;;
     "storage rm "*)
@@ -1704,7 +1709,12 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
                 ),
             ),
         ),
-        cleanup_after_gate=(r"gcloud storage rm .*trusted-router-production[.]json",),
+        cleanup_after_gate=(
+            r"gcloud storage buckets describe gs://tr-deploy-mutex-quill-cloud-proxy --format=json",
+            r"gcloud storage objects describe gs://tr-deploy-mutex-quill-cloud-proxy/locks/trusted-router-production[.]json .*",
+            r"gcloud storage cp gs://tr-deploy-mutex-quill-cloud-proxy/locks/trusted-router-production[.]json#[0-9]+ .*",
+            r"gcloud storage cp .*/state[.]json gs://tr-deploy-mutex-quill-cloud-proxy/locks/trusted-router-production[.]json --if-generation-match=[0-9]+",
+        ),
     ),
     "scripts/deploy/aws_eu_north_clickhouse.sh": ScriptFixture(
         env={"TR_STOCKHOLM_REPLICA_WIRED": "1"},
@@ -1764,7 +1774,10 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
         # apply the schema. Cleanup, not provisioning.
         cleanup_after_gate=(
             r"firewall-rule delete",
-            r"gcloud storage rm .*trusted-router-production[.]json",
+            r"gcloud storage buckets describe gs://tr-deploy-mutex-quill-cloud-proxy --format=json",
+            r"gcloud storage objects describe gs://tr-deploy-mutex-quill-cloud-proxy/locks/trusted-router-production[.]json .*",
+            r"gcloud storage cp gs://tr-deploy-mutex-quill-cloud-proxy/locks/trusted-router-production[.]json#[0-9]+ .*",
+            r"gcloud storage cp .*/state[.]json gs://tr-deploy-mutex-quill-cloud-proxy/locks/trusted-router-production[.]json --if-generation-match=[0-9]+",
         ),
     ),
     "scripts/deploy/azure_canary_app.sh": ScriptFixture(
@@ -1892,6 +1905,13 @@ class DeployScriptHarness:
         verifier = self.mirror / "scripts" / "deploy" / "verify_cloud_complete.sh"
         verifier.write_text(_VERIFIER_STUB)
         verifier.chmod(0o755)
+        # Only replace network health evidence; execute the real CAS/state
+        # machine and shell scope handling against the fake cloud CLI.
+        coordinator = self.mirror / "scripts/deploy/cloud_rollout.py"
+        coordinator.write_text(coordinator.read_text().replace(
+            'if __name__ == "__main__":',
+            'probe_cloud = lambda cloud: "a" * 40\nif __name__ == "__main__":',
+        ))
 
     def _build_bin(self) -> None:
         self.bin.mkdir(parents=True)
@@ -2127,9 +2147,22 @@ class DeployScriptHarness:
             "HARNESS_CLOUD_RUN_TRAFFIC_STATE": str(cloud_run_traffic_state),
             "HARNESS_DEPLOY_MUTEX_STATE": str(run_dir / "deploy-mutex.json"),
             "HARNESS_VERIFIER_RC": str(verifier_rc),
+            "TR_CLOUD_DEPLOY_MODE": "promote",
             **{k: v for k, v in fixture.env.items() if k not in omit_env},
             **(extra_env or {}),
         }
+
+        if env.get("TR_DEPLOY_MUTEX_OPERATION"):
+            # These callers inherit an outer workflow reservation.
+            cloud = env.get("TR_DEPLOY_MUTEX_CLOUD", "gcp")
+            env["TR_DEPLOY_MUTEX_OPERATION"] = "a" * 32
+            lease = {"cloud": cloud, "operation_id": "a" * 32, "owner": "harness",
+                     "state": "active", "created_at": 1, "expires_at": 9_999_999_999}
+            Path(env["HARNESS_DEPLOY_MUTEX_STATE"]).write_text(json.dumps({
+                "schema_version": 2, "leases": {cloud: lease},
+                "holdback": {"cloud": "aws" if cloud != "aws" else "azure", "release": "a" * 40},
+            }))
+            Path(env["HARNESS_DEPLOY_MUTEX_STATE"] + ".generation").write_text("1")
 
         proc = subprocess.run(  # noqa: S603 - fixed argv, stub PATH, repo-local script
             ["bash", str(self.mirror / script), *args],  # noqa: S607

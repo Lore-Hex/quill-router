@@ -49,7 +49,7 @@ release_rollout_deploy_mutex() {
     done
   fi
   if [ "${DEPLOY_MUTEX_SCOPE_OWNS_LOCK:-0}" -eq 1 ]; then
-    deploy_mutex_release
+    deploy_mutex_finish "$rollout_status" || rollout_status=1
   fi
   exit "$rollout_status"
 }
@@ -63,9 +63,11 @@ trap 'exit 143' TERM
 
 # The workflow exports its outer lock through GITHUB_ENV. A direct operator
 # invocation has no such operation and owns this script-level scope instead.
+export TR_DEPLOY_MUTEX_CLOUD=gcp
 if [ -z "${TR_DEPLOY_MUTEX_OPERATION:-}" ]; then
   deploy_mutex_acquire
 fi
+deploy_mutex_assert
 
 TRUST_SOURCE_COMMIT=""
 TRUST_IMAGE_REFERENCE=""
@@ -669,6 +671,7 @@ cloud_run_candidate_min_instances() {
 deploy_one_region() {
   local target="$1"
   local logfile="${2:-/dev/null}"
+  deploy_mutex_assert || return 1
   # When TR_DEPLOY_NO_TRAFFIC=1 is set (the staged-traffic flow in the
   # GHA workflow), the new revision is created with 0% traffic. The
   # workflow then ramps it up via `gcloud run services update-traffic`

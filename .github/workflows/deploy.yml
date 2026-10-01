@@ -205,12 +205,40 @@ jobs:
             sleep 5
           done
 
+  admit-cloud:
+    needs: [gate-on-ci, build-image]
+    if: github.repository == 'Lore-Hex/quill-router'
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    outputs:
+      TR_DEPLOY_MUTEX_OPERATION: ${{ steps.acquire_mutex.outputs.TR_DEPLOY_MUTEX_OPERATION }}
+      TR_DEPLOY_MUTEX_GENERATION: ${{ steps.acquire_mutex.outputs.TR_DEPLOY_MUTEX_GENERATION }}
+      TR_DEPLOY_MUTEX_CREATED_AT: ${{ steps.acquire_mutex.outputs.TR_DEPLOY_MUTEX_CREATED_AT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Acquire production deployment mutex
+        id: acquire_mutex
+        env:
+          TR_DEPLOY_MUTEX_OWNER: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TR_DEPLOY_MUTEX_CLOUD: gcp
+          TR_DEPLOY_WAIT_SECONDS: "3600"
+          TR_DEPLOY_MUTEX_TTL_SECONDS: "21600"
+        run: |
+          set -euo pipefail
+          fence="$(bash scripts/deploy/deploy_mutex.sh acquire)"
+          printf '%s\n' "$fence" >> "$GITHUB_OUTPUT"
+
   migrate-schema:
     # Runs inside the same serialized deploy workflow, after CI and before any
     # serving revision changes. The script is idempotent; normally this is only
     # read-only INFORMATION_SCHEMA verification. A newly added column therefore
     # always exists before code that writes it can receive traffic.
-    needs: [gate-on-ci]
+    needs: [gate-on-ci, admit-cloud]
     if: github.repository == 'Lore-Hex/quill-router'
     runs-on: ubuntu-latest
     steps:
@@ -320,7 +348,7 @@ jobs:
     # schema verification run. SES credentials are rotated directly in GCP
     # Secret Manager; deploys must never copy a stale long-lived key back from
     # GitHub Actions and silently undo an incident-response rotation.
-    needs: [gate-on-ci]
+    needs: [gate-on-ci, admit-cloud]
     if: github.repository == 'Lore-Hex/quill-router'
     runs-on: ubuntu-latest
     steps:
@@ -386,13 +414,13 @@ jobs:
           fi
 
   deploy:
-    needs: [build-image, migrate-schema, sync-runtime-secrets, confirm-current-main]
+    needs: [build-image, migrate-schema, sync-runtime-secrets, confirm-current-main, admit-cloud]
     if: ${{ github.repository == 'Lore-Hex/quill-router' && needs.confirm-current-main.outputs.proceed == 'true' }}
     runs-on: ubuntu-latest
     outputs:
-      TR_DEPLOY_MUTEX_OPERATION: ${{ steps.acquire_mutex.outputs.TR_DEPLOY_MUTEX_OPERATION }}
-      TR_DEPLOY_MUTEX_GENERATION: ${{ steps.acquire_mutex.outputs.TR_DEPLOY_MUTEX_GENERATION }}
-      TR_DEPLOY_MUTEX_CREATED_AT: ${{ steps.acquire_mutex.outputs.TR_DEPLOY_MUTEX_CREATED_AT }}
+      TR_DEPLOY_MUTEX_OPERATION: ${{ needs.admit-cloud.outputs.TR_DEPLOY_MUTEX_OPERATION }}
+      TR_DEPLOY_MUTEX_GENERATION: ${{ needs.admit-cloud.outputs.TR_DEPLOY_MUTEX_GENERATION }}
+      TR_DEPLOY_MUTEX_CREATED_AT: ${{ needs.admit-cloud.outputs.TR_DEPLOY_MUTEX_CREATED_AT }}
       sha: ${{ needs.build-image.outputs.sha }}
       image: ${{ needs.build-image.outputs.image }}
       primary_live_seconds: ${{ steps.primary_live.outputs.primary_live_seconds }}
@@ -402,10 +430,13 @@ jobs:
       europe_west4_revision: ${{ steps.wait_secondary_warms.outputs.europe_west4_revision }}
       us_east4_revision: ${{ steps.wait_secondary_warms.outputs.us_east4_revision }}
       southamerica_east1_revision: ${{ steps.wait_secondary_warms.outputs.southamerica_east1_revision }}
-    # The mutex TTL is 90 minutes. The two lock-owning job bounds total
-    # 25 + 55 = 80 minutes, leaving 10 minutes for the job handoff queue gap.
+    # The outer six-hour reservation spans schema, regions, and public checks.
     timeout-minutes: 25
     env:
+      TR_DEPLOY_MUTEX_OPERATION: ${{ needs.admit-cloud.outputs.TR_DEPLOY_MUTEX_OPERATION }}
+      TR_DEPLOY_MUTEX_GENERATION: ${{ needs.admit-cloud.outputs.TR_DEPLOY_MUTEX_GENERATION }}
+      TR_DEPLOY_MUTEX_CREATED_AT: ${{ needs.admit-cloud.outputs.TR_DEPLOY_MUTEX_CREATED_AT }}
+      TR_DEPLOY_MUTEX_CLOUD: gcp
       PROJECT_ID: quill-cloud-proxy
       REGION: us-central1
       REPO: trusted-router
@@ -430,20 +461,8 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v3
 
-      - name: Acquire production deployment mutex
-        id: acquire_mutex
-        env:
-          TR_DEPLOY_MUTEX_OWNER: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          TR_DEPLOY_MUTEX_TOOL: workflow
-        # No pipeline here: GitHub's default run shell is `bash -e` WITHOUT
-        # pipefail, so `acquire | tee` would exit with tee's 0 and a BLOCKED
-        # acquire would let the deploy proceed without holding the lock. The
-        # command substitution propagates acquire's exit code under -e, and
-        # the fence reaches ENV and OUTPUT only when acquisition succeeded.
-        run: |
-          fence="$(bash scripts/deploy/deploy_mutex.sh acquire)"
-          printf '%s\n' "$fence" >> "$GITHUB_ENV"
-          printf '%s\n' "$fence" >> "$GITHUB_OUTPUT"
+      - name: Verify production cloud reservation
+        run: bash scripts/deploy/deploy_mutex.sh assert
 
       # Staged regional deploy. Launch all four no-traffic revisions together,
       # but gate primary-live only on us-central1's warm plus its unchanged
@@ -734,7 +753,7 @@ jobs:
       - name: Record primary-live timing
         id: primary_live
         env:
-          MUTEX_CREATED_AT: ${{ steps.acquire_mutex.outputs.TR_DEPLOY_MUTEX_CREATED_AT }}
+          MUTEX_CREATED_AT: ${{ needs.admit-cloud.outputs.TR_DEPLOY_MUTEX_CREATED_AT }}
         run: |
           set -euo pipefail
           primary_live_seconds="$(python3 - "${MUTEX_CREATED_AT}" <<'PY'
@@ -821,13 +840,8 @@ jobs:
             exit 1
           fi
 
-      # Mutex release ownership:
-      # - deploy fails/cancels: this conditional release runs promptly.
-      # - deploy succeeds and rollout-secondaries runs: ownership transfers,
-      #   and that job releases on success or failure.
-      # - deploy succeeds but GitHub never schedules rollout-secondaries: no
-      #   release runs; the 90-minute TTL recovers. Queued deploys fail closed
-      #   during that freeze, so production mutations never overlap.
+      # The finalization job owns release. Failures/cancellation retain the
+      # reservation until verified recovery; this step only cleans probe tags.
       - name: Sweep staged-probe tags from never-ramped regions
         if: ${{ failure() || cancelled() }}
         # A warmed-but-never-ramped candidate keeps the staged-probe tag, and
@@ -849,16 +863,11 @@ jobs:
               && echo "swept $region" || echo "sweep $region: nothing to remove or call failed (non-fatal)"
           done
 
-      - name: Release production deployment mutex after primary-live failure
-        if: ${{ failure() || cancelled() }}
-        run: bash scripts/deploy/deploy_mutex.sh release
-
   rollout-secondaries:
     needs: [deploy]
     if: ${{ github.repository == 'Lore-Hex/quill-router' && success() && needs.deploy.result == 'success' }}
     runs-on: ubuntu-latest
-    # The mutex TTL is 90 minutes. The two lock-owning job bounds total
-    # 25 + 55 = 80 minutes, leaving 10 minutes for the job handoff queue gap.
+    # Finalization owns the cloud reservation through all completion gates.
     timeout-minutes: 55
     env:
       PROJECT_ID: quill-cloud-proxy
@@ -1213,30 +1222,23 @@ jobs:
             echo "::warning::failed to write deploy convergence metadata to Cloud Logging"
           fi
 
-      - name: Release production deployment mutex
-        if: always()
-        run: bash scripts/deploy/deploy_mutex.sh release
-
   public-surface-companion:
     # This job creates/updates the isolated T1 service only after the legacy
     # rollout is healthy. It never prepares or imports a URL map. Before the
     # owner cutover it deploys the smokeable run.app companion; after cutover
     # it detects the public backend in the live map and preserves routed-mode
     # ingress/header trust on every later automatic deploy.
-    needs: [rollout-secondaries]
+    needs: [rollout-secondaries, admit-cloud]
     if: github.repository == 'Lore-Hex/quill-router'
     continue-on-error: false
     runs-on: ubuntu-latest
     # Four sequential regional Cloud Run deploys normally finish in 12-20
     # minutes. Thirty allows cold image pulls and bounded smoke retries.
-    # NOTE: this job runs AFTER rollout-secondaries has released the production
-    # deployment mutex, and does not hold it. That is deliberate scope: the
-    # mutex fences trusted-router revisions/traffic, which manual rollout
-    # scripts also mutate; the T1 companion touches only its own service and
-    # is serialized against other workflow runs by the concurrency group. If
-    # manual T1 tooling ever appears, give it the same mutex first.
+    # Public mutations share the same cloud reservation as the API rollout.
     timeout-minutes: 30
     env:
+      TR_DEPLOY_MUTEX_OPERATION: ${{ needs.admit-cloud.outputs.TR_DEPLOY_MUTEX_OPERATION }}
+      TR_DEPLOY_MUTEX_CLOUD: gcp
       PROJECT_ID: quill-cloud-proxy
       REGION: us-central1
       SERVICE: trusted-router
@@ -1326,9 +1328,8 @@ jobs:
   # below to be an exact invocation of a script the registry proves by
   # execution -- not a mention of one.
   #
-  # Out of band by construction: it runs after rollout-secondaries has finished
-  # and released the mutex, so it gates full convergence without extending the
-  # mutation lock. Read-only -- one public GET, no credentials, no cloud SDK.
+  # Read-only completion gate after rollout-secondaries. The outer cloud
+  # reservation remains held until this and the public companion both finish.
   #
   # `if: always()` is load-bearing and was missing. With a bare `needs:
   # [rollout-secondaries]`, GitHub SKIPS this job when the follow-on fails --
@@ -1359,3 +1360,36 @@ jobs:
       # entry proves by execution; an echo, a comment or a `|| true` is not one.
       - name: Is the GCP cloud complete, or only deployed?
         run: bash scripts/deploy/verify_gcp_complete.sh
+
+  finalize-cloud:
+    needs: [admit-cloud, migrate-schema, sync-runtime-secrets, confirm-current-main, deploy, rollout-secondaries, public-surface-companion, verify-cloud-complete]
+    if: ${{ always() && github.repository == 'Lore-Hex/quill-router' && needs.admit-cloud.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Finalize cloud reservation
+        env:
+          TR_DEPLOY_MUTEX_OPERATION: ${{ needs.admit-cloud.outputs.TR_DEPLOY_MUTEX_OPERATION }}
+          TR_DEPLOY_MUTEX_CLOUD: gcp
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          export TR_DEPLOY_OUTCOME=failure
+          if jq -e 'all(.[]; .result == "success")' <<< "$RESULTS" >/dev/null; then
+            TR_DEPLOY_OUTCOME=success
+          elif jq -e '."confirm-current-main".outputs.proceed == "false" and
+            ."migrate-schema".result == "success" and ."sync-runtime-secrets".result == "success" and
+            .deploy.result == "skipped"' <<< "$RESULTS" >/dev/null; then
+            TR_DEPLOY_OUTCOME=success
+          fi
+          bash scripts/deploy/deploy_mutex.sh release
+          if [ "$TR_DEPLOY_OUTCOME" != success ]; then
+            echo '::error::Cloud reservation retained. Verify rollback and owner termination before recovery.'
+            exit 1
+          fi
