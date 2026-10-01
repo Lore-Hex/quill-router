@@ -150,3 +150,26 @@ def test_homepage_social_card_is_fetchable_and_scoped_to_rollout(
     monkeypatch.setattr(client.app.state.settings, "homepage_landscape_enabled", True)
     alternate = dashboard.dashboard_html(client.app.state.settings, brand_name="UptimeRouter")
     assert "social-card-v1.jpg" not in alternate
+
+
+@pytest.mark.parametrize("google,github", [(False, False), (True, False), (False, True), (True, True)])
+def test_redesigned_signin_matches_legacy_provider_options(google: bool, github: bool) -> None:
+    settings = Settings(
+        environment="test", storage_backend="memory",
+        google_client_id="test-google" if google else "",
+        google_client_secret="test-only" if google else "",
+        github_client_id="test-github" if github else "",
+        github_client_secret="test-only" if github else "",
+    )
+    def options(enabled: bool) -> list[tuple[str, str | None, str | None]]:
+        settings.homepage_landscape_enabled = enabled
+        page = BeautifulSoup(dashboard.dashboard_html(settings), "html.parser")
+        return [(button.get_text(" ", strip=True), button.get("href"), button.get("data-action"))
+                for button in page.select("#signinModal .signin-providers .signin-btn")]
+    legacy = options(False)
+    redesigned = options(True)
+    assert redesigned == legacy
+    assert len(redesigned) == 1 + int(google) + int(github)
+    assert any("MetaMask" in label for label, _, _ in redesigned)
+    assert any(href == "/auth/google/login" for _, href, _ in redesigned) == google
+    assert any(href == "/auth/github/login" for _, href, _ in redesigned) == github

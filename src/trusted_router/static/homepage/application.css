@@ -4,6 +4,11 @@ body.homepage-production{--preview-bar-height:0px}
 .signin-modal h2{margin:0 0 6px;font-size:24px}.signin-sub,.signin-foot{color:var(--muted);font-size:13px}
 .signin-close{position:absolute;top:10px;right:12px;background:none;border:0;color:var(--cream);font-size:22px;min-width:44px;min-height:44px}
 .signin-providers{display:flex;flex-direction:column;gap:10px}.signin-btn{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid #526859;border-radius:6px;background:#14251c;color:var(--cream);font-size:14px;min-height:44px}.signin-btn span{width:24px;text-align:center}.signin-foot{margin-top:18px}.signup-error{padding:12px;border:1px solid #F0B3A6;color:#F0B3A6}
+/* Preserve the provider badge treatments used by the main sign-in dialog. */
+.signin-btn span[aria-hidden]{display:inline-grid;place-items:center;flex-shrink:0;width:24px;height:24px;border-radius:6px;background:#101820;color:#fff;font-weight:700;font-size:13px}
+.signin-google span[aria-hidden]{background:#fff;color:#d2452a;border:1px solid var(--line)}
+.signin-github span[aria-hidden]{background:#24292f}
+.signin-metamask span[aria-hidden]{background:linear-gradient(135deg,#e2761b,#cd6116)}
 #search-retry{padding:10px 14px;border:1px solid #526859;background:#14251c;color:var(--cream);border-radius:6px}
 
 .homepage-status{display:inline-flex;align-items:center;gap:7px}

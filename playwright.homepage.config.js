@@ -8,7 +8,9 @@ module.exports = defineConfig({
   use: { ...base.use, baseURL: "http://127.0.0.1:18082" },
   webServer: {
     ...base.webServer,
-    command: "TR_HOMEPAGE_LANDSCAPE_ENABLED=true " + base.webServer.command.replaceAll("18081", "18082"),
+    command: "TR_HOMEPAGE_LANDSCAPE_ENABLED=true " + base.webServer.command.replaceAll("18081", "18082")
+      .replace("TR_GITHUB_CLIENT_ID= TR_GITHUB_CLIENT_SECRET=",
+        "TR_GITHUB_CLIENT_ID=browser-test-client TR_GITHUB_CLIENT_SECRET=not-a-real-secret"),
     url: "http://127.0.0.1:18082/health",
     reuseExistingServer: false,
   },

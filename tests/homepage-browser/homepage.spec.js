@@ -14,7 +14,13 @@ test("new homepage searches models and opens the existing sign-in dialog", async
   await expect(dialog).not.toBeVisible();
   await expect(search).toBeFocused();
   await page.locator("#top .button-primary").click();
-  await expect(page.locator("#signinModal")).toBeVisible();
+  const signin = page.locator("#signinModal");
+  await expect(signin).toBeVisible();
+  await expect(signin.getByRole("link", { name: "Continue with Google" })).toBeVisible();
+  await expect(signin.getByRole("link", { name: "Continue with Google" })).toHaveAttribute("href", "/auth/google/login");
+  await expect(signin.getByRole("link", { name: "Continue with GitHub" })).toBeVisible();
+  await expect(signin.getByRole("link", { name: "Continue with GitHub" })).toHaveAttribute("href", "/auth/github/login");
+  await expect(signin.getByRole("button", { name: "Continue with MetaMask" })).toBeVisible();
 });
 
 test("responsive navigation and customer disclosure remain usable", async ({ page, isMobile }) => {
