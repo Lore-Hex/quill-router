@@ -205,7 +205,7 @@
       </thead>
       <tbody>
         {% for endpoint in model.endpoints %}
-        <tr>
+        <tr id="provider-{{ endpoint.provider_slug }}">
           <td>{{ provider_identity(endpoint.provider_slug, endpoint.provider, endpoint.provider_href, subtitle=endpoint.provider_slug) }}</td>
           <td>{{ endpoint.prompt_price }}</td>
           <td>{{ endpoint.cached_prompt_price }}</td>

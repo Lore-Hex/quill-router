@@ -23,8 +23,9 @@ picker and footer share one ordered directory and highlight the current market.
 - Buyers book an enterprise pilot or visit the existing email-gated brochure flow.
   Suppliers use the existing provider marketplace application. Credentials are
   handled separately by that onboarding flow.
-- No application server, Spanner access, inference, cookies or third-party pixels
-  on these sites. Allowlisted UTM fields pass to intake. Initial site visits are
+- Static pages fetch the public `/token-exchange/evidence/{profile}.json` feed
+  from TrustedRouter on load and every minute. There is no direct Spanner
+  access, inference, cookie, or third-party pixel on these sites. Allowlisted UTM fields pass to intake. Initial site visits are
   not funnel events; central intake and signup use TrustedRouter's existing tracking.
 
 The HTTPS proxy also retains independent flagship certificates
@@ -111,3 +112,65 @@ ZDR policies and verified confidential inference are separate properties. Avoid
 invented liquidity, customers, guaranteed savings, certifications or financial
 exchange affiliation. Shanghai service availability requires explicit eligibility
 and jurisdictional review.
+
+## Live evidence contract
+
+All 13 markets use `live-evidence.js` and the backend's `token_exchange.py`.
+The feed reads the same effective catalog endpoints used by `/models`, selecting
+exactly one Tinfoil Credits route with confidential compute and E2EE. It displays
+exact USD/1M decimal prices and links to the model's provider table. The catalog's
+headline minimum is a cross-provider minimum, not a Tinfoil quote. Prices follow
+the existing catalog refresh/release cycle; the sites need no separate rebuild.
+
+The backend reads the public status and release JSON for the market's established
+GCP/Azure profile. Responses have a one-minute server cache, no stale-response
+window, and `Cache-Control: no-store` to prevent additional browser/CDN caching.
+Failed sources are absent; embedded/stale release records are not republished.
+No checked-in evidence snapshot is used by the site build.
+
+The landing page shows measured service details only when every supplied
+component is operational, fresh and complete. Degraded, failed, unknown or stale
+checks quietly return the whole service panel to its existing source link;
+there is no partial all-clear, warning badge or stale percentage. Historical
+failure or missing-data buckets are never recolored or cherry-picked: the whole
+chart is omitted while the accurate uptime percentage remains. Full incident
+history stays available through the Service status link.
+
+Attestation details require an operational, fresh check and valid published
+release metadata; otherwise only the Published release link remains. Prices are
+independently sourced and remain visible when valid. A failed feed returns every
+panel to its source links. Successful refreshes restore details automatically.
+Checks older than six minutes, missing dates and future dates remain ineligible.
+The browser reassesses freshness every second and fetches every minute, matching
+the shorter server cache. Published measurements do not establish location.
+
+Regression checks:
+
+```sh
+uv run pytest tests/test_token_exchange_evidence.py -q
+NODE_PATH=/path/to/node_modules node sites/token-exchange/verify-live.cjs /tmp/token-exchange-build
+```
+
+The browser test serves New York and London as two local staging hostnames,
+stops the actual HTTP feed, and waits the real one-minute interval with pages
+left open. It checks quiet fallbacks, stale dates, rounding, state selection,
+missing components, and responsive layout. This is staging verification, not
+proof of production deployment. Deploy the backend through the reviewed release
+workflow before publishing the static assets. Run all repository gates first.
+
+For the upstream-outage check (backend remains healthy while status is killed),
+serve the built site on port 8089, then run these in separate terminals:
+
+```sh
+uv run python sites/token-exchange/stage_evidence.py
+NODE_PATH=/path/to/node_modules node sites/token-exchange/verify-upstream.cjs
+```
+
+This binds only loopback. It uses the production public route and its real
+one-minute cache against a stoppable local HTTP status source. The test leaves
+New York and London open, shuts that source down, and checks that uptime and
+attestation disappear while independently sourced catalog prices remain.
+
+The Token Exchange Sites workflow runs the stale/mixed-state browser checks and
+the real one-minute upstream outage test on pull requests and main changes to
+the shared site or evidence backend. It does not publish the sites.

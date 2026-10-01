@@ -186,6 +186,8 @@ from trusted_router.synthetic.fleet import fleet_peers, fleet_snapshot
 from trusted_router.synthetic.leaderboard import aggregate_leaderboard
 from trusted_router.synthetic.status import history_payload, status_snapshot
 from trusted_router.synthetic.video_leaderboard import aggregate_video_leaderboard
+from trusted_router.token_exchange import PROFILES as EXCHANGE_PROFILES
+from trusted_router.token_exchange import exchange_evidence
 from trusted_router.trust import aws_release, azure_release, gcp_release, trust_html
 from trusted_router.views import render_template
 
@@ -2081,6 +2083,24 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def fleet_page(request: Request) -> HTMLResponse:
         _ = request
         return HTMLResponse(_fleet_page_html(await _fleet_snapshot_cached(settings)))
+
+    @app.get("/token-exchange/evidence/{profile}.json")
+    async def token_exchange_evidence(profile: str, background_tasks: BackgroundTasks) -> Response:
+        if profile not in EXCHANGE_PROFILES:
+            raise HTTPException(status_code=404, detail="Unknown evidence profile")
+        response = await _cached_public_response(
+            settings,
+            key=f"exchange:evidence:{profile}",
+            media_type="application/json",
+            ttl_seconds=60,
+            stale_seconds=0,
+            background_tasks=background_tasks,
+            cache_control_override="no-store",
+            build=lambda: _json_body(exchange_evidence(profile)),
+        )
+        # Public, credential-free data shared by all market domains.
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        return response
 
     @app.get("/status.json")
     async def status_json(background_tasks: BackgroundTasks) -> Response:

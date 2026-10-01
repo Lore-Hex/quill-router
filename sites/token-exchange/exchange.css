@@ -1,3 +1,5 @@
+@font-face{font-family:"Plus Jakarta Sans";src:url('/assets/plus-jakarta-sans-italic.ttf') format('truetype');font-style:italic;font-weight:200 800;font-display:swap}
+@font-face{font-family:"Plus Jakarta Sans";src:url('/assets/plus-jakarta-sans.ttf') format('truetype');font-weight:200 800;font-display:swap}
 @font-face{font-family:Archivo;src:url('/assets/archivo.woff2') format('woff2');font-weight:100 900;font-display:swap}
 @font-face{font-family:Spectral;src:url('/assets/spectral.woff2') format('woff2');font-weight:300;font-display:swap}
 :root{color-scheme:dark;--bg:#0b0c0e;--panel:#111518;--text:#f3f3ef;--muted:#d9ddda;--line:rgba(220,225,222,.12);--grid:rgba(220,225,222,.08);--mint:#cce8d7;--section-space:80px}
@@ -105,7 +107,7 @@
 .provider-strip{grid-column:1 / -1;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));margin-top:48px;border-block:1px solid var(--line)}
 .provider-strip p{grid-column:1 / -1;font-size:13px;line-height:1.6;color:var(--muted);margin:0;padding:20px 0 4px}
 .provider-strip a{display:flex;align-items:center;justify-content:center;gap:10px;padding:24px 8px;text-decoration:none;font-size:16px;color:var(--muted)}
-.provider-strip img{width:26px;height:26px;object-fit:contain;filter:grayscale(1) invert(1);mix-blend-mode:screen;opacity:1}
+.provider-strip img{width:26px;height:26px;object-fit:contain}
 .provider-strip a span{line-height:1.4}
 .provider-strip a:hover{color:var(--text)}
 
@@ -326,9 +328,8 @@
 }
 @media(max-width:360px){.privacy-choice h3{font-size:22px}}
 
-/* Editorial rhythm: sticky navigation, broad introductions, three evidence columns. */
-html{scroll-padding-top:108px}
-.masthead{position:sticky;top:0;z-index:20;max-width:none;padding-inline:max(32px,calc((100% - 1136px)/2));min-height:88px;background:#0b0e0df5;border-bottom:1px solid var(--line);backdrop-filter:blur(16px)}
+/* Editorial rhythm: broad introductions and three evidence columns. */
+.masthead{position:relative;z-index:20;max-width:none;padding-inline:max(32px,calc((100% - 1136px)/2));min-height:88px;background:#0b0e0df5;border-bottom:1px solid var(--line);backdrop-filter:blur(16px)}
 .masthead #primary-navigation{align-items:center;gap:28px}.masthead #primary-navigation a{font-size:15px}
 .masthead #primary-navigation .nav-action{min-height:44px;padding:10px 18px;font-size:15px}
 .market-intro{align-items:center}.market-intro>.button{justify-self:end;white-space:nowrap}
@@ -355,7 +356,7 @@ html{scroll-padding-top:108px}
 @media(max-width:1100px){.masthead{padding-inline:24px}.masthead #primary-navigation{gap:18px}.masthead .brand{font-size:16px}.trust-evidence{grid-template-columns:1fr 1fr}.trust-evidence>.catalogue{grid-column:1/-1}.trust-evidence .privacy-comparison{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}}
 @media(max-width:800px){#buyers .section-intro{grid-template-columns:1fr;gap:24px}#buyers .section-intro>p:last-child{font-size:18px}.market-intro>.button{justify-self:start}.exchange-steps{gap:24px}.exchange-steps li{font-size:16px}}
 @media(max-width:600px){
- html{scroll-padding-top:88px}.masthead{min-height:68px;padding-inline:22px}.masthead #primary-navigation{background:#0b0e0d}.masthead.nav-ready #primary-navigation{padding-bottom:20px}
+ .masthead{min-height:68px;padding-inline:22px}.masthead #primary-navigation{background:#0b0e0d}.masthead.nav-ready #primary-navigation{padding-bottom:20px}
  .market-intro{gap:28px}.market-intro>.button{margin:0}.exchange-steps{grid-template-columns:1fr;gap:0;margin-top:12px}.exchange-steps li{display:flex;gap:20px;padding:20px 0;font-size:17px}.exchange-steps li::before{margin:0}
  .trust-evidence{grid-template-columns:1fr;gap:48px;margin-top:40px}.trust-evidence>.catalogue{grid-column:auto}.trust-evidence .privacy-comparison{display:block}.trust-evidence .privacy-column{padding:22px 16px}.trust-evidence .privacy-choice h3{font-size:27px}
  .privacy-band .trust-copy{font-size:18px}.trust-evidence .health-key,.trust-evidence .evidence-scope,.trust-evidence .evidence-footer{font-size:14px}.attestation-panel dl{font-size:15px}
@@ -489,3 +490,27 @@ footer .brand small{font-size:12px}
  .hero-copy .actions{margin-top:36px}
 }
 .hero[data-art-locked]::before{left:var(--hero-art-left);right:var(--hero-art-right);mask-image:var(--hero-art-mask)}
+
+/* Check times remain on the widget face, including stale/failed checks. */
+.last-check { font: 11px/1.5 var(--mono, monospace); color: var(--muted, #a8b0bd); margin: 6px 0 10px; }
+.evidence-state { font-size: 12px; line-height: 1.5; margin: 12px 0; }
+
+/* Shared heading family; body/navigation retain Archivo and all metrics stay unchanged. */
+h1,h2,h3,.headline-accent,.privacy-choice h3,.review-resources h3,
+.uptime-panel figcaption,.attestation-panel h3,.trust-evidence .catalogue-label{
+ font-family:"Plus Jakarta Sans",Archivo,Arial,sans-serif;font-weight:400;letter-spacing:-.035em;
+}
+.headline-accent{font-style:italic;font-synthesis:none}
+.health-metric strong,.service-heading strong{font-family:Archivo,Arial,sans-serif;font-weight:400}
+
+/* Empty live-data slots leave the source links as the fallback. */
+[data-live-state]:empty,[data-live-attestation]:empty,.last-check:empty,[data-live-price-unit][hidden]{display:none}
+
+/* Source-only cards size to their content instead of stretching beside prices. */
+.trust-evidence .uptime-panel:has([data-live-services]:empty),
+.trust-evidence .attestation-panel:has([data-live-attestation]:empty){align-self:start;min-height:0}
+@media(min-width:1101px){
+ .trust-evidence:has([data-live-services]:empty):has([data-live-attestation]:empty){grid-template-columns:1fr 1fr}
+ .trust-evidence:has([data-live-services]:empty):has([data-live-attestation]:empty)>.catalogue{grid-column:1/-1}
+ .trust-evidence:has([data-live-services]:empty):has([data-live-attestation]:empty) .privacy-comparison{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+}
