@@ -267,3 +267,10 @@ Added four provider-configuration parity cases comparing legacy and redesigned r
 
 - `#migrate` keeps "Get your API key" and "Migration guide" on one line at phone widths (equal-width buttons, 15px labels; 14px below 360px). Verified without label clipping at 320, 360, 390 and 430px.
 - `.action-link` supporting links (verify cards, pricing spend controls) are now underlined with a trailing → added by CSS, matching the spec's "underlined text links with a trailing →". The literal arrow was removed from the pricing link so it is not doubled.
+
+## Tester feedback: search field, fee wording and action placement (2026-10-01)
+
+- Placement rule: tools sit by the module heading; actions close the module at the copy's left edge, after the evidence that motivates them. The hero and closing band stay centered. No action is right-justified beside an H2.
+- `#models`: the "Search models" button is now a search-field control (icon, placeholder text, ⌘K hint on pointer devices) that opens the existing model search dialog. Full width on phones, 320px on desktop. Focus returns to the field on close.
+- `#pricing`: the 5.5% term reads "fee on provider costs". "See pricing" moved from beside the H2 to a `.pricing-actions` row after the facts grid, next to the "Spend controls →" link.
+- `#customers`: "Read the case study" moved from between the subtitle and the body to a `.story-actions` row that closes the card after the quote (on phones, directly after the collapsed "Customer perspective" row).
