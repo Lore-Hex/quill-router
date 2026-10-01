@@ -148,7 +148,7 @@ def test_guard_inventory() -> None:
 def test_no_runtime_call_sites() -> None:
     root = Path(__file__).resolve().parents[1] / "src"
     for path in root.rglob("*.py"):
-        if path.name != "speculation_protocol.py":
+        if path.name not in {"speculation_protocol.py", "speculation_shadow.py"}:
             assert "speculation_protocol" not in path.read_text(), str(path)
 
 

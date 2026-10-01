@@ -321,6 +321,10 @@ def ddl_dispatch_arguments(source: str, path: Path, physical_lines: list[int], r
                 fail(i, "unsupported dispatcher DDL parameter assignment")
         dispatchers.add(name.lower())
 
+    # A dispatcher definition is consumed only after its body has been proved
+    # to forward exactly one understood DDL parameter to a recognized sink.
+    # Calls still require separately consumed literal schema below.
+    dispatch_spans.extend(tokens[i].span() for i in definitions if words[i].lower() in dispatchers)
     for i, token in enumerate(tokens):
         if words[i].lower() not in dispatchers or i in definitions:
             continue

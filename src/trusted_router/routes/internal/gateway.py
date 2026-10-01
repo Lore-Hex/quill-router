@@ -781,7 +781,12 @@ def _authorize_gateway_sync_impl(
     api_key, metadata, folded_byok, auth_context = _gateway_authorize_metadata(
         body, boot_kid=boot_auth.kid if boot_auth is not None else None,
     )
+    if settings.speculative_provider_shadow_enabled:
+        from trusted_router.services import speculation_shadow
+        speculation_shadow.resolved(api_key, body.invocation_nonce)
     if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
+        if settings.speculative_provider_shadow_enabled and api_key is not None:
+            speculation_shadow.reason("key_disabled" if api_key.disabled else "key_expired")
         raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
     _assert_gateway_key_scope(api_key)
     if boot_auth is not None:
@@ -801,11 +806,15 @@ def _authorize_gateway_sync_impl(
             resolved_lookup_hash=api_key.lookup_hash,
             accepted_image_digests=accepted_image_digests,
         )
+    if settings.speculative_provider_shadow_enabled:
+        speculation_shadow.boot_verified(boot_context["boot_verified"], boot_auth.kid if boot_auth is not None else "")
     workspace = metadata.workspace if metadata is not None else STORE.get_workspace(api_key.workspace_id)
     gateway_timing_phase("routing_ms")
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
     if workspace_billing_paused(workspace):
+        if settings.speculative_provider_shadow_enabled:
+            speculation_shadow.reason("billing_paused")
         # Keep tenant attribution in the rendered message because Cloud Run's
         # stderr collector does not preserve arbitrary LogRecord extras. This
         # is billing metadata only: never include the raw key, body, or content.
@@ -1361,6 +1370,8 @@ def _authorize_gateway_sync_impl(
                 workspace.id, api_key.hash, request_idempotency_key
             )
         except BillingPausedError as exc:
+            if settings.speculative_provider_shadow_enabled:
+                speculation_shadow.reason("billing_paused")
             raise api_error(403, "billing_paused", ErrorType.FORBIDDEN) from exc
 
         if existing_authorization is not None:
@@ -1591,6 +1602,8 @@ def _authorize_gateway_sync_impl(
         remember_spend_window_decision(request, window_decision)
         if outcome == "billing_paused":
             release_user_model_slot_after_error()
+            if settings.speculative_provider_shadow_enabled:
+                speculation_shadow.reason("billing_paused")
             raise api_error(403, "billing_paused", ErrorType.FORBIDDEN)
         if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS:
             release_user_model_slot_after_error()
@@ -1695,6 +1708,8 @@ def _authorize_gateway_sync_impl(
                 credit_reservation_id = credit_reservation.id
             except BillingPausedError as exc:
                 release_user_model_slot_after_error()
+                if settings.speculative_provider_shadow_enabled:
+                    speculation_shadow.reason("billing_paused")
                 raise api_error(403, "billing_paused", ErrorType.FORBIDDEN) from exc
             except ValueError as exc:
                 # The local balance refused. On a peer plane with deferred
@@ -1780,6 +1795,8 @@ def _authorize_gateway_sync_impl(
                 authorization = create_authorization()
         except BillingPausedError as exc:
             release_user_model_slot_after_error()
+            if settings.speculative_provider_shadow_enabled:
+                speculation_shadow.reason("billing_paused")
             raise api_error(403, "billing_paused", ErrorType.FORBIDDEN) from exc
         except DeferredSettlementCapReached as cap_exc:
             release_user_model_slot_after_error()
@@ -2375,6 +2392,10 @@ def _gateway_authorize_response(
     authorize replay returns the same prospective ID. Consumers must check the
     terminal authorization disposition before expecting a generation.
     """
+    if settings.speculative_provider_shadow_enabled:
+        from trusted_router.services import speculation_shadow
+        speculation_shadow.authorized(authorization, tuple(candidate.id for _, candidate in endpoint_candidates[:16]), idempotent_replay,
+                                      (endpoint.id, endpoint.provider, endpoint.upstream_id or model.id, region))
     stage_d = _gateway_stage_d_payload(
         authorization,
         reason_override=stage_d_reason_override,

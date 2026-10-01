@@ -856,6 +856,23 @@ class Settings(BaseSettings):
     notify_max_per_hour: int = 30
     notify_max_voice_per_hour: int = 4
 
+    # PR3 observes only; rollout pins this false. All cohort identities are explicit.
+    speculative_provider_shadow_enabled: bool = False
+    speculation_shadow_workspaces: list[str] = []
+    speculation_shadow_routes: list[str] = []
+    speculation_shadow_images: list[str] = []
+    speculation_shadow_producers: list[str] = []
+    speculation_shadow_producer: str = ""
+    speculation_shadow_slots: dict[str, dict[str, str]] = {}
+    speculation_shadow_image_policy_version: int = 0
+    speculation_shadow_policy_expires_at: int = 0
+    speculation_shadow_plane: str = "gcp"
+    speculation_shadow_issuer: str = ""
+    speculation_shadow_audience: str = ""
+    speculation_shadow_kid: str = ""
+    # Independently provisioned mounted file. Never a receipt/real issuer key.
+    speculation_shadow_private_key_file: str = ""
+
     # Audited break-glass addition to the signed Stage D runtime policy. This
     # is deliberately empty and rollout.sh never inherits it from a revision.
     spend_lease_accepted_gcp_image_digests: str = ""

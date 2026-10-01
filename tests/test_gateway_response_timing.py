@@ -364,3 +364,15 @@ def test_folded_auth_snapshot_latency_lands_in_key_lookup(monkeypatch: pytest.Mo
     assert timing["key_lookup_ms"] == 250
     assert timing["routing_ms"] == 0
     assert timing["store_ms"] == 0
+
+
+@pytest.fixture(autouse=True, params=[False, True], ids=["shadow-off", "shadow-on"])
+def shadow_rpc_differential_mode(request, monkeypatch):
+    from tests.test_speculation_shadow import ReferenceStore
+    from trusted_router.services import speculation_shadow
+    monkeypatch.setenv("TR_SPECULATIVE_PROVIDER_SHADOW_ENABLED", str(request.param).lower())
+    dispatcher = speculation_shadow.Dispatcher(ReferenceStore(), "matrix")
+    monkeypatch.setattr(speculation_shadow, "_RUNTIME", dispatcher)
+    yield dispatcher
+    if not request.param:
+        assert dispatcher.pending.empty(), "flag-off enqueued an observation"

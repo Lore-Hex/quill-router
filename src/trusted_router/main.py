@@ -271,6 +271,9 @@ def create_app(
     async def _close_post_commit() -> None:
         close_post_commit()
 
+    if surface in {"combined", "internal"} and settings.speculative_provider_shadow_enabled:
+        from trusted_router.services.speculation_shadow import install
+        install(app, settings)
     app.state.settings = settings
     stage_d_policy_resolver = StageDPolicyResolver(
         settings,

@@ -19,6 +19,7 @@ from . import paypal as paypal
 from . import reconcile as reconcile
 from . import routable as routable
 from . import sentry as sentry
+from . import speculation as speculation
 from . import synthetic as synthetic
 from . import veriff as veriff
 from . import video_jobs as video_jobs
@@ -42,6 +43,7 @@ def register_control_internal_routes(router: APIRouter) -> None:
 def register_gateway_internal_routes(router: APIRouter) -> None:
     """Register token-authenticated billing and federation authority routes."""
     gateway.register(router)
+    speculation.register(router)
     video_jobs.register(router)
     fetch_image.register(router)
     reconcile.register(router)

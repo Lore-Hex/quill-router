@@ -180,6 +180,8 @@ def test_internal_surface_route_inventory_matches_capability_audit() -> None:
         ("POST", "/internal/gateway/settle-outbox/drain"),
         ("POST", "/internal/gateway/receipt-keys/collect"),
         ("POST", "/internal/gateway/spend-lease/register-boot"),
+        ("GET", "/internal/speculation/shadow/status"),
+        ("POST", "/internal/speculation/shadow/refresh"),
         ("POST", "/internal/gateway/home-settlement/drain"),
         ("POST", "/internal/gateway/deferred/reap"),
         ("POST", "/internal/gateway/video/jobs/prepare"),

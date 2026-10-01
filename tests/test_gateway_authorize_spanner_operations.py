@@ -893,3 +893,81 @@ def test_byok_misconfiguration_keeps_existing_error(
             "code": 400, "type": "provider_not_supported", "source": "router",
             "message": "No authorized route candidates are available for this workspace",
         }}
+
+
+@pytest.fixture(autouse=True, params=[False, True], ids=["shadow-off", "shadow-on"])
+def shadow_rpc_differential_mode(request, monkeypatch):
+    from tests.test_speculation_shadow import ReferenceStore
+    from trusted_router.services import speculation_shadow
+    monkeypatch.setenv("TR_SPECULATIVE_PROVIDER_SHADOW_ENABLED", str(request.param).lower())
+    dispatcher = speculation_shadow.Dispatcher(ReferenceStore(), "matrix")
+    monkeypatch.setattr(speculation_shadow, "_RUNTIME", dispatcher)
+    yield dispatcher
+    if not request.param:
+        assert dispatcher.pending.empty(), "flag-off enqueued an observation"
+
+
+@pytest.mark.parametrize("refund", [False, True])
+@pytest.mark.parametrize("fault", ["none", "queue-full", "observer-failed"])
+def test_shadow_response_money_and_sql_differential(monkeypatch, fixed_operation_catalog, spanner_operations, refund, fault):
+    import datetime as dt
+    import uuid
+
+    from fastapi.testclient import TestClient
+
+    from tests.test_speculation_shadow import ReferenceStore
+    from trusted_router import acquisition, gateway_timing
+    from trusted_router.main import create_app
+    from trusted_router.services import speculation_shadow as shadow
+
+    store, database, key = _seed_typed_gateway_store()
+    saved = {k: copy.deepcopy(v) for k, v in vars(database).items() if isinstance(v, (dict, list, int))}
+    fixed = dt.datetime(2026, 10, 1, tzinfo=dt.UTC)
+    original_datetime = dt.datetime
+    class Clock(original_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed if tz else fixed.replace(tzinfo=None)
+    monkeypatch.setattr(dt, "datetime", Clock)
+    monkeypatch.setattr(uuid, "uuid4", lambda: uuid.UUID(int=42))
+    monkeypatch.setattr(gateway_timing, "perf_counter", lambda: 1.0)
+    transcripts = []
+    for enabled in (False, True):
+        for k, v in saved.items():
+            setattr(database, k, copy.deepcopy(v))
+        database.now = fixed
+        store._credit_shard_counts.invalidate(key.workspace_id)
+        acquisition._clear_usage_check(key.workspace_id)
+        gateway._BROADCAST_EMPTY_CACHE.clear()
+        settings = Settings(environment="test", speculative_provider_shadow_enabled=enabled)
+        dispatcher = shadow.Dispatcher(ReferenceStore(), "diff", capacity=1)
+        if fault == "queue-full":
+            dispatcher.try_submit(shadow.Observation(dispatcher), 200, "success", {})
+        if fault == "observer-failed":
+            def fail(*args):
+                raise RuntimeError("observer failed")
+            monkeypatch.setattr(dispatcher, "try_submit", fail)
+        monkeypatch.setattr(shadow, "_RUNTIME", dispatcher)
+        client = TestClient(create_app(settings, configure_store_arg=False, init_observability=False))
+        body = _lookup_body(key).model_dump(exclude_none=True)
+        body["invocation_nonce"] = "differential-invocation"
+        # Warm metadata caches without changing balances or authorization state.
+        gateway._broadcast_destinations_for_authorize(key.workspace_id)
+        spanner_operations.clear()
+        responses = []
+        for _ in range(2):
+            result = client.post("/internal/gateway/authorize", json=body)
+            assert result.status_code == 200, result.text
+            responses.append((result.status_code, dict(result.headers), result.json()))
+        auth = result.json()["data"]
+        result = client.post("/internal/gateway/" + ("refund" if refund else "settle"), json={
+            "authorization_id": auth["authorization_id"], "actual_input_tokens": 10, "actual_output_tokens": 10,
+            "selected_endpoint": auth["endpoint_id"],
+        })
+        assert result.status_code == 200, result.text
+        responses.append((result.status_code, dict(result.headers), result.json()))
+        transcripts.append((responses, copy.deepcopy(spanner_operations), copy.deepcopy(database.typed), copy.deepcopy(database.reservations)))
+    assert len(transcripts[0][1]) == len(transcripts[1][1])
+    for off, on in zip(transcripts[0][1], transcripts[1][1], strict=True):
+        assert off == on
+    assert transcripts[0] == transcripts[1]

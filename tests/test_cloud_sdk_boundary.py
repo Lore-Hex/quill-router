@@ -41,6 +41,8 @@ ALLOWED = {
     "storage_gcp_google_ads.py",
     "storage_gcp_io.py",
     "storage_gcp_settle_outbox.py",
+    # Native Spanner implementation of the isolated, optional ShadowStore port.
+    "storage_gcp_speculation_shadow.py",
     # The two explicit cloud ports. Both import lazily so a non-GCP deployment
     # need not install the Google libraries at all.
     "storage_errors.py",

@@ -91,27 +91,88 @@ def _scope() -> Iterator[GatewayTiming | None]:
             _CURRENT.reset(token)
 
 
+_OUTCOME_TIMING: ContextVar[dict[str, int] | None] = ContextVar("shadow_outcome_timing", default=None)
+
+
+@contextmanager
+def _authorize_outcome(name: str, args: Any, kwargs: Any) -> Iterator[None]:
+    settings = kwargs.get("settings") if "settings" in kwargs else (args[2] if len(args) > 2 else None)
+    if name not in {"authorize_gateway", "_authorize_gateway_sync"} or settings is None or not settings.speculative_provider_shadow_enabled:
+        yield
+        return
+    from trusted_router.services.speculation_shadow import complete, outcome_scope
+    with outcome_scope(settings) as observation:
+        if observation is None:
+            yield
+            return
+        token = _OUTCOME_TIMING.set({})
+        error = None
+        try:
+            yield
+        except Exception as exc:
+            error = exc
+            raise
+        finally:
+            timing = _OUTCOME_TIMING.get() or {}
+            if error is not None:
+                detail = getattr(error, "detail", {})
+                data = detail.get("data", {}) if isinstance(detail, dict) else {}
+                timing = data.get("timing", getattr(error, "gateway_timing_data", {}).get("timing", {}))
+            try:
+                complete(observation, timing, error)
+            except Exception:
+                observation.dispatcher.loss.set()
+            finally:
+                _OUTCOME_TIMING.reset(token)
+
+
+def _save_outcome_timing(response: dict[str, Any]) -> None:
+    target = _OUTCOME_TIMING.get()
+    if target is not None:
+        target.update(response["data"].get("timing", {}))
+
+
 def timed_gateway_sync(
     func: Callable[P, dict[str, Any]],
 ) -> Callable[P, dict[str, Any]]:
+    authorize = func.__name__ == "_authorize_gateway_sync"
     @wraps(func)
     def timed(*args: P.args, **kwargs: P.kwargs) -> dict[str, Any]:
-        with _scope() as timing:
-            response = func(*args, **kwargs)
-            if timing is not None:
-                response["data"]["timing"] = timing.snapshot()
-            return response
+        settings: Any = kwargs.get("settings") if "settings" in kwargs else (args[2] if len(args) > 2 else None)
+        if not authorize or settings is None or not settings.speculative_provider_shadow_enabled:
+            with _scope() as timing:
+                response = func(*args, **kwargs)
+                if timing is not None:
+                    response["data"]["timing"] = timing.snapshot()
+                return response
+        with _authorize_outcome(func.__name__, args, kwargs):
+            with _scope() as timing:
+                response = func(*args, **kwargs)
+                if timing is not None:
+                    response["data"]["timing"] = timing.snapshot()
+                _save_outcome_timing(response)
+                return response
     return timed
 
 
 def timed_gateway_async(
     func: Callable[P, Awaitable[dict[str, Any]]],
 ) -> Callable[P, Awaitable[dict[str, Any]]]:
+    authorize = func.__name__ == "authorize_gateway"
     @wraps(func)
     async def timed(*args: P.args, **kwargs: P.kwargs) -> dict[str, Any]:
-        with _scope() as timing:
-            response = await func(*args, **kwargs)
-            if timing is not None:
-                response["data"]["timing"] = timing.snapshot()
-            return response
+        settings: Any = kwargs.get("settings") if "settings" in kwargs else (args[2] if len(args) > 2 else None)
+        if not authorize or settings is None or not settings.speculative_provider_shadow_enabled:
+            with _scope() as timing:
+                response = await func(*args, **kwargs)
+                if timing is not None:
+                    response["data"]["timing"] = timing.snapshot()
+                return response
+        with _authorize_outcome(func.__name__, args, kwargs):
+            with _scope() as timing:
+                response = await func(*args, **kwargs)
+                if timing is not None:
+                    response["data"]["timing"] = timing.snapshot()
+                _save_outcome_timing(response)
+                return response
     return timed

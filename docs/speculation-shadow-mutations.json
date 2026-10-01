@@ -1,0 +1,104 @@
+[
+  {
+    "mutation": "duplicate callback counts",
+    "baseline": "pass",
+    "result": "red",
+    "restored": "pass",
+    "gate": "tests/test_speculation_shadow.py::test_distinct_history_replay_and_invocation_dedup",
+    "summary": [
+      "FAILED tests/test_speculation_shadow.py::test_distinct_history_replay_and_invocation_dedup",
+      "1 failed, 6 warnings in 5.69s"
+    ]
+  },
+  {
+    "mutation": "current request qualifies",
+    "baseline": "pass",
+    "result": "red",
+    "restored": "pass",
+    "gate": "tests/test_speculation_shadow.py::test_current_request_cannot_qualify_its_predecision",
+    "summary": [
+      "FAILED tests/test_speculation_shadow.py::test_current_request_cannot_qualify_its_predecision",
+      "1 failed, 6 warnings in 7.72s"
+    ]
+  },
+  {
+    "mutation": "submit waits on worker IO",
+    "baseline": "pass",
+    "result": "red",
+    "restored": "pass",
+    "gate": "tests/test_speculation_shadow.py::test_submit_does_not_wait_for_worker_io",
+    "summary": [
+      "FAILED tests/test_speculation_shadow.py::test_submit_does_not_wait_for_worker_io",
+      "1 failed, 6 warnings in 8.54s"
+    ]
+  },
+  {
+    "mutation": "extra synchronous boot read",
+    "baseline": "pass",
+    "result": "red",
+    "restored": "pass",
+    "gate": "tests/test_gateway_authorize_spanner_operations.py::test_warm_lookup_authorize_exact_sequence_and_contents",
+    "summary": [
+      "FAILED tests/test_gateway_authorize_spanner_operations.py::test_warm_lookup_authorize_exact_sequence_and_contents[shadow-on-False-False]",
+      "FAILED tests/test_gateway_authorize_spanner_operations.py::test_warm_lookup_authorize_exact_sequence_and_contents[shadow-on-False-True]",
+      "FAILED tests/test_gateway_authorize_spanner_operations.py::test_warm_lookup_authorize_exact_sequence_and_contents[shadow-on-True-False]",
+      "FAILED tests/test_gateway_authorize_spanner_operations.py::test_warm_lookup_authorize_exact_sequence_and_contents[shadow-on-True-True]",
+      "4 failed, 4 passed, 6 warnings in 9.05s"
+    ]
+  },
+  {
+    "mutation": "success clears sticky loss",
+    "baseline": "pass",
+    "result": "red",
+    "restored": "pass",
+    "gate": "tests/test_speculation_shadow.py::test_loss_restart_unacknowledged_tail_and_late_membership",
+    "summary": [
+      "FAILED tests/test_speculation_shadow.py::test_loss_restart_unacknowledged_tail_and_late_membership",
+      "1 failed, 6 warnings in 8.46s"
+    ]
+  },
+  {
+    "mutation": "lifetime topup treated as paid",
+    "baseline": "pass",
+    "result": "red",
+    "restored": "pass",
+    "gate": "tests/test_speculation_shadow.py::test_promotional_mixed_funds_conservation",
+    "summary": [
+      "FAILED tests/test_speculation_shadow.py::test_promotional_mixed_funds_conservation",
+      "1 failed, 6 warnings in 5.26s"
+    ]
+  },
+  {
+    "mutation": "real grant type",
+    "baseline": "pass",
+    "result": "red",
+    "restored": "pass",
+    "gate": "tests/test_speculation_shadow.py::test_exact_v1_signer_round_trip_frozen_verifier_and_authority",
+    "summary": [
+      "FAILED tests/test_speculation_shadow.py::test_exact_v1_signer_round_trip_frozen_verifier_and_authority",
+      "1 failed, 6 warnings in 5.25s"
+    ]
+  },
+  {
+    "mutation": "real store namespace",
+    "baseline": "pass",
+    "result": "red",
+    "restored": "pass",
+    "gate": "tests/test_speculation_shadow.py::test_authority_namespace_at_native_mutation_boundary",
+    "summary": [
+      "FAILED tests/test_speculation_shadow.py::test_authority_namespace_at_native_mutation_boundary",
+      "1 failed, 6 warnings in 4.60s"
+    ]
+  },
+  {
+    "mutation": "first batch identity reused",
+    "baseline": "pass",
+    "result": "red",
+    "restored": "pass",
+    "gate": "tests/test_speculation_shadow.py::test_batch_binding_every_member_and_exact_body",
+    "summary": [
+      "FAILED tests/test_speculation_shadow.py::test_batch_binding_every_member_and_exact_body",
+      "1 failed, 6 warnings in 4.70s"
+    ]
+  }
+]

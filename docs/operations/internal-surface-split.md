@@ -110,6 +110,8 @@ and provider analytics are read from ClickHouse alone.
 | `POST /internal/gateway/authorize` | Key/model reads and credit/key reservations | Storage; gateway token; conditional federation tokens |
 | `POST /internal/gateway/settle` | Credit settlement, generation/analytics writes, settlement outbox, and durable auto-refill sub-request; no payment credential | Storage; gateway token |
 | `POST /internal/gateway/refund` | Credit/key refund and settlement outbox | Storage; gateway token |
+| `GET /internal/speculation/shadow/status` | Process-local shadow health and counters; no storage reads | Gateway token |
+| `POST /internal/speculation/shadow/refresh` | Disabled by default with no storage access; when enabled, bounded boot/key/trust/route reads and isolated shadow projection/grant writes, never money or real permits | Gateway token; authenticated boot; optional separate shadow issuer key; shadow Spanner tables required only before enablement |
 | `POST /internal/gateway/settle-outbox/drain` | Idempotent settlement recovery and activity repair | Storage; gateway token |
 | `POST /internal/gateway/home-settlement/drain` | Deferred-debt reads/writes and outbound HTTPS to the configured home plane | Storage; gateway token; conditional settlement-home token |
 | `POST /internal/gateway/deferred/reap` | Expired deferred-authorization cleanup | Storage; gateway token |

@@ -13,6 +13,7 @@ SOURCE_DIGESTS = {'scripts/deploy/infra.sh': '259931cd73d94d0f3fc535b5f8a6ef523a
  'scripts/deploy/migrate_operational_analytics_outbox.sh': 'ff4a7d8cdcfcf616065bec75a2da5927534ebde9d57e63c47c636227d78e4970',
  'scripts/deploy/migrate_receipt_key_versions.sh': '37c46050906d7f5fe50bc45e732ec1ba99059b916efc659aef1bb6882d437ef6',
  'scripts/deploy/migrate_request_retention.sh': '6817965c0ae1c836553aa4e94124d13e6d3cd98bf891fa11948ed5a0d156f510',
+ 'scripts/deploy/migrate_speculation_shadow.sh': '9f40d3f7f851f66ebbc23d489e8f09ee93fa405a698dfaea88746eb36c8273d7',
  'scripts/deploy/migrate_spend_lease.sh': '198790ab42b43f20306431e386db98188a0c0ad88f948afbc7232f072a7c2798',
  'scripts/deploy/migrate_trust_reconciliation.sh': '7864237a2a0a187f5db14da4812e96481f105b28c4737bc2cfc83b481321140c',
  'scripts/deploy/migrate_typed_counters.sh': 'd1f3dc7eaa4fc383bcea7ce75846b92dd71532296d4773c3aa9cc818c24fc909',
@@ -52,6 +53,31 @@ DDL = ('CREATE TABLE tr_entities (kind STRING(64) NOT NULL, id STRING(512) NOT N
  '(authorization_id)',
  'CREATE TABLE tr_stage_d_policy_watermark ( plane STRING(16) NOT NULL, highest_sequence INT64 '
  'NOT NULL, updated_at TIMESTAMP ) PRIMARY KEY (plane)',
+ 'CREATE TABLE tr_speculation_shadow_event ( plane STRING(32) NOT NULL, producer_incarnation '
+ 'STRING(128) NOT NULL, sequence INT64 NOT NULL, body STRING(MAX) NOT NULL, updated_at '
+ 'TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true) ) PRIMARY KEY (plane, '
+ 'producer_incarnation, sequence)',
+ 'CREATE TABLE tr_speculation_shadow_success ( plane STRING(32) NOT NULL, identity STRING(128) '
+ 'NOT NULL, body STRING(MAX) NOT NULL, updated_at TIMESTAMP NOT NULL OPTIONS '
+ '(allow_commit_timestamp=true) ) PRIMARY KEY (plane, identity)',
+ 'CREATE TABLE tr_speculation_shadow_scope ( plane STRING(32) NOT NULL, identity STRING(128) '
+ 'NOT NULL, body STRING(MAX) NOT NULL, updated_at TIMESTAMP NOT NULL OPTIONS '
+ '(allow_commit_timestamp=true) ) PRIMARY KEY (plane, identity)',
+ 'CREATE TABLE tr_speculation_shadow_producer ( plane STRING(32) NOT NULL, identity '
+ 'STRING(128) NOT NULL, body STRING(MAX) NOT NULL, updated_at TIMESTAMP NOT NULL OPTIONS '
+ '(allow_commit_timestamp=true) ) PRIMARY KEY (plane, identity)',
+ 'CREATE TABLE tr_speculation_shadow_paid ( plane STRING(32) NOT NULL, identity STRING(128) '
+ 'NOT NULL, body STRING(MAX) NOT NULL, updated_at TIMESTAMP NOT NULL OPTIONS '
+ '(allow_commit_timestamp=true) ) PRIMARY KEY (plane, identity)',
+ 'CREATE TABLE tr_speculation_shadow_route ( plane STRING(32) NOT NULL, identity STRING(128) '
+ 'NOT NULL, body STRING(MAX) NOT NULL, updated_at TIMESTAMP NOT NULL OPTIONS '
+ '(allow_commit_timestamp=true) ) PRIMARY KEY (plane, identity)',
+ 'CREATE TABLE tr_speculation_shadow_grant ( plane STRING(32) NOT NULL, identity STRING(128) '
+ 'NOT NULL, body STRING(MAX) NOT NULL, updated_at TIMESTAMP NOT NULL OPTIONS '
+ '(allow_commit_timestamp=true) ) PRIMARY KEY (plane, identity)',
+ 'CREATE TABLE tr_speculation_shadow_exposure ( plane STRING(32) NOT NULL, identity '
+ 'STRING(128) NOT NULL, body STRING(MAX) NOT NULL, updated_at TIMESTAMP NOT NULL OPTIONS '
+ '(allow_commit_timestamp=true) ) PRIMARY KEY (plane, identity)',
  'CREATE TABLE spend_lease_scope_arbitration ( scope_salt STRING(4) NOT NULL, '
  'idempotency_scope STRING(256) NOT NULL, registration_kind STRING(16) NOT NULL, '
  'authorization_id STRING(64), spend_lease_id STRING(64), spend_lease_gen INT64, '

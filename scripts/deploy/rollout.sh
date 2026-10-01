@@ -357,6 +357,11 @@ if [ "${TR_TRUST_JOBS_DEPLOY}" = "1" ]; then
 fi
 
 ENV_VARS=(
+  # PR3 binary deploys OFF. Migration and reviewed cohort evidence precede enable.
+  "TR_SPECULATIVE_PROVIDER_SHADOW_ENABLED=false"
+  'TR_SPECULATION_SHADOW_WORKSPACES=[]'
+  'TR_SPECULATION_SHADOW_ROUTES=[]'
+  'TR_SPECULATION_SHADOW_IMAGES=[]'
   "TR_ENVIRONMENT=production"
   "TR_SERVICE_SURFACE=combined"
   "TR_OPERATOR_IDENTITIES=${TR_OPERATOR_IDENTITIES:-joseph@jperla.com}"
