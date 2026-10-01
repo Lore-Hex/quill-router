@@ -3,6 +3,7 @@
 {% macro dollars(value) %}${{ '{:,}'.format(value) }}{% endmacro %}
 {% block body_attributes %}class="token-index"{% endblock %}
 {% block head_extra %}<link rel="stylesheet" href="/static/token-index.css?v={{ static_version|default('local') }}">{% endblock %}
+{% block body_scripts %}<script src="/static/token-index.js?v={{ static_version|default('local') }}" defer></script>{% endblock %}
 {% block hero %}
 <section class="ti-hero ti-inner" aria-labelledby="ti-title">
   <p class="ti-eyebrow">Token price index &middot; $NYTE</p>
@@ -14,7 +15,7 @@
     <span class="ti-change">{{ change(quotes.ALL.change_7d) }} over 7 days</span>
     <span class="ti-asof">As of <time datetime="{{ as_of_iso }}">{{ as_of }}</time></span>
   </div>
-  <figure class="ti-chart">
+  <figure class="ti-chart" data-ti-chart="nyte" data-series="/static/token-index/series.json?v={{ static_version|default('local') }}">
     <img class="ti-img-dark" src="/static/token-index/nyte-dark.png?v={{ static_version|default('local') }}" width="1200" height="480" alt="{{ chart_alt.nyte }}" fetchpriority="high">
     <img class="ti-img-light" src="/static/token-index/nyte-light.png?v={{ static_version|default('local') }}" width="1200" height="480" alt="{{ chart_alt.nyte }}" loading="lazy">
   </figure>
@@ -33,7 +34,7 @@
     </div>
     {% endfor %}
   </div>
-  <figure class="ti-chart">
+  <figure class="ti-chart ti-chart-grades" data-ti-chart="grades" data-series="/static/token-index/series.json?v={{ static_version|default('local') }}">
     <img class="ti-img-dark" src="/static/token-index/grades-dark.png?v={{ static_version|default('local') }}" width="1200" height="560" alt="{{ chart_alt.grades }}" loading="lazy">
     <img class="ti-img-light" src="/static/token-index/grades-light.png?v={{ static_version|default('local') }}" width="1200" height="560" alt="{{ chart_alt.grades }}" loading="lazy">
   </figure>

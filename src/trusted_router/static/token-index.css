@@ -1,5 +1,6 @@
 /* /index — the NYTE Token Index page. Fixed chart images in a dark and a light
-   rendering; the theme toggle (data-theme on <html>) picks one. */
+   rendering (the theme toggle, data-theme on <html>, picks one) are the no-JS fallback;
+   token-index.js replaces them with interactive SVG charts drawn from these variables. */
 .token-index .public-wrap { width: 100%; max-width: none; margin: 0; padding: 0; }
 .token-index * { box-sizing: border-box; letter-spacing: 0; }
 .ti-inner { width: min(100%, var(--page-max, 1120px)); margin-inline: auto; padding-inline: 32px; }
@@ -42,6 +43,47 @@
 .ti-note { padding-block: 8px 72px; border-top: 1px solid var(--border-hairline); }
 .ti-note p { font-size: 14px; color: var(--text-muted); }
 .ti-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* Interactive charts (token-index.js). Lines take their grade's --stripe; NYTE is sage in its own
+   chart and a dotted reference line among the grades. */
+:root .ti-chart.is-live > img { display: none !important; }   /* outranks the light-theme image rule */
+.token-index { --ti-ref: #acb5a4; }
+:root[data-theme="light"] .token-index { --ti-ref: #454d42; }
+.ti-all { --stripe: var(--sage); }
+.ti-chart-grades .ti-all { --stripe: var(--ti-ref); }
+.ti-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin-bottom: 14px; }
+.ti-buttons { display: inline-flex; border: 1px solid var(--border-default); border-radius: var(--r-control, 2px); overflow: hidden; }
+.ti-button { font: 12px/1 var(--font-mono); padding: 7px 11px; border: 0; background: transparent; color: var(--text-muted); cursor: pointer; }
+.ti-button + .ti-button { border-left: 1px solid var(--border-default); }
+.ti-button[aria-pressed="true"] { background: var(--surface-raised); color: var(--text-display); }
+.ti-legend { display: flex; flex-wrap: wrap; gap: 6px; }
+.ti-chip { display: inline-flex; align-items: center; gap: 7px; font: 12px/1 var(--font-mono); padding: 6px 10px; border: 1px solid var(--border-default); border-radius: 999px; background: transparent; color: var(--text-body); cursor: pointer; }
+.ti-chip::before { content: ""; width: 12px; border-top: 2px solid var(--stripe); }
+.ti-chip.ti-all::before { border-top-style: dotted; }
+.ti-chip[aria-pressed="false"] { color: var(--text-muted); opacity: 0.5; }
+.ti-button:focus-visible, .ti-chip:focus-visible, .ti-svg:focus-visible { outline: 2px solid var(--text-accent); outline-offset: 2px; }
+.ti-plot { position: relative; }
+.ti-svg { display: block; width: 100%; height: auto; overflow: visible; touch-action: pan-y; }
+.ti-grid line { stroke: var(--border-hairline); stroke-width: 1; }
+.ti-axis line { stroke: var(--border-default); stroke-width: 1; }
+.ti-ylabel, .ti-xlabel { font: 12px var(--font-mono); fill: var(--text-muted); }
+.ti-ylabel { text-anchor: end; dominant-baseline: middle; }
+.ti-xlabel { text-anchor: middle; }
+.ti-line { fill: none; stroke: var(--stripe); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.ti-line.ti-ref { stroke-width: 1.3; stroke-dasharray: 2 3; }
+.ti-area { fill: var(--sage); fill-opacity: 0.1; stroke: none; }
+.ti-end { font: 13px var(--font-mono); fill: var(--stripe); dominant-baseline: middle; }
+.ti-chart:not(.ti-chart-grades) .ti-end { font-size: 15px; fill: var(--text-display); }
+.ti-end-dot { fill: var(--stripe); }
+.ti-crosshair { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.ti-dot { fill: var(--surface-card); stroke: var(--stripe); stroke-width: 2; }
+.ti-tip { position: absolute; z-index: 2; min-width: 168px; padding: 8px 10px; border: 1px solid var(--border-default); border-radius: var(--r-panel, 4px); background: var(--surface-card); box-shadow: 0 6px 18px rgb(0 0 0 / 25%); font: 12px/1.6 var(--font-mono); color: var(--text-body); pointer-events: none; }
+.ti-tip-date { color: var(--text-muted); margin-bottom: 2px; }
+.ti-tip-row { display: flex; justify-content: space-between; gap: 16px; }
+.ti-tip-name { display: inline-flex; align-items: center; gap: 6px; }
+.ti-tip-name::before { content: ""; width: 10px; border-top: 2px solid var(--stripe); }
+.ti-chart-grades .ti-tip-row.ti-all .ti-tip-name::before { border-top-style: dotted; }
+.ti-tip-value { color: var(--text-display); font-variant-numeric: tabular-nums; }
 
 @media (max-width: 860px) {
   .ti-quotes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
