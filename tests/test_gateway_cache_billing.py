@@ -4,8 +4,10 @@ The attested gateway reports cache_read_input_tokens /
 cache_creation_input_tokens. Two things must hold:
 
 1. Cached tokens are BILLED (pre-fix, Anthropic cache reads billed at
-   zero because Anthropic's input_tokens exclude them) — at the
-   provider's discounted multiple of the prompt price.
+   zero because Anthropic's input_tokens exclude them). Reads bill at the
+   route's published cached rate, or at the provider's discounted multiple
+   of the prompt price when the route publishes none; writes bill at the
+   provider's multiple.
 2. Provider semantics are normalized: Anthropic input_tokens EXCLUDE
    the cached tokens; OpenAI-compatible prompt counts INCLUDE them.
 """
@@ -84,12 +86,13 @@ def test_anthropic_cache_read_and_write_tokens_are_billed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Claude Haiku 4.5 on a fixture route at $1/M input, $5/M output and a
-    # published $0.10/M cache read: what Anthropic charges today is provider state.
+    # published $0.08/M cache read, apart from Anthropic's 0.1x multiple: what
+    # Anthropic charges today is provider state.
     tier = PriceTier(
         max_prompt_tokens=None,
         prompt_price_microdollars_per_million_tokens=1_000_000,
         completion_price_microdollars_per_million_tokens=5_000_000,
-        prompt_cached_price_microdollars_per_million_tokens=100_000,
+        prompt_cached_price_microdollars_per_million_tokens=80_000,
     )
     drop_routes(monkeypatch, "anthropic/claude-haiku-4.5")
     serve_on_fixture_route(
@@ -119,9 +122,9 @@ def test_anthropic_cache_read_and_write_tokens_are_billed(
     data = settle.json()["data"]
 
     # 14 input tokens at $1/M, 6 output at $5/M, 6,081 cache reads at the
-    # published $0.10/M and 2,000 cache writes at Anthropic's 1.25x input.
+    # published $0.08/M and 2,000 cache writes at Anthropic's 1.25x input.
     # Billing the cache tokens at zero, the regression, comes to 14 + 30.
-    assert data["cost_microdollars"] == 14 + 30 + 608 + 2_500
+    assert data["cost_microdollars"] == 14 + 30 + 486 + 2_500
 
     generation = STORE.get_generation(data["generation_id"])
     assert generation is not None
