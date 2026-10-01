@@ -2350,7 +2350,6 @@ def dashboard_html(
         .get_template("homepage/index.html" if homepage_enabled else "dashboard.html")
         .render(
             **homepage,
-            homepage_review=settings.homepage_review_tools_enabled and environment in {"local", "test"},
             homepage_noindex=environment in {"local", "test"},
             organization_json_ld=_json_ld_graph(settings),
             api_base_url=resolved_api_base_url,

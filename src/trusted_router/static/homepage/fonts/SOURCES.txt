@@ -1,12 +1,1 @@
-Official Google Fonts distribution. Downloaded 2026-09-28. All families licensed under SIL Open Font License 1.1.
-
-Archivo: existing /assets/archivo.woff2 retained unchanged; official family and license: https://github.com/google/fonts/tree/main/ofl/archivo
-
-plusjakartasans: https://raw.githubusercontent.com/google/fonts/main/ofl/plusjakartasans/PlusJakartaSans%5Bwght%5D.ttf
-SHA256: 89b3fb38aa0d275d7a731d0d817a4f1622b316b4d7fbdedcf02ee9099ff68bc8
-
-ibmplexsans: https://raw.githubusercontent.com/google/fonts/main/ofl/ibmplexsans/IBMPlexSans%5Bwdth%2Cwght%5D.ttf
-SHA256: 3b031aa4216174205bd8471f88a49b91f093169e9e87bd5262242bc5967fe2e3
-
-manrope: https://raw.githubusercontent.com/google/fonts/main/ofl/manrope/Manrope%5Bwght%5D.ttf
-SHA256: 3ae11c49db0455a3cc33e37d380f20fdb8c7f8b41dc07625c177e3d87a9d6ae6
+Archivo (SIL Open Font License 1.1): /static/homepage/archivo.woff2, retained unchanged from the marketing handoff. Official family and license: https://github.com/google/fonts/tree/main/ofl/archivo

@@ -1,5 +1,4 @@
 /* Application integration only. Approved homepage styles remain separate. */
-body.homepage-production{--preview-bar-height:0px}
 .signin-modal{max-width:380px;box-shadow:0 24px 60px #0009}
 .signin-modal h2{margin:0 0 6px;font-size:24px}.signin-sub,.signin-foot{color:var(--muted);font-size:13px}
 .signin-close{position:absolute;top:10px;right:12px;background:none;border:0;color:var(--cream);font-size:22px;min-width:44px;min-height:44px}
