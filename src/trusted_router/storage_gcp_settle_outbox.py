@@ -171,6 +171,143 @@ def done_retention_statements(
     return statements
 
 
+def intent_insert_statements(
+    param_types: Any,
+    row: SettleOutboxRow,
+    *,
+    now: str,
+    next_attempt_at: str,
+    resolved: bool = False,
+) -> list[DmlStatement]:
+    """INSERT-as-claim of one intent, plus the retention clears the intent implies.
+
+    ``enqueue`` writes the pending intent. ``resolved=True`` writes the same row
+    in exactly the state ``mark(done=True)`` leaves a just-enqueued, unleased row:
+    status done, one attempt, ``terminal_at`` armed, frozen body dropped and no
+    settlement due time (so it never enters the sparse due index). The one-commit
+    settle records and resolves its intent in the commit that applies the charge.
+    Refill work is attached identically either way: it has its own due time.
+
+    Both callers share this builder so a fold cannot silently drop the enqueue's
+    retention clears (lesson: folding moves only the statements you copy). Row
+    counts: ``intent_insert_counts``. The INSERT raises ALREADY_EXISTS when the
+    intent is already recorded; callers own that replay.
+    """
+    pt = param_types
+    auto_refill_requested = row.auto_refill_workspace_id is not None
+    cols = ", ".join(INSERT_COLUMNS)
+    binds = ", ".join(f"@{c}" for c in INSERT_COLUMNS)
+    values = {
+        "authorization_id": row.authorization_id,
+        "intent_kind": row.intent_kind,
+        "settle_origin": row.settle_origin,
+        "reservation_id": row.reservation_id,
+        "actual_cost_micro": int(row.actual_cost_micro),
+        "selected_endpoint_id": row.selected_endpoint_id,
+        "model_id": row.model_id,
+        "selected_usage_type": row.selected_usage_type,
+        "settle_body": None if resolved else row.settle_body,
+        "status": "done" if resolved else "pending",
+        "attempts": 1 if resolved else 0,
+        "last_error": None,
+        "next_attempt_at": None if resolved else next_attempt_at,
+        "lease_owner": None,
+        "leased_until": None,
+        "created_at": now,
+        "updated_at": now,
+        "terminal_at": now if resolved else None,
+        "auto_refill_workspace_id": row.auto_refill_workspace_id,
+        "auto_refill_status": "pending" if auto_refill_requested else None,
+        "auto_refill_attempts": 0,
+        "auto_refill_last_error": None,
+        "auto_refill_next_attempt_at": (next_attempt_at if auto_refill_requested else None),
+        "auto_refill_lease_owner": None,
+        "auto_refill_leased_until": None,
+        "auto_refill_enqueued_at": now if auto_refill_requested else None,
+        "auto_refill_updated_at": now if auto_refill_requested else None,
+        "auto_refill_terminal_at": None,
+    }
+    types = {
+        "authorization_id": pt.STRING,
+        "intent_kind": pt.STRING,
+        "settle_origin": pt.STRING,
+        "reservation_id": pt.STRING,
+        "actual_cost_micro": pt.INT64,
+        "selected_endpoint_id": pt.STRING,
+        "model_id": pt.STRING,
+        "selected_usage_type": pt.STRING,
+        "settle_body": pt.STRING,
+        "status": pt.STRING,
+        "attempts": pt.INT64,
+        "last_error": pt.STRING,
+        "next_attempt_at": pt.TIMESTAMP,
+        "lease_owner": pt.STRING,
+        "leased_until": pt.TIMESTAMP,
+        "created_at": pt.TIMESTAMP,
+        "updated_at": pt.TIMESTAMP,
+        "terminal_at": pt.TIMESTAMP,
+        "auto_refill_workspace_id": pt.STRING,
+        "auto_refill_status": pt.STRING,
+        "auto_refill_attempts": pt.INT64,
+        "auto_refill_last_error": pt.STRING,
+        "auto_refill_next_attempt_at": pt.TIMESTAMP,
+        "auto_refill_lease_owner": pt.STRING,
+        "auto_refill_leased_until": pt.TIMESTAMP,
+        "auto_refill_enqueued_at": pt.TIMESTAMP,
+        "auto_refill_updated_at": pt.TIMESTAMP,
+        "auto_refill_terminal_at": pt.TIMESTAMP,
+    }
+    statements = [
+        (
+            f"INSERT INTO tr_settle_outbox ({cols}) VALUES ({binds})",  # noqa: S608 - fixed columns
+            values,
+            types,
+        ),
+        gateway_authorization_retention_clear_statement(pt, row.authorization_id),
+    ]
+    if row.reservation_id:
+        statements.append(reservation_retention_clear_statement(pt, str(row.reservation_id)))
+    return statements
+
+
+def intent_insert_counts(statements: list[DmlStatement]) -> list[tuple[int, ...]]:
+    """The INSERT must create its row; each retention UPDATE may find nothing to do."""
+    return [(1,), *[(0, 1)] * (len(statements) - 1)]
+
+
+def resolved_intent_statements(
+    param_types: Any,
+    row: SettleOutboxRow,
+    *,
+    initial_delay_seconds: int = 0,
+) -> list[DmlStatement]:
+    """The one-commit settle's outbox writes, in the order the two commits made them.
+
+    First the enqueue's own statements (the INSERT, already resolved, and its
+    retention clears), then the done-mark's retention resolution: arm both
+    shared records, or keep them TTL-ineligible while a sibling intent is
+    pending/dead. One ``now`` is shared, as one done-mark would. The caller has
+    already claimed the reservation in the same batch; the claim's deferred
+    ``terminal_at`` is what the resolution below arms. Every statement after the
+    INSERT is a retention UPDATE, so ``intent_insert_counts`` covers the list.
+    """
+    if not row.reservation_id:
+        raise ValueError("a one-commit settle intent names its reservation")
+    now = _iso_now()
+    next_attempt_at = (
+        _iso_after_seconds(initial_delay_seconds) if initial_delay_seconds > 0 else now
+    )
+    return [
+        *intent_insert_statements(
+            param_types, row, now=now, next_attempt_at=next_attempt_at, resolved=True,
+        ),
+        *done_retention_statements(
+            param_types, authorization_id=row.authorization_id, intent_kind=row.intent_kind,
+            reservation_id=row.reservation_id, now=now,
+        ),
+    ]
+
+
 # Sequential callers consume the authoritative reservation ID before retention.
 # Speculative callers below guard their candidate ID and discard on a miss.
 _DONE_ROW_SQL = (
@@ -362,82 +499,12 @@ class SpannerSettleOutbox:
         )
 
         def insert_txn(transaction: Any) -> None:
-            cols = ", ".join(INSERT_COLUMNS)
-            binds = ", ".join(f"@{c}" for c in INSERT_COLUMNS)
-            auto_refill_requested = row.auto_refill_workspace_id is not None
-            values = {
-                "authorization_id": row.authorization_id,
-                "intent_kind": row.intent_kind,
-                "settle_origin": row.settle_origin,
-                "reservation_id": row.reservation_id,
-                "actual_cost_micro": int(row.actual_cost_micro),
-                "selected_endpoint_id": row.selected_endpoint_id,
-                "model_id": row.model_id,
-                "selected_usage_type": row.selected_usage_type,
-                "settle_body": row.settle_body,
-                "status": "pending",
-                "attempts": 0,
-                "last_error": None,
-                "next_attempt_at": next_attempt_at,
-                "lease_owner": None,
-                "leased_until": None,
-                "created_at": now,
-                "updated_at": now,
-                "terminal_at": None,
-                "auto_refill_workspace_id": row.auto_refill_workspace_id,
-                "auto_refill_status": "pending" if auto_refill_requested else None,
-                "auto_refill_attempts": 0,
-                "auto_refill_last_error": None,
-                "auto_refill_next_attempt_at": (next_attempt_at if auto_refill_requested else None),
-                "auto_refill_lease_owner": None,
-                "auto_refill_leased_until": None,
-                "auto_refill_enqueued_at": now if auto_refill_requested else None,
-                "auto_refill_updated_at": now if auto_refill_requested else None,
-                "auto_refill_terminal_at": None,
-            }
-            types = {
-                "authorization_id": pt.STRING,
-                "intent_kind": pt.STRING,
-                "settle_origin": pt.STRING,
-                "reservation_id": pt.STRING,
-                "actual_cost_micro": pt.INT64,
-                "selected_endpoint_id": pt.STRING,
-                "model_id": pt.STRING,
-                "selected_usage_type": pt.STRING,
-                "settle_body": pt.STRING,
-                "status": pt.STRING,
-                "attempts": pt.INT64,
-                "last_error": pt.STRING,
-                "next_attempt_at": pt.TIMESTAMP,
-                "lease_owner": pt.STRING,
-                "leased_until": pt.TIMESTAMP,
-                "created_at": pt.TIMESTAMP,
-                "updated_at": pt.TIMESTAMP,
-                "terminal_at": pt.TIMESTAMP,
-                "auto_refill_workspace_id": pt.STRING,
-                "auto_refill_status": pt.STRING,
-                "auto_refill_attempts": pt.INT64,
-                "auto_refill_last_error": pt.STRING,
-                "auto_refill_next_attempt_at": pt.TIMESTAMP,
-                "auto_refill_lease_owner": pt.STRING,
-                "auto_refill_leased_until": pt.TIMESTAMP,
-                "auto_refill_enqueued_at": pt.TIMESTAMP,
-                "auto_refill_updated_at": pt.TIMESTAMP,
-                "auto_refill_terminal_at": pt.TIMESTAMP,
-            }
-            statements = [
-                (
-                    f"INSERT INTO tr_settle_outbox ({cols}) VALUES ({binds})",  # noqa: S608 - fixed columns
-                    values,
-                    types,
-                ),
-                gateway_authorization_retention_clear_statement(pt, row.authorization_id),
-            ]
-            if row.reservation_id:
-                statements.append(reservation_retention_clear_statement(pt, str(row.reservation_id)))
+            statements = intent_insert_statements(
+                pt, row, now=now, next_attempt_at=next_attempt_at,
+            )
             # INSERT-as-claim and its retention clears are independent. A failed
             # INSERT stops the batch; the caller's existing replay path is unchanged.
-            execute_batch_dml(transaction, statements, [(1,), *[(0, 1)] * (len(statements) - 1)])
+            execute_batch_dml(transaction, statements, intent_insert_counts(statements))
 
         try:
             run_in_transaction_with_retry(self._database, insert_txn)

@@ -52,7 +52,25 @@ def optional_executor(monkeypatch: pytest.MonkeyPatch, reset_store: None) -> Any
 
 
 @pytest.fixture
-def scenario(monkeypatch: pytest.MonkeyPatch) -> Any:
+def scenario(monkeypatch: pytest.MonkeyPatch, one_commit_scenario: Any) -> Any:
+    """The durable two-commit settle, whose optional writes run after the reply.
+
+    A one-commit settle (the happy path) has no optional write left to run
+    after the reply: its benchmark rides in the money commit. Every deviation
+    falls back to this flow, so its post-reply guarantees stay load-bearing.
+    The one-commit attempt declines exactly as it does on any deviation.
+    """
+    from trusted_router.storage_gcp import SpannerStore
+
+    def declined(self: Any, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(SpannerStore, "typed_settle_one_commit_result", declined)
+    return one_commit_scenario
+
+
+@pytest.fixture
+def one_commit_scenario(monkeypatch: pytest.MonkeyPatch) -> Any:
     store, db = make_fake_store(
         operational_analytics_outbox_enabled=True,
         generation_records_enabled=True,
@@ -164,6 +182,59 @@ def test_reply_operation_count_and_exact_background_payloads(
     [benchmark] = db.analytics_outbox
     assert benchmark["event_id"] == expected.id
     assert json.loads(benchmark["payload"]) == json.loads(json_body(expected))
+
+
+@pytest.mark.parametrize("refund", [False, True])
+def test_one_commit_reply_carries_every_write_and_leaves_nothing_optional(
+    one_commit_scenario: Any, monkeypatch: pytest.MonkeyPatch, optional_executor: Any,
+    refund: bool,
+) -> None:
+    """The happy path commits once, before the reply, with its benchmark inside
+    that commit. Nothing is left for the post-reply executor, and nothing
+    commits after the reply (before: the enqueue and finalize commits, then a
+    post-reply benchmark commit)."""
+    store, db, auth, app = one_commit_scenario
+    start = _counts(db)
+    submitted: list[str] = []
+    real_submit = optional_executor.submit
+
+    def spy(task: Any, *args: Any, **kwargs: Any) -> None:
+        submitted.append(task.__name__)
+        real_submit(task, *args, **kwargs)
+
+    monkeypatch.setattr(optional_executor, "submit", spy)
+    kind = "refund" if refund else "settle"
+    reply_counts: list[tuple[int, ...]] = []
+
+    def on_reply() -> None:
+        reply_counts.append(tuple(a - b for a, b in zip(_counts(db), start, strict=True)))
+        assert db.gateway_authorizations[auth.id]["settled"] is True
+        assert db.settle_outbox[(auth.id, kind)]["status"] == "done"
+        assert len(db.analytics_outbox) == 1
+        records = 0 if refund else 1
+        assert len(db.generation_records) == len(db.operational_analytics_outbox) == records
+
+    body = _settle_json(auth.id)
+    if refund:
+        body.update(status="error", error_status=503, error_type="provider_error")
+    response = asyncio.run(_request(app, body, on_reply, refund=refund))
+    assert response["data"]["disposition"] == "finalized"
+    assert optional_executor.wait_idle()
+    assert submitted == []
+    # One read-write commit carries everything, and it lands before the reply.
+    assert reply_counts[0][4] == 1
+    assert _counts(db)[4] - start[4] == 1
+    assert len(db.analytics_outbox) == 1
+    [benchmark] = db.analytics_outbox
+    if refund:
+        assert json.loads(benchmark["payload"])["status"] == "error"
+    else:
+        [record] = db.generation_records.values()
+        generation = store.get_generation(record["generation_id"])
+        assert generation is not None
+        expected = ProviderBenchmarkSample.from_generation(generation)
+        assert benchmark["event_id"] == expected.id
+        assert json.loads(benchmark["payload"]) == json.loads(json_body(expected))
 
 
 @pytest.mark.parametrize("target", ["benchmark_outbox", "refund_outbox"])
