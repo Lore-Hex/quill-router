@@ -34,6 +34,11 @@ from trusted_router.types import UsageType
 
 pytestmark = pytest.mark.xdist_group("conformance-spanner-emulator")
 
+# A Read through a key-only index may name only the index columns plus the
+# base table key; the server rejects any other column (NOT_FOUND on
+# `provider` when this read named TRUST_EVENT_COLUMNS).
+DEBT_INDEX_COLUMNS = ("workspace_id", "event_id", "kind", "unrecovered_micro")
+
 
 @pytest.fixture(params=["spanner-emulator"], ids=lambda backend: f"backend={backend}")
 def c1_database(request, native_emulator_resources, tmp_path, monkeypatch):
@@ -117,13 +122,13 @@ def test_payment_debt_positive_range_and_profile(c1_database):
             # SDK Read selects this physical index range directly, with no SQL
             # hint. Zero entries here is range evidence, not optimizer evidence.
             entries = list(transaction.read(
-                "tr_trust_event", columns=TRUST_EVENT_COLUMNS, index=INDEX,
+                "tr_trust_event", columns=DEBT_INDEX_COLUMNS, index=INDEX,
                 keyset=KeySet(ranges=[KeyRange(start_open=[workspace, "payment", 0],
                                               end_closed=[workspace, "payment"])]),
             ))
             assert len(entries) == bool(debt)
             if debt:
-                event = dict(zip(TRUST_EVENT_COLUMNS, entries[0], strict=True))
+                event = dict(zip(DEBT_INDEX_COLUMNS, entries[0], strict=True))
                 assert (event["event_id"], event["unrecovered_micro"]) == ("positive", 50)
             rows, _ = profile(transaction, select)
             assert len(rows) == bool(debt)
