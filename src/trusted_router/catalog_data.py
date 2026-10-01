@@ -2017,6 +2017,29 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://docs.liquid.ai/",
     ),
+    **{
+        slug: Provider(
+            slug=slug,
+            name=f"System1 Models ({tier})",
+            supports_chat=False,
+            supports_prepaid=True,
+            supports_byok=False,
+            stores_content=False,
+            provider_policy=(
+                "Typed decision models, not chat completions. System1 states that prompts "
+                "and outputs are processed in memory, never stored or used for training. "
+                "Operational billing metadata is retained. No confidential-compute or "
+                "E2EE claim is made. "
+                + ("This route enforces the EU tier; inference stays within the EU (currently Finland)."
+                   if tier == "EU" else
+                   "Global uses spare EU capacity and may use worldwide capacity for opted-in keys; "
+                   "it is not an EU residency guarantee.")
+            ),
+            provider_policy_url="https://system1models.ai/legal/privacy",
+            provider_headquarters_country="DE",
+        )
+        for slug, tier in (("system1models", "Global"), ("system1models-eu", "EU"))
+    },
     "typesafe": Provider(
         slug="typesafe",
         name="TypeSafe AI",
@@ -2177,6 +2200,8 @@ PROVIDERS: dict[str, Provider] = {
 
 GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
     {
+        "system1models",
+        "system1models-eu",
         "lyceum",
         "privatemode",
         "telluvian",
@@ -2779,6 +2804,7 @@ ORCHESTRATION_PRIMITIVE_MODEL_IDS = frozenset(
 )
 
 EU_FOCUSED_PROVIDER_ORDER: tuple[str, ...] = (
+    "system1models-eu",
     "mistral",
     "regolo",
     "google-vertex",
@@ -4048,6 +4074,19 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
             "the cerebras PROVIDER jurisdiction, not as a model origin."
         ),
     ),
+    **{
+        slug: ModelOrigin(
+            country=None,
+            lab_name="System1 Models (serving namespace)",
+            source_url="https://system1models.ai/models",
+            note=(
+                "System1's regional profiles serve Plumb, Winnow and JevOmni "
+                "decision models. The serving company's German jurisdiction "
+                "does not establish the origin of the underlying weights."
+            ),
+        )
+        for slug in ("system1models", "system1models-eu")
+    },
 }
 
 # Vendor prefixes at or above this many catalog models must have a MODEL_ORIGINS

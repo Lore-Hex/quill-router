@@ -68,6 +68,7 @@ from trusted_router.provider_manifest_policy import (
 )
 from trusted_router.provider_manifest_policy import (
     EXPIRING_PROVIDER_MANIFEST_SLUGS,
+    decision_manifest_price_is_valid,
 )
 from trusted_router.provider_manifest_policy import (
     provider_manifest_valid_until as _provider_manifest_valid_until,
@@ -980,6 +981,8 @@ def _supplemental_provider_models_and_endpoints(
     models: dict[str, Model] = {}
     endpoints: dict[str, ModelEndpoint] = {}
     for provider_slug in (
+        "system1models",
+        "system1models-eu",
         "novita",
         "nebius",
         "minimax",
@@ -1086,12 +1089,19 @@ def _supplemental_provider_models_and_endpoints(
                 upstream_id = model_id
             if _is_provider_deprecated_model(provider_slug, model_id, upstream_id, at=at):
                 continue
-            if raw_model.get("model_type") not in (None, "chat", "image", "embedding"):
+            if raw_model.get("model_type") not in (None, "chat", "image", "embedding", "decision"):
                 continue
             endpoint_types = {str(item) for item in (raw_model.get("endpoints") or [])}
-            if not endpoint_types.intersection({"chat/completions", "images", "embeddings"}):
+            if not endpoint_types.intersection({"chat/completions", "images", "embeddings", "decide"}):
                 continue
             embedding = raw_model.get("model_type") == "embedding"
+            decision = raw_model.get("model_type") == "decision"
+            if decision and (
+                provider_slug not in {"system1models", "system1models-eu"}
+                or not model_id.startswith(provider_slug + "/s1-")
+                or not decision_manifest_price_is_valid(raw_model)
+            ):
+                continue
             if embedding and (not provider.supports_embeddings or endpoint_types != {"embeddings"}):
                 continue
             # These providers bill per generated image, through a fixed hold.
@@ -1113,7 +1123,7 @@ def _supplemental_provider_models_and_endpoints(
                 raw_model.get("output_token_price_per_m"),
                 price_scale=price_scale,
             )
-            if embedding and (
+            if (embedding or decision) and (
                 prompt_cost <= 0 or completion_cost != 0
                 or "price_tiers" in raw_model or "cached_input_token_price_per_m" in raw_model
             ):
@@ -1173,8 +1183,8 @@ def _supplemental_provider_models_and_endpoints(
                     # A malformed pricing tier is an accounting ambiguity. Do
                     # not create a route at the cheaper headline price.
                     continue
-            if embedding or (provider_slug, model_id) in INPUT_ONLY_PROVIDER_MODELS:
-                if not embedding and not provider_manifest_price_profile_is_valid(raw_model):
+            if embedding or decision or (provider_slug, model_id) in INPUT_ONLY_PROVIDER_MODELS:
+                if not (embedding or decision) and not provider_manifest_price_profile_is_valid(raw_model):
                     continue
                 completion_price = 0
                 tiers = _flat_tier(prompt_price, 0)
@@ -1201,6 +1211,7 @@ def _supplemental_provider_models_and_endpoints(
                 supports_chat="chat/completions" in endpoint_types,
                 supports_embeddings=embedding,
                 supports_messages=publisher == "anthropic",
+                supports_decide=decision,
                 supported_parameters=supported_parameters,
                 input_modalities=_modalities(
                     raw_model.get("input_modalities"),

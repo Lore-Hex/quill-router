@@ -737,6 +737,24 @@
     "route_mode": "Prepaid",
     "slug": "streamlake"
   },
+  "system1models": {
+    "card_version": 2,
+    "model_count": 3,
+    "name": "System1 Models (Global)",
+    "privacy": "Policy documented",
+    "route_count": 3,
+    "route_mode": "Prepaid",
+    "slug": "system1models"
+  },
+  "system1models-eu": {
+    "card_version": 2,
+    "model_count": 3,
+    "name": "System1 Models (EU)",
+    "privacy": "Policy documented",
+    "route_count": 3,
+    "route_mode": "Prepaid",
+    "slug": "system1models-eu"
+  },
   "telluvian": {
     "card_version": 2,
     "model_count": 0,

@@ -32,6 +32,19 @@ class InferenceLocations:
 _NO_TR_PIN = "Not supported by the current TrustedRouter integration."
 
 PROVIDER_INFERENCE_LOCATIONS = {
+    **{
+        slug: InferenceLocations(
+            locations=(("Finland (EU)",) if tier == "eu" else ("Finland (EU)", "Worldwide (opted-in Global keys)")),
+            scope=("EU-only tier, currently Finland." if tier == "eu" else "Global uses spare EU capacity, with worldwide Lium capacity available to opted-in keys; the complete country set is not published."),
+            routing=("EU requests stay within the EU." if tier == "eu" else "Global placement depends on capacity and the key's worldwide-processing opt-in. Probes executed in Finland; this is not a residency guarantee."),
+            provider_pinning="S1-Region explicitly selects the tier; incompatible API keys fail closed.",
+            trustedrouter_pinning=f"Use {slug}/s1-fast, s1-pro or s1-vision. The gateway pins S1-Region={tier} and a separate regional key; no cross-tier fallback.",
+            declaration=("EU-only inference, currently Finland." if tier == "eu" else "Global, dynamically scheduled inference; no fixed-country residency commitment."),
+            evidence="Public API and regional documentation; authenticated tier probes",
+            reviewed_on="2026-10-01",
+            sources=(("Regional processing and pricing", "https://system1models.ai/models"), ("Processing locations", "https://system1models.ai/legal/subprocessors"), ("API contract", "https://system1models.ai/openapi.json")),
+        ) for slug, tier in (("system1models", "global"), ("system1models-eu", "eu"))
+    },
     "lyceum": InferenceLocations(
         scope="Lyceum documents model-specific serving locations; its German headquarters is not a fleet-wide EU residency guarantee.",
         routing="Placement and cross-region failover depend on the model; an exhaustive country list is not verified.",
