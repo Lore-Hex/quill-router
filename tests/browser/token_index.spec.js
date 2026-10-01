@@ -14,9 +14,9 @@ const vertices = async (path) => {
   return d.split("M").filter(Boolean).flatMap((run) => run.split("L").map((p) => p.trim().split(/\s+/).map(Number)));
 };
 
-// Every drawn point must sit where the data puts it. The scale comes from the labelled gridlines
-// (independent of the paths): y is an affine function of the value (linear) or of its log (log
-// scale); x is evenly spaced by day.
+// Every drawn point must sit where the data puts it, against axes read independently of the paths:
+// the gridlines' ends bound the dates (the first day in view at the left end, the last at the right,
+// evenly spaced) and their labels fix the value scale (y affine in the value, or in its log).
 const expectGeometry = async (figure, data, keys, scale, firstDay) => {
   const f = scale === "log" ? Math.log10 : (v) => v;
   const ticks = await figure.locator(".ti-ylabel").evaluateAll((nodes) =>
@@ -24,13 +24,14 @@ const expectGeometry = async (figure, data, keys, scale, firstDay) => {
   expect(ticks.length).toBeGreaterThan(2);
   const [[v0, y0], [v1, y1]] = [ticks[0], ticks[ticks.length - 1]];
   const slope = (y1 - y0) / (f(v1) - f(v0));
+  const [xl, xr] = await figure.locator(".ti-grid line").first().evaluate((line) => [Number(line.getAttribute("x1")), Number(line.getAttribute("x2"))]);
+  expect(xr - xl).toBeGreaterThan(100);
   for (const key of keys) {
     const pts = await vertices(figure.locator(`path.ti-line.ti-${key.toLowerCase()}`));
     const values = data.series[key].slice(firstDay);
     expect(pts.length).toBe(values.length);
-    const dx = (pts[pts.length - 1][0] - pts[0][0]) / (pts.length - 1);
     pts.forEach(([x, y], i) => {
-      expect(Math.abs(x - (pts[0][0] + i * dx))).toBeLessThan(0.6);
+      expect(Math.abs(x - (xl + (i * (xr - xl)) / (values.length - 1)))).toBeLessThan(0.6);
       expect(Math.abs(y - (y0 + slope * (f(values[i]) - f(v0))))).toBeLessThan(1);
     });
   }
@@ -72,7 +73,7 @@ test.describe("/index interactive charts", () => {
     // one month in view: 31 points, weekly date ticks, and Home is 30 days before the last day
     await nyte.getByRole("button", { name: "1M", exact: true }).click();
     await expect(nyte.getByRole("button", { name: "1M", exact: true })).toHaveAttribute("aria-pressed", "true");
-    expect((await vertices(nyte.locator("path.ti-line"))).length).toBe(31);
+    await expectGeometry(nyte, data, ["ALL"], "linear", n - 31);
     await expect(nyte.locator(".ti-xlabel").first()).toHaveText(/^[A-Z][a-z]{2} \d{1,2}$/);
     await svg.focus();
     await page.keyboard.press("Home");

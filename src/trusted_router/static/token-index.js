@@ -19,8 +19,14 @@
     const SVG_NS = 'http://www.w3.org/2000/svg';
     const DAY_MS = 86400000;
     const money = (v) => '$' + (v >= 100 ? Math.round(v).toLocaleString('en-US') : v.toFixed(1));
-    // enough decimals for the tick's magnitude: $3,000, $2.5, $0.3, $0.03
-    const tickMoney = (v) => '$' + v.toLocaleString('en-US', { maximumFractionDigits: v > 0 && v < 1 ? Math.ceil(-Math.log10(v)) + 1 : 1 });
+    // the fewest decimals that print every tick of an axis exactly: $3,000, $1.25, $0.03
+    const tickDecimals = (ticks) => {
+        for (let d = 0; d < 4; d++)
+            if (ticks.every(t => Math.abs(t * 10 ** d - Math.round(t * 10 ** d)) < 1e-6))
+                return d;
+        return 4;
+    };
+    const tickMoney = (v, decimals) => '$' + v.toLocaleString('en-US', { maximumFractionDigits: decimals });
     const longDate = (d) => `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`;
     const css = (k) => `ti-${k.toLowerCase()}`;
     const svgEl = (tag, attrs, parent) => {
@@ -171,10 +177,11 @@
             chart.setAttribute('height', String(h));
             chart.replaceChildren();
             const grid = svgEl('g', { class: 'ti-grid' }, chart);
+            const decimals = tickDecimals(ticks);
             for (const t of ticks) {
                 const ty = y(t);
                 svgEl('line', { x1: left, x2: w - right, y1: ty, y2: ty }, grid);
-                svgEl('text', { x: left - 8, y: ty, class: 'ti-ylabel' }, grid).textContent = tickMoney(t);
+                svgEl('text', { x: left - 8, y: ty, class: 'ti-ylabel' }, grid).textContent = tickMoney(t, decimals);
             }
             // x ticks: weekly in the one-month view, else month starts (thinned so labels never collide)
             const xticks = [];
