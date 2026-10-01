@@ -7,7 +7,7 @@
     "gate": "tests/test_speculation_shadow.py::test_distinct_history_replay_and_invocation_dedup",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_distinct_history_replay_and_invocation_dedup",
-      "1 failed, 6 warnings in 2.73s"
+      "1 failed, 6 warnings in 1.82s"
     ]
   },
   {
@@ -18,7 +18,7 @@
     "gate": "tests/test_speculation_shadow.py::test_current_request_cannot_qualify_its_predecision",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_current_request_cannot_qualify_its_predecision",
-      "1 failed, 6 warnings in 2.50s"
+      "1 failed, 6 warnings in 1.93s"
     ]
   },
   {
@@ -29,7 +29,7 @@
     "gate": "tests/test_speculation_shadow.py::test_submit_does_not_wait_for_worker_io",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_submit_does_not_wait_for_worker_io",
-      "1 failed, 6 warnings in 3.67s"
+      "1 failed, 6 warnings in 3.44s"
     ]
   },
   {
@@ -43,7 +43,7 @@
       "FAILED tests/test_gateway_authorize_spanner_operations.py::test_warm_lookup_authorize_exact_sequence_and_contents[shadow-on-False-True]",
       "FAILED tests/test_gateway_authorize_spanner_operations.py::test_warm_lookup_authorize_exact_sequence_and_contents[shadow-on-True-False]",
       "FAILED tests/test_gateway_authorize_spanner_operations.py::test_warm_lookup_authorize_exact_sequence_and_contents[shadow-on-True-True]",
-      "4 failed, 4 passed, 6 warnings in 2.93s"
+      "4 failed, 4 passed, 6 warnings in 2.35s"
     ]
   },
   {
@@ -54,7 +54,7 @@
     "gate": "tests/test_speculation_shadow.py::test_loss_restart_unacknowledged_tail_and_late_membership",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_loss_restart_unacknowledged_tail_and_late_membership",
-      "1 failed, 6 warnings in 2.14s"
+      "1 failed, 6 warnings in 1.36s"
     ]
   },
   {
@@ -65,7 +65,7 @@
     "gate": "tests/test_speculation_shadow.py::test_promotional_mixed_funds_conservation",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_promotional_mixed_funds_conservation",
-      "1 failed, 6 warnings in 2.09s"
+      "1 failed, 6 warnings in 1.32s"
     ]
   },
   {
@@ -76,7 +76,7 @@
     "gate": "tests/test_speculation_shadow.py::test_exact_v1_signer_round_trip_frozen_verifier_and_authority",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_exact_v1_signer_round_trip_frozen_verifier_and_authority",
-      "1 failed, 6 warnings in 2.08s"
+      "1 failed, 6 warnings in 1.33s"
     ]
   },
   {
@@ -87,7 +87,7 @@
     "gate": "tests/test_speculation_shadow.py::test_authority_namespace_at_native_mutation_boundary",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_authority_namespace_at_native_mutation_boundary",
-      "1 failed, 6 warnings in 1.99s"
+      "1 failed, 6 warnings in 1.72s"
     ]
   },
   {
@@ -98,7 +98,7 @@
     "gate": "tests/test_speculation_shadow.py::test_batch_binding_every_member_and_exact_body",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_batch_binding_every_member_and_exact_body",
-      "1 failed, 6 warnings in 1.98s"
+      "1 failed, 6 warnings in 2.00s"
     ]
   },
   {
@@ -109,7 +109,7 @@
     "gate": "tests/test_speculation_shadow.py::test_cached_grant_rechecks_current_deadlines",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_cached_grant_rechecks_current_deadlines[trust_fresh_until-2050]",
-      "1 failed, 14 passed, 6 warnings in 2.41s"
+      "1 failed, 14 passed, 6 warnings in 2.46s"
     ]
   },
   {
@@ -125,7 +125,7 @@
       "FAILED tests/test_speculation_shadow.py::test_cached_grant_rechecks_current_deadlines[key_expires_at-2012]",
       "FAILED tests/test_speculation_shadow.py::test_cached_grant_rechecks_current_deadlines[price_expires_at-2011]",
       "FAILED tests/test_speculation_shadow.py::test_cached_grant_rechecks_current_deadlines[price_expires_at-2012]",
-      "6 failed, 9 passed, 6 warnings in 2.74s"
+      "6 failed, 9 passed, 6 warnings in 2.86s"
     ]
   },
   {
@@ -136,7 +136,7 @@
     "gate": "tests/test_speculation_shadow.py::test_native_shadow_is_selected_by_ci",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_native_shadow_is_selected_by_ci",
-      "1 failed, 6 warnings in 10.12s"
+      "1 failed, 6 warnings in 15.19s"
     ]
   },
   {
@@ -147,7 +147,7 @@
     "gate": "tests/test_speculation_shadow.py::test_native_shadow_is_selected_by_ci",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_native_shadow_is_selected_by_ci",
-      "1 failed, 6 warnings in 2.10s"
+      "1 failed, 6 warnings in 3.29s"
     ]
   },
   {
@@ -181,7 +181,7 @@
       "FAILED tests/test_gateway_authorize_spanner_operations.py::test_shadow_response_money_and_sql_differential[shadow-on-resolved-True-True]",
       "FAILED tests/test_gateway_authorize_spanner_operations.py::test_shadow_response_money_and_sql_differential[shadow-on-boot_verified-True-False]",
       "FAILED tests/test_gateway_authorize_spanner_operations.py::test_shadow_response_money_and_sql_differential[shadow-on-boot_verified-True-True]",
-      "20 failed, 52 passed, 1158 warnings in 53.74s"
+      "20 failed, 52 passed, 1158 warnings in 91.44s (0:01:31)"
     ]
   },
   {
@@ -192,7 +192,7 @@
     "gate": "tests/test_speculation_shadow.py::test_expired_delivery_after_ttl_cannot_requalify_or_extend_retention",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_expired_delivery_after_ttl_cannot_requalify_or_extend_retention",
-      "1 failed, 6 warnings in 2.23s"
+      "1 failed, 6 warnings in 2.52s"
     ]
   },
   {
@@ -203,7 +203,7 @@
     "gate": "tests/test_speculation_shadow.py::test_success_older_than_history_does_not_recreate_dedup",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_success_older_than_history_does_not_recreate_dedup",
-      "1 failed, 6 warnings in 2.20s"
+      "1 failed, 6 warnings in 2.05s"
     ]
   },
   {
@@ -214,191 +214,191 @@
     "gate": "tests/test_speculation_shadow.py::test_shadow_ttl_only_applies_to_event_and_success",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_shadow_ttl_only_applies_to_event_and_success",
-      "1 failed, 6 warnings in 6.14s"
+      "1 failed, 6 warnings in 5.85s"
     ]
   },
   {
-    "mutation": "remove gateway.py resolved boundary L786",
+    "mutation": "remove gateway.py resolved boundary L789",
     "baseline": "pass",
     "result": "red",
     "restored": "pass",
     "gate": "tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments",
     "summary": [
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-False-787-resolved]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-True-787-resolved]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-787-resolved]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-787-resolved]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-787-resolved]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-787-resolved]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-787-resolved]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-787-resolved]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-787-resolved]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-787-resolved]",
-      "10 failed, 80 passed, 6 warnings in 8.53s"
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-False-790-resolved]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-True-790-resolved]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-790-resolved]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-790-resolved]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-790-resolved]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-790-resolved]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-790-resolved]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-790-resolved]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-790-resolved]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-790-resolved]",
+      "10 failed, 80 passed, 6 warnings in 7.99s"
     ]
   },
   {
-    "mutation": "remove gateway.py boot_verified boundary L812",
+    "mutation": "remove gateway.py boot_verified boundary L815",
     "baseline": "pass",
     "result": "red",
     "restored": "pass",
     "gate": "tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments",
     "summary": [
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-False-813-boot_verified]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-True-813-boot_verified]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-813-boot_verified]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-813-boot_verified]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-813-boot_verified]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-813-boot_verified]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-813-boot_verified]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-813-boot_verified]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-813-boot_verified]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-813-boot_verified]",
-      "10 failed, 80 passed, 6 warnings in 7.66s"
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-False-816-boot_verified]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-True-816-boot_verified]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-816-boot_verified]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-816-boot_verified]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-816-boot_verified]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-816-boot_verified]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-816-boot_verified]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-816-boot_verified]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-816-boot_verified]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-816-boot_verified]",
+      "10 failed, 80 passed, 6 warnings in 7.14s"
     ]
   },
   {
-    "mutation": "remove gateway.py authorized boundary L2405",
+    "mutation": "remove gateway.py authorized boundary L2408",
     "baseline": "pass",
     "result": "red",
     "restored": "pass",
     "gate": "tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments",
     "summary": [
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-False-2406-authorized]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-True-2406-authorized]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-2406-authorized]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-2406-authorized]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-2406-authorized]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-2406-authorized]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-2406-authorized]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-2406-authorized]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-2406-authorized]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-2406-authorized]",
-      "10 failed, 80 passed, 6 warnings in 9.18s"
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-False-2409-authorized]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-True-2409-authorized]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-2409-authorized]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-2409-authorized]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-2409-authorized]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-2409-authorized]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-2409-authorized]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-2409-authorized]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-2409-authorized]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-2409-authorized]",
+      "10 failed, 80 passed, 6 warnings in 7.72s"
     ]
   },
   {
-    "mutation": "remove gateway.py reason boundary L790",
+    "mutation": "remove gateway.py reason boundary L793",
     "baseline": "pass",
     "result": "red",
     "restored": "pass",
     "gate": "tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments",
     "summary": [
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-False-791-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-True-791-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-791-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-791-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-791-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-791-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-791-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-791-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-791-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-791-reason]",
-      "10 failed, 80 passed, 6 warnings in 7.83s"
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-False-794-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-True-794-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-794-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-794-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-794-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-794-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-794-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-794-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-794-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-794-reason]",
+      "10 failed, 80 passed, 6 warnings in 7.36s"
     ]
   },
   {
-    "mutation": "remove gateway.py reason boundary L820",
+    "mutation": "remove gateway.py reason boundary L823",
     "baseline": "pass",
     "result": "red",
     "restored": "pass",
     "gate": "tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments",
     "summary": [
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-False-821-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-True-821-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-821-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-821-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-821-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-821-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-821-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-821-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-821-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-821-reason]",
-      "10 failed, 80 passed, 6 warnings in 8.66s"
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-False-824-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-True-824-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-824-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-824-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-824-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-824-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-824-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-824-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-824-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-824-reason]",
+      "10 failed, 80 passed, 6 warnings in 7.91s"
     ]
   },
   {
-    "mutation": "remove gateway.py reason boundary L1611",
+    "mutation": "remove gateway.py reason boundary L1614",
     "baseline": "pass",
     "result": "red",
     "restored": "pass",
     "gate": "tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments",
     "summary": [
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-False-1612-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-True-1612-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-1612-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-1612-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-1612-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-1612-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-1612-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-1612-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-1612-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-1612-reason]",
-      "10 failed, 80 passed, 6 warnings in 8.61s"
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-False-1615-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-True-1615-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-1615-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-1615-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-1615-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-1615-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-1615-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-1615-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-1615-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-1615-reason]",
+      "10 failed, 80 passed, 6 warnings in 7.71s"
     ]
   },
   {
-    "mutation": "remove gateway.py reason boundary L1378",
+    "mutation": "remove gateway.py reason boundary L1381",
     "baseline": "pass",
     "result": "red",
     "restored": "pass",
     "gate": "tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments",
     "summary": [
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-False-1379-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-True-1379-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-1379-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-1379-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-1379-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-1379-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-1379-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-1379-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-1379-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-1379-reason]",
-      "10 failed, 80 passed, 6 warnings in 8.45s"
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-False-1382-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-True-1382-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-1382-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-1382-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-1382-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-1382-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-1382-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-1382-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-1382-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-1382-reason]",
+      "10 failed, 80 passed, 6 warnings in 7.84s"
     ]
   },
   {
-    "mutation": "remove gateway.py reason boundary L1806",
+    "mutation": "remove gateway.py reason boundary L1809",
     "baseline": "pass",
     "result": "red",
     "restored": "pass",
     "gate": "tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments",
     "summary": [
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-False-1807-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-True-1807-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-1807-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-1807-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-1807-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-1807-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-1807-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-1807-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-1807-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-1807-reason]",
-      "10 failed, 80 passed, 6 warnings in 7.96s"
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-False-1810-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-True-1810-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-1810-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-1810-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-1810-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-1810-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-1810-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-1810-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-1810-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-1810-reason]",
+      "10 failed, 80 passed, 6 warnings in 7.82s"
     ]
   },
   {
-    "mutation": "remove gateway.py reason boundary L1718",
+    "mutation": "remove gateway.py reason boundary L1721",
     "baseline": "pass",
     "result": "red",
     "restored": "pass",
     "gate": "tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments",
     "summary": [
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-False-1719-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-True-1719-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-1719-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-1719-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-1719-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-1719-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-1719-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-1719-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-1719-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-1719-reason]",
-      "10 failed, 80 passed, 6 warnings in 8.67s"
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-False-1722-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[None-True-1722-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-1722-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-1722-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-1722-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-1722-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-1722-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-1722-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-1722-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-1722-reason]",
+      "10 failed, 80 passed, 6 warnings in 7.85s"
     ]
   },
   {
-    "mutation": "remove gateway_timing.py arguments boundary L119",
+    "mutation": "remove gateway_timing.py arguments boundary L141",
     "baseline": "pass",
     "result": "red",
     "restored": "pass",
@@ -424,11 +424,11 @@
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-False-True-_outcome_settings]",
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-True-False-_outcome_settings]",
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-True-True-_outcome_settings]",
-      "20 failed, 100 passed, 6 warnings in 5.00s"
+      "20 failed, 100 passed, 6 warnings in 4.79s"
     ]
   },
   {
-    "mutation": "remove gateway_timing.py scope-cleanup boundary L133",
+    "mutation": "remove gateway_timing.py scope-cleanup boundary L155",
     "baseline": "pass",
     "result": "red",
     "restored": "pass",
@@ -454,11 +454,11 @@
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-False-True-cleanup]",
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-True-False-cleanup]",
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-True-True-cleanup]",
-      "20 failed, 100 passed, 6 warnings in 5.80s"
+      "20 failed, 100 passed, 6 warnings in 5.30s"
     ]
   },
   {
-    "mutation": "remove gateway_timing.py scope-setup boundary L146",
+    "mutation": "remove gateway_timing.py scope-setup boundary L168",
     "baseline": "pass",
     "result": "red",
     "restored": "pass",
@@ -484,11 +484,11 @@
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-False-True-outcome_scope]",
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-True-False-outcome_scope]",
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-True-True-outcome_scope]",
-      "20 failed, 100 passed, 6 warnings in 4.98s"
+      "20 failed, 100 passed, 6 warnings in 4.82s"
     ]
   },
   {
-    "mutation": "remove gateway_timing.py completion boundary L157",
+    "mutation": "remove gateway_timing.py completion boundary L181",
     "baseline": "pass",
     "result": "red",
     "restored": "pass",
@@ -524,11 +524,11 @@
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-True-False-complete]",
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-True-True-complete]",
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-True-True-error-extraction]",
-      "30 failed, 90 passed, 6 warnings in 6.31s"
+      "30 failed, 90 passed, 6 warnings in 5.91s"
     ]
   },
   {
-    "mutation": "remove gateway_timing.py timing boundary L207",
+    "mutation": "remove gateway_timing.py timing boundary L238",
     "baseline": "pass",
     "result": "red",
     "restored": "pass",
@@ -539,11 +539,11 @@
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[reason-map-False-False-_save_outcome_timing]",
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[logging-False-False-_save_outcome_timing]",
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-False-False-_save_outcome_timing]",
-      "5 failed, 115 passed, 6 warnings in 3.92s"
+      "5 failed, 115 passed, 6 warnings in 3.91s"
     ]
   },
   {
-    "mutation": "remove gateway_timing.py timing boundary L232",
+    "mutation": "remove gateway_timing.py timing boundary L263",
     "baseline": "pass",
     "result": "red",
     "restored": "pass",
@@ -554,11 +554,11 @@
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[reason-map-True-False-_save_outcome_timing]",
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[logging-True-False-_save_outcome_timing]",
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-True-False-_save_outcome_timing]",
-      "5 failed, 115 passed, 6 warnings in 4.19s"
+      "5 failed, 115 passed, 6 warnings in 4.11s"
     ]
   },
   {
-    "mutation": "remove speculation_shadow.py submit boundary L224",
+    "mutation": "remove speculation_shadow.py submit boundary L267",
     "baseline": "pass",
     "result": "red",
     "restored": "pass",
@@ -569,7 +569,7 @@
       "FAILED tests/test_speculation_shadow.py::test_content_free_observation_and_observer_failure[reason-map]",
       "FAILED tests/test_speculation_shadow.py::test_content_free_observation_and_observer_failure[logging]",
       "FAILED tests/test_speculation_shadow.py::test_content_free_observation_and_observer_failure[counter]",
-      "5 failed, 6 warnings in 2.82s"
+      "5 failed, 6 warnings in 2.45s"
     ]
   },
   {
@@ -579,79 +579,79 @@
     "restored": "pass",
     "gate": "tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments",
     "summary": [
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-787-resolved]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-813-boot_verified]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-2406-authorized]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-791-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-821-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-1612-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-1379-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-1807-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-1719-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-787-resolved]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-813-boot_verified]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-2406-authorized]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-791-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-821-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-1612-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-1379-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-1807-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-1719-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-787-resolved]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-813-boot_verified]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-2406-authorized]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-791-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-821-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-1612-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-1379-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-1807-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-1719-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-787-resolved]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-813-boot_verified]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-2406-authorized]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-791-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-821-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-1612-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-1379-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-1807-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-1719-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-787-resolved]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-813-boot_verified]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-2406-authorized]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-791-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-821-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-1612-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-1379-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-1807-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-1719-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-787-resolved]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-813-boot_verified]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-2406-authorized]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-791-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-821-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-1612-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-1379-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-1807-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-1719-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-787-resolved]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-813-boot_verified]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-2406-authorized]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-791-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-821-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-1612-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-1379-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-1807-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-1719-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-787-resolved]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-813-boot_verified]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-2406-authorized]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-791-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-821-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-1612-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-1379-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-1807-reason]",
-      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-1719-reason]",
-      "72 failed, 18 passed, 6 warnings in 18.56s"
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-790-resolved]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-816-boot_verified]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-2409-authorized]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-794-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-824-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-1615-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-1382-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-1810-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-False-1722-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-790-resolved]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-816-boot_verified]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-2409-authorized]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-794-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-824-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-1615-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-1382-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-1810-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[loss-set-True-1722-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-790-resolved]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-816-boot_verified]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-2409-authorized]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-794-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-824-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-1615-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-1382-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-1810-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-False-1722-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-790-resolved]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-816-boot_verified]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-2409-authorized]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-794-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-824-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-1615-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-1382-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-1810-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[reason-map-True-1722-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-790-resolved]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-816-boot_verified]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-2409-authorized]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-794-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-824-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-1615-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-1382-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-1810-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-False-1722-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-790-resolved]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-816-boot_verified]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-2409-authorized]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-794-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-824-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-1615-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-1382-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-1810-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-1722-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-790-resolved]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-816-boot_verified]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-2409-authorized]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-794-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-824-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-1615-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-1382-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-1810-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-1722-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-790-resolved]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-816-boot_verified]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-2409-authorized]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-794-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-824-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-1615-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-1382-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-1810-reason]",
+      "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-1722-reason]",
+      "72 failed, 18 passed, 6 warnings in 17.33s"
     ]
   },
   {
@@ -662,24 +662,24 @@
     "gate": "tests/test_speculation_shadow.py::test_failed_reset_restores_context_for_next_sync_authorize",
     "summary": [
       "___ test_failed_reset_restores_context_for_next_sync_authorize[False-shadow] ___",
-      "tests/test_speculation_shadow.py:950: in test_failed_reset_restores_context_for_next_sync_authorize",
+      "tests/test_speculation_shadow.py:955: in test_failed_reset_restores_context_for_next_sync_authorize",
       "___ test_failed_reset_restores_context_for_next_sync_authorize[False-timing] ___",
-      "tests/test_speculation_shadow.py:950: in test_failed_reset_restores_context_for_next_sync_authorize",
+      "tests/test_speculation_shadow.py:955: in test_failed_reset_restores_context_for_next_sync_authorize",
       "____ test_failed_reset_restores_context_for_next_sync_authorize[False-both] ____",
-      "tests/test_speculation_shadow.py:950: in test_failed_reset_restores_context_for_next_sync_authorize",
+      "tests/test_speculation_shadow.py:955: in test_failed_reset_restores_context_for_next_sync_authorize",
       "___ test_failed_reset_restores_context_for_next_sync_authorize[True-shadow] ____",
-      "tests/test_speculation_shadow.py:950: in test_failed_reset_restores_context_for_next_sync_authorize",
+      "tests/test_speculation_shadow.py:955: in test_failed_reset_restores_context_for_next_sync_authorize",
       "___ test_failed_reset_restores_context_for_next_sync_authorize[True-timing] ____",
-      "tests/test_speculation_shadow.py:950: in test_failed_reset_restores_context_for_next_sync_authorize",
+      "tests/test_speculation_shadow.py:955: in test_failed_reset_restores_context_for_next_sync_authorize",
       "____ test_failed_reset_restores_context_for_next_sync_authorize[True-both] _____",
-      "tests/test_speculation_shadow.py:950: in test_failed_reset_restores_context_for_next_sync_authorize",
+      "tests/test_speculation_shadow.py:955: in test_failed_reset_restores_context_for_next_sync_authorize",
       "FAILED tests/test_speculation_shadow.py::test_failed_reset_restores_context_for_next_sync_authorize[False-shadow]",
       "FAILED tests/test_speculation_shadow.py::test_failed_reset_restores_context_for_next_sync_authorize[False-timing]",
       "FAILED tests/test_speculation_shadow.py::test_failed_reset_restores_context_for_next_sync_authorize[False-both]",
       "FAILED tests/test_speculation_shadow.py::test_failed_reset_restores_context_for_next_sync_authorize[True-shadow]",
       "FAILED tests/test_speculation_shadow.py::test_failed_reset_restores_context_for_next_sync_authorize[True-timing]",
       "FAILED tests/test_speculation_shadow.py::test_failed_reset_restores_context_for_next_sync_authorize[True-both]",
-      "6 failed, 6 warnings in 2.02s"
+      "6 failed, 6 warnings in 1.89s"
     ]
   },
   {
@@ -709,7 +709,7 @@
       "FAILED tests/test_speculation_shadow.py::test_abnormal_authorize_is_never_a_success[counter-base]",
       "FAILED tests/test_speculation_shadow.py::test_abnormal_authorize_is_never_a_success[counter-keyboard]",
       "FAILED tests/test_speculation_shadow.py::test_abnormal_authorize_is_never_a_success[counter-exit]",
-      "20 failed, 6 warnings in 2.59s"
+      "20 failed, 6 warnings in 2.48s"
     ]
   },
   {
@@ -739,7 +739,7 @@
       "FAILED tests/test_speculation_shadow.py::test_interrupted_finalization_restores_scopes_and_records_loss[timing-cleanup-SystemExit]",
       "FAILED tests/test_speculation_shadow.py::test_interrupted_finalization_restores_scopes_and_records_loss[timing-cleanup-CancelledError]",
       "FAILED tests/test_speculation_shadow.py::test_interrupted_finalization_restores_scopes_and_records_loss[timing-cleanup-BaseException]",
-      "20 failed, 6 warnings in 2.88s"
+      "20 failed, 6 warnings in 2.38s"
     ]
   },
   {
@@ -751,7 +751,7 @@
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_loss_recorder_interrupt_propagates_after_completion_failure[KeyboardInterrupt]",
       "FAILED tests/test_speculation_shadow.py::test_loss_recorder_interrupt_propagates_after_completion_failure[GeneratorExit]",
-      "2 failed, 6 warnings in 2.10s"
+      "2 failed, 6 warnings in 1.82s"
     ]
   },
   {
@@ -762,7 +762,7 @@
     "gate": "tests/test_speculation_shadow.py::test_double_restoration_failure_retires_before_next_sync_authorize",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_double_restoration_failure_retires_before_next_sync_authorize",
-      "1 failed, 6 warnings in 4.05s"
+      "1 failed, 6 warnings in 1.81s"
     ]
   },
   {
@@ -775,7 +775,7 @@
       "FAILED tests/test_speculation_shadow.py::test_assignment_fault_restores_scopes_and_preserves_response[RuntimeError-retirement]",
       "FAILED tests/test_speculation_shadow.py::test_assignment_fault_restores_scopes_and_preserves_response[KeyboardInterrupt-retirement]",
       "FAILED tests/test_speculation_shadow.py::test_assignment_fault_restores_scopes_and_preserves_response[GeneratorExit-retirement]",
-      "3 failed, 3 passed, 6 warnings in 4.99s"
+      "3 failed, 3 passed, 6 warnings in 1.86s"
     ]
   },
   {
@@ -809,7 +809,7 @@
       "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[True-completion-True-missing]",
       "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[True-completion-True-distinct]",
       "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[True-completion-True-reused]",
-      "24 failed, 6 warnings in 3.38s"
+      "24 failed, 6 warnings in 2.67s"
     ]
   },
   {
@@ -820,7 +820,60 @@
     "gate": "tests/test_speculation_shadow.py::test_assignment_fault_restores_scopes_and_preserves_response",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_assignment_fault_restores_scopes_and_preserves_response[RuntimeError-mark-finished]",
-      "1 failed, 5 passed, 6 warnings in 2.50s"
+      "1 failed, 5 passed, 6 warnings in 2.01s"
+    ]
+  },
+  {
+    "mutation": "match token instead of claimed continuation",
+    "baseline": "pass",
+    "result": "red",
+    "restored": "pass",
+    "gate": "tests/test_speculation_shadow.py::test_same_request_completion_replay_is_independent",
+    "summary": [
+      "FAILED tests/test_speculation_shadow.py::test_same_request_completion_replay_is_independent[False-False-False]",
+      "FAILED tests/test_speculation_shadow.py::test_same_request_completion_replay_is_independent[False-False-True]",
+      "FAILED tests/test_speculation_shadow.py::test_same_request_completion_replay_is_independent[False-True-False]",
+      "FAILED tests/test_speculation_shadow.py::test_same_request_completion_replay_is_independent[False-True-True]",
+      "FAILED tests/test_speculation_shadow.py::test_same_request_completion_replay_is_independent[True-False-False]",
+      "FAILED tests/test_speculation_shadow.py::test_same_request_completion_replay_is_independent[True-False-True]",
+      "FAILED tests/test_speculation_shadow.py::test_same_request_completion_replay_is_independent[True-True-False]",
+      "FAILED tests/test_speculation_shadow.py::test_same_request_completion_replay_is_independent[True-True-True]",
+      "8 failed, 6 warnings in 2.20s"
+    ]
+  },
+  {
+    "mutation": "callbacks can mutate sealed observation",
+    "baseline": "pass",
+    "result": "red",
+    "restored": "pass",
+    "gate": "tests/test_speculation_shadow.py::test_completion_cannot_write_sealed_facts",
+    "summary": [
+      "FAILED tests/test_speculation_shadow.py::test_completion_cannot_write_sealed_facts[workspace_id]",
+      "FAILED tests/test_speculation_shadow.py::test_completion_cannot_write_sealed_facts[key_id]",
+      "FAILED tests/test_speculation_shadow.py::test_completion_cannot_write_sealed_facts[lookup_digest]",
+      "FAILED tests/test_speculation_shadow.py::test_completion_cannot_write_sealed_facts[invocation_nonce]",
+      "FAILED tests/test_speculation_shadow.py::test_completion_cannot_write_sealed_facts[reason]",
+      "FAILED tests/test_speculation_shadow.py::test_completion_cannot_write_sealed_facts[rate_scope]",
+      "FAILED tests/test_speculation_shadow.py::test_completion_cannot_write_sealed_facts[authorization_id]",
+      "FAILED tests/test_speculation_shadow.py::test_completion_cannot_write_sealed_facts[replay]",
+      "FAILED tests/test_speculation_shadow.py::test_completion_cannot_write_sealed_facts[endpoint_ids]",
+      "FAILED tests/test_speculation_shadow.py::test_completion_cannot_write_sealed_facts[route_identity]",
+      "FAILED tests/test_speculation_shadow.py::test_completion_cannot_write_sealed_facts[boot_verified]",
+      "FAILED tests/test_speculation_shadow.py::test_completion_cannot_write_sealed_facts[boot_id]",
+      "FAILED tests/test_speculation_shadow.py::test_completion_cannot_write_sealed_facts[timing]",
+      "FAILED tests/test_speculation_shadow.py::test_completion_cannot_write_sealed_facts[sealed]",
+      "14 failed, 6 warnings in 2.52s"
+    ]
+  },
+  {
+    "mutation": "continuation claimable twice",
+    "baseline": "pass",
+    "result": "red",
+    "restored": "pass",
+    "gate": "tests/test_speculation_shadow.py::test_designated_continuation_second_claim_is_independent",
+    "summary": [
+      "FAILED tests/test_speculation_shadow.py::test_designated_continuation_second_claim_is_independent",
+      "1 failed, 6 warnings in 1.75s"
     ]
   }
 ]

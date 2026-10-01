@@ -11,7 +11,10 @@ from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from functools import wraps
 from time import perf_counter
-from typing import Any, ParamSpec
+from typing import TYPE_CHECKING, Any, ParamSpec
+
+if TYPE_CHECKING:
+    from trusted_router.services.speculation_shadow import Continuation
 
 from starlette.exceptions import HTTPException
 
@@ -91,6 +94,25 @@ def _scope() -> Iterator[GatewayTiming | None]:
             _CURRENT.reset(token)
 
 
+_WORKER_CONTINUATION: ContextVar[Continuation | None] = ContextVar("shadow_worker_continuation", default=None)
+
+
+def worker_continuation() -> Continuation | None:
+    """Pass explicitly to the designated worker, alongside its Request/arguments."""
+    return _WORKER_CONTINUATION.get()
+
+
+@contextmanager
+def _handoff_scope(observation: Any) -> Iterator[None]:
+    from trusted_router.services import speculation_shadow as shadow
+    previous = _WORKER_CONTINUATION.get()
+    token = _WORKER_CONTINUATION.set(shadow.Continuation(observation) if observation is not None else None)
+    try:
+        yield
+    finally:
+        shadow.restore_context(_WORKER_CONTINUATION, token, previous)
+
+
 _OUTCOME_TIMING: ContextVar[dict[str, int] | None] = ContextVar("shadow_outcome_timing", default=None)
 
 
@@ -104,7 +126,7 @@ def _outcome_request_identity(args: Any, kwargs: Any) -> object:
     if state is None:
         return object()  # Direct callers without a request are independent.
     # Log IDs can be supplied by callers and reused on another request. Keep an
-    # opaque per-request token instead, shared with this request's worker call.
+    # opaque per-request token for diagnostics only; it never authorizes attachment.
     identity = getattr(state, "_shadow_request_identity", None)
     if identity is None:
         identity = object()
@@ -113,7 +135,7 @@ def _outcome_request_identity(args: Any, kwargs: Any) -> object:
 
 
 @contextmanager
-def _authorize_outcome(name: str, args: Any, kwargs: Any) -> Iterator[None]:
+def _authorize_outcome(name: str, args: Any, kwargs: Any, continuation: Continuation | None = None) -> Iterator[None]:
     from trusted_router.services import speculation_shadow as shadow
     settings = None
     with shadow.isolate("arguments"):
@@ -144,10 +166,12 @@ def _authorize_outcome(name: str, args: Any, kwargs: Any) -> Iterator[None]:
     try:
         try:
             with shadow.isolate("scope-setup"):
-                observation = stack.enter_context(shadow.outcome_scope(settings, _outcome_request_identity(args, kwargs)))
+                observation = stack.enter_context(shadow.outcome_scope(settings, _outcome_request_identity(args, kwargs), continuation))
                 if observation is not None:
                     previous_timing = _OUTCOME_TIMING.get()
                     token = _OUTCOME_TIMING.set({})
+                if name == "authorize_gateway":
+                    stack.enter_context(_handoff_scope(observation))
             yield
         except BaseException as exc:
             error = exc
@@ -161,7 +185,8 @@ def _authorize_outcome(name: str, args: Any, kwargs: Any) -> Iterator[None]:
                             detail = getattr(error, "detail", {})
                             data = detail.get("data", {}) if isinstance(detail, dict) else {}
                             timing = data.get("timing", getattr(error, "gateway_timing_data", {}).get("timing", {}))
-                        shadow.complete(observation, timing, error, deferred=failures)
+                        shadow.seal(observation, timing)
+                        shadow.complete(observation, dict(observation.timing), error, deferred=failures)
             finally:
                 try:
                     cleanup(stack.close)
@@ -180,6 +205,11 @@ def _authorize_outcome(name: str, args: Any, kwargs: Any) -> Iterator[None]:
 
 
 def _save_outcome_timing(response: dict[str, Any]) -> None:
+    from trusted_router.services import speculation_shadow as shadow
+    observation = shadow._CURRENT.get()
+    if observation is not None and observation.sealed:
+        shadow.record_loss("sealed-write-timing", observation)
+        return
     target = _OUTCOME_TIMING.get()
     if target is not None:
         target.update(response["data"].get("timing", {}))
@@ -191,6 +221,7 @@ def timed_gateway_sync(
     authorize = func.__name__ == "_authorize_gateway_sync"
     @wraps(func)
     def timed(*args: P.args, **kwargs: P.kwargs) -> dict[str, Any]:
+        continuation: Any = kwargs.pop("_shadow_continuation", None)
         settings: Any = kwargs.get("settings") if "settings" in kwargs else (args[2] if len(args) > 2 else None)
         if not authorize or settings is None or not settings.speculative_provider_shadow_enabled:
             with _scope() as timing:
@@ -198,7 +229,7 @@ def timed_gateway_sync(
                 if timing is not None:
                     response["data"]["timing"] = timing.snapshot()
                 return response
-        with _authorize_outcome(func.__name__, args, kwargs):
+        with _authorize_outcome(func.__name__, args, kwargs, continuation):
             with _scope() as timing:
                 response = func(*args, **kwargs)
                 if timing is not None:

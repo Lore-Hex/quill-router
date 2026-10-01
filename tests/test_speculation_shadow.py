@@ -430,7 +430,11 @@ async def test_nested_async_sync_outcome_once_and_early_unresolved(monkeypatch):
     from starlette.exceptions import HTTPException
     from starlette.requests import Request
 
-    from trusted_router.gateway_timing import timed_gateway_async, timed_gateway_sync
+    from trusted_router.gateway_timing import (
+        timed_gateway_async,
+        timed_gateway_sync,
+        worker_continuation,
+    )
     dispatcher = shadow.Dispatcher(ReferenceStore(), "p")
     monkeypatch.setattr(shadow, "_RUNTIME", dispatcher)
     settings = Settings(environment="test", speculative_provider_shadow_enabled=True)
@@ -441,7 +445,8 @@ async def test_nested_async_sync_outcome_once_and_early_unresolved(monkeypatch):
     async def authorize_gateway(request, body, settings):
         if body == "early":
             raise HTTPException(429, detail={"error": {"type": "rate_limited"}})
-        return await run_in_threadpool(_authorize_gateway_sync, request, body, settings)
+        return await run_in_threadpool(_authorize_gateway_sync, request, body, settings,
+                                       _shadow_continuation=worker_continuation())
     await authorize_gateway(Request({"type": "http"}), None, settings)
     assert dispatcher.pending.qsize() == 1
     completed = dispatcher.pending.get_nowait()
@@ -740,8 +745,8 @@ async def test_observer_fault_preserves_response_and_exception_identity(monkeypa
     if site == "cleanup":
         original = shadow.outcome_scope
         @contextmanager
-        def scope(settings, request_identity=None):
-            with original(settings, request_identity) as observation:
+        def scope(settings, request_identity=None, continuation=None):
+            with original(settings, request_identity, continuation) as observation:
                 yield observation
             fail()
         monkeypatch.setattr(shadow, "outcome_scope", scope)
@@ -1299,7 +1304,8 @@ async def test_reentrant_authorize_has_independent_request_observation(monkeypat
     @timing.timed_gateway_async
     async def authorize_gateway(request, body, settings):
         active = shadow._CURRENT.get()
-        result = await run_in_threadpool(_authorize_gateway_sync, request, body, settings)
+        result = await run_in_threadpool(_authorize_gateway_sync, request, body, settings,
+                                       _shadow_continuation=timing.worker_continuation())
         assert observations["outer"] is active  # One observation across async -> worker.
         return result
     result = (await authorize_gateway(outer, None, settings) if asynchronous
@@ -1322,3 +1328,190 @@ async def test_reentrant_authorize_has_independent_request_observation(monkeypat
         assert (event.status, event.reason) == ((403, "billing_paused") if denied else (200, "success"))
     assert not dispatcher.coverage_lost()
     assert shadow._CURRENT.get() is None and timing._OUTCOME_TIMING.get() is None
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("inner_async", [False, True])
+@pytest.mark.parametrize("denied", [False, True])
+async def test_same_request_completion_replay_is_independent(monkeypatch, asynchronous, inner_async, denied):
+    import contextvars
+    from concurrent.futures import ThreadPoolExecutor
+    from types import SimpleNamespace
+
+    from starlette.concurrency import run_in_threadpool
+    from starlette.exceptions import HTTPException
+    from starlette.requests import Request
+
+    from trusted_router import gateway_timing as timing
+    dispatcher = shadow.Dispatcher(ReferenceStore(), "same-request")
+    monkeypatch.setattr(shadow, "_RUNTIME", dispatcher)
+    settings = Settings(environment="test", speculative_provider_shadow_enabled=True)
+    request = Request({"type": "http"})
+    observations = []
+    responses = []
+    snapshots = iter(({"total_ms": 17, "spanner_rpcs": 5}, {"total_ms": 91, "spanner_rpcs": 6}))
+    monkeypatch.setattr(timing.GatewayTiming, "snapshot", lambda self: next(snapshots))
+    failure = HTTPException(403, {"error": {"type": "billing_paused"}})
+
+    @timing.timed_gateway_sync
+    def _authorize_gateway_sync(request, body, settings):
+        observations.append(shadow._CURRENT.get())
+        replay = len(observations) > 1
+        shadow.resolved(SimpleNamespace(workspace_id="w", hash="k", lookup_hash="lookup"), "nonce")
+        shadow.authorized(SimpleNamespace(id="inner-auth" if replay else "outer-auth", invocation_nonce="nonce"), ("endpoint",), replay, ("route",))
+        if replay and denied:
+            shadow.reason("billing_paused")
+            raise failure
+        response = {"data": {"idempotent_replay": replay}}
+        responses.append(response)
+        return response
+
+    @timing.timed_gateway_async
+    async def authorize_gateway(request, body, settings):
+        active = shadow._CURRENT.get()
+        result = await run_in_threadpool(_authorize_gateway_sync, request, body, settings,
+                                        _shadow_continuation=timing.worker_continuation())
+        assert shadow._CURRENT.get() is active
+        return result
+
+    complete = shadow.complete
+    def callback(observation, snapshot, *args, **kwargs):
+        if observation is observations[0]:
+            assert observation.sealed
+            saved = observation.timing
+            previous_timing = timing._OUTCOME_TIMING.get()
+            try:
+                if inner_async:
+                    context = contextvars.copy_context()
+                    with ThreadPoolExecutor(max_workers=1) as pool:
+                        pool.submit(context.run, asyncio.run, authorize_gateway(request, None, settings)).result()
+                else:
+                    _authorize_gateway_sync(request, None, settings)
+            except HTTPException as caught:
+                assert denied and caught is failure
+            assert shadow._CURRENT.get() is observation
+            assert timing._OUTCOME_TIMING.get() is previous_timing
+            assert observation.timing == saved
+        return complete(observation, snapshot, *args, **kwargs)
+    monkeypatch.setattr(shadow, "complete", callback)
+    response = (await authorize_gateway(request, None, settings) if asynchronous
+                else _authorize_gateway_sync(request, None, settings))
+    inner, outer = (dispatcher.pending.get_nowait() for _ in range(2))
+    assert dispatcher.pending.empty()
+    assert observations[0] is not observations[1]
+    assert (outer.status, outer.reason, outer.authorization_id, outer.replay) == (200, "success", "outer-auth", False)
+    assert (inner.status, inner.reason, inner.authorization_id, inner.replay) == (
+        403 if denied else 200, "billing_paused" if denied else "success", "inner-auth", True)
+    assert dict(outer.timing) == response["data"]["timing"] == {"total_ms": 17, "spanner_rpcs": 5}
+    assert dict(inner.timing) == {"total_ms": 91, "spanner_rpcs": 6}
+    assert response is responses[0]
+    assert not dispatcher.coverage_lost()
+    assert shadow._CURRENT.get() is None and timing._OUTCOME_TIMING.get() is None
+    assert timing.worker_continuation() is None
+
+
+@pytest.mark.parametrize("field", ["workspace_id", "key_id", "lookup_digest", "invocation_nonce", "reason", "rate_scope", "authorization_id", "replay", "endpoint_ids", "route_identity", "boot_verified", "boot_id", "timing", "sealed"])
+def test_completion_cannot_write_sealed_facts(monkeypatch, field):
+    from types import SimpleNamespace
+
+    from trusted_router import gateway_timing as timing
+    dispatcher = shadow.Dispatcher(ReferenceStore(), "sealed")
+    monkeypatch.setattr(shadow, "_RUNTIME", dispatcher)
+    original = shadow.complete
+    def callback(observation, snapshot, *args, **kwargs):
+        assert observation.sealed
+        before = vars(observation).copy()
+        setattr(observation, field, False if field == "sealed" else "corrupt")
+        assert vars(observation) == before
+        assert dispatcher.coverage_loss_reason() == "observer-sealed-write-" + field
+        # Callback timing arguments are detached from the sealed facts, too.
+        snapshot["total_ms"] = 999999
+        original(observation, snapshot, *args, **kwargs)
+    monkeypatch.setattr(shadow, "complete", callback)
+    @timing.timed_gateway_sync
+    def _authorize_gateway_sync(request, body, settings):
+        shadow.authorized(SimpleNamespace(id="outer", invocation_nonce="nonce"), ("endpoint",), False)
+        return {"data": {}}
+    response = _authorize_gateway_sync(None, None, Settings(environment="test", speculative_provider_shadow_enabled=True))
+    outcome = dispatcher.pending.get_nowait()
+    assert (outcome.status, outcome.reason, outcome.authorization_id, outcome.replay) == (200, "success", "outer", False)
+    assert dict(outcome.timing) == response["data"]["timing"]
+    assert dispatcher.coverage_lost()
+
+
+async def test_designated_continuation_second_claim_is_independent(monkeypatch):
+    from types import SimpleNamespace
+
+    from starlette.concurrency import run_in_threadpool
+    from starlette.requests import Request
+
+    from trusted_router import gateway_timing as timing
+    dispatcher = shadow.Dispatcher(ReferenceStore(), "double-claim")
+    monkeypatch.setattr(shadow, "_RUNTIME", dispatcher)
+    observations = []
+    @timing.timed_gateway_sync
+    def _authorize_gateway_sync(request, body, settings):
+        observations.append(shadow._CURRENT.get())
+        shadow.authorized(SimpleNamespace(id=body, invocation_nonce=body), (body,), False)
+        return {"data": {}}
+    @timing.timed_gateway_async
+    async def authorize_gateway(request, body, settings):
+        outer = shadow._CURRENT.get()
+        capability = timing.worker_continuation()
+        assert capability.observation is outer
+        for label in ("first", "second"):
+            await run_in_threadpool(_authorize_gateway_sync, request, label, settings,
+                                    _shadow_continuation=capability)
+            assert shadow._CURRENT.get() is outer
+        assert observations[0] is outer
+        assert observations[1] is not outer
+        assert outer.authorization_id == "first"
+        assert capability.claim() is None
+        return {"data": {}}
+    await authorize_gateway(Request({"type": "http"}), None, Settings(environment="test", speculative_provider_shadow_enabled=True))
+    assert [dispatcher.pending.get_nowait().authorization_id for _ in range(2)] == ["second", "first"]
+    assert dispatcher.pending.empty() and not dispatcher.coverage_lost()
+    assert timing.worker_continuation() is None
+
+
+def test_continuation_claim_is_atomic():
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    observation = shadow.Observation(shadow.Dispatcher(ReferenceStore(), "atomic"))
+    capability = shadow.Continuation(observation)
+    barrier = threading.Barrier(8)
+    def claim():
+        barrier.wait(timeout=10)
+        return capability.claim()
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda _: claim(), range(8)))
+    assert sum(result is observation for result in results) == 1
+    assert results.count(None) == 7
+
+
+@pytest.mark.parametrize("retired", [False, True])
+@pytest.mark.parametrize("callback", ["resolved", "reason", "boot_verified", "authorized", "timing"])
+def test_late_fact_callbacks_record_sealed_coverage_loss(monkeypatch, retired, callback):
+    from types import SimpleNamespace
+
+    from trusted_router import gateway_timing as timing
+    dispatcher = shadow.Dispatcher(ReferenceStore(), "late-write")
+    observation = shadow.Observation(dispatcher)
+    shadow.seal(observation, {"total_ms": 17})
+    observation.retired = retired
+    before = vars(observation).copy()
+    token = shadow._CURRENT.set(observation)
+    callbacks = {
+        "resolved": lambda: shadow.resolved(SimpleNamespace(workspace_id="w", hash="k", lookup_hash="lookup"), "nonce"),
+        "reason": lambda: shadow.reason("billing_paused"),
+        "boot_verified": lambda: shadow.boot_verified(True, "boot"),
+        "authorized": lambda: shadow.authorized(SimpleNamespace(id="late", invocation_nonce="nonce"), ("endpoint",), True, ("route",)),
+        "timing": lambda: timing._save_outcome_timing({"data": {"timing": {"total_ms": 99}}}),
+    }
+    try:
+        callbacks[callback]()
+        assert vars(observation) == before
+        assert dispatcher.coverage_lost()
+        assert dispatcher.coverage_loss_reason().startswith("observer-sealed-write-")
+    finally:
+        shadow._CURRENT.reset(token)

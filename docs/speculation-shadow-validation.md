@@ -1,46 +1,58 @@
-# PR3 round 5 validation
+# PR3 round 6 validation
 
-Base: `b0fbe4f2053312f80b34827445b874edb972c00f`, branch
-`speculation/shadow-observation`. Changes remain uncommitted; no git writes,
-migration, production enablement or deployment. The shadow flag stays false;
-workspace/route/image/producer/slot lists stay empty.
+Base: `c2c10ee11076022435e99aca2a768e478b308ece`, branch
+`speculation/shadow-observation`. No git writes, migration, enablement or deployment.
+Changes remain uncommitted. The shadow flag and production prerequisites are unchanged.
 
-## Finding closure
+## Continuation handoff
 
-| Finding | Change and evidence |
-|---|---|
-| P2: retirement interruption leaks active observation | `src/trusted_router/services/speculation_shadow.py:206` puts retirement in a `try` whose `finally` restores `_CURRENT`. Retirement still precedes restoration, preserving double-restoration-failure protection. `tests/test_speculation_shadow.py:1208` injects RuntimeError, KeyboardInterrupt and GeneratorExit at the actual retirement assignment; verifies response/exception identity, the committed 600 hold, restored scopes, lost coverage and a separate next synchronous event while retaining the traceback. |
-| P2: reentrant authorization overwrites outer facts | `src/trusted_router/gateway_timing.py:101` creates a request correlation token; `src/trusted_router/services/speculation_shadow.py:194` shares only matching active identities. `tests/test_speculation_shadow.py:1254` covers body and completion callbacks, independent success and billing_paused denial, sync and async/thread continuations, and absent/distinct/reused log IDs. Both events retain their own workspace/key/nonce/authorization/reason/route, with the original outer response and holds preserved. |
-| P3: mark-finished fault replaces response | `src/trusted_router/gateway_timing.py:136` performs `finalized = True` through the existing isolated cleanup helper at line 170. Ordinary assignment faults preserve the response and close coverage; process-control faults propagate identically. `tests/test_speculation_shadow.py:1208` traces this exact line with RuntimeError, KeyboardInterrupt and GeneratorExit and checks both scopes plus the next authorization. |
+`gateway_timing._authorize_outcome` creates the async owner's observation and enters
+`_handoff_scope`, which creates a `speculation_shadow.Continuation`. A ContextVar
+makes that capability available to the async entrypoint without changing its public
+signature. `gateway.authorize_gateway` explicitly passes it as `_shadow_continuation`
+to `run_in_threadpool`, alongside the Request, body, settings and raw bytes.
+`timed_gateway_sync` removes the private keyword before invoking the ordinary worker.
 
-## Observation identity
+`outcome_scope` consumes the capability with `Continuation.claim`: a nonblocking lock
+protects the check and one-time claim. Claimed, sealed, retired or contended capabilities
+cannot attach. A successful claim pushes the outer observation into the worker scope;
+only the async owner completes it. Without a successful explicit claim, every invocation
+creates an independent observation and outcome-timing scope, including same-Request
+calls, nested async calls, and completion callbacks. Scope exit restores its predecessor.
+The old opaque Request token remains diagnostic correlation only; matching it grants
+no authority. No Request or capability is placed in the event queue.
 
-The outer authorization wrapper puts an opaque `object()` correlation token in
-`request.state._shadow_request_identity`; `Observation.request_identity` stores
-that token. No request content or token is added to the queued Outcome. Log IDs
-are deliberately not authoritative because middleware accepts caller-supplied
-IDs that can be reused by separate requests.
+## Sealing and reviewer reproductions
 
-The async entrypoint and synchronous worker receive the same Request/state and
-therefore the same token. ContextVar propagation into the worker carries the
-active observation; the matching token shares it and only the outer owner emits
-an event. A different request gets its own token, observation and outcome-timing
-scope. ContextVar tokens push/pop the active scope and restore the outer facts
-after the inner authorization completes or fails. Callers without a Request/state
-get fresh independent identities. Retired observations are always inert.
+In `_authorize_outcome`'s existing isolated completion boundary, after ordinary timing
+has been captured and error timing extracted, `seal` copies allowlisted timing into an
+immutable tuple and seals the observation **before invoking `shadow.complete`**.
+Observation fact assignments after sealing are rejected and record
+`observer-sealed-write-<field>` coverage loss. Fact callbacks retain that behavior after
+retirement, and `_save_outcome_timing` rejects late timing writes. Completion receives a
+detached timing dictionary; event construction uses the sealed tuple. Ordinary
+`data.timing` continues through its existing timing implementation.
+
+Regressions cover successful same-Request replay and caught billing-paused replay in
+sync and async/threaded execution, including nested async reentry. Synthetic tests prove
+separate authorization IDs and exact outer/inner timing. Real gateway tests prove a
+successful replay retains its legitimate original authorization ID with `replay=True`,
+while a denied invocation has its own empty authorization ID rather than inheriting the
+outer successful authorization. Both emit two events, and the outer event stays
+200/success with its original timing. Additional gates exercise every sealed fact,
+late callback writes before/after retirement, repeated explicit claims and concurrent
+claims. All round-5 fault-injection and different-Request reentrancy gates remain.
 
 ## Preserved guarantees
 
-- Zero new synchronous storage, RPC, lock or await. Request identity is local
-  bookkeeping; shadow storage IO remains in the independent worker.
-- Ordinary authorization remains pinned at **5 operations / 6 with the
-  transactional pause gate**, with/without boot authentication and shadow off/on.
-- Cached grant current-deadline checks, full response/money/SQL Stage D
-  differential gates and all previous mutation gates remain intact.
-- Native conformance remains selected as `spanner-emulator` in CI's explicit
-  file list with its collection guard and pinned emulator image.
-- Production migration and the three exact PLAN queries remain pre-enable
-  requirements; no production PLAN acceptance is claimed here.
+- No new synchronous storage or RPC. Capability claims use a process-local,
+  nonblocking lock; shadow storage IO remains in the independent worker.
+- Ordinary authorization stays pinned to **5 operations / 6 with the transactional
+  pause gate**, with boot authentication and shadow off/on variants.
+- Stage D response/money/SQL differentials, cached deadline checks, and native CI
+  inclusion remain covered. Native emulator execution requires the configured CI
+  emulator; local skips do not establish native SQL acceptance.
+- Production migration and exact PLAN queries remain pre-enable requirements.
 
 ## Retention
 
@@ -59,10 +71,10 @@ get fresh independent identities. Retired observations are always inert.
 
 ## Environment and gates
 
-Python **3.12.3**, frozen dependencies, existing environment:
-`UV_PROJECT_ENVIRONMENT=/private/tmp/astra-r3b-py312` and
-`UV_CACHE_DIR=/private/tmp/astra-r3b-uv`. The repository's Python 3.11
-environment is unchanged. No tests are excluded.
+Python 3.12.3, existing frozen environment:
+`UV_PROJECT_ENVIRONMENT=/private/tmp/astra-r3b-py312`,
+`UV_CACHE_DIR=/private/tmp/astra-r3b-uv`. The repository's Python 3.11 environment
+is unchanged. Both known Python 3.11-only failures are included without exclusions.
 
 ```text
 uv run --frozen ruff check .
@@ -74,52 +86,49 @@ Success: no issues found in 382 source files
 uv run --frozen mypy
 Success: no issues found in 382 source files
 
-Shadow suite
-384 passed, 14 warnings in 33.93s
+Shadow, protocol, timing, RPC/billing budget, Stage D, boot, outbox,
+and conformance suites (-n 4), final clean targeted run:
+3821 passed, 1068 skipped, 11 xfailed, 1908 warnings in 108.66s (0:01:48)
+Exit 0
 
-Shadow, timing, RPC (including billing path budget), Stage D, boot, outbox,
-and conformance suites (-n 4)
-3296 passed, 1068 skipped, 11 xfailed, 1908 warnings in 175.37s (0:02:55)
-```
-
-The targeted basetemp `/private/tmp/astra-r3e-targeted` was deleted after
-completion. Logs: `/private/tmp/astra-r3e-shadow.log`,
-`/private/tmp/astra-r3e-targeted.log`, `/private/tmp/astra-r3e-ruff.log`,
-`/private/tmp/astra-r3e-mypy-src.log`, `/private/tmp/astra-r3e-mypy.log`.
-
-Native emulator execution remains unavailable locally: no Docker executable or
-configured emulator. Skips are not SQL acceptance. CI still selects the native
-dedup/rollback test and retains its emulator readiness and collection guards.
-
-Final clean full run, after all source/test fixes, with no exclusions and no
-other test jobs launched concurrently for this task:
-
-```text
 uv run --frozen pytest -q -p no:cacheprovider -n 4 \
-  --basetemp /private/tmp/astra-r3e-$$ \
+  --basetemp /private/tmp/astra-r3f-$$ \
   --cov=trusted_router --cov-report=term --cov-fail-under=70
 Required test coverage of 70% reached. Total coverage: 85.77%
-17235 passed, 1118 skipped, 12 xfailed, 14424 warnings in 3607.08s (1:00:07)
+17277 passed, 1118 skipped, 12 xfailed, 14414 warnings in 2395.80s (0:39:55)
 Exit 0
 ```
 
-Coverage data was directed to `/private/tmp/astra-r3e.coverage`. The log is
-`/private/tmp/astra-r3e-full-clean.log`; exit receipt:
-`/private/tmp/astra-r3e-full-exit.txt`. `df -h /private/tmp` reported **116 GiB**
-available immediately before the full run (receipt:
-`/private/tmp/astra-r3e-disk-before.log`). Basetemp
-`/private/tmp/astra-r3e-89619` was deleted after successful completion. Both
-known Python 3.11-only failures were included and pass under Python 3.12.3.
-No source or test edits were made after this full run.
+The full run includes every test, without exclusions. No source or test fixes were
+made after this full run started. `df -h /private/tmp` showed **115 GiB available**
+before the run. Full basetemp `/private/tmp/astra-r3f-35289` and both targeted
+basetemps were deleted after completion. Coverage data is outside the worktree at
+`/private/tmp/astra-r3f.coverage`.
+
+Gate logs: `/private/tmp/astra-r3f-ruff.log`,
+`/private/tmp/astra-r3f-mypy-src.log`, `/private/tmp/astra-r3f-mypy.log`,
+`/private/tmp/astra-r3f-targeted-clean.log`, and
+`/private/tmp/astra-r3f-full-clean.log`. Full-run exit receipt:
+`/private/tmp/astra-r3f-full-exit.txt`; disk receipt:
+`/private/tmp/astra-r3f-disk-before.log`.
+
+Native emulator execution remains unavailable locally (no Docker executable or
+configured emulator). CI selection and its collection guards pass; local skips
+are not native SQL acceptance.
 
 ## Mutation receipts
 
-`uv run --frozen python -m tests.speculation_shadow_mutations` exited **0**:
-**42 red**, all 42 baselines and all 42 restored baselines pass. Each mutation
-runs behavior tests in a disposable copy; import/compile errors and timeouts
-never count as detection. Exact replacements are in
-`tests/speculation_shadow_mutations.py`; full receipts are in
-`speculation-shadow-mutations.json`; log: `/private/tmp/astra-r3e-mutations.log`.
+`uv run --frozen python -m tests.speculation_shadow_mutations` exited **0** on the
+final source: **45 red**, with all 45 baselines and all 45 restored baselines
+passing. Import/compile failures and timeouts never count as detection. Mutations
+run in disposable copies. Receipts: `speculation-shadow-mutations.json`; log:
+`/private/tmp/astra-r3f-mutations-clean.log`.
+
+The 42 round-5 checks are retained. The former identity-guard mutation retains
+its receipt name, but now bypasses the explicit handoff requirement by attaching
+the ambient observation when no capability is supplied. Its existing independent
+Request reentrancy gate kills that equivalent regression. Three new mutations
+restore token matching, permit sealed writes, and allow a second claim.
 
 | # | Mutation | Result | Baseline / restored |
 |---|---|---|---|
@@ -140,22 +149,22 @@ never count as detection. Exact replacements are in
 | 15 | expired replay recreates dedup | red | pass / pass |
 | 16 | old success recreates dedup | red | pass / pass |
 | 17 | retention policy omitted | red | pass / pass |
-| 18 | remove gateway.py resolved boundary L786 | red | pass / pass |
-| 19 | remove gateway.py boot_verified boundary L812 | red | pass / pass |
-| 20 | remove gateway.py authorized boundary L2405 | red | pass / pass |
-| 21 | remove gateway.py reason boundary L790 | red | pass / pass |
-| 22 | remove gateway.py reason boundary L820 | red | pass / pass |
-| 23 | remove gateway.py reason boundary L1611 | red | pass / pass |
-| 24 | remove gateway.py reason boundary L1378 | red | pass / pass |
-| 25 | remove gateway.py reason boundary L1806 | red | pass / pass |
-| 26 | remove gateway.py reason boundary L1718 | red | pass / pass |
-| 27 | remove gateway_timing.py arguments boundary L119 | red | pass / pass |
-| 28 | remove gateway_timing.py scope-cleanup boundary L133 | red | pass / pass |
-| 29 | remove gateway_timing.py scope-setup boundary L146 | red | pass / pass |
-| 30 | remove gateway_timing.py completion boundary L157 | red | pass / pass |
-| 31 | remove gateway_timing.py timing boundary L207 | red | pass / pass |
-| 32 | remove gateway_timing.py timing boundary L232 | red | pass / pass |
-| 33 | remove speculation_shadow.py submit boundary L224 | red | pass / pass |
+| 18 | remove gateway.py resolved boundary L789 | red | pass / pass |
+| 19 | remove gateway.py boot_verified boundary L815 | red | pass / pass |
+| 20 | remove gateway.py authorized boundary L2408 | red | pass / pass |
+| 21 | remove gateway.py reason boundary L793 | red | pass / pass |
+| 22 | remove gateway.py reason boundary L823 | red | pass / pass |
+| 23 | remove gateway.py reason boundary L1614 | red | pass / pass |
+| 24 | remove gateway.py reason boundary L1381 | red | pass / pass |
+| 25 | remove gateway.py reason boundary L1809 | red | pass / pass |
+| 26 | remove gateway.py reason boundary L1721 | red | pass / pass |
+| 27 | remove gateway_timing.py arguments boundary L141 | red | pass / pass |
+| 28 | remove gateway_timing.py scope-cleanup boundary L155 | red | pass / pass |
+| 29 | remove gateway_timing.py scope-setup boundary L168 | red | pass / pass |
+| 30 | remove gateway_timing.py completion boundary L181 | red | pass / pass |
+| 31 | remove gateway_timing.py timing boundary L238 | red | pass / pass |
+| 32 | remove gateway_timing.py timing boundary L263 | red | pass / pass |
+| 33 | remove speculation_shadow.py submit boundary L267 | red | pass / pass |
 | 34 | unguard loss recorder | red | pass / pass |
 | 35 | drop ContextVar restoration fallback | red | pass / pass |
 | 36 | classify only Exception exits | red | pass / pass |
@@ -165,3 +174,6 @@ never count as detection. Exact replacements are in
 | 40 | retirement outside restoration finally | red | pass / pass |
 | 41 | ignore observation request identity | red | pass / pass |
 | 42 | mark finished outside isolation | red | pass / pass |
+| 43 | match token instead of claimed continuation | red | pass / pass |
+| 44 | callbacks can mutate sealed observation | red | pass / pass |
+| 45 | continuation claimable twice | red | pass / pass |

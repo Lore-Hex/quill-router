@@ -68,8 +68,8 @@ MUTATIONS.extend([
     ("native explicit CI list omitted", ".github/workflows/ci.yml",
      '          tests/conformance/test_speculation_shadow_native.py\n', '', UNIT + "test_native_shadow_is_selected_by_ci"),
     ("Stage D observer changes estimate", SERVICE,
-     '    observation = _CURRENT.get()\n    if observation is not None and not observation.retired:\n        observation.authorization_id = authorization.id',
-     '    if authorization.pricing_snapshot is not None:\n        authorization.estimated_microdollars += 1\n    observation = _CURRENT.get()\n    if observation is not None and not observation.retired:\n        observation.authorization_id = authorization.id',
+     '    observation = _CURRENT.get()\n    if observation is not None and (not observation.retired or observation.sealed):\n        observation.authorization_id = authorization.id',
+     '    if authorization.pricing_snapshot is not None:\n        authorization.estimated_microdollars += 1\n    observation = _CURRENT.get()\n    if observation is not None and (not observation.retired or observation.sealed):\n        observation.authorization_id = authorization.id',
      "tests/test_gateway_authorize_spanner_operations.py::test_shadow_response_money_and_sql_differential"),
     ("expired replay recreates dedup", SERVICE,
      'if event is not None and not now - MAX_DELIVERY_SECONDS <= event.occurred_at <= now:',
@@ -156,11 +156,26 @@ MUTATIONS.extend([
      "        observation.retired = True\n        restore_context(_CURRENT, token, previous)",
      UNIT + "test_assignment_fault_restores_scopes_and_preserves_response"),
     ("ignore observation request identity", SERVICE,
-     " and current.request_identity is request_identity", "",
+     "attached = continuation.claim() if continuation is not None else None",
+     "attached = continuation.claim() if continuation is not None else _CURRENT.get()",
      UNIT + "test_reentrant_authorize_has_independent_request_observation"),
     ("mark finished outside isolation", "src/trusted_router/gateway_timing.py",
      "            cleanup(finish)", "            finish()",
      UNIT + "test_assignment_fault_restores_scopes_and_preserves_response"),
+])
+
+
+MUTATIONS.extend([
+    ("match token instead of claimed continuation", SERVICE,
+     "attached = continuation.claim() if continuation is not None else None",
+     "attached = _CURRENT.get() if _CURRENT.get() is not None and _CURRENT.get().request_identity is request_identity else None",
+     UNIT + "test_same_request_completion_replay_is_independent"),
+    ("callbacks can mutate sealed observation", SERVICE,
+     'if self.__dict__.get("sealed", False) and name != "retired":',
+     'if False:', UNIT + "test_completion_cannot_write_sealed_facts"),
+    ("continuation claimable twice", SERVICE,
+     "            self._claimed = True", "            self._claimed = False",
+     UNIT + "test_designated_continuation_second_claim_is_independent"),
 ])
 
 

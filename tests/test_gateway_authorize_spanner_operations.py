@@ -1038,3 +1038,55 @@ def test_shadow_response_money_and_sql_differential(monkeypatch, fixed_operation
     for off, on in zip(transcripts[0][1], transcripts[1][1], strict=True):
         assert off == on
     assert transcripts[0] == transcripts[1]
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("denied", [False, True])
+async def test_same_request_completion_callback_real_replay(
+    monkeypatch: pytest.MonkeyPatch, fixed_operation_catalog: None, asynchronous: bool, denied: bool,
+) -> None:
+    from tests.test_speculation_shadow import ReferenceStore
+    from trusted_router.services import speculation_shadow as shadow
+
+    store, _database, key = _seed_typed_gateway_store()
+    dispatcher = shadow.Dispatcher(ReferenceStore(), "real-replay")
+    monkeypatch.setattr(shadow, "_RUNTIME", dispatcher)
+    request, body = _request(), _lookup_body(key)
+    settings = Settings(environment="test", speculative_provider_shadow_enabled=True)
+    original = shadow.complete
+    captured: list[tuple[shadow.Observation, dict[str, int]]] = []
+    replay = None
+    def callback(observation: Any, timing: Any, *args: Any, **kwargs: Any) -> None:
+        nonlocal replay
+        captured.append((observation, dict(timing)))
+        if len(captured) == 1:
+            assert observation.sealed
+            if denied:
+                workspace = store.get_workspace(key.workspace_id)
+                assert workspace is not None
+                workspace.billing_paused = True
+                store._write_entity("workspace", workspace.id, workspace)
+                with pytest.raises(HTTPException) as caught:
+                    gateway._authorize_gateway_sync(request, body, settings)
+                assert caught.value.status_code == 503
+            else:
+                replay = gateway._authorize_gateway_sync(request, body, settings)
+            assert shadow._CURRENT.get() is observation
+        original(observation, timing, *args, **kwargs)
+    monkeypatch.setattr(shadow, "complete", callback)
+    response = (await gateway.authorize_gateway(request, body, settings) if asynchronous
+                else gateway._authorize_gateway_sync(request, body, settings))
+    inner, outer = (dispatcher.pending.get_nowait() for _ in range(2))
+    assert dispatcher.pending.empty()
+    assert captured[0][0] is not captured[1][0]
+    assert outer.status == 200 and outer.reason == "success" and not outer.replay
+    assert outer.authorization_id == response["data"]["authorization_id"]
+    assert dict(outer.timing) == captured[0][1] == response["data"]["timing"]
+    assert (inner.workspace_id, inner.key_id) == (outer.workspace_id, outer.key_id)
+    assert (inner.status, inner.reason) == ((503, "billing_paused") if denied else (200, "success"))
+    if denied:
+        assert inner.authorization_id == ""  # This invocation never authorized.
+    else:
+        assert replay is not None and replay["data"]["idempotent_replay"]
+        assert inner.replay and inner.authorization_id == outer.authorization_id
+    assert not dispatcher.coverage_lost()

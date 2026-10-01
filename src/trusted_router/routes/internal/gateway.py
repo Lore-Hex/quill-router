@@ -93,6 +93,7 @@ from trusted_router.gateway_timing import (
     gateway_timing_phase,
     timed_gateway_async,
     timed_gateway_sync,
+    worker_continuation,
 )
 from trusted_router.money import money_pair
 from trusted_router.oauth_app_policy import oauth_app_is_effectively_suspended
@@ -492,12 +493,14 @@ async def authorize_gateway(
             # Direct unit callers may construct a Request without an ASGI receive
             # channel. Real routed requests always provide the exact cached bytes.
             raw_body = b""
+        continuation = worker_continuation() if settings.speculative_provider_shadow_enabled else None
         return await run_in_threadpool(
-            _authorize_gateway_sync,
+            cast(Any, _authorize_gateway_sync),  # wrapper consumes the private handoff keyword
             request,
             body,
             settings,
             raw_body,
+            **({"_shadow_continuation": continuation} if continuation is not None else {}),
         )
     finally:
         _AUTHORIZE_ADMISSION.release(subject)

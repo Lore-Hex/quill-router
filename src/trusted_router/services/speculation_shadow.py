@@ -76,6 +76,8 @@ class Observation:
     dispatcher: Dispatcher
     request_identity: object = field(default_factory=object)
     retired: bool = False
+    sealed: bool = False
+    timing: tuple[tuple[str, int], ...] = ()
     route_identity: tuple[str, ...] = ()
     boot_id: str = ""
     workspace_id: str = ""
@@ -88,6 +90,40 @@ class Observation:
     authorization_id: str = ""
     replay: bool = False
     endpoint_ids: tuple[str, ...] = ()
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if self.__dict__.get("sealed", False) and name != "retired":
+            record_loss("sealed-write-" + name, self)
+            return
+        super().__setattr__(name, value)
+
+
+class Continuation:
+    """Explicit, one-use authority for the designated async-to-sync worker."""
+
+    def __init__(self, observation: Observation) -> None:
+        self.observation = observation
+        self._claimed = False
+        self._lock = threading.Lock()
+
+    def claim(self) -> Observation | None:
+        # Never wait on another invocation. A failed claim gets its own scope.
+        if not self._lock.acquire(blocking=False):
+            return None
+        try:
+            if self._claimed or self.observation.sealed or self.observation.retired:
+                return None
+            self._claimed = True
+            return self.observation
+        finally:
+            self._lock.release()
+
+
+def seal(observation: Observation, timing: Mapping[str, int]) -> None:
+    if not observation.sealed:
+        observation.timing = tuple((k, int(timing[k])) for k in
+                                  ("total_ms", "key_lookup_ms", "routing_ms", "store_ms", "post_commit_ms", "spanner_rpcs") if k in timing)
+        observation.sealed = True
 
 
 _CURRENT: contextvars.ContextVar[Observation | None] = contextvars.ContextVar("speculation_shadow", default=None)
@@ -160,7 +196,7 @@ def isolate(site: str, observation: Observation | None = None, *, deferred: list
 
 def resolved(key: Any, nonce: str | None) -> None:
     observation = _CURRENT.get()
-    if observation is not None and not observation.retired and key is not None:
+    if observation is not None and (not observation.retired or observation.sealed) and key is not None:
         observation.workspace_id = key.workspace_id
         observation.key_id = key.hash
         observation.lookup_digest = key.lookup_hash
@@ -169,20 +205,20 @@ def resolved(key: Any, nonce: str | None) -> None:
 
 def reason(code: str, rate_scope: str = "") -> None:
     observation = _CURRENT.get()
-    if observation is not None and not observation.retired:
+    if observation is not None and (not observation.retired or observation.sealed):
         observation.reason, observation.rate_scope = code, rate_scope
 
 
 def boot_verified(verified: bool, kid: str = "") -> None:
     observation = _CURRENT.get()
-    if observation is not None and not observation.retired:
+    if observation is not None and (not observation.retired or observation.sealed):
         observation.boot_verified = verified
         observation.boot_id = kid if verified else ""
 
 
 def authorized(authorization: Any, endpoint_ids: tuple[str, ...], replay: bool, route_identity: tuple[str, ...] = ()) -> None:
     observation = _CURRENT.get()
-    if observation is not None and not observation.retired:
+    if observation is not None and (not observation.retired or observation.sealed):
         observation.authorization_id = authorization.id
         observation.invocation_nonce = authorization.invocation_nonce or observation.invocation_nonce
         observation.endpoint_ids = endpoint_ids[:16]
@@ -191,11 +227,18 @@ def authorized(authorization: Any, endpoint_ids: tuple[str, ...], replay: bool, 
 
 
 @contextmanager
-def outcome_scope(settings: Any, request_identity: object | None = None) -> Iterator[Observation | None]:
-    # Only the same request's continuation shares the active observation.
-    current = _CURRENT.get()
-    if not settings.speculative_provider_shadow_enabled or _RUNTIME is None or (current is not None and not current.retired and current.request_identity is request_identity):
+def outcome_scope(settings: Any, request_identity: object | None = None, continuation: Continuation | None = None) -> Iterator[Observation | None]:
+    if not settings.speculative_provider_shadow_enabled or _RUNTIME is None:
         yield None
+        return
+    attached = continuation.claim() if continuation is not None else None
+    if attached is not None:
+        previous = _CURRENT.get()
+        token = _CURRENT.set(attached)
+        try:
+            yield None  # The async owner alone seals and submits this event.
+        finally:
+            restore_context(_CURRENT, token, previous)
         return
     observation = Observation(_RUNTIME, request_identity=request_identity if request_identity is not None else object())
     previous = _CURRENT.get()
@@ -222,7 +265,7 @@ def complete(observation: Observation | None, timing: Mapping[str, int], error: 
         code = {"key_limit_exceeded": "key_limit_exceeded", "key_window_limit_exceeded": "key_window_limit_exceeded", "insufficient_credits": "credit_exhausted",
                 "billing_paused": "billing_paused"}.get(typed, "success" if not error else "request_error")
     with isolate("submit", observation, deferred=deferred):
-        observation.dispatcher.try_submit(observation, status, code, timing, deferred=deferred)
+        observation.dispatcher.try_submit(observation, status, code, dict(observation.timing) if observation.sealed else timing, deferred=deferred)
 
 
 class Dispatcher:
