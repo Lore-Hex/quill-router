@@ -497,6 +497,9 @@ class SpannerStore:
         from trusted_router.storage_gcp_authorize import ExhaustedKeyCache
 
         self._lifetime_cap_exhausted_keys = ExhaustedKeyCache()
+        # Workspaces whose last authorize found no credit headroom; see
+        # credit_exhaustion_precheck. Each hit is rechecked on a snapshot.
+        self._insufficient_credit_workspaces = ExhaustedKeyCache()
         self._credit_shard_counts = CreditShardCountCache(
             ttl_seconds=float(os.environ.get("TR_CREDIT_SHARD_COUNT_CACHE_SECONDS", "60")),
             max_entries=int(os.environ.get("TR_CREDIT_SHARD_COUNT_CACHE_ENTRIES", "10000")),
@@ -4921,6 +4924,7 @@ class SpannerStore:
             AuthorizeOutcome,
             authorize_atomic,
             bounded_credit_shard_candidates,
+            credit_exhaustion_precheck,
             key_lifetime_cap_precheck,
         )
         from trusted_router.storage_gcp_keys import (
@@ -5056,6 +5060,24 @@ class SpannerStore:
                 )
             if cap_verdict == HEADROOM:
                 self._lifetime_cap_exhausted_keys.discard(key_hash)
+
+        if has_credit_candidate and workspace_id in self._insufficient_credit_workspaces:
+            credit_verdict = credit_exhaustion_precheck(
+                self._database,
+                self._param_types,
+                workspace_id=workspace_id,
+                estimate=estimate,
+                idempotency_scope=scope,
+            )
+            if credit_verdict == EXHAUSTED:
+                from trusted_router.storage_gcp_authorize import AuthorizeVerdict
+
+                return (
+                    AuthorizeVerdict(AuthorizeOutcome.INSUFFICIENT_CREDITS, rate_limit=window_decision),
+                    None,
+                )
+            if credit_verdict == HEADROOM:
+                self._insufficient_credit_workspaces.discard(workspace_id)
 
         credit_shard_candidates = (
             self._credit_shard_candidates(workspace_id) if has_credit_candidate else (UNSHARDED,)
@@ -5317,6 +5339,10 @@ class SpannerStore:
         outcome = result["outcome"]
         if outcome == AuthorizeOutcome.KEY_LIMIT_EXCEEDED and not skip_key_limit:
             self._lifetime_cap_exhausted_keys.add(key_hash)
+        if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS and has_credit_candidate:
+            # Final here: a multi-shard miss without proven aggregate exhaustion
+            # raised StoreUnavailable above instead of returning a 402.
+            self._insufficient_credit_workspaces.add(workspace_id)
         authorization: GatewayAuthorization | None = None
         if outcome == AuthorizeOutcome.ACCEPTED:
             # authorize_atomic stamps one client timestamp onto both the object
