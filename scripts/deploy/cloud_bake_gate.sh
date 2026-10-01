@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Fleet-level bake ladder for operator-run AWS and Azure control-plane deploys.
+# Fleet admission; an explicit promote/canary mode retains the old bake ladder.
+# The default rolling mode uses the atomic two-cloud guard, not a blanket delay.
 # Source this file to call cloud_bake_gate CLOUD in the current shell, or run it
 # directly as: bash scripts/deploy/cloud_bake_gate.sh CLOUD.
 
@@ -302,7 +303,7 @@ _cloud_bake_fleet_healthy() {
 
 cloud_bake_gate() {
   local target_cloud="${1:-${TR_DEPLOY_MUTEX_CLOUD:-}}"
-  local mode="${TR_CLOUD_DEPLOY_MODE:-promote}"
+  local mode="${TR_CLOUD_DEPLOY_MODE:-rolling}"
   local hours_raw="${TR_CLOUD_BAKE_HOURS:-24}"
   local override_reason="${TR_CLOUD_BAKE_OVERRIDE:-}"
 
@@ -315,10 +316,18 @@ cloud_bake_gate() {
       ;;
   esac
   case "$mode" in
+    rolling)
+      # No override bypass: a cloud lease and unchanged healthy holdback are
+      # mandatory even during an incident. Regional rollback gates still run.
+      local coordinator_dir
+      coordinator_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+      python3 "${coordinator_dir}/cloud_rollout.py" assert --cloud "$target_cloud"
+      return $?
+      ;;
     promote|canary) ;;
     *)
       _cloud_bake_log \
-        "cloud_bake_gate.invalid_mode mode=${mode} expected=promote|canary"
+        "cloud_bake_gate.invalid_mode mode=${mode} expected=rolling|promote|canary"
       return 2
       ;;
   esac
@@ -338,6 +347,7 @@ cloud_bake_gate() {
   local repo_root
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   repo_root="$(cd "${script_dir}/../.." && pwd)"
+  repo_root="${TR_RELEASE_CHECKOUT:-$repo_root}"
   local now
   now="$(date +%s)"
   local threshold_seconds=$((bake_hours * 3600))

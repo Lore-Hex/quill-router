@@ -113,7 +113,7 @@ release_aws_control_plane_deploy_mutex() {
   trap '' INT TERM
   trap - EXIT
   if [ "${DEPLOY_MUTEX_SCOPE_OWNS_LOCK:-0}" -eq 1 ]; then
-    deploy_mutex_release
+    deploy_mutex_finish "$deploy_status" || deploy_status=1
   fi
   exit "$deploy_status"
 }

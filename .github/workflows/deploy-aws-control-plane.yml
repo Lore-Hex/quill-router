@@ -1,6 +1,6 @@
 name: Deploy AWS control plane
 
-# Dispatch-only, after the 24-hour bake gate. The live control plane is ECS
+# Dispatchable by operators and automatic catch-up. The live control plane is ECS
 # in eu-west-1 and eu-west-3, not the retired App Runner observer. Reuse the
 # CI-built artifact and preserve native runtime configuration; never recreate
 # infrastructure or change EventBridge/IAM during an ordinary code rollout.
@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       release_sha:
-        description: "Optional full SHA of a baked main release. Run this workflow from main; all CI and cloud bake gates still apply."
+        description: "Optional full SHA of a merged release. CI, two-cloud admission and regional health gates still apply."
         required: false
         default: ""
         type: string
@@ -37,7 +37,11 @@ jobs:
   deploy:
     if: github.repository == 'Lore-Hex/quill-router' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 110
+    env:
+      TR_DEPLOY_MUTEX_OWNER: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      TR_DEPLOY_WAIT_SECONDS: "3600"
+      TR_RELEASE_CHECKOUT: ${{ github.workspace }}/src
     steps:
       # Checkout into a subdirectory: the GCP auth action writes its
       # credentials file into the workspace ROOT, and the deploy script
@@ -47,6 +51,12 @@ jobs:
         with:
           path: src
           fetch-depth: 0
+
+      # Release policy comes from the reviewed workflow revision, not the
+      # historical application artifact selected below.
+      - uses: actions/checkout@v4
+        with:
+          path: ops
 
       # Keep OIDC on main while promoting an older, fully baked artifact.
       # Never execute deploy scripts from an unmerged caller-provided ref.
@@ -69,9 +79,7 @@ jobs:
           role-to-assume: arn:aws:iam::330422590279:role/tr-router-github-deploy
           aws-region: eu-west-3
 
-      # The production deploy mutex lives in GCS (deploy_mutex.sh) so ONE
-      # lock covers every cloud's deploy tooling; this AWS deploy therefore
-      # needs GCP auth too, via the repo's existing workload identity.
+      # One atomic journal allows two clouds, never all three.
       - name: Authenticate to GCP via WIF
         uses: google-github-actions/auth@v3
         with:
@@ -95,7 +103,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TR_CLOUD_BAKE_OVERRIDE: ${{ inputs.bake_override_reason }}
         working-directory: src
-        run: bash scripts/deploy/aws_ecs_control_plane.sh
+        run: bash ../ops/scripts/deploy/aws_ecs_control_plane.sh
 
       - name: Install outbox drain and verify cloud completeness
         if: ${{ inputs.mode == 'drain-install' }}
@@ -108,6 +116,19 @@ jobs:
           # with admin, per the installer's own instructions.
           DSQL_USER: tr_drain
         run: |
+          export TR_DEPLOY_MUTEX_CLOUD=aws
+          source ../ops/scripts/deploy/deploy_mutex.sh
+          finish() {
+            local rc=$?
+            trap - EXIT
+            deploy_mutex_finish "$rc" || rc=1
+            exit "$rc"
+          }
+          trap finish EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          deploy_mutex_acquire
+          deploy_mutex_assert
           # Schema first: the drain's own verification queries every
           # operational table, so a node behind on migrations fails the
           # install with a delivery-shaped error (run 33335255503, missing

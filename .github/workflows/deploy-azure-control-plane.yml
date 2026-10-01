@@ -1,6 +1,6 @@
 name: Deploy Azure control plane
 
-# Dispatch-only, after the 24-hour bake gate, like the AWS deploy. The live
+# Dispatchable by operators and automatic catch-up, like the AWS deploy. The live
 # Azure control plane is the Container App tr-azure-vnet (resource group
 # tr-azure, uaenorth). scripts/deploy/azure_control_plane.sh is the deploy;
 # the runbook section "Deploying the Azure control plane" lists its steps.
@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       release_sha:
-        description: "Optional full SHA of a baked main release. Run this workflow from main; all CI and cloud bake gates still apply."
+        description: "Optional full SHA of a merged release. CI, two-cloud admission and regional health gates still apply."
         required: false
         default: ""
         type: string
@@ -36,7 +36,11 @@ jobs:
   deploy:
     if: github.repository == 'Lore-Hex/quill-router' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 125
+    env:
+      TR_DEPLOY_MUTEX_OWNER: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      TR_DEPLOY_WAIT_SECONDS: "3600"
+      TR_RELEASE_CHECKOUT: ${{ github.workspace }}/src
     steps:
       - name: Require the deploy identity
         env:
@@ -54,6 +58,10 @@ jobs:
         with:
           path: src
           fetch-depth: 0
+
+      - uses: actions/checkout@v4
+        with:
+          path: ops
 
       # Keep OIDC on main while promoting an older, fully baked commit.
       # Never execute deploy scripts from an unmerged caller-provided ref.
@@ -87,9 +95,7 @@ jobs:
           tenant-id: 2abe2fae-5c28-491d-af5a-6255b33e534e
           subscription-id: 2fc83893-ca6c-48e4-b090-8860fba33d33
 
-      # The production deploy mutex lives in GCS (deploy_mutex.sh) so ONE
-      # lock covers every cloud's deploy tooling, and the bake gate reads
-      # GCP's serving commit; both need GCP auth.
+      # The shared journal enforces two-cloud admission across repositories.
       - name: Authenticate to GCP via WIF
         uses: google-github-actions/auth@v3
         with:
@@ -119,4 +125,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TR_CLOUD_BAKE_OVERRIDE: ${{ inputs.bake_override_reason }}
         working-directory: src
-        run: bash scripts/deploy/azure_control_plane.sh
+        run: bash ../ops/scripts/deploy/azure_control_plane.sh

@@ -1,0 +1,32 @@
+name: Catch up secondary control planes
+
+on:
+  workflow_run:
+    workflows: [Deploy TR control plane]
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: reconcile-cloud-releases
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  reconcile:
+    if: github.repository == 'Lore-Hex/quill-router' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Promote verified releases without a calendar delay
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -m scripts.deploy.reconcile_cloud_releases

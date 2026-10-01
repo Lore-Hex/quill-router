@@ -22,6 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_lib.sh"
 # shellcheck source=scripts/deploy/_cloud_run_revision_probe.sh
 source "${SCRIPT_DIR}/_cloud_run_revision_probe.sh"
+source "${SCRIPT_DIR}/deploy_mutex.sh"
 # The active-traffic revision resolver and plain-env reader from _lib.sh are
 # the only permitted configuration source. Reading latest/template state here
 # would copy a rejected revision after rollback and let the two services
@@ -348,9 +349,23 @@ handle_public_signal() {
   exit "$status"
 }
 
-trap cleanup_public_probe_tag EXIT
+finish_public_rollout() {
+  local status=$?
+  trap '' INT TERM
+  trap - EXIT
+  cleanup_public_probe_tag || status=1
+  if [ "${DEPLOY_MUTEX_SCOPE_OWNS_LOCK:-0}" -eq 1 ]; then
+    deploy_mutex_finish "$status" || status=1
+  fi
+  exit "$status"
+}
+trap finish_public_rollout EXIT
 trap 'handle_public_signal 130' INT
 trap 'handle_public_signal 143' TERM
+export TR_DEPLOY_MUTEX_CLOUD=gcp
+export TR_DEPLOY_COMPONENT=public-surface
+if [ -z "${TR_DEPLOY_MUTEX_OPERATION:-}" ]; then deploy_mutex_acquire; fi
+deploy_mutex_assert
 
 # active_revision_json uses SERVICE by design. Point it at the legacy service
 # only while capturing the exact 100%-traffic revision.
@@ -775,6 +790,7 @@ raise SystemExit(0 if actual == sys.argv[1] else 1)
 }
 
 for index in "${!TARGET_REGIONS[@]}"; do
+  deploy_mutex_assert
   CURRENT_REGION_INDEX="$index"
   target="${TARGET_REGIONS[$index]}"
   log "deploying ${PUBLIC_SERVICE} (${STAGE}) to ${target} from ${LEGACY_IMAGE}"

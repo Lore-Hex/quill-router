@@ -6,6 +6,7 @@ set -euo pipefail
 umask 077
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+REPO_ROOT="${TR_RELEASE_CHECKOUT:-$REPO_ROOT}"
 cd "$REPO_ROOT"
 source "${SCRIPT_DIR}/deploy_mutex.sh"
 source "${SCRIPT_DIR}/cloud_bake_gate.sh"
@@ -80,7 +81,7 @@ cleanup() {
     fi
   fi
   rm -rf "$WORK"
-  if [ "${DEPLOY_MUTEX_SCOPE_OWNS_LOCK:-0}" -eq 1 ]; then deploy_mutex_release; fi
+  if [ "${DEPLOY_MUTEX_SCOPE_OWNS_LOCK:-0}" -eq 1 ]; then deploy_mutex_finish "$rc" || rc=1; fi
   exit "$rc"
 }
 trap cleanup EXIT
@@ -121,6 +122,7 @@ for region in "${REGIONS[@]}"; do
 done
 
 for index in "${!REGIONS[@]}"; do
+  deploy_mutex_assert
   region="${REGIONS[$index]}"
   service="${SERVICES[$index]}"
   # Verify live tasks/targets immediately before touching this region.
