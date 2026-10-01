@@ -253,7 +253,8 @@ else:
     <div class="marketing-card">
       <span class="card-label">Limits</span>
       <h3>Sized for real applications.</h3>
-      <p>Up to 64 questions per request, 255 options per choice and 10 levels per score: the same limits on every model, so a request written for one runs on any other. Question and option names up to 128 characters, with no control characters. No streaming: a decision is one small JSON object. <code>typesafe-ai/jev</code> accepts about 32,000 tokens of state.</p>
+      <p>Up to 64 questions per request, 255 options per choice and 10 levels per score, subject to the selected provider's narrower limits. Question and option names up to 128 characters, with no control characters. No streaming: a decision is one small JSON object. <code>typesafe-ai/jev</code> accepts about 32,000 tokens of state.</p>
+      <p><strong>System1 Models:</strong> <code>system1models/s1-fast</code>, <code>system1models/s1-pro</code> and <code>system1models/s1-vision</code> use the Global tier. Replace <code>system1models/</code> with <code>system1models-eu/</code> to pin the EU tier with no Global fallback. These models accept exactly one question and at most 16 KiB of serialized <code>state</code>; additional tokenizer limits are enforced by System1. They bill reported input tokens only, including image tokens; output is free. The vision model optionally accepts <code>"images": ["data:image/png;base64,..."]</code>: one PNG, JPEG or WebP, at most 4 MiB decoded and 2 megapixels. Remote image URLs are not accepted. See the <a href="/providers/system1models">Global</a> and <a href="/providers/system1models-eu">EU</a> provider pages for current prices and processing-location declarations.</p>
     </div>
   </div>
 </section>

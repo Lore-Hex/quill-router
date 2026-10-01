@@ -70,6 +70,8 @@ from scripts.pricing.providers import (
     scaledown,
     scaleway,
     stepfun,
+    system1models,
+    system1models_eu,
     tencent,
     upstage,
     wandb,
@@ -491,6 +493,8 @@ _DISCOVERABLE_MANIFEST_PROVIDERS_BASE: tuple[
         nscale._canonical_id,
     ),
     ("lyceum", lyceum.URL, ("LYCEUM_API_KEY",), lyceum.canonical_model_id),
+    ("system1models", system1models.URL, (), system1models.canonical_model_id),
+    ("system1models-eu", system1models_eu.URL, (), system1models_eu.canonical_model_id),
 )
 
 # Providers on the direct OpenAI catalog adapter. Their credentials are
@@ -530,6 +534,8 @@ _STALE_MANIFEST_PROVIDER_MODULES = (
     nvidia_nim,
     lyceum,
     recraft,
+    system1models,
+    system1models_eu,
     relace,
     stepfun,
     scaledown,

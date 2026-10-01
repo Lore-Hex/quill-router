@@ -32,6 +32,19 @@ class InferenceLocations:
 _NO_TR_PIN = "Not supported by the current TrustedRouter integration."
 
 PROVIDER_INFERENCE_LOCATIONS = {
+    **{
+        slug: InferenceLocations(
+            locations=("Finland (EU)",),
+            scope="Provider-declared execution in Finland; distinct EU and Global tariff tiers.",
+            routing=("EU requests stay within the EU." if tier == "eu" else "Global is currently in Finland but may expand worldwide; no permanent EU-only guarantee."),
+            provider_pinning="S1-Region explicitly selects the tier; incompatible API keys fail closed.",
+            trustedrouter_pinning=f"Use {slug}/s1-fast, s1-pro or s1-vision. The gateway pins S1-Region={tier} and a separate regional key; no cross-tier fallback.",
+            declaration=("EU-only inference, currently Finland." if tier == "eu" else "Global tier; currently Finland, subject to future placement changes."),
+            evidence="Public API and regional documentation; authenticated tier probes",
+            reviewed_on="2026-10-01",
+            sources=(("Regional processing and pricing", "https://system1models.ai/models"), ("API contract", "https://system1models.ai/openapi.json")),
+        ) for slug, tier in (("system1models", "global"), ("system1models-eu", "eu"))
+    },
     "lyceum": InferenceLocations(
         scope="Lyceum documents model-specific serving locations; its German headquarters is not a fleet-wide EU residency guarantee.",
         routing="Placement and cross-region failover depend on the model; an exhaustive country list is not verified.",
