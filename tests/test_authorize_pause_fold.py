@@ -147,3 +147,38 @@ def test_installed_sdk_returning_dml_one_rpc(configured_sdk, paused, funded):  #
     request = sdk.rpcs.execute_streaming_sql.call_args.kwargs['request']
     assert request.sql.endswith('THEN RETURN billing_pause_causes, pause_epoch')
     assert request.transaction.begin.read_write is not None
+
+
+def test_reserve_credit_with_pause_drains_the_returning_stream():
+    """The THEN RETURN result must be consumed to completion, not peeked.
+
+    Spanner finalizes a DML statement's result (and its stats) only when the
+    stream is drained; a first-row peek would also misread a stream whose first
+    chunk is empty. Review P3: a first-row-only consumer survived every test.
+    """
+    drained = []
+
+    def stream():
+        yield [['abuse'], 17]
+        drained.append(True)
+
+    class _Txn:
+        def execute_sql(self, sql, params, param_types):  # noqa: ARG002 - transport shape
+            assert 'THEN RETURN billing_pause_causes, pause_epoch' in sql
+            return stream()
+
+    assert reserve_credit_with_pause(_Txn(), param_types, 'workspace', 5, shard=0) == (True, True)
+    assert drained == [True]
+
+    def empty_then_row():
+        yield []
+        yield [['abuse'], 17]
+
+    class _ChunkedTxn(_Txn):
+        def execute_sql(self, sql, params, param_types):  # noqa: ARG002
+            return empty_then_row()
+
+    with pytest.raises(IndexError):
+        # An empty leading row is not a Spanner row shape; the verdict must not
+        # silently fall through to "unpaused" by reading only the first item.
+        reserve_credit_with_pause(_ChunkedTxn(), param_types, 'workspace', 5, shard=0)
