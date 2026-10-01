@@ -313,8 +313,8 @@ def test_fresh_typed_gateway_authorize_has_exact_sequential_spanner_operation_co
     # Representative steady-state fresh request: the workspace's observed-empty
     # broadcast cache is warm, while this idempotency key and authorization are new.
     # Seven SQL/batch calls (previously eight) for this fixed prepaid/BYOK catalog.
-    # Armed authorization adds one selected-shard pause/epoch read.
-    assert operation_count == 7 + int(armed)
+    # Armed authorization returns pause evidence from the credit UPDATE.
+    assert operation_count == 7
 
 
 def test_broadcast_empty_results_are_cached_until_ttl(
@@ -404,13 +404,22 @@ def spanner_operations(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, 
     """Capture actual snapshot/transaction calls in order, including commit."""
     operations: list[tuple[str, str, dict]] = []
 
+    def count_rpc() -> None:
+        from trusted_router.storage_gcp_io import _SPANNER_RPC_COUNTER
+
+        counter = _SPANNER_RPC_COUNTER.get()
+        if counter is not None:
+            counter.increment()
+
     def wrap(cls: type, method: str, label: str) -> None:
         original = getattr(cls, method)
 
         def recorded(self: object, sql: str, **kwargs: Any) -> Any:
-            if getattr(self, "_in_batch", False):
+            if getattr(self, "_in_batch", False) or getattr(self, "_in_returning", False):
                 return original(self, sql, **kwargs)
-            operations.append((label, " ".join(sql.split()), copy.deepcopy(kwargs.get("params", {}))))
+            count_rpc()
+            operations.append(("T1 DML" if sql.startswith("UPDATE") else label,
+                               " ".join(sql.split()), copy.deepcopy(kwargs.get("params", {}))))
             return original(self, sql, **kwargs)
 
         monkeypatch.setattr(cls, method, recorded)
@@ -421,6 +430,7 @@ def spanner_operations(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, 
     original_batch = _FakeTransaction.batch_update
 
     def batched(self: Any, statements: Any, **kwargs: Any) -> Any:
+        count_rpc()
         operations.append(("T1 BATCH", "", {"statements": copy.deepcopy(statements)}))
         return original_batch(self, statements, **kwargs)
 
@@ -429,6 +439,7 @@ def spanner_operations(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, 
 
     def committed(self: FakeSpannerDatabase, *args: Any, **kwargs: Any) -> Any:
         result = original(self, *args, **kwargs)
+        count_rpc()
         operations.append(("COMMIT", "", {}))
         return result
 
@@ -463,8 +474,9 @@ def test_warm_lookup_authorize_exact_sequence_and_contents(
     }
     operations = spanner_operations
     # Warm lookup: auth + BYOK together, idempotency + credit + batch + commit.
-    # Trust adds its selected-shard read; pre-6a had one extra key RPC.
-    assert len(operations) == 5 + int(armed)
+    # Armed credit DML returns pause evidence without another RPC.
+    assert len(operations) == 5
+    assert response["timing"]["spanner_rpcs"] == 5
     assert operations[-2][0] == "T1 BATCH"
     batch = operations[-2][2]["statements"]
     assert len(batch) == 3
@@ -508,14 +520,11 @@ def test_warm_lookup_authorize_exact_sequence_and_contents(
     reservation = operations[-3][2]
     assert operations[1][2] == {"scope": reservation["idempotency_scope"]}
     assert operations[2] == ("T1 DML",
-        "UPDATE tr_credit_balance SET reserved = reserved + @est "
+        "UPDATE tr_credit_balance SET reserved = reserved + @est "  # noqa: S608 - fixed clauses
         "WHERE workspace_id=@ws AND shard=@shard "
-        "AND (total_credits - total_usage - reserved) >= @est",
+        "AND (total_credits - total_usage - reserved) >= @est"
+        + (" THEN RETURN billing_pause_causes, pause_epoch" if armed else ""),
         {"est": reservation["credit_reserved_micro"], "ws": key.workspace_id, "shard": 0})
-    if armed:
-        assert operations[3] == ("T1 SELECT",
-            "SELECT billing_pause_causes, pause_epoch FROM tr_credit_balance "
-            "WHERE workspace_id=@ws AND shard=@shard", {"ws": key.workspace_id, "shard": 0})
     assert operations[-4] == ("T1 DML",
         "UPDATE tr_key_limit SET reserved = reserved + @est "
         "WHERE key_hash=@kh AND shard=@shard AND limit_micro IS NOT NULL "
@@ -544,6 +553,18 @@ def test_warm_lookup_authorize_exact_sequence_and_contents(
         "anthropic/claude-haiku-4.5@anthropic/prepaid"
     ]
     assert operations[-1] == ("COMMIT", "", {})
+
+    # Same authenticated request replays before credit/pause/key operations.
+    fresh_auth_sql = operations[0]
+    reservation_read = operations[1]
+    spanner_operations.clear()
+    replay = gateway._authorize_gateway_sync(request, body, settings, raw_body)["data"]
+    assert replay["idempotent_replay"] is True
+    assert replay["authorization_id"] == response["authorization_id"]
+    assert [op[0] for op in spanner_operations] == ["RO", "T1 SELECT", "COMMIT", "RO"]
+    assert spanner_operations[:3] == [fresh_auth_sql, reservation_read, ("COMMIT", "", {})]
+    assert "tr_gateway_authorization" in spanner_operations[3][1]
+    assert replay["timing"]["spanner_rpcs"] == 4
 
 
 @pytest.mark.parametrize(("change", "status", "message", "error_type"), [
@@ -893,3 +914,39 @@ def test_byok_misconfiguration_keeps_existing_error(
             "code": 400, "type": "provider_not_supported", "source": "router",
             "message": "No authorized route candidates are available for this workspace",
         }}
+
+
+@pytest.mark.parametrize("funded", [False, True])
+def test_folded_pause_gateway_error_bytes_and_rollback(
+    monkeypatch: pytest.MonkeyPatch, metadata_catalog: None, funded: bool,
+) -> None:
+    from tests.fakes.authorize_pause_sequential import authorize_atomic as parent
+    from tests.test_spanner_batch_dml import _state
+    from trusted_router import gateway_timing
+
+    monkeypatch.setattr(gateway_timing, "perf_counter", lambda: 100.0)
+    folded = storage_gcp_authorize.authorize_atomic
+    errors = []
+    for implementation in (parent, folded):
+        store, database, key = _seed_typed_gateway_store()
+        store.trust_settings = Settings(environment="test", spend_lease_trust_eligibility_enabled=True)
+        row = database.typed[CREDIT_BALANCE_TABLE][(key.workspace_id, 0)]
+        row.update(billing_pause_causes=["abuse"], pause_epoch=19)
+        if not funded:
+            row["total_credits"] = 0
+        before = _state(database)
+        monkeypatch.setattr(storage_gcp_authorize, "authorize_atomic", implementation)
+        with pytest.raises(HTTPException) as raised:
+            gateway._authorize_gateway_sync(_request(), _lookup_body(key), Settings(environment="test"))
+        error = raised.value
+        errors.append((error.status_code, json.dumps(error.detail, separators=(",", ":")).encode(), error.headers))
+        assert _state(database) == before
+        assert database.rollback_calls >= 1
+        assert database.commits == 0
+    assert errors[0] == errors[1]
+    if funded:
+        assert errors[1][0] == 403
+        assert json.loads(errors[1][1])["error"] == {
+            "code": 403, "message": "billing_paused", "type": "forbidden", "source": "router",
+        }
+        assert errors[1][2] is None

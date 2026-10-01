@@ -22,7 +22,8 @@ def record_statements(monkeypatch: pytest.MonkeyPatch) -> StatementCalls:
     execute_sql = _FakeTransaction.execute_sql
 
     def update(transaction: Any, sql: str, **kwargs: Any) -> int:
-        calls.append((transaction, " ".join(sql.split()).lower()))
+        if not getattr(transaction, "_in_returning", False):
+            calls.append((transaction, " ".join(sql.split()).lower()))
         return execute_update(transaction, sql, **kwargs)
 
     def read(transaction: Any, sql: str, **kwargs: Any) -> Any:

@@ -8,7 +8,17 @@ so a pause committed concurrently conflicts with, and rejects, the hold.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
+
+
+def billing_paused_row(row: Sequence[Any]) -> bool:
+    """Interpret pause evidence identically for SELECT and returning DML.
+
+    The epoch is conflict evidence only; its value is not an authorize input.
+    Preserve the historical string predicate, including NULL and empty arrays.
+    """
+    return str(row[0] or "") not in ("", "[]")
 
 
 def billing_paused_tx(
@@ -28,4 +38,4 @@ def billing_paused_tx(
         params=params,
         param_types=types,
     )
-    return any(str(row[0] or "") not in ("", "[]") for row in rows)
+    return any(billing_paused_row(row) for row in rows)

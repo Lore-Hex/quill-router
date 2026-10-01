@@ -44,7 +44,7 @@ def test_credit_shard_lifecycle_stress_preserves_every_invariant(
 
 
 @pytest.mark.parametrize("credit_shard", [0, 1])
-@pytest.mark.parametrize("change", ["other_shard", "pause"])
+@pytest.mark.parametrize("change", ["other_shard", "pause", "pause_clear"])
 def test_authorize_pause_read_conflicts_only_with_relevant_writes(
     monkeypatch, credit_shard: int, change: str,
 ) -> None:
@@ -70,7 +70,7 @@ def test_authorize_pause_read_conflicts_only_with_relevant_writes(
         nonlocal competing_commits
         result = original(transaction, sql, **kwargs)
         if (
-            sql.startswith("SELECT billing_pause_causes, pause_epoch FROM tr_credit_balance")
+            sql.endswith("THEN RETURN billing_pause_causes, pause_epoch")
             and (change == "other_shard" or competing_commits == 0)
         ):
             def compete(other):
@@ -84,6 +84,12 @@ def test_authorize_pause_read_conflicts_only_with_relevant_writes(
                         workspace_id=workspace_id, shard_count=2, paused=True,
                         now=datetime.now(UTC), read_entity_tx=None, write_entity_tx=None,
                     )
+                    if change == "pause_clear":
+                        _sync_principal_recovery_pause_tx(
+                            other, store._param_types,
+                            workspace_id=workspace_id, shard_count=2, paused=False,
+                            now=datetime.now(UTC), read_entity_tx=None, write_entity_tx=None,
+                        )
 
             database.run_in_transaction(compete)
             competing_commits += 1
@@ -113,7 +119,7 @@ def test_authorize_pause_read_conflicts_only_with_relevant_writes(
         assert key_row["usage"] == key_row["reserved"] == 0
     else:
         assert result["outcome"] == "accepted"
-        assert database.aborts == 0
+        assert database.aborts == int(change == "pause_clear")
         assert key_row["reserved"] == 300_000
         assert settle_atomic(
             database, store._param_types, reservation_id=result["reservation_id"],
@@ -124,5 +130,5 @@ def test_authorize_pause_read_conflicts_only_with_relevant_writes(
         assert settled_key["usage"] == 300_000
         assert rows[(workspace_id, credit_shard)]["reserved"] == 0
         assert rows[(workspace_id, credit_shard)]["total_usage"] == 300_000
-        assert rows[(workspace_id, other_shard)]["reserved"] == 1
+        assert rows[(workspace_id, other_shard)]["reserved"] == int(change == "other_shard")
         assert rows[(workspace_id, other_shard)]["total_usage"] == 0

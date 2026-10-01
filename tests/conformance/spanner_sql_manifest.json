@@ -3139,7 +3139,7 @@
       ]
     },
     "trust_eligibility:billing_paused_tx:1": {
-      "fingerprint": "5ce3a94f908455a5508ee285906563975e344a6f64f0edd4db9a9184e0d26a26",
+      "fingerprint": "9c3f7178302081fc0be4f4d0915fccbb86495c0a69c6991e09949b4dde80e6f8",
       "scenarios": [
         {
           "bindings": {
@@ -3559,6 +3559,123 @@
           ]
         }
       ]
+    },
+    "storage_gcp_counter_dml:reserve_credit_with_pause:1": {
+      "fingerprint": "8c628d24eaaf1050a131fbf04151700aed5a95a69befae5d36f343df88761120",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "est": "INT64",
+            "ws": "STRING",
+            "shard": "INT64"
+          },
+          "values": {
+            "est": 100,
+            "ws": "c3-ws",
+            "shard": 1
+          },
+          "credit_rows": [
+            {
+              "ws": "c3-ws",
+              "shard": 1,
+              "total": 1000,
+              "causes": [],
+              "epoch": 17
+            },
+            {
+              "ws": "c3-ws",
+              "shard": 0,
+              "total": 1000,
+              "causes": [
+                "wrong-row"
+              ],
+              "epoch": 99
+            }
+          ],
+          "expected_rows": [
+            [
+              [],
+              17
+            ]
+          ]
+        },
+        {
+          "bindings": {},
+          "types": {
+            "est": "INT64",
+            "ws": "STRING",
+            "shard": "INT64"
+          },
+          "values": {
+            "est": 100,
+            "ws": "c3-ws",
+            "shard": 1
+          },
+          "credit_rows": [
+            {
+              "ws": "c3-ws",
+              "shard": 1,
+              "total": 1000,
+              "causes": [
+                "abuse"
+              ],
+              "epoch": 17
+            },
+            {
+              "ws": "c3-ws",
+              "shard": 0,
+              "total": 1000,
+              "causes": [
+                "wrong-row"
+              ],
+              "epoch": 99
+            }
+          ],
+          "expected_rows": [
+            [
+              [
+                "abuse"
+              ],
+              17
+            ]
+          ]
+        },
+        {
+          "bindings": {},
+          "types": {
+            "est": "INT64",
+            "ws": "STRING",
+            "shard": "INT64"
+          },
+          "values": {
+            "est": 100,
+            "ws": "c3-ws",
+            "shard": 1
+          },
+          "credit_rows": [
+            {
+              "ws": "c3-ws",
+              "shard": 1,
+              "total": 0,
+              "causes": [
+                "abuse"
+              ],
+              "epoch": 17
+            },
+            {
+              "ws": "c3-ws",
+              "shard": 0,
+              "total": 1000,
+              "causes": [
+                "wrong-row"
+              ],
+              "epoch": 99
+            }
+          ],
+          "expected_rows": []
+        }
+      ]
     }
   },
   "sinks": {
@@ -3611,7 +3728,7 @@
     "storage_gcp_authorize:_apply_custom_model_markup_payout_tx": "a1a06d4c1dcc22a836e086dc1700440a90dad6d8c8966466902930955a34e3f0",
     "storage_gcp_authorize:typed_finalize_atomic.speculative_batch": "d8d2fec5ec3fdae61c9a9c31b28c2fb437b03a81bf983bf7c219ad1345e73f4d",
     "storage_gcp_authorize:key_window_limit_decision": "5a317b9f2927443ca6d6686b5cb1d1b6ff036c6d744d511a3b5f24c63e3b2ad7",
-    "storage_gcp_authorize:authorize_atomic.txn": "436c84be91d07b0e183e1da7254118431c058dde512ef29ab5e9e53e451467ae",
+    "storage_gcp_authorize:authorize_atomic.txn": "a019d8c5c015583d75fd0de0e678ac710ab5c9957a06353ea42651e56302712a",
     "storage_gcp_authorize:reap_expired_reservations_result": "9d7f819fc199930d94eaa53e939fced804e61b2cbf9f54cbf676ced4c743976e",
     "storage_gcp_authorize:key_lifetime_cap_precheck": "4e9ee17c7e9363a1fc3a9d614f15148ad6fb20ff04d272785809beef92ab0b4c",
     "storage_gcp_authorize:_finalize_reaped_reservation_atomic.txn": "55ccd7b9ed868037a53ecb228e6efe40882d39fef33e9bd24bb0061340d95200",
@@ -3717,8 +3834,9 @@
     "storage_trust_reconciliation:SpannerTrustReconciliationRepository.list_provider_events": "822180ccfc4058df2f0d8bdc12413c361ac373ef78bf3808eb4934927264e3b5",
     "storage_trust_reconciliation:SpannerTrustReconciliationRepository.replicate_workspace_watermark.txn": "0e17730dea2bd827b209758cce2c692b42518ddf0a74895dbd1d38ef004827a8",
     "storage_trust_reconciliation:SpannerTrustReconciliationRepository.get_marker": "ae66712374f936a93abe08af2e3b6c4b707d6315e830d12c327d10148fa431f2",
-    "trust_eligibility:billing_paused_tx": "5ce3a94f908455a5508ee285906563975e344a6f64f0edd4db9a9184e0d26a26",
-    "trust_owner_budget:recompute_owner_budget": "959e550c803a9b12ebf91949eab221a57f4991b513a300a74725c0395c6e51a4"
+    "trust_eligibility:billing_paused_tx": "9c3f7178302081fc0be4f4d0915fccbb86495c0a69c6991e09949b4dde80e6f8",
+    "trust_owner_budget:recompute_owner_budget": "959e550c803a9b12ebf91949eab221a57f4991b513a300a74725c0395c6e51a4",
+    "storage_gcp_counter_dml:reserve_credit_with_pause": "8c628d24eaaf1050a131fbf04151700aed5a95a69befae5d36f343df88761120"
   },
   "non_google_sql": {
     "analytics_sink:_post_rows:1": {

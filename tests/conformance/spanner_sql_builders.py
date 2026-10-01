@@ -46,6 +46,7 @@ class SQLCase:
     batch: bool = False
     seed: list[DmlStatement] | None = None
     expected_counts: list[int] | None = None
+    expected_rows: list[list[Any]] | None = None
 
 
 class Capture:

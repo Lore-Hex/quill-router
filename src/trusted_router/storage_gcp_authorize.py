@@ -62,6 +62,7 @@ from trusted_router.storage_gcp_counter_dml import (
     read_reservation_by_idempotency,
     reservation_insert_statement,
     reserve_credit,
+    reserve_credit_with_pause,
     reserve_key,
     reserve_key_statement,
 )
@@ -510,27 +511,35 @@ def authorize_atomic(
         # Reservation/authorization INSERTs below consume the selected shards and holds.
         credit_hold = 0
         selected_credit_shard = UNSHARDED
+        armed = trust_settings is not None and trust_settings.spend_lease_trust_eligibility_enabled
+        paused = False
         if has_credit_candidate:
             for candidate in shard_candidates:
-                if reserve_credit(transaction, pt, workspace_id, estimate, shard=candidate):
+                if armed:
+                    reserved, paused = reserve_credit_with_pause(
+                        transaction, pt, workspace_id, estimate, shard=candidate,
+                    )
+                else:
+                    reserved = reserve_credit(transaction, pt, workspace_id, estimate, shard=candidate)
+                if reserved:
                     selected_credit_shard = candidate
                     break
             else:
                 raise _Reject(AuthorizeOutcome.INSUFFICIENT_CREDITS)
             credit_hold = estimate
 
-        # Authorize-time pause enforcement belongs to the armed trust program,
-        # not today's path. Shipping it unarmed changed the enclave rollout
-        # gate's behavior in production.
-        if trust_settings is not None and trust_settings.spend_lease_trust_eligibility_enabled:
-            # Pause state is replicated atomically across the credit shards. Read
-            # only the selected shard, whose balance DML already joined this txn's
-            # read set; a workspace-wide scan couples otherwise independent holds
-            # and can exhaust the retry budget under contention. BYOK requests
-            # use shard zero. A pause still conflicts on this shard and
-            # rejection rolls back every staged credit hold.
-            from trusted_router.trust_eligibility import billing_paused_tx
-            if billing_paused_tx(transaction, pt, workspace_id, shard=selected_credit_shard):
+        if armed:
+            # Returning DML observes pause at the write on the selected row.
+            # Returning both columns preserves the old SELECT's dependencies
+            # on this key, without coupling unrelated credit shards. Spanner
+            # locks cells: reading pause earlier can change race scheduling,
+            # but a conflicting pause still has to serialize or abort/retry.
+            # BYOK has no credit UPDATE and retains its shard-zero read.
+            if not has_credit_candidate:
+                from trusted_router.trust_eligibility import billing_paused_tx
+
+                paused = billing_paused_tx(transaction, pt, workspace_id, shard=selected_credit_shard)
+            if paused:
                 raise _Reject("billing_paused")
 
         # Bounded lifetime-cap TOCTOU: a cap committed after the gateway's
