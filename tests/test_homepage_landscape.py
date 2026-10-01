@@ -46,7 +46,7 @@ def test_landscape_root_integrates_catalog_assets_csp_and_signin(
     request = page.select_one("#request")
     assert "The capital of France is Paris." in request.get_text()
     assert "no confidential provider compute" not in request.get_text()
-    assert "Direct provider route · certificate recorded in receipt" in request.get_text()
+    assert "DeepSeek 4.1 NVFP4 exact quantization verified" in request.get_text()
     assert "Captured request" in request.get_text()
     assert not request.select_one("details")
     assert "All systems operational" not in page.get_text()
