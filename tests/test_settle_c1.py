@@ -5,7 +5,7 @@ import copy
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import fields
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -206,6 +206,91 @@ def test_main_money_differential(scenario: str, capped: bool, intent: bool) -> N
             assert result == {'outcome': 'error'}
             assert state(db) == state(initial)
     assert observations[0] == observations[1]
+
+
+@pytest.mark.parametrize('capped', [False, True])
+@pytest.mark.parametrize(('before', 'after', 'advanced'), [
+    ('2026-10-29T23:59:59.990', '2026-10-30T00:00:00.010', {'daily'}),
+    ('2026-11-01T23:59:59.990', '2026-11-02T00:00:00.010', {'daily', 'weekly'}),
+    ('2026-10-31T23:59:59.990', '2026-11-01T00:00:00.010', {'daily', 'monthly'}),
+    ('2026-10-31T23:59:59.990', '2026-10-31T23:59:59.999', set()),
+], ids=['day', 'week', 'month', 'same-window'])
+def test_batch_clock_boundary_matches_main(
+    monkeypatch: pytest.MonkeyPatch, capped: bool, before: str, after: str, advanced: set[str],
+) -> None:
+    from trusted_router.spend_windows import window_floors
+
+    start, end = (datetime.fromisoformat(value).replace(tzinfo=UTC) for value in (before, after))
+    initial, options = prepare('ordinary', capped, True)
+    old_floors, new_floors = window_floors(start), window_floors(end)
+    names = {'day': 'daily', 'week': 'weekly', 'month': 'monthly'}
+    key = initial.typed['tr_key_limit'][('key', 0)]
+    for column, window in names.items():
+        key[f'{column}_start'] = old_floors[window]
+        key[f'{column}_usage'] = 25
+    original = _FakeTransaction.batch_update
+    clock = start
+
+    def batch(tx: Any, statements: Any, **kwargs: Any) -> Any:
+        nonlocal clock
+        result = original(tx, statements, **kwargs)
+        clock = end  # S6 executes with old floors, then returns across the boundary.
+        return result
+
+    monkeypatch.setattr(_FakeTransaction, 'batch_update', batch)
+    monkeypatch.setattr(main, 'utcnow', lambda: clock)
+    monkeypatch.setattr(current, 'utcnow', lambda: clock)
+    observations = []
+    for impl in (main.typed_finalize_atomic, current.typed_finalize_atomic):
+        clock = start
+        db = clone(initial)
+        committed = []
+        original_commit = db._try_commit
+
+        def commit(
+            tx: Any, original_commit: Any = original_commit,
+            committed: list = committed, db: Any = db,
+        ) -> Any:
+            result = original_commit(tx)
+            if result:
+                committed.append(state(db))
+            return result
+
+        monkeypatch.setattr(db, '_try_commit', commit)
+        result = invoke(db, copy.deepcopy(options), impl)
+        fallback = bool(advanced) and impl is current.typed_finalize_atomic
+        assert result.pop('attempts') == (2 if fallback else 1)
+        assert result['outcome'] == 'settled'
+        assert db.rollback_calls == int(fallback)
+        assert committed == [state(db)]  # No old-window or partial batch commit.
+        key = db.typed['tr_key_limit'][('key', 0)]
+        assert key['usage'] == 70 and key['reserved'] == 0
+        for column, window in names.items():
+            assert key[f'{column}_usage'] == (70 if window in advanced else 95)
+            assert key[f'{column}_start'] == new_floors[window]
+        observations.append((result, state(db)))
+    assert observations[0] == observations[1]
+
+
+@pytest.mark.parametrize('rollover', [False, True])
+def test_oracle_sql_is_independent_and_fake_executes_arithmetic(
+    monkeypatch: pytest.MonkeyPatch, rollover: bool,
+) -> None:
+    from trusted_router import storage_gcp_counter_dml as counters
+
+    # Deliberately mutate BOTH production variants: the literal main oracle
+    # must still book 70, while the fake executes the changed expression.
+    for name in ('_CURRENT_WINDOW_BUMP_SQL', '_WINDOW_BUMP_SQL'):
+        monkeypatch.setattr(counters, name, getattr(counters, name).replace(
+            '@week_wamt', '@week_wamt * 2',
+        ))
+    initial, options = prepare('rollover' if rollover else 'ordinary', True, True)
+    usages = []
+    for impl in (main.typed_finalize_atomic, current.typed_finalize_atomic):
+        db = clone(initial)
+        assert invoke(db, copy.deepcopy(options), impl)['outcome'] == 'settled'
+        usages.append(db.typed['tr_key_limit'][('key', 0)]['week_usage'])
+    assert usages == [70, 140]
 
 
 @pytest.mark.parametrize('position', [7, 8])

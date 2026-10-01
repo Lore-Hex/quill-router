@@ -4,6 +4,7 @@ import copy
 import datetime as dt
 import json
 import re
+import sqlite3
 import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -85,6 +86,47 @@ _TYPED_PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
         "provider", "account_id", "environment", "source", "source_version"
     ),
 }
+
+
+def _execute_key_release_sql(
+    sql: str, params: dict[str, Any], record: dict[str, Any],
+) -> tuple[int, dict[str, Any]]:
+    """Execute release arithmetic/predicates, rather than reimplement the SQL.
+
+    This portable UPDATE subset uses SQLite with Spanner's IF spelling. UTC
+    ISO timestamps preserve ordering and NULLs stay NULL. This is arithmetic
+    evidence only, not a model of Spanner's optimizer or locking. The caller
+    retains the fake's transactional reads, pending writes and rollback.
+    """
+    row = dict(_TYPED_DEFAULTS["tr_key_limit"], key_hash=params["kh"], shard=params["shard"])
+    row.update(record)
+
+    def bind(value: Any) -> Any:
+        if isinstance(value, dt.datetime):
+            return value.astimezone(dt.UTC).isoformat(timespec="microseconds")
+        return value
+
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.create_function("IF", 3, lambda condition, yes, no: yes if condition else no)
+        columns = ", ".join(f'"{column}"' for column in row)
+        connection.execute(f"CREATE TABLE tr_key_limit ({columns})")
+        connection.execute(
+            f"INSERT INTO tr_key_limit VALUES ({', '.join('?' for _ in row)})",  # noqa: S608
+            tuple(bind(value) for value in row.values()),
+        )
+        count = connection.execute(sql, {key: bind(value) for key, value in params.items()}).rowcount
+        values = connection.execute("SELECT * FROM tr_key_limit").fetchone()
+        result = dict(record)
+        assigned = set(re.findall(r"(?:SET |, )([a-z_]+) =", sql))
+        for column, value in zip(row, values, strict=True):
+            if column in assigned:
+                if column.endswith("_start") and value is not None:
+                    value = dt.datetime.fromisoformat(value)
+                result[column] = value
+        return count, result
+    finally:
+        connection.close()
 
 
 def _apply_upsert_typed(
@@ -1262,98 +1304,13 @@ class _FakeTransaction:
             return 1
         if "UPDATE tr_key_limit " in sql and "reserved = reserved - @hold" in sql:
             _require_pred(sql, "key_hash=@kh AND shard=@shard AND reserved >= @hold", "key-release")
-            usage_settle = "usage = usage + @actual" in sql
-            byok_settle = "byok_usage = byok_usage + @actual" in sql
-            if usage_settle == byok_settle:
-                raise AssertionError(
-                    "key-release SQL must update exactly one lifetime usage column"
-                )
-            window_expressions = {}
-            for window in ("day", "week", "month"):
-                amount_param = f"{window}_amount" if f"{window}_amount" in p else "actual"
-                window_expressions[window] = (
-                    f"IF(include_byok, @{amount_param}, 0)" if byok_settle else f"@{amount_param}"
-                )
-            fast_window_bump = (
-                "day_usage = COALESCE(day_usage, 0) +" in sql
-                or "day_start IS NOT NULL" in sql
-            )
-            if fast_window_bump:
-                for window, floor_param in (
-                    ("day", "day_floor"),
-                    ("week", "week_floor"),
-                    ("month", "month_floor"),
-                ):
-                    _require_pred(
-                        sql,
-                        f"{window}_usage = COALESCE({window}_usage, 0) + {window_expressions[window]}",
-                        f"key-release-current-{window}-usage",
-                    )
-                    _require_pred(
-                        sql,
-                        f"AND {window}_start IS NOT NULL "
-                        f"AND {window}_start >= @{floor_param}",
-                        f"key-release-current-{window}",
-                    )
             pk = (p["kh"], p["shard"])
             rec = self._typed_current("tr_key_limit", pk)
-            if rec is None or rec["reserved"] < p["hold"]:
+            if rec is None:
                 return 0
-            if fast_window_bump and any(
-                rec.get(f"{window}_start") is None
-                or rec[f"{window}_start"] < p[floor_param]
-                for window, floor_param in (
-                    ("day", "day_floor"),
-                    ("week", "week_floor"),
-                    ("month", "month_floor"),
-                )
-            ):
-                return 0
-            col = "byok_usage" if byok_settle else "usage"
-            new = dict(rec, reserved=rec["reserved"] - p["hold"])
-            new[col] = rec[col] + p["actual"]
-            window_amounts = {
-                window: (0 if byok_settle and not rec.get("include_byok", True)
-                         else p.get(f"{window}_amount", p["actual"]))
-                for window in ("day", "week", "month")
-            }
-            # Lazy window bump, mirroring release_key's IF() SQL: a stale window
-            # (start < floor) is replaced, a fresh one accumulates. BYOK settles
-            # count only when the row's include_byok says so (wamt gate).
-            if fast_window_bump:
-                for window in ("day", "week", "month"):
-                    new[f"{window}_usage"] = (
-                        rec.get(f"{window}_usage") or 0
-                    ) + window_amounts[window]
-            elif "day_usage = IF(" in sql:
-                for window, floor_param in (
-                    ("day", "day_floor"),
-                    ("week", "week_floor"),
-                    ("month", "month_floor"),
-                ):
-                    _require_pred(
-                        sql,
-                        f"{window}_usage = IF({window}_start IS NULL OR "
-                        f"{window}_start < @{floor_param}, {window_expressions[window]}, "
-                        f"COALESCE({window}_usage, 0) + {window_expressions[window]})",
-                        f"key-release-roll-{window}-usage",
-                    )
-                    _require_pred(
-                        sql,
-                        f"{window}_start = IF({window}_start IS NULL OR "
-                        f"{window}_start < @{floor_param}, @{floor_param}, "
-                        f"{window}_start)",
-                        f"key-release-roll-{window}-start",
-                    )
-                    floor = p[floor_param]
-                    start = rec.get(f"{window}_start")
-                    if start is None or start < floor:
-                        new[f"{window}_usage"] = window_amounts[window]
-                        new[f"{window}_start"] = floor
-                    else:
-                        new[f"{window}_usage"] = (
-                            rec.get(f"{window}_usage") or 0
-                        ) + window_amounts[window]
+            count, new = _execute_key_release_sql(sql, p, rec)
+            if count != 1:
+                return count
             self.pending_writes.append(("update_typed", "tr_key_limit", pk, new))
             return 1
         if sql.startswith("INSERT INTO tr_reservation"):

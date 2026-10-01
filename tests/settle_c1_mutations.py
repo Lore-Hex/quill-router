@@ -55,6 +55,13 @@ MUTATIONS = [
     ('refund accidentally folds tail', AUTHORIZE,
      [('speculate and success and not res["settled"]', 'speculate and not res["settled"]')],
      'test_refund_never_folds_tail'),
+    ('drop post-batch boundary recheck', AUTHORIZE,
+     [('if sampled_floors is not None:', 'if False and sampled_floors is not None:')],
+     'test_batch_clock_boundary_matches_main[month-True]'),
+    ('double current-window weekly SQL increment', COUNTERS,
+     [('", week_usage = COALESCE(week_usage, 0) + @week_wamt"',
+       '", week_usage = COALESCE(week_usage, 0) + @week_wamt * 2"')],
+     'test_main_money_differential[True-True-ordinary]'),
 ]
 
 

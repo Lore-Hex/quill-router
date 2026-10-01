@@ -1637,14 +1637,16 @@ def typed_finalize_atomic(
         # speculative writes before recovery/rollover/deletion classification;
         # never hold a speculative key lock while running credit recovery.
         reasons.extend([None] * (len(statements) - len(reasons)))
+        sampled_floors = window_floors(utcnow()) if fold_tail else None
         if fold_tail:
+            assert sampled_floors is not None
             statements.append(release_credit_no_debt_statement(
                 pt, res["workspace_id"], res["credit_reserved_micro"], book_actual,
                 shard=res["credit_shard"],
             ))
             statements.append(release_key_statement(
                 pt, str(res["key_hash"]), res["key_reserved_micro"], book_actual,
-                book_to_byok=book_to_byok, window_floors=window_floors(utcnow()),
+                book_to_byok=book_to_byok, window_floors=sampled_floors,
                 shard=res["key_shard"],
             ))
             counts.extend([(1,), (1,)])
@@ -1659,6 +1661,13 @@ def typed_finalize_atomic(
                     break
 
         execute_batch_dml(transaction, statements, counts, check_prefix=check_prefix)
+        if sampled_floors is not None:
+            # Main samples after credit release/recovery. A batch crossing a
+            # boundary must discard its old-window increments and resample in
+            # the sequential path, before any of these writes can commit.
+            current_floors = window_floors(utcnow())
+            if any(current_floors[window] > floor for window, floor in sampled_floors.items()):
+                raise _RetrySequentialFinalize("window_boundary_advanced")
 
     def txn(transaction: Any) -> dict:
         nonlocal attempts

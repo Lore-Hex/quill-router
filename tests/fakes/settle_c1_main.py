@@ -27,9 +27,6 @@ from trusted_router.storage_gcp_authorize import (
 )
 from trusted_router.storage_gcp_batch_dml import DmlStatement, execute_batch_dml
 from trusted_router.storage_gcp_counter_dml import (
-    _CURRENT_WINDOW_BUMP_SQL,
-    _CURRENT_WINDOW_PREDICATE_SQL,
-    _WINDOW_BUMP_SQL,
     _credit_shard_count_from_rows,
     claim_reservation_statement,
     complete_reservation_retention,
@@ -59,6 +56,36 @@ from trusted_router.storage_models import (
     Generation,
     UserModelPayout,
 )
+
+# Literal SQL from the frozen main revision: never import production money
+# expressions here, or the differential shares the bug it is meant to detect.
+_WINDOW_BUMP_SQL = (
+    ", day_usage = IF(day_start IS NULL OR day_start < @day_floor,"
+    " @day_wamt, COALESCE(day_usage, 0) + @day_wamt)"
+    ", day_start = IF(day_start IS NULL OR day_start < @day_floor, @day_floor, day_start)"
+    ", week_usage = IF(week_start IS NULL OR week_start < @week_floor,"
+    " @week_wamt, COALESCE(week_usage, 0) + @week_wamt)"
+    ", week_start = IF(week_start IS NULL OR week_start < @week_floor, @week_floor, week_start)"
+    ", month_usage = IF(month_start IS NULL OR month_start < @month_floor,"
+    " @month_wamt, COALESCE(month_usage, 0) + @month_wamt)"
+    ", month_start = IF(month_start IS NULL OR month_start < @month_floor, @month_floor, month_start)"
+)
+
+# The common settle path has already-current window boundaries. Keep those
+# boundary columns out of its SET list so Spanner does not take exclusive cell
+# locks on values that did not change. The guarded UPDATE below falls back to
+# _WINDOW_BUMP_SQL whenever any boundary needs its lazy roll.
+_CURRENT_WINDOW_BUMP_SQL = (
+    ", day_usage = COALESCE(day_usage, 0) + @day_wamt"
+    ", week_usage = COALESCE(week_usage, 0) + @week_wamt"
+    ", month_usage = COALESCE(month_usage, 0) + @month_wamt"
+)
+_CURRENT_WINDOW_PREDICATE_SQL = (
+    " AND day_start IS NOT NULL AND day_start >= @day_floor"
+    " AND week_start IS NOT NULL AND week_start >= @week_floor"
+    " AND month_start IS NOT NULL AND month_start >= @month_floor"
+)
+
 
 log = logging.getLogger(__name__)
 

@@ -26,6 +26,10 @@ sequential classifier in a **fresh transaction under the same RPC deadline**.
 This follows the inventory's explicit rollback rule: continuing the original
 transaction after partially successful Batch DML could release a hold twice or
 run recovery with a key lock already held. No speculative reads are reused.
+The folded path retains its pre-batch window floors and samples them again
+immediately after successful S6, before commit. If any floor advanced, the whole
+transaction rolls back and the sequential fallback samples after credit
+release/recovery, exactly as main. A same-window recheck adds no RPC.
 Every statement's row count is validated, including the two new counts. ABORTED
 retains precedence; an earlier business zero still precedes a later SQL error,
 and a malformed earlier count cannot be hidden by a later guard miss.
@@ -46,6 +50,44 @@ AND (@hold <= @actual OR NOT EXISTS (
 The predicate matches the sequential recovery query's workspace/payment/debt
 scope. It is a transaction read, including the empty range, rather than a cached
 or snapshot absence assertion. No all-credit-shard scan is added on a hit.
+
+`tr_trust_event` has primary key `(workspace_id, event_id)` (see
+`scripts/deploy/migrate_typed_counters.sh`). Neither secondary deduplication
+index covers `(workspace_id, kind, unrecovered_micro)`. The subquery can seek
+the workspace primary-key prefix, then filter `kind` and `unrecovered_micro`;
+it is not an indexed seek to outstanding payment debt. For hold > actual and
+no debt, each successful settle can examine the workspace's entire event
+history: O(N) rows per settle for N events in that workspace, including many
+fully recovered payment events. Removing the SELECT RPC does not remove that
+work (main's recovery SELECT has the same filtering limitation). Equality
+makes the disjunction true, but optimizer short-circuiting must not be assumed.
+Overrun parameters also need PLAN coverage even though C1 routes overruns to
+the sequential path.
+
+An index covering workspace, kind and unrecovered amount, including a range
+on positive debt, is warranted as a separate follow-up for workspaces with
+large histories if PLAN/profiling confirms this scan dominates cost or
+contention. It would trade extra trust-event write/index maintenance for a
+bounded debt search. This cut adds no index; production measurements must
+establish that the current scan is acceptable before rollout.
+
+Required production PLAN list (owner-run before merge; not executed locally):
+
+1. The exact guarded credit UPDATE above on a **no-debt workspace with
+   substantial payment/event history**, using hold > actual, hold == actual,
+   and hold < actual parameters. Inspect workspace-prefix access, filtered
+   rows, predicate/subquery evaluation and estimated work; do not infer
+   short-circuit behavior from the SQL spelling.
+2. The current-window key UPDATE below, with the exact recorded key/shard,
+   current floors and production parameter types. Verify primary-key access
+   and the current-window/reserved predicates.
+3. The complete **nine-statement S6 batch** in the pinned order below on native
+   Spanner, with real parameter types and seeded rows; verify counts and read
+   back credit, key counters and durable finalization state. Inspect individual
+   statement plans and measure transaction/lock duration and contention on a
+   representative workspace. Local SQLite/fake execution establishes neither
+   optimizer behavior nor production lock safety.
+
 
 Key release (exact recorded key shard and hold; this folded path is Credits):
 
@@ -91,12 +133,36 @@ heartbeat-preserving authorization SQL are unchanged.
 `tests/fakes/settle_c1_main.py` freezes the money functions from origin/main
 `8ee7985ecfcee781d39c7964173ce65ebd62bfc2`. These source files matched the initial
 worktree exactly. The oracle has independent finalize, credit/key release and
-key-classification control flow; unrelated helpers are shared.
+key-classification control flow and literal copies of all three window SQL
+constants; unrelated helpers are shared. No money SQL constant is imported
+from production. The fake executes the actual key-release UPDATE in an
+in-memory SQLite database with an `IF` function and normalized UTC timestamp
+bindings. Both current and rollover expressions, BYOK gating, NULL handling,
+reserved decrement and lifetime/window increments come from SQL text, not
+parallel Python arithmetic. Transactional writes still use the fake's pending
+write/commit/rollback machinery. This approach runs in ordinary CI without an
+emulator; it catches the reviewer's weekly `* 2` mutation through a stored-state
+differential. It is not native Spanner optimizer or contention evidence.
+
+The advancing-clock matrix seeds hold=100, actual=70 and usage=25 in each
+window, then moves the clock **inside `batch_update`**, after statements execute:
+
+| S6 clock transition (UTC, 2026) | Day / week / month usage | C1 result |
+| --- | --- | --- |
+| Oct 29 23:59:59.990 → Oct 30 00:00:00.010 | 70 / 95 / 95 | Rollback + sequential fallback |
+| Nov 1 23:59:59.990 → Nov 2 00:00:00.010 | 70 / 70 / 95 | Rollback + sequential fallback |
+| Oct 31 23:59:59.990 → Nov 1 00:00:00.010 | 70 / 95 / 70 | Rollback + sequential fallback |
+| Oct 31 23:59:59.990 → 23:59:59.999 | 95 / 95 / 95 | Direct commit |
+
+Each runs with capped and uncapped keys (eight cases), compares complete durable
+state with frozen main, checks window starts, and permits exactly one final
+commit. Two additional tests deliberately alter both production SQL variants
+and prove frozen main still books 70 while current books the changed 140.
 
 `tests/test_settle_c1.py` covers 24 scenarios × capped/uncapped × intent
 present/absent = **96 money-state differential cases**, plus **92 HTTP
 status/body/header and stored-state comparisons** and **2 nullable legacy-hold
-classifier comparisons**: **190 differential cases** in total. Concurrent first-writer wins
+classifier comparisons**: **190 differential cases** in that matrix, plus the eight boundary cases above. Concurrent first-writer wins
 is tested at transaction level. HTTP pricing is fixed to the same resolved
 amount on both sides, and wall clocks/request identifiers are fixed; stored
 fields are not removed or normalized. Stage D cases use the real heartbeat and
@@ -122,7 +188,8 @@ Run the temporary-copy audit with `uv run python tests/settle_c1_mutations.py`.
 It requires assertion failures (collection errors/skips do not count), restores
 each mutation, and deletes the copy on exit. Mutations cover reserved guard,
 no-debt guard, replay double booking, ignored guard mismatch, post-commit outbox
-done, unchecked tail counts, and refund folding.
+done, unchecked tail counts, refund folding, omitted post-batch floor recheck,
+and doubled current-window weekly SQL arithmetic.
 
 Local gate results and any environmental limitations are recorded in the final
 implementation handoff. Production PLAN review remains with the owner before
@@ -139,11 +206,13 @@ merge; no production statements, git writes, or deployment are part of this cut.
 | Resolve outbox after the finalize commit | RED |
 | Accept invalid credit/key batch counts | RED |
 | Fold the refund tail | RED |
+| Drop post-batch boundary recheck | RED |
+| Double current-window weekly SQL increment | RED |
 
-All seven produced test failures rather than collection errors or skips. The
+All nine produced test failures rather than collection errors or skips. The
 mutation copy was deleted. The driver is retained for reproducibility.
 
-### Local gates (2026-10-01)
+### Round-1 local gates (2026-10-01)
 
 - `uv run ruff check .`: PASS.
 - `uv run mypy src/trusted_router`: PASS, 379 source files.
@@ -174,3 +243,40 @@ Full logs: `/private/tmp/c1-full-clean-final.log` and
 `/private/tmp/c1-full-final.log` (coverage); mutation log:
 `/private/tmp/c1-mutations-final.log`. Full-run basetemp directories and the
 mutation copy were deleted. No git writes were performed; changes are uncommitted.
+
+
+### Round-2 local gates (2026-10-01)
+
+- `uv run ruff check .`: PASS.
+- `uv run mypy src/trusted_router` and `uv run mypy`: PASS, 379 source files.
+- Focused C1: **215 passed**.
+- Clean requested targeted suites, including conformance: **3,570 passed,
+  1,076 skipped, 11 xfailed**. Warm-7/cold-8 pins remain green. The initial run
+  exposed the changed batch-dispatch AST fingerprint; its single manifest
+  entry was updated after reviewing the unchanged SQL/batch shape, and the
+  entire targeted selection was rerun cleanly.
+- SQL acceptance/guard follow-up: **146 passed, 473 skipped**. External/native
+  emulator cases remain unconfigured locally; fake/SQLite evidence does not
+  replace the production PLAN checks listed above.
+- Mutation audit: **9/9 RED**, each with a test failure, no collection error or
+  skip accepted. The disposable mutation copy was deleted.
+- Instrumented full run: **85.79% coverage** (70% required). In addition to the
+  two known Python 3.11 failures, setting coverage options in `PYTEST_ADDOPTS`
+  incorrectly applied the 70% gate to nested single-test pytest runs in the
+  lock-order and lifecycle-clock tests (two failures, one related teardown
+  error). Both tests passed on an uninstrumented rerun (**2 passed**); no code
+  change was needed. The instrumented run's basetemp was deleted.
+- Clean exact-command full suite: `uv run pytest -q -p no:cacheprovider -n 4
+  --basetemp /private/tmp/astra-c1b-$$`: **16,950 passed, 1,125 skipped,
+  12 xfailed, 2 failed** in 978.54 seconds. Only the two known Python 3.11
+  failures listed above remain; there are no additional failures or teardown
+  errors. Disk space was checked before each full run. Full-run basetemp
+  directories were deleted afterward.
+
+Round-2 logs: `/private/tmp/c1b-targeted-clean.log`,
+`/private/tmp/c1b-acceptance.log`, `/private/tmp/c1b-mutations.log`, and
+`/private/tmp/c1b-full-final.log` (exact command),
+`/private/tmp/c1b-full-clean.log` (coverage), and
+`/private/tmp/c1b-instrumentation-controls.log`. `UV_CACHE_DIR` points to a writable temporary
+cache because the default cache is outside the sandbox. No git writes or
+production operations were performed; round-2 changes are uncommitted.
