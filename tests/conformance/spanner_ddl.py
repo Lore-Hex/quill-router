@@ -4,7 +4,7 @@ Regenerate: python -m tests.conformance.spanner_schema_source
 Do not remove emulator-incompatible DDL; provisioning must report it.
 """
 
-SOURCE_DIGESTS = {'scripts/deploy/infra.sh': '6ff0cbe8eee1d6e78adef622d8dfa06c4a2a2e26e0945ce0b942c643eb53d685',
+SOURCE_DIGESTS = {'scripts/deploy/infra.sh': '259931cd73d94d0f3fc535b5f8a6ef523ab7d21dd0ad4efbe679d2f5c5e92ef4',
  'scripts/deploy/migrate_analytics_outbox.sh': 'ae244118bf4d3266e286e663f99e4907289be8e24dea76d05f4bc0814fd4167a',
  'scripts/deploy/migrate_entity_ttl.sh': 'ad4f59b3608ff39a158244b71405ed427b5e47542665afb85370afd2cbebaa9f',
  'scripts/deploy/migrate_gateway_request_index.sh': '5b9a4b18007649f3108214ab2274d216b989909a5098cf38944cad7c7ad480f2',

@@ -1363,7 +1363,7 @@ jobs:
 
   finalize-cloud:
     needs: [admit-cloud, migrate-schema, sync-runtime-secrets, confirm-current-main, deploy, rollout-secondaries, public-surface-companion, verify-cloud-complete]
-    if: ${{ always() && needs.admit-cloud.result == 'success' }}
+    if: ${{ always() && github.repository == 'Lore-Hex/quill-router' && needs.admit-cloud.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

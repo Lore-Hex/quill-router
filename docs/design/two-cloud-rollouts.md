@@ -52,6 +52,8 @@ the control-plane catch-up job does not build or repin gateway images.
 2. Confirm no legacy deployment is still running, including manual operators.
 3. Remove the existing lock bucket's lifecycle rules. The coordinator refuses
    to start until bucket metadata proves automatic deletion is disabled.
+   Dispatch `infra-apply.yml` on main with `operation=configure-retention` and
+   `confirmation=APPLY`. This uses the existing WIF identity and runs no Terraform.
 4. Run the normal gated workflows; inspect journal ownership and regional health.
    No additional application database migration or provider-key rotation is needed.
 
