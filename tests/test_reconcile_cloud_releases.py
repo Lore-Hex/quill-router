@@ -1,3 +1,6 @@
+import json
+import subprocess
+
 import pytest
 
 from scripts.deploy import reconcile_cloud_releases as r
@@ -89,3 +92,54 @@ def test_queued_promotion_refuses_a_diverged_target(api):
 def test_queued_promotion_only_changes_an_older_release(api, comparison):
     api["comparison"] = comparison
     assert r.verify_promotion("azure", "a" * 40) == (comparison == "ahead")
+
+
+@pytest.mark.parametrize("acknowledgment", [
+    "", "Created workflow_dispatch event for deploy-aws-control-plane.yml at main\n",
+    "https://github.com/Lore-Hex/quill-router/actions/runs/36933182051\n",
+])
+def test_cli_acknowledgment_does_not_stop_second_cloud(monkeypatch, acknowledgment):
+    calls = []
+
+    def run(command, **kwargs):
+        assert kwargs["check"] is True and kwargs["timeout"] == 60
+        calls.append(command)
+        args = command[1:]
+        if args[:2] == ["workflow", "run"]:
+            output = acknowledgment
+        elif args[:2] == ["run", "list"]:
+            output = json.dumps(
+                [{"databaseId": 1, "headSha": "a" * 40}] if "deploy.yml" in args else []
+            )
+        elif args[:2] == ["run", "view"]:
+            output = json.dumps({"jobs": [
+                {"name": name, "conclusion": "success"} for name in r.REQUIRED_JOBS
+            ]})
+        else:
+            assert args[0] == "api"
+            identical = args[1].endswith("/compare/" + "a" * 40 + "..." + "a" * 40)
+            output = json.dumps({"status": "identical" if identical else "ahead"})
+        return subprocess.CompletedProcess(command, 0, stdout=output, stderr="")
+
+    monkeypatch.setattr(r.subprocess, "run", run)
+    monkeypatch.setattr(r, "probe_cloud", lambda cloud: ("a" if cloud == "gcp" else "b") * 40)
+    assert [item["cloud"] for item in r.reconcile()] == ["aws", "azure"]
+    dispatches = [c for c in calls if c[1:3] == ["workflow", "run"]]
+    assert len(dispatches) == 2
+    assert all("release_sha=" + "a" * 40 in command for command in dispatches)
+
+
+def test_cli_failed_dispatch_still_raises(monkeypatch):
+    def fail(command, **kwargs):
+        raise subprocess.CalledProcessError(1, command, stderr="dispatch refused")
+
+    monkeypatch.setattr(r.subprocess, "run", fail)
+    with pytest.raises(subprocess.CalledProcessError):
+        r.gh("workflow", "run", "deploy-azure-control-plane.yml")
+
+
+def test_cli_malformed_read_response_still_raises(monkeypatch):
+    monkeypatch.setattr(r.subprocess, "run", lambda command, **kwargs:
+                        subprocess.CompletedProcess(command, 0, stdout="not JSON", stderr=""))
+    with pytest.raises(json.JSONDecodeError):
+        r.gh("api", "repos/Lore-Hex/quill-router/compare/main...main")
