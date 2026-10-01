@@ -64,7 +64,7 @@ resource "google_project_iam_custom_role" "spanner_capacity" {
 
 import {
   to = google_spanner_instance_iam_member.tr_deploy_capacity
-  id = "projects/quill-cloud-proxy/instances/trusted-router-nam6 projects/quill-cloud-proxy/roles/trustedRouterSpannerCapacity serviceAccount:tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com"
+  id = "quill-cloud-proxy/trusted-router-nam6 projects/quill-cloud-proxy/roles/trustedRouterSpannerCapacity serviceAccount:tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com"
 }
 
 resource "google_spanner_instance_iam_member" "tr_deploy_capacity" {
