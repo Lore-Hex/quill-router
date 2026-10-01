@@ -436,6 +436,8 @@ def _finalize_fixture(*, activity_outbox: Any = None) -> tuple[FakeSpannerDataba
 
     db = _database()
     db.now = NOW
+    now = datetime.now(UTC)
+    db.typed['tr_key_limit'][('key', 0)].update(day_start=now, week_start=now, month_start=now)
     result = _authorize(db)
     aid, rid = result['authorization_id'], result['reservation_id']
     auth = _authorization(aid, rid)
@@ -541,7 +543,7 @@ def test_finalize_custom_outbox_observes_flushed_writes_and_cleared_batches(
     assert len(db.generation_records) == len(db.operational_analytics_outbox) == 1
 
 
-@pytest.mark.parametrize('index', range(7))
+@pytest.mark.parametrize('index', range(9))
 @pytest.mark.parametrize('failure', ['status', 'count'])
 def test_finalize_partial_batch_rolls_back_done_claim_and_evidence(
     monkeypatch: pytest.MonkeyPatch, index: int, failure: str,
@@ -556,7 +558,7 @@ def test_finalize_partial_batch_rolls_back_done_claim_and_evidence(
     assert db.commits == commits and db.rollback_calls == 1
 
 
-@pytest.mark.parametrize('index', range(7))
+@pytest.mark.parametrize('index', range(9))
 def test_finalize_batch_abort_retries_claim_done_and_all_evidence(
     monkeypatch: pytest.MonkeyPatch, index: int,
 ) -> None:
@@ -566,7 +568,7 @@ def test_finalize_batch_abort_retries_claim_done_and_all_evidence(
     result = finalize()
     assert result['outcome'] == 'settled' and result['outbox_marked'] is True
     assert db.aborts == 1 and db.commits == commits + 1
-    assert len(batches) == 2 and all(len(batch) == 7 for batch in batches)
+    assert len(batches) == 2 and all(len(batch) == 9 for batch in batches)
     assert all(row['status'] == 'done' and row['attempts'] == 1 for row in db.settle_outbox.values())
     assert all(row['settled'] and row['actual_micro'] == 70 for row in db.reservations.values())
     assert db.typed['tr_credit_balance'][('workspace', 0)]['total_usage'] == 70

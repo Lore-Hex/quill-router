@@ -319,6 +319,27 @@ def release_credit(
     return count
 
 
+def release_credit_no_debt_statement(
+    param_types: Any, workspace_id: str, hold: int, actual: int, *, shard: int,
+) -> DmlStatement:
+    """Speculative release: exact hold and transactional absence of recovery debt.
+
+    A zero requires rollback of the entire batch before sequential classification.
+    Match absorb_unrecovered_recovery_tx's workspace/payment debt predicate.
+    """
+    return (
+        "UPDATE tr_credit_balance "
+        "SET reserved = reserved - @hold, total_usage = total_usage + @actual "
+        "WHERE workspace_id=@ws AND shard=@shard AND reserved >= @hold "
+        "AND (@hold <= @actual OR NOT EXISTS ("
+        "SELECT 1 FROM tr_trust_event "
+        "WHERE workspace_id=@ws AND kind='payment' AND unrecovered_micro>0))",
+        {"hold": int(hold), "actual": int(actual), "ws": workspace_id, "shard": shard},
+        {"hold": param_types.INT64, "actual": param_types.INT64,
+         "ws": param_types.STRING, "shard": param_types.INT64},
+    )
+
+
 def _credit_shard_count_from_rows(
     transaction: Any, param_types: Any, workspace_id: str
 ) -> int:
@@ -436,8 +457,7 @@ _CURRENT_WINDOW_PREDICATE_SQL = (
 )
 
 
-def release_key(
-    transaction: Any,
+def release_key_statement(
     param_types: Any,
     key_hash: str,
     hold: int,
@@ -446,18 +466,9 @@ def release_key(
     book_to_byok: bool,
     window_floors: dict[str, Any],
     shard: int = UNSHARDED,
-) -> int:
-    """Release the EXACT recorded key hold and book `actual` to usage/byok_usage,
-    and bump the lazy per-window counters in the same statement.
-
-    `hold` is the exact amount taken at reserve (0 if no hold was taken — uncapped
-    or BYOK-excluded); `book_to_byok` selects the usage column by the SETTLED
-    usage type. Refund = actual 0 (window bump is then +0 — a no-op that still
-    lazily rolls the window forward, which is harmless). `window_floors` is
-    spend_windows.window_floors(now). The `reserved >= @hold` guard makes a
-    stale/double release a 0-row no-op rather than driving reserved negative.
-    Returns the modified-row count (caller asserts == 1).
-    """
+    current_windows: bool = True,
+) -> DmlStatement:
+    """Exact key release SQL; current-window zero needs sequential classification."""
     usage_col = "byok_usage" if book_to_byok else "usage"
     # BYOK settles count toward the caps (incl. windows) only when the key's own
     # include_byok says so — gated in SQL so it matches reserve semantics. On an
@@ -494,26 +505,48 @@ def release_key(
         + " WHERE key_hash=@kh AND shard=@shard AND reserved >= @hold"
         + _CURRENT_WINDOW_PREDICATE_SQL
     )
-    fast_count = transaction.execute_update(
-        fast_sql,
-        params=params,
-        param_types=bound_param_types,
-    )
-    if fast_count == 1:
-        return 1
-
-    # Keep this fallback statement identical to the original release UPDATE.
+    if current_windows:
+        return fast_sql, params, bound_param_types
     sql = (
         "UPDATE tr_key_limit "  # noqa: S608
         f"SET reserved = reserved - @hold, {usage_col} = {usage_col} + @actual"
         + rolled_window_sql
         + " WHERE key_hash=@kh AND shard=@shard AND reserved >= @hold"
     )
-    return transaction.execute_update(
-        sql,
-        params=params,
-        param_types=bound_param_types,
-    )
+    return sql, params, bound_param_types
+
+
+def release_key(
+    transaction: Any,
+    param_types: Any,
+    key_hash: str,
+    hold: int,
+    actual: int,
+    *,
+    book_to_byok: bool,
+    window_floors: dict[str, Any],
+    shard: int = UNSHARDED,
+) -> int:
+    """Release the EXACT recorded key hold and book `actual` to usage/byok_usage,
+    and bump the lazy per-window counters in the same statement.
+
+    `hold` is the exact amount taken at reserve (0 if no hold was taken — uncapped
+    or BYOK-excluded); `book_to_byok` selects the usage column by the SETTLED
+    usage type. Refund = actual 0 (window bump is then +0 — a no-op that still
+    lazily rolls the window forward, which is harmless). `window_floors` is
+    spend_windows.window_floors(now). The `reserved >= @hold` guard makes a
+    stale/double release a 0-row no-op rather than driving reserved negative.
+    Returns the modified-row count (caller asserts == 1).
+    """
+    for current_windows in (True, False):
+        sql, params, types = release_key_statement(
+            param_types, key_hash, hold, actual, book_to_byok=book_to_byok,
+            window_floors=window_floors, shard=shard, current_windows=current_windows,
+        )
+        count = transaction.execute_update(sql, params=params, param_types=types)
+        if count == 1:
+            return 1
+    return count
 
 
 def key_limit_exists(

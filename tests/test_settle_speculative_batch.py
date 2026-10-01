@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -28,6 +29,9 @@ from trusted_router.storage_models import Generation, SettleOutboxRow
 def fixture() -> tuple[Any, dict[str, Any]]:
     db = _database()
     db.now = NOW
+    db.typed['tr_key_limit'][('key', 0)].update(
+        day_start=datetime.now(UTC), week_start=datetime.now(UTC), month_start=datetime.now(UTC),
+    )
     accepted = _authorize(db)
     aid, rid = accepted['authorization_id'], accepted['reservation_id']
     auth = _authorization(aid, rid)
@@ -55,7 +59,8 @@ def clone(db: Any) -> Any:
     other = _database()
     other.now = NOW
     for name in ('typed', 'rows', 'reservations', 'gateway_authorizations', 'settle_outbox',
-                 'generation_records', 'operational_analytics_outbox'):
+                 'generation_records', 'operational_analytics_outbox', 'analytics_outbox',
+                 'stage_d_policy_watermarks', 'reservation_idemp'):
         setattr(other, name, copy.deepcopy(getattr(db, name)))
     return other
 
@@ -149,7 +154,7 @@ def test_complete_finalize_differential(
     assert observations[0] == observations[1]
 
 
-@pytest.mark.parametrize('index', range(7))
+@pytest.mark.parametrize('index', range(9))
 @pytest.mark.parametrize('failure', ['sql', 'transport', 'count', 'truncated', 'duplicate'])
 def test_every_successful_prefix_is_discarded(
     monkeypatch: pytest.MonkeyPatch, index: int, failure: str,
@@ -179,7 +184,7 @@ def test_every_successful_prefix_is_discarded(
 
 
 @pytest.mark.parametrize('zero', [None, 0, 1, 2])
-@pytest.mark.parametrize('index', range(7))
+@pytest.mark.parametrize('index', range(9))
 def test_aborted_precedes_even_zero_prefix_and_retries_entire_transaction(
     monkeypatch: pytest.MonkeyPatch, index: int, zero: int | None,
 ) -> None:
@@ -209,8 +214,8 @@ def test_aborted_precedes_even_zero_prefix_and_retries_entire_transaction(
         statements = transaction_statements([call for call in calls if call[0] is tx])
         assert statements[0].startswith('select reservation_id, workspace_id')
         credit_before_key(statements, key_last=tx is transactions[-1], require_both=False)
-    assert not any('tr_credit_balance' in sql or 'tr_key_limit' in sql
-                   for tx, sql in calls if tx is transactions[0])
+    # ABORTED discards even a prefix that reached a hot release (C1).
+    assert db.commits == 3  # authorize, intent, final successful T-F
     assert db.typed['tr_credit_balance'][('workspace', 0)]['total_usage'] == 70
     assert db.typed['tr_key_limit'][('key', 0)]['usage'] == 70
     assert len(db.generation_records) == len(db.operational_analytics_outbox) == 1
@@ -218,7 +223,7 @@ def test_aborted_precedes_even_zero_prefix_and_retries_entire_transaction(
 
 @pytest.mark.parametrize('reason', ['claim_zero', 'typed_zero', 'done_zero'])
 @pytest.mark.parametrize('later_error', [False, True])
-def test_fallback_prefix_precedence_and_no_counter_access(
+def test_fallback_prefix_precedence_and_discarded_counter_writes(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
     reason: str, later_error: bool,
 ) -> None:
@@ -242,7 +247,9 @@ def test_fallback_prefix_precedence_and_no_counter_access(
     assert result['outcome'] == 'settled' and result['attempts'] == 2
     assert db.rollback_calls == 1
     first = transaction_statements([call for call in calls if call[0] is transactions[0]])
-    assert not any('tr_credit_balance' in sql or 'tr_key_limit' in sql for sql in first)
+    credit_before_key(first, key_last=True)
+    assert db.typed['tr_credit_balance'][('workspace', 0)]['total_usage'] == 70
+    assert db.typed['tr_key_limit'][('key', 0)]['usage'] == 70
     for tx in set(t for t, _ in calls):
         statements = transaction_statements([call for call in calls if call[0] is tx])
         if any('tr_credit_balance' in sql for sql in statements):
@@ -590,9 +597,9 @@ def test_real_sdk_finalize_retry_and_telemetry(
     options['generation'].model_id = 'PRIVATE_PAYLOAD_SENTINEL'
     sleep = Mock()
     monkeypatch.setattr(_helpers.time, 'sleep', sleep)
-    responses = [_batch_response([1, 1, 1, 1])]
+    responses = [_batch_response([1, 1, 1, 1, 1, 1])]
     if scenario != 'clean':
-        responses = [_batch_response([0, 1, 1, 1])]
+        responses = [_batch_response([0, 1, 1, 1, 1, 1])]
         if 'aborted' in scenario:
             responses.append(_batch_response(
                 [0] if scenario == 'fallback_zero_aborted' else [], code_pb2.ABORTED,
@@ -614,10 +621,10 @@ def test_real_sdk_finalize_retry_and_telemetry(
     assert all(tx.committed is None for tx in sdk.transactions[:-1])
     assert sdk.rpcs.rollback.call_count == int(scenario != 'clean')
     batches = [c.kwargs['request'] for c in sdk.rpcs.execute_batch_dml.call_args_list]
-    assert [len(b.statements) for b in batches] == [4] + [2] * (attempts - 1)
+    assert [len(b.statements) for b in batches] == [6] + [2] * (attempts - 1)
     if attempts > 1:
         assert sdk.rpcs.rollback.call_args.kwargs['transaction_id'] == b'tx-1'
-        assert batches[0].statements[-2:] == batches[1].statements
+        assert batches[0].statements[2:4] == batches[1].statements
     if attempts == 3:
         assert batches[1].statements == batches[2].statements
         assert sdk.transactions[2]._multiplexed_session_previous_transaction_id == (
@@ -628,8 +635,8 @@ def test_real_sdk_finalize_retry_and_telemetry(
         sleep.assert_not_called()
     # Real release DML only executes in the final successful callback.
     updates = [c.kwargs['request'].sql for c in sdk.rpcs.execute_sql.call_args_list]
-    assert sum(sql.startswith('UPDATE tr_credit_balance') for sql in updates) == 1
-    assert sum(sql.startswith('UPDATE tr_key_limit') for sql in updates) == 1
+    assert sum(sql.startswith('UPDATE tr_credit_balance') for sql in updates) == int(attempts > 1)
+    assert sum(sql.startswith('UPDATE tr_key_limit') for sql in updates) == int(attempts > 1)
     _assert_timing(caplog, attempts=attempts, reason='none' if attempts == 1 else 'claim_zero',
                    outcome='not_attempted' if attempts == 1 else 'settled')
 
@@ -672,7 +679,7 @@ def test_real_sdk_finalize_transport_failure_never_commits(
     options = _sdk_finalize_options(sdk)
     error = ServiceUnavailable('batch transport lost')
     sdk.rpcs.execute_batch_dml.side_effect = (
-        [_batch_response([0, 1, 1, 1]), error]
+        [_batch_response([0, 1, 1, 1, 1, 1]), error]
         if failed_rpc == 'rollback_then_fallback_batch' else error
     )
     if failed_rpc != 'batch':

@@ -1553,6 +1553,11 @@ def test_typed_finalize_gateway_authorization_logs_split_timing(
     ws = "ws_wrap_timing"
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
+    # Pin the ordinary current-window path; rollover requires a fresh fallback.
+    current = utcnow()
+    _db.typed["tr_key_limit"][(key.hash, 0)].update(
+        day_start=current, week_start=current, month_start=current,
+    )
     outcome, auth = store.authorize_gateway_typed(
         workspace_id=ws,
         key_hash=key.hash,

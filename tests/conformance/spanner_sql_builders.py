@@ -139,6 +139,30 @@ def builder_cases() -> list[SQLCase]:
     cases.append(SQLCase("speculative-done-batch", speculative_done_statements(
         pt, authorization_id="acceptance-auth", intent_kind="settle", reservation_id="acceptance-reservation",
     ), batch=True))
+    for hold, actual, reserved, debt in ((100, 70, 100, 0), (100, 70, 99, 0),
+                                         (100, 70, 100, 50), (100, 100, 100, 50),
+                                         (100, 130, 100, 50)):
+        credit = counters.release_credit_no_debt_statement(
+            pt, "acceptance-workspace", hold, actual, shard=0,
+        )
+        seed_credit = (
+            "INSERT INTO tr_credit_balance (workspace_id, shard, total_credits, reserved) "
+            "VALUES (@ws, 0, 1000, @reserved)",
+            {"ws": "acceptance-workspace", "reserved": reserved},
+            {"ws": pt.STRING, "reserved": pt.INT64},
+        )
+        seed_debt = (
+            "INSERT INTO tr_trust_event (workspace_id, event_id, kind, provider, "
+            "occurred_at, recorded_at, unrecovered_micro) "
+            "VALUES (@ws, 'acceptance-debt', 'payment', 'stripe', @now, @now, @debt)",
+            {"ws": "acceptance-workspace", "now": NOW, "debt": debt},
+            {"ws": pt.STRING, "now": pt.TIMESTAMP, "debt": pt.INT64},
+        )
+        cases.append(SQLCase(
+            f"c1-credit-{hold}-{actual}-{reserved}-{debt}", [credit],
+            seed=[seed_credit, seed_debt],
+            expected_counts=[int(reserved >= hold and (hold <= actual or debt == 0))],
+        ))
     for byok in (False, True):
         capture = Capture()
         counters.release_key(capture, pt, "acceptance-key", 1, 1, book_to_byok=byok,
@@ -166,6 +190,11 @@ def builder_cases() -> list[SQLCase]:
             writes.append(gen)
         if include_activity:
             writes.append(activity)
+        writes.extend([
+            counters.release_credit_no_debt_statement(pt, "acceptance-workspace", 100, 70, shard=0),
+            counters.release_key_statement(pt, "acceptance-key", 100, 70, book_to_byok=False,
+                                           window_floors=window_floors(NOW), shard=0),
+        ])
         cases.append(SQLCase(f"settle-batch-{claim_hold}-{done_outbox}-{include_generation}-{include_activity}", writes, batch=True, seed=[insert_auth, insert_reservation]))
     for has_reservation, refill in product((False, True), repeat=2):
         capture = Capture()

@@ -122,10 +122,21 @@ def _counts(db: Any) -> tuple[int, int, int, int, int]:
             db.commits)
 
 
+@pytest.mark.parametrize("cold", [False, True])
 def test_reply_operation_count_and_exact_background_payloads(
-    scenario: Any, monkeypatch: pytest.MonkeyPatch, optional_executor: Any,
+    scenario: Any, monkeypatch: pytest.MonkeyPatch, optional_executor: Any, cold: bool,
 ) -> None:
+    from trusted_router import storage_gcp_authorize as finalize
+
     store, db, auth, app = scenario
+    now = dt.datetime.now(dt.UTC)
+    db.typed["tr_key_limit"][(auth.key_hash, 0)].update(
+        day_start=now, week_start=now, month_start=now,
+    )
+    db.name = "projects/test/instances/test/databases/c1"
+    monkeypatch.setattr(finalize, "_OUTBOX_AVAILABILITY_CACHE", {})
+    if not cold:
+        assert finalize._outbox_table_available(db, store._param_types)
     start = _counts(db)
     reply_counts: list[tuple[int, ...]] = []
     transactions: list[tuple[Any, str]] = []
@@ -148,9 +159,9 @@ def test_reply_operation_count_and_exact_background_payloads(
     assert response["data"]["disposition"] == "finalized"
     assert optional_executor.wait_idle()
     # Claim, typed finalization, done, retention and evidence share one batch.
-    # No T4 calls precede the response. Total: 14 -> 11 RPCs.
-    assert reply_counts == [(3, 2, 3, 2, 2)]
-    assert tuple(a - b for a, b in zip(_counts(db), start, strict=True)) == (4, 2, 4, 2, 3)
+    # C1 folds credit/key and the debt check: 7 warm / 8 cold operations.
+    assert reply_counts == [(2 + int(cold), 1, 0, 2, 2)]
+    assert tuple(a - b for a, b in zip(_counts(db), start, strict=True)) == (3 + int(cold), 1, 1, 2, 3)
     [activity_tx] = [tx for tx, sql in transactions if sql.startswith("INSERT INTO tr_operational_analytics_outbox")]
     [generation_tx] = [tx for tx, sql in transactions if sql.startswith("INSERT INTO tr_generation")]
     credit_tx = [tx for tx, sql in transactions if sql.startswith("UPDATE tr_credit_balance")]

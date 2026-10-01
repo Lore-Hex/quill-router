@@ -163,14 +163,20 @@ def test_release_credit_before_key_and_rollback(
                 snapshot_booking_enabled=False,
                 operational_analytics_outbox=None,
             ).outcome
-        statements = transaction_statements(calls)
+        transactions = list(dict.fromkeys(tx for tx, _ in calls))
+        # A C1 zero rolls back before a fresh sequential classifier. Check the
+        # invariant independently in EVERY transaction, including the discarded
+        # speculative credit/key writes and recovery/rollover fallback.
+        for tx in transactions:
+            statements = transaction_statements([call for call in calls if call[0] is tx])
+            credit_before_key(statements, key_last=not broken, require_both=not broken)
+        assert all(tx.rolled_back for tx in transactions[:-1])
         if broken:
             assert result == billing.SettleOutcome.ERROR
             assert (db.typed, db.reservations, db.gateway_authorizations) == before
-            credit_before_key(statements, require_both=False)
+            assert transactions[-1].rolled_back
         else:
             assert result == billing.SettleOutcome.SETTLED
-            credit_before_key(statements, key_last=True)
             assert db.typed[CREDIT_BALANCE_TABLE][("workspace", 0)]["reserved"] == 0
             assert db.typed[KEY_LIMIT_TABLE][("key", 0)]["reserved"] == 0
             amount = 0 if path == "reaper" else 70
@@ -196,8 +202,11 @@ def test_finalize_enabled_outbox_retention_and_evidence_before_credit_and_key(
     assert result["outbox_marked"] is True
     statements = transaction_statements(calls)
     [batch_sql] = batches
-    assert len(batch_sql) == 7
-    claim, typed, done_sql, auth_retention, reservation_retention, generation, activity = batch_sql
+    assert len(batch_sql) == 9
+    claim, typed, done_sql, auth_retention, reservation_retention, generation, activity, credit, key = batch_sql
+    assert credit.startswith("update tr_credit_balance") and "not exists" in credit
+    assert key.startswith("update tr_key_limit")
+    assert statements[-2:] == [credit, key]
     assert claim.startswith("update tr_reservation set settled=true")
     assert typed.startswith("update tr_gateway_authorization set settled=true")
     assert "and reservation_id=@rid" in done_sql
@@ -213,7 +222,7 @@ def test_finalize_enabled_outbox_retention_and_evidence_before_credit_and_key(
     first_retention = statements.index(auth_retention)
     # Done must precede retention within the same batch.
     assert max(done) < first_retention
-    assert statements[first_retention:first_retention + 4] == batch_sql[3:]
+    assert statements[first_retention:first_retention + 4] == batch_sql[3:7]
     first_credit = next(i for i, sql in enumerate(statements) if "tr_credit_balance" in sql)
     assert first_retention + 3 < first_credit
     # This proves statement order; physical lock acquisition inside a Spanner

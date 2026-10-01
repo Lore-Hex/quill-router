@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import datetime as dt
 import json
 import re
@@ -302,6 +303,11 @@ class FakeSpannerDatabase:
 
     def _try_commit(self, txn: _FakeTransaction) -> bool:
         with self._commit_lock:
+            for workspace, observed in txn.trust_event_ranges.items():
+                current = {pk: row for pk, row in self.typed.get("tr_trust_event", {}).items()
+                           if pk[0] == workspace}
+                if current != observed:
+                    return False
             for (kind, prefix), observed_range in txn.entity_prefix_reads.items():
                 current_range = tuple(sorted(
                     (eid, row.version) for (row_kind, eid), row in self.rows.items()
@@ -467,6 +473,8 @@ class _FakeTransaction:
         # a phantom _RebalanceInvariantError real Spanner cannot produce
         # (surfaced as a rare credit-shard stress flake).
         self.row_snapshots: dict[tuple, dict | None] = {}
+        # C1 NOT EXISTS must conflict even when its payment range was empty.
+        self.trust_event_ranges: dict[str, dict] = {}
         self.pending_writes: list[tuple] = []
         # DML+mutation mixing is forbidden in one transaction (real Spanner
         # buffers mutations after DML and DML can't see them); fail fast if both.
@@ -1058,6 +1066,22 @@ class _FakeTransaction:
             _require_pred(
                 sql, "workspace_id=@ws AND shard=@shard AND reserved >= @hold", "credit-release"
             )
+            if "NOT EXISTS" in sql:
+                _require_pred(
+                    sql,
+                    "AND (@hold <= @actual OR NOT EXISTS (SELECT 1 FROM tr_trust_event "
+                    "WHERE workspace_id=@ws AND kind='payment' AND unrecovered_micro>0))",
+                    "credit-release-no-debt",
+                )
+                if p["hold"] > p["actual"]:
+                    debts = _execute_sql(
+                        self.db, self,
+                        "SELECT event_id FROM tr_trust_event "
+                        "WHERE workspace_id=@pk AND kind='payment' AND unrecovered_micro>0",
+                        {"pk": p["ws"]},
+                    )
+                    if debts:
+                        return 0
             pk = (p["ws"], p["shard"])
             rec = self._typed_current("tr_credit_balance", pk)
             # mirrors the `AND reserved >= @hold` guard: underflow = 0-row no-op
@@ -3687,6 +3711,12 @@ def _execute_sql(
         ]
         return [[row.get(column) for column in columns] for row in rows]
     if "FROM tr_trust_event" in sql:
+        workspace = params.get("pk", params.get("workspace_id"))
+        if txn is not None and workspace is not None:
+            txn.trust_event_ranges.setdefault(workspace, copy.deepcopy({
+                pk: row for pk, row in db.typed.get("tr_trust_event", {}).items()
+                if pk[0] == workspace
+            }))
         cols = [
             column.strip()
             for column in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")

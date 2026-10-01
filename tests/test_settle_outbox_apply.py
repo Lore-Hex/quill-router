@@ -45,6 +45,7 @@ from trusted_router.custom_model_markup_billing import (
 from trusted_router.partner_billing import PARTNER_OPERATOR_COST_SETTLE_FIELD
 from trusted_router.services import settle_outbox_apply as apply_mod
 from trusted_router.services.settle_outbox_apply import ApplyOutcome, apply_frozen_settle
+from trusted_router.spend_windows import utcnow
 from trusted_router.storage import InMemoryStore, configure_store
 from trusted_router.storage_gcp_authorize import AuthorizeOutcome, SettleOutcome, settle_atomic
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
@@ -1404,8 +1405,13 @@ def test_typed_finalize_releases_hot_rows_last_in_the_same_transaction(
     ws = "ws_finalize_lock_order"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
+    current = utcnow()
+    _typed_key(db, key.hash).update(
+        day_start=current, week_start=current, month_start=current,
+    )
     auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
     calls = _statement_spy(monkeypatch)
+    rollbacks_before = db.rollback_calls
 
     assert apply_frozen_settle(_row(auth, cost=777_777)) == ApplyOutcome.SETTLED_NOW
 
@@ -1414,10 +1420,15 @@ def test_typed_finalize_releases_hot_rows_last_in_the_same_transaction(
     }
     assert len(finalize_txns) == expected_attempts
     finalize_txn = max(finalize_txns)
-    # A typed miss rolls back before the fresh sequential attempt. Rejected
-    # speculation must never acquire a credit or key counter lock.
-    rejected = [sql for txn, sql in calls if txn in finalize_txns and txn != finalize_txn]
-    assert not any("tr_key_limit" in sql or "tr_credit_balance" in sql for sql in rejected)
+    # A typed miss can stage the guarded counters, but discards the whole batch
+    # before the fresh sequential attempt. Both attempts retain credit/key order.
+    assert db.rollback_calls - rollbacks_before == expected_attempts - 1
+    for txn in finalize_txns:
+        counter_sql = [sql for t, sql in calls if t == txn and (
+            sql.startswith("UPDATE tr_credit_balance") or sql.startswith("UPDATE tr_key_limit")
+        )]
+        assert counter_sql[0].startswith("UPDATE tr_credit_balance")
+        assert all(sql.startswith("UPDATE tr_key_limit") for sql in counter_sql[1:])
     statements = [sql for txn, sql in calls if txn == finalize_txn]
     key_release = next(
         i for i, sql in enumerate(statements) if sql.startswith("UPDATE tr_key_limit")

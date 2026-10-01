@@ -16,6 +16,13 @@ from 6/7 to 5/6 without a header and 7/8 to 5/6 with one (unarmed/armed).
 The exact sequence is pinned in
 ``test_gateway_authorize_spanner_operations.py``; the 20-second deadline stays.
 
+C1 ordinary success settle (hold > actual, no recovery debt, current windows)
+uses seven warm operations, eight with the cold outbox-schema probe: authorization
+snapshot, durable-intent batch and commit, reservation read, finalize batch and
+commit, broadcast snapshot. Credit release, no-debt check and key usage share the
+finalize batch; guard misses roll back and classify in a fresh transaction under
+the same deadline. Refunds and exceptional paths keep their original tail.
+
 That is exactly what happened on the settle-failover-Sentry branch: the budget
 landed on an observability helper. A behavioural test cannot catch it, because
 the budget only changes what happens under RPC pressure. So this asserts the

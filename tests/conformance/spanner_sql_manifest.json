@@ -14,7 +14,9 @@
     "storage_gcp_request_records:gateway_authorization_settled_statement": "ae5e93de4af73f80e254209da33db4f523641496d30a61d994dce60f137f1952",
     "storage_gcp_request_records:gateway_authorization_retention_clear_statement": "e2b6e9ed483274375b390da089a0927566fcd480026e88c0f9b445ffe1e332d5",
     "storage_gcp_settle_outbox:done_retention_statements": "b1d3fa9f8a69938adbc56f212e2ab4ed09e3de2ff37a4d36af7a788f71271cab",
-    "storage_gcp_settle_outbox:speculative_done_statements": "e292de31c54e6ab2d1106ae773cd992b89f07f0e21a3e56b79316f55cd7aba26"
+    "storage_gcp_settle_outbox:speculative_done_statements": "e292de31c54e6ab2d1106ae773cd992b89f07f0e21a3e56b79316f55cd7aba26",
+    "storage_gcp_counter_dml:release_credit_no_debt_statement": "bccbfddb26710596d06e73aa0b32ff02fd15c4f6f1ef9b3173ba6c7500362dbf",
+    "storage_gcp_counter_dml:release_key_statement": "bdb9ab25b278d5d1e7495338d1ba796ec27143148149cdb8ef193edf28ab138d"
   },
   "expressions": {
     "byok_aad_backfill:scan:1": {
@@ -1219,48 +1221,6 @@
           "types": {
             "kh": "STRING",
             "shard": "INT64"
-          }
-        }
-      ]
-    },
-    "storage_gcp_counter_dml:release_key:1": {
-      "fingerprint": "f57a5b6a0be61096c27e07de7f84b4434921d015cc917599bdd9adac52b3dfb5",
-      "scenarios": [
-        {
-          "bindings": {
-            "usage_col": "usage",
-            "current_window_sql": "=_CURRENT_WINDOW_BUMP_SQL.replace(\"@day_wamt\", \"@actual\").replace(\"@week_wamt\", \"@actual\").replace(\"@month_wamt\", \"@actual\")",
-            "rolled_window_sql": "=_WINDOW_BUMP_SQL.replace(\"@day_wamt\", \"@actual\").replace(\"@week_wamt\", \"@actual\").replace(\"@month_wamt\", \"@actual\")"
-          },
-          "types": {
-            "actual": "INT64",
-            "day_floor": "TIMESTAMP",
-            "hold": "INT64",
-            "kh": "STRING",
-            "month_floor": "TIMESTAMP",
-            "shard": "INT64",
-            "week_floor": "TIMESTAMP"
-          }
-        }
-      ]
-    },
-    "storage_gcp_counter_dml:release_key:2": {
-      "fingerprint": "f57a5b6a0be61096c27e07de7f84b4434921d015cc917599bdd9adac52b3dfb5",
-      "scenarios": [
-        {
-          "bindings": {
-            "usage_col": "usage",
-            "current_window_sql": "=_CURRENT_WINDOW_BUMP_SQL.replace(\"@day_wamt\", \"@actual\").replace(\"@week_wamt\", \"@actual\").replace(\"@month_wamt\", \"@actual\")",
-            "rolled_window_sql": "=_WINDOW_BUMP_SQL.replace(\"@day_wamt\", \"@actual\").replace(\"@week_wamt\", \"@actual\").replace(\"@month_wamt\", \"@actual\")"
-          },
-          "types": {
-            "actual": "INT64",
-            "day_floor": "TIMESTAMP",
-            "hold": "INT64",
-            "kh": "STRING",
-            "month_floor": "TIMESTAMP",
-            "shard": "INT64",
-            "week_floor": "TIMESTAMP"
           }
         }
       ]
@@ -3559,6 +3519,92 @@
           ]
         }
       ]
+    },
+    "storage_gcp_counter_dml:release_key_statement:1": {
+      "fingerprint": "bdb9ab25b278d5d1e7495338d1ba796ec27143148149cdb8ef193edf28ab138d",
+      "scenarios": [
+        {
+          "bindings": {
+            "usage_col": "usage",
+            "current_window_sql": "=_CURRENT_WINDOW_BUMP_SQL.replace(\"@day_wamt\", \"@actual\").replace(\"@week_wamt\", \"@actual\").replace(\"@month_wamt\", \"@actual\")",
+            "rolled_window_sql": "=_WINDOW_BUMP_SQL.replace(\"@day_wamt\", \"@actual\").replace(\"@week_wamt\", \"@actual\").replace(\"@month_wamt\", \"@actual\")"
+          },
+          "types": {
+            "actual": "INT64",
+            "day_floor": "TIMESTAMP",
+            "hold": "INT64",
+            "kh": "STRING",
+            "month_floor": "TIMESTAMP",
+            "shard": "INT64",
+            "week_floor": "TIMESTAMP"
+          }
+        }
+      ]
+    },
+    "storage_gcp_counter_dml:release_key_statement:2": {
+      "fingerprint": "bdb9ab25b278d5d1e7495338d1ba796ec27143148149cdb8ef193edf28ab138d",
+      "scenarios": [
+        {
+          "bindings": {
+            "usage_col": "usage",
+            "current_window_sql": "=_CURRENT_WINDOW_BUMP_SQL.replace(\"@day_wamt\", \"@actual\").replace(\"@week_wamt\", \"@actual\").replace(\"@month_wamt\", \"@actual\")",
+            "rolled_window_sql": "=_WINDOW_BUMP_SQL.replace(\"@day_wamt\", \"@actual\").replace(\"@week_wamt\", \"@actual\").replace(\"@month_wamt\", \"@actual\")"
+          },
+          "types": {
+            "actual": "INT64",
+            "day_floor": "TIMESTAMP",
+            "hold": "INT64",
+            "kh": "STRING",
+            "month_floor": "TIMESTAMP",
+            "shard": "INT64",
+            "week_floor": "TIMESTAMP"
+          }
+        }
+      ]
+    },
+    "storage_gcp_counter_dml:release_credit_no_debt_statement:1": {
+      "fingerprint": "bccbfddb26710596d06e73aa0b32ff02fd15c4f6f1ef9b3173ba6c7500362dbf",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "hold": "INT64",
+            "actual": "INT64",
+            "ws": "STRING",
+            "shard": "INT64"
+          },
+          "values": {
+            "hold": 100,
+            "actual": 70
+          }
+        },
+        {
+          "bindings": {},
+          "types": {
+            "hold": "INT64",
+            "actual": "INT64",
+            "ws": "STRING",
+            "shard": "INT64"
+          },
+          "values": {
+            "hold": 100,
+            "actual": 100
+          }
+        },
+        {
+          "bindings": {},
+          "types": {
+            "hold": "INT64",
+            "actual": "INT64",
+            "ws": "STRING",
+            "shard": "INT64"
+          },
+          "values": {
+            "hold": 100,
+            "actual": 101
+          }
+        }
+      ]
     }
   },
   "sinks": {
@@ -3609,13 +3655,13 @@
     "storage_gcp_authorize:_apply_user_model_payout_tx": "87282c76b37fb351b3ae5a7572ff8d6c835affc98e9d3a3b24f976fa471421f8",
     "storage_gcp_authorize:_apply_app_markup_payout_tx": "bf69f4d4f5445dbb97dcf22507d8651974f2430dc5d845fe68c2daab72dfc2c6",
     "storage_gcp_authorize:_apply_custom_model_markup_payout_tx": "a1a06d4c1dcc22a836e086dc1700440a90dad6d8c8966466902930955a34e3f0",
-    "storage_gcp_authorize:typed_finalize_atomic.speculative_batch": "d8d2fec5ec3fdae61c9a9c31b28c2fb437b03a81bf983bf7c219ad1345e73f4d",
+    "storage_gcp_authorize:typed_finalize_atomic.speculative_batch": "83fb75784e6a77e327cbc8746d3c6d50007fec7b43c7c113c9eb3e11772addfb",
     "storage_gcp_authorize:key_window_limit_decision": "5a317b9f2927443ca6d6686b5cb1d1b6ff036c6d744d511a3b5f24c63e3b2ad7",
     "storage_gcp_authorize:authorize_atomic.txn": "436c84be91d07b0e183e1da7254118431c058dde512ef29ab5e9e53e451467ae",
     "storage_gcp_authorize:reap_expired_reservations_result": "9d7f819fc199930d94eaa53e939fced804e61b2cbf9f54cbf676ced4c743976e",
     "storage_gcp_authorize:key_lifetime_cap_precheck": "4e9ee17c7e9363a1fc3a9d614f15148ad6fb20ff04d272785809beef92ab0b4c",
     "storage_gcp_authorize:_finalize_reaped_reservation_atomic.txn": "55ccd7b9ed868037a53ecb228e6efe40882d39fef33e9bd24bb0061340d95200",
-    "storage_gcp_authorize:typed_finalize_atomic.txn": "70a0ce96c53d032e3b6358e1aad064669b61fa98ab1950bc260907b150e8d4c8",
+    "storage_gcp_authorize:typed_finalize_atomic.txn": "b53a9ade92c5fe66db2110aaed1e68abc28250a6b04bb16d0cd615e95e07277b",
     "storage_gcp_authorize:settle_atomic.txn": "0ec2b0d2303c8edbbcfff74724c3bee55a72195a523e21f21e04139aabeb3174",
     "storage_gcp_authorize:_outbox_table_available": "40f44f259524be5dc275f8a3400fc40fc5b8fe850c0482362de0382296e3f910",
     "storage_gcp_batch_dml:execute_batch_dml": "cf69cc8e1a62f4028bd2370e9d3d22e5f6f28856795ef05514f1f8dbc5130169",
@@ -3626,7 +3672,7 @@
     "storage_gcp_counter_dml:transfer_credit_budget": "03771887a0a71a8cff40dd5f89bd1513cade0b57d1907314a529af679b011e92",
     "storage_gcp_counter_dml:release_credit": "63c3f07ddb6b3f1425b5ba4ec6c36165710c12969eb0d0b618ea5cab98eb0591",
     "storage_gcp_counter_dml:reserve_key": "e3481c3aeddf7180d6bdd77bb54a337d61a1a87cd1ec3320b391a6cf521d3c83",
-    "storage_gcp_counter_dml:release_key": "f57a5b6a0be61096c27e07de7f84b4434921d015cc917599bdd9adac52b3dfb5",
+    "storage_gcp_counter_dml:release_key": "0642ca8d01933eec12feb0a0d99d318358cd0f2fea43e67821c795f6fa02ff3d",
     "storage_gcp_counter_dml:insert_reservation": "5003ba8b2eb7e352be932a768f44b7b36ade7acf6b57fa11f00b22136f98400f",
     "storage_gcp_counter_dml:complete_reservation_retention": "04b8a59463b4526c5cb9a597aa50530988691ed1366d38232fb96e450dadcc6b",
     "storage_gcp_counter_dml:clear_reservation_retention": "3bcf32a129af5f7dfdc1d2e5108abfdbb7f7b82be72ba5ce893107d46a12dc49",
