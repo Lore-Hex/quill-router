@@ -68,6 +68,7 @@ from trusted_router.provider_manifest_policy import (
 )
 from trusted_router.provider_manifest_policy import (
     EXPIRING_PROVIDER_MANIFEST_SLUGS,
+    decision_manifest_price_is_valid,
 )
 from trusted_router.provider_manifest_policy import (
     provider_manifest_valid_until as _provider_manifest_valid_until,
@@ -1097,8 +1098,8 @@ def _supplemental_provider_models_and_endpoints(
             decision = raw_model.get("model_type") == "decision"
             if decision and (
                 provider_slug not in {"system1models", "system1models-eu"}
-                or endpoint_types != {"decide"}
                 or not model_id.startswith(provider_slug + "/s1-")
+                or not decision_manifest_price_is_valid(raw_model)
             ):
                 continue
             if embedding and (not provider.supports_embeddings or endpoint_types != {"embeddings"}):

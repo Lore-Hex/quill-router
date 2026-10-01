@@ -194,3 +194,40 @@ def test_hourly_refresh_and_native_cloud_secret_contract():
         assert any(row[0] == module.SLUG for row in _DISCOVERABLE_MANIFEST_PROVIDERS)
         coord = f"{module.CATALOG.key_env}:trustedrouter-system1models-{module.CATALOG.tier}-api-key"
         assert coord in (root / ".github/workflows/refresh-prices.yml").read_text()
+
+
+@pytest.mark.parametrize("tier", ["eu", "global"])
+@pytest.mark.parametrize("change", [None, "chat", "output", "missing_output", "bool_price", "cache", "tiers", "namespace"])
+def test_manifest_expiry_and_runtime_share_strict_decision_price_validation(tier, change):
+    from datetime import UTC, datetime, timedelta
+
+    from trusted_router.provider_manifest_policy import (
+        EXPIRED_PROVIDER_MANIFEST,
+        decision_manifest_price_is_valid,
+        provider_manifest_valid_until,
+    )
+
+    adapter = System1Catalog(tier)
+    _, rows = adapter.discover(catalog("s1-fast"))
+    row = rows[f"{adapter.slug}/s1-fast"]
+    row.update(input_token_price_per_m=25_000, output_token_price_per_m=0)
+    if change == "chat":
+        row["endpoints"] = ["chat/completions"]
+    elif change == "output":
+        row["output_token_price_per_m"] = 1
+    elif change == "missing_output":
+        del row["output_token_price_per_m"]
+    elif change == "bool_price":
+        row["input_token_price_per_m"] = True
+    elif change == "cache":
+        row["cached_input_token_price_per_m"] = 0
+    elif change == "tiers":
+        row["price_tiers"] = []
+    elif change == "namespace":
+        row["id"] = "other/s1-fast"
+    assert decision_manifest_price_is_valid(row) is (change is None)
+    generated = datetime(2026, 10, 1, tzinfo=UTC)
+    deadline = provider_manifest_valid_until(
+        adapter.slug, {"models": [row], "generated_at": generated.isoformat()},
+    )
+    assert deadline == (generated + timedelta(days=14) if change is None else EXPIRED_PROVIDER_MANIFEST)

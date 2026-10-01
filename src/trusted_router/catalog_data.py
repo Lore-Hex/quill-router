@@ -4073,6 +4073,19 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
             "the cerebras PROVIDER jurisdiction, not as a model origin."
         ),
     ),
+    **{
+        slug: ModelOrigin(
+            country=None,
+            lab_name="System1 Models (serving namespace)",
+            source_url="https://system1models.ai/models",
+            note=(
+                "System1's regional profiles serve Plumb, Winnow and JevOmni "
+                "decision models. The serving company's German jurisdiction "
+                "does not establish the origin of the underlying weights."
+            ),
+        )
+        for slug in ("system1models", "system1models-eu")
+    },
 }
 
 # Vendor prefixes at or above this many catalog models must have a MODEL_ORIGINS
