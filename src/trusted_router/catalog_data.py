@@ -2032,7 +2032,8 @@ PROVIDERS: dict[str, Provider] = {
                 "E2EE claim is made. "
                 + ("This route enforces the EU tier; inference stays within the EU (currently Finland)."
                    if tier == "EU" else
-                   "Global currently runs in Finland, but is a global tier, not a permanent EU residency guarantee.")
+                   "Global uses spare EU capacity and may use worldwide capacity for opted-in keys; "
+                   "it is not an EU residency guarantee.")
             ),
             provider_policy_url="https://system1models.ai/legal/privacy",
             provider_headquarters_country="DE",

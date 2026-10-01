@@ -18,17 +18,51 @@ def served_system1(monkeypatch):
     # Product rules must not block hourly discovery when a vendor delists a model.
     for slug in ("system1models", "system1models-eu"):
         model_id = f"{slug}/s1-fixture"
-        model = Model(id=model_id, name="System1 fixture", provider=slug, context_length=0,
-                      supports_chat=False, supports_decide=True, byok_available=False)
-        serve_on_fixture_route(monkeypatch, model_id, slug, author=slug, model=model,
-                               upstream_id="s1-fixture", completion_price_microdollars_per_million_tokens=0)
+        model = Model(
+            id=model_id,
+            name="System1 fixture",
+            provider=slug,
+            context_length=0,
+            supports_chat=False,
+            supports_decide=True,
+            byok_available=False,
+        )
+        serve_on_fixture_route(
+            monkeypatch,
+            model_id,
+            slug,
+            author=slug,
+            model=model,
+            upstream_id="s1-fixture",
+            completion_price_microdollars_per_million_tokens=0,
+        )
 
 
 def catalog(*models: str) -> dict:
-    return {"data": [{"id": model, "name": model, "status": "available", "tier_availability": {"eu": True, "global": True}, "modalities": ["text"], "question_types": ["noul", "choice", "score"], "prices": {"unit": "per_million_input_tokens", "output_tokens": "free", "USD": {"eu": "0.034", "global": "0.025"}, "EUR": {"eu": "0.030", "global": "0.022"}}} for model in models]}
+    return {
+        "data": [
+            {
+                "id": model,
+                "name": model,
+                "status": "available",
+                "tier_availability": {"eu": True, "global": True},
+                "modalities": ["text"],
+                "question_types": ["noul", "choice", "score"],
+                "prices": {
+                    "unit": "per_million_input_tokens",
+                    "output_tokens": "free",
+                    "USD": {"eu": "0.034", "global": "0.025"},
+                    "EUR": {"eu": "0.030", "global": "0.022"},
+                },
+            }
+            for model in models
+        ]
+    }
 
 
-@pytest.mark.parametrize("tier,slug,cost", [("global", "system1models", 25_000), ("eu", "system1models-eu", 34_000)])
+@pytest.mark.parametrize(
+    "tier,slug,cost", [("global", "system1models", 25_000), ("eu", "system1models-eu", 34_000)]
+)
 def test_discovery_uses_exact_regional_usd_not_eur(tier, slug, cost):
     adapter = System1Catalog(tier)
     prices, rows = adapter.discover(catalog("s1-fast", "s1-future"))
@@ -41,7 +75,26 @@ def test_discovery_uses_exact_regional_usd_not_eur(tier, slug, cost):
         assert "chat/completions" not in rows[model]["endpoints"]
 
 
-@pytest.mark.parametrize("change", ["missing_usd", "wrong_unit", "output_billed", "negative", "nan", "zero", "precision", "float", "duplicate", "bad_id", "empty", "unsupported_question", "bad_availability", "bad_question_types", "unknown_vision"])
+@pytest.mark.parametrize(
+    "change",
+    [
+        "missing_usd",
+        "wrong_unit",
+        "output_billed",
+        "negative",
+        "nan",
+        "zero",
+        "precision",
+        "float",
+        "duplicate",
+        "bad_id",
+        "empty",
+        "unsupported_question",
+        "bad_availability",
+        "bad_question_types",
+        "unknown_vision",
+    ],
+)
 def test_ambiguous_catalog_and_prices_fail_closed(change):
     payload = catalog("s1-fast")
     row = payload["data"][0]
@@ -53,7 +106,13 @@ def test_ambiguous_catalog_and_prices_fail_closed(change):
     elif change == "output_billed":
         rates["output_tokens"] = "0.01"
     elif change in {"negative", "nan", "zero", "precision", "float"}:
-        rates["USD"]["eu"] = {"negative": "-1", "nan": "NaN", "zero": "0", "precision": "0.0000001", "float": 0.034}[change]
+        rates["USD"]["eu"] = {
+            "negative": "-1",
+            "nan": "NaN",
+            "zero": "0",
+            "precision": "0.0000001",
+            "float": 0.034,
+        }[change]
     elif change == "duplicate":
         payload["data"].append(copy.deepcopy(row))
     elif change == "bad_id":
@@ -90,7 +149,9 @@ def test_canary_gates_new_routes_and_failed_fetch_cannot_publish(monkeypatch, tm
     adapter.manifest_path = tmp_path / "system1models-eu.json"
     monkeypatch.setenv(adapter.key_env, "test-eu")
     monkeypatch.setattr(_system1models, "fetch_json", lambda *_a: catalog("s1-fast", "s1-pro"))
-    monkeypatch.setattr(adapter, "probe", lambda key, row: key == "test-eu" and row["upstream_id"] == "s1-fast")
+    monkeypatch.setattr(
+        adapter, "probe", lambda key, row: key == "test-eu" and row["upstream_id"] == "s1-fast"
+    )
     result = adapter.fetch()
     assert result.include_in_price_index is False
     adapter.write_provider_manifest(result)
@@ -105,12 +166,19 @@ def test_canary_gates_new_routes_and_failed_fetch_cannot_publish(monkeypatch, tm
 
 
 @pytest.mark.parametrize("tier", ["eu", "global"])
-@pytest.mark.parametrize("change", [None, "header", "tier", "model", "tokens", "output", "decisions"])
+@pytest.mark.parametrize(
+    "change", [None, "header", "tier", "model", "tokens", "output", "decisions"]
+)
 def test_canary_requires_matching_tier_model_and_billable_usage(monkeypatch, tier, change):
     from scripts.pricing.providers import _system1models
 
     adapter = System1Catalog(tier)
-    body = {"model": "s1-fast", "tier": tier, "answers": {"color": {"choice": "red"}}, "usage": {"input_tokens": 100, "output_tokens": 0, "decisions": 1}}
+    body = {
+        "model": "s1-fast",
+        "tier": tier,
+        "answers": {"color": {"choice": "red"}},
+        "usage": {"input_tokens": 100, "output_tokens": 0, "decisions": 1},
+    }
     if change in {"tier", "model"}:
         body[change] = "wrong"
     elif change == "tokens":
@@ -123,7 +191,12 @@ def test_canary_requires_matching_tier_model_and_billable_usage(monkeypatch, tie
     def post(url, *, headers, json, timeout):
         assert headers == {"Authorization": f"Bearer test-{tier}", "S1-Region": tier}
         assert url.endswith("/systemone") and json["model"] == "s1-fast"
-        return httpx.Response(200, request=httpx.Request("POST", url), headers={"S1-Region": "wrong" if change == "header" else tier}, json=body)
+        return httpx.Response(
+            200,
+            request=httpx.Request("POST", url),
+            headers={"S1-Region": "wrong" if change == "header" else tier},
+            json=body,
+        )
 
     monkeypatch.setattr(_system1models.httpx, "post", post)
     assert adapter.probe(f"test-{tier}", {"upstream_id": "s1-fast"}) is (change is None)
@@ -162,12 +235,19 @@ def test_catalog_integration_no_chat_no_byok_no_cross_tier(monkeypatch, tmp_path
 async def test_gateway_authorizes_only_the_requested_tier_and_rejects_chat(slug):
     from tests.test_decide_models import _authorize
 
-    body = {"model": f"{slug}/s1-fixture", "route_type": "decide", "estimated_input_tokens": 100, "max_output_tokens": 1}
+    body = {
+        "model": f"{slug}/s1-fixture",
+        "route_type": "decide",
+        "estimated_input_tokens": 100,
+        "max_output_tokens": 1,
+    }
     response = await _authorize(body)
     assert response.status_code == 200, response.text
     payload = response.json().get("data", response.json())
     assert payload["provider"] == slug
-    assert [(c["provider"], c["upstream_model"]) for c in payload["route_candidates"]] == [(slug, "s1-fixture")]
+    assert [(c["provider"], c["upstream_model"]) for c in payload["route_candidates"]] == [
+        (slug, "s1-fixture")
+    ]
     rejected = await _authorize({**body, "route_type": "chat"})
     assert rejected.status_code == 400
 
@@ -192,12 +272,17 @@ def test_hourly_refresh_and_native_cloud_secret_contract():
     root = Path(__file__).resolve().parents[1]
     for module in (system1models, system1models_eu):
         assert any(row[0] == module.SLUG for row in _DISCOVERABLE_MANIFEST_PROVIDERS)
-        coord = f"{module.CATALOG.key_env}:trustedrouter-system1models-{module.CATALOG.tier}-api-key"
+        coord = (
+            f"{module.CATALOG.key_env}:trustedrouter-system1models-{module.CATALOG.tier}-api-key"
+        )
         assert coord in (root / ".github/workflows/refresh-prices.yml").read_text()
 
 
 @pytest.mark.parametrize("tier", ["eu", "global"])
-@pytest.mark.parametrize("change", [None, "chat", "output", "missing_output", "bool_price", "cache", "tiers", "namespace"])
+@pytest.mark.parametrize(
+    "change",
+    [None, "chat", "output", "missing_output", "bool_price", "cache", "tiers", "namespace"],
+)
 def test_manifest_expiry_and_runtime_share_strict_decision_price_validation(tier, change):
     from datetime import UTC, datetime, timedelta
 
@@ -228,6 +313,9 @@ def test_manifest_expiry_and_runtime_share_strict_decision_price_validation(tier
     assert decision_manifest_price_is_valid(row) is (change is None)
     generated = datetime(2026, 10, 1, tzinfo=UTC)
     deadline = provider_manifest_valid_until(
-        adapter.slug, {"models": [row], "generated_at": generated.isoformat()},
+        adapter.slug,
+        {"models": [row], "generated_at": generated.isoformat()},
     )
-    assert deadline == (generated + timedelta(days=14) if change is None else EXPIRED_PROVIDER_MANIFEST)
+    assert deadline == (
+        generated + timedelta(days=14) if change is None else EXPIRED_PROVIDER_MANIFEST
+    )
