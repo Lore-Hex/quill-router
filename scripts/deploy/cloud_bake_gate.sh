@@ -321,8 +321,14 @@ cloud_bake_gate() {
       # mandatory even during an incident. Regional rollback gates still run.
       local coordinator_dir
       coordinator_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-      python3 "${coordinator_dir}/cloud_rollout.py" assert --cloud "$target_cloud"
-      return $?
+      python3 "${coordinator_dir}/cloud_rollout.py" assert --cloud "$target_cloud" || return 1
+      if [ "${TR_CLOUD_PROMOTION_ONLY:-false}" = true ]; then
+        local promotion_sha
+        promotion_sha="$(git -C "${TR_RELEASE_CHECKOUT:-${coordinator_dir}/../..}" rev-parse HEAD)" || return 1
+        (cd "${coordinator_dir}/../.." && python3 -m scripts.deploy.reconcile_cloud_releases \
+          verify-promotion "$target_cloud" "$promotion_sha") || return $?
+      fi
+      return 0
       ;;
     promote|canary) ;;
     *)

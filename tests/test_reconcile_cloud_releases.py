@@ -32,6 +32,7 @@ def test_dispatches_both_secondary_clouds_with_exact_release(api):
     dispatches = [c for c in api["calls"] if c[:2] == ("workflow", "run")]
     assert len(dispatches) == 2
     assert all("release_sha=" + "a" * 40 in c for c in dispatches)
+    assert all("promotion_only=true" in c for c in dispatches)
     assert all(c[c.index("--ref") + 1] == "main" for c in dispatches)
 
 
@@ -76,3 +77,15 @@ def test_rolled_back_gcp_candidate_is_not_promoted_elsewhere(api):
     with pytest.raises(r.Refused, match="no longer serves"):
         r.reconcile()
     assert not any(c[0] == "workflow" for c in api["calls"])
+
+
+def test_queued_promotion_refuses_a_diverged_target(api):
+    api["comparison"] = "diverged"
+    with pytest.raises(r.Refused, match="queued promotion"):
+        r.verify_promotion("aws", "a" * 40)
+
+
+@pytest.mark.parametrize("comparison", ["ahead", "identical", "behind"])
+def test_queued_promotion_only_changes_an_older_release(api, comparison):
+    api["comparison"] = comparison
+    assert r.verify_promotion("azure", "a" * 40) == (comparison == "ahead")

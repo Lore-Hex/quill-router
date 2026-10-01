@@ -19,6 +19,10 @@ on:
         default: "deploy"
         type: choice
         options: ["deploy", "drain-install"]
+      promotion_only:
+        description: "Automatic catch-up: recheck under reservation and refuse downgrades"
+        type: boolean
+        default: false
       bake_override_reason:
         description: "Non-empty ONLY to override the cloud bake gate (TR_CLOUD_BAKE_OVERRIDE); state the incident/justification - it is recorded in the run log"
         required: false
@@ -42,6 +46,7 @@ jobs:
       TR_DEPLOY_MUTEX_OWNER: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       TR_DEPLOY_WAIT_SECONDS: "3600"
       TR_RELEASE_CHECKOUT: ${{ github.workspace }}/src
+      TR_CLOUD_PROMOTION_ONLY: ${{ inputs.promotion_only && 'true' || 'false' }}
     steps:
       # Checkout into a subdirectory: the GCP auth action writes its
       # credentials file into the workspace ROOT, and the deploy script

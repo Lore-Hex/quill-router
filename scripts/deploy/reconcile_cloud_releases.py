@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import sys
 from typing import Any
 
 from scripts.deploy.cloud_rollout import Refused, probe_cloud
@@ -36,6 +37,19 @@ def completed_release() -> str:
     raise Refused("no fully verified coordinated GCP release; do not dispatch older unguarded workflows")
 
 
+def verify_promotion(cloud: str, candidate: str) -> bool:
+    """Recheck under the cloud reservation, not just at dispatch time."""
+    if cloud not in {"aws", "azure"} or not re.fullmatch(r"[a-f0-9]{40}", candidate):
+        raise Refused("invalid promotion target")
+    serving = probe_cloud(cloud)
+    comparison = gh("api", f"repos/{REPO}/compare/{serving}...{candidate}")
+    if comparison["status"] in {"behind", "identical"}:
+        return False
+    if comparison["status"] != "ahead":
+        raise Refused("queued promotion would downgrade or diverge from the current release")
+    return True
+
+
 def reconcile() -> list[dict[str, str]]:
     candidate = completed_release()
     main = gh("api", f"repos/{REPO}/compare/{candidate}...main")
@@ -61,7 +75,7 @@ def reconcile() -> list[dict[str, str]]:
         if comparison["status"] != "ahead":
             raise Refused(f"{cloud} release diverges from verified candidate; refusing rollback")
         args = ["workflow", "run", workflow, "--repo", REPO, "--ref", "main",
-                "-f", f"release_sha={candidate}"]
+                "-f", f"release_sha={candidate}", "-f", "promotion_only=true"]
         if cloud == "aws":
             args.extend(["-f", "mode=deploy"])
         gh(*args)
@@ -70,4 +84,9 @@ def reconcile() -> list[dict[str, str]]:
 
 
 if __name__ == "__main__":
-    print(json.dumps(reconcile(), indent=2))
+    if len(sys.argv) == 4 and sys.argv[1] == "verify-promotion":
+        raise SystemExit(0 if verify_promotion(sys.argv[2], sys.argv[3]) else 75)
+    elif len(sys.argv) == 1:
+        print(json.dumps(reconcile(), indent=2))
+    else:
+        raise SystemExit("usage: reconcile_cloud_releases [verify-promotion CLOUD SHA]")

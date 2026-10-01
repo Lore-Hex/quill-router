@@ -294,7 +294,8 @@ def run_ecs_fixture(
         'deploy_mutex_finish() { echo "$1" > "$ECS_UNLOCK"; }\n'
     )
     (scripts / "cloud_bake_gate.sh").write_text(
-        'cloud_bake_gate() { [ "${ECS_FAIL_REGION:-}" != gate ]; }\n'
+        'cloud_bake_gate() { [ "${ECS_SUPERSEDED:-}" != 1 ] || return 75; '
+        '[ "${ECS_FAIL_REGION:-}" != gate ]; }\n'
     )
     # Keep the real shared gate library, so its status and diagnostic wording
     # are exercised by the common completeness harness too.
@@ -338,6 +339,14 @@ def assert_registrations_preserve_regional_configuration(tmp_path: Path) -> None
     for region, registered in registrations:
         image = f"330422590279.dkr.ecr.{region}.amazonaws.com/trusted-router@sha256:" + "b" * 64
         assert registered == expected_registration(definitions[region], image)
+
+
+def test_superseded_queued_promotion_is_clean_noop(tmp_path: Path) -> None:
+    result, recorded = run_ecs_fixture(tmp_path, extra_env={"ECS_SUPERSEDED": "1"})
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "unlock").read_text().strip() == "0"
+    assert not any(c[0] == "docker" for c in recorded)
+    assert all(c[:3] == ["aws", "sts", "get-caller-identity"] for c in recorded if c[0] == "aws")
 
 
 @pytest.mark.parametrize("failure", ["", "gate", "eu-west-1", "eu-west-3"])

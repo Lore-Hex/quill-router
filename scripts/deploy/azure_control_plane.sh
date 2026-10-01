@@ -191,7 +191,13 @@ esac
 # Local source-of-truth validation above must fail before any cloud access.
 # The mutex still precedes the first az read below and every later mutation.
 deploy_mutex_acquire
-cloud_bake_gate azure
+bake_status=0
+cloud_bake_gate azure || bake_status=$?
+if [ "$bake_status" -eq 75 ]; then
+  log "automatic promotion is already current or superseded; no production mutation"
+  exit 0
+fi
+[ "$bake_status" -eq 0 ] || exit "$bake_status"
 if [ -n "$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null || true)" ]; then
   die "the gate validated HEAD; a dirty tree deploys unvalidated code"
 fi

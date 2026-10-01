@@ -39,6 +39,8 @@ public companion, completeness and finalization jobs all passed. A superseded
 run with skipped deploy jobs is not a candidate. It dispatches stale AWS/Azure
 control planes, skips already queued/running jobs and never downgrades a newer
 or divergent deployment. Actual admission happens inside those workflows.
+Automatic jobs recheck the target version after acquiring the reservation;
+already-current or superseded jobs finish without mutation and release cleanly.
 
 App artifacts may be older than main; coordination scripts must be from the
 reviewed workflow checkout (`ops`), not the selected historical artifact (`src`).

@@ -89,7 +89,13 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 export TR_DEPLOY_MUTEX_CLOUD=aws
 deploy_mutex_acquire
-cloud_bake_gate aws
+bake_status=0
+cloud_bake_gate aws || bake_status=$?
+if [ "$bake_status" -eq 75 ]; then
+  log "automatic promotion is already current or superseded; no production mutation"
+  exit 0
+fi
+[ "$bake_status" -eq 0 ] || exit "$bake_status"
 python3 "${SCRIPT_DIR}/cloud_serving_release.py" aws >/dev/null
 
 SOURCE_REPO=us-central1-docker.pkg.dev/quill-cloud-proxy/trusted-router/trusted-router
