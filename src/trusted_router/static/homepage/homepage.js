@@ -148,6 +148,9 @@ async function loadSearch(){
 }
 function openSearch(trigger,preset=''){searchTrigger=trigger;closeMenu();search.showModal();query.value=preset;renderSearch();query.focus();void loadSearch();}
 $$('[data-search-model]').forEach(button=>button.addEventListener('click',()=>openSearch(button,button.dataset.searchModel)));
+const labs=$('.trh .labs');let keyboardInput=false;
+document.addEventListener('keydown',()=>{keyboardInput=true;},true);document.addEventListener('pointerdown',()=>{keyboardInput=false;},true);
+if(labs){labs.addEventListener('focusin',()=>{labs.classList.toggle('paused',keyboardInput);});labs.addEventListener('focusout',()=>{labs.classList.remove('paused');});}
 $('#search-retry').addEventListener('click',()=>void loadSearch());
 $$('[data-open-search]').forEach(button=>button.addEventListener('click',()=>openSearch(button)));
 $('[data-close-search]').addEventListener('click',()=>search.close());

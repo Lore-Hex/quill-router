@@ -297,3 +297,9 @@ Added four provider-configuration parity cases comparing legacy and redesigned r
 - Head: `og:site_name`, `twitter:title`, `twitter:description`, and `rel=alternate` links to `/docs/llms.txt` and `/docs/llms-full.txt`, matching main.
 - Footer: `/eu` (EU routing), `/openai-compatible-llm-api`, `/llm-provider-latency-benchmarks` restored in the Compare column; main linked them from the homepage and nothing else did.
 - No-JS: `<html class="no-js">` is cleared by the first inline script; without scripts the phone header shows its links inline and the drawer Sign in link, instead of hiding everything behind Menu.
+
+## Ticker pause rules and press card (2026-10-01)
+
+- The hero marquee pauses only for pointer hover on mouse devices and for keyboard focus (`.labs.paused`, set from `focusin` when the last input was a key). A tap or click, and the focus that returns to the tapped item when the search dialog closes, never pause it. The earlier `:focus-within` and sticky-touch-hover pauses are overridden.
+- Phone ticker: gap `clamp(56px, 14svh, 140px)` below the actions, soft vertical gradient instead of a hard band, light text shadow.
+- Press mention is the second proof in the social-proof module (SPEC section 10): a bordered sibling card under the customer story with the same mono kicker ("Featured in · Axios"), quote, and a "Read the story →" link packed after the quote.

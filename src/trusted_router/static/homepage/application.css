@@ -330,7 +330,7 @@ footer{background:#070a08;border-top:1px solid #33403a}
 
 /* Phones and tablets: the logo ticker follows the hero actions instead of being pinned to the viewport bottom. */
 @media(max-width:1000px){
- #top .hero .labs{margin:clamp(40px,8svh,80px) -32px 0;padding:14px 0;align-self:center;width:calc(100% + 64px);max-width:none;background:#050706bf}
+ #top .hero .labs{margin:clamp(56px,14svh,140px) -32px 0;padding:24px 0;align-self:center;width:calc(100% + 64px);max-width:none;background:linear-gradient(180deg,#05070600,#05070699 30%,#05070699 70%,#05070600)}
 }
 @media(max-width:600px){#top .hero .labs{margin-inline:-20px;width:calc(100% + 40px)}}
 
@@ -432,7 +432,11 @@ footer{background:#070a08;border-top:1px solid #33403a}
 .trh .lab{all:unset;display:inline-flex;align-items:center;gap:10px;cursor:pointer;font-size:14px;color:#d0ded7;white-space:nowrap}
 .trh .lab:hover{color:#edf8f5}
 .trh .lab:focus-visible{outline:2px solid #c0e1ff;outline-offset:4px;border-radius:4px}
-.trh .labs:focus-within .labtrack{animation-play-state:paused}
+/* The marquee pauses for pointer hover and keyboard focus only; a tap or click (and the focus that returns after the dialog) never freezes it. */
+.trh .labs:focus-within .labtrack{animation-play-state:running}
+@media(hover:none){.trh .labs:hover .labtrack{animation-play-state:running}}
+.trh .labs.paused .labtrack{animation-play-state:paused}
+.trh .lab{text-shadow:0 1px 8px #050706}
 
 /* Catalog toolbar: filters left, search right; search first and full width on phones. */
 .trc .fl .catalog-actions{margin-left:auto}
@@ -442,12 +446,12 @@ footer{background:#070a08;border-top:1px solid #33403a}
 .trs .customer-details>summary{font-style:italic;font-size:15px;color:#234636;margin:0 24px;padding:14px 0 16px;border-top:1px solid #9ebaa9}
 .trs .customer-details[open]>summary{border-bottom:0}
 
-/* Press strip under the customer story (SPEC section 10): source, quote, supporting link, left-aligned. */
-.trs .press{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:flex-start;gap:8px 28px;padding:28px 0 0;border:0;background:none}
-.trs .press .src{flex:none}
-.trs .press p{flex:0 1 auto;max-width:62ch;margin:0;font-size:17px;line-height:1.6;font-style:italic;color:#c3c9c3}
-.page .trs .press .action-link{color:var(--action-secondary-ink)}
-@media(max-width:700px){.trs .press{gap:12px}.trs .press p{flex-basis:100%}}
+/* Press mention: a second piece of social proof, styled as a sibling card to the customer story with the same kicker language. */
+.trs .press{display:grid;grid-template-columns:1fr;gap:12px;align-items:center;margin-top:16px;padding:22px 24px;border:1px solid #33403a;background:#0f1411}
+.trs .press .src{font:500 11px/1.5 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:#adbbb2;white-space:nowrap}
+.trs .press p{max-width:62ch;margin:0;font-size:17px;line-height:1.6;font-style:italic;color:#c3c9c3}
+.page .trs .press .action-link{color:var(--action-secondary-ink);justify-self:start}
+@media(min-width:701px){.trs .press{grid-template-columns:auto minmax(0,auto) auto;justify-content:start;gap:16px 32px;padding:20px 28px}}
 
 /* Without JavaScript the phone header shows its links inline instead of hiding them behind Menu. */
 @media(max-width:880px){
