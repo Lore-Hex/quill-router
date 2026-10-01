@@ -1855,8 +1855,8 @@ def test_prometheus_1m_drops_a_member_whose_window_falls_below_1m(
 @pytest.mark.catalog_as_built
 def test_prometheus_1m_keeps_all_three_members_today() -> None:
     """Live provider state: a member leaves Prometheus 1.0 1M when its window
-    falls below 1M or no host lists it. provider-catalog-health.yml reports it
-    hourly, and the price refresh does not wait on it."""
+    falls below 1M or the catalog no longer offers it. provider-catalog-health.yml
+    reports it hourly, and the price refresh does not wait on it."""
     assert [candidate.id for candidate in meta_candidate_models(PROMETHEUS_1_0_1M_MODEL_ID)] == [
         "xiaomi/mimo-v2.5-pro",
         "z-ai/glm-5.2",

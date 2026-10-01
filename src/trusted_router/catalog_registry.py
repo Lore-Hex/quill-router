@@ -1485,22 +1485,25 @@ def _install_deepseek_v4_pro_release_routes() -> dict[str, int]:
     return historical_windows
 
 
-def _advertise_deepseek_v4_pro_0423_window(host_windows: dict[str, int]) -> None:
-    """The 0423 leaf excludes the rolling first-party route, so it advertises
-    the largest window its own routes' hosts list, not the rolling model's;
-    with none listed it keeps the rolling model's. Its routes are final only
-    after the provider filters, so this runs after them."""
+def _settle_deepseek_v4_pro_0423_leaf(host_windows: dict[str, int]) -> None:
+    """The 0423 leaf's routes are final only after the provider filters, so
+    this runs after them. A leaf with no route left is not offered, as the
+    installer does not offer one with none to clone. Otherwise, since it
+    excludes the rolling first-party route, it advertises the largest window
+    its own routes' hosts list, not the rolling model's; with none listed it
+    keeps the rolling model's."""
     model = MODELS.get(DEEPSEEK_V4_PRO_0423_MODEL_ID)
     if model is None:
         return
-    window = max(
-        (
-            host_windows.get(endpoint.provider, 0)
-            for endpoint in MODEL_ENDPOINTS.values()
-            if endpoint.model_id == DEEPSEEK_V4_PRO_0423_MODEL_ID
-        ),
-        default=0,
-    )
+    hosts = [
+        endpoint.provider
+        for endpoint in MODEL_ENDPOINTS.values()
+        if endpoint.model_id == DEEPSEEK_V4_PRO_0423_MODEL_ID
+    ]
+    if not hosts:
+        del MODELS[DEEPSEEK_V4_PRO_0423_MODEL_ID]
+        return
+    window = max(host_windows.get(host, 0) for host in hosts)
     if window:
         MODELS[DEEPSEEK_V4_PRO_0423_MODEL_ID] = replace(model, context_length=window)
 
@@ -1626,7 +1629,7 @@ MODEL_ENDPOINTS = _filter_unserved_provider_endpoints(
     explicit_model_ids=frozenset(_VIDEO_MODELS),
     at=CATALOG_RESOLVED_AT,
 )
-_advertise_deepseek_v4_pro_0423_window(_DEEPSEEK_V4_PRO_0423_HOST_WINDOWS)
+_settle_deepseek_v4_pro_0423_leaf(_DEEPSEEK_V4_PRO_0423_HOST_WINDOWS)
 
 
 def _named_decision_model_with_chain_prices(model_id: str) -> Model:

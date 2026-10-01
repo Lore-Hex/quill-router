@@ -119,7 +119,7 @@ def _install(
     # The provider filters run between the two, as at import.
     for provider in filtered:
         del endpoints[f"{DEEPSEEK_V4_PRO_0423_MODEL_ID}@{provider}/prepaid"]
-    catalog_registry._advertise_deepseek_v4_pro_0423_window(host_windows)
+    catalog_registry._settle_deepseek_v4_pro_0423_leaf(host_windows)
     return models, endpoints
 
 
@@ -162,6 +162,20 @@ def test_the_0423_leaf_advertises_the_largest_window_its_own_routes_list(
 
     assert models[DEEPSEEK_V4_PRO_0423_MODEL_ID].context_length == leaf
     assert models[DEEPSEEK_V4_PRO_0813_MODEL_ID].context_length == rolling
+
+
+def test_a_0423_leaf_whose_routes_the_provider_filters_all_drop_is_not_offered(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    models, endpoints = _install(
+        monkeypatch, tmp_path, windows={"parasail": 1_048_576, "venice": 1_048_576},
+        filtered=("parasail", "venice"),
+    )
+
+    assert DEEPSEEK_V4_PRO_0423_MODEL_ID not in models
+    assert _routes(endpoints, DEEPSEEK_V4_PRO_0423_MODEL_ID) == set()
+    # The 0813 leaf stands on its own routes.
+    assert DEEPSEEK_V4_PRO_0813_MODEL_ID in models
 
 def test_a_complete_catalog_installs_both_leaves_on_exactly_their_routes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
