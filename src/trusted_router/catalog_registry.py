@@ -162,6 +162,7 @@ from trusted_router.catalog_ingest import (  # noqa: F401 - used by import-time 
     _apply_provider_manifest_expiry,
     _author_provider,
     _build_endpoints,
+    _context_window,
     _decision_fallback_endpoints,
     _decision_models,
     _embedding_models,
@@ -1378,26 +1379,36 @@ def _install_deepseek_v4_pro_release_routes() -> None:
     """
     base = MODELS.get("deepseek/deepseek-v4-pro")
     historical: list[ModelEndpoint] = []
+    historical_window = 0
     current: ModelEndpoint | None = None
     baseten_current: ModelEndpoint | None = None
     fireworks_current: ModelEndpoint | None = None
     if base is not None:
         snapshot = json.loads(_INGEST_PATH.read_text())
-        historical_provider_slugs = {
-            str(endpoint.get("tr_provider_slug") or "")
-            for model in snapshot.get("models", [])
-            if model.get("id") == base.id
-            for endpoint in model.get("endpoints", [])
-            if "20260423" in str(endpoint.get("name") or "")
-            and endpoint.get("tr_provider_slug") != "deepseek"
-        }
+        # Each 20260423-labeled host and the window it lists.
+        historical_windows: dict[str, int] = {}
+        for model in snapshot.get("models", []):
+            if model.get("id") != base.id:
+                continue
+            for endpoint in model.get("endpoints", []):
+                slug = str(endpoint.get("tr_provider_slug") or "")
+                if "20260423" in str(endpoint.get("name") or "") and slug != "deepseek":
+                    historical_windows[slug] = max(
+                        historical_windows.get(slug, 0),
+                        _context_window(endpoint.get("context_length")),
+                    )
         historical = [
             endpoint
             for endpoint in _INGESTED_ENDPOINTS.values()
             if endpoint.model_id == base.id
             and endpoint.usage_type == "Credits"
-            and endpoint.provider in historical_provider_slugs
+            and endpoint.provider in historical_windows
         ]
+        # The 0423 leaf excludes the rolling route, so it advertises the
+        # largest window its own hosts list, not the rolling model's.
+        historical_window = max(
+            (historical_windows[endpoint.provider] for endpoint in historical), default=0
+        )
         current = MODEL_ENDPOINTS.get(f"{base.id}@deepseek/prepaid")
         baseten_current = MODEL_ENDPOINTS.get(
             f"{DEEPSEEK_V4_PRO_0813_MODEL_ID}@baseten/prepaid"
@@ -1426,6 +1437,7 @@ def _install_deepseek_v4_pro_release_routes() -> None:
         model_id: str,
         name: str,
         sources: list[ModelEndpoint],
+        context_length: int = 0,
     ) -> None:
         prompt = min(endpoint.prompt_price_microdollars_per_million_tokens for endpoint in sources)
         completion = min(
@@ -1441,6 +1453,7 @@ def _install_deepseek_v4_pro_release_routes() -> None:
             name=name,
             prepaid_available=True,
             byok_available=False,
+            context_length=context_length or base.context_length,
             prompt_price_microdollars_per_million_tokens=prompt,
             completion_price_microdollars_per_million_tokens=completion,
             published_prompt_price_microdollars_per_million_tokens=prompt,
@@ -1461,6 +1474,7 @@ def _install_deepseek_v4_pro_release_routes() -> None:
             DEEPSEEK_V4_PRO_0423_MODEL_ID,
             "DeepSeek V4 Pro 0423",
             historical,
+            historical_window,
         )
     fireworks_required = not provider_model_retired(
         "fireworks", DEEPSEEK_V4_PRO_0813_MODEL_ID, at=CATALOG_RESOLVED_AT

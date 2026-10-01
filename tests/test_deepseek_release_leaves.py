@@ -54,10 +54,14 @@ def _install(
     fireworks: bool = True,
     fireworks_retired: bool = False,
     historical: tuple[str, ...] = ("parasail", "venice"),
+    rolling_window: int | None = None,
+    windows: dict[str, int] | None = None,
 ) -> tuple[dict, dict]:
     models: dict = {}
     if base:
         models[BASE] = replace(_TEMPLATE_MODEL, id=BASE, name="DeepSeek V4 Pro")
+        if rolling_window is not None:
+            models[BASE] = replace(models[BASE], context_length=rolling_window)
     # A provider manifest listed the release id itself. The installer owns
     # that id: the row must neither survive on its own nor join the leaf.
     models[DEEPSEEK_V4_PRO_0813_MODEL_ID] = replace(
@@ -88,7 +92,11 @@ def _install(
                     {
                         "id": BASE,
                         "endpoints": [
-                            {"name": f"{slug} | deepseek-v4-pro-20260423", "tr_provider_slug": slug}
+                            {
+                                "name": f"{slug} | deepseek-v4-pro-20260423",
+                                "tr_provider_slug": slug,
+                                **({"context_length": windows[slug]} if slug in (windows or {}) else {}),
+                            }
                             for slug in labeled
                         ],
                     }
@@ -117,6 +125,33 @@ def _routes(endpoints: dict, model_id: str) -> set[tuple[str, str]]:
         if endpoint.model_id == model_id
     }
 
+
+
+@pytest.mark.parametrize(
+    ("rolling", "hosts", "leaf"),
+    [
+        # Its hosts shrink while the rolling model keeps 1M.
+        (1_048_576, {"parasail": 262_144, "venice": 524_288}, 524_288),
+        # The rolling model shrinks while its hosts keep 1M.
+        (262_144, {"parasail": 1_048_576, "venice": 1_000_000}, 1_048_576),
+        # No host lists a window: the rolling model's.
+        (777_777, {}, 777_777),
+    ],
+)
+def test_the_0423_leaf_advertises_the_largest_window_its_own_hosts_list(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    rolling: int,
+    hosts: dict[str, int],
+    leaf: int,
+) -> None:
+    # SiliconFlow is labeled but has no Credits route here, and DeepSeek is
+    # the rolling route; at 2M either would show if it counted.
+    windows = {**hosts, "siliconflow": 2_000_000, "deepseek": 2_000_000} if hosts else {}
+    models, _ = _install(monkeypatch, tmp_path, rolling_window=rolling, windows=windows)
+
+    assert models[DEEPSEEK_V4_PRO_0423_MODEL_ID].context_length == leaf
+    assert models[DEEPSEEK_V4_PRO_0813_MODEL_ID].context_length == rolling
 
 def test_a_complete_catalog_installs_both_leaves_on_exactly_their_routes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
