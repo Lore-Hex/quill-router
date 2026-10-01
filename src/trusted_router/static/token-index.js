@@ -50,7 +50,8 @@
         if (!Number.isFinite(start) || length < 2)
             return null;
         const keys = ['ALL', ...GRADES];
-        if (keys.some(k => !Array.isArray(file.series[k]) || file.series[k].length !== length))
+        const valid = (v) => v === null || (typeof v === 'number' && Number.isFinite(v) && v >= 0);
+        if (keys.some(k => !Array.isArray(file.series[k]) || file.series[k].length !== length || !file.series[k].every(valid)))
             return null;
         return { days: Array.from({ length }, (_, i) => new Date(start + i * DAY_MS)), series: file.series };
     };
@@ -63,7 +64,6 @@
         let log = grades; // grades span $10 to $3,000: log by default
         let hover = -1;
         let geom = null;
-        const label = figure.querySelector('img')?.getAttribute('alt') || '';
         // controls
         const toolbar = htmlEl('div', 'ti-toolbar');
         const group = (name) => {
@@ -111,14 +111,13 @@
         }
         // plot
         const plot = htmlEl('div', 'ti-plot');
-        const chart = svgEl('svg', { class: 'ti-svg', role: 'img', 'aria-label': label, tabindex: 0, focusable: 'true' }, plot);
+        const chart = svgEl('svg', { class: 'ti-svg', role: 'img', tabindex: 0, focusable: 'true' }, plot);
         const tip = htmlEl('div', 'ti-tip', plot);
         tip.hidden = true;
         const live = htmlEl('p', 'ti-visually-hidden');
         live.setAttribute('aria-live', 'polite');
         figure.prepend(toolbar);
         figure.append(plot, live);
-        figure.classList.add('is-live');
         let hoverLayer = svgEl('g', { class: 'ti-hover' }, chart);
         const draw = () => {
             const w = Math.max(280, Math.round(plot.clientWidth));
@@ -148,8 +147,10 @@
             let ticks;
             if (grades && log) {
                 // the floor snaps down to a 1-3-10 step, so the lowest line always has a labelled gridline under it
-                const steps = [1, 3, 10, 30, 100, 300, 1000, 3000, 10000, 30000];
-                const floor = steps.filter(t => t <= lo / 1.15).pop() ?? 1;
+                const steps = [];
+                for (let e = Math.floor(Math.log10(lo)) - 1; e <= Math.ceil(Math.log10(hi)) + 1; e++)
+                    steps.push(10 ** e, 3 * 10 ** e);
+                const floor = steps.filter(t => t <= lo / 1.15).pop() ?? steps[0];
                 const a = Math.log10(floor), b = Math.log10(hi * 1.3);
                 y = v => top + plotH * (1 - (Math.log10(Math.max(v, 1e-9)) - a) / (b - a));
                 ticks = steps.filter(t => t >= floor && Math.log10(t) <= b);
@@ -202,26 +203,33 @@
             });
             // lines (a gap in a series breaks its line)
             const lines = svgEl('g', { class: 'ti-lines' }, chart);
-            const pathOf = (k) => {
-                let d = '', pen = false;
+            // contiguous runs of drawable points: a gap in a series breaks its line and its area
+            const runs = (k) => {
+                const out = [];
+                let run = [];
                 for (let i = i0; i <= i1; i++) {
                     const v = data.series[k][i];
-                    if (v === null || (log && grades && v <= 0)) {
-                        pen = false;
+                    if (v === null || (grades && log && v <= 0)) {
+                        if (run.length)
+                            out.push(run);
+                        run = [];
                         continue;
                     }
-                    d += `${pen ? 'L' : 'M'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`;
-                    pen = true;
+                    run.push([i, v]);
                 }
-                return d;
+                if (run.length)
+                    out.push(run);
+                return out;
             };
+            const pt = (i, v) => `${x(i).toFixed(1)} ${y(v).toFixed(1)}`;
             if (!grades) {
-                const line = pathOf('ALL');
-                if (line)
-                    svgEl('path', { d: `${line}L${x(i1).toFixed(1)} ${y(0).toFixed(1)}L${x(i0).toFixed(1)} ${y(0).toFixed(1)}Z`, class: 'ti-area' }, lines);
+                const area = runs('ALL').map(r => `M${r.map(([i, v]) => pt(i, v)).join('L')}L${pt(r[r.length - 1][0], 0)}L${pt(r[0][0], 0)}Z`).join('');
+                if (area)
+                    svgEl('path', { d: area, class: 'ti-area' }, lines);
             }
             for (const k of shown) {
-                svgEl('path', { d: pathOf(k), class: `ti-line ${css(k)}${grades && k === 'ALL' ? ' ti-ref' : ''}` }, lines);
+                const d = runs(k).map(r => `M${r.map(([i, v]) => pt(i, v)).join('L')}`).join('');
+                svgEl('path', { d, class: `ti-line ${css(k)}${grades && k === 'ALL' ? ' ti-ref' : ''}` }, lines);
             }
             // end labels: the last value in view, nudged apart so they never overlap
             if (!narrow) {
@@ -230,9 +238,17 @@
                     .filter((e) => e.v !== null)
                     .map(e => ({ ...e, ty: y(e.v) }))
                     .sort((a, b) => b.ty - a.ty);
+                // at least 17px apart, all inside the plot: push up from the lowest, then down from the top
+                const minY = top + 6, maxY = h - bottom - 6;
+                const gap = ends.length > 1 ? Math.min(17, (maxY - minY) / (ends.length - 1)) : 17;
+                ends.forEach(e => { e.ty = Math.min(maxY, Math.max(minY, e.ty)); });
                 for (let j = 1; j < ends.length; j++)
-                    if (ends[j - 1].ty - ends[j].ty < 17)
-                        ends[j].ty = ends[j - 1].ty - 17;
+                    ends[j].ty = Math.min(ends[j].ty, ends[j - 1].ty - gap);
+                if (ends.length && ends[ends.length - 1].ty < minY) {
+                    ends[ends.length - 1].ty = minY;
+                    for (let j = ends.length - 2; j >= 0; j--)
+                        ends[j].ty = Math.max(ends[j].ty, ends[j + 1].ty + gap);
+                }
                 const labels = svgEl('g', { class: 'ti-ends' }, chart);
                 for (const e of ends) {
                     if (!grades)
@@ -244,6 +260,12 @@
             hoverLayer = svgEl('g', { class: 'ti-hover' }, chart);
             if (hover >= 0)
                 show(hover);
+            const last = shown
+                .map(k => [k, data.series[k][i1]])
+                .filter((e) => e[1] !== null)
+                .map(([k, v]) => `${grades ? NAMES[k] : 'NYTE Token Index'} ${money(v)}`);
+            chart.setAttribute('aria-label', `${grades ? `${log ? 'Log-scale' : 'Linear'} chart of the NYTE grade indices` : 'Chart of the NYTE Token Index'}`
+                + ` in US dollars per billion tokens from ${longDate(data.days[i0])} to ${longDate(data.days[i1])}, ending with ${last.join(', ')}.`);
         };
         const show = (i) => {
             if (!geom)
@@ -292,7 +314,8 @@
         };
         chart.addEventListener('pointermove', track);
         chart.addEventListener('pointerdown', track); // a tap shows the readout on touch screens
-        chart.addEventListener('pointerleave', hide);
+        chart.addEventListener('pointerleave', event => { if (event.pointerType !== 'touch')
+            hide(); }); // a tap's readout stays
         chart.addEventListener('blur', hide);
         chart.addEventListener('keydown', event => {
             if (!geom)
@@ -307,8 +330,9 @@
             else if (event.key === 'Escape')
                 hide();
         });
+        draw(); // throws before the images are hidden if anything is wrong
+        figure.classList.add('is-live');
         new ResizeObserver(() => draw()).observe(plot);
-        draw();
     };
     fetch(source, { credentials: 'same-origin' })
         .then(response => {
@@ -318,9 +342,21 @@
     })
         .then(file => {
         const data = parse(file);
-        if (data)
-            for (const figure of figures)
+        if (!data)
+            return;
+        for (const figure of figures) {
+            const before = Array.from(figure.children);
+            try {
                 mount(figure, data);
+            }
+            catch {
+                // keep the fixed images: drop whatever was added and the live class
+                for (const child of Array.from(figure.children))
+                    if (!before.includes(child))
+                        child.remove();
+                figure.classList.remove('is-live');
+            }
+        }
     })
         .catch(() => { });
 })();
