@@ -1,0 +1,189 @@
+{
+  "fixture_version": 1,
+  "purpose": "Exact wire contract of POST /internal/speculation/shadow/refresh (router PR 3). Both repos pin these bytes.",
+  "method": "POST",
+  "path": "/internal/speculation/shadow/refresh",
+  "now": 2000,
+  "trusted_test_keys": [
+    {
+      "kid": "shadow-fixture",
+      "purpose": "shadow-grant",
+      "public_key_b64url": "zg0hX6QFR6ism6Mg8T7mjPGtXNxbbJZ-Iq7YdMeQLgc",
+      "iss": "fixture-router",
+      "aud": "fixture-speculation",
+      "environment": "test",
+      "plane": "gcp-fixture"
+    }
+  ],
+  "boot": {
+    "kid": "boot",
+    "image_digest": "image",
+    "jwk": {
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "x": "kFieGuKCFyPn4RNkonf0Ar7YzWJZHWil4n0Wqh0xHSs"
+    },
+    "public_key_b64url": "kFieGuKCFyPn4RNkonf0Ar7YzWJZHWil4n0Wqh0xHSs",
+    "test_only_private_seed_hex": "10e9e60aad11234c3b9b1f5cf024af2a616786368cd75aa4e03f374534b543d1",
+    "signing": "X-TR-Boot-Auth: kid=<kid>,sig=<base64url(Ed25519(boot_auth_digest(method, path, exact body bytes)))>"
+  },
+  "items": [
+    {
+      "workspace_id": "w",
+      "key_id": "k",
+      "lookup_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "request_body_exact": "{\"items\":[{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"}]}",
+  "request_body_sha256": "62e20eb1f9a0c794abd38c61a03c86fec1edae0a0435702c0b37f7d9bcf8b880",
+  "boot_auth_header": "kid=boot,sig=xWyzPoXelsFEDR4AN595_zo0i_4r5tt5T9ElvEN-ovSzABZgXDSRBHljWAi3dqfDGxJIuVs7uC3mC4JnNiefCw",
+  "response_status": 200,
+  "response_body_exact": "{\"items\":[{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\",\"grant\":\"eyJhbGciOiJFZERTQSIsImtpZCI6InNoYWRvdy1maXh0dXJlIiwidHlwIjoic3BlY3VsYXRpb24tZWxpZ2liaWxpdHktc2hhZG93K2p3cyJ9.eyJhdWQiOiJmaXh0dXJlLXNwZWN1bGF0aW9uIiwiYm9vdF9pZCI6ImJvb3QiLCJlbnZpcm9ubWVudCI6InRlc3QiLCJleHAiOjIwMzAsImdlbmVyYXRpb24iOjEsImdyYW50X2lkIjoiM2NjNDU1MDMxMjkxOTFmNmFlNjk2MGRmMjI2ZDI3OGMyOTY3ZjlkNTFjOTgxMDJkYmI0ZDNkNWMxMzgxYzRiOCIsImhpc3RvcnkiOnsiY2xlYW5fc2luY2UiOjEwMDAsImNvdW50IjoyMCwibGFzdF9zdWNjZXNzX2F0IjoxOTkwLCJzZXF1ZW5jZSI6MjAsIndpbmRvd19zdGFydCI6MTQwMH0sImlhdCI6MjAwMCwiaW1hZ2VfcG9saWN5X3ZlcnNpb24iOjEsImlzcyI6ImZpeHR1cmUtcm91dGVyIiwia2V5X2Vwb2NoIjowLCJrZXlfZXhwaXJlc19hdCI6MjEwMCwia2V5X2lkIjoiayIsImxvb2t1cF9kaWdlc3QiOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIiwicGFpZF9oZWFkcm9vbV9taWNybyI6MjAwMDAwMDAsInBlcl9yZXF1ZXN0X2NlaWxpbmdfbWljcm8iOjEwMDAwLCJwZXJtaXRzIjpbeyJiX21pY3JvIjo0NjA4LCJvcmRpbmFsIjowfV0sInBsYW5lIjoiZ2NwLWZpeHR1cmUiLCJyZWdpb24iOiJ1cy1jZW50cmFsMSIsInJvdXRlIjp7ImFkYXB0ZXJfY2FwYWJpbGl0eV92ZXJzaW9uIjoxLCJjYXRhbG9nX2hhc2giOiJhZjJkNDY1NjI4MDdmZDk5MjUxMjY3Yjg1NzNjOTVhNTU5ZmI5Mzg4MjQ0OTBjZDZkMTNhN2IzYjE5ZjllNTI5IiwiZW5kcG9pbnRfaWQiOiJlcDEiLCJpbnB1dF9ib3VuZCI6ODE5MiwiaW5wdXRfYm91bmRfbWV0aG9kIjoiY2VydGlmaWVkLWZpeHR1cmUtYm91bmQtdjEiLCJpbnB1dF9yYXRlX21pY3JvX3Blcl9tIjo1MDAwMDAsIm1heGltdW1fcmVxdWVzdF9mZWVzX21pY3JvIjowLCJvdXRwdXRfbGltaXQiOjUxMiwib3V0cHV0X3JhdGVfbWljcm9fcGVyX20iOjEwMDAwMDAsInByaWNlX2V4cGlyZXNfYXQiOjIxMDAsInByaXZhY3kiOiJkZWZhdWx0IiwicHJvdmlkZXIiOiJmaXh0dXJlLXByb3ZpZGVyIiwicmVnaW9uIjoidXMtY2VudHJhbDEiLCJyb3V0aW5nX3BvbGljeV9oYXNoIjoiYTU1OTNhMzI0YjczODYzOGU4OThhMDRjYzJlZGIzMTQ5NzNiMGI1MzEyNzQyY2IzNzFkYjdkZjQzZDhlNjkxYyIsInN0YWdlX2QiOnRydWUsInVwc3RyZWFtX21vZGVsIjoiZml4dHVyZS10ZXh0In0sInN0YWJsZV9zbG90X2lkIjoic2xvdCIsInN0YXJ0X2JlZm9yZSI6MjAyOCwidGllciI6MiwidHJ1c3RfZnJlc2hfdW50aWwiOjIxMDAsInYiOjEsIndvcmtzcGFjZV9lcG9jaCI6MCwid29ya3NwYWNlX2lkIjoidyJ9.42VHaMUsoby1MRnbFAjzCGUVhtN4C6pj34zQIkzbAL6UoDm1uI3XrIvIA2Xhhdcy-0NYV-D7XjqREwtO3Ir1Aw\"}],\"authority\":\"shadow-only\"}",
+  "grant_jws": "eyJhbGciOiJFZERTQSIsImtpZCI6InNoYWRvdy1maXh0dXJlIiwidHlwIjoic3BlY3VsYXRpb24tZWxpZ2liaWxpdHktc2hhZG93K2p3cyJ9.eyJhdWQiOiJmaXh0dXJlLXNwZWN1bGF0aW9uIiwiYm9vdF9pZCI6ImJvb3QiLCJlbnZpcm9ubWVudCI6InRlc3QiLCJleHAiOjIwMzAsImdlbmVyYXRpb24iOjEsImdyYW50X2lkIjoiM2NjNDU1MDMxMjkxOTFmNmFlNjk2MGRmMjI2ZDI3OGMyOTY3ZjlkNTFjOTgxMDJkYmI0ZDNkNWMxMzgxYzRiOCIsImhpc3RvcnkiOnsiY2xlYW5fc2luY2UiOjEwMDAsImNvdW50IjoyMCwibGFzdF9zdWNjZXNzX2F0IjoxOTkwLCJzZXF1ZW5jZSI6MjAsIndpbmRvd19zdGFydCI6MTQwMH0sImlhdCI6MjAwMCwiaW1hZ2VfcG9saWN5X3ZlcnNpb24iOjEsImlzcyI6ImZpeHR1cmUtcm91dGVyIiwia2V5X2Vwb2NoIjowLCJrZXlfZXhwaXJlc19hdCI6MjEwMCwia2V5X2lkIjoiayIsImxvb2t1cF9kaWdlc3QiOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIiwicGFpZF9oZWFkcm9vbV9taWNybyI6MjAwMDAwMDAsInBlcl9yZXF1ZXN0X2NlaWxpbmdfbWljcm8iOjEwMDAwLCJwZXJtaXRzIjpbeyJiX21pY3JvIjo0NjA4LCJvcmRpbmFsIjowfV0sInBsYW5lIjoiZ2NwLWZpeHR1cmUiLCJyZWdpb24iOiJ1cy1jZW50cmFsMSIsInJvdXRlIjp7ImFkYXB0ZXJfY2FwYWJpbGl0eV92ZXJzaW9uIjoxLCJjYXRhbG9nX2hhc2giOiJhZjJkNDY1NjI4MDdmZDk5MjUxMjY3Yjg1NzNjOTVhNTU5ZmI5Mzg4MjQ0OTBjZDZkMTNhN2IzYjE5ZjllNTI5IiwiZW5kcG9pbnRfaWQiOiJlcDEiLCJpbnB1dF9ib3VuZCI6ODE5MiwiaW5wdXRfYm91bmRfbWV0aG9kIjoiY2VydGlmaWVkLWZpeHR1cmUtYm91bmQtdjEiLCJpbnB1dF9yYXRlX21pY3JvX3Blcl9tIjo1MDAwMDAsIm1heGltdW1fcmVxdWVzdF9mZWVzX21pY3JvIjowLCJvdXRwdXRfbGltaXQiOjUxMiwib3V0cHV0X3JhdGVfbWljcm9fcGVyX20iOjEwMDAwMDAsInByaWNlX2V4cGlyZXNfYXQiOjIxMDAsInByaXZhY3kiOiJkZWZhdWx0IiwicHJvdmlkZXIiOiJmaXh0dXJlLXByb3ZpZGVyIiwicmVnaW9uIjoidXMtY2VudHJhbDEiLCJyb3V0aW5nX3BvbGljeV9oYXNoIjoiYTU1OTNhMzI0YjczODYzOGU4OThhMDRjYzJlZGIzMTQ5NzNiMGI1MzEyNzQyY2IzNzFkYjdkZjQzZDhlNjkxYyIsInN0YWdlX2QiOnRydWUsInVwc3RyZWFtX21vZGVsIjoiZml4dHVyZS10ZXh0In0sInN0YWJsZV9zbG90X2lkIjoic2xvdCIsInN0YXJ0X2JlZm9yZSI6MjAyOCwidGllciI6MiwidHJ1c3RfZnJlc2hfdW50aWwiOjIxMDAsInYiOjEsIndvcmtzcGFjZV9lcG9jaCI6MCwid29ya3NwYWNlX2lkIjoidyJ9.42VHaMUsoby1MRnbFAjzCGUVhtN4C6pj34zQIkzbAL6UoDm1uI3XrIvIA2Xhhdcy-0NYV-D7XjqREwtO3Ir1Aw",
+  "grant_claims": {
+    "workspace_id": "w",
+    "key_id": "k",
+    "lookup_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "boot_id": "boot",
+    "stable_slot_id": "slot",
+    "region": "us-central1",
+    "generation": 1,
+    "workspace_epoch": 0,
+    "key_epoch": 0,
+    "image_policy_version": 1,
+    "v": 1,
+    "iss": "fixture-router",
+    "aud": "fixture-speculation",
+    "environment": "test",
+    "plane": "gcp-fixture",
+    "grant_id": "3cc45503129191f6ae6960df226d278c2967f9d51c98102dbb4d3d5c1381c4b8",
+    "tier": 2,
+    "paid_headroom_micro": 20000000,
+    "iat": 2000,
+    "exp": 2030,
+    "start_before": 2028,
+    "key_expires_at": 2100,
+    "trust_fresh_until": 2100,
+    "per_request_ceiling_micro": 10000,
+    "history": {
+      "count": 20,
+      "last_success_at": 1990,
+      "sequence": 20,
+      "clean_since": 1000,
+      "window_start": 1400
+    },
+    "route": {
+      "adapter_capability_version": 1,
+      "catalog_hash": "af2d46562807fd99251267b8573c95a559fb938824490cd6d13a7b3b19f9e529",
+      "endpoint_id": "ep1",
+      "input_bound": 8192,
+      "input_bound_method": "certified-fixture-bound-v1",
+      "input_rate_micro_per_m": 500000,
+      "maximum_request_fees_micro": 0,
+      "output_limit": 512,
+      "output_rate_micro_per_m": 1000000,
+      "price_expires_at": 2100,
+      "privacy": "default",
+      "provider": "fixture-provider",
+      "region": "us-central1",
+      "routing_policy_hash": "a5593a324b738638e898a04cc2edb314973b0b5312742cb371db7df43d8e691c",
+      "stage_d": true,
+      "upstream_model": "fixture-text"
+    },
+    "permits": [
+      {
+        "ordinal": 0,
+        "b_micro": 4608
+      }
+    ]
+  },
+  "context": {
+    "workspace_id": "w",
+    "key_id": "k",
+    "lookup_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "boot_id": "boot",
+    "stable_slot_id": "slot",
+    "region": "us-central1",
+    "generation": 1,
+    "workspace_epoch": 0,
+    "key_epoch": 0,
+    "image_policy_version": 1,
+    "route": {
+      "adapter_capability_version": 1,
+      "catalog_hash": "af2d46562807fd99251267b8573c95a559fb938824490cd6d13a7b3b19f9e529",
+      "endpoint_id": "ep1",
+      "input_bound": 8192,
+      "input_bound_method": "certified-fixture-bound-v1",
+      "input_rate_micro_per_m": 500000,
+      "maximum_request_fees_micro": 0,
+      "output_limit": 512,
+      "output_rate_micro_per_m": 1000000,
+      "price_expires_at": 2100,
+      "privacy": "default",
+      "provider": "fixture-provider",
+      "region": "us-central1",
+      "routing_policy_hash": "a5593a324b738638e898a04cc2edb314973b0b5312742cb371db7df43d8e691c",
+      "stage_d": true,
+      "upstream_model": "fixture-text"
+    },
+    "tier_ceiling_micro": 25000000
+  },
+  "misses": [
+    {
+      "name": "per-item-miss start-window-exhausted",
+      "now": 2010,
+      "request_body_exact": "{\"items\":[{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"}]}",
+      "boot_auth_header": "kid=boot,sig=xWyzPoXelsFEDR4AN595_zo0i_4r5tt5T9ElvEN-ovSzABZgXDSRBHljWAi3dqfDGxJIuVs7uC3mC4JnNiefCw",
+      "response_status": 200,
+      "response_body_exact": "{\"items\":[{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\",\"miss\":\"start-window-exhausted\"}],\"authority\":\"shadow-only\"}"
+    },
+    {
+      "name": "batch-miss feature-disabled",
+      "now": 2000,
+      "request_body_exact": "{\"items\":[{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"}]}",
+      "boot_auth_header": "kid=boot,sig=xWyzPoXelsFEDR4AN595_zo0i_4r5tt5T9ElvEN-ovSzABZgXDSRBHljWAi3dqfDGxJIuVs7uC3mC4JnNiefCw",
+      "response_status": 503,
+      "response_body_exact": "{\"miss\":\"feature-disabled\"}"
+    },
+    {
+      "name": "batch-miss batch-too-large (65 items)",
+      "now": 2000,
+      "request_body_exact": "{\"items\":[{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"},{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"}]}",
+      "boot_auth_header": "kid=boot,sig=xWyzPoXelsFEDR4AN595_zo0i_4r5tt5T9ElvEN-ovSzABZgXDSRBHljWAi3dqfDGxJIuVs7uC3mC4JnNiefCw",
+      "response_status": 413,
+      "response_body_exact": "{\"miss\":\"batch-too-large\"}"
+    },
+    {
+      "name": "batch-miss batch-invalid (duplicate JSON key)",
+      "now": 2000,
+      "request_body_exact": "{\"items\":[{\"workspace_id\":\"w\",\"workspace_id\":\"w\",\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}]}",
+      "boot_auth_header": "kid=boot,sig=xWyzPoXelsFEDR4AN595_zo0i_4r5tt5T9ElvEN-ovSzABZgXDSRBHljWAi3dqfDGxJIuVs7uC3mC4JnNiefCw",
+      "response_status": 400,
+      "response_body_exact": "{\"miss\":\"batch-invalid\"}"
+    },
+    {
+      "name": "batch-miss boot-auth-invalid (header absent)",
+      "now": 2000,
+      "request_body_exact": "{\"items\":[{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"}]}",
+      "boot_auth_header": "",
+      "response_status": 401,
+      "response_body_exact": "{\"miss\":\"boot-auth-invalid\"}"
+    },
+    {
+      "name": "batch-miss boot-auth-invalid (signature over different bytes)",
+      "now": 2000,
+      "request_body_exact": "{\"items\":[{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"}]}",
+      "boot_auth_header": "kid=boot,sig=HNOZdPXjMPS3IpnJmOUK8MDeJqJhisoQrpDAquy21engmtYI3rXbpFpFCpuA6vR48APG-JXMmfs5nHJcQV24Bw",
+      "response_status": 401,
+      "response_body_exact": "{\"miss\":\"boot-auth-invalid\"}"
+    },
+    {
+      "name": "batch-miss refresh-rate-limited (second batch within 10 s)",
+      "now": 2000,
+      "request_body_exact": "{\"items\":[{\"key_id\":\"k\",\"lookup_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"workspace_id\":\"w\"}]}",
+      "boot_auth_header": "kid=boot,sig=xWyzPoXelsFEDR4AN595_zo0i_4r5tt5T9ElvEN-ovSzABZgXDSRBHljWAi3dqfDGxJIuVs7uC3mC4JnNiefCw",
+      "response_status": 503,
+      "response_body_exact": "{\"miss\":\"refresh-rate-limited\"}"
+    }
+  ]
+}
