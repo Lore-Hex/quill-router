@@ -93,10 +93,10 @@ jobs:
           node-version: "20"
       - name: Install npm deps
         run: npm ci
-      - name: TypeScript build (verify dashboard.js matches dashboard.ts)
+      - name: TypeScript build (verify the committed .js matches its .ts)
         run: |
           npx tsc
-          git diff --exit-code -- src/trusted_router/static/dashboard.js
+          git diff --exit-code -- src/trusted_router/static/dashboard.js src/trusted_router/static/token-index.js
       - name: ESLint
         run: npx eslint frontend/src
       - name: Stylelint
