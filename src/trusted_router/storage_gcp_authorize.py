@@ -269,6 +269,66 @@ def key_lifetime_cap_precheck(
         return DEFER
 
 
+def credit_exhaustion_precheck(
+    database: Any,
+    param_types: Any,
+    *,
+    workspace_id: str,
+    estimate: int,
+    shard_count: int,
+    idempotency_scope: str | None = None,
+) -> str:
+    """Recheck a cached insufficient-credit verdict without locking any credit row.
+
+    The authorize transaction reserves ``estimate`` on the first credit shard whose
+    ``total_credits - total_usage - reserved`` covers it, after the idempotency
+    replay read and before the pause and key checks. A workspace that keeps
+    retrying against an empty balance would otherwise lock a credit row and roll
+    back on every request, which also delays settles that release that row's holds.
+
+    EXHAUSTED only when no shard covers the estimate on its own and neither does
+    the sum, so no bounded shard prefix and no rebalance could accept it. HEADROOM
+    drops the cache entry; a pending reservation under this idempotency scope, an
+    incomplete or NULL row set, or a read failure defers to the transaction. Like
+    the key lifetime-cap precheck this may pass a request the transaction refuses
+    (which re-records the workspace) but must never refuse one it would accept.
+    """
+    pt = param_types
+    try:
+        with database.snapshot(multi_use=True) as snapshot:
+            rows = list(
+                snapshot.execute_sql(
+                    "SELECT shard, total_credits, total_usage, reserved "
+                    "FROM tr_credit_balance WHERE workspace_id=@pk "
+                    "AND shard>=0 AND shard<@shard_count ORDER BY shard",
+                    params={"pk": workspace_id, "shard_count": shard_count},
+                    param_types={"pk": pt.STRING, "shard_count": pt.INT64},
+                )
+            )
+            if not rows or [int(row[0]) for row in rows] != list(range(shard_count)):
+                return HEADROOM
+            if any(value is None for row in rows for value in row[1:4]):
+                return HEADROOM
+            available = [
+                int(total_credits) - int(total_usage) - int(reserved)
+                for _, total_credits, total_usage, reserved in rows
+            ]
+            if max(available) >= estimate or sum(available) >= estimate:
+                return HEADROOM
+            if idempotency_scope is not None:
+                existing = read_reservation_by_idempotency(snapshot, pt, idempotency_scope)
+                if existing is not None:
+                    return DEFER
+            return EXHAUSTED
+    except Exception:
+        log.warning(
+            "credit exhaustion snapshot failed; deferring to authorize transaction workspace=%s",
+            workspace_id,
+            exc_info=True,
+        )
+        return DEFER
+
+
 def key_window_limit_decision(
     database: Any,
     param_types: Any,

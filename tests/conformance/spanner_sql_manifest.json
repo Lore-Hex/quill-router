@@ -3559,6 +3559,18 @@
           ]
         }
       ]
+    },
+    "storage_gcp_authorize:credit_exhaustion_precheck:1": {
+      "fingerprint": "31c61d399db02d32351059893b982e26d3dfb441c9dcb0b356b76c32285dab6c",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "pk": "STRING",
+            "shard_count": "INT64"
+          }
+        }
+      ]
     }
   },
   "sinks": {
@@ -3718,7 +3730,8 @@
     "storage_trust_reconciliation:SpannerTrustReconciliationRepository.replicate_workspace_watermark.txn": "0e17730dea2bd827b209758cce2c692b42518ddf0a74895dbd1d38ef004827a8",
     "storage_trust_reconciliation:SpannerTrustReconciliationRepository.get_marker": "ae66712374f936a93abe08af2e3b6c4b707d6315e830d12c327d10148fa431f2",
     "trust_eligibility:billing_paused_tx": "5ce3a94f908455a5508ee285906563975e344a6f64f0edd4db9a9184e0d26a26",
-    "trust_owner_budget:recompute_owner_budget": "959e550c803a9b12ebf91949eab221a57f4991b513a300a74725c0395c6e51a4"
+    "trust_owner_budget:recompute_owner_budget": "959e550c803a9b12ebf91949eab221a57f4991b513a300a74725c0395c6e51a4",
+    "storage_gcp_authorize:credit_exhaustion_precheck": "31c61d399db02d32351059893b982e26d3dfb441c9dcb0b356b76c32285dab6c"
   },
   "non_google_sql": {
     "analytics_sink:_post_rows:1": {
