@@ -3814,7 +3814,7 @@
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "provider_analytics:open_csv_export:1": {
-      "fingerprint": "6de32d712bae9898182e156b19dde34d09911e8d1d15169883d573a9d9a0eb1c",
+      "fingerprint": "dc4aa30c4abab83cadc0ef2a33ee5a6709ce4b46025289bb8ce13fe013b1c2b3",
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "provider_trust_postgres:drain_provider_inbox_tx:1": {

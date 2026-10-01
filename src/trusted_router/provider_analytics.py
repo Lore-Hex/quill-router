@@ -8,11 +8,17 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
+
+from trusted_router.clickhouse_endpoints import (
+    parse_endpoints,
+    request_timeout,
+    send_with_failover_async,
+)
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 MAX_PROVIDER_EXPORT_DAYS = 60
@@ -52,9 +58,10 @@ class ProviderAnalyticsClient:
         table: str = "provider_benchmark_samples",
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
-        if not base_url:
+        # One URL, or an ordered comma-separated list: see clickhouse_endpoints.
+        self._endpoints = parse_endpoints(base_url)
+        if not self._endpoints:
             raise ValueError("provider analytics ClickHouse URL is required")
-        self._base_url = base_url.rstrip("/")
         self._user = user
         self._password = password
         self._database = _identifier(database, label="database")
@@ -68,9 +75,34 @@ class ProviderAnalyticsClient:
     def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(
             auth=(self._user, self._password),
-            timeout=httpx.Timeout(20.0),
+            timeout=request_timeout(self._endpoints, 20.0),
             transport=self._transport,
         )
+
+    def _request_builder(
+        self,
+        client: httpx.AsyncClient,
+        query: str,
+        *,
+        provider: str,
+        days: int,
+    ) -> Callable[[str], httpx.Request]:
+        params = {
+            "database": self._database,
+            "param_provider": provider,
+            "param_days": str(days),
+        }
+
+        def build(endpoint: str) -> httpx.Request:
+            return client.build_request(
+                "POST",
+                endpoint,
+                params=params,
+                content=query,
+                headers={"content-type": "text/plain; charset=utf-8"},
+            )
+
+        return build
 
     async def _json_query(
         self,
@@ -81,15 +113,10 @@ class ProviderAnalyticsClient:
     ) -> list[dict[str, Any]]:
         days = _validated_days(days)
         async with self._client() as client:
-            response = await client.post(
-                self._base_url,
-                params={
-                    "database": self._database,
-                    "param_provider": provider,
-                    "param_days": str(days),
-                },
-                content=query,
-                headers={"content-type": "text/plain; charset=utf-8"},
+            response = await send_with_failover_async(
+                client,
+                self._endpoints,
+                self._request_builder(client, query, provider=provider, days=days),
             )
             response.raise_for_status()
             payload = response.json()
@@ -257,19 +284,13 @@ ORDER BY created_at DESC, id DESC
 FORMAT CSVWithNames
 """
         client = self._client()
-        request = client.build_request(
-            "POST",
-            self._base_url,
-            params={
-                "database": self._database,
-                "param_provider": provider,
-                "param_days": str(days),
-            },
-            content=query,
-            headers={"content-type": "text/plain; charset=utf-8"},
-        )
         try:
-            response = await client.send(request, stream=True)
+            response = await send_with_failover_async(
+                client,
+                self._endpoints,
+                self._request_builder(client, query, provider=provider, days=days),
+                stream=True,
+            )
             response.raise_for_status()
         except Exception:
             await client.aclose()
