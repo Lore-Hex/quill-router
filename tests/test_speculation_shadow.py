@@ -1,6 +1,7 @@
 """Shadow safety gates. The reference store never touches customer state."""
 from __future__ import annotations
 
+import asyncio
 import copy
 import dataclasses
 import json
@@ -1060,3 +1061,119 @@ def test_last_resort_loss_reaches_status_worker_and_mint(monkeypatch):
     assert dispatcher.health == "coverage-lost"
     assert dispatcher.store.get("producer", "replacement")["lost"] is True
     assert shadow._COVERAGE_UNKNOWN
+
+
+@pytest.mark.parametrize("fatal", [KeyboardInterrupt, GeneratorExit, SystemExit, asyncio.CancelledError, BaseException])
+@pytest.mark.parametrize("site", ["setup", "completion", "shadow-cleanup", "timing-cleanup"])
+def test_interrupted_finalization_restores_scopes_and_records_loss(monkeypatch, fatal, site):
+    from types import SimpleNamespace
+
+    from trusted_router import gateway_timing as timing
+    dispatcher = shadow.Dispatcher(ReferenceStore(), "interrupted")
+    monkeypatch.setattr(shadow, "_RUNTIME", dispatcher)
+    monkeypatch.setattr(shadow, "_COVERAGE_UNKNOWN", False)
+    error = fatal("observer interrupted")
+    holds = []
+    settings = Settings(environment="test", speculative_provider_shadow_enabled=True)
+    previous = {"previous": 17}
+    token = timing._OUTCOME_TIMING.set(previous)
+    @timing.timed_gateway_sync
+    def _authorize_gateway_sync(request, body, settings):
+        holds.append(600)
+        shadow.authorized(SimpleNamespace(id="committed", invocation_nonce="nonce"), ("endpoint",), False)
+        return {"data": {"ok": True}}
+    def interrupt(*args, **kwargs):
+        raise error
+    class InterruptedReset(ResetFault):
+        def reset(self, token):
+            raise error
+    class InterruptedSetup(ResetFault):
+        def get(self):
+            # Shadow scope has already been installed by this point.
+            assert shadow._CURRENT.get() is not None
+            raise error
+    try:
+        with monkeypatch.context() as fault:
+            if site == "completion":
+                fault.setattr(shadow, "complete", interrupt)
+            elif site == "setup":
+                fault.setattr(timing, "_OUTCOME_TIMING", InterruptedSetup(timing._OUTCOME_TIMING))
+            elif site == "shadow-cleanup":
+                fault.setattr(shadow, "_CURRENT", InterruptedReset(shadow._CURRENT))
+            else:
+                fault.setattr(timing, "_OUTCOME_TIMING", InterruptedReset(timing._OUTCOME_TIMING))
+            with pytest.raises(fatal) as caught:
+                _authorize_gateway_sync(None, None, settings)
+            assert caught.value is error
+        # Keep the traceback alive: cleanup must not depend on generator GC.
+        assert holds == ([] if site == "setup" else [600])
+        assert shadow._CURRENT.get() is None
+        assert timing._OUTCOME_TIMING.get() is previous
+        assert dispatcher.coverage_lost()
+        while not dispatcher.pending.empty():
+            dispatcher.pending.get_nowait()
+        assert _authorize_gateway_sync(None, None, settings)["data"]["ok"]
+        assert dispatcher.pending.get_nowait().authorization_id == "committed"
+        assert dispatcher.pending.empty()
+    finally:
+        timing._OUTCOME_TIMING.reset(token)
+
+
+@pytest.mark.parametrize("fatal", [KeyboardInterrupt, GeneratorExit])
+def test_loss_recorder_interrupt_propagates_after_completion_failure(monkeypatch, fatal):
+    from trusted_router import gateway_timing as timing
+    dispatcher = shadow.Dispatcher(ReferenceStore(), "recorder-interrupt")
+    monkeypatch.setattr(shadow, "_RUNTIME", dispatcher)
+    monkeypatch.setattr(shadow, "_COVERAGE_UNKNOWN", False)
+    monkeypatch.setattr(shadow, "complete", Mock(side_effect=ValueError("completion")))
+    error = fatal("recording interrupted")
+    monkeypatch.setattr(dispatcher.loss, "set", Mock(side_effect=error))
+    holds = []
+    @timing.timed_gateway_sync
+    def _authorize_gateway_sync(request, body, settings):
+        holds.append(600)
+        return {"data": {"ok": True}}
+    with pytest.raises(fatal) as caught:
+        _authorize_gateway_sync(None, None, Settings(environment="test", speculative_provider_shadow_enabled=True))
+    assert caught.value is error and holds == [600]
+    assert shadow._COVERAGE_UNKNOWN
+    assert shadow._CURRENT.get() is None and timing._OUTCOME_TIMING.get() is None
+
+
+def test_double_restoration_failure_retires_before_next_sync_authorize(monkeypatch):
+    import contextvars
+    from types import SimpleNamespace
+
+    from trusted_router import gateway_timing as timing
+    dispatcher = shadow.Dispatcher(ReferenceStore(), "double-restore")
+    monkeypatch.setattr(shadow, "_RUNTIME", dispatcher)
+    monkeypatch.setattr(shadow, "_COVERAGE_UNKNOWN", False)
+    class DoubleFault(ResetFault):
+        def set(self, value):
+            if value is None or value.retired:
+                raise RuntimeError("fallback set also failed")
+            return super().set(value)
+    # A fresh variable keeps the intentionally unrestorable context test-local.
+    variable = contextvars.ContextVar("double-fault-shadow", default=None)
+    monkeypatch.setattr(shadow, "_CURRENT", DoubleFault(variable))
+    holds = []
+    @timing.timed_gateway_sync
+    def _authorize_gateway_sync(request, body, settings):
+        holds.append(600)
+        shadow.authorized(SimpleNamespace(id=f"auth-{len(holds)}", invocation_nonce="nonce"), ("endpoint",), False)
+        return {"data": {"ok": True}}
+    for sequence in (1, 2):
+        assert _authorize_gateway_sync(None, None, Settings(environment="test", speculative_provider_shadow_enabled=True))["data"]["ok"]
+        outcome = dispatcher.pending.get_nowait()
+        assert outcome.sequence == sequence and outcome.authorization_id == f"auth-{sequence}"
+        retired = variable.get()
+        assert retired.retired
+        before = dataclasses.asdict(dataclasses.replace(retired, dispatcher=None))
+        shadow.resolved(SimpleNamespace(workspace_id="other", hash="other", lookup_hash="other"), "other")
+        shadow.reason("other")
+        shadow.boot_verified(True, "other")
+        shadow.authorized(SimpleNamespace(id="other", invocation_nonce="other"), ("other",), True)
+        assert dataclasses.asdict(dataclasses.replace(retired, dispatcher=None)) == before
+        assert timing._OUTCOME_TIMING.get() is None
+    assert holds == [600, 600] and dispatcher.pending.empty()
+    assert dispatcher.coverage_lost() and shadow._COVERAGE_UNKNOWN

@@ -68,8 +68,8 @@ MUTATIONS.extend([
     ("native explicit CI list omitted", ".github/workflows/ci.yml",
      '          tests/conformance/test_speculation_shadow_native.py\n', '', UNIT + "test_native_shadow_is_selected_by_ci"),
     ("Stage D observer changes estimate", SERVICE,
-     '    observation = _CURRENT.get()\n    if observation is not None:\n        observation.authorization_id = authorization.id',
-     '    if authorization.pricing_snapshot is not None:\n        authorization.estimated_microdollars += 1\n    observation = _CURRENT.get()\n    if observation is not None:\n        observation.authorization_id = authorization.id',
+     '    observation = _CURRENT.get()\n    if observation is not None and not observation.retired:\n        observation.authorization_id = authorization.id',
+     '    if authorization.pricing_snapshot is not None:\n        authorization.estimated_microdollars += 1\n    observation = _CURRENT.get()\n    if observation is not None and not observation.retired:\n        observation.authorization_id = authorization.id',
      "tests/test_gateway_authorize_spanner_operations.py::test_shadow_response_money_and_sql_differential"),
     ("expired replay recreates dedup", SERVICE,
      'if event is not None and not now - MAX_DELIVERY_SECONDS <= event.occurred_at <= now:',
@@ -112,16 +112,41 @@ for relative in (GATEWAY, "src/trusted_router/gateway_timing.py", SERVICE):
         MUTATIONS.append((f"remove {relative.split('/')[-1]} {site} boundary L{end}", relative, old, new, test))
 
 
+service_source = (ROOT / SERVICE).read_text()
+RESTORE_RECOVERY = service_source.split("def restore_context(", 1)[1].split("    except BaseException:\n", 1)[1].split("\n\n\n@contextmanager", 1)[0]
+# The outer reset handler includes independently guarded fallback restoration.
+assert RESTORE_RECOVERY.startswith("        try:\n            variable.set(previous)")
+timing_source = (ROOT / "src/trusted_router/gateway_timing.py").read_text()
+FINALIZATION = timing_source.split("def _authorize_outcome(", 1)[1].split("        finally:\n", 1)[1].split("            finalized = True", 1)[0]
+completion_body = FINALIZATION.split("            finally:\n", 1)[0].removeprefix("            try:\n")
+FLAT_FINALIZATION = "".join(line[4:] for line in completion_body.splitlines(keepends=True)) + "            cleanup(stack.close)\n            cleanup(cleanup_timing)\n"
+
+
 MUTATIONS.extend([
     ("unguard loss recorder", SERVICE,
-     "    except BaseException:\n        _COVERAGE_UNKNOWN = True",
-     "    except BaseException:\n        raise", UNIT + "test_every_gateway_callback_boundary_including_arguments"),
+     "    except Exception:\n        _COVERAGE_UNKNOWN = True",
+     "    except Exception:\n        raise", UNIT + "test_every_gateway_callback_boundary_including_arguments"),
     ("drop ContextVar restoration fallback", SERVICE,
-     "        variable.set(previous)\n        raise", "        raise",
+     RESTORE_RECOVERY, "        raise",
      UNIT + "test_failed_reset_restores_context_for_next_sync_authorize"),
     ("classify only Exception exits", "src/trusted_router/gateway_timing.py",
-     "    except BaseException as exc:\n        error = exc",
-     "    except Exception as exc:\n        error = exc", UNIT + "test_abnormal_authorize_is_never_a_success"),
+     "        except BaseException as exc:\n            error = exc",
+     "        except Exception as exc:\n            error = exc", UNIT + "test_abnormal_authorize_is_never_a_success"),
+])
+
+
+MUTATIONS.extend([
+    ("flatten unconditional cleanup nesting", "src/trusted_router/gateway_timing.py",
+     FINALIZATION, FLAT_FINALIZATION,
+     UNIT + "test_interrupted_finalization_restores_scopes_and_records_loss"),
+    ("swallow recorder process-control exceptions", SERVICE,
+     "    except Exception:\n        _COVERAGE_UNKNOWN = True",
+     "    except BaseException:\n        _COVERAGE_UNKNOWN = True",
+     UNIT + "test_loss_recorder_interrupt_propagates_after_completion_failure"),
+    ("retire observation after restoration", SERVICE,
+     "        observation.retired = True\n        restore_context(_CURRENT, token, previous)",
+     "        restore_context(_CURRENT, token, previous)\n        observation.retired = True",
+     UNIT + "test_double_restoration_failure_retires_before_next_sync_authorize"),
 ])
 
 

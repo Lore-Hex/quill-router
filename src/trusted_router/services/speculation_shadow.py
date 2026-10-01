@@ -74,6 +74,7 @@ class Outcome:
 @dataclass
 class Observation:
     dispatcher: Dispatcher
+    retired: bool = False
     route_identity: tuple[str, ...] = ()
     boot_id: str = ""
     workspace_id: str = ""
@@ -105,10 +106,9 @@ def _record_loss(site: str, observation: Observation | None, dispatcher: Dispatc
 
 
 def record_loss(site: str, observation: Observation | None = None, dispatcher: Dispatcher | None = None, *, deferred: list[str] | None = None) -> None:
-    """The recorder itself is untrusted; even its diagnostics cannot escape.
+    """Contain ordinary recorder faults; process-control exceptions still escape.
 
-    BaseException here guards only recording, never the ordinary operation or
-    the observer callback. There is deliberately no request-path logging.
+    Both failure classes close coverage, with no request-path logging or IO.
     """
     global _COVERAGE_UNKNOWN
     try:
@@ -116,16 +116,31 @@ def record_loss(site: str, observation: Observation | None = None, dispatcher: D
             deferred.append(site)
         else:
             _record_loss(site, observation, dispatcher)
-    except BaseException:
+    except Exception:
         _COVERAGE_UNKNOWN = True
+    except BaseException:
+        try:
+            _COVERAGE_UNKNOWN = True
+        finally:
+            raise
 
 
 def restore_context(variable: contextvars.ContextVar[Any], token: contextvars.Token[Any], previous: Any) -> None:
     """Restore even if reset fails (including a stale/already-used token)."""
+    global _COVERAGE_UNKNOWN
     try:
         variable.reset(token)
     except BaseException:
-        variable.set(previous)
+        try:
+            variable.set(previous)
+        except Exception:
+            # A retired observation is inert even if neither restoration works.
+            _COVERAGE_UNKNOWN = True
+        except BaseException:
+            try:
+                _COVERAGE_UNKNOWN = True
+            finally:
+                raise
         raise
 
 
@@ -144,7 +159,7 @@ def isolate(site: str, observation: Observation | None = None, *, deferred: list
 
 def resolved(key: Any, nonce: str | None) -> None:
     observation = _CURRENT.get()
-    if observation is not None and key is not None:
+    if observation is not None and not observation.retired and key is not None:
         observation.workspace_id = key.workspace_id
         observation.key_id = key.hash
         observation.lookup_digest = key.lookup_hash
@@ -153,20 +168,20 @@ def resolved(key: Any, nonce: str | None) -> None:
 
 def reason(code: str, rate_scope: str = "") -> None:
     observation = _CURRENT.get()
-    if observation is not None:
+    if observation is not None and not observation.retired:
         observation.reason, observation.rate_scope = code, rate_scope
 
 
 def boot_verified(verified: bool, kid: str = "") -> None:
     observation = _CURRENT.get()
-    if observation is not None:
+    if observation is not None and not observation.retired:
         observation.boot_verified = verified
         observation.boot_id = kid if verified else ""
 
 
 def authorized(authorization: Any, endpoint_ids: tuple[str, ...], replay: bool, route_identity: tuple[str, ...] = ()) -> None:
     observation = _CURRENT.get()
-    if observation is not None:
+    if observation is not None and not observation.retired:
         observation.authorization_id = authorization.id
         observation.invocation_nonce = authorization.invocation_nonce or observation.invocation_nonce
         observation.endpoint_ids = endpoint_ids[:16]
@@ -177,7 +192,8 @@ def authorized(authorization: Any, endpoint_ids: tuple[str, ...], replay: bool, 
 @contextmanager
 def outcome_scope(settings: Any) -> Iterator[Observation | None]:
     # No context allocation off, nor for nested thread execution.
-    if not settings.speculative_provider_shadow_enabled or _RUNTIME is None or _CURRENT.get() is not None:
+    current = _CURRENT.get()
+    if not settings.speculative_provider_shadow_enabled or _RUNTIME is None or (current is not None and not current.retired):
         yield None
         return
     observation = Observation(_RUNTIME)
@@ -186,6 +202,7 @@ def outcome_scope(settings: Any) -> Iterator[Observation | None]:
     try:
         yield observation
     finally:
+        observation.retired = True
         restore_context(_CURRENT, token, previous)
 
 

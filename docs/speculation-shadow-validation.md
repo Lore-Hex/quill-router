@@ -1,7 +1,7 @@
-# PR3 round 3 validation
+# PR3 round 4 validation
 
-Base: `573e02dfe823e946ac7e64786b6a2a61b0ffdd21`, branch
-`speculation/shadow-observation`. Round 3 changes are uncommitted; no git writes,
+Base: `67556f11c9b44508f0d547567adb732b6c09a240`, branch
+`speculation/shadow-observation`. Changes are uncommitted; no git writes,
 migration, production enablement or deployment. The shadow flag stays false;
 workspace/route/image/producer/slot lists stay empty.
 
@@ -9,15 +9,30 @@ workspace/route/image/producer/slot lists stay empty.
 
 | Finding | Change and evidence |
 |---|---|
-| P1: recorder failures escape isolation | `src/trusted_router/services/speculation_shadow.py:107` guards all loss recording, including deferred reason bookkeeping, with `BaseException`. Failure sets a sticky process-local reference flag without calls, locks, counters, logging or IO. Status (`routes/internal/speculation.py:26`), worker projection (`services/speculation_shadow.py:261`) and minting (`:478`) honor it, including after dispatcher replacement. Every callback and timing boundary is tested with failed loss.set, reason-map lookup, injected logging and counter diagnostics. Production recording needs no logging or counters. Real HTTP lifecycle differentials include recorder failures and unchanged SQL, responses and all money-state collections. |
-| P1: completion skips cleanup | `src/trusted_router/gateway_timing.py:129` defers completion/submission loss recording until both scope cleanups have independently executed. `tests/test_speculation_shadow.py:956` simultaneously fails completion, both resets and recording; it checks exact step order, response/exception identity and unchanged holds. |
-| P2: failed ContextVar reset leaks state | `src/trusted_router/services/speculation_shadow.py:123` falls back to setting the saved previous value, then reports the reset failure through isolation. Both shadow and outcome-timing scopes use it independently. `tests/test_speculation_shadow.py:929` injects failed and already-used-token resets in either/both variables, restores a nonempty previous timing value, and proves the next direct synchronous request in the same context emits its own event. |
-| P2: cancellation looks successful | `src/trusted_router/gateway_timing.py:122` tracks and re-raises the identical `BaseException`. `services/speculation_shadow.py:192` emits status 500 / reason aborted for non-Exception exits; finalization records sticky coverage loss. `tests/test_speculation_shadow.py:997` cancels an awaited future after observing authorization and also checks BaseException, KeyboardInterrupt and SystemExit. Holds and exception identity survive; projection creates no success rows/history, even with recorder faults. |
+| P2: interruptions skip finalization cleanup | `src/trusted_router/gateway_timing.py:126` includes setup and completion inside nested `try/finally` blocks: shadow restoration, timing restoration and loss recording each run even when a preceding step raises a process-control exception. `tests/test_speculation_shadow.py:1068` injects KeyboardInterrupt, GeneratorExit, SystemExit, CancelledError and BaseException during setup, completion and both restoration paths. It retains the traceback, checks exception identity, the committed 600 hold, restored scopes and coverage loss, then verifies the next synchronous authorization emits its own event. |
+| P2: recorder swallows process-control exceptions | `src/trusted_router/services/speculation_shadow.py:108` suppresses ordinary Exception only. Non-Exception BaseException sets sticky uncertainty in a guarded handler and re-raises. `tests/test_speculation_shadow.py:1123` fails completion and interrupts the loss recorder with KeyboardInterrupt/GeneratorExit: the identical interrupt escapes, the hold remains, uncertainty is set and both scopes are restored. |
+| P2: double restoration failure poisons the next request | `src/trusted_router/services/speculation_shadow.py:205` retires the observation before reset/fallback restoration; nesting (`:195`) and all four callbacks (`:160`) ignore retired observations. Restoration (`:128`) independently guards fallback failure and marks uncertainty. `tests/test_speculation_shadow.py:1143` makes both reset and fallback set fail on two sequential synchronous authorizations: both emit distinct events, preserve both 600 holds and leave callbacks unable to modify retired observations. |
 
-Finalization order: **complete → restore shadow scope → restore outcome-timing
-scope → record deferred failures (then abnormal-exit loss)**. Each cleanup has
-its own isolation invocation; a failed step does not early-return. Recorder
-failures themselves only set the last-resort marker.
+Finalizer nesting (ordinary callback failures remain isolated):
+
+```text
+try:
+    try: setup; request (remember and re-raise BaseException)
+    finally:
+        try: complete
+        finally:
+            try: close shadow scope (retire, then restore)
+            finally: restore outcome-timing scope
+        mark finalization finished
+finally:
+    try: record deferred losses
+    finally: record interrupted-finalization / abnormal-request loss
+```
+
+A recorder interruption therefore cannot skip scope restoration; an earlier
+interruption cannot bypass either restoration attempt or final loss marking.
+If both ContextVar restoration operations fail, the retained observation is
+inert and coverage is unknown. No new synchronous storage, lock or await is added.
 
 ## Preserved round 2 guarantees
 
@@ -25,7 +40,7 @@ failures themselves only set the last-resort marker.
   remains independent. Ordinary authorization stays pinned at **5 operations /
   6 with the transactional pause gate**, with/without boot authentication and
   with shadow off/on.
-- All 33 prior mutations remain red; three new mutations are also red.
+- All 36 prior mutations and all three round 4 mutations are red (39 total).
 - Cached grant reuse still checks current key/trust/price deadlines and the
   two-second start margin. Shortened deadlines fail closed or mint a shorter grant.
 - Native conformance remains selected as `spanner-emulator` in CI's explicit
@@ -55,7 +70,7 @@ failures themselves only set the last-resort marker.
 Python **3.12**, frozen dependencies, existing environment:
 `UV_PROJECT_ENVIRONMENT=/private/tmp/astra-r3b-py312` and
 `UV_CACHE_DIR=/private/tmp/astra-r3b-uv`. The repository's Python 3.11 environment
-is unchanged. The full run includes both named local-only Python 3.11 failures.
+is unchanged. No tests are excluded from the full run.
 
 ```text
 uv run ruff check .
@@ -67,26 +82,51 @@ Success: no issues found in 382 source files
 uv run mypy
 Success: no issues found in 382 source files
 
-Expanded shadow + exact RPC/HTTP differential gates
-493 passed, 1190 warnings in 25.04s
+Shadow, timing, exact RPC operations, Stage D, boot, outbox and conformance (-n 4)
+3263 passed, 1068 skipped, 11 xfailed, 1912 warnings in 147.67s (0:02:27)
 
-Shadow, timing, RPC, Stage D, boot, outbox and conformance selection (-n 4)
-3243 passed, 1068 skipped, 11 xfailed, 1912 warnings in 102.26s (0:01:42)
+Billing path RPC budget
+3 passed, 6 warnings in 0.89s
 
 uv run python -m tests.speculation_shadow_mutations
-36 red; all 36 baseline and restored-baseline runs pass
+39 red; all 39 baseline and restored-baseline runs pass; exit 0
 
-uv run pytest -q -p no:cacheprovider -n 4 --basetemp /private/tmp/astra-r3c-$$ \
+First full run (no tests excluded)
+3 failed, 17202 passed, 1118 skipped, 12 xfailed, 14426 warnings in 4766.03s (1:19:26)
+Required test coverage of 70% reached. Total coverage: 85.76%
+
+Isolated rerun of all three failures, unchanged source/tests
+3 passed, 22 warnings in 4.03s
+
+Final clean full run, no overlapping test jobs and no exclusions
+uv run pytest -q -p no:cacheprovider -n 4 --basetemp /private/tmp/astra-r3d-$$ \
   --cov=trusted_router --cov-report=term --cov-fail-under=70
 Required test coverage of 70% reached. Total coverage: 85.76%
-17182 passed, 1118 skipped, 12 xfailed, 14430 warnings in 3814.20s (1:03:34)
+17205 passed, 1118 skipped, 12 xfailed, 14424 warnings in 3629.11s (1:00:29)
+Exit 0
 ```
 
-Final clean full run exited **0**, with no tests excluded and no subsequent
-production/test fixes. Full log: `/private/tmp/astra-r3c-full.log`. Mutation log:
-`/private/tmp/astra-r3c-mutations.log`. Disk was checked before the full run
-(120 GiB available). Full-run basetemp `/private/tmp/astra-r3c-89935` and targeted
-basetemp `/private/tmp/astra-r3c-targeted` were deleted after completion.
+The first full run returned HTTP 408 (`Request body timed out`) in
+`test_patch_updates_every_live_key_and_rejects_bad_values`,
+`test_authorize_settle_identity_and_measured_store_time[shadow-on-True-0.25-global]`
+and `test_storage_error_handler_preserves_gateway_timing[shadow-off-True]`.
+These failed before reaching the routes under test and all passed in isolation.
+The run overlapped other test jobs initially and the machine had elevated load;
+resource contention is the likely cause, not established as a code defect.
+The first full log is `/private/tmp/astra-r3d-full.log`; isolated rerun log:
+`/private/tmp/astra-r3d-timeout-rerun.log`. No code/test change was made in response.
+The final clean full run passed without overlapping test jobs or exclusions;
+its log is `/private/tmp/astra-r3d-full-clean.log`. No subsequent production or
+test changes were made. Disk was checked before both full runs: 120 GiB and
+110 GiB available respectively. The targeted basetemp and both full-run
+basetemps (`/private/tmp/astra-r3d-87587` and `/private/tmp/astra-r3d-53544`)
+were deleted after completion. Targeted logs are
+`/private/tmp/astra-r3d-targeted.log` and `/private/tmp/astra-r3d-rpc.log`.
+
+Direct `sys.settrace` probes at the actual finalizer completion call also passed
+for KeyboardInterrupt and GeneratorExit: identical exception, committed 600 hold,
+both scopes restored, loss marked, next synchronous authorization emits an event.
+These probes ran in a separate process without modifying source or tests.
 
 Native emulator execution remains unavailable locally: no Docker executable or
 configured `SPANNER_EMULATOR_HOST`. Skips are not SQL acceptance. CI still runs
@@ -94,10 +134,11 @@ the native dedup/rollback test after its emulator readiness check.
 
 ## Mutation receipts
 
-Every mutation executes behavior gates in a disposable copy, with passing
+Each mutation executes behavior gates in a disposable copy, with passing
 baseline and restored-baseline runs. Compile/import errors do not count as
 kills. Exact replacements and gates are in `tests/speculation_shadow_mutations.py`;
-full results are in `speculation-shadow-mutations.json`.
+full results are in `speculation-shadow-mutations.json` and the run log is
+`/private/tmp/astra-r3d-mutations.log`.
 
 | # | Mutation | Result | Baseline / restored |
 |---|---|---|---|
@@ -128,12 +169,15 @@ full results are in `speculation-shadow-mutations.json`.
 | 25 | remove gateway.py reason boundary L1806 | red | pass / pass |
 | 26 | remove gateway.py reason boundary L1718 | red | pass / pass |
 | 27 | remove gateway_timing.py arguments boundary L105 | red | pass / pass |
-| 28 | remove gateway_timing.py scope-setup boundary L114 | red | pass / pass |
-| 29 | remove gateway_timing.py completion boundary L129 | red | pass / pass |
-| 30 | remove gateway_timing.py scope-cleanup boundary L141 | red | pass / pass |
-| 31 | remove gateway_timing.py timing boundary L174 | red | pass / pass |
-| 32 | remove gateway_timing.py timing boundary L199 | red | pass / pass |
-| 33 | remove speculation_shadow.py submit boundary L204 | red | pass / pass |
+| 28 | remove gateway_timing.py scope-cleanup boundary L119 | red | pass / pass |
+| 29 | remove gateway_timing.py scope-setup boundary L128 | red | pass / pass |
+| 30 | remove gateway_timing.py completion boundary L139 | red | pass / pass |
+| 31 | remove gateway_timing.py timing boundary L189 | red | pass / pass |
+| 32 | remove gateway_timing.py timing boundary L214 | red | pass / pass |
+| 33 | remove speculation_shadow.py submit boundary L221 | red | pass / pass |
 | 34 | unguard loss recorder | red | pass / pass |
 | 35 | drop ContextVar restoration fallback | red | pass / pass |
 | 36 | classify only Exception exits | red | pass / pass |
+| 37 | flatten unconditional cleanup nesting | red | pass / pass |
+| 38 | swallow recorder process-control exceptions | red | pass / pass |
+| 39 | retire observation after restoration | red | pass / pass |
