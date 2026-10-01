@@ -70,6 +70,20 @@ def test_published_sidecar_omits_empty_extra_permissions():
         inspect(data)
 
 
+def test_node_0105_read_info_expansion_is_explicitly_reviewed():
+    data = responses()
+    data["/v2/node/client_info"]["effective_permissions"] = [
+        "cancel_payment", "create_invoice", "create_offer", "get_human_bitcoin_address",
+        "get_new_payments", "get_next_unused_address", "get_payment_by_id", "get_payments_by_indexes",
+        "get_updated_payments", "get_user_settings", "list_broadcasted_txs", "list_channels", "node_info", "resync",
+    ]
+    result, _ = inspect(data)
+    assert result["status"] == "configuration_checked"
+    data["/v2/node/client_info"]["effective_permissions"].append("update_user_settings")
+    with pytest.raises(preflight.PreflightError, match="unexpected_effective_permissions"):
+        inspect(data)
+
+
 @pytest.mark.parametrize("patch", [
     {"kind": "root_seed"}, {"scopes": ["full"]}, {"scopes": ["read", "receive"]},
     {"scopes": ["read_info", "read_payments", "receive", "spend"]},

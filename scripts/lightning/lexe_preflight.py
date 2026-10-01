@@ -20,6 +20,7 @@ PERMISSIONS = {
     "get_payments_by_indexes", "get_new_payments", "get_updated_payments",
     "get_payment_by_id", "list_broadcasted_txs", "get_next_unused_address",
     "create_invoice", "create_offer", "resync", "cancel_payment",
+    "get_user_settings",  # Reviewed read_info expansion in Lexe node 0.10.5.
 }
 REQUIRED_PERMISSIONS = {"node_info", "list_channels", "get_payment_by_id", "create_invoice", "cancel_payment"}
 

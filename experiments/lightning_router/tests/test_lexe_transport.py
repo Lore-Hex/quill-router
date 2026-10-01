@@ -2,7 +2,7 @@ import logging
 
 import httpx
 import pytest
-from lightning_router.lexe import Lexe
+from lightning_router.lexe import PERMISSIONS, SCOPES, Lexe, LexeReadinessError
 
 
 @pytest.mark.parametrize("error", [httpx.ReadTimeout, httpx.ConnectTimeout,
@@ -122,3 +122,35 @@ def test_retry_does_not_accept_invalid_authority_or_cache_success():
         lexe.ready()
     assert len(calls) == 2
     assert lexe._checked == 0
+
+
+@pytest.mark.parametrize("patch,reason", [
+    ({"kind": "root_seed"}, "authority_invalid"),
+    ({"scopes": [*SCOPES, "spend"]}, "authority_invalid"),
+    ({"permissions": ["pay_invoice"]}, "authority_invalid"),
+    ({"effective_permissions": None}, "effective_permissions_invalid"),
+    ({"effective_permissions": [None]}, "effective_permissions_invalid"),
+    ({"effective_permissions": []}, "required_permissions_missing"),
+    ({"effective_permissions": [*PERMISSIONS, "private-unknown-permission"]}, "unreviewed_permissions"),
+    ({"expires_at": None}, "credential_expiry_invalid"),
+    ({"expires_at": True}, "credential_expiry_invalid"),
+    ({"expires_at": 1}, "credential_expiring"),
+    ({"wallet": "b" * 64}, "wallet_mismatch"),
+])
+def test_readiness_reasons_are_static_and_fail_closed(patch, reason, caplog):
+    info = {"kind": "client_credentials", "scopes": sorted(SCOPES),
+            "effective_permissions": sorted(PERMISSIONS), "expires_at": 9_999_999_999_999}
+    info.update(patch)
+
+    def handle(request):
+        return httpx.Response(200, json=info if request.url.path.endswith("client_info") else
+                              {"user_pk": patch.get("wallet", "a" * 64)})
+
+    lexe = Lexe(httpx.Client(base_url="http://127.0.0.1:5393", transport=httpx.MockTransport(handle)), "a" * 64)
+    with pytest.raises(LexeReadinessError) as error:
+        lexe.ready()
+    assert error.value.reason == reason
+    assert lexe._checked == 0
+    assert f"lightning.lexe_readiness_failed reason={reason}" in caplog.text
+    assert "private-unknown-permission" not in caplog.text
+    assert "b" * 64 not in caplog.text
