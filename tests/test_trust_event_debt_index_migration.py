@@ -34,7 +34,7 @@ def test_debt_index_carrier_is_additive_and_idempotent(tmp_path, monkeypatch):
         assert len(ddls) == 1
         sql = " ".join(ddls[0].split())
         assert sql.startswith(f"CREATE INDEX IF NOT EXISTS {INDEX} ON tr_trust_event "
-                              "(workspace_id, kind, unrecovered_micro, occurred_at, event_id)")
+                              "(workspace_id, kind, unrecovered_micro)")
         assert sql.replace("IF NOT EXISTS ", "") in DDL
         assert set(TRUST_EVENT_COLUMNS) <= set(re.findall(r"\w+", sql))
         assert "DROP" not in sql and "ALTER" not in sql

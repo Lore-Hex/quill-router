@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # Online payment-debt index backfill; run separately from rolling deployments.
+# Key-only on purpose: the no-debt predicate (workspace_id, kind='payment',
+# unrecovered_micro > 0) seeks an EMPTY range for a no-debt workspace, and the
+# base primary key (event_id) rides along; positive-debt rows are rare, so the
+# recovery SELECT's base-row lookups cost less than a covering copy of the table.
 # See docs/design/rpc-diet-c1.md for operator sequencing and PLAN acceptance.
 set -euo pipefail
 
@@ -9,18 +13,14 @@ PROJECT_ARG=()
 [ -n "${GCP_PROJECT_ID:-}" ] && PROJECT_ARG=(--project "${GCP_PROJECT_ID}")
 
 gcloud spanner databases ddl update "$DATABASE" \
-  --instance="$INSTANCE" "${PROJECT_ARG[@]}" \
+  --instance="$INSTANCE" ${PROJECT_ARG[@]+"${PROJECT_ARG[@]}"} \
   --ddl="CREATE INDEX IF NOT EXISTS tr_trust_event_by_debt
-    ON tr_trust_event (workspace_id, kind, unrecovered_micro, occurred_at, event_id)
-    STORING (provider, amount_micro, original_payment_ref, adverse_ref,
-      recorded_at, payment_amount_micro, currency, credited_micro, recovered_micro,
-      provider_subtype, lifecycle_status, cumulative_refunded, recovery_target,
-      debit_status, provider_ordering_watermark)"
+    ON tr_trust_event (workspace_id, kind, unrecovered_micro)"
 
 # A rerun can find an index whose earlier client disconnected during backfill.
 for _ in $(seq 1 "${TR_DEBT_INDEX_WAIT_ATTEMPTS:-360}"); do
   state=$(gcloud spanner databases execute-sql "$DATABASE" \
-    --instance="$INSTANCE" "${PROJECT_ARG[@]}" \
+    --instance="$INSTANCE" ${PROJECT_ARG[@]+"${PROJECT_ARG[@]}"} \
     --sql="SELECT INDEX_STATE FROM INFORMATION_SCHEMA.INDEXES
       WHERE TABLE_NAME='tr_trust_event' AND INDEX_NAME='tr_trust_event_by_debt'" \
     --format='value(rows[0])')

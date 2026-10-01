@@ -14,7 +14,7 @@ SOURCE_DIGESTS = {'scripts/deploy/infra.sh': '259931cd73d94d0f3fc535b5f8a6ef523a
  'scripts/deploy/migrate_receipt_key_versions.sh': '37c46050906d7f5fe50bc45e732ec1ba99059b916efc659aef1bb6882d437ef6',
  'scripts/deploy/migrate_request_retention.sh': '6817965c0ae1c836553aa4e94124d13e6d3cd98bf891fa11948ed5a0d156f510',
  'scripts/deploy/migrate_spend_lease.sh': '198790ab42b43f20306431e386db98188a0c0ad88f948afbc7232f072a7c2798',
- 'scripts/deploy/migrate_trust_event_debt_index.sh': '09e11e36dba40a9ff92738f847bb8f55f9e3f28d00b1e938f9a8392feacd748a',
+ 'scripts/deploy/migrate_trust_event_debt_index.sh': '22d7d8a24dae972dc9dd36662b5bec24483cf81578703b240f63248ff20fb864',
  'scripts/deploy/migrate_trust_reconciliation.sh': '7864237a2a0a187f5db14da4812e96481f105b28c4737bc2cfc83b481321140c',
  'scripts/deploy/migrate_typed_counters.sh': 'd1f3dc7eaa4fc383bcea7ce75846b92dd71532296d4773c3aa9cc818c24fc909',
  'scripts/deploy/retire_settle_outbox_hot_index.sh': 'ce6bac93d3c5442eccfe88aa74eeff151033905161b2d6c87489b4ec9c08cd45'}
@@ -183,10 +183,7 @@ DDL = ('CREATE TABLE tr_entities (kind STRING(64) NOT NULL, id STRING(512) NOT N
  'spend_lease_scope_arbitration (authorization_id)',
  'CREATE NULL_FILTERED INDEX spend_lease_open_due ON spend_lease_open (next_attempt_at)',
  'CREATE INDEX tr_trust_event_by_debt ON tr_trust_event (workspace_id, kind, '
- 'unrecovered_micro, occurred_at, event_id) STORING (provider, amount_micro, '
- 'original_payment_ref, adverse_ref, recorded_at, payment_amount_micro, currency, '
- 'credited_micro, recovered_micro, provider_subtype, lifecycle_status, cumulative_refunded, '
- 'recovery_target, debit_status, provider_ordering_watermark)',
+ 'unrecovered_micro)',
  'CREATE UNIQUE NULL_FILTERED INDEX tr_reservation_by_idemp ON tr_reservation '
  '(idempotency_scope)',
  'CREATE INDEX tr_reservation_by_expiry ON tr_reservation (settled, expires_at)',

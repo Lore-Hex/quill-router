@@ -56,11 +56,7 @@ Round 3 adds the additive, idempotent carrier
 
 ```sql
 CREATE INDEX IF NOT EXISTS tr_trust_event_by_debt
-ON tr_trust_event (workspace_id, kind, unrecovered_micro, occurred_at, event_id)
-STORING (provider, amount_micro, original_payment_ref, adverse_ref,
-  recorded_at, payment_amount_micro, currency, credited_micro, recovered_micro,
-  provider_subtype, lifecycle_status, cumulative_refunded, recovery_target,
-  debit_status, provider_ordering_watermark)
+ON tr_trust_event (workspace_id, kind, unrecovered_micro)
 ```
 
 Both the folded NOT EXISTS and main's recovery SELECT remain **index-agnostic:
