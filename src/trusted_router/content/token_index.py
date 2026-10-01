@@ -14,8 +14,8 @@ QUOTES: dict[str, dict[str, object]] = {
     },
     "AAA": {
         "label": "AAA Frontier",
-        "value": 2984,
-        "change_7d": -12.0
+        "value": 2621,
+        "change_7d": -13.3
     },
     "A": {
         "label": "A Advanced",
@@ -81,8 +81,8 @@ GRADES: list[dict[str, object]] = [
     }
 ]
 CHART_ALT: dict[str, str] = {
-    "nyte": "Line chart of the NYTE Token Index in US dollars per billion tokens from October 2025 to September 2026, peaking near $899 in January and ending near $376.",
-    "grades": "Log-scale chart of the four NYTE grade indices in US dollars per billion tokens from October 2025 to September 2026, ending with Frontier near $2,984, Advanced near $1,122, Professional near $206, Efficient near $40."
+    "nyte": "Line chart of the NYTE Token Index in US dollars per billion tokens from October 2025 to September 2026, peaking near $918 in January and ending near $376.",
+    "grades": "Log-scale chart of the four NYTE grade indices in US dollars per billion tokens from October 2025 to September 2026, ending with Frontier near $2,621, Advanced near $1,122, Professional near $206, Efficient near $40."
 }
 
 

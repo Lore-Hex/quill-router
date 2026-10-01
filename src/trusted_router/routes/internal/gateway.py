@@ -1582,13 +1582,18 @@ def _authorize_gateway_sync_impl(
             )
             raise
         except transient_store_error_types() as exc:
+            from trusted_router.strict_budget import StrictBudgetBusy
+
             release_user_model_slot_after_error()
             # Keep enough tenant-safe context to distinguish a Spanner
             # deadline, service outage, session exhaustion, or retry failure.
             # The request body, raw key, prompt, and output stay out of logs.
             logger.warning(
-                "billing.authorize_storage_unavailable request_id=%s workspace_id=%s "
+                "%s request_id=%s workspace_id=%s "
                 "error_class=%s",
+                "billing.authorize_strict_budget_busy"
+                if isinstance(exc, StrictBudgetBusy)
+                else "billing.authorize_storage_unavailable",
                 getattr(request.state, "request_id", None),
                 workspace.id,
                 type(exc).__name__,

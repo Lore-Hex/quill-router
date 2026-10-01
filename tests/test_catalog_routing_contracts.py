@@ -121,6 +121,7 @@ from trusted_router.catalog_data import (
     PLATO_4_0_CATALOG_MODEL_ORDER,
     SOCRATES_3_0_CATALOG_MODEL_ORDER,
     SYNTH_PROMETHEUS_4_MODEL_ORDER,
+    SYNTH_QUALITY_1M_MODEL_ORDER,
     SYNTH_ZEUS_3_MODEL_ORDER,
 )
 from trusted_router.catalog_ingest import (
@@ -1809,11 +1810,9 @@ def test_prometheus_1m_uses_only_long_context_open_weight_components() -> None:
 
     assert model.name == "TrustedRouter Prometheus 1.0 1M"
     assert model.context_length == 1_048_576
-    assert candidate_ids == [
-        "xiaomi/mimo-v2.5-pro",
-        "z-ai/glm-5.2",
-        DEEPSEEK_V4_PRO_0423_MODEL_ID,
-    ]
+    # Members come from the frozen order, in it. Which of them serve 1M today
+    # is provider state: test_prometheus_1m_keeps_all_three_members_today.
+    assert candidate_ids == [m for m in SYNTH_QUALITY_1M_MODEL_ORDER if m in candidate_ids]
     assert all(candidate.context_length >= 1_000_000 for candidate in candidates)
     assert all(model_open_weights(candidate) for candidate in candidates)
 
@@ -1822,6 +1821,47 @@ def test_prometheus_1m_uses_only_long_context_open_weight_components() -> None:
     assert shape["trustedrouter"]["route_kind"] == "fusion_panel"
     assert shape["trustedrouter"]["auto_candidates"] == candidate_ids
     assert shape["trustedrouter"]["open_weights"] is True
+
+
+def test_prometheus_1m_drops_a_member_whose_window_falls_below_1m(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Fixture windows: which members serve 1M today is provider state.
+    mimo, glm, deepseek = SYNTH_QUALITY_1M_MODEL_ORDER
+
+    def serve(model_id: str, window: int) -> None:
+        model = MODELS.get(model_id) or Model(
+            id=model_id, name=model_id, provider=model_id.split("/")[0], context_length=window,
+        )
+        monkeypatch.setitem(MODELS, model_id, replace(model, context_length=window))
+
+    def members() -> list[str]:
+        return [candidate.id for candidate in meta_candidate_models(PROMETHEUS_1_0_1M_MODEL_ID)]
+
+    serve(mimo, 1_048_576)
+    serve(glm, 999_999)
+    serve(deepseek, 1_000_000)
+    assert members() == [mimo, deepseek]
+    shape = model_to_openrouter_shape(MODELS[PROMETHEUS_1_0_1M_MODEL_ID])
+    assert shape["trustedrouter"]["auto_candidates"] == [mimo, deepseek]
+    assert shape["context_length"] == 1_048_576
+
+    # Back at 1M, the member returns to its place.
+    serve(glm, 1_000_000)
+    assert members() == [mimo, glm, deepseek]
+
+
+@pytest.mark.provider_health
+@pytest.mark.catalog_as_built
+def test_prometheus_1m_keeps_all_three_members_today() -> None:
+    """Live provider state: a member leaves Prometheus 1.0 1M when its window
+    falls below 1M or the catalog no longer offers it. provider-catalog-health.yml
+    reports it hourly, and the price refresh does not wait on it."""
+    assert [candidate.id for candidate in meta_candidate_models(PROMETHEUS_1_0_1M_MODEL_ID)] == [
+        "xiaomi/mimo-v2.5-pro",
+        "z-ai/glm-5.2",
+        DEEPSEEK_V4_PRO_0423_MODEL_ID,
+    ]
 
 
 def test_prometheus_versions_are_frozen_and_rolling_alias_uses_4_0() -> None:

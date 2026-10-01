@@ -607,10 +607,17 @@ def create_app(
         app.add_exception_handler(conflict_type, aborted_exception_handler)
 
     async def unavailable_exception_handler(request: Request, exc: Exception) -> Response:
-        _log_storage_503(request, exc, "storage.unavailable")
+        from trusted_router.strict_budget import StrictBudgetBusy
+
+        strict_busy = isinstance(exc, StrictBudgetBusy)
+        _log_storage_503(
+            request, exc, "billing.strict_budget_busy" if strict_busy else "storage.unavailable"
+        )
         response = error_response(
             503,
-            "Persistent storage is temporarily unavailable; retry.",
+            "Strict budget authorization is busy; retry with backoff."
+            if strict_busy
+            else "Persistent storage is temporarily unavailable; retry.",
             ErrorType.SERVICE_UNAVAILABLE,
             data=getattr(exc, "gateway_timing_data", None),
         )
