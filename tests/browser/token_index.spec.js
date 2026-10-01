@@ -8,10 +8,32 @@ const money = (v) => "$" + (v >= 100 ? Math.round(v).toLocaleString("en-US") : v
 const longDate = (d) => `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`;
 const dayOf = (start, i) => new Date(Date.parse(`${start}T00:00:00Z`) + i * 86_400_000);
 
-// the (x, y) vertices of a path's first subpath
+// every (x, y) vertex of a path, across its subpaths
 const vertices = async (path) => {
   const d = await path.getAttribute("d");
-  return d.split("M")[1].split("L").map((p) => p.trim().split(/\s+/).map(Number));
+  return d.split("M").filter(Boolean).flatMap((run) => run.split("L").map((p) => p.trim().split(/\s+/).map(Number)));
+};
+
+// Every drawn point must sit where the data puts it. The scale comes from the labelled gridlines
+// (independent of the paths): y is an affine function of the value (linear) or of its log (log
+// scale); x is evenly spaced by day.
+const expectGeometry = async (figure, data, keys, scale, firstDay) => {
+  const f = scale === "log" ? Math.log10 : (v) => v;
+  const ticks = await figure.locator(".ti-ylabel").evaluateAll((nodes) =>
+    nodes.map((n) => [Number(n.textContent.replace(/[$,]/g, "")), Number(n.getAttribute("y"))]));
+  expect(ticks.length).toBeGreaterThan(2);
+  const [[v0, y0], [v1, y1]] = [ticks[0], ticks[ticks.length - 1]];
+  const slope = (y1 - y0) / (f(v1) - f(v0));
+  for (const key of keys) {
+    const pts = await vertices(figure.locator(`path.ti-line.ti-${key.toLowerCase()}`));
+    const values = data.series[key].slice(firstDay);
+    expect(pts.length).toBe(values.length);
+    const dx = (pts[pts.length - 1][0] - pts[0][0]) / (pts.length - 1);
+    pts.forEach(([x, y], i) => {
+      expect(Math.abs(x - (pts[0][0] + i * dx))).toBeLessThan(0.6);
+      expect(Math.abs(y - (y0 + slope * (f(values[i]) - f(v0))))).toBeLessThan(1);
+    });
+  }
 };
 
 test.describe("/index interactive charts", () => {
@@ -27,13 +49,10 @@ test.describe("/index interactive charts", () => {
     await expect(nyte).toHaveClass(/is-live/);
     await expect(nyte.locator("img.ti-img-dark")).toBeHidden();
 
-    // one vertex per day, and the highest close is drawn highest (smallest y)
-    const points = await vertices(nyte.locator("path.ti-line"));
-    expect(points.length).toBe(n);
-    const ys = points.map(([, y]) => y);
+    // every point where the data puts it (linear scale), the highest close drawn highest
+    await expectGeometry(nyte, data, ["ALL"], "linear", 0);
+    const ys = (await vertices(nyte.locator("path.ti-line"))).map(([, y]) => y);
     expect(ys.indexOf(Math.min(...ys))).toBe(all.indexOf(Math.max(...all)));
-    expect(ys.indexOf(Math.max(...ys))).toBe(all.indexOf(Math.min(...all)));
-    expect(points[0][0]).toBeLessThan(points[n - 1][0]);
 
     // keyboard readout at both ends equals the data file
     const svg = nyte.locator("svg.ti-svg");
@@ -60,14 +79,16 @@ test.describe("/index interactive charts", () => {
     await expect(nyte.locator(".ti-tip")).toContainText(longDate(dayOf(data.start, n - 31)));
     await expect(svg).toHaveAttribute("aria-label", new RegExp(`from ${longDate(dayOf(data.start, n - 31))} to`));
 
-    // grades: five lines, series toggles, linear scale, readout of every visible grade
+    // grades: five lines on one log scale, series toggles, linear scale, readout of every visible grade
     const grades = page.locator('[data-ti-chart="grades"]');
     await expect(grades.locator("path.ti-line")).toHaveCount(5);
+    await expectGeometry(grades, data, ["AAA", "A", "B", "C", "ALL"], "log", 0);
     await grades.getByRole("button", { name: "Frontier" }).click();
     await expect(grades.getByRole("button", { name: "Frontier" })).toHaveAttribute("aria-pressed", "false");
     await expect(grades.locator("path.ti-line")).toHaveCount(4);
     await grades.getByRole("button", { name: "Linear" }).click();
     await expect(grades.locator(".ti-ylabel").first()).toHaveText("$0");
+    await expectGeometry(grades, data, ["A", "B", "C", "ALL"], "linear", 0);
     await expect(grades.locator("svg.ti-svg")).toHaveAttribute("aria-label", /^Linear chart/);
     await grades.locator("svg.ti-svg").focus();
     await page.keyboard.press("End");
@@ -88,7 +109,7 @@ test.describe("/index interactive charts", () => {
 
     await page.unroute("**/static/token-index/series.json*");
     await page.route("**/static/token-index/series.json*", (route) =>
-      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ as_of: "2026-01-02", start: "2026-01-01", series: { ALL: [1, "oops"], AAA: [1, 2], A: [1, 2], B: [1, 2], C: [1, 2] } }) }));
+      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ as_of: "2026-01-03", start: "2026-01-01", series: { ALL: [1, "oops", 2], AAA: [1, 2, 3], A: [1, 2, 3], B: [1, 2, 3], C: [1, 2, 3] } }) }));
     await page.goto("/index");
     await expect(page.locator('[data-ti-chart="nyte"] img.ti-img-dark')).toBeVisible();
     await expect(page.locator('[data-ti-chart="nyte"]')).not.toHaveClass(/is-live/);

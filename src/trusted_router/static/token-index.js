@@ -19,7 +19,8 @@
     const SVG_NS = 'http://www.w3.org/2000/svg';
     const DAY_MS = 86400000;
     const money = (v) => '$' + (v >= 100 ? Math.round(v).toLocaleString('en-US') : v.toFixed(1));
-    const tickMoney = (v) => '$' + v.toLocaleString('en-US', { maximumFractionDigits: 1 });
+    // enough decimals for the tick's magnitude: $3,000, $2.5, $0.3, $0.03
+    const tickMoney = (v) => '$' + v.toLocaleString('en-US', { maximumFractionDigits: v > 0 && v < 1 ? Math.ceil(-Math.log10(v)) + 1 : 1 });
     const longDate = (d) => `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`;
     const css = (k) => `ti-${k.toLowerCase()}`;
     const svgEl = (tag, attrs, parent) => {
@@ -281,6 +282,8 @@
                 if (hidden.has(k) || v === null)
                     continue;
                 rows.push([k, v]);
+                if (grades && log && v <= 0)
+                    continue; // not on a log scale: listed, not marked
                 svgEl('circle', { cx: hx, cy: g.y(v), r: 4, class: `ti-dot ${css(k)}` }, hoverLayer);
             }
             rows.sort((a, b) => b[1] - a[1]);
