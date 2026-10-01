@@ -112,6 +112,19 @@ for relative in (GATEWAY, "src/trusted_router/gateway_timing.py", SERVICE):
         MUTATIONS.append((f"remove {relative.split('/')[-1]} {site} boundary L{end}", relative, old, new, test))
 
 
+MUTATIONS.extend([
+    ("unguard loss recorder", SERVICE,
+     "    except BaseException:\n        _COVERAGE_UNKNOWN = True",
+     "    except BaseException:\n        raise", UNIT + "test_every_gateway_callback_boundary_including_arguments"),
+    ("drop ContextVar restoration fallback", SERVICE,
+     "        variable.set(previous)\n        raise", "        raise",
+     UNIT + "test_failed_reset_restores_context_for_next_sync_authorize"),
+    ("classify only Exception exits", "src/trusted_router/gateway_timing.py",
+     "    except BaseException as exc:\n        error = exc",
+     "    except Exception as exc:\n        error = exc", UNIT + "test_abnormal_authorize_is_never_a_success"),
+])
+
+
 def main(names: set[str] | None = None) -> None:
     results = []
     with tempfile.TemporaryDirectory(prefix="astra-r3-mutations-", dir="/private/tmp") as directory:

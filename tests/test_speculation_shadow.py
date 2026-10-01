@@ -70,6 +70,43 @@ def key_state(store):
     return store.get("scope", shadow.identity("key", "w", "k"))
 
 
+def install_recorder_fault(monkeypatch, dispatcher, fault):
+    def fail(*args, **kwargs):
+        raise RuntimeError("recorder fault")
+    if fault == "loss-set":
+        monkeypatch.setattr(dispatcher.loss, "set", fail)
+    elif fault == "reason-map":
+        class Reasons(dict):
+            def __getitem__(self, key):
+                fail()
+        class Reason:
+            def __bool__(self):
+                return bool(Reasons()["first"])
+        monkeypatch.setattr(dispatcher, "loss_reason", Reason())
+    elif fault in {"logging", "counter"}:
+        # Inject optional diagnostics inside the recorder; production needs
+        # neither. Their failures must remain inside the recorder's guard.
+        import logging
+        original = shadow._record_loss
+        logger = logging.getLogger("shadow-recorder-test")
+        monkeypatch.setattr(logger, "warning", fail)
+        counter = Mock(side_effect=RuntimeError("counter fault"))
+        def recording(*args):
+            if fault == "logging":
+                logger.warning("observer failure")
+            else:
+                counter()
+            original(*args)
+        monkeypatch.setattr(shadow, "_record_loss", recording)
+
+
+@pytest.fixture(params=[None, "loss-set", "reason-map", "logging", "counter"])
+def recorder_fault(monkeypatch, request):
+    # Production never clears the last-resort marker; test isolation must.
+    monkeypatch.setattr(shadow, "_COVERAGE_UNKNOWN", False)
+    return request.param, lambda dispatcher: install_recorder_fault(monkeypatch, dispatcher, request.param)
+
+
 def test_distinct_history_replay_and_invocation_dedup():
     store = ReferenceStore()
     for seq in range(1, 25):
@@ -372,15 +409,18 @@ def test_disabled_install_and_scope_are_inert(monkeypatch):
     assert not shadow.Observation.mock_calls
 
 
-def test_content_free_observation_and_observer_failure(monkeypatch):
+def test_content_free_observation_and_observer_failure(monkeypatch, recorder_fault):
     dispatcher = shadow.Dispatcher(ReferenceStore(), "p")
+    fault, install_fault = recorder_fault
+    install_fault(dispatcher)
     observation = shadow.Observation(dispatcher, workspace_id="w", key_id="k")
     shadow.complete(observation, {"total_ms": 4, "prompt": "secret"})
     outcome = dataclasses.asdict(dispatcher.pending.get_nowait())
     assert "secret" not in json.dumps(outcome) and "prompt" not in outcome
     monkeypatch.setattr(dispatcher, "try_submit", Mock(side_effect=RuntimeError("do not log me")))
     shadow.complete(observation, {})
-    assert dispatcher.loss.is_set()
+    assert dispatcher.coverage_lost()
+    assert shadow._COVERAGE_UNKNOWN is bool(fault)
 
 
 async def test_nested_async_sync_outcome_once_and_early_unresolved(monkeypatch):
@@ -675,12 +715,14 @@ def test_isolation_preserves_process_control_exceptions(fatal):
 @pytest.mark.parametrize("site", ["_outcome_settings", "outcome_scope", "complete", "_save_outcome_timing", "cleanup", "error-extraction"])
 @pytest.mark.parametrize("failure", [False, True])
 @pytest.mark.parametrize("asynchronous", [False, True])
-async def test_observer_fault_preserves_response_and_exception_identity(monkeypatch, site, failure, asynchronous):
+async def test_observer_fault_preserves_response_and_exception_identity(monkeypatch, site, failure, asynchronous, recorder_fault):
     from contextlib import contextmanager
 
     from trusted_router import gateway_timing as timing
     dispatcher = shadow.Dispatcher(ReferenceStore(), "faults")
     monkeypatch.setattr(shadow, "_RUNTIME", dispatcher)
+    fault, install_fault = recorder_fault
+    install_fault(dispatcher)
     settings = Settings(environment="test", speculative_provider_shadow_enabled=True)
     response = {"data": {"value": object()}}
     error = RuntimeError("ordinary failure")
@@ -725,9 +767,11 @@ async def test_observer_fault_preserves_response_and_exception_identity(monkeypa
     assert holds == ([] if failure else [600])
     # Save-response timing runs only on the successful path.
     if site != "_save_outcome_timing" or not failure:
-        assert dispatcher.loss.is_set()
-        assert dispatcher.loss_reason.startswith("observer-")
+        assert dispatcher.coverage_lost()
+        assert shadow._COVERAGE_UNKNOWN is bool(fault)
+        assert dispatcher.coverage_loss_reason().startswith("coverage-" if fault else "observer-")
     assert shadow._CURRENT.get() is None
+    assert timing._OUTCOME_TIMING.get() is None
 
 
 def _gateway_callback_sites():
@@ -742,7 +786,7 @@ def _gateway_callback_sites():
 
 @pytest.mark.parametrize("line,site", _gateway_callback_sites())
 @pytest.mark.parametrize("argument_failure", [False, True])
-def test_every_gateway_callback_boundary_including_arguments(monkeypatch, line, site, argument_failure):
+def test_every_gateway_callback_boundary_including_arguments(monkeypatch, line, site, argument_failure, recorder_fault):
     """Execute each actual call-site statement with hostile arguments/callbacks.
 
     Coupled with the HTTP lifecycle differential, this also covers rare paused
@@ -760,6 +804,8 @@ def test_every_gateway_callback_boundary_including_arguments(monkeypatch, line, 
     assert isinstance(boundary, ast.With), f"unguarded callback: {site}:{line}"
     dispatcher = shadow.Dispatcher(ReferenceStore(), "faults")
     monkeypatch.setattr(shadow, "_RUNTIME", dispatcher)
+    fault, install_fault = recorder_fault
+    install_fault(dispatcher)
     def fail(*args, **kwargs):
         raise RuntimeError("callback fault")
     class Hostile:
@@ -784,7 +830,9 @@ def test_every_gateway_callback_boundary_including_arguments(monkeypatch, line, 
         raise original_error
     assert caught.value is original_error
     assert holds == [600]
-    assert dispatcher.loss.is_set() and dispatcher.loss_reason == "observer-" + site
+    assert dispatcher.coverage_lost()
+    assert shadow._COVERAGE_UNKNOWN is bool(fault)
+    assert dispatcher.coverage_loss_reason() == ("coverage-unknown" if fault else "observer-" + site)
 
 
 def test_current_deadline_miss_is_per_item_on_refresh(monkeypatch):
@@ -852,3 +900,163 @@ esac
     conflict = run({**env, "SHADOW_CONFLICT": "1"})
     assert conflict.returncode != 0 and "Refusing unexpected retention policy" in conflict.stderr
     assert log.read_text() == first
+
+
+class ResetFault:
+    """Delegate real context operations except reset, including consumed tokens."""
+    def __init__(self, variable, stale=False, steps=None, name=""):
+        self.variable, self.stale, self.steps, self.name = variable, stale, steps, name
+
+    def get(self):
+        return self.variable.get()
+
+    def set(self, value):
+        return self.variable.set(value)
+
+    def reset(self, token):
+        if self.steps is not None:
+            self.steps.append(self.name)
+        if self.stale:
+            installed = self.variable.get()
+            self.variable.reset(token)
+            self.variable.set(installed)
+            self.variable.reset(token)  # real already-used-token RuntimeError
+        raise RuntimeError("reset failed before restoration")
+
+
+@pytest.mark.parametrize("scope", ["shadow", "timing", "both"])
+@pytest.mark.parametrize("stale", [False, True])
+def test_failed_reset_restores_context_for_next_sync_authorize(monkeypatch, scope, stale):
+    from trusted_router import gateway_timing as timing
+    dispatcher = shadow.Dispatcher(ReferenceStore(), "reset")
+    monkeypatch.setattr(shadow, "_RUNTIME", dispatcher)
+    previous = {"previous": 17}
+    timing_token = timing._OUTCOME_TIMING.set(previous)
+    try:
+        if scope in {"shadow", "both"}:
+            monkeypatch.setattr(shadow, "_CURRENT", ResetFault(shadow._CURRENT, stale))
+        if scope in {"timing", "both"}:
+            monkeypatch.setattr(timing, "_OUTCOME_TIMING", ResetFault(timing._OUTCOME_TIMING, stale))
+        @timing.timed_gateway_sync
+        def _authorize_gateway_sync(request, body, settings):
+            return {"data": {"ok": True}}
+        settings = Settings(environment="test", speculative_provider_shadow_enabled=True)
+        for sequence in (1, 2):
+            assert _authorize_gateway_sync(None, None, settings)["data"]["ok"]
+            assert dispatcher.pending.get_nowait().sequence == sequence
+            assert shadow._CURRENT.get() is None
+            assert timing._OUTCOME_TIMING.get() is previous
+        assert dispatcher.coverage_lost()
+    finally:
+        variable = timing._OUTCOME_TIMING
+        (variable.variable if isinstance(variable, ResetFault) else variable).reset(timing_token)
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_finalization_order_survives_completion_cleanup_and_recorder_faults(monkeypatch, recorder_fault, failure):
+    from trusted_router import gateway_timing as timing
+    dispatcher = shadow.Dispatcher(ReferenceStore(), "order")
+    monkeypatch.setattr(shadow, "_RUNTIME", dispatcher)
+    _, install_fault = recorder_fault
+    install_fault(dispatcher)
+    steps = []
+    monkeypatch.setattr(shadow, "_CURRENT", ResetFault(shadow._CURRENT, steps=steps, name="shadow"))
+    monkeypatch.setattr(timing, "_OUTCOME_TIMING", ResetFault(timing._OUTCOME_TIMING, steps=steps, name="timing"))
+    def complete(*args, **kwargs):
+        steps.append("complete")
+        raise ValueError("completion failed")
+    monkeypatch.setattr(shadow, "complete", complete)
+    original = shadow._record_loss
+    def record(*args):
+        steps.append("record")
+        original(*args)
+    monkeypatch.setattr(shadow, "_record_loss", record)
+    error = RuntimeError("ordinary")
+    response = {"data": {"ok": True}}
+    holds = []
+    @timing.timed_gateway_sync
+    def _authorize_gateway_sync(request, body, settings):
+        if failure:
+            raise error
+        holds.append(600)
+        return response
+    settings = Settings(environment="test", speculative_provider_shadow_enabled=True)
+    if failure:
+        with pytest.raises(RuntimeError) as caught:
+            _authorize_gateway_sync(None, None, settings)
+        assert caught.value is error
+    else:
+        assert _authorize_gateway_sync(None, None, settings) is response
+    assert holds == ([] if failure else [600])
+    assert steps == ["complete", "shadow", "timing", "record", "record", "record"]
+    assert shadow._CURRENT.get() is None and timing._OUTCOME_TIMING.get() is None
+    assert dispatcher.coverage_lost()
+
+
+@pytest.mark.parametrize("fatal", ["cancel", "base", "keyboard", "exit"])
+async def test_abnormal_authorize_is_never_a_success(monkeypatch, fatal, recorder_fault):
+    import asyncio
+    from types import SimpleNamespace
+
+    from trusted_router import gateway_timing as timing
+    dispatcher = shadow.Dispatcher(ReferenceStore(), "aborted")
+    monkeypatch.setattr(shadow, "_RUNTIME", dispatcher)
+    _, install_fault = recorder_fault
+    install_fault(dispatcher)
+    error = {"cancel": asyncio.CancelledError, "base": BaseException,
+             "keyboard": KeyboardInterrupt, "exit": SystemExit}[fatal]("ordinary abort")
+    holds = []
+    @timing.timed_gateway_async
+    async def authorize_gateway(request, body, settings):
+        nonlocal error
+        shadow.resolved(SimpleNamespace(workspace_id="w", hash="k", lookup_hash="a" * 64), "nonce")
+        holds.append(600)
+        shadow.authorized(SimpleNamespace(id="committed", invocation_nonce="nonce"), ("endpoint",), False)
+        if fatal == "cancel":
+            pending = asyncio.get_running_loop().create_future()
+            asyncio.get_running_loop().call_soon(pending.cancel)
+            try:
+                await pending
+            except asyncio.CancelledError as cancelled:
+                error = cancelled
+                raise
+        await asyncio.sleep(0)
+        raise error
+    with pytest.raises(type(error)) as caught:
+        await authorize_gateway(None, None, Settings(environment="test", speculative_provider_shadow_enabled=True))
+    assert caught.value is error and holds == [600]
+    outcome = dispatcher.pending.get_nowait()
+    assert outcome.authorization_id == "committed"
+    assert outcome.status == 500 and outcome.reason == "aborted"
+    assert dispatcher.coverage_lost()
+    apply(dispatcher.store, outcome, now=outcome.occurred_at, loss=dispatcher.coverage_lost())
+    assert not key_state(dispatcher.store)["successes"]
+    assert not any(table == "success" for table, _ in dispatcher.store.rows)
+    assert shadow._CURRENT.get() is None and timing._OUTCOME_TIMING.get() is None
+
+
+def test_last_resort_loss_reaches_status_worker_and_mint(monkeypatch):
+    service = ready_service()
+    monkeypatch.setattr(shadow, "_COVERAGE_UNKNOWN", False)
+    monkeypatch.setattr(service.dispatcher.loss, "set", Mock(side_effect=RuntimeError("loss recorder")))
+    shadow.record_loss("test", dispatcher=service.dispatcher)
+    assert shadow._COVERAGE_UNKNOWN
+    assert not service.dispatcher.loss.is_set()  # only the last resort knows
+    response = client(Settings(environment="test", speculative_provider_shadow_enabled=True), service).get("/internal/speculation/shadow/status")
+    assert response.status_code == 503
+    assert response.json()["coverage_lost"] is True
+    assert response.json()["coverage_loss_reason"] == "coverage-unknown"
+    with pytest.raises(shadow.ShadowMiss, match="coverage"):
+        service.mint(facts(), "boot", 2000)
+    # A fresh dispatcher cannot clear process-local uncertainty either.
+    dispatcher = shadow.Dispatcher(ReferenceStore(), "replacement")
+    dispatcher.pending.put_nowait(dataclasses.replace(event(1), producer=dispatcher.producer, incarnation=dispatcher.incarnation))
+    original = dispatcher.store.transaction
+    def flush(operation):
+        original(operation)
+        dispatcher.stopped.set()
+    monkeypatch.setattr(dispatcher.store, "transaction", flush)
+    dispatcher.run()
+    assert dispatcher.health == "coverage-lost"
+    assert dispatcher.store.get("producer", "replacement")["lost"] is True
+    assert shadow._COVERAGE_UNKNOWN

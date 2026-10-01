@@ -110,29 +110,40 @@ def _authorize_outcome(name: str, args: Any, kwargs: Any) -> Iterator[None]:
     stack = ExitStack()
     observation = None
     token = None
+    previous_timing = None
     with shadow.isolate("scope-setup"):
         observation = stack.enter_context(shadow.outcome_scope(settings))
         if observation is not None:
+            previous_timing = _OUTCOME_TIMING.get()
             token = _OUTCOME_TIMING.set({})
     error = None
     try:
         yield
-    except Exception as exc:
+    except BaseException as exc:
         error = exc
         raise
     finally:
-        with shadow.isolate("completion"):
+        # Complete, independently restore both scopes, then record failures.
+        # Recording never runs before cleanup or replaces the ordinary result.
+        failures: list[str] = []
+        with shadow.isolate("completion", observation, deferred=failures):
             if observation is not None:
                 timing = _OUTCOME_TIMING.get() or {}
-                if error is not None:
+                if isinstance(error, Exception):
                     detail = getattr(error, "detail", {})
                     data = detail.get("data", {}) if isinstance(detail, dict) else {}
                     timing = data.get("timing", getattr(error, "gateway_timing_data", {}).get("timing", {}))
-                shadow.complete(observation, timing, error)
-        with shadow.isolate("scope-cleanup"):
+                shadow.complete(observation, timing, error, deferred=failures)
+        def cleanup_timing() -> None:
             if token is not None:
-                _OUTCOME_TIMING.reset(token)
-            stack.close()
+                shadow.restore_context(_OUTCOME_TIMING, token, previous_timing)
+        for cleanup in (stack.close, cleanup_timing):
+            with shadow.isolate("scope-cleanup", observation, deferred=failures):
+                cleanup()
+        for site in failures:
+            shadow.record_loss(site, observation)
+        if error is not None and not isinstance(error, Exception):
+            shadow.record_loss("aborted", observation)
 
 
 def _save_outcome_timing(response: dict[str, Any]) -> None:

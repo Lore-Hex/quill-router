@@ -1,19 +1,40 @@
-# PR3 round 2 validation
+# PR3 round 3 validation
 
-Base: `a773c5b5`, branch `speculation/shadow-observation`. Changes remain
-uncommitted. No git writes, migration, production enablement or deployment.
-The shadow flag stays false; workspace/route/image/producer/slot lists stay empty.
+Base: `573e02dfe823e946ac7e64786b6a2a61b0ffdd21`, branch
+`speculation/shadow-observation`. Round 3 changes are uncommitted; no git writes,
+migration, production enablement or deployment. The shadow flag stays false;
+workspace/route/image/producer/slot lists stay empty.
 
 ## Finding closure
 
 | Finding | Change and evidence |
 |---|---|
-| P1: observer failures alter ordinary results | All nine gateway callbacks and the timing/scope/submission sites use the shared `isolate` boundary. Argument evaluation is inside it. Exceptions set sticky, content-free coverage-loss reasons; process-control exceptions propagate. Fault injection executes every gateway source call site, checks original response/exception identity and holds, and exercises sync/async setup, cleanup, timing and error completion. Real HTTP off/on differentials compare committed holds and all response/state collections with callback, submission and queue faults. |
-| P2: cached deadlines | Current key/trust/price deadlines and the two-second start window are checked before reuse. Shortening mints a fresh generation if eligible, otherwise a typed per-item miss. The exact 2000 → 2010 / trust-fresh-until 2011 reproduction is covered, including no-cache and authenticated batch variants. Tests also shorten claims beyond the cached token's expiry. |
-| P2: native test absent from CI | Native test is parametrized as `spanner-emulator`, included in the explicit emulator list, and protected by an actual subprocess collection assertion with CI's `-k` selection. WIF is workflow-ref based (`infra/gcp_wif.tf`); the emulator job performs no WIF authentication and needs no allowlist change. |
-| P2: incomplete differential | Compares every dict/list/set collection in the fake database: entities, typed counters, reservations, authorizations, generation records, both analytics outboxes, settlement outbox, Stage D watermarks and all versions/state. Boot-authenticated Stage D lifecycle runs authorize → replay → heartbeat → settle/refund. Assertions require nonempty watermarks/outboxes and generation records where applicable. Reviewer's estimate mutation is red. |
-| P2: unbounded event/dedup retention | Idempotent seven-day TTL on event/success tables, regenerated schema, expiry/replay safety tests and shell migration test (first apply, rerun, conflicting-policy refusal). Exposure and scope/producer state receive no TTL. No new application SQL; existing three typed SQL registrations remain unchanged. New migration metadata query and DDL are covered by migration/schema tests. |
-| PLAN evidence list | Runbook contains all three exact SQL statements and typed parameter bindings: credit-shard range, key-limit-shard range, trust-event ordered workspace range with LIMIT 1001. Production PLAN evidence remains a pre-enable requirement; none is claimed here. |
+| P1: recorder failures escape isolation | `src/trusted_router/services/speculation_shadow.py:107` guards all loss recording, including deferred reason bookkeeping, with `BaseException`. Failure sets a sticky process-local reference flag without calls, locks, counters, logging or IO. Status (`routes/internal/speculation.py:26`), worker projection (`services/speculation_shadow.py:261`) and minting (`:478`) honor it, including after dispatcher replacement. Every callback and timing boundary is tested with failed loss.set, reason-map lookup, injected logging and counter diagnostics. Production recording needs no logging or counters. Real HTTP lifecycle differentials include recorder failures and unchanged SQL, responses and all money-state collections. |
+| P1: completion skips cleanup | `src/trusted_router/gateway_timing.py:129` defers completion/submission loss recording until both scope cleanups have independently executed. `tests/test_speculation_shadow.py:956` simultaneously fails completion, both resets and recording; it checks exact step order, response/exception identity and unchanged holds. |
+| P2: failed ContextVar reset leaks state | `src/trusted_router/services/speculation_shadow.py:123` falls back to setting the saved previous value, then reports the reset failure through isolation. Both shadow and outcome-timing scopes use it independently. `tests/test_speculation_shadow.py:929` injects failed and already-used-token resets in either/both variables, restores a nonempty previous timing value, and proves the next direct synchronous request in the same context emits its own event. |
+| P2: cancellation looks successful | `src/trusted_router/gateway_timing.py:122` tracks and re-raises the identical `BaseException`. `services/speculation_shadow.py:192` emits status 500 / reason aborted for non-Exception exits; finalization records sticky coverage loss. `tests/test_speculation_shadow.py:997` cancels an awaited future after observing authorization and also checks BaseException, KeyboardInterrupt and SystemExit. Holds and exception identity survive; projection creates no success rows/history, even with recorder faults. |
+
+Finalization order: **complete → restore shadow scope → restore outcome-timing
+scope → record deferred failures (then abnormal-exit loss)**. Each cleanup has
+its own isolation invocation; a failed step does not early-return. Recorder
+failures themselves only set the last-resort marker.
+
+## Preserved round 2 guarantees
+
+- No added synchronous storage, RPC or await on the observation path; worker IO
+  remains independent. Ordinary authorization stays pinned at **5 operations /
+  6 with the transactional pause gate**, with/without boot authentication and
+  with shadow off/on.
+- All 33 prior mutations remain red; three new mutations are also red.
+- Cached grant reuse still checks current key/trust/price deadlines and the
+  two-second start margin. Shortened deadlines fail closed or mint a shorter grant.
+- Native conformance remains selected as `spanner-emulator` in CI's explicit
+  file list, with digest-pinned emulator image and a collection guard. No WIF change.
+- Full fake-store collection comparisons still cover boot-authenticated Stage D
+  authorize → replay → heartbeat → settle/refund and both analytics outboxes.
+- TTL/schema/migration tests remain intact. All three exact PLAN queries and
+  typed bindings remain in the runbook; production PLAN evidence is still a
+  pre-enable requirement, not claimed here.
 
 ## Retention
 
@@ -31,10 +52,10 @@ The shadow flag stays false; workspace/route/image/producer/slot lists stay empt
 
 ## Environment and gates
 
-Python **3.12** is installed in `/private/tmp/astra-r3b-py312` using frozen
-project dependencies. Commands set `UV_PROJECT_ENVIRONMENT` to that path and
+Python **3.12**, frozen dependencies, existing environment:
+`UV_PROJECT_ENVIRONMENT=/private/tmp/astra-r3b-py312` and
 `UV_CACHE_DIR=/private/tmp/astra-r3b-uv`. The repository's Python 3.11 environment
-is unchanged. Both named local-only Python 3.11 failures pass under 3.12.
+is unchanged. The full run includes both named local-only Python 3.11 failures.
 
 ```text
 uv run ruff check .
@@ -46,81 +67,73 @@ Success: no issues found in 382 source files
 uv run mypy
 Success: no issues found in 382 source files
 
+Expanded shadow + exact RPC/HTTP differential gates
+493 passed, 1190 warnings in 25.04s
+
 Shadow, timing, RPC, Stage D, boot, outbox and conformance selection (-n 4)
-3002 passed, 1068 skipped, 11 xfailed, 1528 warnings in 93.34s
+3243 passed, 1068 skipped, 11 xfailed, 1912 warnings in 102.26s (0:01:42)
 
-Final expanded shadow unit suite
-122 passed, 14 warnings in 16.86s
+uv run python -m tests.speculation_shadow_mutations
+36 red; all 36 baseline and restored-baseline runs pass
 
-Final complete lifecycle differential + migration idempotence
-49 passed, 208 deselected, 774 warnings in 31.17s
-
-Python 3.12 checks for the two named Python 3.11 failures
-2 passed, 6 warnings in 0.92s
-```
-
-Warm ordinary-path RPC assertions remain **5 operations / 6 with the transactional
-pause gate**, with and without boot authentication, in both shadow modes.
-Native emulator execution is unavailable locally: no Docker executable and no
-configured `SPANNER_EMULATOR_HOST`. Skips are not SQL acceptance. CI runs the
-native dedup/rollback test after its emulator readiness check.
-
-Final clean full run, exit code **0**, after all production and collected-test
-changes (no tests excluded):
-
-```text
-uv run pytest -q -p no:cacheprovider -n 4 --basetemp /private/tmp/astra-r3b-$$ \
+uv run pytest -q -p no:cacheprovider -n 4 --basetemp /private/tmp/astra-r3c-$$ \
   --cov=trusted_router --cov-report=term --cov-fail-under=70
-Required test coverage of 70% reached. Total coverage: 85.75%
-16949 passed, 1118 skipped, 12 xfailed, 14044 warnings in 2901.35s (0:48:21)
+Required test coverage of 70% reached. Total coverage: 85.76%
+17182 passed, 1118 skipped, 12 xfailed, 14430 warnings in 3814.20s (1:03:34)
 ```
 
-Full log: `/private/tmp/astra-r3b-full.log`. The actual full-run basetemp
-`/private/tmp/astra-r3b-92726` and focused-run basetemp
-`/private/tmp/astra-r3b-targeted` were deleted after their processes completed.
-Disk was checked before the run (120 GiB available). No post-run fixes to
-production or collected tests were needed. All 33 mutation results are red,
-with passing baseline and restored-baseline runs.
+Final clean full run exited **0**, with no tests excluded and no subsequent
+production/test fixes. Full log: `/private/tmp/astra-r3c-full.log`. Mutation log:
+`/private/tmp/astra-r3c-mutations.log`. Disk was checked before the full run
+(120 GiB available). Full-run basetemp `/private/tmp/astra-r3c-89935` and targeted
+basetemp `/private/tmp/astra-r3c-targeted` were deleted after completion.
+
+Native emulator execution remains unavailable locally: no Docker executable or
+configured `SPANNER_EMULATOR_HOST`. Skips are not SQL acceptance. CI still runs
+the native dedup/rollback test after its emulator readiness check.
 
 ## Mutation receipts
 
-Every mutation runs in a disposable copy with baseline and restored-baseline
-checks. Shell/YAML mutations execute their behavioral test rather than being
-compiled as Python. See `tests/speculation_shadow_mutations.py` and
-`speculation-shadow-mutations.json` for exact replacements, gates and results.
+Every mutation executes behavior gates in a disposable copy, with passing
+baseline and restored-baseline runs. Compile/import errors do not count as
+kills. Exact replacements and gates are in `tests/speculation_shadow_mutations.py`;
+full results are in `speculation-shadow-mutations.json`.
 
-| Round | Mutation | Result | Baseline / restored |
+| # | Mutation | Result | Baseline / restored |
 |---|---|---|---|
 | 1 | duplicate callback counts | red | pass / pass |
-| 1 | current request qualifies | red | pass / pass |
-| 1 | submit waits on worker IO | red | pass / pass |
-| 1 | extra synchronous boot read | red | pass / pass |
-| 1 | success clears sticky loss | red | pass / pass |
-| 1 | lifetime topup treated as paid | red | pass / pass |
-| 1 | real grant type | red | pass / pass |
-| 1 | real store namespace | red | pass / pass |
-| 1 | first batch identity reused | red | pass / pass |
-| 2 | cached current deadlines ignored | red | pass / pass |
-| 2 | exhausted start window untyped | red | pass / pass |
-| 2 | native backend deselected | red | pass / pass |
-| 2 | native explicit CI list omitted | red | pass / pass |
-| 2 | Stage D observer changes estimate | red | pass / pass |
-| 2 | expired replay recreates dedup | red | pass / pass |
-| 2 | old success recreates dedup | red | pass / pass |
-| 2 | retention policy omitted | red | pass / pass |
-| 2 | remove gateway.py resolved boundary L786 | red | pass / pass |
-| 2 | remove gateway.py boot_verified boundary L812 | red | pass / pass |
-| 2 | remove gateway.py authorized boundary L2405 | red | pass / pass |
-| 2 | remove gateway.py reason boundary L790 | red | pass / pass |
-| 2 | remove gateway.py reason boundary L820 | red | pass / pass |
-| 2 | remove gateway.py reason boundary L1611 | red | pass / pass |
-| 2 | remove gateway.py reason boundary L1378 | red | pass / pass |
-| 2 | remove gateway.py reason boundary L1806 | red | pass / pass |
-| 2 | remove gateway.py reason boundary L1718 | red | pass / pass |
-| 2 | remove gateway_timing.py arguments boundary L105 | red | pass / pass |
-| 2 | remove gateway_timing.py scope-setup boundary L113 | red | pass / pass |
-| 2 | remove gateway_timing.py completion boundary L124 | red | pass / pass |
-| 2 | remove gateway_timing.py scope-cleanup boundary L132 | red | pass / pass |
-| 2 | remove gateway_timing.py timing boundary L163 | red | pass / pass |
-| 2 | remove gateway_timing.py timing boundary L188 | red | pass / pass |
-| 2 | remove speculation_shadow.py submit boundary L170 | red | pass / pass |
+| 2 | current request qualifies | red | pass / pass |
+| 3 | submit waits on worker IO | red | pass / pass |
+| 4 | extra synchronous boot read | red | pass / pass |
+| 5 | success clears sticky loss | red | pass / pass |
+| 6 | lifetime topup treated as paid | red | pass / pass |
+| 7 | real grant type | red | pass / pass |
+| 8 | real store namespace | red | pass / pass |
+| 9 | first batch identity reused | red | pass / pass |
+| 10 | cached current deadlines ignored | red | pass / pass |
+| 11 | exhausted start window untyped | red | pass / pass |
+| 12 | native backend deselected | red | pass / pass |
+| 13 | native explicit CI list omitted | red | pass / pass |
+| 14 | Stage D observer changes estimate | red | pass / pass |
+| 15 | expired replay recreates dedup | red | pass / pass |
+| 16 | old success recreates dedup | red | pass / pass |
+| 17 | retention policy omitted | red | pass / pass |
+| 18 | remove gateway.py resolved boundary L786 | red | pass / pass |
+| 19 | remove gateway.py boot_verified boundary L812 | red | pass / pass |
+| 20 | remove gateway.py authorized boundary L2405 | red | pass / pass |
+| 21 | remove gateway.py reason boundary L790 | red | pass / pass |
+| 22 | remove gateway.py reason boundary L820 | red | pass / pass |
+| 23 | remove gateway.py reason boundary L1611 | red | pass / pass |
+| 24 | remove gateway.py reason boundary L1378 | red | pass / pass |
+| 25 | remove gateway.py reason boundary L1806 | red | pass / pass |
+| 26 | remove gateway.py reason boundary L1718 | red | pass / pass |
+| 27 | remove gateway_timing.py arguments boundary L105 | red | pass / pass |
+| 28 | remove gateway_timing.py scope-setup boundary L114 | red | pass / pass |
+| 29 | remove gateway_timing.py completion boundary L129 | red | pass / pass |
+| 30 | remove gateway_timing.py scope-cleanup boundary L141 | red | pass / pass |
+| 31 | remove gateway_timing.py timing boundary L174 | red | pass / pass |
+| 32 | remove gateway_timing.py timing boundary L199 | red | pass / pass |
+| 33 | remove speculation_shadow.py submit boundary L204 | red | pass / pass |
+| 34 | unguard loss recorder | red | pass / pass |
+| 35 | drop ContextVar restoration fallback | red | pass / pass |
+| 36 | classify only Exception exits | red | pass / pass |

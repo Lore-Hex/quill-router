@@ -23,15 +23,15 @@ def register(router: APIRouter) -> None:
         service = getattr(request.app.state, "speculation_shadow", None)
         state = getattr(request.app.state, "speculation_shadow_status", "not-started")
         if service is not None:
-            state = service.dispatcher.health
+            state = "coverage-lost" if service.dispatcher.coverage_lost() else service.dispatcher.health
             if state == "observing" and service.signer is None:
                 state = "shadow-issuer-unavailable"
         return JSONResponse({"status": state, "authority": "shadow-only", "grant_readiness": "evaluated-per-item",
                              "worker_rpcs": service.dispatcher.total_rpcs if service else 0,
                              "refresh_rpcs": service.total_rpcs if service else 0,
                              "queue_depth": service.dispatcher.pending.qsize() if service else 0,
-                             "coverage_lost": service.dispatcher.loss.is_set() if service else False,
-                             "coverage_loss_reason": service.dispatcher.loss_reason if service else ""},
+                             "coverage_lost": service.dispatcher.coverage_lost() if service else False,
+                             "coverage_loss_reason": service.dispatcher.coverage_loss_reason() if service else ""},
                             status_code=200 if state == "observing" else 503)
 
     @router.post("/internal/speculation/shadow/refresh")

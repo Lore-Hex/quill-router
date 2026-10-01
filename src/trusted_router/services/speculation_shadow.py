@@ -90,10 +90,47 @@ class Observation:
 
 _CURRENT: contextvars.ContextVar[Observation | None] = contextvars.ContextVar("speculation_shadow", default=None)
 _RUNTIME: Dispatcher | None = None
+# Last resort: a single process-local reference assignment, with no locks,
+# callbacks, allocation, logging or IO. Never cleared during process lifetime.
+_COVERAGE_UNKNOWN = False
+
+
+def _record_loss(site: str, observation: Observation | None, dispatcher: Dispatcher | None) -> None:
+    observation = observation or _CURRENT.get()
+    dispatcher = dispatcher or (observation.dispatcher if observation is not None else _RUNTIME)
+    if dispatcher is not None:
+        dispatcher.loss.set()
+        if not dispatcher.loss_reason:
+            dispatcher.loss_reason = "observer-" + site
+
+
+def record_loss(site: str, observation: Observation | None = None, dispatcher: Dispatcher | None = None, *, deferred: list[str] | None = None) -> None:
+    """The recorder itself is untrusted; even its diagnostics cannot escape.
+
+    BaseException here guards only recording, never the ordinary operation or
+    the observer callback. There is deliberately no request-path logging.
+    """
+    global _COVERAGE_UNKNOWN
+    try:
+        if deferred is not None:
+            deferred.append(site)
+        else:
+            _record_loss(site, observation, dispatcher)
+    except BaseException:
+        _COVERAGE_UNKNOWN = True
+
+
+def restore_context(variable: contextvars.ContextVar[Any], token: contextvars.Token[Any], previous: Any) -> None:
+    """Restore even if reset fails (including a stale/already-used token)."""
+    try:
+        variable.reset(token)
+    except BaseException:
+        variable.set(previous)
+        raise
 
 
 @contextmanager
-def isolate(site: str, observation: Observation | None = None) -> Iterator[None]:
+def isolate(site: str, observation: Observation | None = None, *, deferred: list[str] | None = None) -> Iterator[None]:
     """Guard callbacks AND their argument evaluation, never the ordinary operation.
 
     Process termination/cancellation (BaseException) is deliberately not swallowed.
@@ -102,12 +139,7 @@ def isolate(site: str, observation: Observation | None = None) -> Iterator[None]
     try:
         yield
     except Exception:
-        observation = observation or _CURRENT.get()
-        dispatcher = observation.dispatcher if observation is not None else _RUNTIME
-        if dispatcher is not None:
-            dispatcher.loss.set()
-            if not dispatcher.loss_reason:
-                dispatcher.loss_reason = "observer-" + site
+        record_loss(site, observation, deferred=deferred)
 
 
 def resolved(key: Any, nonce: str | None) -> None:
@@ -149,26 +181,28 @@ def outcome_scope(settings: Any) -> Iterator[Observation | None]:
         yield None
         return
     observation = Observation(_RUNTIME)
+    previous = _CURRENT.get()
     token = _CURRENT.set(observation)
     try:
         yield observation
     finally:
-        _CURRENT.reset(token)
+        restore_context(_CURRENT, token, previous)
 
 
-def complete(observation: Observation | None, timing: Mapping[str, int], error: Exception | None = None) -> None:
+def complete(observation: Observation | None, timing: Mapping[str, int], error: BaseException | None = None, *, deferred: list[str] | None = None) -> None:
     if observation is None:
         return
     # Never parse error messages or queue a response/body/BYOK object.
-    status = int(getattr(error, "status_code", 500)) if error else 200
-    code = observation.reason
+    aborted = error is not None and not isinstance(error, Exception)
+    status = 500 if aborted else int(getattr(error, "status_code", 500)) if error is not None else 200
+    code = "aborted" if aborted else observation.reason
     if not code:
         detail = getattr(error, "detail", None)
         typed = detail.get("error", {}).get("type", "") if isinstance(detail, dict) and isinstance(detail.get("error"), dict) else ""
         code = {"key_limit_exceeded": "key_limit_exceeded", "key_window_limit_exceeded": "key_window_limit_exceeded", "insufficient_credits": "credit_exhausted",
                 "billing_paused": "billing_paused"}.get(typed, "success" if not error else "request_error")
-    with isolate("submit", observation):
-        observation.dispatcher.try_submit(observation, status, code, timing)
+    with isolate("submit", observation, deferred=deferred):
+        observation.dispatcher.try_submit(observation, status, code, timing, deferred=deferred)
 
 
 class Dispatcher:
@@ -187,10 +221,16 @@ class Dispatcher:
         self.total_rpcs = 0
         self.thread: threading.Thread | None = None
 
-    def try_submit(self, observation: Observation, status: int, code: str, timing: Mapping[str, int]) -> None:
+    def coverage_lost(self) -> bool:
+        return _COVERAGE_UNKNOWN or self.loss.is_set()
+
+    def coverage_loss_reason(self) -> str:
+        return "coverage-unknown" if _COVERAGE_UNKNOWN else self.loss_reason
+
+    def try_submit(self, observation: Observation, status: int, code: str, timing: Mapping[str, int], *, deferred: list[str] | None = None) -> None:
         # The worker NEVER takes this lock. Contention is a coverage loss, not a wait.
         if not self.lock.acquire(blocking=False):
-            self.loss.set()
+            record_loss("queue", dispatcher=self, deferred=deferred)
             return
         try:
             self.sequence += 1
@@ -202,7 +242,7 @@ class Dispatcher:
                             ("total_ms", "key_lookup_ms", "routing_ms", "store_ms", "post_commit_ms", "spanner_rpcs") if k in timing), observation.boot_id, observation.route_identity)
             self.pending.put_nowait(event)
         except queue.Full:
-            self.loss.set()
+            record_loss("queue", dispatcher=self, deferred=deferred)
         finally:
             self.lock.release()
 
@@ -218,7 +258,7 @@ class Dispatcher:
                 try:
                     self.store.ready()
                     self.store.transaction(lambda tx: project(tx, event, self.producer, self.incarnation,
-                                                             self.sequence, self.loss.is_set(), int(time.time()), self.membership))
+                                                             self.sequence, self.coverage_lost(), int(time.time()), self.membership))
                 finally:
                     self.last_rpcs = counter.value()
                     self.total_rpcs += self.last_rpcs
@@ -232,16 +272,16 @@ class Dispatcher:
                 flush(event)
                 # Loss remains sticky for this incarnation. A clean restart and
                 # full fifteen-minute interval are required after local data loss.
-                self.health = "coverage-lost" if self.loss.is_set() else "observing"
+                self.health = "coverage-lost" if self.coverage_lost() else "observing"
             except Exception:
-                self.loss.set()
+                record_loss("worker", dispatcher=self)
                 self.health = "shadow-storage-unavailable"
             finally:
                 if event is not None:
                     self.pending.task_done()
 
     def close(self) -> None:
-        self.loss.set()
+        record_loss("close", dispatcher=self)
         self.stopped.set()
         if self.thread is not None:
             self.thread.join(timeout=3)
@@ -435,7 +475,7 @@ class RefreshService:
             raise ShadowMiss("shadow-policy-stale")
         if facts["workspace_id"] not in settings.speculation_shadow_workspaces:
             raise ShadowMiss("workspace-not-allowed")
-        if self.dispatcher.loss.is_set() or self.dispatcher.health != "observing":
+        if self.dispatcher.coverage_lost() or self.dispatcher.health != "observing":
             raise ShadowMiss("coverage-lost")
         if self.signer is None:
             raise ShadowMiss("shadow-issuer-unavailable")

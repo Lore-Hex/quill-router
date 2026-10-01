@@ -909,14 +909,14 @@ def shadow_rpc_differential_mode(request, monkeypatch):
 
 @pytest.mark.parametrize("refund", [False, True])
 @pytest.mark.parametrize("stage_d", [False, True])
-@pytest.mark.parametrize("fault", ["none", "queue-full", "observer-failed", "resolved", "boot_verified", "authorized"])
+@pytest.mark.parametrize("fault", ["none", "queue-full", "observer-failed", "resolved", "boot_verified", "authorized", "loss-set", "reason-map", "logging"])
 def test_shadow_response_money_and_sql_differential(monkeypatch, fixed_operation_catalog, spanner_operations, refund, fault, stage_d):
     import datetime as dt
     import uuid
 
     from fastapi.testclient import TestClient
 
-    from tests.test_speculation_shadow import ReferenceStore
+    from tests.test_speculation_shadow import ReferenceStore, install_recorder_fault
     from trusted_router import acquisition, gateway_timing
     from trusted_router.main import create_app
     from trusted_router.services import speculation_shadow as shadow
@@ -947,6 +947,7 @@ def test_shadow_response_money_and_sql_differential(monkeypatch, fixed_operation
         monkeypatch.setattr(module, "datetime", Clock)
     monkeypatch.setattr(uuid, "uuid4", lambda: uuid.UUID(int=42))
     monkeypatch.setattr(gateway_timing, "perf_counter", lambda: 1.0)
+    monkeypatch.setattr(shadow, "_COVERAGE_UNKNOWN", False)
     transcripts = []
     for enabled in (False, True):
         for k, v in saved.items():
@@ -968,6 +969,11 @@ def test_shadow_response_money_and_sql_differential(monkeypatch, fixed_operation
             def fail(*args):
                 raise RuntimeError("observer failed")
             monkeypatch.setattr(dispatcher, "try_submit", fail)
+        if fault in {"loss-set", "reason-map", "logging"}:
+            install_recorder_fault(monkeypatch, dispatcher, fault)
+            def fail(*args, **kwargs):
+                raise RuntimeError("observer failed")
+            monkeypatch.setattr(shadow, "authorized", fail)
         if fault in {"resolved", "boot_verified", "authorized"}:
             def fail(*args):
                 raise RuntimeError("observer failed")
@@ -1027,7 +1033,7 @@ def test_shadow_response_money_and_sql_differential(monkeypatch, fixed_operation
         collections = {k: copy.deepcopy(v) for k, v in vars(database).items() if isinstance(v, (dict, list, set))}
         transcripts.append((responses, copy.deepcopy(spanner_operations), collections))
         if enabled and fault != "none":
-            assert dispatcher.loss.is_set()
+            assert dispatcher.coverage_lost()
     assert len(transcripts[0][1]) == len(transcripts[1][1])
     for off, on in zip(transcripts[0][1], transcripts[1][1], strict=True):
         assert off == on

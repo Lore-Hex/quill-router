@@ -252,6 +252,21 @@ propagate. Failures set sticky coverage loss and its first content-free site
 reason, exposed by shadow status. The boundary never encloses ordinary billing
 work, so an ordinary response or exception retains its identity.
 
+Round 3 also guards the loss recorder itself, including reason bookkeeping.
+Any recorder failure sets a process-local `coverage-unknown` marker using only
+a reference assignment; no synchronous storage, counters or logging are needed.
+The marker is sticky for the process lifetime, including dispatcher replacement.
+Status returns 503, the worker persists producer loss, and grant minting refuses
+coverage whenever it is set. A process restart and the full clean coverage
+interval are required to recover; restarting only the dispatcher is insufficient.
+
+Finalization runs in this order: complete the observation, restore the shadow
+scope, restore the outcome-timing scope, then record deferred loss reasons.
+Each scope cleanup has its own guard. Failed ContextVar resets (including stale
+tokens) fall back to setting the saved previous value. Ordinary `BaseException`
+exits propagate unchanged: cancellation is recorded as `status=500`,
+`reason=aborted`, with sticky coverage loss, never as a successful authorization.
+
 Cached grant reuse rechecks current key/trust/price deadlines and the two-second
 start margin. A shorter deadline mints a fresh generation only if the current
 facts still qualify; otherwise the item returns `start-window-exhausted`.
