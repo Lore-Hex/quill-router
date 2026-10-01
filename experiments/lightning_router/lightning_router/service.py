@@ -11,7 +11,7 @@ import segno
 from .credentials import Credentials
 from .credits import Credits
 from .errors import FundingReviewRequired
-from .lexe import Lexe
+from .lexe import Lexe, LexeReadinessError
 from .lnd import Invoice, Lnd
 from .money import MAX_CREDIT_RECEIPT, btc, microdollars, usd
 from .rates import Rate, Rates
@@ -176,6 +176,8 @@ class Funding:
             self._observe(row, invoice)
         except FundingReviewRequired:
             raise
+        except LexeReadinessError as exc:
+            raise FundingReviewRequired("wallet_unavailable") from exc
         except ValueError as exc:
             raise FundingReviewRequired("invoice_invalid") from exc
         self._deliver_credit(self.store.invoice(row["id"], row["key_hash"]))

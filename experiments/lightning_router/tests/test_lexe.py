@@ -19,6 +19,13 @@ from sqlalchemy import select, update
 
 WALLET = "a" * 64
 
+# Captured from the attested 0.10.5 node, independent of the adapter allowlist.
+NODE_0105_PERMISSIONS = [
+    "cancel_payment", "create_invoice", "create_offer", "get_human_bitcoin_address",
+    "get_new_payments", "get_next_unused_address", "get_payment_by_id", "get_payments_by_indexes",
+    "get_updated_payments", "get_user_settings", "list_broadcasted_txs", "list_channels", "node_info", "resync",
+]
+
 
 class Node:
     """Real signed BOLT11s and the documented REST contract, no live funds."""
@@ -412,6 +419,42 @@ def test_wrong_wallet_or_privilege_or_expiry_fails_before_invoice(lexe, raw_key)
 def test_jit_readiness_accepts_zero_channels(lexe):
     funding, _ = lexe
     assert funding.receiving_ready(100_000_000)
+
+
+@pytest.mark.parametrize("paid", [False, True])
+def test_node_0105_recovers_reviewed_invoice_without_duplicate_creation_or_credit(lexe, raw_key, paid):
+    funding, node = lexe
+    row = create(funding, raw_key)
+    if paid:
+        node.pay(row["provider_index"])
+    funding.store.failed(row["id"], "invoice_invalid", int(time.time()) - 301, review=True)
+    node.permissions = list(NODE_0105_PERMISSIONS)
+    funding.lexe._checked = 0
+    funding.refresh(row, cancel=not paid)
+    funding.refresh(row, cancel=not paid)
+    result = funding.store.invoice(row["id"], row["key_hash"])
+    assert result["state"] == ("SETTLED" if paid else "CANCELED")
+    assert result["failure_code"] == ""
+    assert node.creates == 1
+    with funding.store.engine.connect() as conn:
+        saved = conn.execute(select(deposits)).all()
+    assert len(saved) == (1 if paid else 0)
+    assert bool(funding.credits.balances) is paid
+
+
+@pytest.mark.parametrize("extra", ["future_unknown", "pay_invoice", "update_user_settings", "open_channel"])
+def test_unreviewed_authority_is_wallet_failure_not_invalid_invoice(lexe, raw_key, caplog, extra):
+    funding, node = lexe
+    row = create(funding, raw_key)
+    node.permissions = [*NODE_0105_PERMISSIONS, extra]
+    funding.lexe._checked = 0
+    with pytest.raises(FundingReviewRequired, match="wallet_unavailable"):
+        funding.refresh(row)
+    assert funding.lexe._checked == 0
+    assert "lightning.lexe_readiness_failed reason=unreviewed_permissions" in caplog.text
+    assert extra not in caplog.text
+    assert not funding.credits.balances
+    assert node.creates == 1
 
 
 def test_duplicate_recovery_correlation_requires_review(lexe, raw_key):
