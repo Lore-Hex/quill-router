@@ -588,7 +588,40 @@ def test_operator_deploy_calls_bake_gate_after_mutex_before_first_mutation(
     mutation = script.index(first_mutation)
 
     assert source < mutex < gate < mutation
-    assert re.search(rf"(?m)^cloud_bake_gate {cloud}$", script)
+    assert re.search(rf"(?m)^cloud_bake_gate {cloud}(?: \|\| bake_status=\$\?)?$", script)
+
+
+@pytest.mark.parametrize(
+    "relative",
+    (
+        "scripts/deploy/aws_ecs_control_plane.sh",
+        "scripts/deploy/azure_control_plane.sh",
+    ),
+)
+@pytest.mark.parametrize("gate_status", (0, 1, 2, 75))
+def test_promotion_gate_only_continues_after_success(
+    relative: str, gate_status: int
+) -> None:
+    script = (ROOT / relative).read_text(encoding="utf-8")
+    start = script.index("bake_status=0\n")
+    end_marker = '[ "$bake_status" -eq 0 ] || exit "$bake_status"'
+    end = script.index(end_marker, start) + len(end_marker)
+    result = subprocess.run(  # noqa: S603 - execute only the tested gate block
+        [
+            BASH,
+            "-euc",
+            f"cloud_bake_gate() {{ return {gate_status}; }}\n"
+            "log() { :; }\n"
+            + script[start:end]
+            + "\nprintf 'deploy-mutation\\n'\n",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == (0 if gate_status == 75 else gate_status)
+    assert ("deploy-mutation" in result.stdout) is (gate_status == 0)
 
 
 def test_azure_canary_app_refuses_production_names_without_bake_override() -> None:
