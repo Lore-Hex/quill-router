@@ -36,7 +36,11 @@ def test_debt_index_carrier_is_additive_and_idempotent(tmp_path, monkeypatch):
         assert sql.startswith(f"CREATE INDEX IF NOT EXISTS {INDEX} ON tr_trust_event "
                               "(workspace_id, kind, unrecovered_micro)")
         assert sql.replace("IF NOT EXISTS ", "") in DDL
-        assert set(TRUST_EVENT_COLUMNS) <= set(re.findall(r"\w+", sql))
+        # Key-only on purpose: the no-debt seek needs only these columns, and the base
+        # primary key rides along; a covering STORING copy would double the table.
+        assert {"workspace_id", "kind", "unrecovered_micro"} <= set(TRUST_EVENT_COLUMNS)
+        assert "STORING" not in sql
+        assert set(re.findall(r"\w+", sql)) & set(TRUST_EVENT_COLUMNS) == {"workspace_id", "kind", "unrecovered_micro"}
         assert "DROP" not in sql and "ALTER" not in sql
 
 
