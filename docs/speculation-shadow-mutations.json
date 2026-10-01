@@ -7,7 +7,7 @@
     "gate": "tests/test_speculation_shadow.py::test_distinct_history_replay_and_invocation_dedup",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_distinct_history_replay_and_invocation_dedup",
-      "1 failed, 6 warnings in 1.64s"
+      "1 failed, 6 warnings in 2.73s"
     ]
   },
   {
@@ -18,7 +18,7 @@
     "gate": "tests/test_speculation_shadow.py::test_current_request_cannot_qualify_its_predecision",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_current_request_cannot_qualify_its_predecision",
-      "1 failed, 6 warnings in 1.59s"
+      "1 failed, 6 warnings in 2.50s"
     ]
   },
   {
@@ -29,7 +29,7 @@
     "gate": "tests/test_speculation_shadow.py::test_submit_does_not_wait_for_worker_io",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_submit_does_not_wait_for_worker_io",
-      "1 failed, 6 warnings in 4.02s"
+      "1 failed, 6 warnings in 3.67s"
     ]
   },
   {
@@ -43,7 +43,7 @@
       "FAILED tests/test_gateway_authorize_spanner_operations.py::test_warm_lookup_authorize_exact_sequence_and_contents[shadow-on-False-True]",
       "FAILED tests/test_gateway_authorize_spanner_operations.py::test_warm_lookup_authorize_exact_sequence_and_contents[shadow-on-True-False]",
       "FAILED tests/test_gateway_authorize_spanner_operations.py::test_warm_lookup_authorize_exact_sequence_and_contents[shadow-on-True-True]",
-      "4 failed, 4 passed, 6 warnings in 3.22s"
+      "4 failed, 4 passed, 6 warnings in 2.93s"
     ]
   },
   {
@@ -54,7 +54,7 @@
     "gate": "tests/test_speculation_shadow.py::test_loss_restart_unacknowledged_tail_and_late_membership",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_loss_restart_unacknowledged_tail_and_late_membership",
-      "1 failed, 6 warnings in 2.53s"
+      "1 failed, 6 warnings in 2.14s"
     ]
   },
   {
@@ -65,7 +65,7 @@
     "gate": "tests/test_speculation_shadow.py::test_promotional_mixed_funds_conservation",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_promotional_mixed_funds_conservation",
-      "1 failed, 6 warnings in 2.23s"
+      "1 failed, 6 warnings in 2.09s"
     ]
   },
   {
@@ -76,7 +76,7 @@
     "gate": "tests/test_speculation_shadow.py::test_exact_v1_signer_round_trip_frozen_verifier_and_authority",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_exact_v1_signer_round_trip_frozen_verifier_and_authority",
-      "1 failed, 6 warnings in 1.72s"
+      "1 failed, 6 warnings in 2.08s"
     ]
   },
   {
@@ -87,7 +87,7 @@
     "gate": "tests/test_speculation_shadow.py::test_authority_namespace_at_native_mutation_boundary",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_authority_namespace_at_native_mutation_boundary",
-      "1 failed, 6 warnings in 1.80s"
+      "1 failed, 6 warnings in 1.99s"
     ]
   },
   {
@@ -98,7 +98,7 @@
     "gate": "tests/test_speculation_shadow.py::test_batch_binding_every_member_and_exact_body",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_batch_binding_every_member_and_exact_body",
-      "1 failed, 6 warnings in 1.73s"
+      "1 failed, 6 warnings in 1.98s"
     ]
   },
   {
@@ -109,7 +109,7 @@
     "gate": "tests/test_speculation_shadow.py::test_cached_grant_rechecks_current_deadlines",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_cached_grant_rechecks_current_deadlines[trust_fresh_until-2050]",
-      "1 failed, 14 passed, 6 warnings in 1.93s"
+      "1 failed, 14 passed, 6 warnings in 2.41s"
     ]
   },
   {
@@ -125,7 +125,7 @@
       "FAILED tests/test_speculation_shadow.py::test_cached_grant_rechecks_current_deadlines[key_expires_at-2012]",
       "FAILED tests/test_speculation_shadow.py::test_cached_grant_rechecks_current_deadlines[price_expires_at-2011]",
       "FAILED tests/test_speculation_shadow.py::test_cached_grant_rechecks_current_deadlines[price_expires_at-2012]",
-      "6 failed, 9 passed, 6 warnings in 2.36s"
+      "6 failed, 9 passed, 6 warnings in 2.74s"
     ]
   },
   {
@@ -136,7 +136,7 @@
     "gate": "tests/test_speculation_shadow.py::test_native_shadow_is_selected_by_ci",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_native_shadow_is_selected_by_ci",
-      "1 failed, 6 warnings in 7.64s"
+      "1 failed, 6 warnings in 10.12s"
     ]
   },
   {
@@ -147,7 +147,7 @@
     "gate": "tests/test_speculation_shadow.py::test_native_shadow_is_selected_by_ci",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_native_shadow_is_selected_by_ci",
-      "1 failed, 6 warnings in 1.69s"
+      "1 failed, 6 warnings in 2.10s"
     ]
   },
   {
@@ -181,7 +181,7 @@
       "FAILED tests/test_gateway_authorize_spanner_operations.py::test_shadow_response_money_and_sql_differential[shadow-on-resolved-True-True]",
       "FAILED tests/test_gateway_authorize_spanner_operations.py::test_shadow_response_money_and_sql_differential[shadow-on-boot_verified-True-False]",
       "FAILED tests/test_gateway_authorize_spanner_operations.py::test_shadow_response_money_and_sql_differential[shadow-on-boot_verified-True-True]",
-      "20 failed, 52 passed, 1158 warnings in 62.57s (0:01:02)"
+      "20 failed, 52 passed, 1158 warnings in 53.74s"
     ]
   },
   {
@@ -192,7 +192,7 @@
     "gate": "tests/test_speculation_shadow.py::test_expired_delivery_after_ttl_cannot_requalify_or_extend_retention",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_expired_delivery_after_ttl_cannot_requalify_or_extend_retention",
-      "1 failed, 6 warnings in 1.88s"
+      "1 failed, 6 warnings in 2.23s"
     ]
   },
   {
@@ -203,7 +203,7 @@
     "gate": "tests/test_speculation_shadow.py::test_success_older_than_history_does_not_recreate_dedup",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_success_older_than_history_does_not_recreate_dedup",
-      "1 failed, 6 warnings in 1.70s"
+      "1 failed, 6 warnings in 2.20s"
     ]
   },
   {
@@ -214,7 +214,7 @@
     "gate": "tests/test_speculation_shadow.py::test_shadow_ttl_only_applies_to_event_and_success",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_shadow_ttl_only_applies_to_event_and_success",
-      "1 failed, 6 warnings in 4.78s"
+      "1 failed, 6 warnings in 6.14s"
     ]
   },
   {
@@ -234,7 +234,7 @@
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-787-resolved]",
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-787-resolved]",
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-787-resolved]",
-      "10 failed, 80 passed, 6 warnings in 7.80s"
+      "10 failed, 80 passed, 6 warnings in 8.53s"
     ]
   },
   {
@@ -254,7 +254,7 @@
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-813-boot_verified]",
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-813-boot_verified]",
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-813-boot_verified]",
-      "10 failed, 80 passed, 6 warnings in 7.45s"
+      "10 failed, 80 passed, 6 warnings in 7.66s"
     ]
   },
   {
@@ -274,7 +274,7 @@
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-2406-authorized]",
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-2406-authorized]",
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-2406-authorized]",
-      "10 failed, 80 passed, 6 warnings in 7.55s"
+      "10 failed, 80 passed, 6 warnings in 9.18s"
     ]
   },
   {
@@ -294,7 +294,7 @@
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-791-reason]",
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-791-reason]",
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-791-reason]",
-      "10 failed, 80 passed, 6 warnings in 8.31s"
+      "10 failed, 80 passed, 6 warnings in 7.83s"
     ]
   },
   {
@@ -314,7 +314,7 @@
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-821-reason]",
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-821-reason]",
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-821-reason]",
-      "10 failed, 80 passed, 6 warnings in 9.23s"
+      "10 failed, 80 passed, 6 warnings in 8.66s"
     ]
   },
   {
@@ -334,7 +334,7 @@
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-1612-reason]",
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-1612-reason]",
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-1612-reason]",
-      "10 failed, 80 passed, 6 warnings in 6.98s"
+      "10 failed, 80 passed, 6 warnings in 8.61s"
     ]
   },
   {
@@ -354,7 +354,7 @@
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-1379-reason]",
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-1379-reason]",
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-1379-reason]",
-      "10 failed, 80 passed, 6 warnings in 8.88s"
+      "10 failed, 80 passed, 6 warnings in 8.45s"
     ]
   },
   {
@@ -374,7 +374,7 @@
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-1807-reason]",
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-1807-reason]",
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-1807-reason]",
-      "10 failed, 80 passed, 6 warnings in 8.70s"
+      "10 failed, 80 passed, 6 warnings in 7.96s"
     ]
   },
   {
@@ -394,11 +394,11 @@
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[logging-True-1719-reason]",
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-False-1719-reason]",
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-1719-reason]",
-      "10 failed, 80 passed, 6 warnings in 8.89s"
+      "10 failed, 80 passed, 6 warnings in 8.67s"
     ]
   },
   {
-    "mutation": "remove gateway_timing.py arguments boundary L105",
+    "mutation": "remove gateway_timing.py arguments boundary L119",
     "baseline": "pass",
     "result": "red",
     "restored": "pass",
@@ -424,11 +424,11 @@
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-False-True-_outcome_settings]",
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-True-False-_outcome_settings]",
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-True-True-_outcome_settings]",
-      "20 failed, 100 passed, 6 warnings in 6.20s"
+      "20 failed, 100 passed, 6 warnings in 5.00s"
     ]
   },
   {
-    "mutation": "remove gateway_timing.py scope-cleanup boundary L119",
+    "mutation": "remove gateway_timing.py scope-cleanup boundary L133",
     "baseline": "pass",
     "result": "red",
     "restored": "pass",
@@ -454,11 +454,11 @@
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-False-True-cleanup]",
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-True-False-cleanup]",
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-True-True-cleanup]",
-      "20 failed, 100 passed, 6 warnings in 13.91s"
+      "20 failed, 100 passed, 6 warnings in 5.80s"
     ]
   },
   {
-    "mutation": "remove gateway_timing.py scope-setup boundary L128",
+    "mutation": "remove gateway_timing.py scope-setup boundary L146",
     "baseline": "pass",
     "result": "red",
     "restored": "pass",
@@ -484,11 +484,11 @@
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-False-True-outcome_scope]",
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-True-False-outcome_scope]",
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-True-True-outcome_scope]",
-      "20 failed, 100 passed, 6 warnings in 11.65s"
+      "20 failed, 100 passed, 6 warnings in 4.98s"
     ]
   },
   {
-    "mutation": "remove gateway_timing.py completion boundary L139",
+    "mutation": "remove gateway_timing.py completion boundary L157",
     "baseline": "pass",
     "result": "red",
     "restored": "pass",
@@ -524,11 +524,11 @@
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-True-False-complete]",
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-True-True-complete]",
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-True-True-error-extraction]",
-      "30 failed, 90 passed, 6 warnings in 12.28s"
+      "30 failed, 90 passed, 6 warnings in 6.31s"
     ]
   },
   {
-    "mutation": "remove gateway_timing.py timing boundary L189",
+    "mutation": "remove gateway_timing.py timing boundary L207",
     "baseline": "pass",
     "result": "red",
     "restored": "pass",
@@ -539,11 +539,11 @@
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[reason-map-False-False-_save_outcome_timing]",
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[logging-False-False-_save_outcome_timing]",
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-False-False-_save_outcome_timing]",
-      "5 failed, 115 passed, 6 warnings in 9.88s"
+      "5 failed, 115 passed, 6 warnings in 3.92s"
     ]
   },
   {
-    "mutation": "remove gateway_timing.py timing boundary L214",
+    "mutation": "remove gateway_timing.py timing boundary L232",
     "baseline": "pass",
     "result": "red",
     "restored": "pass",
@@ -554,11 +554,11 @@
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[reason-map-True-False-_save_outcome_timing]",
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[logging-True-False-_save_outcome_timing]",
       "FAILED tests/test_speculation_shadow.py::test_observer_fault_preserves_response_and_exception_identity[counter-True-False-_save_outcome_timing]",
-      "5 failed, 115 passed, 6 warnings in 13.69s"
+      "5 failed, 115 passed, 6 warnings in 4.19s"
     ]
   },
   {
-    "mutation": "remove speculation_shadow.py submit boundary L221",
+    "mutation": "remove speculation_shadow.py submit boundary L224",
     "baseline": "pass",
     "result": "red",
     "restored": "pass",
@@ -569,7 +569,7 @@
       "FAILED tests/test_speculation_shadow.py::test_content_free_observation_and_observer_failure[reason-map]",
       "FAILED tests/test_speculation_shadow.py::test_content_free_observation_and_observer_failure[logging]",
       "FAILED tests/test_speculation_shadow.py::test_content_free_observation_and_observer_failure[counter]",
-      "5 failed, 6 warnings in 15.75s"
+      "5 failed, 6 warnings in 2.82s"
     ]
   },
   {
@@ -651,7 +651,7 @@
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-1379-reason]",
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-1807-reason]",
       "FAILED tests/test_speculation_shadow.py::test_every_gateway_callback_boundary_including_arguments[counter-True-1719-reason]",
-      "72 failed, 18 passed, 6 warnings in 90.26s (0:01:30)"
+      "72 failed, 18 passed, 6 warnings in 18.56s"
     ]
   },
   {
@@ -662,24 +662,24 @@
     "gate": "tests/test_speculation_shadow.py::test_failed_reset_restores_context_for_next_sync_authorize",
     "summary": [
       "___ test_failed_reset_restores_context_for_next_sync_authorize[False-shadow] ___",
-      "tests/test_speculation_shadow.py:948: in test_failed_reset_restores_context_for_next_sync_authorize",
+      "tests/test_speculation_shadow.py:950: in test_failed_reset_restores_context_for_next_sync_authorize",
       "___ test_failed_reset_restores_context_for_next_sync_authorize[False-timing] ___",
-      "tests/test_speculation_shadow.py:948: in test_failed_reset_restores_context_for_next_sync_authorize",
+      "tests/test_speculation_shadow.py:950: in test_failed_reset_restores_context_for_next_sync_authorize",
       "____ test_failed_reset_restores_context_for_next_sync_authorize[False-both] ____",
-      "tests/test_speculation_shadow.py:948: in test_failed_reset_restores_context_for_next_sync_authorize",
+      "tests/test_speculation_shadow.py:950: in test_failed_reset_restores_context_for_next_sync_authorize",
       "___ test_failed_reset_restores_context_for_next_sync_authorize[True-shadow] ____",
-      "tests/test_speculation_shadow.py:948: in test_failed_reset_restores_context_for_next_sync_authorize",
+      "tests/test_speculation_shadow.py:950: in test_failed_reset_restores_context_for_next_sync_authorize",
       "___ test_failed_reset_restores_context_for_next_sync_authorize[True-timing] ____",
-      "tests/test_speculation_shadow.py:948: in test_failed_reset_restores_context_for_next_sync_authorize",
+      "tests/test_speculation_shadow.py:950: in test_failed_reset_restores_context_for_next_sync_authorize",
       "____ test_failed_reset_restores_context_for_next_sync_authorize[True-both] _____",
-      "tests/test_speculation_shadow.py:948: in test_failed_reset_restores_context_for_next_sync_authorize",
+      "tests/test_speculation_shadow.py:950: in test_failed_reset_restores_context_for_next_sync_authorize",
       "FAILED tests/test_speculation_shadow.py::test_failed_reset_restores_context_for_next_sync_authorize[False-shadow]",
       "FAILED tests/test_speculation_shadow.py::test_failed_reset_restores_context_for_next_sync_authorize[False-timing]",
       "FAILED tests/test_speculation_shadow.py::test_failed_reset_restores_context_for_next_sync_authorize[False-both]",
       "FAILED tests/test_speculation_shadow.py::test_failed_reset_restores_context_for_next_sync_authorize[True-shadow]",
       "FAILED tests/test_speculation_shadow.py::test_failed_reset_restores_context_for_next_sync_authorize[True-timing]",
       "FAILED tests/test_speculation_shadow.py::test_failed_reset_restores_context_for_next_sync_authorize[True-both]",
-      "6 failed, 6 warnings in 11.62s"
+      "6 failed, 6 warnings in 2.02s"
     ]
   },
   {
@@ -709,7 +709,7 @@
       "FAILED tests/test_speculation_shadow.py::test_abnormal_authorize_is_never_a_success[counter-base]",
       "FAILED tests/test_speculation_shadow.py::test_abnormal_authorize_is_never_a_success[counter-keyboard]",
       "FAILED tests/test_speculation_shadow.py::test_abnormal_authorize_is_never_a_success[counter-exit]",
-      "20 failed, 6 warnings in 12.48s"
+      "20 failed, 6 warnings in 2.59s"
     ]
   },
   {
@@ -738,7 +738,8 @@
       "FAILED tests/test_speculation_shadow.py::test_interrupted_finalization_restores_scopes_and_records_loss[timing-cleanup-GeneratorExit]",
       "FAILED tests/test_speculation_shadow.py::test_interrupted_finalization_restores_scopes_and_records_loss[timing-cleanup-SystemExit]",
       "FAILED tests/test_speculation_shadow.py::test_interrupted_finalization_restores_scopes_and_records_loss[timing-cleanup-CancelledError]",
-      "19 failed, 1 passed, 6 warnings in 15.49s"
+      "FAILED tests/test_speculation_shadow.py::test_interrupted_finalization_restores_scopes_and_records_loss[timing-cleanup-BaseException]",
+      "20 failed, 6 warnings in 2.88s"
     ]
   },
   {
@@ -750,7 +751,7 @@
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_loss_recorder_interrupt_propagates_after_completion_failure[KeyboardInterrupt]",
       "FAILED tests/test_speculation_shadow.py::test_loss_recorder_interrupt_propagates_after_completion_failure[GeneratorExit]",
-      "2 failed, 6 warnings in 22.78s"
+      "2 failed, 6 warnings in 2.10s"
     ]
   },
   {
@@ -761,7 +762,65 @@
     "gate": "tests/test_speculation_shadow.py::test_double_restoration_failure_retires_before_next_sync_authorize",
     "summary": [
       "FAILED tests/test_speculation_shadow.py::test_double_restoration_failure_retires_before_next_sync_authorize",
-      "1 failed, 6 warnings in 14.68s"
+      "1 failed, 6 warnings in 4.05s"
+    ]
+  },
+  {
+    "mutation": "retirement outside restoration finally",
+    "baseline": "pass",
+    "result": "red",
+    "restored": "pass",
+    "gate": "tests/test_speculation_shadow.py::test_assignment_fault_restores_scopes_and_preserves_response",
+    "summary": [
+      "FAILED tests/test_speculation_shadow.py::test_assignment_fault_restores_scopes_and_preserves_response[RuntimeError-retirement]",
+      "FAILED tests/test_speculation_shadow.py::test_assignment_fault_restores_scopes_and_preserves_response[KeyboardInterrupt-retirement]",
+      "FAILED tests/test_speculation_shadow.py::test_assignment_fault_restores_scopes_and_preserves_response[GeneratorExit-retirement]",
+      "3 failed, 3 passed, 6 warnings in 4.99s"
+    ]
+  },
+  {
+    "mutation": "ignore observation request identity",
+    "baseline": "pass",
+    "result": "red",
+    "restored": "pass",
+    "gate": "tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation",
+    "summary": [
+      "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[False-body-False-missing]",
+      "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[False-body-False-distinct]",
+      "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[False-body-False-reused]",
+      "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[False-body-True-missing]",
+      "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[False-body-True-distinct]",
+      "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[False-body-True-reused]",
+      "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[False-completion-False-missing]",
+      "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[False-completion-False-distinct]",
+      "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[False-completion-False-reused]",
+      "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[False-completion-True-missing]",
+      "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[False-completion-True-distinct]",
+      "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[False-completion-True-reused]",
+      "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[True-body-False-missing]",
+      "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[True-body-False-distinct]",
+      "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[True-body-False-reused]",
+      "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[True-body-True-missing]",
+      "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[True-body-True-distinct]",
+      "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[True-body-True-reused]",
+      "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[True-completion-False-missing]",
+      "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[True-completion-False-distinct]",
+      "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[True-completion-False-reused]",
+      "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[True-completion-True-missing]",
+      "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[True-completion-True-distinct]",
+      "FAILED tests/test_speculation_shadow.py::test_reentrant_authorize_has_independent_request_observation[True-completion-True-reused]",
+      "24 failed, 6 warnings in 3.38s"
+    ]
+  },
+  {
+    "mutation": "mark finished outside isolation",
+    "baseline": "pass",
+    "result": "red",
+    "restored": "pass",
+    "gate": "tests/test_speculation_shadow.py::test_assignment_fault_restores_scopes_and_preserves_response",
+    "summary": [
+      "FAILED tests/test_speculation_shadow.py::test_assignment_fault_restores_scopes_and_preserves_response[RuntimeError-mark-finished]",
+      "1 failed, 5 passed, 6 warnings in 2.50s"
     ]
   }
 ]

@@ -98,6 +98,20 @@ def _outcome_settings(args: Any, kwargs: Any) -> Any:
     return kwargs.get("settings") if "settings" in kwargs else (args[2] if len(args) > 2 else None)
 
 
+def _outcome_request_identity(args: Any, kwargs: Any) -> object:
+    request = kwargs.get("request") if "request" in kwargs else (args[0] if args else None)
+    state = getattr(request, "state", None)
+    if state is None:
+        return object()  # Direct callers without a request are independent.
+    # Log IDs can be supplied by callers and reused on another request. Keep an
+    # opaque per-request token instead, shared with this request's worker call.
+    identity = getattr(state, "_shadow_request_identity", None)
+    if identity is None:
+        identity = object()
+        state._shadow_request_identity = identity
+    return identity
+
+
 @contextmanager
 def _authorize_outcome(name: str, args: Any, kwargs: Any) -> Iterator[None]:
     from trusted_router.services import speculation_shadow as shadow
@@ -119,6 +133,10 @@ def _authorize_outcome(name: str, args: Any, kwargs: Any) -> Iterator[None]:
         with shadow.isolate("scope-cleanup", observation, deferred=failures):
             callback()
 
+    def finish() -> None:
+        nonlocal finalized
+        finalized = True
+
     def cleanup_timing() -> None:
         if token is not None:
             shadow.restore_context(_OUTCOME_TIMING, token, previous_timing)
@@ -126,7 +144,7 @@ def _authorize_outcome(name: str, args: Any, kwargs: Any) -> Iterator[None]:
     try:
         try:
             with shadow.isolate("scope-setup"):
-                observation = stack.enter_context(shadow.outcome_scope(settings))
+                observation = stack.enter_context(shadow.outcome_scope(settings, _outcome_request_identity(args, kwargs)))
                 if observation is not None:
                     previous_timing = _OUTCOME_TIMING.get()
                     token = _OUTCOME_TIMING.set({})
@@ -149,7 +167,7 @@ def _authorize_outcome(name: str, args: Any, kwargs: Any) -> Iterator[None]:
                     cleanup(stack.close)
                 finally:
                     cleanup(cleanup_timing)
-            finalized = True
+            cleanup(finish)
     finally:
         # Even an interrupted setup, completion or cleanup closes coverage.
         # Recording runs only after both independent restoration attempts.

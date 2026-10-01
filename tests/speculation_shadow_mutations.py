@@ -117,7 +117,7 @@ RESTORE_RECOVERY = service_source.split("def restore_context(", 1)[1].split("   
 # The outer reset handler includes independently guarded fallback restoration.
 assert RESTORE_RECOVERY.startswith("        try:\n            variable.set(previous)")
 timing_source = (ROOT / "src/trusted_router/gateway_timing.py").read_text()
-FINALIZATION = timing_source.split("def _authorize_outcome(", 1)[1].split("        finally:\n", 1)[1].split("            finalized = True", 1)[0]
+FINALIZATION = timing_source.split("def _authorize_outcome(", 1)[1].split("        finally:\n", 1)[1].split("            cleanup(finish)", 1)[0]
 completion_body = FINALIZATION.split("            finally:\n", 1)[0].removeprefix("            try:\n")
 FLAT_FINALIZATION = "".join(line[4:] for line in completion_body.splitlines(keepends=True)) + "            cleanup(stack.close)\n            cleanup(cleanup_timing)\n"
 
@@ -144,9 +144,23 @@ MUTATIONS.extend([
      "    except BaseException:\n        _COVERAGE_UNKNOWN = True",
      UNIT + "test_loss_recorder_interrupt_propagates_after_completion_failure"),
     ("retire observation after restoration", SERVICE,
-     "        observation.retired = True\n        restore_context(_CURRENT, token, previous)",
+     "        try:\n            observation.retired = True\n        finally:\n            restore_context(_CURRENT, token, previous)",
      "        restore_context(_CURRENT, token, previous)\n        observation.retired = True",
      UNIT + "test_double_restoration_failure_retires_before_next_sync_authorize"),
+])
+
+
+MUTATIONS.extend([
+    ("retirement outside restoration finally", SERVICE,
+     "        try:\n            observation.retired = True\n        finally:\n            restore_context(_CURRENT, token, previous)",
+     "        observation.retired = True\n        restore_context(_CURRENT, token, previous)",
+     UNIT + "test_assignment_fault_restores_scopes_and_preserves_response"),
+    ("ignore observation request identity", SERVICE,
+     " and current.request_identity is request_identity", "",
+     UNIT + "test_reentrant_authorize_has_independent_request_observation"),
+    ("mark finished outside isolation", "src/trusted_router/gateway_timing.py",
+     "            cleanup(finish)", "            finish()",
+     UNIT + "test_assignment_fault_restores_scopes_and_preserves_response"),
 ])
 
 

@@ -74,6 +74,7 @@ class Outcome:
 @dataclass
 class Observation:
     dispatcher: Dispatcher
+    request_identity: object = field(default_factory=object)
     retired: bool = False
     route_identity: tuple[str, ...] = ()
     boot_id: str = ""
@@ -190,20 +191,22 @@ def authorized(authorization: Any, endpoint_ids: tuple[str, ...], replay: bool, 
 
 
 @contextmanager
-def outcome_scope(settings: Any) -> Iterator[Observation | None]:
-    # No context allocation off, nor for nested thread execution.
+def outcome_scope(settings: Any, request_identity: object | None = None) -> Iterator[Observation | None]:
+    # Only the same request's continuation shares the active observation.
     current = _CURRENT.get()
-    if not settings.speculative_provider_shadow_enabled or _RUNTIME is None or (current is not None and not current.retired):
+    if not settings.speculative_provider_shadow_enabled or _RUNTIME is None or (current is not None and not current.retired and current.request_identity is request_identity):
         yield None
         return
-    observation = Observation(_RUNTIME)
+    observation = Observation(_RUNTIME, request_identity=request_identity if request_identity is not None else object())
     previous = _CURRENT.get()
     token = _CURRENT.set(observation)
     try:
         yield observation
     finally:
-        observation.retired = True
-        restore_context(_CURRENT, token, previous)
+        try:
+            observation.retired = True
+        finally:
+            restore_context(_CURRENT, token, previous)
 
 
 def complete(observation: Observation | None, timing: Mapping[str, int], error: BaseException | None = None, *, deferred: list[str] | None = None) -> None:

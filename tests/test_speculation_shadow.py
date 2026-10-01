@@ -7,6 +7,7 @@ import dataclasses
 import json
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -427,6 +428,7 @@ def test_content_free_observation_and_observer_failure(monkeypatch, recorder_fau
 async def test_nested_async_sync_outcome_once_and_early_unresolved(monkeypatch):
     from starlette.concurrency import run_in_threadpool
     from starlette.exceptions import HTTPException
+    from starlette.requests import Request
 
     from trusted_router.gateway_timing import timed_gateway_async, timed_gateway_sync
     dispatcher = shadow.Dispatcher(ReferenceStore(), "p")
@@ -440,13 +442,13 @@ async def test_nested_async_sync_outcome_once_and_early_unresolved(monkeypatch):
         if body == "early":
             raise HTTPException(429, detail={"error": {"type": "rate_limited"}})
         return await run_in_threadpool(_authorize_gateway_sync, request, body, settings)
-    await authorize_gateway(None, None, settings)
+    await authorize_gateway(Request({"type": "http"}), None, settings)
     assert dispatcher.pending.qsize() == 1
     completed = dispatcher.pending.get_nowait()
     assert completed.status == 200 and dict(completed.timing)["spanner_rpcs"] == 0
     assert "MUST_NOT_QUEUE" not in repr(completed)
     with pytest.raises(HTTPException):
-        await authorize_gateway(None, "early", settings)
+        await authorize_gateway(Request({"type": "http"}), "early", settings)
     early = dispatcher.pending.get_nowait()
     assert early.status == 429 and not early.workspace_id and not early.key_id
     assert dispatcher.pending.empty()
@@ -738,8 +740,8 @@ async def test_observer_fault_preserves_response_and_exception_identity(monkeypa
     if site == "cleanup":
         original = shadow.outcome_scope
         @contextmanager
-        def scope(settings):
-            with original(settings) as observation:
+        def scope(settings, request_identity=None):
+            with original(settings, request_identity) as observation:
                 yield observation
             fail()
         monkeypatch.setattr(shadow, "outcome_scope", scope)
@@ -1168,12 +1170,155 @@ def test_double_restoration_failure_retires_before_next_sync_authorize(monkeypat
         assert outcome.sequence == sequence and outcome.authorization_id == f"auth-{sequence}"
         retired = variable.get()
         assert retired.retired
-        before = dataclasses.asdict(dataclasses.replace(retired, dispatcher=None))
+        before = vars(retired).copy()
         shadow.resolved(SimpleNamespace(workspace_id="other", hash="other", lookup_hash="other"), "other")
         shadow.reason("other")
         shadow.boot_verified(True, "other")
         shadow.authorized(SimpleNamespace(id="other", invocation_nonce="other"), ("other",), True)
-        assert dataclasses.asdict(dataclasses.replace(retired, dispatcher=None)) == before
+        assert vars(retired) == before
         assert timing._OUTCOME_TIMING.get() is None
     assert holds == [600, 600] and dispatcher.pending.empty()
     assert dispatcher.coverage_lost() and shadow._COVERAGE_UNKNOWN
+
+
+@contextmanager
+def _trace_assignment(module, statement, error):
+    """Raise at the actual assignment, before its bytecode can execute."""
+    import sys
+    source = Path(module.__file__)
+    matches = [i for i, line in enumerate(source.read_text().splitlines(), 1) if line.strip() == statement]
+    assert len(matches) == 1
+    fired = []
+    previous = sys.gettrace()
+    def trace(frame, event, arg):
+        if event == "line" and frame.f_code.co_filename == str(source) and frame.f_lineno == matches[0]:
+            fired.append(True)
+            raise error
+        return trace
+    sys.settrace(trace)
+    try:
+        yield
+    finally:
+        sys.settrace(previous)
+        assert fired == [True]
+
+
+@pytest.mark.parametrize("site", ["retirement", "mark-finished"])
+@pytest.mark.parametrize("exception", [RuntimeError, KeyboardInterrupt, GeneratorExit])
+def test_assignment_fault_restores_scopes_and_preserves_response(monkeypatch, site, exception):
+    from types import SimpleNamespace
+
+    from trusted_router import gateway_timing as timing
+    dispatcher = shadow.Dispatcher(ReferenceStore(), "assignment")
+    monkeypatch.setattr(shadow, "_RUNTIME", dispatcher)
+    error = exception("assignment interrupted")
+    response = {"data": {"ok": True}}
+    holds = []
+    @timing.timed_gateway_sync
+    def _authorize_gateway_sync(request, body, settings):
+        holds.append(600)
+        shadow.authorized(SimpleNamespace(id=f"auth-{len(holds)}", invocation_nonce="nonce"), ("endpoint",), False)
+        return response
+    settings = Settings(environment="test", speculative_provider_shadow_enabled=True)
+    shadow_token = shadow._CURRENT.set(None)
+    previous_timing = {"previous": 17}
+    timing_token = timing._OUTCOME_TIMING.set(previous_timing)
+    module, statement = ((shadow, "observation.retired = True") if site == "retirement"
+                         else (timing, "finalized = True"))
+    try:
+        with _trace_assignment(module, statement, error):
+            if exception is RuntimeError:
+                assert _authorize_gateway_sync(None, None, settings) is response
+            else:
+                with pytest.raises(exception) as caught:
+                    _authorize_gateway_sync(None, None, settings)
+                assert caught.value is error  # Retain traceback through the next call.
+        assert holds == [600]
+        assert shadow._CURRENT.get() is None
+        assert timing._OUTCOME_TIMING.get() is previous_timing
+        assert dispatcher.coverage_lost()
+        assert dispatcher.pending.get_nowait().authorization_id == "auth-1"
+        assert _authorize_gateway_sync(None, None, settings) is response
+        assert holds == [600, 600]
+        assert dispatcher.pending.get_nowait().authorization_id == "auth-2"
+        assert dispatcher.pending.empty()
+    finally:
+        shadow._CURRENT.reset(shadow_token)
+        timing._OUTCOME_TIMING.reset(timing_token)
+
+
+@pytest.mark.parametrize("log_id", ["missing", "distinct", "reused"])
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("site", ["body", "completion"])
+@pytest.mark.parametrize("inner_failure", [False, True])
+async def test_reentrant_authorize_has_independent_request_observation(monkeypatch, log_id, asynchronous, site, inner_failure):
+    from types import SimpleNamespace
+
+    from starlette.concurrency import run_in_threadpool
+    from starlette.exceptions import HTTPException
+    from starlette.requests import Request
+
+    from trusted_router import gateway_timing as timing
+    dispatcher = shadow.Dispatcher(ReferenceStore(), "reentrant")
+    monkeypatch.setattr(shadow, "_RUNTIME", dispatcher)
+    settings = Settings(environment="test", speculative_provider_shadow_enabled=True)
+    outer, inner = (Request({"type": "http"}) for _ in range(2))
+    if log_id != "missing":
+        outer.state.request_id = "outer-log-id"
+        inner.state.request_id = "outer-log-id" if log_id == "reused" else "inner-log-id"
+    holds = []
+    observations = {}
+    response = {"data": {"ok": True}}
+    inner_error = HTTPException(403, {"error": {"type": "billing_paused"}})
+    def reenter():
+        active = shadow._CURRENT.get()
+        try:
+            _authorize_gateway_sync(request=inner, body=None, settings=settings)
+        except HTTPException as caught:
+            assert inner_failure and caught is inner_error
+        assert shadow._CURRENT.get() is active
+    @timing.timed_gateway_sync
+    def _authorize_gateway_sync(request, body, settings):
+        name = "outer" if request is outer else "inner"
+        observations[name] = shadow._CURRENT.get()
+        shadow.resolved(SimpleNamespace(workspace_id=name + "-workspace", hash=name + "-key", lookup_hash=name + "-lookup"), name + "-nonce")
+        if request is inner and inner_failure:
+            shadow.reason("billing_paused")
+            raise inner_error
+        holds.append((name, 600))
+        shadow.authorized(SimpleNamespace(id=name + "-auth", invocation_nonce=name + "-nonce"), (name + "-endpoint",), False, (name + "-route",))
+        if request is outer and site == "body":
+            reenter()
+        return response if request is outer else {"data": {"ok": True}}
+    complete = shadow.complete
+    def callback(observation, *args, **kwargs):
+        if observation is not None and observation is observations.get("outer") and site == "completion":
+            reenter()
+        return complete(observation, *args, **kwargs)
+    monkeypatch.setattr(shadow, "complete", callback)
+    @timing.timed_gateway_async
+    async def authorize_gateway(request, body, settings):
+        active = shadow._CURRENT.get()
+        result = await run_in_threadpool(_authorize_gateway_sync, request, body, settings)
+        assert observations["outer"] is active  # One observation across async -> worker.
+        return result
+    result = (await authorize_gateway(outer, None, settings) if asynchronous
+              else _authorize_gateway_sync(outer, None, settings))
+    assert result is response
+    assert holds == [("outer", 600)] + ([] if inner_failure else [("inner", 600)])
+    assert observations["outer"] is not observations["inner"]
+    assert observations["outer"].request_identity != observations["inner"].request_identity
+    events = [dispatcher.pending.get_nowait(), dispatcher.pending.get_nowait()]
+    assert dispatcher.pending.empty()
+    assert len({event.event_id for event in events}) == 2
+    assert [event.sequence for event in events] == [1, 2]
+    for event, name in zip(events, ("inner", "outer"), strict=True):
+        denied = name == "inner" and inner_failure
+        assert (event.workspace_id, event.key_id, event.lookup_digest, event.invocation_nonce) == (
+            name + "-workspace", name + "-key", name + "-lookup", name + "-nonce")
+        assert event.authorization_id == ("" if denied else name + "-auth")
+        assert event.endpoint_ids == (() if denied else (name + "-endpoint",))
+        assert event.route_identity == (() if denied else (name + "-route",))
+        assert (event.status, event.reason) == ((403, "billing_paused") if denied else (200, "success"))
+    assert not dispatcher.coverage_lost()
+    assert shadow._CURRENT.get() is None and timing._OUTCOME_TIMING.get() is None
