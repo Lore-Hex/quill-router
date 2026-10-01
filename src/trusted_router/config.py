@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Literal, NamedTuple
 from urllib.parse import urlsplit
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -623,6 +623,9 @@ class Settings(BaseSettings):
     # budget. Keep one API key from filling every worker in a service instance
     # while still allowing ordinary low-latency traffic to scale horizontally.
     gateway_authorize_max_in_flight_per_key: int = 4
+    # Six fallback stages × 105ms Europe planning RTT = 0.63s nominal.
+    # 4s provides >6× headroom; add the 2s cleanup floor before speculation.
+    authorize_speculation_classify_seconds: float = Field(default=4.0, gt=0, allow_inf_nan=False)
     # Settlement has a wider gate because it closes already-issued holds, but
     # one hot key must not consume every Spanner session in an instance.
     settle_per_key_inflight_limit: int = 16

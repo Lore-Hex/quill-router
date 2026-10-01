@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from google.api_core.exceptions import AlreadyExists, DeadlineExceeded, GoogleAPICallError
+from google.api_core.exceptions import AlreadyExists, GoogleAPICallError
 
 from trusted_router.app_markup_billing import (
     app_markup_microdollars_from_charge,
@@ -77,9 +77,12 @@ from trusted_router.storage_gcp_generation_records import (
     insert_generation_record,
 )
 from trusted_router.storage_gcp_io import (
+    _ROLLBACK_FLOOR_SECONDS,
     TXN_BUDGET_SECONDS,
+    SpeculationFailure,
     remaining_rpc_budget,
     run_in_transaction_with_retry,
+    run_speculative_transaction,
     spanner_rpc_budget,
 )
 from trusted_router.storage_gcp_request_records import (
@@ -379,11 +382,11 @@ def check_key_window_limits(
     return decision.window
 
 
-# Reserve 2s for protected rollback plus 2s for sequential classification.
-# The measured pre-cut authorize baseline is 125/160ms p50/p95 in us-central1
-# and ~1.24s in Europe: 2s exceeds that whole slow-region path by 760ms.
-# This is a contention allowance, not a latency guarantee; never renew T1.
-_AUTHORIZE_FALLBACK_RESERVE_SECONDS = 4.0
+# Planning bound: six sequential stages × 105ms Europe RTT = 0.63s;
+# the configurable 4s classification allowance leaves >6× nominal headroom.
+# Retune from #1384 data.timing.store_ms regional p99 after deployment.
+_AUTHORIZE_SPECULATION_MAX_SECONDS = 16.0
+_AUTHORIZE_SPECULATION_FLOOR_SECONDS = 3.0
 
 
 @spanner_rpc_budget(TXN_BUDGET_SECONDS)
@@ -678,24 +681,33 @@ def authorize_atomic(
     try:
         try:
             if speculative:
-                speculation_seconds = (
-                    remaining_rpc_budget(TXN_BUDGET_SECONDS) - _AUTHORIZE_FALLBACK_RESERVE_SECONDS
+                reserve_seconds = _ROLLBACK_FLOOR_SECONDS + float(getattr(
+                    trust_settings, "authorize_speculation_classify_seconds", 4.0,
+                ))
+                speculation_seconds = min(
+                    _AUTHORIZE_SPECULATION_MAX_SECONDS,
+                    remaining_rpc_budget(TXN_BUDGET_SECONDS) - reserve_seconds,
                 )
-                if speculation_seconds <= 0:
+                if speculation_seconds < _AUTHORIZE_SPECULATION_FLOOR_SECONDS:
                     raise _RetrySequentialAuthorize("no speculative budget remaining")
-                # Bound statement RPCs as well as SDK/outer ABORTED retries.
-                # Restoring this nested deadline exposes only the ORIGINAL
-                # remaining budget to fallback, including time spent cleaning up.
-                @spanner_rpc_budget(speculation_seconds)
-                def speculate() -> dict:
-                    return run_in_transaction_with_retry(
-                        database, txn, transaction_tag="tr_authorize",
-                    )
-
                 try:
-                    return speculate()
-                except DeadlineExceeded as exhausted:
-                    raise _RetrySequentialAuthorize("speculative deadline exhausted") from exhausted
+                    return run_speculative_transaction(
+                        database, txn,
+                        statement_deadline=time.monotonic() + speculation_seconds,
+                        transaction_tag="tr_authorize",
+                    )
+                except SpeculationFailure as failure:
+                    if failure.uncertain:
+                        assert idempotency_scope is not None
+                        # Strong, new snapshot: never trust the provisional
+                        # authorization or debit again after a lost commit reply.
+                        with database.snapshot() as snapshot:
+                            existing = read_reservation_by_idempotency(
+                                snapshot, pt, idempotency_scope,
+                            )
+                        if existing is not None:
+                            return _replay(snapshot, existing)
+                    raise _RetrySequentialAuthorize("speculation needs fallback") from failure
             return run_in_transaction_with_retry(
                 database, txn, transaction_tag="tr_authorize",
             )

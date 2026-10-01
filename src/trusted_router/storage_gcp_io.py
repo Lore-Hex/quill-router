@@ -23,6 +23,8 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any, ParamSpec, TypeVar, cast
 
+from google.api_core.exceptions import GoogleAPICallError
+
 T = TypeVar("T")
 P = ParamSpec("P")
 
@@ -49,6 +51,20 @@ _SPANNER_RPC_DEADLINE: contextvars.ContextVar[float | None] = contextvars.Contex
     "trusted_router_spanner_rpc_deadline",
     default=None,
 )
+
+
+# A list lets the RPC wrapper report sends across Transaction.commit's retries.
+_SPANNER_COMMIT_SENT: contextvars.ContextVar[list[bool] | None] = contextvars.ContextVar(
+    "trusted_router_spanner_commit_sent", default=None,
+)
+
+
+class SpeculationFailure(GoogleAPICallError):
+    """Statements failed, commit definitely failed, or commit needs resolution."""
+
+    def __init__(self, phase: str, *, uncertain: bool = False) -> None:
+        super().__init__(f"speculative {phase} failed")
+        self.uncertain = uncertain
 
 
 @dataclass
@@ -195,6 +211,7 @@ def configure_spanner_rpc_deadlines(
             *args: Any,
             _original: Callable[..., Any] = original_method,
             _default_retry: Any = default_retry,
+            _method_name: str = method_name,
             **kwargs: Any,
         ) -> Any:
             remaining = remaining_seconds()
@@ -218,6 +235,9 @@ def configure_spanner_rpc_deadlines(
             counter = _SPANNER_RPC_COUNTER.get()
             if counter is not None:
                 counter.increment()
+            sent = _SPANNER_COMMIT_SENT.get()
+            if _method_name == "commit" and sent is not None:
+                sent[0] = True
             return _original(*args, **kwargs)
 
         setattr(api, method_name, bounded_rpc)
@@ -343,6 +363,65 @@ def run_in_transaction_with_retry(
     raise AssertionError("unreachable")  # pragma: no cover
 
 
+def run_speculative_transaction(
+    database: Any, func: Callable[..., T], *, statement_deadline: float,
+    transaction_tag: str,
+) -> T:
+    """Bound statements across ABORTED reruns, but commit with the original budget.
+
+    Convert commit failures before the SDK can retry them as fresh speculation.
+    A sent commit is uncertain unless Spanner explicitly reports ABORTED. The
+    caller must resolve it using a new strong snapshot before any fallback.
+    """
+    from google.api_core.exceptions import Aborted
+
+    original_deadline = time.monotonic() + remaining_rpc_budget(TXN_BUDGET_SECONDS)
+
+    def statements(transaction: Any) -> T:
+        commit = getattr(transaction, "commit", None)
+        if callable(commit):
+            def guarded_commit(*args: Any, **kwargs: Any) -> Any:
+                # Without configured RPC wrappers, conservatively assume sent.
+                sent = [not getattr(database, "_trusted_router_rpc_deadlines", False)]
+                token = _SPANNER_COMMIT_SENT.set(sent)
+                commit_token = _SPANNER_RPC_DEADLINE.set(original_deadline)
+                try:
+                    return commit(*args, **kwargs)
+                except Exception as exc:
+                    uncertain = sent[0] and not isinstance(exc, Aborted)
+                    if not uncertain:
+                        _rollback_discarded_transaction(transaction)
+                    raise SpeculationFailure("commit", uncertain=uncertain) from exc
+                finally:
+                    _SPANNER_RPC_DEADLINE.reset(commit_token)
+                    _SPANNER_COMMIT_SENT.reset(token)
+
+            transaction.commit = guarded_commit
+        try:
+            remaining_rpc_budget(TXN_BUDGET_SECONDS)
+            return func(transaction)
+        except Aborted:
+            # The next callback checks this SAME absolute deadline, including
+            # SDK retries. The SDK owns cleanup of an explicitly aborted txn.
+            raise
+        except Exception as exc:
+            _rollback_discarded_transaction(transaction)
+            raise SpeculationFailure("statements") from exc
+
+    # The SDK and outer ABORTED loops share the same statement deadline.
+    # Only guarded_commit temporarily restores the original caller deadline.
+    token = _SPANNER_RPC_DEADLINE.set(min(statement_deadline, original_deadline))
+    try:
+        return run_in_transaction_with_retry(
+            database, statements, transaction_tag=transaction_tag,
+        )
+    except Aborted as exc:
+        # Retry exhaustion still means a definite non-commit.
+        raise SpeculationFailure("statements") from exc
+    finally:
+        _SPANNER_RPC_DEADLINE.reset(token)
+
+
 def _rollback_on_api_error(func: Callable[..., T]) -> Callable[..., T]:
     """Roll back the server-side transaction when the callback fails with a
     non-Aborted ``GoogleAPICallError``.
@@ -364,7 +443,7 @@ def _rollback_on_api_error(func: Callable[..., T]) -> Callable[..., T]:
     def rolled_back(transaction: Any, *args: Any, **kwargs: Any) -> T:
         try:
             return func(transaction, *args, **kwargs)
-        except Aborted:
+        except (Aborted, SpeculationFailure):
             raise
         except GoogleAPICallError:
             _rollback_discarded_transaction(transaction)

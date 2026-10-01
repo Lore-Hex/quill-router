@@ -199,8 +199,8 @@ def test_sdk_abort_rerun_keeps_speculation_and_shared_deadline(configured_sdk, m
     assert sdk.rpcs.commit.call_count == 1
     assert sdk.rpcs.execute_sql.call_count == 0
     assert sdk.rpcs.execute_streaming_sql.call_count == int(winner)
-    assert [c.kwargs['timeout'] for c in sdk.rpcs.execute_batch_dml.call_args_list] == [16, 14]
-    assert sdk.rpcs.commit.call_args.kwargs['timeout'] == (16 if winner else 12)
+    assert [c.kwargs['timeout'] for c in sdk.rpcs.execute_batch_dml.call_args_list] == [14, 12]
+    assert sdk.rpcs.commit.call_args.kwargs['timeout'] == 16
 
 
 @pytest.mark.parametrize('armed', [False, True])
@@ -475,7 +475,7 @@ def test_deadline_cleanup_failure_still_classifies_in_new_transaction(configured
     sdk = configured_sdk
 
     def blocked_batch(**kwargs):
-        assert kwargs['timeout'] == 16
+        assert kwargs['timeout'] == 14
         sdk.clock[0] += kwargs['timeout']
         if transport_error:
             sdk.transactions[-1]._transaction_id = b'tx-1'
@@ -505,7 +505,7 @@ def test_deadline_cleanup_failure_still_classifies_in_new_transaction(configured
     assert all(tx.committed is None for tx in sdk.transactions)
     sdk.rpcs.commit.assert_not_called()
     assert sdk.rpcs.execute_batch_dml.call_count == 1
-    assert sdk.rpcs.execute_streaming_sql.call_args.kwargs['timeout'] == 2
+    assert sdk.rpcs.execute_streaming_sql.call_args.kwargs['timeout'] == 4
     assert sdk.rpcs.execute_sql.call_count == 1
     assert 'tr_credit_balance' in sdk.rpcs.execute_sql.call_args.kwargs['request'].sql
     assert sdk.clock[0] <= 120
@@ -536,3 +536,228 @@ def test_rollback_then_sequential_lock_order_has_separate_transactions(monkeypat
         assert classes[0] == 'credit' and classes[-1] == 'key'
     assert recorder.both_tables_seen == 2
     recorder.check('rolled-back speculation followed by sequential transaction')
+
+
+@pytest.mark.parametrize('classify,boundary', [(4, 14), (2, 16)])
+@pytest.mark.parametrize('after', [False, True], ids=['batch-before-deadline', 'batch-after-deadline'])
+def test_sdk_statement_deadline_leaves_commit_original_budget(configured_sdk, classify, boundary, after):  # noqa: F811
+    from google.cloud.spanner_v1.types import ExecuteBatchDmlResponse, ResultSet, ResultSetStats
+
+    sdk = configured_sdk
+    held = [0]
+    waits = []
+
+    def batch(**kwargs):
+        size = len(kwargs['request'].statements)
+        if size == 4:
+            assert kwargs['timeout'] == boundary
+            waits.append(boundary + (0.01 if after else -0.01))
+            sdk.clock[0] += waits[-1]
+            if after:
+                sdk.transactions[-1]._transaction_id = b'tx-1'
+                raise DeadlineExceeded('key still waiting after statement deadline')
+        return ExecuteBatchDmlResponse(status=Status(), result_sets=[
+            ResultSet(metadata={'transaction': {'id': f'tx-{len(sdk.transactions)}'.encode()}},
+                      stats=ResultSetStats(row_count_exact=1)) for _ in range(size)
+        ])
+
+    commit_response = sdk.rpcs.commit.return_value
+
+    def commit(**kwargs):
+        # Request construction crosses the old statement boundary before send.
+        assert kwargs['timeout'] > 3
+        held[0] += 100
+        sdk.clock[0] += 0.1
+        return commit_response
+
+    # Advance during SDK commit processing, before the bounded commit RPC.
+    from google.cloud.spanner_v1.transaction import Transaction
+    original_commit = Transaction.commit
+
+    def process_commit(tx, *args, **kwargs):
+        sdk.clock[0] += 0.02
+        return original_commit(tx, *args, **kwargs)
+
+    from unittest.mock import patch
+    sdk.rpcs.execute_batch_dml.side_effect = batch
+    sdk.rpcs.commit.side_effect = commit
+    with patch.object(Transaction, 'commit', process_commit):
+        result = current.authorize_atomic(sdk.db, param_types, **(_options() | {
+            'trust_settings': Settings(authorize_speculation_classify_seconds=classify),
+        }))
+    assert result['outcome'] == 'accepted'
+    assert held == [100]
+    assert sdk.rpcs.rollback.call_count == int(after)
+    assert sdk.rpcs.commit.call_count == 1
+    assert len(sdk.transactions) == 1 + int(after)
+    assert sdk.clock[0] < 120
+
+
+@pytest.mark.parametrize('resolution_fails', [False, True])
+@pytest.mark.parametrize('error', ['deadline', 'transport'])
+@pytest.mark.parametrize('committed', [True, False])
+def test_uncertain_commit_resolves_snapshot_without_second_hold(configured_sdk, monkeypatch, error, committed, resolution_fails):  # noqa: F811
+    from google.api_core.exceptions import ServiceUnavailable
+    from google.cloud.spanner_v1.snapshot import Snapshot
+    from google.cloud.spanner_v1.types import ExecuteBatchDmlResponse, ResultSet, ResultSetStats
+
+    sdk = configured_sdk
+    held = [0]
+    stored = {}
+    resolutions = []
+    batch_sizes = []
+    commit_response = sdk.rpcs.commit.return_value
+
+    def batch(**kwargs):
+        statements = kwargs['request'].statements
+        batch_sizes.append(len(statements))
+        for statement in statements:
+            if 'INSERT INTO tr_reservation' in statement.sql:
+                stored.update(dict(statement.params))
+        return ExecuteBatchDmlResponse(status=Status(), result_sets=[
+            ResultSet(metadata={'transaction': {'id': f'tx-{len(sdk.transactions)}'.encode()}},
+                      stats=ResultSetStats(row_count_exact=1)) for _ in statements
+        ])
+
+    def commit(**kwargs):
+        assert kwargs['timeout'] > 0
+        if sdk.rpcs.commit.call_count == 1:
+            if committed:
+                held[0] += 100
+            sdk.clock[0] += 1
+            exception = DeadlineExceeded if error == 'deadline' else ServiceUnavailable
+            raise exception('commit RPC sent, response lost')
+        assert resolutions == [True], 'fallback started without a strong snapshot'
+        held[0] += 100
+        return commit_response
+
+    original_read = current.read_reservation_by_idempotency
+
+    def read(reader, pt, scope):
+        if isinstance(reader, Snapshot) and not hasattr(reader, 'commit'):
+            resolutions.append(True)
+            assert scope == _options()['idempotency_scope']
+            assert len(sdk.transactions) == 1
+        else:
+            assert resolutions == [True], 'uncertain commit must resolve before sequential retry'
+        return original_read(reader, pt, scope)
+
+    def reservation_rows(**kwargs):
+        from google.cloud.spanner_v1.types import PartialResultSet
+
+        request = kwargs['request']
+        assert 'tr_reservation' in request.sql
+        if len(sdk.transactions) == 1:
+            assert request.transaction.single_use.read_only.strong
+            if resolution_fails:
+                sdk.clock[0] = 120
+                raise DeadlineExceeded('resolution exhausted original budget')
+        types = ['STRING', 'INT64', 'INT64', 'STRING', 'STRING', 'STRING', 'BOOL', 'INT64', 'INT64', 'INT64']
+        response = PartialResultSet(metadata={
+            'transaction': {'id': b'resolution'},
+            'row_type': {'fields': [{'name': f'c{i}', 'type': {'code': kind}}
+                                    for i, kind in enumerate(types)]},
+        })
+        if committed:
+            for value in [stored['reservation_id'], '100', '100', 'Credits',
+                          stored['authorization_id'], 'fingerprint', False, '0', '0', '0']:
+                response._pb.values.add(**({'bool_value': value} if isinstance(value, bool) else {'string_value': value}))
+        return iter([response])
+
+    sdk.rpcs.execute_streaming_sql.side_effect = reservation_rows
+    sdk.rpcs.execute_batch_dml.side_effect = batch
+    sdk.rpcs.commit.side_effect = commit
+    monkeypatch.setattr(current, 'read_reservation_by_idempotency', read)
+    if resolution_fails:
+        with pytest.raises(DeadlineExceeded, match='resolution exhausted'):
+            current.authorize_atomic(sdk.db, param_types, **_options())
+        assert held == [100 if committed else 0]
+        assert resolutions == [True] and batch_sizes == [4]
+        assert len(sdk.transactions) == sdk.rpcs.commit.call_count == 1
+        sdk.rpcs.rollback.assert_not_called()
+        assert sdk.clock[0] == 120
+        return
+    result = current.authorize_atomic(sdk.db, param_types, **_options())
+    assert result['outcome'] == ('replay' if committed else 'accepted')
+    assert held == [100], 'lost commit response must never create a second hold'
+    assert resolutions == [True]
+    assert batch_sizes == ([4] if committed else [4, 2])
+    assert sdk.rpcs.commit.call_count == (1 if committed else 2)
+    sdk.rpcs.rollback.assert_not_called()
+    assert sdk.clock[0] < 120
+
+
+@pytest.mark.parametrize('failure', ['aborted', 'before-send'])
+def test_definite_commit_failure_cleans_up_before_fallback(configured_sdk, monkeypatch, failure):  # noqa: F811
+    from google.api_core.exceptions import Aborted
+    from google.cloud.spanner_v1.types import ExecuteBatchDmlResponse, ResultSet, ResultSetStats
+
+    from trusted_router import storage_gcp_io as io
+
+    sdk = configured_sdk
+    sdk.rpcs.execute_batch_dml.side_effect = lambda **kw: ExecuteBatchDmlResponse(
+        status=Status(), result_sets=[
+            ResultSet(metadata={'transaction': {'id': f'tx-{len(sdk.transactions)}'.encode()}},
+                      stats=ResultSetStats(row_count_exact=1))
+            for _ in kw['request'].statements
+        ],
+    )
+    commit_response = sdk.rpcs.commit.return_value
+    if failure == 'aborted':
+        sdk.rpcs.commit.side_effect = [Aborted('definite non-commit'), commit_response]
+    else:
+        # A pre-send guard fails; no RPC was sent and the overall budget remains.
+        bounded = sdk.db.spanner_api.commit
+
+        def presend(*args, **kwargs):
+            if len(sdk.transactions) == 1:
+                assert io._SPANNER_COMMIT_SENT.get() == [False]
+                raise DeadlineExceeded('pre-send deadline check')
+            return bounded(*args, **kwargs)
+
+        monkeypatch.setattr(sdk.db.spanner_api, 'commit', presend)
+    read = sdk.rpcs.execute_streaming_sql.side_effect
+
+    def fallback(**kwargs):
+        assert sdk.rpcs.rollback.call_count == 1
+        assert len(sdk.transactions) == 2
+        return read(**kwargs)
+
+    sdk.rpcs.execute_streaming_sql.side_effect = fallback
+    assert current.authorize_atomic(sdk.db, param_types, **_options())['outcome'] == 'accepted'
+    assert sdk.rpcs.rollback.call_count == 1
+    assert sdk.rpcs.commit.call_count == (2 if failure == 'aborted' else 1)
+
+
+@pytest.mark.parametrize('remaining,expected', [(8.99, [2]), (9.0, [4])])
+def test_tiny_remaining_budget_skips_speculation(monkeypatch, remaining, expected):
+    from trusted_router import storage_gcp_io as io
+
+    db = _database()
+    batches = []
+    batch = _FakeTransaction.batch_update
+    clock = [100.0]
+    monkeypatch.setattr(io.time, 'monotonic', lambda: clock[0])
+
+    def record(tx, statements, **kwargs):
+        batches.append(len(statements))
+        return batch(tx, statements, **kwargs)
+
+    monkeypatch.setattr(_FakeTransaction, 'batch_update', record)
+    token = io._SPANNER_RPC_DEADLINE.set(clock[0] + remaining)
+    try:
+        assert current.authorize_atomic(db, param_types, **_options())['outcome'] == 'accepted'
+    finally:
+        io._SPANNER_RPC_DEADLINE.reset(token)
+    assert batches == expected
+    assert db.commits == 1 and db.rollback_calls == 0
+
+
+def test_classification_allowance_setting(monkeypatch):
+    from pydantic import ValidationError
+
+    monkeypatch.setenv('TR_AUTHORIZE_SPECULATION_CLASSIFY_SECONDS', '5.5')
+    assert Settings().authorize_speculation_classify_seconds == 5.5
+    for invalid in (0, -1, float('inf'), float('nan')):
+        with pytest.raises(ValidationError):
+            Settings(authorize_speculation_classify_seconds=invalid)

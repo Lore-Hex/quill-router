@@ -407,6 +407,7 @@ def test_real_sdk_rolls_back_speculative_zero_before_sequential_rejection(
     sdk_runner: tuple[Session, Mock, Mock],
 ) -> None:
     session, speculative, sequential = sdk_runner
+    speculative_commit = speculative.commit
     speculative.execute_sql.return_value = []
     speculative.execute_update.return_value = 1
     speculative.batch_update.return_value = (Status(), [0, 1, 1])
@@ -416,7 +417,7 @@ def test_real_sdk_rolls_back_speculative_zero_before_sequential_rejection(
     assert result == {'outcome': AuthorizeOutcome.KEY_LIMIT_EXCEEDED}
     speculative.rollback.assert_called_once()
     sequential.rollback.assert_called_once()
-    speculative.commit.assert_not_called()
+    speculative_commit.assert_not_called()
     sequential.commit.assert_not_called()
     sequential.batch_update.assert_not_called()
 
@@ -425,6 +426,7 @@ def test_real_sdk_authorize_aborted_prefix_retries_before_business_fallback(
     monkeypatch: pytest.MonkeyPatch, sdk_runner: tuple[Session, Mock, Mock],
 ) -> None:
     session, aborted, committed = sdk_runner
+    aborted_commit, successful_commit = aborted.commit, committed.commit
     monkeypatch.setattr(_helpers.time, 'sleep', Mock())
     for tx in (aborted, committed):
         tx.execute_sql.return_value = []
@@ -433,9 +435,9 @@ def test_real_sdk_authorize_aborted_prefix_retries_before_business_fallback(
     committed.batch_update.return_value = (Status(), [1, 1, 1, 1])
     assert _authorize(session)['outcome'] == AuthorizeOutcome.ACCEPTED
     assert aborted.batch_update.call_args == committed.batch_update.call_args
-    aborted.commit.assert_not_called()
+    aborted_commit.assert_not_called()
     aborted.rollback.assert_not_called()
-    committed.commit.assert_called_once()
+    successful_commit.assert_called_once()
 
 
 def _finalize_fixture(*, activity_outbox: Any = None) -> tuple[FakeSpannerDatabase, Any]:

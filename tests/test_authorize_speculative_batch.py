@@ -322,7 +322,7 @@ def configured_sdk(
         _instance=SimpleNamespace(instance_id='instance', _client=SimpleNamespace(
             project='project', _query_options=None, _client_context=None,
         )),
-        _route_to_leader_enabled=False,
+        _route_to_leader_enabled=False, _directed_read_options=None,
         default_transaction_options=transaction.DefaultTransactionOptions(),
         _next_nth_request=1,
         with_error_augmentation=lambda n, a, m, *rest: (m, nullcontext()),
@@ -341,6 +341,7 @@ def configured_sdk(
 
     monkeypatch.setattr(sdk_session, 'transaction', new_transaction)
     db.run_in_transaction = sdk_session.run_in_transaction
+    db.snapshot = lambda **kw: nullcontext(sdk_session.snapshot(**kw))
 
     def read(**kwargs: Any) -> Any:
         # Every attempt begins with the authoritative idempotency read.
@@ -427,7 +428,7 @@ def test_speculation_miss_configured_rollback_floor(
     sdk.rpcs.rollback.assert_called_once()
     call = sdk.rpcs.rollback.call_args.kwargs
     assert call['transaction_id'] == b'tx-1'
-    assert call['timeout'] == (io._ROLLBACK_FLOOR_SECONDS if elapsed > 20 else 16 - elapsed)
+    assert call['timeout'] == (io._ROLLBACK_FLOOR_SECONDS if elapsed > 20 else 14 - elapsed)
     assert sdk.transactions[0].committed is None
     assert io._SPANNER_RPC_DEADLINE.get() is None
 
