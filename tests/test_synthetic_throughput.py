@@ -70,7 +70,43 @@ def test_throughput_round_robin_visits_every_route_once_per_cycle() -> None:
     assert THROUGHPUT_INTERVAL_SECONDS == 60
 
 
+def test_monthly_full_cap_cost_prices_every_probe_at_its_routes_credits_price(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Fixture routes: the projection holds for any prices, and what today's
+    # top routes charge is provider state.
+    for provider, model, prompt_price, completion_price in (
+        ("cerebras", "fixture/throughput-a", 1_000_000, 3_000_000),
+        ("novita", "fixture/throughput-b", 250_000, 2_000_000),
+    ):
+        route = ModelEndpoint(
+            id=f"{model}@{provider}/prepaid",
+            model_id=model,
+            provider=provider,
+            usage_type="Credits",
+            prompt_price_microdollars_per_million_tokens=prompt_price,
+            completion_price_microdollars_per_million_tokens=completion_price,
+        )
+        monkeypatch.setitem(MODEL_ENDPOINTS, route.id, route)
+    candidates = [
+        ("cerebras", "fixture/throughput-a"),
+        ("novita", "fixture/throughput-b"),
+        # No Credits route: it costs nothing and still takes its turn.
+        ("cerebras", "fixture/unrouted"),
+    ]
+
+    # A probe is 64 input and 512 output tokens: 64 + 1,536 microdollars on
+    # the first route and 16 + 1,024 on the second. A month of one probe a
+    # minute is 43,200 probes, 14,400 cycles of the three candidates.
+    assert projected_monthly_cost_microdollars(candidates) == (1_600 + 1_040) * 14_400
+
+
+@pytest.mark.provider_health
 def test_top_200_monthly_full_cap_cost_stays_inside_reviewed_budget() -> None:
+    """Live provider state: today's top routes and their prices set the
+    projection, and a host raising a price can lift it past the reviewed
+    budget. provider-catalog-health.yml reports it hourly, and the price
+    refresh does not wait on it."""
     candidates = throughput_candidates(limit=200)
     projected = projected_monthly_cost_microdollars(candidates)
 

@@ -4,8 +4,10 @@ The attested gateway reports cache_read_input_tokens /
 cache_creation_input_tokens. Two things must hold:
 
 1. Cached tokens are BILLED (pre-fix, Anthropic cache reads billed at
-   zero because Anthropic's input_tokens exclude them) — at the
-   provider's discounted multiple of the prompt price.
+   zero because Anthropic's input_tokens exclude them). Reads bill at the
+   route's published cached rate, or at the provider's discounted multiple
+   of the prompt price when the route publishes none; writes bill at the
+   provider's multiple.
 2. Provider semantics are normalized: Anthropic input_tokens EXCLUDE
    the cached tokens; OpenAI-compatible prompt counts INCLUDE them.
 """
@@ -17,7 +19,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests import catalog_vehicles
-from tests.fixture_routes import serve_on_fixture_route
+from tests.fixture_routes import drop_routes, serve_on_fixture_route
 from trusted_router.catalog import cache_token_prices_microdollars, endpoint_for_id
 from trusted_router.catalog_data import PriceTier
 from trusted_router.catalog_ingest import _PROVIDER_MODELS_DIR
@@ -80,7 +82,24 @@ def _authorize(
     return authorize.json()["data"]
 
 
-def test_anthropic_cache_read_and_write_tokens_are_billed() -> None:
+def test_anthropic_cache_read_and_write_tokens_are_billed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Claude Haiku 4.5 on a fixture route at $1/M input, $5/M output and a
+    # published $0.08/M cache read, apart from Anthropic's 0.1x multiple: what
+    # Anthropic charges today is provider state.
+    tier = PriceTier(
+        max_prompt_tokens=None,
+        prompt_price_microdollars_per_million_tokens=1_000_000,
+        completion_price_microdollars_per_million_tokens=5_000_000,
+        prompt_cached_price_microdollars_per_million_tokens=80_000,
+    )
+    drop_routes(monkeypatch, "anthropic/claude-haiku-4.5")
+    serve_on_fixture_route(
+        monkeypatch, "anthropic/claude-haiku-4.5", "anthropic", author="anthropic",
+        completion_price_microdollars_per_million_tokens=5_000_000,
+        price_tiers=(tier,), published_price_tiers=(tier,),
+    )
     client, key = _client_and_key()
     auth = _authorize(client, key, "anthropic/claude-haiku-4.5")
     endpoint = endpoint_for_id(auth["endpoint_id"])
@@ -102,25 +121,10 @@ def test_anthropic_cache_read_and_write_tokens_are_billed() -> None:
     assert settle.status_code == 200, settle.text
     data = settle.json()["data"]
 
-    prompt_price = endpoint.prompt_price_microdollars_per_million_tokens
-    completion_price = endpoint.completion_price_microdollars_per_million_tokens
-    read_price, write_price = cache_token_prices_microdollars("anthropic", prompt_price)
-    assert read_price < prompt_price, "anthropic cache reads must be discounted"
-    assert write_price > prompt_price, "anthropic cache writes cost more than raw input"
-    expected = (
-        token_cost_microdollars(14, prompt_price)
-        + token_cost_microdollars(6, completion_price)
-        + token_cost_microdollars(6081, read_price)
-        + token_cost_microdollars(2000, write_price)
-    )
-    assert data["cost_microdollars"] == expected
-
-    # Regression guard for the zero-billing bug: the cost must exceed what
-    # the uncached 14 input tokens alone would have produced.
-    uncached_only = token_cost_microdollars(14, prompt_price) + token_cost_microdollars(
-        6, completion_price
-    )
-    assert data["cost_microdollars"] > uncached_only
+    # 14 input tokens at $1/M, 6 output at $5/M, 6,081 cache reads at the
+    # published $0.08/M and 2,000 cache writes at Anthropic's 1.25x input.
+    # Billing the cache tokens at zero, the regression, comes to 14 + 30.
+    assert data["cost_microdollars"] == 14 + 30 + 486 + 2_500
 
     generation = STORE.get_generation(data["generation_id"])
     assert generation is not None

@@ -346,7 +346,7 @@ def test_the_values_sweep_changes_values_not_listings(
     changed: list[list[str]] = []
     monkeypatch.setattr(sweep, "restore", lambda: None)
     monkeypatch.setattr(sweep, "delist", lambda group: pytest.fail("a value sweep delisted"))
-    monkeypatch.setattr(sweep, "perturb", lambda group, down=False: changed.append(group) or {})
+    monkeypatch.setattr(sweep, "perturb", lambda group, **_: changed.append(group) or {})
     monkeypatch.setattr(sweep, "run_pytest", lambda *_: (set(), "1 passed"))
 
     sweep.sweep(tmp_path / "out", group_size=8, workers=1, values=True, thorough=True)
@@ -405,17 +405,68 @@ def test_a_value_change_moves_snapshot_price_tiers_and_runs_either_way(
     assert down["pricing"]["completion_tiers"][0]["completion"] == "0.0000093"
 
 
+def test_a_skewed_change_moves_each_kind_of_price_apart_both_ways(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifests = tmp_path / "provider_models"
+    manifests.mkdir()
+    row = {
+        "id": "maker/m", "input_token_price_per_m": 1_000_000, "output_token_price_per_m": 3_000_000,
+        "cached_input_token_price_per_m": 100_000, "fixed_output_price_microdollars": {"1k": 1_364},
+        "context_length": 131_072, "max_output_tokens": 8_192,
+        "price_tiers": [{"max_prompt_tokens": 200_000, "input_token_price_per_m": 1_000_000}],
+    }
+    endpoint = {
+        "tr_provider_slug": "alpha", "context_length": 131_072,
+        "pricing": {
+            "prompt": "0.000001", "completion": "0.000003", "input_cache_read": "0.0000001",
+            "prompt_tiers": [{"max_prompt_tokens": 200_000, "prompt": "0.000001", "input_cache_read": "0.0000001"}],
+        },
+    }
+    snapshot = tmp_path / "openrouter_snapshot.json"
+    monkeypatch.setattr(sweep, "MANIFESTS", manifests)
+    monkeypatch.setattr(sweep, "SNAPSHOT", snapshot)
+
+    def changed(**direction: bool) -> tuple[dict[str, Any], dict[str, Any]]:
+        (manifests / "alpha.json").write_text(json.dumps({"models": [row]}), encoding="utf-8")
+        snapshot.write_text(json.dumps({"models": [{"id": "maker/m", "endpoints": [endpoint]}]}), encoding="utf-8")
+        sweep.perturb(["alpha"], skew=True, **direction)
+        return (json.loads((manifests / "alpha.json").read_text())["models"][0],
+                json.loads(snapshot.read_text())["models"][0]["endpoints"][0])
+
+    # Up: input x2, output x0.5, cache prices held, other prices and limits x2.
+    assert changed() == ({
+        **row, "input_token_price_per_m": 2_000_000, "output_token_price_per_m": 1_500_000,
+        "fixed_output_price_microdollars": {"1k": 2_728}, "context_length": 262_144, "max_output_tokens": 16_384,
+        "price_tiers": [{"max_prompt_tokens": 400_000, "input_token_price_per_m": 2_000_000}],
+    }, {
+        "tr_provider_slug": "alpha", "context_length": 262_144,
+        "pricing": {
+            "prompt": "0.000002", "completion": "0.0000015", "input_cache_read": "0.0000001",
+            "prompt_tiers": [{"max_prompt_tokens": 400_000, "prompt": "0.000002", "input_cache_read": "0.0000001"}],
+        },
+    })
+    # Down: input x0.5, output x2, cache prices held, other prices and limits x0.5.
+    down_row, down_endpoint = changed(down=True)
+    assert (down_row["input_token_price_per_m"], down_row["output_token_price_per_m"],
+            down_row["cached_input_token_price_per_m"]) == (500_000, 6_000_000, 100_000)
+    assert down_row["fixed_output_price_microdollars"] == {"1k": 682}
+    assert (down_row["context_length"], down_row["price_tiers"][0]["max_prompt_tokens"]) == (65_536, 100_000)
+    assert down_endpoint["pricing"]["prompt"] == "0.0000005"
+    assert down_endpoint["pricing"]["input_cache_read"] == "0.0000001"
+
+
 def test_a_values_sweep_resumes_only_in_the_mode_it_was_written_in(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     runs: list[list[str]] = []
     monkeypatch.setattr(sweep, "restore", lambda: None)
-    monkeypatch.setattr(sweep, "perturb", lambda group, down=False: {})
+    monkeypatch.setattr(sweep, "perturb", lambda group, **_: {})
     monkeypatch.setattr(sweep, "run_pytest", lambda files, *_: runs.append(files) or (set(), "1 passed"))
 
     sweep.sweep(tmp_path / "out", group_size=8, workers=1, values=True)
     ran = len(runs)
-    for other_mode in ({"thorough": True}, {"down": True}):
+    for other_mode in ({"thorough": True}, {"down": True}, {"skew": True}):
         with pytest.raises(SystemExit, match="sweep into a new OUT"):
             sweep.sweep(tmp_path / "out", group_size=8, workers=1, values=True, **other_mode)
     assert len(runs) == ran
@@ -431,7 +482,7 @@ def test_the_values_sweep_changes_everything_once_then_attributes_on_the_failed_
     changed: list[list[str]] = []
     runs: list[list[str]] = []
     monkeypatch.setattr(sweep, "restore", lambda: None)
-    monkeypatch.setattr(sweep, "perturb", lambda group, down=False: changed.append(group) or {})
+    monkeypatch.setattr(sweep, "perturb", lambda group, **_: changed.append(group) or {})
 
     def run(files: list[str], *_: Any) -> tuple[set[str], str]:
         runs.append(files)
@@ -456,7 +507,7 @@ def test_a_values_sweep_with_nothing_pinned_stops_after_one_run(
 ) -> None:
     changed: list[list[str]] = []
     monkeypatch.setattr(sweep, "restore", lambda: None)
-    monkeypatch.setattr(sweep, "perturb", lambda group, down=False: changed.append(group) or {})
+    monkeypatch.setattr(sweep, "perturb", lambda group, **_: changed.append(group) or {})
     monkeypatch.setattr(sweep, "run_pytest", lambda *_: (set(), "1 passed"))
 
     sweep.sweep(tmp_path / "out", group_size=8, workers=1, values=True)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -75,6 +75,22 @@ def test_api_key_budgets_default_to_hard_limit_and_alert_only_is_opt_in(
     STORE.reserve_key_limit(alert.hash, 1, usage_type="Credits")
 
 
+def _price_llama_31_8b(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Llama 3.1 8B at $1/M input and $3/M output, 1 and 3 microdollars a
+    token. The chat path bills at the model's price, and what its hosts charge
+    today is provider state."""
+    model_id = "meta-llama/llama-3.1-8b-instruct"
+    monkeypatch.setitem(MODELS, model_id, replace(
+        MODELS[model_id],
+        prompt_price_microdollars_per_million_tokens=1_000_000,
+        completion_price_microdollars_per_million_tokens=3_000_000,
+        published_prompt_price_microdollars_per_million_tokens=1_000_000,
+        published_completion_price_microdollars_per_million_tokens=3_000_000,
+        price_tiers=(),
+        published_price_tiers=(),
+    ))
+
+
 def test_inference_key_cannot_call_management_api(
     client: TestClient, inference_headers: dict[str, str]
 ) -> None:
@@ -87,7 +103,9 @@ def test_chat_activity_generation_and_no_content_storage(
     client: TestClient,
     inference_headers: dict[str, str],
     user_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _price_llama_31_8b(monkeypatch)
     prompt = "secret prompt should not be stored"
     chat = client.post(
         "/v1/chat/completions",
@@ -119,7 +137,7 @@ def test_chat_activity_generation_and_no_content_storage(
     assert event["input_tokens"] > 0
     assert event["output_tokens"] > 0
     assert isinstance(event["cost_microdollars"], int)
-    assert event["cost_microdollars"] > 0
+    assert event["cost_microdollars"] == event["input_tokens"] + 3 * event["output_tokens"]
     assert event["content_stored"] is False
     assert prompt not in str(event)
 
@@ -750,7 +768,9 @@ def test_api_key_limit_blocks_credit_and_byok_usage(
 def test_api_key_limit_can_exclude_byok_usage(
     client: TestClient,
     user_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _price_llama_31_8b(monkeypatch)
     created = client.post(
         "/v1/keys",
         headers=user_headers,
@@ -768,9 +788,11 @@ def test_api_key_limit_can_exclude_byok_usage(
         },
     )
     assert resp.status_code == 200
+    usage = resp.json()["usage"]
     key_hash = created["data"]["hash"]
     key = client.get(f"/v1/keys/{key_hash}", headers=user_headers).json()["data"]
-    assert key["byok_usage"] > 0
+    expected_microdollars = usage["prompt_tokens"] + 3 * usage["completion_tokens"]
+    assert key["byok_usage"] == expected_microdollars / 1_000_000
     assert key["limit_remaining"] == key["limit"]
 
 

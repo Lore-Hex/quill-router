@@ -49,8 +49,11 @@ manifest rows and price tiers, and in its snapshot endpoints and their price
 tiers, by 1.07, and every context and output limit and tier threshold by 0.9, then
 runs the release suite like `sweep`; `--down` lowers prices by 0.93 and raises
 limits by 1.1, since a test pinning a floor breaks one way and a ceiling the other.
-(The refresh's price-spike gate may hold a real jump that size; that gate is
-deliberate and not a test.)
+`--skew` moves values apart and far, to break a test that pins a relation between
+today's values: input prices x2 and output prices x0.5 with cache prices held,
+other prices and every limit x2 (with `--down`, input x0.5, output x2, other
+prices and limits x0.5). (The refresh's price-spike gate may hold a real jump
+that size; that gate is deliberate and not a test.)
 
 A sweep starts from a passing release suite, so every failure under a
 delisting is that delisting's. It resumes from OUT/state.json, and only with the
@@ -75,7 +78,7 @@ import time
 from collections import defaultdict
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 ROOT = Path.cwd()
 DATA_PATHS = ["src/trusted_router/data/provider_models", "src/trusted_router/data/openrouter_snapshot.json"]
@@ -129,10 +132,26 @@ def delist(providers: list[str]) -> dict[str, int]:
     return counts
 
 
-# (price factor, limit factor): a value change raises prices and shrinks limits,
-# or with --down lowers prices and grows limits.
-UP = (Decimal("1.07"), Decimal("0.9"))
-DOWN = (Decimal("0.93"), Decimal("1.1"))
+class Change(NamedTuple):
+    """One value change: a factor per kind of price, and one for every limit."""
+
+    input: Decimal
+    output: Decimal
+    cache: Decimal
+    other: Decimal
+    limit: Decimal
+
+
+# A value change raises prices and shrinks limits, or with --down lowers prices
+# and grows limits. --skew moves them apart and far: input and output prices in
+# opposite directions with cache prices held, so a relation between today's
+# values (a cache discount, an output price above the input price, a window
+# under a cap) breaks too.
+UP = Change(*[Decimal("1.07")] * 4, limit=Decimal("0.9"))
+DOWN = Change(*[Decimal("0.93")] * 4, limit=Decimal("1.1"))
+SKEW_UP = Change(input=Decimal(2), output=Decimal("0.5"), cache=Decimal(1), other=Decimal(2), limit=Decimal(2))
+SKEW_DOWN = Change(input=Decimal("0.5"), output=Decimal(2), cache=Decimal(1), other=Decimal("0.5"),
+                   limit=Decimal("0.5"))
 _LIMIT_KEYS = frozenset({"context_length", "max_output_tokens", "max_completion_tokens", "max_prompt_tokens"})
 
 
@@ -140,9 +159,23 @@ def _is_price_key(key: str) -> bool:
     return key.endswith(("_price_per_m", "_microdollars", "_microdollars_by_resolution"))
 
 
+def _price_factor(key: str, change: Change) -> Decimal:
+    """The factor for a manifest price key or a snapshot pricing key."""
+    if "cache" in key:
+        return change.cache
+    if key.startswith("fixed_"):
+        return change.other
+    if "input" in key or key == "prompt":
+        return change.input
+    if "output" in key or key == "completion":
+        return change.output
+    return change.other
+
+
 def _scaled(value: Any, factor: Decimal) -> Any:
-    """A positive integer times factor, rounded, and changed even when rounding would not."""
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+    """A positive integer times factor, rounded, and changed even when rounding
+    would not; a factor of 1 leaves it as it is."""
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0 or factor == 1:
         return value
     scaled = int((Decimal(value) * factor).to_integral_value(rounding=ROUND_HALF_UP))
     if scaled == value:
@@ -150,14 +183,15 @@ def _scaled(value: Any, factor: Decimal) -> Any:
     return scaled
 
 
-def _perturb_fields(fields: dict[str, Any], price_factor: Decimal, limit_factor: Decimal) -> int:
+def _perturb_fields(fields: dict[str, Any], change: Change) -> int:
     changed = 0
     for key, value in list(fields.items()):
         if _is_price_key(key):
-            new = {k: _scaled(v, price_factor) for k, v in value.items()} if isinstance(value, dict) \
-                else _scaled(value, price_factor)
+            factor = _price_factor(key, change)
+            new = {k: _scaled(v, factor) for k, v in value.items()} if isinstance(value, dict) \
+                else _scaled(value, factor)
         elif key in _LIMIT_KEYS:
-            new = _scaled(value, limit_factor)
+            new = _scaled(value, change.limit)
         else:
             continue
         if new != value:
@@ -166,35 +200,36 @@ def _perturb_fields(fields: dict[str, Any], price_factor: Decimal, limit_factor:
     return changed
 
 
-def _perturb_snapshot_pricing(pricing: dict[str, Any], price_factor: Decimal, limit_factor: Decimal) -> int:
+def _perturb_snapshot_pricing(pricing: dict[str, Any], change: Change) -> int:
     """OpenRouter's decimal-string prices, and each price tier's prices and threshold."""
     changed = 0
     for key, value in list(pricing.items()):
         if isinstance(value, list):
-            changed += sum(_perturb_snapshot_pricing(tier, price_factor, limit_factor)
-                           for tier in value if isinstance(tier, dict))
+            changed += sum(_perturb_snapshot_pricing(tier, change) for tier in value if isinstance(tier, dict))
             continue
         if key == "max_prompt_tokens":
-            new = _scaled(value, limit_factor)
+            new = _scaled(value, change.limit)
         else:
             try:
                 amount = Decimal(value) if isinstance(value, str) else None
             except InvalidOperation:
                 amount = None
-            if amount is None or amount <= 0:
+            factor = _price_factor(key, change)
+            if amount is None or amount <= 0 or factor == 1:
                 continue
-            new = f"{(amount * price_factor).normalize():f}"
+            new = f"{(amount * factor).normalize():f}"
         if new != value:
             pricing[key] = new
             changed += 1
     return changed
 
 
-def perturb(providers: list[str], *, down: bool = False) -> dict[str, int]:
+def perturb(providers: list[str], *, down: bool = False, skew: bool = False) -> dict[str, int]:
     """Change each provider's prices and limits, in its manifest rows and price
     tiers and in its snapshot endpoints and their price tiers: prices x1.07 and
-    limits x0.9, or with down, prices x0.93 and limits x1.1."""
-    price_factor, limit_factor = DOWN if down else UP
+    limits x0.9, or with down, prices x0.93 and limits x1.1; skew moves them
+    apart and far (SKEW_UP, SKEW_DOWN)."""
+    change = (SKEW_DOWN if down else SKEW_UP) if skew else (DOWN if down else UP)
     counts = {"rows": 0, "endpoints": 0, "fields": 0}
     for provider in providers:
         path = MANIFESTS / f"{provider}.json"
@@ -202,10 +237,10 @@ def perturb(providers: list[str], *, down: bool = False) -> dict[str, int]:
         for row in raw.get("models", []):
             if not isinstance(row, dict):
                 continue
-            changed = _perturb_fields(row, price_factor, limit_factor)
+            changed = _perturb_fields(row, change)
             for tier in row.get("price_tiers") or []:
                 if isinstance(tier, dict):
-                    changed += _perturb_fields(tier, price_factor, limit_factor)
+                    changed += _perturb_fields(tier, change)
             if changed:
                 counts["rows"] += 1
                 counts["fields"] += changed
@@ -216,9 +251,9 @@ def perturb(providers: list[str], *, down: bool = False) -> dict[str, int]:
         for endpoint in model.get("endpoints") or []:
             if endpoint.get("tr_provider_slug") not in chosen:
                 continue
-            changed = _perturb_snapshot_pricing(endpoint.get("pricing") or {}, price_factor, limit_factor)
+            changed = _perturb_snapshot_pricing(endpoint.get("pricing") or {}, change)
             for key in ("context_length", "max_completion_tokens", "max_prompt_tokens"):
-                new = _scaled(endpoint.get(key), limit_factor)
+                new = _scaled(endpoint.get(key), change.limit)
                 if new != endpoint.get(key):
                     endpoint[key] = new
                     changed += 1
@@ -271,7 +306,8 @@ def run_pytest(files: list[str], workers: int, log: Path) -> tuple[set[str], str
 
 
 def sweep(
-    out: Path, group_size: int, workers: int, *, values: bool = False, thorough: bool = False, down: bool = False
+    out: Path, group_size: int, workers: int, *, values: bool = False, thorough: bool = False,
+    down: bool = False, skew: bool = False,
 ) -> None:
     """Change each group of providers' data, then each provider of a failing group
     alone: delist everything, or (values=True) change every price and limit.
@@ -281,13 +317,13 @@ def sweep(
     That can miss a test that only fails when providers' values move apart (a
     pinned "cheapest route"); `thorough` runs every group over the full suite.
     A values state resumes only in the mode it was written in."""
-    alter = (lambda group: perturb(group, down=down)) if values else delist
+    alter = (lambda group: perturb(group, down=down, skew=skew)) if values else delist
     event = "value change" if values else "delisting"
     out.mkdir(parents=True, exist_ok=True)
     state_path = out / ("values.json" if values else "state.json")
     state = json.loads(state_path.read_text()) if state_path.exists() else {}
     if values:
-        mode = {"down": down, "thorough": thorough}
+        mode = {"down": down, "skew": skew, "thorough": thorough}
         if state and state.get("mode") != mode:
             raise SystemExit(f"{state_path}: written in mode {state.get('mode')}, not {mode}; sweep into a new OUT")
         state["mode"] = mode
@@ -543,6 +579,7 @@ def main() -> None:
     run_parser.add_argument("--vanish", default="", help="comma-separated model ids to remove from every host")
     run_parser.add_argument("--perturb", action="store_true", help="change prices and limits, not delist")
     run_parser.add_argument("--down", action="store_true", help="with --perturb, lower prices and raise limits")
+    run_parser.add_argument("--skew", action="store_true", help="with --perturb, move prices and limits apart and far")
     values_parser = commands.add_parser("values")
     values_parser.add_argument("out", type=Path)
     values_parser.add_argument("--group-size", type=int, default=8)
@@ -550,6 +587,7 @@ def main() -> None:
     values_parser.add_argument("--thorough", action="store_true",
                                help="run every group over the full suite, not just the files that failed at once")
     values_parser.add_argument("--down", action="store_true", help="lower prices and raise limits")
+    values_parser.add_argument("--skew", action="store_true", help="move prices and limits apart and far")
     models_parser = commands.add_parser("models")
     models_parser.add_argument("out", type=Path)
     models_parser.add_argument("--workers", type=int, default=6)
@@ -564,14 +602,15 @@ def main() -> None:
         models(args.out, args.workers, args.only)
         return
     if args.command == "values":
-        sweep(args.out, args.group_size, args.workers, values=True, thorough=args.thorough, down=args.down)
+        sweep(args.out, args.group_size, args.workers, values=True, thorough=args.thorough, down=args.down,
+              skew=args.skew)
         return
     providers = [] if args.providers == "-" else args.providers.split(",")
     restore()
     try:
         if providers:
             print("perturbed:" if args.perturb else "delisted:", providers,
-                  perturb(providers, down=args.down) if args.perturb else delist(providers))
+                  perturb(providers, down=args.down, skew=args.skew) if args.perturb else delist(providers))
         for model_id in filter(None, args.vanish.split(",")):
             print("vanished:", model_id, delist_model(model_id))
         failures, summary = run_pytest(args.files, args.workers, Path(tempfile.mkstemp(suffix=".log")[1]))
