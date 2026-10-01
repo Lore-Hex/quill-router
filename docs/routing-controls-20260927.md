@@ -48,11 +48,21 @@ In-flight holds continue to count across window resets.
 This is strict estimated-cost admission, not an absolute guarantee about final
 provider usage. Alert-only budgets remain alert-only. It can be much slower
 than ordinary admission. Per process, at most 16 keys may authorize strictly
-at once, one authorization per key, with immediate retryable 503 rejection
-instead of queuing. The database work budget is five seconds; other request
+at once, one authorization per key. A brief collision retries admission for at
+most 250 milliseconds, with at most two waiting callers per key and 16 waiting
+callers per process. Excess callers fail immediately with retryable 503; a
+caller still blocked at the deadline also receives 503. Admission waiting
+consumes the original five-second database work budget and never retries a
+transaction that has started. Other request
 work and pool acquisition remain covered by existing request/storage bounds.
 Generation itself does not retain an admission slot. Window exhaustion returns
 429 and UTC reset headers. API clients should back off with jitter on 503.
+
+Local saturation logs `billing.authorize_strict_budget_busy` with the workspace
+and request IDs, and `billing.strict_budget_busy` at the HTTP boundary. These
+are distinct from `billing.authorize_storage_unavailable` and
+`storage.unavailable`: a busy local admission slot is not a database outage or
+proof of an exhausted budget. The HTTP 503 alert remains active for both.
 
 There is no schema migration. Never reshard a strict key: validation rejects it.
 Keep the flag immutable so in-flight requests cannot cross accounting modes.
