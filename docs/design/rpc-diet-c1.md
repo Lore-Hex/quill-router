@@ -51,42 +51,85 @@ The predicate matches the sequential recovery query's workspace/payment/debt
 scope. It is a transaction read, including the empty range, rather than a cached
 or snapshot absence assertion. No all-credit-shard scan is added on a hit.
 
-`tr_trust_event` has primary key `(workspace_id, event_id)` (see
-`scripts/deploy/migrate_typed_counters.sh`). Neither secondary deduplication
-index covers `(workspace_id, kind, unrecovered_micro)`. The subquery can seek
-the workspace primary-key prefix, then filter `kind` and `unrecovered_micro`;
-it is not an indexed seek to outstanding payment debt. For hold > actual and
-no debt, each successful settle can examine the workspace's entire event
-history: O(N) rows per settle for N events in that workspace, including many
-fully recovered payment events. Removing the SELECT RPC does not remove that
-work (main's recovery SELECT has the same filtering limitation). Equality
-makes the disjunction true, but optimizer short-circuiting must not be assumed.
-Overrun parameters also need PLAN coverage even though C1 routes overruns to
-the sequential path.
+Round 3 adds the additive, idempotent carrier
+`scripts/deploy/migrate_trust_event_debt_index.sh`:
 
-An index covering workspace, kind and unrecovered amount, including a range
-on positive debt, is warranted as a separate follow-up for workspaces with
-large histories if PLAN/profiling confirms this scan dominates cost or
-contention. It would trade extra trust-event write/index maintenance for a
-bounded debt search. This cut adds no index; production measurements must
-establish that the current scan is acceptable before rollout.
+```sql
+CREATE INDEX IF NOT EXISTS tr_trust_event_by_debt
+ON tr_trust_event (workspace_id, kind, unrecovered_micro, occurred_at, event_id)
+STORING (provider, amount_micro, original_payment_ref, adverse_ref,
+  recorded_at, payment_amount_micro, currency, credited_micro, recovered_micro,
+  provider_subtype, lifecycle_status, cumulative_refunded, recovery_target,
+  debit_status, provider_ordering_watermark)
+```
 
-Required production PLAN list (owner-run before merge; not executed locally):
+Both the folded NOT EXISTS and main's recovery SELECT remain **index-agnostic:
+no FORCE_INDEX hint**. Equality on workspace/kind followed by the positive
+unrecovered range permits an empty index range for a no-debt workspace, avoiding
+N recovered-event candidates on each attempt. The recovery SELECT projects all
+trust-event columns; STORING covers its remaining columns without a base-table
+lookup. Its ORDER BY occurred_at, event_id still needs a sort across distinct
+positive debt amounts: this index does not provide global chronological order
+across the unrecovered_micro range. Only positive-debt entries need that sort.
 
-1. The exact guarded credit UPDATE above on a **no-debt workspace with
-   substantial payment/event history**, using hold > actual, hold == actual,
-   and hold < actual parameters. Inspect workspace-prefix access, filtered
-   rows, predicate/subquery evaluation and estimated work; do not infer
-   short-circuit behavior from the SQL spelling.
-2. The current-window key UPDATE below, with the exact recorded key/shard,
-   current floors and production parameter types. Verify primary-key access
-   and the current-window/reserved predicates.
-3. The complete **nine-statement S6 batch** in the pinned order below on native
-   Spanner, with real parameter types and seeded rows; verify counts and read
-   back credit, key counters and durable finalization state. Inspect individual
-   statement plans and measure transaction/lock duration and contention on a
-   representative workspace. Local SQLite/fake execution establishes neither
-   optimizer behavior nor production lock safety.
+Expected size is one index row per payment event, **including fully recovered
+payments**, plus one per nonpayment trust event (this is a regular index, not a
+payment-only partial index). The covering payload duplicates the remaining event
+columns; capacity planning must include their variable-length strings as well
+as keys and index overhead. Every event insert and debt update maintains it.
+Creation backfills existing rows online; normal reads/writes continue. The
+carrier waits for READ_WRITE on first execution and reruns, and propagates
+schema errors or a readiness timeout. Apply outside a rolling deployment and
+prefer a low-traffic window, following the typed-counter migration precedent.
+
+**Landing order: merge → operator applies migration → PLAN evidence that the
+optimizer uses the index for both statements.** Code is correct with either
+schema, so either deployment order is safe; the performance claim is pending
+until backfill and optimizer evidence are complete. Merging alone does not
+remove the repeated O(N) work. The carrier is deliberately separate from the
+routine rollout. The generated `spanner_ddl.py` registers its source digest and
+index in the schema inventory. Its direct literal dispatch is fully consumed by
+the extractor, so it needs no DDL exemption; idempotency is normalized away only
+in the fresh-install schema, retaining the clause in the operator carrier.
+
+Required operator evidence after migration (not executed locally):
+
+1. PLAN/PROFILE main's exact recovery SELECT and the guarded credit UPDATE on a
+   no-debt workspace with at least 5,000 recovered payment events. Confirm
+   `tr_trust_event_by_debt` range access and approximately zero payment-debt
+   rows examined, with hold > actual, hold == actual and hold < actual.
+   Also check one and multiple positive debts and chronological recovery order.
+   Do not infer short-circuiting or index selection from SQL spelling.
+2. Check the current-window key UPDATE's primary-key access and guards.
+3. Measure the **complete rejected-attempt plus sequential-fallback path** for
+   stale windows, deleted keys and removed shards, including both debt searches,
+   transaction duration, rows scanned, lock waits and contention. A successful
+   nine-statement batch alone is insufficient. Compare main and C1 on the same
+   indexed schema; both no-debt lookups should seek empty ranges.
+4. Run the full native nine-statement batch and read back committed credit/key
+   counters and durable finalization state, including rollover rollback/fallback.
+
+The native tests in `tests/conformance/test_rpc_c1_native.py` are backend
+parametrized and protected by an offline collection guard for CI's
+`-k spanner-emulator`. They provision a database without the index, execute the
+carrier through the recording harness, and submit its exact captured statements
+twice to the native server. The debt test seeds 5,000 recovered payments and
+executes both real production statements with PROFILE, checks rows_returned and
+DML row_count_exact, and reads the physical positive-debt index range (zero
+entries, then one after adding debt). No timing threshold is used.
+
+**Emulator limit:** its PROFILE reports output rows, not rows scanned, and its
+plan is empty; output count zero cannot establish optimizer range selection.
+The indexed Read proves the range's contents, not the unhinted SQL plan. Thus
+these assertions are SQL/result and index-range evidence, with production
+optimizer evidence still required above. See [Google's emulator limitations](https://github.com/GoogleCloudPlatform/cloud-spanner-emulator)
+and its [PROFILE implementation](https://github.com/GoogleCloudPlatform/cloud-spanner-emulator/blob/master/frontend/handlers/queries.cc).
+The native arithmetic test calls production `typed_finalize_atomic`, records
+execution of the actual nine-statement batch, and reads a fresh committed
+snapshot. It covers current windows, rollover and NULL starts, nonzero shard
+IDs, distinct window counters, untouched BYOK counters and exact INT64 lifetime
+usage above 2^53. Rollover/NULL starts must reject the ninth statement and roll
+back before fallback charges exactly once. SQLite remains the fast differential.
 
 
 Key release (exact recorded key shard and hold; this folded path is Credits):
@@ -189,11 +232,10 @@ It requires assertion failures (collection errors/skips do not count), restores
 each mutation, and deletes the copy on exit. Mutations cover reserved guard,
 no-debt guard, replay double booking, ignored guard mismatch, post-commit outbox
 done, unchecked tail counts, refund folding, omitted post-batch floor recheck,
-and doubled current-window weekly SQL arithmetic.
+doubled current-window weekly SQL arithmetic, and removal of the debt index carrier.
 
 Local gate results and any environmental limitations are recorded in the final
-implementation handoff. Production PLAN review remains with the owner before
-merge; no production statements, git writes, or deployment are part of this cut.
+implementation handoff. Production PLAN review remains with the owner after migration; no production statements, git writes, or deployment are part of this cut.
 
 ### Temporary-copy mutation results
 
@@ -208,8 +250,9 @@ merge; no production statements, git writes, or deployment are part of this cut.
 | Fold the refund tail | RED |
 | Drop post-batch boundary recheck | RED |
 | Double current-window weekly SQL increment | RED |
+| Remove debt index carrier statement (schema-source oracle) | RED |
 
-All nine produced test failures rather than collection errors or skips. The
+All ten produced test failures rather than collection errors or skips. The
 mutation copy was deleted. The driver is retained for reproducibility.
 
 ### Round-1 local gates (2026-10-01)
@@ -280,3 +323,40 @@ Round-2 logs: `/private/tmp/c1b-targeted-clean.log`,
 `/private/tmp/c1b-instrumentation-controls.log`. `UV_CACHE_DIR` points to a writable temporary
 cache because the default cache is outside the sandbox. No git writes or
 production operations were performed; round-2 changes are uncommitted.
+
+
+### Round-3 local gates (2026-10-01)
+
+- `uv run ruff check .`: PASS.
+- `uv run mypy src/trusted_router` and `uv run mypy`: PASS, 379 source files.
+- Requested targeted suites (73 modules plus conformance): **5,543 passed,
+  1,085 skipped, 11 xfailed**, in 664.80 seconds. Warm-7/cold-8 remain pinned.
+- New migration/schema/collection tests: **7 passed, 4 skipped**. All four
+  new native variants collect under CI's `-k spanner-emulator`; they could not
+  execute locally because this host has no Docker/native emulator binary or
+  configured emulator endpoint. No native SQL acceptance or optimizer-seek
+  measurement is claimed from this local run.
+- Mutation audit: **10/10 RED**, each a test failure, not collection/setup
+  failure or skip. The tenth removes the carrier's actual index statement and
+  fails the schema-source test. The disposable copy was deleted.
+- Instrumented full suite: **85.79% coverage**, exceeding the 70% gate;
+  **16,956 passed, 1,129 skipped, 12 xfailed, 2 failed**, in 2,145.18 seconds.
+  Only the two known Python 3.11 failures listed above occurred. Coverage was
+  passed as CLI options, not inherited `PYTEST_ADDOPTS`; nested pytest checks
+  passed without the round-2 instrumentation artifact.
+- Clean exact-command full suite: `uv run pytest -q -p no:cacheprovider -n 4
+  --basetemp /private/tmp/astra-c1c-$$`: **16,956 passed, 1,129 skipped,
+  12 xfailed, 2 failed**, in 742.80 seconds. The only failures remain
+  `tests/test_check_format_ordering.py::test_a_pep695_type_alias_annotation_is_not_enumerated`
+  and `tests/test_store_protocol_conformance.py::test_typed_billing_store_helper_unwraps_the_module_proxy`.
+  There are no additional failures or teardown errors.
+- Disk space was checked before both full runs. Targeted, full-run and mutation
+  temporary directories were deleted. No git writes or production operations
+  were performed; all round-3 changes are uncommitted.
+
+Round-3 logs: `/private/tmp/c1c-targeted.log`,
+`/private/tmp/c1c-new-tests-final.log`, `/private/tmp/c1c-mutations.log`,
+`/private/tmp/c1c-ruff.log`, `/private/tmp/c1c-mypy-src.log`,
+`/private/tmp/c1c-mypy.log`, `/private/tmp/c1c-full-coverage.log`, and
+`/private/tmp/c1c-full-final.log`. `UV_CACHE_DIR` points to a writable temporary
+cache because the default cache is outside the sandbox.

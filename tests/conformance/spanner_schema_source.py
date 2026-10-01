@@ -665,6 +665,9 @@ def migration_ddl(root: Path = ROOT) -> tuple[str, ...]:
                     assert creates[name] == ddl, f"conflicting fresh schemas for {name}"
                 creates[name] = ddl
             else:
+                # The fresh-install schema has no pre-existing indexes; retain
+                # the carrier's idempotency clause only in the operator script.
+                ddl = re.sub(r"\bINDEX IF NOT EXISTS ", "INDEX ", ddl, flags=re.I)
                 name = re.search(r"INDEX (\w+)", ddl, re.I)[1]
                 if name in indexes:
                     assert indexes[name] == ddl, f"conflicting index {name}"
