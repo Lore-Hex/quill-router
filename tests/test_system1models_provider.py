@@ -10,6 +10,20 @@ import pytest
 from scripts.pricing.providers._system1models import System1Catalog
 
 
+@pytest.fixture
+def served_system1(monkeypatch):
+    from tests.fixture_routes import serve_on_fixture_route
+    from trusted_router.catalog_data import Model
+
+    # Product rules must not block hourly discovery when a vendor delists a model.
+    for slug in ("system1models", "system1models-eu"):
+        model_id = f"{slug}/s1-fixture"
+        model = Model(id=model_id, name="System1 fixture", provider=slug, context_length=0,
+                      supports_chat=False, supports_decide=True, byok_available=False)
+        serve_on_fixture_route(monkeypatch, model_id, slug, author=slug, model=model,
+                               upstream_id="s1-fixture", completion_price_microdollars_per_million_tokens=0)
+
+
 def catalog(*models: str) -> dict:
     return {"data": [{"id": model, "name": model, "status": "available", "tier_availability": {"eu": True, "global": True}, "modalities": ["text"], "question_types": ["noul", "choice", "score"], "prices": {"unit": "per_million_input_tokens", "output_tokens": "free", "USD": {"eu": "0.034", "global": "0.025"}, "EUR": {"eu": "0.030", "global": "0.022"}}} for model in models]}
 
@@ -143,18 +157,32 @@ def test_catalog_integration_no_chat_no_byok_no_cross_tier(monkeypatch, tmp_path
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("served_system1")
 @pytest.mark.parametrize("slug", ["system1models", "system1models-eu"])
 async def test_gateway_authorizes_only_the_requested_tier_and_rejects_chat(slug):
     from tests.test_decide_models import _authorize
 
-    body = {"model": f"{slug}/s1-fast", "route_type": "decide", "estimated_input_tokens": 100, "max_output_tokens": 1}
+    body = {"model": f"{slug}/s1-fixture", "route_type": "decide", "estimated_input_tokens": 100, "max_output_tokens": 1}
     response = await _authorize(body)
     assert response.status_code == 200, response.text
     payload = response.json().get("data", response.json())
     assert payload["provider"] == slug
-    assert [(c["provider"], c["upstream_model"]) for c in payload["route_candidates"]] == [(slug, "s1-fast")]
+    assert [(c["provider"], c["upstream_model"]) for c in payload["route_candidates"]] == [(slug, "s1-fixture")]
     rejected = await _authorize({**body, "route_type": "chat"})
     assert rejected.status_code == 400
+
+
+@pytest.mark.usefixtures("served_system1")
+@pytest.mark.parametrize("slug", ["system1models", "system1models-eu"])
+def test_public_pages_identify_decision_api_and_provider(client, slug):
+    model_id = f"{slug}/s1-fixture"
+    page = client.get(f"/models/{model_id}/api")
+    assert page.status_code == 200
+    assert "/decide" in page.text and "chat.completions.create" not in page.text
+    provider = client.get(f"/providers/{slug}")
+    assert provider.status_code == 200
+    assert "System1" in provider.text
+    assert "Finland" in provider.text
 
 
 def test_hourly_refresh_and_native_cloud_secret_contract():
