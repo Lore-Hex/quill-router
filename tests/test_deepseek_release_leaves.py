@@ -56,6 +56,7 @@ def _install(
     historical: tuple[str, ...] = ("parasail", "venice"),
     rolling_window: int | None = None,
     windows: dict[str, int] | None = None,
+    filtered: tuple[str, ...] = (),
 ) -> tuple[dict, dict]:
     models: dict = {}
     if base:
@@ -114,7 +115,11 @@ def _install(
         "provider_model_retired",
         lambda provider, model_id, *, at: fireworks_retired and provider == "fireworks",
     )
-    catalog_registry._install_deepseek_v4_pro_release_routes()
+    host_windows = catalog_registry._install_deepseek_v4_pro_release_routes()
+    # The provider filters run between the two, as at import.
+    for provider in filtered:
+        del endpoints[f"{DEEPSEEK_V4_PRO_0423_MODEL_ID}@{provider}/prepaid"]
+    catalog_registry._advertise_deepseek_v4_pro_0423_window(host_windows)
     return models, endpoints
 
 
@@ -128,27 +133,32 @@ def _routes(endpoints: dict, model_id: str) -> set[tuple[str, str]]:
 
 
 @pytest.mark.parametrize(
-    ("rolling", "hosts", "leaf"),
+    ("rolling", "hosts", "filtered", "leaf"),
     [
         # Its hosts shrink while the rolling model keeps 1M.
-        (1_048_576, {"parasail": 262_144, "venice": 524_288}, 524_288),
+        (1_048_576, {"parasail": 262_144, "venice": 524_288}, (), 524_288),
         # The rolling model shrinks while its hosts keep 1M.
-        (262_144, {"parasail": 1_048_576, "venice": 1_000_000}, 1_048_576),
+        (262_144, {"parasail": 1_048_576, "venice": 1_000_000}, (), 1_048_576),
+        # A host whose route the provider filters drop does not count.
+        (1_048_576, {"parasail": 262_144, "venice": 1_048_576}, ("venice",), 262_144),
         # No host lists a window: the rolling model's.
-        (777_777, {}, 777_777),
+        (777_777, {}, (), 777_777),
     ],
 )
-def test_the_0423_leaf_advertises_the_largest_window_its_own_hosts_list(
+def test_the_0423_leaf_advertises_the_largest_window_its_own_routes_list(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     rolling: int,
     hosts: dict[str, int],
+    filtered: tuple[str, ...],
     leaf: int,
 ) -> None:
     # SiliconFlow is labeled but has no Credits route here, and DeepSeek is
     # the rolling route; at 2M either would show if it counted.
     windows = {**hosts, "siliconflow": 2_000_000, "deepseek": 2_000_000} if hosts else {}
-    models, _ = _install(monkeypatch, tmp_path, rolling_window=rolling, windows=windows)
+    models, _ = _install(
+        monkeypatch, tmp_path, rolling_window=rolling, windows=windows, filtered=filtered,
+    )
 
     assert models[DEEPSEEK_V4_PRO_0423_MODEL_ID].context_length == leaf
     assert models[DEEPSEEK_V4_PRO_0813_MODEL_ID].context_length == rolling
