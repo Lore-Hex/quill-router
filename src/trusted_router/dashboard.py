@@ -2358,7 +2358,10 @@ def dashboard_html(
             canonical_site_url=canonical_site_url,
             brand_name=brand_name,
             alternate_brand=alternate_brand,
-            og_image=f"https://{domain}/og.png",
+            og_image=(
+                f"https://{domain}/static/homepage/social-card-v1.jpg"
+                if homepage_enabled else f"https://{domain}/og.png"
+            ),
             og_title=page_title,
             og_description=OG_DESCRIPTION,
             og_image_width=OG_IMAGE_WIDTH,

@@ -248,3 +248,10 @@ This is the implemented homepage baseline, not a sitewide migration. Keep these 
 - **Imagery:** keep river imagery in the hero and closing CTA, with local dark overlays behind text. Mobile hero brightness is 1.3; closing image stays at 1.4. Decorative images have empty alt text. New imagery should retain the cool green/blue palette and quiet space behind copy.
 
 Expand this baseline into shared tokens and component examples with the next marketing-page adoption PR. Do not globally replace console, billing, form or code typography as part of the homepage release.
+
+
+## Homepage sharing image — October 1
+
+The enabled homepage uses `/static/homepage/social-card-v1.jpg`, a 1200×630 JPEG with the approved river asset, Archivo typography and existing homepage copy. Open Graph and Twitter use the same absolute image URL, with image dimensions, type and descriptive alt text. Legacy and alternate-brand homepages retain their previous card. The new filename separates this asset from cached `/og.png` previews. Messaging services may retain cached page metadata until they fetch the page again after deployment.
+
+Editable composition: `docs/homepage/social-card.html`. Serve the repository locally, open that file through the server at a 1200×630 viewport, and export a screenshot after the font and images load. Save as JPEG; increment the card filename and metadata reference for future image revisions. No runtime rendering service or external font request is needed.

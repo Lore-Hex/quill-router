@@ -126,3 +126,27 @@ def test_pricing_comparison_does_not_reuse_a_removed_model_or_missing_prices(
     assert _pricing_comparison(set()) is None
     monkeypatch.setattr(dashboard, "endpoints_for_model", lambda _: [])
     assert _pricing_comparison({"z-ai/glm-5.3-flash"}) is None
+
+
+def test_homepage_social_card_is_fetchable_and_scoped_to_rollout(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(client.app.state.settings, "homepage_landscape_enabled", True)
+    page = BeautifulSoup(client.get("/").text, "html.parser")
+    url = page.select_one('meta[property="og:image"]')["content"]
+    assert url.startswith("https://")
+    assert url.endswith("/static/homepage/social-card-v1.jpg")
+    assert page.select_one('meta[name="twitter:image"]')["content"] == url
+    assert page.select_one('meta[property="og:image:width"]')["content"] == "1200"
+    assert page.select_one('meta[property="og:image:height"]')["content"] == "630"
+    assert page.select_one('meta[property="og:image:alt"]')["content"]
+    image = client.get("/static/homepage/social-card-v1.jpg")
+    assert image.status_code == 200
+    assert image.headers["content-type"].startswith("image/jpeg")
+    assert image.content.startswith(b"\xff\xd8\xff")
+    monkeypatch.setattr(client.app.state.settings, "homepage_landscape_enabled", False)
+    legacy = BeautifulSoup(client.get("/").text, "html.parser")
+    assert legacy.select_one('meta[property="og:image"]')["content"].endswith("/og.png")
+    monkeypatch.setattr(client.app.state.settings, "homepage_landscape_enabled", True)
+    alternate = dashboard.dashboard_html(client.app.state.settings, brand_name="UptimeRouter")
+    assert "social-card-v1.jpg" not in alternate
