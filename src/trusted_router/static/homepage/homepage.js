@@ -146,7 +146,8 @@ async function loadSearch(){
   searchModels=payload.data.filter(m=>typeof m.id==='string'&&typeof m.name==='string'&&!m.trustedrouter?.internal_only);
  }catch{searchFailed=true;}finally{searchLoading=false;renderSearch();}
 }
-function openSearch(trigger){searchTrigger=trigger;closeMenu();search.showModal();query.value='';renderSearch();query.focus();void loadSearch();}
+function openSearch(trigger,preset=''){searchTrigger=trigger;closeMenu();search.showModal();query.value=preset;renderSearch();query.focus();void loadSearch();}
+$$('[data-search-model]').forEach(button=>button.addEventListener('click',()=>openSearch(button,button.dataset.searchModel)));
 $('#search-retry').addEventListener('click',()=>void loadSearch());
 $$('[data-open-search]').forEach(button=>button.addEventListener('click',()=>openSearch(button)));
 $('[data-close-search]').addEventListener('click',()=>search.close());

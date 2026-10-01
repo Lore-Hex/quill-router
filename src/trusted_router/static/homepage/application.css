@@ -415,13 +415,24 @@ footer{background:#070a08;border-top:1px solid #33403a}
 @media(max-width:360px){.trm .acts .button{font-size:14px;padding-inline:6px}}
 
 /* Tools sit by the heading; actions close each module at the copy's left edge. */
-.trc .catalog-search{display:inline-flex;align-items:center;gap:10px;width:320px;max-width:100%;min-height:48px;padding:0 14px;border:1px solid #526859;border-radius:6px;background:#0c1411;color:#adbbb2;font:400 15px/1.4 var(--sans);text-align:left;cursor:text}
-.trc .catalog-search svg{flex:none;color:#adbbb2}
-.trc .catalog-search span{flex:1;min-width:0}
-.trc .catalog-search kbd{font:500 11px/1 var(--mono);color:#8f968d;border:1px solid #2f3731;border-radius:3px;padding:3px 5px}
-.trc .catalog-search:hover,.trc .catalog-search:focus-visible{border-color:#8cab99;color:#edf8f5;background:#0c1411}
-@media(pointer:coarse){.trc .catalog-search kbd{display:none}}
-@media(max-width:700px){.trc .catalog-actions,.trc .catalog-search{width:100%}}
+.trc .fl .catalog-search{all:unset;box-sizing:border-box;display:inline-flex;align-items:center;gap:10px;width:280px;max-width:100%;min-height:48px;padding:0 14px;border:1px solid #526859;border-radius:6px;background:#0c1411;color:#adbbb2;font:400 15px/1.4 var(--sans);letter-spacing:0;text-transform:none;text-align:left;cursor:text}
+.trc .fl .catalog-search svg{flex:none;color:#adbbb2}
+.trc .fl .catalog-search span{flex:1;min-width:0}
+.trc .fl .catalog-search kbd{font:500 11px/1 var(--mono);color:#8f968d;border:1px solid #2f3731;border-radius:3px;padding:3px 5px}
+.trc .fl .catalog-search:hover{border-color:#8cab99;color:#edf8f5}
+.trc .fl .catalog-search:focus-visible{outline:3px solid #c0e1ff;outline-offset:3px;border-color:#8cab99;color:#edf8f5}
+@media(pointer:coarse){.trc .fl .catalog-search kbd{display:none}}
+@media(max-width:700px){.trc .fl .catalog-actions,.trc .fl .catalog-search{width:100%}}
 .trp .pricing-actions{display:flex;flex-wrap:wrap;align-items:center;gap:12px 28px;margin-top:4px}
 .trs .story-actions{padding:0 48px 36px;background:#cce8d7}
 @media(max-width:700px){.trs .story-actions{padding:0 24px 28px}}
+
+/* Ticker items are real controls: a tap searches that model. */
+.trh .lab{all:unset;display:inline-flex;align-items:center;gap:10px;cursor:pointer;font-size:14px;color:#d0ded7;white-space:nowrap}
+.trh .lab:hover{color:#edf8f5}
+.trh .lab:focus-visible{outline:2px solid #c0e1ff;outline-offset:4px;border-radius:4px}
+.trh .labs:focus-within .labtrack{animation-play-state:paused}
+
+/* Catalog toolbar: filters left, search right; search first and full width on phones. */
+.trc .fl .catalog-actions{margin-left:auto}
+@media(max-width:700px){.trc .fl .catalog-actions{order:-1;flex-basis:100%;margin:0 0 8px}.trc .fl .catalog-search{width:100%}}

@@ -1,7 +1,8 @@
 <section id="models"><div class="trc">
- <div class="chd"><h2>{{ homepage_catalog.total }} models. Every route labeled.</h2><div class="catalog-actions"><button class="catalog-search" type="button" data-open-search aria-haspopup="dialog" aria-controls="model-search"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><span>Search models</span><kbd aria-hidden="true">⌘K</kbd></button></div></div>
+ <div class="chd"><h2>{{ homepage_catalog.total }} models. Every route labeled.</h2></div>
  <div class="fl" role="toolbar" aria-label="Filter models">
   <button type="button" data-f="all" aria-pressed="true">All</button><button type="button" data-f="z" aria-pressed="false">Private</button><button type="button" data-f="c" aria-pressed="false">Confidential</button>
+  <div class="catalog-actions"><button class="catalog-search" type="button" data-open-search aria-haspopup="dialog" aria-controls="model-search"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><span>Search models</span><kbd aria-hidden="true">⌘K</kbd></button></div>
   <span class="cnt" role="status" aria-live="polite" aria-atomic="true">Featured · {{ homepage_catalog.lists.all|length }} of {{ homepage_catalog.total }}</span></div>
  <table aria-label="Model catalog: current application data"><thead><tr><th>Model</th><th>Routes</th><th>Input / 1M</th><th>Output / 1M</th><th>Context</th><th></th></tr></thead>
  {% for key, models in homepage_catalog.lists.items() %}

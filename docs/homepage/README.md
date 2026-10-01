@@ -281,3 +281,10 @@ Added four provider-configuration parity cases comparing legacy and redesigned r
 - Hero ticker on phones and tablets (≤1000px) now follows the action buttons in normal flow instead of being pinned to the viewport bottom, so it is visible wherever the buttons are, regardless of viewport height, browser chrome or text scaling. Desktop keeps the bottom-pinned ticker. Checked at 320×568, 360×640, 390×852, 412×915, 440×956, 844×390, 900×1200, 1024×1366 and 1440×900.
 - Status dot: `status.js` already drives `data-state` from `/status.json` every 60s. The dot is now 8px, saturated (#2ee59d up, #ffc857 degraded, #ff6b5b down, grey unknown) with a glow, and pulses while the probe is fresh; the pulse is disabled under `prefers-reduced-motion`.
 - Preview: the app runs with `TR_RATE_LIMIT_ENABLED=false` because all tunnel traffic shares one loopback bucket. The bridge needs `SSL_CERT_FILE` pointing at certifi to reach production `status.json`, otherwise the dot stays grey. Deployment configuration is unchanged.
+
+## Action placement system, ticker taps, preview script (2026-10-01)
+
+- Two slots, no exceptions: **tools** (search, filters, tabs) sit in the row of content they operate on; **actions** (buttons, action links) close their module at the copy's left edge, after the evidence. Centered modules (hero, closing band) center their actions. Nothing sits beside an H2. The catalog search therefore moved from the heading row into the filter toolbar: filters left, search right on desktop; search first and full width on phones.
+- Hero ticker items are buttons: a tap or click opens the model search prefilled with that model (the spec only defined hover pause, which froze the marquee on touch).
+- Sign-in option labels stay "Continue with Google/GitHub/MetaMask": the dialog is shared with the rest of the site and the wording follows Google's sign-in branding guidance.
+- Preview: `/tmp/tr-homepage-preview/up.sh` restarts app, bridge and ngrok in one command and prints the public URL. The app reads `app.env` beside it (non-secret dummy OAuth IDs, rate limiting off, flag on). Run it after any static change.
