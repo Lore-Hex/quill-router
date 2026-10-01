@@ -301,7 +301,8 @@ footer{background:#070a08;border-top:1px solid #33403a}
  .proof-grid{gap:0}
  .proof-source{border-right:0;border-bottom:1px solid #33403a;padding:0 0 28px}
  .proof-grid .proof-point:not(.proof-source){padding-block:24px}
- .trm .acts{align-items:flex-start;flex-direction:column;gap:12px}
+ .trm .acts{flex-wrap:nowrap;gap:10px;margin-top:10px}
+ .trm .acts .button{flex:1;min-width:0;padding:12px 8px;font-size:15px}
  .trs .stat{padding:28px 24px 24px}
  .trs .stat .nums{font-size:36px}
  .trs .story-results{font-size:18px}
@@ -385,3 +386,4 @@ footer{background:#070a08;border-top:1px solid #33403a}
  .closing-cta::before{background:linear-gradient(180deg,#05070670 0%,#05070659 48%,#05070626 100%)}
  #top h1,#top .sub,.closing-cta h2{text-shadow:0 2px 12px #050706b3}
 }
+@media(max-width:360px){.trm .acts .button{font-size:14px;padding-inline:6px}}
