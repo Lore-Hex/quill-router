@@ -164,6 +164,7 @@ from trusted_router.storage_gcp_io import (
     SpannerIO,
     configure_spanner_rpc_deadlines,
     run_in_transaction_with_retry,
+    spanner_rpc_budget,
 )
 from trusted_router.storage_gcp_keys import SpannerApiKeys
 from trusted_router.storage_gcp_oauth_apps import SpannerOAuthApps
@@ -205,6 +206,7 @@ from trusted_router.storage_models import (
     ReceiptKey,
     RoutablePayoutProfile,
     SessionAuthContext,
+    SettleOutboxRow,
     TypedFinalizeResult,
     UserModelPayout,
     _is_expired,
@@ -4860,6 +4862,177 @@ class SpannerStore:
             finalized=False,
             activity_indexed=False,
         )  # already_settled / not_found
+
+    def typed_settle_one_commit_result(
+        self,
+        authorization_id: str,
+        *,
+        settle_intent: SettleOutboxRow,
+        success: bool,
+        actual_microdollars: int,
+        selected_usage_type: UsageType | str,
+        generation: Generation | None = None,
+        user_model_payout: UserModelPayout | None = None,
+        app_markup_payout: AppMarkupPayout | None = None,
+        custom_model_markup_payout: CustomModelMarkupPayout | None = None,
+        authorization_snapshot: GatewayAuthorization | None = None,
+        refund_benchmark: ProviderBenchmarkSample | None = None,
+        intent_initial_delay_seconds: int = 0,
+    ) -> TypedFinalizeResult | None:
+        """Enqueue + finalize + done-mark (+ benchmark) in ONE read-write commit.
+
+        The happy path of the durable settle: the intent row is written already
+        resolved, in the transaction that claims the reservation, books the
+        exact holds (credit then key, row-count asserted) and makes the activity
+        durable. One commit replaces the enqueue commit, the finalize commit and
+        the post-response benchmark commit.
+
+        Returns the finalize result when that commit landed. Returns None when
+        the one-commit shape does not apply (legacy request records, activity not
+        durable in-commit, outbox table absent, no local typed reservation) or
+        declined before committing anything (reservation missing or already
+        claimed, typed authorization absent or terminal, intent already
+        recorded, release row-count failure). Raises on any other failure,
+        including an abort that outlived its retries, a deadline, or a commit
+        whose outcome is unknown. For both None and an exception the caller runs
+        the durable two-commit settle; its durability is never weaker than
+        before this path existed:
+
+        * Declined or definitely not committed: the fallback is exactly today's
+          flow (durable pending enqueue, then finalize, drain on failure).
+        * Committed, but reported as a failure (unknown outcome): the claim is
+          first-writer-wins (``UPDATE tr_reservation ... WHERE settled=false``),
+          so the fallback finalize claims 0 rows and books nothing. Its enqueue
+          finds the committed ``done`` row (ALREADY_EXISTS, refresh fenced on
+          ``status='pending'``) and reports it terminal; the refill attachment
+          already rode in that row. Any intent row created after the commit (a
+          sibling refund, or a pending row a later delivery enqueues) drains to
+          a replay: the drain's finalize also claims 0 rows and only re-derives
+          ``done`` (ALREADY_SETTLED_WITH_CHARGE), never a second charge.
+        """
+        from google.api_core.exceptions import AlreadyExists
+
+        from trusted_router.storage_gcp_authorize import (
+            ONE_COMMIT_SETTLE_BUDGET_SECONDS,
+            OneCommitSettleDeclined,
+            SettleOutcome,
+            _outbox_table_available,
+            typed_finalize_atomic,
+        )
+
+        activity_outbox = getattr(self, "_operational_analytics_outbox", None)
+        if self.request_record_write_mode != "typed":
+            # Rolling legacy authorizations live in tr_entities; the speculative
+            # shape cannot settle them, so do not spend an attempt finding out.
+            return None
+        if activity_outbox is not None and not callable(
+            getattr(activity_outbox, "activity_insert_statement", None)
+        ):
+            return None
+        if success and generation is not None and activity_outbox is None:
+            # Without in-commit activity durability a done row would hide a
+            # pending repair; the two-commit flow keeps the row pending instead.
+            return None
+        if settle_intent.intent_kind != ("settle" if success else "refund"):
+            raise ValueError("settle_intent intent_kind does not match success")
+        authorization = (
+            copy.deepcopy(authorization_snapshot)
+            if authorization_snapshot is not None
+            else self.get_gateway_authorization(authorization_id)
+        )
+        if authorization is not None and authorization.id != authorization_id:
+            raise ValueError("authorization inputs do not match authorization_id")
+        if (
+            authorization is None
+            or authorization.credit_reservation_id is None
+            or authorization.settlement != "local"
+            or settle_intent.reservation_id != authorization.credit_reservation_id
+        ):
+            return None
+
+        @spanner_rpc_budget(ONE_COMMIT_SETTLE_BUDGET_SECONDS)
+        def attempt() -> dict[str, Any] | None:
+            if not _outbox_table_available(self._database, self._param_types):
+                return None
+            actual_usage_type = UsageType.coerce(selected_usage_type)
+            assert authorization is not None
+            authorization.record_finalization(
+                success=success,
+                actual_microdollars=actual_microdollars,
+                selected_usage_type=actual_usage_type,
+                generation=generation,
+            )
+            benchmark = (
+                self.generation_store.benchmark_sample(generation)
+                if success and generation is not None
+                else refund_benchmark if not success else None
+            )
+            benchmark_outbox = self.generation_store.analytics_outbox
+            return cast(dict[str, Any], typed_finalize_atomic(
+                self._database,
+                self._param_types,
+                reservation_id=str(authorization.credit_reservation_id),
+                authorization_id=authorization_id,
+                success=success,
+                actual_micro=actual_microdollars,
+                settled_usage_type=str(actual_usage_type),
+                now=dt.datetime.now(dt.UTC),
+                outbox_available=True,
+                authorization=authorization,
+                auth_body_settled=_json_body(authorization),
+                # The one-commit shape never takes the legacy-record branch.
+                generation_writes=[],
+                generation=generation,
+                persist_generation_record=getattr(self, "_generation_records_enabled", False),
+                operational_analytics_outbox=activity_outbox,
+                user_model_payout=user_model_payout,
+                app_markup_payout=app_markup_payout,
+                custom_model_markup_payout=custom_model_markup_payout,
+                settle_outbox_intent=settle_intent,
+                intent_initial_delay_seconds=intent_initial_delay_seconds,
+                benchmark_statement=(
+                    benchmark_outbox.enqueue_statement(benchmark)
+                    if benchmark is not None and benchmark_outbox is not None
+                    else None
+                ),
+            ))
+
+        spanner_start = time.perf_counter()
+        try:
+            result = attempt()
+        except OneCommitSettleDeclined as declined:
+            log.info(
+                "one-commit settle declined authorization_id=%s reason=%s",
+                authorization_id,
+                declined.reason,
+            )
+            return None
+        except AlreadyExists:
+            # The intent is already recorded (an earlier delivery's enqueue);
+            # the two-commit flow refreshes or replays it.
+            log.info(
+                "one-commit settle declined authorization_id=%s reason=intent_exists",
+                authorization_id,
+            )
+            return None
+        if result is None:
+            return None
+        if result.get("outcome") != SettleOutcome.SETTLED:  # pragma: no cover - raises instead
+            raise RuntimeError(f"one-commit settle returned {result.get('outcome')!r}")
+        log.info(
+            "typed finalize timing authorization_id=%s spanner_ms=%.1f "
+            "index_ms=%.1f attempts=%d",
+            authorization_id,
+            (time.perf_counter() - spanner_start) * 1000,
+            0.0,
+            result.get("attempts", 1),
+        )
+        return TypedFinalizeResult(
+            finalized=True,
+            activity_indexed=True,
+            request_record_typed=bool(result.get("request_record_typed")),
+            outbox_marked=bool(result.get("outbox_marked")),
+        )
 
     def authorize_gateway_typed(
         self,

@@ -1,8 +1,9 @@
 {
   "builders": {
+    "storage_gcp_analytics_outbox:enqueue_statement": "79aefcba58e80b030f7d48ec211cb998f72478d7347e11905d7a36dbdf4c625e",
     "storage_gcp_counter_dml:reserve_key_statement": "9eb78b975825a2ab99e03b669c8d3dbdbbbae2c0b359ad1a57e9ff5b7d604227",
     "storage_gcp_counter_dml:reservation_insert_statement": "b1ef994b99af7ae79da8a3e3795169c2704edf4e789af3994c3eda292460927e",
-    "storage_gcp_counter_dml:claim_reservation_statement": "4e6dc6e8378e7cd6042474c08fdbf8d84aa705219e942d20bd4a11da21260ce4",
+    "storage_gcp_counter_dml:claim_reservation_statement": "6bd7277efedb9c990782e9fff0d9807f73315412bd43c61806a39e59c2f878f8",
     "storage_gcp_counter_dml:reservation_retention_clear_statement": "ea44390479712ba4e7d9b80b9e450797a780b107760164a313dbdf293d09e885",
     "storage_gcp_counter_dml:entity_insert_statement": "dd77ee0b463b7c33354554a82a8079efff08126fbe32b9810866da714e332f7b",
     "storage_gcp_generation_records:generation_insert_statement": "487437595bca87fd1a20593f66747ac09dea89d49c3465a189e73e0b21d7c0a5",
@@ -14,6 +15,8 @@
     "storage_gcp_request_records:gateway_authorization_settled_statement": "ae5e93de4af73f80e254209da33db4f523641496d30a61d994dce60f137f1952",
     "storage_gcp_request_records:gateway_authorization_retention_clear_statement": "e2b6e9ed483274375b390da089a0927566fcd480026e88c0f9b445ffe1e332d5",
     "storage_gcp_settle_outbox:done_retention_statements": "b1d3fa9f8a69938adbc56f212e2ab4ed09e3de2ff37a4d36af7a788f71271cab",
+    "storage_gcp_settle_outbox:intent_insert_statements": "c98f699b86c3c3867ecc03d6ece0c93444e5bc82b9d1f59dec87a197740c9406",
+    "storage_gcp_settle_outbox:resolved_intent_statements": "64f1ed43cb1ced684e9ce72e489c7152b538d1fe29863bf4165425884656c435",
     "storage_gcp_settle_outbox:speculative_done_statements": "e292de31c54e6ab2d1106ae773cd992b89f07f0e21a3e56b79316f55cd7aba26"
   },
   "expressions": {
@@ -854,8 +857,8 @@
         }
       ]
     },
-    "storage_gcp_analytics_outbox:enqueue_tx:1": {
-      "fingerprint": "3c22c291513d477c9919b357013218ac503d6f06016e546babf865c9e280e5b6",
+    "storage_gcp_analytics_outbox:enqueue_statement:1": {
+      "fingerprint": "79aefcba58e80b030f7d48ec211cb998f72478d7347e11905d7a36dbdf4c625e",
       "scenarios": [
         {
           "bindings": {},
@@ -2245,8 +2248,8 @@
         }
       ]
     },
-    "storage_gcp_settle_outbox:insert_txn:1": {
-      "fingerprint": "d3f3b67327d3c86ac0535a8015513eb0825779ab772eca46ccfd5c34a91f91ae",
+    "storage_gcp_settle_outbox:intent_insert_statements:1": {
+      "fingerprint": "c98f699b86c3c3867ecc03d6ece0c93444e5bc82b9d1f59dec87a197740c9406",
       "scenarios": [
         {
           "bindings": {
@@ -3605,17 +3608,17 @@
     "storage_gcp:SpannerStore._read_outbox_heartbeat_row": "b146d6a9f64d9504bf4948f7d6c40ec3fc279b3c25d09aa5a17c5153211deb03",
     "storage_gcp:SpannerStore.process_trust_demotion_remainders.txn": "17473222e40b3b33bf3cd55d8cabb1b5ef17305e28ddef1d57b3dae49bf4cf9a",
     "storage_gcp:SpannerStore.update_workspace.txn": "d0d1045d40b6dfbd25458bdace3723b596bba4387581942a1f5876f0b8116cde",
-    "storage_gcp_analytics_outbox:SpannerAnalyticsOutbox.enqueue_tx": "3c22c291513d477c9919b357013218ac503d6f06016e546babf865c9e280e5b6",
+    "storage_gcp_analytics_outbox:SpannerAnalyticsOutbox.enqueue_tx": "6a13bf3f98fc189b689c291137614aae25e03db076359d4f5846644d53b41920",
     "storage_gcp_authorize:_apply_user_model_payout_tx": "87282c76b37fb351b3ae5a7572ff8d6c835affc98e9d3a3b24f976fa471421f8",
     "storage_gcp_authorize:_apply_app_markup_payout_tx": "bf69f4d4f5445dbb97dcf22507d8651974f2430dc5d845fe68c2daab72dfc2c6",
     "storage_gcp_authorize:_apply_custom_model_markup_payout_tx": "a1a06d4c1dcc22a836e086dc1700440a90dad6d8c8966466902930955a34e3f0",
-    "storage_gcp_authorize:typed_finalize_atomic.speculative_batch": "d8d2fec5ec3fdae61c9a9c31b28c2fb437b03a81bf983bf7c219ad1345e73f4d",
+    "storage_gcp_authorize:typed_finalize_atomic.speculative_batch": "7cda88810ef1181501e02b1603d71355101e31646f63bdd5849efe0ef17b300d",
     "storage_gcp_authorize:key_window_limit_decision": "5a317b9f2927443ca6d6686b5cb1d1b6ff036c6d744d511a3b5f24c63e3b2ad7",
     "storage_gcp_authorize:authorize_atomic.txn": "436c84be91d07b0e183e1da7254118431c058dde512ef29ab5e9e53e451467ae",
     "storage_gcp_authorize:reap_expired_reservations_result": "9d7f819fc199930d94eaa53e939fced804e61b2cbf9f54cbf676ced4c743976e",
     "storage_gcp_authorize:key_lifetime_cap_precheck": "4e9ee17c7e9363a1fc3a9d614f15148ad6fb20ff04d272785809beef92ab0b4c",
     "storage_gcp_authorize:_finalize_reaped_reservation_atomic.txn": "55ccd7b9ed868037a53ecb228e6efe40882d39fef33e9bd24bb0061340d95200",
-    "storage_gcp_authorize:typed_finalize_atomic.txn": "70a0ce96c53d032e3b6358e1aad064669b61fa98ab1950bc260907b150e8d4c8",
+    "storage_gcp_authorize:typed_finalize_atomic.txn": "ed2aeff0a920cf9a3414d419b777200588afc282c9b28cc252f9fc12eafec03f",
     "storage_gcp_authorize:settle_atomic.txn": "0ec2b0d2303c8edbbcfff74724c3bee55a72195a523e21f21e04139aabeb3174",
     "storage_gcp_authorize:_outbox_table_available": "40f44f259524be5dc275f8a3400fc40fc5b8fe850c0482362de0382296e3f910",
     "storage_gcp_batch_dml:execute_batch_dml": "cf69cc8e1a62f4028bd2370e9d3d22e5f6f28856795ef05514f1f8dbc5130169",
@@ -3680,7 +3683,7 @@
     "storage_gcp_request_records:read_gateway_authorization_by_gateway_request_id": "35327f025b4c16f9c73c53adc04fb1f9d78da8dcb1cceb1edc16ada6a77baf90",
     "storage_gcp_settle_outbox:_resolve_done_retention_tx": "5f60121b3a9a6040d4c5db3d01b32da0b28bb49a716a5a2fb3386a43d5416de7",
     "storage_gcp_settle_outbox:_mark_done_tx": "d18c2a9ba8bf5498d523f66de836eb28463f3f4fc86d62509d69d0da31c31d4f",
-    "storage_gcp_settle_outbox:SpannerSettleOutbox.enqueue.insert_txn": "d3f3b67327d3c86ac0535a8015513eb0825779ab772eca46ccfd5c34a91f91ae",
+    "storage_gcp_settle_outbox:SpannerSettleOutbox.enqueue.insert_txn": "41fe4f962cfba96ab0bf427d3c0768d751718688df425588401620198defae55",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.enqueue.refresh_txn": "d14013762a31ede92e5bbd0ff49b1d99d6d2048acac6e8a3a95d8fd2803dc049",
     "storage_gcp_settle_outbox:SpannerSettleOutbox._claim_one.txn": "f0c353eaf71bd1e39f55d411a4bcca80d2532ae7b3125c915cab981d0a8e777b",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.mark.txn": "3ea0d355ba9fc666b7c0ce5b1af0e50db7b8a28edbcf4c33631a81d82509f885",

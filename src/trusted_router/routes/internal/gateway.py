@@ -2910,6 +2910,39 @@ def _report_route_fallbacks(body: GatewaySettleRequest) -> None:
         logger.warning("route fallback sentry report failed", exc_info=True)
 
 
+def _refund_benchmark_sample_safely(
+    body: GatewaySettleRequest,
+    authorization: GatewayAuthorization,
+    *,
+    model: Any,
+    selected_endpoint: ModelEndpoint,
+    input_tokens: int,
+    selected_usage_type: UsageType,
+) -> ProviderBenchmarkSample | None:
+    """The provider-error benchmark a refund records, or None if it cannot be built."""
+    try:
+        return ProviderBenchmarkSample.from_provider_error(
+            model=model,
+            provider_name=PROVIDERS[selected_endpoint.provider].name,
+            input_tokens=input_tokens,
+            elapsed_seconds=float(body.elapsed_seconds or 0.001),
+            streamed=body.streamed,
+            usage_type=selected_usage_type,
+            error_status=body.error_status or 502,
+            error_type=body.error_type or "provider_error",
+            region=authorization.region,
+            provider=selected_endpoint.provider,
+            workspace_id=authorization.workspace_id,
+        )
+    except Exception:
+        logger.warning(
+            "provider benchmark write failed after refund finalize authorization_id=%s",
+            authorization.id,
+            exc_info=True,
+        )
+        return None
+
+
 def _record_refund_benchmark_safely(
     sample: ProviderBenchmarkSample, authorization_id: str,
 ) -> None:
@@ -3404,8 +3437,22 @@ def _settle_gateway_authorization(
         and selected_usage_type == UsageType.CREDITS
     )
     refill_attached = not refill_required
+    # A refund's provider-error benchmark is pure computation; build it before
+    # finalize so the one-commit settle can record it in its money commit.
+    refund_benchmark = (
+        None
+        if success or _is_synthetic_settlement(body, authorization)
+        else _refund_benchmark_sample_safely(
+            body,
+            authorization,
+            model=model,
+            selected_endpoint=selected_endpoint,
+            input_tokens=input_tokens,
+            selected_usage_type=selected_usage_type,
+        )
+    )
+    settle_intent: SettleOutboxRow | None = None
     if settings.settle_outbox_enabled:
-        enqueue_start = perf_counter()
         try:
             frozen_settle_body = _settle_repair_metadata(settle_body)
             if operator_cost is not None:
@@ -3435,10 +3482,9 @@ def _settle_gateway_authorization(
                 frozen_settle_body[CUSTOM_MODEL_MARKUP_ID_SETTLE_FIELD] = (
                     custom_model_markup_payout.model_id
                 )
-            # §5.4 honest scope: durability starts only when this INSERT commits;
+            # §5.4 honest scope: durability starts only when this intent commits;
             # crashes before it still rely on enclave redelivery. MF4/MF5 freeze
             # the finalize path and exact resolved cost used by the inline attempt.
-            settle_outbox = spanner_settle_outbox()
             settle_intent = SettleOutboxRow(
                 authorization_id=authorization.id,
                 intent_kind=intent_kind,
@@ -3453,6 +3499,65 @@ def _settle_gateway_authorization(
                     authorization.workspace_id if refill_required else None
                 ),
             )
+        except Exception:
+            logger.error(
+                "settle outbox enqueue failed authorization_id=%s",
+                authorization.id,
+                exc_info=True,
+            )
+
+    # Happy path: the intent, the charge, the done-mark and the benchmark in
+    # ONE commit. Any failure (declined, aborted, deadline, unknown outcome)
+    # falls through to the durable two-commit settle below, unchanged; the
+    # store method documents why an unknown outcome is safe to follow with it.
+    one_commit_result: TypedFinalizeResult | None = None
+    one_commit_ms = 0.0
+    settle_one_commit = (
+        getattr(_typed_store, "typed_settle_one_commit_result", None) if is_typed else None
+    )
+    one_commit_attempted = settle_intent is not None and callable(settle_one_commit)
+    if settle_intent is not None and callable(settle_one_commit):
+        one_commit_start = perf_counter()
+        try:
+            with gateway_phase("store_ms", after="post_commit_ms"):
+                one_commit_result = cast(
+                    TypedFinalizeResult | None,
+                    settle_one_commit(
+                        authorization.id,
+                        settle_intent=settle_intent,
+                        success=success,
+                        actual_microdollars=actual_cost,
+                        selected_usage_type=selected_usage_type,
+                        generation=generation,
+                        user_model_payout=user_model_payout,
+                        app_markup_payout=app_markup_payout,
+                        custom_model_markup_payout=custom_model_markup_payout,
+                        authorization_snapshot=authorization_snapshot,
+                        refund_benchmark=refund_benchmark,
+                        # The same refill grace the enqueue below would use.
+                        intent_initial_delay_seconds=60,
+                    ),
+                )
+        except Exception:
+            logger.warning(
+                "one-commit settle failed; using the durable two-commit settle "
+                "authorization_id=%s",
+                authorization.id,
+                exc_info=True,
+            )
+        one_commit_ms = (perf_counter() - one_commit_start) * 1000
+    if one_commit_result is not None:
+        assert settle_intent is not None
+        # The intent committed, already resolved, with its refill attachment.
+        outbox_enqueued = True
+        refill_attached = (
+            not refill_required
+            or settle_intent.auto_refill_workspace_id == authorization.workspace_id
+        )
+    elif settle_intent is not None:
+        enqueue_start = perf_counter()
+        try:
+            settle_outbox = spanner_settle_outbox()
             enqueue_outcome = settle_outbox.enqueue(
                 settle_intent,
                 # Grace so inline finalize wins the benign race; the drain only
@@ -3520,7 +3625,10 @@ def _settle_gateway_authorization(
         finalized=False,
         activity_indexed=False,
     )
-    if is_typed:
+    if one_commit_result is not None:
+        finalize_result = one_commit_result
+        finalized = finalize_result.finalized
+    elif is_typed:
         assert _typed_store is not None
         # Typed finalize atomically commits billing, the bounded generation
         # record, and the ClickHouse delivery intent. Benchmark delivery
@@ -3632,7 +3740,11 @@ def _settle_gateway_authorization(
             finalized=finalized,
             activity_indexed=finalized,
         )
-    finalize_ms = (perf_counter() - finalize_start) * 1000
+    finalize_ms = (
+        one_commit_ms
+        if one_commit_result is not None
+        else (perf_counter() - finalize_start) * 1000
+    )
     _release_user_model_slot_safely(authorization)
     if not finalized:
         # §3/§6/§7: leave the row pending on purpose. Inline's False only says
@@ -3799,27 +3911,18 @@ def _settle_gateway_authorization(
             )
         elif broadcast_enqueued and should_drain_inline(settings):
             drain_broadcast_queue(settings=settings)
-    if not success and not _is_synthetic_settlement(body, authorization):
+    if refund_benchmark is not None and one_commit_result is None:
+        # A one-commit refund already recorded this sample in its money commit.
         try:
-            benchmark = ProviderBenchmarkSample.from_provider_error(
-                model=model,
-                provider_name=PROVIDERS[selected_endpoint.provider].name,
-                input_tokens=input_tokens,
-                elapsed_seconds=float(body.elapsed_seconds or 0.001),
-                streamed=body.streamed,
-                usage_type=selected_usage_type,
-                error_status=body.error_status or 502,
-                error_type=body.error_type or "provider_error",
-                region=authorization.region,
-                provider=selected_endpoint.provider,
-                workspace_id=authorization.workspace_id,
-            )
             if background_tasks is not None:
                 defer_post_commit(
-                    background_tasks, _record_refund_benchmark_safely, benchmark, authorization.id,
+                    background_tasks,
+                    _record_refund_benchmark_safely,
+                    refund_benchmark,
+                    authorization.id,
                 )
             else:
-                _record_refund_benchmark_safely(benchmark, authorization.id)
+                _record_refund_benchmark_safely(refund_benchmark, authorization.id)
         except Exception:
             logger.warning(
                 "provider benchmark write failed after refund finalize "
@@ -3833,7 +3936,8 @@ def _settle_gateway_authorization(
     # that subtraction is the point of this line (2026-07-05 latency investigation).
     logger.info(
         "settle timing authorization_id=%s success=%s origin=%s total_ms=%.1f "
-        "auth_ms=%.1f enqueue_ms=%.1f finalize_ms=%.1f mark_ms=%.1f",
+        "auth_ms=%.1f enqueue_ms=%.1f finalize_ms=%.1f mark_ms=%.1f "
+        "commit_path=%s one_commit_ms=%.1f",
         authorization.id,
         success,
         "typed" if is_typed else "legacy",
@@ -3842,6 +3946,15 @@ def _settle_gateway_authorization(
         enqueue_ms,
         finalize_ms,
         mark_ms,
+        # one_commit: enqueue+finalize+mark in one commit. fallback: that
+        # attempt was declined or failed (its time is one_commit_ms) and the
+        # durable two-commit settle ran. two_commit: never attempted.
+        (
+            "one_commit"
+            if one_commit_result is not None
+            else "fallback" if one_commit_attempted else "two_commit"
+        ),
+        one_commit_ms,
     )
     return {
         "data": {
