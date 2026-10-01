@@ -5067,7 +5067,6 @@ class SpannerStore:
                 self._param_types,
                 workspace_id=workspace_id,
                 estimate=estimate,
-                shard_count=self._credit_shard_count(workspace_id),
                 idempotency_scope=scope,
             )
             if credit_verdict == EXHAUSTED:

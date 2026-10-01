@@ -16,6 +16,8 @@ import pytest
 from tests.test_credit_row_sharding_increment3 import _seed, _typed_authorize
 from trusted_router import storage_gcp_authorize as billing
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
+from trusted_router.storage_gcp_credit_shards import CreditShardCountCache
+from trusted_router.storage_models import CreditAccount
 
 WS = "ws-fragmented"
 
@@ -129,17 +131,61 @@ def test_precheck_never_refuses_a_request_a_shard_or_rebalance_could_accept(
             store._param_types,
             workspace_id=WS,
             estimate=estimate,
-            shard_count=len(totals),
         )
         == verdict
     )
 
 
-def test_a_changed_shard_set_drops_the_entry() -> None:
+def test_a_non_contiguous_shard_set_drops_the_entry() -> None:
     store, database, _key = _seed([0, 0])
+    del database.typed[CREDIT_BALANCE_TABLE][(WS, 0)]
     assert (
-        billing.credit_exhaustion_precheck(
-            database, store._param_types, workspace_id=WS, estimate=100, shard_count=3
-        )
+        billing.credit_exhaustion_precheck(database, store._param_types, workspace_id=WS, estimate=100)
         == billing.HEADROOM
     )
+
+
+def _split_after_cached_rejection(*, cache_rejection: bool) -> tuple[Any, Any, Any]:
+    """A workspace rejected on one shard, then split elsewhere into three shards
+    with only the last funded, while this process still caches a count of one."""
+    store, database, key = _seed([0])
+    clock = [1_000.0]
+    store._credit_shard_counts = CreditShardCountCache(clock=lambda: clock[0])
+    assert _outcome(_typed_authorize(store, key, estimate=50)) == billing.AuthorizeOutcome.INSUFFICIENT_CREDITS
+    if not cache_rejection:
+        store._insufficient_credit_workspaces.discard(WS)
+    table = database.typed[CREDIT_BALANCE_TABLE]
+    for shard, total in ((1, 0), (2, 100)):
+        table[(WS, shard)] = {
+            "workspace_id": WS,
+            "shard": shard,
+            "total_credits": total,
+            "total_usage": 0,
+            "reserved": 0,
+            "source_updated_at": None,
+            "updated_at": None,
+        }
+    store._write_entity("credit", WS, CreditAccount(workspace_id=WS, shard_count=3))
+    # Past the 2 s refresh dedupe, inside the 60 s TTL: the production window in
+    # which the cached count is stale but a reject-path refresh is allowed.
+    clock[0] += 3.0
+    assert store._credit_shard_count(WS) == 1
+    return store, database, key
+
+
+def test_a_split_beyond_the_cached_shard_count_is_never_refused() -> None:
+    # Review finding: the precheck read only the cached shard count, so a funded
+    # shard created by a split elsewhere was invisible and a payable request got
+    # a 402. Positive control: without a cached rejection the existing path
+    # refreshes the count on its reject path and accepts.
+    store, _database, key = _split_after_cached_rejection(cache_rejection=False)
+    assert _outcome(_typed_authorize(store, key, estimate=50)) == billing.AuthorizeOutcome.ACCEPTED
+
+    store, database, key = _split_after_cached_rejection(cache_rejection=True)
+    assert WS in store._insufficient_credit_workspaces
+    assert (
+        billing.credit_exhaustion_precheck(database, store._param_types, workspace_id=WS, estimate=50)
+        == billing.HEADROOM
+    )
+    assert _outcome(_typed_authorize(store, key, estimate=50)) == billing.AuthorizeOutcome.ACCEPTED
+    assert WS not in store._insufficient_credit_workspaces

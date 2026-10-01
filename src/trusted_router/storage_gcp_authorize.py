@@ -275,7 +275,6 @@ def credit_exhaustion_precheck(
     *,
     workspace_id: str,
     estimate: int,
-    shard_count: int,
     idempotency_scope: str | None = None,
 ) -> str:
     """Recheck a cached insufficient-credit verdict without locking any credit row.
@@ -286,10 +285,14 @@ def credit_exhaustion_precheck(
     retrying against an empty balance would otherwise lock a credit row and roll
     back on every request, which also delays settles that release that row's holds.
 
-    EXHAUSTED only when no shard covers the estimate on its own and neither does
-    the sum, so no bounded shard prefix and no rebalance could accept it. HEADROOM
-    drops the cache entry; a pending reservation under this idempotency scope, an
-    incomplete or NULL row set, or a read failure defers to the transaction. Like
+    It reads every credit shard the workspace has, never the process's cached
+    shard count: after a split elsewhere that count can be stale for up to its
+    TTL, and a funded shard beyond it would otherwise turn a payable request
+    into a 402. EXHAUSTED only when no shard covers the estimate on its own and
+    neither does the sum, so no bounded shard prefix and no rebalance could
+    accept it. HEADROOM drops the cache entry; a pending reservation under this
+    idempotency scope, a missing, non-contiguous or NULL row set, or a read
+    failure defers to the transaction (HEADROOM or DEFER). Like
     the key lifetime-cap precheck this may pass a request the transaction refuses
     (which re-records the workspace) but must never refuse one it would accept.
     """
@@ -299,13 +302,12 @@ def credit_exhaustion_precheck(
             rows = list(
                 snapshot.execute_sql(
                     "SELECT shard, total_credits, total_usage, reserved "
-                    "FROM tr_credit_balance WHERE workspace_id=@pk "
-                    "AND shard>=0 AND shard<@shard_count ORDER BY shard",
-                    params={"pk": workspace_id, "shard_count": shard_count},
-                    param_types={"pk": pt.STRING, "shard_count": pt.INT64},
+                    "FROM tr_credit_balance WHERE workspace_id=@pk ORDER BY shard",
+                    params={"pk": workspace_id},
+                    param_types={"pk": pt.STRING},
                 )
             )
-            if not rows or [int(row[0]) for row in rows] != list(range(shard_count)):
+            if not rows or [int(row[0]) for row in rows] != list(range(len(rows))):
                 return HEADROOM
             if any(value is None for row in rows for value in row[1:4]):
                 return HEADROOM
