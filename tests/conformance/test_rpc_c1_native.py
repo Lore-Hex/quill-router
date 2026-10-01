@@ -41,7 +41,8 @@ def c1_database(request, native_emulator_resources, tmp_path, monkeypatch):
     # Start without the new index: its only source here is the executed shell
     # carrier, whose gcloud dispatch is captured and submitted to the native SDK.
     schema = tuple(sql for sql in DDL if not sql.startswith(f"CREATE INDEX {INDEX} ON"))
-    database = native_emulator_resources[0].instance.database(
+    # The SDK Database exposes its Instance only as `_instance` (no public accessor).
+    database = native_emulator_resources[0]._instance.database(  # noqa: SLF001 - SDK has no public accessor
         "c1-" + uuid4().hex[:12], ddl_statements=schema[:20],
     )
     database.create().result(timeout=120)
