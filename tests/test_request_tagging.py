@@ -13,7 +13,6 @@ from trusted_router.request_tags import InvalidTags, merge_tags, validate_tags
 from trusted_router.routes.internal.gateway import _gateway_authorize_fingerprint
 from trusted_router.storage import STORE, Generation
 from trusted_router.storage_activity import summarize_activity_result
-from trusted_router.storage_gcp_generations import SpannerGenerations
 from trusted_router.types import UsageType
 
 
@@ -444,23 +443,6 @@ def test_tag_grouping_caps_cardinality_and_preserves_totals() -> None:
     assert sum(row["requests"] for row in result.data) == 102
     other = next(row for row in result.data if row["tag_value"] == "__other__")
     assert other["requests"] == 2
-
-
-def test_spanner_activity_reports_when_bounded_scan_is_truncated(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    store = object.__new__(SpannerGenerations)
-    generations = [_generation(index, tag_value="legal") for index in range(5001)]
-    monkeypatch.setattr(
-        store,
-        "_activity_generations",
-        lambda *_args, **_kwargs: generations,
-    )
-    result = store.activity_result("ws-tags", group_by_tag="request-id")
-    assert result.truncated is True
-    assert result.scanned == 5000
-    assert result.scan_limit == 5000
-    assert sum(row["requests"] for row in result.data) == 5000
 
 
 def test_activity_rejects_value_without_tag_key(

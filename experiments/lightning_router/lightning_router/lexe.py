@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 import re
 import threading
 import time
@@ -22,6 +23,17 @@ PERMISSIONS = {
     "get_next_unused_address", "create_invoice", "create_offer", "resync", "cancel_payment",
 }
 INDEX = r"[0-9]{19}-ln_[0-9a-f]{64}"
+logger = logging.getLogger("lightning_router")
+READ_OPERATIONS = {
+    "/v2/node/client_info": "client_info",
+    "/v2/node/node_info": "node_info",
+    "/v2/node/payment": "payment",
+    "/v2/node/updated_payments": "updated_payments",
+}
+TRANSIENT_READ_ERRORS = (
+    httpx.ConnectTimeout, httpx.ReadTimeout, httpx.ConnectError,
+    httpx.ReadError, httpx.RemoteProtocolError,
+)
 
 
 def satoshis(value: Any) -> int:
@@ -46,6 +58,26 @@ class Lexe:
         self._lock = threading.Lock()
 
     def request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        # Only replay authenticated reads. An ambiguous create/cancel must keep
+        # its existing durable recovery path, never become a second mutation.
+        if method != "GET" or path not in READ_OPERATIONS:
+            return self._request_once(method, path, **kwargs)
+        try:
+            return self._request_once(method, path, **kwargs)
+        except TRANSIENT_READ_ERRORS as exc:
+            logger.warning("lightning.lexe_read_retry operation=%s error_type=%s attempt=1",
+                           READ_OPERATIONS[path], type(exc).__name__)
+        retry_kwargs = {**kwargs, "timeout": httpx.Timeout(5, connect=1, pool=1)}
+        try:
+            result = self._request_once(method, path, **retry_kwargs)
+        except TRANSIENT_READ_ERRORS as exc:
+            logger.error("lightning.lexe_read_failed operation=%s error_type=%s attempts=2",
+                         READ_OPERATIONS[path], type(exc).__name__)
+            raise
+        logger.warning("lightning.lexe_read_recovered operation=%s attempts=2", READ_OPERATIONS[path])
+        return result
+
+    def _request_once(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         with self.client.stream(method, path, follow_redirects=False, **kwargs) as response:
             # Do not propagate bodies, invoice secrets or diagnostic text to logs.
             if response.status_code == 404 and path == "/v2/node/payment":

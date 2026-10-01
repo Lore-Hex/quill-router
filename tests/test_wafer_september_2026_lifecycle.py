@@ -10,6 +10,7 @@ import pytest
 from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import wafer
+from tests.fixture_routes import drop_routes, serve_on_fixture_route
 from trusted_router import provider_lifecycle
 from trusted_router.catalog import endpoints_for_model
 
@@ -38,11 +39,24 @@ def test_wafer_glm52_retires_at_announced_pacific_cutoff() -> None:
 def test_wafer_glm52_retirement_is_provider_scoped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
+    # GLM 5.2's routes are fixtures: which hosts list it today is provider
+    # state, while the cutoff must drop Wafer's route and only Wafer's.
+    monkeypatch.setattr(
+        provider_lifecycle,
+        "_utc_now",
+        lambda: _CUTOFF - timedelta(microseconds=1),
+    )
+    drop_routes(monkeypatch, _MODEL_ID)
+    for provider, upstream_id in (("wafer", _UPSTREAM_ID), ("zai", "glm-5.2")):
+        serve_on_fixture_route(
+            monkeypatch, _MODEL_ID, provider, author="zai", upstream_id=upstream_id,
+        )
+    before = {endpoint.provider for endpoint in endpoints_for_model(_MODEL_ID)}
+    assert before == {"wafer", "zai"}
 
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
     providers = {endpoint.provider for endpoint in endpoints_for_model(_MODEL_ID)}
-    assert "wafer" not in providers
-    assert providers
+    assert providers == {"zai"}
     assert not provider_lifecycle.provider_model_retired(
         "another-provider",
         _MODEL_ID,

@@ -19,6 +19,7 @@ from fastapi import BackgroundTasks
 from fastapi.testclient import TestClient
 from trustedrouter import AsyncTrustedRouter
 
+from tests.fixture_routes import serve_on_fixture_route
 from trusted_router.catalog import (
     CHEAP_MODEL_ID,
     E2E_MODEL_ID,
@@ -38,16 +39,6 @@ from trusted_router.main import create_app
 from trusted_router.routing import chat_route_candidates
 from trusted_router.security import lookup_hash_api_key
 from trusted_router.storage import STORE, SyntheticProbeSample
-from trusted_router.storage_gcp_codec import reverse_time_key as _reverse_time_key
-from trusted_router.storage_gcp_synthetic_index import (
-    synthetic_probe_samples as _bt_synthetic_probe_samples,
-)
-from trusted_router.storage_gcp_synthetic_index import (
-    write_synthetic_probe_sample as _bt_write_synthetic_probe_sample,
-)
-from trusted_router.storage_gcp_synthetic_rollups import (
-    synthetic_rollups as _bt_synthetic_rollups,
-)
 from trusted_router.storage_models import (
     SYNTHETIC_APP_NAME,
     ProviderBenchmarkSample,
@@ -162,6 +153,7 @@ def test_catalog_exposes_free_cheap_and_monitor_meta_models() -> None:
     assert monitor_shape["trustedrouter"]["auto_candidates"]
 
 
+@pytest.mark.catalog_as_built
 def test_monitor_alias_expands_to_paid_rollover_candidates() -> None:
     candidates = chat_route_candidates(
         {"model": MONITOR_MODEL_ID},
@@ -1615,61 +1607,6 @@ def test_status_component_current_uses_latest_sample_per_probe() -> None:
     assert snapshot["recent_events"][0]["id"] == "syn_old_down_1"
 
 
-def test_gcp_synthetic_index_uses_privacy_safe_recency_keys() -> None:
-    sample = _sample(
-        id="syn_1",
-        probe_type="attestation_nonce",
-        status="up",
-        created_at="2026-05-05T12:00:00Z",
-    )
-    table = _FakeBigtable()
-
-    _bt_write_synthetic_probe_sample(table, "m", sample)
-
-    reverse = _reverse_time_key(sample.created_at)
-    raw_keys = [
-        f"synthetic_recent#{reverse}#syn_1".encode(),
-        f"synthetic_target_recent#canonical#{reverse}#syn_1".encode(),
-        f"synthetic_probe_target_recent#attestation_nonce#canonical#{reverse}#syn_1".encode(),
-        f"synthetic_monitor_recent#us-central1#{reverse}#syn_1".encode(),
-        f"synthetic_day#2026-05-05#canonical#attestation_nonce#{reverse}#syn_1".encode(),
-        f"synthetic_day_recent#2026-05-05#{reverse}#syn_1".encode(),
-    ]
-    assert table.committed[:6] == raw_keys
-    assert any(
-        key.startswith(b"synthetic_rollup#hour#2026-05-05T12:00:00Z#") for key in table.committed
-    )
-    assert any(
-        key.startswith(b"synthetic_rollup#day#2026-05-05T00:00:00Z#") for key in table.committed
-    )
-    assert any(
-        key.startswith(b"synthetic_rollup#month#2026-05-01T00:00:00Z#") for key in table.committed
-    )
-    assert b"sk-tr" not in b"".join(table.committed)
-    assert b"prompt" not in b"".join(table.committed)
-
-
-def test_synthetic_rollups_are_idempotent_and_monthly_queryable() -> None:
-    sample = _sample(
-        id="syn_rollup",
-        probe_type="tls_health",
-        status="up",
-        created_at="2026-05-05T12:00:00Z",
-        latency_milliseconds=123,
-    )
-    table = _FakeBigtable()
-
-    _bt_write_synthetic_probe_sample(table, "m", sample)
-    _bt_write_synthetic_probe_sample(table, "m", sample)
-    month = _bt_synthetic_rollups(table, "m", period="month", limit=20)
-    canonical = next(row for row in month if row.component == "canonical_api")
-
-    assert canonical.sample_count == 1
-    assert canonical.up_count == 1
-    # 123 ms lands in its 2-significant-digit bucket; see histogram_bucket.
-    assert canonical.latency_histogram == {"120": 1}
-
-
 def test_synthetic_rollup_retains_latency_phase_histograms() -> None:
     sample = _sample(
         id="syn_latency_phases",
@@ -1691,42 +1628,6 @@ def test_synthetic_rollup_retains_latency_phase_histograms() -> None:
     assert rollup.gateway_processing_histogram == {"1": 1}
 
 
-def test_gcp_synthetic_rollups_use_period_start_range() -> None:
-    old = _sample(
-        id="syn_rollup_old_range",
-        probe_type="tls_health",
-        status="up",
-        created_at="2026-05-05T11:10:00Z",
-        latency_milliseconds=80,
-    )
-    recent = _sample(
-        id="syn_rollup_recent_range",
-        probe_type="tls_health",
-        status="up",
-        created_at="2026-05-05T12:10:00Z",
-        latency_milliseconds=40,
-    )
-    table = _FakeBigtable()
-    _bt_write_synthetic_probe_sample(table, "m", old)
-    _bt_write_synthetic_probe_sample(table, "m", recent)
-
-    rows = _bt_synthetic_rollups(
-        table,
-        "m",
-        period="hour",
-        since="2026-05-05T12:00:00Z",
-        limit=20,
-    )
-
-    assert {row.period_start for row in rows} == {"2026-05-05T12:00:00Z"}
-    assert table.reads[-1] == (
-        b"synthetic_rollup#hour#2026-05-05T12:00:00Z",
-        b"synthetic_rollup#hour#~",
-        20,
-    )
-    assert table.read_filters[-1] == "CellsColumnLimitFilter"
-
-
 def test_raw_synthetic_samples_expire_before_rollups() -> None:
     old = _sample(
         id="syn_old_raw",
@@ -1742,38 +1643,6 @@ def test_raw_synthetic_samples_expire_before_rollups() -> None:
     monthly = STORE.synthetic_rollups(period="month", limit=10)
     assert monthly
     assert monthly[0].sample_count == 1
-
-
-def test_gcp_synthetic_reads_daily_probe_target_index() -> None:
-    now = utcnow()
-    created_at = now.isoformat().replace("+00:00", "Z")
-    date = created_at[:10]
-    sample = _sample(
-        id="syn_1",
-        probe_type="tls_health",
-        status="up",
-        created_at=created_at,
-    )
-    table = _FakeBigtable([_FakeReadRow(sample)])
-
-    rows = _bt_synthetic_probe_samples(
-        table,
-        "m",
-        date=date,
-        target="canonical",
-        probe_type="tls_health",
-        monitor_region=None,
-        limit=5,
-    )
-
-    assert [row.id for row in rows] == ["syn_1"]
-    assert table.reads == [
-        (
-            f"synthetic_day#{date}#canonical#tls_health#".encode(),
-            f"synthetic_day#{date}#canonical#tls_health#~".encode(),
-            5,
-        )
-    ]
 
 
 @pytest.mark.asyncio
@@ -3518,85 +3387,26 @@ async def test_image_generation_job_confirms_a_text_only_response(
     assert output["generation_id"] == "chatcmpl-image-confirmed"
 
 
-class _FakeCell:
-    def __init__(self, value: Any) -> None:
-        if isinstance(value, bytes):
-            self.value = value
-        elif hasattr(value, "__dataclass_fields__"):
-            self.value = json.dumps(asdict(value), separators=(",", ":"), sort_keys=True).encode()
-        else:
-            self.value = json.dumps(value, separators=(",", ":"), sort_keys=True).encode()
-
-
-class _FakeReadRow:
-    def __init__(self, value: Any) -> None:
-        self.cells = {"m": {b"body": [_FakeCell(value)]}}
-
-
-class _FakeDirectRow:
-    def __init__(self, key: bytes, table: _FakeBigtable) -> None:
-        self.key = key
-        self.table = table
-        self.value: bytes | None = None
-
-    def set_cell(self, _family: str, _qualifier: bytes, value: bytes) -> None:
-        self.value = value
-        return None
-
-    def commit(self) -> None:
-        self.table.committed.append(self.key)
-        if self.value is not None:
-            self.table.rows_by_key[self.key] = _FakeReadRow(self.value)
-
-
-class _FakeBigtable:
-    def __init__(self, rows: list[_FakeReadRow] | None = None) -> None:
-        self.rows = rows or []
-        self.rows_by_key: dict[bytes, _FakeReadRow] = {}
-        self.reads: list[tuple[bytes, bytes, int]] = []
-        self.read_filters: list[str | None] = []
-        self.committed: list[bytes] = []
-
-    def read_rows(
-        self,
-        *,
-        start_key: bytes,
-        end_key: bytes,
-        limit: int,
-        filter_: Any | None = None,
-    ) -> list[_FakeReadRow]:
-        self.reads.append((start_key, end_key, limit))
-        self.read_filters.append(filter_.__class__.__name__ if filter_ is not None else None)
-        keyed_rows = [
-            row for key, row in sorted(self.rows_by_key.items()) if start_key <= key < end_key
-        ]
-        return (keyed_rows + self.rows)[:limit]
-
-    def direct_row(self, key: bytes) -> _FakeDirectRow:
-        return _FakeDirectRow(key, self)
-
-
 # ---------------------------------------------------------------------------
 # Provider/model rotation probe (Phase 1 of the performance-dataset effort).
 # ---------------------------------------------------------------------------
 
 
-def test_rotation_candidates_cover_credits_endpoints() -> None:
+@pytest.mark.catalog_as_built
+def test_rotation_candidates_cover_credits_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
     from trusted_router.catalog import _PROVIDER_DEPRECATED_UPSTREAM_MODELS
 
+    # Coverage is endpoint-driven, not the prepaid_available flag: a Credits
+    # route is covered even when its model does not claim prepaid availability.
+    route = serve_on_fixture_route(monkeypatch, "test/rotation-model", "novita", author="novita")
+    assert MODELS[route.model_id].prepaid_available is False, "fixture"
     pool = rotation_candidates()
-    assert pool, "expected at least one provider with a prepaid endpoint"
+    assert route.model_id in pool["novita"]
     for provider, models in pool.items():
         assert models, f"{provider} has no models"
         assert len(models) == len(set(models)), f"{provider} has duplicate models"
-    # Both a snapshot provider and a supplemental-manifest provider are
-    # reachable — coverage is endpoint-driven, not the prepaid_available flag.
-    assert "openai" in pool
-    assert "novita" in pool
     assert "google/gemma-4-26b-a4b-it" not in pool.get("gmi", [])
     assert "google/gemma-4-31b-it" not in pool.get("gmi", [])
-    assert "moonshotai/kimi-k2.7-code" in pool.get("kimi", [])
-    assert "moonshotai/kimi-k2.7-code-highspeed" in pool.get("kimi", [])
     assert "minimax/minimax-m2.1" not in pool.get("minimax", [])
     assert "minimax/minimax-m2.5" not in pool.get("minimax", [])
     assert "deepseek/deepseek-v3.2" not in pool.get("parasail", [])
@@ -3617,6 +3427,19 @@ def test_rotation_candidates_cover_credits_endpoints() -> None:
     assert not (
         set(pool.get("tinfoil", [])) & _PROVIDER_DEPRECATED_UPSTREAM_MODELS["tinfoil"]
     )
+
+
+@pytest.mark.provider_health
+def test_rotation_candidates_cover_the_routes_we_probe() -> None:
+    """Live provider state: which hosts list these models today.
+    provider-catalog-health.yml reports it hourly, and the price refresh does
+    not wait on it."""
+    pool = rotation_candidates()
+    # Both a snapshot provider and a supplemental-manifest provider are reachable.
+    assert "openai" in pool
+    assert "novita" in pool
+    assert "moonshotai/kimi-k2.7-code" in pool.get("kimi", [])
+    assert "moonshotai/kimi-k2.7-code-highspeed" in pool.get("kimi", [])
     assert "z-ai/glm-5.3" in pool.get("tinfoil", [])
     assert "z-ai/glm-5.3-flash" in pool.get("tinfoil", [])
     assert "z-ai/glm-5.3-flash" in pool.get("fireworks", [])
@@ -3977,16 +3800,23 @@ async def test_rotation_first_token_and_completion_deadlines_are_independent(
     expected_status: str,
     expected_extensions: int,
 ) -> None:
-    """Advance a virtual stream clock, without slow or timing-sensitive sleeps."""
+    """Advance a virtual stream clock, without slow or timing-sensitive sleeps.
+
+    probes.py reads its deadlines from that clock too (the loop time behind its
+    completion deadline, and its timeouts), so real time, however slow the
+    machine, never moves them."""
     from trusted_router.provider_reliability import ModelDeadlines
     from trusted_router.synthetic import probes as probes_module
 
-    start = asyncio.get_running_loop().time()
+    # Virtual loop time. It starts away from zero so an absolute deadline
+    # (start + 40) cannot pass for a bare duration (40).
+    start = 1_000.0
+    now = start
     extensions: list[float] = []
 
     class VirtualTimeout:
         def __init__(self, delay: float) -> None:
-            self.deadline = start + delay
+            self.deadline = now + delay
 
         async def __aenter__(self) -> VirtualTimeout:
             return self
@@ -4000,10 +3830,23 @@ async def test_rotation_first_token_and_completion_deadlines_are_independent(
 
     deadlines: list[VirtualTimeout] = []
 
-    def timeout(delay: float) -> VirtualTimeout:
-        deadline = VirtualTimeout(delay)
-        deadlines.append(deadline)
-        return deadline
+    class VirtualAsyncio:
+        """asyncio as probes.py sees it: its timeouts and its loop clock are
+        virtual, and everything else is the real module."""
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(asyncio, name)
+
+        def timeout(self, delay: float) -> VirtualTimeout:
+            deadline = VirtualTimeout(delay)
+            deadlines.append(deadline)
+            return deadline
+
+        def get_running_loop(self) -> VirtualAsyncio:
+            return self
+
+        def time(self) -> float:
+            return now
 
     chunks = {
         "content": b'data: {"choices":[{"delta":{"content":"PONG"}}]}\n\n',
@@ -4017,8 +3860,10 @@ async def test_rotation_first_token_and_completion_deadlines_are_independent(
 
     class TimedStream(httpx.AsyncByteStream):
         async def __aiter__(self) -> AsyncIterator[bytes]:
+            nonlocal now
             for elapsed, kind in events:
-                if start + elapsed > deadlines[-1].deadline:
+                now = start + elapsed
+                if now > deadlines[-1].deadline:
                     raise TimeoutError("virtual stream deadline exceeded")
                 yield chunks[kind]
 
@@ -4026,7 +3871,7 @@ async def test_rotation_first_token_and_completion_deadlines_are_independent(
             nonlocal closed
             closed = True
 
-    monkeypatch.setattr(probes_module.asyncio, "timeout", timeout)
+    monkeypatch.setattr(probes_module, "asyncio", VirtualAsyncio())
     monkeypatch.setattr(
         probes_module, "model_deadlines", lambda *_args, **_kwargs: ModelDeadlines(10, 40)
     )
@@ -4042,7 +3887,8 @@ async def test_rotation_first_token_and_completion_deadlines_are_independent(
     assert sample.status == expected_status
     assert len(extensions) == expected_extensions
     if extensions:
-        assert extensions[0] == pytest.approx(start + 40, abs=0.1)
+        # The absolute completion deadline: 40 virtual seconds after the request.
+        assert extensions[0] == start + 40
     if expected_status == "error":
         assert sample.error_type == ("provider_error" if events[-1][1] == "error" else "TimeoutError")
     assert closed

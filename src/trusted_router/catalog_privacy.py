@@ -1,11 +1,11 @@
 """Privacy-posture logic for catalog providers and endpoints.
 
 The PRIVACY_TIER_* integer values are stable API vocabulary. They are not an
-implication ladder: confidential compute describes where plaintext is
-processed, while no-store and ZDR describe retention. Routing decisions use
-``endpoint_meets_privacy_requirement`` so those dimensions cannot be
-conflated. The TR gateway hop is always attested; these values describe the
-upstream provider. Split out of the catalog.py god-module (#38); this module
+implication ladder for raw technical flags: confidential compute describes
+where plaintext is processed, while ZDR describes retention. The Confidential
+product tier requires verified compute, E2EE and explicit ZDR together. The TR
+gateway hop is always attested; these values describe the upstream provider.
+Split out of the catalog.py god-module (#38); this module
 depends only on the catalog_data leaf and therefore cannot create a cycle.
 """
 
@@ -26,13 +26,25 @@ from trusted_router.catalog_data import (
 from trusted_router.wafer_policy import wafer_zdr_support
 
 
+def provider_confidential_inference(provider: Provider, *, prepaid: bool = False) -> bool:
+    """Qualify a provider claim; prepaid ZDR applies only when explicitly selected."""
+    return (
+        provider.provider_confidential_compute is True
+        and provider.provider_e2ee is True
+        and (
+            provider.provider_zero_data_retention is True
+            or (prepaid and provider.prepaid_zero_data_retention is True)
+        )
+    )
+
+
 def provider_privacy_tier(provider: Provider) -> int:
     """Return the provider's primary display posture.
 
     Enforcement must use ``endpoint_meets_privacy_requirement`` rather than
     comparing this value numerically.
     """
-    if provider.provider_confidential_compute and provider.provider_e2ee:
+    if provider_confidential_inference(provider):
         return PRIVACY_TIER_CONFIDENTIAL
     if provider.provider_zero_data_retention:
         return PRIVACY_TIER_ZERO_RETENTION
@@ -83,19 +95,29 @@ def _endpoint_privacy_override(
 
 def model_provider_privacy_tier(model_id: str, provider_slug: str) -> int:
     override = _model_provider_privacy_override(model_id, provider_slug)
+    if (
+        model_provider_confidential_compute(model_id, provider_slug) is True
+        and model_provider_e2ee(model_id, provider_slug) is True
+        and model_provider_zero_data_retention(model_id, provider_slug) is True
+    ):
+        return PRIVACY_TIER_CONFIDENTIAL
     if override is not None:
-        return override.privacy_tier
+        if override.privacy_tier != PRIVACY_TIER_CONFIDENTIAL:
+            return override.privacy_tier
+        if model_provider_zero_data_retention(model_id, provider_slug) is True:
+            return PRIVACY_TIER_ZERO_RETENTION
+        return PRIVACY_TIER_NO_STORE if override.stores_content is False else PRIVACY_TIER_STANDARD
     return provider_privacy_tier(PROVIDERS[provider_slug])
 
 
 def endpoint_privacy_tier(endpoint: ModelEndpoint) -> int:
-    override = _endpoint_privacy_override(endpoint)
-    if override is not None:
-        return override.privacy_tier
-    provider = PROVIDERS[endpoint.provider]
-    if endpoint.usage_type == "Credits" and provider.prepaid_zero_data_retention:
-        return max(provider_privacy_tier(provider), PRIVACY_TIER_ZERO_RETENTION)
-    return provider_privacy_tier(provider)
+    if endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL):
+        return PRIVACY_TIER_CONFIDENTIAL
+    if endpoint_zero_data_retention(endpoint) is True:
+        return PRIVACY_TIER_ZERO_RETENTION
+    if not endpoint_stores_content(endpoint):
+        return PRIVACY_TIER_NO_STORE
+    return PRIVACY_TIER_STANDARD
 
 
 def endpoint_stores_content(endpoint: ModelEndpoint) -> bool:
@@ -116,23 +138,9 @@ def endpoint_stores_content(endpoint: ModelEndpoint) -> bool:
 def endpoint_zero_data_retention(endpoint: ModelEndpoint) -> bool | None:
     """Return the ZDR guarantee that applies to this exact credential path.
 
-    Deliberately reads the provider's own flag rather than deriving from the
-    tier. An earlier version of this change derived it — CONFIDENTIAL implies
-    ZDR — to close a case where the router admits a route for a `zdr` floor
-    while this function reports False. Review rejected that reasoning and was
-    right: confidential compute means the provider cannot READ the content, and
-    says nothing about whether it RETAINS the ciphertext or has a deletion
-    policy. Publishing ZDR on that basis would assert a stronger claim than the
-    provider itself makes, which is the exact failure mode this whole tier
-    system exists to prevent.
-
-    The contradictory combination (confidential compute + e2ee together with an
-    explicit provider_zero_data_retention=False) is instead forbidden at the
-    catalog level — see
-    tests/test_catalog_privacy_coherence_property.py::
-    test_no_shipped_provider_has_the_contradictory_flag_combination. No shipped
-    provider has it; the test fails loudly if a catalog edit introduces one,
-    rather than either function quietly inventing an answer.
+    Read explicit route/provider/credential policy, never infer retention from
+    TEE or E2EE. The Confidential tier consumes this result as a prerequisite;
+    missing or false ZDR disqualifies the tier without changing technical flags.
     """
     override = _endpoint_privacy_override(endpoint)
     if override is not None and override.provider_zero_data_retention is not None:
@@ -201,9 +209,8 @@ def endpoint_provider_policy_url(endpoint: ModelEndpoint) -> str | None:
 def endpoint_meets_privacy_requirement(endpoint: ModelEndpoint, requirement: int) -> bool:
     """Match one requested privacy guarantee without conflating dimensions.
 
-    The integer values are stable API vocabulary, not a logical implication
-    chain. In particular, confidential compute proves where plaintext can be
-    processed; it does not by itself promise deletion or zero retention.
+    Confidential requires all three independent facts for the same endpoint:
+    verified compute, provider E2EE, and explicit ZDR. Unknown fails closed.
     """
     if requirement == PRIVACY_TIER_STANDARD:
         return True
@@ -212,7 +219,11 @@ def endpoint_meets_privacy_requirement(endpoint: ModelEndpoint, requirement: int
     if requirement == PRIVACY_TIER_ZERO_RETENTION:
         return endpoint_zero_data_retention(endpoint) is True
     if requirement == PRIVACY_TIER_CONFIDENTIAL:
-        return endpoint_confidential_compute(endpoint) is True and endpoint_e2ee(endpoint) is True
+        return (
+            endpoint_confidential_compute(endpoint) is True
+            and endpoint_e2ee(endpoint) is True
+            and endpoint_zero_data_retention(endpoint) is True
+        )
     return False
 
 

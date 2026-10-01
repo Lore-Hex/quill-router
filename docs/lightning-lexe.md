@@ -51,6 +51,25 @@ Verify `/health` returns 200 with no review backlog. Alerts stay strict; future
 reconciler failures include an allowlisted `failure_code`, never upstream text
 or payment secrets. A source merge alone does not prove production recovery.
 
+## Transient sidecar reads
+
+The September 30 receiving check raised `ReadTimeout` after its 20-second
+read deadline at 06:08:37 UTC. The next scheduled check passed at 06:09:22 UTC;
+funding reconciliation reported zero uncredited or review-required payments.
+The old log did not identify which readiness GET stalled, and sidecar diagnostic
+logging is intentionally disabled to avoid persisting payment secrets. The
+evidence establishes a transient read timeout, not its upstream cause or an
+exhausted liquidity balance.
+
+The adapter now retries only four allowlisted GET operations once after a
+transport timeout/disconnect. The retry has a five-second read timeout and
+one-second connection/pool timeouts; normal read deadlines are unchanged.
+Redacted retry/recovery/failure events identify the operation and exception
+class, never query parameters, payment indexes, response bodies or credentials.
+HTTP rejections, invalid data, wrong wallet/authority and expired credentials
+still fail closed. Invoice create/cancel POSTs are never replayed. Existing
+receiving and funding alert policies and thresholds are unchanged.
+
 ## Owner setup and recovery
 
 Use a dedicated private directory outside disposable Git worktrees. The setup

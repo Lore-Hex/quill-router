@@ -22,11 +22,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_lib.sh"
 # shellcheck source=scripts/deploy/_cloud_run_revision_probe.sh
 source "${SCRIPT_DIR}/_cloud_run_revision_probe.sh"
-# Reuse the active-traffic revision resolver and plain-env reader used by
-# rollout.sh.  Reading latest/template state here would copy a rejected
-# revision after rollback and let the two services silently diverge.
-# shellcheck source=scripts/deploy/regional_quota_rollout.sh
-source "${SCRIPT_DIR}/regional_quota_rollout.sh"
+source "${SCRIPT_DIR}/deploy_mutex.sh"
+# The active-traffic revision resolver and plain-env reader from _lib.sh are
+# the only permitted configuration source. Reading latest/template state here
+# would copy a rejected revision after rollback and let the two services
+# silently diverge.
 
 LEGACY_SERVICE="${TR_LEGACY_SERVICE:-trusted-router}"
 PUBLIC_SERVICE="${TR_PUBLIC_SERVICE:-trusted-router-public}"
@@ -349,17 +349,30 @@ handle_public_signal() {
   exit "$status"
 }
 
-trap cleanup_public_probe_tag EXIT
+finish_public_rollout() {
+  local status=$?
+  trap '' INT TERM
+  trap - EXIT
+  cleanup_public_probe_tag || status=1
+  if [ "${DEPLOY_MUTEX_SCOPE_OWNS_LOCK:-0}" -eq 1 ]; then
+    deploy_mutex_finish "$status" || status=1
+  fi
+  exit "$status"
+}
+trap finish_public_rollout EXIT
 trap 'handle_public_signal 130' INT
 trap 'handle_public_signal 143' TERM
+export TR_DEPLOY_MUTEX_CLOUD=gcp
+export TR_DEPLOY_COMPONENT=public-surface
+if [ -z "${TR_DEPLOY_MUTEX_OPERATION:-}" ]; then deploy_mutex_acquire; fi
+deploy_mutex_assert
 
-# regional_quota_active_revision_json uses SERVICE by design. Point it at the
-# legacy service only while capturing the exact 100%-traffic revision.
-# Consumed by sourced regional_quota_rollout.sh.
+# active_revision_json uses SERVICE by design. Point it at the legacy service
+# only while capturing the exact 100%-traffic revision.
 # shellcheck disable=SC2034
 SERVICE="$LEGACY_SERVICE"
 if ! LEGACY_REVISION_JSON="$(
-  regional_quota_active_revision_json "$TR_PRIMARY_REGION" false
+  active_revision_json "$TR_PRIMARY_REGION" false
 )"; then
   echo "ERROR: cannot derive public configuration from the active legacy revision" >&2
   exit 1
@@ -368,7 +381,7 @@ fi
 legacy_env_required() {
   local name="$1"
   local value
-  if ! value="$(regional_quota_revision_env "$LEGACY_REVISION_JSON" "$name" "__missing__")" || \
+  if ! value="$(revision_env "$LEGACY_REVISION_JSON" "$name" "__missing__")" || \
      [ "$value" = "__missing__" ] || [ -z "$value" ]; then
     echo "ERROR: active ${LEGACY_SERVICE} revision lacks required plain env ${name}" >&2
     return 1
@@ -418,11 +431,14 @@ if legacy_has_secret_binding TR_GITHUB_CLIENT_ID && \
   GITHUB_OAUTH_AVAILABLE=true
 fi
 
-ANALYTICS_READ_MODE="$(legacy_env_required TR_ANALYTICS_READ_MODE)"
-case "$ANALYTICS_READ_MODE" in
-  bigtable|dual|clickhouse|clickhouse-only) ;;
+# Bigtable analytics are retired (2026-09-28): this surface follows a
+# control-plane revision that already runs spanner-clickhouse. An older
+# legacy revision means the control plane deploys first.
+STORAGE_BACKEND="$(legacy_env_required TR_STORAGE_BACKEND)"
+case "$STORAGE_BACKEND" in
+  spanner-clickhouse) ;;
   *)
-    echo "ERROR: active legacy revision has invalid TR_ANALYTICS_READ_MODE=${ANALYTICS_READ_MODE}" >&2
+    echo "ERROR: active legacy revision still runs TR_STORAGE_BACKEND=${STORAGE_BACKEND}; Bigtable analytics are retired, deploy the control plane first" >&2
     exit 1
     ;;
 esac
@@ -452,7 +468,7 @@ ENV_VARS=(
   # Capability metadata only. The public service never gets the probe key
   # or internal billing token, but must display the separately scheduled jobs.
   "TR_SYNTHETIC_STATUS_PROBE_TYPES=gateway_authorize,gateway_settle,provider_fallback,openai_sdk_pong,responses_pong"
-  "TR_STORAGE_BACKEND=$(legacy_env_required TR_STORAGE_BACKEND)"
+  "TR_STORAGE_BACKEND=${STORAGE_BACKEND}"
   "TR_SPANNER_INSTANCE_ID=$(legacy_env_required TR_SPANNER_INSTANCE_ID)"
   "TR_SPANNER_DATABASE_ID=$(legacy_env_required TR_SPANNER_DATABASE_ID)"
   "TR_SPANNER_POOL_SIZE=$(legacy_env_required TR_SPANNER_POOL_SIZE)"
@@ -462,10 +478,13 @@ ENV_VARS=(
   # so run_in_transaction_with_retry rolls back deterministic API failures
   # itself (storage_gcp_io.py). Keep this a decision, not a client default.
   "GOOGLE_CLOUD_SPANNER_MULTIPLEXED_SESSIONS_FOR_RW=true"
-  "TR_BIGTABLE_INSTANCE_ID=$(legacy_env_required TR_BIGTABLE_INSTANCE_ID)"
-  "TR_BIGTABLE_GENERATION_TABLE=$(legacy_env_required TR_BIGTABLE_GENERATION_TABLE)"
-  "TR_BIGTABLE_MIRROR_WRITES_ENABLED=$(legacy_env_required TR_BIGTABLE_MIRROR_WRITES_ENABLED)"
-  "TR_ANALYTICS_READ_MODE=${ANALYTICS_READ_MODE}"
+  # spanner-clickhouse is validated together with typed generation records
+  # and the analytics outboxes; the public store only reads them, but the
+  # process refuses to boot without the same declaration as the control plane.
+  "TR_GENERATION_RECORDS_ENABLED=$(legacy_env_required TR_GENERATION_RECORDS_ENABLED)"
+  "TR_REQUEST_RECORD_WRITE_MODE=$(legacy_env_required TR_REQUEST_RECORD_WRITE_MODE)"
+  "TR_SETTLE_OUTBOX_ENABLED=$(legacy_env_required TR_SETTLE_OUTBOX_ENABLED)"
+  "TR_ANALYTICS_OUTBOX_ENABLED=$(legacy_env_required TR_ANALYTICS_OUTBOX_ENABLED)"
   # The public surface serves /status.json, whose analytics section reports
   # outbox freshness. Without this flag the store is built with NO outbox
   # object, the page publishes reason=not_configured, and stage (c) of
@@ -491,22 +510,22 @@ SECRET_ENVS=(
   "TR_ATTRIBUTION_COOKIE_KEY=trustedrouter-attribution-cookie-key:latest"
   "TR_SENTRY_DSN=trustedrouter-sentry-dsn:latest"
 )
-NETWORK_ARGS=()
-if [ "$ANALYTICS_READ_MODE" != "bigtable" ]; then
-  ENV_VARS+=(
-    "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL=$(legacy_env_required TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL)"
-    "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER=$(legacy_env_required TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER)"
-    "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE=$(legacy_env_required TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE)"
-  )
-  SECRET_ENVS+=(
-    "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD=trustedrouter-clickhouse-control-read-password:latest"
-  )
-  NETWORK_ARGS=(
-    --network "${TR_CLOUD_RUN_NETWORK:-default}"
-    --subnet "${TR_CLOUD_RUN_SUBNET:-default}"
-    --vpc-egress private-ranges-only
-  )
-fi
+# Analytics reads come from ClickHouse alone (Bigtable retired 2026-09-28):
+# the read credentials and the VPC egress that reaches the private ClickHouse
+# address are unconditional.
+ENV_VARS+=(
+  "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL=$(legacy_env_required TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL)"
+  "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER=$(legacy_env_required TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER)"
+  "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE=$(legacy_env_required TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE)"
+)
+SECRET_ENVS+=(
+  "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD=trustedrouter-clickhouse-control-read-password:latest"
+)
+NETWORK_ARGS=(
+  --network "${TR_CLOUD_RUN_NETWORK:-default}"
+  --subnet "${TR_CLOUD_RUN_SUBNET:-default}"
+  --vpc-egress private-ranges-only
+)
 
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 SET_SECRETS="$(IFS=,; echo "${SECRET_ENVS[*]}")"
@@ -516,14 +535,11 @@ print_runtime_sa_bootstrap() {
 Owner action required (do not grant these to the deploy identity):
   gcloud iam service-accounts create tr-public --project=${PROJECT_ID}
   gcloud spanner databases add-iam-policy-binding $(legacy_env_required TR_SPANNER_DATABASE_ID) --instance=$(legacy_env_required TR_SPANNER_INSTANCE_ID) --project=${PROJECT_ID} --member=serviceAccount:${PUBLIC_RUNTIME_SA} --role=roles/spanner.databaseReader
-  gcloud projects add-iam-policy-binding ${PROJECT_ID} --member=serviceAccount:${PUBLIC_RUNTIME_SA} --role=roles/bigtable.reader
   gcloud projects add-iam-policy-binding ${PROJECT_ID} --member=serviceAccount:${PUBLIC_RUNTIME_SA} --role=roles/serviceusage.serviceUsageConsumer
   gcloud secrets add-iam-policy-binding trustedrouter-attribution-cookie-key --project=${PROJECT_ID} --member=serviceAccount:${PUBLIC_RUNTIME_SA} --role=roles/secretmanager.secretAccessor
   gcloud secrets add-iam-policy-binding trustedrouter-sentry-dsn --project=${PROJECT_ID} --member=serviceAccount:${PUBLIC_RUNTIME_SA} --role=roles/secretmanager.secretAccessor
+  gcloud secrets add-iam-policy-binding trustedrouter-clickhouse-control-read-password --project=${PROJECT_ID} --member=serviceAccount:${PUBLIC_RUNTIME_SA} --role=roles/secretmanager.secretAccessor
 EOF
-  if [ "$ANALYTICS_READ_MODE" != "bigtable" ]; then
-    echo "  gcloud secrets add-iam-policy-binding trustedrouter-clickhouse-control-read-password --project=${PROJECT_ID} --member=serviceAccount:${PUBLIC_RUNTIME_SA} --role=roles/secretmanager.secretAccessor" >&2
-  fi
 }
 
 # Every preflight precedes the first Cloud Run mutation. The owner creates the
@@ -567,7 +583,7 @@ if [ "$STAGE" = "routed" ]; then
   # Resolve every serving revision before the first mutation. The existing
   # helper rejects split or ambiguous traffic and describes the traffic-taking
   # revision rather than trusting latestReady/latestCreated state.
-  # shellcheck disable=SC2034  # consumed by regional_quota_active_revision_json
+  # shellcheck disable=SC2034  # consumed by active_revision_json
   SERVICE="$PUBLIC_SERVICE"
   marker_status=0
   read_promotion_marker || marker_status=$?
@@ -581,7 +597,7 @@ if [ "$STAGE" = "routed" ]; then
     exit 1
   fi
   for target in "${TARGET_REGIONS[@]}"; do
-    if ! active_json="$(regional_quota_active_revision_json "$target" false)"; then
+    if ! active_json="$(active_revision_json "$target" false)"; then
       echo "ERROR: cannot capture the serving public revision in ${target}" >&2
       exit 1
     fi
@@ -598,7 +614,7 @@ print(name)
       exit 1
     fi
     ORIGINAL_REVISIONS+=("$active_revision")
-    if ! active_rate_limit_mode="$(regional_quota_revision_env \
+    if ! active_rate_limit_mode="$(revision_env \
         "$active_json" "TR_RATE_LIMIT_CLIENT_IP_MODE" "__missing__")"; then
       echo "ERROR: cannot identify the serving public client-IP mode in ${target}" >&2
       exit 1
@@ -738,7 +754,7 @@ fail_routed_region() {
     active_json=""
     active_revision=""
     service_json=""
-    active_json="$(regional_quota_active_revision_json "$region" false)" || restore_failed=1
+    active_json="$(active_revision_json "$region" false)" || restore_failed=1
     active_revision="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["metadata"]["name"])' \
       <<<"${active_json:-{}}")" || restore_failed=1
     [ "$active_revision" = "$old_revision" ] || restore_failed=1
@@ -774,6 +790,7 @@ raise SystemExit(0 if actual == sys.argv[1] else 1)
 }
 
 for index in "${!TARGET_REGIONS[@]}"; do
+  deploy_mutex_assert
   CURRENT_REGION_INDEX="$index"
   target="${TARGET_REGIONS[$index]}"
   log "deploying ${PUBLIC_SERVICE} (${STAGE}) to ${target} from ${LEGACY_IMAGE}"

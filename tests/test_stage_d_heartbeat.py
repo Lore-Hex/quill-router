@@ -30,18 +30,16 @@ from trusted_router.app_markup_billing import (
     app_markup_owner_share_microdollars,
     app_markup_payout_event_id,
 )
+from trusted_router.catalog_data import Model, ModelEndpoint
 from trusted_router.config import Settings
+from trusted_router.gateway_boot import GatewayBoot, boot_auth_digest
 from trusted_router.pricing import signed_receipt_price_microdollars
+from trusted_router.receipt_keys import b64url_encode
 from trusted_router.routes.internal import gateway
 from trusted_router.schemas import GatewayHeartbeatRequest
-from trusted_router.spend_leases import (
-    SpendLeaseBoot,
-    b64url_encode,
-    boot_auth_digest,
-)
 from trusted_router.stage_d import endpoint_cost_microdollars_from_document
 from trusted_router.storage import configure_store
-from trusted_router.storage_gcp import SpannerBigtableStore
+from trusted_router.storage_gcp import SpannerStore
 from trusted_router.storage_gcp_authorize import (
     SettleOutcome,
     reap_expired_reservations_result,
@@ -474,9 +472,9 @@ def _request(
     )
 
 
-def _boot(kid: str, image_digest: str) -> tuple[Ed25519PrivateKey, SpendLeaseBoot]:
+def _boot(kid: str, image_digest: str) -> tuple[Ed25519PrivateKey, GatewayBoot]:
     private = Ed25519PrivateKey.generate()
-    return private, SpendLeaseBoot(
+    return private, GatewayBoot(
         kid=kid,
         jwk={
             "kty": "OKP",
@@ -493,7 +491,7 @@ def _boot(kid: str, image_digest: str) -> tuple[Ed25519PrivateKey, SpendLeaseBoo
 
 def _boot_auth_header(
     private: Ed25519PrivateKey,
-    boot: SpendLeaseBoot,
+    boot: GatewayBoot,
     raw_body: bytes,
 ) -> str:
     signature = private.sign(
@@ -504,14 +502,14 @@ def _boot_auth_header(
 
 def _gateway_heartbeat_store(
     stage_d_boot_kid: str | None,
-    *boots: SpendLeaseBoot,
+    *boots: GatewayBoot,
 ) -> FakeSpannerDatabase:
-    store, db, _table = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     db.now = NOW
     configure_store(store)
     _seed(stage_d_boot_kid=stage_d_boot_kid, database=db)
     for boot in boots:
-        store.observe_spend_lease_boot(boot)
+        store.observe_gateway_boot(boot)
     return db
 
 
@@ -524,11 +522,11 @@ def _assert_heartbeat_state_unchanged(db: FakeSpannerDatabase) -> None:
 def test_heartbeat_boot_auth_uses_exact_literal_bytes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, _db, _table = make_fake_store(request_record_write_mode="typed")
+    store, _db = make_fake_store(request_record_write_mode="typed")
     configure_store(store)
     private = Ed25519PrivateKey.generate()
     public = private.public_key().public_bytes_raw()
-    boot = SpendLeaseBoot(
+    boot = GatewayBoot(
         kid="boot-stage-d",
         jwk={"kty": "OKP", "crv": "Ed25519", "x": b64url_encode(public)},
         approved=True,
@@ -538,8 +536,8 @@ def test_heartbeat_boot_auth_uses_exact_literal_bytes(
         registered_at="2026-09-02T00:00:00Z",
     )
     monkeypatch.setattr(
-        SpannerBigtableStore,
-        "get_spend_lease_boot",
+        SpannerStore,
+        "get_gateway_boot",
         lambda _self, _kid: boot,
     )
     authorization = GatewayAuthorization(
@@ -553,12 +551,12 @@ def test_heartbeat_boot_auth_uses_exact_literal_bytes(
         stage_d_boot_kid=boot.kid,
     )
     monkeypatch.setattr(
-        SpannerBigtableStore,
+        SpannerStore,
         "get_gateway_authorization",
         lambda _self, _authorization_id: authorization,
     )
     monkeypatch.setattr(
-        SpannerBigtableStore,
+        SpannerStore,
         "heartbeat_gateway_typed",
         lambda _self, **_kwargs: HeartbeatResult(
             accepted=True,
@@ -603,7 +601,7 @@ def test_heartbeat_rejects_valid_current_boot_when_persisted_kid_differs() -> No
         environment="test",
         spend_lease_accepted_gcp_image_digests=boot_b.image_digest,
     )
-    assert boot_b.image_digest in settings.spend_lease_accepted_gcp_digests
+    assert boot_b.image_digest in settings.stage_d_accepted_gcp_digests
 
     with pytest.raises(HTTPException) as raised:
         gateway._heartbeat_gateway_sync(
@@ -643,7 +641,7 @@ def test_heartbeat_accepts_persisted_boot_kid_after_live_set_rotates() -> None:
         environment="test",
         spend_lease_accepted_gcp_image_digests=boot_b.image_digest,
     )
-    assert boot_a.image_digest not in settings.spend_lease_accepted_gcp_digests
+    assert boot_a.image_digest not in settings.stage_d_accepted_gcp_digests
 
     response = gateway._heartbeat_gateway_sync(
         _request(_boot_auth_header(private_a, boot_a, raw)), body, settings, raw
@@ -664,10 +662,10 @@ def test_heartbeat_flag_defaults_on_and_can_disable_endpoint() -> None:
 def test_disposition_lookup_uses_heartbeat_boot_verifier_and_literal_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, _db, _table = make_fake_store(request_record_write_mode="typed")
+    store, _db = make_fake_store(request_record_write_mode="typed")
     configure_store(store)
     private = Ed25519PrivateKey.generate()
-    boot = SpendLeaseBoot(
+    boot = GatewayBoot(
         kid="boot-stage-d-disposition",
         jwk={
             "kty": "OKP",
@@ -694,12 +692,12 @@ def test_disposition_lookup_uses_heartbeat_boot_verifier_and_literal_response(
         stage_d_boot_kid=boot.kid,
     )
     monkeypatch.setattr(
-        SpannerBigtableStore,
-        "get_spend_lease_boot",
+        SpannerStore,
+        "get_gateway_boot",
         lambda _self, _kid: boot,
     )
     monkeypatch.setattr(
-        SpannerBigtableStore,
+        SpannerStore,
         "get_gateway_authorization",
         lambda _self, _authorization_id: authorization,
     )
@@ -917,7 +915,30 @@ def test_reaper_atomic_release_approved_outbox_row_is_not_a_guard() -> None:
 
 
 def test_reaper_snapshot_books_the_frozen_pricing_function_and_generation() -> None:
-    db, _authorization = _seed()
+    db, authorization = _seed()
+    model = Model(id="model", name="Test", provider="anthropic", context_length=4096)
+    endpoint = ModelEndpoint(
+        id="anthropic/test", model_id=model.id, provider="anthropic", usage_type="Credits",
+    )
+    authorize_data = gateway._gateway_authorize_response(
+        authorization=authorization,
+        workspace_id=authorization.workspace_id,
+        key_hash=authorization.key_hash,
+        model=model,
+        endpoint=endpoint,
+        requested_model_id=model.id,
+        model_usage_type=UsageType.CREDITS,
+        limit_usage_type=UsageType.CREDITS,
+        estimate=authorization.estimated_microdollars,
+        credit_reservation_id=authorization.credit_reservation_id,
+        byok_config=None,
+        region="us-central1",
+        settings=Settings(environment="test"),
+        broadcast_destinations=[],
+        endpoint_candidates=[(model, endpoint)],
+        idempotent_replay=False,
+        custom_model=None,
+    )["data"]
     _seed_reaper_counters(db)
     assert _heartbeat(db).accepted
     reap_now = NOW + timedelta(seconds=301)
@@ -953,6 +974,7 @@ def test_reaper_snapshot_books_the_frozen_pricing_function_and_generation() -> N
     assert stored["payload"] is not None
     assert len(db.generation_records) == 1
     generation = json.loads(next(iter(db.generation_records.values()))["payload"])
+    assert generation["id"] == authorize_data["generation_id"]
     assert generation["settled_from"] == "heartbeat"
     assert generation["usage_estimated"] is True
     assert generation["tokens_prompt"] == 100
@@ -993,37 +1015,6 @@ def test_reaper_snapshot_preserves_downstream_fees_and_app_payout() -> None:
         "total_earned"
     ] == payout
 
-
-def test_reaper_snapshot_clamps_a_spend_lease_to_allocation_and_hold() -> None:
-    db, _authorization = _seed()
-    _seed_reaper_counters(db)
-    assert _heartbeat(db).accepted
-    stored = db.gateway_authorizations["gwa-stage-d-fixture"]
-    payload = json.loads(stored["payload"])
-    payload.update(
-        settlement="spend_lease",
-        spend_lease_allocated_micro=80,
-        spend_lease_id="lease",
-    )
-    stored["payload"] = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    stored["spend_lease_allocated_micro"] = 80
-    stored["spend_lease_id"] = "lease"
-
-    result = reap_expired_reservations_result(
-        db,
-        _ParamTypes,
-        now=NOW + timedelta(seconds=301),
-        snapshot_booking_enabled=True,
-    )
-
-    assert result.snapshot_bookings == 1
-    assert db.reservations["reservation"]["actual_micro"] == 80
-    assert db.typed[CREDIT_BALANCE_TABLE][("workspace", 0)]["total_usage"] == 80
-    assert db.gateway_authorizations["gwa-stage-d-fixture"][
-        "finalized_cost_microdollars"
-    ] == 80
-
-
 def test_reaper_flag_off_refunds_started_request_without_nulling_payload() -> None:
     db, _authorization = _seed()
     _seed_reaper_counters(db)
@@ -1041,6 +1032,7 @@ def test_reaper_flag_off_refunds_started_request_without_nulling_payload() -> No
     assert result.snapshot_bookings == 0
     assert result.refunded == 1
     assert result.outcome_counts["refunded"] == 1
+    assert db.generation_records == {}
     assert db.reservations["reservation"]["actual_micro"] == 0
     assert db.typed[CREDIT_BALANCE_TABLE][("workspace", 0)]["total_usage"] == 0
     stored = db.gateway_authorizations["gwa-stage-d-fixture"]
@@ -1184,7 +1176,7 @@ def test_finalize_preserves_heartbeat_committed_after_s1(
     # Independent list: dropping any one field from the SQL must fail this test.
     fields = ("heartbeat_seq", "heartbeat_at", "heartbeat_hash", "started_at",
               "selected_endpoint_id", "delivered_usage")
-    store, db, _table = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     _db, initial = _seed(database=db)
     _seed_reaper_counters(db)
     snapshot = store.get_gateway_authorization(initial.id)  # S1

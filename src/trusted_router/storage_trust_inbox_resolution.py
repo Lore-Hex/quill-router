@@ -25,19 +25,19 @@ REFUND_INDEX_KIND = "trust_paypal_refund"
 def retained_refund_row(store: Any, capture_id: str) -> TrustInboxRow | None:
     """Find the retained full-refund evidence by exact indexed keys only."""
     from trusted_router.storage import InMemoryStore
-    from trusted_router.storage_gcp import SpannerBigtableStore
+    from trusted_router.storage_gcp import SpannerStore
     from trusted_router.storage_postgres import PostgresStore
 
     if isinstance(store, InMemoryStore):
         with store._lock:
             key = store.trust_paypal_refunds.get(capture_id)
             return store.trust_inbox.get(("paypal", key)) if key else None
-    if isinstance(store, (SpannerBigtableStore, PostgresStore)):
+    if isinstance(store, (SpannerStore, PostgresStore)):
         pointer = store._read_entity(REFUND_INDEX_KIND, capture_id, dict)
         if pointer is None:
             return None
         key = str(pointer["adverse_ref"])
-        if isinstance(store, SpannerBigtableStore):
+        if isinstance(store, SpannerStore):
             with store._database.snapshot() as snapshot:
                 records = list(snapshot.execute_sql(
                     "SELECT provider, adverse_ref, payload, received_at FROM tr_trust_inbox "
@@ -63,7 +63,7 @@ def record_refunded_uncredited(
 ) -> int:
     """Commit receipts only while both payment and credit evidence are absent."""
     from trusted_router.storage import InMemoryStore
-    from trusted_router.storage_gcp import SpannerBigtableStore
+    from trusted_router.storage_gcp import SpannerStore
     from trusted_router.storage_postgres import PostgresStore
 
     receipts = [(row, proof.receipt(row)) for row in rows]
@@ -94,7 +94,7 @@ def record_refunded_uncredited(
                     count += 1
             store.trust_paypal_refunds[proof.capture_id] = refund_row.adverse_ref
             return count
-    if isinstance(store, SpannerBigtableStore):
+    if isinstance(store, SpannerStore):
         def spanner_tx(transaction: Any) -> int:
             if (store._read_entity_tx(transaction, "workspace", proof.workspace_id, Workspace) is None
                     or store._read_entity_tx(transaction, "stripe_event",

@@ -98,9 +98,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 from scripts.deploy.service_surface_url_map import rewrite_url_map
 
@@ -163,7 +161,7 @@ for a in "$@"; do
     recorded="${recorded//$'\t'/\\t}"
     printf -v record '%s\t%s' "$record" "$recorded"
 done
-# Background reconcilers share this log: append the complete record at once.
+# Parallel region deploys share this log: append the complete record at once.
 printf '%s\n' "$record" >> "$HARNESS_ARGV_LOG"
 # Drain stdin before answering. A stub that exits without reading closes the
 # pipe under its upstream, and `aws ecr get-login-password | docker login
@@ -178,6 +176,10 @@ joined="${0##*/} $*"
 # The operator-run AWS and Azure control-plane scripts share the real
 # generation-fenced GCS mutex. Model that one object instead of letting the
 # generic success fallback invent an invalid generation or unreadable record.
+if [ "${0##*/}" = "gcloud" ] && [ "$1 $2 $3" = "storage buckets describe" ]; then
+  printf '{"name":"tr-deploy-mutex-quill-cloud-proxy","lifecycle_config":{"rule":[]}}\n'
+  exit 0
+fi
 if [ "${0##*/}" = "gcloud" ] \
     && [[ " $* " == *"trusted-router-production.json"* ]]; then
   case "$1 $2 $3" in
@@ -185,10 +187,11 @@ if [ "${0##*/}" = "gcloud" ] \
       source_path="$3"
       destination_path="$4"
       if [[ "$destination_path" == gs://* ]]; then
-        if [ -f "$HARNESS_DEPLOY_MUTEX_STATE" ]; then
-          exit 1
-        fi
+        generation=0
+        [ ! -f "${HARNESS_DEPLOY_MUTEX_STATE}.generation" ] || generation="$(cat "${HARNESS_DEPLOY_MUTEX_STATE}.generation")"
+        [[ " $* " == *" --if-generation-match=${generation}"* ]] || { echo '412 precondition failed' >&2; exit 1; }
         cp "$source_path" "$HARNESS_DEPLOY_MUTEX_STATE"
+        printf '%s\n' "$((generation + 1))" > "${HARNESS_DEPLOY_MUTEX_STATE}.generation"
       else
         [ -f "$HARNESS_DEPLOY_MUTEX_STATE" ] || exit 1
         cp "$HARNESS_DEPLOY_MUTEX_STATE" "$destination_path"
@@ -196,8 +199,8 @@ if [ "${0##*/}" = "gcloud" ] \
       exit 0
       ;;
     "storage objects describe")
-      [ -f "$HARNESS_DEPLOY_MUTEX_STATE" ] || exit 1
-      printf '1\n'
+      [ -f "$HARNESS_DEPLOY_MUTEX_STATE" ] || { echo '404 not found' >&2; exit 1; }
+      cat "${HARNESS_DEPLOY_MUTEX_STATE}.generation"
       exit 0
       ;;
     "storage rm "*)
@@ -752,25 +755,21 @@ PY
 fi
 
 if [ -n "${HARNESS_FAILURES:-}" ] && [ -f "$HARNESS_FAILURES" ]; then
-  while IFS= read -r pattern; do
-    [ -n "$pattern" ] || continue
+  while IFS= read -r failure; do
+    [ -n "$failure" ] || continue
+    pattern="${failure%%$'\t'*}"
+    message="${failure#*$'\t'}"
     if printf '%s' "$joined" | grep -Eq -- "$pattern"; then
+      [ "$message" = "$failure" ] || printf '%s\n' "$message" >&2
       exit 1
     fi
   done < "$HARNESS_FAILURES"
 fi
 
-# Immutable artifact metadata used by regional quota deployment interlocks.
+# Immutable artifact digest: rollout.sh pins the mutable image tag to it before
+# any revision is created, so every region deploys the same artifact.
 if [[ "$joined" == *"artifacts docker images describe"*"image_summary.digest"* ]]; then
   printf 'sha256:%064d\n' 0
-  exit 0
-fi
-if [[ "$joined" == *"docker buildx imagetools inspect"* ]]; then
-  if [ -n "${HARNESS_IMAGE_CONFIG:-}" ]; then
-    printf '%s\n' "$HARNESS_IMAGE_CONFIG"
-  else
-    printf '%s\n' '{"config":{"Labels":{"com.trustedrouter.accounting_protocol":"2"}}}'
-  fi
   exit 0
 fi
 
@@ -1033,10 +1032,6 @@ _SYNTHETIC_COMBINED_JOB_JSON = json.dumps(
                                             "value": "combined",
                                         },
                                         {
-                                            "name": "TR_SPEND_LEASE_SOAK_PROBE_ENABLED",
-                                            "value": "false",
-                                        },
-                                        {
                                             "name": "TR_INTERNAL_GATEWAY_TOKEN",
                                             "valueFrom": {
                                                 "secretKeyRef": {
@@ -1103,14 +1098,14 @@ _PUBLIC_SURFACE_LEGACY_ENV = {
     "TR_GCP_PROJECT_ID": "quill-cloud-proxy",
     "TR_REGIONS": "us-central1,us-east4,europe-west4,southamerica-east1",
     "TR_PRIMARY_REGION": "us-central1",
-    "TR_STORAGE_BACKEND": "spanner-bigtable",
+    "TR_STORAGE_BACKEND": "spanner-clickhouse",
     "TR_SPANNER_INSTANCE_ID": "trusted-router-nam6",
     "TR_SPANNER_DATABASE_ID": "trusted-router",
     "TR_SPANNER_POOL_SIZE": "8",
-    "TR_BIGTABLE_INSTANCE_ID": "trusted-router-logs",
-    "TR_BIGTABLE_GENERATION_TABLE": "trustedrouter-generations",
-    "TR_BIGTABLE_MIRROR_WRITES_ENABLED": "true",
-    "TR_ANALYTICS_READ_MODE": "clickhouse",
+    "TR_GENERATION_RECORDS_ENABLED": "true",
+    "TR_REQUEST_RECORD_WRITE_MODE": "typed",
+    "TR_SETTLE_OUTBOX_ENABLED": "true",
+    "TR_ANALYTICS_OUTBOX_ENABLED": "true",
     "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL": "http://10.128.15.10:8123",
     "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER": "tr_control_read",
     "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE": "tr",
@@ -1241,10 +1236,6 @@ _INTERNAL_SURFACE_LEGACY_ENV = {
     "TR_ANALYTICS_OUTBOX_ENABLED": "true",
     "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED": "true",
     "TR_USER_MODELS_DISPATCH_ENABLED": "true",
-    # The legacy service carries only the two (false) markers since the
-    # 2026-09-27 ledger retirement; no ledger setting exists on it any more.
-    "TR_REGIONAL_QUOTA_LEASES_ENABLED": "false",
-    "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "false",
     "TR_FEDERATION_HOME_BASE_URL": "https://trustedrouter.com/v1",
     "TR_FEDERATION_DEFERRED_SETTLEMENT_ENABLED": "true",
 }
@@ -1413,6 +1404,8 @@ class ScriptFixture:
     #: ``(extended-regex over "<command> <argv...>", stdout)`` in priority order.
     responses: tuple[tuple[str, str], ...] = ()
     #: Extended regexes whose matching command must exit 1 instead of succeeding.
+    #: A regex may be followed by a TAB and the text the failing command prints
+    #: on stderr, for scripts that classify a failure by its message.
     failures: tuple[str, ...] = ()
     #: Files to create under ``$HOME`` before the run, path -> contents.
     home_files: dict[str, str] = field(default_factory=dict)
@@ -1424,100 +1417,42 @@ class ScriptFixture:
     cleanup_after_gate: tuple[str, ...] = ()
 
 
-# Real Cloud Run v1 shapes for the issuance readiness read-only preflight.
-_QUOTA_WORKER_SPEC: dict[str, Any] = {
-    "containers": [{"image": "reviewed-image", "env": [
-        {"name": "TR_RELEASE", "value": "abc12345"},
-        {"name": "REGIONAL_QUOTA_ACCOUNTING_PROTOCOL", "value": "2"},
-    ]}],
-}
-QUOTA_SCHEDULER: dict[str, Any] = {
-    "state": "ENABLED",
-    "httpTarget": {
-        "uri": "https://us-east4-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/quill-cloud-proxy/jobs/trusted-router-regional-quota-reconciler-abc12345:run",
-        "httpMethod": "POST",
-        "oauthToken": {"serviceAccountEmail": "44325983244-compute@developer.gserviceaccount.com"},
-    },
-}
-# The spend-lease reconciler schedule, for the ledger retirement interlock.
-SPEND_SCHEDULER: dict[str, Any] = {
-    "state": "ENABLED",
-    "httpTarget": {
-        "uri": "https://us-east4-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/quill-cloud-proxy/jobs/trusted-router-spend-lease-reconciler-abc12345:run",
-        "httpMethod": "POST",
-        "oauthToken": {"serviceAccountEmail": "44325983244-compute@developer.gserviceaccount.com"},
-    },
-}
-# Five recent all-zero passes of each worker: what a drained ledger looks like.
-_REGIONAL_DRAINED_LINE = (
-    "INFO:trusted_router.regional_quota_reconcile_cli:regional_quota.reconcile_complete "
-    "inspected=0 reconciled=0 closed=0 errors=0 backlog=0 processed=0 remaining=0 "
-    "completed=0 abandoned=0 budget_exhausted=0"
-)
-_SPEND_DRAINED_LINE = (
-    "INFO:__main__:spend_lease.reconcile_complete candidates=0 open=0 recovered=0 "
-    "bound=0 closed=0 deferred=0 errors=0 dead=0"
-)
-# The harness stamps HARNESS_QUOTA_COMPLETION_TIME with the run's wall clock,
-# so the passes postdate the (old) serving revisions plus the drain interval.
-LEDGER_DRAINED_RESPONSES = (
-    (r"scheduler jobs describe .*spend-lease-reconcile.*--format=json", json.dumps(SPEND_SCHEDULER)),
-    (
-        r"logging read .*regional_quota\.reconcile_complete",
-        json.dumps([{"textPayload": _REGIONAL_DRAINED_LINE, "timestamp": "HARNESS_QUOTA_COMPLETION_TIME"}] * 5),
-    ),
-    (
-        r"logging read .*spend_lease\.reconcile_complete",
-        json.dumps([{"textPayload": _SPEND_DRAINED_LINE, "timestamp": "HARNESS_QUOTA_COMPLETION_TIME"}] * 5),
-    ),
-    (r"spanner databases execute-sql .*regional_quota_lease_open", "0"),
-    (r"spanner databases execute-sql .*regional_quota_lease_workspace_open", "0"),
-    (r"spanner databases execute-sql .*FROM tr_reservation@", "0"),
-    (r"spanner databases execute-sql .*FROM spend_lease_open WHERE", "0"),
-)
-QUOTA_WORKER: dict[str, Any] = {
-    "metadata": {"generation": 1},
-    "spec": {"template": {"spec": {"template": {"spec": _QUOTA_WORKER_SPEC}}}},
-    "status": {
-        "observedGeneration": 1,
-        "conditions": [{"type": "Ready", "status": "True"}],
-        "latestCreatedExecution": {
-            "name": "quota-execution", "completionStatus": "EXECUTION_SUCCEEDED",
+# The one legacy revision receiving 100% of primary traffic. rollout.sh reads
+# its sticky operator pins (the Stripe account id) and nothing else from it;
+# tests append the pin they want preserved.
+_ROLLOUT_ACTIVE_REVISION_JSON = json.dumps(
+    {
+        "metadata": {
+            "name": "trusted-router-active",
+            "creationTimestamp": "2026-09-01T00:00:00Z",
+        },
+        "spec": {
+            "containers": [
+                {
+                    "env": [
+                        {"name": "TR_RELEASE", "value": "abc12345"},
+                        {"name": "TR_STORAGE_BACKEND", "value": "spanner-clickhouse"},
+                        {"name": "TR_REQUEST_RECORD_WRITE_MODE", "value": "typed"},
+                        {"name": "TR_GENERATION_RECORDS_ENABLED", "value": "true"},
+                    ]
+                }
+            ]
         },
     },
-}
-QUOTA_EXECUTION: dict[str, Any] = {
-    "metadata": {"name": "quota-execution"},
-    "spec": {"template": {"spec": _QUOTA_WORKER_SPEC}},
-    "status": {
-        "completionTime": "HARNESS_QUOTA_COMPLETION_TIME",
-        "conditions": [{"type": "Completed", "status": "True"}],
-    },
-}
-QUOTA_READINESS_RESPONSES = (
-    (r"projects describe.*projectNumber", "44325983244"),
-    (r"storage buckets describe .*tr-deploy-mutex.*--format=json", '{"lifecycle_config":{"rule":[{"action":{"type":"Delete"},"condition":{"age":1,"matchesPrefix":["locks/"]}}]}}'),
-    (r"storage objects list --raw --format=json .*controls/", '[{"bucket":"tr-deploy-mutex-quill-cloud-proxy","name":"controls/regional-quota-issuance.txt"},{"bucket":"tr-deploy-mutex-quill-cloud-proxy","name":"controls/ledger-drain-observation.json"}]'),
-    # control objects are written with a generation precondition read first
-    (r"storage objects describe .*controls/.*--format=value\(generation\)", "1"),
-    # The ledger retirement gate's durable observation: this fleet state
-    # (service generation 1, the active revision everywhere) has been in place
-    # since well before any drain interval.
-    (
-        r"storage cat .*controls/ledger-drain-observation.json",
-        json.dumps({"regions": {
-            region: {"generation": "1", "revisions": "trusted-router-active", "off_since": "2026-09-01T00:00:00Z"}
-            for region in ("us-central1", "us-east4", "europe-west4", "southamerica-east1")
-        }, "updated_at": "2026-09-01T00:00:00Z"}),
-    ),
-    (r"storage cat .*controls/regional-quota-issuance.txt", "allow"),
-    (r"scheduler jobs describe .*regional-quota.*--format=json", json.dumps(QUOTA_SCHEDULER)),
-    (r"run jobs describe .*regional-quota.*--format=json", json.dumps(QUOTA_WORKER)),
-    (r"run jobs executions list .*--format=json", json.dumps([QUOTA_EXECUTION])),
-    (r"logging read .*regional_quota.reconciler_complete", '[{"textPayload":"regional_quota.reconciler_complete elapsed_ms=10"}]'),
-    *LEDGER_DRAINED_RESPONSES,
+    separators=(",", ":"),
 )
 
+
+#: The retired spend-lease soak job and its schedule are already gone:
+#: An explicit not-found response is the steady state; scripts delete only what
+#: a describe still finds. Any other lookup failure aborts the deploy.
+_RETIRED_SOAK_ABSENT = (
+    r"scheduler jobs describe trusted-router-spend-lease-soak-"
+    "\tERROR: (gcloud.scheduler.jobs.describe) NOT_FOUND: Job not found.",
+    r"run jobs describe trusted-router-spend-lease-soak-"
+    "\tERROR: (gcloud.run.jobs.describe) Cannot find job "
+    "[trusted-router-spend-lease-soak-us-central1].",
+)
 
 SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
     "scripts/deploy/ramp_secondaries.sh": ScriptFixture(
@@ -1548,49 +1483,25 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
             "TR_DEPLOY_RECONCILE_LB": "0",
             "IMAGE_TAG": "harness-candidate",
             "TR_REQUEST_RECORD_WRITE_MODE": "typed",
-            "TR_STORAGE_BACKEND": "spanner-bigtable",
-            "TR_GENERATION_RECORDS_ENABLED": "false",
-            "TR_BIGTABLE_MIRROR_WRITES_ENABLED": "true",
-            "TR_ANALYTICS_READ_MODE": "bigtable",
+            "TR_STORAGE_BACKEND": "spanner-clickhouse",
+            "TR_GENERATION_RECORDS_ENABLED": "true",
             "TR_DEPLOY_RELEASE_ID": "abc12345",
-            # Lease capability is retired (2026-09-27): rollout.sh pins it off and
-            # refuses an explicit true, so the generic fixture sets nothing here.
-            # No dispatch issuance input: exercise rollout.sh's code pin.
             # Reuse the stateful legacy-service tag behavior in the harness.
             "HARNESS_PUBLIC_SURFACE_SMOKE": "1",
         },
         responses=(
-            *QUOTA_READINESS_RESPONSES,
+            (r"projects describe.*projectNumber", "44325983244"),
+            # spanner-clickhouse requires typed generation records; rollout.sh
+            # then checks that the tr_generation table exists before rendering
+            # them.
+            (
+                r"spanner databases execute-sql .*INFORMATION_SCHEMA.TABLES"
+                r" WHERE table_name='tr_generation'",
+                "1",
+            ),
             (
                 r"run revisions describe trusted-router-active .*--format=json",
-                json.dumps(
-                    {
-                        "metadata": {"creationTimestamp": "2026-09-01T00:00:00Z"},
-                        "spec": {
-                            "containers": [
-                                {
-                                    "env": [
-                                        {"name": "REGIONAL_QUOTA_ACCOUNTING_PROTOCOL", "value": "2"},
-                                        {
-                                            "name": "TR_REGIONAL_QUOTA_LEASES_ENABLED",
-                                            "value": "true",
-                                        },
-                                        {
-                                            "name": "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED",
-                                            "value": "false",
-                                        },
-                                        # Step-1 markers: the ledger retirement gate
-                                        # requires them off on every serving revision.
-                                        {"name": "TR_SPEND_LEASE_ISSUANCE_ENABLED", "value": "false"},
-                                        {"name": "TR_SPEND_LEASE_BINDING_ENABLED", "value": "false"},
-                                        {"name": "TR_SPEND_LEASE_ADMISSION_ACCEPT", "value": "false"},
-                                    ]
-                                }
-                            ]
-                        }
-                    },
-                    separators=(",", ":"),
-                ),
+                _ROLLOUT_ACTIVE_REVISION_JSON,
             ),
             (
                 r"run revisions list .*--limit=10",
@@ -1798,7 +1709,12 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
                 ),
             ),
         ),
-        cleanup_after_gate=(r"gcloud storage rm .*trusted-router-production[.]json",),
+        cleanup_after_gate=(
+            r"gcloud storage buckets describe gs://tr-deploy-mutex-quill-cloud-proxy --format=json",
+            r"gcloud storage objects describe gs://tr-deploy-mutex-quill-cloud-proxy/locks/trusted-router-production[.]json .*",
+            r"gcloud storage cp gs://tr-deploy-mutex-quill-cloud-proxy/locks/trusted-router-production[.]json#[0-9]+ .*",
+            r"gcloud storage cp .*/state[.]json gs://tr-deploy-mutex-quill-cloud-proxy/locks/trusted-router-production[.]json --if-generation-match=[0-9]+",
+        ),
     ),
     "scripts/deploy/aws_eu_north_clickhouse.sh": ScriptFixture(
         env={"TR_STOCKHOLM_REPLICA_WIRED": "1"},
@@ -1858,7 +1774,10 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
         # apply the schema. Cleanup, not provisioning.
         cleanup_after_gate=(
             r"firewall-rule delete",
-            r"gcloud storage rm .*trusted-router-production[.]json",
+            r"gcloud storage buckets describe gs://tr-deploy-mutex-quill-cloud-proxy --format=json",
+            r"gcloud storage objects describe gs://tr-deploy-mutex-quill-cloud-proxy/locks/trusted-router-production[.]json .*",
+            r"gcloud storage cp gs://tr-deploy-mutex-quill-cloud-proxy/locks/trusted-router-production[.]json#[0-9]+ .*",
+            r"gcloud storage cp .*/state[.]json gs://tr-deploy-mutex-quill-cloud-proxy/locks/trusted-router-production[.]json --if-generation-match=[0-9]+",
         ),
     ),
     "scripts/deploy/azure_canary_app.sh": ScriptFixture(
@@ -1878,8 +1797,8 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
     ),
     "scripts/deploy/synthetic.sh": ScriptFixture(
         env={"TR_BILLING_SERVICE": "trusted-router-billing"},
+        failures=_RETIRED_SOAK_ABSENT,
         responses=(
-            (r"scheduler jobs describe .*spend-lease-soak", "ENABLED"),
             (
                 r"run services describe trusted-router-billing.*--format=json",
                 _SYNTHETIC_INGEST_SERVICE_JSON,
@@ -1900,9 +1819,9 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
             ),
             "SHA": "1234567890abcdef",
         },
+        failures=_RETIRED_SOAK_ABSENT,
         responses=(
             (r"run jobs describe .*--format=json", _SYNTHETIC_COMBINED_JOB_JSON),
-            (r"scheduler jobs describe .*spend-lease-soak", "ENABLED"),
         ),
     ),
 }
@@ -1953,6 +1872,16 @@ class HarnessRun:
         return after
 
 
+def harness_timeout_scale() -> float:
+    """``HARNESS_TIMEOUT_SCALE`` from the invoking environment: a finite,
+    positive multiplier for every deploy-script subprocess budget. It defaults
+    to 1; loaded runs (a parallel full suite, a tombstone sweep) opt into more."""
+    scale = float(os.environ.get("HARNESS_TIMEOUT_SCALE", "1"))
+    if not math.isfinite(scale) or scale <= 0:
+        raise ValueError("HARNESS_TIMEOUT_SCALE must be finite and positive")
+    return scale
+
+
 class DeployScriptHarness:
     """A throwaway checkout, a stub PATH, and one recorded run per invocation."""
 
@@ -1976,6 +1905,13 @@ class DeployScriptHarness:
         verifier = self.mirror / "scripts" / "deploy" / "verify_cloud_complete.sh"
         verifier.write_text(_VERIFIER_STUB)
         verifier.chmod(0o755)
+        # Only replace network health evidence; execute the real CAS/state
+        # machine and shell scope handling against the fake cloud CLI.
+        coordinator = self.mirror / "scripts/deploy/cloud_rollout.py"
+        coordinator.write_text(coordinator.read_text().replace(
+            'if __name__ == "__main__":',
+            'probe_cloud = lambda cloud: "a" * 40\nif __name__ == "__main__":',
+        ))
 
     def _build_bin(self) -> None:
         self.bin.mkdir(parents=True)
@@ -2036,12 +1972,10 @@ class DeployScriptHarness:
         ``test_the_gate_status_survives_without_the_operator_attestation``.
 
         ``HARNESS_TIMEOUT_SCALE`` in the invoking environment multiplies every
-        subprocess budget (default 120 seconds, or the caller's override).
-        It defaults to 1; loaded runs can opt into a larger positive scale.
+        subprocess budget (default 120 seconds, or the caller's override); see
+        ``harness_timeout_scale``. The ECS fixture applies it itself.
         """
-        timeout_scale = float(os.environ.get("HARNESS_TIMEOUT_SCALE", "1"))
-        if not math.isfinite(timeout_scale) or timeout_scale <= 0:
-            raise ValueError("HARNESS_TIMEOUT_SCALE must be finite and positive")
+        timeout_scale = harness_timeout_scale()
         fixture = SCRIPT_FIXTURES.get(script, ScriptFixture())
         self._runs += 1
         run_dir = self.root / f"run-{self._runs:03d}"
@@ -2072,7 +2006,7 @@ class DeployScriptHarness:
         fixtures_file = run_dir / "fixtures.tsv"
         fixtures_file.write_text(
             "".join(
-                f"{pattern}\t{base64.b64encode(reply.replace('HARNESS_QUOTA_COMPLETION_TIME', datetime.now(UTC).isoformat()).encode()).decode('ascii')}\n"
+                f"{pattern}\t{base64.b64encode(reply.encode()).decode('ascii')}\n"
                 for pattern, reply in fixture.responses
             )
         )
@@ -2213,9 +2147,22 @@ class DeployScriptHarness:
             "HARNESS_CLOUD_RUN_TRAFFIC_STATE": str(cloud_run_traffic_state),
             "HARNESS_DEPLOY_MUTEX_STATE": str(run_dir / "deploy-mutex.json"),
             "HARNESS_VERIFIER_RC": str(verifier_rc),
+            "TR_CLOUD_DEPLOY_MODE": "promote",
             **{k: v for k, v in fixture.env.items() if k not in omit_env},
             **(extra_env or {}),
         }
+
+        if env.get("TR_DEPLOY_MUTEX_OPERATION"):
+            # These callers inherit an outer workflow reservation.
+            cloud = env.get("TR_DEPLOY_MUTEX_CLOUD", "gcp")
+            env["TR_DEPLOY_MUTEX_OPERATION"] = "a" * 32
+            lease = {"cloud": cloud, "operation_id": "a" * 32, "owner": "harness",
+                     "state": "active", "created_at": 1, "expires_at": 9_999_999_999}
+            Path(env["HARNESS_DEPLOY_MUTEX_STATE"]).write_text(json.dumps({
+                "schema_version": 2, "leases": {cloud: lease},
+                "holdback": {"cloud": "aws" if cloud != "aws" else "azure", "release": "a" * 40},
+            }))
+            Path(env["HARNESS_DEPLOY_MUTEX_STATE"] + ".generation").write_text("1")
 
         proc = subprocess.run(  # noqa: S603 - fixed argv, stub PATH, repo-local script
             ["bash", str(self.mirror / script), *args],  # noqa: S607

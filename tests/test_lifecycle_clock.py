@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import importlib
-import json
 import os
-import shutil
 import subprocess
 import sys
 import textwrap
@@ -13,9 +11,14 @@ from pathlib import Path
 
 import pytest
 
-from tests import lifecycle_clock
+from tests import catalog_vehicles, lifecycle_clock
 from tests.lifecycle_freeze import freeze_lifecycle_clock
-from trusted_router import catalog_ingest, catalog_registry, provider_lifecycle
+from tests.pinned_manifests import (
+    DEEPSEEK_V4_PRO_0813_ROUTES,
+    USE_PINNED_MANIFESTS,
+    pinned_manifests,
+)
+from trusted_router import catalog_registry, provider_lifecycle
 from trusted_router.catalog import endpoints_for_model
 from trusted_router.provider_lifecycle import (
     _RETIREMENTS,
@@ -23,51 +26,15 @@ from trusted_router.provider_lifecycle import (
     provider_model_retired,
 )
 
-# Fireworks' DeepSeek V4 Pro 0813 route as its manifest listed it before the
-# 2026-09-25 retirement. The tests below build the catalog at an instant before
-# that retirement, which requires the route. The live manifest has moved on:
-# Fireworks delisted the route and the hourly refresh tombstoned it on
-# 2026-09-28, so a pre-retirement catalog cannot be built from it any more.
-_FIREWORKS_V4_PRO_0813_BEFORE_RETIREMENT = {
-    "display_name": "DeepSeek V4 Pro 0813 on Fireworks",
-    "title": "accounts/fireworks/models/deepseek-v4-pro-0813",
-    "model_type": "chat",
-    "input_modalities": ["text"],
-    "output_modalities": ["text"],
-    "endpoints": ["chat/completions"],
-    "status": 1,
-    "id": "deepseek/deepseek-v4-pro-0813",
-    "upstream_id": "accounts/fireworks/models/deepseek-v4-pro-0813",
-    "retirement_at": "2026-09-25T00:00:00Z",
-    "context_length": 1048576,
-    "created": 1786637155,
-    "input_token_price_per_m": 1320000,
-    "output_token_price_per_m": 3960000,
-    "cached_input_token_price_per_m": 44000,
-}
-
-# Run in each subprocess before the catalog is built.
-_USE_PRE_RETIREMENT_MANIFESTS = """
-from pathlib import Path as _Path
-from trusted_router import catalog_ingest as _catalog_ingest
-_catalog_ingest._PROVIDER_MODELS_DIR = _Path(__import__("os").environ["TR_TEST_PROVIDER_MODELS_DIR"])
-"""
-
 
 @pytest.fixture
 def pre_retirement_manifests(tmp_path: Path) -> dict[str, str]:
-    """Today's provider manifests, with Fireworks' 0813 route pinned as it was
-    before the retirement, as a subprocess environment."""
-    manifests = tmp_path / "provider_models"
-    shutil.copytree(catalog_ingest._PROVIDER_MODELS_DIR, manifests)
-    fireworks = manifests / "fireworks.json"
-    raw = json.loads(fireworks.read_text(encoding="utf-8"))
-    row = _FIREWORKS_V4_PRO_0813_BEFORE_RETIREMENT
-    raw["models"] = [r for r in raw["models"] if r.get("id") != row["id"]] + [dict(row)]
-    fireworks.write_text(json.dumps(raw), encoding="utf-8")
-    environ = dict(os.environ)
-    environ["TR_TEST_PROVIDER_MODELS_DIR"] = str(manifests)
-    return environ
+    """Today's provider manifests, with the DeepSeek V4 Pro 0813 release routes
+    pinned as they were before Fireworks' 2026-09-25 retirement, as a
+    subprocess environment. The tests below build the catalog at an instant
+    before that retirement, which needs those routes whatever the hosts list
+    today."""
+    return pinned_manifests(tmp_path, DEEPSEEK_V4_PRO_0813_ROUTES)
 
 
 @pytest.mark.parametrize("start_at_cutoff", [False, True])
@@ -78,7 +45,7 @@ def test_registry_import_crossing_fireworks_retirement(
     environ.pop(LIFECYCLE_CLOCK_OVERRIDE_ENV, None)
     environ.pop("PYTEST_CURRENT_TEST", None)
     result = subprocess.run(  # noqa: S603 - fixed Python regression script
-        [sys.executable, "-c", _USE_PRE_RETIREMENT_MANIFESTS + textwrap.dedent("""
+        [sys.executable, "-c", USE_PINNED_MANIFESTS + textwrap.dedent("""
             import sys
             from datetime import UTC, datetime
             from trusted_router import provider_lifecycle
@@ -127,7 +94,7 @@ def test_early_catalog_import_crossing_retirement_matches_release_contract(
     environ.pop(LIFECYCLE_CLOCK_OVERRIDE_ENV, None)
     environ.pop("PYTEST_CURRENT_TEST", None)
     result = subprocess.run(  # noqa: S603 - fixed Python regression script
-        [sys.executable, "-c", _USE_PRE_RETIREMENT_MANIFESTS + textwrap.dedent("""
+        [sys.executable, "-c", USE_PINNED_MANIFESTS + textwrap.dedent("""
             from datetime import UTC, datetime
             from trusted_router import provider_lifecycle
 
@@ -213,7 +180,7 @@ def test_early_lifecycle_plugin_uses_the_same_clock_as_conftest(
     environ.pop(LIFECYCLE_CLOCK_OVERRIDE_ENV, None)
     result = subprocess.run(  # noqa: S603 - fixed Python regression script
         [
-            sys.executable, "-c", _USE_PRE_RETIREMENT_MANIFESTS + textwrap.dedent("""
+            sys.executable, "-c", USE_PINNED_MANIFESTS + textwrap.dedent("""
                 from datetime import UTC, datetime
                 import pytest
                 from trusted_router import provider_lifecycle
@@ -271,6 +238,7 @@ def test_a_retirement_the_catalog_clock_has_passed_is_absent_everywhere() -> Non
     # The registry's import-time filter and the request-time filter must give
     # the same answer as catalog_predates for every scheduled retirement.
     checked = 0
+    built = catalog_vehicles.registry_endpoints()
     for retirement in _RETIREMENTS:
         if lifecycle_clock.catalog_predates(retirement.effective_at):
             continue
@@ -280,14 +248,14 @@ def test_a_retirement_the_catalog_clock_has_passed_is_absent_everywhere() -> Non
             )
             live = [
                 endpoint
-                for endpoint in catalog_registry.MODEL_ENDPOINTS.values()
+                for endpoint in built.values()
                 if endpoint.model_id == model_id and endpoint.provider == retirement.provider
             ]
             assert live == [], (retirement.provider, model_id)
             served = [
                 endpoint
                 for endpoint in endpoints_for_model(model_id)
-                if endpoint.provider == retirement.provider
+                if endpoint.provider == retirement.provider and endpoint.id in built
             ]
             assert served == [], (retirement.provider, model_id)
             checked += 1

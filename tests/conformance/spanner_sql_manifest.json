@@ -8,7 +8,7 @@
     "storage_gcp_generation_records:generation_insert_statement": "487437595bca87fd1a20593f66747ac09dea89d49c3465a189e73e0b21d7c0a5",
     "storage_gcp_operational_analytics_outbox:activity_insert_statement": "d7b110b4ca24df2c42f74552e88e51766d2d78ea15c6ae38cdb114813c5a659c",
     "storage_gcp_operational_analytics_outbox:_insert_statement": "d7a1c8970c6a4cab59bf187c34dec4737ed877ab005c160f707b4b70f2ce3870",
-    "storage_gcp_request_records:gateway_authorization_insert_statement": "4c98dd03cbb169067846e4d8729315e85c61d02d4166462c4fa5e77144339e79",
+    "storage_gcp_request_records:gateway_authorization_insert_statement": "8702c8c49d10278cfb5d65b91c5ff517ad066a306ea6f652b61116c7e200ffe3",
     "storage_gcp_request_records:_current_heartbeat_json_sql": "62f48c68b3ff763ec576e6dc98150e0c0965913bdb1f085733d2a635410785f7",
     "storage_gcp_request_records:_settled_payload_sql": "88f98045ea34ac1b01647e7f0b512d0f27a0430cbaab6852d003d0f9f45df1f3",
     "storage_gcp_request_records:gateway_authorization_settled_statement": "ae5e93de4af73f80e254209da33db4f523641496d30a61d994dce60f137f1952",
@@ -118,24 +118,13 @@
       ]
     },
     "storage_gcp:txn:1": {
-      "fingerprint": "2b188f1bb5110ddf4b7a439988408e12cdb90838cb694444e8075eecba7e3a46",
+      "fingerprint": "d0d1045d40b6dfbd25458bdace3723b596bba4387581942a1f5876f0b8116cde",
       "scenarios": [
         {
           "bindings": {},
           "types": {
             "pk": "STRING",
             "shard_count": "INT64"
-          }
-        }
-      ]
-    },
-    "storage_gcp:txn:2": {
-      "fingerprint": "2b188f1bb5110ddf4b7a439988408e12cdb90838cb694444e8075eecba7e3a46",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "pk": "STRING"
           }
         }
       ]
@@ -151,7 +140,7 @@
         }
       ]
     },
-    "storage_gcp:txn:3": {
+    "storage_gcp:txn:2": {
       "fingerprint": "3f952879b42888a5d0e0d00045371ec9e6dcc5dbb136a6db082372d9a592c558",
       "scenarios": [
         {
@@ -175,7 +164,7 @@
         }
       ]
     },
-    "storage_gcp:txn:4": {
+    "storage_gcp:txn:3": {
       "fingerprint": "56d82a93698e454bbe7a5612aee8613742343bfbcd2cc335b3e2c4982b5bbb3f",
       "scenarios": [
         {
@@ -187,7 +176,7 @@
         }
       ]
     },
-    "storage_gcp:txn:5": {
+    "storage_gcp:txn:4": {
       "fingerprint": "56d82a93698e454bbe7a5612aee8613742343bfbcd2cc335b3e2c4982b5bbb3f",
       "scenarios": [
         {
@@ -199,7 +188,7 @@
         }
       ]
     },
-    "storage_gcp:txn:6": {
+    "storage_gcp:txn:5": {
       "fingerprint": "56d82a93698e454bbe7a5612aee8613742343bfbcd2cc335b3e2c4982b5bbb3f",
       "scenarios": [
         {
@@ -207,6 +196,18 @@
           "types": {
             "causes": "ARRAY<STRING>",
             "now": "TIMESTAMP",
+            "pk": "STRING",
+            "shard_count": "INT64"
+          }
+        }
+      ]
+    },
+    "storage_gcp:txn:6": {
+      "fingerprint": "d8fc24496cd4759f5fb548b407301c31d54b940866efa4f449db9f3506c31669",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
             "pk": "STRING",
             "shard_count": "INT64"
           }
@@ -219,18 +220,6 @@
         {
           "bindings": {},
           "types": {
-            "pk": "STRING",
-            "shard_count": "INT64"
-          }
-        }
-      ]
-    },
-    "storage_gcp:txn:8": {
-      "fingerprint": "d8fc24496cd4759f5fb548b407301c31d54b940866efa4f449db9f3506c31669",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
             "causes": "ARRAY<STRING>",
             "now": "TIMESTAMP",
             "pk": "STRING",
@@ -239,7 +228,7 @@
         }
       ]
     },
-    "storage_gcp:txn:9": {
+    "storage_gcp:txn:8": {
       "fingerprint": "154bb298464bdc8cbc241fb69c784a168d9221877465632758442a69823d8040",
       "scenarios": [
         {
@@ -248,7 +237,7 @@
         }
       ]
     },
-    "storage_gcp:txn:10": {
+    "storage_gcp:txn:9": {
       "fingerprint": "154bb298464bdc8cbc241fb69c784a168d9221877465632758442a69823d8040",
       "scenarios": [
         {
@@ -268,7 +257,7 @@
         }
       ]
     },
-    "storage_gcp:txn:11": {
+    "storage_gcp:txn:10": {
       "fingerprint": "17473222e40b3b33bf3cd55d8cabb1b5ef17305e28ddef1d57b3dae49bf4cf9a",
       "scenarios": [
         {
@@ -280,7 +269,7 @@
         }
       ]
     },
-    "storage_gcp:txn:12": {
+    "storage_gcp:txn:11": {
       "fingerprint": "17473222e40b3b33bf3cd55d8cabb1b5ef17305e28ddef1d57b3dae49bf4cf9a",
       "scenarios": [
         {
@@ -291,7 +280,7 @@
         }
       ]
     },
-    "storage_gcp:txn:13": {
+    "storage_gcp:txn:12": {
       "fingerprint": "17473222e40b3b33bf3cd55d8cabb1b5ef17305e28ddef1d57b3dae49bf4cf9a",
       "scenarios": [
         {
@@ -405,6 +394,19 @@
         }
       ]
     },
+    "storage_gcp:txn:13": {
+      "fingerprint": "9334664b8f68347efb4e59669e7eea1b396c33d1536241622d0916a675a5a128",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "amount": "INT64",
+            "now": "TIMESTAMP",
+            "user_id": "STRING"
+          }
+        }
+      ]
+    },
     "storage_gcp:txn:14": {
       "fingerprint": "9334664b8f68347efb4e59669e7eea1b396c33d1536241622d0916a675a5a128",
       "scenarios": [
@@ -419,19 +421,6 @@
       ]
     },
     "storage_gcp:txn:15": {
-      "fingerprint": "9334664b8f68347efb4e59669e7eea1b396c33d1536241622d0916a675a5a128",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "amount": "INT64",
-            "now": "TIMESTAMP",
-            "user_id": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp:txn:16": {
       "fingerprint": "e49d54606767135d65da27c5523a8a88802780567fb64bb217324b736bca7d54",
       "scenarios": [
         {
@@ -444,7 +433,7 @@
         }
       ]
     },
-    "storage_gcp:txn:17": {
+    "storage_gcp:txn:16": {
       "fingerprint": "a24c106bfe26d891731cd0f9fcef3a65259d8a3a0aa1879d1e9e9f12d0574ccb",
       "scenarios": [
         {
@@ -462,7 +451,7 @@
         }
       ]
     },
-    "storage_gcp:txn:18": {
+    "storage_gcp:txn:17": {
       "fingerprint": "a24c106bfe26d891731cd0f9fcef3a65259d8a3a0aa1879d1e9e9f12d0574ccb",
       "scenarios": [
         {
@@ -474,7 +463,7 @@
         }
       ]
     },
-    "storage_gcp:txn:19": {
+    "storage_gcp:txn:18": {
       "fingerprint": "a24c106bfe26d891731cd0f9fcef3a65259d8a3a0aa1879d1e9e9f12d0574ccb",
       "scenarios": [
         {
@@ -498,7 +487,7 @@
         }
       ]
     },
-    "storage_gcp:txn:20": {
+    "storage_gcp:txn:19": {
       "fingerprint": "c9bb2c5a837c6a90cae7533db1eca0eb04a70fba0690783a89f27bdc7ae22ebc",
       "scenarios": [
         {
@@ -511,7 +500,7 @@
         }
       ]
     },
-    "storage_gcp:txn:21": {
+    "storage_gcp:txn:20": {
       "fingerprint": "446039cd7c42b0b03d335359e589f28eefa2697b2cb5b6a231cc775b997c6d33",
       "scenarios": [
         {
@@ -524,7 +513,7 @@
         }
       ]
     },
-    "storage_gcp:txn:22": {
+    "storage_gcp:txn:21": {
       "fingerprint": "388a70c4eb9250f38b3c0de6fd47ef656942e170b28cbc44f2aded31a08cbddd",
       "scenarios": [
         {
@@ -537,7 +526,7 @@
         }
       ]
     },
-    "storage_gcp:txn:23": {
+    "storage_gcp:txn:22": {
       "fingerprint": "3b8b24a33d9fd21c48fd2874d95cdb2180d64242ecb2319c151d41603bf75a20",
       "scenarios": [
         {
@@ -548,7 +537,7 @@
         }
       ]
     },
-    "storage_gcp:txn:24": {
+    "storage_gcp:txn:23": {
       "fingerprint": "3b8b24a33d9fd21c48fd2874d95cdb2180d64242ecb2319c151d41603bf75a20",
       "scenarios": [
         {
@@ -751,7 +740,7 @@
         }
       ]
     },
-    "storage_gcp:txn:25": {
+    "storage_gcp:txn:24": {
       "fingerprint": "85683da9c98e0d338df286358ddabd4130fbcf122e9e2f5ea70c5e051e0142e0",
       "scenarios": [
         {
@@ -1117,22 +1106,6 @@
         }
       ]
     },
-    "storage_gcp_counter_dml:reserve_credit_for_spend_lease:1": {
-      "fingerprint": "e17e0b988ad445b4b101025c743e23f9f28715130efc49897d909c2a099267e9",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "est": "INT64",
-            "expected_trust_tier": "INT64",
-            "shard": "INT64",
-            "trust_fresh_after": "TIMESTAMP",
-            "trust_now": "TIMESTAMP",
-            "ws": "STRING"
-          }
-        }
-      ]
-    },
     "storage_gcp_counter_dml:debit_workspace_credit:1": {
       "fingerprint": "ecb5f2a550bafecf029f91f3e60e39d118419f887c326c7e88221195eb1a4a0d",
       "scenarios": [
@@ -1251,7 +1224,7 @@
       ]
     },
     "storage_gcp_counter_dml:release_key:1": {
-      "fingerprint": "6275a8d4a9f68dbbf722c374c06afe37f7dca3f76e1fdc15f4c9ba2b5bed92d7",
+      "fingerprint": "f57a5b6a0be61096c27e07de7f84b4434921d015cc917599bdd9adac52b3dfb5",
       "scenarios": [
         {
           "bindings": {
@@ -1272,7 +1245,7 @@
       ]
     },
     "storage_gcp_counter_dml:release_key:2": {
-      "fingerprint": "6275a8d4a9f68dbbf722c374c06afe37f7dca3f76e1fdc15f4c9ba2b5bed92d7",
+      "fingerprint": "f57a5b6a0be61096c27e07de7f84b4434921d015cc917599bdd9adac52b3dfb5",
       "scenarios": [
         {
           "bindings": {
@@ -1436,15 +1409,6 @@
       ]
     },
     "storage_gcp_counter_reconcile:constants:3": {
-      "fingerprint": "05cea70bda9a70b1d0a6d709d6f3b454694e40ad23757f4316fe780318b438ae",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {}
-        }
-      ]
-    },
-    "storage_gcp_counter_reconcile:constants:4": {
       "fingerprint": "354e48282fb8245c5fa88b54fcfd4dfcf2d8f87730fdfb38dfe3ee0668ed0968",
       "scenarios": [
         {
@@ -1455,7 +1419,7 @@
         }
       ]
     },
-    "storage_gcp_counter_reconcile:constants:5": {
+    "storage_gcp_counter_reconcile:constants:4": {
       "fingerprint": "61f872a8cbcc2a655f318ccc9c71f97051abdea0d258504847a3e4f08e2433d2",
       "scenarios": [
         {
@@ -1466,7 +1430,7 @@
         }
       ]
     },
-    "storage_gcp_counter_reconcile:constants:6": {
+    "storage_gcp_counter_reconcile:constants:5": {
       "fingerprint": "206a65087cb841e004191711d62f42dd834824b590fc31cf68e22bfc4ef1849c",
       "scenarios": [
         {
@@ -1475,7 +1439,7 @@
         }
       ]
     },
-    "storage_gcp_counter_reconcile:constants:7": {
+    "storage_gcp_counter_reconcile:constants:6": {
       "fingerprint": "ec6e24bd922bd029171f58ae7804a386cc0a65a64e151546f1405f22c437b50e",
       "scenarios": [
         {
@@ -1484,7 +1448,7 @@
         }
       ]
     },
-    "storage_gcp_counter_reconcile:constants:8": {
+    "storage_gcp_counter_reconcile:constants:7": {
       "fingerprint": "5d85db401e758219dca907d0ab4056e796df1ca808c0f93f73cbc46192b62a92",
       "scenarios": [
         {
@@ -1493,7 +1457,7 @@
         }
       ]
     },
-    "storage_gcp_counter_reconcile:constants:9": {
+    "storage_gcp_counter_reconcile:constants:8": {
       "fingerprint": "f90462de569721d7cc150c989620caa13445a3b18c3d2e4b8216d49c41de91e3",
       "scenarios": [
         {
@@ -1502,7 +1466,7 @@
         }
       ]
     },
-    "storage_gcp_counter_reconcile:constants:10": {
+    "storage_gcp_counter_reconcile:constants:9": {
       "fingerprint": "8f1def3a6834b1a53dbc2fbd56c65a26fe8ba3324ae8efb4e2d844ad7205800b",
       "scenarios": [
         {
@@ -1511,19 +1475,8 @@
         }
       ]
     },
-    "storage_gcp_counter_reconcile:constants:11": {
-      "fingerprint": "85dfc0577136d63343cd0f10ad05bb184396b64f585dfc41d1df700d20abb8fd",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "ws": "STRING"
-          }
-        }
-      ]
-    },
     "storage_gcp_counter_reconcile:audit_typed_invariants:1": {
-      "fingerprint": "a2b1ebed17acc2e0ced149ba2074549630b4de124622e2ec18029261247e15e4",
+      "fingerprint": "fb1be7f19184fdc93497b15295a7991b87bb9c88dfd8a873b3546b9026c41a9d",
       "scenarios": [
         {
           "bindings": {},
@@ -1532,7 +1485,7 @@
       ]
     },
     "storage_gcp_counter_reconcile:audit_typed_invariants:2": {
-      "fingerprint": "a2b1ebed17acc2e0ced149ba2074549630b4de124622e2ec18029261247e15e4",
+      "fingerprint": "fb1be7f19184fdc93497b15295a7991b87bb9c88dfd8a873b3546b9026c41a9d",
       "scenarios": [
         {
           "bindings": {},
@@ -1541,7 +1494,7 @@
       ]
     },
     "storage_gcp_counter_reconcile:repair_typed_reserved:1": {
-      "fingerprint": "810fedf31273dfad89eab2528b05bbc0ce97103ebc91689cf564f9edbd28bd77",
+      "fingerprint": "a7b1ccc040f3cdb2ad56bcd8b9c2c5160d51df3764c1ed7ab0201cb5d7ee2487",
       "scenarios": [
         {
           "bindings": {},
@@ -1552,7 +1505,7 @@
       ]
     },
     "storage_gcp_counter_reconcile:repair_typed_reserved:2": {
-      "fingerprint": "810fedf31273dfad89eab2528b05bbc0ce97103ebc91689cf564f9edbd28bd77",
+      "fingerprint": "a7b1ccc040f3cdb2ad56bcd8b9c2c5160d51df3764c1ed7ab0201cb5d7ee2487",
       "scenarios": [
         {
           "bindings": {},
@@ -1563,7 +1516,7 @@
       ]
     },
     "storage_gcp_counter_reconcile:repair_typed_reserved:3": {
-      "fingerprint": "810fedf31273dfad89eab2528b05bbc0ce97103ebc91689cf564f9edbd28bd77",
+      "fingerprint": "a7b1ccc040f3cdb2ad56bcd8b9c2c5160d51df3764c1ed7ab0201cb5d7ee2487",
       "scenarios": [
         {
           "bindings": {},
@@ -1574,7 +1527,7 @@
       ]
     },
     "storage_gcp_counter_reconcile:repair_typed_reserved:4": {
-      "fingerprint": "810fedf31273dfad89eab2528b05bbc0ce97103ebc91689cf564f9edbd28bd77",
+      "fingerprint": "a7b1ccc040f3cdb2ad56bcd8b9c2c5160d51df3764c1ed7ab0201cb5d7ee2487",
       "scenarios": [
         {
           "bindings": {},
@@ -1585,7 +1538,7 @@
       ]
     },
     "storage_gcp_counter_reconcile:repair_typed_reserved:5": {
-      "fingerprint": "810fedf31273dfad89eab2528b05bbc0ce97103ebc91689cf564f9edbd28bd77",
+      "fingerprint": "a7b1ccc040f3cdb2ad56bcd8b9c2c5160d51df3764c1ed7ab0201cb5d7ee2487",
       "scenarios": [
         {
           "bindings": {},
@@ -1596,7 +1549,7 @@
       ]
     },
     "storage_gcp_counter_reconcile:repair_typed_reserved:6": {
-      "fingerprint": "810fedf31273dfad89eab2528b05bbc0ce97103ebc91689cf564f9edbd28bd77",
+      "fingerprint": "a7b1ccc040f3cdb2ad56bcd8b9c2c5160d51df3764c1ed7ab0201cb5d7ee2487",
       "scenarios": [
         {
           "bindings": {},
@@ -2058,7 +2011,7 @@
       ]
     },
     "storage_gcp_operational_analytics_outbox:oldest_enqueued_at:1": {
-      "fingerprint": "82d15884822ed54261b9ef184f5ef66d10f66bb739c703aac64a08c3a1a6bd80",
+      "fingerprint": "178dbad6786105bf7dd13e736189503a4df7c3df9cde6f7d136c6896bc3baafc",
       "scenarios": [
         {
           "bindings": {
@@ -2075,7 +2028,7 @@
       ]
     },
     "storage_gcp_operational_analytics_outbox:oldest_enqueued_at:2": {
-      "fingerprint": "82d15884822ed54261b9ef184f5ef66d10f66bb739c703aac64a08c3a1a6bd80",
+      "fingerprint": "178dbad6786105bf7dd13e736189503a4df7c3df9cde6f7d136c6896bc3baafc",
       "scenarios": [
         {
           "bindings": {
@@ -2105,138 +2058,6 @@
         }
       ]
     },
-    "storage_gcp_regional_quota:txn:1": {
-      "fingerprint": "e6a0ca93395cbe7215de25ae969974ff24a61455eb4ba80f3be4f579d402d364",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "ws": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_regional_quota:regional_quota_fences:1": {
-      "fingerprint": "ba8cde8dd42ff458dd4de9da2bf087f78115f6027a32fbb85b064605e2ed42e3",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "ids": "ARRAY<STRING>",
-            "kind": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_regional_quota:_check_regional_key_windows:1": {
-      "fingerprint": "e8ccb7259ba51875ab676d30d0651d993ffaa15ed532f2435b0366b4ec956823",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "kh": "STRING",
-            "shard": "INT64"
-          }
-        }
-      ]
-    },
-    "storage_gcp_regional_quota:_credit_rows:1": {
-      "fingerprint": "4c66a4b75485123ae262ad250a5779ce797dca8c83aaa5ee5427494fde0a81e5",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "ws": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_regional_quota:_insert_entity_dml:1": {
-      "fingerprint": "933e88593163cd9ed9466a512c38e161ba9a12f0e1847f367ee045c64e1e75e4",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "body": "STRING",
-            "id": "STRING",
-            "kind": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_regional_quota:_upsert_entity_dml:1": {
-      "fingerprint": "d8bdd58a9bd01e06b95e10e1a9c92340a25ba41d86c795052d83b30fe296d63d",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "body": "STRING",
-            "id": "STRING",
-            "kind": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_regional_quota:_upsert_entity_dml:2": {
-      "fingerprint": "d8bdd58a9bd01e06b95e10e1a9c92340a25ba41d86c795052d83b30fe296d63d",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "body": "STRING",
-            "id": "STRING",
-            "kind": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_regional_quota:_owned_regional_leases:1": {
-      "fingerprint": "b6f5eca645625a1326f5233372169d2fd2342d2e902f1aa078fcd73a5189c535",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "kind": "STRING",
-            "prefix": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_regional_quota:_owned_regional_leases:2": {
-      "fingerprint": "b6f5eca645625a1326f5233372169d2fd2342d2e902f1aa078fcd73a5189c535",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "kind": "STRING",
-            "prefix": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_regional_quota:_owned_regional_leases:3": {
-      "fingerprint": "b6f5eca645625a1326f5233372169d2fd2342d2e902f1aa078fcd73a5189c535",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "ids": "ARRAY<STRING>",
-            "kind": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_regional_quota:txn:2": {
-      "fingerprint": "544ec531700480216f3f4b6e72cb72f2934b92a81248e30781f354bfba261133",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "aid": "STRING"
-          }
-        }
-      ]
-    },
     "storage_gcp_request_records:constants:1": {
       "fingerprint": "0aaac75c7c775e32c0b50274e59ac95de4cda92c3f45b45f149820615445edb5",
       "scenarios": [
@@ -2262,7 +2083,7 @@
       ]
     },
     "storage_gcp_request_records:constants:3": {
-      "fingerprint": "3c40966f595e813b054e5a02918fa4911c6c511528482b915317d822fabab4ff",
+      "fingerprint": "9c5d854da1f18b04d310df0b5650124dcc565958143c5d7f414bb6abfadb78ca",
       "scenarios": [
         {
           "bindings": {},
@@ -2286,74 +2107,16 @@
             "provider": "STRING",
             "reservation_id": "STRING",
             "selected_endpoint_id": "STRING",
-            "spend_lease_allocated_micro": "INT64",
-            "spend_lease_exp": "TIMESTAMP",
-            "spend_lease_gen": "INT64",
-            "spend_lease_id": "STRING",
-            "spend_lease_status": "STRING",
-            "spend_lease_token": "STRING",
             "stage_d_boot_kid": "STRING",
             "started_at": "TIMESTAMP",
             "usage_type": "STRING",
             "workspace_id": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_request_records:constants:4": {
-      "fingerprint": "4a0e8d1ead427b1bf601522e3dba123f5a41b9ca571869e7c025e03e1096855e",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "authorization_id": "STRING",
-            "created_at": "TIMESTAMP",
-            "delivered_usage": "STRING",
-            "estimated_microdollars": "INT64",
-            "finalization_outcome": "STRING",
-            "finalized_cost_microdollars": "INT64",
-            "gateway_request_id": "STRING",
-            "heartbeat_at": "TIMESTAMP",
-            "heartbeat_hash": "STRING",
-            "heartbeat_seq": "INT64",
-            "idempotency_fingerprint": "STRING",
-            "invocation_nonce": "STRING",
-            "key_hash": "STRING",
-            "model_id": "STRING",
-            "payload": "STRING",
-            "pricing_snapshot": "STRING",
-            "provider": "STRING",
-            "reservation_id": "STRING",
-            "selected_endpoint_id": "STRING",
-            "spend_lease_admission_receipt": "STRING",
-            "spend_lease_allocated_micro": "INT64",
-            "spend_lease_exp": "TIMESTAMP",
-            "spend_lease_gen": "INT64",
-            "spend_lease_id": "STRING",
-            "spend_lease_receipt_hash": "STRING",
-            "spend_lease_status": "STRING",
-            "spend_lease_token": "STRING",
-            "stage_d_boot_kid": "STRING",
-            "started_at": "TIMESTAMP",
-            "usage_type": "STRING",
-            "workspace_id": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_request_records:read_gateway_authorization_admission_columns:1": {
-      "fingerprint": "0c7226dedd58930759b95d17c4a7ce827c928295fbaf65caed43b6d469f126f3",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "authorization_id": "STRING"
           }
         }
       ]
     },
     "storage_gcp_request_records:read_gateway_authorization:1": {
-      "fingerprint": "6d8fe4656bcf4c5eed8a32c24c54dba7c97a70943bf20bb439fc26f07b4a8ce5",
+      "fingerprint": "63bc4a77b3a4a0c71c80f190e6cb62d9f35b264bba1f97b8e9c3f998d21b38c4",
       "scenarios": [
         {
           "bindings": {},
@@ -2478,22 +2241,6 @@
           "types": {
             "aid": "STRING",
             "kind": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_settle_outbox:rewrite_frozen_settlement_tx:1": {
-      "fingerprint": "b0cfe5750f3b126671b5c297f73bfd2d1d759beb225305588521a1be616fd21d",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "actual_cost_micro": "INT64",
-            "aid": "STRING",
-            "kind": "STRING",
-            "lease_owner": "STRING",
-            "now": "TIMESTAMP",
-            "settle_body": "STRING"
           }
         }
       ]
@@ -2749,465 +2496,8 @@
         }
       ]
     },
-    "storage_gcp_spend_lease:register_bound:1": {
-      "fingerprint": "97a95850f9e04d8199e2f322a552183cc0475d8cd82888cd877ecb1acc24f57e",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "allocated_micro": "INT64",
-            "authorization_id": "STRING",
-            "gen": "INT64",
-            "lease_id": "STRING",
-            "scope": "STRING",
-            "scope_salt": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease:register_claim:1": {
-      "fingerprint": "899c0245c503f4bd8261ffcce12ed802a11494eb8042fd01a726e58282b8546c",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "provisional_id": "STRING",
-            "scope": "STRING",
-            "scope_salt": "STRING"
-          },
-          "values": {
-            "provisional_id": "authz_acceptance_claim",
-            "scope": "acceptance-claim-scope",
-            "scope_salt": "0c55"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease:read_registration:1": {
-      "fingerprint": "72c2d70f2e990044475901353b8af2d64ffb512c4f50fadd46ced4900125787c",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "scope": "STRING",
-            "scope_salt": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease:delete_bound:1": {
-      "fingerprint": "9361c6b9fffed733f6a4fa33a6d64cf34801c55fe52252b18971c3f3d02ee301",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "authorization_id": "STRING",
-            "scope": "STRING",
-            "scope_salt": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease:arm_bound_retention:1": {
-      "fingerprint": "9ad647e6224e620eb4a1ba2b0e87d19f11251ac022d4ec56d5bf4a767152940e",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "authorization_id": "STRING",
-            "terminal_at": "TIMESTAMP"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease:insert_candidate:1": {
-      "fingerprint": "2fb8b8a79f0c392bf1042f81e31536df6fe935af32da4cb3888b540e650502bc",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "boot_kid": "STRING",
-            "cap_micro": "INT64",
-            "created_at": "TIMESTAMP",
-            "creator": "STRING",
-            "expires_at": "TIMESTAMP",
-            "gen": "INT64",
-            "key_hash": "STRING",
-            "lease_id": "STRING",
-            "region": "STRING",
-            "scope": "STRING",
-            "skew_seconds": "INT64",
-            "workspace_id": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease:upgrade_candidate_to_open:1": {
-      "fingerprint": "43415fe62b2978e75b352676066a0e32dba10f4b53e77435f3ee1bfed3fd8ad4",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "creator": "STRING",
-            "expires_at": "TIMESTAMP",
-            "lease_id": "STRING",
-            "skew_seconds": "INT64"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease:take_recovery_ownership:1": {
-      "fingerprint": "4f2fdf407531a9485bdce5453d4c081d6c7a3a3a8967e7407bfd5bf407c62335",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "lease_id": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease:complete_candidate:1": {
-      "fingerprint": "2de0828ee62da5ba428f6c7a7d8c8e67e9e06dfe27acfc3b24f5894cbba3d8b3",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "lease_id": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease:read_open_row:1": {
-      "fingerprint": "c4962e294aff19205cb034132559670439aaf5cf79a80cdc6f32ac34fa00c7cd",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "lease_id": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease:defer_open_row:1": {
-      "fingerprint": "e79bf0b5356e5638c8c206b502f6acf6cf31a27dab14bbdfcf9d1908a06e8f78",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "attempts": "INT64",
-            "dead": "BOOL",
-            "error": "STRING",
-            "expected_attempts": "INT64",
-            "lease_id": "STRING",
-            "next_attempt_at": "TIMESTAMP",
-            "phase": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease:set_close_eligible_once:1": {
-      "fingerprint": "4e5f3541a7835e0c991bea061e7520e349f3d52e89ead916e6286a1dc3e73ade",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "lease_id": "STRING",
-            "observed_at": "TIMESTAMP"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease:mark_global_closed:1": {
-      "fingerprint": "76616b5a510749fb2ac3aaf49ded1aa08622684951d5af4e733a9f58b1fdd381",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "closed_at": "TIMESTAMP",
-            "lease_id": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease:mark_local_closed:1": {
-      "fingerprint": "688e3d0d5b5ab17146d0d63dd8c7196c723b506c2e09468b1673092b4b97f33e",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "closed_at": "TIMESTAMP",
-            "lease_id": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease:delete_open_row:1": {
-      "fingerprint": "836194299fef961a851d778c4eea3c3c8f267c6997afd00a1fbec80ce6c40eca",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "lease_id": "STRING",
-            "phase": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease:requeue_dead:1": {
-      "fingerprint": "e683aefcf803125ba519b07b48fc2d603fb52a3f9963fd0ccb3449caf30a7437",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "lease_id": "STRING",
-            "next_attempt_at": "TIMESTAMP"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease:dead_rows:1": {
-      "fingerprint": "a5ee8f7db2b5d55d2747ce693f91e0ea9006c4ccc2f2160c68c30dbd674cda7a",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "limit": "INT64"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease:retained_done_candidates:1": {
-      "fingerprint": "a898f9589168e6abdb8cac51bcc792a8444d159e471eadb110b20b97d1e84c16",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "cutoff": "TIMESTAMP",
-            "limit": "INT64"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease:lag_inputs:1": {
-      "fingerprint": "492fa6efdc519ad125bdc32ee1d5a4b953f598b82a7a098196967e9f47efc259",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "now": "TIMESTAMP"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease:_due_rows:1": {
-      "fingerprint": "f242862d51b79b4e461aec411dd21ae1ca41a8a1b8709574f752ef1dfb2c3e5e",
-      "scenarios": [
-        {
-          "bindings": {
-            "phase_sql": "'candidate', 'recovering', 'open'"
-          },
-          "types": {
-            "limit": "INT64"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease_authorize:txn:1": {
-      "fingerprint": "f0069851afbbd756b9ba47c371d8f5c414c04d0892277a7bc7820572865e3b16",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "body": "STRING",
-            "id": "STRING",
-            "kind": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease_authorize:_read_fence:1": {
-      "fingerprint": "d24f1292f2b733883ed3d6b089444734251393eb85b17a0eb34abe9511af1a0f",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "id": "STRING",
-            "kind": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease_authorize:_read_fence:2": {
-      "fingerprint": "d24f1292f2b733883ed3d6b089444734251393eb85b17a0eb34abe9511af1a0f",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "id": "STRING",
-            "kind": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease_authorize:_mark_incumbent:1": {
-      "fingerprint": "b4e4aeaf78398468133b1cee8e6991f65b2b3c958f1c5c8d49d094e9502fa74c",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "id": "STRING",
-            "kind": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease_authorize:_unmark_incumbent:1": {
-      "fingerprint": "77e7b300ee621552808ec611cb4ec855330bd5052926a0f4650f2fc07832b519",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "id": "STRING",
-            "kind": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease_authorize:_unmark_incumbent:2": {
-      "fingerprint": "77e7b300ee621552808ec611cb4ec855330bd5052926a0f4650f2fc07832b519",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "id": "STRING",
-            "kind": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease_authorize:_mark_closing:1": {
-      "fingerprint": "2dcc250358d289359900258046cab9d8cbc0233c17c462a7e92b907851a78096",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "closing_at_text": "STRING",
-            "id": "STRING",
-            "kind": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease_authorize:_decrement_fence:1": {
-      "fingerprint": "7b9ef0ab82390a83f67efeb773e65bfa3a726b8874056e7fc5a523634a2c5d4e",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "id": "STRING",
-            "kind": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease_authorize:_close_global_lease:1": {
-      "fingerprint": "7bd176eb78a57ad73a91c92da2ae4281284eaf46835155a7a7be7cfda746567e",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "body": "STRING",
-            "id": "STRING",
-            "kind": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease_authorize:_advance_fence:1": {
-      "fingerprint": "026fd50230be3468b1c28ecd80a0a13b9c8e3ca155f5ed82bcc42a2a554edc85",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "authoritative_exhaustion": "BOOL",
-            "body": "STRING",
-            "candidate_expires_at": "TIMESTAMP",
-            "id": "STRING",
-            "kind": "STRING",
-            "limit": "INT64",
-            "mark_count": "INT64",
-            "observed_gen": "INT64",
-            "window_closed": "BOOL"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease_reconcile:txn:1": {
-      "fingerprint": "f0e252ddf4a47783fa862ab533641f68ee5eaa1452399b4ebde2664b01ce9e1b",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "id": "STRING",
-            "kind": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease_reconcile:txn:2": {
-      "fingerprint": "f0e252ddf4a47783fa862ab533641f68ee5eaa1452399b4ebde2664b01ce9e1b",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "id": "STRING",
-            "kind": "STRING",
-            "state": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease_reconcile:_read_global_body:1": {
-      "fingerprint": "226f10fb1417d5c81cc3142d78cc58626a0d20deea8564d9e4c075236bf23ff1",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "id": "STRING",
-            "kind": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease_reconcile:_upsert_lock:1": {
-      "fingerprint": "bc6313e1329cd462786dfcb6d7dcd12b8b6d99fb72aef39b3447bc6d07f8dab6",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "body": "STRING",
-            "id": "STRING",
-            "kind": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_spend_lease_reconcile:_upsert_lock:2": {
-      "fingerprint": "bc6313e1329cd462786dfcb6d7dcd12b8b6d99fb72aef39b3447bc6d07f8dab6",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "body": "STRING",
-            "id": "STRING",
-            "kind": "STRING"
-          }
-        }
-      ]
-    },
     "storage_gcp_stage_d:txn:1": {
-      "fingerprint": "3b166979ebefe1a13bbfcca010d6cd55c3ad75252e9e0605fe7b17d988ab16c2",
+      "fingerprint": "ba31910f3432ef5cfb4835333e9ace9eaaeb75742d6136c96760571b3aa3a7ec",
       "scenarios": [
         {
           "bindings": {},
@@ -3218,7 +2508,7 @@
       ]
     },
     "storage_gcp_stage_d:txn:2": {
-      "fingerprint": "3b166979ebefe1a13bbfcca010d6cd55c3ad75252e9e0605fe7b17d988ab16c2",
+      "fingerprint": "ba31910f3432ef5cfb4835333e9ace9eaaeb75742d6136c96760571b3aa3a7ec",
       "scenarios": [
         {
           "bindings": {},
@@ -3235,7 +2525,7 @@
       ]
     },
     "storage_gcp_stage_d:txn:3": {
-      "fingerprint": "3b166979ebefe1a13bbfcca010d6cd55c3ad75252e9e0605fe7b17d988ab16c2",
+      "fingerprint": "ba31910f3432ef5cfb4835333e9ace9eaaeb75742d6136c96760571b3aa3a7ec",
       "scenarios": [
         {
           "bindings": {},
@@ -3703,7 +2993,7 @@
       ]
     },
     "storage_trust_inbox_resolution:retained_refund_row:1": {
-      "fingerprint": "09734257dd545f8dc742702833b8507e03e6a877072d9b020a4120dcbd151ab5",
+      "fingerprint": "ee92bd49047bb4c8f50ea09921acea1ddf881a74ab8d11ab02da53c79938be90",
       "scenarios": [
         {
           "bindings": {},
@@ -3848,39 +3138,6 @@
         }
       ]
     },
-    "trust_eligibility:read_lease_trust:1": {
-      "fingerprint": "e7b6cbd755af7e76f8f83e92f1883f73feb96b84cc87ab0ca12bea941601f4bc",
-      "scenarios": [
-        {
-          "bindings": {
-            "suffix": ""
-          },
-          "types": {
-            "ws": "STRING"
-          }
-        },
-        {
-          "bindings": {
-            "suffix": " AND shard=@shard"
-          },
-          "types": {
-            "ws": "STRING",
-            "shard": "INT64"
-          }
-        }
-      ]
-    },
-    "trust_eligibility:read_workspace_lease_trust:1": {
-      "fingerprint": "294cadc58b9382112d41be6c0f17a14127f34e4c914767160b51059aee79e663",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "ws": "STRING"
-          }
-        }
-      ]
-    },
     "trust_eligibility:billing_paused_tx:1": {
       "fingerprint": "5ce3a94f908455a5508ee285906563975e344a6f64f0edd4db9a9184e0d26a26",
       "scenarios": [
@@ -3903,23 +3160,6 @@
         }
       ]
     },
-    "trust_eligibility:trust_gate_failure:1": {
-      "fingerprint": "e0a6fb851671c6c9fea4d9c989a06eed27863fc9666c8fe7039fccb31373c99c",
-      "scenarios": [
-        {
-          "bindings": {
-            "MARKER_COLUMNS": "=__import__('trusted_router.storage_trust_reconciliation', fromlist=['MARKER_COLUMNS']).MARKER_COLUMNS"
-          },
-          "types": {
-            "account_id": "STRING",
-            "environment": "STRING",
-            "provider": "STRING",
-            "source": "STRING",
-            "source_version": "STRING"
-          }
-        }
-      ]
-    },
     "trust_owner_budget:recompute_owner_budget:1": {
       "fingerprint": "959e550c803a9b12ebf91949eab221a57f4991b513a300a74725c0395c6e51a4",
       "scenarios": [
@@ -3928,75 +3168,465 @@
           "types": {}
         }
       ]
+    },
+    "storage_gcp:constants:3": {
+      "fingerprint": "387f8fd8dd47325a2b4d4e28d425eb80a86b0bd1c6fdd449168f517840082805",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "lookup_hash": "STRING",
+            "boot_kid": "STRING"
+          },
+          "values": {
+            "lookup_hash": "fold-lookup",
+            "boot_kid": null
+          },
+          "entities": [
+            {
+              "kind": "api_key_lookup",
+              "id": "fold-lookup",
+              "body": {
+                "key_id": "fold-key"
+              }
+            },
+            {
+              "kind": "api_key",
+              "id": "fold-key",
+              "body": {
+                "workspace_id": "ws"
+              }
+            },
+            {
+              "kind": "workspace",
+              "id": "ws",
+              "body": {
+                "id": "ws"
+              }
+            },
+            {
+              "kind": "workspace",
+              "id": "ws#other",
+              "body": {
+                "id": "ws#other"
+              }
+            },
+            {
+              "kind": "byok",
+              "id": "ws#other#anthropic",
+              "body": {
+                "secret_ref": "colliding"
+              }
+            },
+            {
+              "kind": "spend_lease_boot",
+              "id": "fixture-boot-kid",
+              "body": {
+                "kid": "fixture-boot-kid"
+              }
+            }
+          ]
+        },
+        {
+          "bindings": {},
+          "types": {
+            "lookup_hash": "STRING",
+            "boot_kid": "STRING"
+          },
+          "values": {
+            "lookup_hash": "fold-lookup",
+            "boot_kid": "fixture-boot-kid"
+          },
+          "entities": [
+            {
+              "kind": "api_key_lookup",
+              "id": "fold-lookup",
+              "body": {
+                "key_id": "fold-key"
+              }
+            },
+            {
+              "kind": "api_key",
+              "id": "fold-key",
+              "body": {
+                "workspace_id": "ws"
+              }
+            },
+            {
+              "kind": "workspace",
+              "id": "ws",
+              "body": {
+                "id": "ws"
+              }
+            },
+            {
+              "kind": "workspace",
+              "id": "ws#other",
+              "body": {
+                "id": "ws#other"
+              }
+            },
+            {
+              "kind": "byok",
+              "id": "ws#other#anthropic",
+              "body": {
+                "secret_ref": "colliding"
+              }
+            },
+            {
+              "kind": "spend_lease_boot",
+              "id": "fixture-boot-kid",
+              "body": {
+                "kid": "fixture-boot-kid"
+              }
+            }
+          ]
+        },
+        {
+          "bindings": {},
+          "types": {
+            "lookup_hash": "STRING",
+            "boot_kid": "STRING"
+          },
+          "values": {
+            "lookup_hash": "fold-lookup",
+            "boot_kid": null
+          },
+          "entities": [
+            {
+              "kind": "api_key_lookup",
+              "id": "fold-lookup",
+              "body": {
+                "key_id": "fold-key"
+              }
+            },
+            {
+              "kind": "api_key",
+              "id": "fold-key",
+              "body": {
+                "workspace_id": "ws"
+              }
+            },
+            {
+              "kind": "workspace",
+              "id": "ws",
+              "body": {
+                "id": "ws"
+              }
+            },
+            {
+              "kind": "workspace",
+              "id": "ws#other",
+              "body": {
+                "id": "ws#other"
+              }
+            },
+            {
+              "kind": "byok",
+              "id": "ws#other#anthropic",
+              "body": {
+                "secret_ref": "colliding"
+              }
+            },
+            {
+              "kind": "spend_lease_boot",
+              "id": "fixture-boot-kid",
+              "body": {
+                "kid": "fixture-boot-kid"
+              }
+            },
+            {
+              "kind": "byok",
+              "id": "ws#anthropic",
+              "body": {
+                "secret_ref": "anthropic"
+              }
+            }
+          ]
+        },
+        {
+          "bindings": {},
+          "types": {
+            "lookup_hash": "STRING",
+            "boot_kid": "STRING"
+          },
+          "values": {
+            "lookup_hash": "fold-lookup",
+            "boot_kid": "fixture-boot-kid"
+          },
+          "entities": [
+            {
+              "kind": "api_key_lookup",
+              "id": "fold-lookup",
+              "body": {
+                "key_id": "fold-key"
+              }
+            },
+            {
+              "kind": "api_key",
+              "id": "fold-key",
+              "body": {
+                "workspace_id": "ws"
+              }
+            },
+            {
+              "kind": "workspace",
+              "id": "ws",
+              "body": {
+                "id": "ws"
+              }
+            },
+            {
+              "kind": "workspace",
+              "id": "ws#other",
+              "body": {
+                "id": "ws#other"
+              }
+            },
+            {
+              "kind": "byok",
+              "id": "ws#other#anthropic",
+              "body": {
+                "secret_ref": "colliding"
+              }
+            },
+            {
+              "kind": "spend_lease_boot",
+              "id": "fixture-boot-kid",
+              "body": {
+                "kid": "fixture-boot-kid"
+              }
+            },
+            {
+              "kind": "byok",
+              "id": "ws#anthropic",
+              "body": {
+                "secret_ref": "anthropic"
+              }
+            }
+          ]
+        },
+        {
+          "bindings": {},
+          "types": {
+            "lookup_hash": "STRING",
+            "boot_kid": "STRING"
+          },
+          "values": {
+            "lookup_hash": "fold-lookup",
+            "boot_kid": null
+          },
+          "entities": [
+            {
+              "kind": "api_key_lookup",
+              "id": "fold-lookup",
+              "body": {
+                "key_id": "fold-key"
+              }
+            },
+            {
+              "kind": "api_key",
+              "id": "fold-key",
+              "body": {
+                "workspace_id": "ws"
+              }
+            },
+            {
+              "kind": "workspace",
+              "id": "ws",
+              "body": {
+                "id": "ws"
+              }
+            },
+            {
+              "kind": "workspace",
+              "id": "ws#other",
+              "body": {
+                "id": "ws#other"
+              }
+            },
+            {
+              "kind": "byok",
+              "id": "ws#other#anthropic",
+              "body": {
+                "secret_ref": "colliding"
+              }
+            },
+            {
+              "kind": "spend_lease_boot",
+              "id": "fixture-boot-kid",
+              "body": {
+                "kid": "fixture-boot-kid"
+              }
+            },
+            {
+              "kind": "byok",
+              "id": "ws#anthropic",
+              "body": {
+                "secret_ref": "anthropic"
+              }
+            },
+            {
+              "kind": "byok",
+              "id": "ws#gemini",
+              "body": {
+                "secret_ref": "gemini"
+              }
+            },
+            {
+              "kind": "byok",
+              "id": "ws#google-ai-studio",
+              "body": {
+                "secret_ref": "google-ai-studio"
+              }
+            }
+          ]
+        },
+        {
+          "bindings": {},
+          "types": {
+            "lookup_hash": "STRING",
+            "boot_kid": "STRING"
+          },
+          "values": {
+            "lookup_hash": "fold-lookup",
+            "boot_kid": "fixture-boot-kid"
+          },
+          "entities": [
+            {
+              "kind": "api_key_lookup",
+              "id": "fold-lookup",
+              "body": {
+                "key_id": "fold-key"
+              }
+            },
+            {
+              "kind": "api_key",
+              "id": "fold-key",
+              "body": {
+                "workspace_id": "ws"
+              }
+            },
+            {
+              "kind": "workspace",
+              "id": "ws",
+              "body": {
+                "id": "ws"
+              }
+            },
+            {
+              "kind": "workspace",
+              "id": "ws#other",
+              "body": {
+                "id": "ws#other"
+              }
+            },
+            {
+              "kind": "byok",
+              "id": "ws#other#anthropic",
+              "body": {
+                "secret_ref": "colliding"
+              }
+            },
+            {
+              "kind": "spend_lease_boot",
+              "id": "fixture-boot-kid",
+              "body": {
+                "kid": "fixture-boot-kid"
+              }
+            },
+            {
+              "kind": "byok",
+              "id": "ws#anthropic",
+              "body": {
+                "secret_ref": "anthropic"
+              }
+            },
+            {
+              "kind": "byok",
+              "id": "ws#gemini",
+              "body": {
+                "secret_ref": "gemini"
+              }
+            },
+            {
+              "kind": "byok",
+              "id": "ws#google-ai-studio",
+              "body": {
+                "secret_ref": "google-ai-studio"
+              }
+            }
+          ]
+        }
+      ]
     }
   },
   "sinks": {
     "byok_aad_backfill:SpannerEntityStore.scan": "cbcb8994d09d078c7ad24a01c07dc5b581d0f7576876ead1765c794295c58edd",
     "byok_aad_backfill:SpannerEntityStore.census": "1a7ab3c8c71257ae9cc02e40a716ec4beef925476fbfea0c054dcda3024b2e49",
-    "storage_gcp:SpannerBigtableStore._workspace_trust_events_tx": "2667a0cbd3785bf54838fe1360410dd3e9b5d50f603fcbe6c8c2009db9df3111",
-    "storage_gcp:SpannerBigtableStore._increment_lifetime_topup_tx": "b8e66263f19c8fcce2a80c366e63a4b052ec668fdadb89e96274e9c36e22e931",
-    "storage_gcp:SpannerBigtableStore._insert_credit_movement_tx": "570833170f2179aefa3746b630cfe8b68c09f8ddb1d45f7c3b50a1253d3830dd",
-    "storage_gcp:SpannerBigtableStore._delete_credit_transfer_claim_tx": "9884e9d228b4e9b12fb33e54a56eae1a0edcc2ed992fe2e812a4a5d23c5243d7",
-    "storage_gcp:SpannerBigtableStore.record_workspace_abuse_and_demote.txn": "56d82a93698e454bbe7a5612aee8613742343bfbcd2cc335b3e2c4982b5bbb3f",
-    "storage_gcp:SpannerBigtableStore.clear_workspace_abuse_pause.txn": "d8fc24496cd4759f5fb548b407301c31d54b940866efa4f449db9f3506c31669",
-    "storage_gcp:SpannerBigtableStore.get_byok_providers": "f4c3e18d45bdb55d850950d98669bc923002d31885af15f146c7b8159256bc15",
-    "storage_gcp:SpannerBigtableStore.list_stale_trust_inbox": "0727a48948262a9b5a54df4b22915be9ad4f3fae71c90b47438837855a4d7391",
-    "storage_gcp:SpannerBigtableStore.credit_user_earnings.txn": "9334664b8f68347efb4e59669e7eea1b396c33d1536241622d0916a675a5a128",
-    "storage_gcp:SpannerBigtableStore.transfer_earnings_to_workspace.txn": "e49d54606767135d65da27c5523a8a88802780567fb64bb217324b736bca7d54",
-    "storage_gcp:SpannerBigtableStore.transfer_workspace_credits.txn": "a24c106bfe26d891731cd0f9fcef3a65259d8a3a0aa1879d1e9e9f12d0574ccb",
-    "storage_gcp:SpannerBigtableStore.reserve_earnings_cashout.txn": "c9bb2c5a837c6a90cae7533db1eca0eb04a70fba0690783a89f27bdc7ae22ebc",
-    "storage_gcp:SpannerBigtableStore.release_earnings_cashout.txn": "388a70c4eb9250f38b3c0de6fd47ef656942e170b28cbc44f2aded31a08cbddd",
-    "storage_gcp:SpannerBigtableStore.ensure_earnings_account.txn": "3b8b24a33d9fd21c48fd2874d95cdb2180d64242ecb2319c151d41603bf75a20",
-    "storage_gcp:SpannerBigtableStore.list_trust_tier_workspace_ids": "23274f4aadb7fb256a7d77dceeb8cc3eea2a821cfc5b57bc85ef38e3c20c7d49",
-    "storage_gcp:SpannerBigtableStore.list_receipt_keys": "034fc4c2aa0e3f4e61b560cf0918985acb48d2df2ac8deeef6fa8bce0e0b4638",
-    "storage_gcp:SpannerBigtableStore.backfill_receipt_key_versions_page.txn": "85683da9c98e0d338df286358ddabd4130fbcf122e9e2f5ea70c5e051e0142e0",
-    "storage_gcp:SpannerBigtableStore._read_entity_from": "2b7b7caacc1847915f4223450b740d1953db7ac56028eede7653c147573e0c66",
-    "storage_gcp:SpannerBigtableStore._list_entities": "0d51ca2b76f1edd118b7b084e59f0af0f47d03b841aa83cb4a6e68dbac36d8b6",
-    "storage_gcp:SpannerBigtableStore.readiness_check": "4ac951f6c468ea8adee1537d86aaaf0514fb06e519e5c409ed07d11b42ca76b5",
-    "storage_gcp:SpannerBigtableStore._owner_workspace_ids_tx": "01c4b505591a72db1602ba44de83da6ba0b0cc648a5fc4f4bc1d5fb3ca75e32a",
-    "storage_gcp:SpannerBigtableStore.session_auth_context": "3349afce6e3e7a4a0bb3135204a355c1d7cbf7422ff6afc98661f771ba737a7d",
-    "storage_gcp:SpannerBigtableStore.set_workspace_trust_override.txn": "3f952879b42888a5d0e0d00045371ec9e6dcc5dbb136a6db082372d9a592c558",
-    "storage_gcp:SpannerBigtableStore._existing_operator_abuse": "b7ad0120effa20c724416cdce618fd88bcf212407c47006c9d0d667e360dbb88",
-    "storage_gcp:SpannerBigtableStore.backfill_owner_inventory.txn": "154bb298464bdc8cbc241fb69c784a168d9221877465632758442a69823d8040",
-    "storage_gcp:SpannerBigtableStore.process_trust_demotion_remainders": "2eaa77fe0f06dab5095648f2052cea02247fa3723f6e207ed1abda8ebcae2e20",
-    "storage_gcp:SpannerBigtableStore._demote_owner_trust_tx": "3735ec2b15cfed0435caf727abd7634a1d8041ee62f5354ff07a06e26b2f9c53",
-    "storage_gcp:SpannerBigtableStore.gateway_api_key_auth_context": "2d834741576b171241d60bb29782ef5c4339a92004733e807ba113ddcfc9dd99",
-    "storage_gcp:SpannerBigtableStore.api_key_auth_context": "00bbec2cdc8b0d46e1f86a2db2b9014f2c5add8829401d276cb83a74db08f996",
-    "storage_gcp:SpannerBigtableStore.workspace_owner_usernames.batch": "beb26aae4436137f6613743edbc2476607aaa0874457e122489a7554df57ff26",
-    "storage_gcp:SpannerBigtableStore.mark_earnings_cashout.txn": "446039cd7c42b0b03d335359e589f28eefa2697b2cb5b6a231cc775b997c6d33",
-    "storage_gcp:SpannerBigtableStore.earnings_summary": "49f2f9f7f1b71667528f206817321da349f8a713ffae7287288f7b2be7e20ab8",
-    "storage_gcp:SpannerBigtableStore.list_credit_movements": "d24e5b4d23a1194fa70d1c902573fa3f807e85f5dc8099657f3d80d4182c0504",
-    "storage_gcp:SpannerBigtableStore.custom_model_earnings_by_model": "3a2db2f528eeca5d6b3217255e086d05bbce8834342234245b8da3a5138ee4a7",
-    "storage_gcp:SpannerBigtableStore.get_lifetime_topup_microdollars": "1338212b983685140271e2b4f6f4c90efdd003fbce2a29ed80b1bcf03019425d",
-    "storage_gcp:SpannerBigtableStore.typed_key_usage": "d7e63be6f965eb15e793d6b63a233036604f835edc5c411b6be3004e8b5a767f",
-    "storage_gcp:SpannerBigtableStore.typed_credit_snapshot": "1992b8f125168aab85e47afa8aeff792a432fabee25b594ab52268abdb3d7025",
-    "storage_gcp:SpannerBigtableStore.typed_credit_trust_snapshot": "f8eade775ad9fbd7196e47c0c12ebe0466e170abd249359d2332b18d7dd25ad0",
-    "storage_gcp:SpannerBigtableStore._read_outbox_heartbeat_row": "b146d6a9f64d9504bf4948f7d6c40ec3fc279b3c25d09aa5a17c5153211deb03",
-    "storage_gcp:SpannerBigtableStore.process_trust_demotion_remainders.txn": "17473222e40b3b33bf3cd55d8cabb1b5ef17305e28ddef1d57b3dae49bf4cf9a",
-    "storage_gcp:SpannerBigtableStore.update_workspace.txn": "2b188f1bb5110ddf4b7a439988408e12cdb90838cb694444e8075eecba7e3a46",
+    "storage_gcp:SpannerStore._workspace_trust_events_tx": "2667a0cbd3785bf54838fe1360410dd3e9b5d50f603fcbe6c8c2009db9df3111",
+    "storage_gcp:SpannerStore._increment_lifetime_topup_tx": "b8e66263f19c8fcce2a80c366e63a4b052ec668fdadb89e96274e9c36e22e931",
+    "storage_gcp:SpannerStore._insert_credit_movement_tx": "570833170f2179aefa3746b630cfe8b68c09f8ddb1d45f7c3b50a1253d3830dd",
+    "storage_gcp:SpannerStore._delete_credit_transfer_claim_tx": "9884e9d228b4e9b12fb33e54a56eae1a0edcc2ed992fe2e812a4a5d23c5243d7",
+    "storage_gcp:SpannerStore.record_workspace_abuse_and_demote.txn": "56d82a93698e454bbe7a5612aee8613742343bfbcd2cc335b3e2c4982b5bbb3f",
+    "storage_gcp:SpannerStore.clear_workspace_abuse_pause.txn": "d8fc24496cd4759f5fb548b407301c31d54b940866efa4f449db9f3506c31669",
+    "storage_gcp:SpannerStore.get_byok_providers": "f4c3e18d45bdb55d850950d98669bc923002d31885af15f146c7b8159256bc15",
+    "storage_gcp:SpannerStore.list_stale_trust_inbox": "0727a48948262a9b5a54df4b22915be9ad4f3fae71c90b47438837855a4d7391",
+    "storage_gcp:SpannerStore.credit_user_earnings.txn": "9334664b8f68347efb4e59669e7eea1b396c33d1536241622d0916a675a5a128",
+    "storage_gcp:SpannerStore.transfer_earnings_to_workspace.txn": "e49d54606767135d65da27c5523a8a88802780567fb64bb217324b736bca7d54",
+    "storage_gcp:SpannerStore.transfer_workspace_credits.txn": "a24c106bfe26d891731cd0f9fcef3a65259d8a3a0aa1879d1e9e9f12d0574ccb",
+    "storage_gcp:SpannerStore.reserve_earnings_cashout.txn": "c9bb2c5a837c6a90cae7533db1eca0eb04a70fba0690783a89f27bdc7ae22ebc",
+    "storage_gcp:SpannerStore.release_earnings_cashout.txn": "388a70c4eb9250f38b3c0de6fd47ef656942e170b28cbc44f2aded31a08cbddd",
+    "storage_gcp:SpannerStore.ensure_earnings_account.txn": "3b8b24a33d9fd21c48fd2874d95cdb2180d64242ecb2319c151d41603bf75a20",
+    "storage_gcp:SpannerStore.list_trust_tier_workspace_ids": "23274f4aadb7fb256a7d77dceeb8cc3eea2a821cfc5b57bc85ef38e3c20c7d49",
+    "storage_gcp:SpannerStore.list_receipt_keys": "034fc4c2aa0e3f4e61b560cf0918985acb48d2df2ac8deeef6fa8bce0e0b4638",
+    "storage_gcp:SpannerStore.backfill_receipt_key_versions_page.txn": "85683da9c98e0d338df286358ddabd4130fbcf122e9e2f5ea70c5e051e0142e0",
+    "storage_gcp:SpannerStore._read_entity_from": "2b7b7caacc1847915f4223450b740d1953db7ac56028eede7653c147573e0c66",
+    "storage_gcp:SpannerStore._list_entities": "0d51ca2b76f1edd118b7b084e59f0af0f47d03b841aa83cb4a6e68dbac36d8b6",
+    "storage_gcp:SpannerStore.readiness_check": "4ac951f6c468ea8adee1537d86aaaf0514fb06e519e5c409ed07d11b42ca76b5",
+    "storage_gcp:SpannerStore._owner_workspace_ids_tx": "01c4b505591a72db1602ba44de83da6ba0b0cc648a5fc4f4bc1d5fb3ca75e32a",
+    "storage_gcp:SpannerStore.session_auth_context": "3349afce6e3e7a4a0bb3135204a355c1d7cbf7422ff6afc98661f771ba737a7d",
+    "storage_gcp:SpannerStore.set_workspace_trust_override.txn": "3f952879b42888a5d0e0d00045371ec9e6dcc5dbb136a6db082372d9a592c558",
+    "storage_gcp:SpannerStore._existing_operator_abuse": "b7ad0120effa20c724416cdce618fd88bcf212407c47006c9d0d667e360dbb88",
+    "storage_gcp:SpannerStore.backfill_owner_inventory.txn": "154bb298464bdc8cbc241fb69c784a168d9221877465632758442a69823d8040",
+    "storage_gcp:SpannerStore.process_trust_demotion_remainders": "2eaa77fe0f06dab5095648f2052cea02247fa3723f6e207ed1abda8ebcae2e20",
+    "storage_gcp:SpannerStore._demote_owner_trust_tx": "3735ec2b15cfed0435caf727abd7634a1d8041ee62f5354ff07a06e26b2f9c53",
+    "storage_gcp:SpannerStore.gateway_api_key_auth_context": "b98a51cb809aae9d4c187a84d4f800b34560d4795f93093997202cc4eb972d9c",
+    "storage_gcp:SpannerStore.api_key_auth_context": "00bbec2cdc8b0d46e1f86a2db2b9014f2c5add8829401d276cb83a74db08f996",
+    "storage_gcp:SpannerStore.workspace_owner_usernames.batch": "beb26aae4436137f6613743edbc2476607aaa0874457e122489a7554df57ff26",
+    "storage_gcp:SpannerStore.mark_earnings_cashout.txn": "446039cd7c42b0b03d335359e589f28eefa2697b2cb5b6a231cc775b997c6d33",
+    "storage_gcp:SpannerStore.earnings_summary": "49f2f9f7f1b71667528f206817321da349f8a713ffae7287288f7b2be7e20ab8",
+    "storage_gcp:SpannerStore.list_credit_movements": "d24e5b4d23a1194fa70d1c902573fa3f807e85f5dc8099657f3d80d4182c0504",
+    "storage_gcp:SpannerStore.custom_model_earnings_by_model": "3a2db2f528eeca5d6b3217255e086d05bbce8834342234245b8da3a5138ee4a7",
+    "storage_gcp:SpannerStore.get_lifetime_topup_microdollars": "1338212b983685140271e2b4f6f4c90efdd003fbce2a29ed80b1bcf03019425d",
+    "storage_gcp:SpannerStore.typed_key_usage": "d7e63be6f965eb15e793d6b63a233036604f835edc5c411b6be3004e8b5a767f",
+    "storage_gcp:SpannerStore.typed_credit_snapshot": "1992b8f125168aab85e47afa8aeff792a432fabee25b594ab52268abdb3d7025",
+    "storage_gcp:SpannerStore.typed_credit_trust_snapshot": "f8eade775ad9fbd7196e47c0c12ebe0466e170abd249359d2332b18d7dd25ad0",
+    "storage_gcp:SpannerStore._read_outbox_heartbeat_row": "b146d6a9f64d9504bf4948f7d6c40ec3fc279b3c25d09aa5a17c5153211deb03",
+    "storage_gcp:SpannerStore.process_trust_demotion_remainders.txn": "17473222e40b3b33bf3cd55d8cabb1b5ef17305e28ddef1d57b3dae49bf4cf9a",
+    "storage_gcp:SpannerStore.update_workspace.txn": "d0d1045d40b6dfbd25458bdace3723b596bba4387581942a1f5876f0b8116cde",
     "storage_gcp_analytics_outbox:SpannerAnalyticsOutbox.enqueue_tx": "3c22c291513d477c9919b357013218ac503d6f06016e546babf865c9e280e5b6",
     "storage_gcp_authorize:_apply_user_model_payout_tx": "87282c76b37fb351b3ae5a7572ff8d6c835affc98e9d3a3b24f976fa471421f8",
     "storage_gcp_authorize:_apply_app_markup_payout_tx": "bf69f4d4f5445dbb97dcf22507d8651974f2430dc5d845fe68c2daab72dfc2c6",
     "storage_gcp_authorize:_apply_custom_model_markup_payout_tx": "a1a06d4c1dcc22a836e086dc1700440a90dad6d8c8966466902930955a34e3f0",
     "storage_gcp_authorize:typed_finalize_atomic.speculative_batch": "d8d2fec5ec3fdae61c9a9c31b28c2fb437b03a81bf983bf7c219ad1345e73f4d",
     "storage_gcp_authorize:key_window_limit_decision": "5a317b9f2927443ca6d6686b5cb1d1b6ff036c6d744d511a3b5f24c63e3b2ad7",
-    "storage_gcp_authorize:authorize_atomic.txn": "fb74537b6e4fdb8d0fab42b25d09ab833139f3c04f2a7191ebdda703db755f3b",
+    "storage_gcp_authorize:authorize_atomic.txn": "436c84be91d07b0e183e1da7254118431c058dde512ef29ab5e9e53e451467ae",
     "storage_gcp_authorize:reap_expired_reservations_result": "9d7f819fc199930d94eaa53e939fced804e61b2cbf9f54cbf676ced4c743976e",
     "storage_gcp_authorize:key_lifetime_cap_precheck": "4e9ee17c7e9363a1fc3a9d614f15148ad6fb20ff04d272785809beef92ab0b4c",
-    "storage_gcp_authorize:_finalize_reaped_reservation_atomic.txn": "67843e960ddce62acdac35b49cc48a2ee8ef4024a21021de1f7e111e5e6dd82e",
-    "storage_gcp_authorize:typed_finalize_atomic.txn": "eb23d389ee0521e3a0575e5ca70c0999ce7c38de3b0a7f46c73dd5fc2dac12ea",
+    "storage_gcp_authorize:_finalize_reaped_reservation_atomic.txn": "55ccd7b9ed868037a53ecb228e6efe40882d39fef33e9bd24bb0061340d95200",
+    "storage_gcp_authorize:typed_finalize_atomic.txn": "70a0ce96c53d032e3b6358e1aad064669b61fa98ab1950bc260907b150e8d4c8",
     "storage_gcp_authorize:settle_atomic.txn": "0ec2b0d2303c8edbbcfff74724c3bee55a72195a523e21f21e04139aabeb3174",
     "storage_gcp_authorize:_outbox_table_available": "40f44f259524be5dc275f8a3400fc40fc5b8fe850c0482362de0382296e3f910",
     "storage_gcp_batch_dml:execute_batch_dml": "cf69cc8e1a62f4028bd2370e9d3d22e5f6f28856795ef05514f1f8dbc5130169",
     "storage_gcp_counter_dml:reserve_credit": "8b28eb55bf811006f16d2baaa3a9100018ba4ac454f0933a46b103fcc0d4bc88",
-    "storage_gcp_counter_dml:reserve_credit_for_spend_lease": "e17e0b988ad445b4b101025c743e23f9f28715130efc49897d909c2a099267e9",
     "storage_gcp_counter_dml:debit_workspace_credit": "ecb5f2a550bafecf029f91f3e60e39d118419f887c326c7e88221195eb1a4a0d",
     "storage_gcp_counter_dml:debit_credit_shard": "3196c9abb65d6e856720ce4e9be5e897e932954c3ffd5565c9325d15aac7deb7",
     "storage_gcp_counter_dml:credit_credit_shard": "0027a78221bba0a336753c0e88d9c53f8cd979e8c58c0abd13bd685cb7cce626",
     "storage_gcp_counter_dml:transfer_credit_budget": "03771887a0a71a8cff40dd5f89bd1513cade0b57d1907314a529af679b011e92",
     "storage_gcp_counter_dml:release_credit": "63c3f07ddb6b3f1425b5ba4ec6c36165710c12969eb0d0b618ea5cab98eb0591",
     "storage_gcp_counter_dml:reserve_key": "e3481c3aeddf7180d6bdd77bb54a337d61a1a87cd1ec3320b391a6cf521d3c83",
-    "storage_gcp_counter_dml:release_key": "6275a8d4a9f68dbbf722c374c06afe37f7dca3f76e1fdc15f4c9ba2b5bed92d7",
+    "storage_gcp_counter_dml:release_key": "f57a5b6a0be61096c27e07de7f84b4434921d015cc917599bdd9adac52b3dfb5",
     "storage_gcp_counter_dml:insert_reservation": "5003ba8b2eb7e352be932a768f44b7b36ade7acf6b57fa11f00b22136f98400f",
     "storage_gcp_counter_dml:complete_reservation_retention": "04b8a59463b4526c5cb9a597aa50530988691ed1366d38232fb96e450dadcc6b",
     "storage_gcp_counter_dml:clear_reservation_retention": "3bcf32a129af5f7dfdc1d2e5108abfdbb7f7b82be72ba5ce893107d46a12dc49",
@@ -4009,13 +3639,13 @@
     "storage_gcp_counter_dml:read_reservation_by_idempotency": "5ef222631a8b3c1caedc551feb8d0d66601c0a4bedde382f7cbdb3d9a9ffed98",
     "storage_gcp_counter_dml:read_reservation": "f1772e5b115030a3e3559277354354703c3edfd1c81727892bdd964ccc4e0f5d",
     "storage_gcp_counter_dml:claim_reservation": "6d137f1506de4e6959220e09f5f6b65cc3592f52743b080e7aef6d9b24e19f59",
-    "storage_gcp_counter_reconcile:audit_typed_invariants": "a2b1ebed17acc2e0ced149ba2074549630b4de124622e2ec18029261247e15e4",
+    "storage_gcp_counter_reconcile:audit_typed_invariants": "fb1be7f19184fdc93497b15295a7991b87bb9c88dfd8a873b3546b9026c41a9d",
     "storage_gcp_counter_reconcile:_confirm_behind_ledger": "08089d2dd3647164ae49ea570aab34b6797757787d8233f2506b9c65e103c166",
     "storage_gcp_counter_reconcile:propose_usage_baselines": "542e2199b35a54736cb75eba85a621f10b7d06fb7bbbd30f4150528feecd1ad1",
-    "storage_gcp_counter_reconcile:repair_typed_reserved": "810fedf31273dfad89eab2528b05bbc0ce97103ebc91689cf564f9edbd28bd77",
+    "storage_gcp_counter_reconcile:repair_typed_reserved": "a7b1ccc040f3cdb2ad56bcd8b9c2c5160d51df3764c1ed7ab0201cb5d7ee2487",
     "storage_gcp_counter_reconcile:repair_typed_usage": "65aeb942da1b3a6aa7d5a6e364703fd6fcb0f7b53427409287341f7f4034dfce",
     "storage_gcp_counter_reconcile:repair_typed_usage._txn": "6154289a1fef241ad9a04812b757b74ebf3b2125587581fa908668900782a9f9",
-    "storage_gcp_counter_reconcile:repair_typed_reserved._txn": "f6d26a0afa6c2a682d17a3e509c47469ae9bcd34bb53906d3c80f563de634d4a",
+    "storage_gcp_counter_reconcile:repair_typed_reserved._txn": "d18994855933d2a53695c3f9dc84df76f47f05b9c16f14767da8f1f0c4407dc5",
     "storage_gcp_counter_reconcile:record_usage_baseline._txn": "6edab65e3359a87ca7664372a250b2e2402417632c0931229dbd2cfcfe584d8b",
     "storage_gcp_credit_json_cleanup:_inspect_reader": "8e30b9701e22a9c56307bfecca369515b6693c3bc760830118d0532b31cff3b1",
     "storage_gcp_credit_json_cleanup:legacy_credit_workspace_ids": "31c5139361245bdf1d10f540c13ccd18d91aa1c79ccc0973aaca6b798aad59d2",
@@ -4041,25 +3671,15 @@
     "storage_gcp_keys:SpannerApiKeys.update.txn": "8b2b096b220bf2a685d9f9a730627e35da13babfb74af02b6476766e4ea0bb72",
     "storage_gcp_legacy_reservations:legacy_reservation_snapshot": "c5b3818e113170d5fda5422e9c83441ee7119014e4a74afd80330cf735b965d7",
     "storage_gcp_operational_analytics_outbox:SpannerOperationalAnalyticsOutbox._enqueue_tx": "99d2a2f669e53e54014e83d8f1ed598c6003b63d010c06adcaf2250e497dd92f",
-    "storage_gcp_operational_analytics_outbox:SpannerOperationalAnalyticsOutbox.oldest_enqueued_at": "82d15884822ed54261b9ef184f5ef66d10f66bb739c703aac64a08c3a1a6bd80",
-    "storage_gcp_regional_quota:_check_regional_key_windows": "e8ccb7259ba51875ab676d30d0651d993ffaa15ed532f2435b0366b4ec956823",
-    "storage_gcp_regional_quota:_insert_entity_dml": "933e88593163cd9ed9466a512c38e161ba9a12f0e1847f367ee045c64e1e75e4",
-    "storage_gcp_regional_quota:_upsert_entity_dml": "d8bdd58a9bd01e06b95e10e1a9c92340a25ba41d86c795052d83b30fe296d63d",
-    "storage_gcp_regional_quota:_owned_regional_leases": "b6f5eca645625a1326f5233372169d2fd2342d2e902f1aa078fcd73a5189c535",
-    "storage_gcp_regional_quota:grant_regional_quota_lease.txn": "e6a0ca93395cbe7215de25ae969974ff24a61455eb4ba80f3be4f579d402d364",
-    "storage_gcp_regional_quota:regional_quota_fences": "ba8cde8dd42ff458dd4de9da2bf087f78115f6027a32fbb85b064605e2ed42e3",
-    "storage_gcp_regional_quota:_credit_rows": "4c66a4b75485123ae262ad250a5779ce797dca8c83aaa5ee5427494fde0a81e5",
-    "storage_gcp_regional_quota:terminal_regional_hold_amount.txn": "544ec531700480216f3f4b6e72cb72f2934b92a81248e30781f354bfba261133",
+    "storage_gcp_operational_analytics_outbox:SpannerOperationalAnalyticsOutbox.oldest_enqueued_at": "178dbad6786105bf7dd13e736189503a4df7c3df9cde6f7d136c6896bc3baafc",
     "storage_gcp_request_records:insert_gateway_authorization": "e547302283bdfc7c831a1506268696f600c4548d1d2bf56c6b45a66dacadc247",
     "storage_gcp_request_records:mark_gateway_authorization_settled": "e889d9811b28a018f96d51a27c17d5adea64f85f03cdd65f262470e182414a7a",
     "storage_gcp_request_records:complete_gateway_authorization_retention": "e3b9c853d68ba2f1f5900a9d15e1cac6f8a526692414f5590be4c685c2b6328c",
     "storage_gcp_request_records:clear_gateway_authorization_retention": "314e768b1b786335aedac687a810f1047c91a543c951f84d1a2232d9efb0c648",
-    "storage_gcp_request_records:read_gateway_authorization_admission_columns": "0c7226dedd58930759b95d17c4a7ce827c928295fbaf65caed43b6d469f126f3",
-    "storage_gcp_request_records:read_gateway_authorization": "6d8fe4656bcf4c5eed8a32c24c54dba7c97a70943bf20bb439fc26f07b4a8ce5",
+    "storage_gcp_request_records:read_gateway_authorization": "63bc4a77b3a4a0c71c80f190e6cb62d9f35b264bba1f97b8e9c3f998d21b38c4",
     "storage_gcp_request_records:read_gateway_authorization_by_gateway_request_id": "35327f025b4c16f9c73c53adc04fb1f9d78da8dcb1cceb1edc16ada6a77baf90",
     "storage_gcp_settle_outbox:_resolve_done_retention_tx": "5f60121b3a9a6040d4c5db3d01b32da0b28bb49a716a5a2fb3386a43d5416de7",
     "storage_gcp_settle_outbox:_mark_done_tx": "d18c2a9ba8bf5498d523f66de836eb28463f3f4fc86d62509d69d0da31c31d4f",
-    "storage_gcp_settle_outbox:rewrite_frozen_settlement_tx": "b0cfe5750f3b126671b5c297f73bfd2d1d759beb225305588521a1be616fd21d",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.enqueue.insert_txn": "d3f3b67327d3c86ac0535a8015513eb0825779ab772eca46ccfd5c34a91f91ae",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.enqueue.refresh_txn": "d14013762a31ede92e5bbd0ff49b1d99d6d2048acac6e8a3a95d8fd2803dc049",
     "storage_gcp_settle_outbox:SpannerSettleOutbox._claim_one.txn": "f0c353eaf71bd1e39f55d411a4bcca80d2532ae7b3125c915cab981d0a8e777b",
@@ -4074,38 +3694,7 @@
     "storage_gcp_settle_outbox:SpannerSettleOutbox.auto_refill_pending_freshness": "042778fa0f70b513e671340a005e55a970a251cff104f834935066de93b88cf3",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.has_intent": "7a6549fdde5a2e87166452242a2391abd4819357e26f9c44ab7a8d08fac61812",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.get": "ebb7838c00289dedefc07e829ef6efc6529b25500a77330c5c865a86812ec6a9",
-    "storage_gcp_spend_lease:register_bound": "97a95850f9e04d8199e2f322a552183cc0475d8cd82888cd877ecb1acc24f57e",
-    "storage_gcp_spend_lease:register_claim": "899c0245c503f4bd8261ffcce12ed802a11494eb8042fd01a726e58282b8546c",
-    "storage_gcp_spend_lease:read_registration": "72c2d70f2e990044475901353b8af2d64ffb512c4f50fadd46ced4900125787c",
-    "storage_gcp_spend_lease:delete_bound": "9361c6b9fffed733f6a4fa33a6d64cf34801c55fe52252b18971c3f3d02ee301",
-    "storage_gcp_spend_lease:arm_bound_retention": "9ad647e6224e620eb4a1ba2b0e87d19f11251ac022d4ec56d5bf4a767152940e",
-    "storage_gcp_spend_lease:insert_candidate": "2fb8b8a79f0c392bf1042f81e31536df6fe935af32da4cb3888b540e650502bc",
-    "storage_gcp_spend_lease:upgrade_candidate_to_open": "43415fe62b2978e75b352676066a0e32dba10f4b53e77435f3ee1bfed3fd8ad4",
-    "storage_gcp_spend_lease:take_recovery_ownership": "4f2fdf407531a9485bdce5453d4c081d6c7a3a3a8967e7407bfd5bf407c62335",
-    "storage_gcp_spend_lease:complete_candidate": "2de0828ee62da5ba428f6c7a7d8c8e67e9e06dfe27acfc3b24f5894cbba3d8b3",
-    "storage_gcp_spend_lease:read_open_row": "c4962e294aff19205cb034132559670439aaf5cf79a80cdc6f32ac34fa00c7cd",
-    "storage_gcp_spend_lease:defer_open_row": "e79bf0b5356e5638c8c206b502f6acf6cf31a27dab14bbdfcf9d1908a06e8f78",
-    "storage_gcp_spend_lease:set_close_eligible_once": "4e5f3541a7835e0c991bea061e7520e349f3d52e89ead916e6286a1dc3e73ade",
-    "storage_gcp_spend_lease:mark_global_closed": "76616b5a510749fb2ac3aaf49ded1aa08622684951d5af4e733a9f58b1fdd381",
-    "storage_gcp_spend_lease:mark_local_closed": "688e3d0d5b5ab17146d0d63dd8c7196c723b506c2e09468b1673092b4b97f33e",
-    "storage_gcp_spend_lease:delete_open_row": "836194299fef961a851d778c4eea3c3c8f267c6997afd00a1fbec80ce6c40eca",
-    "storage_gcp_spend_lease:requeue_dead": "e683aefcf803125ba519b07b48fc2d603fb52a3f9963fd0ccb3449caf30a7437",
-    "storage_gcp_spend_lease:dead_rows": "a5ee8f7db2b5d55d2747ce693f91e0ea9006c4ccc2f2160c68c30dbd674cda7a",
-    "storage_gcp_spend_lease:retained_done_candidates": "a898f9589168e6abdb8cac51bcc792a8444d159e471eadb110b20b97d1e84c16",
-    "storage_gcp_spend_lease:lag_inputs": "492fa6efdc519ad125bdc32ee1d5a4b953f598b82a7a098196967e9f47efc259",
-    "storage_gcp_spend_lease:_due_rows": "f242862d51b79b4e461aec411dd21ae1ca41a8a1b8709574f752ef1dfb2c3e5e",
-    "storage_gcp_spend_lease_authorize:ensure_initial_fence.txn": "f0069851afbbd756b9ba47c371d8f5c414c04d0892277a7bc7820572865e3b16",
-    "storage_gcp_spend_lease_authorize:_read_fence": "d24f1292f2b733883ed3d6b089444734251393eb85b17a0eb34abe9511af1a0f",
-    "storage_gcp_spend_lease_authorize:_mark_incumbent": "b4e4aeaf78398468133b1cee8e6991f65b2b3c958f1c5c8d49d094e9502fa74c",
-    "storage_gcp_spend_lease_authorize:_unmark_incumbent": "77e7b300ee621552808ec611cb4ec855330bd5052926a0f4650f2fc07832b519",
-    "storage_gcp_spend_lease_authorize:_mark_closing": "2dcc250358d289359900258046cab9d8cbc0233c17c462a7e92b907851a78096",
-    "storage_gcp_spend_lease_authorize:_decrement_fence": "7b9ef0ab82390a83f67efeb773e65bfa3a726b8874056e7fc5a523634a2c5d4e",
-    "storage_gcp_spend_lease_authorize:_close_global_lease": "7bd176eb78a57ad73a91c92da2ae4281284eaf46835155a7a7be7cfda746567e",
-    "storage_gcp_spend_lease_authorize:_advance_fence": "026fd50230be3468b1c28ecd80a0a13b9c8e3ca155f5ed82bcc42a2a554edc85",
-    "storage_gcp_spend_lease_reconcile:_upsert_lock": "bc6313e1329cd462786dfcb6d7dcd12b8b6d99fb72aef39b3447bc6d07f8dab6",
-    "storage_gcp_spend_lease_reconcile:_close_global.txn": "f0e252ddf4a47783fa862ab533641f68ee5eaa1452399b4ebde2664b01ce9e1b",
-    "storage_gcp_spend_lease_reconcile:_read_global_body": "226f10fb1417d5c81cc3142d78cc58626a0d20deea8564d9e4c075236bf23ff1",
-    "storage_gcp_stage_d:heartbeat_gateway_atomic.txn": "3b166979ebefe1a13bbfcca010d6cd55c3ad75252e9e0605fe7b17d988ab16c2",
+    "storage_gcp_stage_d:heartbeat_gateway_atomic.txn": "ba31910f3432ef5cfb4835333e9ace9eaaeb75742d6136c96760571b3aa3a7ec",
     "storage_gcp_stage_d_policy:advance_stage_d_policy_watermark.txn": "f8692a3d8d16677e42220de0981b22ff0872777f5a80f690e3a91236d0874df8",
     "storage_gcp_stage_d_policy:get_stage_d_policy_watermark": "aa9db793080ddd1bd6403471723b396a1560e265c307a08f09ff487c396008c0",
     "storage_gcp_strict_budget:reserve_strict_key": "7a35098cb2a910de9879df22182c34dae76c643340d9ddf306436a8e786b1f25",
@@ -4122,16 +3711,13 @@
     "storage_gcp_user_models:SpannerUserProvidedModels.get_many": "cd24bade1b102cd628091886eb67ae24c450e17fa89dc196299dafcbfeaa938a",
     "storage_gcp_user_models:SpannerUserProvidedModels.acquire_slot.txn": "cf1b48fdc7304875ce71e6980c8e51438bf4e91d178e24f91e0875ba42d45ffc",
     "storage_legacy_trust:spanner_pause_epoch": "5f6866d7daeeaf3be4958d19c5f0fb75bff4de3e57b9306db016e9b90d59fce4",
-    "storage_trust_inbox_resolution:retained_refund_row": "09734257dd545f8dc742702833b8507e03e6a877072d9b020a4120dcbd151ab5",
+    "storage_trust_inbox_resolution:retained_refund_row": "ee92bd49047bb4c8f50ea09921acea1ddf881a74ab8d11ab02da53c79938be90",
     "storage_trust_inbox_resolution:record_refunded_uncredited.spanner_tx": "0c51458e02405d5a006241e6b201c2bea208f384e710a73331515156f0533153",
     "storage_trust_reconciliation:SpannerTrustReconciliationRepository.save_marker.txn": "e55af76e57c7b9b891181c45a816a724e64c70e016534f83738816d0414c5c4a",
     "storage_trust_reconciliation:SpannerTrustReconciliationRepository.list_provider_events": "822180ccfc4058df2f0d8bdc12413c361ac373ef78bf3808eb4934927264e3b5",
     "storage_trust_reconciliation:SpannerTrustReconciliationRepository.replicate_workspace_watermark.txn": "0e17730dea2bd827b209758cce2c692b42518ddf0a74895dbd1d38ef004827a8",
     "storage_trust_reconciliation:SpannerTrustReconciliationRepository.get_marker": "ae66712374f936a93abe08af2e3b6c4b707d6315e830d12c327d10148fa431f2",
     "trust_eligibility:billing_paused_tx": "5ce3a94f908455a5508ee285906563975e344a6f64f0edd4db9a9184e0d26a26",
-    "trust_eligibility:read_lease_trust": "e7b6cbd755af7e76f8f83e92f1883f73feb96b84cc87ab0ca12bea941601f4bc",
-    "trust_eligibility:read_workspace_lease_trust": "294cadc58b9382112d41be6c0f17a14127f34e4c914767160b51059aee79e663",
-    "trust_eligibility:trust_gate_failure": "e0a6fb851671c6c9fea4d9c989a06eed27863fc9666c8fe7039fccb31373c99c",
     "trust_owner_budget:recompute_owner_budget": "959e550c803a9b12ebf91949eab221a57f4991b513a300a74725c0395c6e51a4"
   },
   "non_google_sql": {
@@ -4272,7 +3858,7 @@
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
     },
     "storage_trust_inbox_resolution:retained_refund_row:2": {
-      "fingerprint": "09734257dd545f8dc742702833b8507e03e6a877072d9b020a4120dcbd151ab5",
+      "fingerprint": "ee92bd49047bb4c8f50ea09921acea1ddf881a74ab8d11ab02da53c79938be90",
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
     },
     "storage_trust_inbox_resolution:postgres_tx:1": {

@@ -63,7 +63,7 @@ PRIVACY_TIER_NO_STORE = 1  # does not store request/response content
 
 PRIVACY_TIER_ZERO_RETENTION = 2  # contractual / policy zero data retention
 
-PRIVACY_TIER_CONFIDENTIAL = 3  # confidential compute + provider-side e2ee
+PRIVACY_TIER_CONFIDENTIAL = 3  # verified compute + provider-side e2ee + explicit ZDR
 
 PRIVACY_TIER_ALIASES: dict[str, int] = {
     "standard": PRIVACY_TIER_STANDARD,
@@ -85,7 +85,7 @@ PRIVACY_TIER_LABELS: dict[int, str] = {
     PRIVACY_TIER_STANDARD: "Standard",
     PRIVACY_TIER_NO_STORE: "No-store",
     PRIVACY_TIER_ZERO_RETENTION: "Zero retention",
-    PRIVACY_TIER_CONFIDENTIAL: "Confidential + E2EE",
+    PRIVACY_TIER_CONFIDENTIAL: "Confidential + E2EE + ZDR",
 }
 
 # provider_headquarters_country records the legal home of the entity that
@@ -813,38 +813,56 @@ PROVIDERS: dict[str, Provider] = {
         name="Privatemode",
         supports_prepaid=True,
         supports_byok=False,
+        stores_content=False,
+        provider_zero_data_retention=True,
         provider_confidential_compute=True,
         provider_e2ee=True,
         provider_policy=(
             "Requests and responses are encrypted between TrustedRouter's enclave "
             "and release-pinned Privatemode workloads after attestation verification. "
             "Verification failures reject the request; there is no plaintext fallback. "
-            "Cache-routing metadata is visible to the provider edge. No separate "
-            "ZDR commitment is inferred from encryption."
+            "Privatemode explicitly states that prompts and responses are not stored "
+            "after a request completes and are not used for training. Transient "
+            "inference state may remain in a salt-isolated, in-memory prompt cache "
+            "inside confidential workers until eviction. "
+            "Operational metadata is retained for up to 90 days; per-key token usage "
+            "is retained permanently for billing. Cache-routing metadata is visible "
+            "to the provider edge. ZDR describes prompt/output retention, not metadata."
         ),
-        provider_policy_url="https://docs.privatemode.ai/security/attestation/overview/",
+        provider_policy_url=(
+            "https://docs.privatemode.ai/security/trust-and-compliance/#data-processing-and-retention"
+        ),
         provider_headquarters_country=PROVIDER_JURISDICTION_DE,
     ),
     # NEAR AI direct endpoints terminate TLS inside the measured model TEE.
     # TrustedRouter verifies the live TLS SPKI, fresh nonce, Intel TDX quote,
     # NVIDIA GPU evidence, compose-manager action log, and release-pinned
-    # workload before sending prompt bytes. No ZDR/no-store claim is inferred
-    # from confidential compute alone.
+    # workload before sending prompt bytes. ZDR comes from NEAR AI's explicit
+    # confidential-inference declaration, not from attestation alone. Its
+    # Cloud Terms section 7.2 limits privacy claims to the relevant route.
     "near-ai": Provider(
         slug="near-ai",
         name="NEAR AI",
         supports_prepaid=True,
         supports_byok=False,
+        stores_content=False,
+        provider_zero_data_retention=True,
         provider_confidential_compute=True,
         provider_e2ee=True,
         provider_policy=(
+            "NEAR AI declares zero data retention for its hosted confidential "
+            "inference. On TrustedRouter this covers only release-pinned direct "
+            "Private TEE routes, not NEAR AI's Incognito or Attested Third-Party "
+            "routes. ZDR describes inference content, not account, billing or "
+            "operational metadata. Cloud Terms section 7.2 makes retention "
+            "route-specific; the general privacy policy covers Cloud website "
+            "and account-administration data, not an all-services ZDR guarantee. "
             "TrustedRouter connects directly to the model workload and verifies "
             "the live TLS key, Intel TDX quote, NVIDIA GPUs, deployment action "
             "log, and pinned workload inside the TrustedRouter enclave before "
-            "sending content. Verification fails closed. No separate ZDR claim "
-            "is currently tracked."
+            "sending content. Verification fails closed."
         ),
-        provider_policy_url="https://docs.near.ai/cloud/verification/tls/",
+        provider_policy_url="https://near.ai/",
         # Jasnah, Inc. d/b/a NEAR AI identifies itself as a Delaware
         # corporation in its first-party Acceptable Use Policy.
         # https://near.ai/acceptable-use-policy
@@ -1879,6 +1897,23 @@ PROVIDERS: dict[str, Provider] = {
         # Operator jurisdiction is not US-only inference; Canada is also declared.
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
+    "lyceum": Provider(
+        slug="lyceum",
+        name="Lyceum",
+        supports_prepaid=True,
+        supports_byok=False,
+        supports_embeddings=True,
+        provider_policy=(
+            "Lyceum's terms state that inference inputs and outputs are used only "
+            "to generate results, are not stored beyond technical necessity, and "
+            "are not used for training or analysis. No account-specific ZDR or "
+            "verified confidential-compute guarantee is tracked; these routes "
+            "remain Standard. German company jurisdiction is not a guarantee "
+            "that every model executes in the EU."
+        ),
+        provider_policy_url="https://lyceum.technology/legal/terms/index.html",
+        provider_headquarters_country="DE",
+    ),
     "regolo": Provider(
         slug="regolo",
         name="Regolo",
@@ -2036,13 +2071,13 @@ PROVIDERS: dict[str, Provider] = {
     "tencent": Provider(
         slug="tencent",
         name="Tencent Cloud TokenHub",
-        supports_prepaid=False,
-        supports_byok=False,
+        supports_prepaid=True,
+        supports_byok=True,
         provider_policy=(
-            "The TokenHub inference key authenticates and its provider-native "
-            "catalog is discoverable, but inference is blocked by insufficient "
-            "account balance. Routes remain dark until a paid canary succeeds "
-            "and exact first-party postpaid prices are joined."
+            "TokenHub's Singapore API uses global resource scheduling, not a "
+            "Singapore-only inference guarantee. Only canaried chat routes with "
+            "matching regional USD prices are enabled. No verified contractual "
+            "ZDR, confidential-compute, or upstream E2EE claim is tracked."
         ),
         provider_policy_url="https://www.tencentcloud.com/document/product/1300/80632",
     ),
@@ -2142,6 +2177,7 @@ PROVIDERS: dict[str, Provider] = {
 
 GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
     {
+        "lyceum",
         "privatemode",
         "telluvian",
         "vercel-ai-gateway",
@@ -2230,6 +2266,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "arcee",
         "inception",
         "io-net",
+        "tencent",
         "scaleway",
         "featherless",
         "sakana",
@@ -2356,12 +2393,15 @@ class NamedDecisionModel(NamedTuple):
     # at 1516 ms but would double the advertised output price; slower perfect
     # hosts and hosts with errors or missed checks were excluded.
     # gemmev moved to Gemma 4 26B A4B on 2026-09-28, when DeepInfra dropped
-    # Gemma 4 E4B, its only host. Measured the same way, each host pinned, one
-    # at a time: W&B 1387 ms, nextbit 1587 ms, io.net 1738 ms, each 87/87 with
-    # 24/24 valid calls. SiliconFlow also passed (2034 ms) but would raise the
-    # advertised price 40%. Makora, Scaleway and Cloudflare think by default
-    # (about 1,000 output tokens a decision, 5-15x the cost) and were excluded;
-    # Gemma 4 31B Turbo scored 84/87.
+    # Gemma 4 E4B, its only host. Measured the same way, each host pinned, in
+    # three runs that day (two of them after the gateway tuned the model), 72
+    # calls per host: nextbit 1760 ms median and 2260 ms p90, W&B 1940 and 2936,
+    # io.net 1964 and 2701; every host 87/87 with 24/24 valid calls in every run.
+    # One run alone had W&B first (1387 ms), so the order comes from all three.
+    # SiliconFlow also passed (2034 ms) but would raise the advertised price 40%.
+    # Makora, Scaleway and Cloudflare think by default (about 1,000 output tokens
+    # a decision, 5-15x the cost) and were excluded; Gemma 4 31B Turbo scored
+    # 84/87.
     # The rest are pinned to the single host they were measured on. The
     # attested gateway asks for exactly this chain and authorize enforces it,
     # so neither side can widen it alone.
@@ -2408,7 +2448,7 @@ NAMED_DECISION_MODELS: tuple[NamedDecisionModel, ...] = (
         GEMMEV_1_0_MODEL_ID,
         "TrustedRouter Gemmev 1.0",
         "google/gemma-4-26b-a4b-it",
-        ("wandb", "nextbit", "io-net"),
+        ("nextbit", "wandb", "io-net"),
     ),
 )
 
@@ -2862,6 +2902,9 @@ SYNTH_QUALITY_1M_MODEL_ORDER = (
     "z-ai/glm-5.2",
     DEEPSEEK_V4_PRO_0423_MODEL_ID,
 )
+# A member whose catalog window falls below this leaves the panel; the rest
+# keep their order.
+SYNTH_QUALITY_1M_MIN_MEMBER_CONTEXT = 1_000_000
 
 SYNTH_PROMETHEUS_2_MODEL_ORDER = (
     "minimax/minimax-m3",
@@ -3254,7 +3297,7 @@ NATIVE_DECISION_MODEL_PROVIDERS: dict[str, str] = {
     "meta-llama/llama-3.3-70b-instruct": "sambanova",
     "google/gemini-3.1-flash-lite": "google-ai-studio",
     "openai/gpt-oss-20b": "deepinfra",
-    "google/gemma-4-26b-a4b-it": "wandb",
+    "google/gemma-4-26b-a4b-it": "nextbit",
     "deepseek/deepseek-v4.1-flash": "wafer",
 }
 

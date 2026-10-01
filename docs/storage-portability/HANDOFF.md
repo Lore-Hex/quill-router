@@ -137,7 +137,10 @@ selection for the current production topology.
 GCP's serving revision now contains a digest-pinned image. Its `TR_RELEASE`
 must be read from that same traffic-carrying revision, not from the service
 template. Missing, malformed, or conflicting release evidence fails closed.
-These discovery fixes do not change the 24-hour promotion gate.
+The discovery fixes did not change the promotion gate. As of the two-cloud
+rollout change, the default is healthy-holdback admission, not a 24-hour delay.
+See [Two-Cloud Rollouts](../design/two-cloud-rollouts.md) for coordination,
+automatic catch-up, activation prerequisites and fail-closed recovery.
 
 **Current AWS code rollout:** `scripts/deploy/aws_ecs_control_plane.sh`, also
 used by `deploy-aws-control-plane.yml`. It requires successful CI for the exact

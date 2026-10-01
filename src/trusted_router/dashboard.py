@@ -15,6 +15,7 @@ from functools import lru_cache
 from itertools import combinations
 from pathlib import Path
 from typing import Any, TypedDict, cast
+from urllib.parse import quote
 from xml.sax.saxutils import escape as xml_escape
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -38,6 +39,7 @@ from trusted_router.catalog import (
     MODELS,
     MONITOR_MODEL_ID,
     NATIVE_DECISION_MODEL_IDS,
+    PRIVACY_TIER_CONFIDENTIAL,
     PROVIDERS,
     Model,
     ModelEndpoint,
@@ -46,6 +48,7 @@ from trusted_router.catalog import (
     decide_url,
     endpoint_confidential_compute,
     endpoint_e2ee,
+    endpoint_meets_privacy_requirement,
     endpoint_provider_policy,
     endpoint_zero_data_retention,
     endpoints_for_model,
@@ -56,6 +59,7 @@ from trusted_router.catalog import (
     offers_chat,
     orchestration_primitive,
     orchestration_role,
+    provider_confidential_inference,
     provider_is_routable,
     providers_for_display,
 )
@@ -84,6 +88,7 @@ from trusted_router.content.legal import (
     soc2_readiness_packet,
     subprocessor_packet,
 )
+from trusted_router.content.token_index import token_index_context
 from trusted_router.content_handling import CONTENT_HANDLING_CLAIM
 from trusted_router.domains import canonical_public_url
 from trusted_router.marketing_experiments import GoogleSearchExperimentCell
@@ -197,6 +202,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/benchmarks/reports/2026-06",
     "/benchmarks/reports/2026-07",
     "/rankings",
+    "/index",
     "/leaderboard",
     "/leaderboard/video",
     "/status",
@@ -1351,8 +1357,9 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
                 "What do the privacy tiers mean?",
                 "The TrustedRouter gateway hop is attested on every request. Open permits any "
                 "upstream posture. Zero-retention (ZDR) requires a provider endpoint whose "
-                "verified policy or contract retains nothing. TEE requires provider confidential "
-                "compute plus provider-side end-to-end encryption.",
+                "verified policy or contract retains no prompt or output content. Confidential "
+                "requires verified provider confidential compute, provider-side end-to-end "
+                "encryption, and explicit ZDR on the same route.",
             ),
             (
                 "Which models are fastest?",
@@ -1576,6 +1583,16 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         description=(
             "Let agents add TrustedRouter prepaid credits with Stripe x402 while "
             "prompt traffic stays inside the attested API gateway."
+        ),
+    ),
+    "index": PublicPage(
+        template="public/token_index.html",
+        og_card="index.png",
+        og_alt="NYTE Token Index: what AI inference costs, per billion tokens",
+        title="NYTE Token Index: AI Inference Prices",
+        description=(
+            "The NYTE Token Index tracks what AI inference costs in US dollars per billion tokens, "
+            "with Frontier, Advanced, Professional and Efficient grade indices."
         ),
     ),
     "green-tokens": PublicPage(
@@ -2757,6 +2774,7 @@ def public_page_html(
         robots_meta=robots_meta,
         extra_context=(
             _green_tokens_context() if page_key == "green-tokens"
+            else token_index_context() if page_key == "index"
             else company_signin_context(page_key) if page_key in COMPANY_SIGNIN_PAGES else None
         ),
     )
@@ -3081,7 +3099,8 @@ def _render_public_page(
 
 
 def public_not_found_html(settings: Settings, requested_path: str) -> str:
-    safe_path = requested_path if requested_path.startswith("/") else f"/{requested_path}"
+    # ASGI paths are decoded user input, not the trusted paths of published pages.
+    safe_path = "/" + quote(requested_path.lstrip("/"), safe="/")
     return _render_public_page(
         settings,
         _NOT_FOUND_PAGE,
@@ -4926,11 +4945,121 @@ def docs_llms_full_txt(settings: Settings) -> str:
     return "\n".join(lines)
 
 
-def _model_publisher(model: Model) -> Provider:
-    # A TrustedRouter orchestration's publisher is not its internal selector host.
-    if model.id in META_MODEL_IDS and model.id.startswith("trustedrouter/"):
-        return PROVIDERS["trustedrouter"]
-    return PROVIDERS[model.provider]
+# A model's publisher is its maker, named by the author prefix of its id (`qwen`
+# in `qwen/qwen3.7-max`) and never by Model.provider: that is the default route,
+# which for an author without a routing mapping is whichever host lists the
+# model first. Routing reads catalog_ingest._AUTHOR_TO_PROVIDER_SLUG, which is a
+# different map: it sends meta-llama to Cerebras.
+#
+# An author is listed here only when a PROVIDERS entry is its maker's own API.
+# Hosts and resellers are not, including a multi-lab hosting catalog that a
+# maker's own company runs (NVIDIA NIM, Microsoft Azure AI Foundry) and "Meta via
+# OpenRouter", which is OpenRouter reselling Meta. A TrustedRouter orchestration
+# is published by TrustedRouter, not by its internal selector host.
+_PUBLISHER_PROVIDER_BY_AUTHOR: dict[str, str] = {
+    # The maker's API under the author's own name.
+    "aion-labs": "aion-labs",
+    "alibaba": "alibaba",
+    "anthropic": "anthropic",
+    "baidu": "baidu",
+    "cohere": "cohere",
+    "decart": "decart",
+    "deepseek": "deepseek",
+    "inception": "inception",
+    "kling": "kling",
+    "krea": "krea",
+    "minimax": "minimax",
+    "mistral": "mistral",
+    "morph": "morph",
+    "neurometric": "neurometric",
+    "openai": "openai",
+    "parasail": "parasail",
+    "perplexity": "perplexity",
+    "poolside": "poolside",
+    "recraft": "recraft",
+    "reka": "reka",
+    "runway": "runway",
+    "scaledown": "scaledown",
+    "stepfun": "stepfun",
+    "tencent": "tencent",
+    "thinkingmachines": "thinkingmachines",
+    "trustedrouter": "trustedrouter",
+    "upstage": "upstage",
+    "voyage": "voyage",
+    "xiaomi": "xiaomi",
+    "zero-g": "zero-g",
+    # The maker's API under another name.
+    "arcee-ai": "arcee",
+    "black-forest-labs": "bfl",
+    "bytedance": "byteplus",
+    "bytedance-seed": "byteplus",
+    "deepseek-ai": "deepseek",
+    # Alibaba's Tongyi labs (Fun-Audio, Z-Image, Wan) publish through Model Studio.
+    "funaudiollm": "alibaba",
+    "google": "google-ai-studio",
+    "jina-ai": "jina",
+    # Kuaishou's own platform for its Kwaipilot KAT models, under their native ids.
+    "kwaipilot": "streamlake",
+    "lightricks": "ltx",
+    "minimaxai": "minimax",
+    "mistralai": "mistral",
+    "moonshot": "kimi",
+    "moonshotai": "kimi",
+    # Mistral NeMo, built with NVIDIA, is on Mistral's own API.
+    "nv-mistralai": "mistral",
+    # Baidu's PaddlePaddle models (PaddleOCR-VL) are on Baidu's Qianfan API.
+    "paddlepaddle": "baidu",
+    "qwen": "alibaba",
+    "sakana-ai": "sakana",
+    "stepfun-ai": "stepfun",
+    # GLM's original Tsinghua organisation; Z.ai now publishes GLM.
+    "thudm": "zai",
+    "tongyi-mai": "alibaba",
+    "typesafe-ai": "typesafe",
+    "wan-ai": "alibaba",
+    "x-ai": "grok",
+    "xai": "grok",
+    "xiaomimimo": "xiaomi",
+    "z-ai": "zai",
+    "zai-org": "zai",
+    "zhipu": "zai",
+    "zhipuai": "zai",
+}
+
+# Author prefixes that name no maker: a host's namespace for other labs' weights
+# (cerebras/gpt-oss-120b is OpenAI's model, fal/flux-1-schnell Black Forest
+# Labs', lightning-ai/glm-5.3 Z.ai's; phala/* ids select Phala's hosted tier),
+# and stealth/*, whose maker is unannounced.
+_AUTHORS_NAMING_NO_MAKER = frozenset({"cerebras", "fal", "lightning-ai", "phala", "stealth"})
+
+
+@dataclass(frozen=True)
+class _ModelPublisher:
+    """A model's maker as public pages name it.
+
+    `provider` is the maker's own PROVIDERS entry, with a logo and a
+    /providers page; a maker without one is named by `name` alone, with no link
+    and no logo. `name` is None when the model id names no maker.
+    """
+
+    name: str | None
+    provider: Provider | None = None
+
+    @property
+    def slug(self) -> str | None:
+        return self.provider.slug if self.provider is not None else None
+
+
+def _model_publisher(model: Model) -> _ModelPublisher:
+    author = model.id.split("/", 1)[0]
+    key = author.lower()
+    if key in _AUTHORS_NAMING_NO_MAKER:
+        return _ModelPublisher(None)
+    slug = _PUBLISHER_PROVIDER_BY_AUTHOR.get(key)
+    provider = PROVIDERS.get(slug) if slug is not None else None
+    if provider is not None:
+        return _ModelPublisher(provider.name, provider)
+    return _ModelPublisher(_BRAND_DISPLAY_NAMES.get(key, author))
 
 
 def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
@@ -5040,11 +5169,11 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
             endpoint_zero_data_retention(endpoint) is True for endpoint in route_endpoints
         ),
         "confidential_available": any(
-            endpoint_confidential_compute(endpoint) is True for endpoint in route_endpoints
+            endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL)
+            for endpoint in route_endpoints
         ),
         "e2e_available": any(
-            endpoint_confidential_compute(endpoint) is True
-            and endpoint_e2ee(endpoint) is True
+            endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL)
             for endpoint in route_endpoints
         ),
         "orchestration_primitive": orchestration_primitive(model.id),
@@ -5059,6 +5188,7 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
             (
                 model.id,
                 model.name,
+                publisher.name or "",
                 model.provider,
                 provider.name,
                 *provider_search_terms,
@@ -5187,8 +5317,7 @@ def _endpoint_provider_views(
                 "slug": slug,
                 "logo_url": provider_logo_url(slug),
                 "confidential_available": any(
-                    endpoint_confidential_compute(endpoint) is True
-                    and endpoint_e2ee(endpoint) is True
+                    endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL)
                     for endpoint in provider_endpoints
                 ),
                 "zdr_available": any(
@@ -5207,8 +5336,7 @@ def _provider_view(provider: Provider) -> dict[str, object]:
     routing_status = "active" if provider_is_routable(provider) else "blocked"
     confidential_verified = (
         provider.slug != "trustedrouter"
-        and provider.provider_confidential_compute is True
-        and provider.provider_e2ee is True
+        and provider_confidential_inference(provider, prepaid=True)
     )
     return {
         "id": provider.slug,
@@ -5348,7 +5476,7 @@ def _provider_faq_items(
 def _provider_privacy_tier(provider: Provider) -> str:
     if provider.slug == "trustedrouter":
         return "TR gateway"
-    if provider.provider_e2ee and provider.provider_confidential_compute:
+    if provider_confidential_inference(provider, prepaid=True):
         return "Confidential"
     if provider.provider_zero_data_retention:
         return "ZDR"
@@ -5890,9 +6018,12 @@ def _model_faq_items(
             fallback_provider=model.provider,
         )
     ] if credits_endpoints else []
-    publisher = _model_publisher(model)
-    if provider_names and publisher.slug != model.provider:
-        provider_names = [publisher.name]
+    # An orchestration's host is its internal selector, so its publisher is
+    # named instead. Every other model lists the hosts that serve it, which
+    # need not include its maker.
+    publisher_name = _model_publisher(model).name
+    if provider_names and model.id in META_MODEL_IDS and publisher_name is not None:
+        provider_names = [publisher_name]
     if not provider_names:
         provider_answer = "no Credits provider route"
     elif len(provider_names) == 1:
@@ -6215,10 +6346,10 @@ def _cheapest_total_microdollars(model: Model) -> int:
 
 def _privacy_summary(model: Model) -> str:
     endpoints = _credits_endpoints(endpoints_for_model(model.id))
-    if any(endpoint_e2ee(endpoint) for endpoint in endpoints):
-        return "has provider E2EE route"
+    if any(endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL) for endpoint in endpoints):
+        return "has Confidential route (E2EE + ZDR)"
     if any(endpoint_confidential_compute(endpoint) for endpoint in endpoints):
-        return "has confidential-compute route"
+        return "has provider TEE claim"
     if any(endpoint_zero_data_retention(endpoint) is True for endpoint in endpoints):
         return "has ZDR route"
     return "provider posture varies"
@@ -6265,6 +6396,9 @@ def _provider_model_rows(provider_slug: str, *, test_mode: bool = False) -> list
     return sorted(rows, key=lambda row: str(row["id"]))
 
 
+# Makers' names, keyed by the author prefix of the model id. A maker without its
+# own provider entry is published under this name, or under its prefix as the
+# id spells it.
 _BRAND_DISPLAY_NAMES: dict[str, str] = {
     "trustedrouter": "TrustedRouter",
     "anthropic": "Anthropic",
@@ -6284,7 +6418,26 @@ _BRAND_DISPLAY_NAMES: dict[str, str] = {
     "bytedance": "ByteDance",
     "xiaomi": "Xiaomi",
     "nousresearch": "Nous Research",
-    "phala": "Phala",
+    "aisingapore": "AI Singapore",
+    "baichuan": "Baichuan",
+    "bsc-lt": "BSC-LT",
+    "gryphe": "Gryphe",
+    "ibm-granite": "IBM",
+    "inclusionai": "inclusionAI",
+    "intel": "Intel",
+    "jetbrains": "JetBrains",
+    "meituan-longcat": "Meituan LongCat",
+    "meta": "Meta",
+    "microsoft": "Microsoft",
+    "nvidia": "NVIDIA",
+    "openbmb": "OpenBMB",
+    "openpipe": "OpenPipe",
+    "pixverse": "PixVerse",
+    "sao10k": "Sao10K",
+    "shengshu": "ShengShu",
+    "swiss-ai": "Swiss AI",
+    "undi95": "Undi95",
+    "yutori": "Yutori",
 }
 
 
@@ -6326,8 +6479,12 @@ def _model_service_node(settings: Settings, model: Model, site_url: str) -> dict
     else:
         cheapest_micro_per_m = min(prompt_prices)
     cheapest_usd_per_m = cheapest_micro_per_m / MICRODOLLARS_PER_DOLLAR
-    brand_slug = _model_publisher(model).slug
-    brand_name = _BRAND_DISPLAY_NAMES.get(brand_slug, brand_slug.title())
+    # The brand is the publisher the page names; its logo only comes with the
+    # maker's own provider entry, and a model id that names no maker has none.
+    publisher = _model_publisher(model)
+    brand: dict[str, object] = {"@type": "Brand", "name": publisher.name}
+    if publisher.slug is not None:
+        brand["logo"] = _absolute_url(settings, provider_logo_url(publisher.slug))
     return {
         "@type": "Service",
         "name": model.name,
@@ -6343,11 +6500,7 @@ def _model_service_node(settings: Settings, model: Model, site_url: str) -> dict
             "name": "TrustedRouter",
             "url": f"https://{settings.trusted_domain}/",
         },
-        "brand": {
-            "@type": "Brand",
-            "name": brand_name,
-            "logo": _absolute_url(settings, provider_logo_url(brand_slug)),
-        },
+        **({"brand": brand} if publisher.name is not None else {}),
         "areaServed": "Worldwide",
         "offers": {
             "@type": "Offer",

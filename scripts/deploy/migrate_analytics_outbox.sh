@@ -37,8 +37,8 @@ else
   #
   # 7 days is safe specifically BECAUSE analytics is loss-tolerant: rows older
   # than that mean the ingester has been dead for a week, and the documented
-  # recovery is clickhouse/reconcile_benchmark_samples.py replaying from
-  # Bigtable, not this table. Never copy this policy onto a money table, where
+  # recovery is the provider analytics outbox replay, not this table. Never
+  # copy this policy onto a money table, where
   # dropping an undrained row would lose a settlement.
   log "creating tr_analytics_outbox on ${PROJECT}/${INSTANCE}/${DATABASE}"
   gcloud spanner databases ddl update "$DATABASE" \

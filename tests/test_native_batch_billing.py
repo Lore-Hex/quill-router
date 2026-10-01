@@ -6,12 +6,20 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from tests.fixture_routes import drop_routes, serve_on_fixture_route
 from trusted_router.catalog import endpoint_for_id
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.routes.internal import gateway as gateway_routes
 from trusted_router.storage import STORE
 from trusted_router.types import UsageType
+
+
+def _serve_gpt_55_on_openai(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The discount belongs to the provider; any OpenAI Credits route carries it.
+    serve_on_fixture_route(
+        monkeypatch, "openai/gpt-5.5", "openai", author="openai", upstream_id="gpt-5.5"
+    )
 
 
 def _client_and_key() -> tuple[TestClient, dict]:
@@ -73,7 +81,10 @@ def test_native_batch_authorization_outlives_provider_completion_window() -> Non
     assert gateway_routes._authorization_ttl_seconds("batch.native.chat.completions") == 93_600
 
 
-def test_native_batch_authorization_replays_across_region_and_estimator_drift() -> None:
+def test_native_batch_authorization_replays_across_region_and_estimator_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_gpt_55_on_openai(monkeypatch)
     client, key = _client_and_key()
     idempotency_key = "tr-native-batch:test-cross-region-replay:0"
     base = {
@@ -145,7 +156,10 @@ def test_native_batch_retention_policy_fails_closed() -> None:
     )
 
 
-def test_native_batch_settlement_charges_half_and_replay_returns_same_cost() -> None:
+def test_native_batch_settlement_charges_half_and_replay_returns_same_cost(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_gpt_55_on_openai(monkeypatch)
     client, key = _client_and_key()
     authorize = client.post(
         "/v1/internal/gateway/authorize",
@@ -213,7 +227,13 @@ def test_native_batch_settlement_charges_half_and_replay_returns_same_cost() -> 
     assert late_refund_data["output_tokens"] == 200
 
 
-def test_native_batch_settlement_rejects_provider_without_verified_discount() -> None:
+def test_native_batch_settlement_rejects_provider_without_verified_discount(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    serve_on_fixture_route(
+        monkeypatch, "deepseek/deepseek-v4-flash", "deepseek", author="deepseek",
+        upstream_id="deepseek-v4-flash",
+    )
     client, key = _client_and_key()
     authorize = client.post(
         "/v1/internal/gateway/authorize",
@@ -247,7 +267,10 @@ def test_native_batch_settlement_rejects_provider_without_verified_discount() ->
     assert authorization is not None and not authorization.settled
 
 
-def test_native_batch_settlement_rejects_authorization_that_failed_retention_gate() -> None:
+def test_native_batch_settlement_rejects_authorization_that_failed_retention_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_gpt_55_on_openai(monkeypatch)
     client, key = _client_and_key()
     authorize = client.post(
         "/v1/internal/gateway/authorize",
@@ -283,7 +306,10 @@ def test_native_batch_settlement_rejects_authorization_that_failed_retention_gat
     assert authorization is not None and not authorization.settled
 
 
-def test_native_batch_refund_replay_releases_hold_once() -> None:
+def test_native_batch_refund_replay_releases_hold_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_gpt_55_on_openai(monkeypatch)
     client, key = _client_and_key()
     authorize = client.post(
         "/v1/internal/gateway/authorize",
@@ -321,7 +347,15 @@ def test_native_batch_refund_replay_releases_hold_once() -> None:
     assert authorization is not None and authorization.settled
 
 
-def test_native_batch_eligibility_does_not_override_primary_provider_order() -> None:
+def test_native_batch_eligibility_does_not_override_primary_provider_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The primary host has no verified discount; the discounted host is a fallback.
+    drop_routes(monkeypatch, "deepseek/deepseek-v4-flash")
+    for host in ("deepseek", "parasail"):
+        serve_on_fixture_route(
+            monkeypatch, "deepseek/deepseek-v4-flash", host, author="deepseek"
+        )
     client, key = _client_and_key()
     authorize = client.post(
         "/v1/internal/gateway/authorize",
@@ -356,7 +390,10 @@ def test_native_batch_eligibility_does_not_override_primary_provider_order() -> 
     assert refunded.json()["data"]["cost_microdollars"] == 0
 
 
-def test_ordinary_authorization_cannot_claim_native_batch_discount_at_settlement() -> None:
+def test_ordinary_authorization_cannot_claim_native_batch_discount_at_settlement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_gpt_55_on_openai(monkeypatch)
     client, key = _client_and_key()
     authorize = client.post(
         "/v1/internal/gateway/authorize",

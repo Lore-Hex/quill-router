@@ -1,19 +1,20 @@
 from __future__ import annotations
 
-import logging
-
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from tests.fakes.spanner import make_fake_store
+from tests.fixture_routes import drop_routes, serve_on_fixture_route
 from trusted_router.catalog import (
     ARCHIMEDES_1_0_MODEL_ID,
     MISTRAL_LARGE_MODEL_ID,
     MODELS,
     default_endpoint_for_model,
     endpoint_for_id,
+    endpoints_for_model,
 )
+from trusted_router.catalog_data import Model
+from trusted_router.catalog_registry import archimedes_model
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.money import token_cost_microdollars
@@ -22,12 +23,6 @@ from trusted_router.partner_billing import (
     PARASAIL_LIBERTY_2_0_INTERNAL_ROUTE_PREFIX,
     PARASAIL_LIBERTY_2_0_TOP_LEVEL_ROUTE,
     PARTNER_OPERATOR_COST_SETTLE_FIELD,
-)
-from trusted_router.provider_lifecycle import provider_model_retired
-from trusted_router.regional_quota_ledger import (
-    InMemoryRegionalQuotaLedger,
-    RegionalLeaseLedgerError,
-    RegionalLeaseNotFound,
 )
 from trusted_router.routes.helpers import cost_microdollars
 from trusted_router.routes.internal import gateway as gateway_routes
@@ -47,7 +42,28 @@ def _client_and_key() -> tuple[TestClient, dict]:
     return client, created.json()["data"]
 
 
-def test_gateway_archimedes_authorizes_private_credits_route() -> None:
+def _serve_archimedes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Archimedes over Mistral Large on one fixture Credits route. Mistral
+    delisting Mistral Large takes Archimedes out of the catalog with it, and
+    the private-proxy rule holds whatever Mistral lists today."""
+    drop_routes(monkeypatch, MISTRAL_LARGE_MODEL_ID)
+    serve_on_fixture_route(
+        monkeypatch, MISTRAL_LARGE_MODEL_ID, "mistral", author="mistral",
+        model=Model(
+            id=MISTRAL_LARGE_MODEL_ID, name="Mistral Large", provider="mistral",
+            context_length=262_144, prepaid_available=True,
+        ),
+    )
+    if ARCHIMEDES_1_0_MODEL_ID not in MODELS:
+        monkeypatch.setitem(
+            MODELS, ARCHIMEDES_1_0_MODEL_ID, archimedes_model(MODELS[MISTRAL_LARGE_MODEL_ID])
+        )
+
+
+def test_gateway_archimedes_authorizes_private_credits_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_archimedes(monkeypatch)
     client, key = _client_and_key()
 
     response = client.post(
@@ -124,7 +140,13 @@ def test_gateway_archimedes_rejects_byok_and_fallback_arrays() -> None:
     )
 
 
-def test_gateway_authorize_never_escapes_no_fallback_provider_order() -> None:
+def test_gateway_authorize_never_escapes_no_fallback_provider_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    serve_on_fixture_route(
+        monkeypatch, "google/gemma-4-31b-it", "tinfoil", author="google-ai-studio",
+        upstream_id="gemma4-31b",
+    )
     client, key = _client_and_key()
 
     unavailable = client.post(
@@ -169,7 +191,7 @@ def test_gateway_authorize_never_escapes_no_fallback_provider_order() -> None:
 
 
 def test_gateway_authorize_fake_spanner_uses_typed_without_allowlist_settings() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_gcp_capability_authorize"
     store._write_entity("workspace", ws, Workspace(id=ws, name="GCP", owner_user_id="u"))
     store._write_entity(
@@ -211,258 +233,16 @@ def test_gateway_authorize_fake_spanner_uses_typed_without_allowlist_settings() 
     assert ("reservation", data["credit_reservation_id"]) not in db.rows
 
 
-def test_allowlisted_uncapped_key_authorizes_from_bounded_regional_escrow() -> None:
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
-    store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
-    workspace = store.create_workspace(
-        "owner",
-        "regional-pilot",
-        trial_credit_microdollars=100_000_000,
-    )
-    _raw, api_key = store.create_api_key(
-        workspace_id=workspace.id,
-        name="regional",
-        creator_user_id="owner",
-    )
-    configure_store(store)
-    settings = Settings(
-        environment="test",
-        regional_quota_leases_enabled=True,
-        regional_quota_lease_issuance_enabled=True,
-        regional_quota_lease_pilot_workspace_ids=workspace.id,
-    )
-    client = TestClient(
-        create_app(
-            settings,
-            configure_store_arg=False,
-            init_observability=False,
-        )
-    )
-
-    response = client.post(
-        "/v1/internal/gateway/authorize",
-        json={
-            "api_key_hash": api_key.hash,
-            "model": "anthropic/claude-opus-4.7",
-            "estimated_input_tokens": 1_000,
-            "max_output_tokens": 100,
-            "route_type": "chat.completions",
-            "idempotency_key": "regional-pilot-request",
-        },
-    )
-
-    assert response.status_code == 200, response.text
-    authorization = store.get_gateway_authorization(response.json()["data"]["authorization_id"])
-    assert authorization is not None
-    assert authorization.settlement == "regional_lease"
-    reservation = db.reservations[str(authorization.credit_reservation_id)]
-    assert reservation["hold_usage_type"] == "RegionalCredits"
-    assert reservation["credit_reserved_micro"] == 0
-    assert sum(row["reserved"] for row in db.typed[CREDIT_BALANCE_TABLE].values()) > 0
-
-
-def test_regional_ledger_failure_falls_back_to_exact_global_authorization() -> None:
-    class UnavailableRegionalLedger(InMemoryRegionalQuotaLedger):
-        def initialize(self, lease: object) -> object:
-            del lease
-            raise RegionalLeaseLedgerError("regional ledger unavailable")
-
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
-    store._regional_quota_ledger = UnavailableRegionalLedger()
-    workspace = store.create_workspace(
-        "owner",
-        "regional-fallback",
-        trial_credit_microdollars=100_000_000,
-    )
-    _raw, api_key = store.create_api_key(
-        workspace_id=workspace.id,
-        name="regional-fallback",
-        creator_user_id="owner",
-    )
-    configure_store(store)
-    client = TestClient(
-        create_app(
-            Settings(
-                environment="test",
-                regional_quota_leases_enabled=True,
-                regional_quota_lease_issuance_enabled=True,
-                regional_quota_lease_pilot_workspace_ids=workspace.id,
-            ),
-            configure_store_arg=False,
-            init_observability=False,
-        )
-    )
-
-    response = client.post(
-        "/v1/internal/gateway/authorize",
-        json={
-            "api_key_hash": api_key.hash,
-            "model": "anthropic/claude-opus-4.7",
-            "estimated_input_tokens": 1_000,
-            "max_output_tokens": 100,
-            "route_type": "chat.completions",
-            "idempotency_key": "regional-ledger-global-fallback",
-        },
-    )
-
-    assert response.status_code == 200, response.text
-    authorization = store.get_gateway_authorization(response.json()["data"]["authorization_id"])
-    assert authorization is not None
-    assert authorization.settlement == "local"
-    reservation = db.reservations[str(authorization.credit_reservation_id)]
-    assert reservation["credit_reserved_micro"] > 0
-
-
-def test_regional_ledger_read_failure_degrades_with_one_warning_and_no_traceback(
-    caplog: pytest.LogCaptureFixture,
+def test_sakana_fugu_uses_exact_global_settlement(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A europe-west4 process legitimately reads the us-central1 ledger for
-    callbacks; a cross-region timeout there is expected and the request must
-    continue on the exact path with a single warning line, not a traceback
-    that Error Reporting files as a crash."""
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
-    ledger = InMemoryRegionalQuotaLedger()
-    store._regional_quota_ledger = ledger
-    workspace = store.create_workspace(
-        "owner",
-        "regional-read-failure",
-        trial_credit_microdollars=100_000_000,
+    serve_on_fixture_route(
+        monkeypatch, "sakana-ai/fugu-ultra-v1.1", "sakana", author="sakana",
+        context_length=1_000_000, upstream_id="fugu-ultra-v1.1",
+        prompt_price_microdollars_per_million_tokens=5_000_000,
+        completion_price_microdollars_per_million_tokens=30_000_000,
     )
-    _raw, api_key = store.create_api_key(
-        workspace_id=workspace.id,
-        name="regional-read-failure",
-        creator_user_id="owner",
-    )
-    configure_store(store)
-    client = TestClient(
-        create_app(
-            Settings(
-                environment="test",
-                regional_quota_leases_enabled=True,
-                regional_quota_lease_issuance_enabled=True,
-                regional_quota_lease_pilot_workspace_ids=workspace.id,
-            ),
-            configure_store_arg=False,
-            init_observability=False,
-        )
-    )
-
-    def authorize(idempotency_key: str) -> httpx.Response:
-        return client.post(
-            "/v1/internal/gateway/authorize",
-            json={
-                "api_key_hash": api_key.hash,
-                "model": "anthropic/claude-opus-4.7",
-                "estimated_input_tokens": 1_000,
-                "max_output_tokens": 100,
-                "route_type": "chat.completions",
-                "idempotency_key": idempotency_key,
-            },
-        )
-
-    first = authorize("regional-read-failure-1")
-    assert first.status_code == 200, first.text
-    seeded = store.get_gateway_authorization(first.json()["data"]["authorization_id"])
-    assert seeded is not None and seeded.settlement == "regional_lease"
-
-    def failing_get(lease_id: str, *, region: str) -> object:
-        del lease_id, region
-        raise RegionalLeaseLedgerError("regional lease read failed") from TimeoutError(
-            "504 Deadline Exceeded"
-        )
-
-    ledger.get = failing_get  # type: ignore[method-assign]
-    caplog.set_level(logging.WARNING)
-    second = authorize("regional-read-failure-2")
-
-    assert second.status_code == 200, second.text
-    degraded = store.get_gateway_authorization(second.json()["data"]["authorization_id"])
-    assert degraded is not None and degraded.settlement == "local"
-    assert db.reservations[str(degraded.credit_reservation_id)]["credit_reserved_micro"] > 0
-    warnings = [
-        record
-        for record in caplog.records
-        if "regional quota lease read/reserve failed" in record.getMessage()
-    ]
-    assert len(warnings) == 1
-    assert warnings[0].levelno == logging.WARNING
-    assert warnings[0].exc_info is None
-    assert "cause=TimeoutError" in warnings[0].getMessage()
-    assert "Traceback" not in caplog.text
-
-
-def test_regional_lease_vanishing_at_reserve_keeps_its_traceback(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """A row that read fine and is gone at reserve time is an inconsistency,
-    not latency: still degrade to the exact path, but keep the traceback."""
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
-    ledger = InMemoryRegionalQuotaLedger()
-    store._regional_quota_ledger = ledger
-    workspace = store.create_workspace(
-        "owner",
-        "regional-reserve-vanished",
-        trial_credit_microdollars=100_000_000,
-    )
-    _raw, api_key = store.create_api_key(
-        workspace_id=workspace.id,
-        name="regional-reserve-vanished",
-        creator_user_id="owner",
-    )
-    configure_store(store)
-    client = TestClient(
-        create_app(
-            Settings(
-                environment="test",
-                regional_quota_leases_enabled=True,
-                regional_quota_lease_issuance_enabled=True,
-                regional_quota_lease_pilot_workspace_ids=workspace.id,
-            ),
-            configure_store_arg=False,
-            init_observability=False,
-        )
-    )
-
-    def authorize(idempotency_key: str) -> httpx.Response:
-        return client.post(
-            "/v1/internal/gateway/authorize",
-            json={
-                "api_key_hash": api_key.hash,
-                "model": "anthropic/claude-opus-4.7",
-                "estimated_input_tokens": 1_000,
-                "max_output_tokens": 100,
-                "route_type": "chat.completions",
-                "idempotency_key": idempotency_key,
-            },
-        )
-
-    first = authorize("regional-reserve-vanished-1")
-    assert first.status_code == 200, first.text
-
-    def vanishing_reserve(*_args: object, **_kwargs: object) -> object:
-        raise RegionalLeaseNotFound("regional lease row is gone")
-
-    ledger.reserve = vanishing_reserve  # type: ignore[method-assign]
-    caplog.set_level(logging.WARNING)
-    second = authorize("regional-reserve-vanished-2")
-
-    assert second.status_code == 200, second.text
-    degraded = store.get_gateway_authorization(second.json()["data"]["authorization_id"])
-    assert degraded is not None and degraded.settlement == "local"
-    assert db.reservations[str(degraded.credit_reservation_id)]["credit_reserved_micro"] > 0
-    vanished = [
-        record
-        for record in caplog.records
-        if "regional quota lease vanished between read and reserve" in record.getMessage()
-    ]
-    assert len(vanished) == 1
-    assert vanished[0].exc_info is not None
-    assert "Traceback" in caplog.text
-
-
-def test_sakana_fugu_uses_exact_global_settlement_not_regional_escrow() -> None:
-    store, _db, _ = make_fake_store(request_record_write_mode="typed")
-    store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
+    store, _db = make_fake_store(request_record_write_mode="typed")
     workspace = store.create_workspace(
         "owner",
         "sakana-fugu-global-settlement",
@@ -476,12 +256,7 @@ def test_sakana_fugu_uses_exact_global_settlement_not_regional_escrow() -> None:
     configure_store(store)
     client = TestClient(
         create_app(
-            Settings(
-                environment="test",
-                regional_quota_leases_enabled=True,
-                regional_quota_lease_issuance_enabled=True,
-                regional_quota_lease_pilot_workspace_ids=workspace.id,
-            ),
+            Settings(environment="test"),
             configure_store_arg=False,
             init_observability=False,
         )
@@ -506,8 +281,16 @@ def test_sakana_fugu_uses_exact_global_settlement_not_regional_escrow() -> None:
     assert authorization.settlement == "local"
 
 
-def test_sakana_fugu_fails_closed_from_unsupported_europe_gateway() -> None:
-    store, _db, _ = make_fake_store(request_record_write_mode="typed")
+def test_sakana_fugu_fails_closed_from_unsupported_europe_gateway(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    serve_on_fixture_route(
+        monkeypatch, "sakana-ai/fugu-ultra-v1.1", "sakana", author="sakana",
+        context_length=1_000_000, upstream_id="fugu-ultra-v1.1",
+        prompt_price_microdollars_per_million_tokens=5_000_000,
+        completion_price_microdollars_per_million_tokens=30_000_000,
+    )
+    store, _db = make_fake_store(request_record_write_mode="typed")
     workspace = store.create_workspace(
         "owner",
         "sakana-fugu-europe",
@@ -544,28 +327,22 @@ def test_sakana_fugu_fails_closed_from_unsupported_europe_gateway() -> None:
     assert response.json()["error"]["type"] == "provider_not_supported"
 
 
-def test_capability_only_revision_keeps_uncapped_key_on_exact_global_path() -> None:
-    store, _db, _ = make_fake_store(request_record_write_mode="typed")
-    store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
+def test_uncapped_key_authorizes_on_exact_global_path() -> None:
+    store, db = make_fake_store(request_record_write_mode="typed")
     workspace = store.create_workspace(
         "owner",
-        "regional-capability-only",
+        "uncapped-exact-global",
         trial_credit_microdollars=100_000_000,
     )
     _raw, api_key = store.create_api_key(
         workspace_id=workspace.id,
-        name="capability-only",
+        name="uncapped",
         creator_user_id="owner",
     )
     configure_store(store)
     client = TestClient(
         create_app(
-            Settings(
-                environment="test",
-                regional_quota_leases_enabled=True,
-                regional_quota_lease_issuance_enabled=False,
-                regional_quota_lease_pilot_workspace_ids=workspace.id,
-            ),
+            Settings(environment="test"),
             configure_store_arg=False,
             init_observability=False,
         )
@@ -579,7 +356,7 @@ def test_capability_only_revision_keeps_uncapped_key_on_exact_global_path() -> N
             "estimated_input_tokens": 1_000,
             "max_output_tokens": 100,
             "route_type": "chat.completions",
-            "idempotency_key": "regional-capability-only",
+            "idempotency_key": "uncapped-exact-global",
         },
     )
 
@@ -587,92 +364,16 @@ def test_capability_only_revision_keeps_uncapped_key_on_exact_global_path() -> N
     authorization = store.get_gateway_authorization(response.json()["data"]["authorization_id"])
     assert authorization is not None
     assert authorization.settlement == "local"
-    assert store._list_entities("regional_quota_lease", cls=dict) == []
-
-
-@pytest.mark.parametrize("finalize_kind", ["settle", "refund"])
-def test_capability_only_peer_finalizes_lease_issued_by_enabled_peer(
-    finalize_kind: str,
-) -> None:
-    store, _db, _ = make_fake_store(request_record_write_mode="typed")
-    store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
-    workspace = store.create_workspace(
-        "owner",
-        f"regional-mixed-revision-{finalize_kind}",
-        trial_credit_microdollars=100_000_000,
-    )
-    _raw, api_key = store.create_api_key(
-        workspace_id=workspace.id,
-        name="mixed-revision",
-        creator_user_id="owner",
-    )
-    configure_store(store)
-    issuing_peer = TestClient(
-        create_app(
-            Settings(
-                environment="test",
-                regional_quota_leases_enabled=True,
-                regional_quota_lease_issuance_enabled=True,
-                regional_quota_lease_pilot_workspace_ids=workspace.id,
-            ),
-            configure_store_arg=False,
-            init_observability=False,
-        )
-    )
-
-    authorize = issuing_peer.post(
-        "/v1/internal/gateway/authorize",
-        json={
-            "api_key_hash": api_key.hash,
-            "model": "anthropic/claude-opus-4.7",
-            "estimated_input_tokens": 1_000,
-            "max_output_tokens": 100,
-            "route_type": "chat.completions",
-            "idempotency_key": f"regional-mixed-{finalize_kind}",
-        },
-    )
-    assert authorize.status_code == 200, authorize.text
-    authorization_id = authorize.json()["data"]["authorization_id"]
-    authorization = store.get_gateway_authorization(authorization_id)
-    assert authorization is not None
-    assert authorization.settlement == "regional_lease"
-
-    # This app represents a different active revision: it retains the ledger
-    # capability, but its traffic-issuance switch is intentionally off.
-    settlement_peer = TestClient(
-        create_app(
-            Settings(
-                environment="test",
-                regional_quota_leases_enabled=True,
-                regional_quota_lease_issuance_enabled=False,
-            ),
-            configure_store_arg=False,
-            init_observability=False,
-        )
-    )
-    finalized = settlement_peer.post(
-        f"/v1/internal/gateway/{finalize_kind}",
-        json={
-            "authorization_id": authorization_id,
-            "actual_input_tokens": 900,
-            "actual_output_tokens": 50,
-            "route_type": "chat.completions",
-            "elapsed_seconds": 0.2,
-        },
-    )
-
-    assert finalized.status_code == 200, finalized.text
-    expected = "settled" if finalize_kind == "settle" else "refunded"
-    assert finalized.json()["data"]["finalization_outcome"] == expected
+    reservation = db.reservations[str(authorization.credit_reservation_id)]
+    assert reservation["credit_reserved_micro"] == authorization.estimated_microdollars
+    assert reservation["credit_reserved_micro"] > 0
 
 
 def test_capped_key_stays_on_exact_global_authorization_path() -> None:
-    store, db, _ = make_fake_store(request_record_write_mode="typed")
-    ledger = InMemoryRegionalQuotaLedger()
-    store._regional_quota_ledger = ledger
+    store, db = make_fake_store(request_record_write_mode="typed")
     workspace = store.create_workspace(
         "owner",
-        "regional-ineligible",
+        "capped-exact-global",
         trial_credit_microdollars=100_000_000,
     )
     _raw, api_key = store.create_api_key(
@@ -684,12 +385,7 @@ def test_capped_key_stays_on_exact_global_authorization_path() -> None:
     configure_store(store)
     client = TestClient(
         create_app(
-            Settings(
-                environment="test",
-                regional_quota_leases_enabled=True,
-                regional_quota_lease_issuance_enabled=True,
-                regional_quota_lease_pilot_workspace_ids=workspace.id,
-            ),
+            Settings(environment="test"),
             configure_store_arg=False,
             init_observability=False,
         )
@@ -703,7 +399,7 @@ def test_capped_key_stays_on_exact_global_authorization_path() -> None:
             "estimated_input_tokens": 1_000,
             "max_output_tokens": 100,
             "route_type": "chat.completions",
-            "idempotency_key": "regional-capped-key",
+            "idempotency_key": "capped-exact-global",
         },
     )
 
@@ -711,34 +407,13 @@ def test_capped_key_stays_on_exact_global_authorization_path() -> None:
     authorization = store.get_gateway_authorization(response.json()["data"]["authorization_id"])
     assert authorization is not None
     assert authorization.settlement == "local"
-    assert store._list_entities("regional_quota_lease", cls=dict) == []
-
-
-def test_regional_reconciler_fails_scheduler_tick_when_any_lease_errors() -> None:
-    store, _db, _ = make_fake_store(request_record_write_mode="typed")
-    store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
-    store.reconcile_regional_quota_leases = lambda **_kwargs: {
-        "inspected": 2,
-        "reconciled": 1,
-        "closed": 0,
-        "errors": 1,
-    }
-    configure_store(store)
-    settings = Settings(
-        environment="test",
-        regional_quota_leases_enabled=True,
-        regional_quota_lease_pilot_workspace_ids="pilot",
-    )
-    client = TestClient(create_app(settings, configure_store_arg=False, init_observability=False))
-
-    response = client.post("/v1/internal/gateway/regional-quota/reconcile")
-
-    assert response.status_code == 503
-    assert response.json()["error"]["type"] == "service_unavailable"
+    reservation = db.reservations[str(authorization.credit_reservation_id)]
+    assert reservation["credit_reserved_micro"] == authorization.estimated_microdollars
+    assert reservation["credit_reserved_micro"] > 0
 
 
 def test_gateway_web_search_cost_uses_typed_reservation_and_finalize() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_gcp_web_search_cost"
     store._write_entity("workspace", ws, Workspace(id=ws, name="GCP", owner_user_id="u"))
     store._write_entity("credit", ws, CreditAccount(workspace_id=ws))
@@ -804,7 +479,16 @@ def test_gateway_web_search_cost_uses_typed_reservation_and_finalize() -> None:
     assert settled_cost >= 7_000
 
 
-def test_gateway_authorizes_every_liberty_alias_to_working_nemotron_hosts() -> None:
+def test_gateway_authorizes_every_liberty_alias_to_working_nemotron_hosts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Every liberty alias offers each Credits host the catalog serves Nemotron
+    # on, whichever those are today; Baseten serves it here on a fixture route.
+    nemotron = "nvidia/nemotron-3-ultra-550b-a55b"
+    serve_on_fixture_route(
+        monkeypatch, nemotron, "baseten", author="baseten", context_length=262_144,
+        upstream_id="nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B",
+    )
     client, key = _client_and_key()
 
     for model_id in (
@@ -829,21 +513,35 @@ def test_gateway_authorizes_every_liberty_alias_to_working_nemotron_hosts() -> N
         nemotron_hosts = {
             route["provider"]
             for route in routes
-            if route["model"] == "nvidia/nemotron-3-ultra-550b-a55b"
-            and route["usage_type"] == "Credits"
+            if route["model"] == nemotron and route["usage_type"] == "Credits"
         }
-        expected_hosts = {"baseten"}
-        if not provider_model_retired(
-            "nebius",
-            "nvidia/nemotron-3-ultra-550b-a55b",
-            "nvidia/Nemotron-3-Ultra-550b-a55b",
-        ):
-            expected_hosts.add("nebius")
+        expected_hosts = {
+            endpoint.provider
+            for endpoint in endpoints_for_model(nemotron)
+            if endpoint.usage_type == "Credits"
+        }
+        assert "baseten" in expected_hosts
         assert expected_hosts <= nemotron_hosts, (model_id, routes)
         assert "gmi" not in nemotron_hosts, (model_id, routes)
 
 
-def test_parasail_liberty_uses_fixed_top_level_price_and_public_generation() -> None:
+def _serve_nemotron_for_parasail_liberty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Parasail Liberty 2.0 routes through Nemotron 3 Ultra, here on one
+    fixture Credits route whichever hosts list the model today: its billing
+    contract holds whatever serves it. Whether Liberty may run without
+    Nemotron is a product question, not a billing one."""
+    nemotron = "nvidia/nemotron-3-ultra-550b-a55b"
+    drop_routes(monkeypatch, nemotron)
+    serve_on_fixture_route(
+        monkeypatch, nemotron, "baseten", author="baseten", context_length=262_144,
+        upstream_id="nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B",
+    )
+
+
+def test_parasail_liberty_uses_fixed_top_level_price_and_public_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_nemotron_for_parasail_liberty(monkeypatch)
     client, key = _client_and_key()
 
     authorize = client.post(
@@ -889,7 +587,10 @@ def test_parasail_liberty_uses_fixed_top_level_price_and_public_generation() -> 
     assert generation.total_cost_microdollars == 13_241
 
 
-def test_parasail_liberty_minimum_is_reserved_and_settled_exactly_once() -> None:
+def test_parasail_liberty_minimum_is_reserved_and_settled_exactly_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_nemotron_for_parasail_liberty(monkeypatch)
     client, key = _client_and_key()
     money = STORE.credit_money[key["workspace_id"]]
     usage_before = money.total_usage_microdollars
@@ -928,7 +629,10 @@ def test_parasail_liberty_minimum_is_reserved_and_settled_exactly_once() -> None
     assert money.total_usage_microdollars == usage_before + 1_000
 
 
-def test_parasail_liberty_failed_request_refunds_minimum_reservation() -> None:
+def test_parasail_liberty_failed_request_refunds_minimum_reservation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_nemotron_for_parasail_liberty(monkeypatch)
     client, key = _client_and_key()
     money = STORE.credit_money[key["workspace_id"]]
     usage_before = money.total_usage_microdollars
@@ -967,7 +671,15 @@ def test_parasail_liberty_failed_request_refunds_minimum_reservation() -> None:
     assert not STORE.generation_store.generations
 
 
-def test_perplexity_fixed_request_fee_settles_once_and_refunds_on_failure() -> None:
+def test_perplexity_fixed_request_fee_settles_once_and_refunds_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    serve_on_fixture_route(
+        monkeypatch, "perplexity/sonar", "perplexity", author="perplexity",
+        upstream_id="sonar", request_price_microdollars=5_275,
+        prompt_price_microdollars_per_million_tokens=263_750,
+        completion_price_microdollars_per_million_tokens=2_637_500,
+    )
     client, key = _client_and_key()
     money = STORE.credit_money[key["workspace_id"]]
     endpoint = endpoint_for_id("perplexity/sonar@perplexity/prepaid")
@@ -1044,6 +756,7 @@ def test_perplexity_fixed_request_fee_settles_once_and_refunds_on_failure() -> N
 def test_parasail_liberty_internal_calls_are_customer_cost_zero(
     monkeypatch,
 ) -> None:
+    _serve_nemotron_for_parasail_liberty(monkeypatch)
     client, key = _client_and_key()
     route_type = f"{PARASAIL_LIBERTY_2_0_INTERNAL_ROUTE_PREFIX}advisor.worker"
     auto_refills: list[str] = []
@@ -1162,7 +875,7 @@ def test_parasail_liberty_billing_markers_fail_closed() -> None:
 
 
 def test_gateway_settle_ancient_legacy_reservation_missing_typed_row_is_clean() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_gcp_ancient_legacy_settle"
     store._write_entity("workspace", ws, Workspace(id=ws, name="GCP", owner_user_id="u"))
     store._write_entity(
@@ -1214,6 +927,7 @@ def test_gateway_settle_ancient_legacy_reservation_missing_typed_row_is_clean() 
 
     assert settle.status_code == 200, settle.text
     assert settle.json()["data"] == {
+        "timing": settle.json()["data"]["timing"],
         "authorization_id": auth.id,
         "settled": False,
         "already_settled": True,
@@ -1293,7 +1007,13 @@ def test_gateway_settle_can_bill_authorized_fallback_model() -> None:
     assert refreshed_key.byok_usage_microdollars == expected_cost
 
 
-def test_gateway_uses_legacy_gemini_envelope_identity_for_ai_studio() -> None:
+def test_gateway_uses_legacy_gemini_envelope_identity_for_ai_studio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    serve_on_fixture_route(
+        monkeypatch, "google/gemini-2.5-flash", "google-ai-studio", author="google-ai-studio",
+        usage_type="BYOK", upstream_id="gemini-2.5-flash",
+    )
     client, key = _client_and_key()
     STORE.upsert_byok_provider(
         workspace_id=key["workspace_id"],
@@ -1430,7 +1150,15 @@ def test_gateway_settle_rejects_unlisted_fallback_without_charge_or_generation()
     assert refreshed_key.byok_usage_microdollars == 0
 
 
-def test_gateway_refund_records_provider_benchmark_without_generation() -> None:
+def test_gateway_refund_records_provider_benchmark_without_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    drop_routes(monkeypatch, "deepseek/deepseek-v4-flash")
+    for usage_type in ("Credits", "BYOK"):
+        serve_on_fixture_route(
+            monkeypatch, "deepseek/deepseek-v4-flash", "deepseek", author="deepseek",
+            usage_type=usage_type, upstream_id="deepseek-v4-flash",
+        )
     client, key = _client_and_key()
     STORE.upsert_byok_provider(
         workspace_id=key["workspace_id"],
@@ -1561,7 +1289,15 @@ def test_gateway_byok_preference_without_workspace_config_is_rejected() -> None:
     assert not STORE.api_keys.reservations
 
 
-def test_gateway_prepaid_route_does_not_return_byok_secret_even_if_configured() -> None:
+def test_gateway_prepaid_route_does_not_return_byok_secret_even_if_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    drop_routes(monkeypatch, "moonshotai/kimi-k2.6")
+    for usage_type in ("Credits", "BYOK"):
+        serve_on_fixture_route(
+            monkeypatch, "moonshotai/kimi-k2.6", "kimi", author="kimi",
+            usage_type=usage_type, upstream_id="kimi-k2.6",
+        )
     client, key = _client_and_key()
     STORE.upsert_byok_provider(
         workspace_id=key["workspace_id"],
@@ -1595,7 +1331,15 @@ def test_gateway_prepaid_route_does_not_return_byok_secret_even_if_configured() 
     assert "kimi" in {item["provider"] for item in data["route_candidates"]}
 
 
-def test_gateway_can_prefer_byok_endpoint_for_dual_mode_model() -> None:
+def test_gateway_can_prefer_byok_endpoint_for_dual_mode_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    drop_routes(monkeypatch, "moonshotai/kimi-k2.6")
+    for usage_type in ("Credits", "BYOK"):
+        serve_on_fixture_route(
+            monkeypatch, "moonshotai/kimi-k2.6", "kimi", author="kimi",
+            usage_type=usage_type, upstream_id="kimi-k2.6",
+        )
     client, key = _client_and_key()
     STORE.upsert_byok_provider(
         workspace_id=key["workspace_id"],

@@ -22,7 +22,7 @@ transaction (docs §5) — the authorize/settle transactions are DML-only.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from trusted_router.storage_gcp_batch_dml import DmlStatement
@@ -87,60 +87,6 @@ def reserve_credit(
         },
     )
     return count == 1
-
-
-def reserve_credit_for_spend_lease(
-    transaction: Any,
-    param_types: Any,
-    workspace_id: str,
-    amount: int,
-    *,
-    shard: int,
-    trust_eligibility_enabled: bool,
-    expected_trust_tier: int | None,
-    trust_max_age_seconds: int = 3600,
-    now: datetime | None = None,
-) -> bool:
-    """Apply the selected-shard trust guard only after the arm flag flips."""
-
-    if not trust_eligibility_enabled:
-        return reserve_credit(
-            transaction, param_types, workspace_id, amount, shard=shard
-        )
-    if expected_trust_tier is None:
-        raise ValueError("expected_trust_tier is required while trust eligibility is armed")
-    now = now or datetime.now(UTC)
-    sql = (
-        "UPDATE tr_credit_balance SET reserved = reserved + @est "
-        "WHERE workspace_id=@ws AND shard=@shard "
-        "AND (total_credits - total_usage - reserved) >= @est "
-        "AND trust_tier = @expected_trust_tier AND trust_tier >= 1 "
-        "AND trust_latched_at IS NULL "
-        "AND COALESCE(ARRAY_LENGTH(billing_pause_causes), 0) = 0 "
-        "AND trust_reconciled_through >= @trust_fresh_after "
-        "AND trust_reconciled_through <= @trust_now"
-    )
-    count = transaction.execute_update(
-        sql,
-        params={
-            "est": int(amount),
-            "ws": workspace_id,
-            "shard": shard,
-            "expected_trust_tier": int(expected_trust_tier),
-            "trust_fresh_after": now - timedelta(seconds=trust_max_age_seconds),
-            "trust_now": now,
-        },
-        param_types={
-            "est": param_types.INT64,
-            "ws": param_types.STRING,
-            "shard": param_types.INT64,
-            "expected_trust_tier": param_types.INT64,
-            "trust_fresh_after": param_types.TIMESTAMP,
-            "trust_now": param_types.TIMESTAMP,
-        },
-    )
-    return count == 1
-
 
 def debit_workspace_credit(
     transaction: Any,
@@ -499,7 +445,6 @@ def release_key(
     *,
     book_to_byok: bool,
     window_floors: dict[str, Any],
-    window_amounts: dict[str, int] | None = None,
     shard: int = UNSHARDED,
 ) -> int:
     """Release the EXACT recorded key hold and book `actual` to usage/byok_usage,
@@ -511,8 +456,6 @@ def release_key(
     lazily rolls the window forward, which is harmless). `window_floors` is
     spend_windows.window_floors(now). The `reserved >= @hold` guard makes a
     stale/double release a 0-row no-op rather than driving reserved negative.
-    Regional imports may supply separate daily/weekly/monthly `window_amounts`;
-    omitted amounts preserve inline settlement semantics exactly.
     Returns the modified-row count (caller asserts == 1).
     """
     usage_col = "byok_usage" if book_to_byok else "usage"
@@ -541,15 +484,9 @@ def release_key(
     }
     current_window_sql = _CURRENT_WINDOW_BUMP_SQL
     rolled_window_sql = _WINDOW_BUMP_SQL
-    for window, period in (("day", "daily"), ("week", "weekly"), ("month", "monthly")):
-        expression = wamt
-        if window_amounts is not None:
-            name = f"{window}_amount"
-            params[name] = int(window_amounts[period])
-            bound_param_types[name] = param_types.INT64
-            expression = f"IF(include_byok, @{name}, 0)" if book_to_byok else f"@{name}"
-        current_window_sql = current_window_sql.replace(f"@{window}_wamt", expression)
-        rolled_window_sql = rolled_window_sql.replace(f"@{window}_wamt", expression)
+    for window in ("day", "week", "month"):
+        current_window_sql = current_window_sql.replace(f"@{window}_wamt", wamt)
+        rolled_window_sql = rolled_window_sql.replace(f"@{window}_wamt", wamt)
     fast_sql = (
         "UPDATE tr_key_limit "  # noqa: S608
         f"SET reserved = reserved - @hold, {usage_col} = {usage_col} + @actual"

@@ -3,8 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import chutes, cloudflare_workers_ai, digitalocean
+from tests import catalog_vehicles
 from trusted_router.catalog import (
     GATEWAY_PREPAID_PROVIDER_SLUGS,
     MODEL_ENDPOINTS,
@@ -70,10 +73,12 @@ def test_cloudflare_committed_manifest_exposes_only_funded_priced_routes() -> No
     rows = manifest["models"]
 
     assert rows
-    assert any(row.get("routable") is True for row in rows)
+    # A row is routable, awaiting a price, or tombstoned by the refresh after
+    # the provider delisted it.
     assert all(
         row.get("routable") is True
         or row.get("routable_reason") == "awaiting-price"
+        or (row.get("routable_reason") == "delisted-upstream" and row.get("missing_since"))
         for row in rows
     )
     assert all(
@@ -81,10 +86,16 @@ def test_cloudflare_committed_manifest_exposes_only_funded_priced_routes() -> No
         or row["upstream_id"] == "moonshotai/kimi-k3"
         for row in rows
     )
+
+
+@pytest.mark.provider_health
+def test_cloudflare_lists_kimi_k3_at_its_native_id_with_a_1m_window() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    rows = json.loads(cloudflare_workers_ai.MANIFEST_PATH.read_text(encoding="utf-8"))["models"]
     kimi_k3 = next(row for row in rows if row["id"] == "moonshotai/kimi-k3")
     assert kimi_k3["upstream_id"] == "moonshotai/kimi-k3"
     assert kimi_k3["context_length"] == 1_048_576
-    assert kimi_k3["routable"] is True
 
 
 def test_discovered_writer_never_routes_a_new_unpriced_model(tmp_path: Path) -> None:
@@ -132,21 +143,20 @@ def test_new_provider_privacy_and_gateway_registration() -> None:
 
 
 def test_new_provider_manifests_create_only_eligible_routes() -> None:
-    endpoints = list(MODEL_ENDPOINTS.values())
+    endpoints = list(catalog_vehicles.registry_endpoints().values())
 
-    assert any(endpoint.provider == "chutes" for endpoint in endpoints)
-    assert any(endpoint.provider == "digitalocean" for endpoint in endpoints)
+    # A provider routes only its manifest's routable rows: none for a row the
+    # refresh tombstoned or one still awaiting a price.
+    for provider in (chutes, digitalocean, cloudflare_workers_ai):
+        manifest = json.loads(provider.MANIFEST_PATH.read_text(encoding="utf-8"))
+        routable = {row["id"] for row in manifest["models"] if row.get("routable") is not False}
+        routed = {endpoint.model_id for endpoint in endpoints if endpoint.provider == provider.SLUG}
+        assert routed <= routable, provider.SLUG
     cloudflare = [
         endpoint
         for endpoint in endpoints
         if endpoint.provider == "cloudflare-workers-ai"
     ]
-    assert cloudflare
-    assert any(
-        endpoint.model_id == "moonshotai/kimi-k3"
-        and endpoint.upstream_id == "moonshotai/kimi-k3"
-        for endpoint in cloudflare
-    )
     assert not any(
         endpoint.model_id == "meta-llama/llama-guard-3-8b"
         for endpoint in cloudflare
@@ -155,6 +165,21 @@ def test_new_provider_manifests_create_only_eligible_routes() -> None:
         endpoint.prompt_price_microdollars_per_million_tokens > 0
         and endpoint.completion_price_microdollars_per_million_tokens > 0
         for endpoint in cloudflare
+    )
+
+
+@pytest.mark.provider_health
+def test_new_providers_serve_routes_and_cloudflare_serves_kimi_k3() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    endpoints = list(MODEL_ENDPOINTS.values())
+    assert any(endpoint.provider == "chutes" for endpoint in endpoints)
+    assert any(endpoint.provider == "digitalocean" for endpoint in endpoints)
+    assert any(
+        endpoint.provider == "cloudflare-workers-ai"
+        and endpoint.model_id == "moonshotai/kimi-k3"
+        and endpoint.upstream_id == "moonshotai/kimi-k3"
+        for endpoint in endpoints
     )
 
 
@@ -171,8 +196,15 @@ def test_digitalocean_manifest_preserves_exact_upstream_ids() -> None:
     rows = {row["id"]: row for row in manifest["models"]}
 
     assert rows["deepseek/deepseek-v4-flash"]["upstream_id"] == "deepseek-4-flash"
-    glm = rows["z-ai/glm-5.2"]
-    assert glm["upstream_id"] == "glm-5.2"
+    assert rows["z-ai/glm-5.2"]["upstream_id"] == "glm-5.2"
+
+
+@pytest.mark.provider_health
+def test_digitalocean_prices_glm_52_with_a_paid_discounted_cache_read() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    manifest = json.loads(digitalocean.MANIFEST_PATH.read_text(encoding="utf-8"))
+    glm = next(row for row in manifest["models"] if row["id"] == "z-ai/glm-5.2")
     assert glm["input_token_price_per_m"] > 0
     assert glm["output_token_price_per_m"] > 0
     assert 0 < glm["cached_input_token_price_per_m"] < glm["input_token_price_per_m"]

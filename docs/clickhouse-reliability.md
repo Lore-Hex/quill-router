@@ -115,10 +115,6 @@ scripts/deploy/clickhouse_resize_disk.sh --apply
 scripts/deploy/clickhouse_cluster.sh --apply
 scripts/deploy/clickhouse_live_ingestion.sh
 scripts/deploy/rollout.sh
-scripts/deploy/prepare_bigtable_retirement.sh --apply
-scripts/deploy/clickhouse_analytics_cutover.sh --apply
-# Wait for the second clean seven-day soak.
-scripts/deploy/retire_bigtable_runtime.sh --apply
 ```
 
 `clickhouse_live_ingestion.sh` before `rollout.sh` is a runtime dependency,
@@ -131,10 +127,16 @@ one row — and only then roll the control plane. Reversed, gcp's analytics
 section flips to `poller_stale` until the first heartbeat lands and
 `check_fleet_analytics_freshness` fails, by design: an unobserved lag is not 0.
 
-The final script deploys one region at a time, switches to
-`spanner-clickhouse` plus `clickhouse-only`, and disables Bigtable mirror
-writes. It never deletes the Bigtable instance or its data. The retained copy
-is rollback evidence until a separate, explicit deletion review.
+Bigtable analytics are retired (2026-09-28). `rollout.sh` pins every
+control-plane revision to `spanner-clickhouse`; the public and internal
+surfaces follow the control plane and refuse an older legacy revision; the
+synthetic, trust and backfill jobs run `spanner-clickhouse` as workers (no
+analytics reads, so no ClickHouse credentials). The analytics Bigtable
+client, mirror writes, read paths, the node repair units (`reconcile`,
+`synthetic-reconcile`, `operational-parity`) and the cutover ladder are
+deleted from the code (2026-09-29). The table's final `m`/`rollup` export
+lives in the ClickHouse archive bucket under `bigtable-final-export/`; the
+instance is destroyed through Terraform once that export is verified.
 
 `clickhouse_cluster.sh` stages all Keeper configs before restarts, starts the
 two new voters together, migrates only after full-fingerprint parity, pauses

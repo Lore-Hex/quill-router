@@ -1,0 +1,130 @@
+[
+  {
+    "object": "column/tr_key_limit/day_usage",
+    "attribute": "IS_NULLABLE",
+    "production": true,
+    "fixture": false,
+    "reason": "Verified in production run 36749042316 (2026-09-30): migrate_typed_counters.sh adds nullable INT64 DEFAULT (0) during rolling upgrades; fresh installations require NOT NULL.",
+    "verified_against_production": true
+  },
+  {
+    "object": "column/tr_key_limit/week_usage",
+    "attribute": "IS_NULLABLE",
+    "production": true,
+    "fixture": false,
+    "reason": "Verified in production run 36749042316 (2026-09-30): migrate_typed_counters.sh adds nullable INT64 DEFAULT (0) during rolling upgrades; fresh installations require NOT NULL.",
+    "verified_against_production": true
+  },
+  {
+    "object": "column/tr_key_limit/month_usage",
+    "attribute": "IS_NULLABLE",
+    "production": true,
+    "fixture": false,
+    "reason": "Verified in production run 36749042316 (2026-09-30): migrate_typed_counters.sh adds nullable INT64 DEFAULT (0) during rolling upgrades; fresh installations require NOT NULL.",
+    "verified_against_production": true
+  },
+  {
+    "object": "column/tr_reservation/credit_shard",
+    "attribute": "IS_NULLABLE",
+    "production": true,
+    "fixture": false,
+    "reason": "Verified in production run 36749042316 (2026-09-30): migrate_typed_counters.sh adds nullable INT64 DEFAULT (0) during rolling upgrades; fresh installations require NOT NULL.",
+    "verified_against_production": true
+  },
+  {
+    "object": "constraint/tr_trust_event/tr_trust_event_provider_lightning",
+    "attribute": "object",
+    "production": {
+      "CONSTRAINT_TYPE": "CHECK",
+      "IS_DEFERRABLE": false,
+      "INITIALLY_DEFERRED": false,
+      "ENFORCED": true,
+      "columns": [],
+      "CHECK_CLAUSE": "provider IN ('stripe','paypal','adyen','x402','lightning','operator','system')",
+      "SPANNER_STATE": "COMMITTED"
+    },
+    "fixture": null,
+    "reason": "Verified exact provider check clause and constraint name in production run 36749042316 (2026-09-30); scripts/lightning/spanner_provenance.sql renames the equivalent check to tr_trust_event_provider_lightning.",
+    "verified_against_production": true
+  },
+  {
+    "object": "constraint/tr_trust_event/tr_trust_event_provider",
+    "attribute": "object",
+    "production": null,
+    "fixture": {
+      "CONSTRAINT_TYPE": "CHECK",
+      "IS_DEFERRABLE": false,
+      "INITIALLY_DEFERRED": false,
+      "ENFORCED": true,
+      "columns": [],
+      "CHECK_CLAUSE": "provider IN ('stripe','paypal','adyen','x402','lightning','operator','system')",
+      "SPANNER_STATE": "COMMITTED"
+    },
+    "reason": "Verified exact provider check clause and constraint name in production run 36749042316 (2026-09-30); scripts/lightning/spanner_provenance.sql renames the equivalent check to tr_trust_event_provider_lightning.",
+    "verified_against_production": true
+  },
+  {
+    "object": "constraint/tr_key_limit/CK_IS_NOT_NULL_tr_key_limit_day_usage",
+    "attribute": "object",
+    "production": null,
+    "fixture": {
+      "CONSTRAINT_TYPE": "CHECK",
+      "IS_DEFERRABLE": false,
+      "INITIALLY_DEFERRED": false,
+      "ENFORCED": true,
+      "columns": [],
+      "CHECK_CLAUSE": "day_usage IS NOT NULL",
+      "SPANNER_STATE": "COMMITTED"
+    },
+    "reason": "Verified in production run 36749042316 (2026-09-30): this implicit NOT NULL check is absent for the corresponding documented nullable rolling-upgrade column; the column nullability difference is separately and exactly recorded.",
+    "verified_against_production": true
+  },
+  {
+    "object": "constraint/tr_key_limit/CK_IS_NOT_NULL_tr_key_limit_week_usage",
+    "attribute": "object",
+    "production": null,
+    "fixture": {
+      "CONSTRAINT_TYPE": "CHECK",
+      "IS_DEFERRABLE": false,
+      "INITIALLY_DEFERRED": false,
+      "ENFORCED": true,
+      "columns": [],
+      "CHECK_CLAUSE": "week_usage IS NOT NULL",
+      "SPANNER_STATE": "COMMITTED"
+    },
+    "reason": "Verified in production run 36749042316 (2026-09-30): this implicit NOT NULL check is absent for the corresponding documented nullable rolling-upgrade column; the column nullability difference is separately and exactly recorded.",
+    "verified_against_production": true
+  },
+  {
+    "object": "constraint/tr_key_limit/CK_IS_NOT_NULL_tr_key_limit_month_usage",
+    "attribute": "object",
+    "production": null,
+    "fixture": {
+      "CONSTRAINT_TYPE": "CHECK",
+      "IS_DEFERRABLE": false,
+      "INITIALLY_DEFERRED": false,
+      "ENFORCED": true,
+      "columns": [],
+      "CHECK_CLAUSE": "month_usage IS NOT NULL",
+      "SPANNER_STATE": "COMMITTED"
+    },
+    "reason": "Verified in production run 36749042316 (2026-09-30): this implicit NOT NULL check is absent for the corresponding documented nullable rolling-upgrade column; the column nullability difference is separately and exactly recorded.",
+    "verified_against_production": true
+  },
+  {
+    "object": "constraint/tr_reservation/CK_IS_NOT_NULL_tr_reservation_credit_shard",
+    "attribute": "object",
+    "production": null,
+    "fixture": {
+      "CONSTRAINT_TYPE": "CHECK",
+      "IS_DEFERRABLE": false,
+      "INITIALLY_DEFERRED": false,
+      "ENFORCED": true,
+      "columns": [],
+      "CHECK_CLAUSE": "credit_shard IS NOT NULL",
+      "SPANNER_STATE": "COMMITTED"
+    },
+    "reason": "Verified in production run 36749042316 (2026-09-30): this implicit NOT NULL check is absent for the corresponding documented nullable rolling-upgrade column; the column nullability difference is separately and exactly recorded.",
+    "verified_against_production": true
+  }
+]

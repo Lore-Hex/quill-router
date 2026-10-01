@@ -11,6 +11,7 @@ import base64
 
 import pytest
 
+from tests.fakes.production_storage import PRODUCTION_SPANNER_STORAGE
 from trusted_router.config import Settings
 from trusted_router.services import telephony
 
@@ -238,10 +239,7 @@ class TestTelnyxVoiceRequestShape:
                 aws_access_key_id="test-access-key",
                 aws_secret_access_key="test-secret-key",  # noqa: S106 - test config.
                 ses_from_email="noreply@example.com",
-                storage_backend="spanner-bigtable",
-                spanner_instance_id="trusted-router",
-                spanner_database_id="trusted-router",
-                bigtable_instance_id="trusted-router-logs",
+                **PRODUCTION_SPANNER_STORAGE,
                 byok_kms_key_name=("projects/test/locations/global/keyRings/tr/cryptoKeys/byok"),
             )
         )

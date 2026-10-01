@@ -200,6 +200,11 @@ LEGACY_MODEL_PAGE_REDIRECTS: dict[str, str] = {
     # backlink by sending readers to the current open-weight catalog.
     "meta/muse-spark-1.1": "/models?filter=open",
 }
+LEGACY_MODEL_SECTION_REDIRECTS: dict[tuple[str, str], str] = {
+    # This one-route model answers its only pricing question on the overview.
+    # Consolidate the historical facet instead of serving a duplicate thin page.
+    ("qwen/qwen-3-8-27b", "pricing"): "/models/qwen/qwen-3-8-27b",
+}
 
 
 def _canonical_public_provider_slug(provider_slug: str) -> str:
@@ -1675,6 +1680,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def green_tokens() -> str:
         return public_page_html(settings, "green-tokens")
 
+    @public_html_route("/index")
+    async def token_index() -> str:
+        return public_page_html(settings, "index")
+
     @public_html_route("/customers/robot-robot-human")
     async def customer_robot_robot_human() -> str:
         return public_page_html(settings, "customers/robot-robot-human")
@@ -2290,6 +2299,9 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             maybe_base_model_id if separator and maybe_section in MODEL_SEO_SECTIONS else cleaned
         )
         canonical_model_id = _canonical_public_model_id(legacy_model_id)
+        section_redirect = LEGACY_MODEL_SECTION_REDIRECTS.get((canonical_model_id, maybe_section))
+        if section_redirect and canonical_model_id in MODELS:
+            return RedirectResponse(url=section_redirect, status_code=301)
         if canonical_model_id != legacy_model_id:
             section_suffix = (
                 f"/{maybe_section}" if separator and maybe_section in MODEL_SEO_SECTIONS else ""

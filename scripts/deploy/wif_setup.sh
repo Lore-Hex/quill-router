@@ -43,7 +43,6 @@ POOL="${POOL:-multicloud}"
 SA_NAME="${SA_NAME:-tr-multicloud}"
 SPANNER_INSTANCE="${SPANNER_INSTANCE:-trusted-router-nam6}"
 SPANNER_DATABASE="${SPANNER_DATABASE:-trusted-router}"
-BIGTABLE_INSTANCE="${BIGTABLE_INSTANCE:-trusted-router-logs}"
 AWS_ACCOUNT="${AWS_ACCOUNT:-330422590279}"
 # The AWS role the test-network instance runs as. WIF is scoped to exactly
 # this role, so an unrelated principal in the same account cannot impersonate
@@ -153,10 +152,6 @@ say "granting spanner.databaseUser on ${SPANNER_INSTANCE}/${SPANNER_DATABASE}"
 run gcloud spanner databases add-iam-policy-binding "$SPANNER_DATABASE" \
   --instance="$SPANNER_INSTANCE" --project "$PROJECT" \
   --member "serviceAccount:${SA_EMAIL}" --role roles/spanner.databaseUser --quiet
-
-say "granting bigtable.user on ${BIGTABLE_INSTANCE}"
-run gcloud bigtable instances add-iam-policy-binding "$BIGTABLE_INSTANCE" --project "$PROJECT" \
-  --member "serviceAccount:${SA_EMAIL}" --role roles/bigtable.user --quiet
 
 # ─── pool ──────────────────────────────────────────────────────────────────
 if gcloud iam workload-identity-pools describe "$POOL" --location=global --project "$PROJECT" >/dev/null 2>&1; then

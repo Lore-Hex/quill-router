@@ -2,9 +2,9 @@
 """Provision the dedicated workspace/key for the recurring Stage D probe.
 
 The key must be heartbeat-capable and use local typed authorization. After the
-dry-run/apply, put the emitted workspace id in TR_STAGE_D_PILOT_WORKSPACE_IDS,
-keep it out of TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS, and store the raw
-key as Secret Manager secret ``trustedrouter-stage-d-probe-api-key``.
+dry-run/apply, put the emitted workspace id in TR_STAGE_D_PILOT_WORKSPACE_IDS
+and store the raw key as Secret Manager secret
+``trustedrouter-stage-d-probe-api-key``.
 """
 
 from __future__ import annotations
@@ -16,12 +16,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
-os.environ.setdefault("TR_STORAGE_BACKEND", "spanner-bigtable")
+os.environ.setdefault("TR_STORAGE_BACKEND", "spanner-clickhouse")
 os.environ.setdefault("TR_GCP_PROJECT_ID", "quill-cloud-proxy")
 os.environ.setdefault("TR_SPANNER_INSTANCE_ID", "trusted-router-nam6")
 os.environ.setdefault("TR_SPANNER_DATABASE_ID", "trusted-router")
-os.environ.setdefault("TR_BIGTABLE_INSTANCE_ID", "trusted-router-logs")
-os.environ.setdefault("TR_BIGTABLE_GENERATION_TABLE", "trustedrouter-generations")
 
 try:
     from scripts.provision_synthetic_monitor import provision
@@ -50,8 +48,8 @@ def main(argv: list[str] | None = None, *, store: Any | None = None) -> int:
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
 
-    if args.apply and os.environ.get("TR_STORAGE_BACKEND") != "spanner-bigtable":
-        print("ERROR: --apply requires TR_STORAGE_BACKEND=spanner-bigtable", file=sys.stderr)
+    if args.apply and os.environ.get("TR_STORAGE_BACKEND") != "spanner-clickhouse":
+        print("ERROR: --apply requires TR_STORAGE_BACKEND=spanner-clickhouse", file=sys.stderr)
         return 2
     if args.target_shards < 1 or args.target_shards > 64:
         print("ERROR: --target-shards must be between 1 and 64", file=sys.stderr)
@@ -78,7 +76,6 @@ def main(argv: list[str] | None = None, *, store: Any | None = None) -> int:
         {
             "heartbeat_capable_local_typed_key": True,
             "stage_d_pilot_workspace_id": workspace_id,
-            "regional_quota_pilot_membership_required": False,
             "secret_name": "trustedrouter-stage-d-probe-api-key",
         }
     )

@@ -10,7 +10,8 @@ import pytest
 from scripts.pricing.base import ProviderPricingResult
 from scripts.pricing.providers import databricks
 from scripts.pricing.refresh import PROVIDER_SLUGS
-from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS
+from tests import catalog_vehicles
+from trusted_router.catalog import PROVIDERS
 from trusted_router.providers import OPENAI_COMPATIBLE_PROVIDERS, ProviderClient
 from trusted_router.services.inference_errors import default_provider_secret_ref
 
@@ -331,12 +332,13 @@ def test_databricks_canaried_manifest_routes_are_in_catalog() -> None:
         if row.get("routable") is False
     }
 
+    built = catalog_vehicles.registry_endpoints()
     for model_id, row in active.items():
-        endpoint = MODEL_ENDPOINTS[f"{model_id}@databricks/prepaid"]
+        endpoint = built[f"{model_id}@databricks/prepaid"]
         assert endpoint.upstream_id == row["upstream_id"]
         assert endpoint.usage_type == "Credits"
     for model_id in dark:
-        assert f"{model_id}@databricks/prepaid" not in MODEL_ENDPOINTS
+        assert f"{model_id}@databricks/prepaid" not in built
 
 
 def test_provider_client_requires_workspace_host() -> None:

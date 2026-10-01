@@ -326,10 +326,10 @@ def test_round3_successful_begin_supersedes_refused_region() -> None:
 def test_round3_refused_destination_is_written_in_transaction(monkeypatch, backend) -> None:
     from dataclasses import asdict
 
-    from trusted_router.storage_gcp import SpannerBigtableStore
+    from trusted_router.storage_gcp import SpannerStore
     from trusted_router.storage_postgres import PostgresStore
 
-    cls = SpannerBigtableStore if backend == "spanner" else PostgresStore
+    cls = SpannerStore if backend == "spanner" else PostgresStore
     store = object.__new__(cls)
     user = _user()
     code = pv.begin(user, "+14165550123")

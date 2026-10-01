@@ -33,25 +33,14 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "trusted_router"
 
 #: Modules permitted to import a cloud SDK, and why.
 ALLOWED = {
-    # The GCP storage adapter: implementing SpannerBigtableStore is exactly
+    # The GCP storage adapter: implementing SpannerStore is exactly
     # what these exist to do.
     "storage_gcp.py",
     "storage_gcp_authorize.py",
     "storage_gcp_batch_dml.py",
     "storage_gcp_google_ads.py",
     "storage_gcp_io.py",
-    # Drives SDK MutateRows worker directly to preserve sparse per-row statuses; durable path stays in Spanner.
-    "storage_gcp_mirror.py",
-    "storage_gcp_regional_quota.py",
-    # GCP Secret Manager adapter for the lazy spend-lease issuer seed.
-    "storage_gcp_secrets.py",
     "storage_gcp_settle_outbox.py",
-    "storage_gcp_synthetic_rollups.py",
-    "storage_gcp_synthetic_index.py",
-    # Fixed-cluster Bigtable CAS implementation of the regional storage port.
-    "regional_quota_ledger.py",
-    # Fixed-cluster Bigtable CAS implementation of the spend-lease storage port.
-    "spend_lease_ledger.py",
     # The two explicit cloud ports. Both import lazily so a non-GCP deployment
     # need not install the Google libraries at all.
     "storage_errors.py",

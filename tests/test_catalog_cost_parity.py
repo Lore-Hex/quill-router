@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
+from trusted_router import catalog_ingest
 from trusted_router.catalog import (
-    MODEL_ENDPOINTS,
     MODELS,
     Model,
     ModelEndpoint,
@@ -17,10 +20,32 @@ from trusted_router.routes.internal.gateway import _endpoint_cost_microdollars
 @pytest.mark.parametrize("prompt_tokens", [199_999, 200_000, 200_001])
 @pytest.mark.parametrize("cached_tokens", [0, 100_000])
 def test_grok_47_billing_matches_xai_at_long_context_boundary(
-    prompt_tokens: int, cached_tokens: int,
+    prompt_tokens: int, cached_tokens: int, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    model = MODELS["x-ai/grok-4.7"]
-    endpoint = MODEL_ENDPOINTS["x-ai/grok-4.7@grok/prepaid"]
+    # xAI's Grok 4.7 rate card as its manifest row states it: a prompt of 200K
+    # tokens or more pays double on every rate. The catalog's own ingest builds
+    # the route from that row, so this holds whatever xAI lists today.
+    low = {
+        "input_token_price_per_m": 2_000_000,
+        "cached_input_token_price_per_m": 500_000,
+        "output_token_price_per_m": 6_000_000,
+    }
+    high = {field: 2 * rate for field, rate in low.items()}
+    (tmp_path / "grok.json").write_text(json.dumps({
+        "provider": "grok", "price_scale": "microdollars_per_million",
+        "models": [{
+            "id": "x-ai/grok-4.7", "upstream_id": "grok-4.7", "model_type": "chat",
+            "endpoints": ["chat/completions"], **low,
+            "price_tiers": [
+                {"max_prompt_tokens": 199_999, **low},
+                {"max_prompt_tokens": None, **high},
+            ],
+        }],
+    }))
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    models, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
+    model = models["x-ai/grok-4.7"]
+    endpoint = endpoints["x-ai/grok-4.7@grok/prepaid"]
     multiplier = 1 if prompt_tokens < 200_000 else 2
     input_rate = _customer_price(2_000_000 * multiplier)
     cached_rate = _customer_price(500_000 * multiplier)

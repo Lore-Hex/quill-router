@@ -10,10 +10,10 @@
   },
   "akashml": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 7,
     "name": "AkashML",
     "privacy": "Policy documented",
-    "route_count": 6,
+    "route_count": 7,
     "route_mode": "Prepaid",
     "slug": "akashml"
   },
@@ -28,10 +28,10 @@
   },
   "anthropic": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 13,
     "name": "Anthropic",
     "privacy": "Policy documented",
-    "route_count": 24,
+    "route_count": 26,
     "route_mode": "Prepaid + BYOK",
     "slug": "anthropic"
   },
@@ -73,10 +73,10 @@
   },
   "baseten": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 12,
     "name": "Baseten",
     "privacy": "Zero retention",
-    "route_count": 21,
+    "route_count": 23,
     "route_mode": "Prepaid + BYOK",
     "slug": "baseten"
   },
@@ -111,7 +111,7 @@
     "card_version": 2,
     "model_count": 10,
     "name": "Chutes",
-    "privacy": "E2EE + confidential",
+    "privacy": "Confidential + ZDR",
     "route_count": 20,
     "route_mode": "Prepaid + BYOK",
     "slug": "chutes"
@@ -226,10 +226,10 @@
   },
   "featherless": {
     "card_version": 2,
-    "model_count": 20,
+    "model_count": 31,
     "name": "Featherless AI",
     "privacy": "Policy documented",
-    "route_count": 20,
+    "route_count": 31,
     "route_mode": "Prepaid",
     "slug": "featherless"
   },
@@ -253,10 +253,10 @@
   },
   "gmi": {
     "card_version": 2,
-    "model_count": 71,
+    "model_count": 72,
     "name": "GMI Cloud",
     "privacy": "Policy documented",
-    "route_count": 77,
+    "route_count": 78,
     "route_mode": "Prepaid + BYOK",
     "slug": "gmi"
   },
@@ -386,6 +386,15 @@
     "route_mode": "Prepaid",
     "slug": "ltx"
   },
+  "lyceum": {
+    "card_version": 2,
+    "model_count": 17,
+    "name": "Lyceum",
+    "privacy": "Policy documented",
+    "route_count": 17,
+    "route_mode": "Prepaid",
+    "slug": "lyceum"
+  },
   "makora": {
     "card_version": 2,
     "model_count": 5,
@@ -453,7 +462,7 @@
     "card_version": 2,
     "model_count": 1,
     "name": "NEAR AI",
-    "privacy": "E2EE + confidential",
+    "privacy": "Confidential + ZDR",
     "route_count": 1,
     "route_mode": "Prepaid",
     "slug": "near-ai"
@@ -469,10 +478,10 @@
   },
   "neurometric": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 12,
     "name": "Neurometric AI",
     "privacy": "Policy documented",
-    "route_count": 11,
+    "route_count": 12,
     "route_mode": "Prepaid",
     "slug": "neurometric"
   },
@@ -487,10 +496,10 @@
   },
   "novita": {
     "card_version": 2,
-    "model_count": 103,
+    "model_count": 99,
     "name": "Novita AI",
     "privacy": "Policy documented",
-    "route_count": 201,
+    "route_count": 193,
     "route_mode": "Prepaid + BYOK",
     "slug": "novita"
   },
@@ -505,19 +514,19 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 13,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 12,
+    "route_count": 13,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
   "openai": {
     "card_version": 2,
-    "model_count": 47,
+    "model_count": 48,
     "name": "OpenAI",
     "privacy": "Zero retention",
-    "route_count": 81,
+    "route_count": 83,
     "route_mode": "Prepaid + BYOK",
     "slug": "openai"
   },
@@ -597,7 +606,7 @@
     "card_version": 2,
     "model_count": 3,
     "name": "Privatemode",
-    "privacy": "E2EE + confidential",
+    "privacy": "Confidential + ZDR",
     "route_count": 3,
     "route_mode": "Prepaid",
     "slug": "privatemode"
@@ -748,11 +757,11 @@
   },
   "tencent": {
     "card_version": 2,
-    "model_count": 0,
+    "model_count": 20,
     "name": "Tencent Cloud TokenHub",
     "privacy": "Policy documented",
-    "route_count": 0,
-    "route_mode": "Catalog profile",
+    "route_count": 35,
+    "route_mode": "Prepaid + BYOK",
     "slug": "tencent"
   },
   "thinkingmachines": {
@@ -768,7 +777,7 @@
     "card_version": 2,
     "model_count": 7,
     "name": "Tinfoil",
-    "privacy": "E2EE + confidential",
+    "privacy": "Confidential + ZDR",
     "route_count": 14,
     "route_mode": "Prepaid + BYOK",
     "slug": "tinfoil"
@@ -786,7 +795,7 @@
     "card_version": 2,
     "model_count": 0,
     "name": "TrustedRouter",
-    "privacy": "E2EE + confidential",
+    "privacy": "Confidential + ZDR",
     "route_count": 0,
     "route_mode": "Catalog profile",
     "slug": "trustedrouter"
@@ -885,7 +894,7 @@
     "card_version": 2,
     "model_count": 3,
     "name": "0G Private Computer",
-    "privacy": "Confidential compute",
+    "privacy": "Provider TEE claim",
     "route_count": 3,
     "route_mode": "Prepaid",
     "slug": "zero-g"

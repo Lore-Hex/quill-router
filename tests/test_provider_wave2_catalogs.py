@@ -15,6 +15,7 @@ from scripts.pricing.parsers import morph as morph_parser
 from scripts.pricing.parsers import streamlake as streamlake_parser
 from scripts.pricing.providers import atlas_cloud, inceptron, morph, streamlake
 from scripts.pricing.refresh import _PRICING_RESULT_PROVIDER_ALIASES, PROVIDER_SLUGS
+from tests import catalog_vehicles
 from trusted_router.catalog import (
     GATEWAY_PREPAID_PROVIDER_SLUGS,
     MODEL_ENDPOINTS,
@@ -153,11 +154,16 @@ def test_wave2_manifests_publish_only_live_eligible_routes() -> None:
         for row in atlas_image_rows
     )
     assert all(row["upstream_id"] for raw in manifests.values() for row in raw["models"])
-    route_providers = {endpoint.provider for endpoint in MODEL_ENDPOINTS.values()}
-    assert {"inceptron", "morph", "atlas-cloud"}.issubset(route_providers)
+    built = catalog_vehicles.registry_endpoints()
+    route_providers = {endpoint.provider for endpoint in built.values()}
+    # A provider publishes routes while its manifest has a routable row; one
+    # the refresh tombstoned entirely is simply not expected.
+    for slug in ("inceptron", "morph", "atlas-cloud"):
+        live_rows = [row for row in manifests[slug]["models"] if row.get("routable") is not False]
+        assert slug in route_providers or not live_rows, slug
     streamlake_route_models = {
         endpoint.model_id
-        for endpoint in MODEL_ENDPOINTS.values()
+        for endpoint in built.values()
         if endpoint.provider == "streamlake"
     }
     streamlake_manifest_models = {
@@ -170,6 +176,14 @@ def test_wave2_manifests_publish_only_live_eligible_routes() -> None:
         row.get("routable") is not False or row.get("routable_reason")
         for row in manifests["streamlake"]["models"]
     )
+
+
+@pytest.mark.provider_health
+def test_wave2_providers_serve_routes() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    route_providers = {endpoint.provider for endpoint in MODEL_ENDPOINTS.values()}
+    assert {"inceptron", "morph", "atlas-cloud"} <= route_providers
 
 
 def test_wave2_exact_upstream_ids_are_committed() -> None:

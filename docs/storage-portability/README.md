@@ -3,6 +3,13 @@
 Handoff document. Goal: run the control plane end-to-end on AWS (then Azure)
 without a risky rewrite of the billing core.
 
+Update 2026-09-29: the Bigtable analytics backend this document describes is
+gone. The `storage_gcp_*_index` / `storage_gcp_synthetic_rollups` modules,
+`synthetic/backfill_rollups.py`, `clickhouse/prove_leaderboard.py`,
+`clickhouse/prove_route_health.py` and the Bigtable reconcile/backfill node
+scripts were deleted once ClickHouse became the only analytics store. The
+sections below are the historical record of how that cutover was proven.
+
 Status as of 2026-07-31:
 
 | Phase | State |

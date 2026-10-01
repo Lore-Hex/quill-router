@@ -2,9 +2,9 @@
   "_about": "Provider-native Baseten Model API routes, capabilities, context windows, and account-billable prices refreshed hourly from Baseten's authenticated /v1/models feed.",
   "provider": "baseten",
   "source": "https://inference.baseten.co/v1/models",
-  "generated_at": "2026-09-28T15:04:09Z",
+  "generated_at": "2026-09-30T12:23:53Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 23,
+  "model_count": 24,
   "models": [
     {
       "id": "openai/gpt-oss-120b",
@@ -762,6 +762,34 @@
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 1200000,
       "cached_input_token_price_per_m": 7000
+    },
+    {
+      "display_name": "deepseek-ai/DeepSeek-V4.1-Flash-Fast",
+      "title": "deepseek-ai/DeepSeek-V4.1-Flash-Fast",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4.1-flash-fast",
+      "upstream_id": "deepseek-ai/DeepSeek-V4.1-Flash-Fast",
+      "context_length": 1048576,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "tools",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [],
+      "input_token_price_per_m": 600000,
+      "output_token_price_per_m": 2400000,
+      "cached_input_token_price_per_m": 140000
     }
   ]
 }

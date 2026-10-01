@@ -49,10 +49,7 @@ def test_cluster_migration_is_parity_gated_and_keeps_local_backup() -> None:
     assert "source and replicated fingerprints differ" in script
     assert "timedelta(minutes=5)" in script
     assert "service account did not become visible" in script
-    assert "bigtable instances add-iam-policy-binding" in script
-    assert '"$BIGTABLE_INSTANCE_ID"' in script
-    assert "roles/bigtable.reader" in script
-    assert "could not grant Bigtable read access" in script
+    assert "bigtable" not in script
     assert "roles/spanner.databaseUser" in script
     assert "spanner databases add-iam-policy-binding" in script
     assert "provider_benchmark_samples_local_backup" in script
@@ -78,7 +75,7 @@ def test_rollout_prefers_private_clickhouse_load_balancer() -> None:
     assert "TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL=${PROVIDER_ANALYTICS_CLICKHOUSE_URL}" in script
 
 
-def test_operational_deploy_moves_benchmark_code_schema_and_replay_together() -> None:
+def test_operational_deploy_moves_benchmark_code_and_schema_together() -> None:
     script = (ROOT / "scripts/deploy/clickhouse_operational_analytics.sh").read_text()
 
     upload = script.index("sudo tar -xzf - -C /opt/tr-clickhouse")
@@ -87,11 +84,10 @@ def test_operational_deploy_moves_benchmark_code_schema_and_replay_together() ->
     restart = script.index(
         "systemctl start tr-clickhouse-operational-ingest.service", migration
     )
-    replay = script.index("clickhouse.backfill_benchmark_samples")
 
-    assert upload < stop < migration < restart < replay
+    assert upload < stop < migration < restart
     assert "007_benchmark_samples_workspace_id.sql" in script
-    assert "TR_CLICKHOUSE_BENCHMARK_WORKSPACE_BACKFILL_LIMIT" in script
+    assert "clickhouse.backfill_" not in script
 
 
 # --------------------------------------------------------------------------

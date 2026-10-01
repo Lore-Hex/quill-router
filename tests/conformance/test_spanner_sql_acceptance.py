@@ -6,6 +6,7 @@ The only SQL accommodation is the DDL-derived null-filtered-index hint.
 """
 from __future__ import annotations
 
+import json
 import re
 import sys
 from contextlib import contextmanager
@@ -45,7 +46,17 @@ def literal_cases():
                 sql = scenario["wrapper"].format(sql=sql)
             params, types = typed_parameters(scenario["types"])
             params.update(scenario.get("values", {}))
-            yield SQLCase(f"{key}/{index}", [(sql, params, types)])
+            seed = []
+            for entity in scenario.get("entities", []):
+                values = {"kind": entity["kind"], "id": entity["id"],
+                          "body": json.dumps(entity["body"])}
+                _, seed_types = typed_parameters(dict.fromkeys(values, "STRING"))
+                seed.append((
+                    "INSERT INTO tr_entities (kind, id, body, updated_at) "
+                    "VALUES (@kind, @id, @body, CURRENT_TIMESTAMP())",
+                    values, seed_types,
+                ))
+            yield SQLCase(f"{key}/{index}", [(sql, params, types)], seed=seed or None)
 
 
 def all_cases():
@@ -208,8 +219,14 @@ def test_production_sql_acceptance(sql_database, case):
     try:
         if len(case.statements) == 1 and query_kind(case.statements[0][0]) in {"SELECT", "WITH"}:
             sql, params, types = case.statements[0]
-            with sql_database.snapshot() as snapshot:
-                list(snapshot.execute_sql(sql, params=params, param_types=types))
+            if case.seed:
+                with rolled_back(sql_database) as transaction:
+                    execute_dml(transaction, case.seed, batch=False)
+                    rows = list(transaction.execute_sql(sql, params=params, param_types=types))
+                    assert rows, "seeded query must exercise its target row"
+            else:
+                with sql_database.snapshot() as snapshot:
+                    list(snapshot.execute_sql(sql, params=params, param_types=types))
         else:
             with rolled_back(sql_database) as transaction:
                 if case.seed:
@@ -278,7 +295,7 @@ def test_frozen_fragments_are_inside_fingerprinted_scopes():
     import ast
 
     sources = discover()
-    fragments = {"where", "arms", "sibling", "phase_sql", "suffix_sql", "tail", "suffix"}
+    fragments = {"where", "arms", "sibling", "suffix_sql", "tail", "suffix"}
     seen = set()
     for key, registration in load_manifest()["expressions"].items():
         source = sources[key]
@@ -306,13 +323,3 @@ def test_json_remove_reported_restriction_texts(message):
         assert re.search(pattern, unrelated) is None
 
 
-def test_register_claim_scenario_has_production_value_shapes():
-    from trusted_router.spend_leases import spend_lease_scope_salt
-
-    case = next(case for case in literal_cases() if case.name == "storage_gcp_spend_lease:register_claim:1/0")
-    _, params, _ = case.statements[0]
-    # DDL's CLAIM branch requires a non-null provisional_id; the global default
-    # is None for BOUND rows. Keep this override local to the inserting scenario.
-    assert isinstance(params["provisional_id"], str) and 0 < len(params["provisional_id"]) <= 64
-    assert 0 < len(params["scope"]) <= 256
-    assert params["scope_salt"] == spend_lease_scope_salt(params["scope"])

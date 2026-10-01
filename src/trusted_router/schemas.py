@@ -284,50 +284,51 @@ class CreditTransferRequest(_Strict):
         return dollars_to_microdollars(self.amount)
 
 
-class SpendLeaseEcho(_Strict):
-    lease_id: str | None = Field(default=None, max_length=64)
-    state: str = Field(min_length=1, max_length=64)
-    remaining_micro: int | None = Field(default=None, ge=0)
-    enclave_estimate_micro: int | None = Field(default=None, ge=0)
-    catalog_version: str | None = Field(default=None, max_length=128)
-    would_admit: bool | None = None
-
-
-class SpendLeaseBootRegistrationRequest(_Strict):
+class GatewayBootRegistrationRequest(_Strict):
     kid: str = Field(min_length=1, max_length=128)
     receipt_public_key: dict[str, Any]
     attestation_evidence: str = Field(min_length=1, max_length=2 * 1024 * 1024)
     attestation_kind: str = Field(min_length=1, max_length=64)
 
 
-class SpendLeaseAdmissionMarker(_Strict):
-    accepted: Literal[True]
-    receipt_hash: str = Field(pattern="^[0-9a-f]{64}$")
+class GatewayTimingData(BaseModel):
+    """Elapsed integer milliseconds; phases exclude worker queue time."""
+
+    spanner_rpcs: int = Field(ge=0, description="Spanner deadline-wrapper calls; excludes GAPIC-internal transport retries.")
+    total_ms: int = Field(ge=0)
+    key_lookup_ms: int = Field(ge=0)
+    routing_ms: int = Field(ge=0)
+    store_ms: int = Field(ge=0)
+    post_commit_ms: int = Field(ge=0)
 
 
-class SpendLeaseAdmissionRejectedError(_Strict):
-    code: Literal[409]
-    message: Literal["Spend-lease admission was rejected"]
-    type: Literal["admission_rejected"]
-    source: Literal["router"]
-    reason: Literal[
-        "receipt_invalid",
-        "boot_not_accepted",
-        "boot_mismatch",
-        "lease_not_open",
-        "window",
-        "policy_mismatch",
-        "estimate_mismatch",
-        "capacity",
-        "hold_refused",
-        "scope_conflict",
-        "reuse_lost",
-        "not_accepting",
-    ]
+class GatewayAuthorizeData(BaseModel):
+    # The gateway contract also contains routing/lease fields. Preserve them.
+    model_config = ConfigDict(extra="allow")
+
+    authorization_id: str
+    generation_id: str = Field(description=(
+        "Prospective generation identity: this ID is recorded when the authorization reaches "
+        "settled or reaped_snapshot (Stage D heartbeat snapshot booking). It is never recorded "
+        "for refunded authorizations, including refunding reaps. "
+        "Consumers must check the terminal authorization disposition before expecting a generation."
+    ))
+    timing: GatewayTimingData
 
 
-class SpendLeaseAdmissionRejected(_Strict):
-    error: SpendLeaseAdmissionRejectedError
+class GatewayAuthorizeResponse(BaseModel):
+    data: GatewayAuthorizeData
+
+
+class GatewaySettleData(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    authorization_id: str
+    timing: GatewayTimingData
+
+
+class GatewaySettleResponse(BaseModel):
+    data: GatewaySettleData
 
 
 class GatewayAuthorizeRequest(_Lenient):
@@ -370,10 +371,6 @@ class GatewayAuthorizeRequest(_Lenient):
     # atomic hold as their planner model call. This is internal-only and is
     # accepted only for enclave-owned hosted tools and asynchronous media.
     additional_cost_reservation_microdollars: int = Field(default=0, ge=0, le=100_000_000)
-    spend_lease_echo: SpendLeaseEcho | None = None
-    # Compact JWS signed by the admitted lease's attested boot. It is excluded
-    # from the logical request fingerprint and is consequential only in Stage C.
-    spend_lease_admission: str | None = Field(default=None, min_length=1, max_length=16_384)
     invocation_nonce: str | None = Field(default=None, max_length=64)
 
     @model_validator(mode="after")

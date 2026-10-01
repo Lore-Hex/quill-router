@@ -1,0 +1,56 @@
+/* /index — the NYTE Token Index page. Fixed chart images in a dark and a light
+   rendering; the theme toggle (data-theme on <html>) picks one. */
+.token-index .public-wrap { width: 100%; max-width: none; margin: 0; padding: 0; }
+.token-index * { box-sizing: border-box; letter-spacing: 0; }
+.ti-inner { width: min(100%, var(--page-max, 1120px)); margin-inline: auto; padding-inline: 32px; }
+.token-index h1, .token-index h2 { font-family: var(--font-display); font-weight: 300; line-height: 1.12; text-wrap: balance; margin: 0; color: var(--text-display); }
+.token-index h1 { font-size: 64px; }
+.token-index h2 { font-size: 40px; margin-bottom: 28px; }
+.token-index p { font-size: 17px; line-height: 1.65; text-wrap: pretty; max-width: 720px; color: var(--text-body); }
+.ti-eyebrow { font: 13px/1.6 var(--font-mono); color: var(--text-accent); text-transform: uppercase; margin: 0 0 16px; }
+.ti-hero { padding-block: 56px 24px; }
+.ti-hero .ti-lead { font-size: 21px; line-height: 1.45; margin-block: 14px 28px; }
+.ti-quote { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; margin-bottom: 20px; }
+.ti-value { font: 500 56px/1 var(--font-mono); color: var(--text-display); font-variant-numeric: tabular-nums; }
+.ti-unit { font: 14px var(--font-mono); color: var(--text-muted); }
+.ti-change { font: 15px var(--font-mono); color: var(--text-body); font-variant-numeric: tabular-nums; }
+.ti-asof { font-size: 14px; color: var(--text-muted); }
+.ti-chart { margin: 0; border-top: 1px solid var(--border-hairline); padding-top: 16px; }
+.ti-chart img { display: block; width: 100%; height: auto; }
+.ti-img-light { display: none !important; }
+:root[data-theme="light"] .ti-img-dark { display: none !important; }
+:root[data-theme="light"] .ti-img-light { display: block !important; }
+.ti-section { padding-block: 56px; }
+.ti-quotes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 24px; }
+.ti-tile { display: grid; gap: 4px; padding: 14px 16px; border: 1px solid var(--border-default); border-left: 3px solid var(--stripe); border-radius: var(--r-panel, 4px); background: var(--surface-card); }
+.ti-tile-name { font-size: 13px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.ti-tile-value { font: 500 28px/1.2 var(--font-mono); color: var(--text-display); font-variant-numeric: tabular-nums; }
+.ti-tile-change { font: 13px var(--font-mono); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.ti-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.ti-card { padding: 20px 22px; border: 1px solid var(--border-default); border-top: 3px solid var(--stripe); border-radius: var(--r-panel, 4px); background: var(--surface-card); }
+.ti-card h3 { margin: 0 0 8px; font: 400 24px/1.2 var(--font-display); color: var(--text-display); display: flex; align-items: baseline; gap: 10px; }
+.ti-card p { font-size: 15px; margin: 0 0 12px; }
+.ti-card .ti-label { font: 12px var(--font-mono); text-transform: uppercase; color: var(--text-muted); margin: 14px 0 8px; }
+.ti-card ul { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px; }
+.ti-card li { font: 13px var(--font-mono); padding: 3px 8px; border: 1px solid var(--border-default); border-radius: var(--r-control, 2px); color: var(--text-body); }
+.ti-code { font: 500 0.8em var(--font-mono); color: var(--stripe); letter-spacing: 0.04em; }
+.ti-aaa { --stripe: var(--clay); }
+.ti-a { --stripe: var(--gold); }
+.ti-b { --stripe: #8fb0c9; }
+.ti-c { --stripe: var(--sage); }
+:root[data-theme="light"] .ti-b { --stripe: #3f6583; }
+.ti-note { padding-block: 8px 72px; border-top: 1px solid var(--border-hairline); }
+.ti-note p { font-size: 14px; color: var(--text-muted); }
+.ti-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+@media (max-width: 860px) {
+  .ti-quotes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ti-cards { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 560px) {
+  .ti-inner { padding-inline: 16px; }
+  .token-index h1 { font-size: 42px; }
+  .token-index h2 { font-size: 30px; }
+  .ti-value { font-size: 44px; }
+}

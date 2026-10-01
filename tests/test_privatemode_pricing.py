@@ -5,6 +5,7 @@ import pytest
 
 from scripts.pricing.currency import eur_microdollars_per_million, usd_per_eur
 from scripts.pricing.providers import privatemode
+from tests import catalog_vehicles
 
 PRICES = """<table><tr><th>Model</th><th>Input</th><th>Output</th><th>Cached input</th></tr>
 <tr><td>GLM-5.3</td><td>EUR 1.55</td><td>EUR 7.74</td><td>EUR 0.15</td></tr>
@@ -80,15 +81,38 @@ def test_confidential_privatemode_has_only_reviewed_priced_credits_routes():
 
     assert catalog.PROVIDERS["privatemode"].provider_e2ee is True
     assert catalog.PROVIDERS["privatemode"].supports_byok is False
+    manifest = json.loads(privatemode.MANIFEST_PATH.read_text(encoding="utf-8"))
+    routable = {row["id"] for row in manifest["models"] if row.get("routable") is not False}
+    built = catalog_vehicles.registry_endpoints()
     for model_id, upstream_id in privatemode.UPSTREAM_ID_MAP.items():
-        routes = [e for e in catalog.endpoints_for_model(model_id) if e.provider == "privatemode"]
-        assert len(routes) == 1
+        routes = [
+            e
+            for e in catalog.endpoints_for_model(model_id)
+            if e.provider == "privatemode" and e.id in built
+        ]
+        # One route per reviewed model while its row is routable; a row the
+        # refresh tombstoned is simply not expected.
+        assert len(routes) == (model_id in routable)
+        if not routes:
+            continue
         route = routes[0]
         assert route.usage_type == "Credits"
         assert route.upstream_id == upstream_id
         assert catalog.endpoint_privacy_tier(route) == catalog.PRIVACY_TIER_CONFIDENTIAL
         assert route.prompt_price_microdollars_per_million_tokens > 0
         assert route.completion_price_microdollars_per_million_tokens > 0
+
+
+@pytest.mark.provider_health
+def test_privatemode_serves_every_reviewed_model():
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    from trusted_router import catalog
+
+    for model_id in privatemode.UPSTREAM_ID_MAP:
+        assert any(
+            e.provider == "privatemode" for e in catalog.endpoints_for_model(model_id)
+        ), model_id
 
 
 @pytest.mark.parametrize("reason", ["provider-canary-failed", "operator-review", "attested-enclave-rollout-pending"])

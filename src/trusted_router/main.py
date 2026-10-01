@@ -78,6 +78,7 @@ from trusted_router.routes.internal import (
 from trusted_router.routes.keys import register_key_routes
 from trusted_router.routes.lightning_support import register_lightning_support_routes
 from trusted_router.routes.mcp import register_mcp_routes
+from trusted_router.routes.mcp_advisor import register_advisor_mcp_routes
 from trusted_router.routes.notify import register_notify_public_routes, register_notify_routes
 from trusted_router.routes.oauth import register_oauth_routes
 from trusted_router.routes.oauth_apps import register_oauth_app_routes
@@ -220,7 +221,7 @@ def create_app(
     validate_auto_model_order(settings.auto_model_order)
     if configure_store_arg:
         configure_store(create_store(settings))
-        # No-op unless TR_CLICKHOUSE_URL is set; Bigtable stays authoritative.
+        # No-op unless TR_CLICKHOUSE_URL is set; the store stays authoritative.
         configure_analytics_sink(create_analytics_sink(settings))
     if init_observability:
         init_sentry(settings)
@@ -524,7 +525,7 @@ def create_app(
             headers = dict(exc.headers or {})
             headers["vary"] = "Accept"
             return HTMLResponse(
-                public_not_found_html(settings, request.url.path),
+                public_not_found_html(settings, request.scope["path"]),
                 status_code=404,
                 headers=headers,
             )
@@ -589,6 +590,7 @@ def create_app(
             503,
             "The request was aborted due to transient database contention; retry.",
             ErrorType.SERVICE_UNAVAILABLE,
+            data=getattr(exc, "gateway_timing_data", None),
         )
         response.headers["Retry-After"] = "1"
         return response
@@ -602,11 +604,19 @@ def create_app(
         app.add_exception_handler(conflict_type, aborted_exception_handler)
 
     async def unavailable_exception_handler(request: Request, exc: Exception) -> Response:
-        _log_storage_503(request, exc, "storage.unavailable")
+        from trusted_router.strict_budget import StrictBudgetBusy
+
+        strict_busy = isinstance(exc, StrictBudgetBusy)
+        _log_storage_503(
+            request, exc, "billing.strict_budget_busy" if strict_busy else "storage.unavailable"
+        )
         response = error_response(
             503,
-            "Persistent storage is temporarily unavailable; retry.",
+            "Strict budget authorization is busy; retry with backoff."
+            if strict_busy
+            else "Persistent storage is temporarily unavailable; retry.",
             ErrorType.SERVICE_UNAVAILABLE,
+            data=getattr(exc, "gateway_timing_data", None),
         )
         response.headers["Retry-After"] = "1"
         return response
@@ -620,6 +630,7 @@ def create_app(
         register_public_routes(app, settings)
     if surface in {"combined", "public"}:
         register_bedrock_group_buy_public_routes(app, settings)
+        register_advisor_mcp_routes(app, settings)
     if surface in {"combined", "actions"}:
         register_public_action_routes(app, settings)
     if surface in {"combined", "control"}:

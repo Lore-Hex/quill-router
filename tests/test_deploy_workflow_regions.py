@@ -265,12 +265,7 @@ def test_all_regions_launch_together_but_only_primary_warm_gates_traffic() -> No
     primary_canary = deploy.index("- name: Canary gate — watch us-central1 only")
     secondary_wait = deploy.index("- name: Wait for secondary no-traffic warms")
     assert primary_wait < primary_ramp < primary_canary < secondary_wait
-    collector = deploy[
-        secondary_wait : deploy.index(
-            "- name: Release production deployment mutex after primary-live failure",
-            secondary_wait,
-        )
-    ]
+    collector = deploy[secondary_wait:]
     assert "if: ${{ always() }}" in collector
     assert 'kill -0 "${pid}"' in collector
     assert 'done <"${secondary_state}"' in collector
@@ -284,11 +279,12 @@ def test_all_regions_launch_together_but_only_primary_warm_gates_traffic() -> No
     assert "staged_traffic.sh southamerica-east1" not in deploy
     assert "ramp_secondary" not in deploy
     assert "timeout-minutes: 25" in deploy
-    release = deploy.index("- name: Release production deployment mutex after primary-live failure")
-    assert "if: ${{ failure() || cancelled() }}" in deploy[release : release + 220]
-    assert "GitHub never schedules rollout-secondaries" in deploy
-    assert "the 90-minute TTL recovers" in deploy
-    assert "Queued deploys fail closed" in deploy
+    assert "deploy_mutex.sh release" not in deploy
+    finalization = yaml.safe_load(workflow)["jobs"]["finalize-cloud"]
+    assert "always()" in finalization["if"]
+    assert "deploy" in finalization["needs"]
+    assert "rollout-secondaries" in finalization["needs"]
+    assert 'export TR_DEPLOY_OUTCOME=failure' in str(finalization)
 
 
 def test_secondaries_ramp_serially() -> None:
@@ -319,19 +315,14 @@ def test_secondaries_ramp_serially() -> None:
     billing_gate = script.index("assert_no_billing_5xx.sh")
     assert stamp < staged_call < billing_gate
 
-    # The ledger reconciler workers are retired (2026-09-27): nothing runs in
-    # the background alongside the ramp any more.
-    assert "regional_quota_reconciler.sh" not in script
-    assert "spend_lease_reconciler.sh" not in script
-    assert "reconciler_pid" not in script
     assert "Later regions remain warm at zero traffic and never received traffic" in script
     assert "#695 (billing 5xx, 2026-08-20)" in script
     assert "--slo-class router_core" in script
     assert "secondary-started-" not in script
 
-    release = rollout.index("- name: Release production deployment mutex")
-    assert "if: always()" in rollout[release : release + 180]
-    assert "deploy_mutex.sh release" in rollout[release : release + 180]
+    assert "deploy_mutex.sh release" not in rollout
+    finalization = yaml.safe_load(workflow)["jobs"]["finalize-cloud"]
+    assert {"rollout-secondaries", "public-surface-companion", "verify-cloud-complete"} <= set(finalization["needs"])
 
 
 def test_rollout_secondaries_deploy_result_gate_rejects_bare_success_mutation() -> None:
@@ -354,7 +345,7 @@ def test_full_convergence_jobs_need_rollout_secondaries() -> None:
     )[0]
     verify = workflow.split("\n  verify-cloud-complete:\n", 1)[1]
 
-    assert "needs: [rollout-secondaries]" in companion
+    assert "needs: [rollout-secondaries, admit-cloud]" in companion
     assert "needs: [rollout-secondaries]" in verify
     assert "needs.rollout-secondaries.result != 'skipped'" in verify
 
@@ -447,7 +438,7 @@ def test_runtime_secret_validation_is_parallel_and_does_not_restore_stale_ses_ke
     confirm = workflow.index("confirm-current-main:", sync)
     section = workflow[sync:confirm]
 
-    assert "needs: [gate-on-ci]" in section
+    assert "needs: [gate-on-ci, admit-cloud]" in section
     assert "trustedrouter-aws-access-key-id" in section
     assert "gcloud secrets versions access latest" in section
     assert "secrets.TR_AWS_ACCESS_KEY_ID" not in section
@@ -501,9 +492,10 @@ def test_full_convergence_metrics_are_reported_before_mutex_release() -> None:
     )[0]
 
     report = rollout.index("- name: Report full convergence timing")
-    release = rollout.index("- name: Release production deployment mutex", report)
-    metric = rollout[report:release]
-    assert report < release
+    metric = rollout[report:]
+    assert "deploy_mutex.sh release" not in rollout
+    finalization = yaml.safe_load(workflow)["jobs"]["finalize-cloud"]
+    assert "rollout-secondaries" in finalization["needs"]
     assert "if: ${{ success() }}" in metric
     assert "deploy.full_convergence_seconds=${full_convergence_seconds}" in metric
     assert "primary_live_seconds=${PRIMARY_LIVE_SECONDS}" in metric

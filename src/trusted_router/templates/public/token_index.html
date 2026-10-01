@@ -1,0 +1,58 @@
+{% extends "public/_base.html" %}
+{% macro change(value) %}{% if value > 0.05 %}+{{ '%.1f'|format(value) }}%{% elif value < -0.05 %}&minus;{{ '%.1f'|format(-value) }}%{% else %}0.0%{% endif %}{% endmacro %}
+{% macro dollars(value) %}${{ '{:,}'.format(value) }}{% endmacro %}
+{% block body_attributes %}class="token-index"{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/token-index.css?v={{ static_version|default('local') }}">{% endblock %}
+{% block hero %}
+<section class="ti-hero ti-inner" aria-labelledby="ti-title">
+  <p class="ti-eyebrow">Token price index &middot; $NYTE</p>
+  <h1 id="ti-title">NYTE Token Index</h1>
+  <p class="ti-lead">What the market pays for AI inference, in US dollars per billion tokens.</p>
+  <div class="ti-quote" aria-label="Latest NYTE Token Index level">
+    <span class="ti-value">{{ dollars(quotes.ALL.value) }}</span>
+    <span class="ti-unit">per billion tokens</span>
+    <span class="ti-change">{{ change(quotes.ALL.change_7d) }} over 7 days</span>
+    <span class="ti-asof">As of <time datetime="{{ as_of_iso }}">{{ as_of }}</time></span>
+  </div>
+  <figure class="ti-chart">
+    <img class="ti-img-dark" src="/static/token-index/nyte-dark.png?v={{ static_version|default('local') }}" width="1200" height="480" alt="{{ chart_alt.nyte }}" fetchpriority="high">
+    <img class="ti-img-light" src="/static/token-index/nyte-light.png?v={{ static_version|default('local') }}" width="1200" height="480" alt="{{ chart_alt.nyte }}" loading="lazy">
+  </figure>
+</section>
+{% endblock %}
+{% block body %}
+<section class="ti-section ti-inner" aria-labelledby="ti-grades-title">
+  <p class="ti-eyebrow">Four grades</p>
+  <h2 id="ti-grades-title">Priced by capability.</h2>
+  <div class="ti-quotes">
+    {% for grade in grades %}{% set quote = quotes[grade.code] %}
+    <div class="ti-tile ti-{{ grade.code|lower }}">
+      <span class="ti-tile-name"><span class="ti-code">{{ grade.code }}</span> {{ grade.name }}</span>
+      <span class="ti-tile-value">{{ dollars(quote.value) }}</span>
+      <span class="ti-tile-change">{{ change(quote.change_7d) }} (7D)</span>
+    </div>
+    {% endfor %}
+  </div>
+  <figure class="ti-chart">
+    <img class="ti-img-dark" src="/static/token-index/grades-dark.png?v={{ static_version|default('local') }}" width="1200" height="560" alt="{{ chart_alt.grades }}" loading="lazy">
+    <img class="ti-img-light" src="/static/token-index/grades-light.png?v={{ static_version|default('local') }}" width="1200" height="560" alt="{{ chart_alt.grades }}" loading="lazy">
+  </figure>
+</section>
+<section class="ti-section ti-inner" aria-labelledby="ti-cards-title">
+  <h2 id="ti-cards-title" class="ti-visually-hidden">The grades</h2>
+  <div class="ti-cards">
+    {% for grade in grades %}
+    <article class="ti-card ti-{{ grade.code|lower }}">
+      <h3><span class="ti-code">{{ grade.code }}</span> {{ grade.name }}</h3>
+      <p>{{ grade.use }}</p>
+      <p class="ti-label">Example models</p>
+      <ul>{% for model in grade.examples %}<li>{{ model }}</li>{% endfor %}</ul>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+<section class="ti-note ti-inner" aria-label="About the index">
+  <p>The NYTE Token Index tracks the price of AI inference across 600+ models from 100+ providers, built on TrustedRouter's proprietary trade data. The four grade indices track Frontier, Advanced, Professional and Efficient models; grade membership is reviewed as models launch and are superseded. Prices are in US dollars per billion tokens.</p>
+  <p>Provisional. Not for trading.</p>
+</section>
+{% endblock %}

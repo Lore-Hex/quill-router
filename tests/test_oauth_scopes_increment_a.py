@@ -7,6 +7,8 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from tests.fixture_routes import serve_on_fixture_route
+from trusted_router.catalog_data import Model
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.routes.internal.gateway import _assert_gateway_key_scope
@@ -195,8 +197,22 @@ def test_all_gateway_inline_sites_deny_scoped_key_without_inference(
 
 
 def test_scoped_inference_key_passes_all_gateway_sites_including_media(
-    client: TestClient,
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The media site rides an image route; which hosts list one today is
+    # provider state.
+    image_model = "google/gemini-3.1-flash-image"
+    serve_on_fixture_route(
+        monkeypatch, image_model, "google-ai-studio", author="google-ai-studio",
+        model=Model(
+            id=image_model, name=image_model, provider="google-ai-studio",
+            context_length=32_768, supports_chat=False,
+            input_modalities=("text", "image"), output_modalities=("image",),
+        ),
+        upstream_id="gemini-3.1-flash-image",
+        prompt_price_microdollars_per_million_tokens=527_500,
+        completion_price_microdollars_per_million_tokens=63_300_000,
+    )
     _raw, key = _make_key(scopes=[SCOPE_INFERENCE], email="gateway-positive@example.com")
     user = STORE.get_user(key.creator_user_id or "")
     assert user is not None

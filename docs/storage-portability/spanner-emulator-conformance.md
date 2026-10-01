@@ -4,7 +4,7 @@ This change adds a real GoogleSQL server gate alongside the unchanged Python fak
 
 ## Schema source and scope
 
-The base GoogleSQL table comes from `scripts/deploy/infra.sh` (duplicated in `infra-stage0.sh` and `spanner_zero_downtime_cutover.sh`). The authoritative additions are `scripts/deploy/migrate_*.sh`; the post-rollout `scripts/deploy/retire_settle_outbox_hot_index.sh` is also extracted because deploy.yml executes it. Its DROP removes the named index from the fresh-install result (the historical index is already absent today). There is no standalone native GoogleSQL schema file in the existing checkout. `src/trusted_router/storage_postgres_schema.sql` is the other dialect and is not a source for this backend. `scripts/lightning/spanner_provenance.sql` and `scripts/deploy/backfill_credit_balance_trust.sql` are operational artifacts rather than this adapter's base schema. Context: [storage handoff](HANDOFF.md), [typed counters](../design/billing-typed-counters.md), [durable settle outbox](../design/durable-settle-outbox.md).
+The base GoogleSQL table comes from `scripts/deploy/infra.sh` (duplicated in `spanner_zero_downtime_cutover.sh`). The authoritative additions are `scripts/deploy/migrate_*.sh`; the post-rollout `scripts/deploy/retire_settle_outbox_hot_index.sh` is also extracted because deploy.yml executes it. Its DROP removes the named index from the fresh-install result (the historical index is already absent today). There is no standalone native GoogleSQL schema file in the existing checkout. `src/trusted_router/storage_postgres_schema.sql` is the other dialect and is not a source for this backend. `scripts/lightning/spanner_provenance.sql` and `scripts/deploy/backfill_credit_balance_trust.sql` are operational artifacts rather than this adapter's base schema. Context: [storage handoff](HANDOFF.md), [typed counters](../design/billing-typed-counters.md), [durable settle outbox](../design/durable-settle-outbox.md).
 
 [spanner_ddl.py](../../tests/conformance/spanner_ddl.py) is checked-in schema as code. [The parser](../../tests/conformance/spanner_schema_source.py) extracts CREATE statements, resolves static index names, adds missing columns, and expands retention-policy calls without running shell scripts. Source digests additionally fail on changed helpers, new files, or shell syntax the narrow parser does not understand. Review changes before regenerating with `python -m tests.conformance.spanner_schema_source`. Unrecognized schema helpers fail extraction, so regeneration cannot silently bless an unsupported `ensure_*` call. Source digests intentionally make even migration-comment changes require review/regeneration.
 
@@ -33,7 +33,7 @@ The round-15 audit found exactly two existing non-code text files with transport
 | File | Matches | Handling |
 |---|---:|---|
 | `.test_durations` | 6 | Exact-path data exemption above; matches are pytest node IDs, not programs. |
-| `.codex-review-1.md:22` | 1 | Occurrence-bound line exemption in `spanner_ddl_exemptions.json`; archived review prose about receipt-column deployment ordering, not a schema dispatch. The rest of the file remains scanned. |
+| `.codex-review-1.md:22` | 1 | Removed: the file was PR #1159's codex review transcript, committed with that PR, and its line exemption went with it. `test_review_note_line_exemption_is_occurrence_bound` keeps the occurrence binding covered on a synthetic note. |
 
 No other previously name-excluded text file contains a transport token. New ClickHouse SQL containing only statements and ordinary `middleware` imports also need no registry changes. A helper using `spanner_dbapi` is caught at its own transport token regardless of launchers such as `timeout`, `env`, `xargs`, subprocess calls, or working-directory changes; the guard does not model execution syntax.
 
@@ -48,7 +48,7 @@ Each carrier must belong to a dispatch consumed by extraction (including a liter
 
 There are no additional directory or statement-pattern exemptions in the registry. Diagnostics name physical `file:line`, the carrier and the registry remedy. Registry entries do not bypass structural validation of migration dispatch arguments, and regeneration runs the same guard.
 
-Explicit non-goals are DDL through an API or tool with **no DDL-specific token** (for example a generic `cursor.execute` supplied a connection externally), transport tokens or URLs assembled at runtime (for example `getattr(db, "update_" + "d" + "dl")`), **statement text outside the fixed migration list** (for example an `ALTER TABLE` literal in `clickhouse/build_public_snapshots.py` or `trusted_router.regional_quota_reconcile_gate`), **root `tests/` and `docs/` (including deploy steps executing files there)**, **the exact data path `.test_durations`**, the build/dependency directories and binary files defined in (b) and (d), and anything applied outside the repository (console or manual commands). Statement text outside the list cannot reach Spanner without a transport; appending `database.update_ddl([...])` to either program fails, while appending only statement text passes. Recognizing a transport vocabulary cannot establish completeness. The real backstop is [Lore-Hex/quill-router#1372](https://github.com/Lore-Hex/quill-router/issues/1372): a scheduled production INFORMATION_SCHEMA comparison with the checked-in schema. That comparison is outside this PR.
+Explicit non-goals are DDL through an API or tool with **no DDL-specific token** (for example a generic `cursor.execute` supplied a connection externally), transport tokens or URLs assembled at runtime (for example `getattr(db, "update_" + "d" + "dl")`), **statement text outside the fixed migration list** (for example an `ALTER TABLE` literal in `clickhouse/build_public_snapshots.py` or `trusted_router.activity_delivery_repair_cli`), **root `tests/` and `docs/` (including deploy steps executing files there)**, **the exact data path `.test_durations`**, the build/dependency directories and binary files defined in (b) and (d), and anything applied outside the repository (console or manual commands). Statement text outside the list cannot reach Spanner without a transport; appending `database.update_ddl([...])` to either program fails, while appending only statement text passes. Recognizing a transport vocabulary cannot establish completeness. The real backstop is [Lore-Hex/quill-router#1372](https://github.com/Lore-Hex/quill-router/issues/1372): a scheduled production INFORMATION_SCHEMA comparison with the checked-in schema. That comparison is implemented by the scheduled metadata audit below.
 
 The generated schema contains **63 DDL statements: 21 tables, 14 secondary indexes, and 9 row-deletion policies**, including the additive column operations. This is the fully migrated **fresh-install** schema, not a claim that every production database already has each optional migration. In particular:
 
@@ -58,6 +58,102 @@ The generated schema contains **63 DDL statements: 21 tables, 14 secondary index
 - `migrate_gateway_request_index.sh` prepares the nonunique trace index; `--retire-unique` later drops the historical unique `tr_gateway_authorization_by_gateway_request_id`. Fresh installations include only `tr_gateway_authorization_by_trace_id`.
 - `migrate_trust_reconciliation.sh` conditionally recreates the old three-column-key marker table only when it contains no real reconciliation state. This fixture uses the current five-column primary key without running that destructive upgrade.
 - Existing installations intentionally add nullable key-window usage and reservation `credit_shard` columns; fresh CREATE definitions retain NOT NULL/defaults. This suite does not test historical rolling-upgrade schemas or backfills.
+
+## Scheduled production schema audit (#1372)
+
+The `spanner-schema-drift` job in `.github/workflows/typed-audit.yml` runs daily
+at 11:43 UTC and on manual dispatch, independently of the typed billing audit
+job so either audit still runs if the other fails. It uses the typed audit's
+existing WIF identity and its own instance of the same digest-pinned Spanner
+emulator as CI. It needs no new secrets or IAM grants.
+
+The job lives in `typed-audit.yml` because that workflow is already admitted by
+`quill_router_workflow_refs` in `infra/gcp_wif.tf`. The former standalone
+`spanner-schema-drift.yml` was not admitted and failed authentication with
+`unauthorized_client` (the credential was rejected by the attribute condition).
+A dedicated workflow or a read-only identity would require a reviewed change
+to `infra/gcp_wif.tf`, applied through `infra-apply` on push; expanding access
+is an operator decision. The offline workflow guard scans all workflow files
+using this WIF provider and requires each to appear in that allowlist.
+
+The production path uses ADC and reads only `INFORMATION_SCHEMA` in a single read-only snapshot,
+restricted to the GoogleSQL default schema (`TABLE_SCHEMA = ''`, or
+`CONSTRAINT_SCHEMA = ''` for constraint-only views). It never scans entity bodies
+or other application tables.
+
+`python -m scripts.audit_spanner_schema` provisions and removes a unique emulator
+instance/database from `tests/conformance/spanner_ddl.py`, reads it using the same
+queries as production, and compares the sorted metadata. This comparison parses
+no schema statements. It covers table interleaving/deletion action/TTL; column
+type, nullability, generated expression, stored flag and default; commit
+timestamp options; index type, uniqueness, null filtering, state, interleaving,
+ordered keys and storing columns; table/check constraints and foreign-key
+columns, targets and rules. Primary-key constraint names are canonicalized because
+they can be server generated; expressions retain their exact server text so
+whitespace inside literals cannot disappear. Index storing columns sort after keys.
+
+Table column ordinals remain in the captured metadata but are not semantic drift:
+historical additive migrations and fresh installations can place named columns in
+different physical order. The adapters project and mutate columns by name. Primary
+key, secondary index, and constraint key ordering are still compared exactly.
+Spanner exposes `PRIMARY_KEY` as a pseudo-index, with a null state in production
+and the emulator; only that null state is exempt from the readiness check.
+Secondary indexes with null or transitional state still fail. See Google's
+[INFORMATION_SCHEMA reference](https://docs.cloud.google.com/spanner/docs/information-schema#indexes).
+
+Reports put **FIXTURE-HAS / PRODUCTION-LACKS** first: these are objects that let SQL
+pass CI while failing in production. They also include **PRODUCTION-HAS /
+FIXTURE-LACKS** and individual attribute mismatches. `--json` emits a machine-readable
+report; `GITHUB_STEP_SUMMARY` appends a Markdown table. Exit codes are 0 for no
+unexplained differences, 1 for unexplained drift or stale allowlist entries, and 2
+when any metadata query, provisioning, cleanup, configuration, or report write fails.
+A failed or empty metadata read never counts as clean.
+
+The reviewed [allowlist](../../tests/conformance/spanner_schema_drift_allowlist.json)
+names one object and attribute per entry, with exact production and fixture values
+and a reason. `attribute: "object"` describes an entire absent/present object,
+including all of its attributes; it is not a wildcard. Every entry must match a
+current difference: stale entries fail even when the schemas otherwise agree.
+The first authenticated production audit on 2026-09-30
+([run 36749042316](https://github.com/Lore-Hex/quill-router/actions/runs/36749042316))
+verified ten exact historical differences: four nullable rolling-upgrade columns,
+their four absent implicit NOT NULL constraints, and the two sides of the manual
+Lightning constraint rename. All ten entries are verified against that production
+run. Seven provisional exceptions were removed because the retention policies,
+entity TTL column, and historical unique-index retirement already match production.
+The script reports matched unverified entries but never edits or expands the
+allowlist automatically. An unexplained difference needs investigation, not a
+blanket exception. Other historical differences remain unexplained by design.
+
+For a local operator run, start the pinned emulator and select the operator's ADC:
+
+```bash
+gcloud auth application-default login --account josephjavierperla@tt.live
+docker run --rm -d --name tr-schema-audit-emulator -p 127.0.0.1:9010:9010 \
+  gcr.io/cloud-spanner-emulator/emulator@sha256:c6f3402f2599684f295a0fdefb6fbbbfb18a0e43e309ff5456ccb452a4570a79
+unset SPANNER_EMULATOR_HOST
+uv sync --frozen
+uv run python -m scripts.audit_spanner_schema --emulator-host 127.0.0.1:9010
+# Optional machine report:
+uv run python -m scripts.audit_spanner_schema --emulator-host 127.0.0.1:9010 --json
+docker stop tr-schema-audit-emulator
+```
+
+Defaults match the typed auditor: project `quill-cloud-proxy`, instance
+`trusted-router-nam6`, database `trusted-router`. Override with `--project`,
+`--instance`, `--database` or `TR_GCP_PROJECT_ID`, `TR_SPANNER_INSTANCE_ID`,
+`TR_SPANNER_DATABASE_ID`. The emulator endpoint uses `--emulator-host` or
+`TR_SCHEMA_AUDIT_EMULATOR_HOST`; only numeric loopback addresses are accepted.
+The parent refuses **any** `SPANNER_EMULATOR_HOST` setting (even empty) before
+constructing the production client. Only the separate child process receives
+that variable and anonymous emulator credentials. No production writes occur.
+
+Offline tests use synthetic metadata. The opt-in
+`tests/conformance/test_spanner_schema_audit.py` additionally provisions the fixture
+on the emulator and checks that every fixture table and secondary index is visible
+through this exact reader. It runs in CI's second focused emulator pytest step;
+without `TR_CONFORMANCE_EMULATOR_SCHEMA=1` it skips rather than claiming server
+coverage. Once opted in, an unavailable server fails.
 
 ## CI provisioning and emulator evidence
 
@@ -78,14 +174,14 @@ The synthetic-rollup ordering failure reproduces on the real Bigtable emulator: 
 
 ## Statement coverage and emulator limitations
 
-283 native expressions (167 SELECT, 116 DML), 303 literal scenarios, 124 builder/capture cases, 427 primary acceptance cases, 116 additional batch cases, 3 rejection canaries and 3 positive controls; 15 builders and 202 dispatch scopes fingerprinted.
+227 native expressions (142 SELECT, 85 DML), 246 literal scenarios, 119 builder/capture cases, 365 primary acceptance cases, 85 additional batch cases, 3 rejection canaries and 3 positive controls; 15 builders and 157 dispatch scopes fingerprinted. (Before the 2026-09 removal of the regional-quota and spend-lease pilots: 283 expressions, 303 scenarios, 124 builder cases, 427 primary cases and 202 dispatch scopes.)
 
 See [the inventory](spanner-sql-inventory.md) for every source expression and runtime case. Discovery covers all Python modules by default, excluding only the reviewed `storage_postgres.py` dialect adapter. Other non-GoogleSQL expressions in mixed or analytics modules remain explicitly classified and fingerprinted in the manifest, so new files and expressions cannot escape review.
 
 The shim makes two emulator accommodations, without changing production SQL or settings:
 
 1. It derives null-filtered index names from `CREATE [UNIQUE] NULL_FILTERED INDEX` in `spanner_ddl.DDL` and merges `spanner_emulator.disable_query_null_filtered_index_check=true` into each `@{FORCE_INDEX=...}` table-hint block naming one of those indexes. Matching is case-insensitive and whitespace-tolerant, preserves other keys, and is idempotent; other SQL is byte-identical. Run 2 showed that a statement-level prefix breaks UPDATE (including batch DML): the emulator accepts this hint on table scans and queries, while DML statements accept only `ignore_unknown_hints`. An always-on guard checks every registered index-name occurrence is a FORCE_INDEX value inside a hint and that every eligible block is rewritten.
-2. It wraps `Database.snapshot` to drop only `exact_staleness` and `max_staleness`, making these reads strong. Explicit `read_timestamp` and `min_read_timestamp`, `multi_use`, and other options pass through unchanged. Fresh emulator databases otherwise read an older schema or miss just-written movements. Source inspection found only `exact_staleness`: conditional 5-second reads at `storage_gcp.py:4461`, `4573`, `7065`, movement history at 30 seconds (`4509`), and the earnings display aggregate at 60 seconds (`4544`). Production history/reporting intentionally lags writes by up to 30/60 seconds to use nearby replicas; these reads do not authorize transfers. Neither the Python fake (which ignores staleness) nor this emulator conformance backend asserts that production lag.
+2. It wraps `Database.snapshot` to drop only `exact_staleness` and `max_staleness`, making these reads strong. Explicit `read_timestamp` and `min_read_timestamp`, `multi_use`, and other options pass through unchanged. Fresh emulator databases otherwise read an older schema or miss just-written movements. Source inspection found only `exact_staleness`: conditional 5-second reads at `storage_gcp.py:4264`, `4376`, `5355`, movement history at 30 seconds (`4312`), and the earnings display aggregate at 60 seconds (`4347`). Production history/reporting intentionally lags writes by up to 30/60 seconds to use nearby replicas; these reads do not authorize transfers. Neither the Python fake (which ignores staleness) nor this emulator conformance backend asserts that production lag.
 
 `emulator_resources()` installs the shared SDK shim only after emulator safety checks succeed and restores all patched methods on exit, including exceptions. Both acceptance and the real native store use it. Offline recorders verify SQL rewriting, snapshot option preservation, and restoration; server execution of the round-4 changes still requires CI.
 
@@ -94,10 +190,8 @@ Source inspection confirms the store reaches `_SnapshotBase.execute_sql` (also i
 The affected native store methods are:
 
 - `storage_gcp.list_receipt_keys`
-- `storage_gcp_regional_quota.terminal_regional_hold_amount` / its nested `txn`
 - `storage_gcp_request_records.read_gateway_authorization_by_gateway_request_id`
 - `storage_gcp_settle_outbox.due`, `due_auto_refills`, and `auto_refill_pending_freshness`
-- `storage_gcp_spend_lease._due_rows` and `arm_bound_retention`
 
 The first CI run's emulator explained: “The emulator is not able to determine whether the null filtered index … can be used to answer this query as it may filter out nulls that may be required to answer the query.” It directed testing against Cloud Spanner and said “the emulator will accept the query and return a valid result when it is run with the check disabled.” These are live production queries; the hint bypasses the emulator's index eligibility check, not SQL parsing or execution. Eleven first-run failures had this message. This evidence comes from the supplied CI logs; no online documentation was fetched.
 
@@ -105,9 +199,9 @@ The DDL is unchanged, including generated columns and row-deletion policies. Acc
 
 The canaries now match their specific restriction: `create_if_missing` plus literal/parameter wording; `Argument 2 to JSON_REMOVE must be a constant expression` (production) or `Argument 2 to JSON_REMOVE must be a literal or query parameter` (emulator run 2); and the exact 1000-function limit message. Each control uses the same table, column and expression as its canary, changing only the prohibited argument or repetition count. The matched IF expressions use 450 copies (~900 functions) for acceptance and 520 (~1040) for rejection. Unrelated InvalidArgument messages cannot satisfy the canaries. The other two canary patterns matched in run 2. Offline diagnostic fixtures check both JSON_REMOVE alternatives and unrelated-message rejection, but no offline test can prove what an emulator actually emits.
 
-Run 2 also confirms the emulator enforces `spend_lease_scope_arbitration_shape`, which the fake does not. `register_claim:1` inherited the BOUND-oriented default `provisional_id=None`, violating the CLAIM branch's non-null requirement. Only that scenario now supplies a nonempty provisional authorization ID, a scope, and its production four-hex-character hash salt. The production INSERT already supplies NULL BOUND fields and non-null terminal time as required by the DDL. Other synthetic scenarios that matched no rows are unchanged.
+Run 2 also confirmed that the emulator enforces CHECK constraints the fake does not: the then-registered spend-lease `register_claim:1` scenario violated `spend_lease_scope_arbitration_shape` until it supplied a non-null provisional ID, scope and salt. The two spend-lease tables stay in the checked-in DDL, but no native expression has targeted them since the pilot's removal in 2026-09.
 
-Frozen SQL fragments remain explicit scenarios: `where` in `storage_gcp.list_credit_movements`, `storage_gcp._list_entities`, and `storage_gcp_google_ads._list_entities`; `suffix_sql` in `storage_gcp._list_entities` and `tail` in `storage_gcp_google_ads._list_entities`; `arms` in `SpannerOperationalAnalyticsOutbox.oldest_enqueued_at`; `sibling` in `done_retention_statements`; `phase_sql` in `_due_rows`; and `suffix` in `trust_eligibility.read_lease_trust` / `billing_paused_tx`. The always-on scope guard requires an assignment for each fragment inside its fingerprinted production scope, so changing its production construction invalidates completeness. Module column constants used by the newly registered reconciliation queries are evaluated from production. Builder batches use the matching key shard and settlement's `defer_retention=True`.
+Frozen SQL fragments remain explicit scenarios: `where` in `storage_gcp.list_credit_movements`, `storage_gcp._list_entities`, and `storage_gcp_google_ads._list_entities`; `suffix_sql` in `storage_gcp._list_entities` and `tail` in `storage_gcp_google_ads._list_entities`; `arms` in `SpannerOperationalAnalyticsOutbox.oldest_enqueued_at`; `sibling` in `done_retention_statements`; and `suffix` in `trust_eligibility.billing_paused_tx`. The always-on scope guard requires an assignment for each fragment inside its fingerprinted production scope, so changing its production construction invalidates completeness. Module column constants used by the newly registered reconciliation queries are evaluated from production. Builder batches use the matching key shard and settlement's `defer_retention=True`.
 
 ## Offline evidence and remaining verification
 

@@ -83,10 +83,6 @@ def builder_cases() -> list[SQLCase]:
     )
     outbox = SpannerOperationalAnalyticsOutbox(None, pt)
     insert_auth = gateway_authorization_insert_statement(pt, authorization, created_at=NOW)
-    insert_admission = gateway_authorization_insert_statement(
-        pt, replace(authorization, spend_lease_admission_receipt="{}", spend_lease_receipt_hash="a" * 64),
-        created_at=NOW,
-    )
     insert_reservation = counters.reservation_insert_statement(
         pt, reservation_id="acceptance-reservation", workspace_id="acceptance-ws",
         key_hash="acceptance-key", ws_shard=0, credit_shard=0, key_shard=0,
@@ -98,7 +94,7 @@ def builder_cases() -> list[SQLCase]:
     reserve_key = counters.reserve_key_statement(pt, "acceptance-key", 1, is_byok=False, shard=0)
     gen = generation_insert_statement(pt, generation, terminal_at=NOW)
     activity = outbox.activity_insert_statement(generation)
-    for name, statement in (("authorization", insert_auth), ("admission", insert_admission),
+    for name, statement in (("authorization", insert_auth),
                             ("reservation", insert_reservation), ("entity", entity),
                             ("reserve-key", reserve_key), ("generation", gen), ("activity", activity)):
         cases.append(SQLCase(name, [statement]))
@@ -143,13 +139,12 @@ def builder_cases() -> list[SQLCase]:
     cases.append(SQLCase("speculative-done-batch", speculative_done_statements(
         pt, authorization_id="acceptance-auth", intent_kind="settle", reservation_id="acceptance-reservation",
     ), batch=True))
-    for byok, amounts in product((False, True), repeat=2):
+    for byok in (False, True):
         capture = Capture()
         counters.release_key(capture, pt, "acceptance-key", 1, 1, book_to_byok=byok,
-                             window_floors=window_floors(NOW),
-                             window_amounts={"daily": 1, "weekly": 1, "monthly": 1} if amounts else None)
+                             window_floors=window_floors(NOW))
         for index, statement in enumerate(capture.statements):
-            cases.append(SQLCase(f"release-key-{byok}-{amounts}-{index}", [statement]))
+            cases.append(SQLCase(f"release-key-{byok}-{index}", [statement]))
     for enforce in (False, True):
         capture = Capture()
         reserve_strict_key(capture, pt, "acceptance-key", 1, is_byok=False, enforce_windows=enforce)

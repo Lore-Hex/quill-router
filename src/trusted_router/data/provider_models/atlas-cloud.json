@@ -864,9 +864,9 @@
         "max_tokens",
         "logit_bias"
       ],
-      "input_token_price_per_m": 270000,
-      "output_token_price_per_m": 410000,
-      "cached_input_token_price_per_m": 270000
+      "input_token_price_per_m": 260000,
+      "output_token_price_per_m": 380000,
+      "cached_input_token_price_per_m": 130000
     },
     {
       "display_name": "DeepSeek V4 Flash",
@@ -4194,6 +4194,6 @@
       "cached_input_token_price_per_m": 10000
     }
   ],
-  "generated_at": "2026-09-28T15:04:09Z",
+  "generated_at": "2026-09-28T23:57:13Z",
   "model_count": 150
 }

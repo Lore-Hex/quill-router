@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import importlib
 import json
+import shutil
 import urllib.error
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from scripts import check_price_coverage
 from scripts.check_price_coverage import audit
 from trusted_router.provider_manifest_policy import (
     EXPIRED_PROVIDER_MANIFEST,
+    _provider_manifest_row_price_is_valid,
     provider_manifest_canary_quarantine_valid_until,
     provider_manifest_valid_until,
 )
@@ -36,6 +38,31 @@ def _one_day_past_deadline(slug: str, raw: dict) -> dt.datetime:
         if deadline is not None and deadline != EXPIRED_PROVIDER_MANIFEST:
             return deadline + dt.timedelta(days=1)
     raise AssertionError(f"{slug}.json has no deadline the coverage audit would use")
+
+
+def _as_listed(
+    slug: str, directory: Path, monkeypatch: pytest.MonkeyPatch
+) -> dict:
+    """Audit a copy of the committed manifests in which `slug` still lists the
+    priced rows its provider delisted, and return that manifest.
+
+    The price refresh tombstones a delisted row (routable false,
+    delisted-upstream), and a manifest with no routable row fails route
+    validity outright. The age rules below are about a stale manifest, not
+    about which rows its provider lists today.
+    """
+    shutil.copytree(check_price_coverage.MANIFEST_DIR, directory)
+    path = directory / f"{slug}.json"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    for row in raw["models"]:
+        if row.get("routable_reason") == "delisted-upstream" and (
+            _provider_manifest_row_price_is_valid(row)
+        ):
+            for key in ("routable", "routable_reason", "missing_since"):
+                row.pop(key, None)
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    monkeypatch.setattr(check_price_coverage, "MANIFEST_DIR", directory)
+    return raw
 
 _NEW_AUTOMATIC_FEED_MODELS = {
     "aion-labs/aion-3.0",
@@ -67,6 +94,8 @@ _NEW_AUTOMATIC_FEED_ROWS = _NEW_AUTOMATIC_FEED_MODELS | _NEW_AUTOMATIC_FEED_ALIA
 
 
 def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict:
+    if "api.lyceum.technology" in url:
+        return {"data": [{"id": "z-ai/glm-5.3-flash"}]}
     if "api.privatemode.ai" in url:
         return {"data": [{"id": "gpt-oss-120b"}]}
     if "api.regolo.ai" in url:
@@ -291,10 +320,10 @@ def test_gemini_model_discovery_keeps_api_key_out_of_url(
     assert headers["x-goog-api-key"] == "secret-token"
 
 
-def test_stale_fallback_manifests_are_age_gated_even_with_live_scrapers() -> None:
-    raw = json.loads(
-        check_price_coverage.MANIFEST_DIR.joinpath("upstage.json").read_text(encoding="utf-8")
-    )
+def test_stale_fallback_manifests_are_age_gated_even_with_live_scrapers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw = _as_listed("upstage", tmp_path / "manifests", monkeypatch)
 
     warnings, _info, hard_failures = check_price_coverage._run_audit(
         14,
@@ -336,10 +365,10 @@ def test_a_fully_quarantined_manifest_is_aged_like_the_audit_ages_it(
     assert covered is None
 
 
-def test_discovery_only_non_runtime_manifest_warns_without_global_freeze() -> None:
-    raw = json.loads(
-        check_price_coverage.MANIFEST_DIR.joinpath("stepfun.json").read_text(encoding="utf-8")
-    )
+def test_discovery_only_non_runtime_manifest_warns_without_global_freeze(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw = _as_listed("stepfun", tmp_path / "manifests", monkeypatch)
 
     warnings, _info, hard_failures = check_price_coverage._run_audit(
         14,
@@ -352,13 +381,13 @@ def test_discovery_only_non_runtime_manifest_warns_without_global_freeze() -> No
     assert warning not in hard_failures
 
 
-def test_nvidia_runtime_fallback_manifest_is_age_gated_provider_locally() -> None:
+def test_nvidia_runtime_fallback_manifest_is_age_gated_provider_locally(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from trusted_router.catalog import GATEWAY_PREPAID_PROVIDER_SLUGS
 
     assert "nvidia-nim" in GATEWAY_PREPAID_PROVIDER_SLUGS
-    raw = json.loads(
-        check_price_coverage.MANIFEST_DIR.joinpath("nvidia-nim.json").read_text(encoding="utf-8")
-    )
+    raw = _as_listed("nvidia-nim", tmp_path / "manifests", monkeypatch)
 
     warnings, _info, hard_failures = check_price_coverage._run_audit(
         14,
@@ -377,12 +406,10 @@ def test_manifest_expiry_warns_before_provider_routes_go_dark(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     generated = dt.datetime(2026, 8, 1, tzinfo=dt.UTC)
-    manifest = json.loads(
-        check_price_coverage.MANIFEST_DIR.joinpath("upstage.json").read_text(encoding="utf-8")
-    )
+    manifests = tmp_path / "manifests"
+    manifest = _as_listed("upstage", manifests, monkeypatch)
     manifest["generated_at"] = generated.isoformat()
-    tmp_path.joinpath("upstage.json").write_text(json.dumps(manifest), encoding="utf-8")
-    monkeypatch.setattr(check_price_coverage, "MANIFEST_DIR", tmp_path)
+    manifests.joinpath("upstage.json").write_text(json.dumps(manifest), encoding="utf-8")
 
     warning, covered = check_price_coverage._audit_fallback_manifest(
         "upstage",
@@ -741,6 +768,78 @@ def test_provider_glm_model_discovery_normalizes_native_ids() -> None:
 def test_kimi_discovery_ignores_unpriced_auto_alias() -> None:
     assert check_price_coverage._kimi_model_id("moonshot-v1-auto") is None
     assert check_price_coverage._kimi_model_id("kimi-k2.7-code") == "moonshotai/kimi-k2.7-code"
+
+
+def test_provider_glm_discovery_does_not_invent_routes_from_display_labels() -> None:
+    payload = {
+        "data": [
+            {"id": "zai-org/GLM-5.3-Flash", "name": "ZAI: GLM-5.3 Flash"},
+            {
+                "id": "zai-org/GLM-5.3-Flash",
+                "name": "GLM-5.3-Flash-H200-dev",
+                "title": "GLM-5.3-Flash-preview",
+                "model": "GLM-5.3-Flash-internal",
+            },
+        ]
+    }
+
+    assert check_price_coverage._provider_glm_model_ids(payload) == {"z-ai/glm-5.3-flash"}
+
+
+@pytest.mark.parametrize(
+    "row,expected",
+    [
+        ({"model": "zai-org/GLM-5.3", "name": "GLM-5.2"}, "z-ai/glm-5.3"),
+        ({"name": "zai-org/GLM-5.3"}, "z-ai/glm-5.3"),
+        ({"title": "GLM-5.3-Flash"}, "z-ai/glm-5.3-flash"),
+        ({"id": "opaque-123", "model": "zai-org/GLM-5.3"}, "z-ai/glm-5.3"),
+        ({"id": "zai-org/GLM-6", "name": "GLM-5.3"}, "z-ai/glm-6"),
+        (
+            {"id": "zai-org/GLM-5.3-Flash-H200-dev", "name": "GLM-5.3-Flash"},
+            "z-ai/glm-5.3-flash-h200-dev",
+        ),
+    ],
+)
+def test_provider_glm_discovery_keeps_native_fallbacks_and_real_new_ids(
+    row: dict[str, str], expected: str,
+) -> None:
+    assert check_price_coverage._provider_glm_model_ids({"data": [row]}) == {expected}
+
+
+@pytest.mark.parametrize("new_id", [False, True])
+def test_gmi_coverage_requires_new_ids_not_display_labels(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, new_id: bool,
+) -> None:
+    model_id = "z-ai/glm-5.3-flash"
+    (tmp_path / "gmi.json").write_text(
+        json.dumps({"models": [{"id": model_id, "upstream_id": "zai-org/GLM-5.3-Flash"}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_price_coverage, "MANIFEST_DIR", tmp_path)
+    monkeypatch.setattr(check_price_coverage, "_DISCOVERABLE_MANIFEST_PROVIDERS", ())
+    monkeypatch.setattr(
+        check_price_coverage, "_GLM_DISCOVERABLE_PROVIDER_APIS",
+        (("gmi", "https://api.gmi-serving.com/v1/models", ("GMI_API_KEY",)),),
+    )
+    warnings, info = check_price_coverage._model_discovery_audit(
+        fetch_text=lambda _url: "No model announcements",
+        fetch_json=lambda _url, _env: {
+            "data": [{
+                "id": "zai-org/GLM-5.3-Flash-H200-dev" if new_id else "zai-org/GLM-5.3-Flash",
+                "name": "GLM-5.3-Flash-H200-dev",
+            }],
+        },
+        published_model_ids={model_id},
+    )
+
+    gmi_warnings = [warning for warning in warnings if warning.startswith("gmi:")]
+    if new_id:
+        assert len(gmi_warnings) == 1
+        assert "live GLM current model API lists unpublished" in gmi_warnings[0]
+        assert "z-ai/glm-5.3-flash-h200-dev" in gmi_warnings[0]
+    else:
+        assert gmi_warnings == []
+        assert any(item.startswith("gmi: GLM model discovery matched catalog") for item in info)
 
 
 def test_cerebras_discovery_uses_canonical_ids_and_ignores_unknown_models() -> None:
@@ -1245,7 +1344,35 @@ def test_strict_model_discovery_does_not_fail_provider_api_visibility_warning(
     assert rc == 0
 
 
+def test_manifest_state_buckets_rows_by_routability(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rows = [
+        {"id": "z-ai/glm-5.3-flash", "upstream_id": "zai-org/GLM-5.3-Flash"},
+        {
+            "id": "a/awaiting", "routable": False, "routable_reason": "awaiting-price",
+            "unresolved_since": "2026-09-01",
+        },
+        {"id": "a/delisted", "routable": False, "routable_reason": "delisted-upstream"},
+    ]
+    tmp_path.joinpath("wandb.json").write_text(
+        json.dumps({"provider": "wandb", "models": rows}), encoding="utf-8"
+    )
+    monkeypatch.setattr(check_price_coverage, "MANIFEST_DIR", tmp_path)
+
+    routable, unresolved, classified, new_unresolved = (
+        check_price_coverage._manifest_provider_model_state("wandb")
+    )
+    assert routable == {"z-ai/glm-5.3-flash", "zai-org/GLM-5.3-Flash"}
+    assert unresolved == new_unresolved == {"a/awaiting"}
+    assert classified == {"a/delisted"}
+
+
+@pytest.mark.provider_health
 def test_wandb_flash_manifest_is_classified_priced_and_routable() -> None:
+    """Live provider state: whether W&B lists GLM 5.3 Flash today.
+    provider-catalog-health.yml reports it hourly, and the price refresh does
+    not wait on it."""
     routable, unresolved, classified, new_unresolved = (
         check_price_coverage._manifest_provider_model_state("wandb")
     )

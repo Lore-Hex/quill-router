@@ -42,6 +42,7 @@ from trusted_router.custom_model_billing import (
 from trusted_router.custom_model_markup_billing import (
     custom_model_markup_authorization_id_from_payout_event_id,
 )
+from trusted_router.gateway_boot import GATEWAY_BOOT_KIND, GatewayBoot
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
 from trusted_router.operational_analytics_freshness import (
     BACKEND_DIRECT,
@@ -84,13 +85,6 @@ from trusted_router.security import (
     new_hash_salt,
     new_key_id,
     verify_api_key,
-)
-from trusted_router.spend_leases import (
-    SPEND_LEASE_ACTIVE_GRANT_KIND,
-    SPEND_LEASE_BOOT_KIND,
-    SPEND_LEASE_GENERATION_KIND,
-    SpendLeaseArtifact,
-    SpendLeaseBoot,
 )
 from trusted_router.spend_windows import (
     KeyLimitExceeded,
@@ -1035,13 +1029,13 @@ class PostgresStore:
         )
         return cursor.rowcount == 1
 
-    def observe_spend_lease_boot(self, record: SpendLeaseBoot) -> SpendLeaseBoot:
-        def operation(conn: Any) -> SpendLeaseBoot:
+    def observe_gateway_boot(self, record: GatewayBoot) -> GatewayBoot:
+        def operation(conn: Any) -> GatewayBoot:
             existing = self._read_entity_tx(
                 conn,
-                SPEND_LEASE_BOOT_KIND,
+                GATEWAY_BOOT_KIND,
                 record.kid,
-                SpendLeaseBoot,
+                GatewayBoot,
                 for_update=True,
             )
             if existing is not None and (
@@ -1058,71 +1052,13 @@ class PostgresStore:
                     verified=existing.verified or record.verified,
                     image_digest=record.image_digest or existing.image_digest,
                 )
-            self._write_entity_tx(conn, SPEND_LEASE_BOOT_KIND, record.kid, merged)
+            self._write_entity_tx(conn, GATEWAY_BOOT_KIND, record.kid, merged)
             return merged
 
         return self._run_transaction(operation)
 
-    def get_spend_lease_boot(self, kid: str) -> SpendLeaseBoot | None:
-        return self._read_entity(SPEND_LEASE_BOOT_KIND, kid, SpendLeaseBoot)
-
-    def next_spend_lease_generation(self, key_hash: str, boot_kid: str) -> int:
-        entity_id = hashlib.sha256(f"{key_hash}\0{boot_kid}".encode()).hexdigest()
-
-        def operation(conn: Any) -> int:
-            existing = self._read_entity_tx(
-                conn,
-                SPEND_LEASE_GENERATION_KIND,
-                entity_id,
-                dict,
-                for_update=True,
-            )
-            generation = int((existing or {}).get("generation", 0)) + 1
-            self._write_entity_tx(
-                conn,
-                SPEND_LEASE_GENERATION_KIND,
-                entity_id,
-                {"key_hash": key_hash, "boot_kid": boot_kid, "generation": generation},
-            )
-            return generation
-
-        return self._run_transaction(operation)
-
-    @staticmethod
-    def _spend_lease_pair_id(key_hash: str, boot_kid: str) -> str:
-        return hashlib.sha256(f"{key_hash}\0{boot_kid}".encode()).hexdigest()
-
-    def get_active_spend_lease(self, key_hash: str, boot_kid: str) -> SpendLeaseArtifact | None:
-        return self._read_entity(
-            SPEND_LEASE_ACTIVE_GRANT_KIND,
-            self._spend_lease_pair_id(key_hash, boot_kid),
-            SpendLeaseArtifact,
-        )
-
-    def retain_spend_lease(
-        self,
-        key_hash: str,
-        boot_kid: str,
-        candidate: SpendLeaseArtifact,
-        *,
-        replace: bool,
-    ) -> SpendLeaseArtifact:
-        entity_id = self._spend_lease_pair_id(key_hash, boot_kid)
-
-        def operation(conn: Any) -> SpendLeaseArtifact:
-            existing = self._read_entity_tx(
-                conn,
-                SPEND_LEASE_ACTIVE_GRANT_KIND,
-                entity_id,
-                SpendLeaseArtifact,
-                for_update=True,
-            )
-            if existing is None or (replace and candidate.gen > existing.gen):
-                self._write_entity_tx(conn, SPEND_LEASE_ACTIVE_GRANT_KIND, entity_id, candidate)
-                return candidate
-            return existing
-
-        return self._run_transaction(operation)
+    def get_gateway_boot(self, kid: str) -> GatewayBoot | None:
+        return self._read_entity(GATEWAY_BOOT_KIND, kid, GatewayBoot)
 
     def _list_entities(
         self,
@@ -1755,33 +1691,6 @@ class PostgresStore:
                     if changed.rowcount != credit_shard_count(credit):
                         raise RuntimeError(
                             "archive trust latch did not cover every active shard"
-                        )
-                    lease_rows = conn.execute(
-                        "SELECT kind, id, body FROM tr_entities WHERE "
-                        "kind IN ('spend_lease', 'regional_quota_lease')"
-                    ).fetchall()
-                    for lease_kind, lease_id, raw_body in lease_rows:
-                        body = (
-                            json.loads(raw_body)
-                            if isinstance(raw_body, str)
-                            else dict(raw_body)
-                        )
-                        if body.get("workspace_id") != workspace_id:
-                            continue
-                        if lease_kind == "spend_lease" and body.get("state") != "CLOSED":
-                            body["state"] = "TOMBSTONED"
-                            body["closing_at"] = iso_now()
-                        elif (
-                            lease_kind == "regional_quota_lease"
-                            and body.get("state") != "closed"
-                        ):
-                            body["state"] = "quarantined"
-                            body["last_error"] = "workspace_archived"
-                            body["updated_at"] = iso_now()
-                        else:
-                            continue
-                        self._write_entity_tx(
-                            conn, str(lease_kind), str(lease_id), body
                         )
                 else:
                     owned = self._require_owner_growth_tx(
@@ -6598,7 +6507,6 @@ class PostgresStore:
         settlement: str = "local",
         expires_at: str | None = None,
         deferred_cap_microdollars: int | None = None,
-        spend_lease: SpendLeaseArtifact | None = None,
         invocation_nonce: str | None = None,
         expected_pause_epoch: int | None = None,
     ) -> GatewayAuthorization:
@@ -6659,16 +6567,6 @@ class PostgresStore:
             native_batch_eligible=native_batch_eligible,
             settlement=settlement,
             expires_at=expires_at,
-            spend_lease_token=spend_lease.token if spend_lease else None,
-            spend_lease_id=spend_lease.lease_id if spend_lease else None,
-            spend_lease_cap_micro=spend_lease.cap_micro if spend_lease else None,
-            spend_lease_gen=spend_lease.gen if spend_lease else None,
-            spend_lease_iat=spend_lease.iat if spend_lease else None,
-            spend_lease_exp=spend_lease.exp if spend_lease else None,
-            spend_lease_issuer_kid=spend_lease.issuer_kid if spend_lease else None,
-            spend_lease_boot_kid=spend_lease.boot_kid if spend_lease else None,
-            spend_lease_catalog_version=(spend_lease.catalog_version if spend_lease else None),
-            spend_lease_status=spend_lease.lease_status if spend_lease else None,
             invocation_nonce=invocation_nonce,
         )
 
@@ -7210,13 +7108,6 @@ class PostgresStore:
                 },
             )
             raise
-
-    def record_spend_lease_shadow(self, event_id: str, payload: dict[str, Any]) -> None:
-        outbox = self._operational_analytics_outbox
-        if outbox is None:
-            log.warning("postgres.spend_lease_shadow_outbox_disabled_drop")
-            return
-        outbox.enqueue_spend_lease_shadow(event_id, payload)
 
     def record_provider_benchmark(self, sample: ProviderBenchmarkSample) -> None:
         # indexed_at = created_at lets provider_route_benchmark_samples bound

@@ -6,12 +6,6 @@
     }
   },
   "lines": {
-    ".codex-review-1.md": {
-      "- **P2 — [docs/client-receipts.md:47]:** The documentation says the migration is safe after the compatible router, but the new writer immediately names physical `kid` and `att_sha256` columns and fails if they do not exist. Reproduce by starting this revision before applying DDL and collecting a key. Fix: state expli": {
-        "count": 1,
-        "reason": "Archived review prose about receipt-column deployment ordering; this line executes no schema command."
-      }
-    },
     ".github/workflows/ci.yml": {
       "# order-independent; grouping is what serializes the DDL.": {
         "count": 1,
@@ -20,16 +14,6 @@
     },
     "clickhouse/ingest_operational_outbox.py": {
       "# OutboxHeartbeatPublisher). One generic tr_entities row -- no DDL -- read back": {
-        "count": 1,
-        "reason": "ClickHouse analytics operation or explanation, not Spanner schema."
-      }
-    },
-    "clickhouse/prove_leaderboard.py": {
-      "def _materialized_view_ddl() -> str:": {
-        "count": 1,
-        "reason": "ClickHouse analytics operation or explanation, not Spanner schema."
-      },
-      "ch(_materialized_view_ddl())": {
         "count": 1,
         "reason": "ClickHouse analytics operation or explanation, not Spanner schema."
       }
@@ -44,32 +28,6 @@
       "every table plus DDL, on a cluster that also holds wallets, keys and the": {
         "count": 1,
         "reason": "ClickHouse schema provisioning, parsing or operator explanation, not Spanner schema."
-      }
-    },
-    "scripts/deploy/infra-stage0.sh": {
-      "log \" creating database $NEW_SPANNER_DATABASE on $NEW_SPANNER_INSTANCE (mirrored DDL)\"": {
-        "count": 1,
-        "reason": "Stage-0 provisioning log only; no schema dispatch."
-      },
-      "gc_or_dry spanner databases create \"$NEW_SPANNER_DATABASE\" \\": {
-        "count": 1,
-        "reason": "Stage-0 creates the alternate-instance database with the same tr_entities base table extracted from infra.sh; not an additional fresh-install migration."
-      },
-      "--ddl='CREATE TABLE tr_entities (kind STRING(64) NOT NULL, id STRING(512) NOT NULL, body STRING(MAX) NOT NULL, updated_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true)) PRIMARY KEY (kind, id)'": {
-        "count": 1,
-        "reason": "Stage-0 duplicate of the infra.sh tr_entities base table, including the commit-timestamp option and primary key."
-      },
-      "dry_log \"gcloud spanner databases ddl update $NEW_SPANNER_DATABASE --instance=$NEW_SPANNER_INSTANCE --ddl=ALTER_DATABASE_PITR_7D\"": {
-        "count": 1,
-        "reason": "Stage-0 dry-run log describing the seven-day PITR setting; no schema dispatch."
-      },
-      "gc spanner databases ddl update \"$NEW_SPANNER_DATABASE\" \\": {
-        "count": 1,
-        "reason": "Stage-0 database retention dispatch; repeats the seven-day PITR option reviewed in infra.sh, not a table/index migration."
-      },
-      "--ddl=\"ALTER DATABASE \\`${NEW_SPANNER_DATABASE}\\` SET OPTIONS (version_retention_period = '7d')\"": {
-        "count": 1,
-        "reason": "Stage-0 seven-day PITR database option, matching the reviewed infra.sh retention setting."
       }
     },
     "scripts/deploy/migrate_analytics_outbox.sh": {
@@ -559,18 +517,6 @@
         "count": 1,
         "reason": "Spanner instance drop-protection option, not a DROP statement."
       },
-      "gc bigtable instances create \"$BIGTABLE_INSTANCE_ID\" \\": {
-        "count": 1,
-        "reason": "Bigtable instance provisioning, not Spanner schema."
-      },
-      "gc bigtable instances tables create \"$BIGTABLE_GENERATION_TABLE\" \\": {
-        "count": 1,
-        "reason": "Bigtable table provisioning, not Spanner schema."
-      },
-      "gc iam roles create \"$BIGTABLE_SCHEMA_ROLE_ID\" \\": {
-        "count": 1,
-        "reason": "IAM custom-role provisioning, not Spanner schema."
-      },
       "gc storage buckets create \"gs://${DEPLOY_MUTEX_BUCKET}\" \\": {
         "count": 1,
         "reason": "Cloud Storage bucket provisioning, not Spanner schema."
@@ -590,6 +536,24 @@
       "gc iam service-accounts create \"$GOOGLE_DATA_MANAGER_SERVICE_ACCOUNT_ID\" \\": {
         "count": 1,
         "reason": "IAM service-account provisioning, not Spanner schema."
+      }
+    },
+    "scripts/audit_spanner_schema.py": {
+      "from tests.conformance.spanner_ddl import DDL": {
+        "count": 1,
+        "reason": "Scheduled schema audit provisions the reviewed conformance fixture only in its separate anonymous-credential process after numeric-loopback and emulator-environment checks; never production schema changes."
+      },
+      "target = instance.database(\"fixture\", ddl_statements=DDL[:20])": {
+        "count": 1,
+        "reason": "Scheduled schema audit provisions the reviewed conformance fixture only in its separate anonymous-credential process after numeric-loopback and emulator-environment checks; never production schema changes."
+      },
+      "for offset in range(20, len(DDL), 20):": {
+        "count": 1,
+        "reason": "Scheduled schema audit provisions the reviewed conformance fixture only in its separate anonymous-credential process after numeric-loopback and emulator-environment checks; never production schema changes."
+      },
+      "target.update_ddl(DDL[offset:offset + 20]).result(timeout=120)": {
+        "count": 1,
+        "reason": "Scheduled schema audit provisions the reviewed conformance fixture only in its separate anonymous-credential process after numeric-loopback and emulator-environment checks; never production schema changes."
       }
     }
   }

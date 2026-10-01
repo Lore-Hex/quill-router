@@ -111,7 +111,7 @@ on **INSERT-as-claim**, which is the *typed-counter* mechanism
 So: `tr_settle_outbox` is a native Spanner table with a real PRIMARY KEY, enqueued
 via INSERT DML that raises `AlreadyExists`. Mirror broadcast's *state machine*,
 not its storage. **InMemory backend: no-op/unsupported** (durability needs
-Spanner); the mechanism is only active on `spanner-bigtable`.
+Spanner); the mechanism is only active on `spanner-clickhouse`.
 
 ### 5.2 Primary key handles settle-vs-refund polarity (SF1)
 
@@ -189,17 +189,11 @@ lease-claims due `pending` rows and for each:
   full `_settle_gateway_authorization` HTTP handler — which would re-run pricing
   and re-fire non-idempotent side effects (budget alerts, auto-refill, metadata
   broadcast, provider-benchmark samples) on every replay (SF7).
-- Spend-lease rows have one corrective exception to the general frozen-cost rule.
-  A rolling pre-clamp revision may have frozen a successful charge above its typed
-  allocation. While the reservation is still unclaimed, the drain caps that charge,
-  re-derives every charge-dependent payout hidden in `settle_body`, and rewrites both
-  fields in the same billing transaction. The rewrite is fenced by
-  `status='pending'` and the drain worker's `lease_owner`; a zero-row rewrite aborts
-  the transaction, so billing cannot commit while durable replay authority is stale.
-  The generation and analytics intent are constructed only from the corrected amount.
-  If an older revision already won the reservation, its historical booked charge is
-  left untouched and used for generation repair, then surfaced for spend-lease
-  quarantine rather than charged again.
+- The frozen amount has no exceptions. Rows whose `settle_body` carries a
+  retired settlement kind (`regional_lease` or `spend_lease`, from the pilots
+  removed in 2026-09) are dead-lettered as `invalid_row` when still unsettled,
+  and the settle route answers 409 for those kinds; the frozen-cost rewrite that
+  once clamped spend-lease charges is gone with the pilot.
 - Interprets the **richer finalize outcome** (§3): `settled_now` or
   `already_settled_with_charge` → `status='done'`; `already_released_free` on a
   row that intended a charge → **`dead` + alert** (the reaper beat us — invariant
@@ -215,9 +209,6 @@ lease-claims due `pending` rows and for each:
   outbox terminal retention timestamps in the same transaction. The
   authorization keeps only its content-free replay record so a client
   idempotency key remains valid for the full window.
-  Spend-lease finalization follows the same split retention rule: finalization
-  defers retention, and only the existing lease-fenced `mark(done)` arms it after
-  sibling-intent checks.
 - Final `ApplyOutcome` contract for the drain:
   `settled_now` → done. `already_settled_with_charge` means done for settle
   intent; for refund intent with a charged reservation, done plus the same
@@ -363,7 +354,7 @@ Read this first if you are continuing the outbox build.
     (lease-fenced), `mark` (backoff→`dead` at max_attempts), `has_intent`
     (the reaper-guard predicate: freezes on `pending`/`dead`, NOT
     `done`/`release_approved`), `get`.
-  - Wired as `self.settle_outbox` on `SpannerBigtableStore` only. **No live
+  - Wired as `self.settle_outbox` on `SpannerStore` only. **No live
     caller yet** — dormant.
   - Fake Spanner models the table AND asserts every load-bearing SQL predicate
     (`_require_pred`) so a dropped predicate FAILS a test (the MF6 guarantee).

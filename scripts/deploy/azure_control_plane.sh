@@ -48,6 +48,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${TR_RELEASE_CHECKOUT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 # shellcheck source=scripts/deploy/deploy_mutex.sh
 source "${SCRIPT_DIR}/deploy_mutex.sh"
 # shellcheck source=scripts/deploy/cloud_bake_gate.sh
@@ -77,7 +78,7 @@ ACR="${ACR:-$(echo "${STACK}${LOCATION}acr" | tr -cd "[:alnum:]")}"
 # while the actual image reference stays pinned by digest. The bake gate
 # reads it back as this cloud's serving commit, so a wrong value here
 # poisons fleet-wide bake evidence — die rather than stamp 'unknown'.
-IMAGE_TAG="${IMAGE_TAG:-$(git -C "${SCRIPT_DIR}/../.." rev-parse --short HEAD 2>/dev/null || true)}"
+IMAGE_TAG="${IMAGE_TAG:-$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || true)}"
 [ -n "$IMAGE_TAG" ] || die "not a git checkout: set IMAGE_TAG=<short-sha>"
 # #768's staleness detector reads RELEASE_COMMIT; same truth as the tag,
 # and the bake gate asserts the tag equals HEAD below.
@@ -85,7 +86,6 @@ RELEASE_COMMIT="${RELEASE_COMMIT:-$IMAGE_TAG}"
 STATE_DIR="${STATE_DIR:-$HOME/.config/$STACK}"
 PW_FILE="${PW_FILE:-$STATE_DIR/pgpw}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 # The attested Azure gateway this control plane fronts, and the health host the
 # status page is published under.
@@ -168,7 +168,7 @@ cleanup_azure_control_plane() {
       --yes -o none 2>/dev/null || true
   fi
   if [ "${DEPLOY_MUTEX_SCOPE_OWNS_LOCK:-0}" -eq 1 ]; then
-    deploy_mutex_release
+    deploy_mutex_finish "$deploy_status" || deploy_status=1
   fi
   exit "$deploy_status"
 }
@@ -191,11 +191,17 @@ esac
 # Local source-of-truth validation above must fail before any cloud access.
 # The mutex still precedes the first az read below and every later mutation.
 deploy_mutex_acquire
-cloud_bake_gate azure
-if [ -n "$(git -C "${SCRIPT_DIR}/../.." status --porcelain 2>/dev/null || true)" ]; then
+bake_status=0
+cloud_bake_gate azure || bake_status=$?
+if [ "$bake_status" -eq 75 ]; then
+  log "automatic promotion is already current or superseded; no production mutation"
+  exit 0
+fi
+[ "$bake_status" -eq 0 ] || exit "$bake_status"
+if [ -n "$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null || true)" ]; then
   die "the gate validated HEAD; a dirty tree deploys unvalidated code"
 fi
-HEAD_IMAGE_TAG="$(git -C "${SCRIPT_DIR}/../.." rev-parse --short HEAD 2>/dev/null || true)"
+HEAD_IMAGE_TAG="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || true)"
 if [ "$IMAGE_TAG" != "$HEAD_IMAGE_TAG" ]; then
   if [ -z "${TR_CLOUD_BAKE_OVERRIDE:-}" ]; then
     die "IMAGE_TAG=${IMAGE_TAG} does not match the validated short HEAD ${HEAD_IMAGE_TAG:-UNKNOWN}; set TR_CLOUD_BAKE_OVERRIDE only for break glass"
@@ -573,6 +579,7 @@ if exists az containerapp show -g "$RG" -n "$APP"; then
       --user-assigned "$CLICKHOUSE_IDENTITY_ID" -o none
   fi
   az containerapp secret set -g "$RG" -n "$APP" --secrets "${SECRET_ARGS[@]}" -o none
+  deploy_mutex_assert
   az containerapp update -g "$RG" -n "$APP" \
     --image "$IMAGE_REF" --set-env-vars "${ENV_VARS[@]}" \
     --remove-env-vars "${RETIRED_OBSERVER_ENV_VARS[@]}" \
@@ -588,6 +595,7 @@ else
   if [ "$OUTBOX_ENABLED" = "true" ]; then
     IDENTITY_CREATE_ARGS=(--user-assigned "$CLICKHOUSE_IDENTITY_ID")
   fi
+  deploy_mutex_assert
   az containerapp create -g "$RG" -n "$APP" \
     --environment "$APP_ENV" \
     --image "$IMAGE_REF" \
