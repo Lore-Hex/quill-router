@@ -313,17 +313,33 @@ footer{background:#070a08;border-top:1px solid #33403a}
  .closing-cta .closing-landscape{object-position:60% 70%}
 }
 
-/* The model search stays visible at every width: a second header row on phones and tablets. */
+/* The model search lives in the header row at every width. Narrow screens trade the wordmark and button labels for it. */
 @media(max-width:1200px){
- :root{--site-header-height:134px}
- .trh>.tbar{display:flex;flex-wrap:wrap;height:auto;min-height:var(--site-header-height);padding-bottom:12px;row-gap:12px}
- .trnav .search{display:flex;order:10;flex:1 1 100%;width:100%;height:44px;border-radius:6px;font-size:15px;color:#adbbb2}
+ .trnav .search{display:flex;flex:1 1 120px;min-width:0;width:auto;max-width:360px;height:44px;padding:0 12px;border-radius:6px;font-size:14px;color:#adbbb2}
+ .trnav .search span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
  .trnav .search kbd{display:none}
- .trnav nav{top:100%}
+ .trnav nav{gap:12px}
 }
-@media(max-width:1200px) and (pointer:fine){.trnav .search kbd{display:inline-block}}
-/* Short landscape phones keep the 64px single-row header the hero sizing assumes; search stays one tap away in the dialog. */
-@media(max-width:1200px) and (max-height:480px){.trnav .search{display:none}.trh>.tbar{padding-bottom:0}}
+@media(min-width:881px) and (max-width:1200px) and (pointer:fine){.trnav .search kbd{display:inline-block}}
+@media(max-width:880px){.trh>.tbar{gap:10px}.trnav .search{max-width:none}.trnav .signin{margin-left:0}.trnav .menu{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-width:44px;padding:0 12px}}
+@media(max-width:600px){.brand-link>span{display:none}.trnav .menu>span{display:none}.trnav .menu{width:44px;padding:0}.trnav .signin{padding:12px;font-size:13px}}
+/* Small phones: the hero's primary action opens the same sign-in dialog, so the header keeps search and moves Sign in into the drawer. */
+.trnav .drawer-signin{display:none}
+@media(max-width:480px){.trnav .signin.button-secondary{display:none}.trnav nav.open .drawer-signin{display:block;padding:16px 0;min-height:44px;color:#cce8d7}.trnav .menu{margin-left:0}}
+@media(max-width:360px){.trnav .search{font-size:13px}}
+
+/* Phones and tablets: the logo ticker follows the hero actions instead of being pinned to the viewport bottom. */
+@media(max-width:1000px){
+ #top .hero .labs{margin:28px 0 0;padding:10px 0;align-self:center;width:min(460px,100%);background:transparent}
+}
+
+/* Live status dot: saturated, glowing, and pulsing while the probe is fresh. */
+.homepage-status-dot{width:8px;height:8px;background:#6b7a72}
+.homepage-status[data-state="up"] .homepage-status-dot{background:#2ee59d;box-shadow:0 0 0 3px #2ee59d33,0 0 10px #2ee59d99}
+.homepage-status[data-state="degraded"] .homepage-status-dot{background:#ffc857;box-shadow:0 0 0 3px #ffc85733,0 0 10px #ffc85799}
+.homepage-status[data-state="down"] .homepage-status-dot{background:#ff6b5b;box-shadow:0 0 0 3px #ff6b5b33,0 0 10px #ff6b5b99}
+@keyframes status-pulse{0%,100%{box-shadow:0 0 0 2px #2ee59d40,0 0 8px #2ee59d99}50%{box-shadow:0 0 0 6px #2ee59d00,0 0 14px #2ee59dcc}}
+@media(prefers-reduced-motion:no-preference){.homepage-status[data-state="up"] .homepage-status-dot{animation:status-pulse 2.4s ease-in-out infinite}}
 @media(max-width:600px){#top .cta{gap:16px}#top .lnk{font-size:14px}}
 
 /* Final reading hierarchy: mobile actions follow headings; quotes need no rule. */
