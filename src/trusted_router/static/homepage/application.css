@@ -330,8 +330,9 @@ footer{background:#070a08;border-top:1px solid #33403a}
 
 /* Phones and tablets: the logo ticker follows the hero actions instead of being pinned to the viewport bottom. */
 @media(max-width:1000px){
- #top .hero .labs{margin:28px 0 0;padding:10px 0;align-self:center;width:min(460px,100%);background:transparent}
+ #top .hero .labs{margin:clamp(40px,8svh,80px) -32px 0;padding:14px 0;align-self:center;width:calc(100% + 64px);max-width:none;background:#050706bf}
 }
+@media(max-width:600px){#top .hero .labs{margin-inline:-20px;width:calc(100% + 40px)}}
 
 /* Live status dot: saturated, glowing, and pulsing while the probe is fresh. */
 .homepage-status-dot{width:8px;height:8px;background:#6b7a72}
@@ -436,3 +437,23 @@ footer{background:#070a08;border-top:1px solid #33403a}
 /* Catalog toolbar: filters left, search right; search first and full width on phones. */
 .trc .fl .catalog-actions{margin-left:auto}
 @media(max-width:700px){.trc .fl .catalog-actions{order:-1;flex-basis:100%;margin:0 0 8px}.trc .fl .catalog-search{width:100%}}
+
+/* Customer story: the collapsed perspective row reads as a quiet label, not another line of the headline. */
+.trs .customer-details>summary{font-style:italic;font-size:15px;color:#234636;margin:0 24px;padding:14px 0 16px;border-top:1px solid #9ebaa9}
+.trs .customer-details[open]>summary{border-bottom:0}
+
+/* Press strip under the customer story (SPEC section 10): source, quote, supporting link, left-aligned. */
+.trs .press{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:flex-start;gap:8px 28px;padding:28px 0 0;border:0;background:none}
+.trs .press .src{flex:none}
+.trs .press p{flex:0 1 auto;max-width:62ch;margin:0;font-size:17px;line-height:1.6;font-style:italic;color:#c3c9c3}
+.page .trs .press .action-link{color:var(--action-secondary-ink)}
+@media(max-width:700px){.trs .press{gap:12px}.trs .press p{flex-basis:100%}}
+
+/* Without JavaScript the phone header shows its links inline instead of hiding them behind Menu. */
+@media(max-width:880px){
+ html.no-js .trh>.tbar{height:auto;flex-wrap:wrap;padding-bottom:10px;row-gap:6px}
+ html.no-js .trnav nav{display:flex;position:static;flex-direction:row;flex-wrap:wrap;gap:4px 18px;padding:0;border:0;background:transparent;flex-basis:100%}
+ html.no-js .trnav nav a{padding:8px 0;min-height:40px}
+ html.no-js .trnav .menu{display:none}
+ html.no-js .trnav .drawer-signin{display:inline-flex;align-items:center}
+}

@@ -288,3 +288,12 @@ Added four provider-configuration parity cases comparing legacy and redesigned r
 - Hero ticker items are buttons: a tap or click opens the model search prefilled with that model (the spec only defined hover pause, which froze the marquee on touch).
 - Sign-in option labels stay "Continue with Google/GitHub/MetaMask": the dialog is shared with the rest of the site and the wording follows Google's sign-in branding guidance.
 - Preview: `/tmp/tr-homepage-preview/up.sh` restarts app, bridge and ngrok in one command and prints the public URL. The app reads `app.env` beside it (non-secret dummy OAuth IDs, rate limiting off, flag on). Run it after any static change.
+
+## Ticker contrast, press strip, head tags, footer links, no-JS nav (2026-10-01)
+
+- Hero ticker on phones and tablets: anchored to the action buttons with a `clamp(40px, 8svh, 80px)` gap, full-bleed dark strip (`#050706bf`) for contrast over the river. Nothing about its position depends on viewport height, so it cannot fall below the first screen while the buttons are visible. A reported vertical jump on a real phone was not reproduced in Chromium (position sampled every 500ms through a full 32s marquee cycle, no change).
+- Customer story: the collapsed "Customer perspective" row is italic, muted, with a hairline above, so it reads as a label rather than a headline line.
+- Press strip restored under the customer story per SPEC section 10: Featured in Axios, quote, "Read the story →" (action-link).
+- Head: `og:site_name`, `twitter:title`, `twitter:description`, and `rel=alternate` links to `/docs/llms.txt` and `/docs/llms-full.txt`, matching main.
+- Footer: `/eu` (EU routing), `/openai-compatible-llm-api`, `/llm-provider-latency-benchmarks` restored in the Compare column; main linked them from the homepage and nothing else did.
+- No-JS: `<html class="no-js">` is cleared by the first inline script; without scripts the phone header shows its links inline and the drawer Sign in link, instead of hiding everything behind Menu.
