@@ -128,6 +128,28 @@ credit row while holding the key row, so key rows inherited credit-row wait
 (production `LOCK_STATS`, 2026-09-07). Taking every credit-table cell first
 means the key row is held only until commit.
 
+Fresh-authorize speculative batching (RPC diet cut 2) keeps this order. For an
+eligible non-NULL idempotency scope the first RPC batches credit reserve, key
+reserve, reservation INSERT, then authorization INSERT. The UNIQUE NULL_FILTERED
+`tr_reservation_by_idemp` index now supplies the scope conflict; no speculative
+reservation SELECT acquires a read lock or upgrades it later. A duplicate status
+or any unexpected count rolls the entire prefix back before the sequential
+transaction rereads scope and counters. ABORTED repeats the speculative callback.
+Existing-row finalizers and same-scope competitors can still cause aborts; the
+shared deadline bounds retries. The fake order guard proves call order only,
+not Spanner contention or deadlock freedom.
+
+Armed authorize retains credit UPDATE -> selected-shard pause SELECT -> key/new
+rows batch. Updating balance cells does not establish that pause/epoch cells
+are already locked, so a post-key pause read is not exempted from the guard.
+Moving that read after the new batch would violate the documented credit-class
+ordering; moving it before credit DML would change its required position.
+Consequently this cut is 3 operations unarmed and 5 armed, including the auth
+snapshot and commit. The proposed armed 4-operation target requires a separate
+pause-read design decision. BYOK keeps its shard-zero pause read before key.
+NULL scopes are excluded from the unique index and keep sequential admission;
+strict budgets and the existing key-speculation hints also keep their checks.
+
 A bounded per-process negative cache remembers final lifetime-cap rejections;
 only cached keys pay a lock-free snapshot precheck, so healthy keys pay nothing.
 The snapshot remains authoritative on every hit, dropping the entry when it

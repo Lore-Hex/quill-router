@@ -98,6 +98,27 @@ def builder_cases() -> list[SQLCase]:
                             ("reservation", insert_reservation), ("entity", entity),
                             ("reserve-key", reserve_key), ("generation", gen), ("activity", activity)):
         cases.append(SQLCase(name, [statement]))
+    reserve_credit = counters.reserve_credit_statement(pt, "acceptance-ws", 1, shard=0)
+    cases.append(SQLCase("reserve-credit", [reserve_credit]))
+    # Exercise funded and zero-row prefixes on native GoogleSQL in CI. Batch
+    # DML executes the inserts after a zero; caller rollback is tested separately.
+    for funded_credit, funded_key in product((False, True), repeat=2):
+        seed_counters = [
+            ("INSERT INTO tr_credit_balance (workspace_id, shard, total_credits) "
+             "VALUES (@ws, 0, @credits)",
+             {"ws": "acceptance-ws", "credits": int(funded_credit)},
+             {"ws": pt.STRING, "credits": pt.INT64}),
+            ("INSERT INTO tr_key_limit (key_hash, shard, limit_micro) VALUES (@kh, 0, @cap)",
+             {"kh": "acceptance-key", "cap": int(funded_key)},
+             {"kh": pt.STRING, "cap": pt.INT64}),
+        ]
+        for mode, auth_statement in (("typed", insert_auth), ("legacy", entity)):
+            cases.append(SQLCase(
+                f"authorize-fresh-{mode}-{funded_credit}-{funded_key}",
+                [reserve_credit, reserve_key, insert_reservation, auth_statement],
+                batch=True, seed=seed_counters,
+                expected_counts=[int(funded_credit), int(funded_key), 1, 1],
+            ))
     # The common speculative authorize shapes, including fallback ownership.
     cases.append(SQLCase("authorize-batch", [reserve_key, insert_reservation, insert_auth], batch=True))
     cases.append(SQLCase("authorize-legacy-batch", [reserve_key, insert_reservation, entity], batch=True))

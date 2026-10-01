@@ -5,10 +5,14 @@ See docs/design/billing-typed-counters.md.
 ONE Spanner read-write transaction (no mutation mixing) owns the whole authorize
 decision, so a crash can never leak a hold (codex#1 #1):
 
-  scoped idempotency read (+ fingerprint) ->
-  conditional credit DML -> pause / spend-lease checks -> conditional key-cap DML ->
-  tr_reservation INSERT (exact holds + hold usage type + authorization_id) ->
-  gateway_authorization DML INSERT.
+  eligible fresh: batch [credit reserve, key reserve, reservation, authorization]
+  armed: credit reserve -> selected-shard pause read -> batch [key, new rows]
+  fallback: scoped idempotency read -> sequential credit/pause/key checks -> rows.
+
+The UNIQUE NULL_FILTERED idempotency index arbitrates speculative requests.
+NULL scopes, strict budgets, skipped key limits, and no-speculation hints retain
+sequential admission. Any speculative count mismatch or duplicate rolls back
+before a new sequential transaction classifies the result under the same budget.
 
 A rejection (insufficient credits / key cap) raises inside the callback, which
 rolls the whole transaction back — releasing any hold already taken atomically,
@@ -62,6 +66,7 @@ from trusted_router.storage_gcp_counter_dml import (
     read_reservation_by_idempotency,
     reservation_insert_statement,
     reserve_credit,
+    reserve_credit_statement,
     reserve_key,
     reserve_key_statement,
 )
@@ -154,13 +159,11 @@ class _Reject(Exception):
         self.outcome = outcome
 
 
-class _RetrySequentialKeyReserve(GoogleAPICallError):
-    """Discard speculative rows before classifying a zero-row key hold.
+class _RetrySequentialAuthorize(GoogleAPICallError):
+    """Roll back a speculative fresh authorize before sequential classification.
 
-    Use the API-error lifecycle deliberately: storage_gcp_io rolls back with an
-    independent deadline floor, and the SDK then discards the transaction without
-    sending another rollback (even if cleanup failed). A generic exception would
-    let the SDK roll back inside the spent request budget and mask this signal.
+    Deliberately not ABORTED: the protected API-error lifecycle releases the
+    transaction before fallback, without renewing the shared RPC deadline.
     """
 
 
@@ -491,17 +494,39 @@ def authorize_atomic(
 
     if strict_budget and key_candidates != (UNSHARDED,):
         raise ValueError("strict budgets require exactly one key shard")
-    speculative = not strict_budget and not skip_key_limit and speculate_key_limit
+    speculative = (
+        idempotency_scope is not None and not strict_budget
+        and not skip_key_limit and speculate_key_limit
+    )
 
-    def check_key_prefix(counts: Sequence[int]) -> None:
-        # Zero is ambiguous (missing, exhausted, uncapped, BYOK-excluded).
-        # Even a later INSERT error must not override the key business decision.
-        # ABORTED is handled first by execute_batch_dml and retries this callback.
-        if counts and counts[0] == 0:
-            raise _RetrySequentialKeyReserve("speculative key hold missed")
+    trust_armed = (
+        trust_settings is not None and trust_settings.spend_lease_trust_eligibility_enabled
+    )
+    # Pause columns must be read before taking the key lock (Spanner cell locks).
+    # An armed transaction keeps credit DML -> pause SELECT -> remaining batch.
+    batch_credit = not trust_armed
+
+    def check_authorize_counts(counts: Sequence[int]) -> None:
+        # Batch DML continues after zero rows. No prefix, including successful
+        # INSERTs, may commit unless every statement affected exactly one row.
+        # ABORTED takes precedence in execute_batch_dml and retries speculation.
+        expected = 4 if has_credit_candidate and batch_credit else 3
+        if len(counts) != expected or any(count != 1 for count in counts):
+            raise _RetrySequentialAuthorize("speculative authorize row-count mismatch")
+
+    def check_pause(transaction: Any, selected_credit_shard: int) -> None:
+        # Preserve #1119: flag-off never enforces pause. Read only the selected
+        # shard; scanning all shards would couple otherwise independent holds.
+        if trust_settings is not None and trust_settings.spend_lease_trust_eligibility_enabled:
+            from trusted_router.trust_eligibility import billing_paused_tx
+            if billing_paused_tx(transaction, pt, workspace_id, shard=selected_credit_shard):
+                if speculative:
+                    # Replay wins over pause; reread it only after rollback.
+                    raise _RetrySequentialAuthorize("speculative authorize paused")
+                raise _Reject("billing_paused")
 
     def txn(transaction: Any) -> dict:
-        if idempotency_scope is not None:
+        if not speculative and idempotency_scope is not None:
             existing = read_reservation_by_idempotency(transaction, pt, idempotency_scope)
             if existing is not None:
                 return _replay(transaction, existing)
@@ -510,28 +535,24 @@ def authorize_atomic(
         # Reservation/authorization INSERTs below consume the selected shards and holds.
         credit_hold = 0
         selected_credit_shard = UNSHARDED
-        if has_credit_candidate:
+        if has_credit_candidate and speculative and batch_credit:
+            selected_credit_shard = shard_candidates[0]
+            credit_hold = estimate
+        elif has_credit_candidate:
             for candidate in shard_candidates:
                 if reserve_credit(transaction, pt, workspace_id, estimate, shard=candidate):
                     selected_credit_shard = candidate
                     break
             else:
+                if speculative:
+                    raise _RetrySequentialAuthorize("speculative credit hold missed")
                 raise _Reject(AuthorizeOutcome.INSUFFICIENT_CREDITS)
             credit_hold = estimate
 
-        # Authorize-time pause enforcement belongs to the armed trust program,
-        # not today's path. Shipping it unarmed changed the enclave rollout
-        # gate's behavior in production.
-        if trust_settings is not None and trust_settings.spend_lease_trust_eligibility_enabled:
-            # Pause state is replicated atomically across the credit shards. Read
-            # only the selected shard, whose balance DML already joined this txn's
-            # read set; a workspace-wide scan couples otherwise independent holds
-            # and can exhaust the retry budget under contention. BYOK requests
-            # use shard zero. A pause still conflicts on this shard and
-            # rejection rolls back every staged credit hold.
-            from trusted_router.trust_eligibility import billing_paused_tx
-            if billing_paused_tx(transaction, pt, workspace_id, shard=selected_credit_shard):
-                raise _Reject("billing_paused")
+        # BYOK has no credit DML: retain credit-class pause read before key.
+        # Sequential fallback preserves credit -> pause -> key error precedence.
+        if not speculative or not batch_credit or not has_credit_candidate:
+            check_pause(transaction, selected_credit_shard)
 
         # Bounded lifetime-cap TOCTOU: a cap committed after the gateway's
         # entity read can miss only requests already in flight at that commit,
@@ -618,16 +639,21 @@ def authorize_atomic(
                 legacy_auth_body,
             )
         if speculative:
-            # Ordered server execution: credit precedes key,
-            # and key precedes these new rows. A zero does NOT stop Batch DML.
-            execute_batch_dml(
-                transaction,
-                [reserve_key_statement(
-                    pt, key_hash, estimate, is_byok=is_byok, shard=selected_key_shard,
-                ), reservation_statement, authorization_statement],
-                [(1,), (1,), (1,)],
-                check_prefix=check_key_prefix,
-            )
+            statements = []
+            if has_credit_candidate and batch_credit:
+                statements.append(reserve_credit_statement(
+                    pt, workspace_id, estimate, shard=selected_credit_shard,
+                ))
+            statements.extend([reserve_key_statement(
+                pt, key_hash, estimate, is_byok=is_byok, shard=selected_key_shard,
+            ), reservation_statement, authorization_statement])
+            try:
+                execute_batch_dml(
+                    transaction, statements, [(1,)] * len(statements),
+                    check_prefix=check_authorize_counts,
+                )
+            except AlreadyExists as conflict:
+                raise _RetrySequentialAuthorize("speculative authorize collision") from conflict
         else:
             execute_batch_dml(
                 transaction, [reservation_statement, authorization_statement], [(1,), (1,)]
@@ -645,7 +671,7 @@ def authorize_atomic(
             return run_in_transaction_with_retry(
                 database, txn, transaction_tag="tr_authorize",
             )
-        except _RetrySequentialKeyReserve:
+        except _RetrySequentialAuthorize:
             # Protected API-error cleanup attempted rollback before the SDK
             # discarded the handle. Cleanup never renews the shared T1 budget.
             # Retry the original decision path once; it handles no-hold success,

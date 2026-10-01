@@ -111,7 +111,7 @@ def test_frozen_sequential_equivalence(
     assert run(current) == run(frozen)
 
 
-@pytest.mark.parametrize('index', [1, 2])
+@pytest.mark.parametrize('index', [2, 3])
 @pytest.mark.parametrize('code', [code_pb2.ALREADY_EXISTS, code_pb2.FAILED_PRECONDITION])
 def test_zero_key_count_precedes_later_insert_error(
     monkeypatch: pytest.MonkeyPatch, index: int, code: int,
@@ -123,7 +123,7 @@ def test_zero_key_count_precedes_later_insert_error(
 
     def partial(tx: Any, statements: Any, **kwargs: Any) -> Any:
         status, counts = original(tx, statements[:index], **kwargs)
-        assert status.code == 0 and counts[0] == 0
+        assert status.code == 0 and counts[1] == 0
         return Status(code=code, message='later insert failure'), counts
 
     monkeypatch.setattr(_FakeTransaction, 'batch_update', partial)
@@ -152,10 +152,10 @@ def test_zero_count_retries_with_same_ids_and_releases_unique_scope(
     assert db.rollback_calls == 1 and db.commits == 1
     assert len(batches) == 2
     speculative, sequential = batches
-    predicted = speculative[1][1]
+    predicted = speculative[2][1]
     final = sequential[0][1]
     assert predicted == {**final, 'key_reserved_micro': 100}
-    assert speculative[2] == sequential[1]
+    assert speculative[3] == sequential[1]
     assert len(db.reservations) == len(db.gateway_authorizations) == 1
     assert next(iter(db.reservations.values()))['key_reserved_micro'] == 0
 
@@ -176,17 +176,6 @@ def test_already_exists_after_successful_key_uses_replay(
     db = _database()
     first = current.authorize_atomic(db, param_types, **_options())
     before = _state(db)
-    read = current.read_reservation_by_idempotency
-    hidden = False
-
-    def hide_winner_once(*args: Any, **kwargs: Any) -> Any:
-        nonlocal hidden
-        if not hidden:
-            hidden = True
-            return None
-        return read(*args, **kwargs)
-
-    monkeypatch.setattr(current, 'read_reservation_by_idempotency', hide_winner_once)
     replay = current.authorize_atomic(db, param_types, **_options())
     assert replay['outcome'] == current.AuthorizeOutcome.REPLAY
     assert replay['authorization_id'] == first['authorization_id']
@@ -220,7 +209,7 @@ def test_sequential_fallback_shares_authorize_deadline(
     original = _FakeTransaction.batch_update
 
     def batch(tx: Any, statements: Any, **kwargs: Any) -> Any:
-        if len(statements) == 3:
+        if len(statements) == 4:
             clock[0] += elapsed
         return original(tx, statements, **kwargs)
 
@@ -365,8 +354,9 @@ def configured_sdk(
         size = len(kwargs['request'].statements)
         return ExecuteBatchDmlResponse(
             status=Status(),
-            result_sets=[ResultSet(stats=ResultSetStats(row_count_exact=n))
-                         for n in ([0, 1, 1] if size == 3 else [1, 1])],
+            result_sets=[ResultSet(metadata={"transaction": {"id": f"tx-{len(transactions)}".encode()}},
+                                   stats=ResultSetStats(row_count_exact=n))
+                         for n in ([1, 0, 1, 1] if size == 4 else [1, 1])],
         )
 
     api.execute_streaming_sql.side_effect = read
@@ -393,7 +383,7 @@ def test_speculation_miss_configured_rollback_floor(
 
     def spend_budget(**kwargs: Any) -> Any:
         response = batch(**kwargs)
-        if len(kwargs['request'].statements) == 3:
+        if len(kwargs['request'].statements) == 4:
             sdk.clock[0] += elapsed
         return response
 
@@ -427,11 +417,11 @@ def test_speculation_miss_configured_rollback_floor(
         assert len(sdk.transactions) == 2
         sdk.rpcs.commit.assert_called_once()
         # The fallback reruns both authoritative checks before inserting.
-        assert sdk.rpcs.execute_streaming_sql.call_count == 2
+        assert sdk.rpcs.execute_streaming_sql.call_count == 1
         assert ['tr_credit_balance' in call.kwargs['request'].sql
-                for call in sdk.rpcs.execute_sql.call_args_list] == [True, True, False]
+                for call in sdk.rpcs.execute_sql.call_args_list] == [True, False]
         assert [len(call.kwargs['request'].statements)
-                for call in sdk.rpcs.execute_batch_dml.call_args_list] == [3, 2]
+                for call in sdk.rpcs.execute_batch_dml.call_args_list] == [4, 2]
     sdk.rpcs.rollback.assert_called_once()
     call = sdk.rpcs.rollback.call_args.kwargs
     assert call['transaction_id'] == b'tx-1'
@@ -455,7 +445,8 @@ def test_aborted_during_sequential_fallback(configured_sdk: Any, monkeypatch: py
     retry_info.Pack(RetryInfo(retry_delay={'seconds': 1}))
     sdk.rpcs.execute_batch_dml.side_effect = [
         ExecuteBatchDmlResponse(status=Status(), result_sets=[
-            ResultSet(stats=ResultSetStats(row_count_exact=n)) for n in [0, 1, 1]
+            ResultSet(metadata={"transaction": {"id": b"tx-1"}},
+                      stats=ResultSetStats(row_count_exact=n)) for n in [1, 0, 1, 1]
         ]),
         ExecuteBatchDmlResponse(status=Status(code=code_pb2.ABORTED, details=[retry_info])),
         ExecuteBatchDmlResponse(status=Status(), result_sets=[
@@ -466,7 +457,7 @@ def test_aborted_during_sequential_fallback(configured_sdk: Any, monkeypatch: py
     assert result['outcome'] == 'accepted'
     assert len(sdk.transactions) == 3
     assert [len(c.kwargs['request'].statements)
-            for c in sdk.rpcs.execute_batch_dml.call_args_list] == [3, 2, 2]
+            for c in sdk.rpcs.execute_batch_dml.call_args_list] == [4, 2, 2]
     # ABORTED stays with the SDK; the retry retains sequential shape and IDs.
     batches = sdk.rpcs.execute_batch_dml.call_args_list
     assert batches[1].kwargs['request'].statements == batches[2].kwargs['request'].statements
@@ -487,8 +478,8 @@ def _operation_count(db: Any) -> int:
 
 
 @pytest.mark.parametrize(('scenario', 'parent_count', 'round2_count'), [
-    ('accepted', 5, 4), ('byok_excluded', 5, 5), ('uncapped_direct', 6, 6),
-    ('key_rejection', 5, 9), ('credit_rejection', 3, 3), ('skip', 4, 4),
+    ('accepted', 5, 2), ('byok_excluded', 5, 5), ('uncapped_direct', 6, 6),
+    ('key_rejection', 5, 7), ('credit_rejection', 3, 5), ('skip', 4, 4),
 ])
 def test_operation_counts_with_metadata_hint(
     stable_ids: None, scenario: str, parent_count: int, round2_count: int,

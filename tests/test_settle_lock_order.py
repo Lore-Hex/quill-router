@@ -101,7 +101,7 @@ def test_authorize_rejection_order_and_rollback(
         }[failure]
     )
     transactions = list(dict.fromkeys(tx for tx, _ in calls))
-    assert len(transactions) == (1 if failure == "credit" else 2)
+    assert len(transactions) == 1  # NULL scope takes sequential admission
     for transaction in transactions:
         statements = transaction_statements([(tx, sql) for tx, sql in calls if tx is transaction])
         if failure == "credit":
@@ -869,7 +869,9 @@ def test_lifetime_cap_exhausted_idempotent_authorize_replays(
     verdict, replay = _fragmented_authorize(store, key, **options)
     assert verdict == billing.AuthorizeOutcome.REPLAY
     assert replay == authorization
-    assert not any("tr_credit_balance" in sql for _, sql in calls)
+    speculative = {tx for tx, sql in calls if "tr_credit_balance" in sql}
+    assert speculative and all(tx.rolled_back for tx in speculative)
+    # The new attempt may stage holds, but releases all of them before replay.
     assert (db.typed, db.reservations) == before
     assert len(_lifetime_snapshot_reads(db)) == 1
     assert key.hash in store._lifetime_cap_exhausted_keys
@@ -914,7 +916,8 @@ def test_cached_lifetime_exhaustion_preserves_idempotency_mismatch(
         assert (key.hash in store._lifetime_cap_exhausted_keys) == cached
         assert len(_lifetime_snapshot_reads(db)) == int(cached)
         assert calls  # Both classifications come from the transaction.
-        assert not any("tr_credit_balance" in sql for _, sql in calls)
+        speculative = {tx for tx, sql in calls if "tr_credit_balance" in sql}
+        assert speculative and all(tx.rolled_back for tx in speculative)
 
 
 @pytest.mark.parametrize("estimate", [0, 10_000])

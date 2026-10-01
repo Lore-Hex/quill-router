@@ -420,3 +420,15 @@ def test_buffered_write_does_not_excuse_an_inversion_in_recorded_sql(order):
     assert record.unproved == {"t"}, "the buffered write must still be reported as unproved"
     with pytest.raises(lock_order.LockOrderError, match="deadlock shape"):
         record.check("unproved-must-not-excuse")
+
+
+def test_pause_columns_after_key_are_not_exempted_by_credit_reserve():
+    """A prior balance UPDATE does not prove locks on the distinct pause cells."""
+    record = lock_order._Recorder()
+    record.record("fresh", "UPDATE tr_credit_balance SET reserved=reserved+@est "
+                  "WHERE workspace_id=@ws AND shard=@shard", read_locks=True)
+    record.record("fresh", KEY, read_locks=True)
+    record.record("fresh", "SELECT billing_pause_causes, pause_epoch FROM tr_credit_balance "
+                  "WHERE workspace_id=@ws AND shard=@shard", read_locks=True)
+    with pytest.raises(lock_order.LockOrderError, match="credit-class lock after"):
+        record.check("armed fresh batch")

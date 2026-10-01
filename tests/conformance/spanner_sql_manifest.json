@@ -1,5 +1,6 @@
 {
   "builders": {
+    "storage_gcp_counter_dml:reserve_credit_statement": "ed58f78e5e137f32288904fe1e496fd4979ae990b2f8dea8babfc0342dd19f4a",
     "storage_gcp_counter_dml:reserve_key_statement": "9eb78b975825a2ab99e03b669c8d3dbdbbbae2c0b359ad1a57e9ff5b7d604227",
     "storage_gcp_counter_dml:reservation_insert_statement": "b1ef994b99af7ae79da8a3e3795169c2704edf4e789af3994c3eda292460927e",
     "storage_gcp_counter_dml:claim_reservation_statement": "4e6dc6e8378e7cd6042474c08fdbf8d84aa705219e942d20bd4a11da21260ce4",
@@ -1093,8 +1094,8 @@
         }
       ]
     },
-    "storage_gcp_counter_dml:reserve_credit:1": {
-      "fingerprint": "8b28eb55bf811006f16d2baaa3a9100018ba4ac454f0933a46b103fcc0d4bc88",
+    "storage_gcp_counter_dml:reserve_credit_statement:1": {
+      "fingerprint": "ed58f78e5e137f32288904fe1e496fd4979ae990b2f8dea8babfc0342dd19f4a",
       "scenarios": [
         {
           "bindings": {},
@@ -3611,7 +3612,7 @@
     "storage_gcp_authorize:_apply_custom_model_markup_payout_tx": "a1a06d4c1dcc22a836e086dc1700440a90dad6d8c8966466902930955a34e3f0",
     "storage_gcp_authorize:typed_finalize_atomic.speculative_batch": "d8d2fec5ec3fdae61c9a9c31b28c2fb437b03a81bf983bf7c219ad1345e73f4d",
     "storage_gcp_authorize:key_window_limit_decision": "5a317b9f2927443ca6d6686b5cb1d1b6ff036c6d744d511a3b5f24c63e3b2ad7",
-    "storage_gcp_authorize:authorize_atomic.txn": "436c84be91d07b0e183e1da7254118431c058dde512ef29ab5e9e53e451467ae",
+    "storage_gcp_authorize:authorize_atomic.txn": "14447039604240dc6bb009e6a22ca421b903fea2ec2137d1f199f97ad6fce97a",
     "storage_gcp_authorize:reap_expired_reservations_result": "9d7f819fc199930d94eaa53e939fced804e61b2cbf9f54cbf676ced4c743976e",
     "storage_gcp_authorize:key_lifetime_cap_precheck": "4e9ee17c7e9363a1fc3a9d614f15148ad6fb20ff04d272785809beef92ab0b4c",
     "storage_gcp_authorize:_finalize_reaped_reservation_atomic.txn": "55ccd7b9ed868037a53ecb228e6efe40882d39fef33e9bd24bb0061340d95200",
@@ -3619,7 +3620,6 @@
     "storage_gcp_authorize:settle_atomic.txn": "0ec2b0d2303c8edbbcfff74724c3bee55a72195a523e21f21e04139aabeb3174",
     "storage_gcp_authorize:_outbox_table_available": "40f44f259524be5dc275f8a3400fc40fc5b8fe850c0482362de0382296e3f910",
     "storage_gcp_batch_dml:execute_batch_dml": "cf69cc8e1a62f4028bd2370e9d3d22e5f6f28856795ef05514f1f8dbc5130169",
-    "storage_gcp_counter_dml:reserve_credit": "8b28eb55bf811006f16d2baaa3a9100018ba4ac454f0933a46b103fcc0d4bc88",
     "storage_gcp_counter_dml:debit_workspace_credit": "ecb5f2a550bafecf029f91f3e60e39d118419f887c326c7e88221195eb1a4a0d",
     "storage_gcp_counter_dml:debit_credit_shard": "3196c9abb65d6e856720ce4e9be5e897e932954c3ffd5565c9325d15aac7deb7",
     "storage_gcp_counter_dml:credit_credit_shard": "0027a78221bba0a336753c0e88d9c53f8cd979e8c58c0abd13bd685cb7cce626",
@@ -3634,6 +3634,7 @@
     "storage_gcp_counter_dml:insert_entity_dml_at": "f535e040c7b5c0c884a98d21a144b7a012e697b38c4d6e223ca8456ec595c914",
     "storage_gcp_counter_dml:delete_entity_dml": "629ec53ffa94708b6a3e0c45ee8009294805d93fb162036e4c2d69afd3d91d84",
     "storage_gcp_counter_dml:update_entity_body_dml": "a5858b82dffd2805a5fc332072532a1227f22616a1b6821ec163f3e890df85ef",
+    "storage_gcp_counter_dml:reserve_credit": "ea3b88e761b8676ca99a63c851aea93754f05065f09753bd7a6dbb9fed8c9a3c",
     "storage_gcp_counter_dml:_credit_shard_count_from_rows": "7741a05cfd0cbf559c9f5dcde40502fd8650854dd6991aae43cb17bda76cd254",
     "storage_gcp_counter_dml:key_limit_exists": "91b8eb8029af0530303a487ff57f6e2407e243b388e98175906de69f933ead6c",
     "storage_gcp_counter_dml:read_reservation_by_idempotency": "5ef222631a8b3c1caedc551feb8d0d66601c0a4bedde382f7cbdb3d9a9ffed98",

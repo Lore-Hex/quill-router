@@ -233,7 +233,7 @@ def _inject(
 
 
 @pytest.mark.parametrize('mode', ['typed', 'legacy'])
-@pytest.mark.parametrize('index', [0, 1, 2])
+@pytest.mark.parametrize('index', range(4))
 @pytest.mark.parametrize('failure', ['status', 'count'])
 def test_authorize_partial_batch_rolls_back(
     monkeypatch: pytest.MonkeyPatch, mode: str, index: int, failure: str,
@@ -241,10 +241,21 @@ def test_authorize_partial_batch_rolls_back(
     db = _database()
     before = _state(db)
     _inject(monkeypatch, index, failure)
-    with pytest.raises(FailedPrecondition):
-        _authorize(db, mode)
-    assert _state(db) == before  # no rows, holds, or entity authorization leak
-    assert db.commits == 0 and db.rollback_calls == 1
+    if index < 2:
+        # The persistent fault also hits the sequential two-insert batch.
+        with pytest.raises(FailedPrecondition):
+            _authorize(db, mode)
+        assert _state(db) == before
+        assert db.commits == 0 and db.rollback_calls == 2
+    else:
+        # A fault beyond the fallback batch length is classified on fresh state;
+        # its rolled-back prefix cannot leak a second credit/key hold.
+        assert _authorize(db, mode)['outcome'] == AuthorizeOutcome.ACCEPTED
+        assert db.commits == 1 and db.rollback_calls == 1
+        assert db.typed['tr_credit_balance'][('workspace', 0)]['reserved'] == 100
+        assert db.typed['tr_key_limit'][('key', 0)]['reserved'] == 100
+        assert len(db.reservations) == 1
+
 
 
 @pytest.mark.parametrize('index', [0, 1, 2])
@@ -419,7 +430,7 @@ def test_real_sdk_authorize_aborted_prefix_retries_before_business_fallback(
         tx.execute_sql.return_value = []
         tx.execute_update.return_value = 1
     aborted.batch_update.return_value = (Status(code=code_pb2.ABORTED), [0, 1])
-    committed.batch_update.return_value = (Status(), [1, 1, 1])
+    committed.batch_update.return_value = (Status(), [1, 1, 1, 1])
     assert _authorize(session)['outcome'] == AuthorizeOutcome.ACCEPTED
     assert aborted.batch_update.call_args == committed.batch_update.call_args
     aborted.commit.assert_not_called()

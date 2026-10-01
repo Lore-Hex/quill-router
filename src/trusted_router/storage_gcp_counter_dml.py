@@ -71,22 +71,22 @@ def reserve_credit(
 
     True = accepted (row-count 1); False = insufficient credits (row-count 0).
     """
-    # Static table name (literal, not interpolated) + bound params only.
-    sql = (
+    sql, params, types = reserve_credit_statement(param_types, workspace_id, amount, shard=shard)
+    return transaction.execute_update(sql, params=params, param_types=types) == 1
+
+
+def reserve_credit_statement(
+    param_types: Any, workspace_id: str, amount: int, *, shard: int = UNSHARDED,
+) -> DmlStatement:
+    """The same guarded reserve for sequential and speculative execution."""
+    return (
         "UPDATE tr_credit_balance SET reserved = reserved + @est "
         "WHERE workspace_id=@ws AND shard=@shard "
-        "AND (total_credits - total_usage - reserved) >= @est"
+        "AND (total_credits - total_usage - reserved) >= @est",
+        {"est": int(amount), "ws": workspace_id, "shard": shard},
+        {"est": param_types.INT64, "ws": param_types.STRING, "shard": param_types.INT64},
     )
-    count = transaction.execute_update(
-        sql,
-        params={"est": int(amount), "ws": workspace_id, "shard": shard},
-        param_types={
-            "est": param_types.INT64,
-            "ws": param_types.STRING,
-            "shard": param_types.INT64,
-        },
-    )
-    return count == 1
+
 
 def debit_workspace_credit(
     transaction: Any,

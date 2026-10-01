@@ -222,8 +222,8 @@ def test_typed_replay_has_exact_sequential_spanner_operation_count(
     )
     operation_count = sum(end - start for start, end in zip(before, after, strict=True))
     assert replay["data"]["idempotent_replay"] is True
-    # One provider BYOK lookup; no dependence on optional live catalog routes.
-    assert operation_count == 5
+    # Includes failed speculation and replay reads; excludes rollback/commit.
+    assert operation_count == 6
 
 
 def test_typed_accepted_authorization_is_returned_without_post_commit_read(
@@ -312,9 +312,9 @@ def test_fresh_typed_gateway_authorize_has_exact_sequential_spanner_operation_co
     assert response["data"]["authorization_id"]
     # Representative steady-state fresh request: the workspace's observed-empty
     # broadcast cache is warm, while this idempotency key and authorization are new.
-    # Seven SQL/batch calls (previously eight) for this fixed prepaid/BYOK catalog.
-    # Armed authorization adds one selected-shard pause/epoch read.
-    assert operation_count == 7 + int(armed)
+    # Hash-based lookup has additional authentication reads; the warm lookup
+    # fixture below pins the 3-op fast path. Armed keeps separate credit/pause RPCs.
+    assert operation_count == 5 + 2 * int(armed)
 
 
 def test_broadcast_empty_results_are_cached_until_ttl(
@@ -425,6 +425,13 @@ def spanner_operations(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, 
         return original_batch(self, statements, **kwargs)
 
     monkeypatch.setattr(_FakeTransaction, "batch_update", batched)
+    original_rollback = _FakeTransaction.rollback
+
+    def rolled_back(self: Any) -> Any:
+        operations.append(("ROLLBACK", "", {}))
+        return original_rollback(self)
+
+    monkeypatch.setattr(_FakeTransaction, "rollback", rolled_back)
     original = FakeSpannerDatabase.run_in_transaction
 
     def committed(self: FakeSpannerDatabase, *args: Any, **kwargs: Any) -> Any:
@@ -462,12 +469,12 @@ def test_warm_lookup_authorize_exact_sequence_and_contents(
         "eligible": with_boot, "reason": "ok" if with_boot else "boot_not_accepted",
     }
     operations = spanner_operations
-    # Warm lookup: auth + BYOK together, idempotency + credit + batch + commit.
-    # Trust adds its selected-shard read; pre-6a had one extra key RPC.
-    assert len(operations) == 5 + int(armed)
+    # Warm scoped lookup: auth snapshot + speculative batch + commit.
+    # Armed keeps credit UPDATE and its pause SELECT ahead of the key batch.
+    assert len(operations) == 3 + 2 * int(armed)
     assert operations[-2][0] == "T1 BATCH"
     batch = operations[-2][2]["statements"]
-    assert len(batch) == 3
+    assert len(batch) == (3 if armed else 4)
     assert all(set(params) == set(types) for _, params, types in batch)
     # Expand only for the existing statement/parameter assertions below.
     operations = [*operations[:-2], *[
@@ -501,19 +508,15 @@ def test_warm_lookup_authorize_exact_sequence_and_contents(
     ]
     # Authentication and credentials share one strong, single-use snapshot.
     assert database.snapshot_calls == [{}]
-    assert operations[1][0:2] == ("T1 SELECT",
-        "SELECT reservation_id, credit_reserved_micro, key_reserved_micro, "
-        "hold_usage_type, authorization_id, idempotency_fingerprint, settled, "
-        "credit_shard, ws_shard, key_shard FROM tr_reservation WHERE idempotency_scope=@scope")
     reservation = operations[-3][2]
-    assert operations[1][2] == {"scope": reservation["idempotency_scope"]}
-    assert operations[2] == ("T1 DML",
+    assert reservation["idempotency_scope"] is not None
+    assert operations[1] == ("T1 DML",
         "UPDATE tr_credit_balance SET reserved = reserved + @est "
         "WHERE workspace_id=@ws AND shard=@shard "
         "AND (total_credits - total_usage - reserved) >= @est",
         {"est": reservation["credit_reserved_micro"], "ws": key.workspace_id, "shard": 0})
     if armed:
-        assert operations[3] == ("T1 SELECT",
+        assert operations[2] == ("T1 SELECT",
             "SELECT billing_pause_causes, pause_epoch FROM tr_credit_balance "
             "WHERE workspace_id=@ws AND shard=@shard", {"ws": key.workspace_id, "shard": 0})
     assert operations[-4] == ("T1 DML",
@@ -653,7 +656,7 @@ def test_byok_batch_covers_candidates_aliases_and_removal(
     gateway._authorize_gateway_sync(_request(), _lookup_body(key, idempotency_key="warm"), settings)
     spanner_operations.clear()
     first = gateway._authorize_gateway_sync(_request(), _lookup_body(key), settings)["data"]
-    assert len(spanner_operations) == 5
+    assert len(spanner_operations) == 3
     # Even with all BYOK credentials, Credits wins the reservation semantics.
     assert first["limit_usage_type"] == "Credits"
     assert first["credit_reservation_id"]
@@ -773,7 +776,7 @@ def test_gateway_selects_speculation_from_authenticated_key(
     assert database.transaction_batch_update_calls == 1
     # The exclusion hint keeps the parent's conditional UPDATE and point-read.
     assert database.transaction_execute_update_calls == int(metadata == 'byok_excluded')
-    assert database.transaction_execute_sql_calls == (2 if metadata == 'byok_excluded' else 1)
+    assert database.transaction_execute_sql_calls == {'byok_excluded': 2, 'uncapped': 1, 'byok_included': 0}[metadata]
 
 
 @pytest.mark.parametrize("key_type", ["management", "oauth", "strict", "federated"])
