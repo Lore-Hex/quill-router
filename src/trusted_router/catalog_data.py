@@ -2902,6 +2902,9 @@ SYNTH_QUALITY_1M_MODEL_ORDER = (
     "z-ai/glm-5.2",
     DEEPSEEK_V4_PRO_0423_MODEL_ID,
 )
+# A member whose catalog window falls below this leaves the panel; the rest
+# keep their order.
+SYNTH_QUALITY_1M_MIN_MEMBER_CONTEXT = 1_000_000
 
 SYNTH_PROMETHEUS_2_MODEL_ORDER = (
     "minimax/minimax-m3",
