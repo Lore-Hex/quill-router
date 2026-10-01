@@ -32,7 +32,9 @@ test("responsive navigation and customer disclosure remain usable", async ({ pag
     await expect(customer).toHaveAttribute("open", "");
     await page.getByRole("button", { name: "Menu", exact: true }).click();
     await expect(page.locator("#homepage-nav")).toBeVisible();
-    await page.locator("#homepage-nav .mobile-search").click();
+    await page.getByRole("button", { name: "Menu", exact: true }).click();
+    await expect(page.locator("#homepage-nav")).not.toBeVisible();
+    await page.locator(".trnav .search").click();
     await expect(page.getByRole("dialog", { name: "Find a model" })).toBeVisible();
     await page.getByRole("searchbox").press("Escape");
   } else {

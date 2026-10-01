@@ -313,7 +313,17 @@ footer{background:#070a08;border-top:1px solid #33403a}
  .closing-cta .closing-landscape{object-position:60% 70%}
 }
 
-@media(max-width:1200px){.trnav .search{display:none}}
+/* The model search stays visible at every width: a second header row on phones and tablets. */
+@media(max-width:1200px){
+ :root{--site-header-height:134px}
+ .trh>.tbar{display:flex;flex-wrap:wrap;height:auto;min-height:var(--site-header-height);padding-bottom:12px;row-gap:12px}
+ .trnav .search{display:flex;order:10;flex:1 1 100%;width:100%;height:44px;border-radius:6px;font-size:15px;color:#adbbb2}
+ .trnav .search kbd{display:none}
+ .trnav nav{top:100%}
+}
+@media(max-width:1200px) and (pointer:fine){.trnav .search kbd{display:inline-block}}
+/* Short landscape phones keep the 64px single-row header the hero sizing assumes; search stays one tap away in the dialog. */
+@media(max-width:1200px) and (max-height:480px){.trnav .search{display:none}.trh>.tbar{padding-bottom:0}}
 @media(max-width:600px){#top .cta{gap:16px}#top .lnk{font-size:14px}}
 
 /* Final reading hierarchy: mobile actions follow headings; quotes need no rule. */

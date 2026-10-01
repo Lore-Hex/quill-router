@@ -274,3 +274,10 @@ Added four provider-configuration parity cases comparing legacy and redesigned r
 - `#models`: the "Search models" button is now a search-field control (icon, placeholder text, ⌘K hint on pointer devices) that opens the existing model search dialog. Full width on phones, 320px on desktop. Focus returns to the field on close.
 - `#pricing`: the 5.5% term reads "fee on provider costs". "See pricing" moved from beside the H2 to a `.pricing-actions` row after the facts grid, next to the "Spend controls →" link.
 - `#customers`: "Read the case study" moved from between the subtitle and the body to a `.story-actions` row that closes the card after the quote (on phones, directly after the collapsed "Customer perspective" row).
+
+## Tester feedback: model search in the header at every width (2026-10-01)
+
+- The nav search is no longer collapsed into the Menu below 1200px. Phones and tablets get a second header row with a full-width field reading "Search N models" (live catalog count, as SPEC.md section 4 specifies). The duplicate "Search models" entry in the mobile drawer is gone; the browser spec opens the field directly.
+- Header height on narrow screens is 134px, and the hero's first-screen formula uses that value. Short landscape phones (height ≤ 480px) keep the single-row 64px header the landscape hero sizing assumes, so the field is hidden there and search remains one tap away via the dialog.
+- Hero ticker check: measured in Chromium at 320–412px widths × 560–800px heights, plus iPhone SE/16/16 Pro Max, Pixel 9/9 Pro/10, Galaxy A55/Z Fold 6, iPad Mini/Pro 13, Surface Pro 10 and three landscape sizes; the logo ticker is inside the first screen in every case. A real-device report of it falling below the fold has not been reproduced yet.
+- Preview note: the local preview app had rate limiting enabled while all tunnel traffic reaches it from the bridge's loopback address, so everyone shares one bucket; QA screenshot runs produced 429s. The preview process now runs with `TR_RATE_LIMIT_ENABLED=false`. Deployment configuration is unchanged.
