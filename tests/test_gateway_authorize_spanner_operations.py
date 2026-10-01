@@ -33,8 +33,8 @@ def _request() -> Request:
     return Request({"type": "http", "method": "POST", "path": "/", "headers": []})
 
 
-def _seed_typed_gateway_store() -> tuple[SpannerStore, object, object]:
-    store, database = make_fake_store(request_record_write_mode="typed")
+def _seed_typed_gateway_store(**options: Any) -> tuple[SpannerStore, object, object]:
+    store, database = make_fake_store(request_record_write_mode="typed", **options)
     workspace = Workspace(id="ws-rpc", name="RPC", owner_user_id="user-rpc")
     store._write_entity("workspace", workspace.id, workspace)
     store._write_entity("credit", workspace.id, CreditAccount(workspace_id=workspace.id))
@@ -908,8 +908,9 @@ def shadow_rpc_differential_mode(request, monkeypatch):
 
 
 @pytest.mark.parametrize("refund", [False, True])
-@pytest.mark.parametrize("fault", ["none", "queue-full", "observer-failed"])
-def test_shadow_response_money_and_sql_differential(monkeypatch, fixed_operation_catalog, spanner_operations, refund, fault):
+@pytest.mark.parametrize("stage_d", [False, True])
+@pytest.mark.parametrize("fault", ["none", "queue-full", "observer-failed", "resolved", "boot_verified", "authorized"])
+def test_shadow_response_money_and_sql_differential(monkeypatch, fixed_operation_catalog, spanner_operations, refund, fault, stage_d):
     import datetime as dt
     import uuid
 
@@ -920,15 +921,30 @@ def test_shadow_response_money_and_sql_differential(monkeypatch, fixed_operation
     from trusted_router.main import create_app
     from trusted_router.services import speculation_shadow as shadow
 
-    store, database, key = _seed_typed_gateway_store()
+    store, database, key = _seed_typed_gateway_store(generation_records_enabled=True, analytics_outbox_enabled=True, operational_analytics_outbox_enabled=True)
+    from tests.conformance.test_gateway_auth_boot_fold import _BOOT_KEYS, signed_request
+    from trusted_router.gateway_boot import boot_auth_digest
+    from trusted_router.receipt_keys import b64url_encode
+    _, signed_body, _, boot = signed_request(store, key)
+    store.advance_stage_d_policy_watermark(plane="gcp", sequence=42, updated_at=dt.datetime(2026, 10, 1, tzinfo=dt.UTC))
     saved = {k: copy.deepcopy(v) for k, v in vars(database).items() if isinstance(v, (dict, list, int))}
     fixed = dt.datetime(2026, 10, 1, tzinfo=dt.UTC)
     original_datetime = dt.datetime
-    class Clock(original_datetime):
+    class ClockMeta(type):
+        def __instancecheck__(cls, instance):
+            return isinstance(instance, original_datetime)
+    class Clock(original_datetime, metaclass=ClockMeta):
         @classmethod
         def now(cls, tz=None):
             return fixed if tz else fixed.replace(tzinfo=None)
     monkeypatch.setattr(dt, "datetime", Clock)
+    from trusted_router import (
+        storage_gcp_counter_dml,
+        storage_gcp_settle_outbox,
+        storage_gcp_stage_d,
+    )
+    for module in (storage_gcp_counter_dml, storage_gcp_settle_outbox, storage_gcp_stage_d):
+        monkeypatch.setattr(module, "datetime", Clock)
     monkeypatch.setattr(uuid, "uuid4", lambda: uuid.UUID(int=42))
     monkeypatch.setattr(gateway_timing, "perf_counter", lambda: 1.0)
     transcripts = []
@@ -939,7 +955,12 @@ def test_shadow_response_money_and_sql_differential(monkeypatch, fixed_operation
         store._credit_shard_counts.invalidate(key.workspace_id)
         acquisition._clear_usage_check(key.workspace_id)
         gateway._BROADCAST_EMPTY_CACHE.clear()
-        settings = Settings(environment="test", speculative_provider_shadow_enabled=enabled)
+        settings = Settings(environment="test", speculative_provider_shadow_enabled=enabled,
+                            stage_d_eligibility_enabled=stage_d, stage_d_pilot_workspace_ids="",
+                            spend_lease_accepted_gcp_image_digests=boot.image_digest)
+        settings.settle_outbox_enabled = True
+        settings.analytics_outbox_enabled = True
+        settings.operational_analytics_outbox_enabled = True
         dispatcher = shadow.Dispatcher(ReferenceStore(), "diff", capacity=1)
         if fault == "queue-full":
             dispatcher.try_submit(shadow.Observation(dispatcher), 200, "success", {})
@@ -947,26 +968,66 @@ def test_shadow_response_money_and_sql_differential(monkeypatch, fixed_operation
             def fail(*args):
                 raise RuntimeError("observer failed")
             monkeypatch.setattr(dispatcher, "try_submit", fail)
+        if fault in {"resolved", "boot_verified", "authorized"}:
+            def fail(*args):
+                raise RuntimeError("observer failed")
+            monkeypatch.setattr(shadow, fault, fail)
         monkeypatch.setattr(shadow, "_RUNTIME", dispatcher)
         client = TestClient(create_app(settings, configure_store_arg=False, init_observability=False))
-        body = _lookup_body(key).model_dump(exclude_none=True)
+        body = (signed_body if stage_d else _lookup_body(key)).model_dump(exclude_none=True)
         body["invocation_nonce"] = "differential-invocation"
         # Warm metadata caches without changing balances or authorization state.
         gateway._broadcast_destinations_for_authorize(key.workspace_id)
         spanner_operations.clear()
         responses = []
-        for _ in range(2):
-            result = client.post("/internal/gateway/authorize", json=body)
+        def post(path, payload, client=client):
+            raw = shadow.canonical(payload)
+            headers = {"content-type": "application/json"}
+            if stage_d:
+                signature = _BOOT_KEYS[boot.kid].sign(boot_auth_digest("POST", path, raw))
+                headers["x-tr-boot-auth"] = f"kid={boot.kid},sig={b64url_encode(signature)}"
+            return client.post(path, content=raw, headers=headers)
+        for attempt in range(2):
+            result = post("/internal/gateway/authorize", body)
             assert result.status_code == 200, result.text
             responses.append((result.status_code, dict(result.headers), result.json()))
+            if stage_d and attempt == 0:
+                assert result.json()["data"]["stage_d"]["eligible"] is True
         auth = result.json()["data"]
+        if stage_d:
+            heartbeat = post("/internal/gateway/heartbeat", {
+                "authorization_id": auth["authorization_id"], "seq": 1,
+                "started_at_ms": int(fixed.timestamp() * 1000),
+                "selected_endpoint_id": auth["endpoint_id"],
+                "usage": {"input_tokens": 10, "output_tokens": 10, "cache_read_input_tokens": 0,
+                          "cache_creation_input_tokens": 0, "price_tier_input_tokens": 0, "reasoning_tokens": 0},
+                "elapsed_ms": 1000, "stream": True,
+            })
+            assert heartbeat.status_code == 200, heartbeat.text
+            assert heartbeat.json()["accepted"] is True
+            responses.append((heartbeat.status_code, dict(heartbeat.headers), heartbeat.json()))
         result = client.post("/internal/gateway/" + ("refund" if refund else "settle"), json={
             "authorization_id": auth["authorization_id"], "actual_input_tokens": 10, "actual_output_tokens": 10,
             "selected_endpoint": auth["endpoint_id"],
         })
         assert result.status_code == 200, result.text
         responses.append((result.status_code, dict(result.headers), result.json()))
-        transcripts.append((responses, copy.deepcopy(spanner_operations), copy.deepcopy(database.typed), copy.deepcopy(database.reservations)))
+        assert database.gateway_authorizations[auth["authorization_id"]]["settled"] is True
+        assert database.stage_d_policy_watermarks
+        assert database.settle_outbox
+        if not refund:
+            assert database.generation_records
+            assert database.operational_analytics_outbox
+        else:
+            assert database.analytics_outbox
+        if stage_d:
+            assert database.gateway_authorizations[auth["authorization_id"]]["heartbeat_seq"] == 1
+        # Include EVERY fake collection, including future additions. Instrumentation
+        # and per-row versions are useful parts of the transcript too.
+        collections = {k: copy.deepcopy(v) for k, v in vars(database).items() if isinstance(v, (dict, list, set))}
+        transcripts.append((responses, copy.deepcopy(spanner_operations), collections))
+        if enabled and fault != "none":
+            assert dispatcher.loss.is_set()
     assert len(transcripts[0][1]) == len(transcripts[1][1])
     for off, on in zip(transcripts[0][1], transcripts[1][1], strict=True):
         assert off == on

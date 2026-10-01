@@ -64,6 +64,9 @@ REVIEWED_DDL_STATEMENTS = {
         "ALTER TABLE $1 ADD COLUMN $2 TIMESTAMP": "expanded ensure_column helper",
         "ALTER TABLE $table ADD ROW DELETION POLICY (OLDER_THAN(terminal_at, INTERVAL 30 DAY))": "expanded ensure_policy helper",
     },
+    "migrate_speculation_shadow.sh": {
+        "ALTER TABLE $table ADD ROW DELETION POLICY (OLDER_THAN(updated_at, INTERVAL 7 DAY))": "expanded ensure_policy helper",
+    },
     "migrate_trust_reconciliation.sh": {
         "DROP TABLE tr_trust_backfill": "recreate empty legacy marker; retain current CREATE",
     },

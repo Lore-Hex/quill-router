@@ -95,7 +95,7 @@ def test_distinct_history_replay_and_invocation_dedup():
 ])
 def test_scoped_late_denial(status, reason, rate, scope):
     store = ReferenceStore()
-    apply(store, event(1), now=1000)
+    apply(store, dataclasses.replace(event(1), occurred_at=1000), now=1000)
     denial = dataclasses.replace(event(2), status=status, reason=reason, rate_scope=rate, occurred_at=900)
     apply(store, denial, now=2000)
     workspace = store.get("scope", shadow.identity("workspace", "w"))
@@ -105,7 +105,7 @@ def test_scoped_late_denial(status, reason, rate, scope):
 
 def test_loss_restart_unacknowledged_tail_and_late_membership():
     store = ReferenceStore()
-    apply(store, event(1), now=1000)
+    apply(store, dataclasses.replace(event(1), occurred_at=1000), now=1000)
     apply(store, event(2), now=2000, loss=True)
     apply(store, event(3), now=2001)
     assert store.get("producer", "p")["lost"] is True
@@ -229,7 +229,7 @@ def ready_service():
     dispatcher = shadow.Dispatcher(store, "p")
     dispatcher.health = "observing"
     for seq in range(1, 21):
-        apply(store, dataclasses.replace(event(seq), occurred_at=1980+seq//2, endpoint_ids=(claims["route"]["endpoint_id"],)), now=1000 if seq == 1 else 2000)
+        apply(store, dataclasses.replace(event(seq), occurred_at=1000 if seq == 1 else 1980+seq//2, endpoint_ids=(claims["route"]["endpoint_id"],)), now=1000 if seq == 1 else 2000)
     store.put("producer", "p", {"clean_since": 1000, "sequence": 20, "submitted": 20, "expires_at": 2100, "membership": ""})
     # Projection source times in this synthetic setup are independent of commit times.
     state = key_state(store)
@@ -585,3 +585,270 @@ def test_worker_rpc_accounting_is_separate_from_request():
             assert request_counter.value() == 1
         finally:
             dispatcher.close()
+
+
+@pytest.mark.parametrize("deadline", [2011, 2012, 2013, 2025, 2050])
+@pytest.mark.parametrize("source", ["trust_fresh_until", "key_expires_at", "price_expires_at"])
+def test_cached_grant_rechecks_current_deadlines(source, deadline):
+    service = ready_service()
+    original = service.mint(facts(), "boot", 2000)
+    current = facts()
+    if source == "price_expires_at":
+        endpoint = service.settings.speculation_shadow_routes[0]
+        row = service.store.get("route", endpoint)
+        row["route"][source] = deadline
+        service.store.put("route", endpoint, row)
+    else:
+        current[source] = deadline
+    before = copy.deepcopy(service.store.rows)
+    if deadline <= 2012:
+        with pytest.raises(shadow.ShadowMiss, match="start-window-exhausted"):
+            service.mint(current, "boot", 2010)
+        assert service.store.rows == before
+        # Exact reviewer reproduction also fails closed without the cached grant.
+        service.store.rows.pop(("grant", shadow.identity("w", "k", "boot")))
+        with pytest.raises(shadow.ShadowMiss, match="start-window-exhausted"):
+            service.mint(current, "boot", 2010)
+    else:
+        token = service.mint(current, "boot", 2010)
+        assert token != original
+        import base64
+        claims = json.loads(base64.urlsafe_b64decode(token.split(".")[1] + "=="))
+        assert claims["exp"] == min(2040, deadline)
+        assert claims["start_before"] == min(2040, deadline) - 2
+
+
+def test_expired_delivery_after_ttl_cannot_requalify_or_extend_retention():
+    store = ReferenceStore()
+    apply(store, event(1, invocation_nonce="same"))
+    # Model TTL deleting both dedup families. Persistent scope/exposure survive.
+    store.rows = {k: v for k, v in store.rows.items() if k[0] not in {"event", "success"}}
+    store.put("exposure", "fleet", {"micro": 100, "ordinal": 1})
+    before = copy.deepcopy(store.rows)
+    apply(store, event(1, invocation_nonce="same"), now=2000 + 7 * 86400)
+    assert store.get("producer", "p")["lost"] is True
+    assert not any(k[0] in {"event", "success"} for k in store.rows)
+    assert key_state(store) == before["scope", shadow.identity("key", "w", "k")]
+    assert store.get("exposure", "fleet") == before["exposure", "fleet"]
+
+
+def test_success_older_than_history_does_not_recreate_dedup():
+    store = ReferenceStore()
+    apply(store, event(1), now=3000)
+    assert not key_state(store)["successes"]
+    assert not any(k[0] == "success" for k in store.rows)
+
+
+def test_native_shadow_is_selected_by_ci(tmp_path):
+    import os
+    import subprocess
+    import sys
+    root = Path(__file__).resolve().parents[1]
+    relative = "tests/conformance/test_speculation_shadow_native.py"
+    workflow = (root / ".github/workflows/ci.yml").read_text()
+    assert relative in workflow
+    result = subprocess.run(  # noqa: S603 - fixed local collection, no database access
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider",
+         relative, "-k", "spanner-emulator", "--basetemp", str(tmp_path / "collection")],
+        cwd=root, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "test_native_shadow_atomic_dedup_and_scoped_projection[spanner-emulator]" in result.stdout
+
+
+def test_shadow_ttl_only_applies_to_event_and_success():
+    from tests.conformance.spanner_ddl import DDL
+    from tests.conformance.spanner_schema_source import migration_ddl
+    assert tuple(DDL) == migration_ddl()
+    policies = {statement for statement in DDL if "tr_speculation_shadow_" in statement and "ROW DELETION POLICY" in statement}
+    assert policies == {f"ALTER TABLE tr_speculation_shadow_{name} ADD ROW DELETION POLICY (OLDER_THAN(updated_at, INTERVAL 7 DAY))" for name in ("event", "success")}
+
+
+@pytest.mark.parametrize("fatal", [KeyboardInterrupt, SystemExit])
+def test_isolation_preserves_process_control_exceptions(fatal):
+    error = fatal()
+    with pytest.raises(fatal) as caught, shadow.isolate("test"):
+        raise error
+    assert caught.value is error
+
+
+@pytest.mark.parametrize("site", ["_outcome_settings", "outcome_scope", "complete", "_save_outcome_timing", "cleanup", "error-extraction"])
+@pytest.mark.parametrize("failure", [False, True])
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_observer_fault_preserves_response_and_exception_identity(monkeypatch, site, failure, asynchronous):
+    from contextlib import contextmanager
+
+    from trusted_router import gateway_timing as timing
+    dispatcher = shadow.Dispatcher(ReferenceStore(), "faults")
+    monkeypatch.setattr(shadow, "_RUNTIME", dispatcher)
+    settings = Settings(environment="test", speculative_provider_shadow_enabled=True)
+    response = {"data": {"value": object()}}
+    error = RuntimeError("ordinary failure")
+    holds = []
+    def ordinary():
+        if failure:
+            raise error
+        holds.append(600)
+        return response
+    def fail(*args, **kwargs):
+        raise ValueError("observer fault")
+    if site == "cleanup":
+        original = shadow.outcome_scope
+        @contextmanager
+        def scope(settings):
+            with original(settings) as observation:
+                yield observation
+            fail()
+        monkeypatch.setattr(shadow, "outcome_scope", scope)
+    elif site == "error-extraction":
+        if not failure:
+            return  # extraction only exists on the failure path
+        class Error(RuntimeError):
+            @property
+            def detail(self):
+                raise ValueError("observer argument extraction")
+        error = Error("ordinary failure")
+    else:
+        monkeypatch.setattr(timing if site.startswith("_") else shadow, site, fail)
+    @timing.timed_gateway_sync
+    def _authorize_gateway_sync(request, body, settings):
+        return ordinary()
+    @timing.timed_gateway_async
+    async def authorize_gateway(request, body, settings):
+        return ordinary()
+    try:
+        result = await authorize_gateway(None, None, settings) if asynchronous else _authorize_gateway_sync(None, None, settings)
+    except RuntimeError as caught:
+        assert failure and caught is error
+    else:
+        assert not failure and result is response
+    assert holds == ([] if failure else [600])
+    # Save-response timing runs only on the successful path.
+    if site != "_save_outcome_timing" or not failure:
+        assert dispatcher.loss.is_set()
+        assert dispatcher.loss_reason.startswith("observer-")
+    assert shadow._CURRENT.get() is None
+
+
+def _gateway_callback_sites():
+    import ast
+    source = Path(__file__).resolve().parents[1] / "src/trusted_router/routes/internal/gateway.py"
+    tree = ast.parse(source.read_text())
+    return [(node.lineno, node.func.attr) for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name) and node.func.value.id == "speculation_shadow"
+            and node.func.attr != "isolate"]
+
+
+@pytest.mark.parametrize("line,site", _gateway_callback_sites())
+@pytest.mark.parametrize("argument_failure", [False, True])
+def test_every_gateway_callback_boundary_including_arguments(monkeypatch, line, site, argument_failure):
+    """Execute each actual call-site statement with hostile arguments/callbacks.
+
+    Coupled with the HTTP lifecycle differential, this also covers rare paused
+    fallback branches without replacing the money implementation to reach them.
+    """
+    import ast
+    from types import SimpleNamespace
+    source = Path(__file__).resolve().parents[1] / "src/trusted_router/routes/internal/gateway.py"
+    tree = ast.parse(source.read_text())
+    call = next(n for n in ast.walk(tree) if isinstance(n, ast.Call) and n.lineno == line)
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    statement = parents[call]
+    assert isinstance(statement, ast.Expr)
+    boundary = parents[statement]
+    assert isinstance(boundary, ast.With), f"unguarded callback: {site}:{line}"
+    dispatcher = shadow.Dispatcher(ReferenceStore(), "faults")
+    monkeypatch.setattr(shadow, "_RUNTIME", dispatcher)
+    def fail(*args, **kwargs):
+        raise RuntimeError("callback fault")
+    class Hostile:
+        def __getattribute__(self, name):
+            raise RuntimeError("argument fault")
+    if not argument_failure or site == "reason":
+        monkeypatch.setattr(shadow, site, fail)
+    environment = dict(speculation_shadow=shadow, api_key=SimpleNamespace(disabled=True),
+        body=Hostile() if argument_failure else SimpleNamespace(invocation_nonce="nonce"),
+        boot_context={} if argument_failure else {"boot_verified": True}, boot_auth=None,
+        authorization=None, endpoint_candidates=[(None, Hostile())] if argument_failure else [],
+        idempotent_replay=False, endpoint=SimpleNamespace(id="e", provider="p", upstream_id="u"), model=None, region="r")
+    response = object()
+    original_error = RuntimeError("ordinary exception")
+    holds = [600]
+    def ordinary():
+        exec(compile(ast.Module(body=[boundary], type_ignores=[]), str(source), "exec"), environment)  # noqa: S102 - actual repository statement, controlled namespace
+        return response
+    assert ordinary() is response
+    with pytest.raises(RuntimeError) as caught:
+        ordinary()
+        raise original_error
+    assert caught.value is original_error
+    assert holds == [600]
+    assert dispatcher.loss.is_set() and dispatcher.loss_reason == "observer-" + site
+
+
+def test_current_deadline_miss_is_per_item_on_refresh(monkeypatch):
+    import base64
+    service = ready_service()
+    original = service.mint(facts(), "boot", 2000)
+    service.store.facts["a" * 64] = {**facts(), "trust_fresh_until": 2011}
+    private = Ed25519PrivateKey.generate()
+    def enc(value):
+        return base64.urlsafe_b64encode(value).rstrip(b"=").decode()
+    service.store.boots["boot"] = GatewayBoot(
+        kid="boot", jwk={"kty": "OKP", "crv": "Ed25519", "x": enc(private.public_key().public_bytes_raw())},
+        approved=False, verified=True, image_digest="image", attestation_kind="gcp", registered_at="2026-01-01T00:00:00Z")
+    item = {k: facts()[k] for k in ("workspace_id", "key_id", "lookup_digest")}
+    body = shadow.canonical({"items": [item]})
+    path = "/internal/speculation/shadow/refresh"
+    auth = BootAuthHeader("boot", enc(private.sign(boot_auth_digest("POST", path, body))))
+    monkeypatch.setattr(shadow.time, "time", lambda: 2010)
+    assert service.refresh([item], auth, body, "POST", path) == [{**item, "miss": "start-window-exhausted"}]
+    assert service.store.get("grant", shadow.identity("w", "k", "boot"))["token"] == original
+
+
+def test_shadow_migration_retention_is_idempotent_and_refuses_conflict(tmp_path):
+    import os
+    import subprocess
+    # Execute the real shell migration against a metadata-only gcloud stub.
+    stub = tmp_path / "gcloud"
+    stub.write_text('''#!/bin/bash
+case "$*" in
+  *"ddl update"*)
+    printf '%s\\n' "$*" >> "$SHADOW_DDL_LOG"
+    for argument in "$@"; do
+      case "$argument" in
+        *"ALTER TABLE tr_speculation_shadow_event"*) touch "$SHADOW_STATE/event" ;;
+        *"ALTER TABLE tr_speculation_shadow_success"*) touch "$SHADOW_STATE/success" ;;
+      esac
+    done ;;
+  *"ROW_DELETION_POLICY_EXPRESSION"*)
+    case "$*" in
+      *"tr_speculation_shadow_event"*) table=event ;;
+      *) table=success ;;
+    esac
+    if [ -n "$SHADOW_CONFLICT" ]; then
+      printf 'OLDER_THAN(updated_at, INTERVAL 1 DAY)\\n'
+    elif [ -f "$SHADOW_STATE/$table" ]; then
+      printf 'OLDER_THAN(updated_at, INTERVAL 7 DAY)\\n'
+    fi ;;
+  *) printf '1\\n' ;;
+esac
+''')
+    stub.chmod(0o755)
+    log = tmp_path / "ddl.log"
+    env = {**os.environ, "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
+           "SPANNER_INSTANCE_ID": "offline", "SPANNER_DATABASE_ID": "offline", "GCP_PROJECT_ID": "offline",
+           "SHADOW_STATE": str(tmp_path), "SHADOW_DDL_LOG": str(log), "SHADOW_CONFLICT": ""}
+    script = Path(__file__).resolve().parents[1] / "scripts/deploy/migrate_speculation_shadow.sh"
+    def run(environment):
+        return subprocess.run(["/bin/bash", str(script)], env=environment, capture_output=True, text=True, check=False)  # noqa: S603 - fixed script and fake gcloud
+    assert run(env).returncode == 0
+    first = log.read_text()
+    assert first.count("ADD ROW DELETION POLICY") == 2
+    assert "exposure" not in first
+    assert run(env).returncode == 0
+    assert log.read_text() == first
+    conflict = run({**env, "SHADOW_CONFLICT": "1"})
+    assert conflict.returncode != 0 and "Refusing unexpected retention policy" in conflict.stderr
+    assert log.read_text() == first

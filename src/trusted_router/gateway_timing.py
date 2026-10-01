@@ -7,7 +7,7 @@ an independent scope. Background tasks run after the response snapshot.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from functools import wraps
 from time import perf_counter
@@ -94,36 +94,45 @@ def _scope() -> Iterator[GatewayTiming | None]:
 _OUTCOME_TIMING: ContextVar[dict[str, int] | None] = ContextVar("shadow_outcome_timing", default=None)
 
 
+def _outcome_settings(args: Any, kwargs: Any) -> Any:
+    return kwargs.get("settings") if "settings" in kwargs else (args[2] if len(args) > 2 else None)
+
+
 @contextmanager
 def _authorize_outcome(name: str, args: Any, kwargs: Any) -> Iterator[None]:
-    settings = kwargs.get("settings") if "settings" in kwargs else (args[2] if len(args) > 2 else None)
-    if name not in {"authorize_gateway", "_authorize_gateway_sync"} or settings is None or not settings.speculative_provider_shadow_enabled:
+    from trusted_router.services import speculation_shadow as shadow
+    settings = None
+    with shadow.isolate("arguments"):
+        settings = _outcome_settings(args, kwargs)
+    if name not in {"authorize_gateway", "_authorize_gateway_sync"} or settings is None:
         yield
         return
-    from trusted_router.services.speculation_shadow import complete, outcome_scope
-    with outcome_scope(settings) as observation:
-        if observation is None:
-            yield
-            return
-        token = _OUTCOME_TIMING.set({})
-        error = None
-        try:
-            yield
-        except Exception as exc:
-            error = exc
-            raise
-        finally:
-            timing = _OUTCOME_TIMING.get() or {}
-            if error is not None:
-                detail = getattr(error, "detail", {})
-                data = detail.get("data", {}) if isinstance(detail, dict) else {}
-                timing = data.get("timing", getattr(error, "gateway_timing_data", {}).get("timing", {}))
-            try:
-                complete(observation, timing, error)
-            except Exception:
-                observation.dispatcher.loss.set()
-            finally:
+    stack = ExitStack()
+    observation = None
+    token = None
+    with shadow.isolate("scope-setup"):
+        observation = stack.enter_context(shadow.outcome_scope(settings))
+        if observation is not None:
+            token = _OUTCOME_TIMING.set({})
+    error = None
+    try:
+        yield
+    except Exception as exc:
+        error = exc
+        raise
+    finally:
+        with shadow.isolate("completion"):
+            if observation is not None:
+                timing = _OUTCOME_TIMING.get() or {}
+                if error is not None:
+                    detail = getattr(error, "detail", {})
+                    data = detail.get("data", {}) if isinstance(detail, dict) else {}
+                    timing = data.get("timing", getattr(error, "gateway_timing_data", {}).get("timing", {}))
+                shadow.complete(observation, timing, error)
+        with shadow.isolate("scope-cleanup"):
+            if token is not None:
                 _OUTCOME_TIMING.reset(token)
+            stack.close()
 
 
 def _save_outcome_timing(response: dict[str, Any]) -> None:
@@ -150,7 +159,9 @@ def timed_gateway_sync(
                 response = func(*args, **kwargs)
                 if timing is not None:
                     response["data"]["timing"] = timing.snapshot()
-                _save_outcome_timing(response)
+                from trusted_router.services.speculation_shadow import isolate
+                with isolate("timing"):
+                    _save_outcome_timing(response)
                 return response
     return timed
 
@@ -173,6 +184,8 @@ def timed_gateway_async(
                 response = await func(*args, **kwargs)
                 if timing is not None:
                     response["data"]["timing"] = timing.snapshot()
-                _save_outcome_timing(response)
+                from trusted_router.services.speculation_shadow import isolate
+                with isolate("timing"):
+                    _save_outcome_timing(response)
                 return response
     return timed

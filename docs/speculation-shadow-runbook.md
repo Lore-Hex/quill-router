@@ -167,3 +167,97 @@ baseline → mutant → restored-baseline gates. Every mutation uses disposable
 copies, reports red/survived/build-broken, and leaves the worktree intact.
 See `speculation-shadow-mutations.json` and `speculation-shadow-validation.md`
 for this worktree's actual results. No deployment or git writes are performed.
+
+## Retention and delayed delivery
+
+The event and success-dedup tables both use
+`ROW DELETION POLICY (OLDER_THAN(updated_at, INTERVAL 7 DAY))` on server commit
+time. Migration checks the existing expression, accepts the exact policy on
+rerun, and refuses a conflicting policy. Only these two tables get TTL;
+`tr_speculation_shadow_exposure`, scope history, epochs and producer coverage
+are untouched. Expiry never releases retained exposure.
+
+The history policy uses 20 distinct successes in **600 seconds**, with a
+success in the last **30 seconds**, and a **900-second** clean interval.
+Only successes whose observation time remains in the 600-second window may
+create success-dedup rows. Authorization replay never counts, even when its
+original callback was lost. Seven-day dedup therefore exceeds both the history
+window and the maximum accepted delivery delay of **86,400 seconds (one day)**.
+Callbacks outside that delay (or with future timestamps) set persistent sticky
+producer coverage loss and do not recreate event/dedup rows. A late denial
+within the accepted day restarts the clean interval at receipt time. An older
+denial invalidates producer coverage rather than disappearing silently.
+Duplicates do not refresh the dedup commit timestamp. Replaying an immutable
+old event after TTL cannot qualify history or refill exposure. Recovery needs
+a clean incarnation and a new full clean interval.
+
+At 10 distinct successes/second, each with an invocation nonce, there are at
+most 864,000 event rows and 1,728,000 dedup rows/day: **2,592,000 rows/day**.
+Seven days retains **6,048,000 events + 12,096,000 dedup = 18,144,000 rows**
+from that traffic. Additional denials and replays contribute one event each. TTL runs
+asynchronously, so this is the logical retention bound, not an immediate
+physical cap. With the documented typical deletion lag of up to 72 hours,
+budget **25,920,000 rows** for ten days at that rate, plus operational headroom.
+Alert on nonzero undeletable rows and TTL processed-watermark age over 72 hours;
+failed cleanup must be investigated, not treated as bounded storage.
+See [Spanner TTL](https://docs.cloud.google.com/spanner/docs/ttl) and
+[TTL monitoring](https://docs.cloud.google.com/spanner/docs/ttl/monitoring-and-metrics).
+
+## Required production PLAN evidence
+
+Before enablement, capture PLAN-mode results for these exact adapter statements,
+using the actual allowlisted workspace/key and configured shard counts. Record
+SQL, typed parameter bindings, plan, schema version and timestamp. Require a
+primary-key range seek with the bounded shard/event range, rather than a full
+table scan. `LIMIT` alone is not seek evidence. Do not run data scans to obtain
+this evidence. Local fakes and emulator acceptance do not replace it.
+
+```sql
+SELECT shard, total_credits, total_usage, reserved, trust_tier, trust_latched_at,
+       billing_pause_causes, pause_epoch, trust_reconciled_through
+FROM tr_credit_balance
+WHERE workspace_id=@workspace_id AND shard>=0 AND shard<@shard_count ORDER BY shard
+```
+
+Parameters: `workspace_id STRING` = resolved allowlisted workspace ID;
+`shard_count INT64` = `credit_shard_count(account)` from that workspace's
+credit configuration. Evidence must cover the configured shard range.
+
+```sql
+SELECT shard, limit_micro, day_limit_micro, week_limit_micro, month_limit_micro
+FROM tr_key_limit
+WHERE key_hash=@key_id AND shard>=0 AND shard<@shard_count ORDER BY shard
+```
+
+Parameters: `key_id STRING` = independently resolved stored key hash;
+`shard_count INT64` = that key's `usage_shard_count`.
+
+```sql
+SELECT kind, provider, credited_micro, recovered_micro, lifecycle_status,
+       unrecovered_micro, recovery_target
+FROM tr_trust_event
+WHERE workspace_id=@workspace_id ORDER BY event_id LIMIT 1001
+```
+
+Parameters: `workspace_id STRING` = resolved allowlisted workspace ID. Require
+an ordered primary-key prefix seek on `(workspace_id, event_id)` with the
+1,001-row bound; reaching that bound still means incomplete paid evidence.
+
+## Round 2 isolation and CI
+
+Every observer call site uses the same `isolate` boundary, including evaluation
+of callback arguments, scope entry/exit, response timing capture and error
+completion. It catches `Exception`; `KeyboardInterrupt` and `SystemExit` still
+propagate. Failures set sticky coverage loss and its first content-free site
+reason, exposed by shadow status. The boundary never encloses ordinary billing
+work, so an ordinary response or exception retains its identity.
+
+Cached grant reuse rechecks current key/trust/price deadlines and the two-second
+start margin. A shorter deadline mints a fresh generation only if the current
+facts still qualify; otherwise the item returns `start-window-exhausted`.
+
+The native transaction test has the `spanner-emulator` backend parameter and is
+also named in CI's explicit emulator file list. An offline collection test
+requires its exact node ID under `-k spanner-emulator`. The WIF rules were checked
+in `infra/gcp_wif.tf`: they authorize workflow refs, not content hashes. This
+CI emulator job performs no WIF authentication and needs no allowlist change.

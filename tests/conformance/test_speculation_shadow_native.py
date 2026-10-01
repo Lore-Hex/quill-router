@@ -10,7 +10,8 @@ from trusted_router.storage_gcp_speculation_shadow import SpannerSpeculationShad
 pytestmark = pytest.mark.xdist_group("conformance-spanner-emulator")
 
 
-def test_native_shadow_atomic_dedup_and_scoped_projection(native_emulator_resources):
+@pytest.mark.parametrize("backend", ["spanner-emulator"])
+def test_native_shadow_atomic_dedup_and_scoped_projection(native_emulator_resources, backend):
     database, _ = native_emulator_resources
     store = SpannerSpeculationShadow(SimpleNamespace(_database=database), SimpleNamespace(speculation_shadow_plane="shadow-test"))
     store.ready()

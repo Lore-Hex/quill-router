@@ -88,3 +88,20 @@ if ! table_exists tr_speculation_shadow_exposure; then
     updated_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true)
   ) PRIMARY KEY (plane, identity)"
 fi
+
+# Seven days covers the one-day delivery bound plus the ten-minute history
+# window. Never attach this policy to retained exposure or scope/producer state.
+ensure_policy() {
+  local table="$1" current normalized
+  current=$(gcloud spanner databases execute-sql "$DATABASE" --instance="$INSTANCE" "${PROJECT_ARG[@]}" \
+    --sql="SELECT COALESCE(ROW_DELETION_POLICY_EXPRESSION, '') FROM INFORMATION_SCHEMA.TABLES WHERE table_name='${table}'" --format='value(rows[0])')
+  normalized=$(printf '%s' "$current" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+  if [ -z "$normalized" ]; then
+    apply_ddl "ALTER TABLE $table ADD ROW DELETION POLICY (OLDER_THAN(updated_at, INTERVAL 7 DAY))"
+  elif [ "$normalized" != 'older_than(updated_at,interval7day)' ]; then
+    printf 'Refusing unexpected retention policy for %s: %s\n' "$table" "$current" >&2
+    exit 1
+  fi
+}
+ensure_policy tr_speculation_shadow_event
+ensure_policy tr_speculation_shadow_success

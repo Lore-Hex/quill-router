@@ -6,6 +6,7 @@ timeouts are build-broken, not successful detection.
 """
 from __future__ import annotations
 
+import ast
 import json
 import os
 import shutil
@@ -31,8 +32,8 @@ MUTATIONS = [
      '\n        self.store.ready()\n        if not self.lock.acquire(blocking=False):',
      UNIT + "test_submit_does_not_wait_for_worker_io"),
     ("extra synchronous boot read", GATEWAY,
-     '        speculation_shadow.resolved(api_key, body.invocation_nonce)',
-     '        STORE.get_gateway_boot("mutation-boot")\n        speculation_shadow.resolved(api_key, body.invocation_nonce)',
+     '            speculation_shadow.resolved(api_key, body.invocation_nonce)',
+     '            STORE.get_gateway_boot("mutation-boot")\n            speculation_shadow.resolved(api_key, body.invocation_nonce)',
      "tests/test_gateway_authorize_spanner_operations.py::test_warm_lookup_authorize_exact_sequence_and_contents"),
     ("success clears sticky loss", SERVICE,
      '    state.update(submitted=submitted, expires_at=now + 5, membership=membership)',
@@ -55,11 +56,67 @@ MUTATIONS = [
 ]
 
 
+MUTATIONS.extend([
+    ("cached current deadlines ignored", SERVICE,
+     'if (cached["trust_fresh_until"] <= facts["trust_fresh_until"]',
+     'if (True', UNIT + "test_cached_grant_rechecks_current_deadlines"),
+    ("exhausted start window untyped", SERVICE,
+     'if deadline - 2 <= now:', 'if False:', UNIT + "test_cached_grant_rechecks_current_deadlines"),
+    ("native backend deselected", "tests/conformance/test_speculation_shadow_native.py",
+     '@pytest.mark.parametrize("backend", ["spanner-emulator"])',
+     '@pytest.mark.parametrize("backend", ["native"])', UNIT + "test_native_shadow_is_selected_by_ci"),
+    ("native explicit CI list omitted", ".github/workflows/ci.yml",
+     '          tests/conformance/test_speculation_shadow_native.py\n', '', UNIT + "test_native_shadow_is_selected_by_ci"),
+    ("Stage D observer changes estimate", SERVICE,
+     '    observation = _CURRENT.get()\n    if observation is not None:\n        observation.authorization_id = authorization.id',
+     '    if authorization.pricing_snapshot is not None:\n        authorization.estimated_microdollars += 1\n    observation = _CURRENT.get()\n    if observation is not None:\n        observation.authorization_id = authorization.id',
+     "tests/test_gateway_authorize_spanner_operations.py::test_shadow_response_money_and_sql_differential"),
+    ("expired replay recreates dedup", SERVICE,
+     'if event is not None and not now - MAX_DELIVERY_SECONDS <= event.occurred_at <= now:',
+     'if False:', UNIT + "test_expired_delivery_after_ttl_cannot_requalify_or_extend_retention"),
+    ("old success recreates dedup", SERVICE,
+     'and not event.replay and now - HISTORY_SECONDS <= event.occurred_at <= now:',
+     'and not event.replay:', UNIT + "test_success_older_than_history_does_not_recreate_dedup"),
+    ("retention policy omitted", "scripts/deploy/migrate_speculation_shadow.sh",
+     'ensure_policy tr_speculation_shadow_success\n', '', UNIT + "test_shadow_ttl_only_applies_to_event_and_success"),
+])
+
+# One actual source-site removal per boundary, including each paused fallback.
+# Keep indentation executable; compile/import failure is never a mutation kill.
+for relative in (GATEWAY, "src/trusted_router/gateway_timing.py", SERVICE):
+    source = (ROOT / relative).read_text()
+    lines = source.splitlines(keepends=True)
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.With):
+            continue
+        expression = node.items[0].context_expr
+        if not isinstance(expression, ast.Call):
+            continue
+        func = expression.func
+        name = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else ""
+        if name != "isolate":
+            continue
+        site = expression.args[0].value
+        end = node.lineno
+        start = end - 1
+        old = ''.join(lines[start:end])
+        while source.count(old) != 1:
+            start -= 1
+            old = ''.join(lines[start:end])
+        boundary = lines[end - 1]
+        replacement = boundary[:len(boundary) - len(boundary.lstrip())] + "if True:\n"
+        new = old[:-len(boundary)] + replacement
+        test = (UNIT + "test_every_gateway_callback_boundary_including_arguments" if relative == GATEWAY
+                else UNIT + "test_content_free_observation_and_observer_failure" if relative == SERVICE
+                else UNIT + "test_observer_fault_preserves_response_and_exception_identity")
+        MUTATIONS.append((f"remove {relative.split('/')[-1]} {site} boundary L{end}", relative, old, new, test))
+
+
 def main(names: set[str] | None = None) -> None:
     results = []
     with tempfile.TemporaryDirectory(prefix="astra-r3-mutations-", dir="/private/tmp") as directory:
         copied = Path(directory)
-        for name in ("src", "tests", "scripts", "docs"):
+        for name in ("src", "tests", "scripts", "docs", ".github"):
             shutil.copytree(ROOT / name, copied / name, ignore=shutil.ignore_patterns("__pycache__"))
         shutil.copy2(ROOT / "pyproject.toml", copied / "pyproject.toml")
         env = {**os.environ, "PYTHONPATH": str(copied / "src"), "PYTHONDONTWRITEBYTECODE": "1"}
@@ -67,7 +124,7 @@ def main(names: set[str] | None = None) -> None:
             command = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", test,
                        "--tb=short", "--disable-warnings"]
             completed = subprocess.run(command, cwd=copied, env=env,  # noqa: S603 - fixed repository test command
-                                       capture_output=True, text=True, timeout=120, check=False)
+                                       capture_output=True, text=True, timeout=240, check=False)
             output = completed.stdout + completed.stderr
             broken = completed.returncode not in (0, 1) or any(s in output for s in ("ERROR collecting", "SyntaxError", "ImportError"))
             return ("build-broken" if broken else "survived" if completed.returncode == 0 else "red"), output
@@ -82,7 +139,8 @@ def main(names: set[str] | None = None) -> None:
                 raise AssertionError(f"baseline {name}: {output}")
             try:
                 path.write_text(original.replace(old, new))
-                compile(path.read_text(), str(path), "exec")
+                if path.suffix == ".py":
+                    compile(path.read_text(), str(path), "exec")
                 result, output = run(test)
             except (SyntaxError, subprocess.TimeoutExpired) as exc:
                 result, output = "build-broken", str(exc)

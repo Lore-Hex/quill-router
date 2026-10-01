@@ -32,6 +32,8 @@ TIER_CEILINGS = {2: 25_000_000, 3: 100_000_000}
 TABLES = frozenset({"event", "success", "scope", "producer", "paid", "route", "grant", "exposure"})
 MAX_BATCH = 64
 MAX_BODY = 32768
+HISTORY_SECONDS = 600
+MAX_DELIVERY_SECONDS = 86400  # replay acceptance; TTL keeps dedup for seven days
 
 
 class ShadowMiss(ValueError):
@@ -88,6 +90,24 @@ class Observation:
 
 _CURRENT: contextvars.ContextVar[Observation | None] = contextvars.ContextVar("speculation_shadow", default=None)
 _RUNTIME: Dispatcher | None = None
+
+
+@contextmanager
+def isolate(site: str, observation: Observation | None = None) -> Iterator[None]:
+    """Guard callbacks AND their argument evaluation, never the ordinary operation.
+
+    Process termination/cancellation (BaseException) is deliberately not swallowed.
+    The first content-free site reason survives later callbacks and queue overflow.
+    """
+    try:
+        yield
+    except Exception:
+        observation = observation or _CURRENT.get()
+        dispatcher = observation.dispatcher if observation is not None else _RUNTIME
+        if dispatcher is not None:
+            dispatcher.loss.set()
+            if not dispatcher.loss_reason:
+                dispatcher.loss_reason = "observer-" + site
 
 
 def resolved(key: Any, nonce: str | None) -> None:
@@ -147,11 +167,8 @@ def complete(observation: Observation | None, timing: Mapping[str, int], error: 
         typed = detail.get("error", {}).get("type", "") if isinstance(detail, dict) and isinstance(detail.get("error"), dict) else ""
         code = {"key_limit_exceeded": "key_limit_exceeded", "key_window_limit_exceeded": "key_window_limit_exceeded", "insufficient_credits": "credit_exhausted",
                 "billing_paused": "billing_paused"}.get(typed, "success" if not error else "request_error")
-    try:
+    with isolate("submit", observation):
         observation.dispatcher.try_submit(observation, status, code, timing)
-    except Exception:
-        # A broken observer cannot change ordinary response/exception semantics.
-        observation.dispatcher.loss.set()
 
 
 class Dispatcher:
@@ -161,6 +178,7 @@ class Dispatcher:
         self.membership = membership
         self.pending: queue.Queue[Outcome] = queue.Queue(maxsize=capacity)
         self.loss = threading.Event()  # separate from the bounded queue; sticky
+        self.loss_reason = ""
         self.stopped = threading.Event()
         self.lock = threading.Lock()
         self.sequence = 0
@@ -239,6 +257,12 @@ def project(tx: ShadowTransaction, event: Outcome | None, producer: str, incarna
         state["clean_since"] = now
         state["lost"] = True
     state.update(submitted=submitted, expires_at=now + 5, membership=membership)
+    # Older deliveries cannot resurrect dedup entries after TTL. Fail coverage
+    # closed even for old denials; do not silently discard adverse evidence.
+    if event is not None and not now - MAX_DELIVERY_SECONDS <= event.occurred_at <= now:
+        state["clean_since"] = now
+        state["lost"] = True
+        event = None
     if event is not None:
         event_key = event.incarnation + ":" + str(event.sequence)
         if tx.get("event", event_key) is None:
@@ -260,7 +284,7 @@ def project(tx: ShadowTransaction, event: Outcome | None, producer: str, incarna
                         # deny invalidates the entire newly observed clean interval.
                         row["clean_since"] = now
                         row["epoch"] += 1
-                    if scope == "key" and event.status == 200 and event.authorization_id and not event.replay:
+                    if scope == "key" and event.status == 200 and event.authorization_id and not event.replay and now - HISTORY_SECONDS <= event.occurred_at <= now:
                         unique = identity(event.authorization_id)
                         invocation = identity("invocation", event.key_id, event.invocation_nonce) if event.invocation_nonce else unique
                         if tx.get("success", unique) is None and tx.get("success", invocation) is None:
@@ -456,12 +480,19 @@ class RefreshService:
                            workspace_epoch=workspace["epoch"], key_epoch=key_state["epoch"],
                            image_policy_version=settings.speculation_shadow_image_policy_version,
                            route=route, tier_ceiling_micro=TIER_CEILINGS[facts["tier"]])
+            deadline = min(now + 30, facts["key_expires_at"], facts["trust_fresh_until"], route["price_expires_at"])
+            if deadline - 2 <= now:
+                raise ShadowMiss("start-window-exhausted")
             cache_key = identity(ws, key, boot_id)
             old = tx.get("grant", cache_key)
             if old:
                 try:
-                    verify_grant(old["token"], [signer.trusted], {**context, "generation": old["generation"]}, now, shadow=True)
-                    return str(old["token"])
+                    cached = verify_grant(old["token"], [signer.trusted], {**context, "generation": old["generation"]}, now, shadow=True).claims
+                    if (cached["trust_fresh_until"] <= facts["trust_fresh_until"]
+                            and cached["key_expires_at"] <= facts["key_expires_at"]
+                            and cached["route"]["price_expires_at"] <= route["price_expires_at"]
+                            and now < cached["start_before"] <= deadline - 2):
+                        return str(old["token"])
                 except ValueError:
                     pass
                 context["generation"] = old["generation"] + 1
@@ -475,7 +506,6 @@ class RefreshService:
                 if retained["micro"] + b > bound:
                     raise ShadowMiss("retained-budget")
                 exposures.append(retained)
-            deadline = min(now + 30, facts["key_expires_at"], facts["trust_fresh_until"], route["price_expires_at"])
             claims = {k: context[k] for k in context if k not in {"route", "tier_ceiling_micro"}}
             claims.update(v=1, iss=signer.trusted.iss, aud=signer.trusted.aud, environment=signer.trusted.environment,
                           plane=signer.trusted.plane, grant_id=identity(ws, key, boot_id, str(context["generation"])),
