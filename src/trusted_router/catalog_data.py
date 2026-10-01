@@ -1897,6 +1897,23 @@ PROVIDERS: dict[str, Provider] = {
         # Operator jurisdiction is not US-only inference; Canada is also declared.
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
+    "lyceum": Provider(
+        slug="lyceum",
+        name="Lyceum",
+        supports_prepaid=True,
+        supports_byok=False,
+        supports_embeddings=True,
+        provider_policy=(
+            "Lyceum's terms state that inference inputs and outputs are used only "
+            "to generate results, are not stored beyond technical necessity, and "
+            "are not used for training or analysis. No account-specific ZDR or "
+            "verified confidential-compute guarantee is tracked; these routes "
+            "remain Standard. German company jurisdiction is not a guarantee "
+            "that every model executes in the EU."
+        ),
+        provider_policy_url="https://lyceum.technology/legal/terms/index.html",
+        provider_headquarters_country="DE",
+    ),
     "regolo": Provider(
         slug="regolo",
         name="Regolo",
@@ -2160,6 +2177,7 @@ PROVIDERS: dict[str, Provider] = {
 
 GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
     {
+        "lyceum",
         "privatemode",
         "telluvian",
         "vercel-ai-gateway",

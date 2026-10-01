@@ -280,6 +280,7 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "azure",
         "scaleway",
         "regolo",
+        "lyceum",
         "privatemode",
         "featherless",
         "sakana",
@@ -1049,6 +1050,7 @@ def _supplemental_provider_models_and_endpoints(
         "tencent",
         "scaleway",
         "regolo",
+        "lyceum",
         "privatemode",
         "featherless",
         "sakana",
@@ -1084,10 +1086,13 @@ def _supplemental_provider_models_and_endpoints(
                 upstream_id = model_id
             if _is_provider_deprecated_model(provider_slug, model_id, upstream_id, at=at):
                 continue
-            if raw_model.get("model_type") not in (None, "chat", "image"):
+            if raw_model.get("model_type") not in (None, "chat", "image", "embedding"):
                 continue
             endpoint_types = {str(item) for item in (raw_model.get("endpoints") or [])}
-            if not endpoint_types.intersection({"chat/completions", "images"}):
+            if not endpoint_types.intersection({"chat/completions", "images", "embeddings"}):
+                continue
+            embedding = raw_model.get("model_type") == "embedding"
+            if embedding and (not provider.supports_embeddings or endpoint_types != {"embeddings"}):
                 continue
             # These providers bill per generated image, through a fixed hold.
             fixed_price_image = (
@@ -1108,6 +1113,11 @@ def _supplemental_provider_models_and_endpoints(
                 raw_model.get("output_token_price_per_m"),
                 price_scale=price_scale,
             )
+            if embedding and (
+                prompt_cost <= 0 or completion_cost != 0
+                or "price_tiers" in raw_model or "cached_input_token_price_per_m" in raw_model
+            ):
+                continue
             cached_raw = raw_model.get("cached_input_token_price_per_m")
             cached_cost = _provider_manifest_optional_price_cost(
                 cached_raw,
@@ -1163,8 +1173,8 @@ def _supplemental_provider_models_and_endpoints(
                     # A malformed pricing tier is an accounting ambiguity. Do
                     # not create a route at the cheaper headline price.
                     continue
-            if (provider_slug, model_id) in INPUT_ONLY_PROVIDER_MODELS:
-                if not provider_manifest_price_profile_is_valid(raw_model):
+            if embedding or (provider_slug, model_id) in INPUT_ONLY_PROVIDER_MODELS:
+                if not embedding and not provider_manifest_price_profile_is_valid(raw_model):
                     continue
                 completion_price = 0
                 tiers = _flat_tier(prompt_price, 0)
@@ -1173,7 +1183,11 @@ def _supplemental_provider_models_and_endpoints(
             )
             context_length = _as_positive_int(raw_model.get("context_length"))
             name = str(raw_model.get("display_name") or raw_model.get("title") or model_id)
-            supported_parameters = manifest_supported_parameters(raw_model)
+            supported_parameters = manifest_supported_parameters(
+                raw_model,
+                supports_chat="chat/completions" in endpoint_types,
+                supports_embeddings=embedding,
+            )
             reliability = raw_model.get("reliability")
             if not isinstance(reliability, dict):
                 reliability = {}
@@ -1185,6 +1199,7 @@ def _supplemental_provider_models_and_endpoints(
                 context_length=context_length,
                 upstream_id=upstream_id,
                 supports_chat="chat/completions" in endpoint_types,
+                supports_embeddings=embedding,
                 supports_messages=publisher == "anthropic",
                 supported_parameters=supported_parameters,
                 input_modalities=_modalities(

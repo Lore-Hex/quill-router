@@ -386,6 +386,15 @@
     "route_mode": "Prepaid",
     "slug": "ltx"
   },
+  "lyceum": {
+    "card_version": 2,
+    "model_count": 17,
+    "name": "Lyceum",
+    "privacy": "Policy documented",
+    "route_count": 17,
+    "route_mode": "Prepaid",
+    "slug": "lyceum"
+  },
   "makora": {
     "card_version": 2,
     "model_count": 5,

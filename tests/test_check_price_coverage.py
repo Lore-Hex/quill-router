@@ -94,6 +94,8 @@ _NEW_AUTOMATIC_FEED_ROWS = _NEW_AUTOMATIC_FEED_MODELS | _NEW_AUTOMATIC_FEED_ALIA
 
 
 def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict:
+    if "api.lyceum.technology" in url:
+        return {"data": [{"id": "z-ai/glm-5.3-flash"}]}
     if "api.privatemode.ai" in url:
         return {"data": [{"id": "gpt-oss-120b"}]}
     if "api.regolo.ai" in url:

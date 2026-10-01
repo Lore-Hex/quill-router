@@ -1,0 +1,707 @@
+{
+  "provider": "lyceum",
+  "models": [
+    {
+      "display_name": "deepseek v4 flash",
+      "title": "deepseek/deepseek-v4-flash-0731",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash-0731",
+      "upstream_id": "deepseek/deepseek-v4-flash-0731",
+      "context_length": 1000000,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "tools",
+        "streaming",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 300000,
+      "cached_input_token_price_per_m": 60000
+    },
+    {
+      "display_name": "deepseek v4 pro",
+      "title": "deepseek/deepseek-v4-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-pro",
+      "upstream_id": "deepseek/deepseek-v4-pro",
+      "context_length": 1000000,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "tools",
+        "streaming",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 1750000,
+      "output_token_price_per_m": 3500000,
+      "cached_input_token_price_per_m": 440000
+    },
+    {
+      "display_name": "deepseek v4.1 flash",
+      "title": "deepseek/deepseek-v4.1-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4.1-flash",
+      "upstream_id": "deepseek/deepseek-v4.1-flash",
+      "context_length": 1000000,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "tools",
+        "streaming",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 1500000,
+      "cached_input_token_price_per_m": 130000
+    },
+    {
+      "display_name": "lyceum/complex",
+      "title": "lyceum/complex",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "lyceum/complex",
+      "upstream_id": "lyceum/complex",
+      "routable": false,
+      "routable_reason": "price-unavailable",
+      "unresolved_since": "2026-09-30"
+    },
+    {
+      "display_name": "lyceum/reasoning",
+      "title": "lyceum/reasoning",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "lyceum/reasoning",
+      "upstream_id": "lyceum/reasoning",
+      "routable": false,
+      "routable_reason": "price-unavailable",
+      "unresolved_since": "2026-09-30"
+    },
+    {
+      "display_name": "lyceum/router",
+      "title": "lyceum/router",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "lyceum/router",
+      "upstream_id": "lyceum/router",
+      "routable": false,
+      "routable_reason": "price-unavailable",
+      "unresolved_since": "2026-09-30"
+    },
+    {
+      "display_name": "lyceum/simple",
+      "title": "lyceum/simple",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "lyceum/simple",
+      "upstream_id": "lyceum/simple",
+      "routable": false,
+      "routable_reason": "price-unavailable",
+      "unresolved_since": "2026-09-30"
+    },
+    {
+      "display_name": "minimax/minimax-m2.5",
+      "title": "minimax/minimax-m2.5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "minimax/minimax-m2.5",
+      "upstream_id": "minimax/minimax-m2.5",
+      "routable": false,
+      "routable_reason": "price-unavailable",
+      "unresolved_since": "2026-09-30"
+    },
+    {
+      "display_name": "minimax m3",
+      "title": "minimax/minimax-m3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "minimax/minimax-m3",
+      "upstream_id": "minimax/minimax-m3",
+      "context_length": 1000000,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "tools",
+        "streaming",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 2000000,
+      "cached_input_token_price_per_m": 100000
+    },
+    {
+      "display_name": "kimi k2.6",
+      "title": "moonshotai/kimi-k2.6",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k2.6",
+      "upstream_id": "moonshotai/kimi-k2.6",
+      "context_length": 256000,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "tools",
+        "streaming",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 4000000,
+      "cached_input_token_price_per_m": 250000
+    },
+    {
+      "display_name": "kimi k2.7 code",
+      "title": "moonshotai/kimi-k2.7-code",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k2.7-code",
+      "upstream_id": "moonshotai/kimi-k2.7-code",
+      "context_length": 256000,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "tools",
+        "streaming",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 1250000,
+      "output_token_price_per_m": 4500000,
+      "cached_input_token_price_per_m": 310000
+    },
+    {
+      "display_name": "kimi k3",
+      "title": "moonshotai/kimi-k3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k3",
+      "upstream_id": "moonshotai/kimi-k3",
+      "context_length": 1000000,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "tools",
+        "streaming",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 750000
+    },
+    {
+      "display_name": "qwen/qwen3-235b-a22b-2507",
+      "title": "qwen/qwen3-235b-a22b-2507",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-235b-a22b-2507",
+      "upstream_id": "qwen/qwen3-235b-a22b-2507",
+      "routable": false,
+      "routable_reason": "price-unavailable",
+      "unresolved_since": "2026-09-30"
+    },
+    {
+      "display_name": "qwen3 235b a22b instruct",
+      "title": "qwen/qwen3-235b-a22b-instruct-2507",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-235b-a22b-instruct-2507",
+      "upstream_id": "qwen/qwen3-235b-a22b-instruct-2507",
+      "context_length": 256000,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "tools",
+        "streaming"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 600000
+    },
+    {
+      "display_name": "qwen3 embedding 8b",
+      "title": "qwen/qwen3-embedding-8b",
+      "model_type": "embedding",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "embeddings"
+      ],
+      "endpoints": [
+        "embeddings"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-embedding-8b",
+      "upstream_id": "qwen/qwen3-embedding-8b",
+      "context_length": 32000,
+      "max_output_tokens": 0,
+      "supported_features": [],
+      "routable": true,
+      "input_token_price_per_m": 20000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "qwen3.5 9b",
+      "title": "qwen/qwen3.5-9b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.5-9b",
+      "upstream_id": "qwen/qwen3.5-9b",
+      "context_length": 256000,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "tools",
+        "streaming",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 200000,
+      "cached_input_token_price_per_m": 40000
+    },
+    {
+      "display_name": "qwen3.8 2.4t a95b",
+      "title": "qwen/qwen3.8-2.4t-a95b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.8-2.4t-a95b",
+      "upstream_id": "qwen/qwen3.8-2.4t-a95b",
+      "context_length": 256000,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "tools",
+        "streaming",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 2500000,
+      "output_token_price_per_m": 6000000,
+      "cached_input_token_price_per_m": 630000
+    },
+    {
+      "display_name": "qwen3.8 27b",
+      "title": "qwen/qwen3.8-27b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.8-27b",
+      "upstream_id": "qwen/qwen3.8-27b",
+      "context_length": 256000,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "tools",
+        "streaming",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 2400000,
+      "cached_input_token_price_per_m": 100000
+    },
+    {
+      "display_name": "qwen/qwen3.8-27b-instant",
+      "title": "qwen/qwen3.8-27b-instant",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.8-27b-instant",
+      "upstream_id": "qwen/qwen3.8-27b-instant",
+      "routable": false,
+      "routable_reason": "price-unavailable",
+      "unresolved_since": "2026-09-30"
+    },
+    {
+      "display_name": "qwen3.8 flash next",
+      "title": "qwen/qwen3.8-flash-next",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.8-flash-next",
+      "upstream_id": "qwen/qwen3.8-flash-next",
+      "context_length": 256000,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "tools",
+        "streaming",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 500000,
+      "cached_input_token_price_per_m": 50000
+    },
+    {
+      "display_name": "qwen/qwen3.8-flash-next-instant",
+      "title": "qwen/qwen3.8-flash-next-instant",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.8-flash-next-instant",
+      "upstream_id": "qwen/qwen3.8-flash-next-instant",
+      "routable": false,
+      "routable_reason": "price-unavailable",
+      "unresolved_since": "2026-09-30"
+    },
+    {
+      "display_name": "glm-5.1",
+      "title": "z-ai/glm-5.1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.1",
+      "upstream_id": "z-ai/glm-5.1",
+      "context_length": 200000,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "tools",
+        "streaming",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 350000
+    },
+    {
+      "display_name": "glm-5.2",
+      "title": "z-ai/glm-5.2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "z-ai/glm-5.2",
+      "context_length": 1000000,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "tools",
+        "streaming",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 1500000,
+      "output_token_price_per_m": 4500000,
+      "cached_input_token_price_per_m": 380000
+    },
+    {
+      "display_name": "z-ai/glm-5.2-instant",
+      "title": "z-ai/glm-5.2-instant",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.2-instant",
+      "upstream_id": "z-ai/glm-5.2-instant",
+      "routable": false,
+      "routable_reason": "price-unavailable",
+      "unresolved_since": "2026-09-30"
+    },
+    {
+      "display_name": "glm-5.3",
+      "title": "z-ai/glm-5.3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3",
+      "upstream_id": "z-ai/glm-5.3",
+      "context_length": 1000000,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "tools",
+        "streaming",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 1750000,
+      "output_token_price_per_m": 4500000,
+      "cached_input_token_price_per_m": 440000
+    },
+    {
+      "display_name": "glm-5.3 flash",
+      "title": "z-ai/glm-5.3-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3-flash",
+      "upstream_id": "z-ai/glm-5.3-flash",
+      "context_length": 1000000,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "tools",
+        "streaming",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 500000,
+      "cached_input_token_price_per_m": 50000
+    },
+    {
+      "display_name": "z-ai/glm-5.3-flash-instant",
+      "title": "z-ai/glm-5.3-flash-instant",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3-flash-instant",
+      "upstream_id": "z-ai/glm-5.3-flash-instant",
+      "routable": false,
+      "routable_reason": "price-unavailable",
+      "unresolved_since": "2026-09-30"
+    },
+    {
+      "display_name": "z-ai/glm-5.3-instant",
+      "title": "z-ai/glm-5.3-instant",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3-instant",
+      "upstream_id": "z-ai/glm-5.3-instant",
+      "routable": false,
+      "routable_reason": "price-unavailable",
+      "unresolved_since": "2026-09-30"
+    }
+  ],
+  "source": "https://api.lyceum.technology/openai/v1/models",
+  "pricing_source": "https://lyceum.technology/products/inference/models/",
+  "generated_at": "2026-09-30T21:51:44Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 28
+}

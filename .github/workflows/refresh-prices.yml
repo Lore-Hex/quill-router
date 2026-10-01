@@ -185,6 +185,7 @@ jobs:
                       TENCENT_API_KEY:trustedrouter-tencent-tokenhub-api-key \
                       SCALEWAY_SECRET_KEY:trustedrouter-scaleway-api-key \
                       REGOLO_API_KEY:trustedrouter-regolo-api-key \
+                      LYCEUM_API_KEY:trustedrouter-lyceum-api-key \
                       PRIVATEMODE_API_KEY:trustedrouter-privatemode-api-key \
                       FEATHERLESS_API_KEY:trustedrouter-featherless-api-key \
                       JINA_API_KEY:trustedrouter-jina-api-key \
