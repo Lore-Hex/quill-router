@@ -6,8 +6,11 @@ _FakeTransaction methods, and PostgresStore._run_transaction using
 SqlitePostgresConn. These funnels are not the only way to reach the database.
 The paths in KNOWN_UNCOVERED_PATHS below are not covered.
 
-The observation is table-level call order, not row contention or deadlock
-freedom. Spanner read-write SELECTs count as reads that acquire locks; Postgres
+The observation is table-level call order within each transaction, not row
+contention, unique-index lock order, lock release, or deadlock freedom. A rolled-
+back speculative transaction and its sequential fallback have separate traces;
+key access in the first followed by credit access in the second is not an
+inversion within either transaction. Failed cleanup can leave locks until expiry. Spanner read-write SELECTs count as reads that acquire locks; Postgres
 SELECTs count only with explicit locking clauses. Buffered counter writes take no
 call-order lock, so such a transaction is reported as UNPROVED (see
 ``recorder.unproved``) rather than ordered -- absence of a violation there is

@@ -1028,8 +1028,12 @@ def test_authorize_atomic_concurrent_same_scope_one_debit() -> None:
     """Two concurrent first-calls, same idempotency scope: exactly one debits,
     the other replays (ALREADY_EXISTS -> replay) — never a double reservation."""
     ws = "ws_auth_race"
-    barrier = threading.Barrier(3)
-    store, db = make_fake_store(ready_barrier=barrier)
+    store, db = make_fake_store()
+    # Synchronize only the two first attempts. The loser may classify replay in
+    # a new transaction; making it wait for two departed participants races the
+    # fake's 10s barrier timeout against _run_workers' 10s join timeout.
+    barrier = threading.Barrier(3, action=lambda: setattr(db, "_ready_barrier", None))
+    db._ready_barrier = barrier
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
     outcomes: list[str] = []

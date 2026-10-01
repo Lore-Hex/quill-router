@@ -133,22 +133,60 @@ eligible non-NULL idempotency scope the first RPC batches credit reserve, key
 reserve, reservation INSERT, then authorization INSERT. The UNIQUE NULL_FILTERED
 `tr_reservation_by_idemp` index now supplies the scope conflict; no speculative
 reservation SELECT acquires a read lock or upgrades it later. A duplicate status
-or any unexpected count rolls the entire prefix back before the sequential
-transaction rereads scope and counters. ABORTED repeats the speculative callback.
-Existing-row finalizers and same-scope competitors can still cause aborts; the
-shared deadline bounds retries. The fake order guard proves call order only,
-not Spanner contention or deadlock freedom.
+or any unexpected count fails the callback. Non-ABORTED callback API failures
+attempt rollback through protected cleanup before a **new** sequential transaction
+rereads scope and counters. Cleanup can fail: the server-side transaction then
+expires uncommitted; no SDK branch commits the failed callback's partial effects.
+ABORTED has already discarded its transaction and repeats speculation.
+
+Speculation gets its own deadline of **remaining shared budget minus 4 seconds**
+(at most **16 seconds** of the original 20). The reserve covers the existing
+2-second protected rollback floor plus 2 seconds for sequential classification.
+The measured pre-cut authorize baseline was 125/160 ms p50/p95 in us-central1,
+455 ms in us-east4 and approximately 1,240 ms in Europe (RPC-diet inventory);
+2 seconds exceeds even that whole slow-region path by 760 ms. This is a measured
+baseline with margin, not a bound on contention. Cleanup and fallback consume the
+original budget; it is never renewed. If less than the reserve remains, skip
+speculation. A speculative timeout triggers fresh sequential classification:
+zero credit returns the same 402 and headers as main without a sequential key
+access. Funded requests still wait on the key and can exhaust the shared budget.
+Protected cleanup may itself exceed the overall deadline by its existing floor.
+
+The fake order guard proves table call order **within each transaction**, including
+separate speculative and fallback traces. It proves neither unique-index lock
+order nor lock release, actual Spanner contention, or deadlock freedom.
 
 Armed authorize retains credit UPDATE -> selected-shard pause SELECT -> key/new
-rows batch. Updating balance cells does not establish that pause/epoch cells
-are already locked, so a post-key pause read is not exempted from the guard.
-Moving that read after the new batch would violate the documented credit-class
-ordering; moving it before credit DML would change its required position.
-Consequently this cut is 3 operations unarmed and 5 armed, including the auth
-snapshot and commit. The proposed armed 4-operation target requires a separate
-pause-read design decision. BYOK keeps its shard-zero pause read before key.
-NULL scopes are excluded from the unique index and keep sequential admission;
-strict budgets and the existing key-speculation hints also keep their checks.
+rows batch: **5 operations**, versus **3 unarmed**, including auth snapshot and
+commit. This ordering is conservative, not a data dependency: the speculative
+first candidate is already known and `pause_epoch` is read for conflict detection,
+not consumed as a returned value. Cut 3 can consider a selected-shard pause read
+before the whole batch for 4 operations, with credit-before-pause rejection
+precedence and pause/unpause race coverage. A post-key pause read would violate
+credit-before-key ordering. BYOK retains its shard-zero pause read before key.
+NULL scopes, strict budgets and existing metadata hints retain their checks.
+
+The replay regression is accepted for this cut; no enclave hint or new field is
+added. Operation counts for eligible capped requests (auth snapshot included):
+
+| Request | Main | Candidate | Change |
+|---|---:|---:|---:|
+| Fresh, unarmed | 5 | 3 | -2 |
+| Replay, unarmed | 4 | 6 | +2 |
+| Fresh, armed | 6 | 5 | -1 |
+| Replay, armed | 4 | 8 | +4 |
+
+The October 1 measurement supplied for this review covered **72,730
+enclave-authorized requests; 0.051% had more than one authorize attempt**.
+The enclave retries HTTP 502/503/504. Multiple attempts can also include dial
+fallback, so this is a retry-attempt proxy, not a direct stored-replay rate or an
+estimate of arbitrary client idempotency reuse. The supplied expected extra cost
+is approximately **0.0015 operations/request** (a 3-operation average penalty at
+that frequency), against 2 saved on every eligible fresh unarmed request (1 armed).
+The +2/+4 replay penalties imply approximately 0.0010–0.0020 extra operations per
+request at that proxy rate; break-even replay fractions are **50% unarmed / 20%
+armed**. Contention can still add latency or produce a timeout on a replay whose
+main path would succeed; the reserve does not establish replay latency equivalence.
 
 A bounded per-process negative cache remembers final lifetime-cap rejections;
 only cached keys pay a lock-free snapshot precheck, so healthy keys pay nothing.

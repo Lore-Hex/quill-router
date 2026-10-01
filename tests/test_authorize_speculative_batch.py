@@ -396,7 +396,9 @@ def test_speculation_miss_configured_rollback_floor(
 
     sdk.rpcs.execute_batch_dml.side_effect = spend_budget
     sdk.rpcs.rollback.side_effect = rollback
-    if elapsed > 20 or cleanup == 'expired':
+    # An expired cleanup now consumes the nested speculation deadline, leaving
+    # the original T1 reserve for fallback. Only actual overall exhaustion fails.
+    if elapsed > 20:
         with pytest.raises(DeadlineExceeded) as caught:
             current.authorize_atomic(sdk.db, param_types, **_options())
         # Even at exhaustion, count an actual RPC below the deadline wrapper.
@@ -425,7 +427,7 @@ def test_speculation_miss_configured_rollback_floor(
     sdk.rpcs.rollback.assert_called_once()
     call = sdk.rpcs.rollback.call_args.kwargs
     assert call['transaction_id'] == b'tx-1'
-    assert call['timeout'] == (io._ROLLBACK_FLOOR_SECONDS if elapsed > 20 else 20 - elapsed)
+    assert call['timeout'] == (io._ROLLBACK_FLOOR_SECONDS if elapsed > 20 else 16 - elapsed)
     assert sdk.transactions[0].committed is None
     assert io._SPANNER_RPC_DEADLINE.get() is None
 

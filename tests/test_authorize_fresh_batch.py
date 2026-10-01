@@ -1,14 +1,17 @@
 """Fresh-batch differential against main 7fc31bd5 and rollback/race controls."""
 from __future__ import annotations
 
+import asyncio
 import copy
 import datetime as dt
+import json
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 
 import pytest
 from fastapi import HTTPException
+from google.api_core.exceptions import DeadlineExceeded
 from google.cloud.spanner_v1 import param_types
 from google.rpc import code_pb2
 from google.rpc.status_pb2 import Status
@@ -196,8 +199,8 @@ def test_sdk_abort_rerun_keeps_speculation_and_shared_deadline(configured_sdk, m
     assert sdk.rpcs.commit.call_count == 1
     assert sdk.rpcs.execute_sql.call_count == 0
     assert sdk.rpcs.execute_streaming_sql.call_count == int(winner)
-    assert [c.kwargs['timeout'] for c in sdk.rpcs.execute_batch_dml.call_args_list] == [20, 18]
-    assert sdk.rpcs.commit.call_args.kwargs['timeout'] == 16
+    assert [c.kwargs['timeout'] for c in sdk.rpcs.execute_batch_dml.call_args_list] == [16, 14]
+    assert sdk.rpcs.commit.call_args.kwargs['timeout'] == (16 if winner else 12)
 
 
 @pytest.mark.parametrize('armed', [False, True])
@@ -222,7 +225,7 @@ ROUTE_SCENARIOS = [
     'credits', 'stage-d', 'byok', 'strict', 'strict-window-exceeded', 'window', 'window-exceeded',
     'uncapped', 'key-exceeded', 'credit-exceeded', 'paused', 'paused-credit-exceeded',
     'paused-key-exceeded', 'replay', 'mismatch', 'replay-exhausted', 'replay-paused',
-    'null-scope', 'abort-rerun', 'race-already-exists', 'race-aborted',
+    'delayed-key-zero-credit', 'delayed-key-funded', 'replay-missing-authorization', 'null-scope', 'abort-rerun', 'race-already-exists', 'race-aborted',
 ]
 
 
@@ -232,7 +235,7 @@ def test_gateway_money_differential_against_main(monkeypatch, fixed_operation_ca
     """Compare HTTP status/body/headers and every durable money/request/outbox row.
 
     Only the additive timing payload is excluded: fewer RPCs is intentional.
-    The main oracle forces its existing sequential hint, preserving its checks.
+    Both implementations receive the hint production computes from the key.
     """
     class FixedDateTime(dt.datetime):
         @classmethod
@@ -268,7 +271,7 @@ def test_gateway_money_differential_against_main(monkeypatch, fixed_operation_ca
         store.update_key(key.hash, {'limit_daily_microdollars': 1 if 'exceeded' in scenario else 1_000_000})
     credit = db.typed['tr_credit_balance'][(key.workspace_id, 0)]
     cap = db.typed['tr_key_limit'][(key.hash, 0)]
-    if 'credit-exceeded' in scenario:
+    if 'credit-exceeded' in scenario or scenario == 'delayed-key-zero-credit':
         credit['total_credits'] = 0
     if 'key-exceeded' in scenario:
         cap['limit_micro'] = 0
@@ -280,6 +283,11 @@ def test_gateway_money_differential_against_main(monkeypatch, fixed_operation_ca
     original = current.authorize_atomic
     results = []
     original_batch = _FakeTransaction.batch_update
+    original_update = _FakeTransaction.execute_update
+    from trusted_router import storage_gcp_io as io
+    clock = [100.0]
+    if scenario.startswith('delayed-key'):
+        monkeypatch.setattr(io.time, 'monotonic', lambda: clock[0])
     for implementation in (main.authorize_atomic, original):
         for name, value in initial.items():
             setattr(db, name, copy.deepcopy(value))
@@ -289,10 +297,19 @@ def test_gateway_money_differential_against_main(monkeypatch, fixed_operation_ca
         request_body = body.model_copy(deep=True)
         aborted = False
         winner = None
+        clock[0] = 100.0
+        key_waits = []
+        before_delay = _state(db)
+
+        def delayed_update(tx, sql, key_waits=key_waits, **kwargs):
+            if scenario.startswith('delayed-key') and 'UPDATE tr_key_limit' in sql:
+                remaining = io.remaining_rpc_budget(20)
+                key_waits.append(remaining)
+                clock[0] += remaining
+                raise DeadlineExceeded('injected key lock wait')
+            return original_update(tx, sql, **kwargs)
 
         def dispatch(*args, implementation=implementation, **kwargs):
-            if implementation is main.authorize_atomic:
-                kwargs['speculate_key_limit'] = False
             return implementation(*args, **kwargs)
 
         def batch(tx, statements, **kwargs):
@@ -311,11 +328,15 @@ def test_gateway_money_differential_against_main(monkeypatch, fixed_operation_ca
                 return Status(code=code_pb2.ABORTED), []
             return original_batch(tx, statements, **kwargs)
 
+        monkeypatch.setattr(_FakeTransaction, 'execute_update', delayed_update)
         monkeypatch.setattr(current, 'authorize_atomic', dispatch)
         monkeypatch.setattr(_FakeTransaction, 'batch_update', batch)
         settings = route_settings
-        if scenario in ('replay', 'mismatch', 'replay-exhausted', 'replay-paused'):
+        if scenario in ('replay', 'mismatch', 'replay-exhausted', 'replay-paused', 'replay-missing-authorization'):
             winner = gateway._authorize_gateway_sync(_request(), request_body, settings)
+            if scenario == 'replay-missing-authorization':
+                db.gateway_authorizations.clear()
+                replay_state = _state(db)
             if scenario == 'mismatch':
                 request_body.max_output_tokens += 1
             elif scenario == 'replay-exhausted':
@@ -328,12 +349,27 @@ def test_gateway_money_differential_against_main(monkeypatch, fixed_operation_ca
             status, headers = 200, None
         except HTTPException as exc:
             response, status, headers = exc.detail, exc.status_code, exc.headers
+        except DeadlineExceeded as exc:
+            from trusted_router.main import app
+            http_response = asyncio.run(app.exception_handlers[DeadlineExceeded](route_request, exc))
+            response = json.loads(http_response.body)
+            status, headers = http_response.status_code, dict(http_response.headers)
         response = copy.deepcopy(response)
         response.get('data', {}).pop('timing', None)
         state = copy.deepcopy((db.typed, {k: v.body for k, v in db.rows.items()},
                                db.reservations, db.gateway_authorizations, db.settle_outbox,
                                db.operational_analytics_outbox, db.analytics_outbox))
         results.append((status, response, headers, state))
+        if scenario.startswith('delayed-key'):
+            assert _state(db) == before_delay, 'key delay must leave all rows untouched'
+            if scenario == 'delayed-key-zero-credit':
+                assert status == 402 and headers is None
+                assert len(key_waits) == int(implementation is original and not armed)
+                assert clock[0] <= 116
+            else:
+                assert status == 503 and headers['retry-after'] == '1'
+                assert key_waits, 'funded main must also wait on the key'
+                assert clock[0] == 120, 'fallback must not renew the 20s budget'
         if scenario == 'credit-exceeded':
             assert status == 402 and not db.reservations
         if scenario == 'key-exceeded':
@@ -348,7 +384,10 @@ def test_gateway_money_differential_against_main(monkeypatch, fixed_operation_ca
             assert status == 200 and response['data']['stage_d'] == {'eligible': True, 'reason': 'ok'}
         if scenario == 'paused':
             assert status == (403 if armed else 200)
-        if winner is not None and scenario != 'mismatch':
+        if scenario == 'replay-missing-authorization':
+            assert status == 500
+            assert _state(db) == replay_state, 'missing authorization must not create rows or holds'
+        if winner is not None and scenario not in ('mismatch', 'replay-missing-authorization'):
             assert response['data']['authorization_id'] == winner['data']['authorization_id']
             assert len(db.reservations) == 1
     assert results[0] == results[1]
@@ -375,7 +414,7 @@ def test_credit_candidate_fallback_matches_main(monkeypatch, armed, balance):
         result = implementation(db, param_types, **(_options() | {
             'credit_shard_candidates': (0, 1),
             'trust_settings': Settings(spend_lease_trust_eligibility_enabled=armed),
-            'speculate_key_limit': implementation is current.authorize_atomic,
+            'speculate_key_limit': True,
         }))
         if not balance.startswith('all'):
             assert result['outcome'] == 'accepted' and result['credit_shard'] == 1
@@ -422,3 +461,78 @@ def test_sdk_fresh_timing_counts_batch_and_commit(configured_sdk):  # noqa: F811
         assert current.authorize_atomic(sdk.db, param_types, **_options())['outcome'] == 'accepted'
     assert counter.count == 2  # gateway's preceding strong auth snapshot adds one
     assert sdk.rpcs.execute_streaming_sql.call_count == sdk.rpcs.execute_sql.call_count == 0
+
+
+@pytest.mark.parametrize('cleanup_fails', [False, True])
+@pytest.mark.parametrize('transport_error', [False, True])
+def test_deadline_cleanup_failure_still_classifies_in_new_transaction(configured_sdk, cleanup_fails, transport_error):  # noqa: F811
+    """Real SDK drops failed callbacks even if rollback cannot release their locks."""
+    from google.api_core.exceptions import ServiceUnavailable
+    from google.cloud.spanner_v1.types import ExecuteBatchDmlResponse, ResultSet, ResultSetStats
+
+    from trusted_router import storage_gcp_io as io
+
+    sdk = configured_sdk
+
+    def blocked_batch(**kwargs):
+        assert kwargs['timeout'] == 16
+        sdk.clock[0] += kwargs['timeout']
+        if transport_error:
+            sdk.transactions[-1]._transaction_id = b'tx-1'
+            raise DeadlineExceeded('injected transport timeout after staging credit')
+        # A staged credit prefix and transaction ID really exist at the failure.
+        return ExecuteBatchDmlResponse(status=Status(code=code_pb2.DEADLINE_EXCEEDED), result_sets=[
+            ResultSet(metadata={'transaction': {'id': b'tx-1'}},
+                      stats=ResultSetStats(row_count_exact=1)),
+        ])
+
+    def cleanup(**kwargs):
+        if kwargs['transaction_id'] != b'tx-1':
+            return
+        assert kwargs['timeout'] == 2
+        sdk.clock[0] += 2
+        if cleanup_fails:
+            raise ServiceUnavailable('injected cleanup failure')
+
+    sdk.rpcs.execute_batch_dml.side_effect = blocked_batch
+    sdk.rpcs.rollback.side_effect = cleanup
+    # The authoritative credit check rejects before any key access or INSERT.
+    sdk.rpcs.execute_sql.return_value = ResultSet(stats=ResultSetStats(row_count_exact=0))
+    assert current.authorize_atomic(sdk.db, param_types, **_options()) == {
+        'outcome': 'insufficient_credits',
+    }
+    assert len(sdk.transactions) == 2 and sdk.transactions[0] is not sdk.transactions[1]
+    assert all(tx.committed is None for tx in sdk.transactions)
+    sdk.rpcs.commit.assert_not_called()
+    assert sdk.rpcs.execute_batch_dml.call_count == 1
+    assert sdk.rpcs.execute_streaming_sql.call_args.kwargs['timeout'] == 2
+    assert sdk.rpcs.execute_sql.call_count == 1
+    assert 'tr_credit_balance' in sdk.rpcs.execute_sql.call_args.kwargs['request'].sql
+    assert sdk.clock[0] <= 120
+    assert io._SPANNER_RPC_DEADLINE.get() is None
+
+
+def test_rollback_then_sequential_lock_order_has_separate_transactions(monkeypatch):
+    """Prove per-transaction credit/key order across fallback, not lock release,
+    unique-index ordering, real lock waits, or production deadlock freedom.
+    """
+    from tests.fakes.lock_order import recorder
+
+    recorder.reset()
+    db = _database()
+    db.typed['tr_key_limit'][('key', 0)]['limit_micro'] = None
+    read = current.read_reservation_by_idempotency
+
+    def after_cleanup(tx, *args):
+        assert db.rollback_calls == 1
+        return read(tx, *args)
+
+    monkeypatch.setattr(current, 'read_reservation_by_idempotency', after_cleanup)
+    assert current.authorize_atomic(db, param_types, **_options())['outcome'] == 'accepted'
+    traces = list(recorder._tx.values())
+    assert len(traces) == 2
+    for steps in traces:
+        classes = [kind for kinds, _ in steps for kind in kinds]
+        assert classes[0] == 'credit' and classes[-1] == 'key'
+    assert recorder.both_tables_seen == 2
+    recorder.check('rolled-back speculation followed by sequential transaction')

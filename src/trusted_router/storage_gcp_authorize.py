@@ -11,12 +11,13 @@ decision, so a crash can never leak a hold (codex#1 #1):
 
 The UNIQUE NULL_FILTERED idempotency index arbitrates speculative requests.
 NULL scopes, strict budgets, skipped key limits, and no-speculation hints retain
-sequential admission. Any speculative count mismatch or duplicate rolls back
-before a new sequential transaction classifies the result under the same budget.
+sequential admission. Speculative callback failures attempt protected rollback
+before a new sequential transaction classifies the result under the same overall budget.
+Failed cleanup leaves an uncommitted transaction to expire, never to commit.
 
-A rejection (insufficient credits / key cap) raises inside the callback, which
-rolls the whole transaction back — releasing any hold already taken atomically,
-no compensation needed. A duplicate idempotency_scope (concurrent first-call
+A rejection (insufficient credits / key cap) raises inside the callback, so no
+hold can commit: rollback releases it, or failed cleanup leaves it to expire.
+No compensation is needed. A duplicate idempotency_scope (concurrent first-call
 loser) surfaces ALREADY_EXISTS (NOT retried); we re-read and REPLAY — no second
 debit. Replay is resume/no-execute: the caller must NOT re-run the LLM call
 (codex#2 #4).
@@ -34,7 +35,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from google.api_core.exceptions import AlreadyExists, GoogleAPICallError
+from google.api_core.exceptions import AlreadyExists, DeadlineExceeded, GoogleAPICallError
 
 from trusted_router.app_markup_billing import (
     app_markup_microdollars_from_charge,
@@ -160,10 +161,11 @@ class _Reject(Exception):
 
 
 class _RetrySequentialAuthorize(GoogleAPICallError):
-    """Roll back a speculative fresh authorize before sequential classification.
+    """Discard a speculative callback before sequential classification.
 
-    Deliberately not ABORTED: the protected API-error lifecycle releases the
-    transaction before fallback, without renewing the shared RPC deadline.
+    Deliberately not ABORTED: protected cleanup attempts rollback. If cleanup
+    fails, the server transaction expires uncommitted; fallback uses a new
+    transaction without renewing the shared RPC deadline.
     """
 
 
@@ -375,6 +377,13 @@ def check_key_window_limits(
     if decision is None or decision.allowed:
         return None
     return decision.window
+
+
+# Reserve 2s for protected rollback plus 2s for sequential classification.
+# The measured pre-cut authorize baseline is 125/160ms p50/p95 in us-central1
+# and ~1.24s in Europe: 2s exceeds that whole slow-region path by 760ms.
+# This is a contention allowance, not a latency guarantee; never renew T1.
+_AUTHORIZE_FALLBACK_RESERVE_SECONDS = 4.0
 
 
 @spanner_rpc_budget(TXN_BUDGET_SECONDS)
@@ -668,6 +677,25 @@ def authorize_atomic(
 
     try:
         try:
+            if speculative:
+                speculation_seconds = (
+                    remaining_rpc_budget(TXN_BUDGET_SECONDS) - _AUTHORIZE_FALLBACK_RESERVE_SECONDS
+                )
+                if speculation_seconds <= 0:
+                    raise _RetrySequentialAuthorize("no speculative budget remaining")
+                # Bound statement RPCs as well as SDK/outer ABORTED retries.
+                # Restoring this nested deadline exposes only the ORIGINAL
+                # remaining budget to fallback, including time spent cleaning up.
+                @spanner_rpc_budget(speculation_seconds)
+                def speculate() -> dict:
+                    return run_in_transaction_with_retry(
+                        database, txn, transaction_tag="tr_authorize",
+                    )
+
+                try:
+                    return speculate()
+                except DeadlineExceeded as exhausted:
+                    raise _RetrySequentialAuthorize("speculative deadline exhausted") from exhausted
             return run_in_transaction_with_retry(
                 database, txn, transaction_tag="tr_authorize",
             )
