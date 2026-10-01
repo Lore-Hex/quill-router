@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from trusted_router import catalog_ingest
+from trusted_router.catalog_data import maker_provider_slug
 from trusted_router.catalog_ingest import _INGEST_PATH, _ingested_models_and_endpoints
 
 
@@ -23,14 +24,41 @@ def _snapshot() -> list[dict]:
     return [m for m in items if isinstance(m, dict)]
 
 
+def _api_reported_windows() -> dict[tuple[str, str], int]:
+    """Each committed manifest's windows that its provider's own API reported."""
+    windows: dict[tuple[str, str], int] = {}
+    for path in catalog_ingest._PROVIDER_MODELS_DIR.glob("*.json"):
+        raw = json.loads(path.read_text())
+        if not isinstance(raw, dict):
+            continue
+        for row in raw.get("models") or []:
+            if not isinstance(row, dict) or row.get("context_length_source") != "api":
+                continue
+            window = row.get("context_length")
+            if row.get("routable") is not False and type(window) is int and window > 0:
+                windows[(raw["provider"], row["id"])] = window
+    return windows
+
+
 def test_advertised_context_matches_publisher_or_top_provider() -> None:
-    models, _ = _ingested_models_and_endpoints()
+    models, endpoints = _ingested_models_and_endpoints()
     by_id = {m["id"]: m for m in _snapshot() if m.get("id")}
+    api_windows = _api_reported_windows()
 
     over = []
     for model_id, model in models.items():
         raw = by_id.get(model_id)
         if not raw:
+            continue
+        maker = maker_provider_slug(model_id)
+        maker_routes = [
+            endpoint
+            for endpoint in endpoints.values()
+            if endpoint.model_id == model_id and endpoint.provider == maker
+        ]
+        if maker_routes and (maker, model_id) in api_windows:
+            if model.context_length != api_windows[(maker, model_id)]:
+                over.append((model_id, model.context_length, api_windows[(maker, model_id)]))
             continue
         publisher_windows = [
             ep["context_length"]
@@ -48,7 +76,8 @@ def test_advertised_context_matches_publisher_or_top_provider() -> None:
             over.append((model_id, model.context_length, canonical))
 
     assert not over, (
-        "advertised context differs from the publisher (or fallback top_provider) window "
+        "advertised context differs from the maker's API-reported window, the publisher's, "
+        "or the fallback top_provider window "
         f"for {len(over)} model(s): {over}"
     )
 
@@ -65,6 +94,21 @@ def test_glm_5_3_flash_advertises_the_publisher_window() -> None:
     assert model.context_length == 1_048_576, (
         f"expected the publisher's 1,048,576 window, got {model.context_length:,}"
     )
+
+
+@pytest.mark.provider_health
+def test_minimax_m3_advertises_minimax_api_window() -> None:
+    """Regression: OpenRouter lists MiniMax's own endpoint at 524288, and
+    DeepInfra, the first host, at 524288 too, while MiniMax's /v1/models
+    reports 1000000.
+
+    Live provider state: it needs MiniMax's API to report the window and the
+    snapshot to list MiniMax's route. The rule holds on fixtures in
+    test_maker_api_window_outranks_the_listing_of_its_route."""
+    models, _ = _ingested_models_and_endpoints()
+    model = models.get("minimax/minimax-m3")
+    assert model is not None, "minimax/minimax-m3 missing from the ingested catalog"
+    assert model.context_length == 1_000_000
 
 
 def test_every_ingested_model_keeps_a_usable_context() -> None:
@@ -109,8 +153,154 @@ def _ingest_context(
         encoding="utf-8",
     )
     monkeypatch.setattr(catalog_ingest, "_INGEST_PATH", snapshot)
+    monkeypatch.setattr(catalog_ingest, "_api_reported_context_windows", lambda: {})
     models, _ = _ingested_models_and_endpoints()
     return models["z-ai/glm-5.2"].context_length
+
+
+M3 = "minimax/minimax-m3"
+
+
+def _ingest_m3(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    endpoints: list[tuple[str, int]],
+    api_windows: dict[tuple[str, str], int],
+) -> tuple[str, int]:
+    """(default route, window) built from one MiniMax M3 snapshot entry."""
+    snapshot = tmp_path / "snapshot.json"
+    snapshot.write_text(
+        json.dumps(
+            {
+                "models": [
+                    {
+                        "id": M3,
+                        "context_length": 1_048_576,
+                        "top_provider": {"context_length": 1_048_576},
+                        "endpoints": [
+                            {"tr_provider_slug": slug, "context_length": window}
+                            for slug, window in endpoints
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(catalog_ingest, "_INGEST_PATH", snapshot)
+    monkeypatch.setattr(catalog_ingest, "_api_reported_context_windows", lambda: api_windows)
+    models, _ = _ingested_models_and_endpoints()
+    return models[M3].provider, models[M3].context_length
+
+
+def test_maker_api_window_outranks_the_listing_of_its_route(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hosts = [("deepinfra", 524_288), ("minimax", 524_288), ("novita", 1_000_000)]
+    # Without MiniMax's API report, the first host's listed window (#966).
+    assert _ingest_m3(tmp_path, monkeypatch, endpoints=hosts, api_windows={}) == (
+        "deepinfra",
+        524_288,
+    )
+    # MiniMax's own API reports 1000000. The default route stays DeepInfra:
+    # only the advertised window changes, never routing.
+    assert _ingest_m3(
+        tmp_path, monkeypatch, endpoints=hosts, api_windows={("minimax", M3): 1_000_000}
+    ) == ("deepinfra", 1_000_000)
+    # The maker's API also narrows a listing that over-reports.
+    assert _ingest_m3(
+        tmp_path,
+        monkeypatch,
+        endpoints=[("deepinfra", 1_048_576), ("minimax", 1_048_576)],
+        api_windows={("minimax", M3): 1_000_000},
+    ) == ("deepinfra", 1_000_000)
+
+
+def test_maker_api_window_needs_a_live_maker_route(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    api_windows = {("minimax", M3): 1_000_000}
+    # The snapshot lists no MiniMax route.
+    assert _ingest_m3(
+        tmp_path, monkeypatch, endpoints=[("deepinfra", 200_000)], api_windows=api_windows
+    ) == ("deepinfra", 200_000)
+    # MiniMax's listed route is deprecated, so a reseller serves every request.
+    monkeypatch.setitem(
+        catalog_ingest._PROVIDER_DEPRECATED_UPSTREAM_MODELS, "minimax", frozenset({M3})
+    )
+    assert _ingest_m3(
+        tmp_path,
+        monkeypatch,
+        endpoints=[("minimax", 200_000), ("deepinfra", 200_000)],
+        api_windows=api_windows,
+    ) == ("minimax", 200_000)
+
+
+def test_only_the_makers_api_window_counts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert _ingest_m3(
+        tmp_path,
+        monkeypatch,
+        endpoints=[("deepinfra", 524_288), ("minimax", 524_288), ("novita", 524_288)],
+        api_windows={("deepinfra", M3): 2_097_152, ("novita", M3): 2_097_152},
+    ) == ("deepinfra", 524_288)
+
+
+def test_api_windows_come_from_marked_routable_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unusable = [None, 0, -1, "1000000", 1_000_000.0, True, {}]
+    (tmp_path / "minimax.json").write_text(
+        json.dumps(
+            {
+                "provider": "minimax",
+                "models": [
+                    {"id": M3, "context_length": 1_000_000, "context_length_source": "api"},
+                    {
+                        "id": "minimax/listed",
+                        "context_length": 204_800,
+                        "context_length_source": "api",
+                        "routable": True,
+                    },
+                    # A hand-entered or documentation-derived window.
+                    {"id": "minimax/unmarked", "context_length": 1_000_000},
+                    {"id": "minimax/other-source", "context_length": 1_000_000, "context_length_source": "docs"},
+                    {
+                        "id": "minimax/held",
+                        "context_length": 1_000_000,
+                        "context_length_source": "api",
+                        "routable": False,
+                    },
+                    *(
+                        {
+                            "id": f"minimax/unusable-{index}",
+                            "context_length": window,
+                            "context_length_source": "api",
+                        }
+                        for index, window in enumerate(unusable)
+                    ),
+                    {"context_length": 1_000_000, "context_length_source": "api"},
+                    "minimax/not-a-row",
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "no-provider.json").write_text(
+        json.dumps({"models": [{"id": "a/b", "context_length": 1, "context_length_source": "api"}]}),
+        encoding="utf-8",
+    )
+    (tmp_path / "no-rows.json").write_text(json.dumps({"provider": "x", "models": {}}), encoding="utf-8")
+    (tmp_path / "list.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "truncated.json").write_text("{", encoding="utf-8")
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+
+    assert catalog_ingest._api_reported_context_windows() == {
+        ("minimax", M3): 1_000_000,
+        ("minimax", "minimax/listed"): 204_800,
+    }
 
 
 @pytest.mark.parametrize("top_window", [202_752, 1_024_000, 1_310_720])

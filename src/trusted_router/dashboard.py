@@ -63,6 +63,7 @@ from trusted_router.catalog import (
     provider_is_routable,
     providers_for_display,
 )
+from trusted_router.catalog_data import AUTHORS_NAMING_NO_MAKER, maker_provider_slug
 from trusted_router.competitor_comparisons import (
     COMPETITOR_COMPARISONS,
     CompetitorComparison,
@@ -4945,94 +4946,6 @@ def docs_llms_full_txt(settings: Settings) -> str:
     return "\n".join(lines)
 
 
-# A model's publisher is its maker, named by the author prefix of its id (`qwen`
-# in `qwen/qwen3.7-max`) and never by Model.provider: that is the default route,
-# which for an author without a routing mapping is whichever host lists the
-# model first. Routing reads catalog_ingest._AUTHOR_TO_PROVIDER_SLUG, which is a
-# different map: it sends meta-llama to Cerebras.
-#
-# An author is listed here only when a PROVIDERS entry is its maker's own API.
-# Hosts and resellers are not, including a multi-lab hosting catalog that a
-# maker's own company runs (NVIDIA NIM, Microsoft Azure AI Foundry) and "Meta via
-# OpenRouter", which is OpenRouter reselling Meta. A TrustedRouter orchestration
-# is published by TrustedRouter, not by its internal selector host.
-_PUBLISHER_PROVIDER_BY_AUTHOR: dict[str, str] = {
-    # The maker's API under the author's own name.
-    "aion-labs": "aion-labs",
-    "alibaba": "alibaba",
-    "anthropic": "anthropic",
-    "baidu": "baidu",
-    "cohere": "cohere",
-    "decart": "decart",
-    "deepseek": "deepseek",
-    "inception": "inception",
-    "kling": "kling",
-    "krea": "krea",
-    "minimax": "minimax",
-    "mistral": "mistral",
-    "morph": "morph",
-    "neurometric": "neurometric",
-    "openai": "openai",
-    "parasail": "parasail",
-    "perplexity": "perplexity",
-    "poolside": "poolside",
-    "recraft": "recraft",
-    "reka": "reka",
-    "runway": "runway",
-    "scaledown": "scaledown",
-    "stepfun": "stepfun",
-    "tencent": "tencent",
-    "thinkingmachines": "thinkingmachines",
-    "trustedrouter": "trustedrouter",
-    "upstage": "upstage",
-    "voyage": "voyage",
-    "xiaomi": "xiaomi",
-    "zero-g": "zero-g",
-    # The maker's API under another name.
-    "arcee-ai": "arcee",
-    "black-forest-labs": "bfl",
-    "bytedance": "byteplus",
-    "bytedance-seed": "byteplus",
-    "deepseek-ai": "deepseek",
-    # Alibaba's Tongyi labs (Fun-Audio, Z-Image, Wan) publish through Model Studio.
-    "funaudiollm": "alibaba",
-    "google": "google-ai-studio",
-    "jina-ai": "jina",
-    # Kuaishou's own platform for its Kwaipilot KAT models, under their native ids.
-    "kwaipilot": "streamlake",
-    "lightricks": "ltx",
-    "minimaxai": "minimax",
-    "mistralai": "mistral",
-    "moonshot": "kimi",
-    "moonshotai": "kimi",
-    # Mistral NeMo, built with NVIDIA, is on Mistral's own API.
-    "nv-mistralai": "mistral",
-    # Baidu's PaddlePaddle models (PaddleOCR-VL) are on Baidu's Qianfan API.
-    "paddlepaddle": "baidu",
-    "qwen": "alibaba",
-    "sakana-ai": "sakana",
-    "stepfun-ai": "stepfun",
-    # GLM's original Tsinghua organisation; Z.ai now publishes GLM.
-    "thudm": "zai",
-    "tongyi-mai": "alibaba",
-    "typesafe-ai": "typesafe",
-    "wan-ai": "alibaba",
-    "x-ai": "grok",
-    "xai": "grok",
-    "xiaomimimo": "xiaomi",
-    "z-ai": "zai",
-    "zai-org": "zai",
-    "zhipu": "zai",
-    "zhipuai": "zai",
-}
-
-# Author prefixes that name no maker: a host's namespace for other labs' weights
-# (cerebras/gpt-oss-120b is OpenAI's model, fal/flux-1-schnell Black Forest
-# Labs', lightning-ai/glm-5.3 Z.ai's; phala/* ids select Phala's hosted tier),
-# and stealth/*, whose maker is unannounced.
-_AUTHORS_NAMING_NO_MAKER = frozenset({"cerebras", "fal", "lightning-ai", "phala", "stealth"})
-
-
 @dataclass(frozen=True)
 class _ModelPublisher:
     """A model's maker as public pages name it.
@@ -5053,11 +4966,11 @@ class _ModelPublisher:
 def _model_publisher(model: Model) -> _ModelPublisher:
     author = model.id.split("/", 1)[0]
     key = author.lower()
-    if key in _AUTHORS_NAMING_NO_MAKER:
+    if key in AUTHORS_NAMING_NO_MAKER:
         return _ModelPublisher(None)
-    slug = _PUBLISHER_PROVIDER_BY_AUTHOR.get(key)
-    provider = PROVIDERS.get(slug) if slug is not None else None
-    if provider is not None:
+    slug = maker_provider_slug(model.id)
+    if slug is not None:
+        provider = PROVIDERS[slug]
         return _ModelPublisher(provider.name, provider)
     return _ModelPublisher(_BRAND_DISPLAY_NAMES.get(key, author))
 

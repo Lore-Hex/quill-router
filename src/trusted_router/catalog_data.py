@@ -2919,11 +2919,10 @@ SYNTH_QUALITY_MODEL_ORDER = (
     DEEPSEEK_V4_PRO_0813_MODEL_ID,
 )
 
-# Every member must serve the 1M window this model advertises. minimax-m3 tops
-# out at 524288 and was only ever eligible here because upstream reseller
-# metadata over-reported its context; routing does not filter candidates by
-# capacity, so a large request could land on it and fail at the provider.
+# Every member must serve the 1M window this model advertises, by its catalog
+# window (#966). Routing does not filter a member's hosts by capacity.
 SYNTH_QUALITY_1M_MODEL_ORDER = (
+    "minimax/minimax-m3",
     "xiaomi/mimo-v2.5-pro",
     "z-ai/glm-5.2",
     DEEPSEEK_V4_PRO_0423_MODEL_ID,
@@ -4104,3 +4103,100 @@ def model_origin_for_model_id(model_id: str) -> ModelOrigin | None:
     if not rest:
         return None
     return MODEL_ORIGINS.get(prefix)
+
+
+# A model's publisher is its maker, named by the author prefix of its id (`qwen`
+# in `qwen/qwen3.7-max`) and never by Model.provider: that is the default route,
+# which for an author without a routing mapping is whichever host lists the
+# model first. Routing reads catalog_ingest._AUTHOR_TO_PROVIDER_SLUG, which is a
+# different map: it sends meta-llama to Cerebras.
+#
+# An author is listed here only when a PROVIDERS entry is its maker's own API.
+# Hosts and resellers are not, including a multi-lab hosting catalog that a
+# maker's own company runs (NVIDIA NIM, Microsoft Azure AI Foundry) and "Meta via
+# OpenRouter", which is OpenRouter reselling Meta. A TrustedRouter orchestration
+# is published by TrustedRouter, not by its internal selector host.
+MAKER_PROVIDER_BY_AUTHOR: dict[str, str] = {
+    # The maker's API under the author's own name.
+    "aion-labs": "aion-labs",
+    "alibaba": "alibaba",
+    "anthropic": "anthropic",
+    "baidu": "baidu",
+    "cohere": "cohere",
+    "decart": "decart",
+    "deepseek": "deepseek",
+    "inception": "inception",
+    "kling": "kling",
+    "krea": "krea",
+    "minimax": "minimax",
+    "mistral": "mistral",
+    "morph": "morph",
+    "neurometric": "neurometric",
+    "openai": "openai",
+    "parasail": "parasail",
+    "perplexity": "perplexity",
+    "poolside": "poolside",
+    "recraft": "recraft",
+    "reka": "reka",
+    "runway": "runway",
+    "scaledown": "scaledown",
+    "stepfun": "stepfun",
+    "tencent": "tencent",
+    "thinkingmachines": "thinkingmachines",
+    "trustedrouter": "trustedrouter",
+    "upstage": "upstage",
+    "voyage": "voyage",
+    "xiaomi": "xiaomi",
+    "zero-g": "zero-g",
+    # The maker's API under another name.
+    "arcee-ai": "arcee",
+    "black-forest-labs": "bfl",
+    "bytedance": "byteplus",
+    "bytedance-seed": "byteplus",
+    "deepseek-ai": "deepseek",
+    # Alibaba's Tongyi labs (Fun-Audio, Z-Image, Wan) publish through Model Studio.
+    "funaudiollm": "alibaba",
+    "google": "google-ai-studio",
+    "jina-ai": "jina",
+    # Kuaishou's own platform for its Kwaipilot KAT models, under their native ids.
+    "kwaipilot": "streamlake",
+    "lightricks": "ltx",
+    "minimaxai": "minimax",
+    "mistralai": "mistral",
+    "moonshot": "kimi",
+    "moonshotai": "kimi",
+    # Mistral NeMo, built with NVIDIA, is on Mistral's own API.
+    "nv-mistralai": "mistral",
+    # Baidu's PaddlePaddle models (PaddleOCR-VL) are on Baidu's Qianfan API.
+    "paddlepaddle": "baidu",
+    "qwen": "alibaba",
+    "sakana-ai": "sakana",
+    "stepfun-ai": "stepfun",
+    # GLM's original Tsinghua organisation; Z.ai now publishes GLM.
+    "thudm": "zai",
+    "tongyi-mai": "alibaba",
+    "typesafe-ai": "typesafe",
+    "wan-ai": "alibaba",
+    "x-ai": "grok",
+    "xai": "grok",
+    "xiaomimimo": "xiaomi",
+    "z-ai": "zai",
+    "zai-org": "zai",
+    "zhipu": "zai",
+    "zhipuai": "zai",
+}
+
+# Author prefixes that name no maker: a host's namespace for other labs' weights
+# (cerebras/gpt-oss-120b is OpenAI's model, fal/flux-1-schnell Black Forest
+# Labs', lightning-ai/glm-5.3 Z.ai's; phala/* ids select Phala's hosted tier),
+# and stealth/*, whose maker is unannounced.
+AUTHORS_NAMING_NO_MAKER = frozenset({"cerebras", "fal", "lightning-ai", "phala", "stealth"})
+
+
+def maker_provider_slug(model_id: str) -> str | None:
+    """The PROVIDERS slug of the model maker's own API, when TrustedRouter has one."""
+    author = model_id.split("/", 1)[0].lower()
+    if author in AUTHORS_NAMING_NO_MAKER:
+        return None
+    slug = MAKER_PROVIDER_BY_AUTHOR.get(author)
+    return slug if slug in PROVIDERS else None
