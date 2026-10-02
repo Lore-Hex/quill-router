@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -22,6 +23,24 @@ from trusted_router.trust_reconciliation import (
     BackfillMarker,
     OutstandingAdverse,
 )
+
+log = logging.getLogger(__name__)
+
+
+def same_instant(left: datetime | None, right: datetime | None) -> bool:
+    """Equal timestamps at full precision; NULL equals only NULL.
+
+    Spanner TIMESTAMP keeps nanoseconds, but ``DatetimeWithNanoseconds``
+    inherits ``datetime``'s microsecond equality, so two values that differ
+    below a microsecond would compare equal and a stale shard would never be
+    rewritten.
+    """
+
+    if left is None or right is None:
+        return left is None and right is None
+    left_ns = getattr(left, "nanosecond", left.microsecond * 1000)
+    right_ns = getattr(right, "nanosecond", right.microsecond * 1000)
+    return left == right and left_ns == right_ns
 
 MARKER_KEY_COLUMNS = (
     "provider",
@@ -326,7 +345,7 @@ class SpannerTrustReconciliationRepository:
     ) -> datetime | None:
         types = self.store._param_types
 
-        def txn(transaction: Any) -> datetime | None:
+        def reconciled_through(transaction: Any) -> datetime | None:
             provider_rows = list(
                 transaction.execute_sql(
                     "SELECT DISTINCT provider FROM tr_trust_event "
@@ -363,7 +382,37 @@ class SpannerTrustReconciliationRepository:
                     watermarks = []
                     break
                 watermarks.append(rows[0][0])
-            reconciled = min(watermarks) if watermarks and providers else None
+            return min(watermarks) if watermarks and providers else None
+
+        # The tier job replicates every workspace's watermark each run, but the
+        # value only moves when a provider backfill advances. Decide on a
+        # lock-free snapshot first and skip the read-write transaction when every
+        # shard already holds the value; on any read failure, fall through.
+        database = getattr(self.store, "_database", None)
+        if database is not None:
+            try:
+                with database.snapshot(multi_use=True) as snapshot:
+                    expected = reconciled_through(snapshot)
+                    current = list(
+                        snapshot.execute_sql(
+                            "SELECT shard, trust_reconciled_through FROM tr_credit_balance "
+                            "WHERE workspace_id=@workspace_id ORDER BY shard",
+                            params={"workspace_id": workspace_id},
+                            param_types={"workspace_id": types.STRING},
+                        )
+                    )
+            except Exception:
+                log.info(
+                    "trust.watermark_snapshot_precheck_failed workspace_id=%s",
+                    workspace_id,
+                    exc_info=True,
+                )
+            else:
+                if current and all(same_instant(row[1], expected) for row in current):
+                    return expected
+
+        def txn(transaction: Any) -> datetime | None:
+            reconciled = reconciled_through(transaction)
             shard_rows = list(
                 transaction.execute_sql(
                     "SELECT shard FROM tr_credit_balance "
@@ -562,9 +611,13 @@ class PostgresTrustReconciliationRepository:
                 watermarks.append(rows[0][0])
             reconciled = min(watermarks) if watermarks and providers else None
             shard_rows = conn.execute(
-                "SELECT shard FROM tr_credit_balance WHERE workspace_id=%s ORDER BY shard",
+                "SELECT shard, trust_reconciled_through FROM tr_credit_balance "
+                "WHERE workspace_id=%s ORDER BY shard",
                 (workspace_id,),
             ).fetchall()
+            # Same rule as Spanner: the value moves only when a backfill advances.
+            if shard_rows and all(same_instant(row[1], reconciled) for row in shard_rows):
+                return reconciled
             updated = conn.execute(
                 "UPDATE tr_credit_balance SET trust_reconciled_through=%s "
                 "WHERE workspace_id=%s",

@@ -5545,6 +5545,7 @@ class SpannerStore:
             tier3_min_days=tier3_min_days,
             tier3_min_paid_microdollars=tier3_min_paid_microdollars,
             now=now,
+            snapshot=lambda: self._database.snapshot(multi_use=True),
         )
 
     def read_typed_reservation(self, reservation_id: str) -> dict[str, Any] | None:
