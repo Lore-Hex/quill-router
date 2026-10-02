@@ -129,6 +129,12 @@ def _matrix_rows(job, context):
     return rows if matrix else [{}]
 
 
+def _env_context(context, overrides):
+    # Expressions capture the inherited scope, never sibling overrides.
+    resolved = _resolve_static(overrides, context)
+    return context | {"env": context["env"] | resolved}
+
+
 def _gcp_wif_consumers(root: Path) -> set[str]:
     workflows = {
         path.relative_to(root).as_posix(): yaml.safe_load(path.read_text())
@@ -155,7 +161,10 @@ def _gcp_wif_consumers(root: Path) -> set[str]:
 
     def references_github_env(steps, path, job_id, caller, stack=()):
         for index, step in enumerate(steps, start=1):
-            if "GITHUB_ENV" in str(step.get("run", "")):
+            if any(re.search(
+                r"GITHUB_ENV|\$\{\{[^{}]*\bgithub\s*\.\s*env\b[^{}]*\}\}",
+                str(step.get(field, "")), re.IGNORECASE,
+            ) for field in ("run", "with")):
                 return True
             uses = step.get("uses")
             if isinstance(uses, str) and uses.startswith("./") and "${{" not in uses:
@@ -177,7 +186,7 @@ def _gcp_wif_consumers(root: Path) -> set[str]:
                 location += f" via {' -> '.join(trail)}"
             unresolved = f"UNRESOLVED uses {uses!r} in {location}"
             assert isinstance(uses, str) and uses and "${{" not in uses, unresolved
-            step_context = context | {"env": context["env"] | step.get("env", {})}
+            step_context = _env_context(context, step.get("env", {}))
             if uses.startswith("./"):
                 action_path, action = local_composite(uses, stack, unresolved)
                 inputs = {key: _resolve_static(spec.get("default"), step_context) for key, spec in action.get("inputs", {}).items()}
@@ -210,16 +219,15 @@ def _gcp_wif_consumers(root: Path) -> set[str]:
         call = triggers.get("workflow_call") if isinstance(triggers, dict) else None
         inputs = {key: spec.get("default") for key, spec in (call or {}).get("inputs", {}).items()}
         inputs.update(supplied_inputs)
+        workflow_context = _env_context({"inputs": inputs, "env": {}}, workflow.get("env", {}))
         for job_id, job in workflow.get("jobs", {}).items():
-            context = {
-                "inputs": inputs,
-                "env": workflow.get("env", {}) | job.get("env", {}),
+            context = workflow_context | {
                 # Scan the whole job first: composites share its runtime env,
                 # and even a later write makes static env resolution unsafe.
                 "runtime_env_writes": references_github_env(job.get("steps", []), path, job_id, caller),
             }
             for matrix in _matrix_rows(job, context) or [None]:
-                job_context = context | {"matrix": matrix}
+                job_context = _env_context(context | {"matrix": matrix}, job.get("env", {}))
                 if "uses" in job:
                     callee = job["uses"]
                     assert isinstance(callee, str) and callee.startswith("./.github/workflows/") and "${{" not in callee, (
@@ -255,8 +263,9 @@ def _assert_workflows_using_gcp_wif_provider_are_allowlisted(root: Path) -> None
     env, or local reusable-workflow/composite input values. Secrets, vars,
     unsupported expressions, env references in jobs with runtime env writes,
     external reusable workflows, and unknown external actions fail as
-    UNRESOLVED. Any GITHUB_ENV reference in a job's run scripts (including
-    nested composites) conservatively counts as a runtime env write.
+    UNRESOLVED. Any case-insensitive GITHUB_ENV reference or github.env
+    expression in run scripts or action inputs (including nested composites)
+    conservatively counts as a runtime env write.
     Values assembled outside workflow YAML are out of scope.
     """
     terraform = (root / "infra/gcp_wif.tf").read_text()
@@ -396,6 +405,28 @@ def test_wif_runtime_env_write_does_not_taint_independent_provider(wif_repositor
         workflow['jobs']['writer'] = {'steps': [write]}
     _write_workflow(wif_repository_copy, 'unlisted-workflow.yml', workflow)
     _assert_workflows_using_gcp_wif_provider_are_allowlisted(wif_repository_copy)
+
+
+@pytest.mark.parametrize('reference', ['${{ github.env }}', '${{ GITHUB.ENV }}', '$github_env', '$GitHub_Env'])
+@pytest.mark.parametrize('field', ['run', 'with'])
+@pytest.mark.parametrize('writer', ['direct', 'composite', 'nested-composite'])
+def test_wif_environment_file_references_are_unresolved(wif_repository_copy: Path, reference, field, writer):
+    workflow = _auth_workflow('${{ env.WIF }}')
+    workflow['env'] = {'WIF': 'another-provider'}
+    script = f'echo "WIF={WIF_PROVIDER}" >> "{reference}"'
+    write = {'run': script, 'shell': 'bash'}
+    if field == 'with':
+        write = {'uses': 'actions/checkout@v4', 'with': {'path': script}}
+    if writer != 'direct':
+        _write_composite(wif_repository_copy, 'writer', [write])
+        write = {'uses': './.github/actions/writer'}
+        if writer == 'nested-composite':
+            _write_composite(wif_repository_copy, 'wrapper', [write])
+            write = {'uses': './.github/actions/wrapper'}
+    workflow['jobs']['audit']['steps'].insert(0, write)
+    _write_workflow(wif_repository_copy, 'unlisted-workflow.yml', workflow)
+    with pytest.raises(AssertionError, match=r'Cannot statically resolve GCP WIF provider \(UNRESOLVED\).*step Authenticate to GCP'):
+        _assert_workflows_using_gcp_wif_provider_are_allowlisted(wif_repository_copy)
 
 
 @pytest.mark.parametrize('filename', ['action.yml', 'action.yaml'])
@@ -567,6 +598,24 @@ def test_wif_env_uses_most_specific_scope(wif_repository_copy: Path, scope):
 def test_wif_unresolved_provider_names_file_and_step(wif_repository_copy: Path, provider):
     _write_workflow(wif_repository_copy, 'typed-audit.yml', _auth_workflow(provider))
     with pytest.raises(AssertionError, match=r'Cannot statically resolve .*typed-audit\.yml, job audit, step Authenticate to GCP'):
+        _assert_workflows_using_gcp_wif_provider_are_allowlisted(wif_repository_copy)
+
+
+@pytest.mark.parametrize('scope', ['job', 'step', 'step-from-job', 'composite-step'])
+def test_wif_env_alias_captures_outer_scope_before_overrides(wif_repository_copy: Path, scope):
+    workflow = _auth_workflow('${{ env.AUTH_PROVIDER }}')
+    workflow['env'] = {'WIF': WIF_PROVIDER}
+    job = workflow['jobs']['audit']
+    if scope == 'step-from-job':
+        workflow['env']['WIF'] = 'another-provider'
+        job['env'] = {'WIF': WIF_PROVIDER}
+    target = job if scope == 'job' else job['steps'][0]
+    target['env'] = {'AUTH_PROVIDER': '${{ env.WIF }}', 'WIF': 'another-provider'}
+    if scope == 'composite-step':
+        _write_composite(wif_repository_copy, 'auth', job['steps'])
+        job['steps'] = [{'uses': './.github/actions/auth'}]
+    _write_workflow(wif_repository_copy, 'unlisted-workflow.yml', workflow)
+    with pytest.raises(AssertionError, match=r'missing from .*unlisted-workflow\.yml'):
         _assert_workflows_using_gcp_wif_provider_are_allowlisted(wif_repository_copy)
 
 
