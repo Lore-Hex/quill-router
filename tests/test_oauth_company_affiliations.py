@@ -14,6 +14,20 @@ from trusted_router.scopes import SCOPE_INFERENCE, SCOPE_PROFILE
 from trusted_router.storage import STORE
 
 
+@pytest.fixture(autouse=True)
+def lookups_finish_on_a_loaded_runner(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sign-in gives the optional lookup one second, which a loaded CI runner can miss.
+
+    A missed lookup returns the identity without affiliations, so the tests
+    below that expect a claim would fail and those that expect none would pass
+    for the wrong reason. They test what a finished lookup discloses, so they
+    allow it longer. The slow-directory test sets its own short limit.
+    """
+    import trusted_router.verification as verification
+
+    monkeypatch.setattr(verification, "AFFILIATION_TIMEOUT_SECONDS", 30.0)
+
+
 def _seed() -> None:
     now = dt.datetime.now(dt.UTC)
     docs = build_snapshot([{
