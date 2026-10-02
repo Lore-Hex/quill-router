@@ -108,3 +108,90 @@ def test_large_sweep_reports_bounded_progress(
     assert len(progress) == 11
     assert "completed=100 total=1001 failed=0 elapsed_seconds=" in progress[0]
     assert "completed=1001 total=1001 failed=0 elapsed_seconds=" in progress[-1]
+
+
+# --- the per-workspace pass runs in parallel ---
+
+
+def concurrent_settings(concurrency: int) -> SimpleNamespace:
+    values = settings()
+    values.trust_tier_job_concurrency = concurrency
+    return values
+
+
+def no_owner_scan(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        trust_owner_budget, "recompute_owner_budget",
+        lambda *_args, **_kwargs: {"scan_complete": True, "violating_owners": []},
+    )
+
+
+def test_a_parallel_pass_visits_every_workspace_once(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    no_owner_scan(monkeypatch)
+    caplog.set_level("INFO", logger="trusted_router.trust_tier_cli")
+    store = TierStore(1001)
+
+    result = trust_tier_cli.run(store, concurrent_settings(8), now=NOW)
+
+    assert result.succeeded == 1001 and result.failed == ()
+    visited = [call for call in store.calls if call != "enumerate"]
+    assert sorted(visited) == sorted(f"ws-{index}" for index in range(1001))
+    progress = [r.getMessage() for r in caplog.records if "trust.tier_job_progress" in r.message]
+    assert len(progress) == 11
+    assert "completed=1001 total=1001 failed=0" in progress[-1]
+
+
+def test_a_parallel_pass_isolates_ordinary_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    no_owner_scan(monkeypatch)
+
+    class FlakyStore(TierStore):
+        def recompute_workspace_trust_tier(self, workspace_id: str, **kwargs: Any) -> int:
+            if workspace_id in {"ws-3", "ws-70"}:
+                raise RuntimeError("row diverged")
+            return super().recompute_workspace_trust_tier(workspace_id, **kwargs)
+
+    store = FlakyStore(100)
+    result = trust_tier_cli.run(store, concurrent_settings(4), now=NOW)
+
+    assert sorted(result.failed) == ["ws-3", "ws-70"]
+    assert result.succeeded == 98
+    assert len([call for call in store.calls if call != "enumerate"]) == 98
+
+
+def test_a_platform_stop_in_a_worker_stops_the_parallel_pass(monkeypatch: pytest.MonkeyPatch) -> None:
+    no_owner_scan(monkeypatch)
+
+    class StoppingStore(TierStore):
+        def recompute_workspace_trust_tier(self, workspace_id: str, **kwargs: Any) -> int:
+            if workspace_id == "ws-5":
+                raise WorkerStopped()
+            return super().recompute_workspace_trust_tier(workspace_id, **kwargs)
+
+    store = StoppingStore(1000)
+    with pytest.raises(WorkerStopped):
+        trust_tier_cli.run(store, concurrent_settings(4), now=NOW)
+    # The rest is cancelled, not run to completion.
+    assert len([call for call in store.calls if call != "enumerate"]) < 999
+
+
+def test_the_setting_defaults_to_one_worker_and_reads_its_variable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.config import Settings
+
+    monkeypatch.delenv("TR_TRUST_TIER_JOB_CONCURRENCY", raising=False)
+    assert Settings().trust_tier_job_concurrency == 1
+    monkeypatch.setenv("TR_TRUST_TIER_JOB_CONCURRENCY", "8")
+    assert Settings().trust_tier_job_concurrency == 8
+
+
+def test_the_job_has_a_session_for_every_worker() -> None:
+    from pathlib import Path
+
+    script = (Path(__file__).resolve().parents[1] / "scripts/deploy/trust_tier_job.sh").read_text()
+    pool = int(script.split('"TR_SPANNER_POOL_SIZE=', 1)[1].split('"', 1)[0])
+    workers = int(script.split('"TR_TRUST_TIER_JOB_CONCURRENCY=', 1)[1].split('"', 1)[0])
+    assert workers > 1
+    assert pool >= workers
