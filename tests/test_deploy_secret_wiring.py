@@ -482,7 +482,9 @@ def test_provider_portal_uses_private_vpc_and_dedicated_clickhouse_reader() -> N
 
     assert "compute addresses describe tr-clickhouse-ilb" in rollout
     assert 'PROVIDER_ANALYTICS_CLICKHOUSE_URL="http://${clickhouse_ilb_ip}:8123"' in rollout
-    assert 'PROVIDER_ANALYTICS_CLICKHOUSE_URL="http://10.128.15.214:8123"' in rollout
+    # No silent fallback that pins every reader to node 1.
+    assert "10.128.15.214" not in rollout
+    assert "cannot resolve the ClickHouse load balancer address" in rollout
     assert "TR_PROVIDER_ANALYTICS_CLICKHOUSE_USER=tr_provider_read" in rollout
     assert "--vpc-egress private-ranges-only" in rollout
     assert '--network "${TR_CLOUD_RUN_NETWORK:-default}"' in rollout
