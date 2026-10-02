@@ -3548,6 +3548,85 @@ def test_azure_deploy_masks_every_value_it_reads_when_running_in_github_actions(
         assert value not in unmasked_output
 
 
+_CLICKHOUSE_READ_ENDPOINTS = (
+    "http://10.128.0.250:8123",  # the load balancer
+    "http://10.128.0.34:8123",  # tr-clickhouse-3
+    "http://10.128.0.28:8123",  # tr-clickhouse-2
+    "http://10.128.15.214:8123",  # tr-clickhouse-1, the writer host, last
+)
+
+
+def test_rollout_gives_clickhouse_readers_the_balancer_then_every_replica(
+    harness: DeployScriptHarness,
+) -> None:
+    # G2 in docs/design/clickhouse-high-availability.md: with one URL, a dead
+    # replica behind the TCP-checked load balancer failed a third of new reads
+    # until the check noticed. The readers now fail over to each replica.
+    from trusted_router.clickhouse_endpoints import parse_endpoints
+
+    run = harness.run("scripts/deploy/rollout.sh")
+    assert run.returncode == 0, summarise(run)
+
+    listing = [
+        call
+        for call in run.calls
+        if call[3:6] == ["compute", "instances", "list"]
+    ]
+    assert len(listing) == 1
+    assert "--filter=name~^tr-clickhouse-[0-9]+$" in listing[0]
+    assert "--sort-by=~name" in listing[0]
+    deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
+    rendered = _cloud_run_job_env(deploy)
+    expected = ",".join(_CLICKHOUSE_READ_ENDPOINTS)
+    assert rendered["TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL"] == expected
+    assert rendered["TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL"] == expected
+    # The read clients parse it into the ordered list they fail over across.
+    assert parse_endpoints(expected) == _CLICKHOUSE_READ_ENDPOINTS
+    # The direct sink, which posts to one URL, stays off.
+    assert rendered["TR_OPERATIONAL_ANALYTICS_SINK"] == "outbox"
+
+
+@pytest.mark.parametrize(
+    ("answer", "failure", "message"),
+    [
+        (
+            None,
+            r"compute instances list .*tr-clickhouse"
+            "\tERROR: (gcloud.compute.instances.list) PERMISSION_DENIED",
+            "cannot list the ClickHouse replicas",
+        ),
+        ("", None, "cannot list the ClickHouse replicas"),
+        ("10.128.0.34\n34.66.1.2", None, "unexpected ClickHouse replica address '34.66.1.2'"),
+    ],
+    ids=["denied", "empty", "public-address"],
+)
+def test_rollout_fails_closed_when_the_clickhouse_replicas_cannot_be_listed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    answer: str | None,
+    failure: str | None,
+    message: str,
+) -> None:
+    script = "scripts/deploy/rollout.sh"
+    fixture = SCRIPT_FIXTURES[script]
+    responses = tuple(
+        (pattern, reply) for pattern, reply in fixture.responses if "instances list" not in pattern
+    )
+    if answer is not None:
+        responses = ((r"compute instances list .*tr-clickhouse", answer), *responses)
+    failures = (*fixture.failures, failure) if failure else fixture.failures
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES, script, replace(fixture, responses=responses, failures=failures)
+    )
+    isolated = DeployScriptHarness(tmp_path / "rollout-clickhouse-replicas")
+
+    run = isolated.run(script, verifier_rc=0)
+
+    assert run.returncode != 0, summarise(run)
+    assert message in run.stderr
+    assert not _gcloud_calls(run, "run", "deploy")
+
+
 @pytest.mark.parametrize(
     "failure",
     [
