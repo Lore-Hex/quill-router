@@ -263,27 +263,32 @@
     "provider": "near-ai",
     "model_id": "z-ai/glm-5.3-flash",
     "upstream_id": "z-ai/glm-5.3-flash",
-    "quantization": "fp8",
-    "label": "FP8",
+    "quantization": "int4",
+    "label": "W4AFP8 (INT4 + FP8)",
     "weight_formats": [
+      "int4",
       "fp8"
     ],
     "kv_cache_dtype": "bfloat16",
-    "model_repository": "zai-org/GLM-5.3-Flash",
-    "model_revision": "84c6a6aa9497188e15a635ba793b0f95a79b1033",
-    "reviewed_on": "2026-09-27",
+    "model_repository": "graphistry/GLM-5.3-Flash-W4AFP8",
+    "model_revision": "99f1fa70408c52b007d4fd69e02e5a522422e755",
+    "reviewed_on": "2026-10-02",
     "sources": [
       {
         "title": "Published serving configuration",
-        "url": "https://github.com/nearai/cvm-compose-files/blob/e14107901d202215ab44eb027eb4792047d5ec83/prod/GLM-5.3-Flash-SGL-TP4.yaml",
-        "sha256": "2878b9c4c6db512a7538dc4e8981fd5acae72cdaace7794509f48161bcce08e3"
+        "url": "https://github.com/nearai/cvm-compose-files/blob/ddec8d8c4f637d16884ca949e43c51582d8ed858/prod/GLM-5.3-Flash-SGL-TP2x4-W4AFP8.yaml",
+        "sha256": "5745db6b0d3e4a4f1ff6872acbf90da254ef83ca834c0bfd4cffb86f540ff781"
       },
       {
         "title": "Pinned weight configuration",
-        "url": "https://huggingface.co/zai-org/GLM-5.3-Flash/resolve/84c6a6aa9497188e15a635ba793b0f95a79b1033/config.json"
+        "url": "https://huggingface.co/graphistry/GLM-5.3-Flash-W4AFP8/resolve/99f1fa70408c52b007d4fd69e02e5a522422e755/config.json"
+      },
+      {
+        "title": "Pinned model card and mixed-precision description",
+        "url": "https://huggingface.co/graphistry/GLM-5.3-Flash-W4AFP8/blob/99f1fa70408c52b007d4fd69e02e5a522422e755/README.md"
       }
     ],
-    "notes": "Official FP8 weights. Published serving command separately selects BF16 KV cache; excluded weight modules retain higher precision."
+    "notes": "W4AFP8: routed MoE expert weights are symmetric group-128 INT4 with FP8 activation scales; attention, dense MLPs and shared experts retain source block-FP8 weights. Published serving command separately selects BF16 KV cache."
   },
   {
     "provider": "privatemode",
