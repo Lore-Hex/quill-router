@@ -43,7 +43,8 @@ TTL_LESS_DEFAULT_LOGS = {
 
 
 def _xml(name: str) -> ET.Element:
-    return ET.parse(CONFIG_DIR / name).getroot()
+    # The repository's own committed config files, not untrusted input.
+    return ET.parse(CONFIG_DIR / name).getroot()  # noqa: S314
 
 
 def test_every_ttl_less_default_log_gets_a_ttl_and_nothing_else_is_enabled() -> None:
@@ -104,6 +105,13 @@ def test_health_user_is_passwordless_read_only_and_network_restricted() -> None:
 
 # --- the node script, executed against a scratch root and stub commands ---
 
+VOTERS = ("10.0.0.1", "10.0.0.2", "10.0.0.3")
+CLUSTER_XML = (
+    "<clickhouse>\n  <zookeeper>\n"
+    + "".join(f"    <node><host>{ip}</host><port>9181</port></node>\n" for ip in VOTERS)
+    + "  </zookeeper>\n</clickhouse>\n"
+)
+
 
 STUB = r"""#!/usr/bin/env bash
 name="$(basename "$0")"
@@ -126,14 +134,32 @@ case "$name" in
     printf '%s' "$code"
     ;;
   clickhouse-client)
+    host=local
+    previous=""
+    for arg in "$@"; do
+      [ "$previous" = "--host" ] && host="$arg"
+      previous="$arg"
+    done
     query="${@: -1}"
     case "$query" in
-      *"FROM system.replicas"*) cat "$state/unhealthy-replicas" 2>/dev/null || printf '0\n' ;;
-      *"FROM system.tables"*) cat "$state/system-tables" 2>/dev/null || true ;;
+      *"FROM system.replicas"*) cat "$state/unhealthy-$host" 2>/dev/null || printf '0\n' ;;
+      *"FROM system.tables"*)
+        [ -e "$state/fail-system-tables" ] && { echo "Connection refused" >&2; exit 210; }
+        cat "$state/system-tables" 2>/dev/null || true
+        ;;
     esac
     ;;
   hostname) printf 'tr-clickhouse-test\n' ;;
-  keeper-probe) cat "$state/keeper-state" 2>/dev/null || printf 'follower\n' ;;
+  keeper-probe)
+    host="$1"
+    if [ -e "$state/keeper-$host" ]; then
+      cat "$state/keeper-$host"
+    elif [ "$host" = "10.0.0.1" ]; then
+      printf 'zk_server_state\tleader\nzk_synced_followers\t2\n'
+    else
+      printf 'zk_server_state\tfollower\n'
+    fi
+    ;;
 esac
 exit 0
 """
@@ -144,6 +170,7 @@ class Node:
         self.root = tmp_path / "node"
         (self.root / "etc/clickhouse-server/config.d").mkdir(parents=True)
         (self.root / "etc/clickhouse-server/users.d").mkdir(parents=True)
+        (self.root / "etc/clickhouse-server/config.d/tr-cluster.xml").write_text(CLUSTER_XML)
         (self.root / "etc/tr-clickhouse-ingest.env").write_text("CH_PASSWORD=fixture-node-credential\n")
         self.bundle = tmp_path / "bundle"
         shutil.copytree(CONFIG_DIR, self.bundle)
@@ -237,7 +264,9 @@ def test_apply_installs_restarts_once_and_waits_for_health(node: Node) -> None:
     assert node.calls("systemctl") == [["restart", "clickhouse-server"]]
     # It kept polling /tr_health until the 200.
     assert len(node.calls("curl")) == 3
-    assert "/tr_health answers 200 and the Keeper voter has rejoined" in result.stdout
+    assert "/tr_health answers 200 and the cluster is whole" in result.stdout
+    # Every voter was asked before the restart, not just this node's.
+    assert {call[0] for call in node.calls("keeper-probe")} == set(VOTERS)
     # The users.d identity is installed before the restart that needs it.
     installs = [line for line in result.stdout.splitlines() if "installed" in line]
     assert installs[0].endswith("users.d/tr-health.xml")
@@ -264,18 +293,51 @@ def test_a_users_only_change_reloads_without_a_restart(node: Node) -> None:
     assert len(node.calls("curl")) >= 1
 
 
-@pytest.mark.parametrize(
-    ("setup", "message"),
-    [
-        (("unhealthy-replicas", "2\n"), "a replica here is read-only or more than 300 s behind"),
-        (("keeper-state", "observer\n"), "its Keeper voter is not leader or follower"),
-        (("keeper-state", ""), "its Keeper voter is not leader or follower"),
-    ],
-    ids=["unhealthy-replica", "keeper-observer", "keeper-silent"],
-)
-def test_an_unhealthy_node_is_never_restarted(
+DEGRADED = [
+    (
+        ("keeper-10.0.0.3", ""),
+        "Keeper voter 10.0.0.3 is not leader or follower (no answer)",
+    ),
+    (
+        ("keeper-10.0.0.1", "zk_server_state\tobserver\n"),
+        "Keeper voter 10.0.0.1 is not leader or follower (observer)",
+    ),
+    (
+        ("keeper-10.0.0.1", "zk_server_state\tleader\nzk_synced_followers\t1\n"),
+        "Keeper has 1 leader(s) and 1 synced follower(s) of 2",
+    ),
+    (
+        ("unhealthy-10.0.0.2", "1\n"),
+        "a replica on 10.0.0.2 is read-only, more than 300 s behind, or unreachable",
+    ),
+]
+DEGRADED_IDS = ["another-voter-down", "this-voter-observer", "leader-missing-a-follower", "replica-behind-elsewhere"]
+
+
+@pytest.mark.parametrize(("setup", "message"), DEGRADED, ids=DEGRADED_IDS)
+def test_a_degraded_cluster_is_never_restarted(
     node: Node, setup: tuple[str, str], message: str
 ) -> None:
+    # Review finding: checking only this node let a survivor restart while
+    # another voter was already down, losing quorum.
+    (node.state / setup[0]).write_text(setup[1])
+
+    result = node.run("--apply")
+
+    assert result.returncode != 0
+    assert message in result.stderr
+    assert "the cluster is not whole" in result.stderr
+    assert node.calls("systemctl") == []
+    assert node.installed() == {}
+
+
+@pytest.mark.parametrize(("setup", "message"), DEGRADED, ids=DEGRADED_IDS)
+def test_an_unchanged_node_still_fails_when_the_cluster_is_not_whole(
+    node: Node, setup: tuple[str, str], message: str
+) -> None:
+    # Review finding: a retry after a failed restart found matching files and
+    # reported success, so the wrapper moved on to the next node.
+    node.install_current()
     (node.state / setup[0]).write_text(setup[1])
 
     result = node.run("--apply")
@@ -283,7 +345,18 @@ def test_an_unhealthy_node_is_never_restarted(
     assert result.returncode != 0
     assert message in result.stderr
     assert node.calls("systemctl") == []
-    assert node.installed() == {}
+
+
+def test_installed_but_not_live_configuration_is_restarted(node: Node) -> None:
+    # An earlier run installed the files and stopped before its restart.
+    node.install_current()
+    (node.state / "curl-codes").write_text("404\n200\n")
+
+    result = node.run("--apply")
+
+    assert result.returncode == 0, result.stderr
+    assert "installed but /tr_health does not answer" in result.stdout
+    assert node.calls("systemctl") == [["restart", "clickhouse-server"]]
 
 
 def test_health_that_never_recovers_fails_the_node(node: Node) -> None:
@@ -292,8 +365,18 @@ def test_health_that_never_recovers_fails_the_node(node: Node) -> None:
     result = node.run("--apply")
 
     assert result.returncode != 0
-    assert "/tr_health did not answer 200" in result.stderr
+    assert "/tr_health did not answer 200 or the cluster is not whole" in result.stderr
     assert node.calls("systemctl") == [["restart", "clickhouse-server"]]
+
+
+def test_a_failed_system_tables_query_fails_the_apply(node: Node) -> None:
+    node.install_current()
+    (node.state / "fail-system-tables").write_text("")
+
+    result = node.run("--apply")
+
+    assert result.returncode != 0
+    assert "could not list system tables" in result.stderr
 
 
 def test_apply_without_credentials_refuses(node: Node) -> None:
