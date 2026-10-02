@@ -1611,6 +1611,26 @@ def _reap_datetime(value: Any) -> datetime:
 
 
 @spanner_rpc_budget(TXN_BUDGET_SECONDS)
+def _dispose_open_transaction(opened: list[Any]) -> None:
+    """Roll back the one transaction a failed one-commit attempt can leave open.
+
+    Within one runner call only the LAST attempt can still be open: earlier
+    attempts ended in ``Aborted`` (already dead server-side, though the client
+    leaves ``committed`` None and ``rolled_back`` False), and a callback error
+    is rolled back by the runner. Rolling back only the last keeps cleanup to
+    one bounded Rollback, so a burst of aborts before a commit timeout cannot
+    consume the durable fallback's budget.
+    """
+
+    if not opened:
+        return
+    transaction = opened[-1]
+    if getattr(transaction, "committed", None) is None and not getattr(
+        transaction, "rolled_back", False
+    ):
+        _rollback_discarded_transaction(transaction)
+
+
 def typed_finalize_atomic(
     database: Any,
     param_types: Any,
@@ -1971,11 +1991,7 @@ def typed_finalize_atomic(
             # durable two-commit fallback until Spanner reaps them. Dispose of it
             # first. If that commit actually landed, the rollback fails harmlessly
             # and the first-writer-wins claim turns the fallback into a replay.
-            for transaction in opened:
-                if getattr(transaction, "committed", None) is None and not getattr(
-                    transaction, "rolled_back", False
-                ):
-                    _rollback_discarded_transaction(transaction)
+            _dispose_open_transaction(opened)
             raise
 
     try:

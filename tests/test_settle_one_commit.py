@@ -967,3 +967,34 @@ def test_one_commit_commit_boundary_timeout_rolls_back_before_fallback(
     assert sdk.rpcs.commit.call_count == int(phase == 'during_commit')
     assert remaining[0] == pytest.approx(14.999)
     sdk.rpcs.rollback.assert_called_once()
+
+
+class _Txn:
+    def __init__(self) -> None:
+        self.committed: Any = None
+        self.rolled_back = False
+        self.rollbacks = 0
+
+    def rollback(self) -> None:
+        self.rollbacks += 1
+        self.rolled_back = True
+
+
+def test_one_commit_cleanup_rolls_back_only_the_last_attempt() -> None:
+    # Review round 2: aborted attempts keep committed=None and rolled_back=False
+    # in the client, but Spanner already killed them. Rolling each one back
+    # with its own deadline floor stretched a 5 s attempt to 23 s after eight
+    # aborts and a commit timeout. Only the last attempt can still be open.
+    attempts = [_Txn() for _ in range(9)]
+    storage_gcp_authorize._dispose_open_transaction(attempts)
+    assert [txn.rollbacks for txn in attempts] == [0] * 8 + [1]
+
+
+def test_one_commit_cleanup_skips_a_committed_or_rolled_back_last_attempt() -> None:
+    committed, rolled_back = _Txn(), _Txn()
+    committed.committed = object()
+    rolled_back.rolled_back = True
+    storage_gcp_authorize._dispose_open_transaction([committed])
+    storage_gcp_authorize._dispose_open_transaction([rolled_back])
+    storage_gcp_authorize._dispose_open_transaction([])
+    assert committed.rollbacks == 0 and rolled_back.rollbacks == 0
