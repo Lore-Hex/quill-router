@@ -52,9 +52,27 @@ case "$name" in
     printf '%s\n%s' "${line%%|*}" "${line##*|}"
     ;;
   systemctl)
-    case "$1" in
-      list-units) cat "$state/active-units" 2>/dev/null || true ;;
-      is-active) [ ! -e "$state/inactive-$3" ] ;;
+    verb="$1"
+    shift
+    [ "${1:-}" = "--now" ] && shift
+    case "$verb" in
+      enable)
+        [ ! -e "$state/enable-fails" ] || exit 1
+        for unit in "$@"; do printf active > "$state/unit-$unit"; done
+        ;;
+      disable)
+        [ ! -e "$state/disable-fails" ] || exit 1
+        for unit in "$@"; do printf inactive > "$state/unit-$unit"; done
+        ;;
+      show)
+        [ ! -e "$state/show-fails" ] || exit 1
+        unit="${@: -1}"
+        if [ -e "$state/force-$unit" ]; then cat "$state/force-$unit"
+        elif [ -e "$state/unit-$unit" ]; then cat "$state/unit-$unit"
+        else printf inactive
+        fi
+        printf '\n'
+        ;;
     esac
     ;;
   clickhouse-client)
@@ -195,14 +213,37 @@ def test_stop_workers_disables_every_timer_and_service(tmp_path: Path) -> None:
     assert len([unit for unit in disable[2:] if unit.endswith(".timer")]) == 10
 
 
-def test_stop_workers_refuses_while_a_worker_is_still_active(tmp_path: Path) -> None:
+@pytest.mark.parametrize("state", ["active", "activating", "deactivating", "reloading"])
+def test_stop_workers_refuses_while_a_worker_is_still_running(tmp_path: Path, state: str) -> None:
     node = Node(tmp_path)
-    (node.state / "active-units").write_text("tr-clickhouse-public-snapshots.service loaded active running\n")
+    # A oneshot job still running reports "activating", not "active".
+    (node.state / "force-tr-clickhouse-public-snapshots.service").write_text(state)
 
     result = node.run("node_takeover.sh", "stop-workers")
 
     assert result.returncode != 0
-    assert "tr-clickhouse-public-snapshots.service" in result.stderr
+    assert f"tr-clickhouse-public-snapshots.service {state}" in result.stderr
+
+
+@pytest.mark.parametrize("failure", ["show-fails", "disable-fails"])
+def test_stop_workers_fails_closed_when_systemd_cannot_answer(tmp_path: Path, failure: str) -> None:
+    node = Node(tmp_path)
+    (node.state / failure).write_text("")
+
+    result = node.run("node_takeover.sh", "stop-workers")
+
+    assert result.returncode != 0
+    assert "every worker timer and service is stopped" not in result.stdout
+
+
+def test_start_workers_refuses_a_worker_that_did_not_start(tmp_path: Path) -> None:
+    node = Node(tmp_path, "publisher|200")
+    (node.state / "force-tr-clickhouse-ingest.service").write_text("failed")
+
+    result = node.run("node_takeover.sh", "start-workers")
+
+    assert result.returncode != 0
+    assert "tr-clickhouse-ingest.service failed" in result.stderr
 
 
 @pytest.mark.parametrize(("running", "ok"), [("0", True), ("2", False)])
@@ -302,6 +343,9 @@ name = argv[3] if len(argv) > 3 else ""
 if argv[:3] == ["compute", "instances", "describe"]:
     node = state[name]
     fmt = next(arg for arg in argv if arg.startswith("--format="))
+    if fmt == "--format=json" and node.get("describe_fails"):
+        print("ERROR: (gcloud.compute.instances.describe) transient failure", file=sys.stderr)
+        sys.exit(1)
     if "natIP" in fmt:
         print(node.get("nat", ""))
     elif "status" in fmt:
@@ -317,6 +361,24 @@ elif argv[:3] == ["compute", "instances", "stop"]:
     if not state[name].get("stop_fails"):
         state[name]["status"] = "TERMINATED"
         state_file.write_text(json.dumps(state))
+elif argv[:2] == ["storage", "cp"]:
+    if "--if-generation-match=0" in argv and state.get("lock"):
+        print("412 precondition failed: the lock object exists", file=sys.stderr)
+        sys.exit(1)
+    generation = state.get("lock_generation", 0) + 1
+    state["lock"] = {"content": pathlib.Path(argv[2]).read_text(), "generation": generation}
+    state["lock_generation"] = generation
+    state_file.write_text(json.dumps(state))
+elif argv[:3] == ["storage", "objects", "describe"]:
+    print(state["lock"]["generation"])
+elif argv[:2] == ["storage", "cat"]:
+    print(state["lock"]["content"] if state.get("lock") else "")
+elif argv[:2] == ["storage", "rm"]:
+    match = next(arg for arg in argv if arg.startswith("--if-generation-match=")).split("=", 1)[1]
+    if not state.get("lock") or str(state["lock"]["generation"]) != match:
+        sys.exit(1)
+    state["lock"] = None
+    state_file.write_text(json.dumps(state))
 elif argv[:2] == ["compute", "ssh"]:
     name = argv[2]
     command = next(arg for arg in argv if arg.startswith("--command="))
@@ -352,6 +414,10 @@ def _wrapper(
             state["fail_step"] = value  # type: ignore[assignment]
         elif key == "stop_fails":
             state["tr-clickhouse-1"]["stop_fails"] = value
+        elif key == "describe_fails":
+            state[str(value)]["describe_fails"] = True
+        elif key == "lock_held":
+            state["lock"] = {"content": '{"owner":"someone@else"}', "generation": 7}  # type: ignore[assignment]
     (fake / "instances.json").write_text(json.dumps(state))
     (fake / "gcloud.jsonl").write_text("")
     result = subprocess.run(  # noqa: S603 - fixed script under test
@@ -393,7 +459,7 @@ def test_first_fence_makes_node_one_the_publisher_and_fences_it_last(tmp_path: P
         'tr-clickhouse-2: install_fence.sh" standby',
         'tr-clickhouse-1: install_fence.sh" publisher',
     ]
-    assert {name: node["role"] for name, node in state.items()} == {
+    assert {name: node["role"] for name, node in state.items() if name.startswith("tr-clickhouse-")} == {
         "tr-clickhouse-1": "publisher",
         "tr-clickhouse-2": "standby",
         "tr-clickhouse-3": "standby",
@@ -631,3 +697,196 @@ def test_the_operational_installer_targets_the_publisher_not_node_one() -> None:
     assert "node_ssh 0 " not in script
     assert 'publisher="$(clickhouse_publisher)"' in script
     assert script.count('node_ssh "$WORKER"') >= 10
+
+
+# --- review round 1: locking, unreadable roles, resuming, reconciling ---
+
+
+def _metadata_writes(calls: list[dict]) -> list[list[str]]:
+    return [call["argv"] for call in calls if call["argv"][:3] == ["compute", "instances", "add-metadata"]]
+
+
+def test_a_held_lock_refuses_every_change(tmp_path: Path) -> None:
+    roles = {"tr-clickhouse-1": "publisher", "tr-clickhouse-2": "standby", "tr-clickhouse-3": "standby"}
+
+    result, calls, state = _wrapper(
+        tmp_path, "takeover", "--to", "tr-clickhouse-2", "--apply", roles=roles, lock_held=True
+    )
+
+    assert result.returncode != 0
+    assert "another role change holds" in result.stderr
+    assert "someone@else" in result.stderr
+    assert _metadata_writes(calls) == [] and _steps(calls) == []
+    assert state["lock"]["generation"] == 7  # someone else's lock is left alone
+
+
+def test_apply_holds_the_lock_for_the_whole_run(tmp_path: Path) -> None:
+    roles = {"tr-clickhouse-1": "publisher", "tr-clickhouse-2": "standby", "tr-clickhouse-3": "standby"}
+
+    result, calls, state = _wrapper(tmp_path, "takeover", "--to", "tr-clickhouse-2", "--apply", roles=roles)
+
+    assert result.returncode == 0, result.stderr
+    argvs = [call["argv"] for call in calls]
+    take = next(i for i, argv in enumerate(argvs) if argv[:2] == ["storage", "cp"])
+    first_write = next(i for i, argv in enumerate(argvs) if argv[:3] == ["compute", "instances", "add-metadata"])
+    release = next(i for i, argv in enumerate(argvs) if argv[:2] == ["storage", "rm"])
+    assert "--if-generation-match=0" in argvs[take]
+    assert take < first_write < release
+    assert state["lock"] is None
+
+
+def test_a_dry_run_takes_no_lock(tmp_path: Path) -> None:
+    roles = {"tr-clickhouse-1": "publisher", "tr-clickhouse-2": "standby", "tr-clickhouse-3": "standby"}
+
+    result, calls, _ = _wrapper(tmp_path, "takeover", "--to", "tr-clickhouse-2", roles=roles)
+
+    assert result.returncode == 0, result.stderr
+    assert not any(call["argv"][0] == "storage" for call in calls)
+
+
+@pytest.mark.parametrize("command", [("fence",), ("takeover", "--to", "tr-clickhouse-3")])
+def test_an_unreadable_role_stops_before_any_change(tmp_path: Path, command: tuple[str, ...]) -> None:
+    # Node 2 publishes; a failed read of its metadata must not look like "no
+    # publisher" and promote node 1 beside it.
+    roles = {"tr-clickhouse-2": "publisher", "tr-clickhouse-3": "standby", "tr-clickhouse-1": "standby"}
+
+    result, calls, state = _wrapper(
+        tmp_path, *command, "--apply", roles=roles, describe_fails="tr-clickhouse-2"
+    )
+
+    assert result.returncode != 0
+    assert "cannot read tr-clickhouse-2's metadata" in result.stderr
+    assert _metadata_writes(calls) == [] and _steps(calls) == []
+    assert state["tr-clickhouse-2"]["role"] == "publisher"
+
+
+def test_fence_refuses_a_takeover_that_stopped_part_way(tmp_path: Path) -> None:
+    roles = {"tr-clickhouse-1": "standby", "tr-clickhouse-2": "standby"}
+
+    result, calls, _ = _wrapper(tmp_path, "fence", "--apply", roles=roles)
+
+    assert result.returncode != 0
+    assert "a takeover stopped part-way" in result.stderr
+    assert "--from OLD_PUBLISHER" in result.stderr
+    assert _metadata_writes(calls) == []
+
+
+def test_a_takeover_with_no_publisher_needs_from(tmp_path: Path) -> None:
+    roles = {name: "standby" for name in ("tr-clickhouse-1", "tr-clickhouse-2", "tr-clickhouse-3")}
+
+    result, calls, _ = _wrapper(tmp_path, "takeover", "--to", "tr-clickhouse-2", "--apply", roles=roles)
+
+    assert result.returncode != 0
+    assert "takeover --to tr-clickhouse-2 --from OLD_PUBLISHER --apply" in result.stderr
+    assert _metadata_writes(calls) == []
+
+
+def test_a_stopped_takeover_resumes_with_from(tmp_path: Path) -> None:
+    # The first attempt fenced node 1, then its barrier failed.
+    roles = {name: "standby" for name in ("tr-clickhouse-1", "tr-clickhouse-2", "tr-clickhouse-3")}
+
+    result, calls, state = _wrapper(
+        tmp_path, "takeover", "--to", "tr-clickhouse-2", "--from", "tr-clickhouse-1", "--apply", roles=roles
+    )
+
+    assert result.returncode == 0, result.stderr
+    steps = _steps(calls)
+    assert 'tr-clickhouse-1: node_takeover.sh" stop-workers' in steps
+    assert steps.index('tr-clickhouse-2: node_takeover.sh" sync-barrier') < steps.index("tr-clickhouse-2=publisher")
+    assert steps[-1] == 'tr-clickhouse-2: node_takeover.sh" start-workers'
+    assert state["tr-clickhouse-2"]["role"] == "publisher"
+    assert state["tr-clickhouse-1"]["role"] == "standby"
+
+
+def test_from_must_name_a_fenced_node(tmp_path: Path) -> None:
+    roles = {"tr-clickhouse-1": "standby", "tr-clickhouse-2": "standby"}  # node 3: no role
+
+    result, calls, _ = _wrapper(
+        tmp_path, "takeover", "--to", "tr-clickhouse-2", "--from", "tr-clickhouse-3", "--apply", roles=roles
+    )
+
+    assert result.returncode != 0
+    assert "tr-clickhouse-3's role is '', not standby" in result.stderr
+    assert _metadata_writes(calls) == []
+
+
+def test_from_must_match_a_live_publisher(tmp_path: Path) -> None:
+    roles = {"tr-clickhouse-1": "publisher", "tr-clickhouse-2": "standby", "tr-clickhouse-3": "standby"}
+
+    result, calls, _ = _wrapper(
+        tmp_path, "takeover", "--to", "tr-clickhouse-2", "--from", "tr-clickhouse-3", "--apply", roles=roles
+    )
+
+    assert result.returncode != 0
+    assert "the publisher is tr-clickhouse-1, not tr-clickhouse-3" in result.stderr
+    assert _metadata_writes(calls) == []
+
+
+def test_a_retry_after_promotion_starts_and_verifies_the_workers(tmp_path: Path) -> None:
+    # The first attempt set node 2's role, then its start-workers call failed.
+    roles = {"tr-clickhouse-1": "standby", "tr-clickhouse-2": "publisher", "tr-clickhouse-3": "standby"}
+
+    result, calls, _ = _wrapper(tmp_path, "takeover", "--to", "tr-clickhouse-2", "--apply", roles=roles)
+
+    assert result.returncode == 0, result.stderr
+    assert _steps(calls) == ['tr-clickhouse-2: node_takeover.sh" start-workers']
+    assert "its workers are running" in result.stdout
+
+
+def test_a_failed_start_after_promotion_is_not_reported_as_success(tmp_path: Path) -> None:
+    roles = {"tr-clickhouse-1": "standby", "tr-clickhouse-2": "publisher", "tr-clickhouse-3": "standby"}
+
+    result, _, _ = _wrapper(
+        tmp_path, "takeover", "--to", "tr-clickhouse-2", "--apply", roles=roles, fail_step="start-workers"
+    )
+
+    assert result.returncode != 0
+    assert "its workers are running" not in result.stdout
+
+
+def _publisher_lookup(tmp_path: Path, roles: dict[str, str], **failures: str) -> subprocess.CompletedProcess[str]:
+    fake = tmp_path / "fake"
+    fake.mkdir()
+    (fake / "gcloud").write_text(FAKE_GCLOUD)
+    (fake / "gcloud").chmod(0o755)
+    state = {
+        name: {"role": roles.get(name, ""), "status": "RUNNING"}
+        for name in ("tr-clickhouse-1", "tr-clickhouse-2", "tr-clickhouse-3")
+    }
+    if failures.get("describe_fails"):
+        state[failures["describe_fails"]]["describe_fails"] = True
+    (fake / "instances.json").write_text(json.dumps(state))
+    (fake / "gcloud.jsonl").write_text("")
+    helper = ROOT / "scripts/deploy/_clickhouse_publisher.sh"
+    return subprocess.run(  # noqa: S603 - fixed helper under test
+        [BASH, "-c", f'set -euo pipefail; source "{helper}"; clickhouse_publisher'],
+        env={"PATH": f"{fake}:{os.environ['PATH']}", "HOME": str(tmp_path), "FAKE_DIR": str(fake)},
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("roles", "failure", "answer", "message"),
+    [
+        ({}, "", "tr-clickhouse-1", ""),
+        ({"tr-clickhouse-3": "publisher", "tr-clickhouse-1": "standby"}, "", "tr-clickhouse-3", ""),
+        ({"tr-clickhouse-1": "standby", "tr-clickhouse-2": "standby"}, "", "", "finish the takeover"),
+        ({"tr-clickhouse-1": "publisher", "tr-clickhouse-2": "publisher"}, "", "", "more than one"),
+        ({"tr-clickhouse-2": "publisher"}, "tr-clickhouse-2", "", "cannot read tr-clickhouse-2's metadata"),
+    ],
+    ids=["legacy", "publisher", "part-way", "two", "unreadable"],
+)
+def test_the_installers_publisher_lookup_fails_closed(
+    tmp_path: Path, roles: dict[str, str], failure: str, answer: str, message: str
+) -> None:
+    result = _publisher_lookup(tmp_path, roles, describe_fails=failure)
+
+    if answer:
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == answer
+    else:
+        assert result.returncode != 0
+        assert message in result.stderr

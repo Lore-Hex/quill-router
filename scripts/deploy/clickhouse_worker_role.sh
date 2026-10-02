@@ -12,15 +12,20 @@
 #   clickhouse_worker_role.sh standby --node NAME [--apply]
 #       Install the worker code and units on standby NAME, disabled and fenced,
 #       with its node-local _staging tables, so a takeover only has to start them.
-#   clickhouse_worker_role.sh takeover --to NAME [--from-unreachable] [--apply]
+#   clickhouse_worker_role.sh takeover --to NAME [--from OLD] [--from-unreachable] [--apply]
 #       Move publishing from the current publisher to NAME, in the order the
 #       design requires: fence the old node durably, end its server-side work,
 #       wait until NAME has pulled and applied every replication log entry, then
-#       make NAME the publisher and start its workers.
+#       make NAME the publisher and start its workers. Every step can run again,
+#       so a takeover that stopped part-way is resumed by running it again; when
+#       it stopped after the old publisher was fenced, no node is the publisher
+#       and --from must name the old one.
 #
-# Without --apply nothing changes: the script prints what it would do. Every
-# node must already have the worker units installed (NAME needs the standby
-# install before a takeover can start it).
+# Without --apply nothing changes: the script prints what it would do. With
+# --apply it holds a lock object (TR_CLICKHOUSE_ROLE_LOCK) for the whole run,
+# so two role changes never interleave. Every node must already have the worker
+# units installed (NAME needs the standby install before a takeover can start
+# it).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,7 +41,7 @@ NODES=(
 )
 
 usage() {
-  sed -n '2,22p' "${BASH_SOURCE[0]}" >&2
+  sed -n '2,29p' "${BASH_SOURCE[0]}" >&2
   exit 2
 }
 
@@ -46,12 +51,15 @@ shift
 APPLY=0
 TO=""
 NODE=""
+FROM=""
 FROM_UNREACHABLE=0
+LOCK="${TR_CLICKHOUSE_ROLE_LOCK:-gs://tr-deploy-mutex-quill-cloud-proxy/locks/clickhouse-worker-role.json}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --apply) APPLY=1 ;;
     --to) TO="${2:-}"; shift ;;
     --node) NODE="${2:-}"; shift ;;
+    --from) FROM="${2:-}"; shift ;;
     --from-unreachable) FROM_UNREACHABLE=1 ;;
     *) usage ;;
   esac
@@ -69,13 +77,18 @@ zone_of() {
   return 1
 }
 
-role_of() {
-  gcloud compute instances describe "$1" --project="$PROJECT" --zone="$(zone_of "$1")" \
-    --format=json | python3 -c '
+# Sets ROLE to NAME's tr-clickhouse-role, empty when the key is absent. Any
+# failure to read it ends the script: a role it could not read must never be
+# taken for an absent one.
+read_role() {
+  local json
+  json="$(gcloud compute instances describe "$1" --project="$PROJECT" --zone="$(zone_of "$1")" \
+    --format=json)" || { echo "refusing: cannot read ${1}'s metadata" >&2; exit 1; }
+  ROLE="$(python3 -c '
 import json, sys
 items = (json.load(sys.stdin).get("metadata") or {}).get("items") or []
 print(next((item.get("value", "") for item in items if item.get("key") == "tr-clickhouse-role"), ""))
-'
+' <<<"$json")" || { echo "refusing: cannot parse ${1}'s metadata" >&2; exit 1; }
 }
 
 set_role() {
@@ -86,7 +99,8 @@ set_role() {
   fi
   gcloud compute instances add-metadata "$name" --project="$PROJECT" --zone="$(zone_of "$name")" \
     --metadata="tr-clickhouse-role=${role}"
-  if [ "$(role_of "$name")" != "$role" ]; then
+  read_role "$name"
+  if [ "$ROLE" != "$role" ]; then
     echo "refusing to continue: ${name}'s tr-clickhouse-role does not read back as ${role}" >&2
     exit 1
   fi
@@ -129,12 +143,51 @@ archive="$(mktemp "${TMPDIR:-/tmp}/tr-clickhouse-worker-role.XXXXXX")"
 trap 'rm -f "$archive"' EXIT
 git -C "$ROOT" archive --format=tar.gz --output="$archive" HEAD "$ROLE_DIR"
 
+# The role read for NAME at start-up (bash 3.2 has no associative arrays).
+role_for() {
+  local index=0 node
+  for node in "${NODES[@]}"; do
+    if [ "${node%%:*}" = "$1" ]; then
+      printf '%s\n' "${NODE_ROLES[$index]}"
+      return 0
+    fi
+    index=$((index + 1))
+  done
+  return 1
+}
+
+# One role change at a time: a create-only lock object, held until exit.
+take_lock() {
+  local body generation
+  body="$(mktemp "${TMPDIR:-/tmp}/tr-clickhouse-role-lock.XXXXXX")"
+  printf '{"command":"%s","owner":"%s","started_at":"%s"}\n' \
+    "$command" "$(whoami)@$(hostname)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$body"
+  if ! gcloud storage cp "$body" "$LOCK" --if-generation-match=0 >/dev/null 2>&1; then
+    rm -f "$body"
+    echo "refusing: another role change holds ${LOCK}:" >&2
+    gcloud storage cat "$LOCK" >&2 || true
+    echo "If that run is dead, remove the lock: gcloud storage rm ${LOCK}" >&2
+    exit 1
+  fi
+  rm -f "$body"
+  generation="$(gcloud storage objects describe "$LOCK" --format='value(generation)')"
+  trap 'gcloud storage rm "$LOCK" --if-generation-match='"$generation"' >/dev/null 2>&1 || true; rm -f "$archive"' EXIT
+}
+if [ "$APPLY" -eq 1 ] && [ "$command" != status ]; then
+  take_lock
+fi
+
 publishers=()
+unset_roles=0
+NODE_ROLES=()
 for node in "${NODES[@]}"; do
   name="${node%%:*}"
-  if [ "$(role_of "$name")" = "publisher" ]; then
-    publishers+=("$name")
-  fi
+  read_role "$name"
+  NODE_ROLES+=("$ROLE")
+  case "$ROLE" in
+    publisher) publishers+=("$name") ;;
+    "") unset_roles=$((unset_roles + 1)) ;;
+  esac
 done
 if [ "${#publishers[@]}" -gt 1 ]; then
   echo "refusing: more than one node is the publisher: ${publishers[*]}; fix the metadata by hand" >&2
@@ -145,20 +198,25 @@ case "$command" in
   status)
     for node in "${NODES[@]}"; do
       name="${node%%:*}"
-      echo "${name}: tr-clickhouse-role=$(role_of "$name")"
+      echo "${name}: tr-clickhouse-role=$(role_for "$name")"
     done
     ;;
   fence)
-    if [ "${#publishers[@]}" -eq 0 ]; then
-      # First rollout: node 1 has always run the workers.
+    if [ "${#publishers[@]}" -eq 1 ]; then
+      publisher="${publishers[0]}"
+    elif [ "$unset_roles" -eq "${#NODES[@]}" ]; then
+      # First rollout, every role read and none set: node 1 has always run
+      # the workers.
       set_role tr-clickhouse-1 publisher
       publisher=tr-clickhouse-1
     else
-      publisher="${publishers[0]}"
+      echo "refusing: no node is the publisher but some roles are set; a takeover stopped part-way." >&2
+      echo "  Resume it: clickhouse_worker_role.sh takeover --to NAME --from OLD_PUBLISHER --apply" >&2
+      exit 1
     fi
     for node in "${NODES[@]}"; do
       name="${node%%:*}"
-      if [ "$name" != "$publisher" ] && [ "$(role_of "$name")" != "standby" ]; then
+      if [ "$name" != "$publisher" ] && [ "$(role_for "$name")" != "standby" ]; then
         set_role "$name" standby
       fi
     done
@@ -172,7 +230,7 @@ case "$command" in
     ;;
   standby)
     zone_of "$NODE" >/dev/null || { echo "refusing: --node must name a cluster node" >&2; exit 2; }
-    if [ "$(role_of "$NODE")" != "standby" ]; then
+    if [ "$(role_for "$NODE")" != "standby" ]; then
       echo "refusing: ${NODE}'s tr-clickhouse-role is not standby; run fence first" >&2
       exit 1
     fi
@@ -191,13 +249,31 @@ case "$command" in
     ;;
   takeover)
     zone_of "$TO" >/dev/null || { echo "refusing: --to must name a cluster node" >&2; exit 2; }
-    if [ "${#publishers[@]}" -ne 1 ]; then
-      echo "refusing: no node is the publisher; run fence first" >&2
+    if [ "${#publishers[@]}" -eq 1 ]; then
+      from="${publishers[0]}"
+      if [ -n "$FROM" ] && [ "$FROM" != "$from" ]; then
+        echo "refusing: the publisher is ${from}, not ${FROM}" >&2
+        exit 1
+      fi
+    elif [ -n "$FROM" ]; then
+      # Resuming a takeover that fenced FROM and stopped before promotion.
+      zone_of "$FROM" >/dev/null || { echo "refusing: --from must name a cluster node" >&2; exit 2; }
+      if [ "$(role_for "$FROM")" != "standby" ]; then
+        echo "refusing: ${FROM}'s role is '$(role_for "$FROM")', not standby; it was not fenced" >&2
+        exit 1
+      fi
+      from="$FROM"
+    else
+      echo "refusing: no node is the publisher. If a takeover stopped part-way, resume it:" >&2
+      echo "  clickhouse_worker_role.sh takeover --to ${TO} --from OLD_PUBLISHER --apply" >&2
+      echo "  (on a fresh cluster with no roles at all, run fence first)" >&2
       exit 1
     fi
-    from="${publishers[0]}"
     if [ "$from" = "$TO" ]; then
-      echo "${TO} is already the publisher"
+      # Promotion already happened; a run that failed after it may have left
+      # the workers stopped, so start and verify them before saying so.
+      on_node "$TO" node_takeover.sh start-workers
+      echo "${TO} is the publisher, and its workers are running"
       exit 0
     fi
     # 1. Fence the old publisher durably: its role first, so nothing restarts.

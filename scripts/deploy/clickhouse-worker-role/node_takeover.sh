@@ -42,16 +42,40 @@ clickhouse() {
   clickhouse-client --user tr --password "$CH_PASSWORD" "$@"
 }
 
+# Print each unit's ActiveState, failing if systemd cannot answer for any of
+# them: a check that cannot see a unit must not report it stopped.
+unit_states() {
+  local unit state
+  for unit in "$@"; do
+    if ! state="$(systemctl show --property=ActiveState --value "$unit")" || [ -z "$state" ]; then
+      echo "cannot read the state of ${unit} on ${node}" >&2
+      return 1
+    fi
+    printf '%s %s\n' "$unit" "$state"
+  done
+}
+
+worker_units() {
+  local unit
+  for unit in "${TIMERS[@]}"; do printf '%s.timer\n' "$unit"; done
+  for unit in "${SERVICES[@]}"; do printf '%s.service\n' "$unit"; done
+}
+
 case "${1:-}" in
   stop-workers)
     units=()
-    for unit in "${TIMERS[@]}"; do units+=("${unit}.timer"); done
-    for unit in "${SERVICES[@]}"; do units+=("${unit}.service"); done
-    systemctl disable --now "${units[@]}" >/dev/null 2>&1 || true
-    active="$(systemctl list-units --state=active --no-legend --plain 'tr-clickhouse-*' | awk '{print $1}' | grep -E '^tr-clickhouse-' || true)"
-    if [ -n "$active" ]; then
-      echo "refusing to continue: still active on ${node}:" >&2
-      echo "$active" >&2
+    while IFS= read -r unit; do units+=("$unit"); done < <(worker_units)
+    systemctl disable --now "${units[@]}"
+    # A oneshot job still running reports "activating", not "active"; only
+    # inactive and failed units have stopped.
+    states="$(unit_states "${units[@]}")" || {
+      echo "refusing to continue: cannot confirm the workers on ${node} stopped" >&2
+      exit 1
+    }
+    running="$(awk '$2 != "inactive" && $2 != "failed"' <<<"$states")"
+    if [ -n "$running" ]; then
+      echo "refusing to continue: still running on ${node}:" >&2
+      echo "$running" >&2
       exit 1
     fi
     echo "${node}: every worker timer and service is stopped and disabled"
@@ -104,12 +128,16 @@ case "${1:-}" in
     for unit in "${TIMERS[@]}"; do units+=("${unit}.timer"); done
     for unit in "${DRAINS[@]}"; do units+=("${unit}.service"); done
     systemctl enable --now "${units[@]}"
-    for unit in "${units[@]}"; do
-      if ! systemctl is-active --quiet "$unit"; then
-        echo "refusing to report success: ${unit} is not active on ${node}" >&2
-        exit 1
-      fi
-    done
+    states="$(unit_states "${units[@]}")" || {
+      echo "refusing to report success: cannot read the workers' state on ${node}" >&2
+      exit 1
+    }
+    stopped="$(awk '$2 != "active"' <<<"$states")"
+    if [ -n "$stopped" ]; then
+      echo "refusing to report success: not active on ${node}:" >&2
+      echo "$stopped" >&2
+      exit 1
+    fi
     echo "${node}: the drains and every worker timer are running; this node now publishes"
     ;;
   *)

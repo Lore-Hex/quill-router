@@ -77,10 +77,19 @@ set +a
 clickhouse-client --user tr --password "$CH_PASSWORD" --database tr --multiquery \
   < "${APP}/clickhouse/002_provider_analytics_rollups.sql"
 
-active="$(systemctl list-units --state=active --no-legend --plain 'tr-clickhouse-*' | awk '{print $1}' | grep -E '^tr-clickhouse-' || true)"
-if [ -n "$active" ]; then
-  echo "refusing to report success: worker units are active on standby ${node}:" >&2
-  echo "$active" >&2
+# Every installed unit must be stopped. A unit whose state systemd cannot
+# report counts as running: a check that cannot see it must not pass it.
+running=""
+for unit in "${SERVICES[@]/%/.service}" "${TIMERS[@]/%/.timer}"; do
+  state="$(systemctl show --property=ActiveState --value "$unit" 2>/dev/null || true)"
+  case "$state" in
+    inactive|failed) ;;
+    *) running+="${unit} ${state:-unreadable}"$'\n' ;;
+  esac
+done
+if [ -n "$running" ]; then
+  echo "refusing to report success: worker units are not stopped on standby ${node}:" >&2
+  printf '%s' "$running" >&2
   exit 1
 fi
 echo "${node}: workers installed, disabled and fenced; a takeover starts them"
