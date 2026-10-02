@@ -1,8 +1,8 @@
 # Fast admission and batched settlement
 
-Status: **proposed, v16, 2026-10-03. Nothing built.** v8 changed direction
-to regional leases, Joseph's choice (§2). Codex and Fable reviewed v1-v15
-(§11), and v16 answers their reviews of v15.
+Status: **proposed, v17, 2026-10-03. Nothing built.** v8 changed direction
+to regional leases, Joseph's choice (§2). Codex and Fable reviewed v1-v16
+(§11), and v17 answers their reviews of v16.
 
 This is the plan for reaching 100T tokens a month without spending the routing
 margin on the billing database, and for taking the control plane out of request
@@ -30,10 +30,11 @@ Spanner transactions:
   holds credit and the key limit, and writes the reservation and authorization
   rows.
 - Stage D heartbeats while a stream runs. Every workspace is in the cohort in
-  production. The gateway sends one before the first byte, then one every 10 s
-  or 256 output tokens. Each records the delivered usage and renews the
-  reservation. Nothing is charged until settle, or until the reaper books the
-  last snapshot of a request whose gateway never settled.
+  production. The gateway sends one when the provider's first byte arrives,
+  before relaying it, then one every 10 s or 256 output tokens. Each records
+  the delivered usage and renews the reservation. Nothing is charged until
+  settle, or until the reaper books the last snapshot of a request whose
+  gateway never settled.
 - `POST /internal/gateway/settle`: one commit on the success path since #1465.
   It books the actual cost, releases the holds, pays app owners, and writes the
   generation record and analytics intent. When that commit is declined, a
@@ -338,9 +339,9 @@ lease's expiry minus a skew allowance.
 
 **A warm fast authorization reads and writes no store:** its workspace is
 eligible, its caches are fresh and its lease has room. A cold cache reads
-Spanner, and heartbeats and terminals write Pub/Sub synchronously. A streaming request's
-first heartbeat then waits for its publish, as it waits for a Spanner commit
-today.
+Spanner, and heartbeats and terminals write Pub/Sub synchronously. A streaming
+request's first heartbeat then waits for its publish, as it waits for a
+Spanner commit today.
 
 **When the lease is short:**
 
@@ -410,10 +411,13 @@ and the request records all follow that rule.
     that row's record ID. So the auditor recognizes the drain-log copy by
     identity, as well as by authorization.
   - An append is conditional, in its own transaction, on the lease not being
-    closed. A refused append is answered as a settle after today's reaper is:
-    200 with `already_settled` and not `settled`. That ends the enclave's
-    retries, and the enclave logs the loss (`stageDDispositionLost` in
-    `stage_d.go`). A 409 would not: its queue retries any error.
+    closed. A refused append is answered as today's
+    `_already_settled_gateway_data` answers an authorization that is already
+    terminal: from the stored winner, field for field (cost, disposition,
+    outcome), or as released uncharged when there is none. That is a 200,
+    which ends the enclave's retries; `stageDDispositionLost` then counts a
+    loss only for a reap or a release. A 409 would not end them: the queue
+    retries any error.
   - A row-deletion policy removes a lease's rows after it closes. The drain
     log lives in the multi-region database, with the leases.
   - Appends happen only when an owner is unreachable, has stopped or is past
@@ -452,24 +456,33 @@ and the request records all follow that rule.
 
   That queue is the whole budget, so a Spanner outage longer than it loses
   those settles (§4.8).
-- **A stream's hold before its first heartbeat.** A streaming hold with no
-  accepted heartbeat by the first-heartbeat allowance plus the heartbeat
-  grace is released uncharged: by the owner, or at a tick by the auditor.
-  "Accepted" means durable: a first heartbeat that was stored but whose answer
-  was lost leaves a hold with a heartbeat, which is reaped at its snapshot,
-  as today. Without a durable heartbeat the enclave delivered nothing and
-  sends no settle, so nothing can still be owed. Today such a hold waits out the
-  2-hour reservation time (`GATEWAY_RESERVATION_TTL_SECONDS`); here it would
-  also hold the trust allowance, so a short blip could refuse a small
-  workspace's grants for hours.
-  - The enclave sends the first heartbeat when the provider's first byte
-    arrives (`selectedRoute.Ready()` in `serveStreaming`). So the allowance
-    bounds the provider's time to first byte, which is minutes for reasoning
-    models. It comes per route from the routing snapshot's measured
-    first-byte latency, a high percentile plus a margin.
-  - A heartbeat at stream open, before the provider answers, would let the
-    allowance shrink to the authorize-to-heartbeat latency. That is a
-    quill-cloud-proxy change (§9).
+- **A stream's hold before its first heartbeat.** Today such a hold waits out
+  the 2-hour reservation time (`GATEWAY_RESERVATION_TTL_SECONDS`). Here it
+  would also hold the trust allowance, so a short blip could refuse a small
+  workspace's grants for hours. Releasing it sooner needs the enclave:
+  - Today the enclave sends the first heartbeat only when the provider's
+    first byte arrives (`selectedRoute.Ready()` in `serveStreaming`). An
+    allowance would then have to bound the provider's time to first byte:
+    minutes for reasoning models, with a tail. That tail, and any provider
+    incident beyond it, would release live streams whose first heartbeat is
+    then refused after a long, already-paid wait.
+  - So the release waits for a heartbeat at stream open, before the provider
+    answers, a quill-cloud-proxy change (§9). Then a streaming hold with no
+    accepted heartbeat by the first-heartbeat allowance plus the heartbeat
+    grace is released uncharged: by the owner, or at a tick by the auditor.
+    The allowance is the authorize-to-heartbeat latency, with the provider's
+    latency out of it. The fast path admits only streams the enclave
+    heartbeats (§4.11), so this never releases a stream that runs without
+    heartbeats.
+  - "Accepted" means durable: a first heartbeat that was stored but whose
+    answer was lost leaves a hold with a heartbeat, which is reaped at its
+    snapshot, as today. Without a durable heartbeat the enclave delivered
+    nothing and sends no settle, so nothing can still be owed.
+  - Until then every streaming hold keeps today's 2 hours. A burst of
+    first-heartbeat failures holds those estimates against the trust
+    allowance for up to 2 hours, so a small workspace can get 503s with
+    `Retry-After` for that long. That is the cost of not cutting live
+    streams.
 - Non-streaming holds never heartbeat, and keep today's 2-hour reservation
   time.
 - **A Spanner stall longer than the expiry window cuts streams fleet-wide.**
@@ -591,8 +604,9 @@ headroom is unchanged.
   `_credit_workspace_balance_tx` (payments, grants, auto-refill),
   `_credit_across_shards` (credit-transfer returns), the earnings-to-credit
   transfer, and the shard-admin credits. Into a marked workspace, it repays the
-  negative shards first, in ascending order, in the same transaction. When the signed sum is no longer negative, the mark is cleared
-  on every row, and only then is the rest spread over the shards as today
+  negative shards first, in ascending order, in the same transaction. When
+  the signed sum is no longer negative, the mark is cleared on every row, and
+  only then is the rest spread over the shards as today
   (`distribute_credit_amount`). A customer who pays is never left behind a
   mark.
 - **Lock order.** New multi-row writers (covering, repayment, marking) take
@@ -725,11 +739,19 @@ by the first-terminal rule.
   plus the skew allowance plus the owner's publish deadline. Every draining
   transaction stores it, the auditor's and the owner's alike (a final
   checkpoint or a forced exit), from the lease's last renewed expiry. So no
-  draining lease lacks F.
-- **The owner boundary S.** When the auditor applies its fence tick (below),
-  it first stores S, the highest owner sequence number it has applied, in
-  the lease row. It does that in a transaction of its own, before it appends
-  any reap or decides any drain-log terminal.
+  draining lease lacks F. F has one use: a fence tick, the auditor's or a
+  rebuild's, is published only once its publisher's clock passes F plus the
+  skew allowance.
+- **The owner boundary S.** When the auditor applies its fence tick, it first
+  stores S, the highest owner sequence number it has applied, in the lease
+  row, with the tick's publish time T. It does that before it appends any
+  reap or decides any drain-log terminal.
+  - The write is the per-lease commit that advances progress to S, carrying
+    the bookings and winners of every record up to S. So S is never ahead of
+    what was committed.
+  - S is written once, conditional on being unset. A member that takes over,
+    or a rebuild, finds it set and uses the stored value. Its own commit of
+    anything above S fails the commit-version guard, and it re-reads.
 - An owner record above S is ignored, whenever it arrives, in ordinary
   processing and in a rebuild alike. A late terminal loses, and a late
   heartbeat or checkpoint changes nothing; a remainder a late checkpoint
@@ -786,11 +808,16 @@ A new owner never reuses a dead owner's lease. It is granted a new one.
     sequence numbers, and those above the stored boundary S are ignored. A
     draining lease's later terminals and reaps are in its drain log in
     Spanner, in order, which does not expire.
-  - **Completeness first.** A rebuild decides nothing until the archive is
-    complete through F. It is complete once the archive subscription's oldest
-    unacknowledged message was published after F: that subscription
-    acknowledges a message only after the object holding it is finalized.
-    Until then the lease stays pending.
+  - **Completeness first.** A rebuild decides nothing until the archive holds
+    every record received before a fence tick: the one stored with S, or,
+    when S was never stored, one the rebuild publishes under the lease
+    itself. The archive is complete once the archive subscription's oldest
+    unacknowledged message was published later than that tick's publish time
+    T plus a margin, or there is none in a sample taken after then: that
+    subscription acknowledges a message only after the object holding it is
+    finalized. Until then the lease stays pending.
+    - The margin assumes Pub/Sub's servers' clocks agree within seconds,
+      which is a different assumption from the nodes' skew allowance.
     - The export writes Avro with message metadata, since the publish time
       and the message ID are what the fence and the gap check read.
     - The oldest-unacknowledged-message age is a sampled metric, minutes
@@ -800,9 +827,13 @@ A new owner never reuses a dead owner's lease. It is granted a new one.
     missing number is a true gap, and the lease stays reserved for an
     operator.
   - If S was never stored, nothing depends on it yet: no reap was appended and
-    no drain-log terminal decided. The rebuild stores S itself, as the highest
-    owner sequence number with every number below it present, once the
-    archive is complete through F. It then proceeds as the auditor would.
+    no drain-log terminal decided. The rebuild publishes its tick as the
+    auditor would, once its clock passes F plus the skew allowance. Once the
+    archive is complete through that tick, it holds every owner record
+    received before it, which includes every publish the owner had
+    acknowledged. The rebuild stores S as the highest owner sequence number
+    with every number below it present, and T as its tick's publish time. It
+    then proceeds as the auditor would.
   - The rebuild stores what it books as winners, so a later resumption of
     the ordinary path agrees with it.
 - Records unreadable for longer than 31 days, in a regional outage that long,
@@ -895,9 +926,17 @@ when Python is unreachable: the first durable point is Python's
 
 ### 4.11 What stays synchronous at first
 
-Credit-funded keys on standard catalog routes go first, streaming or not. These
-stay on today's Python path:
+Credit-funded keys on standard catalog routes go first: requests that do not
+stream, and streams the enclave heartbeats. These stay on today's Python path:
 
+- streams the enclave does not heartbeat. Today's rule
+  (`_stage_d_eligibility_reason` in `gateway.py`) admits to heartbeats only
+  streaming `chat.completions` and `responses` from an accepted boot, priced
+  in credits on standard endpoints, outside the priority and auto service
+  tiers. The enclave applies the same route test (`stageDStreamEligible` in
+  `stage_d.go` at `a06050f`). So a streaming `/v1/messages` request stays:
+  `serveMessages` relays it without heartbeats. Releasing a hold before its
+  first heartbeat (§4.5) assumes the stream heartbeats;
 - requests with an `Idempotency-Key` (§4.3);
 - BYOK routes, custom and user-provided models, Polyphemus selection, native
   batch, video and image jobs, and hosted tools with
@@ -1092,8 +1131,8 @@ leases, and was retired on 2026-09-27.
   - the skew allowance, and the reaper's grace;
   - the expiry window, as a multiple of Spanner's observed commit-stall tail
     (§4.5);
-  - the first-heartbeat allowance per route, against the provider's measured
-    time to first byte (§4.5);
+  - the first-heartbeat allowance, against the measured authorize-to-heartbeat
+    latency, once the enclave heartbeats at stream open (§4.5);
   - the state cache's maximum age, and the shard count rule.
 
   They come from the spike, the benchmark and the pilot.
@@ -1101,8 +1140,10 @@ leases, and was retired on 2026-09-27.
   later step.
 - **Enclave changes (quill-cloud-proxy), Joseph's call:**
   - a durable settle outbox, which would close the loss in §4.8;
-  - a heartbeat at stream open, which would shorten the first-heartbeat
-    allowance (§4.5);
+  - a heartbeat at stream open, which the release of a stream's hold before
+    its first heartbeat waits for (§4.5);
+  - heartbeats on the Messages path (`serveMessages`), which would bring
+    streaming `/v1/messages` onto the fast path (§4.11);
   - the retirement phase in §4.12, without which gateway scale-in stays
     scale-out only.
 - **Where request records live at 100T:** ClickHouse rather than Spanner
@@ -1509,4 +1550,31 @@ record.
     ends the enclave's retries.
   - The first-heartbeat allowance is per route, from measured first-byte
     latency, and a heartbeat at stream open is listed as an enclave change.
+  - The P3s are answered in place.
+- **v17.** Codex (1 P1, 1 P2) and Fable (2 P2, 5 P3) found these problems in
+  v16:
+  - streaming `/v1/messages` was in the first cohort, but the enclave never
+    heartbeats it, so releasing a hold before its first heartbeat would free
+    a running stream;
+  - a closed lease answered `settled` false even when the authorization's
+    settle had won, so the enclave would log a charged settle as lost;
+  - a per-route first-byte allowance would turn the provider's slow tail and
+    its incidents into refused streams after long, already-paid waits;
+  - a rebuild still proved completeness through F, by publish times, rather
+    than through a tick in the order Pub/Sub received the records;
+  - and, among the P3s, which commit stores S, writing S only once, routes
+    with no measured first byte, and F's remaining uses.
+
+  v17 answers them:
+  - The fast path admits only streams the enclave heartbeats, by today's
+    Stage D rule. Streaming Messages stays on the Python path.
+  - A closed lease answers from the stored winner, field for field, as
+    `_already_settled_gateway_data` does today.
+  - Releasing a stream's hold before its first heartbeat waits for the
+    enclave to heartbeat at stream open. Until then streaming holds keep
+    today's 2 hours, and no per-route allowance is needed.
+  - A rebuild proves the archive complete through a fence tick: the one
+    stored with S, or its own.
+  - S is written once, in the commit that advances progress to it, and F's
+    one use is named where F is defined.
   - The P3s are answered in place.
