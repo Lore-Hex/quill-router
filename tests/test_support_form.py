@@ -44,10 +44,15 @@ def test_inquiry_delivery_has_a_process_wide_cost_ceiling(
     )
 
 
+@pytest.mark.parametrize(
+    ("category", "label"), [("api", "API and routing"), ("model", "Model request")]
+)
 def test_support_submission_sends_to_help_with_reply_to(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
+    category: str,
+    label: str,
 ) -> None:
     sent_messages: list[EmailMessage] = []
     ops_messages: list[OpsChatSupportMessage] = []
@@ -75,7 +80,7 @@ def test_support_submission_sends_to_help_with_reply_to(
     with caplog.at_level(logging.INFO, logger="trusted_router.routes.public"):
         response = client.post(
             "/support/inquiry",
-            json=_payload(message=support_text),
+            json=_payload(category=category, message=support_text),
         )
 
     assert response.status_code == 200
@@ -85,7 +90,7 @@ def test_support_submission_sends_to_help_with_reply_to(
     assert message.to == "help@trustedrouter.com"
     assert message.reply_to == "ada@example.com"
     assert message.subject == (
-        "TrustedRouter support: API and routing: Streaming request failed"
+        f"TrustedRouter support: {label}: Streaming request failed"
     )
     assert "req_support_123" in message.text_body
     assert support_text in message.text_body
@@ -95,7 +100,7 @@ def test_support_submission_sends_to_help_with_reply_to(
     )
     assert all(support_text not in record.getMessage() for record in caplog.records)
     assert any(
-        record.getMessage().startswith("support_inquiry.sent category=api ")
+        record.getMessage().startswith(f"support_inquiry.sent category={category} ")
         for record in caplog.records
     )
 

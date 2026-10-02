@@ -10,6 +10,7 @@
   const empty = explorer.querySelector("[data-model-empty]");
   const showMore = explorer.querySelector("[data-model-show-more]");
   const clearButtons = [...explorer.querySelectorAll("[data-model-clear]")];
+  const requestLinks = [...document.querySelectorAll("[data-model-request]")];
   const cards = [...explorer.querySelectorAll("[data-model-card]")];
   const pageSize = Number.parseInt(explorer.dataset.pageSize || "24", 10);
   const params = new URLSearchParams(window.location.search);
@@ -74,6 +75,11 @@
       showMore.textContent = `Show ${Math.min(pageSize, remaining)} more models`;
     }
     clearButtons.forEach((button) => { button.hidden = !query && sort.value === "featured"; });
+    const requestParams = new URLSearchParams({ category: "model" });
+    if (search.value.trim()) requestParams.set("model", search.value.trim().slice(0, 200));
+    requestLinks.forEach((link) => {
+      link.href = `/support?${requestParams.toString()}#support-inquiry`;
+    });
     writeUrl();
   }
 
