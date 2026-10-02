@@ -1,8 +1,8 @@
 # Fast admission and batched settlement
 
-Status: **proposed, v15, 2026-10-03. Nothing built.** v8 changed direction
-to regional leases, Joseph's choice (§2). Codex and Fable reviewed v1-v14
-(§11), and v15 answers their reviews of v14.
+Status: **proposed, v16, 2026-10-03. Nothing built.** v8 changed direction
+to regional leases, Joseph's choice (§2). Codex and Fable reviewed v1-v15
+(§11), and v16 answers their reviews of v15.
 
 This is the plan for reaching 100T tokens a month without spending the routing
 margin on the billing database, and for taking the control plane out of request
@@ -372,10 +372,13 @@ and the request records all follow that rule.
     the same records, with the same sequence numbers, before anything new.
   - Its publishes are bounded by a deadline shorter than the reaper's grace
     minus twice the skew allowance. The deadline covers the request and the
-    client library's queued retries, not only the caller's wait.
+    client library's queued retries, not only the caller's wait. A republish
+    after a failure is issued before the cutoff too, so every owner publish
+    is received by the cutoff plus the deadline, which is what the fence time
+    allows for (§4.8).
   - A publish that timed out can still be stored later. So the auditor does
-    not rely on the deadline alone: a draining lease has a fence time (§4.8),
-    and an owner record published after it is ignored.
+    not rely on the deadline alone: a draining lease stores an owner boundary
+    (§4.8), and an owner record beyond it is ignored.
 - The owner answers a later terminal for `A` with the winner's outcome, and
   does not publish it. It charges nothing.
 - An answer that depends on the owner's decision is given only if the publish
@@ -407,8 +410,10 @@ and the request records all follow that rule.
     that row's record ID. So the auditor recognizes the drain-log copy by
     identity, as well as by authorization.
   - An append is conditional, in its own transaction, on the lease not being
-    closed. A refused append gets a final refusal, 409 `lease_closed`, not
-    `retry`, so the enclave's queue does not spend its attempts on it.
+    closed. A refused append is answered as a settle after today's reaper is:
+    200 with `already_settled` and not `settled`. That ends the enclave's
+    retries, and the enclave logs the loss (`stageDDispositionLost` in
+    `stage_d.go`). A 409 would not: its queue retries any error.
   - A row-deletion policy removes a lease's rows after it closes. The drain
     log lives in the multi-region database, with the leases.
   - Appends happen only when an owner is unreachable, has stopped or is past
@@ -450,11 +455,21 @@ and the request records all follow that rule.
 - **A stream's hold before its first heartbeat.** A streaming hold with no
   accepted heartbeat by the first-heartbeat allowance plus the heartbeat
   grace is released uncharged: by the owner, or at a tick by the auditor.
-  When the enclave's first heartbeat fails it delivers nothing and sends no
-  settle, so nothing can still be owed. Today such a hold waits out the
+  "Accepted" means durable: a first heartbeat that was stored but whose answer
+  was lost leaves a hold with a heartbeat, which is reaped at its snapshot,
+  as today. Without a durable heartbeat the enclave delivered nothing and
+  sends no settle, so nothing can still be owed. Today such a hold waits out the
   2-hour reservation time (`GATEWAY_RESERVATION_TTL_SECONDS`); here it would
   also hold the trust allowance, so a short blip could refuse a small
   workspace's grants for hours.
+  - The enclave sends the first heartbeat when the provider's first byte
+    arrives (`selectedRoute.Ready()` in `serveStreaming`). So the allowance
+    bounds the provider's time to first byte, which is minutes for reasoning
+    models. It comes per route from the routing snapshot's measured
+    first-byte latency, a high percentile plus a margin.
+  - A heartbeat at stream open, before the provider answers, would let the
+    allowance shrink to the authorize-to-heartbeat latency. That is a
+    quill-cloud-proxy change (§9).
 - Non-streaming holds never heartbeat, and keep today's 2-hour reservation
   time.
 - **A Spanner stall longer than the expiry window cuts streams fleet-wide.**
@@ -704,16 +719,26 @@ by the first-terminal rule.
 - The auditor publishes ticks under the lease, each carrying its time.
 - While a lease is open, the auditor leaves its drain log to the owner.
 - It reads a draining lease's drain log only after applying a tick it
-  published after F. Every owner record published by F was received before
-  that tick, so all of them come first.
+  published once its own clock passed F plus the skew allowance, and after
+  storing S. Owner records up to S come first.
 - When a lease drains, its **fence time** F is stored with it: the expiry
-  plus the skew allowance plus the owner's publish deadline.
-- An owner record whose Pub/Sub publish time is after F is ignored, whenever
-  it arrives, in ordinary processing and in a rebuild alike. A late terminal
-  loses, and a late heartbeat or checkpoint changes nothing; a remainder a
-  late checkpoint returned is released at close anyway.
-- The publish time is the server's receipt time, and the archive keeps it, so
-  live processing and a rebuild ignore exactly the same records.
+  plus the skew allowance plus the owner's publish deadline. Every draining
+  transaction stores it, the auditor's and the owner's alike (a final
+  checkpoint or a forced exit), from the lease's last renewed expiry. So no
+  draining lease lacks F.
+- **The owner boundary S.** When the auditor applies its fence tick (below),
+  it first stores S, the highest owner sequence number it has applied, in
+  the lease row. It does that in a transaction of its own, before it appends
+  any reap or decides any drain-log terminal.
+- An owner record above S is ignored, whenever it arrives, in ordinary
+  processing and in a rebuild alike. A late terminal loses, and a late
+  heartbeat or checkpoint changes nothing; a remainder a late checkpoint
+  returned is released at close anyway.
+- S follows the order Pub/Sub received the records in. Their publish times do
+  not, since servers' clocks differ, so a stored boundary is the only rule
+  live processing and a rebuild can share. Owner sequence numbers are issued
+  in order, and a republish reuses its number, so a record received after the
+  tick is above S.
 - It reads drain-log rows up to its read timestamp, in commit-timestamp
   order. A row committed later has a later timestamp, so none is missed.
 - At a tick past a hold's deadline plus the grace, it reaps the hold by
@@ -758,17 +783,26 @@ A new owner never reuses a dead owner's lease. It is granted a new one.
   - A rebuild starts from the auditor's stored winners and progress, and never
     decides an authorization that already has a winner.
   - It needs no order between publishers. Owner records are ordered by their
-    sequence numbers, and those published after the fence time F are
-    ignored. A draining lease's later terminals and reaps are in its drain log
-    in Spanner, in order, which does not expire.
+    sequence numbers, and those above the stored boundary S are ignored. A
+    draining lease's later terminals and reaps are in its drain log in
+    Spanner, in order, which does not expire.
   - **Completeness first.** A rebuild decides nothing until the archive is
     complete through F. It is complete once the archive subscription's oldest
     unacknowledged message was published after F: that subscription
     acknowledges a message only after the object holding it is finalized.
     Until then the lease stays pending.
-  - Then every owner sequence number up to the highest one published by F
-    must be present. A missing number is a true gap, and the lease stays
-    reserved for an operator.
+    - The export writes Avro with message metadata, since the publish time
+      and the message ID are what the fence and the gap check read.
+    - The oldest-unacknowledged-message age is a sampled metric, minutes
+      behind, so the check allows that margin. One stuck message holds every
+      rebuild's check; rebuilds are rare enough for that wait.
+  - If S was stored, every owner sequence number up to S must be present. A
+    missing number is a true gap, and the lease stays reserved for an
+    operator.
+  - If S was never stored, nothing depends on it yet: no reap was appended and
+    no drain-log terminal decided. The rebuild stores S itself, as the highest
+    owner sequence number with every number below it present, once the
+    archive is complete through F. It then proceeds as the auditor would.
   - The rebuild stores what it books as winners, so a later resumption of
     the ordinary path agrees with it.
 - Records unreadable for longer than 31 days, in a regional outage that long,
@@ -779,6 +813,10 @@ A new owner never reuses a dead owner's lease. It is granted a new one.
   conditional transaction, once the expiry plus the skew has passed. That
   stores F, and the rebuild then proceeds as above. Stored winners and the
   commit-version guard apply throughout.
+  - If its owner is still renewing, the operator first revokes its renewal,
+    so the lease can expire. When the auditor was down longer than the
+    subscription's retention, the archive, not the subscription, is the
+    source.
 
 **When an owner's region is lost.**
 
@@ -912,7 +950,7 @@ Each has a production check.
    publishes only winners, so log order agrees with it. A terminal it does
    not take, because it is unreachable, past its cutoff or gone, goes to the
    drain log in Spanner, as do a draining lease's reaps. The first terminal
-   in the lease's order wins: owner records published by the fence time,
+   in the lease's order wins: owner records up to the stored boundary S,
    then the drain log.
 4. **No charge lost.** Every terminal is in the log or the drain log before it
    is acknowledged.
@@ -991,9 +1029,9 @@ Each has a production check.
 **After an owner crash,** its leases' streams stop at their next heartbeat
 and settle into the drain log within one heartbeat interval. For 2,000 open
 streams on a lease, that is about 200 independent inserts a second. Each
-enclave sends its settles through one queue worker, one Spanner commit each,
-so an enclave with 50 streams on that owner's leases clears them in a few
-seconds.
+request makes its first settle call itself, so those appends are concurrent.
+Only settles that fail go to the enclave's single queue worker, one Spanner
+commit each.
 
 The benchmark measures the owner's throughput on the hottest workspace, the
 publish latency, and the auditor at the target rate.
@@ -1054,7 +1092,8 @@ leases, and was retired on 2026-09-27.
   - the skew allowance, and the reaper's grace;
   - the expiry window, as a multiple of Spanner's observed commit-stall tail
     (§4.5);
-  - the first-heartbeat allowance for a stream's hold (§4.5);
+  - the first-heartbeat allowance per route, against the provider's measured
+    time to first byte (§4.5);
   - the state cache's maximum age, and the shard count rule.
 
   They come from the spike, the benchmark and the pilot.
@@ -1062,6 +1101,8 @@ leases, and was retired on 2026-09-27.
   later step.
 - **Enclave changes (quill-cloud-proxy), Joseph's call:**
   - a durable settle outbox, which would close the loss in §4.8;
+  - a heartbeat at stream open, which would shorten the first-heartbeat
+    allowance (§4.5);
   - the retirement phase in §4.12, without which gateway scale-in stays
     scale-out only.
 - **Where request records live at 100T:** ClickHouse rather than Spanner
@@ -1445,4 +1486,27 @@ record.
     message is newer than F, which proves the archive complete through F.
   - A streaming hold with no accepted heartbeat is released uncharged after
     the first-heartbeat allowance.
+  - The P3s are answered in place.
+- **v16.** Codex (1 P1, 1 P2, 2 P3) and Fable (1 P2, 7 P3) found these
+  problems in v15:
+  - publish times follow servers' clocks, not the order Pub/Sub received the
+    records in, so live processing (received before the tick) and a rebuild
+    (published by F) could disagree about a late owner settle;
+  - a 409 for a closed lease is retried by the enclave's queue;
+  - the first-heartbeat allowance has to cover the provider's time to first
+    byte, since the enclave heartbeats only then;
+  - and, among the P3s, the tick's receipt time, the archive's format, the
+    sampled completeness metric, F on owner-initiated drains, renewing owners
+    during a rebuild, republish bounds, durable heartbeat acceptance, and
+    concurrent first settles.
+
+  v16 answers them:
+  - The auditor stores an owner boundary S, in receipt order, before anything
+    depends on it. Live processing and a rebuild both use S.
+  - A rebuild sets S only when none was stored, after proving the archive
+    complete through F.
+  - A closed lease's terminal gets today's settle-after-reaper answer, which
+    ends the enclave's retries.
+  - The first-heartbeat allowance is per route, from measured first-byte
+    latency, and a heartbeat at stream open is listed as an enclave change.
   - The P3s are answered in place.
