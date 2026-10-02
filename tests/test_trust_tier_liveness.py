@@ -176,6 +176,45 @@ def test_a_platform_stop_in_a_worker_stops_the_parallel_pass(monkeypatch: pytest
     assert len([call for call in store.calls if call != "enumerate"]) < 999
 
 
+def test_a_stop_is_seen_while_another_worker_is_blocked(monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+    import time
+
+    no_owner_scan(monkeypatch)
+    blocked = threading.Event()
+    release = threading.Event()
+
+    class BlockingStore(TierStore):
+        def replicate_workspace_trust_reconciled_through(self, workspace_id: str, *_args: Any, **_kwargs: Any):
+            if workspace_id == "ws-0":
+                blocked.set()
+                release.wait(10)
+            return None
+
+        def recompute_workspace_trust_tier(self, workspace_id: str, **kwargs: Any) -> int:
+            if workspace_id == "ws-1":
+                assert blocked.wait(5)
+                raise WorkerStopped()
+            return super().recompute_workspace_trust_tier(workspace_id, **kwargs)
+
+    # Four workers, two workspaces: both are in flight when submission ends,
+    # so the stop has to be found by the final drain.
+    store = BlockingStore(2)
+    started = time.monotonic()
+    with pytest.raises(WorkerStopped):
+        trust_tier_cli.run(store, concurrent_settings(4), now=NOW)
+    # The stop surfaced while ws-0 was still blocked, not after it finished.
+    assert time.monotonic() - started < 5
+    assert not release.is_set()
+
+    release.set()
+    for thread in threading.enumerate():
+        if thread.name.startswith("trust-tier"):
+            thread.join(5)
+    # Released after the stop, ws-0 wrote nothing.
+    assert "ws-0" not in store.calls
+
+
 def test_the_setting_defaults_to_one_worker_and_reads_its_variable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

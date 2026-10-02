@@ -103,7 +103,15 @@ def run(
         len(workspace_ids), environment, concurrency,
     )
 
+    # Set when the pass is stopping (a platform stop in any worker). A running
+    # worker cannot be interrupted, so it checks this between its database
+    # phases and writes nothing after it is set; each phase is a bounded
+    # Spanner call, so the threads Python joins at exit finish promptly.
+    stop = threading.Event()
+
     def recompute(workspace_id: str) -> None:
+        if stop.is_set():
+            return
         try:
             replicated, reconciled_through = replicate_tier_job_watermark(
                 store,
@@ -117,6 +125,8 @@ def run(
                     workspace_id,
                     reconciled_through,
                 )
+            if stop.is_set():
+                return
             tier = store.recompute_workspace_trust_tier(
                 workspace_id,
                 qualifying_providers=settings.trust_qualifying_provider_set,
@@ -130,7 +140,9 @@ def run(
                 failed.append(workspace_id)
             log.exception("trust.tier_job_workspace_failed workspace_id=%s", workspace_id)
 
-    def progress(completed: int) -> None:
+    completed = 0
+
+    def progress() -> None:
         if completed % 100 == 0 or completed == len(workspace_ids):
             log.info(
                 "trust.tier_job_progress completed=%d total=%d failed=%d elapsed_seconds=%.3f",
@@ -139,32 +151,37 @@ def run(
 
     failed_lock = threading.Lock()
     if concurrency == 1:
-        for completed, workspace_id in enumerate(workspace_ids, start=1):
+        for workspace_id in workspace_ids:
             recompute(workspace_id)
-            progress(completed)
+            completed += 1
+            progress()
     else:
         # Workspaces are independent: each recompute runs its own reads and
         # transaction. A worker's ordinary failure is recorded by recompute();
-        # anything else (a platform stop) cancels the rest and propagates.
+        # anything else (a platform stop) stops the pass and propagates.
         executor = ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="trust-tier")
         pending: set[Future[None]] = set()
-        remaining = iter(workspace_ids)
-        completed = 0
-        try:
-            for workspace_id in remaining:
-                pending.add(executor.submit(recompute, workspace_id))
-                if len(pending) < concurrency:
-                    continue
-                done, pending = wait(pending, return_when=FIRST_COMPLETED)
-                for future in done:
-                    future.result()
-                    completed += 1
-                    progress(completed)
-            for future in list(pending):
-                future.result()
+
+        def collect(done: set[Future[None]]) -> None:
+            nonlocal completed
+            for future in done:
+                future.result()  # re-raises a worker's BaseException
                 completed += 1
-                progress(completed)
+                progress()
+
+        try:
+            for workspace_id in workspace_ids:
+                pending.add(executor.submit(recompute, workspace_id))
+                if len(pending) >= concurrency:
+                    done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                    collect(done)
+            # Drain in completion order, so a stop raised by any worker is
+            # seen at once, not after an unrelated slow one finishes.
+            while pending:
+                done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                collect(done)
         except BaseException:
+            stop.set()
             executor.shutdown(wait=False, cancel_futures=True)
             raise
         executor.shutdown(wait=True)
