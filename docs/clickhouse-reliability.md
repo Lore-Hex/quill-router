@@ -142,7 +142,10 @@ instance is destroyed through Terraform once that export is verified.
 two new voters together, migrates only after full-fingerprint parity, pauses
 the ingester for the final delta, and exposes the load balancer only after the
 canonical replicated table is healthy. Routine control-plane rollouts discover
-the internal load-balancer address dynamically.
+the internal load-balancer address and the replica addresses dynamically. The
+read clients get the load balancer first, then each replica in reverse name
+order, and move to the next only when a connection cannot be opened or the
+endpoint answers 502, 503 or 504. A failed or empty lookup fails the rollout.
 
 Never restart or deploy all three ClickHouse nodes together. Change one zone,
 wait for replica queue and load-balancer health to recover, then continue.
