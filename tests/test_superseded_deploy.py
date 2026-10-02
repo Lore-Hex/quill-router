@@ -197,3 +197,17 @@ def test_every_workflow_wait_passes_the_coordinators_own_check(workflow: str) ->
         # The value the coordinator will read; a wait it refuses fails every
         # deploy at admission, with no competing lease at all.
         assert cloud_rollout.admission_wait({"TR_DEPLOY_WAIT_SECONDS": wait}) == int(wait)
+
+
+def test_no_other_workflow_can_evict_a_pending_deploy() -> None:
+    # GitHub keeps one pending run per concurrency group and cancels the older
+    # one when another arrives. Only deploys may queue behind a deploy, so the
+    # pending one is always the newest deploy.
+    for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
+        text = yaml.safe_load(path.read_text())
+        groups = [text.get("concurrency")] + [job.get("concurrency") for job in text["jobs"].values()]
+        names = [g["group"] if isinstance(g, dict) else g for g in groups if g]
+        if path.name == "deploy.yml":
+            assert names == ["deploy-trusted-router"]
+        else:
+            assert "deploy-trusted-router" not in names, path.name

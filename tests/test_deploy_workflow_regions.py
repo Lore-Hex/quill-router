@@ -196,8 +196,19 @@ def test_scheduled_ssh_hygiene_is_api_only_and_repairs_ci_keys() -> None:
     hygiene_job = workflow.split("\n  ssh-metadata-hygiene:\n", 1)[1]
     assert "gcp_ssh_metadata_hygiene.py" in workflow
     assert "--apply" in workflow
-    assert "group: deploy-trusted-router" in hygiene_job
+    # Its own group: in the deploy's group a queued hygiene job evicted a
+    # pending deploy (GitHub keeps one pending run per group).
+    assert "group: deploy-trusted-router" not in hygiene_job
+    assert "group: ssh-metadata-hygiene" in hygiene_job
     assert "cancel-in-progress: false" in hygiene_job
+    skip = hygiene_job.index("--workflow deploy.yml")
+    assert "--status in_progress" in hygiene_job[skip : skip + 200]
+    assert hygiene_job.index("Skip while a control-plane deploy runs") < hygiene_job.index(
+        "gcp_ssh_metadata_hygiene.py"
+    )
+    assert "if: steps.deploys.outputs.skip == 'false'" in hygiene_job.split(
+        "- name: Reconcile CI SSH metadata", 1
+    )[1].split("run:", 1)[0]
     assert "compute ssh" not in hygiene_job
     assert "compute scp" not in hygiene_job
     assert not standalone.exists()
