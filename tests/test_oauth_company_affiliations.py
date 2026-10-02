@@ -102,10 +102,16 @@ def test_registered_oauth_grants_disclose_only_with_profile_scope(client: TestCl
 
 
 def test_slow_directory_cannot_block_signin(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sign-in returns while the directory read is still blocked.
+
+    Nothing here depends on wall-clock time, so no thread start delay or
+    scheduling pause changes the outcome. If sign-in waited for the read, the
+    first request would block until the suite's pytest timeout fails the test.
+    """
     import asyncio
 
+    import trusted_router.company_affiliations as company_affiliations
     import trusted_router.verification as verification
-    from trusted_router.company_affiliations import AffiliationDirectory
 
     _seed()
     user = STORE.ensure_user("slow@example.com")
@@ -134,9 +140,9 @@ def test_slow_directory_cannot_block_signin(client: TestClient, monkeypatch: pyt
             limits.append((asyncio.get_running_loop(), limit))
             return limit
 
-    original_lookup = AffiliationDirectory.lookup
+    original_lookup = company_affiliations.AffiliationDirectory.lookup
 
-    def tracked_lookup(self: AffiliationDirectory, *args: Any, **kwargs: Any) -> Any:
+    def tracked_lookup(self: company_affiliations.AffiliationDirectory, *args: Any, **kwargs: Any) -> Any:
         done = threading.Event()
         lookups.append(done)
         try:
@@ -148,37 +154,26 @@ def test_slow_directory_cannot_block_signin(client: TestClient, monkeypatch: pyt
         reads.append(key)
         loop, limit = limits[-1]
         loop.call_soon_threadsafe(lambda: limit.reschedule(loop.time()))
-        release.wait()  # until cleanup, or the watchdog below
+        release.wait()  # until cleanup
         return None
 
     monkeypatch.setattr(STORE.target, "get_company_affiliation_document", slow_read)
-    monkeypatch.setattr(AffiliationDirectory, "lookup", tracked_lookup)
+    monkeypatch.setattr(company_affiliations.AffiliationDirectory, "lookup", tracked_lookup)
+    # The timed-out first read defers retries. Make that last the whole test,
+    # so a pause between the requests cannot send the second one to the lock
+    # the blocked read holds.
+    monkeypatch.setattr(company_affiliations, "CACHE_SECONDS", 10**9)
     monkeypatch.setattr(verification, "asyncio", _ExpireOnRead())
     headers = {"authorization": "Bearer " + key}
-    first_returned = threading.Event()
-    waited = threading.Event()
-
-    def watchdog() -> None:
-        # Only a first sign-in still out after two minutes is waiting for the
-        # read. Releasing the read reports that, instead of hanging until the
-        # suite's timeout. A pause after it returned cannot trigger this.
-        if not first_returned.is_set():
-            waited.set()
-            release.set()
-
-    timer = threading.Timer(120, watchdog)
-    timer.start()
     try:
         for _ in range(2):
             response = client.get("/v1/auth/userinfo", headers=headers)
-            first_returned.set()
             assert response.status_code == 200
             assert "company_affiliations" not in response.json()["data"]
-        assert not waited.is_set(), "Sign-in waited for optional directory read"
+        assert not release.is_set()  # the read was still blocked when both returned
         assert len(reads) == 1
         assert limits[0][1].expired()
     finally:
-        timer.cancel()
         release.set()
-        lookups_finished = all(done.wait(10) for done in lookups)
-    assert lookups_finished, "a directory lookup was still running after cleanup"
+        for done in lookups:
+            done.wait()  # the suite's pytest timeout bounds a lookup that never finishes
