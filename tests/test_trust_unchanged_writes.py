@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from google.api_core.datetime_helpers import DatetimeWithNanoseconds
 
 from tests.fakes.spanner import make_fake_store
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
@@ -22,6 +23,7 @@ from trusted_router.storage_models import CreditAccount, CreditProvenance, User,
 from trusted_router.storage_trust_reconciliation import (
     PostgresTrustReconciliationRepository,
     SpannerTrustReconciliationRepository,
+    same_instant,
 )
 
 NOW = dt.datetime(2026, 9, 3, 12, tzinfo=dt.UTC)
@@ -278,3 +280,45 @@ def test_postgres_watermark_writes_only_when_a_shard_differs(
 
     assert result == WATERMARK
     assert conn.updates == expected_updates
+
+
+def _nanos(nanosecond: int) -> DatetimeWithNanoseconds:
+    return DatetimeWithNanoseconds(2026, 9, 3, 11, 40, 0, nanosecond=nanosecond, tzinfo=dt.UTC)
+
+
+def test_sub_microsecond_watermark_difference_is_not_treated_as_current() -> None:
+    # Review finding: DatetimeWithNanoseconds compares at microsecond resolution.
+    expected, stored = _nanos(123_456_900), _nanos(123_456_100)
+    assert expected == stored  # the trap: datetime equality ignores the nanoseconds
+    assert not same_instant(stored, expected)
+
+    class Reader(_Reader):
+        def execute_sql(self, sql: str, **kwargs: Any) -> list[tuple[Any, ...]]:
+            if sql.startswith("SELECT closed_through"):
+                return [(expected,)]
+            return super().execute_sql(sql, **kwargs)
+
+    reader = Reader([stored, expected])
+    repository, transactions = _spanner_repository(reader)
+
+    assert repository.replicate_workspace_watermark(WS, frozenset({"stripe"})) == expected
+
+    assert transactions == [1]
+    assert reader.updates == [{"watermark": expected, "workspace_id": WS}]
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "same"),
+    [
+        (None, None, True),
+        (None, WATERMARK, False),
+        (WATERMARK, None, False),
+        (WATERMARK, WATERMARK, True),
+        (WATERMARK, OLDER, False),
+        (_nanos(123_456_000), _nanos(123_456_000), True),
+        (_nanos(123_456_000), _nanos(123_456_001), False),
+        (_nanos(123_456_000), dt.datetime(2026, 9, 3, 11, 40, 0, 123_456, tzinfo=dt.UTC), True),
+    ],
+)
+def test_same_instant_compares_at_full_precision(left: Any, right: Any, same: bool) -> None:
+    assert same_instant(left, right) is same

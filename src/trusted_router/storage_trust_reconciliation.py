@@ -26,6 +26,22 @@ from trusted_router.trust_reconciliation import (
 
 log = logging.getLogger(__name__)
 
+
+def same_instant(left: datetime | None, right: datetime | None) -> bool:
+    """Equal timestamps at full precision; NULL equals only NULL.
+
+    Spanner TIMESTAMP keeps nanoseconds, but ``DatetimeWithNanoseconds``
+    inherits ``datetime``'s microsecond equality, so two values that differ
+    below a microsecond would compare equal and a stale shard would never be
+    rewritten.
+    """
+
+    if left is None or right is None:
+        return left is None and right is None
+    left_ns = getattr(left, "nanosecond", left.microsecond * 1000)
+    right_ns = getattr(right, "nanosecond", right.microsecond * 1000)
+    return left == right and left_ns == right_ns
+
 MARKER_KEY_COLUMNS = (
     "provider",
     "account_id",
@@ -392,7 +408,7 @@ class SpannerTrustReconciliationRepository:
                     exc_info=True,
                 )
             else:
-                if current and all(row[1] == expected for row in current):
+                if current and all(same_instant(row[1], expected) for row in current):
                     return expected
 
         def txn(transaction: Any) -> datetime | None:
@@ -600,7 +616,7 @@ class PostgresTrustReconciliationRepository:
                 (workspace_id,),
             ).fetchall()
             # Same rule as Spanner: the value moves only when a backfill advances.
-            if shard_rows and all(row[1] == reconciled for row in shard_rows):
+            if shard_rows and all(same_instant(row[1], reconciled) for row in shard_rows):
                 return reconciled
             updated = conn.execute(
                 "UPDATE tr_credit_balance SET trust_reconciled_through=%s "

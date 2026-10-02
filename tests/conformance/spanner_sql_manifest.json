@@ -3116,7 +3116,7 @@
       ]
     },
     "storage_trust_reconciliation:replicate_workspace_watermark:1": {
-      "fingerprint": "dcc6e93d706b663026a9e2ecd35207a92ff1febf2de969bf6e043cad3185e25e",
+      "fingerprint": "6136a2f8fc24e53e3ec48943e51552901ac88d8a97a8a02c10faf58f3f98cd5f",
       "scenarios": [
         {
           "bindings": {},
@@ -3741,7 +3741,7 @@
     "storage_trust_reconciliation:SpannerTrustReconciliationRepository.replicate_workspace_watermark.txn": "119d535974c450357f4882a066379f4e31df5490c83ce6f073d0c2f1e1cd6ddc",
     "storage_trust_reconciliation:SpannerTrustReconciliationRepository.get_marker": "ae66712374f936a93abe08af2e3b6c4b707d6315e830d12c327d10148fa431f2",
     "storage_trust_reconciliation:SpannerTrustReconciliationRepository.replicate_workspace_watermark.reconciled_through": "79f8d601cacfe4ac6288296d94d4b17a33bfcfe84209be4c83902c0abe8b6f04",
-    "storage_trust_reconciliation:SpannerTrustReconciliationRepository.replicate_workspace_watermark": "dcc6e93d706b663026a9e2ecd35207a92ff1febf2de969bf6e043cad3185e25e",
+    "storage_trust_reconciliation:SpannerTrustReconciliationRepository.replicate_workspace_watermark": "6136a2f8fc24e53e3ec48943e51552901ac88d8a97a8a02c10faf58f3f98cd5f",
     "trust_eligibility:billing_paused_tx": "5ce3a94f908455a5508ee285906563975e344a6f64f0edd4db9a9184e0d26a26",
     "trust_owner_budget:recompute_owner_budget": "959e550c803a9b12ebf91949eab221a57f4991b513a300a74725c0395c6e51a4",
     "storage_gcp_authorize:credit_exhaustion_precheck": "2d005ac4817ef9dff2e8481daedb53a1dafcf758ba22790222190d51fd1d3e50"
@@ -3916,19 +3916,19 @@
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
     },
     "storage_trust_reconciliation:write:4": {
-      "fingerprint": "5bb53b37472543666740fbab9d9dca8a8d4059f4c6a3c4d5348d5e3581974113",
+      "fingerprint": "c6becd7764dccd875ca78b8d33ec0323b66fc97e293cc7633124ea5d7ca7c122",
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
     },
     "storage_trust_reconciliation:write:5": {
-      "fingerprint": "5bb53b37472543666740fbab9d9dca8a8d4059f4c6a3c4d5348d5e3581974113",
+      "fingerprint": "c6becd7764dccd875ca78b8d33ec0323b66fc97e293cc7633124ea5d7ca7c122",
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
     },
     "storage_trust_reconciliation:write:6": {
-      "fingerprint": "5bb53b37472543666740fbab9d9dca8a8d4059f4c6a3c4d5348d5e3581974113",
+      "fingerprint": "c6becd7764dccd875ca78b8d33ec0323b66fc97e293cc7633124ea5d7ca7c122",
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
     },
     "storage_trust_reconciliation:write:7": {
-      "fingerprint": "5bb53b37472543666740fbab9d9dca8a8d4059f4c6a3c4d5348d5e3581974113",
+      "fingerprint": "c6becd7764dccd875ca78b8d33ec0323b66fc97e293cc7633124ea5d7ca7c122",
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
     }
   }
