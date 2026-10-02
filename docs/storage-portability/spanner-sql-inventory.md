@@ -107,7 +107,6 @@ Round-4 offline verification: ruff passed; mypy reported no issues in 400 source
 | [storage_gcp:_read_entity_from:1](../../src/trusted_router/storage_gcp.py#L6542) | SELECT | STRING: id, kind | — |
 | [storage_gcp:_list_entities:1](../../src/trusted_router/storage_gcp.py#L6594) | SELECT | INT64: limit; STRING: kind, prefix, suffix | — |
 | [storage_gcp_analytics_outbox:enqueue_statement:1](../../src/trusted_router/storage_gcp_analytics_outbox.py#L81) | DML | INT64: shard; STRING: event_id, payload | PENDING_COMMIT_TIMESTAMP |
-| [storage_gcp_authorize:key_lifetime_cap_precheck:1](../../src/trusted_router/storage_gcp_authorize.py#L241) | SELECT | INT64: shard_count; STRING: kh | — |
 | [storage_gcp_authorize:key_window_limit_decision:1](../../src/trusted_router/storage_gcp_authorize.py#L315) | SELECT | INT64: shard_count; STRING: kh | — |
 | [storage_gcp_authorize:constants:1](../../src/trusted_router/storage_gcp_authorize.py#L1078) | SELECT | INT64: limit; TIMESTAMP: now | — |
 | [storage_gcp_authorize:constants:2](../../src/trusted_router/storage_gcp_authorize.py#L1083) | SELECT | INT64: limit; TIMESTAMP: now | — |
@@ -185,7 +184,7 @@ Round-4 offline verification: ruff passed; mypy reported no issues in 400 source
 | [storage_gcp_generations:_reconcile_page:1](../../src/trusted_router/storage_gcp_generations.py#L291) | SELECT | INT64: limit; STRING: after_id, kind, prefix | — |
 | [storage_gcp_google_ads:_read_entity_from:1](../../src/trusted_router/storage_gcp_google_ads.py#L139) | SELECT | STRING: id, kind | — |
 | [storage_gcp_google_ads:_list_entities:1](../../src/trusted_router/storage_gcp_google_ads.py#L176) | SELECT | INT64: limit; STRING: kind, prefix, suffix | — |
-| [storage_gcp_key_escrow:txn:1](../../src/trusted_router/storage_gcp_key_escrow.py#L43) | SELECT | INT64: shard_count; STRING: kh | — |
+| [storage_gcp_key_escrow:key_escrow_rows:1](../../src/trusted_router/storage_gcp_key_escrow.py#L40) | SELECT | INT64: shard_count; STRING: kh | — |
 | [storage_gcp_key_shard_admin:_typed_key_state:1](../../src/trusted_router/storage_gcp_key_shard_admin.py#L91) | SELECT | INT64: shard_count; STRING: pk | — |
 | [storage_gcp_key_shard_admin:_typed_key_state:2](../../src/trusted_router/storage_gcp_key_shard_admin.py#L102) | SELECT | STRING: kh | — |
 | [storage_gcp_key_shard_admin:txn:1](../../src/trusted_router/storage_gcp_key_shard_admin.py#L245) | SELECT | INT64: shard_count; STRING: pk | — |

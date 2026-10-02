@@ -76,6 +76,7 @@ from trusted_router.storage_gcp_io import (
     run_in_transaction_with_retry,
     spanner_rpc_budget,
 )
+from trusted_router.storage_gcp_key_escrow import key_escrow_rows
 from trusted_router.storage_gcp_request_records import (
     complete_gateway_authorization_retention,
     gateway_authorization_insert_statement,
@@ -128,6 +129,22 @@ def bounded_credit_shard_candidates(candidates: tuple[int, ...]) -> tuple[int, .
     if not candidates:
         raise ValueError("credit_shard_candidates must not be empty")
     return candidates[:MAX_CREDIT_SHARD_ATTEMPTS_PER_TRANSACTION]
+
+
+# The same bound for exact key caps: each refused conditional key UPDATE (and
+# its classification read) keeps its row lock until rollback, while the
+# transaction already holds its credit row. A depleted sharded key must not
+# turn one authorization into up to 64 key-row locks behind a credit lock. The
+# caller keeps every shard for its lock-free headroom precheck.
+MAX_KEY_SHARD_ATTEMPTS_PER_TRANSACTION = 4
+
+
+def bounded_key_shard_candidates(candidates: tuple[int, ...]) -> tuple[int, ...]:
+    """Return the fixed, pre-randomized key-shard subset for one transaction."""
+
+    if not candidates:
+        raise ValueError("key_shard_candidates must not be empty")
+    return candidates[:MAX_KEY_SHARD_ATTEMPTS_PER_TRANSACTION]
 
 
 class AuthorizeOutcome:
@@ -245,15 +262,7 @@ def key_lifetime_cap_precheck(
     pt = param_types
     try:
         with database.snapshot(multi_use=True) as snapshot:
-            rows = list(
-                snapshot.execute_sql(
-                    "SELECT shard, limit_micro, usage, byok_usage, reserved, include_byok "
-                    "FROM tr_key_limit WHERE key_hash=@kh "
-                    "AND shard>=0 AND shard<@shard_count ORDER BY shard",
-                    params={"kh": key_hash, "shard_count": shard_count},
-                    param_types={"kh": pt.STRING, "shard_count": pt.INT64},
-                )
-            )
+            rows = key_escrow_rows(snapshot, pt, key_hash=key_hash, shard_count=shard_count)
             if not rows or [int(row[0]) for row in rows] != list(range(shard_count)):
                 return HEADROOM
             if any(row[1] is None or (not has_credit_candidate and not row[5]) for row in rows):
@@ -421,7 +430,10 @@ def authorize_atomic(
     the transaction so Spanner retries use the same order. The first shard with
     enough independent sub-budget is recorded durably on the reservation. The
     store wrapper applies `bounded_credit_shard_candidates`; direct callers must
-    likewise pass no more than the hot-path limit.
+    likewise pass no more than the hot-path limit. `key_shard_candidates`
+    follows the same rule (`bounded_key_shard_candidates`): the first key shard
+    whose escrow covers the hold is recorded as `key_shard`, and settlement
+    releases exactly that row.
 
     `skip_key_limit` is opt-in: the gateway's already-loaded ApiKey must have
     no lifetime cap, regardless of window caps checked by the caller. Omitted
@@ -471,6 +483,8 @@ def authorize_atomic(
         raise ValueError("key shards must be non-negative")
     if len(set(key_candidates)) != len(key_candidates):
         raise ValueError("key_shard_candidates must be unique")
+    if len(key_candidates) > MAX_KEY_SHARD_ATTEMPTS_PER_TRANSACTION:
+        raise ValueError("key_shard_candidates exceeds the hot-path transaction limit")
     is_byok = not has_credit_candidate
     # Stable ids across ABORTED retries (only the committed attempt persists).
     reservation_id = str(uuid.uuid4())

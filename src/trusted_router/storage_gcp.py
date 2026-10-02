@@ -5094,6 +5094,7 @@ class SpannerStore:
             AuthorizeOutcome,
             authorize_atomic,
             bounded_credit_shard_candidates,
+            bounded_key_shard_candidates,
             key_lifetime_cap_precheck,
         )
         from trusted_router.storage_gcp_keys import (
@@ -5233,6 +5234,10 @@ class SpannerStore:
         credit_shard_candidates = (
             self._credit_shard_candidates(workspace_id) if has_credit_candidate else (UNSHARDED,)
         )
+        # Like credit, one transaction tries a bounded prefix of the randomized
+        # key shards; the cold path below keeps every shard. Read at call time:
+        # the key repair can narrow it to the one shard that holds escrow.
+        current_key_candidates = bounded_key_shard_candidates(key_shard_candidates)
 
         def run_authorize(candidates: tuple[int, ...]) -> dict[str, Any]:
             def invoke() -> dict[str, Any]:
@@ -5256,7 +5261,7 @@ class SpannerStore:
                     # workspace must never make one rejected transaction lock every
                     # configured shard.
                     credit_shard_candidates=bounded_credit_shard_candidates(candidates),
-                    key_shard_candidates=key_shard_candidates,
+                    key_shard_candidates=current_key_candidates,
                     skip_key_limit=skip_key_limit,
                     speculate_key_limit=speculate_key_limit,
                     strict_budget=strict_budget,
@@ -5464,17 +5469,42 @@ class SpannerStore:
         # Match authorize's credit-before-key precedence when both escrows fragment.
         if result["outcome"] == AuthorizeOutcome.KEY_LIMIT_EXCEEDED and key_counter_shards > 1:
             from trusted_router.storage_gcp_key_escrow import (
+                key_headroom_precheck,
                 rebalance_key_limit_headroom,
             )
 
-            if rebalance_key_limit_headroom(
+            # Classify the refusal on a lock-free snapshot of every shard before
+            # anything takes a key-row write lock (credit's precheck rule).
+            headroom = key_headroom_precheck(
                 self._database,
                 self._param_types,
                 key_hash=key_hash,
                 shard_count=key_counter_shards,
                 estimate=estimate,
-                preferred_shard=key_shard_candidates[0],
+                has_credit_candidate=has_credit_candidate,
+            )
+            if headroom.funded_shard is not None:
+                # The bounded random prefix missed a shard whose own escrow
+                # covers the hold: retry that exact row, never every shard.
+                current_key_candidates = (headroom.funded_shard,)
+                result = run_tracked(last_credit_candidates)
+                result = recover_credit(result, after_key_repair=True)
+            if (
+                result["outcome"] == AuthorizeOutcome.KEY_LIMIT_EXCEEDED
+                # Deny only when no shard and no pooled allowance has headroom:
+                # a decisive "the pool cannot cover it" needs no locked proof.
+                and (not headroom.decisive or headroom.aggregate_covers)
+                and rebalance_key_limit_headroom(
+                    self._database,
+                    self._param_types,
+                    key_hash=key_hash,
+                    shard_count=key_counter_shards,
+                    estimate=estimate,
+                    preferred_shard=key_shard_candidates[0],
+                )
             ):
+                # The escrow moved onto the preferred shard, the prefix's first.
+                current_key_candidates = bounded_key_shard_candidates(key_shard_candidates)
                 result = run_tracked(last_credit_candidates)
                 result = recover_credit(result, after_key_repair=True)
         if (

@@ -870,18 +870,6 @@
         }
       ]
     },
-    "storage_gcp_authorize:key_lifetime_cap_precheck:1": {
-      "fingerprint": "4e9ee17c7e9363a1fc3a9d614f15148ad6fb20ff04d272785809beef92ab0b4c",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "kh": "STRING",
-            "shard_count": "INT64"
-          }
-        }
-      ]
-    },
     "storage_gcp_authorize:key_window_limit_decision:1": {
       "fingerprint": "5a317b9f2927443ca6d6686b5cb1d1b6ff036c6d744d511a3b5f24c63e3b2ad7",
       "scenarios": [
@@ -1920,8 +1908,8 @@
         }
       ]
     },
-    "storage_gcp_key_escrow:txn:1": {
-      "fingerprint": "fcbc39b2991f619d26365b919a4bdc925b950453acd760c67ce638fb5d50d5f4",
+    "storage_gcp_key_escrow:key_escrow_rows:1": {
+      "fingerprint": "38ce0dcdcbcc95a188422a983ef44ff2071438709e2547aa5021daa2809b40f2",
       "scenarios": [
         {
           "bindings": {},
@@ -3616,7 +3604,6 @@
     "storage_gcp_authorize:key_window_limit_decision": "5a317b9f2927443ca6d6686b5cb1d1b6ff036c6d744d511a3b5f24c63e3b2ad7",
     "storage_gcp_authorize:authorize_atomic.txn": "436c84be91d07b0e183e1da7254118431c058dde512ef29ab5e9e53e451467ae",
     "storage_gcp_authorize:reap_expired_reservations_result": "9d7f819fc199930d94eaa53e939fced804e61b2cbf9f54cbf676ced4c743976e",
-    "storage_gcp_authorize:key_lifetime_cap_precheck": "4e9ee17c7e9363a1fc3a9d614f15148ad6fb20ff04d272785809beef92ab0b4c",
     "storage_gcp_authorize:_finalize_reaped_reservation_atomic.txn": "55ccd7b9ed868037a53ecb228e6efe40882d39fef33e9bd24bb0061340d95200",
     "storage_gcp_authorize:typed_finalize_atomic.txn": "ed2aeff0a920cf9a3414d419b777200588afc282c9b28cc252f9fc12eafec03f",
     "storage_gcp_authorize:settle_atomic.txn": "0ec2b0d2303c8edbbcfff74724c3bee55a72195a523e21f21e04139aabeb3174",
@@ -3667,7 +3654,7 @@
     "storage_gcp_generations:SpannerGenerations._reconcile_page": "889635a6ac2415c0fa1bcc9a1b71411fd6e061052c8fc22c56a17cc121a86f41",
     "storage_gcp_google_ads:SpannerGoogleAdsDeliveryStore._read_entity_from": "e633b9b8413c4b1ce44309ce8fe0fabc6a4a6d42d2a0fcbf6c9e94982820440a",
     "storage_gcp_google_ads:SpannerGoogleAdsDeliveryStore._list_entities": "fd1dd78c71ba2d47ad201bf583a268188f245afb11f791d9a6cc314e63d7e7ef",
-    "storage_gcp_key_escrow:rebalance_key_limit_headroom.txn": "fcbc39b2991f619d26365b919a4bdc925b950453acd760c67ce638fb5d50d5f4",
+    "storage_gcp_key_escrow:key_escrow_rows": "38ce0dcdcbcc95a188422a983ef44ff2071438709e2547aa5021daa2809b40f2",
     "storage_gcp_key_shard_admin:_typed_key_state": "73a4a569ff114b9a2347b324dccc1c4756c9e380b1cd87971af930e2677001f5",
     "storage_gcp_key_shard_admin:reshard_key_usage.txn": "8eaa4a729d9eeb516e0cc65370c34c1f6529bd298c0879974bd8c03a5b276717",
     "storage_gcp_keys:SpannerApiKeys.list_with_usage_for_workspace": "d5ea4b3c7a4cf8a5fe1b3ea8741b246cfa9c5ad826ae1d8c8414fc9b7efd163a",
