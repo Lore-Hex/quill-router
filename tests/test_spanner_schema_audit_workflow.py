@@ -161,19 +161,21 @@ def _gcp_wif_consumers(root: Path) -> set[str]:
 
     def references_github_env(steps, path, job_id, caller, stack=()):
         for index, step in enumerate(steps, start=1):
+            label = step.get("name", step.get("id", f"#{index}"))
+            location = f"{path}, job {job_id}, step {label} (caller {caller})"
             if any(re.search(
                 r"GITHUB_ENV|\$\{\{[^{}]*\bgithub\s*\.\s*env\b[^{}]*\}\}",
                 str(step.get(field, "")), re.IGNORECASE,
-            ) for field in ("run", "with")):
-                return True
+            ) for field in ("run", "with", "env")):
+                return location
             uses = step.get("uses")
             if isinstance(uses, str) and uses.startswith("./") and "${{" not in uses:
-                label = step.get("name", step.get("id", f"#{index}"))
-                unresolved = f"UNRESOLVED uses {uses!r} in {path}, job {job_id}, step {label} (caller {caller})"
+                unresolved = f"UNRESOLVED uses {uses!r} in {location}"
                 action_path, action = local_composite(uses, stack, unresolved)
-                if references_github_env(action["runs"]["steps"], action_path, job_id, caller, (*stack, action_path)):
-                    return True
-        return False
+                taint_location = references_github_env(action["runs"]["steps"], action_path, job_id, caller, (*stack, action_path))
+                if taint_location:
+                    return taint_location
+        return None
 
     def inspect_steps(steps, path, job_id, caller, context, stack=(), trail=()):
         for index, step in enumerate(steps, start=1):
@@ -191,8 +193,8 @@ def _gcp_wif_consumers(root: Path) -> set[str]:
                 action_path, action = local_composite(uses, stack, unresolved)
                 inputs = {key: _resolve_static(spec.get("default"), step_context) for key, spec in action.get("inputs", {}).items()}
                 inputs.update(_resolve_static(step.get("with", {}), step_context))
-                # Freeze caller env references before replacing the inputs scope.
-                composite_context = step_context | {"inputs": inputs, "env": _resolve_static(step_context["env"], step_context)}
+                # _env_context already resolved caller env references eagerly.
+                composite_context = step_context | {"inputs": inputs}
                 inspect_steps(
                     action["runs"]["steps"], action_path, job_id, caller, composite_context,
                     (*stack, action_path), (*trail, location),
@@ -204,11 +206,15 @@ def _gcp_wif_consumers(root: Path) -> set[str]:
                 provider = _resolve_static(step.get("with", {}).get("workload_identity_provider"), step_context)
                 assert isinstance(provider, str) and provider.strip(), (
                     f"Cannot statically resolve GCP WIF provider (UNRESOLVED) in {location}"
+                    + (f"; runtime env resolution tainted by environment-file reference in {step_context['runtime_env_writes']}"
+                       if step_context.get("runtime_env_writes") else "")
                 )
                 if provider.strip() == WIF_PROVIDER.strip():
                     consumers.add(caller)
             else:
-                assert action_name in KNOWN_NON_GCP_AUTH_ACTIONS, unresolved
+                assert action_name in KNOWN_NON_GCP_AUTH_ACTIONS, (
+                    f"{unresolved}; add it to KNOWN_NON_GCP_AUTH_ACTIONS with a reason if it cannot authenticate to GCP"
+                )
 
     def inspect(path, caller, supplied_inputs, stack=()):
         assert path not in stack, f"Recursive reusable workflow call: {(*stack, path)}"
@@ -224,6 +230,7 @@ def _gcp_wif_consumers(root: Path) -> set[str]:
             context = workflow_context | {
                 # Scan the whole job first: composites share its runtime env,
                 # and even a later write makes static env resolution unsafe.
+                # Keep the first tainting location for failure diagnostics.
                 "runtime_env_writes": references_github_env(job.get("steps", []), path, job_id, caller),
             }
             for matrix in _matrix_rows(job, context) or [None]:
@@ -264,7 +271,7 @@ def _assert_workflows_using_gcp_wif_provider_are_allowlisted(root: Path) -> None
     unsupported expressions, env references in jobs with runtime env writes,
     external reusable workflows, and unknown external actions fail as
     UNRESOLVED. Any case-insensitive GITHUB_ENV reference or github.env
-    expression in run scripts or action inputs (including nested composites)
+    expression in run scripts, action inputs, or step-level env values (including nested composites)
     conservatively counts as a runtime env write.
     Values assembled outside workflow YAML are out of scope.
     """
@@ -374,7 +381,7 @@ def test_wif_runtime_env_write_is_unresolved(wif_repository_copy: Path, writer, 
     if auth == 'composite-input':
         _write_composite(wif_repository_copy, 'auth', _auth_workflow('${{ inputs.provider }}')['jobs']['audit']['steps'])
         steps[:] = [{'uses': './.github/actions/auth', 'with': {'provider': '${{ env.WIF }}'}}]
-    write = {'run': f'echo "WIF={WIF_PROVIDER}" >> "$GITHUB_ENV"', 'shell': 'bash'}
+    write = {'name': 'Write runtime env', 'run': f'echo "WIF={WIF_PROVIDER}" >> "$GITHUB_ENV"', 'shell': 'bash'}
     if writer != 'direct':
         _write_composite(wif_repository_copy, 'writer', [write])
         write = {'uses': './.github/actions/writer'}
@@ -390,8 +397,12 @@ def test_wif_runtime_env_write_is_unresolved(wif_repository_copy: Path, writer, 
             'jobs': {'call': {'uses': './.github/workflows/reusable.yml'}},
         }
     _write_workflow(wif_repository_copy, 'unlisted-workflow.yml', workflow)
-    with pytest.raises(AssertionError, match=r'Cannot statically resolve GCP WIF provider \(UNRESOLVED\).*step Authenticate to GCP'):
+    with pytest.raises(AssertionError, match=r'Cannot statically resolve GCP WIF provider \(UNRESOLVED\).*step Authenticate to GCP') as error:
         _assert_workflows_using_gcp_wif_provider_are_allowlisted(wif_repository_copy)
+    writer_path = '.github/actions/writer/action.yml' if writer != 'direct' else (
+        '.github/workflows/reusable.yml' if auth == 'reusable' else '.github/workflows/unlisted-workflow.yml'
+    )
+    assert f'environment-file reference in {writer_path}, job audit, step Write runtime env (caller .github/workflows/unlisted-workflow.yml)' in str(error.value)
 
 
 @pytest.mark.parametrize('form', ['literal', 'other-job'])
@@ -408,7 +419,7 @@ def test_wif_runtime_env_write_does_not_taint_independent_provider(wif_repositor
 
 
 @pytest.mark.parametrize('reference', ['${{ github.env }}', '${{ GITHUB.ENV }}', '$github_env', '$GitHub_Env'])
-@pytest.mark.parametrize('field', ['run', 'with'])
+@pytest.mark.parametrize('field', ['run', 'with', 'env'])
 @pytest.mark.parametrize('writer', ['direct', 'composite', 'nested-composite'])
 def test_wif_environment_file_references_are_unresolved(wif_repository_copy: Path, reference, field, writer):
     workflow = _auth_workflow('${{ env.WIF }}')
@@ -417,6 +428,8 @@ def test_wif_environment_file_references_are_unresolved(wif_repository_copy: Pat
     write = {'run': script, 'shell': 'bash'}
     if field == 'with':
         write = {'uses': 'actions/checkout@v4', 'with': {'path': script}}
+    elif field == 'env':
+        write = {'run': f'echo "WIF={WIF_PROVIDER}" >> "$ENV_FILE"', 'shell': 'bash', 'env': {'ENV_FILE': reference}}
     if writer != 'direct':
         _write_composite(wif_repository_copy, 'writer', [write])
         write = {'uses': './.github/actions/writer'}
@@ -425,8 +438,10 @@ def test_wif_environment_file_references_are_unresolved(wif_repository_copy: Pat
             write = {'uses': './.github/actions/wrapper'}
     workflow['jobs']['audit']['steps'].insert(0, write)
     _write_workflow(wif_repository_copy, 'unlisted-workflow.yml', workflow)
-    with pytest.raises(AssertionError, match=r'Cannot statically resolve GCP WIF provider \(UNRESOLVED\).*step Authenticate to GCP'):
+    with pytest.raises(AssertionError, match=r'Cannot statically resolve GCP WIF provider \(UNRESOLVED\).*step Authenticate to GCP') as error:
         _assert_workflows_using_gcp_wif_provider_are_allowlisted(wif_repository_copy)
+    writer_path = '.github/workflows/unlisted-workflow.yml' if writer == 'direct' else '.github/actions/writer/action.yml'
+    assert f'environment-file reference in {writer_path}, job audit, step #1 (caller .github/workflows/unlisted-workflow.yml)' in str(error.value)
 
 
 @pytest.mark.parametrize('filename', ['action.yml', 'action.yaml'])
@@ -471,7 +486,7 @@ def test_wif_composite_uses_callers_identity_and_context(wif_repository_copy: Pa
 
 
 def test_wif_composite_resolves_inputs_per_call(wif_repository_copy: Path):
-    _write_composite(wif_repository_copy, 'x', _auth_workflow('${{ inputs.provider }}')['jobs']['audit']['steps'])
+    _write_composite(wif_repository_copy, 'x', _auth_workflow('${{ inputs.provider }}')['jobs']['audit']['steps'], inputs={'provider': {'default': 'another-provider'}})
     for name, provider in [('typed-audit.yml', 'another-provider'), ('unlisted-workflow.yml', WIF_PROVIDER)]:
         workflow = _auth_workflow()
         workflow['jobs']['audit']['steps'] = [{'uses': './.github/actions/x', 'with': {'provider': provider}}]
@@ -533,6 +548,20 @@ def test_wif_unknown_action_is_unresolved(wif_repository_copy: Path, uses, compo
     _write_workflow(wif_repository_copy, 'typed-audit.yml', workflow)
     with pytest.raises(AssertionError, match=rf'UNRESOLVED uses .*{re.escape(path)}, job audit, step Unknown action'):
         _assert_workflows_using_gcp_wif_provider_are_allowlisted(wif_repository_copy)
+
+
+@pytest.mark.parametrize('composite', [False, True])
+def test_wif_unknown_action_explains_review_remedy(wif_repository_copy: Path, composite):
+    step = {'name': 'Unknown action', 'uses': 'actions/setup-unknown@v1'}
+    workflow = _auth_workflow()
+    workflow['jobs']['audit']['steps'] = [step]
+    if composite:
+        _write_composite(wif_repository_copy, 'x', [step])
+        workflow['jobs']['audit']['steps'] = [{'uses': './.github/actions/x'}]
+    _write_workflow(wif_repository_copy, 'typed-audit.yml', workflow)
+    with pytest.raises(AssertionError, match='UNRESOLVED uses') as error:
+        _assert_workflows_using_gcp_wif_provider_are_allowlisted(wif_repository_copy)
+    assert 'add it to KNOWN_NON_GCP_AUTH_ACTIONS with a reason if it cannot authenticate to GCP' in str(error.value)
 
 
 @pytest.mark.parametrize('form', ['missing', 'recursive', 'node24', 'docker', 'ambiguous'])
@@ -660,7 +689,7 @@ def test_wif_reusable_workflow_checks_caller_identity(wif_repository_copy: Path,
 
 def test_wif_reusable_workflow_resolves_inputs_per_caller(wif_repository_copy: Path):
     callee = _auth_workflow('${{ inputs.provider }}')
-    callee['on'] = {'workflow_call': {'inputs': {'provider': {'type': 'string'}}}}
+    callee['on'] = {'workflow_call': {'inputs': {'provider': {'type': 'string', 'default': 'another-provider'}}}}
     _write_workflow(wif_repository_copy, 'reusable.yml', callee)
     for name, provider in [('typed-audit.yml', 'another-provider'), ('unlisted-workflow.yml', WIF_PROVIDER)]:
         _write_workflow(wif_repository_copy, name, {
