@@ -14,6 +14,7 @@ from google.rpc.status_pb2 import Status
 
 from trusted_router import storage_gcp_counter_dml as counters
 from trusted_router.spend_windows import window_floors
+from trusted_router.storage_gcp_analytics_outbox import SpannerAnalyticsOutbox
 from trusted_router.storage_gcp_batch_dml import DmlStatement
 from trusted_router.storage_gcp_generation_records import generation_insert_statement
 from trusted_router.storage_gcp_operational_analytics_outbox import (
@@ -30,10 +31,16 @@ from trusted_router.storage_gcp_settle_outbox import (
     _DONE_ROW_SQL,
     SpannerSettleOutbox,
     done_retention_statements,
+    resolved_intent_statements,
     speculative_done_statements,
 )
 from trusted_router.storage_gcp_strict_budget import reserve_strict_key
-from trusted_router.storage_models import GatewayAuthorization, Generation, SettleOutboxRow
+from trusted_router.storage_models import (
+    GatewayAuthorization,
+    Generation,
+    ProviderBenchmarkSample,
+    SettleOutboxRow,
+)
 from trusted_router.types import UsageType
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
@@ -167,6 +174,38 @@ def builder_cases() -> list[SQLCase]:
         if include_activity:
             writes.append(activity)
         cases.append(SQLCase(f"settle-batch-{claim_hold}-{done_outbox}-{include_generation}-{include_activity}", writes, batch=True, seed=[insert_auth, insert_reservation]))
+    # The one-commit settle: claim, settled authorization, the intent INSERTed
+    # already resolved with the enqueue's retention clears, the done-mark's
+    # retention resolution, request records, activity and benchmark intents.
+    benchmark = SpannerAnalyticsOutbox(None, pt).enqueue_statement(
+        ProviderBenchmarkSample.from_generation(generation)
+    )
+    for intent_kind, refill in (("settle", False), ("settle", True), ("refund", False)):
+        intent = SettleOutboxRow(
+            authorization_id="acceptance-auth", intent_kind=intent_kind, settle_origin="typed",
+            actual_cost_micro=1, reservation_id="acceptance-reservation",
+            selected_endpoint_id="acceptance-endpoint", model_id="acceptance-model",
+            selected_usage_type="Credits", settle_body="{}",
+            auto_refill_workspace_id="acceptance-ws" if refill else None,
+        )
+        writes = [
+            counters.claim_reservation_statement(
+                pt, "acceptance-reservation", actual_micro=1, settled_usage_type="credits",
+                terminal_at=NOW, defer_retention=True,
+            ),
+            settled,
+            *resolved_intent_statements(pt, intent, initial_delay_seconds=60),
+        ]
+        if intent_kind == "settle":
+            writes.extend([gen, activity])
+        writes.append(benchmark)
+        # Counts: claim, settled, INSERT; nothing to clear on fresh rows; then
+        # both records arm (no sibling intent); then the request-record INSERTs.
+        cases.append(SQLCase(
+            f"one-commit-{intent_kind}-{refill}", writes, batch=True,
+            seed=[insert_auth, insert_reservation],
+            expected_counts=[1, 1, 1, 0, 0, 1, 1, *([1, 1] if intent_kind == "settle" else []), 1],
+        ))
     for has_reservation, refill in product((False, True), repeat=2):
         capture = Capture()
         database = SimpleNamespace(run_in_transaction=lambda fn, capture=capture, **_kw: fn(capture))

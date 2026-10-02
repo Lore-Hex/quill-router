@@ -87,6 +87,14 @@ ssh_node --command="sudo sh -c '
   set -a
   . /etc/tr-clickhouse-ingest.env
   set +a
+  # 001 and 002 are single-node schema files, applied here only for the node-local
+  # _staging tables in 002. On a freshly rebuilt node their CREATE TABLE IF
+  # NOT EXISTS would create NON-replicated canonical tables, and the drain
+  # would write rows that never replicate. Refuse unless every canonical
+  # table already exists as a replica (G7 in
+  # docs/design/clickhouse-high-availability.md).
+  (cd /opt/tr-clickhouse && /opt/tr-clickhouse/venv/bin/python -m clickhouse.require_replicated_tables \
+    provider_benchmark_samples provider_analytics_hourly provider_analytics_daily provider_analytics_monthly)
   clickhouse-client --user tr --password \"\$CH_PASSWORD\" --database tr \
     --multiquery < /opt/tr-clickhouse/clickhouse/001_provider_benchmark_samples.sql
   clickhouse-client --user tr --password \"\$CH_PASSWORD\" --database tr \

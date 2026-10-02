@@ -92,6 +92,23 @@ def prod_shaped_store() -> Iterator[tuple[Any, Any]]:
         configure_store(InMemoryStore())
 
 
+@pytest.fixture
+def two_commit_settle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the durable two-commit settle (enqueue commit, then finalize commit).
+
+    It is the fallback for every deviation from the one-commit happy path, so
+    its windows (between enqueue and finalize) stay load-bearing. The one-commit
+    attempt declines here exactly as it does on any deviation: before writing.
+    Patch the backend class, never the STORE proxy (AGENTS.md, issue #333).
+    """
+    from trusted_router.storage_gcp import SpannerStore
+
+    def declined(self: Any, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(SpannerStore, "typed_settle_one_commit_result", declined)
+
+
 def _client(settings: Settings, *, raise_server_exceptions: bool = True) -> TestClient:
     return TestClient(
         create_app(settings, configure_store_arg=False, init_observability=False),
@@ -582,11 +599,146 @@ def _internal_settle(auth: GatewayAuthorization, **body_updates: Any) -> dict[st
     )["data"]
 
 
+def _expand_batches(
+    settle_operations: list[tuple[Any, str, dict[str, Any]]],
+) -> list[tuple[Any, str, dict[str, Any]]]:
+    return [
+        (reader, " ".join(statement.split()), values)
+        for reader, sql, params in settle_operations
+        for statement, values in (
+            [(statement, values) for statement, values, _ in params["statements"]]
+            if sql == "BATCH" else [(sql, params)]
+        )
+    ]
+
+
+def _phases(settle_operations: list[tuple[Any, str, dict[str, Any]]]) -> list[tuple[str, str, str]]:
+    transactions: dict[Any, str] = {}
+    observed = []
+    for reader, sql, _params in settle_operations:
+        phase = "ro"
+        if isinstance(reader, _FakeTransaction):
+            if reader not in transactions:
+                transactions[reader] = ["t1", "t3", "t4"][len(transactions)]
+            phase = transactions[reader]
+        table = re.search(r"(?:FROM|INTO|UPDATE) (tr_\w+)", sql)
+        observed.append((phase, sql.split()[0], table[1] if table else ""))
+    return observed
+
+
 def test_fresh_settle_round_trip_order(
     prod_shaped_store: tuple[Any, Any],
     settle_operations: list[tuple[Any, str, dict[str, Any]]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A fresh settle is ONE read-write transaction: the intent is inserted
+    already resolved beside the claim, the request records and the activity
+    intent, with the hot counter releases last (credit, then key)."""
+    from trusted_router import storage_gcp_authorize
+
+    store, db = prod_shaped_store
+    ws = "ws-fresh-rtt"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    now = dt.datetime.now(dt.UTC)
+    _typed_key(db, key.hash).update(day_start=now, week_start=now, month_start=now)
+    # Pin the cold schema probe so test ordering cannot change this count.
+    monkeypatch.setattr(storage_gcp_authorize, "_OUTBOX_AVAILABILITY_CACHE", {})
+    settle_operations.clear()
+    data = _internal_settle(auth)
+    assert data["disposition"] == "finalized", data
+    assert db.gateway_authorizations[auth.id]["settled"] is True
+    assert len(settle_operations) == 9
+    batches = [params["statements"] for _, sql, params in settle_operations if sql == "BATCH"]
+    assert [len(group) for group in batches] == [9]
+    assert all(set(params) == set(types) for _, params, types in batches[0])
+    assert batches[0][2][0] == (
+        f"INSERT INTO tr_settle_outbox ({', '.join(INSERT_COLUMNS)}) "  # noqa: S608
+        f"VALUES ({', '.join('@' + c for c in INSERT_COLUMNS)})"  # noqa: S608
+    )
+    settle_operations = _expand_batches(settle_operations)
+    assert _phases(settle_operations) == [
+        ("ro", "SELECT", "tr_gateway_authorization"),
+        ("ro", "SELECT", "tr_settle_outbox"),
+        ("t1", "SELECT", "tr_reservation"),
+        ("t1", "UPDATE", "tr_reservation"),
+        ("t1", "UPDATE", "tr_gateway_authorization"),
+        ("t1", "INSERT", "tr_settle_outbox"),
+        ("t1", "UPDATE", "tr_gateway_authorization"),
+        ("t1", "UPDATE", "tr_reservation"),
+        ("t1", "UPDATE", "tr_gateway_authorization"),
+        ("t1", "UPDATE", "tr_reservation"),
+        ("t1", "INSERT", "tr_generation"),
+        ("t1", "INSERT", "tr_operational_analytics_outbox"),
+        ("t1", "UPDATE", "tr_credit_balance"),
+        ("t1", "SELECT", "tr_trust_event"),
+        ("t1", "UPDATE", "tr_key_limit"),
+        ("t1", "COMMIT", ""),
+        ("ro", "SELECT", "tr_entities"),
+    ]
+    params = [params for _, _, params in settle_operations]
+    statements = [sql for _, sql, _ in settle_operations]
+    cost = data["cost_microdollars"]
+    assert params[0] == {"authorization_id": auth.id}
+    assert params[2] == {"rid": auth.credit_reservation_id}
+    assert statements[3].endswith("WHERE reservation_id=@rid AND settled=false")
+    assert params[3] == {
+        "rid": auth.credit_reservation_id, "actual": cost, "sut": "Credits", "terminal_at": None,
+    }
+    assert statements[4].endswith("WHERE authorization_id=@authorization_id AND settled=false")
+    payload = json.loads(params[4]["payload"])
+    assert payload["credit_reservation_id"] == auth.credit_reservation_id
+    assert payload["finalized_cost_microdollars"] == cost
+    inserted = params[5]
+    assert {name: inserted[name] for name in (
+        "authorization_id", "intent_kind", "reservation_id", "actual_cost_micro",
+        "selected_endpoint_id", "status", "attempts", "settle_body", "next_attempt_at",
+        "lease_owner", "leased_until", "last_error",
+    )} == {
+        "authorization_id": auth.id, "intent_kind": "settle",
+        "reservation_id": auth.credit_reservation_id, "actual_cost_micro": cost,
+        "selected_endpoint_id": ENDPOINT_ID, "status": "done", "attempts": 1,
+        "settle_body": None, "next_attempt_at": None, "lease_owner": None,
+        "leased_until": None, "last_error": None,
+    }
+    assert inserted["created_at"] == inserted["updated_at"] == inserted["terminal_at"]
+    assert {name: value for name, value in inserted.items() if name.startswith("auto_refill_")} == {
+        "auto_refill_workspace_id": ws, "auto_refill_status": "pending",
+        "auto_refill_attempts": 0, "auto_refill_last_error": None,
+        "auto_refill_next_attempt_at": inserted["auto_refill_next_attempt_at"],
+        "auto_refill_lease_owner": None, "auto_refill_leased_until": None,
+        "auto_refill_enqueued_at": inserted["created_at"],
+        "auto_refill_updated_at": inserted["created_at"], "auto_refill_terminal_at": None,
+    }
+    assert inserted["auto_refill_next_attempt_at"] > inserted["created_at"]
+    assert "SET terminal_at=NULL" in statements[6] and params[6] == {"authorization_id": auth.id}
+    assert "SET terminal_at=NULL" in statements[7] and params[7] == {"rid": auth.credit_reservation_id}
+    for index, record_id in ((8, auth.id), (9, auth.credit_reservation_id)):
+        assert statements[index].startswith("UPDATE tr_") and "SET terminal_at=IF(" in statements[index]
+        assert params[index] == {
+            "aid": auth.id, "kind": "settle", "record_id": record_id, "now": inserted["created_at"],
+        }
+    assert params[12] == {"hold": ESTIMATE, "actual": cost, "ws": ws, "shard": 0}
+    assert params[13] == {"pk": ws}
+    assert params[14]["kh"] == key.hash and params[14]["hold"] == ESTIMATE
+    assert params[14]["actual"] == cost
+    assert params[16] == {"kind": "broadcast_destination_by_workspace", "prefix": ws + "#"}
+    assert _typed_credit(db, ws)["total_usage"] == cost
+    row = db.settle_outbox[(auth.id, "settle")]
+    assert row["status"] == "done" and row["auto_refill_status"] == "pending"
+    assert db.gateway_authorizations[auth.id]["terminal_at"] is not None
+    assert db.reservations[auth.credit_reservation_id]["terminal_at"] is not None
+
+
+@pytest.mark.usefixtures("two_commit_settle")
+def test_two_commit_settle_round_trip_order(
+    prod_shaped_store: tuple[Any, Any],
+    settle_operations: list[tuple[Any, str, dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The durable fallback keeps its exact order: enqueue commit, then the
+    finalize commit with the done-mark folded in (#1027)."""
     from trusted_router import storage_gcp_authorize
 
     store, db = prod_shaped_store
@@ -742,6 +894,7 @@ def test_nonfresh_settle_keeps_refill_repair(
     prod_shaped_store: tuple[Any, Any],
     settle_operations: list[tuple[Any, str, dict[str, Any]]],
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
     case: str,
 ) -> None:
     store, db = prod_shaped_store
@@ -751,6 +904,10 @@ def test_nonfresh_settle_keeps_refill_repair(
     auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
     outbox = _outbox(store)
     if case == "inserted_other_workspace":
+        # The injected INSERT is the two-commit enqueue; a fresh one-commit
+        # settle never calls it. Every other case already has an intent row,
+        # so its one-commit attempt declines (ALREADY_EXISTS) on its own.
+        request.getfixturevalue("two_commit_settle")
         enqueue = SpannerSettleOutbox.enqueue
 
         def wrong_workspace(self: Any, row: SettleOutboxRow, **kwargs: Any) -> str:
@@ -797,8 +954,14 @@ def test_request_snapshot_loses_to_refund_after_s1(
     prod_shaped_store: tuple[Any, Any],
     settle_operations: list[tuple[Any, str, dict[str, Any]]],
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
     existing: bool,
 ) -> None:
+    if not existing:
+        # The race window between the enqueue and finalize commits exists only
+        # in the two-commit flow (an existing intent declines one-commit itself).
+        # tests/test_settle_one_commit.py covers the one-commit counterpart.
+        request.getfixturevalue("two_commit_settle")
     store, db = prod_shaped_store
     ws = "ws-refund-race-rtt"
     _seed_credit(store, ws)
@@ -847,15 +1010,22 @@ def test_request_snapshot_loses_to_refund_after_s1(
                for reader, sql, params in settle_operations)
 
 
+@pytest.mark.parametrize(
+    "method", ["typed_settle_one_commit_result", "typed_finalize_gateway_authorization_result"],
+)
 def test_route_finalize_snapshot_preserves_types_and_is_detached(
     prod_shaped_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+    method: str,
 ) -> None:
     from fastapi import BackgroundTasks
 
     from trusted_router.routes.internal.gateway import _settle_gateway_authorization
     from trusted_router.schemas import GatewaySettleRequest
 
+    if method == "typed_finalize_gateway_authorization_result":
+        request.getfixturevalue("two_commit_settle")
     store, _db = prod_shaped_store
     ws = "ws-route-snapshot-copy"
     _seed_credit(store, ws)
@@ -864,7 +1034,7 @@ def test_route_finalize_snapshot_preserves_types_and_is_detached(
     auth.usage_type = UsageType.CREDITS
     auth.tags = {"frozen": "original"}
     expected = copy.deepcopy(auth)
-    original = type(store).typed_finalize_gateway_authorization_result
+    original = getattr(type(store), method)
     received: list[GatewayAuthorization] = []
 
     def finalize(self: Any, authorization_id: str, **kwargs: Any) -> TypedFinalizeResult:
@@ -880,7 +1050,7 @@ def test_route_finalize_snapshot_preserves_types_and_is_detached(
         assert asdict(auth) == asdict(expected)
         return original(self, authorization_id, **kwargs)
 
-    monkeypatch.setattr(type(store), "typed_finalize_gateway_authorization_result", finalize)
+    monkeypatch.setattr(type(store), method, finalize)
     data = _settle_gateway_authorization(
         GatewaySettleRequest(**_settle_json(auth.id)),
         success=True,
@@ -3116,11 +3286,16 @@ def _settle_with_sql_spy(
     return auth, calls, _client(Settings(environment="test", settle_outbox_enabled=True))
 
 
+@pytest.mark.parametrize("path", ["one_commit", "two_commit"])
 def test_inline_settle_resolves_the_outbox_row_inside_the_finalize_commit(
     prod_shaped_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
+    request: pytest.FixtureRequest,
+    path: str,
 ) -> None:
+    if path == "two_commit":
+        request.getfixturevalue("two_commit_settle")
     store, db = prod_shaped_store
     auth, calls, client = _settle_with_sql_spy(store, monkeypatch, ws="ws-fold-done")
 
@@ -3137,21 +3312,33 @@ def test_inline_settle_resolves_the_outbox_row_inside_the_finalize_commit(
     assert db.gateway_authorizations[auth.id]["terminal_at"] is not None
     assert db.reservations[auth.credit_reservation_id]["terminal_at"] is not None
 
-    marks = [
-        txn for txn, sql in calls if sql.startswith("UPDATE tr_settle_outbox SET status=@status")
-    ]
-    assert len(marks) == 1, "the done-mark must run exactly once"
-    [mark_txn] = marks
     finalize_tables = {
         txn for txn, sql in calls if "tr_reservation" in sql or "tr_credit_balance" in sql
     }
-    assert mark_txn in finalize_tables, (
-        "the done-mark ran in its own transaction, not the finalize's"
-    )
+    marks = [
+        txn for txn, sql in calls if sql.startswith("UPDATE tr_settle_outbox SET status=@status")
+    ]
+    if path == "one_commit":
+        # The intent is born resolved: no done-mark UPDATE exists at all, and
+        # its INSERT shares the finalize transaction (the only one).
+        assert marks == []
+        inserts = [txn for txn, sql in calls if sql.startswith("INSERT INTO tr_settle_outbox")]
+        assert len(inserts) == 1 and inserts[0] in finalize_tables
+        assert len({txn for txn, _sql in calls}) == 1
+    else:
+        assert len(marks) == 1, "the done-mark must run exactly once"
+        [mark_txn] = marks
+        assert mark_txn in finalize_tables, (
+            "the done-mark ran in its own transaction, not the finalize's"
+        )
 
     [record] = _settle_timing_records(caplog)
     assert isinstance(record.args, tuple)
     assert record.args[7] == 0.0  # mark_ms: no standalone mark commit
+    # commit_path: a declined one-commit attempt is reported as the fallback.
+    assert record.args[8] == ("one_commit" if path == "one_commit" else "fallback")
+    if path == "one_commit":
+        assert record.args[5] == 0.0  # enqueue_ms: no separate enqueue commit
 
 
 @pytest.mark.parametrize("settlement", ["spend_lease", "regional_lease"])
@@ -3211,12 +3398,19 @@ def test_flag_off_settle_body_outbox_and_charge_ignore_lease_named_extras(
     store, _db = prod_shaped_store
     captured: list[SettleOutboxRow] = []
     real_enqueue = SpannerSettleOutbox.enqueue
+    real_one_commit = type(store).typed_settle_one_commit_result
 
     def capture(self: SpannerSettleOutbox, row: SettleOutboxRow, **kwargs: Any) -> str:
         captured.append(row)
         return real_enqueue(self, row, **kwargs)
 
+    def capture_one_commit(self: Any, authorization_id: str, **kwargs: Any) -> Any:
+        # The fresh path persists the same frozen intent inside its commit.
+        captured.append(kwargs["settle_intent"])
+        return real_one_commit(self, authorization_id, **kwargs)
+
     monkeypatch.setattr(SpannerSettleOutbox, "enqueue", capture)
+    monkeypatch.setattr(type(store), "typed_settle_one_commit_result", capture_one_commit)
     client = _client(Settings(environment="test", settle_outbox_enabled=True))
     responses = []
     for suffix, extras in (
@@ -3254,9 +3448,11 @@ def test_flag_off_settle_body_outbox_and_charge_ignore_lease_named_extras(
             row.authorization_id, "normalized"
         )
         normalized_rows.append(frozen)
+    assert len(normalized_rows) == 2
     assert normalized_rows[0] == normalized_rows[1]
 
 
+@pytest.mark.usefixtures("two_commit_settle")
 def test_inline_settle_leaves_a_leased_outbox_row_to_its_drain_worker(
     prod_shaped_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,

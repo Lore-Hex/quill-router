@@ -4059,6 +4059,7 @@ def make_fake_store(
     from trusted_router.storage_gcp_credit_shards import CreditShardCountCache
 
     store._lifetime_cap_exhausted_keys = ExhaustedKeyCache()
+    store._insufficient_credit_workspaces = ExhaustedKeyCache()
     store._credit_shard_counts = CreditShardCountCache()
     io = SpannerIO(
         database=db,

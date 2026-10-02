@@ -102,16 +102,13 @@ def test_a_host_namespace_names_no_publisher(model_id: str, default_route: str) 
 
 def test_every_maker_entry_has_a_provider_page_and_a_logo() -> None:
     # A publisher link or logo must never 404 or fall back to TrustedRouter's.
-    from trusted_router.dashboard import (
-        _AUTHORS_NAMING_NO_MAKER,
-        _PUBLISHER_PROVIDER_BY_AUTHOR,
-    )
+    from trusted_router.catalog_data import AUTHORS_NAMING_NO_MAKER, MAKER_PROVIDER_BY_AUTHOR
 
-    for author, slug in _PUBLISHER_PROVIDER_BY_AUTHOR.items():
+    for author, slug in MAKER_PROVIDER_BY_AUTHOR.items():
         assert author == author.lower(), author
         assert slug in PROVIDERS, author
         assert provider_logo_url(slug) == f"/static/provider-logos/{slug}.png", author
-    assert not _AUTHORS_NAMING_NO_MAKER & set(_PUBLISHER_PROVIDER_BY_AUTHOR)
+    assert not AUTHORS_NAMING_NO_MAKER & set(MAKER_PROVIDER_BY_AUTHOR)
 
 
 # --- Pages, on fixture models ------------------------------------------------

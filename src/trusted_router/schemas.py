@@ -443,10 +443,27 @@ class GatewayVideoJobUpdateRequest(_Strict):
     poll_after_seconds: int = Field(default=5, ge=1, le=300)
 
 
+GATEWAY_REJECTION_PARAMETER_PATH_MAX_LENGTH = 100
+
+
 class GatewayContractRejection(_Strict):
     status: Literal[400, 422, 501]
     parameter: str = Field(min_length=1, max_length=64)
     request_id: str = Field(pattern=r"^rlog_[0-9a-f]{32}$")
+    parameter_path: str | None = Field(
+        default=None, max_length=GATEWAY_REJECTION_PARAMETER_PATH_MAX_LENGTH,
+    )
+    value_preview: str | None = Field(default=None, max_length=100)
+    value_truncated: bool = False
+
+    @field_validator("parameter_path", "value_preview", mode="before")
+    @classmethod
+    def drop_oversized_parameter_path(cls, value: Any) -> Any:
+        # Preserve rejection attribution during mixed-version gateway rollouts
+        # without retaining even a prefix of a possible prompt-shaped name.
+        if isinstance(value, str) and len(value) > GATEWAY_REJECTION_PARAMETER_PATH_MAX_LENGTH:
+            return None
+        return value
 
 
 class GatewayValidateRequest(_Lenient):

@@ -20,6 +20,9 @@ def gh(*args: str) -> Any:
     result = subprocess.run(  # noqa: S603,S607 - fixed CLI/repository; no shell
         ["gh", *args], capture_output=True, text=True, check=True, timeout=60,  # noqa: S607
     )
+    # Dispatch prints a human acknowledgment or run URL, not a JSON response.
+    if args[:2] == ("workflow", "run"):
+        return None
     return json.loads(result.stdout) if result.stdout.strip() else None
 
 

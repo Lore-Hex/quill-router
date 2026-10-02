@@ -752,6 +752,43 @@ def test_min_privacy_confidential_keeps_confidential_reachable_model(
     assert all(model_max_privacy_tier(m) >= PRIVACY_TIER_CONFIDENTIAL for m in candidates)
 
 
+def test_min_privacy_confidential_never_routes_to_the_model_vendor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import dataclasses
+
+    from trusted_router.catalog import PROVIDERS
+
+    # Z.AI's own API and a third-party host both carry every Confidential flag.
+    for slug in ("zai", "chutes"):
+        monkeypatch.setitem(
+            PROVIDERS,
+            slug,
+            dataclasses.replace(
+                PROVIDERS[slug],
+                provider_confidential_compute=True,
+                provider_e2ee=True,
+                provider_zero_data_retention=True,
+            ),
+        )
+    drop_routes(monkeypatch, "z-ai/glm-5.2")
+    serve_on_fixture_route(monkeypatch, "z-ai/glm-5.2", "zai", author="zai")
+    serve_on_fixture_route(monkeypatch, "z-ai/glm-5.2", "chutes", author="zai")
+
+    def hosts(provider: dict[str, object]) -> set[str]:
+        body = {"model": "z-ai/glm-5.2", "provider": provider}
+        return {endpoint.provider for _model, endpoint in chat_route_endpoint_candidates(body, _settings())}
+
+    assert hosts({}) == {"zai", "chutes"}
+    assert hosts({"min_privacy": "confidential"}) == {"chutes"}
+    # Without a third-party Confidential host, the request fails closed.
+    drop_routes(monkeypatch, "z-ai/glm-5.2")
+    serve_on_fixture_route(monkeypatch, "z-ai/glm-5.2", "zai", author="zai")
+    with pytest.raises(HTTPException) as exc:
+        hosts({"min_privacy": "confidential"})
+    assert exc.value.status_code == 400
+
+
 def test_min_privacy_too_high_for_model_raises() -> None:
     # A no-store-only model demanded at confidential tier has no route —
     # fail closed rather than silently downgrade.

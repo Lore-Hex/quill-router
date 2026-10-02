@@ -405,6 +405,33 @@ def test_gateway_authorization_freezes_user_model_attribution(
     assert authorization.user_model_owner_user_id == created["owner_user_id"]
 
 
+@pytest.mark.parametrize(
+    "provider",
+    [{"min_privacy": "confidential"}, {"min_privacy": "zdr"}, {"min_privacy": "no_store"}, {"zdr": True}],
+)
+def test_gateway_refuses_a_privacy_floor_for_a_user_model(
+    dispatch_client: TestClient, provider: dict[str, Any]
+) -> None:
+    """The owner's endpoint carries no tracked privacy posture."""
+    client = dispatch_client
+    key = _create_key(client)
+    created = _create(client)
+    _online(created)
+    body = {
+        "api_key_hash": key["hash"],
+        "model": created["id"],
+        "estimated_input_tokens": 10,
+        "max_output_tokens": 10,
+    }
+    refused = client.post("/v1/internal/gateway/authorize", json={**body, "provider": provider})
+    assert refused.status_code == 400
+    assert refused.json()["error"]["message"] == (
+        "User-provided models cannot meet a provider privacy floor"
+    )
+    allowed = client.post("/v1/internal/gateway/authorize", json=body)
+    assert allowed.status_code == 200, allowed.text
+
+
 def test_gateway_settle_uses_frozen_prices_and_pays_owner_once(
     dispatch_client: TestClient,
     monkeypatch: pytest.MonkeyPatch,

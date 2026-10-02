@@ -6,6 +6,7 @@ from decimal import Decimal
 import pytest
 from fastapi.testclient import TestClient
 
+from trusted_router import catalog_privacy
 from trusted_router.catalog_data import Model, ModelEndpoint
 from trusted_router.config import Settings
 from trusted_router.main import create_app
@@ -117,7 +118,7 @@ def catalog(monkeypatch):
 
 
 def test_search_limits_context_and_privacy(client, catalog, monkeypatch):
-    monkeypatch.setattr(advisor, "endpoint_zero_data_retention", lambda _: False)
+    monkeypatch.setattr(catalog_privacy, "endpoint_zero_data_retention", lambda _: False)
     assert call(client, "search_models", {"privacy": "zdr"})["structuredContent"]["models"] == []
     assert (
         call(client, "search_models", {"query": "TEST"})["structuredContent"]["total_matches"] == 1
@@ -141,11 +142,37 @@ def test_search_limits_context_and_privacy(client, catalog, monkeypatch):
 def test_confidential_requires_all_three_on_same_prepaid_route(
     client, catalog, monkeypatch, zdr, tee, e2ee, expected
 ):
-    monkeypatch.setattr(advisor, "endpoint_zero_data_retention", lambda _: zdr)
-    monkeypatch.setattr(advisor, "endpoint_confidential_compute", lambda _: tee)
-    monkeypatch.setattr(advisor, "endpoint_e2ee", lambda _: e2ee)
+    # The advisor filters with the routing predicate, which reads these.
+    monkeypatch.setattr(catalog_privacy, "endpoint_zero_data_retention", lambda _: zdr)
+    monkeypatch.setattr(catalog_privacy, "endpoint_confidential_compute", lambda _: tee)
+    monkeypatch.setattr(catalog_privacy, "endpoint_e2ee", lambda _: e2ee)
     result = call(client, "compare_models", {"models": ["test/model"], "privacy": "confidential"})
     assert result["isError"] is False
+    assert len(result["structuredContent"]["models"][0]["routes"]) == expected
+
+
+@pytest.mark.parametrize("host,expected", [("minimax", 0), ("novita", 1)])
+def test_confidential_never_lists_the_model_vendor(client, monkeypatch, host, expected):
+    """Every Confidential flag is set; only the vendor's own route is refused."""
+    model = Model(id="minimax/fixture", name="Fixture", provider=host, context_length=1_000_000)
+    endpoint = ModelEndpoint(
+        id=f"fixture-{host}",
+        model_id=model.id,
+        provider=host,
+        usage_type="Credits",
+        prompt_price_microdollars_per_million_tokens=1_000_000,
+        completion_price_microdollars_per_million_tokens=2_000_000,
+    )
+    monkeypatch.setattr(advisor, "MODELS", {model.id: model})
+    monkeypatch.setattr(
+        advisor,
+        "_shapes",
+        lambda: {model.id: {"id": model.id, "name": "Fixture", "context_length": 1_000_000}},
+    )
+    monkeypatch.setattr(advisor, "endpoints_for_model", lambda _: [endpoint])
+    for name in ("endpoint_zero_data_retention", "endpoint_confidential_compute", "endpoint_e2ee"):
+        monkeypatch.setattr(catalog_privacy, name, lambda _: True)
+    result = call(client, "compare_models", {"models": [model.id], "privacy": "confidential"})
     assert len(result["structuredContent"]["models"][0]["routes"]) == expected
 
 

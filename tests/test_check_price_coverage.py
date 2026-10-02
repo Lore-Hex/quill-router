@@ -81,6 +81,8 @@ _NEW_AUTOMATIC_FEED_MODELS = {
     "z-ai/glm-5.2",
     "sakana-ai/fugu-ultra-v1.1",
     "sakana-ai/sakana-namazu-v1.0",
+    "system1models/s1-fast",
+    "system1models-eu/s1-fast",
 }
 _NEW_AUTOMATIC_FEED_ALIASES = {
     "deepseek-v4-flash",
@@ -94,6 +96,8 @@ _NEW_AUTOMATIC_FEED_ROWS = _NEW_AUTOMATIC_FEED_MODELS | _NEW_AUTOMATIC_FEED_ALIA
 
 
 def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict:
+    if "api.system1models.ai" in url:
+        return {"data": [{"id": "s1-fast"}]}
     if "api.lyceum.technology" in url:
         return {"data": [{"id": "z-ai/glm-5.3-flash"}]}
     if "api.privatemode.ai" in url:

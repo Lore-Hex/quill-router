@@ -676,11 +676,21 @@ def claim_reservation_statement(
     defer_retention: bool = False, outbox_available: bool = True,
     expires_before: Any | None = None,
 ) -> DmlStatement:
-    """Build the same conditional claim for standalone or batch execution."""
+    """Build the same conditional claim for standalone or batch execution.
+
+    A deferred claim writes ``terminal_at=NULL`` whatever the outbox holds: the
+    guarded form would compute ``IF(EXISTS(...), NULL, NULL)``. So only a claim
+    that arms retention pays for the correlated outbox subquery. Measured
+    2026-10-01 (SPANNER_SYS, one hour) before this: the guarded claim was the
+    costliest statement, ~6.5 ms CPU per execution and 36% of all query CPU, at
+    ~39k executions/hour, one per finalize. Finalize (and reaper) claims all
+    defer retention, so that subquery never changed what they wrote.
+    """
     resolved_terminal_at = (
         None if defer_retention else (terminal_at or datetime.now(UTC))
     )
-    sql = _CLAIM_RESERVATION_GUARDED_SQL if outbox_available else _CLAIM_RESERVATION_SQL
+    guarded = outbox_available and resolved_terminal_at is not None
+    sql = _CLAIM_RESERVATION_GUARDED_SQL if guarded else _CLAIM_RESERVATION_SQL
     params = {
             "rid": reservation_id,
             "actual": int(actual_micro),

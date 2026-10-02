@@ -63,6 +63,8 @@ def default_provider_secret_ref(provider: str) -> str:
     back to local key files) and the enclave authorize path return the same
     pointer for a given provider."""
     env_names = {
+        "system1models": "SYSTEM1MODELS_GLOBAL_API_KEY",
+        "system1models-eu": "SYSTEM1MODELS_EU_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
         "openai": "OPENAI_API_KEY",
         "gemini": "GEMINI_API_KEY",

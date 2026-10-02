@@ -142,10 +142,36 @@ instance is destroyed through Terraform once that export is verified.
 two new voters together, migrates only after full-fingerprint parity, pauses
 the ingester for the final delta, and exposes the load balancer only after the
 canonical replicated table is healthy. Routine control-plane rollouts discover
-the internal load-balancer address dynamically.
+the internal load-balancer address and the replica addresses dynamically. The
+read clients get the load balancer first, then each replica in reverse name
+order, and move to the next only when a connection cannot be opened or the
+endpoint answers 502, 503 or 504. A failed or empty lookup fails the rollout.
 
 Never restart or deploy all three ClickHouse nodes together. Change one zone,
 wait for replica queue and load-balancer health to recover, then continue.
+
+### Node configuration: `/tr_health` and system-log retention
+
+`scripts/deploy/clickhouse_node_config.sh` installs the files in
+`scripts/deploy/clickhouse-node-config/` on tr-clickhouse-3, -2 and then -1:
+the `/tr_health` handler and its `tr_health` user (G2 in
+`docs/design/clickhouse-high-availability.md`) and the system-log TTLs (G5).
+It refuses to restart a node whose replicas or Keeper voter are unhealthy,
+waits after each restart until `/tr_health` answers 200 and the voter has
+rejoined, and stops at the first failure.
+
+```bash
+scripts/deploy/clickhouse_node_config.sh
+scripts/deploy/clickhouse_node_config.sh --apply
+scripts/deploy/clickhouse_node_config.sh --apply --drop-renamed-logs
+```
+
+The first run only reports. The restart renames each changed log table to
+`<log>_0`, which keeps the old data, cannot take a TTL and is read-only. The
+third command drops those copies on every node to free the disk; run it once
+the second has finished cleanly. Check a node by hand with
+`curl -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:8123/tr_health?user=tr_health'`
+on it, which must print 200.
 
 ## Health checks
 

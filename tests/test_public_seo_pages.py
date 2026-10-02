@@ -1033,6 +1033,7 @@ def test_public_privacy_terms_and_support_pages_are_distinct(client: TestClient)
     assert 'id="support-inquiry"' in support.text
     assert 'fetch("/support/inquiry"' in support.text
     assert '<option value="feature">Feature request</option>' in support.text
+    assert '<option value="model">Model request</option>' in support.text
     assert 'href="/support?category=feature#support-inquiry"' in support.text
     assert 'button.textContent = "Send feature request"' in support.text
     assert "github.com/Lore-Hex/quill-router/issues" in support.text
