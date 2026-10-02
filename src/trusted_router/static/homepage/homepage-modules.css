@@ -94,7 +94,6 @@ details.was[open] summary{margin-bottom:12px}
 .trc .pc{font:400 12px/1 var(--mono);color:#adbbb2;white-space:nowrap}
 .trc .num{font:400 13.5px/1.35 var(--mono);color:#edf8f5;font-variant-numeric:tabular-nums;white-space:nowrap}
 .trc .num small{display:block;font-size:10.5px;color:#adbbb2;letter-spacing:.06em;text-transform:uppercase}
-.trc td.go{color:#adbbb2;text-align:right;width:28px}
 .trc .cft{font-size:12px;color:#adbbb2}
 .tipt{position:relative;cursor:help;outline:none}
 .tipt::after{content:attr(data-tip);position:absolute;left:0;bottom:calc(100% + 8px);width:240px;padding:9px 11px;background:#edf8f5;color:#111410;font:400 12.5px/1.45 var(--sans);letter-spacing:0;text-transform:none;border-radius:3px;box-shadow:0 8px 24px rgba(0,0,0,.45);opacity:0;visibility:hidden;transform:translateY(3px);pointer-events:none;z-index:5;white-space:normal;text-decoration:none}
@@ -235,7 +234,7 @@ details.was[open] summary{margin-bottom:12px}
 }
 @media (max-width:520px){
   .trh h2{font-size:34px}
-  .trc th:nth-child(5),.trc td:nth-child(5),.trc th:nth-child(6),.trc td:nth-child(6){display:none}
+  .trc th:nth-child(5),.trc td:nth-child(5){display:none}
   .trft .cols{grid-template-columns:1fr 1fr}
 }
 
