@@ -153,6 +153,45 @@ OBSERVER_REMEDIATOR_MODE="observe"
 OBSERVER_MAX_REPLICAS_EFFECTIVE=1
 
 log() { printf '\n=== %s\n' "$*" >&2; }
+
+# In GitHub Actions, azure/login leaves az holding the job's OIDC ID token as a
+# federated credential. That token expires about five minutes after login, and
+# az needs it again for every resource it has not yet fetched a token for (Key
+# Vault, here). The mutex wait can last an hour, so log in again with a fresh ID
+# token once the lease is held. An operator's own az login refreshes itself;
+# outside Actions this is a no-op.
+azure_refresh_login() {
+  [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || return 0
+  [ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ] \
+    || die "ACTIONS_ID_TOKEN_REQUEST_TOKEN is missing; the job needs id-token: write"
+  [ -n "${AZURE_CLIENT_ID:-}" ] && [ -n "${AZURE_TENANT_ID:-}" ] && [ -n "${AZURE_SUBSCRIPTION_ID:-}" ] \
+    || die "AZURE_CLIENT_ID, AZURE_TENANT_ID and AZURE_SUBSCRIPTION_ID are required to renew the Azure login"
+  local id_token
+  id_token="$(curl -fsS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+    "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=api://AzureADTokenExchange" \
+    | python3 -c 'import json, sys; print(json.load(sys.stdin)["value"])')" \
+    || die "could not fetch a fresh GitHub OIDC token to renew the Azure login"
+  [ -n "$id_token" ] || die "the GitHub OIDC token endpoint returned no token"
+  az login --service-principal --username "$AZURE_CLIENT_ID" --tenant "$AZURE_TENANT_ID" \
+    --federated-token "$id_token" --allow-no-subscriptions --output none \
+    || die "renewing the Azure login after the deploy mutex wait failed"
+  az account set --subscription "$AZURE_SUBSCRIPTION_ID" \
+    || die "cannot select subscription ${AZURE_SUBSCRIPTION_ID} after renewing the Azure login"
+}
+
+# Run one read-only az lookup without hiding why it failed: its output lands in
+# LOOKUP_OUTPUT, and on failure its error in LOOKUP_ERROR, for the refusal below.
+azure_lookup() {
+  local errors
+  errors="$(mktemp "${TMPDIR:-/tmp}/tr-azure-lookup.XXXXXX")"
+  LOOKUP_ERROR=""
+  if ! LOOKUP_OUTPUT="$("$@" 2>"$errors")"; then
+    LOOKUP_OUTPUT=""
+    LOOKUP_ERROR="$(tr '\n' ' ' <"$errors" | cut -c1-300)"
+    [ -n "$LOOKUP_ERROR" ] || LOOKUP_ERROR="az exited non-zero with no message"
+  fi
+  rm -f "$errors"
+}
 exists() { "$@" >/dev/null 2>&1; }
 
 AZURE_TEMP_FIREWALL_RULE=""
@@ -191,6 +230,7 @@ esac
 # Local source-of-truth validation above must fail before any cloud access.
 # The mutex still precedes the first az read below and every later mutation.
 deploy_mutex_acquire
+azure_refresh_login
 bake_status=0
 cloud_bake_gate azure || bake_status=$?
 if [ "$bake_status" -eq 75 ]; then
@@ -303,9 +343,9 @@ The fleet registry says azure expects_outbox=${ANALYTICS_EXPECTS_OUTBOX_DISPLAY}
 lookup must not turn a working production outbox off.
 
 Looked for:
-  private IP   VM ${CLICKHOUSE_NODE} in resource group ${RG}: ${CLICKHOUSE_HOST:-not found}
-  password     Key Vault ${CLICKHOUSE_VAULT}, secret ${CLICKHOUSE_SECRET_NAME}: $([ -n "$CLICKHOUSE_SECRET_ID" ] && echo reference found || echo not found)
-  identity     ${CLICKHOUSE_IDENTITY} in resource group ${RG}: $([ -n "$CLICKHOUSE_IDENTITY_ID" ] && echo found || echo not found)
+  private IP   VM ${CLICKHOUSE_NODE} in resource group ${RG}: ${CLICKHOUSE_HOST:-not found}${CLICKHOUSE_HOST_ERROR:+ (az: ${CLICKHOUSE_HOST_ERROR})}
+  password     Key Vault ${CLICKHOUSE_VAULT}, secret ${CLICKHOUSE_SECRET_NAME}: $([ -n "$CLICKHOUSE_SECRET_ID" ] && echo reference found || echo not found)${CLICKHOUSE_SECRET_ERROR:+ (az: ${CLICKHOUSE_SECRET_ERROR})}
+  identity     ${CLICKHOUSE_IDENTITY} in resource group ${RG}: $([ -n "$CLICKHOUSE_IDENTITY_ID" ] && echo found || echo not found)${CLICKHOUSE_IDENTITY_ERROR:+ (az: ${CLICKHOUSE_IDENTITY_ERROR})}
   location     ${LOCATION}
 
 Verify the active account and each lookup by hand:
@@ -377,12 +417,17 @@ esac
 # Resolve all three non-secret pieces before any build or Container App
 # mutation. A private address without a usable Key Vault reference and identity
 # is not a partial success: the new revision would start, then fail on first use.
-CLICKHOUSE_HOST="$(az vm list-ip-addresses -g "$RG" -n "$CLICKHOUSE_NODE" \
-  --query "[0].virtualMachine.network.privateIpAddresses[0]" -o tsv 2>/dev/null || true)"
-CLICKHOUSE_SECRET_ID="$(az keyvault secret show --vault-name "$CLICKHOUSE_VAULT" \
-  -n "$CLICKHOUSE_SECRET_NAME" --query id -o tsv 2>/dev/null || true)"
-CLICKHOUSE_IDENTITY_ID="$(az identity show -g "$RG" -n "$CLICKHOUSE_IDENTITY" \
-  --query id -o tsv 2>/dev/null || true)"
+azure_lookup az vm list-ip-addresses -g "$RG" -n "$CLICKHOUSE_NODE" \
+  --query "[0].virtualMachine.network.privateIpAddresses[0]" -o tsv
+CLICKHOUSE_HOST="$LOOKUP_OUTPUT"
+CLICKHOUSE_HOST_ERROR="$LOOKUP_ERROR"
+azure_lookup az keyvault secret show --vault-name "$CLICKHOUSE_VAULT" \
+  -n "$CLICKHOUSE_SECRET_NAME" --query id -o tsv
+CLICKHOUSE_SECRET_ID="$LOOKUP_OUTPUT"
+CLICKHOUSE_SECRET_ERROR="$LOOKUP_ERROR"
+azure_lookup az identity show -g "$RG" -n "$CLICKHOUSE_IDENTITY" --query id -o tsv
+CLICKHOUSE_IDENTITY_ID="$LOOKUP_OUTPUT"
+CLICKHOUSE_IDENTITY_ERROR="$LOOKUP_ERROR"
 
 ANALYTICS_DISCOVERED=true
 case "$CLICKHOUSE_HOST" in ""|None) ANALYTICS_DISCOVERED=false ;; esac
