@@ -455,7 +455,7 @@ h3,.privacy-choice h3,.uptime-panel figcaption,.attestation-panel h3,.trust-evid
 .hero-provider-group a{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;gap:12px;min-width:192px;min-height:36px;font-size:17px;color:var(--text);text-decoration:none;white-space:nowrap}
 .hero-provider-group a:hover{color:var(--mint)}
 .hero-provider-group img{width:32px;height:32px;object-fit:contain}
-@keyframes provider-marquee{from{transform:translateX(0)}to{transform:translateX(-16.6667%)}}
+@keyframes provider-marquee{from{transform:translateX(0)}to{transform:translateX(-50%)}}
 @media(prefers-reduced-motion:reduce){
  .hero-provider-track{animation:none}
  .hero-provider-group+.hero-provider-group{display:none}
