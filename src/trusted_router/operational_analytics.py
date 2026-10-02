@@ -13,6 +13,11 @@ from typing import Any, TypeVar
 
 import httpx
 
+from trusted_router.clickhouse_endpoints import (
+    parse_endpoints,
+    request_timeout,
+    send_with_failover,
+)
 from trusted_router.client_reliability import tenant_client_reliability_summary
 from trusted_router.storage_models import (
     Generation,
@@ -52,9 +57,10 @@ class OperationalAnalyticsClient:
         database: str = "tr",
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        if not base_url:
+        # One URL, or an ordered comma-separated list: see clickhouse_endpoints.
+        self._endpoints = parse_endpoints(base_url)
+        if not self._endpoints:
             raise ValueError("operational analytics ClickHouse URL is required")
-        self._base_url = base_url.rstrip("/")
         self._user = user
         self._password = password
         self._database = _identifier(database, label="database")
@@ -72,14 +78,19 @@ class OperationalAnalyticsClient:
             query_params[f"param_{key}"] = str(value)
         with httpx.Client(
             auth=(self._user, self._password),
-            timeout=httpx.Timeout(timeout_seconds),
+            timeout=request_timeout(self._endpoints, timeout_seconds),
             transport=self._transport,
         ) as client:
-            response = client.post(
-                self._base_url,
-                params=query_params,
-                content=sql,
-                headers={"content-type": "text/plain; charset=utf-8"},
+            response = send_with_failover(
+                client,
+                self._endpoints,
+                lambda endpoint: client.build_request(
+                    "POST",
+                    endpoint,
+                    params=query_params,
+                    content=sql,
+                    headers={"content-type": "text/plain; charset=utf-8"},
+                ),
             )
             response.raise_for_status()
             payload = response.json()

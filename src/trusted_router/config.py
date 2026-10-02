@@ -354,6 +354,14 @@ def operational_analytics_sink_problems(settings: Any) -> list[str]:
             "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL and "
             "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_WRITE_PASSWORD"
         )
+    # The read clients accept an ordered comma-separated endpoint list for
+    # failover (clickhouse_endpoints.py); the direct sink posts to one URL.
+    if sink == "direct" and "," in (settings.operational_analytics_clickhouse_url or ""):
+        problems.append(
+            "TR_OPERATIONAL_ANALYTICS_SINK=direct writes to a single "
+            "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL; a comma-separated endpoint "
+            "list is only supported by the read clients"
+        )
     return problems
 
 
@@ -447,7 +455,9 @@ class Settings(BaseSettings):
     clickhouse_benchmark_table: str = "provider_benchmark_samples"
     # Private, read-only provider portal connection. This intentionally uses a
     # separate ClickHouse account from ingestion and is reachable only through
-    # the service's VPC egress path.
+    # the service's VPC egress path. This URL and the operational one below
+    # take one URL or an ordered comma-separated list (load balancer first,
+    # then replicas); see clickhouse_endpoints.py for when a read fails over.
     provider_analytics_clickhouse_url: str = ""
     provider_analytics_clickhouse_user: str = "tr_provider_read"
     provider_analytics_clickhouse_password: str = ""
