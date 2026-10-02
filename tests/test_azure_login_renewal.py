@@ -71,8 +71,9 @@ def test_in_actions_the_login_is_renewed_once_the_lease_is_held(
     assert lease < login < account < first_other_az
     token_requests = [call for call in calls if call.startswith("curl ")]
     assert any("audience=api://AzureADTokenExchange" in call for call in token_requests)
-    # The request token travels in a header, never in the URL.
-    assert all("harness-request-token" not in call.split()[-1] for call in token_requests)
+    # The request token reaches curl on stdin: no command's argv carries it.
+    assert all("harness-request-token" not in call for call in calls)
+    assert any(" -H @- " in f" {call} " for call in token_requests)
 
 
 def test_outside_actions_the_operator_login_is_left_alone(

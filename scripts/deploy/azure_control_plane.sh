@@ -167,8 +167,10 @@ azure_refresh_login() {
   [ -n "${AZURE_CLIENT_ID:-}" ] && [ -n "${AZURE_TENANT_ID:-}" ] && [ -n "${AZURE_SUBSCRIPTION_ID:-}" ] \
     || die "AZURE_CLIENT_ID, AZURE_TENANT_ID and AZURE_SUBSCRIPTION_ID are required to renew the Azure login"
   local id_token
-  id_token="$(curl -fsS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-    "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=api://AzureADTokenExchange" \
+  # The request token goes in on stdin (-H @-), never in curl's argv, where
+  # anything on the runner could read it from the process list.
+  id_token="$(printf 'Authorization: bearer %s\n' "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+    | curl -fsS -H @- "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=api://AzureADTokenExchange" \
     | python3 -c 'import json, sys; print(json.load(sys.stdin)["value"])')" \
     || die "could not fetch a fresh GitHub OIDC token to renew the Azure login"
   [ -n "$id_token" ] || die "the GitHub OIDC token endpoint returned no token"
