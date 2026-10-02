@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import re
 
-from trusted_router.schemas import GatewayContractRejection
+from trusted_router.schemas import (
+    GATEWAY_REJECTION_PARAMETER_PATH_MAX_LENGTH,
+    GatewayContractRejection,
+)
 from trusted_router.sentry_config import capture_gateway_contract_warning
 
 # Public parameter categories, not a request allowlist. Unknown names might
@@ -122,7 +125,7 @@ _PARAMETER_PATH = re.compile(
 
 
 def _safe_parameter_path(value: str | None) -> str | None:
-    if not value or len(value) > 128:
+    if not value or len(value) > GATEWAY_REJECTION_PARAMETER_PATH_MAX_LENGTH:
         return None
     if value in PARAMETER_CATEGORIES:
         return value

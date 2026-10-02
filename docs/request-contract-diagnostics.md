@@ -29,11 +29,16 @@ field name. The request-end record provides verified workspace and credential
 attribution when identity validation succeeds. Conventional unknown names such
 as `usage.future_option` are retained, not reduced to `other` alone.
 
-Parameter paths contain names only, never values. Paths are limited to 128
+Parameter paths contain names only, never values. Paths are limited to 100
 characters and eight identifier segments, with bounded array indices. Free-form
 names, credential-like strings and arbitrary punctuation are omitted. Known
 public paths such as `plugins.web-fetch` are also allowed. No request bodies,
 prompts or outputs are exported by this mechanism.
+
+Oversized paths are omitted entirely, not truncated. The rejection's request ID,
+route, status, and verified workspace/credential IDs remain available even when
+the name is dropped. Both the enclave and control-plane diagnostic boundary
+enforce the limit.
 
 The control plane validates paths again before adding them to Sentry context.
 Sentry uses the bounded category, not the unknown path, for grouping and flood
