@@ -43,7 +43,8 @@ const assert = require('node:assert/strict');
         assert(await menu.evaluate(el => el === document.activeElement));
       }
       assert.equal(await page.locator('.hero').evaluate(el => getComputedStyle(el, '::before').animationName), 'none');
-      assert.equal(await page.locator('.hero-provider-row a').count(), 6);
+      assert.equal(await page.locator('.hero-provider-group:first-child a').count(), 6);
+      assert.equal(await page.locator('.hero-provider-group[aria-hidden="true"] a:not([tabindex="-1"])').count(), 0);
       const footerNav = page.getByRole('navigation', {name:'Exchange markets', exact:true});
       assert.equal(await footerNav.getByRole('link').count(), markets.length);
       assert.equal(await footerNav.locator('[aria-current="page"]').textContent(), market.region);

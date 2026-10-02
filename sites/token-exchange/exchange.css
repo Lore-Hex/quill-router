@@ -515,30 +515,36 @@ h3,.privacy-choice h3,.review-resources h3,.uptime-panel figcaption,.attestation
  .trust-evidence:has([data-live-services]:empty):has([data-live-attestation]:empty) .privacy-comparison{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 }
 
-/* Hero follows the TrustedRouter homepage: its landscape photograph, copy at the top,
-   providers along the bottom, the same page black, header and secondary button. */
+/* Hero keeps its arc; the page black, header and secondary button follow the homepage.
+   Copy is centred above a provider marquee that runs only while the hero is on screen,
+   pauses on hover or keyboard focus, and is a static row for reduced motion or without JS. */
 :root{--bg:#050706;--text:#edf8f5}
 .masthead{background:#050706;backdrop-filter:none}
 .masthead::after{display:none}
 .secondary{background:#0b1814b3;color:#d4ecff;border-color:#8cab99;box-shadow:none}
 .secondary:hover{background:#13261f;border-color:#a9c7b6;color:#fff}
-.hero{flex-direction:column;align-items:stretch;background:#050706}
-.hero::before,.hero::after{display:none;animation:none}
-.hero-picture{position:absolute;inset:0;z-index:-1;pointer-events:none}
-.hero-image{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:50% 62%}
-.hero-copy{flex:1 0 auto;min-height:0;justify-content:flex-start;padding-block:clamp(40px,6svh,76px) 24px}
+.hero{flex-direction:column;align-items:stretch}
+.hero-copy{flex:1 0 auto;min-height:0;justify-content:center;padding-block:clamp(40px,6svh,76px) 24px}
 .hero .lead{margin:24px auto 28px}
 .hero-copy .actions{margin-top:0}
 .hero-values{display:block}
-.hero-providers{position:relative;z-index:1;width:100%;padding:16px 24px 20px;background:linear-gradient(#05070600,#05070699 30%,#05070699 70%,#05070600)}
-.hero-providers p{margin:0 0 10px;text-align:center;font-size:12px;line-height:1.6;color:var(--muted)}
-.hero-provider-row{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:10px 36px}
-.hero-provider-row a{flex:0 0 auto;display:inline-flex;align-items:center;gap:10px;min-height:32px;font-size:15px;color:var(--text);text-decoration:none;white-space:nowrap}
-.hero-provider-row a:hover{color:var(--mint)}
-.hero-provider-row img{width:26px;height:26px;object-fit:contain}
+.hero-providers{position:relative;z-index:1;width:100%;padding:16px 0 20px}
+.hero-providers p{margin:0 0 12px;text-align:center;font-size:12px;line-height:1.6;color:var(--muted)}
+.hero-provider-row{overflow:hidden;mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)}
+.hero-provider-track{display:flex;width:max-content;margin-inline:auto;animation:provider-marquee 48s linear infinite;animation-play-state:paused}
+.hero.is-animating .hero-provider-track{animation-play-state:running}
+.hero-provider-row:hover .hero-provider-track,.hero-provider-row:focus-within .hero-provider-track{animation-play-state:paused}
+.hero-provider-group{display:flex;align-items:center;gap:36px;padding-inline:18px}
+.hero-provider-group a{flex:0 0 auto;display:inline-flex;align-items:center;gap:10px;min-height:32px;font-size:15px;color:var(--text);text-decoration:none;white-space:nowrap}
+.hero-provider-group a:hover{color:var(--mint)}
+.hero-provider-group img{width:26px;height:26px;object-fit:contain}
+@keyframes provider-marquee{from{transform:translateX(0)}to{transform:translateX(-25%)}}
+@media(prefers-reduced-motion:reduce){
+ .hero-provider-track{animation:none}
+ .hero-provider-group+.hero-provider-group{display:none}
+ .hero-provider-row{overflow-x:auto;mask-image:none;scrollbar-width:thin}
+}
 @media(max-width:600px){
  .hero-copy{padding-block:40px 24px}
- .hero-providers{padding-inline:0}
- .hero-provider-row{flex-wrap:nowrap;justify-content:flex-start;gap:24px;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none;padding-inline:22px;mask-image:linear-gradient(90deg,#000 88%,transparent)}
- .hero-provider-row::after{content:"";flex:0 0 1px}
+ .hero-provider-group{gap:24px;padding-inline:12px}
 }

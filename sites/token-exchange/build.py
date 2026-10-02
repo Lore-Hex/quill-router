@@ -62,6 +62,30 @@ def market_links(markets: list[dict], current: dict) -> str:
     )
 
 
+PROVIDERS = [
+    ("openai", "OpenAI"),
+    ("anthropic", "Anthropic"),
+    ("mistral", "Mistral"),
+    ("google-vertex", "Google Vertex AI"),
+    ("deepseek", "DeepSeek"),
+    ("grok", "xAI"),
+]
+
+
+def provider_ticker(copies: int = 4) -> str:
+    """One visible provider group plus hidden copies so the CSS marquee loops without a gap."""
+    groups = []
+    for index in range(copies):
+        hidden = index > 0
+        links = "".join(
+            f'<a href="https://trustedrouter.com/providers"{" tabindex=\"-1\"" if hidden else ""}>'
+            f'<img src="/assets/provider-{slug}.png" width="32" height="32" alt=""><span>{html.escape(name)}</span></a>'
+            for slug, name in PROVIDERS
+        )
+        groups.append(f'<div class="hero-provider-group"{" aria-hidden=\"true\"" if hidden else ""}>{links}</div>')
+    return "".join(groups)
+
+
 def render(market: dict, markets: list[dict], version: str) -> str:
     profile = {"new-york": "new-york", "dubai": "dubai", "europe": "europe"}.get(market["slug"], "shared-gcp")
     catalogue, health = render_evidence(profile)
@@ -78,6 +102,7 @@ def render(market: dict, markets: list[dict], version: str) -> str:
         {
             "version": version,
             "hero_headline": headline,
+            "provider_ticker": provider_ticker(),
             "buyer_heading": html.escape(market.get("buyer_heading", "Buy capacity. Set your requirements.")).replace("Choose how it is served.", '<br>Choose how it is <span class="headline-accent">served.</span>').replace("Spend it", "Spend<br>it").replace("jurisdiction.", '<span class="headline-accent">jurisdiction.</span>').replace("Set your requirements.", '<br>Set your <span class="headline-accent">requirements.</span>'),
             "buyer_copy": html.escape(market.get("buyer_copy", "Compare model rates and provider privacy policies. Prioritize end-to-end encrypted routes where available, or review zero-retention options. Confirm processing locations and commercial terms for your workload.")),
             "catalogue": "",
@@ -128,8 +153,6 @@ def build(output: Path) -> None:
     ).hexdigest()[:12]
     for name in ("exchange.css", "exchange.js", "live-evidence.js"):
         shutil.copyfile(HERE / name, assets / name)
-    for art in sorted((HERE / "art").glob("trustedrouter-landscape-*")):
-        shutil.copyfile(art, assets / art.name)
     static = ROOT / "src/trusted_router/static"
     for source, target in {
         "enterprise/token-exchange-hero.webp": "exchange.webp",
