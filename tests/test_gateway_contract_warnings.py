@@ -95,6 +95,77 @@ def test_plain_validation_is_not_an_error(
     assert warnings == []
 
 
+@pytest.mark.parametrize(
+    "parameter",
+    [
+        "plugins", "truncation", "prompt_cache_key", "prompt_cache_options", "service_tier",
+        "usage.include", "stream_options.include_usage", "provider.quantizations",
+        "provider.max_price.image", "plugins.web-fetch",
+    ],
+)
+def test_public_parameter_diagnosis_survives_scrubbing(
+    client: TestClient, warnings: list[dict[str, Any]], parameter: str
+) -> None:
+    key = _key(client)
+    response = client.post(
+        "/v1/internal/gateway/validate", json=_request(key, parameter=parameter)
+    )
+    assert response.status_code == 200
+    [event] = warnings
+    assert event["tags"]["parameter"] == parameter
+    assert event["fingerprint"][-1] == parameter
+    assert event["tags"]["workspace_id"] == key["workspace_id"]
+    assert STORE.credit_money[key["workspace_id"]].reserved_microdollars == 0
+
+
+@pytest.mark.parametrize("path", ["future_option", "usage.future_option", "input[12].future_option"])
+def test_unknown_rejected_field_path_is_retained_without_value_or_new_fingerprint(
+    client: TestClient, warnings: list[dict[str, Any]], path: str
+) -> None:
+    payload = _request(_key(client), parameter="other")
+    payload["contract_rejection"]["parameter_path"] = path
+    response = client.post("/v1/internal/gateway/validate", json=payload)
+    assert response.status_code == 200
+    [event] = warnings
+    assert event["contexts"]["gateway_rejection"]["parameter_path"] == path
+    assert event["fingerprint"][-1] == "other"
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["alice@example.com", "sk-tr-v1-secret", "sk_private_secret", "private customer text", "usage=secret", "x\nsecret"],
+)
+def test_unsafe_rejected_field_path_is_dropped_not_forwarded(
+    warnings: list[dict[str, Any]], path: str
+) -> None:
+    report_gateway_contract_rejection(
+        GatewayContractRejection(status=400, parameter="other", request_id=REQUEST_ID, parameter_path=path),
+        route="/v1/chat/completions", workspace_id="ws_verified", credential_id="key_verified",
+    )
+    assert "parameter_path" not in warnings[0]["contexts"]["gateway_rejection"]
+
+
+def test_rejected_field_path_length_is_bounded(client: TestClient) -> None:
+    payload = _request(_key(client))
+    payload["contract_rejection"]["parameter_path"] = "a" * 129
+    assert client.post("/v1/internal/gateway/validate", json=payload).status_code == 400
+
+
+def test_arbitrary_rejected_paths_do_not_exhaust_sentry_budget(
+    warnings: list[dict[str, Any]],
+) -> None:
+    for i in range(100):
+        report_gateway_contract_rejection(
+            GatewayContractRejection(
+                status=400, parameter="other", request_id=REQUEST_ID,
+                parameter_path=f"future_option_{i}",
+            ),
+            route="/v1/chat/completions", workspace_id="ws_verified", credential_id="key_verified",
+        )
+    assert len(warnings) == 1
+    assert warnings[0]["contexts"]["gateway_rejection"]["parameter_path"] == "future_option_0"
+
+
 def test_invalid_key_cannot_create_a_warning(
     client: TestClient, warnings: list[dict[str, Any]]
 ) -> None:

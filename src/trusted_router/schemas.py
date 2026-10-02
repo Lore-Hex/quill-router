@@ -447,6 +447,7 @@ class GatewayContractRejection(_Strict):
     status: Literal[400, 422, 501]
     parameter: str = Field(min_length=1, max_length=64)
     request_id: str = Field(pattern=r"^rlog_[0-9a-f]{32}$")
+    parameter_path: str | None = Field(default=None, max_length=128)
 
 
 class GatewayValidateRequest(_Lenient):
