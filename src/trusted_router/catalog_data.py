@@ -133,6 +133,11 @@ PROVIDER_JURISDICTION_SG = "SG"
 # starts where this one stopped instead of repeating it. Keys must be provider
 # slugs whose provider_headquarters_country is None.
 PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
+    "abliterate": (
+        "Checked abliterate.ai/docs and abliterate.ai/terms. Neither identifies "
+        "a legal operating entity or headquarters country, and the terms refer "
+        "to an unnamed upstream inference provider. Excluded from jurisdiction filters."
+    ),
     "telluvian": (
         "Checked Telluvian's product and privacy pages for selector integration; "
         "the contracting operator's jurisdiction has not been verified. Excluded from US/EU filters."
@@ -1737,6 +1742,19 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://akashml.com/",
     ),
+    "abliterate": Provider(
+        slug="abliterate",
+        name="Abliterate",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "Abliterate says prompts and completions are discarded after each request, "
+            "but they transit an upstream inference provider whose retention is not "
+            "identified in its terms. End-to-end ZDR and confidential inference are "
+            "unverified. Paid routes are held pending upstream token-usage accounting."
+        ),
+        provider_policy_url="https://abliterate.ai/terms",
+    ),
     "mancer": Provider(
         slug="mancer",
         name="Mancer",
@@ -2200,6 +2218,7 @@ PROVIDERS: dict[str, Provider] = {
 
 GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
     {
+        "abliterate",
         "system1models",
         "system1models-eu",
         "lyceum",

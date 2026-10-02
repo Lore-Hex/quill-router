@@ -13,6 +13,7 @@ from trusted_router.pricing import provider_manifest_price_profile_is_valid
 # stale-price containment for the hours that discovery fails.
 EXPIRING_PROVIDER_MANIFEST_SLUGS = frozenset(
     {
+        "abliterate",
         "aion-labs",
         "akashml",
         "arcee",
@@ -52,7 +53,7 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = frozenset(
 )
 PROVIDER_MANIFEST_MAX_AGE_DAYS = 14
 EXPIRED_PROVIDER_MANIFEST = datetime.min.replace(tzinfo=UTC)
-_CANARY_QUARANTINE_REASONS = frozenset({"provider-canary-failed"})
+_CANARY_QUARANTINE_REASONS = frozenset({"provider-canary-failed", "upstream-usage-unavailable"})
 
 
 def decision_manifest_price_is_valid(row: dict[str, Any]) -> bool:

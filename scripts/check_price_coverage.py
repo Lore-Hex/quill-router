@@ -39,6 +39,7 @@ from scripts.pricing.model_ids import (
     canonicalize_unqualified_model_id,
 )
 from scripts.pricing.providers import (
+    abliterate,
     aion_labs,
     akashml,
     arcee,
@@ -501,6 +502,7 @@ _DISCOVERABLE_MANIFEST_PROVIDERS_BASE: tuple[
 # available to the hourly refresh workflow, so a missing workflow secret is a
 # deployment error, not an intentionally skipped discovery check.
 _CI_DIRECT_OPENAI_DISCOVERY_MODULES = (
+    abliterate,
     upstage,
     sail_research,
     reka,
