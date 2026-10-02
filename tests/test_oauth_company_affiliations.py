@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import threading
+from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -21,7 +22,7 @@ def lookups_finish_on_a_loaded_runner(monkeypatch: pytest.MonkeyPatch) -> None:
     A missed lookup returns the identity without affiliations, so the tests
     below that expect a claim would fail and those that expect none would pass
     for the wrong reason. They test what a finished lookup discloses, so they
-    allow it longer. The slow-directory test sets its own limit.
+    allow it longer. The slow-directory test controls its limit itself.
     """
     import trusted_router.verification as verification
 
@@ -100,6 +101,8 @@ def test_registered_oauth_grants_disclose_only_with_profile_scope(client: TestCl
 
 
 def test_slow_directory_cannot_block_signin(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
     import trusted_router.verification as verification
 
     _seed()
@@ -110,19 +113,37 @@ def test_slow_directory_cannot_block_signin(client: TestClient, monkeypatch: pyt
     reads = []
     release = threading.Event()
     finished = threading.Event()
+    limits: list[tuple[asyncio.AbstractEventLoop, asyncio.Timeout]] = []
+
+    class _ExpireOnRead:
+        """verification's asyncio, with a limit that expires once the read starts.
+
+        A wall-clock limit races the worker thread's start: a thread that
+        starts after the timeout finds retries already deferred and never
+        reads. This limit has no deadline until the read is underway, so the
+        real timeout and the real thread dispatch run in a fixed order.
+        """
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(asyncio, name)
+
+        def timeout(self, delay: float | None) -> asyncio.Timeout:
+            limit = asyncio.timeout(None)
+            limits.append((asyncio.get_running_loop(), limit))
+            return limit
 
     def slow_read(key: str):
         reads.append(key)
+        loop, limit = limits[-1]
+        loop.call_soon_threadsafe(lambda: limit.reschedule(loop.time()))
+        # Bounds the test if the limit never expires: sign-in would then wait
+        # here, and the assertion below reports it.
         release.wait(60)
         finished.set()
         return None
 
     monkeypatch.setattr(STORE.target, "get_company_affiliation_document", slow_read)
-    # The limit must outlast the worker thread's start. A thread that starts
-    # after the timeout finds retries already deferred and never reads, so
-    # `reads` stays empty. The read blocks far longer than the limit, so the
-    # sign-in still returns before it finishes.
-    monkeypatch.setattr(verification, "AFFILIATION_TIMEOUT_SECONDS", 5.0)
+    monkeypatch.setattr(verification, "asyncio", _ExpireOnRead())
     headers = {"authorization": "Bearer " + key}
     try:
         for _ in range(2):
@@ -131,5 +152,7 @@ def test_slow_directory_cannot_block_signin(client: TestClient, monkeypatch: pyt
             assert "company_affiliations" not in response.json()["data"]
         assert not finished.is_set(), "Sign-in waited for optional directory read"
         assert len(reads) == 1
+        assert limits[0][1].expired()
     finally:
         release.set()
+        finished.wait(5)
