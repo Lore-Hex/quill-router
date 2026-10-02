@@ -24,6 +24,7 @@ Static files are loaded into memory at process start, so restart the server afte
 ## Design rules in force
 
 - **Placement.** Tools (search, filters, tabs) sit in the row of content they operate on. Actions (buttons, `.action-link`) close their module at the copy's left edge, after the evidence. The hero and closing band center theirs. Nothing sits beside an H2.
+- **Catalog filters.** Switching All / Private / Confidential never moves the toolbar or the columns: the count label keeps one width on desktop and takes its own line below 1000px; the table uses fixed column widths above 880px.
 - **Supporting links** are underlined with a trailing arrow added by CSS (`.action-link`).
 - **Header.** Model search is in the header row at every width ("Search N models", live count). Below 600px the wordmark drops to the mark and Menu is an icon; below 480px Sign in moves into the drawer. Short landscape phones keep a 64px header.
 - **Hero ticker.** Items are buttons that open the model search prefilled. The marquee pauses for pointer hover and keyboard focus only. On phones and tablets it follows the hero actions on a gradient band; on desktop it sits at the hero's bottom.
