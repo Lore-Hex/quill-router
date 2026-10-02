@@ -1,7 +1,7 @@
 # Fast admission and batched settlement
 
-Status: **proposed, v6, 2026-10-02. Nothing built.** Codex and Fable have
-reviewed five versions (§11). Joseph's decisions are in §2. **One decision is
+Status: **proposed, v7, 2026-10-02. Nothing built.** Codex and Fable have
+reviewed six versions (§11). Joseph's decisions are in §2. **One decision is
 still open: the per-request store (§2).** Since v5 the design has known that a
 TigerBeetle cluster fills in days at this volume, so clusters must rotate
 (§4.13). That bears on the decision.
@@ -124,14 +124,15 @@ Python keeps routing policy and everything off the hot path.
 
 ### 4.2 The ledger
 
-Three ledgers in one cluster. A linked chain may span them, as in TigerBeetle's
+Two ledgers in one cluster. A linked chain may span them, as in TigerBeetle's
 currency-exchange recipe.
 
 | Ledger | Accounts | Purpose |
 |---|---|---|
 | Money | per workspace-region: Budget (`debits_must_not_exceed_credits`), Sink, Overdraft, Pool | escrow, charges, debt, grants and returns |
-| Keys | per capped key and region: the same four | lifetime caps |
 | Control | per workspace: Gate. Per region: ScopeClaims and AdmitSink, GateSink, TerminalClaims and TerminalSink | scope claims, the admission gate, terminal claims |
+
+Capped keys stay synchronous at first (§4.6), so there is no key ledger.
 
 - **Only Budget accounts carry a balance flag.** On the others, `exceeds_*`
   cannot happen, so it can never permanently burn a deterministic ID.
@@ -149,7 +150,7 @@ currency-exchange recipe.
 | Transfer | ID |
 |---|---|
 | hold | `A` (§4.3) |
-| every other leg of an authorization | `H(A, leg)`: `gate`, `repay`, `settle`, `settle/1..3`, `refund`, `reap`, `terminal`, `terminal/1..3`, and a `key-` twin of each money leg on the key ledger (`key-repay`, `key-hold`, `key-settle`, and so on) |
+| every other leg of an authorization | `H(A, leg)`: `gate`, `repay`, `settle`, `settle/1..3`, `refund`, `reap`, `terminal`, `terminal/1..3` |
 | scope claim | `H(scope)` |
 | grant | the grant row's ID |
 | return | `R = H(workspace, region, fence)`, and `H(R, repay)` for its repay leg |
@@ -169,14 +170,21 @@ head leg answers `exists` exactly when the whole chain committed before:
 A retry that meets `exists` there reads the committed outcome. §8 keeps a test
 of this for each release.
 
+**Chain ends in the change stream.** An event of type `single_phase`,
+`two_phase_pending`, `two_phase_posted` or `two_phase_voided` whose transfer
+carries `flags.linked` continues a chain; any other event ends one. A
+`two_phase_expired` event always ends one: it reports a hold that may have been
+linked when created, long before. A chain's events are consecutive.
+
 **Codes.** Holds have code 1. A post or void must carry its pending transfer's
 code, or zero
 ([two-phase transfers](https://docs.tigerbeetle.com/coding/two-phase-transfers/)),
 so the resolver is identified by its ID, not its code. Overrun legs, repays,
 grants and returns, gate units, scope claims (fast, synchronous) and terminal
-claims each have their own code. Holds carry the fingerprint and nonce hashes
-in `user_data_128`, the key's 64-bit ledger number in `user_data_64`, and the
-snapshot version in `user_data_32`. Other legs carry `A` in `user_data_128`.
+claims each have their own code. Holds carry the nonce and fingerprint hashes,
+64 bits each, in `user_data_128`, the key's 64-bit ledger number in
+`user_data_64`, and the snapshot version in `user_data_32`. Other legs carry `A`
+in `user_data_128`.
 
 **Versions.** Clients and replicas run the same release, 0.16.43 or later:
 
@@ -214,7 +222,6 @@ file to 16 TiB.
 | Admission, unkeyed or keyed | 3 or 4: gate, repay and hold, plus the scope claim |
 | Terminal | 1: a post or a void |
 | An overrun (12% of settles today) | 3 more |
-| A capped key | 2 more at admission and 1 at the terminal (3 more on an overrun) |
 | A heartbeat | none (§4.5) |
 
 That averages about 4.5.
@@ -228,8 +235,8 @@ machine's local SSD, about 9 to 36 TB per VM depending on the GCP machine
 family. The spike measures bytes per transfer and the largest data file the
 chosen machine and file system support.
 
-**Gate before production:** benchmark the whole path, including chains, key
-legs, the change stream and a rotation, on the real VM and disk shape. One
+**Gate before production:** benchmark the whole path, including chains, the
+change stream, the reaper's probes and a rotation, on the real VM and disk shape. One
 published cloud benchmark of an unoptimised deployment measured p50 32 ms and
 p99 over 500 ms.
 
@@ -254,17 +261,26 @@ home region's control ledger.
 - **The authorization ID** is `A = H(scope, nonce)`. The nonce identifies one
   gateway invocation, and the gateway retries with the same bytes, nonce and
   key.
-- **Replays answer as today** (`routes/internal/gateway.py:1379-1385`). A
-  request that finds the scope's fast claim reads hold `A` from it:
-  - same fingerprint: the original envelope, re-signed against the hold's
-    snapshot version and marked `idempotent_replay` with the original nonce.
-    The gateway applies its nonce rule to that answer, as it does now;
-  - different fingerprint: 409.
-
-  A synchronous claim pins the scope to Python for the retention period. Every
-  request for it is forwarded, and Python's own idempotency decides. A request
-  Python rejected leaves the scope free to retry there, as today, and no fast
-  claim can compete for it.
+- **Replays answer as today** (`routes/internal/gateway.py:1379-1385`), from
+  what the claim and the hold store:
+  - the caller's own `A`: the same invocation, which never acted on the lost
+    answer. The service re-signs the envelope against the hold's snapshot
+    version, which is retained because the hold is recent;
+  - another `A` with the same fingerprint: a replay marker carrying the original
+    nonce's hash. The gateway compares its own nonce's hash and answers 409
+    `idempotency_replay`, as it does now for another nonce. Today the answer
+    carries the raw nonce, so the gateway changes to compare hashes;
+  - a different fingerprint: 409.
+- **A claim counts for 30 days after its admission, plus the longest hold:**
+  today's retention. A request that finds an older claim treats it as absent
+  and goes to Python under a synchronous signature, where the unique index
+  arbitrates concurrent duplicates, as it does for any scope today. TigerBeetle
+  cannot reuse the claim's ID, so this is how an expired scope is reused.
+- **A synchronous claim pins the scope to Python** while Python holds a
+  reservation for it; §4.13 carries it that long. Every request for it is
+  forwarded, and Python's own idempotency decides. A request Python rejected
+  leaves the scope free to retry there, as today, and no fast claim can compete
+  for it.
 - **Failed attempts burn only their own invocation's IDs** (`A`, `H(A, gate)`
   and so on). That invocation's retries fail the same way. A new invocation has
   a new nonce, a new `A` and a clean chain. There is no attempt counter, so no
@@ -278,10 +294,12 @@ home region's control ledger.
   synchronous worker cannot spend regional escrow.
 
 **Workspace modes.** A Spanner row per workspace holds its mode and
-`front_door_until`. Python's authorize transaction checks it with a predicate in
-its conditional DML. The check is then atomic with the reservation, and the
-transaction stays DML-only and never reads `tr_key_limit`. A transaction that
-read the old mode commits before the change or aborts.
+`front_door_until`. Python's authorize transaction checks it with a predicate on
+the reservation INSERT, which every authorize runs. The check is then atomic
+with the reservation, and the transaction stays DML-only and never reads
+`tr_key_limit`. A transaction that read the old mode commits before the change
+or aborts. A zero-row insert is a mode refusal, answered 503, never insufficient
+credits.
 
 | Mode | Unkeyed requests | Keyed requests |
 |---|---|---|
@@ -298,10 +316,13 @@ The gate is open in front-door and fast modes and closed otherwise.
   1. Set `front door`. Unkeyed requests take the fast path at once. From then
      on, Python refuses a keyed request that carries no signature, so a front
      door still on the old mode is refused and refreshes.
-  2. Wait out the reservations' 30-day retention, Spanner's deletion lag of up
-     to 72 hours, and the longest hold. By then every keyed scope Python
-     accepted before step 1 has left Spanner, as it would have today, so no
-     scope can be replayed into a second execution. Set `fast`.
+  2. Set `fast` once Spanner shows no keyed reservation of the workspace
+     created before step 1.
+     - The check is a range scan of `tr_reservation_by_idemp` over the
+       workspace's scope prefix (`<workspace>#`), so no new index is needed.
+     - It also catches reservations whose settlement is pending or dead,
+       because they stay until settled and 30 days on.
+     - Until it passes, keyed requests keep their synchronous claims.
 - **Out of fast mode** (pause, revoke, trust downgrade, or a switch): close the
   gate (§4.7), then set `leaving` with `front_door_until` 30 days plus the
   longest hold ahead. Until then keyed requests still pass the front door, so
@@ -323,7 +344,6 @@ The gate is open in front-door and fast modes and closed otherwise.
    | one unit `Gate→AdmitSink`; it fails while the gate is closed | `H(A, gate)` |
    | repay: `Budget→Overdraft`, `balancing_debit` and `balancing_credit`, amount `AMOUNT_MAX` | `H(A, repay)` |
    | the hold: pending `Budget→Sink` for e, timeout T (§4.5) | `A` |
-   | for a capped key, the same repay and hold on the key ledger; the key hold's timeout is T + 60 s | `H(A, key-repay)`, `H(A, key-hold)` |
 
    The repay moves the smaller of the free budget and the debt, so debt is paid
    before the hold can draw. With no debt it moves zero. The generation ID is
@@ -341,11 +361,11 @@ The gate is open in front-door and fast modes and closed otherwise.
 
 - **`exceeds_credits` on the hold** means a regional shortfall. The sweeper may
   be behind, or debt was repaid first. A keyed request gets 503 with
-  `Retry-After`; an unkeyed one takes the synchronous path. The answer is 402
-  only when Spanner's balance cannot cover the estimate.
-- **`exceeds_credits` on the key hold** is answered the same way, except that
-  when Spanner shows the key's cap exhausted the answer is the key-limit error
-  that synchronous requests get today.
+  `Retry-After`; an unkeyed one takes the synchronous path.
+- **402 only when the balance cannot cover the estimate.** Python changes so
+  that when the workspace's balance covers it but the headroom outside regional
+  escrow does not, it answers 503 with `Retry-After`.
+  `_insufficient_credits_error` already tells those cases apart.
 - **A closed gate or admission sink** sends the service to refresh the
   workspace's mode and the region's cluster (§4.13), then route again.
 - **A lost authorize response** is covered by §4.3: the retry rebuilds the same
@@ -373,7 +393,7 @@ first** (§4.9). Only then does it touch the ledger.
 **While the hold is open, the hold arbitrates.** A pending transfer resolves
 once.
 
-| Event | Chain (key legs alike) | IDs |
+| Event | Chain | IDs |
 |---|---|---|
 | Settle, a ≤ e | post the hold for a | `H(A, settle)` |
 | Settle, a > e | post the hold for e; overrun for E = a − e | `H(A, settle)`, `H(A, settle/1..3)` |
@@ -414,11 +434,10 @@ ID `H(A, terminal)`, with the kind in `user_data_64`.
 | Reaper, snapshot s | overrun for E = s |
 | Refund | nothing |
 
-The first claim wins. `exists` is a retry. `exists_with_different_user_data_64`
-means another kind won, and the loser reports it. The key hold expires 60 s
-after the money hold, so a terminal never finds an open money hold beside an
-expired key hold. Each ledger's legs follow that ledger's own answer, and one
-retry converges.
+The first claim wins. `exists` is a retry. Any `exists_with_different_*` result
+means another terminal won, whether it differs in kind or only in flags (a
+refund's claim stands alone, unlinked): the loser reads the committed claim and
+reports it.
 
 **Decision 70 stays.** When the reaper's snapshot wins, a later settle or refund
 is a no-op, as today (`settle_outbox_apply.py:159-164`). When a settle or refund
@@ -430,82 +449,75 @@ nothing is ever reversed.
 1. is checked against the envelope by whichever admission node receives it: the
    endpoint pin, and a running charge within the hold;
 2. is published to the settle log under `A`;
-3. is answered only after the publish is acknowledged:
-   - `accepted`, with the new deadline, signed. The next heartbeat echoes it,
-     and one that arrives within 30 s of its echoed deadline, or after it, is
-     answered `deadline_passed` instead: the gateway stops and settles, and
-     that settle may lose to the reaper, as a late heartbeat can lose today;
+3. is answered after the publish is acknowledged:
+   - `accepted`, with the new deadline, signed, but only if the acknowledgement
+     arrived before the deadline the heartbeat echoes;
+   - `deadline_passed` otherwise. The gateway stops and settles, and that settle
+     may lose to the reaper, as a late heartbeat can lose today;
    - `already_terminal`, when one batched lookup finds a resolution or a
      terminal claim;
-   - `hold_expired`, past the end of life. The gateway then stops the stream
-     and settles, and its settle takes the rows above.
+   - `end_of_life`, past the end of life. The gateway stops the stream and
+     settles.
 
 **The reaper is the authority on heartbeats.** It consumes the log in order per
-authorization. It checks sequence, endpoint, token non-regression and the cap
-against durable per-authorization state: the last accepted sequence, payload
-hash, token counts and running charge. So an altered payload under an accepted
-sequence number is ignored, whichever admission node took it. The archived
-change stream tells it when holds open and resolve.
+authorization.
 
-**The reaper resolves the holds of silent gateways.** It consumes everything the
-log holds for an authorization: heartbeats, settles and refunds.
+- **Deadlines:** a signed heartbeat's deadline counts whether or not its usage
+  is valid, because the gateway was told `accepted`.
+- **Snapshots:** only a valid heartbeat moves the snapshot. Validity is today's
+  checks (sequence, endpoint, token non-regression and the cap) against durable
+  per-authorization state: the last accepted sequence, payload hash, token
+  counts and running charge. So an altered payload under an accepted sequence
+  number is ignored, whichever admission node took it.
+- **Hold events:** the archived change stream tells it when holds open and
+  resolve.
 
-- **It acts on a hold at its deadline plus 60 s, never earlier.** Even then it
-  acts only while every message published before the deadline has been
-  consumed: its subscription's oldest unacknowledged message must be younger
-  than 60 s, and a stalled ordering key counts. Every accepted heartbeat was
-  published at least 30 s before its deadline, so the reaper has seen it, and
-  every durable terminal intent published in time.
+**The reaper resolves the holds of silent gateways.**
+
+- **At the deadline plus 60 s, it publishes a probe under `A`** in the hold's
+  region, and acts only when it consumes that probe.
+  - Messages under one ordering key in one region arrive in the order they were
+    published. By then the reaper has seen every heartbeat answered `accepted`,
+    all acknowledged before their deadline, and every settle or refund intent
+    published before the probe.
+  - The spike verifies that ordering across publishers.
+  - A probe made stale by a renewal or an intent is dropped.
 - **It never reaps an authorization with a durable settle or refund intent.**
   It completes that intent instead, as today's reaper guards pending intents
   (`storage_gcp_authorize.py:1373`).
 - **Otherwise it writes its intent** (`A`, snapshot s) to the log, then posts
   the hold for s, or voids it when s is 0. Any settle or refund races it
   through the hold itself.
-- **When it falls behind, it pauses and alerts.** Holds then reach the
-  backstop, and their settles book a in full through the rows above. A slow
-  log never turns a live stream's tail into a free one.
+- **If its probes stop arriving,** because a key or the consumer is stalled,
+  holds reach the backstop, and their settles book a in full through the rows
+  above. Nothing waits on a monitoring metric, and a slow log never turns a
+  live stream's tail into a free one.
 - **Heartbeats and terminals go to the region the envelope names,** wherever
-  the gateway runs. The reaper's checks rely on sequence numbers, not on
-  ordering keys.
+  the gateway runs, so one ordering key orders them.
 - **Its state is checkpointed** with its log and stream positions. After a
   restart it is rebuilt by replay, which needs retained acknowledged messages
   and seek on the subscription.
 
 ### 4.6 Keys
 
-Capped keys run the same legs on the key ledger, under their own IDs and with
-their own Sink, so a charge is never counted twice.
+**Capped keys stay synchronous at first,** like window-limited and
+`budget_strict` keys (§4.11). On the fast path, a lowered cap could be refilled
+by holds released afterwards, unless every key had its own ledger accounts,
+gate and epochs. That machinery waits until the shadow phase shows how much
+traffic uses capped keys.
 
-- **Grant.** A regional key budget is granted from the key's remaining cap. One
-  Spanner transaction adds it to `tr_key_limit.reserved` on a donor key shard,
-  which removes it from synchronous headroom, and writes a grant row. Then comes
-  a `Pool→Budget` transfer on the key ledger.
-- **Return and rollup** mirror §4.7 against `tr_key_limit`.
-- **Overruns consume the cap.** A $10-capped key whose $5 hold settles at $8 has
-  $2 left.
-- **Uncapped keys** have no key accounts:
-  - Revocation reaches admission through the key-status cache, whose maximum age
-    is short and stated as the exposure.
-  - Their usage is booked to `tr_key_limit` by the sweeper's rollups. Each
-    archived charge is attributed through its hold's key number.
-- **A cap added to a key that has used the fast path.**
-  1. The key answers 503 with `Retry-After` on both paths.
-  2. The sweeper writes a marker transfer in every region and waits until its
-     fence passes the marker. Every charge committed before the marker is then
-     booked.
-  3. It grants the regional key budgets from the cap minus booked usage, and the
-     key reopens.
+**Uncapped keys:**
 
-  Requests already admitted when the cap was added settle in full and may pass
-  the cap, as they can today.
-- **Lowering a capped key's cap.** The cap update returns the key's free budget
-  in every region, one balancing return each, before it answers. No admission
-  can then draw on the old allowance. A region it cannot reach keeps its old
-  allowance until that region's sweeper returns it, and that window is the
-  stated exposure. After the next fence the sweeper regrants from the new cap,
-  as for any grant.
-- **Window-limited and `budget_strict` keys stay synchronous.**
+- Revocation reaches admission through the key-status cache, whose maximum age
+  is short and stated as the exposure.
+- Their usage is booked to `tr_key_limit` by the sweeper's rollups. Each
+  archived charge is attributed through its hold's key number.
+- **Adding a cap** moves the key to the synchronous path.
+  - Python serves it only after the sweeper's fence has passed a marker
+    transfer written after the change, so every earlier fast charge is booked.
+  - Until then the key answers 503 with `Retry-After`.
+  - Requests already admitted settle in full and may pass the cap, as they can
+    today.
 
 ### 4.7 Budget: grants, returns, rollups and gates
 
@@ -522,11 +534,10 @@ balances, and of the timestamp up to which the archive is complete. Balances are
 absolute, so a duplicate delivery changes nothing. Rollups read that view and
 never scan the stream.
 
-**Fences fall only at chain ends.** Every event of a linked chain except the
-last carries `flags.linked`, and a chain's events are consecutive. The archive's
-completion timestamp therefore advances only past an event without the flag. A
-fence or a recovery cut never splits a chain, so a terminal's post and its
-overrun legs, money and key, are archived together or not at all.
+**Fences fall only at chain ends** (§4.2). The archive's completion timestamp
+advances only past an event that ends a chain. A fence or a recovery cut
+therefore never splits one, so a terminal's post and its overrun legs are
+archived together or not at all.
 
 | Delta since the last fence | Definition |
 |---|---|
@@ -561,12 +572,15 @@ A replay of the same fence is a no-op. Between two chain-end fences, neither
 
 **Grants:**
 
-1. One Spanner transaction checks a donor shard's headroom, adds g to
-   `reserved` there, and writes a grant row with the shard.
+1. One Spanner transaction checks the workspace's headroom as the signed sum
+   over its shards, so debt on shard 0 counts, as the credit rebalancer already
+   does. It then adds g to `reserved` on a donor shard with enough headroom,
+   and writes a grant row with that shard.
 2. A `Pool→Budget` transfer for g, with the row's ID. Neither account can refuse
    it once both exist, so it does not fail; a replay answers `exists`.
 
 Grants are sized by headroom, not trailing spend, with a per-workspace cooldown.
+They leave headroom outside escrow for the workspace's synchronous requests.
 
 **Returns** are one linked chain:
 
@@ -622,11 +636,11 @@ non-negative. The extra exposure is at most the open holds, and it is alerted.
      and reaper intent whose terminal is not in the archive:
      - a settle books a in full, since nothing is charged before a terminal;
      - a refund books nothing;
-     - when an authorization has both a gateway intent and a reaper intent,
-       the gateway's settle or refund wins, the first logged if there are two.
-       The lost ledger may have let the reaper win; recovery then books the
-       settle's actual cost rather than the snapshot. That difference is
-       stated as part of the loss;
+     - when an authorization has more than one logged terminal intent,
+       recovery books the cheapest: a refund, then the reaper's snapshot, then
+       a settle. It never charges more than the lost ledger could have. Where
+       the ledger chose a costlier terminal, the difference is revenue lost,
+       and stated as part of the loss;
      - the reaper books its snapshot, and finishes open authorizations from its
        state, rebuilt from the log and the archive if the region took it too.
   4. Seed the replacement cluster's scope claims from the archive, so replays
@@ -678,7 +692,7 @@ stay on today's Python path, with keyed scopes still claimed at the front door
   batch, video and image jobs, and hosted tools with
   `additional_cost_reservation_microdollars`;
 - x402 and federated (deferred-settlement) keys;
-- keys with window limits, and `budget_strict` keys;
+- keys with lifetime caps or window limits, and `budget_strict` keys (§4.6);
 - OAuth-app keys with a markup, and synthetic-probe workspaces;
 - workspaces that are paused, in debt, below the minimum balance, or below the
   trust tier that allows grants. The carding incident of 2026-08 is why.
@@ -703,29 +717,36 @@ Load Balancer:
 Each region retires a cluster before its data file fills (§4.2):
 
 1. **Prepare.** Format the next cluster and create its control accounts. The
-   sweeper creates each active workspace's accounts there, and grants budgets
-   where Spanner headroom allows.
+   sweeper creates each active workspace's accounts there. While the old
+   cluster still admits, it returns a share of each workspace's free funds
+   there and grants that share in the new cluster, so admissions find funds
+   after the switch.
 2. **Switch.** The sweeper closes the old cluster's AdmitSink with a pending
-   closing transfer.
-   - From that commit, no gate leg or scope claim succeeds there, so nothing new
-     is admitted.
-   - Admission nodes move to the new cluster on that failure or on their
-     configuration, whichever comes first.
-   - The sweeper then returns the old cluster's free funds, and grants the new
-     cluster from the headroom that releases. Until then a workspace short of
-     headroom sees a regional shortfall (§4.4).
+   closing transfer. From that commit, no gate leg or scope claim succeeds
+   there.
+   - The new configuration is published only after the close commits.
+   - A node admits in the new cluster only after reading that closing transfer,
+     whose ID is per rotation, in the old one.
+   - So the two clusters never admit at once, and the lookup in step 3 always
+     sees a frozen old cluster.
+   - The sweeper then returns the old cluster's remaining free funds and grants
+     the new cluster from them.
    - Terminal claims and gate closings use their own accounts, so late
-     terminals and pauses still work there.
-3. **Carry the claims.** The sweeper copies the old cluster's scope claims whose
-   original time is within the last 30 days into the new cluster.
+     terminals and pauses still work in the old cluster.
+3. **Carry the claims.** The sweeper copies into the new cluster the old
+   cluster's fast claims whose original time is within the retention (30 days
+   plus the longest hold), and its synchronous claims whose scope Python still
+   holds a reservation for. That holding is checked in Spanner by scope during
+   the copy.
    - Each copy keeps its code and `A`, records the old cluster, and carries the
-     original time in `user_data_64`, so later rotations count 30 days from the
-     first claim, not from the copy.
-   - The copy's size is the keyed share of traffic times 30 days. The shadow
-     phase measures that share.
+     original time in `user_data_64`, so later rotations count from the first
+     claim, not from the copy.
+   - The copy's size is the keyed share of traffic over that window. A cluster
+     rotates early enough to leave room for it. If the keyed share is too large
+     for that, keyed requests stay synchronous in that region. The shadow phase
+     measures it.
    - Until the copy finishes, the front door looks a scope up in the new
-     cluster, then in the old one. The old cluster's claims cannot change after
-     step 2, so that order is safe.
+     cluster, then in the old one.
 4. **Drain.** Holds in the old cluster settle there; the envelope names the
    cluster.
    - The reaper resolves the rest by their deadlines.
@@ -738,10 +759,12 @@ Each region retires a cluster before its data file fills (§4.2):
      wait for its settle.
    - The recovery worker and the reaper finish those first. The sweeper counts
      open authorizations from the archive view.
-   - A late terminal for one of its authorizations goes through the synchronous
-     path, claimed in Spanner by `A`.
-   - A replay whose carried claim points at it is answered from the archive's
-     record of the hold. That path is slow, and rare.
+   - After retirement, a late settle, refund or reaper intent for one of its
+     authorizations answers `already_terminal` and books nothing, since each
+     already has a terminal that a rollup booked.
+   - A request whose carried claim points at it comes from another invocation,
+     and is answered 409 `idempotency_replay`, where the gateway's nonce rule
+     would have led.
 
 Two clusters run in a region only during a drain: about T, plus the copy.
 
@@ -757,9 +780,9 @@ Each has a production check.
    expiry, the terminal claim decides. The loser answers with the winner's
    outcome.
 4. **No charge lost.** Intents are durable before any ledger change. The reaper
-   books the snapshot of every hold its gateway abandoned, acts only while it
-   has consumed the log up to the deadline, and never reaps an authorization
-   with a durable settle or refund intent.
+   books the snapshot of every hold its gateway abandoned. It acts only after
+   its probe has come back through the authorization's ordering key, and never
+   reaps an authorization with a durable settle or refund intent.
 5. **No charge invented.** Only boot-signed settles, and the reaper's snapshots
    of validated heartbeats, post. Nothing reverses a charge.
 6. **Debt.** Charges beyond free budget become debt. Admissions and returns
@@ -768,9 +791,9 @@ Each has a production check.
 7. **Ownership.** A keyed scope has one claim, written once: atomically with its
    admission, or before Python sees the request. Python's acceptance is atomic
    with the workspace's mode. Ambiguity answers 503.
-8. **Key caps.** Key budgets plus synchronous key holds never exceed the cap.
-   Lowering a cap returns the old allowance before the change answers.
-   Overruns, and requests in flight when a cap is added, may pass it, as today.
+8. **Key caps.** Capped keys are served synchronously. Adding a cap waits for a
+   fence, so the synchronous check sees every earlier fast charge. Requests in
+   flight when a cap is added may pass it, as today.
 9. **Pauses** close the gate at once. No admission runs on state older than its
    maximum age.
 10. **Returns** move only free funds, after repaying debt. Spanner releases them
@@ -782,8 +805,8 @@ Each has a production check.
     and never a partial chain.
 13. **Loss bound.** Admission stops when the archive lags past its bound. Loss is
     at most the keyed scopes claimed in that window. Beyond that, an
-    authorization whose terminal was not archived may be booked at its settle's
-    actual cost where the lost ledger chose the reaper's snapshot.
+    authorization whose terminal was not archived is booked at its cheapest
+    logged terminal, never above what the lost ledger could have charged.
 14. **Records.** Every terminal has one record within the records bound.
 15. **Growth.** A cluster rotates before its data file fills, and retires only
     when every authorization admitted there has a terminal.
@@ -796,12 +819,14 @@ Each has a production check.
 |---|---|
 | Gateway to admission service, same region | 0.5-1 ms (more from AWS, Azure and non-home regions) |
 | Boot signature, caches, routing evaluation | 0.2-1 ms |
-| Linked admission (claim, gate, repay, hold, key legs) | 1.5-4 ms p50; 10-30 ms p99 under load |
+| Linked admission (claim, gate, repay, hold) | 1.5-4 ms p50; 10-30 ms p99 under load |
 | Sign the envelope, reply | under 0.3 ms |
 | **Total** | **about 3-6 ms p50; over 10 ms at p99** |
 
 Ledger load is admissions and terminals: about 4.5 transfers per generation
-(§4.2). A heartbeat costs one settle-log publish and no ledger write. The one
+(§4.2). A heartbeat costs one settle-log publish, one batched ledger lookup for
+`already_terminal`, and no ledger write. The reaper adds one probe per
+authorization that reaches its deadline. The one
 before the first byte waits for that publish, as it waits for a Spanner commit
 today; the benchmark measures it. The benchmark gate runs the whole path at the
 target rate, including a hot workspace, a replica failover and a rotation.
@@ -834,9 +859,10 @@ and was retired on 2026-09-27.
    - change-stream throughput and a rotation.
 4. **Shadow.** Gateways mirror authorize, heartbeat and settle. A comparator
    reports any difference from Python in decisions, holds, per-authorization
-   charges, reaper outcomes and records. The phase also measures the longest
-   streams against the end of life (§4.5), and the keyed share of traffic
-   (§4.13).
+   charges, reaper outcomes and records. The phase also measures:
+   - the longest streams, against the end of life (§4.5);
+   - the keyed share of traffic (§4.13);
+   - the share on capped keys (§4.6).
 5. **Benchmark gate** (§6).
 6. **Pilot:** Joseph's own workspace, then a few large ones, with kill switches
    per workspace, region and cloud.
@@ -960,3 +986,34 @@ record.
 
   TigerBeetle's state machine confirms that `exists` ends a linked chain;
   §4.2 now relies on that rather than leaving it open.
+- **v7.** Codex (6 P1, 2 P2) and Fable (1 P1, 5 P2, 7 P3) found these problems
+  in v6:
+  - refunded holds could refill a lowered key cap;
+  - a heartbeat's renewal was checked at arrival but ordered at publication,
+    and the reaper relied on a monitoring metric sampled once a minute;
+  - the node and the reaper applied different acceptance rules;
+  - a fixed entry wait missed reservations still settling;
+  - rotation dropped synchronous ownership too early, admitted in two clusters
+    at once, and left a funding gap;
+  - recovery could charge a refunded request;
+  - late terminals after retirement could book twice;
+  - replays needed the raw nonce;
+  - expiry events and old claims had no rule;
+  - funded workspaces got 402 while their funds sat in escrow.
+
+  v7 answers them:
+  - Capped keys stay synchronous, and the key ledger is gone.
+  - The reaper acts only after a probe published under the authorization's
+    ordering key comes back, and takes deadlines from every signed heartbeat.
+    A heartbeat is `accepted` only if its publish was acknowledged before its
+    deadline.
+  - Entry waits on a scan of Python's idempotency index.
+  - Rotation publishes the new cluster only after the old one is closed,
+    carries synchronous claims while Python holds their scopes, and pre-funds
+    the new cluster.
+  - Recovery books the cheapest logged terminal.
+  - Retired clusters answer `already_terminal`.
+  - Replays rebuild the envelope only for the same nonce.
+  - `two_phase_expired` always ends a chain, and claims expire with today's
+    retention.
+  - Python answers 503, not 402, while funds sit in escrow.
