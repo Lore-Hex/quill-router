@@ -358,7 +358,15 @@ elif argv[:3] == ["compute", "instances", "add-metadata"]:
     if state.get("slow_add_metadata"):
         (root / "add-metadata-started").write_text(name)
         import time
-        time.sleep(float(state["slow_add_metadata"]))
+        if state["slow_add_metadata"] == "until_released":
+            # Block until the test releases the write, so a signal it sends
+            # meanwhile always lands while the write is in flight.
+            release = root / "add-metadata-release"
+            deadline = time.monotonic() + 120
+            while not release.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+        else:
+            time.sleep(float(state["slow_add_metadata"]))
         state = json.loads(state_file.read_text())
     state[name]["role"] = value
     state_file.write_text(json.dumps(state))
@@ -928,7 +936,9 @@ def test_an_interrupted_run_finishes_its_write_and_keeps_the_lock(tmp_path: Path
     (fake / "gcloud").write_text(FAKE_GCLOUD)
     (fake / "gcloud").chmod(0o755)
     state = {name: {"role": roles[name], "status": "RUNNING"} for name in roles}
-    state["slow_add_metadata"] = 3  # type: ignore[assignment]
+    # Held until released below: a fixed sleep let a loaded machine finish the
+    # whole takeover before the signal was sent.
+    state["slow_add_metadata"] = "until_released"  # type: ignore[assignment]
     (fake / "instances.json").write_text(json.dumps(state))
     (fake / "gcloud.jsonl").write_text("")
     process = subprocess.Popen(  # noqa: S603 - fixed script under test
@@ -944,6 +954,7 @@ def test_an_interrupted_run_finishes_its_write_and_keeps_the_lock(tmp_path: Path
         time.sleep(0.05)
     assert started.exists()
     process.send_signal(getattr(signal, signal_name))  # while the first role write is in flight
+    (fake / "add-metadata-release").write_text("")
     _, stderr = process.communicate(timeout=60)
 
     final = json.loads((fake / "instances.json").read_text())
