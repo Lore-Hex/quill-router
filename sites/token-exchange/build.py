@@ -128,6 +128,8 @@ def build(output: Path) -> None:
     ).hexdigest()[:12]
     for name in ("exchange.css", "exchange.js", "live-evidence.js"):
         shutil.copyfile(HERE / name, assets / name)
+    for art in sorted((HERE / "art").glob("trustedrouter-landscape-*")):
+        shutil.copyfile(art, assets / art.name)
     static = ROOT / "src/trusted_router/static"
     for source, target in {
         "enterprise/token-exchange-hero.webp": "exchange.webp",

@@ -38,11 +38,23 @@
   </header>
   <main id="main">
     <section class="hero">
+      <picture class="hero-picture"><source type="image/avif" srcset="/assets/trustedrouter-landscape-768.avif 768w, /assets/trustedrouter-landscape-1152.avif 1152w, /assets/trustedrouter-landscape-1536.avif 1536w" sizes="100vw"><img class="hero-image" src="/assets/trustedrouter-landscape-1536.webp" srcset="/assets/trustedrouter-landscape-768.webp 768w, /assets/trustedrouter-landscape-1152.webp 1152w, /assets/trustedrouter-landscape-1536.webp 1536w" sizes="100vw" width="1536" height="1024" alt="" decoding="async" fetchpriority="high"></picture>
       <div class="shell hero-copy">
         <p class="hero-values">Secure <span aria-hidden="true">·</span> Smart <span aria-hidden="true">·</span> Scalable <span aria-hidden="true">·</span> Savings</p>
         <h1>$hero_headline</h1>
         <p class="lead">$lead</p>
         <div class="actions"><a class="button primary" data-attribution href="$buyer_url">Request an allocation</a><a class="button secondary" href="https://trustedrouter.com/trust">Verify a live route</a></div>
+      </div>
+      <div class="hero-providers">
+        <p>Providers on TrustedRouter</p>
+        <div class="hero-provider-row">
+          <a href="https://trustedrouter.com/providers"><img src="/assets/provider-openai.png" width="32" height="32" alt=""><span>OpenAI</span></a>
+          <a href="https://trustedrouter.com/providers"><img src="/assets/provider-anthropic.png" width="32" height="32" alt=""><span>Anthropic</span></a>
+          <a href="https://trustedrouter.com/providers"><img src="/assets/provider-mistral.png" width="32" height="32" alt=""><span>Mistral</span></a>
+          <a href="https://trustedrouter.com/providers"><img src="/assets/provider-google-vertex.png" width="32" height="32" alt=""><span>Google Vertex AI</span></a>
+          <a href="https://trustedrouter.com/providers"><img src="/assets/provider-deepseek.png" width="32" height="32" alt=""><span>DeepSeek</span></a>
+          <a href="https://trustedrouter.com/providers"><img src="/assets/provider-grok.png" width="32" height="32" alt=""><span>xAI</span></a>
+        </div>
       </div>
     </section>
     <section class="market-band"><div class="shell section"><p class="eyebrow">Workload priorities</p><div class="market-intro"><h2>$focus</h2></div><div class="columns sectors">$sectors</div></div></section>
@@ -50,15 +62,6 @@
       <div class="section-intro"><p class="eyebrow">How the exchange works</p><h2>$buyer_heading</h2><p>$buyer_copy</p><a class="button primary pilot-action" data-attribution href="$buyer_url">Plan an enterprise pilot</a></div>
       <ol class="exchange-steps"><li>Plan capacity for your workload</li><li>Route through pre-approved providers</li><li>Review attestation evidence</li></ol>
       $catalogue
-      <div class="provider-strip">
-        <p>Providers on TrustedRouter</p>
-        <a href="https://trustedrouter.com/providers"><img src="/assets/provider-openai.png" width="32" height="32" alt=""><span>OpenAI</span></a>
-        <a href="https://trustedrouter.com/providers"><img src="/assets/provider-anthropic.png" width="32" height="32" alt=""><span>Anthropic</span></a>
-        <a href="https://trustedrouter.com/providers"><img src="/assets/provider-mistral.png" width="32" height="32" alt=""><span>Mistral</span></a>
-        <a href="https://trustedrouter.com/providers"><img src="/assets/provider-google-vertex.png" width="32" height="32" alt=""><span>Google Vertex AI</span></a>
-        <a href="https://trustedrouter.com/providers"><img src="/assets/provider-deepseek.png" width="32" height="32" alt=""><span>DeepSeek</span></a>
-        <a href="https://trustedrouter.com/providers"><img src="/assets/provider-grok.png" width="32" height="32" alt=""><span>xAI</span></a>
-      </div>
     </section>
 
     <section class="privacy-band"><div class="shell section"><div class="trust-intro"><h2>A market needs <span class="headline-accent">trust.</span></h2><p class="trust-copy">TrustedRouter does not keep prompt or output logs. Zero data retention is a provider policy, separate from confidential inference. Review provider retention and attestation evidence for your route.</p><a class="button secondary trust-action" href="https://trustedrouter.com/trust">Review the trust center</a></div>$regional_health</div></section>

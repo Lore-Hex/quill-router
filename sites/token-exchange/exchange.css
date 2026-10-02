@@ -514,3 +514,31 @@ h3,.privacy-choice h3,.review-resources h3,.uptime-panel figcaption,.attestation
  .trust-evidence:has([data-live-services]:empty):has([data-live-attestation]:empty)>.catalogue{grid-column:1/-1}
  .trust-evidence:has([data-live-services]:empty):has([data-live-attestation]:empty) .privacy-comparison{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 }
+
+/* Hero follows the TrustedRouter homepage: its landscape photograph, copy at the top,
+   providers along the bottom, the same page black, header and secondary button. */
+:root{--bg:#050706;--text:#edf8f5}
+.masthead{background:#050706;backdrop-filter:none}
+.masthead::after{display:none}
+.secondary{background:#0b1814b3;color:#d4ecff;border-color:#8cab99;box-shadow:none}
+.secondary:hover{background:#13261f;border-color:#a9c7b6;color:#fff}
+.hero{flex-direction:column;align-items:stretch;background:#050706}
+.hero::before,.hero::after{display:none;animation:none}
+.hero-picture{position:absolute;inset:0;z-index:-1;pointer-events:none}
+.hero-image{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:50% 62%}
+.hero-copy{flex:1 0 auto;min-height:0;justify-content:flex-start;padding-block:clamp(40px,6svh,76px) 24px}
+.hero .lead{margin:24px auto 28px}
+.hero-copy .actions{margin-top:0}
+.hero-values{display:block}
+.hero-providers{position:relative;z-index:1;width:100%;padding:16px 24px 20px;background:linear-gradient(#05070600,#05070699 30%,#05070699 70%,#05070600)}
+.hero-providers p{margin:0 0 10px;text-align:center;font-size:12px;line-height:1.6;color:var(--muted)}
+.hero-provider-row{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:10px 36px}
+.hero-provider-row a{flex:0 0 auto;display:inline-flex;align-items:center;gap:10px;min-height:32px;font-size:15px;color:var(--text);text-decoration:none;white-space:nowrap}
+.hero-provider-row a:hover{color:var(--mint)}
+.hero-provider-row img{width:26px;height:26px;object-fit:contain}
+@media(max-width:600px){
+ .hero-copy{padding-block:40px 24px}
+ .hero-providers{padding-inline:0}
+ .hero-provider-row{flex-wrap:nowrap;justify-content:flex-start;gap:24px;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none;padding-inline:22px;mask-image:linear-gradient(90deg,#000 88%,transparent)}
+ .hero-provider-row::after{content:"";flex:0 0 1px}
+}
