@@ -1,10 +1,10 @@
 # Fast admission and batched settlement
 
-Status: **proposed, v5, 2026-10-02. Nothing built.** Codex and Fable have
-reviewed four versions (§11). Joseph's decisions are in §2. **One decision is
-still open: the per-request store (§2).** v5 found that a TigerBeetle cluster
-fills in days at this volume, so clusters must rotate (§4.13). That bears on the
-decision.
+Status: **proposed, v6, 2026-10-02. Nothing built.** Codex and Fable have
+reviewed five versions (§11). Joseph's decisions are in §2. **One decision is
+still open: the per-request store (§2).** Since v5 the design has known that a
+TigerBeetle cluster fills in days at this volume, so clusters must rotate
+(§4.13). That bears on the decision.
 
 This is the plan for reaching 100T tokens a month without spending the routing
 margin on the billing database, and for taking the control plane out of request
@@ -131,7 +131,7 @@ currency-exchange recipe.
 |---|---|---|
 | Money | per workspace-region: Budget (`debits_must_not_exceed_credits`), Sink, Overdraft, Pool | escrow, charges, debt, grants and returns |
 | Keys | per capped key and region: the same four | lifetime caps |
-| Control | per workspace: Gate. Per region: ScopeClaims and AdmitSink, TerminalClaims and TerminalSink | scope claims, the admission gate, terminal claims |
+| Control | per workspace: Gate. Per region: ScopeClaims and AdmitSink, GateSink, TerminalClaims and TerminalSink | scope claims, the admission gate, terminal claims |
 
 - **Only Budget accounts carry a balance flag.** On the others, `exceeds_*`
   cannot happen, so it can never permanently burn a deterministic ID.
@@ -155,8 +155,19 @@ currency-exchange recipe.
 | return | `R = H(workspace, region, fence)`, and `H(R, repay)` for its repay leg |
 
 A retry rebuilds the same IDs, so a lost response never applies a leg twice.
-That holds whether or not `exists` stops a linked chain, which the documentation
-does not say (§8 tests it).
+TigerBeetle's state machine ends a linked chain at the first result other than
+`created`, `exists` included: the chain commits nothing, and only a transiently
+failed ID burns. Every multi-leg operation here is therefore one chain whose
+head leg answers `exists` exactly when the whole chain committed before:
+
+- the scope claim, or `H(A, gate)` without one;
+- `H(A, settle)`, `H(A, refund)` or `H(A, reap)`;
+- `H(A, terminal)`;
+- `H(R, repay)`;
+- a grant's ID.
+
+A retry that meets `exists` there reads the committed outcome. §8 keeps a test
+of this for each release.
 
 **Codes.** Holds have code 1. A post or void must carry its pending transfer's
 code, or zero
@@ -171,8 +182,8 @@ snapshot version in `user_data_32`. Other legs carry `A` in `user_data_128`.
 
 - **0.16.0:** balancing transfers may move zero, and a post of amount 0 posts
   zero. Single-phase amounts may also be zero.
-- **0.16.4 (client):** an ID that failed with a transient error stays failed.
-  Ownership (§4.3) depends on it.
+- **0.16.4:** an ID that failed with a transient error stays failed. Ownership
+  (§4.3) depends on it.
 - **0.16.43 (cluster):** the CDC job
   ([requirements](https://docs.tigerbeetle.com/operating/cdc/)).
 
@@ -212,8 +223,10 @@ That averages about 4.5.
   transfers, or about 125 TiB a month across regions.
 - **A region carrying half the traffic** fills 16 TiB in about 8 days.
 
-Clusters therefore rotate (§4.13). The spike measures bytes per transfer and the
-largest data file the chosen machine and file system support.
+Clusters therefore rotate (§4.13). The data file is also bounded by the
+machine's local SSD, about 9 to 36 TB per VM depending on the GCP machine
+family. The spike measures bytes per transfer and the largest data file the
+chosen machine and file system support.
 
 **Gate before production:** benchmark the whole path, including chains, key
 legs, the change stream and a rotation, on the real VM and disk shape. One
@@ -240,13 +253,18 @@ home region's control ledger.
   it.
 - **The authorization ID** is `A = H(scope, nonce)`. The nonce identifies one
   gateway invocation, and the gateway retries with the same bytes, nonce and
-  key:
-  - a claim carrying the caller's own `A` is the same invocation, which never
-    acted on the lost answer, so the service re-signs the envelope against the
-    hold's snapshot version;
-  - a claim carrying another `A` belongs to another invocation, and the answer
-    is 409 `idempotency_replay`, as today. A different fingerprint is a 409
-    too.
+  key.
+- **Replays answer as today** (`routes/internal/gateway.py:1379-1385`). A
+  request that finds the scope's fast claim reads hold `A` from it:
+  - same fingerprint: the original envelope, re-signed against the hold's
+    snapshot version and marked `idempotent_replay` with the original nonce.
+    The gateway applies its nonce rule to that answer, as it does now;
+  - different fingerprint: 409.
+
+  A synchronous claim pins the scope to Python for the retention period. Every
+  request for it is forwarded, and Python's own idempotency decides. A request
+  Python rejected leaves the scope free to retry there, as today, and no fast
+  claim can compete for it.
 - **Failed attempts burn only their own invocation's IDs** (`A`, `H(A, gate)`
   and so on). That invocation's retries fail the same way. A new invocation has
   a new nonce, a new `A` and a clean chain. There is no attempt counter, so no
@@ -259,36 +277,37 @@ home region's control ledger.
   into `reserved`, which synchronous reservations cannot use, so a stale
   synchronous worker cannot spend regional escrow.
 
-**Workspace modes.** A Spanner row per workspace holds its mode, its epoch and
-`front_door_until`. Python's authorize transaction reads that row, so its check
-is atomic with its reservation. A transaction that read the old mode commits
-before the change or aborts.
+**Workspace modes.** A Spanner row per workspace holds its mode and
+`front_door_until`. Python's authorize transaction checks it with a predicate in
+its conditional DML. The check is then atomic with the reservation, and the
+transaction stays DML-only and never reads `tr_key_limit`. A transaction that
+read the old mode commits before the change or aborts.
 
-| Mode | Gate | Python, keyed requests |
+| Mode | Unkeyed requests | Keyed requests |
 |---|---|---|
-| synchronous, `front_door_until` passed or never set | closed | accepted, as today |
-| migrating | closed | refused with 503 |
-| fast | open | accepted only with the front door's signature over a synchronous claim |
-| synchronous, `front_door_until` ahead | closed | accepted only with that signature |
+| synchronous | Python | Python, as today |
+| front door | fast path | the front door writes a synchronous claim; Python accepts only with the front door's signature over it |
+| fast | fast path | fast path, claimed |
+| leaving (`front_door_until` ahead) | Python | as in front-door mode |
+
+The gate is open in front-door and fast modes and closed otherwise.
 
 **Transitions:**
 
-- **Into fast mode:**
-  1. Set `migrating` and an unbounded `front_door_until` in one commit. Keyed
-     requests now get 503; unkeyed ones keep the synchronous path.
-  2. Wait out the front doors' maximum state age.
-  3. Backfill: write each of the workspace's retained keyed scopes (the last 30
-     days of reservations, read through an index by workspace) as a synchronous
-     claim. A reservation that committed before step 1 is visible to this read;
-     one that did not was refused.
-  4. Open the gate and set `fast`.
+- **Into fast mode,** in two steps and with no backfill:
+  1. Set `front door`. Unkeyed requests take the fast path at once. From then
+     on, Python refuses a keyed request that carries no signature, so a front
+     door still on the old mode is refused and refreshes.
+  2. Wait out the reservations' 30-day retention, Spanner's deletion lag of up
+     to 72 hours, and the longest hold. By then every keyed scope Python
+     accepted before step 1 has left Spanner, as it would have today, so no
+     scope can be replayed into a second execution. Set `fast`.
 - **Out of fast mode** (pause, revoke, trust downgrade, or a switch): close the
-  gate (§4.7), then set `synchronous` with `front_door_until` 30 days plus the
+  gate (§4.7), then set `leaving` with `front_door_until` 30 days plus the
   longest hold ahead. Until then keyed requests still pass the front door, so
   replays of fast scopes find their claims.
-- **A home-region move** is those two in sequence: out of fast mode in the old
-  region, then into it in the new region once `front_door_until` has passed.
-  Claims never move between regions.
+- **A home-region move** is the exit, then the entry in the new region once
+  `front_door_until` has passed. Claims never move between regions.
 
 ### 4.4 Authorize
 
@@ -324,6 +343,9 @@ before the change or aborts.
   be behind, or debt was repaid first. A keyed request gets 503 with
   `Retry-After`; an unkeyed one takes the synchronous path. The answer is 402
   only when Spanner's balance cannot cover the estimate.
+- **`exceeds_credits` on the key hold** is answered the same way, except that
+  when Spanner shows the key's cap exhausted the answer is the key-limit error
+  that synchronous requests get today.
 - **A closed gate or admission sink** sends the service to refresh the
   workspace's mode and the region's cluster (§4.13), then route again.
 - **A lost authorize response** is covered by §4.3: the retry rebuilds the same
@@ -336,11 +358,14 @@ first** (§4.9). Only then does it touch the ledger.
 
 **Times.**
 
-- **Deadline:** today's rule, capped at 2 h 15 min. That is two hours after
-  admission, or 300 s after the latest heartbeat if that is later.
-- **End of life:** the gateway ends a stream still running at 2 h 15 min. Today
-  renewal is open-ended. The shadow phase checks the cap against the longest
-  real streams.
+- **End of life:** the gateway ends a stream still running at 2 h 15 min, and
+  settles it. Today renewal is open-ended. The shadow phase checks the cap
+  against the longest real streams.
+- **Deadline:** today's rule, capped at 2 h 20 min. That is two hours after
+  admission, or 300 s after the latest accepted heartbeat if that is later.
+- **The reaper acts at the deadline plus 60 s at the earliest** (below). A
+  stream ended at its end of life therefore has more than five minutes to
+  settle first.
 - **The ledger timeout T** is 2 h 30 min. It is only a backstop for a reaper
   that is down: before it fires, every hold has been resolved by a terminal or
   by the reaper.
@@ -373,6 +398,7 @@ request.
 | Result on the post or void | Meaning | Action |
 |---|---|---|
 | `exists` | a retry of the same resolution | read the committed outcome |
+| `exists_with_different_*` | the same resolution committed with other values, such as an amount | read the committed outcome |
 | `pending_transfer_already_posted` or `pending_transfer_already_voided` | another resolution won | look up `H(A, settle)`, `H(A, refund)` and `H(A, reap)`, and report the one that exists |
 | `pending_transfer_expired` | the backstop fired | use the rows below |
 
@@ -405,7 +431,10 @@ nothing is ever reversed.
    endpoint pin, and a running charge within the hold;
 2. is published to the settle log under `A`;
 3. is answered only after the publish is acknowledged:
-   - `accepted`, with the deadline;
+   - `accepted`, with the new deadline, signed. The next heartbeat echoes it,
+     and one that arrives within 30 s of its echoed deadline, or after it, is
+     answered `deadline_passed` instead: the gateway stops and settles, and
+     that settle may lose to the reaper, as a late heartbeat can lose today;
    - `already_terminal`, when one batched lookup finds a resolution or a
      terminal claim;
    - `hold_expired`, past the end of life. The gateway then stops the stream
@@ -418,10 +447,30 @@ hash, token counts and running charge. So an altered payload under an accepted
 sequence number is ignored, whichever admission node took it. The archived
 change stream tells it when holds open and resolve.
 
-**The reaper resolves every hold still open at its deadline.** It writes its
-intent (`A`, snapshot s) to the settle log, then posts or voids the hold,
-racing any settle or refund through the hold itself. Its state is checkpointed
-with its log and stream positions, and rebuilt by replay after a restart.
+**The reaper resolves the holds of silent gateways.** It consumes everything the
+log holds for an authorization: heartbeats, settles and refunds.
+
+- **It acts on a hold at its deadline plus 60 s, never earlier.** Even then it
+  acts only while every message published before the deadline has been
+  consumed: its subscription's oldest unacknowledged message must be younger
+  than 60 s, and a stalled ordering key counts. Every accepted heartbeat was
+  published at least 30 s before its deadline, so the reaper has seen it, and
+  every durable terminal intent published in time.
+- **It never reaps an authorization with a durable settle or refund intent.**
+  It completes that intent instead, as today's reaper guards pending intents
+  (`storage_gcp_authorize.py:1373`).
+- **Otherwise it writes its intent** (`A`, snapshot s) to the log, then posts
+  the hold for s, or voids it when s is 0. Any settle or refund races it
+  through the hold itself.
+- **When it falls behind, it pauses and alerts.** Holds then reach the
+  backstop, and their settles book a in full through the rows above. A slow
+  log never turns a live stream's tail into a free one.
+- **Heartbeats and terminals go to the region the envelope names,** wherever
+  the gateway runs. The reaper's checks rely on sequence numbers, not on
+  ordering keys.
+- **Its state is checkpointed** with its log and stream positions. After a
+  restart it is rebuilt by replay, which needs retained acknowledged messages
+  and seek on the subscription.
 
 ### 4.6 Keys
 
@@ -450,6 +499,12 @@ their own Sink, so a charge is never counted twice.
 
   Requests already admitted when the cap was added settle in full and may pass
   the cap, as they can today.
+- **Lowering a capped key's cap.** The cap update returns the key's free budget
+  in every region, one balancing return each, before it answers. No admission
+  can then draw on the old allowance. A region it cannot reach keeps its old
+  allowance until that region's sweeper returns it, and that window is the
+  stated exposure. After the next fence the sweeper regrants from the new cap,
+  as for any grant.
 - **Window-limited and `budget_strict` keys stay synchronous.**
 
 ### 4.7 Budget: grants, returns, rollups and gates
@@ -462,6 +517,17 @@ workspace's balances at t are those carried by the last archived event at or
 before t that touched each account. They are exact and consistent with each
 other, and everything before t is archived by construction.
 
+The archive writer keeps a checkpointed view of each account's latest archived
+balances, and of the timestamp up to which the archive is complete. Balances are
+absolute, so a duplicate delivery changes nothing. Rollups read that view and
+never scan the stream.
+
+**Fences fall only at chain ends.** Every event of a linked chain except the
+last carries `flags.linked`, and a chain's events are consecutive. The archive's
+completion timestamp therefore advances only past an event without the flag. A
+fence or a recovery cut never splits a chain, so a terminal's post and its
+overrun legs, money and key, are archived together or not at all.
+
 | Delta since the last fence | Definition |
 |---|---|
 | charges ΔC | the Sink's credits |
@@ -471,17 +537,23 @@ other, and everything before t is archived by construction.
 
 One Spanner transaction, conditional on the stored fence, then:
 
-- applies `total_usage += ΔC` on the shard of the oldest open grant row, or
-  shard 0 if none is open;
-- applies `reserved −= (ΔC − ΔO) + ΔR` across open grant rows, oldest first; a
-  row that reaches zero closes;
+- drains the escrow consumed, ΔC − ΔO, across open grant rows oldest first.
+  On each drained row's shard it applies `total_usage += y` and
+  `reserved −= y`, so that shard's headroom is unchanged;
+- books the signed ΔO to `total_usage` on shard 0. New debt lowers shard 0's
+  headroom, as an overrun lowers its shard's headroom today, and a repayment
+  restores it. No other shard's bound moves, so Python cannot spend headroom
+  that charges already used;
+- drains ΔR across open rows oldest first, releasing `reserved` on their
+  shards;
+- closes any row that reaches zero;
 - marks grant rows landed through ΔG;
 - applies today's recovery-debt absorption to returned funds;
 - books uncapped keys' usage;
 - moves the fence to t.
 
-A replay of the same fence is a no-op. Neither ΔC − ΔO nor ΔR is ever negative,
-so rows only drain:
+A replay of the same fence is a no-op. Between two chain-end fences, neither
+ΔC − ΔO nor ΔR is ever negative, so rows only drain:
 
 - nothing reverses a charge (§4.5);
 - a repayment raises consumption;
@@ -515,8 +587,9 @@ Every term is exact.
 
 **Pause, revoke, trust downgrade, and a switch out of fast mode:**
 
-- Close the gate with a pending `closing_debit` transfer on Gate: zero amount,
-  timeout 0, ID per epoch. New admissions fail at once.
+- Close the gate with a pending `closing_debit` transfer from Gate to GateSink:
+  zero amount, timeout 0, ID per epoch. New admissions fail at once. Its credit
+  side is not AdmitSink, so a rotation that closes AdmitSink never touches it.
 - Sweep free funds back with returns.
 - Reopen by voiding the closing transfer.
 
@@ -540,16 +613,24 @@ non-negative. The extra exposure is at most the open holds, and it is alerted.
 - **Losing a region's ledger:**
   1. Declare the loss and stop that region's admission.
   2. Roll up to the archive's last event, t_a, so everything archived is booked.
-     Then release each workspace's remaining `reserved` in the region. That
-     includes open holds.
+     Then release each workspace's remaining `reserved` in the region, except
+     what open holds account for. That part stays reserved until their
+     terminals are booked or their deadlines pass, as in home settlement
+     (§4.7).
   3. Book the rest from the settle log through the synchronous path, claimed in
      Spanner by `A`, so each is booked once. That covers every settle, refund
      and reaper intent whose terminal is not in the archive:
      - a settle books a in full, since nothing is charged before a terminal;
      - a refund books nothing;
+     - when an authorization has both a gateway intent and a reaper intent,
+       the gateway's settle or refund wins, the first logged if there are two.
+       The lost ledger may have let the reaper win; recovery then books the
+       settle's actual cost rather than the snapshot. That difference is
+       stated as part of the loss;
      - the reaper books its snapshot, and finishes open authorizations from its
        state, rebuilt from the log and the archive if the region took it too.
-  4. Answer replays of archived scope claims from the archive.
+  4. Seed the replacement cluster's scope claims from the archive, so replays
+     find them on the request path.
 
   Only keyed scopes claimed after t_a are unknown. They may execute again if
   replayed, and that window, bounded by the archive-lag gate, is the stated
@@ -563,7 +644,8 @@ non-negative. The extra exposure is at most the open holds, and it is alerted.
     `intent_durable`, an existing disposition the gateway treats as success.
   - A recovery worker completes these intents from the log. The hold's single
     resolution, or the terminal claim, makes completion exactly-once.
-  - Heartbeats are consumed only by the reaper.
+  - Heartbeats are consumed only by the reaper, which also reads settle and
+    refund intents so that it never reaps over one (§4.5).
 - **Records.** One consumer joins the log with the archived ledger events.
   - It writes each authorization's record once, from the winning terminal.
     Duplicate events are idempotent on `A` and cannot change the winner.
@@ -621,29 +703,45 @@ Load Balancer:
 Each region retires a cluster before its data file fills (§4.2):
 
 1. **Prepare.** Format the next cluster and create its control accounts. The
-   sweeper creates each active workspace's accounts there and grants its
-   budgets, so admissions find funds on arrival.
+   sweeper creates each active workspace's accounts there, and grants budgets
+   where Spanner headroom allows.
 2. **Switch.** The sweeper closes the old cluster's AdmitSink with a pending
    closing transfer.
    - From that commit, no gate leg or scope claim succeeds there, so nothing new
      is admitted.
    - Admission nodes move to the new cluster on that failure or on their
      configuration, whichever comes first.
-   - Terminal claims use their own accounts, so late terminals still work.
-3. **Carry the claims.** The sweeper copies the old cluster's scope claims from
-   the last 30 days into the new one. Each copy keeps its code and `A`, and
-   records the old cluster.
+   - The sweeper then returns the old cluster's free funds, and grants the new
+     cluster from the headroom that releases. Until then a workspace short of
+     headroom sees a regional shortfall (§4.4).
+   - Terminal claims and gate closings use their own accounts, so late
+     terminals and pauses still work there.
+3. **Carry the claims.** The sweeper copies the old cluster's scope claims whose
+   original time is within the last 30 days into the new cluster.
+   - Each copy keeps its code and `A`, records the old cluster, and carries the
+     original time in `user_data_64`, so later rotations count 30 days from the
+     first claim, not from the copy.
+   - The copy's size is the keyed share of traffic times 30 days. The shadow
+     phase measures that share.
    - Until the copy finishes, the front door looks a scope up in the new
-     cluster, then in the old one.
-   - The old cluster's claims cannot change after step 2, so that order is safe.
+     cluster, then in the old one. The old cluster's claims cannot change after
+     step 2, so that order is safe.
 4. **Drain.** Holds in the old cluster settle there; the envelope names the
    cluster.
    - The reaper resolves the rest by their deadlines.
    - The sweeper keeps rolling up and returning there until no hold is open,
      then runs a final rollup, and Spanner releases what remains.
-5. **Retire** the old cluster once the archive holds its last event. Replays of
-   carried scopes whose authorization lived there are answered from the
-   archive.
+5. **Retire** the old cluster once every authorization admitted there has a
+   terminal there and the archive holds its last event.
+   - A terminal means a resolution of the hold, or a terminal claim after the
+     backstop. Zero open holds is not enough: a backstop-expired hold may still
+     wait for its settle.
+   - The recovery worker and the reaper finish those first. The sweeper counts
+     open authorizations from the archive view.
+   - A late terminal for one of its authorizations goes through the synchronous
+     path, claimed in Spanner by `A`.
+   - A replay whose carried claim points at it is answered from the archive's
+     record of the hold. That path is slow, and rare.
 
 Two clusters run in a region only during a drain: about T, plus the copy.
 
@@ -658,8 +756,10 @@ Each has a production check.
 3. **One terminal per authorization.** The hold resolves once; after a backstop
    expiry, the terminal claim decides. The loser answers with the winner's
    outcome.
-4. **No charge lost.** Intents are durable before any ledger change, and the
-   reaper books the snapshot of every hold its gateway abandoned.
+4. **No charge lost.** Intents are durable before any ledger change. The reaper
+   books the snapshot of every hold its gateway abandoned, acts only while it
+   has consumed the log up to the deadline, and never reaps an authorization
+   with a durable settle or refund intent.
 5. **No charge invented.** Only boot-signed settles, and the reaper's snapshots
    of validated heartbeats, post. Nothing reverses a charge.
 6. **Debt.** Charges beyond free budget become debt. Admissions and returns
@@ -669,18 +769,24 @@ Each has a production check.
    admission, or before Python sees the request. Python's acceptance is atomic
    with the workspace's mode. Ambiguity answers 503.
 8. **Key caps.** Key budgets plus synchronous key holds never exceed the cap.
+   Lowering a cap returns the old allowance before the change answers.
    Overruns, and requests in flight when a cap is added, may pass it, as today.
 9. **Pauses** close the gate at once. No admission runs on state older than its
    maximum age.
 10. **Returns** move only free funds, after repaying debt. Spanner releases them
     only from archived counters.
-11. **Rollups** are monotone, fenced at archived timestamps, and drain grant rows
-    oldest first.
-12. **Archive completeness.** Rollups and recovery read only archived events.
+11. **Rollups** are monotone, fenced at archived chain ends, and drain grant rows
+    oldest first. Every shard's headroom is unchanged by them, except shard 0's
+    by outstanding debt.
+12. **Archive completeness.** Rollups and recovery read only archived events,
+    and never a partial chain.
 13. **Loss bound.** Admission stops when the archive lags past its bound. Loss is
-    at most the keyed scopes claimed in that window.
+    at most the keyed scopes claimed in that window. Beyond that, an
+    authorization whose terminal was not archived may be booked at its settle's
+    actual cost where the lost ledger chose the reaper's snapshot.
 14. **Records.** Every terminal has one record within the records bound.
-15. **Growth.** A cluster rotates before its data file fills.
+15. **Growth.** A cluster rotates before its data file fills, and retires only
+    when every authorization admitted there has a terminal.
 16. **Latency** is stated as percentiles. Excursions take the documented
     fallback or a 503.
 
@@ -729,7 +835,8 @@ and was retired on 2026-09-27.
 4. **Shadow.** Gateways mirror authorize, heartbeat and settle. A comparator
    reports any difference from Python in decisions, holds, per-authorization
    charges, reaper outcomes and records. The phase also measures the longest
-   streams against the end of life (§4.5).
+   streams against the end of life (§4.5), and the keyed share of traffic
+   (§4.13).
 5. **Benchmark gate** (§6).
 6. **Pilot:** Joseph's own workspace, then a few large ones, with kill switches
    per workspace, region and cloud.
@@ -740,9 +847,10 @@ and was retired on 2026-09-27.
 
 - **The per-request store** (§2).
 - **Tuning values:** grant sizing and cooldown, the rollup interval, the
-  archive-lag bound, the maximum state age, the uncapped-key revocation window,
-  the end of life and the rotation threshold. They come from the spike, the
-  benchmark and the pilot.
+  archive-lag bound, the reaper's log-lag bound, the maximum state age, the
+  uncapped-key revocation window, the end of life and the rotation threshold.
+  They come from the spike, the benchmark and the pilot.
+- **The keyed share of traffic,** which sizes each rotation's claim copy (§4.13).
 - **Home-region assignment** for workspaces whose traffic moves between
   continents.
 
@@ -819,3 +927,36 @@ record.
   - Every leg has a deterministic ID, versions are pinned, and clusters rotate.
 
   One correction to v4: from 0.16.0, single-phase amounts may be zero.
+- **v6.** Codex (8 P1, 1 P2) and Fable (1 P1, 6 P2, 7 P3) found these problems
+  in v5:
+  - the reaper could act on a stale view of the log, reaping live streams,
+    acknowledged renewals, durable settles and the final settle at the end of
+    life;
+  - one shard took all usage while reservations drained elsewhere, so Python
+    could spend headroom twice;
+  - an archive cut could split a linked chain;
+  - lowering a cap left the old allowance spendable;
+  - a terminal winner that was never archived could not be rebuilt;
+  - a cluster could retire with expired, unsettled holds;
+  - entering fast mode needed an unindexed backfill and a keyed outage;
+  - replays were answered 409 where today returns the original;
+  - and the rotation's copy, grants, sinks and reader were underspecified.
+
+  v6 answers them:
+  - The reaper consumes the whole log, acts only at the deadline plus 60 s and
+    while current, and completes durable intents instead of reaping them.
+    Heartbeats carry signed deadlines.
+  - Matched shard allocation, with debt booked on shard 0.
+  - Fences only at chain ends.
+  - Lowering a cap returns the old allowance first.
+  - Recovery prefers the gateway's intent when no terminal was archived.
+  - Retirement waits for a terminal per authorization.
+  - Entry is a front-door phase with no backfill: unkeyed requests are fast at
+    once, and keyed requests after the retention period.
+  - Replays answer as today.
+  - Rotation copies claims with their original time, and returns the old
+    cluster's funds before granting. The gate closes against its own sink.
+  - Rollups read the archive writer's balance view.
+
+  TigerBeetle's state machine confirms that `exists` ends a linked chain;
+  §4.2 now relies on that rather than leaving it open.
