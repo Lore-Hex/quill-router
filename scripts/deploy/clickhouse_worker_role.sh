@@ -34,6 +34,8 @@ PROJECT="${PROJECT:-quill-cloud-proxy}"
 ROLE_DIR="scripts/deploy/clickhouse-worker-role"
 # shellcheck source=scripts/deploy/_clickhouse_bundle.sh
 source "${SCRIPT_DIR}/_clickhouse_bundle.sh"
+# shellcheck source=scripts/deploy/_clickhouse_publisher.sh
+source "${SCRIPT_DIR}/_clickhouse_publisher.sh"
 NODES=(
   "tr-clickhouse-1:us-central1-a"
   "tr-clickhouse-2:us-central1-b"
@@ -53,7 +55,6 @@ TO=""
 NODE=""
 FROM=""
 FROM_UNREACHABLE=0
-LOCK="${TR_CLICKHOUSE_ROLE_LOCK:-gs://tr-deploy-mutex-quill-cloud-proxy/locks/clickhouse-worker-role.json}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --apply) APPLY=1 ;;
@@ -156,25 +157,9 @@ role_for() {
   return 1
 }
 
-# One role change at a time: a create-only lock object, held until exit.
-take_lock() {
-  local body generation
-  body="$(mktemp "${TMPDIR:-/tmp}/tr-clickhouse-role-lock.XXXXXX")"
-  printf '{"command":"%s","owner":"%s","started_at":"%s"}\n' \
-    "$command" "$(whoami)@$(hostname)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$body"
-  if ! gcloud storage cp "$body" "$LOCK" --if-generation-match=0 >/dev/null 2>&1; then
-    rm -f "$body"
-    echo "refusing: another role change holds ${LOCK}:" >&2
-    gcloud storage cat "$LOCK" >&2 || true
-    echo "If that run is dead, remove the lock: gcloud storage rm ${LOCK}" >&2
-    exit 1
-  fi
-  rm -f "$body"
-  generation="$(gcloud storage objects describe "$LOCK" --format='value(generation)')"
-  trap 'gcloud storage rm "$LOCK" --if-generation-match='"$generation"' >/dev/null 2>&1 || true; rm -f "$archive"' EXIT
-}
 if [ "$APPLY" -eq 1 ] && [ "$command" != status ]; then
-  take_lock
+  clickhouse_role_lock_take "$command" || exit 1
+  trap 'clickhouse_role_lock_release; rm -f "$archive"' EXIT
 fi
 
 publishers=()
@@ -249,7 +234,11 @@ case "$command" in
     ;;
   takeover)
     zone_of "$TO" >/dev/null || { echo "refusing: --to must name a cluster node" >&2; exit 2; }
-    if [ "${#publishers[@]}" -eq 1 ]; then
+    if [ "${#publishers[@]}" -eq 1 ] && [ "${publishers[0]}" = "$TO" ]; then
+      # Promotion already happened (a retry of a run that failed after it,
+      # resumed with --from or not); start and verify the workers.
+      from="$TO"
+    elif [ "${#publishers[@]}" -eq 1 ]; then
       from="${publishers[0]}"
       if [ -n "$FROM" ] && [ "$FROM" != "$from" ]; then
         echo "refusing: the publisher is ${from}, not ${FROM}" >&2

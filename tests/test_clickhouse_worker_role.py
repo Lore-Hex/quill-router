@@ -355,6 +355,11 @@ if argv[:3] == ["compute", "instances", "describe"]:
         print(json.dumps({"metadata": {"items": items}, "status": node["status"]}))
 elif argv[:3] == ["compute", "instances", "add-metadata"]:
     value = next(arg for arg in argv if arg.startswith("--metadata=")).split("=", 2)[2]
+    if state.get("slow_add_metadata"):
+        (root / "add-metadata-started").write_text(name)
+        import time
+        time.sleep(float(state["slow_add_metadata"]))
+        state = json.loads(state_file.read_text())
     state[name]["role"] = value
     state_file.write_text(json.dumps(state))
 elif argv[:3] == ["compute", "instances", "stop"]:
@@ -395,7 +400,8 @@ def _wrapper(
     repo = tmp_path / "repo"
     (repo / "scripts/deploy").mkdir(parents=True)
     shutil.copy(WRAPPER, repo / "scripts/deploy/clickhouse_worker_role.sh")
-    shutil.copy(ROOT / "scripts/deploy/_clickhouse_bundle.sh", repo / "scripts/deploy/_clickhouse_bundle.sh")
+    for helper in ("_clickhouse_bundle.sh", "_clickhouse_publisher.sh"):
+        shutil.copy(ROOT / "scripts/deploy" / helper, repo / "scripts/deploy" / helper)
     shutil.copytree(ROLE_DIR, repo / "scripts/deploy/clickhouse-worker-role")
     git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.com"]
     subprocess.run([*git, "init", "-q"], check=True)  # noqa: S603
@@ -416,6 +422,8 @@ def _wrapper(
             state["tr-clickhouse-1"]["stop_fails"] = value
         elif key == "describe_fails":
             state[str(value)]["describe_fails"] = True
+        elif key == "slow_add_metadata":
+            state["slow_add_metadata"] = value  # type: ignore[assignment]
         elif key == "lock_held":
             state["lock"] = {"content": '{"owner":"someone@else"}', "generation": 7}  # type: ignore[assignment]
     (fake / "instances.json").write_text(json.dumps(state))
@@ -890,3 +898,121 @@ def test_the_installers_publisher_lookup_fails_closed(
     else:
         assert result.returncode != 0
         assert message in result.stderr
+
+
+# --- review round 2: interruption, installers under the lock, resumed retries ---
+
+
+def test_an_interrupted_run_finishes_its_write_and_keeps_the_lock(tmp_path: Path) -> None:
+    import signal
+    import time
+
+    roles = {"tr-clickhouse-1": "publisher", "tr-clickhouse-2": "standby", "tr-clickhouse-3": "standby"}
+    repo = tmp_path / "repo"
+    (repo / "scripts/deploy").mkdir(parents=True)
+    for name in ("clickhouse_worker_role.sh", "_clickhouse_bundle.sh", "_clickhouse_publisher.sh"):
+        shutil.copy(ROOT / "scripts/deploy" / name, repo / "scripts/deploy" / name)
+    shutil.copytree(ROLE_DIR, repo / "scripts/deploy/clickhouse-worker-role")
+    git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run([*git, "init", "-q"], check=True)  # noqa: S603
+    subprocess.run([*git, "add", "-A"], check=True)  # noqa: S603
+    subprocess.run([*git, "commit", "-q", "-m", "fixture"], check=True)  # noqa: S603
+    fake = tmp_path / "fake"
+    fake.mkdir()
+    (fake / "gcloud").write_text(FAKE_GCLOUD)
+    (fake / "gcloud").chmod(0o755)
+    state = {name: {"role": roles[name], "status": "RUNNING"} for name in roles}
+    state["slow_add_metadata"] = 3  # type: ignore[assignment]
+    (fake / "instances.json").write_text(json.dumps(state))
+    (fake / "gcloud.jsonl").write_text("")
+    process = subprocess.Popen(  # noqa: S603 - fixed script under test
+        [BASH, str(repo / "scripts/deploy/clickhouse_worker_role.sh"), "takeover", "--to", "tr-clickhouse-2", "--apply"],
+        env={"PATH": f"{fake}:{os.environ['PATH']}", "HOME": str(tmp_path), "TMPDIR": str(tmp_path), "FAKE_DIR": str(fake)},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    started = fake / "add-metadata-started"
+    deadline = time.monotonic() + 60
+    while not started.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert started.exists()
+    process.send_signal(signal.SIGTERM)  # while the first role write is in flight
+    _, stderr = process.communicate(timeout=60)
+
+    final = json.loads((fake / "instances.json").read_text())
+    assert process.returncode != 0
+    # The write that was running finished, and nothing after it ran.
+    assert final["tr-clickhouse-1"]["role"] == "standby"
+    assert final["tr-clickhouse-2"]["role"] == "standby"
+    calls = [json.loads(line) for line in (fake / "gcloud.jsonl").read_text().splitlines()]
+    assert not any(call["argv"][:2] == ["compute", "ssh"] for call in calls)
+    # The lock stays for an operator to check, with the command to remove it.
+    assert final["lock"] is not None
+    assert "stays held" in stderr
+
+
+def _installer_run(tmp_path: Path, roles: dict[str, str], *, lock_held: bool) -> tuple[subprocess.CompletedProcess[str], dict, list[dict]]:
+    repo = tmp_path / "repo"
+    (repo / "scripts/deploy").mkdir(parents=True)
+    for name in ("clickhouse_live_ingestion.sh", "_clickhouse_bundle.sh", "_clickhouse_publisher.sh"):
+        shutil.copy(ROOT / "scripts/deploy" / name, repo / "scripts/deploy" / name)
+    fake = tmp_path / "fake"
+    fake.mkdir()
+    (fake / "gcloud").write_text(FAKE_GCLOUD)
+    (fake / "gcloud").chmod(0o755)
+    state: dict = {name: {"role": roles.get(name, ""), "status": "RUNNING"} for name in ("tr-clickhouse-1", "tr-clickhouse-2", "tr-clickhouse-3")}
+    if lock_held:
+        state["lock"] = {"content": '{"owner":"someone@else"}', "generation": 7}
+    (fake / "instances.json").write_text(json.dumps(state))
+    (fake / "gcloud.jsonl").write_text("")
+    result = subprocess.run(  # noqa: S603 - fixed script under test
+        [BASH, str(repo / "scripts/deploy/clickhouse_live_ingestion.sh")],
+        env={"PATH": f"{fake}:{os.environ['PATH']}", "HOME": str(tmp_path), "TMPDIR": str(tmp_path), "FAKE_DIR": str(fake), "NAME": "tr-clickhouse-2"},
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    calls = [json.loads(line) for line in (fake / "gcloud.jsonl").read_text().splitlines()]
+    return result, json.loads((fake / "instances.json").read_text()), calls
+
+
+def test_an_installer_waits_for_no_one_while_a_role_change_holds_the_lock(tmp_path: Path) -> None:
+    roles = {"tr-clickhouse-2": "publisher", "tr-clickhouse-1": "standby", "tr-clickhouse-3": "standby"}
+
+    result, state, calls = _installer_run(tmp_path, roles, lock_held=True)
+
+    assert result.returncode != 0
+    assert "another role change holds" in result.stderr
+    assert not any(call["argv"][:2] == ["compute", "ssh"] for call in calls)
+    assert not any(call["argv"][:3] == ["compute", "instances", "describe"] for call in calls)
+    assert state["lock"]["generation"] == 7
+
+
+def test_an_installer_takes_and_releases_the_lock(tmp_path: Path) -> None:
+    roles = {"tr-clickhouse-1": "publisher", "tr-clickhouse-2": "standby", "tr-clickhouse-3": "standby"}
+
+    # NAME=tr-clickhouse-2 is not the publisher, so the installer refuses
+    # after taking the lock; its EXIT trap must release it.
+    result, state, calls = _installer_run(tmp_path, roles, lock_held=False)
+
+    assert result.returncode != 0
+    assert "is not the ClickHouse publisher" in result.stderr
+    argvs = [call["argv"] for call in calls]
+    take = next(i for i, argv in enumerate(argvs) if argv[:2] == ["storage", "cp"])
+    first_role_read = next(i for i, argv in enumerate(argvs) if argv[:3] == ["compute", "instances", "describe"])
+    assert take < first_role_read
+    assert state["lock"] is None
+
+
+def test_a_resumed_takeover_retried_after_promotion_starts_the_workers(tmp_path: Path) -> None:
+    # takeover --to 2 --from 1 promoted node 2, then start-workers failed.
+    roles = {"tr-clickhouse-1": "standby", "tr-clickhouse-2": "publisher", "tr-clickhouse-3": "standby"}
+
+    result, calls, _ = _wrapper(
+        tmp_path, "takeover", "--to", "tr-clickhouse-2", "--from", "tr-clickhouse-1", "--apply", roles=roles
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _steps(calls) == ['tr-clickhouse-2: node_takeover.sh" start-workers']

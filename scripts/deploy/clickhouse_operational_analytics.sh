@@ -37,6 +37,12 @@ if [ "$APPLY" -eq 0 ]; then
   exit 0
 fi
 
+# Hold the role lock for the rest of the run: this installer starts workers
+# and runs a rollup directly, which the role fence does not cover, so a
+# takeover must not move the publisher while it runs.
+clickhouse_role_lock_take clickhouse_operational_analytics || exit 1
+trap 'clickhouse_role_lock_release' EXIT
+
 # The workers run on the publisher only (G1 in
 # docs/design/clickhouse-high-availability.md): tr-clickhouse-1 until a takeover.
 PROJECT="$PROJECT_ID"
@@ -112,6 +118,7 @@ cleanup() {
     log "deployment exited during parser/schema cutover; restarting live ingest"
     node_ssh "$WORKER" --command="sudo systemctl start tr-clickhouse-operational-ingest.service" || true
   fi
+  clickhouse_role_lock_release
   return "$status"
 }
 trap cleanup EXIT

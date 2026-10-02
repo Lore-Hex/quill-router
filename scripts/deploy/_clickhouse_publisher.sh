@@ -64,6 +64,46 @@ clickhouse_publisher() {
   fi
 }
 
+# One role change or worker install at a time, across the operator wrapper
+# (clickhouse_worker_role.sh) and both installers: a create-only lock object.
+CLICKHOUSE_ROLE_LOCK="${TR_CLICKHOUSE_ROLE_LOCK:-gs://tr-deploy-mutex-quill-cloud-proxy/locks/clickhouse-worker-role.json}"
+CLICKHOUSE_ROLE_LOCK_GENERATION=""
+CLICKHOUSE_ROLE_INTERRUPTED=0
+
+# Take the lock, or refuse naming its holder. The caller must arm an EXIT trap
+# that calls clickhouse_role_lock_release right after this returns.
+clickhouse_role_lock_take() {
+  local body
+  body="$(mktemp "${TMPDIR:-/tmp}/tr-clickhouse-role-lock.XXXXXX")"
+  printf '{"command":"%s","owner":"%s","started_at":"%s"}\n' \
+    "$1" "$(whoami)@$(hostname)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$body"
+  if ! gcloud storage cp "$body" "$CLICKHOUSE_ROLE_LOCK" --if-generation-match=0 >/dev/null 2>&1; then
+    rm -f "$body"
+    echo "refusing: another role change holds ${CLICKHOUSE_ROLE_LOCK}:" >&2
+    gcloud storage cat "$CLICKHOUSE_ROLE_LOCK" >&2 || true
+    echo "If that run is dead, check the roles (clickhouse_worker_role.sh status), then: gcloud storage rm ${CLICKHOUSE_ROLE_LOCK}" >&2
+    return 1
+  fi
+  rm -f "$body"
+  CLICKHOUSE_ROLE_LOCK_GENERATION="$(gcloud storage objects describe "$CLICKHOUSE_ROLE_LOCK" --format='value(generation)')"
+  # A signal must not release the lock while a step's command is still
+  # running. With a trap set, bash lets the running command finish first;
+  # the run then stops and keeps the lock for an operator to check.
+  trap 'CLICKHOUSE_ROLE_INTERRUPTED=1; exit 130' INT TERM
+}
+
+# For the caller's EXIT trap: release the lock, unless the run was
+# interrupted part-way, when it stays held until someone checks the roles.
+clickhouse_role_lock_release() {
+  [ -n "$CLICKHOUSE_ROLE_LOCK_GENERATION" ] || return 0
+  if [ "$CLICKHOUSE_ROLE_INTERRUPTED" = 1 ]; then
+    echo "interrupted: ${CLICKHOUSE_ROLE_LOCK} stays held. Check the roles (clickhouse_worker_role.sh status), resume or finish the change, then: gcloud storage rm ${CLICKHOUSE_ROLE_LOCK} --if-generation-match=${CLICKHOUSE_ROLE_LOCK_GENERATION}" >&2
+    return 0
+  fi
+  gcloud storage rm "$CLICKHOUSE_ROLE_LOCK" --if-generation-match="$CLICKHOUSE_ROLE_LOCK_GENERATION" >/dev/null 2>&1 \
+    || echo "could not release ${CLICKHOUSE_ROLE_LOCK}; remove it after checking the roles" >&2
+}
+
 # Refuse to install and start workers anywhere but the publisher.
 require_clickhouse_publisher() {
   local target="$1" publisher
