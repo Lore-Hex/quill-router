@@ -68,7 +68,10 @@ def _parse_prices(source: str) -> dict[str, ModelPrice]:
         )
         if len(matches) != 1 or name in {key.removeprefix("abliterate/") for key in prices}:
             raise RuntimeError(f"abliterate: ambiguous or malformed price for {name}")
-        prompt, completion = (int(Decimal(value) * 1_000_000) for value in matches[0])
+        amounts = [Decimal(value) * 1_000_000 for value in matches[0]]
+        if any(value != value.to_integral_value() for value in amounts):
+            raise RuntimeError(f"abliterate: unsupported price precision for {name}")
+        prompt, completion = (int(value) for value in amounts)
         if prompt <= 0 or completion <= 0:
             raise RuntimeError(f"abliterate: nonpositive price for {name}")
         prices[EXPLICIT_MODEL_MAP[name]] = ModelPrice(prompt, completion)

@@ -28,7 +28,7 @@ def test_prices_are_usd_per_million_not_per_token():
     assert prices["abliterate/abliterated-research-0.1"].completion_micro_per_m == 20_000_000
 
 
-@pytest.mark.parametrize("value", ["$NaN", "$-1", "$0", "EUR0.50", "$Infinity"])
+@pytest.mark.parametrize("value", ["$NaN", "$-1", "$0", "EUR0.50", "$Infinity", "$0.5000009"])
 def test_malformed_prices_fail_closed(value):
     with pytest.raises(RuntimeError):
         abliterate._parse_prices(docs_prices().replace("$0.50", value))
