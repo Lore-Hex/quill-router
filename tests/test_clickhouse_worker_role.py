@@ -375,12 +375,15 @@ elif argv[:2] == ["storage", "cp"]:
     state["lock_generation"] = generation
     state_file.write_text(json.dumps(state))
 elif argv[:3] == ["storage", "objects", "describe"]:
+    if state.get("lock_describe_fails"):
+        print("ERROR: transient", file=sys.stderr)
+        sys.exit(1)
     print(state["lock"]["generation"])
 elif argv[:2] == ["storage", "cat"]:
     print(state["lock"]["content"] if state.get("lock") else "")
 elif argv[:2] == ["storage", "rm"]:
-    match = next(arg for arg in argv if arg.startswith("--if-generation-match=")).split("=", 1)[1]
-    if not state.get("lock") or str(state["lock"]["generation"]) != match:
+    match = next((arg for arg in argv if arg.startswith("--if-generation-match=")), "=").split("=", 1)[1]
+    if not state.get("lock") or (match and str(state["lock"]["generation"]) != match):
         sys.exit(1)
     state["lock"] = None
     state_file.write_text(json.dumps(state))
@@ -422,6 +425,8 @@ def _wrapper(
             state["tr-clickhouse-1"]["stop_fails"] = value
         elif key == "describe_fails":
             state[str(value)]["describe_fails"] = True
+        elif key == "lock_describe_fails":
+            state["lock_describe_fails"] = True  # type: ignore[assignment]
         elif key == "slow_add_metadata":
             state["slow_add_metadata"] = value  # type: ignore[assignment]
         elif key == "lock_held":
@@ -903,7 +908,8 @@ def test_the_installers_publisher_lookup_fails_closed(
 # --- review round 2: interruption, installers under the lock, resumed retries ---
 
 
-def test_an_interrupted_run_finishes_its_write_and_keeps_the_lock(tmp_path: Path) -> None:
+@pytest.mark.parametrize("signal_name", ["SIGTERM", "SIGHUP"])
+def test_an_interrupted_run_finishes_its_write_and_keeps_the_lock(tmp_path: Path, signal_name: str) -> None:
     import signal
     import time
 
@@ -937,7 +943,7 @@ def test_an_interrupted_run_finishes_its_write_and_keeps_the_lock(tmp_path: Path
     while not started.exists() and time.monotonic() < deadline:
         time.sleep(0.05)
     assert started.exists()
-    process.send_signal(signal.SIGTERM)  # while the first role write is in flight
+    process.send_signal(getattr(signal, signal_name))  # while the first role write is in flight
     _, stderr = process.communicate(timeout=60)
 
     final = json.loads((fake / "instances.json").read_text())
@@ -1016,3 +1022,35 @@ def test_a_resumed_takeover_retried_after_promotion_starts_the_workers(tmp_path:
 
     assert result.returncode == 0, result.stderr
     assert _steps(calls) == ['tr-clickhouse-2: node_takeover.sh" start-workers']
+
+
+
+# --- review round 3: the installer's rollup under systemd, armed restart, lock lookup ---
+
+
+def test_the_installer_runs_its_initial_rollup_through_the_fenced_unit() -> None:
+    script = (ROOT / "scripts/deploy/clickhouse_operational_analytics.sh").read_text()
+    # A direct python run outlives the SSH session and the role fence; the
+    # oneshot unit is fenced and is stopped by a takeover's stop-workers.
+    assert "python -m clickhouse.rollup_synthetic" not in script
+    assert 'sudo systemctl start tr-clickhouse-synthetic-rollup.service' in script
+
+
+def test_the_installer_arms_the_ingest_restart_before_stopping_ingest() -> None:
+    script = (ROOT / "scripts/deploy/clickhouse_operational_analytics.sh").read_text()
+    arm = script.index("ingester_stopped=1")
+    stop = script.index("systemctl stop tr-clickhouse-operational-ingest.service")
+    assert arm < stop
+
+
+def test_a_failed_lock_lookup_removes_the_lock_and_refuses(tmp_path: Path) -> None:
+    roles = {"tr-clickhouse-1": "publisher", "tr-clickhouse-2": "standby", "tr-clickhouse-3": "standby"}
+
+    result, calls, state = _wrapper(
+        tmp_path, "takeover", "--to", "tr-clickhouse-2", "--apply", roles=roles, lock_describe_fails=True
+    )
+
+    assert result.returncode != 0
+    assert "cannot read the generation of the lock just taken" in result.stderr
+    assert state["lock"] is None
+    assert _metadata_writes(calls) == [] and _steps(calls) == []

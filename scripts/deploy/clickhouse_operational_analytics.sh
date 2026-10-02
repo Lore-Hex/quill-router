@@ -180,8 +180,10 @@ node_ssh "$WORKER" --command="sudo sh -c '
 # Pause only for the additive schema cutover, then restart on the new parser
 # before any bounded replay, backfill, replica sync, or reader setup begins.
 log "pausing live operational ingest for parser/schema cutover"
-node_ssh "$WORKER" --command="sudo systemctl stop tr-clickhouse-operational-ingest.service"
+# Arm the restart before stopping: a signal during the stop must still leave
+# cleanup a reason to start ingest again.
 ingester_stopped=1
+node_ssh "$WORKER" --command="sudo systemctl stop tr-clickhouse-operational-ingest.service"
 
 log "adding workspace attribution to benchmark samples"
 benchmark_workspace_schema="$(cat "$BENCHMARK_WORKSPACE_SCHEMA")"
@@ -194,15 +196,11 @@ node_ssh "$WORKER" --command="sudo systemctl start tr-clickhouse-operational-ing
 ingester_stopped=0
 
 log "building initial synthetic status rollups"
-node_ssh "$WORKER" --command="sudo sh -c '
-  set -eu
-  set -a
-  . /etc/tr-clickhouse-ingest.env
-  set +a
-  cd /opt/tr-clickhouse
-  PYTHONPATH=/opt/tr-clickhouse/src \
-    /opt/tr-clickhouse/venv/bin/python -m clickhouse.rollup_synthetic
-'"
+# Through the worker's own oneshot unit, not a direct python run: the unit
+# keeps the role fence (ExecCondition), outlives a dropped SSH session as a
+# systemd job rather than an orphan, and is stopped by a takeover's
+# stop-workers like every other worker.
+node_ssh "$WORKER" --command="sudo systemctl start tr-clickhouse-synthetic-rollup.service"
 
 node_ssh "$WORKER" --command="sudo systemctl enable tr-clickhouse-operational-ingest.service tr-clickhouse-synthetic-rollup.timer tr-clickhouse-client-rollup.timer tr-clickhouse-public-snapshots.timer tr-clickhouse-archive-restore.timer tr-clickhouse-spanner-delivery.timer"
 

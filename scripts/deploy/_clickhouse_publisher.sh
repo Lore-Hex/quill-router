@@ -73,8 +73,8 @@ CLICKHOUSE_ROLE_INTERRUPTED=0
 # Take the lock, or refuse naming its holder. The caller must arm an EXIT trap
 # that calls clickhouse_role_lock_release right after this returns.
 clickhouse_role_lock_take() {
-  local body
-  body="$(mktemp "${TMPDIR:-/tmp}/tr-clickhouse-role-lock.XXXXXX")"
+  local body generation
+  body="$(mktemp "${TMPDIR:-/tmp}/tr-clickhouse-role-lock.XXXXXX")" || return 1
   printf '{"command":"%s","owner":"%s","started_at":"%s"}\n' \
     "$1" "$(whoami)@$(hostname)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$body"
   if ! gcloud storage cp "$body" "$CLICKHOUSE_ROLE_LOCK" --if-generation-match=0 >/dev/null 2>&1; then
@@ -85,11 +85,22 @@ clickhouse_role_lock_take() {
     return 1
   fi
   rm -f "$body"
-  CLICKHOUSE_ROLE_LOCK_GENERATION="$(gcloud storage objects describe "$CLICKHOUSE_ROLE_LOCK" --format='value(generation)')"
+  # Every step is checked explicitly: callers use `|| exit 1`, which turns
+  # errexit off inside this function.
+  if ! generation="$(gcloud storage objects describe "$CLICKHOUSE_ROLE_LOCK" --format='value(generation)')" \
+      || [ -z "$generation" ]; then
+    # We created the object a moment ago and nothing else can have; remove it
+    # rather than run on a lock we could not release.
+    gcloud storage rm "$CLICKHOUSE_ROLE_LOCK" >/dev/null 2>&1 \
+      || echo "could not remove ${CLICKHOUSE_ROLE_LOCK} after a failed lookup; remove it by hand" >&2
+    echo "refusing: cannot read the generation of the lock just taken" >&2
+    return 1
+  fi
+  CLICKHOUSE_ROLE_LOCK_GENERATION="$generation"
   # A signal must not release the lock while a step's command is still
   # running. With a trap set, bash lets the running command finish first;
   # the run then stops and keeps the lock for an operator to check.
-  trap 'CLICKHOUSE_ROLE_INTERRUPTED=1; exit 130' INT TERM
+  trap 'CLICKHOUSE_ROLE_INTERRUPTED=1; exit 130' INT TERM HUP
 }
 
 # For the caller's EXIT trap: release the lock, unless the run was
