@@ -508,7 +508,9 @@ h3,.privacy-choice h3,.review-resources h3,.uptime-panel figcaption,.attestation
 .hero-provider-row{overflow:hidden;mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)}
 .hero-provider-track{display:flex;width:max-content;margin-inline:auto;animation:provider-marquee 48s linear infinite;animation-play-state:paused}
 .hero.is-animating .hero-provider-track{animation-play-state:running}
-.hero-provider-row:focus-within .hero-provider-track{animation-play-state:paused}
+/* Keyboard focus stops the slide and lets the row scroll, so the focused logo is always in view. */
+.hero-provider-row:focus-within{overflow-x:auto;mask-image:none}
+.hero-provider-row:focus-within .hero-provider-track{animation:none;transform:none}
 @media(hover:hover){.hero-provider-row:hover .hero-provider-track{animation-play-state:paused}}
 .hero-provider-group{display:flex;align-items:center;gap:36px;padding-inline:18px}
 .hero-provider-group a{flex:0 0 auto;display:inline-flex;align-items:center;gap:10px;min-height:32px;font-size:15px;color:var(--text);text-decoration:none;white-space:nowrap}
@@ -528,7 +530,7 @@ h3,.privacy-choice h3,.review-resources h3,.uptime-panel figcaption,.attestation
 /* Hero and closing box share one photograph: the TrustedRouter river, cropped to water
    so it reads as texture rather than a place. The gradient arcs are retired. */
 .hero-photo{position:absolute;inset:0;z-index:-2;pointer-events:none;background:url('/assets/river-close.webp') 50% 50%/cover no-repeat}
-.hero-photo::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(5,7,6,.8),rgba(5,7,6,.4) 40%,rgba(5,7,6,.25) 72%,rgba(5,7,6,.9))}
+.hero-photo::after{content:"";position:absolute;inset:0;background:radial-gradient(ellipse 58% 46% at 50% 44%,rgba(5,7,6,.5),transparent 72%),linear-gradient(180deg,rgba(5,7,6,.8),rgba(5,7,6,.4) 40%,rgba(5,7,6,.25) 72%,rgba(5,7,6,.9))}
 .hero .lead{color:#edf8f5}
 .closing-art::before{content:"";position:absolute;inset:0;background:url('/assets/river-close.webp') 50% 50%/cover no-repeat}
 .closing-art::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(5,7,6,.94),rgba(5,7,6,.6) 55%,rgba(5,7,6,.35))}
