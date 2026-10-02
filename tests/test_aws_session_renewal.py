@@ -231,3 +231,23 @@ def test_the_renewal_checks_each_step_without_pipefail(
     )
     assert (result.returncode == 0) == renewed, result.stderr
     assert ("renewed=renewed-session" in result.stdout) == renewed
+
+
+def test_an_unparseable_sts_response_never_reaches_the_log(tmp_path: Path) -> None:
+    result, recorded, _, _ = _run(tmp_path, {**ACTIONS_ENV, "ECS_MALFORMED_STS": "1"})
+
+    _assert_stopped_before_any_write(result, recorded, tmp_path)
+    assert (
+        "renewing the AWS session after the deploy mutex wait failed (aws exit 255)"
+        in result.stderr
+    )
+    for secret in ("ASIARENEWED", "renewed-secret", "renewed-session"):
+        assert secret not in result.stderr
+        assert secret not in result.stdout
+
+
+def test_an_identity_check_that_fails_after_printing_stops_the_deploy(tmp_path: Path) -> None:
+    result, recorded, _, _ = _run(tmp_path, {**ACTIONS_ENV, "ECS_CALLER_FAILS_AFTER_RENEWAL": "1"})
+
+    _assert_stopped_before_any_write(result, recorded, tmp_path)
+    assert "the renewed AWS session is not in account 330422590279" in result.stderr

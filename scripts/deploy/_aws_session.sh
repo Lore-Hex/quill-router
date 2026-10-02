@@ -34,7 +34,7 @@ aws_refresh_session_untraced() {
     aws_session_fail "AWS_DEPLOY_ROLE_ARN must name the deploy role to renew the AWS session"
     return 1
   fi
-  local account="${BASH_REMATCH[1]}" response id_token credentials key secret session
+  local account="${BASH_REMATCH[1]}" response id_token credentials key secret session caller
   # The request token reaches curl on stdin (-H @-), so it is not in argv.
   if ! response="$(printf 'Authorization: bearer %s\n' "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
       | curl -fsS -H @- "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")"; then
@@ -49,14 +49,18 @@ aws_refresh_session_untraced() {
   fi
   # The ID token reaches aws on stdin (file:///dev/stdin): never in argv, never
   # in a file. The call is unsigned, since the job's first session may already
-  # have expired and this call needs no credentials.
-  if ! credentials="$(printf '%s' "$id_token" \
-      | aws sts assume-role-with-web-identity --role-arn "$AWS_DEPLOY_ROLE_ARN" \
-        --role-session-name "tr-deploy-${GITHUB_RUN_ID:-renewal}" \
-        --web-identity-token file:///dev/stdin --duration-seconds 3600 \
-        --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text \
-        --no-sign-request)"; then
-    aws_session_fail "renewing the AWS session after the deploy mutex wait failed"
+  # have expired and this call needs no credentials. Its stderr is discarded:
+  # on a response it cannot parse, the AWS CLI prints the raw response, which
+  # can hold the new credentials before they are masked.
+  local status=0
+  credentials="$(printf '%s' "$id_token" \
+    | aws sts assume-role-with-web-identity --role-arn "$AWS_DEPLOY_ROLE_ARN" \
+      --role-session-name "tr-deploy-${GITHUB_RUN_ID:-renewal}" \
+      --web-identity-token file:///dev/stdin --duration-seconds 3600 \
+      --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text \
+      --no-sign-request 2>/dev/null)" || status=$?
+  if [ "$status" -ne 0 ]; then
+    aws_session_fail "renewing the AWS session after the deploy mutex wait failed (aws exit ${status})"
     return 1
   fi
   read -r key secret session <<<"$credentials"
@@ -69,7 +73,8 @@ aws_refresh_session_untraced() {
     printf '::add-mask::%s\n' "$key" "$secret" "$session"
   fi
   export AWS_ACCESS_KEY_ID="$key" AWS_SECRET_ACCESS_KEY="$secret" AWS_SESSION_TOKEN="$session"
-  if [ "$(aws sts get-caller-identity --query Account --output text)" != "$account" ]; then
+  if ! caller="$(aws sts get-caller-identity --query Account --output text)" \
+      || [ "$caller" != "$account" ]; then
     aws_session_fail "the renewed AWS session is not in account ${account}"
     return 1
   fi

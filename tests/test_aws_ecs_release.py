@@ -222,12 +222,23 @@ elif tool == "aws":
     if os.environ.get("ECS_AWS_SESSIONS"):
         with open(os.environ["ECS_AWS_SESSIONS"], "a") as f:
             f.write(json.dumps([op, os.environ.get("AWS_SESSION_TOKEN", "")]) + "\n")
-    if op == "sts get-caller-identity": print("330422590279")
+    if op == "sts get-caller-identity":
+        print("330422590279")
+        # The account printed, then a failure: the status must still count.
+        if os.environ.get("ECS_CALLER_FAILS_AFTER_RENEWAL") and os.environ.get("AWS_SESSION_TOKEN") == "renewed-session":
+            sys.exit(254)
     elif op == "sts assume-role-with-web-identity":
         # The ID token arrives on stdin: never in argv, never in a file.
         assert args[args.index("--web-identity-token") + 1] == "file:///dev/stdin"
         assert sys.stdin.read() == os.environ["ECS_OIDC_TOKEN"]
         if os.environ.get("ECS_FAIL_ASSUME"): sys.exit(254)
+        if os.environ.get("ECS_MALFORMED_STS"):
+            # What the AWS CLI does with a response it cannot parse: it prints
+            # the raw response, credentials included, to stderr.
+            sys.stderr.write("Unable to parse response: <AccessKeyId>ASIARENEWED</AccessKeyId>"
+                             "<SecretAccessKey>renewed-secret</SecretAccessKey>"
+                             "<SessionToken>renewed-session</SessionToken>\n")
+            sys.exit(255)
         print("ASIARENEWED\trenewed-secret\trenewed-session")
     elif op == "ecr get-login-password": print("fixture-password")
     elif op == "ecr describe-images": print(digest)
