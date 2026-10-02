@@ -1,0 +1,101 @@
+{
+  "provider": "system1models",
+  "models": [
+    {
+      "display_name": "System1 s1-fast (GLOBAL)",
+      "title": "s1-fast",
+      "model_type": "decision",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "decision"
+      ],
+      "endpoints": [
+        "decide"
+      ],
+      "status": 1,
+      "id": "system1models/s1-fast",
+      "upstream_id": "s1-fast",
+      "context_length": 0,
+      "supported_features": [],
+      "supported_sampling_parameters": [],
+      "documentation": {
+        "description": "Fast open typed-decision profile for text decisions; noul/choice/score answers with probabilities in milliseconds.",
+        "input_format": "POST /v1/decide: state (at most 16 KiB serialized JSON) and exactly one boolean/noul, choice or score question. Vision accepts one images entry: PNG, JPEG or WebP data URL, at most 4 MiB decoded and 2 megapixels. No streaming.",
+        "output_format": "Verified answers and probabilities, with inputTokens usage. Input-only billing; output tokens are free. The EU route cannot fall back to Global.",
+        "example_input": "{\"model\": \"system1models/s1-fast\", \"state\": \"Mia owns a red bicycle.\", \"questions\": {\"color\": {\"type\": \"choice\", \"instructions\": \"Which color is the bicycle?\", \"criteria\": {\"red\": null, \"blue\": null}}}}",
+        "example_output": "{\"model\": \"system1models/s1-fast\", \"answers\": {\"color\": {\"type\": \"choice\", \"choice\": \"red\", \"probabilities\": {\"red\": 0.99, \"blue\": 0.01}}}}"
+      },
+      "routable": true,
+      "input_token_price_per_m": 25000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "System1 s1-pro (GLOBAL)",
+      "title": "s1-pro",
+      "model_type": "decision",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "decision"
+      ],
+      "endpoints": [
+        "decide"
+      ],
+      "status": 1,
+      "id": "system1models/s1-pro",
+      "upstream_id": "s1-pro",
+      "context_length": 0,
+      "supported_features": [],
+      "supported_sampling_parameters": [],
+      "documentation": {
+        "description": "Larger open typed-decision profile for text decisions; noul/choice/score answers with probabilities.",
+        "input_format": "POST /v1/decide: state (at most 16 KiB serialized JSON) and exactly one boolean/noul, choice or score question. Vision accepts one images entry: PNG, JPEG or WebP data URL, at most 4 MiB decoded and 2 megapixels. No streaming.",
+        "output_format": "Verified answers and probabilities, with inputTokens usage. Input-only billing; output tokens are free. The EU route cannot fall back to Global.",
+        "example_input": "{\"model\": \"system1models/s1-pro\", \"state\": \"Mia owns a red bicycle.\", \"questions\": {\"color\": {\"type\": \"choice\", \"instructions\": \"Which color is the bicycle?\", \"criteria\": {\"red\": null, \"blue\": null}}}}",
+        "example_output": "{\"model\": \"system1models/s1-pro\", \"answers\": {\"color\": {\"type\": \"choice\", \"choice\": \"red\", \"probabilities\": {\"red\": 0.99, \"blue\": 0.01}}}}"
+      },
+      "routable": true,
+      "input_token_price_per_m": 34000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "System1 s1-vision (GLOBAL)",
+      "title": "s1-vision",
+      "model_type": "decision",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "decision"
+      ],
+      "endpoints": [
+        "decide"
+      ],
+      "status": 1,
+      "id": "system1models/s1-vision",
+      "upstream_id": "s1-vision",
+      "context_length": 0,
+      "supported_features": [],
+      "supported_sampling_parameters": [],
+      "documentation": {
+        "description": "Image + text typed-decision profile: one image plus state, noul/choice/score answers with probabilities.",
+        "input_format": "POST /v1/decide: state (at most 16 KiB serialized JSON) and exactly one boolean/noul, choice or score question. Vision accepts one images entry: PNG, JPEG or WebP data URL, at most 4 MiB decoded and 2 megapixels. No streaming.",
+        "output_format": "Verified answers and probabilities, with inputTokens usage. Input-only billing; output tokens are free. The EU route cannot fall back to Global.",
+        "example_input": "{\"model\": \"system1models/s1-vision\", \"state\": \"Mia owns a red bicycle.\", \"questions\": {\"color\": {\"type\": \"choice\", \"instructions\": \"Which color is the bicycle?\", \"criteria\": {\"red\": null, \"blue\": null}}}}",
+        "example_output": "{\"model\": \"system1models/s1-vision\", \"answers\": {\"color\": {\"type\": \"choice\", \"choice\": \"red\", \"probabilities\": {\"red\": 0.99, \"blue\": 0.01}}}}"
+      },
+      "routable": true,
+      "input_token_price_per_m": 34000,
+      "output_token_price_per_m": 0
+    }
+  ],
+  "source": "https://api.system1models.ai/v1/models",
+  "pricing_source": "https://api.system1models.ai/v1/models",
+  "generated_at": "2026-10-01T15:07:20Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 3
+}

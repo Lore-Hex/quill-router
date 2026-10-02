@@ -1,0 +1,27 @@
+<!--
+  /tr_health for the load balancer's HTTP health check (G2 in
+  docs/design/clickhouse-high-availability.md). It answers 200 only when this
+  replica sees all 17 replicated tables in `tr`, none read-only and none more
+  than 300 s behind; otherwise throwIf makes it answer 500. /replicas_status is
+  not enough: it skips read-only replicas.
+
+  Keep 17 in step with the replicated tables: the same change that adds or
+  drops a replicated table updates this number.
+
+  The check runs as tr_health (users.d/tr-health.xml): GCP health checks cannot
+  send credentials, so the request names the user, /tr_health?user=tr_health.
+  <defaults/> keeps the built-in handlers (/, /ping, /replicas_status, /play).
+-->
+<clickhouse>
+  <http_handlers>
+    <rule>
+      <url>/tr_health</url>
+      <methods>GET,HEAD</methods>
+      <handler>
+        <type>predefined_query_handler</type>
+        <query>SELECT throwIf(countIf(is_readonly OR absolute_delay &gt; 300) &gt; 0 OR count() &lt; 17, 'replica unhealthy') FROM system.replicas WHERE database = 'tr'</query>
+      </handler>
+    </rule>
+    <defaults/>
+  </http_handlers>
+</clickhouse>

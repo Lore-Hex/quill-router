@@ -3,12 +3,16 @@ on:
   pull_request:
     paths:
       - 'sites/token-exchange/**'
+      - 'src/trusted_router/token_exchange.py'
+      - 'tests/test_token_exchange_evidence.py'
       - 'infra/token_exchange_certificate_domains.json'
       - '.github/workflows/token-exchange-sites.yml'
   push:
     branches: [main]
     paths:
       - 'sites/token-exchange/**'
+      - 'src/trusted_router/token_exchange.py'
+      - 'tests/test_token_exchange_evidence.py'
       - 'infra/token_exchange_certificate_domains.json'
       - '.github/workflows/token-exchange-sites.yml'
 permissions:
@@ -23,3 +27,39 @@ jobs:
           python-version: '3.12'
       - run: python -m unittest discover -s sites/token-exchange -p 'test_*.py' -v
       - run: python sites/token-exchange/build.py --output /tmp/token-exchange-build
+  live-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --frozen --no-dev
+      - run: npm install --prefix /tmp/exchange-browser playwright@1.63.0
+      - run: /tmp/exchange-browser/node_modules/.bin/playwright install --with-deps chromium
+      - run: python sites/token-exchange/build.py --output /tmp/token-exchange-build
+      - name: Stale data and every component-state combination
+        env:
+          NODE_PATH: /tmp/exchange-browser/node_modules
+        run: node sites/token-exchange/verify-live.cjs /tmp/token-exchange-build --quick
+      - name: Stop upstream status and wait through the real cache window
+        env:
+          NODE_PATH: /tmp/exchange-browser/node_modules
+        run: |
+          python -m http.server 8089 --bind 127.0.0.1 --directory /tmp/token-exchange-build &
+          static_pid=$!
+          uv run --no-dev python sites/token-exchange/stage_evidence.py &
+          evidence_pid=$!
+          trap 'kill "$static_pid" "$evidence_pid"' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --silent --output /dev/null http://127.0.0.1:8094/not-a-route; then
+              break
+            fi
+            sleep 1
+          done
+          node sites/token-exchange/verify-upstream.cjs

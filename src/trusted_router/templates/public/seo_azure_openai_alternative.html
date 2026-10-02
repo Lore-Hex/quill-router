@@ -25,8 +25,8 @@ reply = client.chat.completions.create(
 </section>
 <section class="marketing-grid three">
   <div class="marketing-card"><span class="card-label">Capacity</span><h3>Automatic provider rollover</h3><p>Routes are served across 30+ providers. When a provider goes down, requests roll over to another serving the route automatically. Latency numbers come from real routed requests, published at <a href="/llm-provider-latency-benchmarks">the latency benchmarks</a>.</p></div>
-  <div class="marketing-card"><span class="card-label">Catalog</span><h3>220+ models, 30+ providers</h3><p>Claude, GPT, Gemini, DeepSeek V4, Kimi K2.7, Qwen 3.5, GLM-5 and more behind one OpenAI-compatible API. Meta-routes decide per request: trustedrouter/auto for best fit, trustedrouter/cheap for the cheapest capable route in a TEE. Compare at <a href="/choose">/choose</a>.</p></div>
-  <div class="marketing-card"><span class="card-label">Privacy tiers</span><h3>Set privacy per route</h3><p>Three tiers: Open, Zero-Data-Retention, and TEE, where even the serving provider cannot read the prompt. Chinese open-weight models such as DeepSeek and Kimi are served by non-Chinese hosts on attested infrastructure. Details on the <a href="/security">security page</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Catalog</span><h3>220+ models, 30+ providers</h3><p>Claude, GPT, Gemini, DeepSeek V4, Kimi K2.7, Qwen 3.5, GLM-5 and more behind one OpenAI-compatible API. Meta-routes decide per request: trustedrouter/auto for best fit, trustedrouter/cheap for the cheapest capable route. Compare at <a href="/choose">/choose</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Privacy tiers</span><h3>Set privacy per route</h3><p>Three tiers: Open, Zero-Data-Retention, and TEE, where even the serving provider cannot read the prompt. {{ vendor_exclusion_claim }} Details on the <a href="/security">security page</a>.</p></div>
 </section>
 <section class="compare-matrix" aria-label="Azure OpenAI vs TrustedRouter">
   <div class="matrix-row matrix-head"><span></span><strong>Azure OpenAI</strong><strong>TrustedRouter</strong></div>

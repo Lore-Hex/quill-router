@@ -33,6 +33,7 @@ from trusted_router.catalog_data import (
     ModelDocumentation,
     ModelEndpoint,
     _EmbeddingSpec,
+    maker_provider_slug,
 )
 from trusted_router.image_generation import OPENAI_IMAGE_MODEL_IDS
 from trusted_router.pricing import (
@@ -68,6 +69,7 @@ from trusted_router.provider_manifest_policy import (
 )
 from trusted_router.provider_manifest_policy import (
     EXPIRING_PROVIDER_MANIFEST_SLUGS,
+    decision_manifest_price_is_valid,
 )
 from trusted_router.provider_manifest_policy import (
     provider_manifest_valid_until as _provider_manifest_valid_until,
@@ -768,6 +770,35 @@ def _native_endpoint_capabilities() -> dict[tuple[str, str], tuple[str, ...]]:
     return capabilities
 
 
+def _api_reported_context_windows() -> dict[tuple[str, str], int]:
+    """Windows that a provider's own model API reported for its routes.
+
+    A refresh marks a window it read from the provider's live model listing with
+    context_length_source "api". Hand-entered and documentation-derived windows
+    carry no source and are not returned.
+    """
+    windows: dict[tuple[str, str], int] = {}
+    for path in _PROVIDER_MODELS_DIR.glob("*.json"):
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(raw, dict) or not isinstance(raw.get("provider"), str):
+            continue
+        rows = raw.get("models")
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get("id"), str):
+                continue
+            if row.get("routable") is False or row.get("context_length_source") != "api":
+                continue
+            window = _context_window(row.get("context_length"))
+            if window:
+                windows[(raw["provider"], row["id"])] = window
+    return windows
+
+
 def _ingested_models_and_endpoints(
     *, at: datetime | None = None,
 ) -> tuple[dict[str, Model], dict[str, ModelEndpoint]]:
@@ -784,6 +815,7 @@ def _ingested_models_and_endpoints(
     models: dict[str, Model] = {}
     endpoints: dict[str, ModelEndpoint] = {}
     native_capabilities = _native_endpoint_capabilities()
+    api_windows = _api_reported_context_windows()
 
     def endpoint_capabilities(slug: str, model_id: str, row: dict[str, Any]) -> tuple[str, ...]:
         native = native_capabilities.get((slug, model_id))
@@ -845,20 +877,31 @@ def _ingested_models_and_endpoints(
         # headline rate above).
         cheapest_tiers = next(t for p, _c, t, _s, _e in per_endpoint_prices if p == cheapest_prompt)
 
-        # Advertise a window the publisher serves (#966): resellers report
-        # 1310720 for z-ai/glm-5.3-flash, but Z.AI's own endpoint says 1048576.
-        # top_provider is a ranking, not a capability summary: on 2026-09-10
-        # glm-5.2 flapped to 202752 (Ambient) and 1024000 (StreamLake) while
-        # Z.AI still reported 1048576. Prefer the largest positive publisher
-        # endpoint window, then top_provider, then the historical max fallback.
-        context_length = max(
-            (
-                _context_window(ep.get("context_length"))
-                for ep in raw_endpoints
-                if ep.get("tr_provider_slug") == publisher
-            ),
-            default=0,
-        )
+        # The maker's own model API is the authority on its route's window.
+        # When the model's maker serves it on a route this snapshot lists and
+        # its API reported that route's window, advertise it: OpenRouter lists
+        # MiniMax's own MiniMax-M3 endpoint at 524288, and MiniMax's /v1/models
+        # reports 1000000.
+        context_length = 0
+        maker = maker_provider_slug(model_id)
+        if maker is not None and any(slug == maker for _p, _c, _t, slug, _e in per_endpoint_prices):
+            context_length = api_windows.get((maker, model_id), 0)
+        # Otherwise advertise a window the publisher serves (#966): resellers
+        # report 1310720 for z-ai/glm-5.3-flash, but Z.AI's own endpoint says
+        # 1048576. top_provider is a ranking, not a capability summary: on
+        # 2026-09-10 glm-5.2 flapped to 202752 (Ambient) and 1024000
+        # (StreamLake) while Z.AI still reported 1048576. Prefer the largest
+        # positive publisher endpoint window, then top_provider, then the
+        # historical max fallback.
+        if not context_length:
+            context_length = max(
+                (
+                    _context_window(ep.get("context_length"))
+                    for ep in raw_endpoints
+                    if ep.get("tr_provider_slug") == publisher
+                ),
+                default=0,
+            )
         top_provider = raw_model.get("top_provider")
         if not isinstance(top_provider, dict):
             top_provider = {}
@@ -980,6 +1023,8 @@ def _supplemental_provider_models_and_endpoints(
     models: dict[str, Model] = {}
     endpoints: dict[str, ModelEndpoint] = {}
     for provider_slug in (
+        "system1models",
+        "system1models-eu",
         "novita",
         "nebius",
         "minimax",
@@ -1086,12 +1131,19 @@ def _supplemental_provider_models_and_endpoints(
                 upstream_id = model_id
             if _is_provider_deprecated_model(provider_slug, model_id, upstream_id, at=at):
                 continue
-            if raw_model.get("model_type") not in (None, "chat", "image", "embedding"):
+            if raw_model.get("model_type") not in (None, "chat", "image", "embedding", "decision"):
                 continue
             endpoint_types = {str(item) for item in (raw_model.get("endpoints") or [])}
-            if not endpoint_types.intersection({"chat/completions", "images", "embeddings"}):
+            if not endpoint_types.intersection({"chat/completions", "images", "embeddings", "decide"}):
                 continue
             embedding = raw_model.get("model_type") == "embedding"
+            decision = raw_model.get("model_type") == "decision"
+            if decision and (
+                provider_slug not in {"system1models", "system1models-eu"}
+                or not model_id.startswith(provider_slug + "/s1-")
+                or not decision_manifest_price_is_valid(raw_model)
+            ):
+                continue
             if embedding and (not provider.supports_embeddings or endpoint_types != {"embeddings"}):
                 continue
             # These providers bill per generated image, through a fixed hold.
@@ -1113,7 +1165,7 @@ def _supplemental_provider_models_and_endpoints(
                 raw_model.get("output_token_price_per_m"),
                 price_scale=price_scale,
             )
-            if embedding and (
+            if (embedding or decision) and (
                 prompt_cost <= 0 or completion_cost != 0
                 or "price_tiers" in raw_model or "cached_input_token_price_per_m" in raw_model
             ):
@@ -1173,8 +1225,8 @@ def _supplemental_provider_models_and_endpoints(
                     # A malformed pricing tier is an accounting ambiguity. Do
                     # not create a route at the cheaper headline price.
                     continue
-            if embedding or (provider_slug, model_id) in INPUT_ONLY_PROVIDER_MODELS:
-                if not embedding and not provider_manifest_price_profile_is_valid(raw_model):
+            if embedding or decision or (provider_slug, model_id) in INPUT_ONLY_PROVIDER_MODELS:
+                if not (embedding or decision) and not provider_manifest_price_profile_is_valid(raw_model):
                     continue
                 completion_price = 0
                 tiers = _flat_tier(prompt_price, 0)
@@ -1201,6 +1253,7 @@ def _supplemental_provider_models_and_endpoints(
                 supports_chat="chat/completions" in endpoint_types,
                 supports_embeddings=embedding,
                 supports_messages=publisher == "anthropic",
+                supports_decide=decision,
                 supported_parameters=supported_parameters,
                 input_modalities=_modalities(
                     raw_model.get("input_modalities"),

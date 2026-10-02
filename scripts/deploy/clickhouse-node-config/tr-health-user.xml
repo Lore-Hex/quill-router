@@ -1,0 +1,34 @@
+<!--
+  The read-only identity behind /tr_health (tr-health.xml). No password: GCP
+  health checks cannot send credentials. It is limited to the health-check
+  source ranges of internal passthrough load balancers and to this host, can
+  read only system.replicas, and needs SHOW TABLES on tr.* because
+  system.replicas hides rows for tables the user cannot see (without it every
+  replica would look healthy with zero rows; the count() guard catches that).
+-->
+<clickhouse>
+  <profiles>
+    <tr_health_profile>
+      <readonly>1</readonly>
+      <max_execution_time>2</max_execution_time>
+      <max_memory_usage>104857600</max_memory_usage>
+    </tr_health_profile>
+  </profiles>
+  <users>
+    <tr_health>
+      <no_password/>
+      <networks>
+        <ip>35.191.0.0/16</ip>
+        <ip>130.211.0.0/22</ip>
+        <ip>127.0.0.1</ip>
+        <ip>::1</ip>
+      </networks>
+      <profile>tr_health_profile</profile>
+      <quota>default</quota>
+      <grants>
+        <query>GRANT SELECT ON system.replicas</query>
+        <query>GRANT SHOW TABLES ON tr.*</query>
+      </grants>
+    </tr_health>
+  </users>
+</clickhouse>

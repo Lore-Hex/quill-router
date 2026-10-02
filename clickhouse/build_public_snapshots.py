@@ -153,7 +153,7 @@ INNER JOIN (
 ) AS selected USING (provider, model, created_at, id)
 WHERE samples.created_at >= now64(3) - INTERVAL 7 DAY
 ORDER BY selected.provider_rank, samples.created_at DESC, samples.id DESC
-SETTINGS max_execution_time = 15, max_memory_usage = 268435456, max_threads = 2,
+SETTINGS max_execution_time = 15, max_memory_usage = 1073741824, max_threads = 2,
   max_bytes_before_external_sort = 33554432, max_block_size = 8192
 FORMAT JSONEachRow
 """,

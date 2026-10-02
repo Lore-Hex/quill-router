@@ -333,18 +333,42 @@ read_primary_revision_env() {
 # Pin the image to its digest before any revision is created.
 resolve_image_digest
 
-# Prefer the private three-replica ClickHouse load balancer once provisioned.
-# The direct node-1 address remains only as a migration fallback for projects
-# that have not run clickhouse_cluster.sh yet.
+# Readers go through the private three-replica ClickHouse load balancer first,
+# then to each replica directly. The read clients move to the next URL only
+# when a connection cannot be opened or the endpoint answers 502, 503 or 504
+# (src/trusted_router/clickhouse_endpoints.py; G2 in
+# docs/design/clickhouse-high-availability.md). Every tr-clickhouse-N is a
+# replica of the cluster's single shard, so any of them can answer any read;
+# revisit this list if the cluster is ever sharded. Replicas are listed in
+# reverse name order so the writer host, tr-clickhouse-1, is the last resort.
+# A failed or empty lookup fails the rollout: the former fallback to node 1's
+# address turned any transient lookup error into a release whose every reader
+# was pinned to one replica. Set TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL to
+# override deliberately.
 PROVIDER_ANALYTICS_CLICKHOUSE_URL="${TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL:-}"
 if [ -z "$PROVIDER_ANALYTICS_CLICKHOUSE_URL" ]; then
-  clickhouse_ilb_ip="$(gc compute addresses describe tr-clickhouse-ilb \
-    --region=us-central1 --format='value(address)' 2>/dev/null || true)"
-  if [ -n "$clickhouse_ilb_ip" ]; then
-    PROVIDER_ANALYTICS_CLICKHOUSE_URL="http://${clickhouse_ilb_ip}:8123"
-  else
-    PROVIDER_ANALYTICS_CLICKHOUSE_URL="http://10.128.15.214:8123"
+  if ! clickhouse_ilb_ip="$(gc compute addresses describe tr-clickhouse-ilb \
+      --region=us-central1 --format='value(address)')" || [ -z "$clickhouse_ilb_ip" ]; then
+    echo "ERROR: cannot resolve the ClickHouse load balancer address tr-clickhouse-ilb;" \
+      "set TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL to override" >&2
+    exit 1
   fi
+  if ! clickhouse_replica_ips="$(gc compute instances list \
+      --filter='name~^tr-clickhouse-[0-9]+$' --sort-by='~name' \
+      --format='value(networkInterfaces[0].networkIP)')" || [ -z "$clickhouse_replica_ips" ]; then
+    echo "ERROR: cannot list the ClickHouse replicas tr-clickhouse-N;" \
+      "set TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL to override" >&2
+    exit 1
+  fi
+  PROVIDER_ANALYTICS_CLICKHOUSE_URL="http://${clickhouse_ilb_ip}:8123"
+  while IFS= read -r clickhouse_replica_ip; do
+    if [[ ! "$clickhouse_replica_ip" =~ ^10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+      echo "ERROR: unexpected ClickHouse replica address '${clickhouse_replica_ip}';" \
+        "set TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL to override" >&2
+      exit 1
+    fi
+    PROVIDER_ANALYTICS_CLICKHOUSE_URL+=",http://${clickhouse_replica_ip}:8123"
+  done <<<"$clickhouse_replica_ips"
 fi
 
 # Preserve the account pin from the serving revision across ordinary releases.

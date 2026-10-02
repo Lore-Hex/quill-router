@@ -555,6 +555,12 @@
         "count": 1,
         "reason": "Scheduled schema audit provisions the reviewed conformance fixture only in its separate anonymous-credential process after numeric-loopback and emulator-environment checks; never production schema changes."
       }
+    },
+    "infra/logging_sampling.tf": {
+      "\"logging.exclusions.create\",": {
+        "count": 1,
+        "reason": "IAM permission name in the log-exclusions custom role (Terraform); not Spanner DDL."
+      }
     }
   }
 }
