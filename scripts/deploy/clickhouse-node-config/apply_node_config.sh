@@ -84,8 +84,16 @@ keeper_mntr() {
   exec 3<&- 3>&-
 }
 
+# The replicated-table inventory /tr_health requires, read from its own query
+# so the two can never disagree.
+INVENTORY="$(grep -o 'count() &lt; [0-9]*' "${HERE}/tr-health.xml" | grep -o '[0-9]*$' || true)"
+if ! [[ "$INVENTORY" =~ ^[1-9][0-9]*$ ]]; then
+  echo "refusing: cannot read the replicated-table count from tr-health.xml" >&2
+  exit 1
+fi
+
 cluster_healthy() {
-  local hosts host mntr state count=0 leaders=0 synced=""
+  local hosts host mntr state row bad total count=0 leaders=0 synced=""
   hosts="$(voters)"
   if [ -z "$hosts" ]; then
     echo "no Keeper voters found in ${CLUSTER_CONFIG}" >&2
@@ -106,8 +114,15 @@ cluster_healthy() {
         return 1
         ;;
     esac
-    if [ "$(clickhouse_on "$host" "SELECT countIf(is_readonly OR absolute_delay > 300) FROM system.replicas WHERE database = 'tr'" 2>/dev/null || true)" != "0" ]; then
+    row="$(clickhouse_on "$host" "SELECT countIf(is_readonly OR absolute_delay > 300), count() FROM system.replicas WHERE database = 'tr' FORMAT TSV" 2>/dev/null || true)"
+    bad="$(cut -f1 <<<"$row")"
+    total="$(cut -f2 <<<"$row")"
+    if [ "$bad" != "0" ]; then
       echo "a replica on ${host} is read-only, more than 300 s behind, or unreachable" >&2
+      return 1
+    fi
+    if ! [[ "$total" =~ ^[0-9]+$ ]] || [ "$total" -lt "$INVENTORY" ]; then
+      echo "${host} sees ${total:-no} replicated tables in tr, fewer than ${INVENTORY}" >&2
       return 1
     fi
   done <<<"$hosts"

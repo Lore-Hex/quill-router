@@ -142,7 +142,7 @@ case "$name" in
     done
     query="${@: -1}"
     case "$query" in
-      *"FROM system.replicas"*) cat "$state/unhealthy-$host" 2>/dev/null || printf '0\n' ;;
+      *"FROM system.replicas"*) cat "$state/replicas-$host" 2>/dev/null || printf '0\t17\n' ;;
       *"FROM system.tables"*)
         [ -e "$state/fail-system-tables" ] && { echo "Connection refused" >&2; exit 210; }
         cat "$state/system-tables" 2>/dev/null || true
@@ -307,11 +307,27 @@ DEGRADED = [
         "Keeper has 1 leader(s) and 1 synced follower(s) of 2",
     ),
     (
-        ("unhealthy-10.0.0.2", "1\n"),
+        ("replicas-10.0.0.2", "1\t17\n"),
+        "a replica on 10.0.0.2 is read-only, more than 300 s behind, or unreachable",
+    ),
+    (
+        # Review finding: countIf() is 0 when tables are missing or detached.
+        ("replicas-10.0.0.3", "0\t16\n"),
+        "10.0.0.3 sees 16 replicated tables in tr, fewer than 17",
+    ),
+    (
+        ("replicas-10.0.0.2", ""),
         "a replica on 10.0.0.2 is read-only, more than 300 s behind, or unreachable",
     ),
 ]
-DEGRADED_IDS = ["another-voter-down", "this-voter-observer", "leader-missing-a-follower", "replica-behind-elsewhere"]
+DEGRADED_IDS = [
+    "another-voter-down",
+    "this-voter-observer",
+    "leader-missing-a-follower",
+    "replica-behind-elsewhere",
+    "tables-missing-elsewhere",
+    "replicas-unreachable",
+]
 
 
 @pytest.mark.parametrize(("setup", "message"), DEGRADED, ids=DEGRADED_IDS)
