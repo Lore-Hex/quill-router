@@ -28,6 +28,7 @@ on:
     paths:
       - "src/**"
       - "scripts/deploy/**"
+      - "scripts/entrypoint.sh"
       - "frontend/src/**"
       - "Dockerfile"
       - ".gcloudignore"
@@ -209,7 +210,12 @@ jobs:
     needs: [gate-on-ci, build-image]
     if: github.repository == 'Lore-Hex/quill-router'
     runs-on: ubuntu-latest
-    timeout-minutes: 65
+    # The wait must outlast the longest legitimate holder of the gcp lease. A
+    # quill-cloud-proxy gateway rollout holds it for about 2 h 20 min (four
+    # regions, one at a time, with a bake after us-central1); with a 1 h wait,
+    # every control-plane push that landed in a gateway rollout's first 80
+    # minutes failed (7 of 9 failed deploys 2026-09-30 to 10-02).
+    timeout-minutes: 190
     outputs:
       TR_DEPLOY_MUTEX_OPERATION: ${{ steps.acquire_mutex.outputs.TR_DEPLOY_MUTEX_OPERATION }}
       TR_DEPLOY_MUTEX_GENERATION: ${{ steps.acquire_mutex.outputs.TR_DEPLOY_MUTEX_GENERATION }}
@@ -226,7 +232,7 @@ jobs:
         env:
           TR_DEPLOY_MUTEX_OWNER: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TR_DEPLOY_MUTEX_CLOUD: gcp
-          TR_DEPLOY_WAIT_SECONDS: "3600"
+          TR_DEPLOY_WAIT_SECONDS: "10800"
           TR_DEPLOY_MUTEX_TTL_SECONDS: "21600"
         run: |
           set -euo pipefail
@@ -395,6 +401,10 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/deploy/superseded_deploy.py
+          sparse-checkout-cone-mode: false
       - name: Confirm this push is still current main
         id: current
         run: |
@@ -408,6 +418,12 @@ jobs:
           if [ "${latest_sha}" = "${GITHUB_SHA}" ]; then
             echo "proceed=true" >> "$GITHUB_OUTPUT"
             echo "${GITHUB_SHA} is still current main"
+          elif python3 scripts/deploy/superseded_deploy.py \
+              --repo "${GITHUB_REPOSITORY}" --base "${GITHUB_SHA}" --head "${latest_sha}"; then
+            # A newer commit that touches no deploy path starts no run of its
+            # own, so skipping here would leave main undeployed.
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Main moved to ${latest_sha} only outside the deploy paths; deploying ${GITHUB_SHA}."
           else
             echo "proceed=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Skipping superseded deploy ${GITHUB_SHA}; current main is ${latest_sha}."
