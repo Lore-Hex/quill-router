@@ -118,7 +118,9 @@ def test_public_parameter_diagnosis_survives_scrubbing(
     assert STORE.credit_money[key["workspace_id"]].reserved_microdollars == 0
 
 
-@pytest.mark.parametrize("path", ["future_option", "usage.future_option", "input[12].future_option"])
+@pytest.mark.parametrize(
+    "path", ["future_option", "usage.future_option", "input[12].future_option", "a" * 100, "usage." + "a" * 94],
+)
 def test_unknown_rejected_field_path_is_retained_without_value_or_new_fingerprint(
     client: TestClient, warnings: list[dict[str, Any]], path: str
 ) -> None:
@@ -145,10 +147,33 @@ def test_unsafe_rejected_field_path_is_dropped_not_forwarded(
     assert "parameter_path" not in warnings[0]["contexts"]["gateway_rejection"]
 
 
-def test_rejected_field_path_length_is_bounded(client: TestClient) -> None:
-    payload = _request(_key(client))
-    payload["contract_rejection"]["parameter_path"] = "a" * 129
-    assert client.post("/v1/internal/gateway/validate", json=payload).status_code == 400
+@pytest.mark.parametrize("path", ["a" * 101, "usage." + "a" * 95, "a" * 128, "a" * 129, "private_prompt_" * 100])
+def test_oversized_path_is_dropped_without_losing_rejection_context(
+    client: TestClient, warnings: list[dict[str, Any]], path: str,
+) -> None:
+    key = _key(client)
+    payload = _request(key, parameter="other")
+    payload["contract_rejection"]["parameter_path"] = path
+    assert client.post("/v1/internal/gateway/validate", json=payload).status_code == 200
+    [event] = warnings
+    assert event["contexts"]["gateway_rejection"] == {"request_id": REQUEST_ID}
+    assert event["tags"]["workspace_id"] == key["workspace_id"]
+    assert event["tags"]["credential_id"] == key["hash"]
+    assert event["tags"]["route"] == "/v1/chat/completions"
+    assert event["tags"]["http_status"] == "400"
+    assert event["fingerprint"][-1] == "other"
+    assert path[:100] not in json.dumps(event)
+    assert STORE.credit_money[key["workspace_id"]].reserved_microdollars == 0
+
+
+def test_diagnostic_sink_rechecks_path_limit(warnings: list[dict[str, Any]]) -> None:
+    rejection = GatewayContractRejection.model_construct(
+        status=400, parameter="other", request_id=REQUEST_ID, parameter_path="a" * 101,
+    )
+    report_gateway_contract_rejection(
+        rejection, route="/v1/chat/completions", workspace_id="ws_verified", credential_id="key_verified",
+    )
+    assert warnings[0]["contexts"]["gateway_rejection"] == {"request_id": REQUEST_ID}
 
 
 def test_arbitrary_rejected_paths_do_not_exhaust_sentry_budget(
