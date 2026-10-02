@@ -47,6 +47,9 @@ jobs:
       TR_DEPLOY_WAIT_SECONDS: "3600"
       TR_RELEASE_CHECKOUT: ${{ github.workspace }}/src
       TR_CLOUD_PROMOTION_ONLY: ${{ inputs.promotion_only && 'true' || 'false' }}
+      # Assumed at job start, and again by scripts/deploy/_aws_session.sh
+      # once the deploy mutex is held.
+      AWS_DEPLOY_ROLE_ARN: arn:aws:iam::330422590279:role/tr-router-github-deploy
     steps:
       # Checkout into a subdirectory: the GCP auth action writes its
       # credentials file into the workspace ROOT, and the deploy script
@@ -81,7 +84,7 @@ jobs:
       # first dispatch failed on them with "security token invalid").
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::330422590279:role/tr-router-github-deploy
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
           aws-region: eu-west-3
 
       # One atomic journal allows two clouds, never all three.
@@ -123,6 +126,7 @@ jobs:
         run: |
           export TR_DEPLOY_MUTEX_CLOUD=aws
           source ../ops/scripts/deploy/deploy_mutex.sh
+          source ../ops/scripts/deploy/_aws_session.sh
           finish() {
             local rc=$?
             trap - EXIT
@@ -133,6 +137,8 @@ jobs:
           trap 'exit 130' INT
           trap 'exit 143' TERM
           deploy_mutex_acquire
+          # The wait above can outlast the job's first AWS session.
+          aws_refresh_session || exit 1
           deploy_mutex_assert
           # Schema first: the drain's own verification queries every
           # operational table, so a node behind on migrations fails the

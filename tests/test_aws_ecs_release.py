@@ -210,9 +210,23 @@ elif tool == "gcloud":
 elif tool == "docker":
     if args[0] == "login": sys.stdin.read()
 elif tool == "sleep": pass
+elif tool == "curl":
+    header = sys.stdin.read()
+    expected = "Authorization: bearer " + os.environ.get("ECS_REQUEST_TOKEN", "") + "\n"
+    if header != expected or os.environ.get("ECS_FAIL_OIDC"): sys.exit(22)
+    print(json.dumps({"value": os.environ["ECS_OIDC_TOKEN"]}))
 elif tool == "aws":
     op = " ".join(args[:2])
+    if os.environ.get("ECS_AWS_SESSIONS"):
+        with open(os.environ["ECS_AWS_SESSIONS"], "a") as f:
+            f.write(json.dumps([op, os.environ.get("AWS_SESSION_TOKEN", "")]) + "\n")
     if op == "sts get-caller-identity": print("330422590279")
+    elif op == "sts assume-role-with-web-identity":
+        token = args[args.index("--web-identity-token") + 1]
+        assert token.startswith("file://"), "the ID token must not be in argv"
+        assert pathlib.Path(token[7:]).read_text() == os.environ["ECS_OIDC_TOKEN"]
+        if os.environ.get("ECS_FAIL_ASSUME"): sys.exit(254)
+        print("ASIARENEWED\trenewed-secret\trenewed-session")
     elif op == "ecr get-login-password": print("fixture-password")
     elif op == "ecr describe-images": print(digest)
     elif op == "ecs describe-services":
@@ -277,6 +291,12 @@ print(value)
 '''
 
 
+#: What the ECS rollout needs from scripts/deploy, copied verbatim into a fixture.
+ECS_SCRIPT_FILES = (
+    "aws_ecs_control_plane.sh", "_aws_session.sh", "prepare_ecs_release.py", "cloud_complete_gate.sh",
+)
+
+
 def run_ecs_fixture(
     tmp_path: Path, *, failure: str = "", verifier_rc: int = 0,
     source_root: Path = ROOT, extra_env: dict | None = None, timeout: int = 120,
@@ -286,10 +306,11 @@ def run_ecs_fixture(
     scripts.mkdir(parents=True)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    for name in ("aws_ecs_control_plane.sh", "prepare_ecs_release.py", "cloud_complete_gate.sh"):
+    for name in ECS_SCRIPT_FILES:
         shutil.copy2(source_root / "scripts/deploy" / name, scripts / name)
     (scripts / "deploy_mutex.sh").write_text(
-        'deploy_mutex_acquire() { DEPLOY_MUTEX_SCOPE_OWNS_LOCK=1; }; '
+        'deploy_mutex_acquire() { DEPLOY_MUTEX_SCOPE_OWNS_LOCK=1; '
+        'wc -l < "$ECS_CALLS" | tr -d " " > "${ECS_UNLOCK}.acquired"; }; '
         'deploy_mutex_assert() { :; }; '
         'deploy_mutex_finish() { echo "$1" > "$ECS_UNLOCK"; }\n'
     )
@@ -304,7 +325,7 @@ def run_ecs_fixture(
         'exit "$HARNESS_VERIFIER_RC"\n'
     )
     (scripts / "cloud_serving_release.py").write_text(READER_STUB)
-    for tool in ("git", "gh", "aws", "gcloud", "docker", "sleep"):
+    for tool in ("git", "gh", "aws", "gcloud", "docker", "sleep", "curl"):
         executable = bin_dir / tool
         executable.write_text(CLI_STUB)
         executable.chmod(0o755)
@@ -316,7 +337,10 @@ def run_ecs_fixture(
     definition.write_text(json.dumps(definitions if definitions is not None else {
         region: task_definition(region) for region in ("eu-west-1", "eu-west-3")
     }))
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("TR_CLOUD_", "TR_DEPLOY_", "TR_ECS_", "ECS_"))}
+    # A developer's or runner's own AWS credentials and OIDC request variables
+    # never reach the copied script; tests that need them pass them in.
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith(("TR_CLOUD_", "TR_DEPLOY_", "TR_ECS_", "ECS_", "ACTIONS_ID_TOKEN_", "AWS_"))}
     result = subprocess.run(  # noqa: S603 - copied script, all cloud and image tools stubbed
         [shutil.which("bash") or "/bin/bash", str(scripts / "aws_ecs_control_plane.sh")],
         env={**env, "PATH": f"{bin_dir}:{env['PATH']}", "ECS_STATE": str(state),
@@ -536,7 +560,7 @@ def test_ecs_rollout_refuses_misaligned_tables_before_registration(
     source_root = tmp_path / "source"
     scripts = source_root / "scripts/deploy"
     scripts.mkdir(parents=True)
-    for name in ("aws_ecs_control_plane.sh", "prepare_ecs_release.py", "cloud_complete_gate.sh"):
+    for name in ECS_SCRIPT_FILES:
         shutil.copy2(ROOT / "scripts/deploy" / name, scripts / name)
     script = scripts / "aws_ecs_control_plane.sh"
     text = script.read_text()

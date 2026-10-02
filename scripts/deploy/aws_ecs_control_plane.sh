@@ -9,6 +9,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 REPO_ROOT="${TR_RELEASE_CHECKOUT:-$REPO_ROOT}"
 cd "$REPO_ROOT"
 source "${SCRIPT_DIR}/deploy_mutex.sh"
+source "${SCRIPT_DIR}/_aws_session.sh"
 source "${SCRIPT_DIR}/cloud_bake_gate.sh"
 source "${SCRIPT_DIR}/cloud_complete_gate.sh"
 
@@ -89,6 +90,8 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 export TR_DEPLOY_MUTEX_CLOUD=aws
 deploy_mutex_acquire
+# The wait above can outlast the job's first AWS session.
+aws_refresh_session || exit 1
 bake_status=0
 cloud_bake_gate aws || bake_status=$?
 if [ "$bake_status" -eq 75 ]; then
