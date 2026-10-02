@@ -1,8 +1,8 @@
 # Fast admission and batched settlement
 
-Status: **proposed, v12, 2026-10-02. Nothing built.** v8 changed direction
-to regional leases, Joseph's choice (§2). Codex and Fable reviewed v1-v11
-(§11), and v12 answers their reviews of v11.
+Status: **proposed, v13, 2026-10-02. Nothing built.** v8 changed direction
+to regional leases, Joseph's choice (§2). Codex and Fable reviewed v1-v12
+(§11), and v13 answers their reviews of v12.
 
 This is the plan for reaching 100T tokens a month without spending the routing
 margin on the billing database, and for taking the control plane out of request
@@ -222,8 +222,8 @@ lease's expiry minus a skew allowance.
 
 - It reads the clock after recording a hold, and undoes the hold if the
   cutoff has passed.
-- After the cutoff it issues no new publish for the lease. Requests for the
-  lease get retry until it is draining (§4.5).
+- After the cutoff it issues no new publish for the lease. Its heartbeats get
+  `retry`, and its terminals go to the drain log (§4.5).
 - A renewal that keeps failing lets the lease reach its cutoff. The owner then
   stops admitting under it (§4.4).
 - The expiry is Spanner's time and the cutoff the owner's, so clock steps
@@ -286,11 +286,11 @@ lease's expiry minus a skew allowance.
   - The cost is a little extra reservation for a while.
 - **Requests carry their lease.** Heartbeats, settles and refunds go to the
   owner and lease named in the authorization's signed envelope.
-  - While the lease is open, only its owner publishes its records.
-  - A front door learns a lease's state from Spanner, through a cache. It
-    writes a lease's terminals only once Spanner shows it draining (§4.5).
-  - If the owner cannot be reached, the front door answers retry. The gateway
-    retries within its budget, as it retries Python today.
+  - While the lease is open, only its owner publishes its records to the log.
+  - If the owner cannot be reached, a terminal goes to the lease's drain log
+    at once (§4.5), and the front door answers `recorded`. A heartbeat it
+    cannot deliver gets `retry`, which stops the stream; the stream then
+    settles, into the drain log if need be.
   - A front door that keeps failing to reach an owner can revoke the lease's
     renewal in Spanner. The lease then expires, and the log takes over
     (§4.8). Revocations are rate-limited per lease and per front door, so one
@@ -364,45 +364,69 @@ and the request records all follow that rule.
     the same records, with the same sequence numbers, before anything new.
   - Its publishes are bounded by a deadline shorter than the reaper's grace
     minus twice the skew allowance. The deadline covers the request and the
-    client library's queued retries, not only the caller's wait. An owner
-    record that still arrives after a tick that reaped its hold only loses,
-    as Decision 70 allows.
+    client library's queued retries, not only the caller's wait.
+  - A publish that timed out can still be stored later. So the auditor does
+    not rely on the deadline alone: it records the owner's frontier when the
+    lease drains (§4.8), and an owner record beyond it loses.
 - The owner answers a later terminal for `A` with the winner's outcome, and
   does not publish it. It charges nothing.
 - An answer that depends on the owner's decision is given only if the publish
   was acknowledged before the owner's cutoff.
   - Otherwise the answer is `recorded`, and the lease's order decides.
   - The gateway needs only to know that the record is durable.
-- **Once the lease is draining,** its terminals go to Spanner, not to the log.
-  - The front door appends the terminal, with its money fields and its full
-    record's digest, to the lease's **drain log**: a Spanner table ordered by
-    a per-lease sequence number taken in the same transaction. It then
-    answers `recorded`.
-  - So a lease's terminals have one order: the owner's records by their
+- **The drain log.** A terminal the owner does not take goes to the lease's
+  drain log, a Spanner table. A front door appends it, with its money fields
+  and its full record's digest, when the owner cannot be reached or once the
+  lease is draining. It then answers `recorded`.
+  - Rows are keyed by lease, authorization and record ID, and ordered by
+    their Spanner commit timestamp, then record ID. Appends are independent
+    inserts with no counter row, so a crashed owner's streams all settling
+    at once do not queue on one row.
+  - A lease's terminals have one order: the owner's records by their
     sequence numbers, then the drain log. The first terminal for an
-    authorization in that order wins. Reaps are appended to the drain log too
-    (§4.8).
-  - A draining lease exists only after a crash, a revocation or a forced
-    exit, so one Spanner transaction per terminal there is affordable.
+    authorization in that order wins. Reaps of a draining lease are
+    appended to the drain log too (§4.8).
+  - The owner's reaper reads a hold's drain-log rows before reaping it. If it
+    finds a terminal, it adopts it, publishing it as its own record, instead
+    of reaping.
+  - An append is conditional, in its own transaction, on the lease not being
+    closed. A refused append answers `retry`.
+  - A row-deletion policy removes a lease's rows after it closes. The drain
+    log lives in the multi-region database, with the leases.
+  - Appends happen only when an owner is unreachable, has stopped or is past
+    its cutoff, so one Spanner transaction per terminal there is affordable.
   - A heartbeat for a draining lease is refused with 409 and a new reason,
     `lease_draining`. Nothing renews a hold whose owner has stopped.
-  - The enclave's handling, at quill-cloud-proxy `a06050f`: a heartbeat gets
-    one attempt within a 5-second budget. Any error ends the stream: a 409 of
-    any reason, a 503 or a transport failure (`sendHeartbeatLocked` and
-    `markHeartbeatLostLocked` in `enclave-go/cmd/enclave/stage_d.go`). The
-    enclave then sends a settle with the usage it delivered, not a refund
-    (`BeforeTerminal` in `main.go`). A settle that fails goes to its
-    in-memory retry queue (`settlementRetries`).
+  - The enclave's handling, at quill-cloud-proxy `a06050f`:
+    - A heartbeat is retried up to three times on a 502, 503 or 504, within
+      its 5-second budget (`authorizeRetry`, from the `Heartbeat` call in
+      `internal/trustedrouter/stage_d.go`). A 409 is not retried.
+    - If the heartbeat still fails, the stream ends (`sendHeartbeatLocked` and
+      `markHeartbeatLostLocked` in `cmd/enclave/stage_d.go`). The enclave then
+      sends a settle with the usage it delivered, not a refund (`BeforeTerminal`
+      in `main.go`). A settle that fails goes to its in-memory retry queue
+      (`settlementRetries`).
+    - The first heartbeat is the exception. If it fails, before any byte
+      reaches the client, the enclave answers 503 and sends no settle
+      (`main.go`). Nothing was delivered, and the hold ends at its deadline.
   - So refusing a draining lease's heartbeats needs no enclave change beyond
-    logging the new reason. It is also why one failed heartbeat stops a
-    stream today, including the heartbeat kill switch's 503.
+    logging the new reason. It is also why a heartbeat that fails through its
+    retries stops a stream today, including under the heartbeat kill
+    switch's 503.
   - Owners retire through deploys without draining (§4.2), so this cuts
     streams only after a crash, a revocation or a forced exit. That is a cost
     today's design does not have: a Python instance's crash cuts no stream,
     since the state is in Spanner.
-- **`retry`** is a 503 with `Retry-After`. For a heartbeat, it stops the
-  stream, which then settles. For a settle, the enclave retries from its
-  queue, within its budget.
+- **`retry`** is a 503. For a heartbeat, once its retries are spent, it stops
+  the stream, which then settles. A terminal is answered `retry` only when the drain log refuses it
+  or Spanner is unavailable. The enclave then retries the settle from its
+  queue: 6 attempts, backing off from 0.5 s to 15 s, about 30 s in all
+  (`settlement_retry.go`).
+- **A Spanner stall longer than the expiry window cuts streams fleet-wide.**
+  Renewals fail, leases reach their cutoff, and heartbeats get `retry`. Today
+  a stall longer than a heartbeat's 5-second budget already does this, since
+  every heartbeat is a Spanner commit. The expiry window is sized as a
+  multiple of Spanner's observed commit-stall tail (§9).
 
 **Terminals.** A settle moves e out of `held` and a into `consumed`. A refund
 moves e out of `held`.
@@ -641,12 +665,21 @@ by the first-terminal rule.
 **The drain log and reaping.**
 
 - The auditor publishes ticks under the lease, each carrying its time.
-- It reads a draining lease's drain log only after applying a tick
-  published once no owner record can still arrive: after the owner's cutoff
-  plus its publish deadline. So every owner record comes first.
-- At a tick past a hold's deadline plus the grace, with the drain log
-  applied to that point, it appends a reap for the hold to the drain log. A
-  terminal already there for the hold wins over it.
+- While a lease is open, the auditor leaves its drain log to the owner.
+- It reads a draining lease's drain log only after applying a tick it
+  published once its own clock passed the lease's expiry plus the skew
+  allowance plus the owner's publish deadline.
+- With that tick it stores the lease's **owner frontier**: the highest owner
+  sequence number it has applied. An owner record above the frontier loses,
+  whenever it arrives, in ordinary processing and in a rebuild alike. Owner
+  sequence numbers are issued in order and a failed publish is republished
+  under its own number, so a late record is always above the frontier.
+- It reads drain-log rows up to its read timestamp, in commit-timestamp
+  order. A row committed later has a later timestamp, so none is missed.
+- At a tick past a hold's deadline plus the grace, it reaps the hold by
+  inserting a reap row, in a read-write transaction that first reads the
+  hold's drain-log rows. A concurrent append for the same hold conflicts with
+  that read, and one of the two retries. A terminal already there wins.
 - It books a draining lease's winners in that order: owner records, then the
   drain log.
 
@@ -656,6 +689,11 @@ by the first-terminal rule.
   published once the drain's end condition held. Everything published before
   that tick has then been applied, including terminals for holds the auditor
   never saw.
+- The close transaction also reads the lease's drain log beyond what the
+  auditor has applied. If it finds a row, it aborts, and the auditor applies
+  the row first. An append checks, in its own transaction, that the lease is
+  not closed. The two conflict, so an acknowledged append is never left
+  behind by a close.
 - It books what remains, releases the remaining allocation through the
   release primitive (§4.7), and marks the lease closed.
 - A record for a closed lease charges nothing, as a settle after today's
@@ -680,8 +718,9 @@ A new owner never reuses a dead owner's lease. It is granted a new one.
   - A rebuild starts from the auditor's stored winners and progress, and never
     decides an authorization that already has a winner.
   - It needs no order between publishers. Owner records are ordered by their
-    sequence numbers, and a draining lease's later terminals and reaps are in
-    its drain log in Spanner, in order, which does not expire.
+    sequence numbers, up to the stored owner frontier. A draining lease's
+    later terminals and reaps are in its drain log in Spanner, in order,
+    which does not expire.
   - The rebuild stores what it books as winners, so a later resumption of
     the ordinary path agrees with it.
 - Records unreadable for longer than 31 days, in a regional outage that long,
@@ -722,13 +761,16 @@ when Python is unreachable: the first durable point is Python's
   - A stream's first heartbeat also publishes its full authorization record
     (model, endpoint and frozen prices). The two publishes go out together,
     and the heartbeat is answered after both are acknowledged, so the first
-    byte waits for one round trip, not two. The heartbeat record carries the
-    authorization record's digest. A reap's request record is built from that
-    record and the last snapshot.
+    byte waits for one round trip, not two.
+  - The first heartbeat record itself carries what a reap's request record
+    needs: the model, endpoint, frozen prices, workspace and key. Later
+    heartbeats carry only their snapshot. So a reap never depends on the
+    authorization record having arrived, which only adds detail.
   - The record topic's subscription is acknowledged only after staging, so a
-    ClickHouse outage shorter than the topic's retention loses nothing. While
-    a winner's records wait, disposition lookups answer from the stored
-    winner.
+    ClickHouse outage shorter than the subscription's 31-day retention loses
+    nothing. The record topic's Cloud Storage export is the backstop: a
+    staged record lost in ClickHouse is rebuilt from it. While a winner's
+    records wait, disposition lookups answer from the stored winner.
   - A consumer stages the full records in ClickHouse, keyed by
     authorization.
   - The auditor writes each authorization's generation and activity record
@@ -816,7 +858,8 @@ Each has a production check.
    the lease is draining, terminals and reaps go to its drain log in Spanner.
    The first terminal in the lease's order wins: owner records, then the
    drain log.
-4. **No charge lost.** Every terminal is in the log before it is acknowledged.
+4. **No charge lost.** Every terminal is in the log or the drain log before it
+   is acknowledged.
    A draining lease keeps its reservation until the auditor has applied a
    tick published after every hold it could have admitted has ended. A lease
    with unread or missing records never closes by the ordinary path.
@@ -886,6 +929,10 @@ Each has a production check.
 - the pre-first-byte heartbeat waits for its publish, as it waits for a
   Spanner commit today.
 
+**After an owner crash,** its leases' streams stop at their next heartbeat
+and settle into the drain log within one heartbeat interval. For 2,000 open
+streams on a lease, that is about 200 independent inserts a second.
+
 The benchmark measures the owner's throughput on the hottest workspace, the
 publish latency, and the auditor at the target rate.
 
@@ -943,6 +990,8 @@ leases, and was retired on 2026-09-27.
   - the low-water mark, the top-up horizon and the cooldown;
   - the renewal, checkpoint and tick intervals;
   - the skew allowance, and the reaper's grace;
+  - the expiry window, as a multiple of Spanner's observed commit-stall tail
+    (§4.5);
   - the state cache's maximum age, and the shard count rule.
 
   They come from the spike, the benchmark and the pilot.
@@ -1258,3 +1307,37 @@ record.
     covering ships.
   - The authorization record and the first heartbeat publish together.
   - The P3s are answered in place.
+- **v13.** Codex (2 P1, 1 P2, 1 P3) and Fable (1 P1, 2 P2, 7 P3) found these
+  problems in v12:
+  - an owner publish that timed out could still be stored after the drain's
+    tick, and a rebuild would then let it beat the reap that won live;
+  - a close was not fenced against a drain-log append committed after the
+    auditor's last read;
+  - the drain log's per-lease counter row would serialize a crashed owner's
+    settles, and the enclave's retries of about 30 s would drop the tail;
+  - settles between an owner's death and its lease draining depended on
+    those retries;
+  - a Spanner stall longer than the expiry window cuts streams fleet-wide,
+    which was not stated;
+  - concurrent first-heartbeat publishes could leave a reap without its
+    record;
+  - the enclave retries heartbeats three times on 502, 503 and 504, which the
+    doc misstated;
+  - and, among the P3s, the fence on the auditor's clock, the append
+    condition, drain-log deletion, Invariant 4's wording, the record topic's
+    backstop and `retry`'s meaning.
+
+  v13 answers them:
+  - The auditor stores the owner frontier when the lease drains. Owner
+    records above it lose, live and in a rebuild.
+  - The close transaction re-reads the drain log, and appends check that the
+    lease is not closed.
+  - The drain log is ordered by commit timestamp, with no counter row.
+  - A front door that cannot reach an owner appends a terminal at once,
+    whatever the lease's state. The owner's reaper adopts a terminal it finds
+    there.
+  - The Spanner-stall case is stated, and the expiry window is sized against
+    Spanner's commit-stall tail.
+  - The first heartbeat record carries what a reap needs.
+  - The enclave's retries are cited exactly, with the first-heartbeat
+    exception.
