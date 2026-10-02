@@ -60,14 +60,12 @@
 (() => {
   const header = document.querySelector('.masthead');
   if (!header) return;
-  const hero = document.querySelector('.hero');
   let previousWidth;
   const lockedStyles = [
     ['.hero-copy', ['paddingTop', 'paddingBottom']],
     ['.hero-copy .actions', ['marginTop']],
     ['.hero h1', ['fontSize']],
     ['.hero .lead', ['fontSize', 'lineHeight', 'marginTop']],
-    ['.hero-values', ['marginBottom']],
   ];
   const measure = () => {
     const width = document.documentElement.clientWidth;
@@ -75,18 +73,6 @@
       document.documentElement.style.setProperty('--hero-viewport', `${window.innerHeight}px`);
     }
     if (previousWidth !== width) {
-      // Lock the artwork too: height-based media queries change as mobile chrome hides.
-      if (hero) {
-        hero.removeAttribute('data-art-locked');
-        if (width <= 600) {
-          const art = getComputedStyle(hero, '::before');
-          const values = [art.left, art.right, art.maskImage];
-          ['left', 'right', 'mask'].forEach((property, index) => {
-            hero.style.setProperty(`--hero-art-${property}`, values[index]);
-          });
-          hero.setAttribute('data-art-locked', '');
-        }
-      }
       lockedStyles.forEach(([selector, properties]) => {
         const element = document.querySelector(selector);
         if (!element) return;
@@ -129,7 +115,7 @@
   reveal(document.querySelectorAll('.evidence-reveal, .privacy-column'), 0.35);
   const foreground = document.querySelectorAll(
     '.hero-copy, .market-intro, .sectors > article, #buyers .section-intro, ' +
-    '.provider-strip, .trust-intro, .supplier-art, .seller-intro, ' +
+    '.trust-intro, .supplier-art, .seller-intro, ' +
     '.supplier-cards > article, .closing-copy'
   );
   foreground.forEach(element => element.classList.add('scroll-reveal'));
@@ -150,7 +136,7 @@
     entries.forEach(entry => visible.set(entry.target, entry.isIntersecting));
     sync();
   });
-  document.querySelectorAll('.hero, .route-flow, .supplier-art, .closing').forEach(element => observer.observe(element));
+  document.querySelectorAll('.hero, .route-flow, .supplier-art').forEach(element => observer.observe(element));
 })();
 
 /* Show directional controls only when more market links are out of view. */

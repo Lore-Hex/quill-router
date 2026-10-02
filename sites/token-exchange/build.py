@@ -161,7 +161,6 @@ def build(output: Path) -> None:
     for source, target in {
         "enterprise/token-exchange-hero.webp": "exchange.webp",
         "fonts/archivo-latin.woff2": "archivo.woff2",
-        "fonts/spectral-300-latin.woff2": "spectral.woff2",
         "fonts/ibm-plex-mono-400-latin.woff2": "plex.woff2",
         "trustedrouter-mark-dark.svg": "mark.svg",
         "provider-logos/openai.png": "provider-openai.png",

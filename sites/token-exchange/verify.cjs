@@ -42,7 +42,16 @@ const assert = require('node:assert/strict');
         assert.equal(await mainNav.isVisible(), false);
         assert(await menu.evaluate(el => el === document.activeElement));
       }
-      assert.equal(await page.locator('.hero').evaluate(el => getComputedStyle(el, '::before').animationName), 'none');
+      // The hero and closing box render the river photograph; the provider marquee holds still for reduced motion.
+      const heroPhoto = page.locator('.hero-photo');
+      assert.equal(await heroPhoto.count(), 1);
+      const heroImage = await heroPhoto.evaluate(el => getComputedStyle(el).backgroundImage);
+      const closingImage = await page.locator('.closing-art').evaluate(el => getComputedStyle(el, '::before').backgroundImage);
+      for (const image of [heroImage, closingImage]) {
+        const url = image.match(/^url\("([^"]+)"\)$/)[1];
+        assert((await page.request.get(url)).ok(), `${market.slug} artwork ${url} did not resolve at ${width}`);
+      }
+      assert.equal(await page.locator('.hero-provider-track').evaluate(el => getComputedStyle(el).animationName), 'none');
       assert.equal(await page.locator('.hero-provider-group:first-child a').count(), 6);
       assert.equal(await page.locator('.hero-provider-group[aria-hidden="true"] a:not([tabindex="-1"])').count(), 0);
       const footerNav = page.getByRole('navigation', {name:'Exchange markets', exact:true});
@@ -94,9 +103,10 @@ const assert = require('node:assert/strict');
   const heroGeometry = () => mobile.locator('.hero').evaluate(hero => {
     const rect = hero.getBoundingClientRect();
     const actions = hero.querySelector('.actions').getBoundingClientRect();
-    const art = getComputedStyle(hero, '::before');
+    const photo = hero.querySelector('.hero-photo');
+    const art = photo.getBoundingClientRect();
     return {height:rect.height, actionsTop:actions.top - rect.top,
-      artHeight:art.height, artLeft:art.left, mask:art.maskImage};
+      artHeight:art.height, artTop:art.top - rect.top, artSize:getComputedStyle(photo).backgroundSize};
   });
   for (const [width, height] of [[390,700], [320,600]]) {
     await mobile.setViewportSize({width,height});
