@@ -19,10 +19,13 @@ from starlette.concurrency import run_in_threadpool
 
 from trusted_router.catalog import (
     MODELS,
+    PRIVACY_TIER_CONFIDENTIAL,
+    PRIVACY_TIER_ZERO_RETENTION,
     PROVIDERS,
     ModelEndpoint,
     endpoint_confidential_compute,
     endpoint_e2ee,
+    endpoint_meets_privacy_requirement,
     endpoint_provider_policy,
     endpoint_provider_policy_url,
     endpoint_zero_data_retention,
@@ -124,13 +127,15 @@ def _routes(model_id: str, privacy: Privacy = "any") -> list[ModelEndpoint]:
     routes = [
         endpoint for endpoint in endpoints_for_model(model_id) if endpoint.usage_type == "Credits"
     ]
-    if privacy != "any":
-        routes = [endpoint for endpoint in routes if endpoint_zero_data_retention(endpoint) is True]
-    if privacy == "confidential":
+    # The routing predicate, so a recommendation never lists a route a
+    # request with the same privacy floor would refuse.
+    requirement = {
+        "zdr": PRIVACY_TIER_ZERO_RETENTION,
+        "confidential": PRIVACY_TIER_CONFIDENTIAL,
+    }.get(privacy)
+    if requirement is not None:
         routes = [
-            endpoint
-            for endpoint in routes
-            if endpoint_confidential_compute(endpoint) is True and endpoint_e2ee(endpoint) is True
+            endpoint for endpoint in routes if endpoint_meets_privacy_requirement(endpoint, requirement)
         ]
     return sorted(routes, key=lambda endpoint: (endpoint.provider, endpoint.id))
 

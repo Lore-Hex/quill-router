@@ -63,7 +63,7 @@ PRIVACY_TIER_NO_STORE = 1  # does not store request/response content
 
 PRIVACY_TIER_ZERO_RETENTION = 2  # contractual / policy zero data retention
 
-PRIVACY_TIER_CONFIDENTIAL = 3  # verified compute + provider-side e2ee + explicit ZDR
+PRIVACY_TIER_CONFIDENTIAL = 3  # verified compute + provider-side e2ee + explicit ZDR, not the vendor
 
 PRIVACY_TIER_ALIASES: dict[str, int] = {
     "standard": PRIVACY_TIER_STANDARD,
@@ -4200,3 +4200,33 @@ def maker_provider_slug(model_id: str) -> str | None:
         return None
     slug = MAKER_PROVIDER_BY_AUTHOR.get(author)
     return slug if slug in PROVIDERS else None
+
+
+# Hosts a model maker's company runs besides the API above. They deliver a
+# prompt to the vendor as surely as its own API does: Google runs Vertex AI,
+# Microsoft runs Azure AI Foundry, NVIDIA runs NIM, and Meta via OpenRouter is
+# Meta's Llama API.
+MAKER_OPERATED_HOSTS_BY_AUTHOR: dict[str, frozenset[str]] = {
+    "google": frozenset({"google-vertex"}),
+    "meta-llama": frozenset({"meta"}),
+    "microsoft": frozenset({"azure"}),
+    "nvidia": frozenset({"nvidia-nim"}),
+}
+
+
+def model_vendor_provider_slugs(model_id: str) -> frozenset[str]:
+    """Every PROVIDERS entry that delivers a prompt to the model's own vendor.
+
+    That is the maker's own API, the hosts its company runs, and a provider
+    named like the model's author.
+    """
+    author = model_id.split("/", 1)[0].lower()
+    if author in AUTHORS_NAMING_NO_MAKER:
+        return frozenset()
+    slugs = set(MAKER_OPERATED_HOSTS_BY_AUTHOR.get(author, ()))
+    maker = maker_provider_slug(model_id)
+    if maker is not None:
+        slugs.add(maker)
+    if author in PROVIDERS:
+        slugs.add(author)
+    return frozenset(slug for slug in slugs if slug in PROVIDERS)

@@ -90,7 +90,7 @@ from trusted_router.content.legal import (
     subprocessor_packet,
 )
 from trusted_router.content.token_index import token_index_context
-from trusted_router.content_handling import CONTENT_HANDLING_CLAIM
+from trusted_router.content_handling import CONTENT_HANDLING_CLAIM, VENDOR_EXCLUSION_CLAIM
 from trusted_router.domains import canonical_public_url
 from trusted_router.marketing_experiments import GoogleSearchExperimentCell
 from trusted_router.measured import measured_for_model, measured_for_provider
@@ -862,11 +862,11 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         faq_items=(
             (
                 "Is the DeepSeek API safe to use?",
-                f"It depends on which endpoint you call. api.deepseek.com is the vendor's own service, and several US states have restricted it on government devices. TrustedRouter serves the same MIT-licensed V4 weights through non-Chinese hosting providers inside a hardware-attested gateway. Prompts do not go to the model vendor. {CONTENT_HANDLING_CLAIM} You can verify the attestation live at any time instead of relying on a policy.",
+                f"It depends on which endpoint you call. api.deepseek.com is the vendor's own service, and several US states have restricted it on government devices. TrustedRouter serves the same MIT-licensed V4 weights through a hardware-attested gateway, and DeepSeek's own API is one of its routes. {VENDOR_EXCLUSION_CLAIM} {CONTENT_HANDLING_CLAIM} You can verify the attestation live at any time instead of relying on a policy.",
             ),
             (
                 "Does using DeepSeek through TrustedRouter send data to China?",
-                "No. DeepSeek V4 routes are served by non-Chinese hosting providers on attested infrastructure, so prompts never reach the model vendor. Zero-Data-Retention routes add a contractual guarantee that providers keep nothing, and TEE routes keep the prompt sealed even from the hosting provider. Each route's privacy tier is listed on the models page, and the attestation backing the claim is checkable live.",
+                f"It can on Standard routing, where DeepSeek's own API is one of the V4 routes. {VENDOR_EXCLUSION_CLAIM} Zero-Data-Retention routes add a contractual guarantee that providers keep nothing. Each route's privacy tier is listed on the models page, and the gateway's attestation is checkable live.",
             ),
             (
                 "How do I require DeepSeek zero data retention?",
@@ -889,7 +889,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Do my prompts go to Zhipu or z.ai?",
-                f"No. GLM routes on TrustedRouter are served by non-Chinese hosting providers on attested infrastructure, so prompts do not go to the model vendor. Zero-Data-Retention and TEE tiers are available, and on TEE routes even the hosting provider cannot read the prompt. {CONTENT_HANDLING_CLAIM}",
+                f"They can on Standard routing, where Z.AI's own API is one of the GLM routes. {VENDOR_EXCLUSION_CLAIM} Zero-Data-Retention and TEE tiers are available, and on TEE routes even the hosting provider cannot read the prompt. {CONTENT_HANDLING_CLAIM}",
             ),
             (
                 "Why does GLM answer more questions through TrustedRouter than on the vendor API?",
@@ -927,11 +927,11 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     "chinese-ai-models-us-hosted": PublicPage(
         template="public/seo_chinese_ai_models_us_hosted.html",
         title="Qwen, GLM, Kimi & DeepSeek APIs Hosted on US Infrastructure",
-        description="Use Qwen, GLM, Kimi, and DeepSeek through US-hosted attested infrastructure. Prompts never reach the model vendor, and you can verify that live.",
+        description="Use Qwen, GLM, Kimi, and DeepSeek through US-hosted attested infrastructure. With Confidential privacy, prompts never reach the model vendor, and you can verify the gateway live.",
         faq_items=(
             (
                 "Do my prompts go to China when I use Qwen, GLM, or Kimi through TrustedRouter?",
-                "No. DeepSeek, Kimi, Qwen, GLM, and MiniMax routes are served via non-Chinese hosting providers on attested infrastructure, and prompts do not go to the model vendor. Zero-Data-Retention and TEE tiers are available per route; on the TEE tier, end-to-end confidential compute means even the hosting provider cannot read your prompt. You can verify the gateway live through the attestation endpoint described on the security page.",
+                f"They can on Standard routing, where the vendors' own APIs are among the routes. {VENDOR_EXCLUSION_CLAIM} Zero-Data-Retention and TEE tiers are available per route; on the TEE tier, end-to-end confidential compute means even the hosting provider cannot read your prompt. You can verify the gateway live through the attestation endpoint described on the security page.",
             ),
             (
                 "Is the GLM served through TrustedRouter the same model as the vendor-hosted API?",
@@ -962,7 +962,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Do my prompts go to MiniMax when I use this API?",
-                f"No. MiniMax M3 routes on TrustedRouter are served by non-Chinese hosting providers on attested infrastructure, and prompts do not go to the model vendor. Zero-Data-Retention and TEE tiers are available. {CONTENT_HANDLING_CLAIM} You can verify the gateway yourself: the attestation endpoint returns a JWT signed by the CPU vendor's root key, bound to your live TLS session.",
+                f"They can on Standard routing, where MiniMax's own API is one of the M3 routes. {VENDOR_EXCLUSION_CLAIM} Zero-Data-Retention routes are available. {CONTENT_HANDLING_CLAIM} You can verify the gateway yourself: the attestation endpoint returns a JWT signed by the CPU vendor's root key, bound to your live TLS session.",
             ),
             (
                 "How do I switch from OpenRouter to TrustedRouter for MiniMax M3?",
@@ -1035,7 +1035,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Which models does TrustedRouter serve?",
-                "TrustedRouter has 220+ model routes across 30+ providers: Claude, GPT, Gemini, DeepSeek V4 Pro and Flash, Kimi K2.7, GLM-5.2, Qwen 3.5, MiniMax M3, Llama, Mistral, and Nemotron 3 Ultra, plus meta-routes that pick the best, cheapest, or fastest route per request. Chinese open-weight models are served by non-Chinese hosting providers on attested infrastructure, so your prompts do not go to the model vendor.",
+                f"TrustedRouter has 220+ model routes across 30+ providers: Claude, GPT, Gemini, DeepSeek V4 Pro and Flash, Kimi K2.7, GLM-5.2, Qwen 3.5, MiniMax M3, Llama, Mistral, and Nemotron 3 Ultra, plus meta-routes that pick the best, cheapest, or fastest route per request. {VENDOR_EXCLUSION_CLAIM}",
             ),
         ),
     ),
@@ -1104,7 +1104,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Can we use open-weight models like DeepSeek or Qwen without sending data to the model vendor?",
-                "Yes. DeepSeek, Kimi, Qwen, GLM, and MiniMax routes are served by non-Chinese hosting providers on attested infrastructure, with Zero-Data-Retention and TEE tiers available, so prompts do not go to the model vendor. For legal work that means access to frontier open-weight models without adding the model vendor to your disclosure chain.",
+                f"Yes. {VENDOR_EXCLUSION_CLAIM} For legal work that means access to frontier open-weight models without adding the model vendor to your disclosure chain. Standard routing can include a vendor's own API, so set the Confidential tier for matters that require it.",
             ),
         ),
     ),
@@ -1188,7 +1188,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Which model routes are cheapest for coding agents?",
-                "trustedrouter/cheap automatically selects the cheapest capable route and runs it in a TEE, which suits high-volume agent loops. trustedrouter/fast optimizes for speed instead. Fixed routes for open models such as GLM glm-5.2-fast, DeepSeek V4 Flash, and Kimi K2.7 are listed with transparent per-model pricing, a thin markup over provider list prices, at trustedrouter.com/pricing.",
+                "trustedrouter/cheap automatically selects the cheapest capable route, which suits high-volume agent loops. trustedrouter/fast optimizes for speed instead. Fixed routes for open models such as GLM glm-5.2-fast, DeepSeek V4 Flash, and Kimi K2.7 are listed with transparent per-model pricing, a thin markup over provider list prices, at trustedrouter.com/pricing.",
             ),
             (
                 "Is my code private when an agent routes through TrustedRouter?",
@@ -1196,7 +1196,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Can I use DeepSeek, Kimi, or GLM in Cline without sending code to the model vendor?",
-                "Yes. DeepSeek, Kimi, Qwen, GLM, and MiniMax routes on TrustedRouter are served by non-Chinese hosting providers on attested infrastructure, with Zero-Data-Retention and TEE tiers available. Prompts do not go to the model vendor. You get the capability of the open weights while your codebase stays inside infrastructure you can verify.",
+                f"Yes. {VENDOR_EXCLUSION_CLAIM} Standard routing can include a vendor's own API, so set the Confidential tier for code that must not reach it. With it, you get the capability of the open weights while your codebase stays inside infrastructure you can verify.",
             ),
         ),
     ),
@@ -1265,7 +1265,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Which models can I use for document extraction?",
-                "There are 220+ model routes across 30+ providers, including Claude, GPT, Gemini, DeepSeek, Kimi, GLM, Qwen, Llama, and Mistral. Chinese open-weight models are served by non-Chinese hosting providers on attested infrastructure, so prompts do not go to the model vendor. Meta-routes help batch pipelines: trustedrouter/auto picks a best-fit route per request, trustedrouter/cheap picks the cheapest capable route in a TEE, and automatic fallback covers provider outages.",
+                f"There are 220+ model routes across 30+ providers, including Claude, GPT, Gemini, DeepSeek, Kimi, GLM, Qwen, Llama, and Mistral. {VENDOR_EXCLUSION_CLAIM} Meta-routes help batch pipelines: trustedrouter/auto picks a best-fit route per request, trustedrouter/cheap picks the cheapest capable route, and automatic fallback covers provider outages.",
             ),
         ),
     ),
@@ -1330,7 +1330,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Which models can an agent pay for with x402?",
-                "The same catalog as every other payment method: 220+ model routes across 30+ providers, including Claude, GPT, Gemini, DeepSeek V4, Kimi K2.7, GLM-5.2, Qwen 3.5, MiniMax M3, Llama, and Mistral. Meta-routes help agents that should not hardcode a model: trustedrouter/auto picks the best fit per request, trustedrouter/cheap picks the cheapest capable route in a TEE, and trustedrouter/fast optimizes for latency. Per-model pricing is listed at /pricing.",
+                "The same catalog as every other payment method: 220+ model routes across 30+ providers, including Claude, GPT, Gemini, DeepSeek V4, Kimi K2.7, GLM-5.2, Qwen 3.5, MiniMax M3, Llama, and Mistral. Meta-routes help agents that should not hardcode a model: trustedrouter/auto picks the best fit per request, trustedrouter/cheap picks the cheapest capable route, and trustedrouter/fast optimizes for latency. Per-model pricing is listed at /pricing.",
             ),
             (
                 "Is my agent's prompt private when it pays per request?",
@@ -2300,6 +2300,7 @@ def _env() -> Environment:
     env.globals["decide_path"] = DECIDE_PATH
     env.globals["decide_path_aliases"] = DECIDE_PATH_ALIASES
     env.globals["content_handling_claim"] = CONTENT_HANDLING_CLAIM
+    env.globals["vendor_exclusion_claim"] = VENDOR_EXCLUSION_CLAIM
     # Callable, not a value: this env is lru_cached and shared across
     # requests, so it must read the per-request ContextVar at render time.
     env.globals["csp_nonce"] = current_csp_nonce
