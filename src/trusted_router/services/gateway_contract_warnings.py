@@ -9,6 +9,7 @@ from trusted_router.schemas import (
     GatewayContractRejection,
 )
 from trusted_router.sentry_config import capture_gateway_contract_warning
+from trusted_router.services.contract_value_preview import safe_value_preview
 
 # Public parameter categories, not a request allowlist. Unknown names might
 # themselves contain customer content, so only bounded identifier paths are
@@ -149,9 +150,13 @@ def report_gateway_contract_rejection(
     if rejection is None or route not in {"/v1/chat/completions", "/v1/responses"}:
         return
     parameter = rejection.parameter if rejection.parameter in PARAMETER_CATEGORIES else "other"
-    context = {"request_id": rejection.request_id}
+    context: dict[str, str | bool] = {"request_id": rejection.request_id}
     if path := _safe_parameter_path(rejection.parameter_path):
         context["parameter_path"] = path
+        preview, trimmed = safe_value_preview(path, rejection.value_preview)
+        if preview is not None:
+            context["value_preview"] = preview
+            context["value_truncated"] = rejection.value_truncated or trimmed
     capture_gateway_contract_warning(
         {
             "level": "warning",

@@ -453,8 +453,10 @@ class GatewayContractRejection(_Strict):
     parameter_path: str | None = Field(
         default=None, max_length=GATEWAY_REJECTION_PARAMETER_PATH_MAX_LENGTH,
     )
+    value_preview: str | None = Field(default=None, max_length=100)
+    value_truncated: bool = False
 
-    @field_validator("parameter_path", mode="before")
+    @field_validator("parameter_path", "value_preview", mode="before")
     @classmethod
     def drop_oversized_parameter_path(cls, value: Any) -> Any:
         # Preserve rejection attribution during mixed-version gateway rollouts
