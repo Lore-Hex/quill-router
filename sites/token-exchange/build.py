@@ -78,13 +78,14 @@ def provider_ticker(copies: int = 6) -> str:
     The loop slides by one group; six groups keep the row full up to about 4000px wide."""
     groups = []
     for index in range(copies):
-        hidden = index > 0
+        link_attrs = ' tabindex="-1"' if index else ""
+        group_attrs = ' aria-hidden="true"' if index else ""
         links = "".join(
-            f'<a href="https://trustedrouter.com/providers"{" tabindex=\"-1\"" if hidden else ""}>'
+            f'<a href="https://trustedrouter.com/providers"{link_attrs}>'
             f'<img src="/assets/provider-{slug}.png" width="32" height="32" alt=""><span>{html.escape(name)}</span></a>'
             for slug, name in PROVIDERS
         )
-        groups.append(f'<div class="hero-provider-group"{" aria-hidden=\"true\"" if hidden else ""}>{links}</div>')
+        groups.append(f'<div class="hero-provider-group"{group_attrs}>{links}</div>')
     return "".join(groups)
 
 
