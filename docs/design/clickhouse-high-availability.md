@@ -338,6 +338,19 @@ could record a poison row twice.
    Takeover time ≤ 60 s plus one cycle. Do not reuse the
    `operational_outbox_heartbeat` row: both hosts would write it, and it
    cannot tell a standby whether someone else is alive.
+
+   A lease alone does not fence a job that started before it expired. A
+   rollup can outlive the 60 s lease and run its `REPLACE PARTITION` after the
+   standby has published fresher results; each job's parity check uses its own
+   source snapshot, so both pass and the older publication replaces newer
+   aggregates. Idempotent recomputation does not make that overlap safe. So:
+   give every worker unit a `RuntimeMaxSec=` well under its timer period, have
+   a new holder wait out the longest `RuntimeMaxSec` after the previous lease
+   expires before it publishes, and have each publishing step re-read the
+   lease immediately before `REPLACE PARTITION` or its `INSERT`, aborting
+   unless it still holds the same lease epoch (the epoch increments on every
+   takeover). Either guard alone leaves a gap; together they bound the overlap
+   to zero.
 3. Drill: `clickhouse_failover_smoke.sh:16` defaults to node 3 and checks reads
    only. Add a node-1 mode that requires the standby to drain (drain lag on
    `/status.json` recovers) while node 1 is stopped.
@@ -349,15 +362,24 @@ receiving about a third of new connections for ~15–25 s. Each query opens a ne
 connection with a 20 s connect timeout (2 s for public snapshots), so those
 reads hang and then fail.
 
-1. Health check: HTTP `GET /replicas_status` on 8123, every 5 s, unhealthy
-   after 2. ClickHouse answers 503 when a writable replica lags its freshest
-   peer by `min_relative_delay_to_close` (300 s, the default; verified on the
-   cluster). The freshest replica therefore always passes, so the backend set
-   cannot go empty because of lag. Read-only replicas are skipped by that
-   check, which is acceptable: during a Keeper partition the writer is
-   blocked too, so every replica is equally stale. The firewall already allows
-   the health-check ranges to 8123 and the endpoint needs no credentials
-   (verified: 200 on node 1). Terraform in §3.2.
+1. Health check: an HTTP check on 8123, every 5 s, unhealthy after 2.
+   `GET /replicas_status` alone is not enough. It answers 503 when a writable
+   replica lags its freshest peer by `min_relative_delay_to_close` (300 s, the
+   default; verified on the cluster), but it skips read-only replicas
+   ([`ReplicasStatusHandler.cpp`](https://raw.githubusercontent.com/ClickHouse/ClickHouse/master/src/Server/ReplicasStatusHandler.cpp)).
+   A minority replica that loses Keeper while node 1 and the other voter keep
+   quorum turns read-only and falls further behind while ingestion continues,
+   yet still answers 200, so it keeps receiving reads and successful responses
+   never trigger client failover. Use a predefined HTTP handler instead
+   (`http_handlers` with a `predefined_query_handler` at, for example,
+   `/tr_health`) whose query fails when this replica is read-only or too far
+   behind, e.g. `SELECT throwIf(count() > 0) FROM system.replicas WHERE
+   is_readonly OR absolute_delay > 300`; ClickHouse returns an error status for
+   a thrown exception, so the check marks the replica unhealthy. The freshest
+   writable replicas still pass, so lag alone cannot empty the backend set.
+   The firewall already allows the health-check ranges to 8123; the handler
+   runs as a dedicated read-only user with access to `system.replicas` only.
+   Terraform in §3.2 points the check at this path.
 2. Client failover: committed on this branch (§4); turn it on by setting the
    two URLs to the load balancer followed by the three replicas.
 3. `scripts/deploy/rollout.sh:341-347`: fail the rollout when the
@@ -483,10 +505,10 @@ resource "google_compute_region_health_check" "clickhouse_tcp" {
 }
 
 # Second pull request.
-resource "google_compute_region_health_check" "clickhouse_replicas_status" {
+resource "google_compute_region_health_check" "clickhouse_replica_health" {
   name                = "tr-clickhouse-replicas-status"
   region              = local.clickhouse_region
-  description         = "ClickHouse /replicas_status: 503 when a replica lags its peers by >= min_relative_delay_to_close (300 s)"
+  description         = "ClickHouse /tr_health: error when this replica is read-only or more than 300 s behind"
   check_interval_sec  = 5
   timeout_sec         = 3
   healthy_threshold   = 2
@@ -494,7 +516,7 @@ resource "google_compute_region_health_check" "clickhouse_replicas_status" {
 
   http_health_check {
     port         = 8123
-    request_path = "/replicas_status"
+    request_path = "/tr_health"
   }
 }
 
@@ -506,7 +528,7 @@ resource "google_compute_region_backend_service" "clickhouse_http" {
   session_affinity                = "NONE"
   connection_draining_timeout_sec = 0
   # First pull request: google_compute_region_health_check.clickhouse_tcp.id
-  health_checks = [google_compute_region_health_check.clickhouse_replicas_status.id]
+  health_checks = [google_compute_region_health_check.clickhouse_replica_health.id]
 
   dynamic "backend" {
     for_each = local.clickhouse_nodes
