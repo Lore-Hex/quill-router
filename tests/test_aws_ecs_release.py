@@ -215,6 +215,8 @@ elif tool == "curl":
     expected = "Authorization: bearer " + os.environ.get("ECS_REQUEST_TOKEN", "") + "\n"
     if header != expected or os.environ.get("ECS_FAIL_OIDC"): sys.exit(22)
     print(json.dumps({"value": os.environ["ECS_OIDC_TOKEN"]}))
+    # A short transfer: complete JSON on stdout, then curl's exit 18.
+    if os.environ.get("ECS_PARTIAL_OIDC"): sys.exit(18)
 elif tool == "aws":
     op = " ".join(args[:2])
     if os.environ.get("ECS_AWS_SESSIONS"):
@@ -222,9 +224,9 @@ elif tool == "aws":
             f.write(json.dumps([op, os.environ.get("AWS_SESSION_TOKEN", "")]) + "\n")
     if op == "sts get-caller-identity": print("330422590279")
     elif op == "sts assume-role-with-web-identity":
-        token = args[args.index("--web-identity-token") + 1]
-        assert token.startswith("file://"), "the ID token must not be in argv"
-        assert pathlib.Path(token[7:]).read_text() == os.environ["ECS_OIDC_TOKEN"]
+        # The ID token arrives on stdin: never in argv, never in a file.
+        assert args[args.index("--web-identity-token") + 1] == "file:///dev/stdin"
+        assert sys.stdin.read() == os.environ["ECS_OIDC_TOKEN"]
         if os.environ.get("ECS_FAIL_ASSUME"): sys.exit(254)
         print("ASIARENEWED\trenewed-secret\trenewed-session")
     elif op == "ecr get-login-password": print("fixture-password")

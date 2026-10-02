@@ -11,11 +11,15 @@ fetches a fresh GitHub token whenever it needs one.
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
-from .test_aws_ecs_release import run_ecs_fixture
+from .test_aws_ecs_release import CLI_STUB, run_ecs_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 ROLE = "arn:aws:iam::330422590279:role/tr-router-github-deploy"
@@ -153,3 +157,77 @@ def test_the_workflow_renews_with_the_role_it_assumed_in_both_modes() -> None:
     acquire = run.index("deploy_mutex_acquire\n")
     renew = run.index("aws_refresh_session || exit 1")
     assert acquire < renew < run.index("aws_eu_clickhouse_schema_apply.sh")
+
+
+def test_tracing_never_prints_the_tokens_or_the_new_session(tmp_path: Path) -> None:
+    env = {**ACTIONS_ENV, "GITHUB_ACTIONS": "true", "SHELLOPTS": "xtrace"}
+    result, _, _, _ = _run(tmp_path, env)
+
+    assert result.returncode == 0, result.stderr
+    assert "+ aws_refresh_session" in result.stderr  # the caller really was traced
+    for secret in (
+        "harness-request-token",
+        "harness-oidc-token",
+        "renewed-secret",
+        "renewed-session",
+    ):
+        assert secret not in result.stderr
+    # The new session is registered for masking, as the first one was.
+    masks = [line for line in result.stdout.splitlines() if line.startswith("::add-mask::")]
+    assert masks == [
+        "::add-mask::ASIARENEWED",
+        "::add-mask::renewed-secret",
+        "::add-mask::renewed-session",
+    ]
+
+
+def test_a_short_token_transfer_stops_before_any_production_write(tmp_path: Path) -> None:
+    result, recorded, _, _ = _run(tmp_path, {**ACTIONS_ENV, "ECS_PARTIAL_OIDC": "1"})
+
+    _assert_stopped_before_any_write(result, recorded, tmp_path)
+    assert "could not fetch a fresh GitHub OIDC token to renew the AWS session" in result.stderr
+
+
+@pytest.mark.parametrize(("partial", "renewed"), [(False, True), (True, False)])
+def test_the_renewal_checks_each_step_without_pipefail(
+    tmp_path: Path, partial: bool, renewed: bool
+) -> None:
+    """GitHub's default step shell is `bash -e` without pipefail, as in drain-install."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for tool in ("curl", "aws"):
+        (bin_dir / tool).write_text(CLI_STUB)
+        (bin_dir / tool).chmod(0o755)
+    (tmp_path / "state").write_text("{}")
+    (tmp_path / "calls").write_text("")
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith(("ECS_", "ACTIONS_ID_TOKEN_", "AWS_", "SHELLOPTS"))
+    }
+    env.update(ACTIONS_ENV)
+    env.update(
+        {
+            "PATH": f"{bin_dir}:{env['PATH']}",
+            "ECS_STATE": str(tmp_path / "state"),
+            "ECS_CALLS": str(tmp_path / "calls"),
+        }
+    )
+    if partial:
+        env["ECS_PARTIAL_OIDC"] = "1"
+    library = ROOT / "scripts/deploy/_aws_session.sh"
+    result = subprocess.run(  # noqa: S603 - the repository's library, all cloud tools stubbed
+        [
+            shutil.which("bash") or "/bin/bash",
+            "-e",
+            "-c",
+            f'source "{library}"; aws_refresh_session; echo "renewed=$AWS_SESSION_TOKEN"',
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    assert (result.returncode == 0) == renewed, result.stderr
+    assert ("renewed=renewed-session" in result.stdout) == renewed
