@@ -72,6 +72,7 @@ from trusted_router.storage_gcp_generation_records import (
 )
 from trusted_router.storage_gcp_io import (
     TXN_BUDGET_SECONDS,
+    _rollback_discarded_transaction,
     remaining_rpc_budget,
     run_in_transaction_with_retry,
     spanner_rpc_budget,
@@ -1951,9 +1952,31 @@ def typed_finalize_atomic(
 
     def run() -> dict:
         tag = "tr_finalize" if success else "tr_refund_finalize"
-        if one_commit:
-            tag = "tr_settle_one_commit" if success else "tr_refund_one_commit"
-        return run_in_transaction_with_retry(database, txn, transaction_tag=tag)
+        if not one_commit:
+            return run_in_transaction_with_retry(database, txn, transaction_tag=tag)
+        tag = "tr_settle_one_commit" if success else "tr_refund_one_commit"
+        opened: list[Any] = []
+
+        def tracked(transaction: Any) -> dict:
+            opened.append(transaction)
+            return txn(transaction)
+
+        try:
+            return run_in_transaction_with_retry(database, tracked, transaction_tag=tag)
+        except BaseException:
+            # The runner rolls back failures inside the callback only. A commit
+            # that failed or timed out (including the attempt budget expiring at
+            # the commit boundary) leaves its transaction open, and its locks on
+            # the reservation, intent and counter rows would block the caller's
+            # durable two-commit fallback until Spanner reaps them. Dispose of it
+            # first. If that commit actually landed, the rollback fails harmlessly
+            # and the first-writer-wins claim turns the fallback into a replay.
+            for transaction in opened:
+                if getattr(transaction, "committed", None) is None and not getattr(
+                    transaction, "rolled_back", False
+                ):
+                    _rollback_discarded_transaction(transaction)
+            raise
 
     try:
         try:

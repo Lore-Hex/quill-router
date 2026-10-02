@@ -25,7 +25,22 @@ import anyio
 import pytest
 from fastapi import BackgroundTasks
 from google.api_core.exceptions import AlreadyExists, DeadlineExceeded
+from google.api_core.exceptions import DeadlineExceeded as _CommitDeadlineExceeded
 from google.cloud.spanner_v1 import param_types
+from google.cloud.spanner_v1 import param_types as _sdk_param_types
+from google.cloud.spanner_v1.types import (
+    ExecuteBatchDmlResponse as _ExecuteBatchDmlResponse,
+)
+from google.cloud.spanner_v1.types import (
+    PartialResultSet as _PartialResultSet,
+)
+from google.cloud.spanner_v1.types import (
+    ResultSet as _ResultSet,
+)
+from google.cloud.spanner_v1.types import (
+    ResultSetStats as _ResultSetStats,
+)
+from google.rpc.status_pb2 import Status as _RpcStatus
 from starlette.requests import Request
 
 from tests.fakes.spanner import (
@@ -35,10 +50,15 @@ from tests.fakes.spanner import (
     make_fake_store,
 )
 from tests.fakes.spanner_order import credit_before_key, record_statements, transaction_statements
+from tests.test_authorize_speculative_batch import configured_sdk  # noqa: F401  (fixture)
 from tests.test_settle_speculative_batch import clone, invoke
 from tests.test_settle_speculative_batch import state as finalize_state
 from tests.test_spanner_batch_dml import NOW, _authorization, _authorize, _database
+from tests.test_spanner_batch_dml import NOW as _BATCH_NOW
+from tests.test_spanner_batch_dml import _authorization as _batch_authorization
 from trusted_router import storage_gcp_authorize, storage_gcp_io
+from trusted_router import storage_gcp_authorize as _billing_module
+from trusted_router import storage_gcp_io as _io
 from trusted_router import storage_gcp_settle_outbox as outbox
 from trusted_router.catalog import MODEL_ENDPOINTS, ModelEndpoint
 from trusted_router.config import Settings
@@ -869,3 +889,81 @@ def test_shapes_without_in_commit_durability_never_attempt_one_commit() -> None:
         assert data["disposition"] == "finalized"
         assert "tr_settle_one_commit" not in db.transaction_tags
         assert db.settle_outbox[(authorized["authorization_id"], "settle")]["status"] == "done"
+
+
+# Review finding (PR #1465 round 1): a commit that fails or times out leaves the
+# speculative transaction open, because the runner rolls back only failures
+# inside the callback. Its locks would then block the durable fallback's writes
+# to the same rows. Real-SDK reproduction: the one-commit attempt must send
+# exactly one Rollback and leave the fallback its full remaining budget.
+@pytest.mark.parametrize('phase', ['during_dml', 'before_commit', 'during_commit'])
+def test_one_commit_commit_boundary_timeout_rolls_back_before_fallback(
+    configured_sdk: Any,  # noqa: F811 - fixture imported above
+    monkeypatch: pytest.MonkeyPatch,
+    phase: str,
+) -> None:
+    sdk = configured_sdk
+    store, _ = make_fake_store(request_record_write_mode='typed')
+    store._database = sdk.db
+    store._param_types = _sdk_param_types
+    monkeypatch.setattr(_billing_module, '_outbox_table_available', lambda *_: True)
+    auth = _batch_authorization('a', 'r')
+    fields = [
+        ('reservation_id', _sdk_param_types.STRING, 'r'), ('workspace_id', _sdk_param_types.STRING, 'w'),
+        ('key_hash', _sdk_param_types.STRING, 'k'), ('ws_shard', _sdk_param_types.INT64, '0'),
+        ('credit_shard', _sdk_param_types.INT64, '0'), ('key_shard', _sdk_param_types.INT64, '0'),
+        ('credit_reserved_micro', _sdk_param_types.INT64, '0'), ('key_reserved_micro', _sdk_param_types.INT64, '10'),
+        ('hold_usage_type', _sdk_param_types.STRING, 'Credits'), ('settled_usage_type', _sdk_param_types.STRING, 'Credits'),
+        ('actual_micro', _sdk_param_types.INT64, '0'), ('authorization_id', _sdk_param_types.STRING, 'a'),
+        ('settled', _sdk_param_types.BOOL, False), ('expires_at', _sdk_param_types.TIMESTAMP, _BATCH_NOW.isoformat()),
+    ]
+    def read(**kw: Any) -> Any:
+        assert 'FROM tr_reservation WHERE reservation_id=@rid' in kw['request'].sql
+        response = _PartialResultSet(metadata={
+            'transaction': {'id': b'tx-1'},
+            'row_type': {'fields': [{'name': name, 'type_': typ} for name, typ, _ in fields]},
+        })
+        for _, _, value in fields:
+            if isinstance(value, bool):
+                response._pb.values.add(bool_value=value)
+            else:
+                response._pb.values.add(string_value=value)
+        return iter([response])
+    def batch(**kw: Any) -> Any:
+        return _ExecuteBatchDmlResponse(status=_RpcStatus(), result_sets=[
+            _ResultSet(stats=_ResultSetStats(row_count_exact=1)) for _ in kw['request'].statements
+        ])
+    def last_update(**kw: Any) -> Any:
+        assert kw['request'].sql.startswith('UPDATE tr_key_limit')
+        # Model the final successful DML returning at the five-second boundary,
+        # or just before an in-flight Commit times out.
+        sdk.clock[0] = 104.0 if phase == 'during_commit' else 105.001
+        if phase == 'during_dml':
+            raise _CommitDeadlineExceeded('DML deadline')
+        return _ResultSet(stats=_ResultSetStats(row_count_exact=1))
+    def timed_out_commit(**kw: Any) -> Any:
+        sdk.clock[0] = 105.001
+        raise _CommitDeadlineExceeded('commit outcome unknown')
+    sdk.rpcs.execute_streaming_sql.side_effect = read
+    sdk.rpcs.execute_batch_dml.side_effect = batch
+    sdk.rpcs.execute_sql.side_effect = last_update
+    if phase == 'during_commit':
+        sdk.rpcs.commit.side_effect = timed_out_commit
+    remaining = []
+    @_io.spanner_rpc_budget(20)
+    def call() -> None:
+        with pytest.raises(_CommitDeadlineExceeded):
+            store.typed_settle_one_commit_result(
+                'a', settle_intent=SettleOutboxRow(
+                    authorization_id='a', reservation_id='r', intent_kind='refund',
+                    settle_origin='typed', actual_cost_micro=0, settle_body='{}',
+                ), success=False, actual_microdollars=0, selected_usage_type='Credits',
+                authorization_snapshot=auth,
+            )
+        remaining.append(_io.remaining_rpc_budget(20))
+    call()
+    assert sdk.rpcs.execute_batch_dml.call_count == 1
+    assert sdk.rpcs.execute_sql.call_count == 1
+    assert sdk.rpcs.commit.call_count == int(phase == 'during_commit')
+    assert remaining[0] == pytest.approx(14.999)
+    sdk.rpcs.rollback.assert_called_once()
