@@ -1,4 +1,13 @@
 {
+  "abliterate": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "Abliterate",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "abliterate"
+  },
   "aion-labs": {
     "card_version": 2,
     "model_count": 6,

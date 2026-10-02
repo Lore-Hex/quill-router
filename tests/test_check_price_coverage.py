@@ -65,6 +65,7 @@ def _as_listed(
     return raw
 
 _NEW_AUTOMATIC_FEED_MODELS = {
+    "abliterate/abliterate-0.3-fast",
     "aion-labs/aion-3.0",
     "arcee-ai/trinity-large-thinking",
     "openai/gpt-5.6-sol",
@@ -96,6 +97,8 @@ _NEW_AUTOMATIC_FEED_ROWS = _NEW_AUTOMATIC_FEED_MODELS | _NEW_AUTOMATIC_FEED_ALIA
 
 
 def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict:
+    if "abliterate.ai" in url:
+        return {"data": [{"id": "abliterate-0.3-fast"}]}
     if "api.system1models.ai" in url:
         return {"data": [{"id": "s1-fast"}]}
     if "api.lyceum.technology" in url:

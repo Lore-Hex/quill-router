@@ -133,6 +133,11 @@ PROVIDER_JURISDICTION_SG = "SG"
 # starts where this one stopped instead of repeating it. Keys must be provider
 # slugs whose provider_headquarters_country is None.
 PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
+    "abliterate": (
+        "Checked abliterate.ai/docs and abliterate.ai/terms. Neither identifies "
+        "a legal operating entity or headquarters country, and the terms refer "
+        "to an unnamed upstream inference provider. Excluded from jurisdiction filters."
+    ),
     "telluvian": (
         "Checked Telluvian's product and privacy pages for selector integration; "
         "the contracting operator's jurisdiction has not been verified. Excluded from US/EU filters."
