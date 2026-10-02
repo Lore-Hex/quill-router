@@ -334,6 +334,19 @@ class Coordinator:
         self.transaction(change)
 
 
+# A control-plane deploy waits behind a gateway rollout, which holds the gcp
+# lease for about 2 h 20 min; deploy.yml waits up to 3 h.
+MAX_ADMISSION_WAIT_SECONDS = 4 * 3600
+
+
+def admission_wait(environ: Any) -> int:
+    """TR_DEPLOY_WAIT_SECONDS, validated: how long acquire may wait for a lease."""
+    wait = int(environ.get("TR_DEPLOY_WAIT_SECONDS", "0"))
+    if not 0 <= wait <= MAX_ADMISSION_WAIT_SECONDS:
+        raise Refused(f"admission wait must be 0..{MAX_ADMISSION_WAIT_SECONDS} seconds")
+    return wait
+
+
 def owner_stopped(lease: dict[str, Any]) -> bool:
     match = re.fullmatch(r"https://github.com/(Lore-Hex/(?:quill-router|quill-cloud-proxy))/actions/runs/([0-9]+)",
                          lease["owner"])
@@ -389,9 +402,7 @@ def main() -> int:
             if args.operation:
                 emit(coordinator.check(args.cloud, args.operation))
             else:
-                wait = int(os.environ.get("TR_DEPLOY_WAIT_SECONDS", "0"))
-                if not 0 <= wait <= 7200:
-                    raise Refused("admission wait must be 0..7200 seconds")
+                wait = admission_wait(os.environ)
                 deadline = time.monotonic() + wait
                 while True:
                     try:

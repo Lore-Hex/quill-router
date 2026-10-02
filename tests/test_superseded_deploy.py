@@ -172,3 +172,28 @@ def test_the_admit_wait_outlasts_a_gateway_rollout() -> None:
     # longer than the job that holds it.
     assert job["timeout-minutes"] * 60 > wait
     assert int(acquire["env"]["TR_DEPLOY_MUTEX_TTL_SECONDS"]) > job["timeout-minutes"] * 60
+
+
+@pytest.mark.parametrize(
+    "workflow",
+    [
+        ".github/workflows/deploy.yml",
+        ".github/workflows/deploy-aws-control-plane.yml",
+        ".github/workflows/deploy-azure-control-plane.yml",
+    ],
+)
+def test_every_workflow_wait_passes_the_coordinators_own_check(workflow: str) -> None:
+    from scripts.deploy import cloud_rollout
+
+    text = yaml.safe_load((ROOT / workflow).read_text())
+    waits = [
+        env["TR_DEPLOY_WAIT_SECONDS"]
+        for job in text["jobs"].values()
+        for env in [job.get("env", {})] + [step.get("env", {}) for step in job.get("steps", [])]
+        if "TR_DEPLOY_WAIT_SECONDS" in env
+    ]
+    assert waits, workflow
+    for wait in waits:
+        # The value the coordinator will read; a wait it refuses fails every
+        # deploy at admission, with no competing lease at all.
+        assert cloud_rollout.admission_wait({"TR_DEPLOY_WAIT_SECONDS": wait}) == int(wait)
