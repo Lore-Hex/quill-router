@@ -1,8 +1,8 @@
 # Fast admission and batched settlement
 
-Status: **proposed, v9, 2026-10-02. Nothing built.** v8 changed direction to
-regional leases, Joseph's choice (§2). Codex and Fable reviewed v1-v8 (§11),
-and v9 answers their reviews of v8.
+Status: **proposed, v10, 2026-10-02. Nothing built.** v8 changed direction
+to regional leases, Joseph's choice (§2). Codex and Fable reviewed v1-v9
+(§11), and v10 answers their reviews of v9.
 
 This is the plan for reaching 100T tokens a month without spending the routing
 margin on the billing database, and for taking the control plane out of request
@@ -119,12 +119,19 @@ Per GCP region:
   through the lease's region's locational endpoint.
   - Pub/Sub delivers one key's messages in the order it receives them, from
     any publisher in that region.
-  - Each key is limited to 1 MBps, which sets the shard count of the hottest
-    workspaces (§4.3).
+  - Its records carry money fields only: about 250 bytes each, about 1 KB per
+    generation with its heartbeats. Each key is limited to 1 MBps, about
+    1,000 generations a second, which sets the shard count of the hottest
+    workspaces (§4.3, §6).
+  - Each request's full record goes to a second, unordered topic, keyed by
+    authorization. Its settle record carries the full record's digest.
   - Every settle, refund, heartbeat and reap record is published before it is
     acknowledged.
+  - Subscriptions keep unacknowledged messages for 31 days, Pub/Sub's
+    maximum, and an archive subscription copies every record to Cloud
+    Storage (§4.8).
 - **Lease auditor.** A consumer group on each region's settle log, and the
-  only writer of consumption to Spanner (§4.8). It applies each lease's
+  only writer of lease consumption to Spanner (§4.8). It applies each lease's
   records in log order, books them, writes the request records (§4.9), audits
   the owners, and drains the leases of owners that stopped.
 
@@ -140,14 +147,27 @@ owner. Its row records:
 - L, and its allocation over donor credit shards;
 - its state: open, draining or closed;
 - an expiry, which each renewal extends, and whether renewal is revoked;
-- what the auditor has booked against it, and the last record it applied.
+- what the auditor has booked against it, and how far it has applied the
+  lease's log.
+
+**Consumption and allocation.**
+
+- A lease's consumption is everything booked against it. Overruns can take it
+  above L.
+- Its remaining allocation is what it still holds in `reserved`: L minus its
+  consumption, never below zero.
+- Releases, the identity and the allowance use the remaining allocation.
+  Consumption beyond L is usage, booked as §4.7 says.
 
 **Granting** is one Spanner transaction, never on the request path:
 
-- It reads the workspace's open and draining leases. It refuses a grant that
-  would take their unbooked total, the sum of `L − booked`, above the trust
-  tier's allowance. The allowance is per workspace, across regions and
-  shards. The carding incident of 2026-08 is why.
+- It reads the workspace's leases under the workspace's range lock, as the
+  pilot did, so two regions' grants cannot both pass the check.
+- It refuses a grant that would take the workspace's exposure above the trust
+  tier's allowance. The exposure is the remaining allocation of its open
+  leases, plus the known open holds of its draining ones.
+- The allowance is per workspace, across regions and shards. The carding
+  incident of 2026-08 is why.
 - It checks the workspace's headroom as the signed sum over its credit
   shards, so debt counts.
 - It adds L to `reserved` on donor shards with enough headroom, and records
@@ -175,21 +195,29 @@ owner. Its row records:
 - In a batch, each lease is its own conditional statement. One that changes
   no row means the lease was revoked or is draining. The owner re-reads it
   and stops using it.
+- Each record the owner publishes carries the lease's next **owner sequence
+  number**, assigned when the publish is issued. A retry republishes the same
+  record with the same number, so a duplicate is recognizable.
 - With each renewal, the owner publishes a **checkpoint record** under the
   lease:
-  - its cumulative `consumed`;
+  - its cumulative `consumed`, over the terminals with lower sequence
+    numbers;
   - its open holds' count, sum and latest end of life;
   - the key-status version it applies, and its open holds of any key being
     moved (§4.6).
 
-**The cutoff.** The owner admits under a lease, and decides its holds'
-outcomes (§4.5), only while its own clock is before the lease's expiry minus
-a skew allowance.
+**The cutoff.** The owner admits under a lease, decides its holds' outcomes
+(§4.5), and issues publishes for it, only while its own clock is before the
+lease's expiry minus a skew allowance.
 
 - It reads the clock after recording a hold, and undoes the hold if the
   cutoff has passed.
+- After the cutoff it issues no new publish for the lease. Requests for the
+  lease get retry until it is draining (§4.5).
 - A renewal that keeps failing lets the lease reach its cutoff. The owner then
   stops admitting under it (§4.4).
+- The expiry is Spanner's time and the cutoff the owner's, so clock steps
+  must stay within the skew allowance (§5).
 
 **Top-ups and closing:**
 
@@ -200,14 +228,19 @@ a skew allowance.
   - The amount is sized by the recent rate times a horizon, within the
     allowance.
 - An owner stops admitting under a lease when the lease goes idle or reaches
-  its maximum life, when the workspace is paused, or when the owner is
-  leaving.
-  - Once no holds are open, it publishes a final checkpoint record and marks
-    the lease draining.
-  - If it is leaving with holds still open, it publishes them in a hand-off
-    record (authorization, estimate, deadline and last snapshot), then marks
-    the lease draining.
+  its maximum life, or when the workspace is paused.
+  - It returns the unused remainder, `L − consumed − held`, in its next
+    checkpoint record. The auditor releases it when it applies that record.
+  - It keeps serving the lease's holds. Once none is open, it publishes a
+    final checkpoint record and marks the lease draining.
   - The auditor then finishes the lease (§4.8).
+- **Retiring.** An owner leaving in a deploy stops admitting, keeps serving
+  its holds until they end (at most 2 h 20 min), then finishes its leases as
+  above.
+- **A forced exit.** An owner that must exit sooner publishes its open holds in
+  hand-off records (authorization, estimate, deadline and last snapshot,
+  chunked under the message limit). It then stops deciding and marks its
+  leases draining.
 - The maximum life bounds the winners the auditor stores for a lease.
 
 ### 4.3 Ownership
@@ -220,7 +253,8 @@ a skew allowance.
   - A request picks a shard by its own hash.
   - One workspace carried 74% of all tokens to date, so this is needed from
     the start.
-  - K is also set by the 1 MBps limit on a lease's ordering key.
+  - K is also set by the 1 MBps limit on a lease's ordering key: about 25
+    to 30 for the hottest workspace at 100T (§6).
 - **Correctness does not depend on exclusive ownership.** Each lease is
   separately reserved money.
   - If a membership change briefly lets two nodes act as owner, each holds its
@@ -229,11 +263,14 @@ a skew allowance.
 - **Requests carry their lease.** Heartbeats, settles and refunds go to the
   owner and lease named in the authorization's signed envelope.
   - While the lease is open, only its owner publishes its records.
+  - A front door learns a lease's state from Spanner, through a cache. It
+    publishes for a lease only once Spanner shows it draining.
   - If the owner cannot be reached, the front door answers retry. The gateway
-    retries as today, and its settles come from its durable outbox.
+    retries within its budget, as it retries Python today.
   - A front door that keeps failing to reach an owner can revoke the lease's
     renewal in Spanner. The lease then expires, and the log takes over
-    (§4.8).
+    (§4.8). Revocations are rate-limited per lease and per front door, so one
+    flapping link cannot drain the fleet's leases.
 - **Keyed requests** (an `Idempotency-Key`) stay on today's synchronous path
   at first. Python's unique index already owns their exactly-once rule.
 - **Unkeyed requests** get a scope for one gateway invocation, keyed by the
@@ -297,14 +334,22 @@ request records all follow that rule.
   - It publishes only the winner, and answers after the publish is
     acknowledged.
   - So its memory follows log order.
+  - If a publish fails, it resumes the paused ordering key and republishes
+    the same records, with the same sequence numbers, before anything new.
 - The owner answers a later terminal for `A` with the winner's outcome, and
   does not publish it. It charges nothing.
 - An answer that depends on the owner's decision is given only if the publish
   was acknowledged before the owner's cutoff.
   - Otherwise the answer is `recorded`, and the log decides.
   - The gateway needs only to know that the record is durable.
-- Once the lease is draining, any node publishes its records, through the
-  lease's region's endpoint, and the log alone decides (§4.8).
+- **Once the lease is draining,** front doors publish its terminals, through
+  the lease's region's endpoint, and answer `recorded`. The log alone decides
+  (§4.8).
+  - A heartbeat for a draining lease is refused, as an invalid heartbeat is
+    refused today. The gateway stops the stream and settles what it
+    delivered. Nothing renews a hold whose owner has stopped.
+  - Owners retire through deploys without draining (§4.2), so this cuts
+    streams only after a crash, a revocation or a forced exit.
 
 **Terminals.** A settle moves e out of `held` and a into `consumed`. A refund
 moves e out of `held`.
@@ -314,8 +359,8 @@ is acknowledged.
 
 - Today's validity rules carry over (`heartbeat_gateway_atomic`):
   - a lower sequence, or the same sequence with another hash, is stale;
-  - the same sequence and hash is a replay, answered without a second
-    publish;
+  - the same sequence and hash is a replay, answered with the deadline
+    already granted, without a second publish;
   - a changed endpoint, regressed usage, usage beyond the authorized tokens,
     or a running charge above the hold's cap is rejected.
 - A signed deadline comes back with each answer. A heartbeat whose publish is
@@ -353,10 +398,12 @@ charges nothing more.
   overspent by the leases already out.
 - **Uncapped keys:**
   - The auditor books usage per key to `tr_key_limit`, with the lease's other
-    bookings.
+    bookings. It advances the key's window counters too, as `release_key`
+    does.
   - Revocation reaches admission through the key-status cache, whose maximum
     age is short and stated as the exposure.
-- **Adding a cap** moves the key to the synchronous path.
+- **Adding a cap, a window limit or `budget_strict`** moves the key to the
+  synchronous path.
   - The change bumps the workspace's key-status version.
   - A grant carries the version current when it was made. An owner admits
     under a lease only with a key-status cache at least that new.
@@ -374,7 +421,7 @@ charges nothing more.
 **The identity, per credit shard.**
 
 - `reserved` equals:
-  - the unbooked allocation on that shard of every open or draining lease;
+  - the remaining allocation on that shard of every open or draining lease;
   - plus the unsettled synchronous holds on that shard.
 - Every term is a Spanner value.
 - Both the lease audit and the existing counter reconciler
@@ -385,28 +432,37 @@ charges nothing more.
 `total_usage` and lowers `reserved` on the same donor shard, so that shard's
 headroom is unchanged.
 
-**Shards never mix signs.**
+**A negative shard is covered at once, or marks every shard.**
 
-- Consumption beyond L is booked as usage on shards that still have headroom,
-  the lease's donors first.
-- Only what no shard can cover leaves a shard negative, and then none is
-  positive.
-- Headroom that appears while a shard is negative repays that shard first:
-  from a hold's release, a lease's return, or a payment.
-- The overrun booking sets a debt marker on the workspace. A release reads
-  one more row only while the workspace is in debt.
-- So Python's per-shard reservation check (`reserve_credit`) means the same as
-  the signed sum.
-- Today an overrun stays on the hold's shard. That shard can go negative while
-  another stays positive, and Python can then spend the positive shard though
-  the workspace has nothing left. The synchronous path adopts the same rules.
+- Consumption beyond L is booked as usage on the lease's first donor shard.
+- Any write that leaves a credit shard negative covers it in the same
+  transaction, moving credit from the workspace's other shards' headroom.
+- Only if the workspace's signed sum is negative does the write instead mark
+  every shard row of the workspace in debt.
+- Every writer that can leave a shard negative does this:
+  - a settle or reap that overruns, and a lease booking beyond L;
+  - federated settlement, which books on shard 0
+    (`storage_gcp_federated_settlement.py`);
+  - debits and chargebacks.
+- A reservation or a grant refuses a marked row. `reserve_credit` gains one
+  condition on the row it already updates, so the hot path still touches one
+  shard.
+- A release on a marked row repays the negative shards first. The last
+  repayment clears the mark on every row.
+- Writers take credit rows in ascending shard order, then key rows.
+- So no shard is negative unless every shard is marked, and Python's
+  per-shard check means the same as the signed sum.
+- Today an overrun stays on the hold's shard. That shard can go negative
+  while another stays positive, and Python can then spend the positive shard
+  though the workspace has nothing left. A one-time pass covers or marks the
+  workspaces already in that state (§8).
 
 **Returns repay debt first.**
 
-- Releasing a lease's unbooked amount goes through today's release primitive
-  (`release_credit`).
-- Freed money repays a negative shard first. It then absorbs unrecovered
-  payment claims, and the recovery pause is re-evaluated
+- Releasing a lease's remaining allocation goes through today's release
+  primitive (`release_credit`).
+- On a marked row, freed money repays the negative shards first. It then
+  absorbs unrecovered payment claims, and the recovery pause is re-evaluated
   (`absorb_unrecovered_recovery_tx`).
 - An overrun lowers the signed headroom that grants read.
 
@@ -430,25 +486,40 @@ leases, no lease is granted or topped up, and the owners close their leases.
 The **lease auditor** is a consumer group on each region's settle log.
 Pub/Sub gives each lease's records to one member at a time, in log order.
 
-**It is the only writer of consumption.**
+**It is the only writer of lease consumption.** Python still books
+synchronous holds, through `settle_atomic`.
 
-- Per lease, every few seconds, one Spanner transaction:
-  - books the consumption applied since the last one (§4.7), with per-key
-    usage;
-  - stores the winners decided since then, keyed by authorization, and the
-    ID of the last record applied;
-  - is conditional on the previously stored record ID.
+- Per lease, every few seconds, one Spanner transaction stores what any
+  member needs in order to carry on:
+  - the consumption booked since the last commit (§4.7), with per-key usage,
+    and the remaining allocation;
+  - each open hold the log has shown, with its estimate, its latest valid
+    snapshot (sequence, hash and usage) and its deadline;
+  - the winners decided since the last commit, keyed by authorization, each
+    with its pending work: its request records and amount-sensitive side
+    effects (§4.9);
+  - its progress: the highest owner sequence number applied, and the last
+    tick applied.
+- The transaction is conditional on the progress it read, so two members
+  applying the same lease cannot both commit.
 - Only then does it acknowledge the records.
-- A redelivered record at or before the stored ID is skipped. A duplicate
-  publish is recognized by its record ID.
-- A terminal for an authorization with a stored winner charges nothing.
-  Winners are kept until the lease closes.
+- A member that takes over a lease loads this state before applying anything.
+  - It skips a redelivered owner record at or below the stored sequence
+    number.
+  - It recognizes another publisher's record by what it is for: a terminal by
+    its authorization (a terminal for an authorization with a winner charges
+    nothing), a tick by its number.
+- A gap in an owner's sequence numbers stops the lease's processing and
+  alerts.
 - One transaction can carry many leases, each its own conditional statement.
+- A winner is deleted only after its lease is closed and its pending work is
+  done.
 
 **It audits the owners.**
 
 - At each checkpoint record, the owner's cumulative `consumed` must equal the
-  sum of the terminals the owner published before it.
+  sum of the terminals it published with lower sequence numbers. A
+  republished duplicate counts once.
 - A difference is a fault. The auditor alerts and revokes the lease.
 
 **Expiry.**
@@ -460,11 +531,11 @@ Pub/Sub gives each lease's records to one member at a time, in log order.
 - By then the owner's cutoff has passed, so the owner neither admits nor
   decides under the lease.
 
-**Draining.** A draining lease keeps its unbooked amount reserved until every
-hold it could have admitted has ended, at a terminal or a reap:
+**Draining.** A draining lease keeps its remaining allocation reserved until
+every hold it could have admitted has ended, at a terminal or a reap:
 
-- **If the owner published a final checkpoint or a hand-off record,** the
-  holds it lists are all there are.
+- **If the owner published a final checkpoint record or hand-off records,
+  and the auditor has applied them,** the holds they list are all there are.
 - **Otherwise,** the auditor knows the holds the log shows through heartbeats.
   Holds it cannot see end by the lease's expiry plus the 2 h 20 min maximum
   life, plus the grace.
@@ -472,10 +543,8 @@ hold it could have admitted has ended, at a terminal or a reap:
 Records that arrive meanwhile are booked against that reservation, terminals
 by the first-terminal rule.
 
-- A front door checks a heartbeat for a draining lease only for its signature
-  and its deadline.
-- The auditor applies today's validity rules in log order, and an invalid
-  heartbeat changes nothing.
+- A draining lease's heartbeats are refused (§4.5), so nothing extends a
+  deadline the auditor has stored.
 
 **Reaping in a draining lease.**
 
@@ -485,13 +554,31 @@ by the first-terminal rule.
 
 **Close.**
 
-- When the drain ends, the auditor books what remains and releases
-  `L − booked` through the release primitive (§4.7).
-- It marks the lease closed.
+- The auditor closes a draining lease only after applying a tick that it
+  published once the drain's end condition held. Everything published before
+  that tick has then been applied, including terminals for holds the auditor
+  never saw.
+- It books what remains, releases the remaining allocation through the
+  release primitive (§4.7), and marks the lease closed.
 - A record for a closed lease charges nothing, as a settle after today's
   reaper does.
 
 A new owner never reuses a dead owner's lease. It is granted a new one.
+
+**Retention.**
+
+- A lease whose records cannot be read stays reserved, and nothing is
+  released from it. That covers a region whose Pub/Sub is down and a stopped
+  auditor.
+- Unacknowledged records wait for up to 31 days. The archive subscription
+  copies every record to Cloud Storage on its own, so a stopped auditor
+  loses nothing.
+- A lease whose records expired unread by the auditor, or whose owner
+  sequence numbers show a gap, does not close by the ordinary path. It stays
+  reserved, and an operator rebuilds it from the archive.
+- Records unreadable for longer than 31 days, in a regional outage that long,
+  are beyond recovery. Such a lease stays reserved until an operator closes
+  it.
 
 **When an owner's region is lost.**
 
@@ -502,8 +589,14 @@ A new owner never reuses a dead owner's lease. It is granted a new one.
   Nothing is released from them meanwhile. The region's owners cannot publish,
   so they stop admitting.
 
-**What can be lost:** a request whose gateway died before any settle or
-heartbeat reached the log. It is uncharged, as today.
+**What can be lost:** a request whose gateway could not get a settle or
+heartbeat into the log within its retry budget. That is what happens today
+when Python is unreachable: the first durable point is Python's
+`tr_settle_outbox`, written when the settle reaches Python.
+
+- Such a request is charged as a reap, at its last snapshot, or not at all.
+- A durable settle outbox in the enclave would close this. It is a
+  quill-cloud-proxy change (§9).
 
 ### 4.9 Settle durability, records and side effects
 
@@ -512,9 +605,15 @@ heartbeat reached the log. It is uncharged, as today.
   - If the publish fails, the answer is an error, and the gateway retries as
     today.
   - Nothing is applied to a lease without its record.
-- **Request records.** The auditor writes each authorization's generation and
-  activity record from its stored winner, after the commit that stored it.
-  - Writes are idempotent on `A`, so a crash between the two loses nothing.
+- **Request records.** Whoever publishes a settle, the owner or a front door,
+  also publishes the full request record to the unordered record topic, keyed
+  by authorization, before acknowledging. The settle record carries the full
+  record's digest.
+  - The auditor writes each authorization's generation and activity record
+    from its stored winner and the matching full record, after the commit
+    that stored the winner.
+  - The pending work is stored with the winner, so a crash between the two
+    leaves it to be done (§4.8). Writes are idempotent on `A`.
   - Amount-sensitive consumers act once per winner: budget alerts,
     auto-refill, metadata webhooks, routing feedback and route-fallback
     reports.
@@ -557,8 +656,15 @@ Each region's gateway group goes behind a regional external passthrough Network
 Load Balancer:
 
 - TLS still terminates inside the enclave, so attestation is unchanged.
-- Connection draining, as long as the longest stream, makes scale-in safe for
-  the gateway autoscaler (quill-cloud-proxy #432).
+- **Scale-in needs an application-aware retirement.**
+  - An instance chosen for removal fails the load balancer's health check, so
+    it gets no new connections.
+  - It is deleted only after its streams end, up to 2 h 15 min.
+  - The load balancer's own connection draining stops at one hour, so it is
+    not relied on.
+  - GCE's autoscaler does not wait that long, so a small controller retires
+    instances this way, or the autoscaler stays scale-out only
+    (quill-cloud-proxy #432).
 - Receipt keys move off DNS discovery, which has an instance-termination gap.
   Boot-registry registration, with attestation history, becomes the publication
   path, required before an instance takes traffic.
@@ -571,13 +677,15 @@ Each has a production check.
    amount Spanner has reserved. The sum of open holds and settled charges never
    exceeds L, except for overruns.
 2. **Conservation.** The per-shard identity in §4.7 holds after every booking.
-   Each checkpoint record equals the terminals its owner published before it.
+   Each checkpoint record equals the terminals its owner published with lower
+   sequence numbers.
 3. **One terminal per authorization:** the first in its lease's log order.
-   While the lease is open, the owner publishes only winners. After that, the
-   log alone decides.
+   While the lease is open, the owner publishes only winners. After that,
+   front doors publish terminals and the log alone decides.
 4. **No charge lost.** Every terminal is in the log before it is acknowledged.
-   A draining lease keeps its reservation until every hold it could have
-   admitted has ended.
+   A draining lease keeps its reservation until the auditor has applied a
+   tick published after every hold it could have admitted has ended. A lease
+   with unread or missing records never closes by the ordinary path.
 5. **No charge invented.** Only boot-signed settles, and reaps at the last
    validated heartbeat's snapshot, charge.
 6. **No lease is reused after its owner stops.** A new owner gets a new lease.
@@ -588,19 +696,22 @@ Each has a production check.
 9. **Pauses** stop admission within the state cache's maximum age. Exposure is
    at most the sum of `L − consumed` over open leases, within the workspace's
    trust allowance.
-10. **Renewals and bookings are conditional:** on lease state and epoch, and
-    on the stored record ID. Replays change nothing.
-11. **Shards never mix signs.** No credit shard is positive while another is
-    negative.
+10. **Renewals and bookings are conditional:** renewals on lease state and
+    epoch, bookings on the auditor's stored progress. Replays change nothing.
+11. **Debt marks every shard.** No credit shard is negative unless every
+    shard row of the workspace is marked in debt, and a marked row admits
+    nothing.
 12. **Latency** is stated as percentiles. Excursions take the documented
     fallback or a 503.
 
 **The windows Target 4 allows:**
 
 - the state cache's maximum age, for pauses and revocation;
-- a clock wrong by more than the skew allowance, which could let an owner
-  admit or decide after its lease drains;
-- overruns, which are booked as debt (§4.7).
+- a clock wrong, or stepped, by more than the skew allowance, which could let
+  an owner admit or decide after its lease drains;
+- overruns, which are booked as debt (§4.7);
+- requests whose gateway could not reach the log within its retry budget
+  (§4.8).
 
 ## 6. Latency and load
 
@@ -618,14 +729,18 @@ Each has a production check.
 - renewals and bookings are each about one transaction per active lease every
   few seconds, batched across leases;
 - a workspace hot enough for K shards adds K leases;
-- none of it grows with requests.
+- commits do not grow with requests, but mutations do: winners and request
+  records are rows written in those batches.
 
 **Pub/Sub load:**
 
-- one settle record per generation, plus heartbeats, checkpoint records and
-  ticks;
-- a lease's records share one ordering key, limited to 1 MBps, so a lease's
-  record rate bounds its request rate and sets K;
+- about 1 KB of money records per generation: a settle and about three
+  heartbeats, about 250 bytes each, plus checkpoint records and ticks;
+- a lease's records share one ordering key, limited to 1 MBps, so a lease
+  carries about 1,000 generations a second. The hottest workspace, about
+  24,000 a second at 100T, needs K of about 25 to 30;
+- the full request records go to the unordered topic, which has no per-key
+  limit;
 - the pre-first-byte heartbeat waits for its publish, as it waits for a
   Spanner commit today.
 
@@ -652,14 +767,16 @@ leases, and was retired on 2026-09-27.
 2. **Gateway load balancer and receipt-key publication** (§4.12), independent
    of the rest.
 3. **Python changes that stand alone:**
-   - shards that never mix signs (§4.7), which closes a gap on today's path;
+   - the debt mark on every shard, and covering a negative shard at once
+     (§4.7), which closes a gap on today's path, with a one-time pass over
+     workspaces that already have a negative shard;
    - 503 instead of 402 when a balance's headroom sits in leases;
    - the combined identity in the counter reconciler.
 4. **A spike** of the owner, renewals and the auditor on one region:
    - ownership hand-off, and an owner killed mid-stream;
    - the hottest workspace's rate on one owner;
-   - Pub/Sub ordering across publishers in one region, the per-key limit, and
-     redelivery;
+   - Pub/Sub ordering across publishers in one region, the per-key limit,
+     record sizes, and redelivery;
    - the auditor's conditional commits while its members change.
 5. **Shadow.** Gateways mirror authorize, heartbeat and settle. A comparator
    reports any difference from Python in decisions, per-authorization charges,
@@ -682,6 +799,8 @@ leases, and was retired on 2026-09-27.
   They come from the spike, the benchmark and the pilot.
 - **Keyed requests on the fast path** need a durable per-scope claim. It is a
   later step.
+- **A durable settle outbox in the enclave** (quill-cloud-proxy) would close
+  the loss in §4.8. It is a cross-repository change, Joseph's call.
 - **Home-region assignment** for workspaces whose traffic moves between
   continents.
 
@@ -880,3 +999,44 @@ record.
   - One identity covers leases and synchronous holds.
   - Sharded workspaces never fall back to the synchronous path.
   - A region's leases stay reserved while its Pub/Sub is down.
+- **v10.** Codex (4 P1, 4 P2) and Fable (2 P1, 5 P2, 8 P3) found these
+  problems in v9:
+  - the auditor's knowledge of open streams lived only in a member's memory,
+    so a member change could release a stream that ran;
+  - heartbeats on a draining lease were renewed without today's validity
+    rules;
+  - an overrun made a lease's unbooked amount negative, which inflated the
+    allowance and asked the release primitive to release a negative amount;
+  - a draining lease could close at a wall-clock horizon before the auditor
+    had applied a settle published before it;
+  - records could expire unread during a long regional outage;
+  - a record ID is not a cursor, publishes could fail ambiguously, and
+    winners could be deleted before their request records were written;
+  - federated settlement and other writers could leave a negative shard
+    without the marker;
+  - stopped leases held their unused remainder against the allowance;
+  - the 1 MBps per-key limit was not computed;
+  - the enclave has no durable settle outbox;
+  - load-balancer draining stops at one hour.
+
+  v10 answers them:
+  - The auditor's per-lease commit stores open holds with their snapshots and
+    deadlines, winners with their pending work, and its progress. It is
+    conditional on that progress.
+  - Owner records carry sequence numbers assigned when the publish is
+    issued. Failed publishes are republished with the same numbers.
+  - A draining lease's heartbeats are refused. Owners retire through deploys
+    without draining.
+  - Consumption and remaining allocation are separate. Releases, the identity
+    and the allowance use the remaining allocation.
+  - A lease closes only after the auditor applies a tick published after its
+    drain ended.
+  - Leases with unread or missing records stay reserved for an operator, and
+    an archive subscription keeps every record.
+  - A negative shard is covered at once from the other shards, or marks every
+    shard in debt. Every writer is listed.
+  - Stopping leases return their unused remainder.
+  - Money records are about 250 bytes, the full records go to an unordered
+    topic, and K is about 25 to 30 for the hottest workspace.
+  - The loss without an enclave outbox is stated.
+  - Gateways retire in an application-aware way.
