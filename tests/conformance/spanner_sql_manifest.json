@@ -2898,8 +2898,8 @@
         }
       ]
     },
-    "storage_gcp_trust:txn:1": {
-      "fingerprint": "2dd9d2c85a033d520378faf7c7356aea8e5105bc8d093bab57d3e1d9e1adb598",
+    "storage_gcp_trust:evaluate:1": {
+      "fingerprint": "25b6f611b9df6f0d3f60dc3ca11d89418e5028c146d978dceacda6b44f561ee2",
       "scenarios": [
         {
           "bindings": {},
@@ -2909,8 +2909,8 @@
         }
       ]
     },
-    "storage_gcp_trust:txn:2": {
-      "fingerprint": "2dd9d2c85a033d520378faf7c7356aea8e5105bc8d093bab57d3e1d9e1adb598",
+    "storage_gcp_trust:evaluate:2": {
+      "fingerprint": "25b6f611b9df6f0d3f60dc3ca11d89418e5028c146d978dceacda6b44f561ee2",
       "scenarios": [
         {
           "bindings": {},
@@ -2920,8 +2920,8 @@
         }
       ]
     },
-    "storage_gcp_trust:txn:3": {
-      "fingerprint": "2dd9d2c85a033d520378faf7c7356aea8e5105bc8d093bab57d3e1d9e1adb598",
+    "storage_gcp_trust:evaluate:3": {
+      "fingerprint": "25b6f611b9df6f0d3f60dc3ca11d89418e5028c146d978dceacda6b44f561ee2",
       "scenarios": [
         {
           "bindings": {},
@@ -2932,8 +2932,8 @@
         }
       ]
     },
-    "storage_gcp_trust:txn:4": {
-      "fingerprint": "2dd9d2c85a033d520378faf7c7356aea8e5105bc8d093bab57d3e1d9e1adb598",
+    "storage_gcp_trust:txn:1": {
+      "fingerprint": "e9f985606a5309c249b97980c8bf5afe00dcc2d608f01382fc97e6baedd11c51",
       "scenarios": [
         {
           "bindings": {},
@@ -3090,8 +3090,8 @@
         }
       ]
     },
-    "storage_trust_reconciliation:txn:3": {
-      "fingerprint": "0e17730dea2bd827b209758cce2c692b42518ddf0a74895dbd1d38ef004827a8",
+    "storage_trust_reconciliation:reconciled_through:1": {
+      "fingerprint": "79f8d601cacfe4ac6288296d94d4b17a33bfcfe84209be4c83902c0abe8b6f04",
       "scenarios": [
         {
           "bindings": {},
@@ -3101,8 +3101,8 @@
         }
       ]
     },
-    "storage_trust_reconciliation:txn:4": {
-      "fingerprint": "0e17730dea2bd827b209758cce2c692b42518ddf0a74895dbd1d38ef004827a8",
+    "storage_trust_reconciliation:reconciled_through:2": {
+      "fingerprint": "79f8d601cacfe4ac6288296d94d4b17a33bfcfe84209be4c83902c0abe8b6f04",
       "scenarios": [
         {
           "bindings": {},
@@ -3115,8 +3115,8 @@
         }
       ]
     },
-    "storage_trust_reconciliation:txn:5": {
-      "fingerprint": "0e17730dea2bd827b209758cce2c692b42518ddf0a74895dbd1d38ef004827a8",
+    "storage_trust_reconciliation:replicate_workspace_watermark:1": {
+      "fingerprint": "dcc6e93d706b663026a9e2ecd35207a92ff1febf2de969bf6e043cad3185e25e",
       "scenarios": [
         {
           "bindings": {},
@@ -3126,8 +3126,19 @@
         }
       ]
     },
-    "storage_trust_reconciliation:txn:6": {
-      "fingerprint": "0e17730dea2bd827b209758cce2c692b42518ddf0a74895dbd1d38ef004827a8",
+    "storage_trust_reconciliation:txn:3": {
+      "fingerprint": "119d535974c450357f4882a066379f4e31df5490c83ce6f073d0c2f1e1cd6ddc",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "workspace_id": "STRING"
+          }
+        }
+      ]
+    },
+    "storage_trust_reconciliation:txn:4": {
+      "fingerprint": "119d535974c450357f4882a066379f4e31df5490c83ce6f073d0c2f1e1cd6ddc",
       "scenarios": [
         {
           "bindings": {},
@@ -3717,7 +3728,8 @@
     "storage_gcp_trust:absorb_unrecovered_recovery_tx": "8bfcd33be0ebe5ef083ff1fe230ead9da2e581e77bf817860a29dc47a1ba4243",
     "storage_gcp_trust:_debit_available_principal_tx": "4b84f597af7aa5e4a320710c132f72f7f0f2591a4c9b4a766f7028282e5fa0de",
     "storage_gcp_trust:drain_matching_trust_inbox_tx": "19112b87dd2898f3f9f248e2e857bfea4576630557be9ef4a4cf40784929eb07",
-    "storage_gcp_trust:recompute_workspace_trust_tier_tx.txn": "2dd9d2c85a033d520378faf7c7356aea8e5105bc8d093bab57d3e1d9e1adb598",
+    "storage_gcp_trust:recompute_workspace_trust_tier_tx.txn": "e9f985606a5309c249b97980c8bf5afe00dcc2d608f01382fc97e6baedd11c51",
+    "storage_gcp_trust:recompute_workspace_trust_tier_tx.evaluate": "25b6f611b9df6f0d3f60dc3ca11d89418e5028c146d978dceacda6b44f561ee2",
     "storage_gcp_user_models:SpannerUserProvidedModels.list_for_user": "b05e21b82a1aa40a841c2b5ec02da602c81ce8080f0afdc9d567fab1f72d9b31",
     "storage_gcp_user_models:SpannerUserProvidedModels.get_many": "cd24bade1b102cd628091886eb67ae24c450e17fa89dc196299dafcbfeaa938a",
     "storage_gcp_user_models:SpannerUserProvidedModels.acquire_slot.txn": "cf1b48fdc7304875ce71e6980c8e51438bf4e91d178e24f91e0875ba42d45ffc",
@@ -3726,8 +3738,10 @@
     "storage_trust_inbox_resolution:record_refunded_uncredited.spanner_tx": "0c51458e02405d5a006241e6b201c2bea208f384e710a73331515156f0533153",
     "storage_trust_reconciliation:SpannerTrustReconciliationRepository.save_marker.txn": "e55af76e57c7b9b891181c45a816a724e64c70e016534f83738816d0414c5c4a",
     "storage_trust_reconciliation:SpannerTrustReconciliationRepository.list_provider_events": "822180ccfc4058df2f0d8bdc12413c361ac373ef78bf3808eb4934927264e3b5",
-    "storage_trust_reconciliation:SpannerTrustReconciliationRepository.replicate_workspace_watermark.txn": "0e17730dea2bd827b209758cce2c692b42518ddf0a74895dbd1d38ef004827a8",
+    "storage_trust_reconciliation:SpannerTrustReconciliationRepository.replicate_workspace_watermark.txn": "119d535974c450357f4882a066379f4e31df5490c83ce6f073d0c2f1e1cd6ddc",
     "storage_trust_reconciliation:SpannerTrustReconciliationRepository.get_marker": "ae66712374f936a93abe08af2e3b6c4b707d6315e830d12c327d10148fa431f2",
+    "storage_trust_reconciliation:SpannerTrustReconciliationRepository.replicate_workspace_watermark.reconciled_through": "79f8d601cacfe4ac6288296d94d4b17a33bfcfe84209be4c83902c0abe8b6f04",
+    "storage_trust_reconciliation:SpannerTrustReconciliationRepository.replicate_workspace_watermark": "dcc6e93d706b663026a9e2ecd35207a92ff1febf2de969bf6e043cad3185e25e",
     "trust_eligibility:billing_paused_tx": "5ce3a94f908455a5508ee285906563975e344a6f64f0edd4db9a9184e0d26a26",
     "trust_owner_budget:recompute_owner_budget": "959e550c803a9b12ebf91949eab221a57f4991b513a300a74725c0395c6e51a4",
     "storage_gcp_authorize:credit_exhaustion_precheck": "2d005ac4817ef9dff2e8481daedb53a1dafcf758ba22790222190d51fd1d3e50"
@@ -3902,19 +3916,19 @@
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
     },
     "storage_trust_reconciliation:write:4": {
-      "fingerprint": "4d5be5fb3f86d30514274f20693cc67984dd73859e5c679567a84ee04004e4f5",
+      "fingerprint": "5bb53b37472543666740fbab9d9dca8a8d4059f4c6a3c4d5348d5e3581974113",
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
     },
     "storage_trust_reconciliation:write:5": {
-      "fingerprint": "4d5be5fb3f86d30514274f20693cc67984dd73859e5c679567a84ee04004e4f5",
+      "fingerprint": "5bb53b37472543666740fbab9d9dca8a8d4059f4c6a3c4d5348d5e3581974113",
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
     },
     "storage_trust_reconciliation:write:6": {
-      "fingerprint": "4d5be5fb3f86d30514274f20693cc67984dd73859e5c679567a84ee04004e4f5",
+      "fingerprint": "5bb53b37472543666740fbab9d9dca8a8d4059f4c6a3c4d5348d5e3581974113",
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
     },
     "storage_trust_reconciliation:write:7": {
-      "fingerprint": "4d5be5fb3f86d30514274f20693cc67984dd73859e5c679567a84ee04004e4f5",
+      "fingerprint": "5bb53b37472543666740fbab9d9dca8a8d4059f4c6a3c4d5348d5e3581974113",
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
     }
   }
