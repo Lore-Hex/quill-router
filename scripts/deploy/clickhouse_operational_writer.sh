@@ -12,18 +12,39 @@
 set -euo pipefail
 
 PROJECT="${PROJECT:-quill-cloud-proxy}"
-ZONE="${ZONE:-us-central1-a}"
-NAME="${NAME:-tr-clickhouse-1}"
 WRITER_SECRET="${WRITER_SECRET:-trustedrouter-clickhouse-ops-ingest-password}"
 
-external_ip="$(gcloud compute instances describe "$NAME" \
-  --project="$PROJECT" \
-  --zone="$ZONE" \
-  --format='value(networkInterfaces[0].accessConfigs[0].natIP)')"
-if [ -n "$external_ip" ]; then
-  echo "refusing configuration: $NAME has external IP $external_ip" >&2
-  exit 1
+# Every replica, one at a time. The account lives in each node's users.d, so
+# a writer installed on node 1 alone fails authentication on two of every
+# three connections through the load balancer (G7 in
+# docs/design/clickhouse-high-availability.md). NAME and ZONE together target
+# one node.
+if [ -n "${NAME:-}" ] || [ -n "${ZONE:-}" ]; then
+  if [ -z "${NAME:-}" ] || [ -z "${ZONE:-}" ]; then
+    echo "refusing: set NAME and ZONE together to target one node" >&2
+    exit 1
+  fi
+  NODES=("${NAME}:${ZONE}")
+else
+  NODES=(
+    "tr-clickhouse-1:us-central1-a"
+    "tr-clickhouse-2:us-central1-b"
+    "tr-clickhouse-3:us-central1-c"
+  )
 fi
+
+for node in "${NODES[@]}"; do
+  name="${node%%:*}"
+  zone="${node##*:}"
+  external_ip="$(gcloud compute instances describe "$name" \
+    --project="$PROJECT" \
+    --zone="$zone" \
+    --format='value(networkInterfaces[0].accessConfigs[0].natIP)')"
+  if [ -n "$external_ip" ]; then
+    echo "refusing configuration: $name has external IP $external_ip" >&2
+    exit 1
+  fi
+done
 
 # REFUSE a credential with surrounding whitespace rather than silently
 # hashing the trimmed form. `openssl rand -hex 24 | gcloud secrets create
@@ -81,26 +102,34 @@ sed "s/__PASSWORD_SHA256__/${writer_hash}/g" >"$config" <<'XML'
 XML
 unset writer_hash
 
-gcloud compute ssh "$NAME" \
-  --project="$PROJECT" \
-  --zone="$ZONE" \
-  --tunnel-through-iap \
-  --quiet \
-  --command="sudo sh -c 'set -eu; umask 077; temporary=\$(mktemp); cat > \"\$temporary\"; if ! cmp -s \"\$temporary\" /etc/clickhouse-server/users.d/tr-ops-ingest.xml; then install -o clickhouse -g clickhouse -m 0640 \"\$temporary\" /etc/clickhouse-server/users.d/tr-ops-ingest.xml; systemctl restart clickhouse-server; fi; rm -f \"\$temporary\"'" \
-  <"$config"
-
-# Prove the account can INSERT (into the quarantine table, with a marker row
-# whose reason names this script) and CANNOT SELECT -- both halves matter.
 writer_password="$(gcloud secrets versions access latest \
   --secret="$WRITER_SECRET" \
   --project="$PROJECT")"
-printf 'CH_OPS_INGEST_PASSWORD=%s\n' "$writer_password" |
-  gcloud compute ssh "$NAME" \
+for node in "${NODES[@]}"; do
+  name="${node%%:*}"
+  zone="${node##*:}"
+  # No restart: ClickHouse reloads users.d on the fly. Restarting every node
+  # in a row would also break the one-zone-at-a-time rule in
+  # docs/clickhouse-reliability.md.
+  gcloud compute ssh "$name" \
     --project="$PROJECT" \
-    --zone="$ZONE" \
+    --zone="$zone" \
     --tunnel-through-iap \
     --quiet \
-    --command="sudo sh -c 'umask 077; cat > /tmp/tr-ops-ingest.env; set -a; . /tmp/tr-ops-ingest.env; set +a; status=0; echo \"{\\\"shard\\\":0,\\\"commit_ts\\\":\\\"2026-01-01T00:00:00\\\",\\\"event_kind\\\":\\\"provisioning\\\",\\\"event_id\\\":\\\"tr-ops-ingest-check\\\",\\\"payload\\\":\\\"{}\\\",\\\"reason\\\":\\\"clickhouse_operational_writer.sh grant check\\\",\\\"quarantined_at\\\":\\\"2026-01-01T00:00:00\\\"}\" | /usr/bin/clickhouse-client --user tr_ops_ingest --password \"\$CH_OPS_INGEST_PASSWORD\" --query \"INSERT INTO tr.operational_outbox_quarantine FORMAT JSONEachRow\" || status=1; if /usr/bin/clickhouse-client --user tr_ops_ingest --password \"\$CH_OPS_INGEST_PASSWORD\" --query \"SELECT 1 FROM tr.activity_generations LIMIT 1\" >/dev/null 2>&1; then echo \"tr_ops_ingest can SELECT; grants too broad\" >&2; status=1; fi; rm -f /tmp/tr-ops-ingest.env; exit \$status'"
+    --command="sudo sh -c 'set -eu; umask 077; temporary=\$(mktemp); cat > \"\$temporary\"; if ! cmp -s \"\$temporary\" /etc/clickhouse-server/users.d/tr-ops-ingest.xml; then install -o clickhouse -g clickhouse -m 0640 \"\$temporary\" /etc/clickhouse-server/users.d/tr-ops-ingest.xml; fi; rm -f \"\$temporary\"'" \
+    <"$config"
+
+  # Wait up to 60 s for the reload, then prove the account can INSERT (into
+  # the quarantine table, with a marker row whose reason names this script)
+  # and CANNOT SELECT -- both halves matter.
+  printf 'CH_OPS_INGEST_PASSWORD=%s\n' "$writer_password" |
+    gcloud compute ssh "$name" \
+      --project="$PROJECT" \
+      --zone="$zone" \
+      --tunnel-through-iap \
+      --quiet \
+      --command="sudo sh -c 'umask 077; cat > /tmp/tr-ops-ingest.env; set -a; . /tmp/tr-ops-ingest.env; set +a; tries=0; until /usr/bin/clickhouse-client --user tr_ops_ingest --password \"\$CH_OPS_INGEST_PASSWORD\" --query \"SELECT 1\" >/dev/null 2>&1; do tries=\$((tries + 1)); if [ \"\$tries\" -ge 30 ]; then echo \"tr_ops_ingest did not load within 60 s; see clickhouse-server.err.log\" >&2; rm -f /tmp/tr-ops-ingest.env; exit 1; fi; sleep 2; done; status=0; echo \"{\\\"shard\\\":0,\\\"commit_ts\\\":\\\"2026-01-01T00:00:00\\\",\\\"event_kind\\\":\\\"provisioning\\\",\\\"event_id\\\":\\\"tr-ops-ingest-check\\\",\\\"payload\\\":\\\"{}\\\",\\\"reason\\\":\\\"clickhouse_operational_writer.sh grant check\\\",\\\"quarantined_at\\\":\\\"2026-01-01T00:00:00\\\"}\" | /usr/bin/clickhouse-client --user tr_ops_ingest --password \"\$CH_OPS_INGEST_PASSWORD\" --query \"INSERT INTO tr.operational_outbox_quarantine FORMAT JSONEachRow\" || status=1; if /usr/bin/clickhouse-client --user tr_ops_ingest --password \"\$CH_OPS_INGEST_PASSWORD\" --query \"SELECT 1 FROM tr.activity_generations LIMIT 1\" >/dev/null 2>&1; then echo \"tr_ops_ingest can SELECT; grants too broad\" >&2; status=1; fi; rm -f /tmp/tr-ops-ingest.env; exit \$status'"
+done
 unset writer_password
 
 echo "configured private insert-only ClickHouse operational-ingest account"

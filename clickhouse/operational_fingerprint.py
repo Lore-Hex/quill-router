@@ -85,7 +85,16 @@ def clickhouse_rows(
     table: str,
     id_column: str,
     ids: list[str],
+    created_at_range: tuple[dt.datetime, dt.datetime] | None = None,
 ) -> dict[str, dict[str, Any]]:
+    """Rows of ``table`` whose ``id_column`` is in ``ids``, after FINAL.
+
+    ``created_at_range`` (inclusive, timezone-aware) restricts the lookup to
+    that span of ``created_at``. ``activity_generations`` is partitioned by
+    month of ``created_at`` and sorted by ``(tenant_id, created_at, ...)``, so
+    an ID-only lookup reads every part, while a bounded one skips the parts
+    whose ``created_at`` range lies outside it.
+    """
     allowed = {
         ("provider_benchmark_samples", "id"),
         ("activity_generations", "generation_id"),
@@ -94,14 +103,26 @@ def clickhouse_rows(
     }
     if (table, id_column) not in allowed:
         raise ValueError("unsupported parity table")
+    if created_at_range is not None and table != "activity_generations":
+        raise ValueError("created_at_range is supported for activity_generations only")
     if not ids:
         return {}
     if any(SAFE_ID.fullmatch(item) is None for item in ids):
         raise ValueError("source contains an invalid record ID")
+    bound = ""
+    if created_at_range is not None:
+        low, high = created_at_range
+        if high < low:
+            raise ValueError("created_at_range ends before it starts")
+        bound = (
+            f"AND created_at >= {_datetime64_literal(low, round_up=False)} "
+            f"AND created_at <= {_datetime64_literal(high, round_up=True)} "
+        )
     payload = ("\n".join(ids) + "\n").encode()
     result = clickhouse.query(
         f"SELECT * EXCEPT ingest_version FROM {table} FINAL "  # noqa: S608
         f"WHERE {id_column} IN (SELECT id FROM wanted) "
+        f"{bound}"
         "FORMAT JSONEachRow",
         input_bytes=payload,
         external_ids=True,
@@ -112,6 +133,39 @@ def clickhouse_rows(
         if isinstance(row, dict):
             rows[str(row[id_column])] = row
     return rows
+
+
+def parse_utc(value: Any) -> dt.datetime | None:
+    """An ISO-8601 timestamp as an aware UTC datetime, or None if unparseable."""
+    if isinstance(value, dt.datetime):
+        parsed = value
+    else:
+        try:
+            parsed = dt.datetime.fromisoformat(
+                str(value).replace(" ", "T").replace("Z", "+00:00")
+            )
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.UTC)
+    return parsed.astimezone(dt.UTC)
+
+
+def _datetime64_literal(value: dt.datetime, *, round_up: bool) -> str:
+    """A ``DateTime64(3, 'UTC')`` literal: millisecond precision, the column's.
+
+    The lower bound rounds down and the upper bound rounds up, so a bound built
+    from sub-millisecond source values still includes every source row.
+    """
+    if value.tzinfo is None:
+        raise ValueError("created_at bounds must be timezone-aware")
+    utc = value.astimezone(dt.UTC)
+    millis, remainder = divmod(utc.microsecond, 1000)
+    whole = utc.replace(microsecond=millis * 1000)
+    if round_up and remainder:
+        whole += dt.timedelta(milliseconds=1)
+    text = whole.strftime("%Y-%m-%d %H:%M:%S") + f".{whole.microsecond // 1000:03d}"
+    return f"toDateTime64('{text}', 3, 'UTC')"
 
 
 def _iso(value: Any) -> str:
