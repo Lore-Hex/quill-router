@@ -20,6 +20,7 @@ The law, quantified over the whole catalog:
     for every ModelEndpoint e,
         meets(e, ZERO_RETENTION)        <=>  zero_data_retention(e) is True
         meets(e, CONFIDENTIAL)          <=>  confidential compute AND e2ee AND ZDR
+                                             AND e is not the model vendor's own service
         meets(e, NO_STORE)               <=> not stores_content(e)
 
 The catalog is finite — 51 providers, ~1500 endpoints — so this enumerates
@@ -61,6 +62,7 @@ from trusted_router.catalog_privacy import (
     endpoint_zero_data_retention,
     model_provider_privacy_tier,
     provider_privacy_tier,
+    served_by_model_vendor,
 )
 
 # MODEL_ENDPOINTS is a dict keyed by "model@provider/usage"; the VALUES are the
@@ -115,6 +117,7 @@ def test_confidential_tier_requires_all_three_flags() -> None:
             endpoint_confidential_compute(endpoint) is True
             and endpoint_e2ee(endpoint) is True
             and endpoint_zero_data_retention(endpoint) is True
+            and not served_by_model_vendor(endpoint.model_id, endpoint.provider)
         )
         assert endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL) is expected
         assert (endpoint_privacy_tier(endpoint) == PRIVACY_TIER_CONFIDENTIAL) is expected
@@ -312,6 +315,77 @@ def test_tee_and_e2ee_without_zdr_remain_accurate_but_not_confidential(zdr: bool
     assert provider.provider_zero_data_retention is zdr
     assert provider.provider_confidential_compute is True
     assert provider.provider_e2ee is True
+
+
+def _with_confidential_flags(monkeypatch: pytest.MonkeyPatch, *slugs: str) -> None:
+    for slug in slugs:
+        monkeypatch.setitem(
+            PROVIDERS,
+            slug,
+            dataclasses.replace(
+                PROVIDERS[slug],
+                provider_confidential_compute=True,
+                provider_e2ee=True,
+                provider_zero_data_retention=True,
+            ),
+        )
+
+
+def _route(model_id: str, provider: str) -> ModelEndpoint:
+    template = ALL_ENDPOINTS[0]
+    return dataclasses.replace(
+        template, id=f"{model_id}@{provider}/prepaid", model_id=model_id, provider=provider
+    )
+
+
+def test_confidential_never_admits_the_model_vendor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A Confidential request never reaches the model vendor, even when the
+    vendor's own API carries every Confidential flag."""
+    _with_confidential_flags(monkeypatch, "minimax", "novita", "trustedrouter")
+
+    vendor = _route("minimax/minimax-m3", "minimax")
+    assert not endpoint_meets_privacy_requirement(vendor, PRIVACY_TIER_CONFIDENTIAL)
+    assert endpoint_privacy_tier(vendor) == PRIVACY_TIER_ZERO_RETENTION
+    assert model_provider_privacy_tier("minimax/minimax-m3", "minimax") == PRIVACY_TIER_ZERO_RETENTION
+    # Spelling the author another way names the same vendor.
+    assert served_by_model_vendor("MiniMaxAI/MiniMax-M3", "minimax")
+
+    # Positive controls: the same flags on a third-party host, and on
+    # TrustedRouter's own models, whose gateway a Confidential request trusts.
+    host = _route("minimax/minimax-m3", "novita")
+    assert endpoint_meets_privacy_requirement(host, PRIVACY_TIER_CONFIDENTIAL)
+    assert endpoint_privacy_tier(host) == PRIVACY_TIER_CONFIDENTIAL
+    assert model_provider_privacy_tier("minimax/minimax-m3", "novita") == PRIVACY_TIER_CONFIDENTIAL
+    own = _route("trustedrouter/prometheus-1.0-1m", "trustedrouter")
+    assert endpoint_meets_privacy_requirement(own, PRIVACY_TIER_CONFIDENTIAL)
+
+
+@pytest.mark.parametrize(
+    "model_id,vendor_host",
+    [
+        # The maker's own API, under the maker map and under an alias author.
+        ("deepseek/deepseek-v4-pro", "deepseek"),
+        ("moonshotai/kimi-k3", "kimi"),
+        ("qwen/qwen3.7-max", "alibaba"),
+        # Hosts the maker's company runs besides its own API.
+        ("google/gemini-3-pro", "google-vertex"),
+        ("nvidia/nemotron-3-ultra-550b-a55b", "nvidia-nim"),
+        ("microsoft/phi-5", "azure"),
+        ("meta-llama/llama-4-maverick", "meta"),
+        # A provider named like the model's author.
+        ("system1models/s1-pro", "system1models"),
+    ],
+)
+def test_every_host_the_vendor_runs_is_the_vendor(
+    monkeypatch: pytest.MonkeyPatch, model_id: str, vendor_host: str
+) -> None:
+    _with_confidential_flags(monkeypatch, vendor_host, "tinfoil")
+    assert served_by_model_vendor(model_id, vendor_host)
+    assert not endpoint_meets_privacy_requirement(
+        _route(model_id, vendor_host), PRIVACY_TIER_CONFIDENTIAL
+    )
+    # Positive control: a third-party host with the same flags.
+    assert endpoint_meets_privacy_requirement(_route(model_id, "tinfoil"), PRIVACY_TIER_CONFIDENTIAL)
 
 
 def test_no_shipped_provider_has_confidential_tier_without_zdr() -> None:

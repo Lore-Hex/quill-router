@@ -59,6 +59,7 @@ from trusted_router.catalog import (
     default_endpoint_for_model,
     effective_endpoint,
     endpoint_for_id,
+    endpoint_meets_privacy_requirement,
     endpoint_zero_data_retention,
 )
 from trusted_router.client_context import parse_client_context, parse_gateway_request_id
@@ -143,6 +144,7 @@ from trusted_router.request_tags import InvalidTags, merge_tags, tags_match, val
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.routing import (
     _apply_endpoint_provider_filters,
+    _required_privacy_postures,
     canonical_model_id,
     chat_route_endpoint_candidates,
     decide_route_endpoint_candidates,
@@ -1059,6 +1061,14 @@ def _authorize_gateway_sync_impl(
                 "User-provided models do not support image generation",
                 ErrorType.MODEL_NOT_SUPPORTED,
             )
+        if _required_privacy_postures(route_preferences):
+            # The owner's endpoint carries no tracked privacy posture, so a
+            # privacy floor fails closed, as it does for any unknown route.
+            raise api_error(
+                400,
+                "User-provided models cannot meet a provider privacy floor",
+                ErrorType.MODEL_NOT_SUPPORTED,
+            )
         endpoint_candidates = [_user_model_gateway_candidate(user_model)]
     elif is_video_request:
         endpoint_candidates = video_route_endpoint_candidates(
@@ -1318,7 +1328,9 @@ def _authorize_gateway_sync_impl(
         # routing), so a replay across catalog/pricing/BYOK drift advertises
         # the endpoint that was actually authorized (codex 3e route review #1).
         existing_candidates = _authorization_endpoint_candidates(
-            existing_authorization, endpoint_candidates
+            existing_authorization,
+            endpoint_candidates,
+            privacy_requirements=_required_privacy_postures(effective_route_preferences),
         )
         existing_model, existing_endpoint = existing_candidates[0]
         existing_usage_type = UsageType.for_endpoint(existing_endpoint)
@@ -2303,6 +2315,8 @@ def _new_gateway_authorization_id() -> str:
 def _authorization_endpoint_candidates(
     authorization: Any,
     fallback: list[tuple[Model, ModelEndpoint]],
+    *,
+    privacy_requirements: frozenset[int] = frozenset(),
 ) -> list[tuple[Model, ModelEndpoint]]:
     user_model_pair = _authorized_user_model_pair(authorization)
     if user_model_pair is not None:
@@ -2311,14 +2325,32 @@ def _authorization_endpoint_candidates(
     endpoint_ids = authorization.candidate_endpoint_ids or []
     if not endpoint_ids and authorization.endpoint_id:
         endpoint_ids = [authorization.endpoint_id]
+    privacy_excluded = False
     for endpoint_id in endpoint_ids:
         endpoint = _endpoint_for_id_compat(endpoint_id)
         if endpoint is None:
+            continue
+        # A replay never restores a route the request's privacy floor now
+        # excludes.
+        if not all(
+            endpoint_meets_privacy_requirement(endpoint, requirement)
+            for requirement in privacy_requirements
+        ):
+            privacy_excluded = True
             continue
         model = MODELS.get(endpoint.model_id)
         if model is None:
             continue
         candidates.append((model, endpoint))
+    if not candidates and privacy_excluded:
+        # Settlement and refund accept only routes this authorization holds,
+        # so it cannot hand out the freshly filtered ones.
+        raise api_error(
+            409,
+            "This authorization's routes no longer meet the requested privacy floor; "
+            "retry with a new idempotency key",
+            ErrorType.BAD_REQUEST,
+        )
     return candidates or fallback
 
 
