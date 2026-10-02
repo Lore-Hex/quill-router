@@ -333,18 +333,20 @@ read_primary_revision_env() {
 # Pin the image to its digest before any revision is created.
 resolve_image_digest
 
-# Prefer the private three-replica ClickHouse load balancer once provisioned.
-# The direct node-1 address remains only as a migration fallback for projects
-# that have not run clickhouse_cluster.sh yet.
+# Readers go through the private three-replica ClickHouse load balancer. A
+# failed or empty lookup fails the rollout: the former fallback to node 1's
+# address turned any transient lookup error into a release whose every reader
+# was pinned to one replica (docs/design/clickhouse-high-availability.md, G2).
+# Set TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL to override deliberately.
 PROVIDER_ANALYTICS_CLICKHOUSE_URL="${TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL:-}"
 if [ -z "$PROVIDER_ANALYTICS_CLICKHOUSE_URL" ]; then
-  clickhouse_ilb_ip="$(gc compute addresses describe tr-clickhouse-ilb \
-    --region=us-central1 --format='value(address)' 2>/dev/null || true)"
-  if [ -n "$clickhouse_ilb_ip" ]; then
-    PROVIDER_ANALYTICS_CLICKHOUSE_URL="http://${clickhouse_ilb_ip}:8123"
-  else
-    PROVIDER_ANALYTICS_CLICKHOUSE_URL="http://10.128.15.214:8123"
+  if ! clickhouse_ilb_ip="$(gc compute addresses describe tr-clickhouse-ilb \
+      --region=us-central1 --format='value(address)')" || [ -z "$clickhouse_ilb_ip" ]; then
+    echo "ERROR: cannot resolve the ClickHouse load balancer address tr-clickhouse-ilb;" \
+      "set TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL to override" >&2
+    exit 1
   fi
+  PROVIDER_ANALYTICS_CLICKHOUSE_URL="http://${clickhouse_ilb_ip}:8123"
 fi
 
 # Preserve the account pin from the serving revision across ordinary releases.

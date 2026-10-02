@@ -1491,6 +1491,9 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
         },
         responses=(
             (r"projects describe.*projectNumber", "44325983244"),
+            # Readers go through the private ClickHouse load balancer; a failed
+            # or empty lookup fails the rollout.
+            (r"compute addresses describe tr-clickhouse-ilb", "10.128.0.250"),
             # spanner-clickhouse requires typed generation records; rollout.sh
             # then checks that the tr_generation table exists before rendering
             # them.

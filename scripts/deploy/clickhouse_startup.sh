@@ -32,7 +32,13 @@ PASSWORD=$(curl -fsSL -H "Authorization: Bearer ${ACCESS_TOKEN}" \
   | python3 -c 'import base64,json,sys; print(base64.b64decode(json.load(sys.stdin)["payload"]["data"]).decode(), end="")')
 unset ACCESS_TOKEN
 debconf-set-selections <<< "clickhouse-server clickhouse-server/default-password password ${PASSWORD}"
-apt-get install -y clickhouse-server clickhouse-client
+# Pin the version: a replacement replica must join the running cluster at the
+# same version (measured 26.7.1.1315 on 2026-10-01). Upgrade deliberately, one
+# replica at a time, by changing this value (G7 in
+# docs/design/clickhouse-high-availability.md).
+CLICKHOUSE_VERSION="${CLICKHOUSE_VERSION:-26.7.1.1315}"
+apt-get install -y "clickhouse-common-static=${CLICKHOUSE_VERSION}" \
+  "clickhouse-server=${CLICKHOUSE_VERSION}" "clickhouse-client=${CLICKHOUSE_VERSION}"
 
 # Listen on the VPC interface only — never 0.0.0.0. The firewall is the second
 # layer, not the only one.
