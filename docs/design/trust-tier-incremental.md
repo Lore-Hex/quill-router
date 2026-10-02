@@ -1,10 +1,11 @@
 # The trust-tier job: one set-based pass
 
-Status: **proposed, v4, 2026-10-02.** #1483 is the stopgap: today's per-workspace
+Status: **proposed, v5, 2026-10-02.** #1483 is the stopgap: today's per-workspace
 pass with eight workers. v1 and v2 proposed a due queue maintained by every
 writer. Two Codex reviews found 25 problems in it (Rejected, below). v3 kept
 today's semantics and removed the per-workspace round trips instead. v4 makes
-v3's candidate test exact, after Codex's third review.
+v3's candidate test exact, after Codex's third review, and v5 settles the
+shadow's classification after its fourth.
 
 ## Why
 
@@ -96,8 +97,9 @@ There are no writer changes, queue, timers or claims.
 **One thing changes: when a write committed during the run is seen.** Today
 the loop reads each workspace when it reaches it, so a change committed during
 the run is seen in that run if the workspace comes later. The pass reads
-everything at the start, so such a change is seen by the next successful run,
-at most 15 minutes later.
+everything at the start, so such a change is seen by the next successful run:
+the next run's snapshot plus its processing time, so somewhat more than one
+15-minute interval.
 
 Example: an ownership transfer to an unverified user, which does not recompute
 the tier itself, demotes the workspace one run later than it might today. This
@@ -110,10 +112,12 @@ is accepted, and a race test covers it.
   and 906 events.
 - **At 100 times today's fleet,** about 160,000 workspaces:
   - the aggregate still scans about 1.76 million balance rows on the server;
-  - the entity reads are about 320,000 rows in batches, plus the events.
+  - the entity reads are two per workspace plus one per distinct owner: up to
+    about 480,000 rows in batches, plus the events.
 
   The job's budget is 512 MiB and 14 minutes, so the benchmark measures time
-  and memory at that size, including the grouping structures.
+  and memory at that size, including decoding and holding the owner entities
+  and the grouping structures.
 - **Writes.** Candidates are few while tiers and watermarks are steady.
   - When a provider's reconciliation advances its marker, every paid
     workspace's expected watermark moves, and every one becomes a candidate
@@ -150,9 +154,16 @@ step (Rejected).
    as now. The full loop's path reports what it actually did for each
    workspace: wrote a tier, repaired `trust_computed_at`, wrote a watermark, or
    raised a validation error. Return values do not show a repair or a no-op
-   write. Any workspace it acted on outside the candidate set is a
-   discrepancy. A discrepancy whose inputs committed after the snapshot is
-   classed as a race; the rest are defects.
+   write.
+   - A write records whether it changed a stored value. Today's watermark
+     fallback, after a failed snapshot precheck, writes the current value
+     again; such a write changes nothing and is not a discrepancy.
+   - Any workspace whose stored values the loop changed, or that raised a
+     validation error, outside the candidate set is a discrepancy.
+   - A discrepancy whose inputs committed after the snapshot is classed as a
+     race; the rest are defects.
+   - A fault-injected test fails the loop's snapshot precheck on purpose and
+     checks that its no-op fallback write is not classed as a defect.
 3. **Switch** to candidates only once the shadow shows no defects and the tests
    pass. The full loop stays as a manual command, and as the fallback in
    step 5.
@@ -208,4 +219,10 @@ one of those failure modes is absent from a pass that recomputes everything.
   - the shadow had no reliable change oracle.
 - **v4**: the exact candidate test, isolation and fallback, the freshness
   change stated, the costs corrected, and differential, adversarial and race
-  tests ahead of a shadow that records actual mutations.
+  tests ahead of a shadow that records actual mutations. Codex: 1 P2, 2 P3, no
+  P1. Its findings: the shadow would count the existing fallback's no-op
+  watermark write as a defect; the freshness bound was too tight; the entity
+  count left out owners.
+- **v5**: the shadow classifies writes by whether they changed a value, with
+  a fault-injected test; the freshness bound is "by the next successful
+  run"; the entity count includes owners.
