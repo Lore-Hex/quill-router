@@ -425,9 +425,14 @@ reads hang and then fail.
    treats all backends as eligible (GCP's documented behaviour for an
    internal passthrough load balancer without a failover policy; see
    [traffic distribution](https://docs.cloud.google.com/load-balancing/docs/internal/int-netlb-traffic-distribution)),
-   so reads continue, stale, exactly as they would without the check. Keep
-   it that way: a failover policy that drops traffic when every backend is
-   unhealthy would turn that case into failed reads. The handler runs as a
+   so the lagging replicas keep serving reads, stale. One case is worse than
+   with the TCP check: when a node's server is also down, the fallback makes
+   it eligible again, and about a third of new connections go to it and
+   fail. Client failover (item 2) retries those connections on the next
+   endpoint, so it must be enabled and verified before the switch in §3.2.
+   Do not add a failover policy that drops traffic when every backend is
+   unhealthy: that would turn this case into failed reads for every client.
+   The handler runs as a
    dedicated read-only user granted `SELECT ON system.replicas` and
    `SHOW TABLES ON tr.*`: `system.replicas` filters rows by the user's table
    visibility, so without the second grant an unhealthy replica's rows are
@@ -436,7 +441,8 @@ reads hang and then fail.
    inventory. The firewall already allows the health-check ranges to 8123.
    Terraform in §3.2 points the check at this path.
 2. Client failover: committed on this branch (§4); turn it on by setting the
-   two URLs to the load balancer followed by the three replicas.
+   two URLs to the load balancer followed by the three replicas. It must be
+   live and verified before the health check switches (item 1, §3.2).
 3. Done (#1467): `scripts/deploy/rollout.sh` fails the rollout when the
    load-balancer address cannot be resolved, instead of pinning every reader
    to node 1.
@@ -525,7 +531,11 @@ pull requests:
 
 1. Adopt the existing check and backend service. The plan must say
    **No changes**.
-2. Add the HTTP check and switch the backend service to it.
+2. Add the HTTP check and switch the backend service to it. Merge it only
+   after `/tr_health` answers on all three nodes and client failover (G2
+   item 2) is live and verified in production: with every check failing, the
+   load balancer also sends connections to a node whose server is down, and
+   only client failover retries them elsewhere.
 
 ```hcl
 locals {
