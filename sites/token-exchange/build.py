@@ -62,6 +62,33 @@ def market_links(markets: list[dict], current: dict) -> str:
     )
 
 
+PROVIDERS = [
+    ("openai", "OpenAI"),
+    ("anthropic", "Anthropic"),
+    ("mistral", "Mistral"),
+    ("google-vertex", "Google Vertex AI"),
+    ("deepseek", "DeepSeek"),
+    ("grok", "xAI"),
+]
+
+
+def provider_ticker(copies: int = 6) -> str:
+    """One visible provider group plus hidden copies so the CSS marquee loops without a gap.
+
+    The loop slides by one group; six groups keep the row full up to about 4000px wide."""
+    groups = []
+    for index in range(copies):
+        link_attrs = ' tabindex="-1"' if index else ""
+        group_attrs = ' aria-hidden="true"' if index else ""
+        links = "".join(
+            f'<a href="https://trustedrouter.com/providers"{link_attrs}>'
+            f'<img src="/assets/provider-{slug}.png" width="32" height="32" alt=""><span>{html.escape(name)}</span></a>'
+            for slug, name in PROVIDERS
+        )
+        groups.append(f'<div class="hero-provider-group"{group_attrs}>{links}</div>')
+    return "".join(groups)
+
+
 def render(market: dict, markets: list[dict], version: str) -> str:
     profile = {"new-york": "new-york", "dubai": "dubai", "europe": "europe"}.get(market["slug"], "shared-gcp")
     catalogue, health = render_evidence(profile)
@@ -78,6 +105,7 @@ def render(market: dict, markets: list[dict], version: str) -> str:
         {
             "version": version,
             "hero_headline": headline,
+            "provider_ticker": provider_ticker(),
             "buyer_heading": html.escape(market.get("buyer_heading", "Buy capacity. Set your requirements.")).replace("Choose how it is served.", '<br>Choose how it is <span class="headline-accent">served.</span>').replace("Spend it", "Spend<br>it").replace("jurisdiction.", '<span class="headline-accent">jurisdiction.</span>').replace("Set your requirements.", '<br>Set your <span class="headline-accent">requirements.</span>'),
             "buyer_copy": html.escape(market.get("buyer_copy", "Compare model rates and provider privacy policies. Prioritize end-to-end encrypted routes where available, or review zero-retention options. Confirm processing locations and commercial terms for your workload.")),
             "catalogue": "",
@@ -128,13 +156,11 @@ def build(output: Path) -> None:
     ).hexdigest()[:12]
     for name in ("exchange.css", "exchange.js", "live-evidence.js"):
         shutil.copyfile(HERE / name, assets / name)
-    for name in ("plus-jakarta-sans.ttf", "plus-jakarta-sans-italic.ttf", "plus-jakarta-sans-OFL.txt"):
-        shutil.copyfile(HERE / "fonts" / name, assets / name)
+    shutil.copyfile(HERE / "art" / "river-close.webp", assets / "river-close.webp")
     static = ROOT / "src/trusted_router/static"
     for source, target in {
         "enterprise/token-exchange-hero.webp": "exchange.webp",
         "fonts/archivo-latin.woff2": "archivo.woff2",
-        "fonts/spectral-300-latin.woff2": "spectral.woff2",
         "fonts/ibm-plex-mono-400-latin.woff2": "plex.woff2",
         "trustedrouter-mark-dark.svg": "mark.svg",
         "provider-logos/openai.png": "provider-openai.png",
