@@ -185,6 +185,9 @@ jobs:
                       TENCENT_API_KEY:trustedrouter-tencent-tokenhub-api-key \
                       SCALEWAY_SECRET_KEY:trustedrouter-scaleway-api-key \
                       REGOLO_API_KEY:trustedrouter-regolo-api-key \
+                      LYCEUM_API_KEY:trustedrouter-lyceum-api-key \
+                      SYSTEM1MODELS_GLOBAL_API_KEY:trustedrouter-system1models-global-api-key \
+                      SYSTEM1MODELS_EU_API_KEY:trustedrouter-system1models-eu-api-key \
                       PRIVATEMODE_API_KEY:trustedrouter-privatemode-api-key \
                       FEATHERLESS_API_KEY:trustedrouter-featherless-api-key \
                       JINA_API_KEY:trustedrouter-jina-api-key \
@@ -199,6 +202,7 @@ jobs:
                       NEXTBIT_API_KEY:trustedrouter-nextbit-api-key \
                       AKASHML_API_KEY:trustedrouter-akashml-api-key \
                       MANCER_API_KEY:trustedrouter-mancer-api-key \
+                      ABLITERATE_API_KEY:trustedrouter-abliterate-api-key \
                       NSCALE_API_KEY:trustedrouter-nscale-api-key \
                       AION_LABS_API_KEY:trustedrouter-aion-labs-api-key \
                       SAMBANOVA_API_KEY:trustedrouter-sambanova-api-key \

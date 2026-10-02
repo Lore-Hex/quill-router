@@ -51,7 +51,7 @@ DEPLOY_MUTEX_BUCKET="${TR_DEPLOY_MUTEX_BUCKET:-tr-deploy-mutex-quill-cloud-proxy
 DEPLOY_MUTEX_LOCATION="${TR_DEPLOY_MUTEX_LOCATION:-us-central1}"
 DEPLOY_MUTEX_LIFECYCLE_FILE="$(mktemp "${TMPDIR:-/tmp}/tr-deploy-mutex-lifecycle-XXXXXX.json")"
 printf '%s\n' \
-  '{"rule":[{"action":{"type":"Delete"},"condition":{"age":1,"matchesPrefix":["locks/"]}}]}' \
+  '{"rule":[]}' \
   >"$DEPLOY_MUTEX_LIFECYCLE_FILE"
 if ! gc storage buckets describe "gs://${DEPLOY_MUTEX_BUCKET}" >/dev/null 2>&1; then
   gc storage buckets create "gs://${DEPLOY_MUTEX_BUCKET}" \

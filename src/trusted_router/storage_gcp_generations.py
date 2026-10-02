@@ -114,10 +114,27 @@ class SpannerGenerations:
         self.post_commit_analytics(generation)
         return activity_queued
 
+    @property
+    def analytics_outbox(self) -> SpannerAnalyticsOutbox | None:
+        """The benchmark outbox, when configured (the one-commit settle batches it)."""
+        return self._analytics_outbox
+
+    @staticmethod
+    def benchmark_sample(generation: Generation) -> ProviderBenchmarkSample | None:
+        """The loss-tolerant benchmark a settled generation records, if any.
+
+        Single source for the post-commit write below and for the one-commit
+        settle, which records the same sample inside its money commit.
+        """
+        if generation.app == "TrustedRouter Synthetic":
+            return None
+        return ProviderBenchmarkSample.from_generation(generation)
+
     def post_commit_analytics(self, generation: Generation) -> None:
         """Record loss-tolerant analytics without affecting settlement success."""
-        if generation.app != "TrustedRouter Synthetic":
-            self.record_benchmark(ProviderBenchmarkSample.from_generation(generation))
+        sample = self.benchmark_sample(generation)
+        if sample is not None:
+            self.record_benchmark(sample)
 
     def post_commit_analytics_safely(self, generation: Generation) -> None:
         """Executor boundary for optional post-settle writes.
@@ -195,8 +212,10 @@ class SpannerGenerations:
         if self._analytics_outbox is None:
             return
         try:
-            # A separate transaction by construction. Do not move this into
-            # gateway settlement: analytics is best-effort; money is not.
+            # A separate transaction by construction: analytics is best-effort;
+            # money is not. Only the one-commit settle batches this INSERT into
+            # its money commit, because that commit falls back to the durable
+            # two-commit settle (which lands here) on any failure.
             self._analytics_outbox.enqueue(sample)
         except Exception as exc:
             log.exception(

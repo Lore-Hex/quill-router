@@ -934,11 +934,11 @@ def test_operator_control_plane_holds_fleet_mutex_through_its_deploy(
     release = next(
         index
         for index, call in enumerate(run.calls)
-        if call[0:3] == ["gcloud", "storage", "rm"]
+        if call[0:3] == ["gcloud", "storage", "cp"] and "--if-generation-match=1" in call
     )
 
     assert create < mutation < gate < release
-    assert f"deploy_mutex.acquired cloud={cloud}" in run.stderr
+    assert f"TR_DEPLOY_MUTEX_CLOUD={cloud}" in run.stdout
 
 
 @pytest.mark.parametrize(
@@ -948,7 +948,7 @@ def test_operator_control_plane_holds_fleet_mutex_through_its_deploy(
         ("scripts/deploy/azure_control_plane.sh", ("az", "acr", "build")),
     ),
 )
-def test_operator_bake_gate_refusal_aborts_and_releases_mutex(
+def test_operator_bake_gate_refusal_aborts_and_retains_failed_reservation(
     harness: DeployScriptHarness,
     script: str,
     mutation_prefix: tuple[str, ...],
@@ -971,7 +971,9 @@ def test_operator_bake_gate_refusal_aborts_and_releases_mutex(
         )
         for call in run.calls
     )
-    assert any(call[:3] == ["gcloud", "storage", "rm"] for call in run.calls)
+    assert not any(call[:3] == ["gcloud", "storage", "rm"] for call in run.calls)
+    assert any(call[:3] == ["gcloud", "storage", "cp"] and "--if-generation-match=1" in call
+               for call in run.calls)
 
 
 def test_harness_git_discovery_stops_at_the_harness_root(tmp_path: Path) -> None:
@@ -1094,7 +1096,8 @@ def test_operator_deploy_refuses_dirty_tree_after_gate(
     assert not any(
         tuple(call[: len(mutation_prefix)]) == mutation_prefix for call in run.calls
     )
-    assert any(call[:3] == ["gcloud", "storage", "rm"] for call in run.calls)
+    assert not any(call[:3] == ["gcloud", "storage", "rm"] for call in run.calls)
+    assert any("--if-generation-match=1" in call for call in run.calls)
 
 
 @pytest.mark.parametrize(
@@ -1136,7 +1139,8 @@ def test_operator_deploy_refuses_tag_that_does_not_match_validated_head(
     assert not any(
         tuple(call[: len(mutation_prefix)]) == mutation_prefix for call in run.calls
     )
-    assert any(call[:3] == ["gcloud", "storage", "rm"] for call in run.calls)
+    assert not any(call[:3] == ["gcloud", "storage", "rm"] for call in run.calls)
+    assert any("--if-generation-match=1" in call for call in run.calls)
 
 
 @pytest.mark.parametrize(
@@ -3542,3 +3546,115 @@ def test_azure_deploy_masks_every_value_it_reads_when_running_in_github_actions(
     )
     for value in values:
         assert value not in unmasked_output
+
+
+_CLICKHOUSE_READ_ENDPOINTS = (
+    "http://10.128.0.250:8123",  # the load balancer
+    "http://10.128.0.34:8123",  # tr-clickhouse-3
+    "http://10.128.0.28:8123",  # tr-clickhouse-2
+    "http://10.128.15.214:8123",  # tr-clickhouse-1, the writer host, last
+)
+
+
+def test_rollout_gives_clickhouse_readers_the_balancer_then_every_replica(
+    harness: DeployScriptHarness,
+) -> None:
+    # G2 in docs/design/clickhouse-high-availability.md: with one URL, a dead
+    # replica behind the TCP-checked load balancer failed a third of new reads
+    # until the check noticed. The readers now fail over to each replica.
+    from trusted_router.clickhouse_endpoints import parse_endpoints
+
+    run = harness.run("scripts/deploy/rollout.sh")
+    assert run.returncode == 0, summarise(run)
+
+    listing = [
+        call
+        for call in run.calls
+        if call[3:6] == ["compute", "instances", "list"]
+    ]
+    assert len(listing) == 1
+    assert "--filter=name~^tr-clickhouse-[0-9]+$" in listing[0]
+    assert "--sort-by=~name" in listing[0]
+    deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
+    rendered = _cloud_run_job_env(deploy)
+    expected = ",".join(_CLICKHOUSE_READ_ENDPOINTS)
+    assert rendered["TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL"] == expected
+    assert rendered["TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL"] == expected
+    # The read clients parse it into the ordered list they fail over across.
+    assert parse_endpoints(expected) == _CLICKHOUSE_READ_ENDPOINTS
+    # The direct sink, which posts to one URL, stays off.
+    assert rendered["TR_OPERATIONAL_ANALYTICS_SINK"] == "outbox"
+
+
+@pytest.mark.parametrize(
+    ("answer", "failure", "message"),
+    [
+        (
+            None,
+            r"compute instances list .*tr-clickhouse"
+            "\tERROR: (gcloud.compute.instances.list) PERMISSION_DENIED",
+            "cannot list the ClickHouse replicas",
+        ),
+        ("", None, "cannot list the ClickHouse replicas"),
+        ("10.128.0.34\n34.66.1.2", None, "unexpected ClickHouse replica address '34.66.1.2'"),
+    ],
+    ids=["denied", "empty", "public-address"],
+)
+def test_rollout_fails_closed_when_the_clickhouse_replicas_cannot_be_listed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    answer: str | None,
+    failure: str | None,
+    message: str,
+) -> None:
+    script = "scripts/deploy/rollout.sh"
+    fixture = SCRIPT_FIXTURES[script]
+    responses = tuple(
+        (pattern, reply) for pattern, reply in fixture.responses if "instances list" not in pattern
+    )
+    if answer is not None:
+        responses = ((r"compute instances list .*tr-clickhouse", answer), *responses)
+    failures = (*fixture.failures, failure) if failure else fixture.failures
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES, script, replace(fixture, responses=responses, failures=failures)
+    )
+    isolated = DeployScriptHarness(tmp_path / "rollout-clickhouse-replicas")
+
+    run = isolated.run(script, verifier_rc=0)
+
+    assert run.returncode != 0, summarise(run)
+    assert message in run.stderr
+    assert not _gcloud_calls(run, "run", "deploy")
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        r"compute addresses describe tr-clickhouse-ilb"
+        "\tERROR: (gcloud.compute.addresses.describe) PERMISSION_DENIED",
+        None,  # the lookup succeeds but answers nothing
+    ],
+    ids=["denied", "empty"],
+)
+def test_rollout_fails_closed_when_the_clickhouse_lb_cannot_be_resolved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str | None
+) -> None:
+    # G2 in docs/design/clickhouse-high-availability.md: the former fallback to
+    # node 1's address pinned every reader to one replica on any lookup error.
+    script = "scripts/deploy/rollout.sh"
+    fixture = SCRIPT_FIXTURES[script]
+    responses = tuple(
+        (pattern, answer) for pattern, answer in fixture.responses if "tr-clickhouse-ilb" not in pattern
+    )
+    if failure is None:
+        responses = ((r"compute addresses describe tr-clickhouse-ilb", ""), *responses)
+    failures = (*fixture.failures, failure) if failure else fixture.failures
+    monkeypatch.setitem(SCRIPT_FIXTURES, script, replace(fixture, responses=responses, failures=failures))
+    isolated = DeployScriptHarness(tmp_path / f"rollout-clickhouse-lb-{failure is None}")
+
+    run = isolated.run(script, verifier_rc=0)
+
+    assert run.returncode != 0, summarise(run)
+    assert "cannot resolve the ClickHouse load balancer address" in run.stderr
+    assert not _gcloud_calls(run, "run", "deploy")
+    assert not any("10.128.15.214" in " ".join(call) for call in run.calls)

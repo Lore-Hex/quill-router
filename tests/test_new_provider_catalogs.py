@@ -7,6 +7,7 @@ import pytest
 
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import chutes, cloudflare_workers_ai, digitalocean
+from tests import catalog_vehicles
 from trusted_router.catalog import (
     GATEWAY_PREPAID_PROVIDER_SLUGS,
     MODEL_ENDPOINTS,
@@ -85,6 +86,13 @@ def test_cloudflare_committed_manifest_exposes_only_funded_priced_routes() -> No
         or row["upstream_id"] == "moonshotai/kimi-k3"
         for row in rows
     )
+
+
+@pytest.mark.provider_health
+def test_cloudflare_lists_kimi_k3_at_its_native_id_with_a_1m_window() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    rows = json.loads(cloudflare_workers_ai.MANIFEST_PATH.read_text(encoding="utf-8"))["models"]
     kimi_k3 = next(row for row in rows if row["id"] == "moonshotai/kimi-k3")
     assert kimi_k3["upstream_id"] == "moonshotai/kimi-k3"
     assert kimi_k3["context_length"] == 1_048_576
@@ -135,7 +143,7 @@ def test_new_provider_privacy_and_gateway_registration() -> None:
 
 
 def test_new_provider_manifests_create_only_eligible_routes() -> None:
-    endpoints = list(MODEL_ENDPOINTS.values())
+    endpoints = list(catalog_vehicles.registry_endpoints().values())
 
     # A provider routes only its manifest's routable rows: none for a row the
     # refresh tombstoned or one still awaiting a price.
@@ -188,8 +196,15 @@ def test_digitalocean_manifest_preserves_exact_upstream_ids() -> None:
     rows = {row["id"]: row for row in manifest["models"]}
 
     assert rows["deepseek/deepseek-v4-flash"]["upstream_id"] == "deepseek-4-flash"
-    glm = rows["z-ai/glm-5.2"]
-    assert glm["upstream_id"] == "glm-5.2"
+    assert rows["z-ai/glm-5.2"]["upstream_id"] == "glm-5.2"
+
+
+@pytest.mark.provider_health
+def test_digitalocean_prices_glm_52_with_a_paid_discounted_cache_read() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    manifest = json.loads(digitalocean.MANIFEST_PATH.read_text(encoding="utf-8"))
+    glm = next(row for row in manifest["models"] if row["id"] == "z-ai/glm-5.2")
     assert glm["input_token_price_per_m"] > 0
     assert glm["output_token_price_per_m"] > 0
     assert 0 < glm["cached_input_token_price_per_m"] < glm["input_token_price_per_m"]

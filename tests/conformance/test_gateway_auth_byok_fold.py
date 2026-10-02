@@ -216,7 +216,7 @@ def test_complete_byok_authorize_differential(key_type, config_state, metadata_c
     )
     from trusted_router.config import Settings
     from trusted_router.routes.internal import gateway
-    from trusted_router.storage_gcp import SpannerBigtableStore
+    from trusted_router.storage_gcp import SpannerStore
     from trusted_router.storage_models import OAuthApp
 
     store, database, key = _seed_typed_gateway_store()
@@ -262,7 +262,7 @@ def test_complete_byok_authorize_differential(key_type, config_state, metadata_c
         store._write_entity("workspace", workspace.id, workspace)
     initial = {name: copy.deepcopy(value) for name, value in vars(database).items()
                if isinstance(value, dict)}
-    folded = SpannerBigtableStore.gateway_api_key_auth_context
+    folded = SpannerStore.gateway_api_key_auth_context
     consume = gateway._byok_configs_for_candidates
     outcomes = []
     for joined in (False, True):
@@ -271,7 +271,7 @@ def test_complete_byok_authorize_differential(key_type, config_state, metadata_c
         captured = []
         counter = iter(range(1, 1000))
         monkeypatch.setattr(uuid, "uuid4", lambda counter=counter: uuid.UUID(int=next(counter)))
-        monkeypatch.setattr(SpannerBigtableStore, "gateway_api_key_auth_context",
+        monkeypatch.setattr(SpannerStore, "gateway_api_key_auth_context",
                             folded if joined else separate_context)
 
         def consumed(*args, captured=captured, **kwargs):

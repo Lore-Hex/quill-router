@@ -1,7 +1,7 @@
 """Email send-block list — the SES bounce/complaint suppression layer.
 
 Lives outside storage.py so the in-memory store stays small and adding
-fields here doesn't churn the main module. SpannerBigtableStore has its
+fields here doesn't churn the main module. SpannerStore has its
 own implementation; both satisfy the Store Protocol.
 """
 

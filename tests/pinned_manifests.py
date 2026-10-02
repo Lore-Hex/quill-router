@@ -110,6 +110,25 @@ FEATHERLESS_QWEN38_FLASH_NEXT = {
     "cached_input_token_price_per_m": 30000,
 }
 
+# Featherless's DeepSeek V4.1 Flash row as its feed listed it on 2026-09-30.
+FEATHERLESS_DEEPSEEK_V4_1_FLASH = {
+    "display_name": "deepseek-ai/DeepSeek-V4.1-Flash",
+    "title": "deepseek-ai/DeepSeek-V4.1-Flash",
+    "model_type": "chat",
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "id": "deepseek/deepseek-v4.1-flash",
+    "upstream_id": "deepseek-ai/DeepSeek-V4.1-Flash",
+    "context_length": 262144,
+    "max_output_tokens": 32768,
+    "routable": True,
+    "input_token_price_per_m": 300000,
+    "output_token_price_per_m": 1200000,
+    "cached_input_token_price_per_m": 30000,
+}
+
 # NEAR AI"s only routable row on 2026-09-29, GLM 5.3 Flash, as its feed listed it.
 NEAR_AI_GLM_53_FLASH = {
     "display_name": "z-ai/glm-5.3-flash",
@@ -292,6 +311,26 @@ FIREWORKS_KIMI_K3 = {
     "status": 1,
     "created": 1784483409,
 }
+# Cerebras's GPT OSS 120B row as its feed listed it on 2026-09-29.
+CEREBRAS_GPT_OSS_120B = {
+    "id": "openai/gpt-oss-120b",
+    "upstream_id": "gpt-oss-120b",
+    "display_name": "OpenAI GPT OSS",
+    "title": "gpt-oss-120b",
+    "context_length": 131072,
+    "max_output_tokens": 40960,
+    "input_token_price_per_m": 350000,
+    "output_token_price_per_m": 750000,
+    "model_type": "chat",
+    "features": [
+        "function-calling", "high-throughput", "json-mode", "reasoning", "response-format",
+        "structured-outputs", "tool-choice", "tools",
+    ],
+    "input_modalities": ["text"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+}
 BASETEN_GLM_5_2_FAST = {
     "display_name": "GLM 5.2 Fast",
     "title": "zai-org/GLM-5.2-Fast",
@@ -351,6 +390,24 @@ ALIBABA_QWEN_3_7_FLASH = tuple(
         ("qwen3.7-flash-2026-07-15", "Qwen3.7 Flash 2026 07 15"),
     )
 )
+
+# NVIDIA NIM's Llama 3.2 11B Vision row as its feed listed it on 2026-09-30.
+# NVIDIA publishes no per-token price; the refresh writes its conservative
+# accounting rate (nvidia_nim._CONSERVATIVE_HOSTED_PRICE) into every row.
+NVIDIA_NIM_LLAMA_3_2_11B_VISION = {
+    "display_name": "meta/llama-3.2-11b-vision-instruct",
+    "title": "meta/llama-3.2-11b-vision-instruct",
+    "model_type": "chat",
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "id": "meta-llama/llama-3.2-11b-vision-instruct",
+    "upstream_id": "meta/llama-3.2-11b-vision-instruct",
+    "routable": True,
+    "input_token_price_per_m": 2000000,
+    "output_token_price_per_m": 10000000,
+}
 
 # Tinfoil's confidential routes as its manifest lists them.
 TINFOIL_DEEPSEEK_V4_1_FLASH = {
@@ -519,6 +576,47 @@ PEARL_GLM_5_3 = {
     "cached_input_token_price_per_m": 230000,
 }
 
+# Novita's Hy3 row as its feed listed it on 2026-09-30. Novita's feed prices
+# 100x below its public table; its manifest header's scale restores them.
+NOVITA_TENCENT_HY3 = {
+    "id": "tencent/hy3",
+    "display_name": "Hy3",
+    "title": "tencent/hy3",
+    "created": 1782798401,
+    "context_length": 262144,
+    "max_output_tokens": 262144,
+    "input_token_price_per_m": 1400,
+    "output_token_price_per_m": 5800,
+    "model_type": "chat",
+    "features": ["serverless", "function-calling", "structured-outputs", "reasoning"],
+    "input_modalities": ["text"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+    "upstream_id": "tencent/hy3",
+    "cached_input_token_price_per_m": 350,
+}
+
+# Parasail's Qwen3.5 397B row, under its own deployment id, as its feed listed
+# it on 2026-09-30.
+PARASAIL_QWEN_3_5_397B = {
+    "id": "qwen/qwen3.5-397b-a17b",
+    "upstream_id": "parasail-qwen35-397b-a17b",
+    "display_name": "Parasail Qwen3.5 397B A17B",
+    "title": "qwen/qwen3.5-397b-a17b",
+    "context_length": 262144,
+    "max_output_tokens": 65536,
+    "input_token_price_per_m": 500000,
+    "output_token_price_per_m": 3600000,
+    "cached_input_token_price_per_m": 300000,
+    "model_type": "chat",
+    "features": ["reasoning", "function-calling", "serverless"],
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "status": 1,
+}
+
 # OpenAI's own routes as its manifest lists them, for rules of OpenAI's
 # routes: its prepaid ZDR contract, Priority processing, image billing.
 OPENAI_GPT_4O_MINI = {
@@ -657,6 +755,326 @@ DEEPSEEK_V4_PRO_0813_ROUTES: tuple[tuple[str, dict[str, Any]], ...] = (
         "cached_input_token_price_per_m": 44000,
     }),
 )
+
+# GLM 5.2 as OpenRouter's snapshot listed it on 2026-09-29, trimmed to Z.AI's own
+# endpoint and the three resellers that reported another window, without their
+# parameter lists and uptimes.
+OPENROUTER_GLM_5_2: dict[str, Any] = {
+    "id": "z-ai/glm-5.2",
+    "name": "Z.ai: GLM 5.2",
+    "created": 1781631930,
+    "context_length": 1048576,
+    "architecture": {
+        "modality": "text->text",
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "tokenizer": "Other",
+        "instruct_type": None,
+    },
+    "pricing": {"prompt": "0.0000004433", "completion": "0.0000027417", "input_cache_read": "0.000000191"},
+    "top_provider": {"context_length": 1048576, "max_completion_tokens": 131072, "is_moderated": False},
+    "endpoints": [
+        {
+            "name": f"{name} | z-ai/glm-5.2-20260616",
+            "model_id": upstream_id,
+            "provider_name": name,
+            "tr_provider_slug": slug,
+            "context_length": context_length,
+            "pricing": {"prompt": "0.0000014", "completion": "0.0000044", "input_cache_read": "0.00000026"},
+            "max_completion_tokens": max_completion_tokens,
+            "pricing_source": "provider_direct",
+        }
+        for name, slug, upstream_id, context_length, max_completion_tokens in (
+            ("Parasail", "parasail", "zai-org/GLM-5.2-FP8", 262144, 235929),
+            ("Together", "together", "zai-org/GLM-5.2", 1048575, 943717),
+            ("Venice", "venice", "zai-org-glm-5-2", 1000000, 131072),
+            ("Z.AI", "zai", "glm-5.2", 1048576, 131072),
+        )
+    ],
+    "pricing_source": "provider_direct",
+}
+
+# Hy3 as OpenRouter's snapshot listed it on 2026-09-30, trimmed to DeepInfra,
+# the first host it lists, and Novita, without parameter lists and uptimes.
+# Every host listed a 262144 window.
+OPENROUTER_TENCENT_HY3: dict[str, Any] = {
+    "id": "tencent/hy3",
+    "name": "Tencent: Hy3",
+    "created": 1783344048,
+    "context_length": 262144,
+    "architecture": {
+        "modality": "text->text",
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "tokenizer": "Other",
+        "instruct_type": None,
+    },
+    "pricing": {"prompt": "0.00000013", "completion": "0.00000053", "input_cache_read": "0.000000033"},
+    "top_provider": {"context_length": 262144, "max_completion_tokens": 128000, "is_moderated": False},
+    "endpoints": [
+        {
+            "name": f"{name} | tencent/hy3-20260706",
+            "model_id": upstream_id,
+            "provider_name": name,
+            "tr_provider_slug": slug,
+            "context_length": 262144,
+            "pricing": {"prompt": prompt, "completion": completion, "input_cache_read": cache_read},
+            "max_completion_tokens": max_completion_tokens,
+            "pricing_source": "provider_direct",
+        }
+        for name, slug, upstream_id, prompt, completion, cache_read, max_completion_tokens in (
+            ("DeepInfra", "deepinfra", "tencent/Hy3", "0.00000013", "0.00000053", "0.000000033", 131072),
+            ("Novita", "novita", "tencent/hy3", "0.00000014", "0.00000058", "0.000000035", 235929),
+        )
+    ],
+    "pricing_source": "provider_direct",
+}
+
+# Qwen3.5 397B as OpenRouter's snapshot listed it on 2026-09-30, trimmed to
+# DeepInfra, the first host it lists, and Parasail, without parameter lists and
+# uptimes. Both listed a 262144 window.
+OPENROUTER_QWEN_3_5_397B: dict[str, Any] = {
+    "id": "qwen/qwen3.5-397b-a17b",
+    "name": "Qwen: Qwen3.5 397B A17B",
+    "created": 1771223018,
+    "context_length": 262144,
+    "architecture": {
+        "modality": "text+image+video->text",
+        "input_modalities": ["text", "image", "video"],
+        "output_modalities": ["text"],
+        "tokenizer": "Qwen3",
+        "instruct_type": None,
+    },
+    "pricing": {"prompt": "0.00000045", "completion": "0.000003", "input_cache_read": "0.000000045"},
+    "top_provider": {"context_length": 262144, "max_completion_tokens": 235929, "is_moderated": False},
+    "endpoints": [
+        {
+            "name": f"{name} | qwen/qwen3.5-397b-a17b-20260216",
+            "model_id": "Qwen/Qwen3.5-397B-A17B",
+            "provider_name": name,
+            "tr_provider_slug": slug,
+            "context_length": 262144,
+            "pricing": {"prompt": prompt, "completion": completion, "input_cache_read": cache_read},
+            "max_completion_tokens": max_completion_tokens,
+            "pricing_source": "provider_direct",
+        }
+        for name, slug, prompt, completion, cache_read, max_completion_tokens in (
+            ("DeepInfra", "deepinfra", "0.00000045", "0.000003", "0.00000022", 81920),
+            ("Parasail", "parasail", "0.0000005", "0.0000036", "0.0000003", 235929),
+        )
+    ],
+    "pricing_source": "provider_direct",
+}
+
+# GLM 5.2 as each host that served it listed it in its manifest on 2026-09-29.
+GLM_5_2_ROUTES: tuple[tuple[str, dict[str, Any]], ...] = (
+    ("zai", {
+        "id": "z-ai/glm-5.2",
+        "upstream_id": "glm-5.2",
+        "display_name": "glm-5.2",
+        "title": "z-ai/glm-5.2",
+        "context_length": 1000000,
+        "max_output_tokens": 131072,
+        "input_token_price_per_m": 1400000,
+        "output_token_price_per_m": 4400000,
+        "cached_input_token_price_per_m": 260000,
+        "model_type": "chat",
+        "features": ["reasoning", "function-calling", "structured-output"],
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "endpoints": ["chat/completions"],
+        "status": 1,
+        "created": 1781625600,
+    }),
+    ("gmi", {
+        "id": "z-ai/glm-5.2",
+        "upstream_id": "zai-org/GLM-5.2-FP8",
+        "display_name": "zai-org/GLM-5.2-FP8",
+        "title": "z-ai/glm-5.2",
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "input_token_price_per_m": 1400000,
+        "output_token_price_per_m": 4400000,
+        "cached_input_token_price_per_m": 260000,
+        "model_type": "chat",
+        "features": ["reasoning", "function-calling", "structured-outputs", "serverless"],
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "endpoints": ["chat/completions"],
+        "status": 1,
+    }),
+    ("deepinfra", {
+        "id": "z-ai/glm-5.2",
+        "upstream_id": "zai-org/GLM-5.2",
+        "display_name": "zai-org/GLM-5.2",
+        "title": "z-ai/glm-5.2",
+        "context_length": 1048576,
+        "max_output_tokens": 1048576,
+        "input_token_price_per_m": 750000,
+        "output_token_price_per_m": 2400000,
+        "model_type": "chat",
+        "features": ["reasoning", "serverless"],
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "endpoints": ["chat/completions"],
+        "status": 1,
+        "cached_input_token_price_per_m": 140000,
+    }),
+    ("novita", {
+        "id": "z-ai/glm-5.2",
+        "upstream_id": "zai-org/glm-5.2",
+        "display_name": "GLM 5.2",
+        "title": "zai-org/glm-5.2",
+        "created": 1781262235,
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "input_token_price_per_m": 14000,
+        "output_token_price_per_m": 44000,
+        "cached_input_token_price_per_m": 2600,
+        "model_type": "chat",
+        "features": ["function-calling", "structured-outputs", "reasoning", "serverless"],
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "endpoints": ["chat/completions", "anthropic"],
+        "status": 1,
+    }),
+    ("phala", {
+        "id": "z-ai/glm-5.2",
+        "upstream_id": "z-ai/glm-5.2",
+        "display_name": "Z.ai: GLM 5.2",
+        "title": "z-ai/glm-5.2",
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "input_token_price_per_m": 1260000,
+        "output_token_price_per_m": 3000000,
+        "cached_input_token_price_per_m": 220000,
+        "model_type": "chat",
+        "features": ["reasoning", "function-calling", "structured-outputs", "serverless"],
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "endpoints": ["chat/completions"],
+        "status": 1,
+        "supported_features": ["json_mode", "reasoning", "structured_outputs", "tools"],
+        "supported_sampling_parameters": [
+            "frequency_penalty", "max_tokens", "min_p", "presence_penalty",
+            "repetition_penalty", "seed", "stop", "temperature", "top_k", "top_p",
+        ],
+        "provider_route_class": "standard_pass_through",
+    }),
+    ("siliconflow", {
+        "id": "z-ai/glm-5.2",
+        "upstream_id": "zai-org/GLM-5.2",
+        "display_name": "zai-org/GLM-5.2",
+        "title": "z-ai/glm-5.2",
+        "context_length": 1048576,
+        "max_output_tokens": 262144,
+        "input_token_price_per_m": 1302000,
+        "output_token_price_per_m": 4092000,
+        "cached_input_token_price_per_m": 260000,
+        "model_type": "chat",
+        "features": ["reasoning", "function-calling", "serverless"],
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "endpoints": ["chat/completions"],
+        "status": 1,
+    }),
+    ("together", {
+        "id": "z-ai/glm-5.2",
+        "upstream_id": "zai-org/GLM-5.2",
+        "display_name": "GLM 5.2",
+        "title": "zai-org/GLM-5.2",
+        "context_length": 1048575,
+        "max_output_tokens": 131072,
+        "input_token_price_per_m": 1400000,
+        "output_token_price_per_m": 4400000,
+        "cached_input_token_price_per_m": 260000,
+        "model_type": "chat",
+        "features": ["serverless"],
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "endpoints": ["chat/completions"],
+        "status": 1,
+    }),
+    ("venice", {
+        "id": "z-ai/glm-5.2",
+        "upstream_id": "zai-org-glm-5-2",
+        "display_name": "GLM 5.2",
+        "title": "z-ai/glm-5.2",
+        "context_length": 1000000,
+        "max_output_tokens": 131072,
+        "input_token_price_per_m": 1400000,
+        "output_token_price_per_m": 4400000,
+        "cached_input_token_price_per_m": 260000,
+        "model_type": "chat",
+        "features": ["function-calling", "reasoning", "structured-outputs"],
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "endpoints": ["chat/completions"],
+        "status": 1,
+    }),
+    ("parasail", {
+        "id": "z-ai/glm-5.2",
+        "upstream_id": "parasail-glm-52",
+        "display_name": "Parasail GLM 5.2",
+        "title": "z-ai/glm-5.2",
+        "context_length": 262144,
+        "max_output_tokens": 262144,
+        "input_token_price_per_m": 1400000,
+        "output_token_price_per_m": 4400000,
+        "cached_input_token_price_per_m": 260000,
+        "model_type": "chat",
+        "features": ["reasoning", "function-calling", "structured-outputs", "serverless"],
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "endpoints": ["chat/completions"],
+        "status": 1,
+    }),
+    ("friendli", {
+        "id": "z-ai/glm-5.2",
+        "upstream_id": "zai-org/GLM-5.2",
+        "display_name": "zai-org/GLM-5.2",
+        "title": "zai-org/GLM-5.2",
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "input_token_price_per_m": 1400000,
+        "output_token_price_per_m": 4400000,
+        "cached_input_token_price_per_m": 260000,
+        "model_type": "chat",
+        "features": ["reasoning", "function-calling", "structured-outputs", "serverless"],
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "endpoints": ["chat/completions"],
+        "status": 1,
+    }),
+    ("baseten", {
+        "id": "z-ai/glm-5.2",
+        "upstream_id": "zai-org/GLM-5.2",
+        "display_name": "GLM 5.2",
+        "context_length": 1048576,
+        "endpoints": ["chat/completions"],
+        "input_token_price_per_m": 1400000,
+        "output_token_price_per_m": 4400000,
+        "cached_input_token_price_per_m": 140000,
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text"],
+        "supported_features": ["tools", "json_mode", "structured_outputs", "reasoning"],
+        "supported_sampling_parameters": ["temperature", "top_p", "stop"],
+        "max_output_tokens": 262144,
+    }),
+)
+
+# TypeSafe's Jev decision row as its models page listed it on 2026-09-30.
+TYPESAFE_JEV = {
+    "id": "typesafe-ai/jev",
+    "upstream_id": "jev-latest",
+    "display_name": "TypeSafe AI Jev",
+    "context_length": 32000,
+    "model_type": "decision",
+    "endpoints": ["decide"],
+    "input_token_price_per_m": 42000,
+    "output_token_price_per_m": 0,
+    "pricing_source": "https://docs.typesafe.ai/models.md",
+}
 
 # Run in the subprocess before the catalog is built.
 USE_PINNED_MANIFESTS = """

@@ -21,7 +21,7 @@ from trusted_router.config import Settings
 from trusted_router.routes.internal import gateway
 from trusted_router.schemas import GatewayAuthorizeRequest
 from trusted_router.storage import CreditAccount, Workspace, configure_store
-from trusted_router.storage_gcp import _GATEWAY_API_KEY_AUTH_CONTEXT_SQL, SpannerBigtableStore
+from trusted_router.storage_gcp import _GATEWAY_API_KEY_AUTH_CONTEXT_SQL, SpannerStore
 from trusted_router.storage_gcp_authorize import AuthorizeOutcome
 from trusted_router.storage_gcp_counter_dml import RESERVATION_COLUMNS
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
@@ -33,8 +33,8 @@ def _request() -> Request:
     return Request({"type": "http", "method": "POST", "path": "/", "headers": []})
 
 
-def _seed_typed_gateway_store() -> tuple[SpannerBigtableStore, object, object]:
-    store, database = make_fake_store(request_record_write_mode="typed")
+def _seed_typed_gateway_store(**options: Any) -> tuple[SpannerStore, object, object]:
+    store, database = make_fake_store(request_record_write_mode="typed", **options)
     workspace = Workspace(id="ws-rpc", name="RPC", owner_user_id="user-rpc")
     store._write_entity("workspace", workspace.id, workspace)
     store._write_entity("credit", workspace.id, CreditAccount(workspace_id=workspace.id))
@@ -101,7 +101,7 @@ def test_typed_authorize_route_does_not_call_legacy_idempotency_probe(
         raise AssertionError("typed authorize must never probe the legacy entity index")
 
     monkeypatch.setattr(
-        SpannerBigtableStore,
+        SpannerStore,
         "get_gateway_authorization_by_idempotency_key",
         forbidden,
     )
@@ -124,7 +124,7 @@ def test_typed_authorize_route_does_not_call_typed_pretransaction_probe(
         raise AssertionError("typed fresh authorize must rely on its in-transaction probe")
 
     monkeypatch.setattr(
-        SpannerBigtableStore,
+        SpannerStore,
         "get_typed_authorization_by_idempotency",
         forbidden,
     )
@@ -234,7 +234,7 @@ def test_typed_accepted_authorization_is_returned_without_post_commit_read(
     def forbidden(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("accepted authorize already has the exact inserted record")
 
-    monkeypatch.setattr(SpannerBigtableStore, "get_gateway_authorization", forbidden)
+    monkeypatch.setattr(SpannerStore, "get_gateway_authorization", forbidden)
     outcome, authorization = store.authorize_gateway_typed(
         workspace_id=key.workspace_id,
         key_hash=key.hash,
@@ -313,8 +313,8 @@ def test_fresh_typed_gateway_authorize_has_exact_sequential_spanner_operation_co
     # Representative steady-state fresh request: the workspace's observed-empty
     # broadcast cache is warm, while this idempotency key and authorization are new.
     # Seven SQL/batch calls (previously eight) for this fixed prepaid/BYOK catalog.
-    # Armed authorization adds one selected-shard pause/epoch read.
-    assert operation_count == 7 + int(armed)
+    # Armed authorization returns pause evidence from the credit UPDATE.
+    assert operation_count == 7
 
 
 def test_broadcast_empty_results_are_cached_until_ttl(
@@ -332,7 +332,7 @@ def test_broadcast_empty_results_are_cached_until_ttl(
         return []
 
     monkeypatch.setattr(gateway.time, "monotonic", lambda: now[0])
-    monkeypatch.setattr(SpannerBigtableStore, "list_broadcast_destinations", list_empty)
+    monkeypatch.setattr(SpannerStore, "list_broadcast_destinations", list_empty)
 
     assert gateway._broadcast_destinations_for_authorize(key.workspace_id) == []
     assert gateway._broadcast_destinations_for_authorize(key.workspace_id) == []
@@ -357,7 +357,7 @@ def test_positive_broadcast_results_are_never_cached(
         calls += 1
         return [destination]
 
-    monkeypatch.setattr(SpannerBigtableStore, "list_broadcast_destinations", list_positive)
+    monkeypatch.setattr(SpannerStore, "list_broadcast_destinations", list_positive)
 
     assert gateway._broadcast_destinations_for_authorize(key.workspace_id) == [destination]
     assert gateway._broadcast_destinations_for_authorize(key.workspace_id) == [destination]
@@ -372,7 +372,7 @@ def test_broadcast_empty_cache_evicts_oldest_workspace(
     gateway._BROADCAST_EMPTY_CACHE.clear()
     monkeypatch.setattr(gateway, "_BROADCAST_EMPTY_CACHE_MAX_ENTRIES", 2)
     monkeypatch.setattr(
-        SpannerBigtableStore,
+        SpannerStore,
         "list_broadcast_destinations",
         lambda _self, _workspace_id: [],
     )
@@ -404,13 +404,22 @@ def spanner_operations(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, 
     """Capture actual snapshot/transaction calls in order, including commit."""
     operations: list[tuple[str, str, dict]] = []
 
+    def count_rpc() -> None:
+        from trusted_router.storage_gcp_io import _SPANNER_RPC_COUNTER
+
+        counter = _SPANNER_RPC_COUNTER.get()
+        if counter is not None:
+            counter.increment()
+
     def wrap(cls: type, method: str, label: str) -> None:
         original = getattr(cls, method)
 
         def recorded(self: object, sql: str, **kwargs: Any) -> Any:
-            if getattr(self, "_in_batch", False):
+            if getattr(self, "_in_batch", False) or getattr(self, "_in_returning", False):
                 return original(self, sql, **kwargs)
-            operations.append((label, " ".join(sql.split()), copy.deepcopy(kwargs.get("params", {}))))
+            count_rpc()
+            operations.append(("T1 DML" if sql.startswith("UPDATE") else label,
+                               " ".join(sql.split()), copy.deepcopy(kwargs.get("params", {}))))
             return original(self, sql, **kwargs)
 
         monkeypatch.setattr(cls, method, recorded)
@@ -421,6 +430,7 @@ def spanner_operations(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, 
     original_batch = _FakeTransaction.batch_update
 
     def batched(self: Any, statements: Any, **kwargs: Any) -> Any:
+        count_rpc()
         operations.append(("T1 BATCH", "", {"statements": copy.deepcopy(statements)}))
         return original_batch(self, statements, **kwargs)
 
@@ -429,6 +439,7 @@ def spanner_operations(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, 
 
     def committed(self: FakeSpannerDatabase, *args: Any, **kwargs: Any) -> Any:
         result = original(self, *args, **kwargs)
+        count_rpc()
         operations.append(("COMMIT", "", {}))
         return result
 
@@ -463,8 +474,9 @@ def test_warm_lookup_authorize_exact_sequence_and_contents(
     }
     operations = spanner_operations
     # Warm lookup: auth + BYOK together, idempotency + credit + batch + commit.
-    # Trust adds its selected-shard read; pre-6a had one extra key RPC.
-    assert len(operations) == 5 + int(armed)
+    # Armed credit DML returns pause evidence without another RPC.
+    assert len(operations) == 5
+    assert response["timing"]["spanner_rpcs"] == 5
     assert operations[-2][0] == "T1 BATCH"
     batch = operations[-2][2]["statements"]
     assert len(batch) == 3
@@ -508,14 +520,11 @@ def test_warm_lookup_authorize_exact_sequence_and_contents(
     reservation = operations[-3][2]
     assert operations[1][2] == {"scope": reservation["idempotency_scope"]}
     assert operations[2] == ("T1 DML",
-        "UPDATE tr_credit_balance SET reserved = reserved + @est "
+        "UPDATE tr_credit_balance SET reserved = reserved + @est "  # noqa: S608 - fixed clauses
         "WHERE workspace_id=@ws AND shard=@shard "
-        "AND (total_credits - total_usage - reserved) >= @est",
+        "AND (total_credits - total_usage - reserved) >= @est"
+        + (" THEN RETURN billing_pause_causes, pause_epoch" if armed else ""),
         {"est": reservation["credit_reserved_micro"], "ws": key.workspace_id, "shard": 0})
-    if armed:
-        assert operations[3] == ("T1 SELECT",
-            "SELECT billing_pause_causes, pause_epoch FROM tr_credit_balance "
-            "WHERE workspace_id=@ws AND shard=@shard", {"ws": key.workspace_id, "shard": 0})
     assert operations[-4] == ("T1 DML",
         "UPDATE tr_key_limit SET reserved = reserved + @est "
         "WHERE key_hash=@kh AND shard=@shard AND limit_micro IS NOT NULL "
@@ -544,6 +553,18 @@ def test_warm_lookup_authorize_exact_sequence_and_contents(
         "anthropic/claude-haiku-4.5@anthropic/prepaid"
     ]
     assert operations[-1] == ("COMMIT", "", {})
+
+    # Same authenticated request replays before credit/pause/key operations.
+    fresh_auth_sql = operations[0]
+    reservation_read = operations[1]
+    spanner_operations.clear()
+    replay = gateway._authorize_gateway_sync(request, body, settings, raw_body)["data"]
+    assert replay["idempotent_replay"] is True
+    assert replay["authorization_id"] == response["authorization_id"]
+    assert [op[0] for op in spanner_operations] == ["RO", "T1 SELECT", "COMMIT", "RO"]
+    assert spanner_operations[:3] == [fresh_auth_sql, reservation_read, ("COMMIT", "", {})]
+    assert "tr_gateway_authorization" in spanner_operations[3][1]
+    assert replay["timing"]["spanner_rpcs"] == 4
 
 
 @pytest.mark.parametrize(("change", "status", "message", "error_type"), [
@@ -801,8 +822,8 @@ def test_key_variants_consume_folded_byok(
     def forbidden(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("authorize must consume folded credentials without a second read")
 
-    monkeypatch.setattr(SpannerBigtableStore, "get_byok_providers", forbidden)
-    monkeypatch.setattr(SpannerBigtableStore, "get_byok_provider", forbidden)
+    monkeypatch.setattr(SpannerStore, "get_byok_providers", forbidden)
+    monkeypatch.setattr(SpannerStore, "get_byok_provider", forbidden)
     response = gateway._authorize_gateway_sync(
         _request(), _lookup_body(key), Settings(environment="test"),
     )["data"]
@@ -870,7 +891,7 @@ def test_byok_misconfiguration_keeps_existing_error(
             return ApiKeyAuthContext(
                 _auth_record(rows[0][0], ApiKey), _auth_record(rows[0][1], Workspace),
             )
-        monkeypatch.setattr(SpannerBigtableStore, "gateway_api_key_auth_context", old_context)
+        monkeypatch.setattr(SpannerStore, "gateway_api_key_auth_context", old_context)
     if misconfiguration == "invalid_envelope":
         store.upsert_byok_provider(
             workspace_id=key.workspace_id, provider="anthropic",
@@ -893,3 +914,236 @@ def test_byok_misconfiguration_keeps_existing_error(
             "code": 400, "type": "provider_not_supported", "source": "router",
             "message": "No authorized route candidates are available for this workspace",
         }}
+
+
+@pytest.mark.parametrize("funded", [False, True])
+def test_folded_pause_gateway_error_bytes_and_rollback(
+    monkeypatch: pytest.MonkeyPatch, metadata_catalog: None, funded: bool,
+) -> None:
+    from tests.fakes.authorize_pause_sequential import authorize_atomic as parent
+    from tests.test_spanner_batch_dml import _state
+    from trusted_router import gateway_timing
+
+    monkeypatch.setattr(gateway_timing, "perf_counter", lambda: 100.0)
+    folded = storage_gcp_authorize.authorize_atomic
+    errors = []
+    for implementation in (parent, folded):
+        store, database, key = _seed_typed_gateway_store()
+        store.trust_settings = Settings(environment="test", spend_lease_trust_eligibility_enabled=True)
+        row = database.typed[CREDIT_BALANCE_TABLE][(key.workspace_id, 0)]
+        row.update(billing_pause_causes=["abuse"], pause_epoch=19)
+        if not funded:
+            row["total_credits"] = 0
+        before = _state(database)
+        monkeypatch.setattr(storage_gcp_authorize, "authorize_atomic", implementation)
+        with pytest.raises(HTTPException) as raised:
+            gateway._authorize_gateway_sync(_request(), _lookup_body(key), Settings(environment="test"))
+        error = raised.value
+        errors.append((error.status_code, json.dumps(error.detail, separators=(",", ":")).encode(), error.headers))
+        assert _state(database) == before
+        assert database.rollback_calls >= 1
+        assert database.commits == 0
+    assert errors[0] == errors[1]
+    if funded:
+        assert errors[1][0] == 403
+        assert json.loads(errors[1][1])["error"] == {
+            "code": 403, "message": "billing_paused", "type": "forbidden", "source": "router",
+        }
+        assert errors[1][2] is None
+
+
+@pytest.fixture(autouse=True, params=[False, True], ids=["shadow-off", "shadow-on"])
+def shadow_rpc_differential_mode(request, monkeypatch):
+    from tests.test_speculation_shadow import ReferenceStore
+    from trusted_router.services import speculation_shadow
+    monkeypatch.setenv("TR_SPECULATIVE_PROVIDER_SHADOW_ENABLED", str(request.param).lower())
+    dispatcher = speculation_shadow.Dispatcher(ReferenceStore(), "matrix")
+    monkeypatch.setattr(speculation_shadow, "_RUNTIME", dispatcher)
+    yield dispatcher
+    if not request.param:
+        assert dispatcher.pending.empty(), "flag-off enqueued an observation"
+
+
+@pytest.mark.parametrize("refund", [False, True])
+@pytest.mark.parametrize("stage_d", [False, True])
+@pytest.mark.parametrize("fault", ["none", "queue-full", "observer-failed", "resolved", "boot_verified", "authorized", "loss-set", "reason-map", "logging"])
+def test_shadow_response_money_and_sql_differential(monkeypatch, fixed_operation_catalog, spanner_operations, refund, fault, stage_d):
+    import datetime as dt
+    import uuid
+
+    from fastapi.testclient import TestClient
+
+    from tests.test_speculation_shadow import ReferenceStore, install_recorder_fault
+    from trusted_router import acquisition, gateway_timing
+    from trusted_router.main import create_app
+    from trusted_router.services import speculation_shadow as shadow
+
+    store, database, key = _seed_typed_gateway_store(generation_records_enabled=True, analytics_outbox_enabled=True, operational_analytics_outbox_enabled=True)
+    from tests.conformance.test_gateway_auth_boot_fold import _BOOT_KEYS, signed_request
+    from trusted_router.gateway_boot import boot_auth_digest
+    from trusted_router.receipt_keys import b64url_encode
+    _, signed_body, _, boot = signed_request(store, key)
+    store.advance_stage_d_policy_watermark(plane="gcp", sequence=42, updated_at=dt.datetime(2026, 10, 1, tzinfo=dt.UTC))
+    saved = {k: copy.deepcopy(v) for k, v in vars(database).items() if isinstance(v, (dict, list, int))}
+    fixed = dt.datetime(2026, 10, 1, tzinfo=dt.UTC)
+    original_datetime = dt.datetime
+    class ClockMeta(type):
+        def __instancecheck__(cls, instance):
+            return isinstance(instance, original_datetime)
+    class Clock(original_datetime, metaclass=ClockMeta):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed if tz else fixed.replace(tzinfo=None)
+    monkeypatch.setattr(dt, "datetime", Clock)
+    from trusted_router import (
+        storage_gcp_counter_dml,
+        storage_gcp_settle_outbox,
+        storage_gcp_stage_d,
+    )
+    for module in (storage_gcp_counter_dml, storage_gcp_settle_outbox, storage_gcp_stage_d):
+        monkeypatch.setattr(module, "datetime", Clock)
+    monkeypatch.setattr(uuid, "uuid4", lambda: uuid.UUID(int=42))
+    monkeypatch.setattr(gateway_timing, "perf_counter", lambda: 1.0)
+    monkeypatch.setattr(shadow, "_COVERAGE_UNKNOWN", False)
+    transcripts = []
+    for enabled in (False, True):
+        for k, v in saved.items():
+            setattr(database, k, copy.deepcopy(v))
+        database.now = fixed
+        store._credit_shard_counts.invalidate(key.workspace_id)
+        acquisition._clear_usage_check(key.workspace_id)
+        gateway._BROADCAST_EMPTY_CACHE.clear()
+        settings = Settings(environment="test", speculative_provider_shadow_enabled=enabled,
+                            stage_d_eligibility_enabled=stage_d, stage_d_pilot_workspace_ids="",
+                            spend_lease_accepted_gcp_image_digests=boot.image_digest)
+        settings.settle_outbox_enabled = True
+        settings.analytics_outbox_enabled = True
+        settings.operational_analytics_outbox_enabled = True
+        dispatcher = shadow.Dispatcher(ReferenceStore(), "diff", capacity=1)
+        if fault == "queue-full":
+            dispatcher.try_submit(shadow.Observation(dispatcher), 200, "success", {})
+        if fault == "observer-failed":
+            def fail(*args):
+                raise RuntimeError("observer failed")
+            monkeypatch.setattr(dispatcher, "try_submit", fail)
+        if fault in {"loss-set", "reason-map", "logging"}:
+            install_recorder_fault(monkeypatch, dispatcher, fault)
+            def fail(*args, **kwargs):
+                raise RuntimeError("observer failed")
+            monkeypatch.setattr(shadow, "authorized", fail)
+        if fault in {"resolved", "boot_verified", "authorized"}:
+            def fail(*args):
+                raise RuntimeError("observer failed")
+            monkeypatch.setattr(shadow, fault, fail)
+        monkeypatch.setattr(shadow, "_RUNTIME", dispatcher)
+        client = TestClient(create_app(settings, configure_store_arg=False, init_observability=False))
+        body = (signed_body if stage_d else _lookup_body(key)).model_dump(exclude_none=True)
+        body["invocation_nonce"] = "differential-invocation"
+        # Warm metadata caches without changing balances or authorization state.
+        gateway._broadcast_destinations_for_authorize(key.workspace_id)
+        spanner_operations.clear()
+        responses = []
+        def post(path, payload, client=client):
+            raw = shadow.canonical(payload)
+            headers = {"content-type": "application/json"}
+            if stage_d:
+                signature = _BOOT_KEYS[boot.kid].sign(boot_auth_digest("POST", path, raw))
+                headers["x-tr-boot-auth"] = f"kid={boot.kid},sig={b64url_encode(signature)}"
+            return client.post(path, content=raw, headers=headers)
+        for attempt in range(2):
+            result = post("/internal/gateway/authorize", body)
+            assert result.status_code == 200, result.text
+            responses.append((result.status_code, dict(result.headers), result.json()))
+            if stage_d and attempt == 0:
+                assert result.json()["data"]["stage_d"]["eligible"] is True
+        auth = result.json()["data"]
+        if stage_d:
+            heartbeat = post("/internal/gateway/heartbeat", {
+                "authorization_id": auth["authorization_id"], "seq": 1,
+                "started_at_ms": int(fixed.timestamp() * 1000),
+                "selected_endpoint_id": auth["endpoint_id"],
+                "usage": {"input_tokens": 10, "output_tokens": 10, "cache_read_input_tokens": 0,
+                          "cache_creation_input_tokens": 0, "price_tier_input_tokens": 0, "reasoning_tokens": 0},
+                "elapsed_ms": 1000, "stream": True,
+            })
+            assert heartbeat.status_code == 200, heartbeat.text
+            assert heartbeat.json()["accepted"] is True
+            responses.append((heartbeat.status_code, dict(heartbeat.headers), heartbeat.json()))
+        result = client.post("/internal/gateway/" + ("refund" if refund else "settle"), json={
+            "authorization_id": auth["authorization_id"], "actual_input_tokens": 10, "actual_output_tokens": 10,
+            "selected_endpoint": auth["endpoint_id"],
+        })
+        assert result.status_code == 200, result.text
+        responses.append((result.status_code, dict(result.headers), result.json()))
+        assert database.gateway_authorizations[auth["authorization_id"]]["settled"] is True
+        assert database.stage_d_policy_watermarks
+        assert database.settle_outbox
+        if not refund:
+            assert database.generation_records
+            assert database.operational_analytics_outbox
+        else:
+            assert database.analytics_outbox
+        if stage_d:
+            assert database.gateway_authorizations[auth["authorization_id"]]["heartbeat_seq"] == 1
+        # Include EVERY fake collection, including future additions. Instrumentation
+        # and per-row versions are useful parts of the transcript too.
+        collections = {k: copy.deepcopy(v) for k, v in vars(database).items() if isinstance(v, (dict, list, set))}
+        transcripts.append((responses, copy.deepcopy(spanner_operations), collections))
+        if enabled and fault != "none":
+            assert dispatcher.coverage_lost()
+    assert len(transcripts[0][1]) == len(transcripts[1][1])
+    for off, on in zip(transcripts[0][1], transcripts[1][1], strict=True):
+        assert off == on
+    assert transcripts[0] == transcripts[1]
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("denied", [False, True])
+async def test_same_request_completion_callback_real_replay(
+    monkeypatch: pytest.MonkeyPatch, fixed_operation_catalog: None, asynchronous: bool, denied: bool,
+) -> None:
+    from tests.test_speculation_shadow import ReferenceStore
+    from trusted_router.services import speculation_shadow as shadow
+
+    store, _database, key = _seed_typed_gateway_store()
+    dispatcher = shadow.Dispatcher(ReferenceStore(), "real-replay")
+    monkeypatch.setattr(shadow, "_RUNTIME", dispatcher)
+    request, body = _request(), _lookup_body(key)
+    settings = Settings(environment="test", speculative_provider_shadow_enabled=True)
+    original = shadow.complete
+    captured: list[tuple[shadow.Observation, dict[str, int]]] = []
+    replay = None
+    def callback(observation: Any, timing: Any, *args: Any, **kwargs: Any) -> None:
+        nonlocal replay
+        captured.append((observation, dict(timing)))
+        if len(captured) == 1:
+            assert observation.sealed
+            if denied:
+                workspace = store.get_workspace(key.workspace_id)
+                assert workspace is not None
+                workspace.billing_paused = True
+                store._write_entity("workspace", workspace.id, workspace)
+                with pytest.raises(HTTPException) as caught:
+                    gateway._authorize_gateway_sync(request, body, settings)
+                assert caught.value.status_code == 503
+            else:
+                replay = gateway._authorize_gateway_sync(request, body, settings)
+            assert shadow._CURRENT.get() is observation
+        original(observation, timing, *args, **kwargs)
+    monkeypatch.setattr(shadow, "complete", callback)
+    response = (await gateway.authorize_gateway(request, body, settings) if asynchronous
+                else gateway._authorize_gateway_sync(request, body, settings))
+    inner, outer = (dispatcher.pending.get_nowait() for _ in range(2))
+    assert dispatcher.pending.empty()
+    assert captured[0][0] is not captured[1][0]
+    assert outer.status == 200 and outer.reason == "success" and not outer.replay
+    assert outer.authorization_id == response["data"]["authorization_id"]
+    assert dict(outer.timing) == captured[0][1] == response["data"]["timing"]
+    assert (inner.workspace_id, inner.key_id) == (outer.workspace_id, outer.key_id)
+    assert (inner.status, inner.reason) == ((503, "billing_paused") if denied else (200, "success"))
+    if denied:
+        assert inner.authorization_id == ""  # This invocation never authorized.
+    else:
+        assert replay is not None and replay["data"]["idempotent_replay"]
+        assert inner.replay and inner.authorization_id == outer.authorization_id
+    assert not dispatcher.coverage_lost()

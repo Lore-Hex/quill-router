@@ -40,6 +40,7 @@ from trusted_router.secrets import LocalKeyFile
 from trusted_router.wafer_policy import wafer_zdr_support
 
 OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
+    "abliterate": (("ABLITERATE_API_KEY",), "https://abliterate.ai/api/v1"),
     "meta": (("OPENROUTER_API_KEY",), "https://openrouter.ai/api/v1"),
     "openrouter": (("OPENROUTER_API_KEY",), "https://openrouter.ai/api/v1"),
     "openai": (("OPENAI_API_KEY",), "https://api.openai.com/v1"),
@@ -115,6 +116,7 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
     "wandb": (("WANDB_API_KEY",), "https://api.inference.wandb.ai/v1"),
     "nscale": (("NSCALE_API_KEY",), "https://inference.api.nscale.com/v1"),
     "regolo": (("REGOLO_API_KEY",), "https://api.regolo.ai/v1"),
+    "lyceum": (("LYCEUM_API_KEY",), "https://api.lyceum.technology/openai/v1"),
     "confidential-ai": (("CONFIDENTIAL_AI_API_KEY",), "https://api.confidential.ai/v1"),
     "nvidia-nim": (("NVIDIA_NIM_API_KEY",), "https://integrate.api.nvidia.com/v1"),
 }

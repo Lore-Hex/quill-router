@@ -32,14 +32,14 @@ from trusted_router.app_markup_billing import (
 )
 from trusted_router.catalog_data import Model, ModelEndpoint
 from trusted_router.config import Settings
-from trusted_router.gateway_boot import SpendLeaseBoot, boot_auth_digest
+from trusted_router.gateway_boot import GatewayBoot, boot_auth_digest
 from trusted_router.pricing import signed_receipt_price_microdollars
 from trusted_router.receipt_keys import b64url_encode
 from trusted_router.routes.internal import gateway
 from trusted_router.schemas import GatewayHeartbeatRequest
 from trusted_router.stage_d import endpoint_cost_microdollars_from_document
 from trusted_router.storage import configure_store
-from trusted_router.storage_gcp import SpannerBigtableStore
+from trusted_router.storage_gcp import SpannerStore
 from trusted_router.storage_gcp_authorize import (
     SettleOutcome,
     reap_expired_reservations_result,
@@ -472,9 +472,9 @@ def _request(
     )
 
 
-def _boot(kid: str, image_digest: str) -> tuple[Ed25519PrivateKey, SpendLeaseBoot]:
+def _boot(kid: str, image_digest: str) -> tuple[Ed25519PrivateKey, GatewayBoot]:
     private = Ed25519PrivateKey.generate()
-    return private, SpendLeaseBoot(
+    return private, GatewayBoot(
         kid=kid,
         jwk={
             "kty": "OKP",
@@ -491,7 +491,7 @@ def _boot(kid: str, image_digest: str) -> tuple[Ed25519PrivateKey, SpendLeaseBoo
 
 def _boot_auth_header(
     private: Ed25519PrivateKey,
-    boot: SpendLeaseBoot,
+    boot: GatewayBoot,
     raw_body: bytes,
 ) -> str:
     signature = private.sign(
@@ -502,14 +502,14 @@ def _boot_auth_header(
 
 def _gateway_heartbeat_store(
     stage_d_boot_kid: str | None,
-    *boots: SpendLeaseBoot,
+    *boots: GatewayBoot,
 ) -> FakeSpannerDatabase:
     store, db = make_fake_store(request_record_write_mode="typed")
     db.now = NOW
     configure_store(store)
     _seed(stage_d_boot_kid=stage_d_boot_kid, database=db)
     for boot in boots:
-        store.observe_spend_lease_boot(boot)
+        store.observe_gateway_boot(boot)
     return db
 
 
@@ -526,7 +526,7 @@ def test_heartbeat_boot_auth_uses_exact_literal_bytes(
     configure_store(store)
     private = Ed25519PrivateKey.generate()
     public = private.public_key().public_bytes_raw()
-    boot = SpendLeaseBoot(
+    boot = GatewayBoot(
         kid="boot-stage-d",
         jwk={"kty": "OKP", "crv": "Ed25519", "x": b64url_encode(public)},
         approved=True,
@@ -536,8 +536,8 @@ def test_heartbeat_boot_auth_uses_exact_literal_bytes(
         registered_at="2026-09-02T00:00:00Z",
     )
     monkeypatch.setattr(
-        SpannerBigtableStore,
-        "get_spend_lease_boot",
+        SpannerStore,
+        "get_gateway_boot",
         lambda _self, _kid: boot,
     )
     authorization = GatewayAuthorization(
@@ -551,12 +551,12 @@ def test_heartbeat_boot_auth_uses_exact_literal_bytes(
         stage_d_boot_kid=boot.kid,
     )
     monkeypatch.setattr(
-        SpannerBigtableStore,
+        SpannerStore,
         "get_gateway_authorization",
         lambda _self, _authorization_id: authorization,
     )
     monkeypatch.setattr(
-        SpannerBigtableStore,
+        SpannerStore,
         "heartbeat_gateway_typed",
         lambda _self, **_kwargs: HeartbeatResult(
             accepted=True,
@@ -601,7 +601,7 @@ def test_heartbeat_rejects_valid_current_boot_when_persisted_kid_differs() -> No
         environment="test",
         spend_lease_accepted_gcp_image_digests=boot_b.image_digest,
     )
-    assert boot_b.image_digest in settings.spend_lease_accepted_gcp_digests
+    assert boot_b.image_digest in settings.stage_d_accepted_gcp_digests
 
     with pytest.raises(HTTPException) as raised:
         gateway._heartbeat_gateway_sync(
@@ -641,7 +641,7 @@ def test_heartbeat_accepts_persisted_boot_kid_after_live_set_rotates() -> None:
         environment="test",
         spend_lease_accepted_gcp_image_digests=boot_b.image_digest,
     )
-    assert boot_a.image_digest not in settings.spend_lease_accepted_gcp_digests
+    assert boot_a.image_digest not in settings.stage_d_accepted_gcp_digests
 
     response = gateway._heartbeat_gateway_sync(
         _request(_boot_auth_header(private_a, boot_a, raw)), body, settings, raw
@@ -665,7 +665,7 @@ def test_disposition_lookup_uses_heartbeat_boot_verifier_and_literal_response(
     store, _db = make_fake_store(request_record_write_mode="typed")
     configure_store(store)
     private = Ed25519PrivateKey.generate()
-    boot = SpendLeaseBoot(
+    boot = GatewayBoot(
         kid="boot-stage-d-disposition",
         jwk={
             "kty": "OKP",
@@ -692,12 +692,12 @@ def test_disposition_lookup_uses_heartbeat_boot_verifier_and_literal_response(
         stage_d_boot_kid=boot.kid,
     )
     monkeypatch.setattr(
-        SpannerBigtableStore,
-        "get_spend_lease_boot",
+        SpannerStore,
+        "get_gateway_boot",
         lambda _self, _kid: boot,
     )
     monkeypatch.setattr(
-        SpannerBigtableStore,
+        SpannerStore,
         "get_gateway_authorization",
         lambda _self, _authorization_id: authorization,
     )

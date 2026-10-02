@@ -19,10 +19,10 @@ from typing import Literal
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from trusted_router.receipt_keys import b64url_decode, normalize_receipt_jwk
-from trusted_router.storage_models import SpendLeaseBoot as SpendLeaseBoot
+from trusted_router.storage_models import GatewayBoot as GatewayBoot
 
 BOOT_AUTH_DOMAIN = b"tr-authorize-v1"
-SPEND_LEASE_BOOT_KIND = "spend_lease_boot"
+GATEWAY_BOOT_KIND = "spend_lease_boot"
 
 
 @dataclass(frozen=True)
@@ -60,7 +60,7 @@ def boot_auth_digest(method: str, path: str, exact_body_bytes: bytes) -> bytes:
 
 def verify_boot_auth(
     *,
-    boot: SpendLeaseBoot | None,
+    boot: GatewayBoot | None,
     auth: BootAuthHeader,
     method: str,
     path: str,
@@ -87,7 +87,7 @@ def verify_boot_auth(
 
 def _boot_auth_failure_reason(
     *,
-    boot: SpendLeaseBoot | None,
+    boot: GatewayBoot | None,
     auth: BootAuthHeader,
     method: str,
     path: str,

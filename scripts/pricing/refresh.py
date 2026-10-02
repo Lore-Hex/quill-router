@@ -151,6 +151,7 @@ PROVIDER_SLUGS = [
     "nextbit",
     "akashml",
     "mancer",
+    "abliterate",
     "aion_labs",
     "sambanova",
     "arcee",
@@ -159,6 +160,7 @@ PROVIDER_SLUGS = [
     "tencent",
     "scaleway",
     "regolo",
+    "lyceum",
     "privatemode",
     "featherless",
     "sakana",
@@ -182,11 +184,14 @@ PROVIDER_SLUGS = [
     "vercel_ai_gateway",
     # The same decision model at its vendor, read from TypeSafe's models page.
     "typesafe",
+    "system1models",
+    "system1models_eu",
 ]
 
 # Product adapters own independent availability and prices. Aliases here map
 # Python module names to public provider identities, never across products.
 _PRICING_RESULT_PROVIDER_ALIASES: dict[str, tuple[str, ...]] = {
+    "system1models_eu": ("system1models-eu",),
     "confidential_ai": ("confidential-ai",),
     "gemini": ("google-ai-studio",),
     "google_vertex": ("google-vertex",),

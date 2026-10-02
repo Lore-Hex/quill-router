@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from scripts.pricing.providers import _direct_openai, tencent
+from tests import catalog_vehicles
 from trusted_router.provider_lifecycle import (
     TENCENT_OFF_PEAK_PRICES,
     ProviderPrice,
@@ -69,13 +70,13 @@ def test_tencent_capabilities_do_not_mix_media_or_retiring_models() -> None:
 
 
 def test_tencent_manifest_credits_route_only_priced_canary_successes() -> None:
-    from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS
+    from trusted_router.catalog import PROVIDERS
 
     rows = json.loads(tencent.MANIFEST_PATH.read_text())["models"]
     eligible = {row["id"]: row for row in rows if row.get("routable") is True}
     # Account canaries gate our Credits key, not a customer's BYOK entitlement.
     endpoints = [
-        e for e in MODEL_ENDPOINTS.values()
+        e for e in catalog_vehicles.registry_endpoints().values()
         if e.provider == "tencent" and e.usage_type == "Credits"
     ]
     assert eligible

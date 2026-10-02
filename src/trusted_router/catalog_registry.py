@@ -162,6 +162,7 @@ from trusted_router.catalog_ingest import (  # noqa: F401 - used by import-time 
     _apply_provider_manifest_expiry,
     _author_provider,
     _build_endpoints,
+    _context_window,
     _decision_fallback_endpoints,
     _decision_models,
     _embedding_models,
@@ -1360,7 +1361,7 @@ MODEL_ENDPOINTS.update(_SUPPLEMENTAL_ENDPOINTS)
 MODEL_ENDPOINTS.update(_decision_fallback_endpoints(_DECISION_MODELS))
 
 
-def _install_deepseek_v4_pro_release_routes() -> None:
+def _install_deepseek_v4_pro_release_routes() -> dict[str, int]:
     """Install honest release-specific leaves for immutable combo presets.
 
     DeepSeek's API accepts only ``deepseek-v4-pro``. Its official model page
@@ -1375,28 +1376,33 @@ def _install_deepseek_v4_pro_release_routes() -> None:
     release route would otherwise stop the whole control plane from starting.
     A leaf whose required routes are gone is not offered at all (authorize
     answers "unknown model" for it), never offered on a different route set.
+
+    Returns each 20260423-labeled host and the window it lists.
     """
     base = MODELS.get("deepseek/deepseek-v4-pro")
     historical: list[ModelEndpoint] = []
+    historical_windows: dict[str, int] = {}
     current: ModelEndpoint | None = None
     baseten_current: ModelEndpoint | None = None
     fireworks_current: ModelEndpoint | None = None
     if base is not None:
         snapshot = json.loads(_INGEST_PATH.read_text())
-        historical_provider_slugs = {
-            str(endpoint.get("tr_provider_slug") or "")
-            for model in snapshot.get("models", [])
-            if model.get("id") == base.id
-            for endpoint in model.get("endpoints", [])
-            if "20260423" in str(endpoint.get("name") or "")
-            and endpoint.get("tr_provider_slug") != "deepseek"
-        }
+        for model in snapshot.get("models", []):
+            if model.get("id") != base.id:
+                continue
+            for endpoint in model.get("endpoints", []):
+                slug = str(endpoint.get("tr_provider_slug") or "")
+                if "20260423" in str(endpoint.get("name") or "") and slug != "deepseek":
+                    historical_windows[slug] = max(
+                        historical_windows.get(slug, 0),
+                        _context_window(endpoint.get("context_length")),
+                    )
         historical = [
             endpoint
             for endpoint in _INGESTED_ENDPOINTS.values()
             if endpoint.model_id == base.id
             and endpoint.usage_type == "Credits"
-            and endpoint.provider in historical_provider_slugs
+            and endpoint.provider in historical_windows
         ]
         current = MODEL_ENDPOINTS.get(f"{base.id}@deepseek/prepaid")
         baseten_current = MODEL_ENDPOINTS.get(
@@ -1420,7 +1426,7 @@ def _install_deepseek_v4_pro_release_routes() -> None:
     MODELS.pop(DEEPSEEK_V4_PRO_0423_MODEL_ID, None)
     MODELS.pop(DEEPSEEK_V4_PRO_0813_MODEL_ID, None)
     if base is None:
-        return
+        return historical_windows
 
     def install(
         model_id: str,
@@ -1476,8 +1482,33 @@ def _install_deepseek_v4_pro_release_routes() -> None:
             [current, baseten_current]
             + ([fireworks_current] if fireworks_current is not None else []),
         )
+    return historical_windows
 
-_install_deepseek_v4_pro_release_routes()
+
+def _settle_deepseek_v4_pro_0423_leaf(host_windows: dict[str, int]) -> None:
+    """The 0423 leaf's routes are final only after the provider filters, so
+    this runs after them. A leaf with no route left is not offered, as the
+    installer does not offer one with none to clone. Otherwise, since it
+    excludes the rolling first-party route, it advertises the largest window
+    its own routes' hosts list, not the rolling model's; with none listed it
+    keeps the rolling model's."""
+    model = MODELS.get(DEEPSEEK_V4_PRO_0423_MODEL_ID)
+    if model is None:
+        return
+    hosts = [
+        endpoint.provider
+        for endpoint in MODEL_ENDPOINTS.values()
+        if endpoint.model_id == DEEPSEEK_V4_PRO_0423_MODEL_ID
+    ]
+    if not hosts:
+        del MODELS[DEEPSEEK_V4_PRO_0423_MODEL_ID]
+        return
+    window = max(host_windows.get(host, 0) for host in hosts)
+    if window:
+        MODELS[DEEPSEEK_V4_PRO_0423_MODEL_ID] = replace(model, context_length=window)
+
+
+_DEEPSEEK_V4_PRO_0423_HOST_WINDOWS = _install_deepseek_v4_pro_release_routes()
 
 _VIDEO_UPSTREAM_IDS = {
     "bytedance/seedance-2.5": "seedance-2-5-text-to-video-basic",
@@ -1598,6 +1629,7 @@ MODEL_ENDPOINTS = _filter_unserved_provider_endpoints(
     explicit_model_ids=frozenset(_VIDEO_MODELS),
     at=CATALOG_RESOLVED_AT,
 )
+_settle_deepseek_v4_pro_0423_leaf(_DEEPSEEK_V4_PRO_0423_HOST_WINDOWS)
 
 
 def _named_decision_model_with_chain_prices(model_id: str) -> Model:

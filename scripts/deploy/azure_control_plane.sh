@@ -48,6 +48,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${TR_RELEASE_CHECKOUT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 # shellcheck source=scripts/deploy/deploy_mutex.sh
 source "${SCRIPT_DIR}/deploy_mutex.sh"
 # shellcheck source=scripts/deploy/cloud_bake_gate.sh
@@ -77,7 +78,7 @@ ACR="${ACR:-$(echo "${STACK}${LOCATION}acr" | tr -cd "[:alnum:]")}"
 # while the actual image reference stays pinned by digest. The bake gate
 # reads it back as this cloud's serving commit, so a wrong value here
 # poisons fleet-wide bake evidence — die rather than stamp 'unknown'.
-IMAGE_TAG="${IMAGE_TAG:-$(git -C "${SCRIPT_DIR}/../.." rev-parse --short HEAD 2>/dev/null || true)}"
+IMAGE_TAG="${IMAGE_TAG:-$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || true)}"
 [ -n "$IMAGE_TAG" ] || die "not a git checkout: set IMAGE_TAG=<short-sha>"
 # #768's staleness detector reads RELEASE_COMMIT; same truth as the tag,
 # and the bake gate asserts the tag equals HEAD below.
@@ -85,7 +86,6 @@ RELEASE_COMMIT="${RELEASE_COMMIT:-$IMAGE_TAG}"
 STATE_DIR="${STATE_DIR:-$HOME/.config/$STACK}"
 PW_FILE="${PW_FILE:-$STATE_DIR/pgpw}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 # The attested Azure gateway this control plane fronts, and the health host the
 # status page is published under.
@@ -153,6 +153,47 @@ OBSERVER_REMEDIATOR_MODE="observe"
 OBSERVER_MAX_REPLICAS_EFFECTIVE=1
 
 log() { printf '\n=== %s\n' "$*" >&2; }
+
+# In GitHub Actions, azure/login leaves az holding the job's OIDC ID token as a
+# federated credential. That token expires about five minutes after login, and
+# az needs it again for every resource it has not yet fetched a token for (Key
+# Vault, here). The mutex wait can last an hour, so log in again with a fresh ID
+# token once the lease is held. An operator's own az login refreshes itself;
+# outside Actions this is a no-op.
+azure_refresh_login() {
+  [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || return 0
+  [ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ] \
+    || die "ACTIONS_ID_TOKEN_REQUEST_TOKEN is missing; the job needs id-token: write"
+  [ -n "${AZURE_CLIENT_ID:-}" ] && [ -n "${AZURE_TENANT_ID:-}" ] && [ -n "${AZURE_SUBSCRIPTION_ID:-}" ] \
+    || die "AZURE_CLIENT_ID, AZURE_TENANT_ID and AZURE_SUBSCRIPTION_ID are required to renew the Azure login"
+  local id_token
+  # The request token goes in on stdin (-H @-), never in curl's argv, where
+  # anything on the runner could read it from the process list.
+  id_token="$(printf 'Authorization: bearer %s\n' "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+    | curl -fsS -H @- "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=api://AzureADTokenExchange" \
+    | python3 -c 'import json, sys; print(json.load(sys.stdin)["value"])')" \
+    || die "could not fetch a fresh GitHub OIDC token to renew the Azure login"
+  [ -n "$id_token" ] || die "the GitHub OIDC token endpoint returned no token"
+  az login --service-principal --username "$AZURE_CLIENT_ID" --tenant "$AZURE_TENANT_ID" \
+    --federated-token "$id_token" --allow-no-subscriptions --output none \
+    || die "renewing the Azure login after the deploy mutex wait failed"
+  az account set --subscription "$AZURE_SUBSCRIPTION_ID" \
+    || die "cannot select subscription ${AZURE_SUBSCRIPTION_ID} after renewing the Azure login"
+}
+
+# Run one read-only az lookup without hiding why it failed: its output lands in
+# LOOKUP_OUTPUT, and on failure its error in LOOKUP_ERROR, for the refusal below.
+azure_lookup() {
+  local errors
+  errors="$(mktemp "${TMPDIR:-/tmp}/tr-azure-lookup.XXXXXX")"
+  LOOKUP_ERROR=""
+  if ! LOOKUP_OUTPUT="$("$@" 2>"$errors")"; then
+    LOOKUP_OUTPUT=""
+    LOOKUP_ERROR="$(tr '\n' ' ' <"$errors" | cut -c1-300)"
+    [ -n "$LOOKUP_ERROR" ] || LOOKUP_ERROR="az exited non-zero with no message"
+  fi
+  rm -f "$errors"
+}
 exists() { "$@" >/dev/null 2>&1; }
 
 AZURE_TEMP_FIREWALL_RULE=""
@@ -168,7 +209,7 @@ cleanup_azure_control_plane() {
       --yes -o none 2>/dev/null || true
   fi
   if [ "${DEPLOY_MUTEX_SCOPE_OWNS_LOCK:-0}" -eq 1 ]; then
-    deploy_mutex_release
+    deploy_mutex_finish "$deploy_status" || deploy_status=1
   fi
   exit "$deploy_status"
 }
@@ -191,11 +232,18 @@ esac
 # Local source-of-truth validation above must fail before any cloud access.
 # The mutex still precedes the first az read below and every later mutation.
 deploy_mutex_acquire
-cloud_bake_gate azure
-if [ -n "$(git -C "${SCRIPT_DIR}/../.." status --porcelain 2>/dev/null || true)" ]; then
+azure_refresh_login
+bake_status=0
+cloud_bake_gate azure || bake_status=$?
+if [ "$bake_status" -eq 75 ]; then
+  log "automatic promotion is already current or superseded; no production mutation"
+  exit 0
+fi
+[ "$bake_status" -eq 0 ] || exit "$bake_status"
+if [ -n "$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null || true)" ]; then
   die "the gate validated HEAD; a dirty tree deploys unvalidated code"
 fi
-HEAD_IMAGE_TAG="$(git -C "${SCRIPT_DIR}/../.." rev-parse --short HEAD 2>/dev/null || true)"
+HEAD_IMAGE_TAG="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || true)"
 if [ "$IMAGE_TAG" != "$HEAD_IMAGE_TAG" ]; then
   if [ -z "${TR_CLOUD_BAKE_OVERRIDE:-}" ]; then
     die "IMAGE_TAG=${IMAGE_TAG} does not match the validated short HEAD ${HEAD_IMAGE_TAG:-UNKNOWN}; set TR_CLOUD_BAKE_OVERRIDE only for break glass"
@@ -297,9 +345,9 @@ The fleet registry says azure expects_outbox=${ANALYTICS_EXPECTS_OUTBOX_DISPLAY}
 lookup must not turn a working production outbox off.
 
 Looked for:
-  private IP   VM ${CLICKHOUSE_NODE} in resource group ${RG}: ${CLICKHOUSE_HOST:-not found}
-  password     Key Vault ${CLICKHOUSE_VAULT}, secret ${CLICKHOUSE_SECRET_NAME}: $([ -n "$CLICKHOUSE_SECRET_ID" ] && echo reference found || echo not found)
-  identity     ${CLICKHOUSE_IDENTITY} in resource group ${RG}: $([ -n "$CLICKHOUSE_IDENTITY_ID" ] && echo found || echo not found)
+  private IP   VM ${CLICKHOUSE_NODE} in resource group ${RG}: ${CLICKHOUSE_HOST:-not found}${CLICKHOUSE_HOST_ERROR:+ (az: ${CLICKHOUSE_HOST_ERROR})}
+  password     Key Vault ${CLICKHOUSE_VAULT}, secret ${CLICKHOUSE_SECRET_NAME}: $([ -n "$CLICKHOUSE_SECRET_ID" ] && echo reference found || echo not found)${CLICKHOUSE_SECRET_ERROR:+ (az: ${CLICKHOUSE_SECRET_ERROR})}
+  identity     ${CLICKHOUSE_IDENTITY} in resource group ${RG}: $([ -n "$CLICKHOUSE_IDENTITY_ID" ] && echo found || echo not found)${CLICKHOUSE_IDENTITY_ERROR:+ (az: ${CLICKHOUSE_IDENTITY_ERROR})}
   location     ${LOCATION}
 
 Verify the active account and each lookup by hand:
@@ -371,12 +419,17 @@ esac
 # Resolve all three non-secret pieces before any build or Container App
 # mutation. A private address without a usable Key Vault reference and identity
 # is not a partial success: the new revision would start, then fail on first use.
-CLICKHOUSE_HOST="$(az vm list-ip-addresses -g "$RG" -n "$CLICKHOUSE_NODE" \
-  --query "[0].virtualMachine.network.privateIpAddresses[0]" -o tsv 2>/dev/null || true)"
-CLICKHOUSE_SECRET_ID="$(az keyvault secret show --vault-name "$CLICKHOUSE_VAULT" \
-  -n "$CLICKHOUSE_SECRET_NAME" --query id -o tsv 2>/dev/null || true)"
-CLICKHOUSE_IDENTITY_ID="$(az identity show -g "$RG" -n "$CLICKHOUSE_IDENTITY" \
-  --query id -o tsv 2>/dev/null || true)"
+azure_lookup az vm list-ip-addresses -g "$RG" -n "$CLICKHOUSE_NODE" \
+  --query "[0].virtualMachine.network.privateIpAddresses[0]" -o tsv
+CLICKHOUSE_HOST="$LOOKUP_OUTPUT"
+CLICKHOUSE_HOST_ERROR="$LOOKUP_ERROR"
+azure_lookup az keyvault secret show --vault-name "$CLICKHOUSE_VAULT" \
+  -n "$CLICKHOUSE_SECRET_NAME" --query id -o tsv
+CLICKHOUSE_SECRET_ID="$LOOKUP_OUTPUT"
+CLICKHOUSE_SECRET_ERROR="$LOOKUP_ERROR"
+azure_lookup az identity show -g "$RG" -n "$CLICKHOUSE_IDENTITY" --query id -o tsv
+CLICKHOUSE_IDENTITY_ID="$LOOKUP_OUTPUT"
+CLICKHOUSE_IDENTITY_ERROR="$LOOKUP_ERROR"
 
 ANALYTICS_DISCOVERED=true
 case "$CLICKHOUSE_HOST" in ""|None) ANALYTICS_DISCOVERED=false ;; esac
@@ -573,6 +626,7 @@ if exists az containerapp show -g "$RG" -n "$APP"; then
       --user-assigned "$CLICKHOUSE_IDENTITY_ID" -o none
   fi
   az containerapp secret set -g "$RG" -n "$APP" --secrets "${SECRET_ARGS[@]}" -o none
+  deploy_mutex_assert
   az containerapp update -g "$RG" -n "$APP" \
     --image "$IMAGE_REF" --set-env-vars "${ENV_VARS[@]}" \
     --remove-env-vars "${RETIRED_OBSERVER_ENV_VARS[@]}" \
@@ -588,6 +642,7 @@ else
   if [ "$OUTBOX_ENABLED" = "true" ]; then
     IDENTITY_CREATE_ARGS=(--user-assigned "$CLICKHOUSE_IDENTITY_ID")
   fi
+  deploy_mutex_assert
   az containerapp create -g "$RG" -n "$APP" \
     --environment "$APP_ENV" \
     --image "$IMAGE_REF" \

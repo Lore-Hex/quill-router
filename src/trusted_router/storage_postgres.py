@@ -42,7 +42,7 @@ from trusted_router.custom_model_billing import (
 from trusted_router.custom_model_markup_billing import (
     custom_model_markup_authorization_id_from_payout_event_id,
 )
-from trusted_router.gateway_boot import SPEND_LEASE_BOOT_KIND, SpendLeaseBoot
+from trusted_router.gateway_boot import GATEWAY_BOOT_KIND, GatewayBoot
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
 from trusted_router.operational_analytics_freshness import (
     BACKEND_DIRECT,
@@ -1029,13 +1029,13 @@ class PostgresStore:
         )
         return cursor.rowcount == 1
 
-    def observe_spend_lease_boot(self, record: SpendLeaseBoot) -> SpendLeaseBoot:
-        def operation(conn: Any) -> SpendLeaseBoot:
+    def observe_gateway_boot(self, record: GatewayBoot) -> GatewayBoot:
+        def operation(conn: Any) -> GatewayBoot:
             existing = self._read_entity_tx(
                 conn,
-                SPEND_LEASE_BOOT_KIND,
+                GATEWAY_BOOT_KIND,
                 record.kid,
-                SpendLeaseBoot,
+                GatewayBoot,
                 for_update=True,
             )
             if existing is not None and (
@@ -1052,13 +1052,13 @@ class PostgresStore:
                     verified=existing.verified or record.verified,
                     image_digest=record.image_digest or existing.image_digest,
                 )
-            self._write_entity_tx(conn, SPEND_LEASE_BOOT_KIND, record.kid, merged)
+            self._write_entity_tx(conn, GATEWAY_BOOT_KIND, record.kid, merged)
             return merged
 
         return self._run_transaction(operation)
 
-    def get_spend_lease_boot(self, kid: str) -> SpendLeaseBoot | None:
-        return self._read_entity(SPEND_LEASE_BOOT_KIND, kid, SpendLeaseBoot)
+    def get_gateway_boot(self, kid: str) -> GatewayBoot | None:
+        return self._read_entity(GATEWAY_BOOT_KIND, kid, GatewayBoot)
 
     def _list_entities(
         self,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+from pathlib import Path
 from typing import Any
 
 from clickhouse.verify_spanner_delivery import verify_delivery
@@ -87,8 +88,10 @@ def test_spanner_delivery_matches_content_free_generation_rows() -> None:
         "found": 1,
         "missing": 0,
         "mismatched": 0,
+        "duplicated": 0,
         "missing_ids": [],
         "mismatched_ids": [],
+        "duplicated_ids": [],
         "mismatch_fields": {},
         "ok": True,
     }
@@ -199,3 +202,107 @@ def test_spanner_delivery_allows_an_empty_quiet_window() -> None:
 
     assert result["sampled"] == 0
     assert result["ok"] is True
+
+
+# G6 in docs/design/clickhouse-high-availability.md: the lookup reads every
+# stored copy of each generation (through the by_generation_id projection), so a
+# generation stored under two sort keys is reported instead of hidden behind
+# whichever row FINAL returned last.
+
+
+class MultiRowClickHouse:
+    def __init__(self, rows: dict[str, list[dict[str, Any]]]) -> None:
+        self.rows = rows
+        self.sql: list[str] = []
+
+    def query(
+        self,
+        sql: str,
+        *,
+        input_bytes: bytes | None = None,
+        external_ids: bool = False,
+    ) -> str:
+        assert external_ids is True and input_bytes is not None
+        self.sql.append(sql)
+        lines = []
+        for generation_id in input_bytes.decode().splitlines():
+            lines.extend(json.dumps(row) for row in self.rows.get(generation_id, []))
+        return "\n".join(lines)
+
+
+def test_a_generation_stored_under_two_sort_keys_is_reported_as_duplicated() -> None:
+    twice = _generation("gen-twice")
+    once = _generation("gen-once")
+    shifted = activity_payload(twice)
+    shifted["created_at"] = "2026-07-30T08:00:00.000Z"
+    clickhouse = MultiRowClickHouse(
+        {
+            twice.id: [activity_payload(twice), shifted],
+            once.id: [activity_payload(once)],
+        }
+    )
+
+    result = verify_delivery(
+        FakeSource([twice, once]),
+        clickhouse,
+        start=dt.datetime(2026, 7, 31, tzinfo=dt.UTC),
+        end=dt.datetime(2026, 8, 1, tzinfo=dt.UTC),
+        limit=100,
+    )
+
+    assert result["ok"] is False
+    assert result["duplicated_ids"] == ["gen-twice"]
+    assert result["duplicated"] == 1
+    # It is neither missing nor compared as a mismatch; the other row passes.
+    assert result["missing"] == 0 and result["mismatched"] == 0
+    assert result["found"] == 2
+
+
+def test_the_lookup_finds_sort_keys_by_generation_then_reads_rows_by_key() -> None:
+    generation = _generation()
+    clickhouse = MultiRowClickHouse({generation.id: [activity_payload(generation)]})
+
+    verify_delivery(
+        FakeSource([generation]),
+        clickhouse,
+        start=dt.datetime(2026, 7, 31, tzinfo=dt.UTC),
+        end=dt.datetime(2026, 8, 1, tzinfo=dt.UTC),
+        limit=100,
+    )
+
+    [sql] = clickhouse.sql
+    # The outer read is by the full sort key, so the primary index serves it;
+    # the inner lookup is what the by_generation_id projection serves.
+    assert "FROM activity_generations FINAL WHERE (tenant_id, created_at, generation_id) IN (" in sql
+    assert "SELECT tenant_id, created_at, generation_id FROM activity_generations WHERE generation_id IN (SELECT id FROM wanted)" in sql
+
+
+def test_the_projection_migration_matches_the_lookup() -> None:
+    migration = (
+        Path(__file__).resolve().parents[1]
+        / "clickhouse/023_activity_generation_id_projection_replicated.sql"
+    ).read_text()
+    assert "MODIFY SETTING deduplicate_merge_projection_mode = 'rebuild'" in migration
+    assert (
+        "ADD PROJECTION IF NOT EXISTS by_generation_id\n"
+        "    (SELECT generation_id, tenant_id, created_at ORDER BY generation_id)"
+    ) in migration
+    assert "MATERIALIZE PROJECTION by_generation_id" in migration
+    # The replicated-migration applier only accepts ON CLUSTER statements.
+    statements = [line for line in migration.splitlines() if line.startswith("ALTER TABLE")]
+    assert statements and all(
+        line == "ALTER TABLE tr.activity_generations ON CLUSTER trustedrouter" for line in statements
+    )
+
+
+def test_the_projection_migration_leaves_lightweight_deletes_refused() -> None:
+    # 'rebuild' let projection reads return a deleted row until the next merge,
+    # and 'drop' left the touched part without its projection (26.7.1.1315).
+    # Deletions on this table use ALTER TABLE ... DELETE instead.
+    migration = (
+        Path(__file__).resolve().parents[1]
+        / "clickhouse/023_activity_generation_id_projection_replicated.sql"
+    ).read_text()
+    sql = "\n".join(line for line in migration.splitlines() if not line.lstrip().startswith("--"))
+    assert "lightweight_mutation_projection_mode" not in sql
+    assert "ALTER TABLE ... DELETE" in migration

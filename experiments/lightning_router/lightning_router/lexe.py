@@ -21,6 +21,7 @@ PERMISSIONS = {
     "node_info", "list_channels", "get_human_bitcoin_address", "get_payments_by_indexes",
     "get_new_payments", "get_updated_payments", "get_payment_by_id", "list_broadcasted_txs",
     "get_next_unused_address", "create_invoice", "create_offer", "resync", "cancel_payment",
+    "get_user_settings",  # Reviewed read_info expansion in Lexe node 0.10.5.
 }
 INDEX = r"[0-9]{19}-ln_[0-9a-f]{64}"
 logger = logging.getLogger("lightning_router")
@@ -34,6 +35,25 @@ TRANSIENT_READ_ERRORS = (
     httpx.ConnectTimeout, httpx.ReadTimeout, httpx.ConnectError,
     httpx.ReadError, httpx.RemoteProtocolError,
 )
+
+
+class LexeReadinessError(ValueError):
+    """A wallet/authority failure, not evidence that an invoice is invalid."""
+
+    def __init__(self, reason: str) -> None:
+        messages = {
+            "authority_invalid": "Receive-only Lexe authority required",
+            "effective_permissions_invalid": "Receive-only Lexe authority required",
+            "required_permissions_missing": "Receive-only Lexe authority required",
+            "unreviewed_permissions": "Receive-only Lexe authority required",
+            "credential_expiry_invalid": "Invalid payment timestamp",
+            "credential_expiring": "Lexe credential expired or expiring",
+            "wallet_mismatch": "Wrong Lexe wallet",
+        }
+        if reason not in messages:
+            raise ValueError("Unknown Lexe readiness reason")
+        self.reason = reason
+        super().__init__(messages[reason])
 
 
 def satoshis(value: Any) -> int:
@@ -98,21 +118,34 @@ class Lexe:
         with self._lock:
             if self._checked and time.monotonic() - self._checked < 60:
                 return
-            info = self.request("GET", "/v2/node/client_info")
-            scopes, permissions, effective = info.get("scopes"), info.get("permissions", []), info.get("effective_permissions")
-            if (info.get("kind") != "client_credentials" or not isinstance(scopes, list)
-                    or not all(isinstance(s, str) for s in scopes) or set(scopes) != SCOPES
-                    or permissions != [] or not isinstance(effective, list)
-                    or not all(isinstance(p, str) for p in effective)
-                    or not {"node_info", "get_payment_by_id", "get_updated_payments", "create_invoice", "cancel_payment"} <= set(effective) <= PERMISSIONS):
-                raise ValueError("Receive-only Lexe authority required")
-            expires = timestamp(info.get("expires_at"))
-            if expires <= int(time.time() * 1000) + 3_600_000:
-                raise ValueError("Lexe credential expired or expiring")
-            node = self.request("GET", "/v2/node/node_info")
-            if node.get("user_pk") != self.wallet_id:
-                raise ValueError("Wrong Lexe wallet")
+            try:
+                self._verify_ready()
+            except LexeReadinessError as exc:
+                logger.error("lightning.lexe_readiness_failed reason=%s", exc.reason)
+                raise
             self._checked = time.monotonic()
+
+    def _verify_ready(self) -> None:
+        info = self.request("GET", "/v2/node/client_info")
+        scopes, permissions, effective = info.get("scopes"), info.get("permissions", []), info.get("effective_permissions")
+        if (info.get("kind") != "client_credentials" or not isinstance(scopes, list)
+                or not all(isinstance(s, str) for s in scopes) or set(scopes) != SCOPES or permissions != []):
+            raise LexeReadinessError("authority_invalid")
+        if not isinstance(effective, list) or not all(isinstance(p, str) for p in effective):
+            raise LexeReadinessError("effective_permissions_invalid")
+        if not {"node_info", "get_payment_by_id", "get_updated_payments", "create_invoice", "cancel_payment"} <= set(effective):
+            raise LexeReadinessError("required_permissions_missing")
+        if not set(effective) <= PERMISSIONS:
+            raise LexeReadinessError("unreviewed_permissions")
+        try:
+            expires = timestamp(info.get("expires_at"))
+        except ValueError as exc:
+            raise LexeReadinessError("credential_expiry_invalid") from exc
+        if expires <= int(time.time() * 1000) + 3_600_000:
+            raise LexeReadinessError("credential_expiring")
+        node = self.request("GET", "/v2/node/node_info")
+        if node.get("user_pk") != self.wallet_id:
+            raise LexeReadinessError("wallet_mismatch")
 
     @staticmethod
     def note(row: dict[str, Any]) -> str:

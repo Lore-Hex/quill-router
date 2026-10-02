@@ -1,6 +1,46 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
+
+from trusted_router.config import Settings
+from trusted_router.dashboard import public_not_found_html
+
+
+@pytest.mark.parametrize(
+    ("path", "canonical_path"),
+    [
+        ("//backend/.env", "/backend/.env"),
+        ("///external.example/missing", "/external.example/missing"),
+        ("/missing%3Fpage", "/missing%3Fpage"),
+        ("/missing%23section", "/missing%23section"),
+    ],
+)
+def test_untrusted_public_path_remains_a_404(
+    client: TestClient, path: str, canonical_path: str, test_settings: Settings
+) -> None:
+    # An absolute request URL preserves the double slash from the production incident.
+    response = client.get(
+        f"http://testserver{path}?private-query=do-not-publish",
+        headers={"accept": "text/html"},
+    )
+
+    assert response.status_code == 404
+    assert response.headers["content-type"].startswith("text/html")
+    assert "That page is not here." in response.text
+    assert (
+        f'<link rel="canonical" href="https://{test_settings.trusted_domain}{canonical_path}">'
+        in response.text
+    )
+    assert "do-not-publish" not in response.text
+    assert '<meta name="robots" content="noindex,follow">' in response.text
+
+
+@pytest.mark.parametrize("path", ["missing", "/missing"])
+def test_not_found_preserves_ordinary_canonical_path(test_settings: Settings, path: str) -> None:
+    html = public_not_found_html(test_settings, path)
+
+    assert f'<link rel="canonical" href="https://{test_settings.trusted_domain}/missing">' in html
 
 
 def test_unknown_public_browser_route_uses_styled_not_found(client: TestClient) -> None:

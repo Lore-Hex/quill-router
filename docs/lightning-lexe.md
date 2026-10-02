@@ -70,6 +70,31 @@ HTTP rejections, invalid data, wrong wallet/authority and expired credentials
 still fail closed. Invoice create/cancel POSTs are never replayed. Existing
 receiving and funding alert policies and thresholds are unchanged.
 
+## Node 0.10.5 permission expansion (October 1)
+
+Receiving checks began failing at 18:49 UTC while the deployed image and secret
+version were unchanged. A read-only reproduction using the same pinned sidecar
+and credential found node version 0.10.5 with one additional effective permission:
+`get_user_settings`. The wallet matched, the credential still expires in December,
+and no extra explicit permissions were configured. The strict allowlist correctly
+failed closed on an unreviewed capability, but generic `ValueError` handling
+misclassified one invoice as `invoice_invalid`.
+
+The capability was reviewed against Lexe commit
+[`aab30588`](https://github.com/lexe-app/lexe-public/blob/aab30588d92549e5a92f3e8754426add8d6e8828/lexe-api-core/src/revocable_clients/scopes.rs).
+It belongs to `read_info`; its
+[handler](https://github.com/lexe-app/lexe-public/blob/aab30588d92549e5a92f3e8754426add8d6e8828/node/src/server/user.rs)
+only clones settings under a read lock. The runtime and operator preflight now
+explicitly allow this getter, not `update_user_settings`, spending, channel
+management, or arbitrary future permissions. No credential authority is changed.
+
+Readiness failures now log static reason codes and are classified as
+`wallet_unavailable`, distinct from invoice validation failures. Allow the existing
+worker to authenticate and re-read the reviewed invoice after deploy; do not clear
+its review flag or rewrite financial rows manually. Fixed external-response
+fixtures cover the 0.10.5 expansion, future-permission rejection, and recovery of
+paid/unpaid reviewed rows without duplicate invoice creation or credit delivery.
+
 ## Owner setup and recovery
 
 Use a dedicated private directory outside disposable Git worktrees. The setup

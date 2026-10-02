@@ -2,12 +2,21 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 
+from tests.fixture_routes import serve_on_fixture_route
 from trusted_router.benchmark_reports import monthly_benchmark_reports
 
 
-def test_report_links_are_canonical_without_rewriting_historical_evidence(client: TestClient) -> None:
+def test_report_links_are_canonical_without_rewriting_historical_evidence(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The report's legacy Mistral Small 3.2 id links to the model's current id,
+    # here on a fixture route whichever hosts list the model today.
+    serve_on_fixture_route(
+        monkeypatch, "mistralai/mistral-small-3.2-24b-instruct-2506", "mistral", author="mistral"
+    )
     page = client.get("/benchmarks/reports/2026-07")
     download = client.get("/benchmarks/reports/2026-07.json")
     assert 'href="/providers/google-ai-studio"' in page.text

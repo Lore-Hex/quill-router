@@ -1,7 +1,7 @@
 """Spanner-backed BYOK provider configuration store.
 
 Sibling of InMemoryByok (storage_byok.py). Both implement upsert / get /
-list / delete on (workspace_id, provider) keys. SpannerBigtableStore
+list / delete on (workspace_id, provider) keys. SpannerStore
 composes this through the SpannerIO adapter."""
 
 from __future__ import annotations

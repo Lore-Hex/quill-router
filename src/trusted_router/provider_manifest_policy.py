@@ -13,6 +13,7 @@ from trusted_router.pricing import provider_manifest_price_profile_is_valid
 # stale-price containment for the hours that discovery fails.
 EXPIRING_PROVIDER_MANIFEST_SLUGS = frozenset(
     {
+        "abliterate",
         "aion-labs",
         "akashml",
         "arcee",
@@ -32,6 +33,7 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = frozenset(
         "perplexity",
         "scaleway",
         "regolo",
+        "lyceum",
         "privatemode",
         "featherless",
         "sakana",
@@ -45,11 +47,32 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = frozenset(
         "recraft",
         "relace",
         "stepfun",
+        "system1models",
+        "system1models-eu",
     }
 )
 PROVIDER_MANIFEST_MAX_AGE_DAYS = 14
 EXPIRED_PROVIDER_MANIFEST = datetime.min.replace(tzinfo=UTC)
-_CANARY_QUARANTINE_REASONS = frozenset({"provider-canary-failed"})
+_CANARY_QUARANTINE_REASONS = frozenset({"provider-canary-failed", "upstream-usage-unavailable"})
+
+
+def decision_manifest_price_is_valid(row: dict[str, Any]) -> bool:
+    """Input-only decision routes must never inherit chat or cache pricing."""
+    model_id = row.get("id")
+    prompt = row.get("input_token_price_per_m")
+    completion = row.get("output_token_price_per_m")
+    return (
+        isinstance(model_id, str)
+        and model_id.startswith(("system1models/s1-", "system1models-eu/s1-"))
+        and row.get("model_type") == "decision"
+        and row.get("endpoints") == ["decide"]
+        and type(prompt) is int
+        and prompt > 0
+        and type(completion) is int
+        and completion == 0
+        and "price_tiers" not in row
+        and "cached_input_token_price_per_m" not in row
+    )
 
 
 def _provider_manifest_row_price_is_valid(row: dict[str, Any]) -> bool:
@@ -57,6 +80,8 @@ def _provider_manifest_row_price_is_valid(row: dict[str, Any]) -> bool:
     try:
         if model_type == "chat":
             return provider_manifest_price_profile_is_valid(row)
+        if model_type == "decision":
+            return decision_manifest_price_is_valid(row)
         if model_type == "image":
             fixed = row.get("fixed_output_price_microdollars")
             return (

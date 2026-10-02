@@ -3,8 +3,9 @@
 The PRIVACY_TIER_* integer values are stable API vocabulary. They are not an
 implication ladder for raw technical flags: confidential compute describes
 where plaintext is processed, while ZDR describes retention. The Confidential
-product tier requires verified compute, E2EE and explicit ZDR together. The TR
-gateway hop is always attested; these values describe the upstream provider.
+product tier requires verified compute, E2EE and explicit ZDR together, from a
+host that is not the model's own vendor. The TR gateway hop is always attested;
+these values describe the upstream provider.
 Split out of the catalog.py god-module (#38); this module
 depends only on the catalog_data leaf and therefore cannot create a cycle.
 """
@@ -22,6 +23,7 @@ from trusted_router.catalog_data import (
     ModelEndpoint,
     ModelProviderPrivacyOverride,
     Provider,
+    model_vendor_provider_slugs,
 )
 from trusted_router.wafer_policy import wafer_zdr_support
 
@@ -93,7 +95,27 @@ def _endpoint_privacy_override(
     return _model_provider_privacy_override(endpoint.model_id, endpoint.provider)
 
 
+def served_by_model_vendor(model_id: str, provider_slug: str) -> bool:
+    """Whether this route delivers the prompt to the model's own vendor.
+
+    A Confidential request never reaches the model vendor. TrustedRouter's own
+    models are exempt: a Confidential request already trusts the attested
+    gateway that TrustedRouter runs.
+    """
+    return provider_slug != "trustedrouter" and provider_slug in model_vendor_provider_slugs(
+        model_id
+    )
+
+
 def model_provider_privacy_tier(model_id: str, provider_slug: str) -> int:
+    tier = _model_provider_privacy_tier(model_id, provider_slug)
+    if tier == PRIVACY_TIER_CONFIDENTIAL and served_by_model_vendor(model_id, provider_slug):
+        # Confidential already required ZDR from this route.
+        return PRIVACY_TIER_ZERO_RETENTION
+    return tier
+
+
+def _model_provider_privacy_tier(model_id: str, provider_slug: str) -> int:
     override = _model_provider_privacy_override(model_id, provider_slug)
     if (
         model_provider_confidential_compute(model_id, provider_slug) is True
@@ -211,6 +233,7 @@ def endpoint_meets_privacy_requirement(endpoint: ModelEndpoint, requirement: int
 
     Confidential requires all three independent facts for the same endpoint:
     verified compute, provider E2EE, and explicit ZDR. Unknown fails closed.
+    The model's own vendor never qualifies, whatever its flags.
     """
     if requirement == PRIVACY_TIER_STANDARD:
         return True
@@ -223,6 +246,7 @@ def endpoint_meets_privacy_requirement(endpoint: ModelEndpoint, requirement: int
             endpoint_confidential_compute(endpoint) is True
             and endpoint_e2ee(endpoint) is True
             and endpoint_zero_data_retention(endpoint) is True
+            and not served_by_model_vendor(endpoint.model_id, endpoint.provider)
         )
     return False
 

@@ -35,7 +35,7 @@ from trusted_router.operational_analytics_freshness import (
 )
 from trusted_router.routes import public as public_routes
 from trusted_router.storage import STORE
-from trusted_router.storage_gcp import SpannerBigtableStore
+from trusted_router.storage_gcp import SpannerStore
 
 
 def _snapshot(monkeypatch) -> dict[str, object]:
@@ -145,7 +145,7 @@ class _ParamTypes:
     STRING = "STRING"
 
 
-def _spanner_store(answer) -> SpannerBigtableStore:
+def _spanner_store(answer) -> SpannerStore:
     """A store whose heartbeat point read answers with ``answer``.
 
     ``answer`` is a heartbeat body, ``None`` for no row, an exception to
@@ -153,7 +153,7 @@ def _spanner_store(answer) -> SpannerBigtableStore:
     is a sentinel: the /status path must never touch it (pinned in
     tests/test_outbox_freshness_heartbeat.py).
     """
-    store = object.__new__(SpannerBigtableStore)
+    store = object.__new__(SpannerStore)
     store._operational_analytics_outbox = object()  # type: ignore[assignment]
     store._database = _HeartbeatDatabase(answer)
     store._param_types = _ParamTypes()

@@ -525,7 +525,23 @@ def test_gateway_authorizes_every_liberty_alias_to_working_nemotron_hosts(
         assert "gmi" not in nemotron_hosts, (model_id, routes)
 
 
-def test_parasail_liberty_uses_fixed_top_level_price_and_public_generation() -> None:
+def _serve_nemotron_for_parasail_liberty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Parasail Liberty 2.0 routes through Nemotron 3 Ultra, here on one
+    fixture Credits route whichever hosts list the model today: its billing
+    contract holds whatever serves it. Whether Liberty may run without
+    Nemotron is a product question, not a billing one."""
+    nemotron = "nvidia/nemotron-3-ultra-550b-a55b"
+    drop_routes(monkeypatch, nemotron)
+    serve_on_fixture_route(
+        monkeypatch, nemotron, "baseten", author="baseten", context_length=262_144,
+        upstream_id="nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B",
+    )
+
+
+def test_parasail_liberty_uses_fixed_top_level_price_and_public_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_nemotron_for_parasail_liberty(monkeypatch)
     client, key = _client_and_key()
 
     authorize = client.post(
@@ -571,7 +587,10 @@ def test_parasail_liberty_uses_fixed_top_level_price_and_public_generation() -> 
     assert generation.total_cost_microdollars == 13_241
 
 
-def test_parasail_liberty_minimum_is_reserved_and_settled_exactly_once() -> None:
+def test_parasail_liberty_minimum_is_reserved_and_settled_exactly_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_nemotron_for_parasail_liberty(monkeypatch)
     client, key = _client_and_key()
     money = STORE.credit_money[key["workspace_id"]]
     usage_before = money.total_usage_microdollars
@@ -610,7 +629,10 @@ def test_parasail_liberty_minimum_is_reserved_and_settled_exactly_once() -> None
     assert money.total_usage_microdollars == usage_before + 1_000
 
 
-def test_parasail_liberty_failed_request_refunds_minimum_reservation() -> None:
+def test_parasail_liberty_failed_request_refunds_minimum_reservation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_nemotron_for_parasail_liberty(monkeypatch)
     client, key = _client_and_key()
     money = STORE.credit_money[key["workspace_id"]]
     usage_before = money.total_usage_microdollars
@@ -734,6 +756,7 @@ def test_perplexity_fixed_request_fee_settles_once_and_refunds_on_failure(
 def test_parasail_liberty_internal_calls_are_customer_cost_zero(
     monkeypatch,
 ) -> None:
+    _serve_nemotron_for_parasail_liberty(monkeypatch)
     client, key = _client_and_key()
     route_type = f"{PARASAIL_LIBERTY_2_0_INTERNAL_ROUTE_PREFIX}advisor.worker"
     auto_refills: list[str] = []

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -31,6 +32,8 @@ from trusted_router.trust_tiers import (
     payment_recovery_target,
     validate_adverse_event,
 )
+
+log = logging.getLogger(__name__)
 
 TRUST_EVENT_COLUMNS = (
     "workspace_id",
@@ -772,10 +775,23 @@ def recompute_workspace_trust_tier_tx(
     tier3_min_days: int,
     tier3_min_paid_microdollars: int,
     now: dt.datetime,
+    snapshot: Callable[[], Any] | None = None,
 ) -> int:
-    """Rewrite every active shard together; return the effective tier."""
+    """Rewrite every active shard together; return the effective tier.
 
-    def txn(transaction: Any) -> int:
+    The hourly tier job used to rewrite every workspace's tier and
+    ``trust_computed_at`` even when nothing changed: two read-write commits
+    per workspace per run, about 7% of all Spanner commits on 2026-10-01.
+    With ``snapshot`` the decision is first computed on a lock-free strong
+    snapshot; when every active shard already holds the effective tier and a
+    non-NULL ``trust_computed_at``, no transaction runs. Otherwise (or when the
+    snapshot read fails) the read-write transaction recomputes under its own
+    reads and writes as before, and it also skips the write when its reads
+    show the tier already current. ``trust_computed_at`` therefore records
+    when the current tier was last written, not the last time a job looked.
+    """
+
+    def evaluate(transaction: Any) -> tuple[int, list[Any], int]:
         workspace = read_entity_tx(transaction, "workspace", workspace_id, Workspace)
         account = read_entity_tx(transaction, "credit", workspace_id, CreditAccount)
         if workspace is None or account is None:
@@ -813,8 +829,8 @@ def recompute_workspace_trust_tier_tx(
         shard_count = credit_shard_count(account)
         shard_rows = list(
             transaction.execute_sql(
-                "SELECT shard, trust_tier, trust_latched_at, trust_override_tier "
-                "FROM tr_credit_balance WHERE workspace_id=@pk "
+                "SELECT shard, trust_tier, trust_latched_at, trust_override_tier, "
+                "trust_computed_at FROM tr_credit_balance WHERE workspace_id=@pk "
                 "AND shard>=0 AND shard<@shard_count ORDER BY shard",
                 params={"pk": workspace_id, "shard_count": shard_count},
                 param_types={
@@ -842,12 +858,18 @@ def recompute_workspace_trust_tier_tx(
             now=now,
             identity_bypass=identity_bypass,
         )
+        return decision.effective_tier, shard_rows, shard_count
+
+    def txn(transaction: Any) -> int:
+        effective_tier, shard_rows, shard_count = evaluate(transaction)
+        if _trust_tier_is_current(shard_rows, effective_tier):
+            return effective_tier
         updated = transaction.execute_update(
             "UPDATE tr_credit_balance SET trust_tier=@trust_tier, "
             "trust_computed_at=@trust_computed_at "
             "WHERE workspace_id=@pk AND shard>=0 AND shard<@shard_count",
             params={
-                "trust_tier": decision.effective_tier,
+                "trust_tier": effective_tier,
                 "trust_computed_at": now,
                 "pk": workspace_id,
                 "shard_count": shard_count,
@@ -861,9 +883,30 @@ def recompute_workspace_trust_tier_tx(
         )
         if int(updated) != shard_count:
             raise RuntimeError("trust-tier update did not cover every active shard")
-        return decision.effective_tier
+        return effective_tier
 
+    if snapshot is not None:
+        try:
+            with snapshot() as reader:
+                effective_tier, shard_rows, _shard_count = evaluate(reader)
+        except Exception:
+            # The transaction below re-reads and raises the authoritative error.
+            log.info(
+                "trust.tier_snapshot_precheck_failed workspace_id=%s", workspace_id, exc_info=True
+            )
+        else:
+            if _trust_tier_is_current(shard_rows, effective_tier):
+                return effective_tier
     return run_in_transaction(txn)
+
+
+def _trust_tier_is_current(shard_rows: list[Any], effective_tier: int) -> bool:
+    """Every active shard already holds ``effective_tier`` and was written once."""
+
+    return bool(shard_rows) and all(
+        row[1] is not None and int(row[1]) == effective_tier and row[4] is not None
+        for row in shard_rows
+    )
 
 
 assert len(CREDIT_BALANCE_TRUST_COLUMNS) == 7

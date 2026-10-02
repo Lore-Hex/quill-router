@@ -166,7 +166,7 @@ class FakeAlreadyExists(_AlreadyExists):
 
 class FakeSpannerDatabase:
     """In-process Spanner replacement that simulates snapshot-isolation
-    conflict-abort. Implements only the surface used by SpannerBigtableStore:
+    conflict-abort. Implements only the surface used by SpannerStore:
     run_in_transaction, batch, snapshot, with execute_sql / insert_or_update /
     delete underneath. Each row carries a monotonic version; on commit, if any
     row in the transaction's read-set has been modified since it was read, the
@@ -483,6 +483,18 @@ class _FakeTransaction:
         param_types: Any = None,
     ) -> list[list[str]]:
         self.db.transaction_execute_sql_calls += 1
+        if sql.startswith("UPDATE tr_credit_balance SET reserved = reserved + @est"):
+            if not sql.endswith(" THEN RETURN billing_pause_causes, pause_epoch"):
+                raise ValueError("DML rows require the registered THEN RETURN columns")
+            self._in_returning = True
+            try:
+                count = self.execute_update(sql, params=params, param_types=param_types)
+            finally:
+                self._in_returning = False
+            if not count:
+                return []
+            rec = self._typed_current("tr_credit_balance", (params["ws"], params["shard"]))
+            return [[rec.get("billing_pause_causes"), rec.get("pause_epoch")]]
         if sql.startswith("UPDATE tr_settle_outbox SET status=@status"):
             if not sql.endswith(" THEN RETURN reservation_id"):
                 raise ValueError("DML rows require THEN RETURN")
@@ -4016,7 +4028,7 @@ def make_fake_store(
     generation_records_enabled: bool = False,
     analytics_outbox_enabled: bool = False,
 ) -> tuple[Any, FakeSpannerDatabase]:
-    from trusted_router.storage_gcp import SpannerBigtableStore
+    from trusted_router.storage_gcp import SpannerStore
     from trusted_router.storage_gcp_analytics_outbox import SpannerAnalyticsOutbox
     from trusted_router.storage_gcp_attribution import SpannerAcquisitionAttribution
     from trusted_router.storage_gcp_auth_sessions import SpannerAuthSessions
@@ -4041,7 +4053,7 @@ def make_fake_store(
     from trusted_router.storage_gcp_wallet_challenges import SpannerWalletChallenges
 
     db = FakeSpannerDatabase(ready_barrier=ready_barrier)
-    store = object.__new__(SpannerBigtableStore)
+    store = object.__new__(SpannerStore)
     store._spanner = _SpannerModule
     store._param_types = _ParamTypes
     store._database = db
@@ -4059,6 +4071,7 @@ def make_fake_store(
     from trusted_router.storage_gcp_credit_shards import CreditShardCountCache
 
     store._lifetime_cap_exhausted_keys = ExhaustedKeyCache()
+    store._insufficient_credit_workspaces = ExhaustedKeyCache()
     store._credit_shard_counts = CreditShardCountCache()
     io = SpannerIO(
         database=db,

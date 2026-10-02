@@ -33,21 +33,21 @@ def test_in_memory_store_satisfies_store_protocol() -> None:
 
 
 def test_spanner_store_class_declares_every_protocol_method() -> None:
-    """We can't instantiate `SpannerBigtableStore` without live
+    """We can't instantiate `SpannerStore` without live
     credentials — it eagerly opens a Spanner client in __init__. So we
     test the class itself: every method defined on the Protocol must
     exist as an attribute on the class. mypy already enforces signature
     compatibility; this catches the "deleted in one place, kept in the
     other" drift case."""
-    from trusted_router.storage_gcp import SpannerBigtableStore
+    from trusted_router.storage_gcp import SpannerStore
 
     protocol_members = _public_method_names(Store)
     assert protocol_members, "Protocol has no members — wrong target?"
     missing: list[str] = []
     for name in protocol_members:
-        if not hasattr(SpannerBigtableStore, name):
+        if not hasattr(SpannerStore, name):
             missing.append(name)
-    assert not missing, f"SpannerBigtableStore is missing Protocol members: {missing}"
+    assert not missing, f"SpannerStore is missing Protocol members: {missing}"
 
 
 def test_in_memory_store_class_declares_every_protocol_method() -> None:
@@ -84,12 +84,12 @@ def test_protocol_methods_have_consistent_signatures_across_backends() -> None:
     runtime tripwire for the case where someone added a kwarg to one
     backend and forgot the other, and the test runner doesn't happen to
     exercise that exact call site."""
-    from trusted_router.storage_gcp import SpannerBigtableStore
+    from trusted_router.storage_gcp import SpannerStore
     from trusted_router.storage_postgres import PostgresStore
 
     diffs: list[str] = []
     backend_classes = {
-        "spanner": SpannerBigtableStore,
+        "spanner": SpannerStore,
         "postgres": PostgresStore,
     }
     for name in _public_method_names(Store):
@@ -154,24 +154,24 @@ def test_protocol_uses_storage_models_dataclasses() -> None:
 
 
 def test_spanner_store_satisfies_typed_billing_store() -> None:
-    """The typed-billing capability (#39): SpannerBigtableStore must declare
+    """The typed-billing capability (#39): SpannerStore must declare
     every TypedBillingStore method so isinstance(store, TypedBillingStore) is a
     real, mypy-narrowing capability check on the authorization path — replacing
     the old getattr(STORE, "authorize_gateway_typed", None) probes."""
-    from trusted_router.storage_gcp import SpannerBigtableStore
+    from trusted_router.storage_gcp import SpannerStore
     from trusted_router.store_protocol import TypedBillingStore
 
     missing = [
         name for name in _public_method_names(TypedBillingStore)
-        if not hasattr(SpannerBigtableStore, name)
+        if not hasattr(SpannerStore, name)
     ]
-    assert not missing, f"SpannerBigtableStore missing TypedBillingStore members: {missing}"
+    assert not missing, f"SpannerStore missing TypedBillingStore members: {missing}"
 
 
 def test_spanner_legacy_json_reserve_path_removed() -> None:
-    from trusted_router.storage_gcp import SpannerBigtableStore
+    from trusted_router.storage_gcp import SpannerStore
 
-    store = SpannerBigtableStore.__new__(SpannerBigtableStore)
+    store = SpannerStore.__new__(SpannerStore)
     with pytest.raises(RuntimeError, match="legacy JSON reserve path removed"):
         store.reserve("ws", "key", 1)
 

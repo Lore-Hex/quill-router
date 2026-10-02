@@ -329,9 +329,25 @@ def test_endpoint_cost_rejects_invalid_tier_basis_conservatively() -> None:
 
 
 def test_endpoint_cost_flat_and_empty_tiers_match_headline_math_with_cache() -> None:
-    single_tier = endpoint_for_id("anthropic/claude-haiku-4.5@anthropic/prepaid")
-    assert single_tier is not None
-    assert len(single_tier.price_tiers) == 1
+    # Fixtures: the arithmetic holds for any route with one uncapped tier or
+    # none, and what a host charges today is provider state.
+    flat = PriceTier(
+        max_prompt_tokens=None,
+        prompt_price_microdollars_per_million_tokens=1_000_000,
+        completion_price_microdollars_per_million_tokens=5_000_000,
+    )
+    single_tier = ModelEndpoint(
+        id="anthropic/flat-fixture@anthropic/prepaid",
+        model_id="anthropic/flat-fixture",
+        provider="anthropic",
+        usage_type="Credits",
+        prompt_price_microdollars_per_million_tokens=1_000_000,
+        completion_price_microdollars_per_million_tokens=5_000_000,
+        price_tiers=(flat,),
+        published_price_tiers=(flat,),
+    )
+    # 1,234 input tokens at $1/M, 567 output at $5/M, 890 cache reads at
+    # Anthropic's 0.1x input and 321 cache writes at its 1.25x input.
     assert _endpoint_cost_microdollars(
         single_tier,
         1_234,
@@ -344,11 +360,18 @@ def test_endpoint_cost_flat_and_empty_tiers_match_headline_math_with_cache() -> 
         567,
         cache_read_tokens=890,
         cache_creation_tokens=321,
-    )
+    ) == 1_234 + 2_835 + 89 + 401
 
-    empty_tiers = endpoint_for_id("openai/text-embedding-3-large@openai/prepaid")
-    assert empty_tiers is not None
-    assert empty_tiers.price_tiers == ()
+    empty_tiers = ModelEndpoint(
+        id="openai/untiered-fixture@openai/prepaid",
+        model_id="openai/untiered-fixture",
+        provider="openai",
+        usage_type="Credits",
+        prompt_price_microdollars_per_million_tokens=100_000,
+        completion_price_microdollars_per_million_tokens=0,
+    )
+    # 1,234 input tokens at $0.10/M, 890 cache reads at OpenAI's 0.5x input
+    # and 321 cache writes at its 1.25x input.
     assert _endpoint_cost_microdollars(
         empty_tiers,
         1_234,
@@ -361,7 +384,7 @@ def test_endpoint_cost_flat_and_empty_tiers_match_headline_math_with_cache() -> 
         0,
         cache_read_tokens=890,
         cache_creation_tokens=321,
-    )
+    ) == 123 + 45 + 40
 
 
 def test_endpoint_cost_matches_model_helper_for_multitier_no_cache() -> None:

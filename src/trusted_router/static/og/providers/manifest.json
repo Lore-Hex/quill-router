@@ -1,4 +1,13 @@
 {
+  "abliterate": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "Abliterate",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "abliterate"
+  },
   "aion-labs": {
     "card_version": 2,
     "model_count": 6,
@@ -386,6 +395,15 @@
     "route_mode": "Prepaid",
     "slug": "ltx"
   },
+  "lyceum": {
+    "card_version": 2,
+    "model_count": 17,
+    "name": "Lyceum",
+    "privacy": "Policy documented",
+    "route_count": 17,
+    "route_mode": "Prepaid",
+    "slug": "lyceum"
+  },
   "makora": {
     "card_version": 2,
     "model_count": 5,
@@ -727,6 +745,24 @@
     "route_count": 3,
     "route_mode": "Prepaid",
     "slug": "streamlake"
+  },
+  "system1models": {
+    "card_version": 2,
+    "model_count": 3,
+    "name": "System1 Models (Global)",
+    "privacy": "Policy documented",
+    "route_count": 3,
+    "route_mode": "Prepaid",
+    "slug": "system1models"
+  },
+  "system1models-eu": {
+    "card_version": 2,
+    "model_count": 3,
+    "name": "System1 Models (EU)",
+    "privacy": "Policy documented",
+    "route_count": 3,
+    "route_mode": "Prepaid",
+    "slug": "system1models-eu"
   },
   "telluvian": {
     "card_version": 2,

@@ -14,22 +14,22 @@ from starlette.requests import Request
 from trusted_router.config import Settings
 from trusted_router.gateway_boot import (
     BootAuthHeader,
-    SpendLeaseBoot,
+    GatewayBoot,
     boot_auth_digest,
     parse_boot_auth_header,
     verify_boot_auth,
 )
 from trusted_router.receipt_keys import b64url_encode, receipt_kid
 from trusted_router.routes.internal import gateway
-from trusted_router.schemas import GatewayAuthorizeRequest, SpendLeaseBootRegistrationRequest
+from trusted_router.schemas import GatewayAuthorizeRequest, GatewayBootRegistrationRequest
 from trusted_router.storage import STORE
 
 
-def _boot_auth_fixture() -> tuple[Ed25519PrivateKey, SpendLeaseBoot, bytes, BootAuthHeader]:
+def _boot_auth_fixture() -> tuple[Ed25519PrivateKey, GatewayBoot, bytes, BootAuthHeader]:
     private = Ed25519PrivateKey.generate()
     public = private.public_key().public_bytes_raw()
     jwk = {"kty": "OKP", "crv": "Ed25519", "x": b64url_encode(public)}
-    boot = SpendLeaseBoot(
+    boot = GatewayBoot(
         kid="boot-kid",
         jwk=jwk,
         approved=True,
@@ -131,7 +131,7 @@ def test_boot_auth_empty_current_accepted_set_refuses_every_digest() -> None:
 
 def test_boot_auth_unverified_or_mismatched_boot_is_refused() -> None:
     _private, boot, raw_body, auth = _boot_auth_fixture()
-    unverified = SpendLeaseBoot(**{**boot.__dict__, "verified": False})
+    unverified = GatewayBoot(**{**boot.__dict__, "verified": False})
     assert not verify_boot_auth(
         boot=unverified,
         auth=auth,
@@ -202,9 +202,9 @@ def test_boot_registration_accepts_verified_gcp_approved_digest(
     monkeypatch.setattr(gateway, "attestation_commits_to_jwk", lambda *_args: True)
     monkeypatch.setattr(gateway, "verify_gcp_attestation_chain", lambda _att: None)
     monkeypatch.setattr(gateway, "gcp_attestation_image_digest", lambda _att: digest)
-    response = gateway._register_spend_lease_boot_sync(  # noqa: SLF001
+    response = gateway._register_gateway_boot_sync(  # noqa: SLF001
         _request(),
-        SpendLeaseBootRegistrationRequest(
+        GatewayBootRegistrationRequest(
             kid=receipt_kid(jwk),
             receipt_public_key=jwk,
             attestation_evidence="signed-gcp-evidence",
@@ -213,7 +213,7 @@ def test_boot_registration_accepts_verified_gcp_approved_digest(
         _registration_settings(digest),
     )
     assert response == {"data": {"verified": True}}
-    stored = STORE.get_spend_lease_boot(receipt_kid(jwk))
+    stored = STORE.get_gateway_boot(receipt_kid(jwk))
     assert stored is not None and stored.verified is True and stored.approved is True
     assert stored.image_digest == digest
 
@@ -225,9 +225,9 @@ def test_boot_registration_kid_must_match_the_receipt_key(
     jwk = _jwk(Ed25519PrivateKey.generate())
     monkeypatch.setattr(gateway, "attestation_commits_to_jwk", lambda *_args: True)
     with pytest.raises(HTTPException, match="kid does not match"):
-        gateway._register_spend_lease_boot_sync(  # noqa: SLF001
+        gateway._register_gateway_boot_sync(  # noqa: SLF001
             _request(),
-            SpendLeaseBootRegistrationRequest(
+            GatewayBootRegistrationRequest(
                 kid="someone-else",
                 receipt_public_key=jwk,
                 attestation_evidence="signed-gcp-evidence",
@@ -235,7 +235,7 @@ def test_boot_registration_kid_must_match_the_receipt_key(
             ),
             _registration_settings("sha256:" + "11" * 32),
         )
-    assert STORE.get_spend_lease_boot(receipt_kid(jwk)) is None
+    assert STORE.get_gateway_boot(receipt_kid(jwk)) is None
 
 
 def test_boot_registration_rejects_evidence_that_does_not_commit_to_the_key(
@@ -245,9 +245,9 @@ def test_boot_registration_rejects_evidence_that_does_not_commit_to_the_key(
     jwk = _jwk(Ed25519PrivateKey.generate())
     monkeypatch.setattr(gateway, "attestation_commits_to_jwk", lambda *_args: False)
     with pytest.raises(HTTPException, match="does not commit"):
-        gateway._register_spend_lease_boot_sync(  # noqa: SLF001
+        gateway._register_gateway_boot_sync(  # noqa: SLF001
             _request(),
-            SpendLeaseBootRegistrationRequest(
+            GatewayBootRegistrationRequest(
                 kid=receipt_kid(jwk),
                 receipt_public_key=jwk,
                 attestation_evidence="unbound",
@@ -255,7 +255,7 @@ def test_boot_registration_rejects_evidence_that_does_not_commit_to_the_key(
             ),
             _registration_settings("sha256:" + "11" * 32),
         )
-    assert STORE.get_spend_lease_boot(receipt_kid(jwk)) is None
+    assert STORE.get_gateway_boot(receipt_kid(jwk)) is None
 
 
 def test_boot_registration_records_wrong_gcp_image_digest_as_unapproved(
@@ -268,9 +268,9 @@ def test_boot_registration_records_wrong_gcp_image_digest_as_unapproved(
     monkeypatch.setattr(gateway, "attestation_commits_to_jwk", lambda *_args: True)
     monkeypatch.setattr(gateway, "verify_gcp_attestation_chain", lambda _att: None)
     monkeypatch.setattr(gateway, "gcp_attestation_image_digest", lambda _att: observed)
-    response = gateway._register_spend_lease_boot_sync(  # noqa: SLF001
+    response = gateway._register_gateway_boot_sync(  # noqa: SLF001
         _request(),
-        SpendLeaseBootRegistrationRequest(
+        GatewayBootRegistrationRequest(
             kid=receipt_kid(jwk),
             receipt_public_key=jwk,
             attestation_evidence="signed-gcp-evidence",
@@ -281,7 +281,7 @@ def test_boot_registration_records_wrong_gcp_image_digest_as_unapproved(
     # Verified (the chain is good) but not approved: acceptance is decided at
     # authorize time against the live digest set, never at registration.
     assert response == {"data": {"verified": True}}
-    stored = STORE.get_spend_lease_boot(receipt_kid(jwk))
+    stored = STORE.get_gateway_boot(receipt_kid(jwk))
     assert stored is not None and stored.approved is False and stored.image_digest == observed
 
 
@@ -297,9 +297,9 @@ def test_boot_registration_rejects_bad_gcp_chain_without_storing(
 
     monkeypatch.setattr(gateway, "verify_gcp_attestation_chain", bad_chain)
     with pytest.raises(HTTPException, match="bad chain"):
-        gateway._register_spend_lease_boot_sync(  # noqa: SLF001
+        gateway._register_gateway_boot_sync(  # noqa: SLF001
             _request(),
-            SpendLeaseBootRegistrationRequest(
+            GatewayBootRegistrationRequest(
                 kid=receipt_kid(jwk),
                 receipt_public_key=jwk,
                 attestation_evidence="forged",
@@ -307,7 +307,7 @@ def test_boot_registration_rejects_bad_gcp_chain_without_storing(
             ),
             _registration_settings("sha256:" + "11" * 32),
         )
-    assert STORE.get_spend_lease_boot(receipt_kid(jwk)) is None
+    assert STORE.get_gateway_boot(receipt_kid(jwk)) is None
 
 
 def test_boot_registration_records_aws_as_unverified(
@@ -316,9 +316,9 @@ def test_boot_registration_records_aws_as_unverified(
     STORE.reset()
     jwk = _jwk(Ed25519PrivateKey.generate())
     monkeypatch.setattr(gateway, "attestation_commits_to_jwk", lambda *_args: True)
-    response = gateway._register_spend_lease_boot_sync(  # noqa: SLF001
+    response = gateway._register_gateway_boot_sync(  # noqa: SLF001
         _request(),
-        SpendLeaseBootRegistrationRequest(
+        GatewayBootRegistrationRequest(
             kid=receipt_kid(jwk),
             receipt_public_key=jwk,
             attestation_evidence="bound-aws-cose",
@@ -327,7 +327,7 @@ def test_boot_registration_records_aws_as_unverified(
         _registration_settings("sha256:" + "11" * 32),
     )
     assert response == {"data": {"verified": False}}
-    stored = STORE.get_spend_lease_boot(receipt_kid(jwk))
+    stored = STORE.get_gateway_boot(receipt_kid(jwk))
     assert stored is not None and stored.verified is False and stored.approved is False
 
 

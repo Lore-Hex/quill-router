@@ -354,6 +354,14 @@ def operational_analytics_sink_problems(settings: Any) -> list[str]:
             "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL and "
             "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_WRITE_PASSWORD"
         )
+    # The read clients accept an ordered comma-separated endpoint list for
+    # failover (clickhouse_endpoints.py); the direct sink posts to one URL.
+    if sink == "direct" and "," in (settings.operational_analytics_clickhouse_url or ""):
+        problems.append(
+            "TR_OPERATIONAL_ANALYTICS_SINK=direct writes to a single "
+            "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL; a comma-separated endpoint "
+            "list is only supported by the read clients"
+        )
     return problems
 
 
@@ -448,7 +456,9 @@ class Settings(BaseSettings):
     clickhouse_benchmark_table: str = "provider_benchmark_samples"
     # Private, read-only provider portal connection. This intentionally uses a
     # separate ClickHouse account from ingestion and is reachable only through
-    # the service's VPC egress path.
+    # the service's VPC egress path. This URL and the operational one below
+    # take one URL or an ordered comma-separated list (load balancer first,
+    # then replicas); see clickhouse_endpoints.py for when a read fails over.
     provider_analytics_clickhouse_url: str = ""
     provider_analytics_clickhouse_user: str = "tr_provider_read"
     provider_analytics_clickhouse_password: str = ""
@@ -856,6 +866,23 @@ class Settings(BaseSettings):
     # loop must not be able to spend a customer's balance overnight.
     notify_max_per_hour: int = 30
     notify_max_voice_per_hour: int = 4
+
+    # PR3 observes only; rollout pins this false. All cohort identities are explicit.
+    speculative_provider_shadow_enabled: bool = False
+    speculation_shadow_workspaces: list[str] = []
+    speculation_shadow_routes: list[str] = []
+    speculation_shadow_images: list[str] = []
+    speculation_shadow_producers: list[str] = []
+    speculation_shadow_producer: str = ""
+    speculation_shadow_slots: dict[str, dict[str, str]] = {}
+    speculation_shadow_image_policy_version: int = 0
+    speculation_shadow_policy_expires_at: int = 0
+    speculation_shadow_plane: str = "gcp"
+    speculation_shadow_issuer: str = ""
+    speculation_shadow_audience: str = ""
+    speculation_shadow_kid: str = ""
+    # Independently provisioned mounted file. Never a receipt/real issuer key.
+    speculation_shadow_private_key_file: str = ""
 
     # Audited break-glass addition to the signed Stage D runtime policy. This
     # is deliberately empty and rollout.sh never inherits it from a revision.
@@ -1998,7 +2025,7 @@ class Settings(BaseSettings):
         )
 
     @property
-    def spend_lease_accepted_gcp_digests(self) -> frozenset[str]:
+    def stage_d_accepted_gcp_digests(self) -> frozenset[str]:
         return frozenset(
             digest.strip()
             for digest in self.spend_lease_accepted_gcp_image_digests.split(",")

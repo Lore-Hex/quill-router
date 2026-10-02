@@ -88,6 +88,31 @@ def reserve_credit(
     )
     return count == 1
 
+
+def reserve_credit_with_pause(
+    transaction: Any, param_types: Any, workspace_id: str, amount: int, *, shard: int = UNSHARDED
+) -> tuple[bool, bool]:
+    """Return (reserved, paused) from the affected credit row in one RPC.
+
+    An empty result is insufficient credit, not pause evidence. The caller must
+    finish its bounded shard search before applying the funded shard's verdict.
+    """
+    from trusted_router.trust_eligibility import billing_paused_row
+
+    rows = list(transaction.execute_sql(
+        "UPDATE tr_credit_balance SET reserved = reserved + @est "
+        "WHERE workspace_id=@ws AND shard=@shard "
+        "AND (total_credits - total_usage - reserved) >= @est "
+        "THEN RETURN billing_pause_causes, pause_epoch",
+        params={"est": int(amount), "ws": workspace_id, "shard": shard},
+        param_types={
+            "est": param_types.INT64,
+            "ws": param_types.STRING,
+            "shard": param_types.INT64,
+        },
+    ))
+    return (True, billing_paused_row(rows[0])) if rows else (False, False)
+
 def debit_workspace_credit(
     transaction: Any,
     param_types: Any,
@@ -676,11 +701,21 @@ def claim_reservation_statement(
     defer_retention: bool = False, outbox_available: bool = True,
     expires_before: Any | None = None,
 ) -> DmlStatement:
-    """Build the same conditional claim for standalone or batch execution."""
+    """Build the same conditional claim for standalone or batch execution.
+
+    A deferred claim writes ``terminal_at=NULL`` whatever the outbox holds: the
+    guarded form would compute ``IF(EXISTS(...), NULL, NULL)``. So only a claim
+    that arms retention pays for the correlated outbox subquery. Measured
+    2026-10-01 (SPANNER_SYS, one hour) before this: the guarded claim was the
+    costliest statement, ~6.5 ms CPU per execution and 36% of all query CPU, at
+    ~39k executions/hour, one per finalize. Finalize (and reaper) claims all
+    defer retention, so that subquery never changed what they wrote.
+    """
     resolved_terminal_at = (
         None if defer_retention else (terminal_at or datetime.now(UTC))
     )
-    sql = _CLAIM_RESERVATION_GUARDED_SQL if outbox_available else _CLAIM_RESERVATION_SQL
+    guarded = outbox_available and resolved_terminal_at is not None
+    sql = _CLAIM_RESERVATION_GUARDED_SQL if guarded else _CLAIM_RESERVATION_SQL
     params = {
             "rid": reservation_id,
             "actual": int(actual_micro),

@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.fixture_routes import serve_on_fixture_route
 from trusted_router.catalog import (
-    MODEL_ENDPOINTS,
     PRIVACY_TIER_ZERO_RETENTION,
     PROVIDERS,
     ZDR_MODEL_ID,
@@ -13,26 +13,22 @@ from trusted_router.catalog import (
     endpoints_for_model,
     provider_privacy_tier,
 )
-from trusted_router.catalog_data import ModelEndpoint
 from trusted_router.config import Settings
 from trusted_router.routing import chat_route_endpoint_candidates
 from trusted_router.routing_candidates import zdr_candidate_models
 
 
-def _serve_on_parasail(monkeypatch: pytest.MonkeyPatch, model_id: str) -> None:
-    """Parasail serves the model on a fixture route: its ZDR posture is a rule
-    of Parasail's routes, whatever Parasail lists today."""
-    route = ModelEndpoint(
-        id=f"{model_id}@parasail/prepaid", model_id=model_id,
-        provider="parasail", usage_type="Credits", upstream_id=model_id,
-    )
-    monkeypatch.setitem(MODEL_ENDPOINTS, route.id, route)
+def _serve_on_parasail(monkeypatch: pytest.MonkeyPatch, model_id: str, author: str) -> None:
+    """Parasail serves the model on a fixture route, and the catalog carries the
+    model even if every host has delisted it: its ZDR posture is a rule of
+    Parasail's routes, whatever the hosts list today."""
+    serve_on_fixture_route(monkeypatch, model_id, "parasail", author=author, upstream_id=model_id)
 
 
 def test_parasail_serverless_and_dedicated_routes_are_zdr(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _serve_on_parasail(monkeypatch, "z-ai/glm-5.2")
+    _serve_on_parasail(monkeypatch, "z-ai/glm-5.2", author="zai")
     provider = PROVIDERS["parasail"]
     endpoints = [
         endpoint
@@ -56,9 +52,10 @@ def test_parasail_serverless_and_dedicated_routes_are_zdr(
 def test_parasail_can_satisfy_direct_and_alias_zdr_routing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _serve_on_parasail(monkeypatch, "z-ai/glm-5.2")
+    _serve_on_parasail(monkeypatch, "z-ai/glm-5.2", author="zai")
     # And one model of the ZDR alias's ladder, whichever models it holds today.
-    _serve_on_parasail(monkeypatch, zdr_candidate_models()[0].id)
+    ladder_model = zdr_candidate_models()[0]
+    _serve_on_parasail(monkeypatch, ladder_model.id, author=ladder_model.provider)
     settings = Settings(environment="test")
     direct = chat_route_endpoint_candidates(
         {

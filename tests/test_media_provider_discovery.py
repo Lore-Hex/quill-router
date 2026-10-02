@@ -145,11 +145,38 @@ def test_fal_h3_max_parser_rejects_ambiguous_standard_prices() -> None:
         raise AssertionError("ambiguous fal prices must fail closed")
 
 
-def test_media_manifests_match_runtime_fixed_price_contract() -> None:
+def _discovered_image_prices() -> dict[str, dict[str, int]]:
     discovered: dict[str, dict[str, int]] = {}
     for provider in ("recraft", "bfl", "decart", "nscale", "krea", "fal"):
         discovered.update(_manifest_prices(provider))
-    assert discovered == FIXED_IMAGE_PRICES_MICRODOLLARS
+    return discovered
+
+
+def test_media_manifests_match_runtime_fixed_price_contract() -> None:
+    # Billing and public pricing read the runtime prices: image_generation's
+    # FIXED_IMAGE_PRICES_MICRODOLLARS, and the enclave's audited per-second
+    # video registry. A manifest price is what discovery saw upstream, so this
+    # holds whatever the providers charge today: every fixed-price image row
+    # has a runtime price for the same variants (a row without one raises
+    # "missing fixed image pricing"), and the manifests price exactly the
+    # audited video models by the second.
+    assert {model_id: set(prices) for model_id, prices in _discovered_image_prices().items()} == {
+        model_id: set(prices) for model_id, prices in FIXED_IMAGE_PRICES_MICRODOLLARS.items()
+    }
+    assert set(_manifest_video_prices("decart")) == {
+        "decart/lucy-2.5",
+        "decart/lucy-vton-3.5",
+        "decart/lucy-restyle-2",
+    }
+    assert set(_manifest_video_prices("fal")) == {"minimax/h3-max"}
+
+
+@pytest.mark.provider_health
+def test_media_providers_charge_the_audited_runtime_prices() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it. A difference is a provider price
+    # change for a human to review, and to deploy in the audited runtime prices.
+    assert _discovered_image_prices() == FIXED_IMAGE_PRICES_MICRODOLLARS
     assert _manifest_video_prices("decart") == {
         "decart/lucy-2.5": 40_000,
         "decart/lucy-vton-3.5": 40_000,

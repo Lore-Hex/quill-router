@@ -49,7 +49,7 @@ release_rollout_deploy_mutex() {
     done
   fi
   if [ "${DEPLOY_MUTEX_SCOPE_OWNS_LOCK:-0}" -eq 1 ]; then
-    deploy_mutex_release
+    deploy_mutex_finish "$rollout_status" || rollout_status=1
   fi
   exit "$rollout_status"
 }
@@ -63,9 +63,11 @@ trap 'exit 143' TERM
 
 # The workflow exports its outer lock through GITHUB_ENV. A direct operator
 # invocation has no such operation and owns this script-level scope instead.
+export TR_DEPLOY_MUTEX_CLOUD=gcp
 if [ -z "${TR_DEPLOY_MUTEX_OPERATION:-}" ]; then
   deploy_mutex_acquire
 fi
+deploy_mutex_assert
 
 TRUST_SOURCE_COMMIT=""
 TRUST_IMAGE_REFERENCE=""
@@ -331,18 +333,42 @@ read_primary_revision_env() {
 # Pin the image to its digest before any revision is created.
 resolve_image_digest
 
-# Prefer the private three-replica ClickHouse load balancer once provisioned.
-# The direct node-1 address remains only as a migration fallback for projects
-# that have not run clickhouse_cluster.sh yet.
+# Readers go through the private three-replica ClickHouse load balancer first,
+# then to each replica directly. The read clients move to the next URL only
+# when a connection cannot be opened or the endpoint answers 502, 503 or 504
+# (src/trusted_router/clickhouse_endpoints.py; G2 in
+# docs/design/clickhouse-high-availability.md). Every tr-clickhouse-N is a
+# replica of the cluster's single shard, so any of them can answer any read;
+# revisit this list if the cluster is ever sharded. Replicas are listed in
+# reverse name order so the writer host, tr-clickhouse-1, is the last resort.
+# A failed or empty lookup fails the rollout: the former fallback to node 1's
+# address turned any transient lookup error into a release whose every reader
+# was pinned to one replica. Set TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL to
+# override deliberately.
 PROVIDER_ANALYTICS_CLICKHOUSE_URL="${TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL:-}"
 if [ -z "$PROVIDER_ANALYTICS_CLICKHOUSE_URL" ]; then
-  clickhouse_ilb_ip="$(gc compute addresses describe tr-clickhouse-ilb \
-    --region=us-central1 --format='value(address)' 2>/dev/null || true)"
-  if [ -n "$clickhouse_ilb_ip" ]; then
-    PROVIDER_ANALYTICS_CLICKHOUSE_URL="http://${clickhouse_ilb_ip}:8123"
-  else
-    PROVIDER_ANALYTICS_CLICKHOUSE_URL="http://10.128.15.214:8123"
+  if ! clickhouse_ilb_ip="$(gc compute addresses describe tr-clickhouse-ilb \
+      --region=us-central1 --format='value(address)')" || [ -z "$clickhouse_ilb_ip" ]; then
+    echo "ERROR: cannot resolve the ClickHouse load balancer address tr-clickhouse-ilb;" \
+      "set TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL to override" >&2
+    exit 1
   fi
+  if ! clickhouse_replica_ips="$(gc compute instances list \
+      --filter='name~^tr-clickhouse-[0-9]+$' --sort-by='~name' \
+      --format='value(networkInterfaces[0].networkIP)')" || [ -z "$clickhouse_replica_ips" ]; then
+    echo "ERROR: cannot list the ClickHouse replicas tr-clickhouse-N;" \
+      "set TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL to override" >&2
+    exit 1
+  fi
+  PROVIDER_ANALYTICS_CLICKHOUSE_URL="http://${clickhouse_ilb_ip}:8123"
+  while IFS= read -r clickhouse_replica_ip; do
+    if [[ ! "$clickhouse_replica_ip" =~ ^10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+      echo "ERROR: unexpected ClickHouse replica address '${clickhouse_replica_ip}';" \
+        "set TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL to override" >&2
+      exit 1
+    fi
+    PROVIDER_ANALYTICS_CLICKHOUSE_URL+=",http://${clickhouse_replica_ip}:8123"
+  done <<<"$clickhouse_replica_ips"
 fi
 
 # Preserve the account pin from the serving revision across ordinary releases.
@@ -355,6 +381,11 @@ if [ "${TR_TRUST_JOBS_DEPLOY}" = "1" ]; then
 fi
 
 ENV_VARS=(
+  # PR3 binary deploys OFF. Migration and reviewed cohort evidence precede enable.
+  "TR_SPECULATIVE_PROVIDER_SHADOW_ENABLED=false"
+  'TR_SPECULATION_SHADOW_WORKSPACES=[]'
+  'TR_SPECULATION_SHADOW_ROUTES=[]'
+  'TR_SPECULATION_SHADOW_IMAGES=[]'
   "TR_ENVIRONMENT=production"
   "TR_HOMEPAGE_LANDSCAPE_ENABLED=true"
   "TR_SERVICE_SURFACE=combined"
@@ -670,6 +701,7 @@ cloud_run_candidate_min_instances() {
 deploy_one_region() {
   local target="$1"
   local logfile="${2:-/dev/null}"
+  deploy_mutex_assert || return 1
   # When TR_DEPLOY_NO_TRAFFIC=1 is set (the staged-traffic flow in the
   # GHA workflow), the new revision is created with 0% traffic. The
   # workflow then ramps it up via `gcloud run services update-traffic`

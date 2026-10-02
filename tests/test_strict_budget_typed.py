@@ -109,9 +109,8 @@ def test_strict_old_windows_reset_but_inflight_holds_still_count():
     assert authorize(store, key, amount=40)["outcome"] == "accepted"
 
 
-def test_strict_typed_wrapper_uses_current_limits_even_without_snapshot():
-    store, db, key = setup()
-    kwargs = dict(
+def strict_wrapper_kwargs(key):
+    return dict(
         workspace_id="strict-ws",
         key_hash=key.hash,
         estimate=60,
@@ -130,6 +129,11 @@ def test_strict_typed_wrapper_uses_current_limits_even_without_snapshot():
         strict_budget=True,
         window_limits=None,
     )
+
+
+def test_strict_typed_wrapper_uses_current_limits_even_without_snapshot():
+    store, db, key = setup()
+    kwargs = strict_wrapper_kwargs(key)
     first, _ = store.authorize_gateway_typed(**kwargs)
     assert first == "accepted"
     second, _ = store.authorize_gateway_typed(**kwargs)
@@ -138,3 +142,43 @@ def test_strict_typed_wrapper_uses_current_limits_even_without_snapshot():
     assert db.typed["tr_key_limit"][(key.hash, 0)]["reserved"] == 60
     alerted, _ = store.authorize_gateway_typed(**kwargs, strict_budget_alert_only=True)
     assert alerted == "accepted"
+
+
+def test_strict_typed_brief_collision_preserves_idempotency_and_hard_cap(monkeypatch):
+    from trusted_router import strict_budget
+    from trusted_router.services.keyed_admission import KeyedConcurrencyAdmission
+
+    store, db, key = setup()
+    limiter = KeyedConcurrencyAdmission(max_subjects=2)
+    monkeypatch.setattr(strict_budget, "STRICT_ADMISSION", limiter)
+    assert limiter.try_acquire(key.hash, limit=1)
+
+    class Clock:
+        now = 0.0
+        waits = 0
+
+        def monotonic(self):
+            return self.now
+
+        def sleep(self, seconds):
+            self.now += seconds
+            self.waits += 1
+            assert _typed(db, "strict-ws")["reserved"] == 0
+            limiter.release(key.hash)
+
+    clock = Clock()
+    monkeypatch.setattr(strict_budget, "time", clock)
+    kwargs = strict_wrapper_kwargs(key)
+    kwargs.update(idempotency_key="same-operation", idempotency_fingerprint="fingerprint")
+    first, authorization = store.authorize_gateway_typed(**kwargs)
+    assert first == "accepted"
+    assert clock.waits == 1
+    replay, repeated = store.authorize_gateway_typed(**kwargs)
+    assert replay == "replay"
+    assert repeated.id == authorization.id
+    kwargs.update(idempotency_key="different-operation")
+    denied, _ = store.authorize_gateway_typed(**kwargs)
+    assert denied == "key_window_limit_exceeded:daily"
+    assert db.typed["tr_key_limit"][(key.hash, 0)]["reserved"] == 60
+    assert _typed(db, "strict-ws")["reserved"] == 60
+    assert limiter.count(key.hash) == 0

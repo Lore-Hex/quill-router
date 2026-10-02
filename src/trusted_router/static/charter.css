@@ -2861,6 +2861,8 @@ body.auth.auth-shell {
 }
 
 .model-result-card[hidden],
+.model-explorer [data-model-show-more][hidden],
+.model-explorer [data-model-clear][hidden],
 .provider-chip-overflow {
   display: none;
 }

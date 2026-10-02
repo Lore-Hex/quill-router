@@ -281,7 +281,20 @@ def test_provider_require_parameters_filters_incompatible_endpoints() -> None:
     )
 
 
-def test_provider_max_price_filters_prompt_and_completion_prices() -> None:
+def test_provider_max_price_filters_prompt_and_completion_prices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Fixture routes, whatever the hosts charge today: one within both caps,
+    # one over the prompt cap and one over the completion cap.
+    drop_routes(monkeypatch, "google/gemma-4-31b-it")
+    for host, prompt, completion in (
+        ("deepinfra", 100_000, 300_000), ("novita", 200_000, 300_000), ("parasail", 100_000, 500_000),
+    ):
+        serve_on_fixture_route(
+            monkeypatch, "google/gemma-4-31b-it", host, author="google-ai-studio",
+            prompt_price_microdollars_per_million_tokens=prompt,
+            completion_price_microdollars_per_million_tokens=completion,
+        )
     candidates = chat_route_endpoint_candidates(
         {
             "model": "google/gemma-4-31b-it",
@@ -292,7 +305,7 @@ def test_provider_max_price_filters_prompt_and_completion_prices() -> None:
         _settings(),
     )
 
-    assert candidates
+    assert [endpoint.provider for _model, endpoint in candidates] == ["deepinfra"]
     assert all(
         endpoint.prompt_price_microdollars_per_million_tokens <= 150_000
         and endpoint.completion_price_microdollars_per_million_tokens <= 400_000
@@ -409,14 +422,14 @@ def test_disjoint_alias_and_request_provider_allowlists_fail_closed() -> None:
     ],
 )
 def test_allow_fallbacks_false_never_validates_or_routes_fallback_models(
-    fallback_control: dict[str, object],
+    fallback_control: dict[str, object], monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A disabled fallback list is inert, including stale model IDs.
 
     Validating the fallback array before applying the flag can reject a valid
     primary with an error naming a model the caller explicitly disabled.
     """
-
+    serve_on_fixture_route(monkeypatch, "openai/gpt-oss-20b", "deepinfra", author="openai")
     candidates = chat_route_endpoint_candidates(
         {
             "model": "openai/gpt-oss-20b",
@@ -504,7 +517,10 @@ def test_provider_route_preferences_accepts_top_level_allow_fallbacks_alias() ->
     assert prefs.allow_fallbacks is False
 
 
-def test_top_level_no_fallbacks_pins_exact_request_to_one_provider_route() -> None:
+def test_top_level_no_fallbacks_pins_exact_request_to_one_provider_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    serve_on_fixture_route(monkeypatch, "openai/gpt-oss-20b", "deepinfra", author="openai")
     candidates = chat_route_endpoint_candidates(
         {
             "model": "openai/gpt-oss-20b",
@@ -734,6 +750,43 @@ def test_min_privacy_confidential_keeps_confidential_reachable_model(
     )
     assert candidates
     assert all(model_max_privacy_tier(m) >= PRIVACY_TIER_CONFIDENTIAL for m in candidates)
+
+
+def test_min_privacy_confidential_never_routes_to_the_model_vendor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import dataclasses
+
+    from trusted_router.catalog import PROVIDERS
+
+    # Z.AI's own API and a third-party host both carry every Confidential flag.
+    for slug in ("zai", "chutes"):
+        monkeypatch.setitem(
+            PROVIDERS,
+            slug,
+            dataclasses.replace(
+                PROVIDERS[slug],
+                provider_confidential_compute=True,
+                provider_e2ee=True,
+                provider_zero_data_retention=True,
+            ),
+        )
+    drop_routes(monkeypatch, "z-ai/glm-5.2")
+    serve_on_fixture_route(monkeypatch, "z-ai/glm-5.2", "zai", author="zai")
+    serve_on_fixture_route(monkeypatch, "z-ai/glm-5.2", "chutes", author="zai")
+
+    def hosts(provider: dict[str, object]) -> set[str]:
+        body = {"model": "z-ai/glm-5.2", "provider": provider}
+        return {endpoint.provider for _model, endpoint in chat_route_endpoint_candidates(body, _settings())}
+
+    assert hosts({}) == {"zai", "chutes"}
+    assert hosts({"min_privacy": "confidential"}) == {"chutes"}
+    # Without a third-party Confidential host, the request fails closed.
+    drop_routes(monkeypatch, "z-ai/glm-5.2")
+    serve_on_fixture_route(monkeypatch, "z-ai/glm-5.2", "zai", author="zai")
+    with pytest.raises(HTTPException) as exc:
+        hosts({"min_privacy": "confidential"})
+    assert exc.value.status_code == 400
 
 
 def test_min_privacy_too_high_for_model_raises() -> None:
@@ -1047,7 +1100,18 @@ def test_glm_52_explicit_provider_preferences_override_parasail_default(
     )
 
 
-def test_glm_52_provider_preference_does_not_override_primary_model_order() -> None:
+def test_glm_52_provider_preference_does_not_override_primary_model_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Requested alone, GLM 5.2 prefers its Parasail route to every other host,
+    # and the primary model rides Novita, which ranks low by default: fixture
+    # routes both, whoever lists these models today.
+    for model_id, host, author in (
+        ("deepseek/deepseek-v4-flash", "novita", "deepseek"),
+        ("z-ai/glm-5.2", "parasail", "zai"),
+    ):
+        drop_routes(monkeypatch, model_id)
+        serve_on_fixture_route(monkeypatch, model_id, host, author=author)
     candidates = chat_route_endpoint_candidates(
         {
             "model": "deepseek/deepseek-v4-flash",
@@ -1058,6 +1122,10 @@ def test_glm_52_provider_preference_does_not_override_primary_model_order() -> N
     )
 
     assert candidates[0][0].id == "deepseek/deepseek-v4-flash"
+    assert [endpoint.id for _model, endpoint in candidates] == [
+        "deepseek/deepseek-v4-flash@novita/prepaid",
+        "z-ai/glm-5.2@parasail/prepaid",
+    ]
 
 
 def test_confidential_alias_uses_exact_e2e_endpoint_pool() -> None:

@@ -23,7 +23,7 @@ curl "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE"
 </section>
 <section class="marketing-grid three">
   <div class="marketing-card"><span class="card-label">No logs. Always.</span><h3>Storage you can check</h3><p>Provider logging toggles ask you to believe a settings page. An attested gateway lets you fetch a JWT signed by the CPU vendor's root key and compare the image digest against the published open-source build. Privacy you can check beats privacy you're promised.</p></div>
-  <div class="marketing-card"><span class="card-label">Privacy tiers</span><h3>ZDR and TEE, labeled per route</h3><p>Every route carries a tier. Zero-Data-Retention means the provider contractually keeps nothing. TEE means end-to-end confidential compute, where even the provider cannot read the prompt. trustedrouter/cheap always resolves to the cheapest capable route inside a TEE.</p></div>
+  <div class="marketing-card"><span class="card-label">Privacy tiers</span><h3>ZDR and TEE, labeled per route</h3><p>Every route carries a tier. Zero-Data-Retention means the provider contractually keeps nothing. TEE means end-to-end confidential compute, where even the provider cannot read the prompt. trustedrouter/cheap always resolves to the cheapest capable route; add a Confidential privacy floor to keep it on TEE routes.</p></div>
   <div class="marketing-card"><span class="card-label">Pay your way</span><h3>Credits, BYOK, or a wallet</h3><p>Prepaid credits via Stripe, bring your own provider key, or x402 pay-per-request with Continue with MetaMask sign-in that works without a traditional account. That suits users who prefer not to attach an identity to their chats; the <a href="/anonymous-llm-api">anonymous LLM API</a> page covers the details. Per-model rates are on <a href="/pricing">the pricing page</a>: thin markup over provider list prices.</p></div>
 </section>
 <section class="compare-matrix" aria-label="OpenRouter vs TrustedRouter for SillyTavern">
@@ -35,7 +35,7 @@ curl "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE"
 </section>
 <section class="quote-feature">
   <div><span class="eyebrow">Verify, don't trust</span><h2>The same weights behave differently depending on who hosts them.</h2></div>
-  <div><p>In our testing, identical GLM weights answered 60 of 60 sensitive questions through TrustedRouter's enclave and 30 of 60 through the vendor-hosted API. That filtering is host-applied, not in the weights. DeepSeek, Kimi, Qwen, GLM, and MiniMax routes here are served by non-Chinese hosting providers on attested infrastructure, so your roleplay prompts never reach the model vendor.</p>
+  <div><p>In our testing, identical GLM weights answered 60 of 60 sensitive questions through TrustedRouter's enclave and 30 of 60 through the vendor-hosted API. That filtering is host-applied, not in the weights. {{ vendor_exclusion_claim }}</p>
   <p>Two plain limits. Every model keeps its own refusal behavior on every route, and acceptable-use terms apply to all traffic. What changes is storage and visibility: a <a href="/no-log-llm-api">no-log LLM API</a> you can audit, with content-stateless real-time inference and explicitly labeled encrypted Batch retention. Moving from OpenRouter takes one base-URL change; keep your SDK, your model ids, and your code.</p></div>
 </section>
 {% endblock %}

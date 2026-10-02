@@ -4,6 +4,7 @@ import json
 import re
 from pathlib import Path
 
+import pytest
 from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
@@ -61,11 +62,11 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/llm-provider-latency-benchmarks": "Provider speed data from real routed requests.",
         # SEO wave 2 — keyword-gap landing pages.
         "/azure-openai-alternative": "Azure OpenAI promises privacy in a contract; TrustedRouter proves it with hardware attestation you can check live.",
-        "/deepseek-api-privacy": "DeepSeek V4 on attested infrastructure: your prompts never reach the model vendor.",
-        "/glm-5-api": "Run GLM-5 and GLM-5.2 on attested hardware without sending your prompts to the model vendor.",
+        "/deepseek-api-privacy": "DeepSeek V4 on attested infrastructure. With Confidential privacy, your prompts never reach the model vendor.",
+        "/glm-5-api": "Run GLM-5 and GLM-5.2 on attested hardware. With Confidential privacy, your prompts never reach the model vendor.",
         "/gdpr-compliant-llm-api": "An LLM API built for GDPR workflows: attested inference, a signable DPA, and no prompt or output logs.",
-        "/chinese-ai-models-us-hosted": "Run GLM, Qwen, Kimi, and DeepSeek on US-hosted, attested infrastructure that never forwards a prompt to the model vendor.",
-        "/minimax-m3-api": "MiniMax M3 on attested hardware, with prompts that never reach the model vendor.",
+        "/chinese-ai-models-us-hosted": "Run GLM, Qwen, Kimi, and DeepSeek on US-hosted, attested infrastructure. With Confidential privacy, no prompt reaches the model vendor.",
+        "/minimax-m3-api": "MiniMax M3 on attested hardware, with the privacy tier chosen per request.",
         "/best-llm-router": "The best LLM router is the one whose privacy claims you can verify with a curl command.",
         "/llm-failover": "Your uptime should not depend on one provider's status page.",
         "/groq-alternative": "Fast inference only counts when request 41 still goes through.",
@@ -690,14 +691,11 @@ def test_public_kimi_k3_page_separates_router_attestation_from_provider_e2ee(
     assert "<th>TR router attested</th>" in detail.text
     assert "<th>Attested</th>" not in detail.text
     assert "Provider policy" in detail.text
-    moonshot_row = re.search(
-        r'<tr>\s*<td><a[^>]+href="/providers/kimi".*?</tr>',
-        detail.text,
-        flags=re.DOTALL,
-    )
+    moonshot_row = BeautifulSoup(detail.text, "html.parser").select_one("tr#provider-kimi")
     assert moonshot_row is not None
-    assert "privacy unknown" in moonshot_row.group(0)
-    assert "provider E2EE" not in moonshot_row.group(0)
+    assert moonshot_row.select_one('a[href="/providers/kimi"]') is not None
+    assert "privacy unknown" in moonshot_row.get_text()
+    assert "provider E2EE" not in moonshot_row.get_text()
 
 
 def test_single_provider_model_shows_provider_posture_not_variation(
@@ -716,9 +714,18 @@ def test_single_provider_model_shows_provider_posture_not_variation(
     assert "varies by route" not in detail.text
 
 
-def test_phala_pages_do_not_claim_verified_provider_e2ee(client: TestClient) -> None:
+def test_phala_pages_do_not_claim_verified_provider_e2ee(
+    client: TestClient, monkeypatch: MonkeyPatch
+) -> None:
+    # A model on a Phala Confidential AI route (the phala/* upstream namespace),
+    # a fixture route: Phala lists none today, and the pass-through routes it
+    # does list, GLM 5.2's among them, claim no privacy at all.
+    serve_on_fixture_route(
+        monkeypatch, "fixture/phala-confidential", "phala", author="phala",
+        upstream_id="phala/fixture-confidential",
+    )
     provider = client.get("/providers/phala")
-    detail = client.get("/models/z-ai/glm-5.2")
+    detail = client.get("/models/fixture/phala-confidential")
 
     assert provider.status_code == 200
     assert 'Verified confidential inference</th><td><span class="pill ">Not verified</span>' in provider.text
@@ -727,6 +734,7 @@ def test_phala_pages_do_not_claim_verified_provider_e2ee(client: TestClient) -> 
     assert "provider E2EE not verified" in detail.text
 
 
+@pytest.mark.catalog_as_built
 def test_public_meta_model_detail_renders_orchestration_components(
     client: TestClient, monkeypatch: MonkeyPatch
 ) -> None:
@@ -758,6 +766,7 @@ def test_public_meta_model_detail_renders_orchestration_components(
     assert 'Canonical: <a href="/models/trustedrouter/socrates-3.0"' in rolling.text
 
 
+@pytest.mark.catalog_as_built
 def test_public_k3_combo_pages_render_exact_graphs(
     client: TestClient,
 ) -> None:

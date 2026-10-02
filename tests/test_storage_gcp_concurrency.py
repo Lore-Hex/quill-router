@@ -1,4 +1,4 @@
-"""Concurrency tests for SpannerBigtableStore.
+"""Concurrency tests for SpannerStore.
 
 Drives the real store code against an in-process Spanner fake that simulates
 snapshot-isolation conflict-abort. The point is to verify that the surviving

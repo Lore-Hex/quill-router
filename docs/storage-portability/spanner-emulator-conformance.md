@@ -33,7 +33,7 @@ The round-15 audit found exactly two existing non-code text files with transport
 | File | Matches | Handling |
 |---|---:|---|
 | `.test_durations` | 6 | Exact-path data exemption above; matches are pytest node IDs, not programs. |
-| `.codex-review-1.md:22` | 1 | Occurrence-bound line exemption in `spanner_ddl_exemptions.json`; archived review prose about receipt-column deployment ordering, not a schema dispatch. The rest of the file remains scanned. |
+| `.codex-review-1.md:22` | 1 | Removed: the file was PR #1159's codex review transcript, committed with that PR, and its line exemption went with it. `test_review_note_line_exemption_is_occurrence_bound` keeps the occurrence binding covered on a synthetic note. |
 
 No other previously name-excluded text file contains a transport token. New ClickHouse SQL containing only statements and ordinary `middleware` imports also need no registry changes. A helper using `spanner_dbapi` is caught at its own transport token regardless of launchers such as `timeout`, `env`, `xargs`, subprocess calls, or working-directory changes; the guard does not model execution syntax.
 
@@ -61,10 +61,22 @@ The generated schema contains **63 DDL statements: 21 tables, 14 secondary index
 
 ## Scheduled production schema audit (#1372)
 
-`.github/workflows/spanner-schema-drift.yml` runs daily at 11:17 UTC and on manual
-dispatch, using the typed audit's existing WIF identity and the same digest-pinned
-Spanner emulator as CI. It needs no new secrets or IAM grants. The production
-path uses ADC and reads only `INFORMATION_SCHEMA` in a single read-only snapshot,
+The `spanner-schema-drift` job in `.github/workflows/typed-audit.yml` runs daily
+at 11:43 UTC and on manual dispatch, independently of the typed billing audit
+job so either audit still runs if the other fails. It uses the typed audit's
+existing WIF identity and its own instance of the same digest-pinned Spanner
+emulator as CI. It needs no new secrets or IAM grants.
+
+The job lives in `typed-audit.yml` because that workflow is already admitted by
+`quill_router_workflow_refs` in `infra/gcp_wif.tf`. The former standalone
+`spanner-schema-drift.yml` was not admitted and failed authentication with
+`unauthorized_client` (the credential was rejected by the attribute condition).
+A dedicated workflow or a read-only identity would require a reviewed change
+to `infra/gcp_wif.tf`, applied through `infra-apply` on push; expanding access
+is an operator decision. The offline workflow guard scans all workflow files
+using this WIF provider and requires each to appear in that allowlist.
+
+The production path uses ADC and reads only `INFORMATION_SCHEMA` in a single read-only snapshot,
 restricted to the GoogleSQL default schema (`TABLE_SCHEMA = ''`, or
 `CONSTRAINT_SCHEMA = ''` for constraint-only views). It never scans entity bodies
 or other application tables.
@@ -73,12 +85,21 @@ or other application tables.
 instance/database from `tests/conformance/spanner_ddl.py`, reads it using the same
 queries as production, and compares the sorted metadata. This comparison parses
 no schema statements. It covers table interleaving/deletion action/TTL; column
-ordinal, type, nullability, generated expression, stored flag and default; commit
+type, nullability, generated expression, stored flag and default; commit
 timestamp options; index type, uniqueness, null filtering, state, interleaving,
 ordered keys and storing columns; table/check constraints and foreign-key
 columns, targets and rules. Primary-key constraint names are canonicalized because
 they can be server generated; expressions retain their exact server text so
 whitespace inside literals cannot disappear. Index storing columns sort after keys.
+
+Table column ordinals remain in the captured metadata but are not semantic drift:
+historical additive migrations and fresh installations can place named columns in
+different physical order. The adapters project and mutate columns by name. Primary
+key, secondary index, and constraint key ordering are still compared exactly.
+Spanner exposes `PRIMARY_KEY` as a pseudo-index, with a null state in production
+and the emulator; only that null state is exempt from the readiness check.
+Secondary indexes with null or transitional state still fail. See Google's
+[INFORMATION_SCHEMA reference](https://docs.cloud.google.com/spanner/docs/information-schema#indexes).
 
 Reports put **FIXTURE-HAS / PRODUCTION-LACKS** first: these are objects that let SQL
 pass CI while failing in production. They also include **PRODUCTION-HAS /
@@ -93,12 +114,13 @@ names one object and attribute per entry, with exact production and fixture valu
 and a reason. `attribute: "object"` describes an entire absent/present object,
 including all of its attributes; it is not a wildcard. Every entry must match a
 current difference: stale entries fail even when the schemas otherwise agree.
-Seeds cover only the documented rolling-upgrade nullability, historical unique
-trace index, optional retention policies/entity TTL column, and manual Lightning
-constraint rename. They are hypotheses, **all `verified_against_production: false`**;
-server expression formatting and implicit index columns also require confirmation.
-The first production run supplies the evidence to confirm exact values, remove
-stale hypotheses, and set `verified_against_production: true` in a reviewed change.
+The first authenticated production audit on 2026-09-30
+([run 36749042316](https://github.com/Lore-Hex/quill-router/actions/runs/36749042316))
+verified ten exact historical differences: four nullable rolling-upgrade columns,
+their four absent implicit NOT NULL constraints, and the two sides of the manual
+Lightning constraint rename. All ten entries are verified against that production
+run. Seven provisional exceptions were removed because the retention policies,
+entity TTL column, and historical unique-index retirement already match production.
 The script reports matched unverified entries but never edits or expands the
 allowlist automatically. An unexplained difference needs investigation, not a
 blanket exception. Other historical differences remain unexplained by design.

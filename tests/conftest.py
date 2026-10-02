@@ -101,17 +101,18 @@ def live_monitors_judge_catalog_freshness_on_the_real_clock(
 
 
 @pytest.fixture(autouse=True)
-def provider_health_sees_no_vehicle_routes(
+def the_catalog_as_built_has_no_vehicles(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[None]:
-    """A provider_health test asks whether a provider still serves a route, so
-    the vehicle routes this session put back (tests/catalog_vehicles.py) are
-    taken out for it: a delisted vehicle would otherwise pass. The cached
-    catalog projections are emptied on each side, so that neither view of the
-    catalog outlives the test."""
-    if (
-        request.node.get_closest_marker("provider_health") is None
-        or not catalog_vehicles.VEHICLES_ADDED
+    """The vehicle routes and models this session put back
+    (tests/catalog_vehicles.py) are taken out for a test that asks about the
+    catalog the data built, where a vehicle would otherwise pass: a
+    provider_health test (does a provider still serve a route) and a
+    catalog_as_built test (is every member of a fixed list still cataloged).
+    The cached catalog projections are emptied on each side, so that neither
+    view of the catalog outlives the test."""
+    if not catalog_vehicles.VEHICLES_ADDED or not any(
+        request.node.get_closest_marker(marker) for marker in ("provider_health", "catalog_as_built")
     ):
         yield
         return

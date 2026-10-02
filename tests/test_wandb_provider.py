@@ -10,6 +10,7 @@ from scripts.pricing.base import ModelPrice
 from scripts.pricing.providers import wandb
 from scripts.pricing.providers._direct_openai import DirectOpenAIProvider
 from scripts.pricing.refresh import PROVIDER_SLUGS
+from tests import catalog_vehicles
 from trusted_router.catalog import (
     GATEWAY_PREPAID_PROVIDER_SLUGS,
     PROVIDERS,
@@ -226,12 +227,9 @@ def test_wandb_manifest_is_priced_and_preserves_exact_upstream_ids() -> None:
     assert raw["provider"] == wandb.SLUG
     assert raw["model_count"] >= 20
     rows = {row["id"]: row for row in raw["models"]}
-    flash = rows["z-ai/glm-5.3-flash"]
-    assert flash["upstream_id"] == "zai-org/GLM-5.3-Flash"
-    assert flash["input_modalities"] == ["text", "image"]
-    assert flash["context_length"] == 1_048_576
-    assert flash["cached_input_token_price_per_m"] > 0
-    assert flash["id"] not in wandb.CATALOG.spec.operator_hold_reasons
+    # GLM 5.3 Flash's operator hold is lifted in code. What W&B lists for it
+    # today is test_wandb_lists_glm_5_3_flash_at_its_native_id_with_its_window_and_prices.
+    assert "z-ai/glm-5.3-flash" not in wandb.CATALOG.spec.operator_hold_reasons
     assert all(row["upstream_id"] for row in rows.values())
     assert all(row["input_token_price_per_m"] > 0 for row in rows.values())
     assert all(row["output_token_price_per_m"] > 0 for row in rows.values())
@@ -241,13 +239,14 @@ def test_wandb_manifest_is_priced_and_preserves_exact_upstream_ids() -> None:
     # clock, is not. The immutable DeepSeek releases are offered only through
     # the registry's release leaves, never by a manifest row alone.
     release_leaves = {DEEPSEEK_V4_PRO_0423_MODEL_ID, DEEPSEEK_V4_PRO_0813_MODEL_ID}
+    built = catalog_vehicles.registry_endpoints()
     for model_id, row in rows.items():
         if model_id in release_leaves:
             continue
         endpoints = [
             endpoint
             for endpoint in endpoints_for_model(model_id)
-            if endpoint.provider == wandb.SLUG
+            if endpoint.provider == wandb.SLUG and endpoint.id in built
         ]
         if row.get("routable") is False or provider_model_retired(
             wandb.SLUG, model_id, row["upstream_id"]
@@ -256,6 +255,18 @@ def test_wandb_manifest_is_priced_and_preserves_exact_upstream_ids() -> None:
         else:
             assert len(endpoints) == 1, model_id
             assert endpoints[0].upstream_id == row["upstream_id"]
+
+
+@pytest.mark.provider_health
+def test_wandb_lists_glm_5_3_flash_at_its_native_id_with_its_window_and_prices() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    rows = {row["id"]: row for row in json.loads(wandb.MANIFEST_PATH.read_text())["models"]}
+    flash = rows["z-ai/glm-5.3-flash"]
+    assert flash["upstream_id"] == "zai-org/GLM-5.3-Flash"
+    assert flash["input_modalities"] == ["text", "image"]
+    assert flash["context_length"] == 1_048_576
+    assert flash["cached_input_token_price_per_m"] > 0
 
 
 @pytest.mark.provider_health

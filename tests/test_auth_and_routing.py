@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.fixture_routes import serve_on_fixture_route
+from tests.fixture_routes import drop_routes, serve_on_fixture_route
 from trusted_router.catalog import MODELS
 from trusted_router.config import Settings
 from trusted_router.main import create_app
@@ -418,8 +418,16 @@ def test_gateway_authorize_top_level_no_fallbacks_ignores_stale_alternatives(
     assert len(data["route_candidates"]) == 1
 
 
-def test_gateway_no_fallbacks_selects_an_eligible_provider_for_exact_model() -> None:
+def test_gateway_no_fallbacks_selects_an_eligible_provider_for_exact_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Provider eligibility must run before pinning one exact-model endpoint."""
+    # The model on two BYOK fixture routes, whichever hosts serve it today.
+    drop_routes(monkeypatch, "openai/gpt-oss-20b")
+    for host in ("deepinfra", "novita"):
+        serve_on_fixture_route(
+            monkeypatch, "openai/gpt-oss-20b", host, author="openai", usage_type="BYOK"
+        )
     settings = Settings(environment="test")
     raw_candidates = chat_route_endpoint_candidates(
         {

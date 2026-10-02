@@ -249,6 +249,24 @@ lease-claims due `pending` rows and for each:
   legacy finalize contract still marks in a separate commit. Measured motivation:
   `mark_ms` was a full multi-region commit on every settle (p50 224–709 ms, p90
   ~775 ms), one of three serial commits behind the ~3 s settle p90.
+- **One-commit settle (2026-10):** on the happy path the enqueue folds in too.
+  `typed_finalize_atomic(settle_outbox_intent=...)` INSERTs the intent already
+  resolved (exactly the row `mark(done=True)` leaves: status `done`, one
+  attempt, `terminal_at` armed, body dropped, no due time) together with the
+  enqueue's retention clears and the done-mark's retention resolution, in the
+  commit that claims the reservation and books the holds; the post-response
+  benchmark INSERT rides in the same batch. Per authorize+settle round trip:
+  4 read-write commits → 2. Any deviation (claim already taken, reservation or
+  typed authorization missing, intent already recorded, release row-count,
+  abort after retries, the attempt's 5 s budget, an unknown commit outcome)
+  rolls back and runs the unchanged two-commit flow above. That is safe even
+  when the one commit landed but reported failure: the fallback enqueue finds
+  the `done` row (ALREADY_EXISTS, refresh fenced on `pending`), its finalize
+  claims 0 rows, and any intent created afterwards (a concurrent sibling
+  refund) drains to `already_settled_with_charge`, never a second charge.
+  Before the one commit lands nothing is durable and the enclave's redelivery
+  covers it, exactly as before the enqueue committed; the reaper still
+  serializes against it on the `settled=false` claim.
 
 ## 8. Rollout (default-off, Joseph-gated)
 
@@ -354,7 +372,7 @@ Read this first if you are continuing the outbox build.
     (lease-fenced), `mark` (backoff→`dead` at max_attempts), `has_intent`
     (the reaper-guard predicate: freezes on `pending`/`dead`, NOT
     `done`/`release_approved`), `get`.
-  - Wired as `self.settle_outbox` on `SpannerBigtableStore` only. **No live
+  - Wired as `self.settle_outbox` on `SpannerStore` only. **No live
     caller yet** — dormant.
   - Fake Spanner models the table AND asserts every load-bearing SQL predicate
     (`_require_pred`) so a dropped predicate FAILS a test (the MF6 guarantee).

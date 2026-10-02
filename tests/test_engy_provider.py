@@ -9,6 +9,7 @@ import pytest
 
 from scripts.check_price_coverage import _DISCOVERABLE_MANIFEST_PROVIDERS
 from scripts.pricing.providers import engy
+from tests import catalog_vehicles
 from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS
 from trusted_router.pricing import _customer_price
 from trusted_router.providers import OPENAI_COMPATIBLE_PROVIDERS
@@ -202,7 +203,11 @@ def test_engy_is_prepaid_zdr_but_not_confidential_or_byok() -> None:
 
 
 def test_engy_manifest_routes_use_exact_upstream_ids_and_customer_prices() -> None:
-    endpoints = [endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "engy"]
+    endpoints = [
+        endpoint
+        for endpoint in catalog_vehicles.registry_endpoints().values()
+        if endpoint.provider == "engy"
+    ]
     manifest = json.loads(engy.MANIFEST_PATH.read_text(encoding="utf-8"))
     rows = {
         row["upstream_id"]: row

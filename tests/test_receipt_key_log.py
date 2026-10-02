@@ -30,7 +30,7 @@ from trusted_router.receipt_keys import (
 from trusted_router.routes import public as public_routes
 from trusted_router.services import receipt_key_collector as collector
 from trusted_router.storage import InMemoryStore, configure_store
-from trusted_router.storage_gcp import SpannerBigtableStore
+from trusted_router.storage_gcp import SpannerStore
 from trusted_router.storage_models import ReceiptKey
 from trusted_router.storage_postgres import PostgresStore
 
@@ -790,7 +790,7 @@ def test_durable_receipt_key_reads_filter_and_limit_in_the_database(
         def snapshot(self):
             yield Snapshot()
 
-    spanner = SpannerBigtableStore.__new__(SpannerBigtableStore)
+    spanner = SpannerStore.__new__(SpannerStore)
     spanner._database = Database()
     spanner._param_types = SimpleNamespace(STRING="STRING", INT64="INT64")
     monkeypatch.setattr(spanner, "_list_entities", forbidden)
@@ -885,7 +885,7 @@ def test_durable_receipt_key_reads_union_legacy_and_versioned_rows() -> None:
         def snapshot(self):
             yield Snapshot()
 
-    spanner = SpannerBigtableStore.__new__(SpannerBigtableStore)
+    spanner = SpannerStore.__new__(SpannerStore)
     spanner._database = Database()
     spanner._param_types = SimpleNamespace(STRING="STRING", INT64="INT64")
 
@@ -1009,7 +1009,7 @@ def _two_phase_store(backend: str):
         def snapshot(self):
             yield Snapshot()
 
-    store = SpannerBigtableStore.__new__(SpannerBigtableStore)
+    store = SpannerStore.__new__(SpannerStore)
     store._database = Database()
     store._param_types = SimpleNamespace(STRING="STRING", INT64="INT64")
     return store

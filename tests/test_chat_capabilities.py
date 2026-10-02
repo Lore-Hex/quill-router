@@ -3,6 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.fixture_routes import drop_routes, serve_on_fixture_route
 from trusted_router.chat_capabilities import reasoning_modes
 
 
@@ -27,11 +28,19 @@ def test_only_verified_hybrid_routes_advertise_reasoning_controls(
     assert reasoning_modes(provider, model) == (["off", "on"] if supported else [])
 
 
-def test_endpoint_reasoning_controls_are_provider_specific(client: TestClient) -> None:
+def test_endpoint_reasoning_controls_are_provider_specific(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # GLM 5.2 on Z.AI's own route and on a reseller's, fixture routes both,
+    # whoever lists the model today.
+    drop_routes(monkeypatch, "z-ai/glm-5.2")
+    for host in ("zai", "novita"):
+        serve_on_fixture_route(monkeypatch, "z-ai/glm-5.2", host, author="zai")
     response = client.get("/v1/models/z-ai/glm-5.2/endpoints")
     assert response.status_code == 200
     endpoints = response.json()["data"]
     assert endpoints
+    assert {endpoint["provider"] for endpoint in endpoints} == {"zai", "novita"}
     direct = [endpoint for endpoint in endpoints if endpoint["provider"] == "zai"]
     assert direct
     for endpoint in endpoints:

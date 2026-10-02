@@ -105,6 +105,10 @@ def _live_model_rows() -> dict[str, dict[str, Any]]:
             parsed = _positive_int(value)
             if parsed is not None:
                 row[field] = parsed
+        if "context_length" in row:
+            # Catalog ingestion lets a maker's API-reported window outrank
+            # OpenRouter's listing of the maker's endpoint.
+            row["context_length_source"] = "api"
         discovered[model_id] = row
     if not discovered:
         raise RuntimeError("minimax: /v1/models returned no active models")
@@ -146,6 +150,9 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
     for model_id, discovered in sorted(_DISCOVERED_MANIFEST_ROWS.items()):
         row = dict(existing_by_id.get(model_id) or {})
         row.update(discovered)
+        if "context_length_source" not in discovered:
+            # A window the API stopped reporting is no longer API-reported.
+            row.pop("context_length_source", None)
         price = result.prices.get(model_id)
         if price is not None:
             tier = price.tiers[0]

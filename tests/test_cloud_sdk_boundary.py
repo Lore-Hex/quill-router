@@ -33,7 +33,7 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "trusted_router"
 
 #: Modules permitted to import a cloud SDK, and why.
 ALLOWED = {
-    # The GCP storage adapter: implementing SpannerBigtableStore is exactly
+    # The GCP storage adapter: implementing SpannerStore is exactly
     # what these exist to do.
     "storage_gcp.py",
     "storage_gcp_authorize.py",
@@ -41,6 +41,8 @@ ALLOWED = {
     "storage_gcp_google_ads.py",
     "storage_gcp_io.py",
     "storage_gcp_settle_outbox.py",
+    # Native Spanner implementation of the isolated, optional ShadowStore port.
+    "storage_gcp_speculation_shadow.py",
     # The two explicit cloud ports. Both import lazily so a non-GCP deployment
     # need not install the Google libraries at all.
     "storage_errors.py",

@@ -297,7 +297,7 @@ def test_stage_d_settings_defaults_are_fail_closed_and_contract_pinned() -> None
     assert settings.stage_d_policy_oidc_issuer == (
         "https://token.actions.githubusercontent.com"
     )
-    assert settings.spend_lease_accepted_gcp_digests == frozenset()
+    assert settings.stage_d_accepted_gcp_digests == frozenset()
     assert settings.reap_snapshot_booking_enabled is False
 
 

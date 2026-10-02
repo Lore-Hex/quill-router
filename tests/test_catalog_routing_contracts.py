@@ -3,14 +3,25 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from tests.fixture_routes import drop_routes
 from tests.lifecycle_clock import catalog_predates
-from tests.pinned_manifests import GROK_47, build_manifest_rows
-from trusted_router import provider_lifecycle
+from tests.pinned_manifests import (
+    GLM_5_2_ROUTES,
+    GROK_47,
+    NOVITA_TENCENT_HY3,
+    OPENROUTER_GLM_5_2,
+    OPENROUTER_QWEN_3_5_397B,
+    OPENROUTER_TENCENT_HY3,
+    PARASAIL_QWEN_3_5_397B,
+    build_manifest_rows,
+)
+from trusted_router import catalog_ingest, provider_lifecycle
 from trusted_router.catalog import (
     ADVISOR_CATALOG_MODEL_ORDERS,
     ADVISOR_MODEL_ID,
@@ -110,6 +121,7 @@ from trusted_router.catalog_data import (
     PLATO_4_0_CATALOG_MODEL_ORDER,
     SOCRATES_3_0_CATALOG_MODEL_ORDER,
     SYNTH_PROMETHEUS_4_MODEL_ORDER,
+    SYNTH_QUALITY_1M_MODEL_ORDER,
     SYNTH_ZEUS_3_MODEL_ORDER,
 )
 from trusted_router.catalog_ingest import (
@@ -286,6 +298,7 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
         )
 
 
+@pytest.mark.catalog_as_built
 def test_parasail_liberty_catalog_publishes_fixed_credits_only_price() -> None:
     model = MODELS[PARASAIL_LIBERTY_2_0_MODEL_ID]
     shape = model_to_openrouter_shape(model)
@@ -409,12 +422,15 @@ def test_native_provider_catalog_preserves_live_model_ids(
     """Provider-native `/models` feeds can be ahead of OpenRouter's
     endpoint feed. TR should publish those routes with exact upstream
     IDs so the enclave can dispatch them without strip-author bugs."""
+    from tests import catalog_vehicles
+
+    built = catalog_vehicles.registry_endpoints()
     for model_id in sample_ids:
         row = _listed_row(provider, model_id)
         if row is None:
             continue
         for usage in ("prepaid", "byok"):
-            assert MODEL_ENDPOINTS[f"{model_id}@{provider}/{usage}"].upstream_id == (
+            assert built[f"{model_id}@{provider}/{usage}"].upstream_id == (
                 row.get("upstream_id") or model_id
             )
 
@@ -437,6 +453,7 @@ def test_native_provider_catalogs_still_serve_their_lineups(
 
 
 def test_novita_native_catalog_preserves_every_eligible_manifest_row() -> None:
+    from tests import catalog_vehicles
     from trusted_router.catalog_ingest import (
         _PROVIDER_MODELS_DIR,
         _is_provider_deprecated_model,
@@ -467,6 +484,7 @@ def test_novita_native_catalog_preserves_every_eligible_manifest_row() -> None:
             if endpoint.provider == "novita" and endpoint.usage_type == usage
         }
         assert actual == expected
+    built = catalog_vehicles.registry_endpoints()
     for model_id in (
         "moonshotai/kimi-k2.6", "deepseek/deepseek-ocr-2", "tencent/hy3",
         "xiaomimimo/mimo-v2.5-pro", "zai-org/glm-5.1", "Sao10K/L3-8B-Stheno-v3.2",
@@ -474,7 +492,7 @@ def test_novita_native_catalog_preserves_every_eligible_manifest_row() -> None:
         if model_id not in expected:
             continue
         for usage in ("prepaid", "byok"):
-            assert MODEL_ENDPOINTS[f"{model_id}@novita/{usage}"].upstream_id == expected[model_id]
+            assert built[f"{model_id}@novita/{usage}"].upstream_id == expected[model_id]
 
 
 def test_cerebras_native_catalog_preserves_every_live_model_id() -> None:
@@ -499,6 +517,9 @@ def test_non_chat_deepseek_ocr_is_not_routable_as_chat() -> None:
 def test_minimax_public_ids_map_to_exact_upstream_ids() -> None:
     # MiniMax's upstream ids are case-sensitive (MiniMax-M3): each route uses
     # the exact id MiniMax's own feed names.
+    from tests import catalog_vehicles
+
+    built = catalog_vehicles.registry_endpoints()
     for endpoint_id in (
         "minimax/minimax-m3@minimax/prepaid",
         "minimax/minimax-m3@minimax/byok",
@@ -508,7 +529,7 @@ def test_minimax_public_ids_map_to_exact_upstream_ids() -> None:
         model_id = endpoint_id.partition("@")[0]
         row = _listed_row("minimax", model_id)
         if row is not None:
-            assert MODEL_ENDPOINTS[endpoint_id].upstream_id == (row.get("upstream_id") or model_id)
+            assert built[endpoint_id].upstream_id == (row.get("upstream_id") or model_id)
 
 
 def test_grok_45_uses_xai_native_model_id_and_pricing() -> None:
@@ -525,9 +546,7 @@ def test_grok_45_uses_xai_native_model_id_and_pricing() -> None:
     assert byok.upstream_id == row["upstream_id"]
     assert prepaid.prompt_price_microdollars_per_million_tokens > 0
     assert prepaid.completion_price_microdollars_per_million_tokens > 0
-    cached_prompt = prepaid.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
-    assert cached_prompt is not None
-    assert 0 < cached_prompt < prepaid.prompt_price_microdollars_per_million_tokens
+    assert prepaid.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens is not None
 
 
 @pytest.mark.parametrize("native_id", ["grok-4.6", "grok-4.7"])
@@ -551,6 +570,18 @@ def test_grok_uses_xai_native_model_id_and_long_context_pricing(native_id: str) 
     for tier in prepaid.price_tiers:
         assert tier.prompt_price_microdollars_per_million_tokens > 0
         assert tier.completion_price_microdollars_per_million_tokens > 0
+        assert tier.prompt_cached_price_microdollars_per_million_tokens is not None
+
+
+@pytest.mark.provider_health
+@pytest.mark.parametrize("native_id", ["grok-4.5", "grok-4.6", "grok-4.7"])
+def test_xai_discounts_cached_input_on_grok(native_id: str) -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    endpoint_id = f"x-ai/{native_id}@grok/prepaid"
+    if endpoint_id not in MODEL_ENDPOINTS:
+        return
+    for tier in MODEL_ENDPOINTS[endpoint_id].price_tiers:
         assert tier.prompt_cached_price_microdollars_per_million_tokens is not None
         assert (
             0
@@ -624,33 +655,25 @@ def test_qwen_38_routes_only_through_hosts_with_verified_pricing() -> None:
     assert f"{model_id}@alibaba/byok" not in MODEL_ENDPOINTS
 
 
-def test_novita_hy3_uses_live_provider_id_and_price_floor() -> None:
-    row = _listed_row("novita", "tencent/hy3")
-    if row is None:
-        return
-    model = MODELS["tencent/hy3"]
-    prepaid = MODEL_ENDPOINTS["tencent/hy3@novita/prepaid"]
-    byok = MODEL_ENDPOINTS["tencent/hy3@novita/byok"]
-    # Novita's feed prices 100x below its public table; its manifest's scale
-    # restores them before the markup.
-    scale = json.loads((_PROVIDER_MODELS_DIR / "novita.json").read_text(encoding="utf-8"))[
-        "price_scale_to_microdollars_per_million_tokens"
-    ]
+def test_novita_hy3_uses_live_provider_id_and_price_floor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    # Novita's routes built from its pinned manifest row, whatever Novita lists
+    # today. Tencent has several independent hosts, so this checks the Novita
+    # endpoint itself; the model's window is its first host's (see
+    # test_a_model_whose_author_has_no_route_advertises_its_first_hosts_window).
+    _models, endpoints = build_manifest_rows(monkeypatch, tmp_path, "novita", [NOVITA_TENCENT_HY3])
+    prepaid = endpoints["tencent/hy3@novita/prepaid"]
+    byok = endpoints["tencent/hy3@novita/byok"]
 
-    # Tencent has several independent hosts. Validate the Novita endpoint
-    # itself rather than whichever host happens to sort first on the model.
-    assert model.context_length == row["context_length"]
-    assert prepaid.upstream_id == row["upstream_id"]
-    assert byok.upstream_id == row["upstream_id"]
-    assert prepaid.prompt_price_microdollars_per_million_tokens == _customer_price(
-        row["input_token_price_per_m"] * scale
-    )
-    assert prepaid.completion_price_microdollars_per_million_tokens == _customer_price(
-        row["output_token_price_per_m"] * scale
-    )
-    assert prepaid.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == (
-        _customer_price(row["cached_input_token_price_per_m"] * scale)
-    )
+    assert prepaid.upstream_id == "tencent/hy3"
+    assert byok.upstream_id == "tencent/hy3"
+    # Novita's feed prices 100x below its public table ($0.14, $0.58 and
+    # $0.035 per million); its manifest's scale restores them before the 5.5%
+    # markup, instead of the $0.01/M floor.
+    assert prepaid.prompt_price_microdollars_per_million_tokens == 147_700
+    assert prepaid.completion_price_microdollars_per_million_tokens == 611_900
+    assert prepaid.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 36_925
 
 
 def test_minimax_empty_operator_routes_are_not_prepaid() -> None:
@@ -692,20 +715,25 @@ def test_minimax_empty_operator_routes_are_not_prepaid() -> None:
 def test_operator_unavailable_provider_routes_are_not_prepaid(
     provider: str, model_ids: tuple[str, ...]
 ) -> None:
+    from tests import catalog_vehicles
+
+    built = catalog_vehicles.registry_endpoints()
     for model_id in model_ids:
-        if f"{model_id}@{provider}/byok" not in MODEL_ENDPOINTS:
+        if f"{model_id}@{provider}/byok" not in built:
             # Provider feeds may retire the route entirely. The suppression
             # contract applies only while the provider still advertises it.
             continue
-        assert f"{model_id}@{provider}/prepaid" not in MODEL_ENDPOINTS
-        assert f"{model_id}@{provider}/byok" in MODEL_ENDPOINTS
+        assert f"{model_id}@{provider}/prepaid" not in built
+        assert f"{model_id}@{provider}/byok" in built
 
 
 def test_minimax_m3_uses_provider_native_context_tiers() -> None:
+    from tests import catalog_vehicles
+
     row = _listed_row("minimax", "minimax/minimax-m3")
     if row is None:
         return
-    prepaid = MODEL_ENDPOINTS["minimax/minimax-m3@minimax/prepaid"]
+    prepaid = catalog_vehicles.registry_endpoints()["minimax/minimax-m3@minimax/prepaid"]
 
     # The model row can come from the OpenRouter snapshot when that snapshot
     # catches up, but the provider-native MiniMax endpoint must still carry
@@ -890,6 +918,9 @@ def test_closed_provider_zdr_claims_are_route_scoped(monkeypatch: pytest.MonkeyP
 
 
 def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
+    from tests import catalog_vehicles
+
+    built = catalog_vehicles.registry_endpoints()
     quarantined_routes = [
         ("xiaomi", "xiaomi/mimo-v2-flash"),
         ("xiaomi", "xiaomi/mimo-v2-pro"),
@@ -923,7 +954,7 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
     for provider, model_id in quarantined_routes:
         assert not [
             endpoint
-            for endpoint in MODEL_ENDPOINTS.values()
+            for endpoint in built.values()
             if endpoint.provider == provider and endpoint.model_id == model_id
         ], f"{provider}/{model_id} should be quarantined"
 
@@ -933,7 +964,7 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
     for kept_model in ("openai/gpt-4.1-mini", "openai/gpt-5.5", "openai/gpt-5.6-sol"):
         assert [
             endpoint
-            for endpoint in MODEL_ENDPOINTS.values()
+            for endpoint in built.values()
             if endpoint.provider == "atlas-cloud" and endpoint.model_id == kept_model
         ] or _listed_row("atlas-cloud", kept_model) is None, (
             f"atlas-cloud/{kept_model} should remain routable"
@@ -941,7 +972,7 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
 
     # Policy (2026-07-18): Anthropic-authored models route via Anthropic only
     # for Credits — the reseller prepaid route is gone, its BYOK route stays.
-    assert "anthropic/claude-fable-5@lightning/prepaid" not in MODEL_ENDPOINTS
+    assert "anthropic/claude-fable-5@lightning/prepaid" not in built
     # Residue quarantine is provider-scoped: healthy siblings survive while
     # their providers list them.
     for endpoint_id in (
@@ -950,10 +981,10 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
         "z-ai/glm-5@zai/prepaid",
         "deepseek/deepseek-v4-pro@deepseek/prepaid",
     ):
-        assert endpoint_id in MODEL_ENDPOINTS or _delisted(endpoint_id), endpoint_id
+        assert endpoint_id in built or _delisted(endpoint_id), endpoint_id
     assert [
         endpoint
-        for endpoint in MODEL_ENDPOINTS.values()
+        for endpoint in built.values()
         if endpoint.model_id == "google/gemini-2.5-flash-lite"
         and endpoint.provider != "google-ai-studio"
     ] or _delisted("google/gemini-2.5-flash-lite@google-vertex/prepaid"), (
@@ -1044,15 +1075,18 @@ def test_deepseek_v4_pro_release_routes_are_keyed_and_credits_only() -> None:
     assert endpoint_privacy_tier(baseten) >= PRIVACY_TIER_ZERO_RETENTION
 
 
-@pytest.mark.parametrize(
-    "model_id",
-    [
-        "moonshotai/kimi-k3",
-        "z-ai/glm-5.2",
-        "minimax/minimax-m3",
-    ],
-)
-def test_current_orchestration_backups_have_zdr_routes(model_id: str) -> None:
+_ORCHESTRATION_BACKUP_IDS = ["moonshotai/kimi-k3", "z-ai/glm-5.2", "minimax/minimax-m3"]
+
+
+@pytest.mark.parametrize("model_id", _ORCHESTRATION_BACKUP_IDS)
+def test_a_zdr_floor_keeps_only_the_zdr_routes_of_orchestration_backups(
+    model_id: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Each backup on a ZDR host (Parasail) and on a host with no retention
+    # guarantee (Novita), fixture routes both, whoever lists it today. Whether
+    # each still has a ZDR route is test_current_orchestration_backups_have_zdr_routes.
+    drop_routes(monkeypatch, model_id)
+    _serve_on_fixture_routes(monkeypatch, model_id, ("parasail", "Credits"), ("novita", "Credits"))
     candidates = chat_route_endpoint_candidates(
         {
             "model": model_id,
@@ -1063,6 +1097,7 @@ def test_current_orchestration_backups_have_zdr_routes(model_id: str) -> None:
     )
 
     assert candidates
+    assert [endpoint.id for _model, endpoint in candidates] == [f"{model_id}@parasail/prepaid"]
     assert all(
         endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_ZERO_RETENTION
         for _model, endpoint in candidates
@@ -1452,6 +1487,7 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
     assert MODELS[ARISTOTLE_MODEL_ID].context_length == 1_048_576
 
 
+@pytest.mark.catalog_as_built
 def test_liberty_models_publish_verified_components_and_honest_context_limits() -> None:
     inkling_1m_available = catalog_predates(BASETEN_SEPTEMBER_2026_RETIREMENT_AT)
     expected = {
@@ -1512,13 +1548,6 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
 
     if "thinkingmachines/inkling" in MODELS:
         inkling = MODELS["thinkingmachines/inkling"]
-        # Inkling's serverless hosts currently advertise different verified
-        # windows (256K, 512K, and 1M). The canonical row follows the largest
-        # live routed endpoint, so an hourly availability refresh may
-        # legitimately move it within this range. It must still satisfy
-        # Liberty 1.0's 256K contract and must never overstate the largest
-        # verified 1M route.
-        assert 262_144 <= inkling.context_length <= 1_048_576
         endpoints = endpoints_for_model(inkling.id)
         provider_ids = {endpoint.provider for endpoint in endpoints}
         assert inkling.provider in provider_ids
@@ -1543,10 +1572,6 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
         return
     inkling_small = MODELS["thinkingmachines/inkling-small"]
     inkling_small_shape = model_to_openrouter_shape(inkling_small)
-    # The first-party route is 256K, while independent hosts can expose a
-    # larger verified window for the same weights. The canonical model follows
-    # the largest live routed endpoint and must stay within the audited range.
-    assert 262_144 <= inkling_small.context_length <= 1_048_576
     assert inkling_small.input_modalities == ("text", "image")
     assert inkling_small.output_modalities == ("text",)
     assert inkling_small_shape["architecture"]["modality"] == "text+image->text"
@@ -1705,6 +1730,7 @@ def test_zeus_versions_are_frozen_and_rolling_alias_uses_3_0() -> None:
     assert canonical_orchestration_model_id(ZEUS_MODEL_ID) == ZEUS_3_0_MODEL_ID
 
 
+@pytest.mark.catalog_as_built
 def test_openpatcher_s1_is_cataloged_as_custom_synth_preset() -> None:
     model = MODELS[OPEN_PATCHER_S1_MODEL_ID]
     shape = model_to_openrouter_shape(model)
@@ -1722,6 +1748,7 @@ def test_openpatcher_s1_is_cataloged_as_custom_synth_preset() -> None:
     ]
 
 
+@pytest.mark.catalog_as_built
 def test_openpatcher_s2_replaces_k2_with_k3_without_mutating_s1() -> None:
     s1_candidates = [model.id for model in meta_candidate_models(OPEN_PATCHER_S1_MODEL_ID)]
     s2 = MODELS[OPEN_PATCHER_S2_MODEL_ID]
@@ -1775,6 +1802,7 @@ def test_iris_versions_are_frozen_and_rolling_alias_uses_3_0() -> None:
     assert canonical_orchestration_model_id(IRIS_MODEL_ID) == IRIS_3_0_MODEL_ID
 
 
+@pytest.mark.catalog_as_built
 def test_prometheus_1m_uses_only_long_context_open_weight_components() -> None:
     model = MODELS[PROMETHEUS_1_0_1M_MODEL_ID]
     candidates = meta_candidate_models(PROMETHEUS_1_0_1M_MODEL_ID)
@@ -1782,11 +1810,9 @@ def test_prometheus_1m_uses_only_long_context_open_weight_components() -> None:
 
     assert model.name == "TrustedRouter Prometheus 1.0 1M"
     assert model.context_length == 1_048_576
-    assert candidate_ids == [
-        "xiaomi/mimo-v2.5-pro",
-        "z-ai/glm-5.2",
-        DEEPSEEK_V4_PRO_0423_MODEL_ID,
-    ]
+    # Members come from the frozen order, in it. Which of them serve 1M today
+    # is provider state: test_prometheus_1m_keeps_all_four_members_today.
+    assert candidate_ids == [m for m in SYNTH_QUALITY_1M_MODEL_ORDER if m in candidate_ids]
     assert all(candidate.context_length >= 1_000_000 for candidate in candidates)
     assert all(model_open_weights(candidate) for candidate in candidates)
 
@@ -1795,6 +1821,51 @@ def test_prometheus_1m_uses_only_long_context_open_weight_components() -> None:
     assert shape["trustedrouter"]["route_kind"] == "fusion_panel"
     assert shape["trustedrouter"]["auto_candidates"] == candidate_ids
     assert shape["trustedrouter"]["open_weights"] is True
+
+
+def test_prometheus_1m_drops_a_member_whose_window_falls_below_1m(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Fixture windows: which members serve 1M today is provider state.
+    minimax, mimo, glm, deepseek = SYNTH_QUALITY_1M_MODEL_ORDER
+
+    def serve(model_id: str, window: int) -> None:
+        model = MODELS.get(model_id) or Model(
+            id=model_id, name=model_id, provider=model_id.split("/")[0], context_length=window,
+        )
+        monkeypatch.setitem(MODELS, model_id, replace(model, context_length=window))
+
+    def members() -> list[str]:
+        return [candidate.id for candidate in meta_candidate_models(PROMETHEUS_1_0_1M_MODEL_ID)]
+
+    serve(minimax, 524_288)
+    serve(mimo, 1_048_576)
+    serve(glm, 999_999)
+    serve(deepseek, 1_000_000)
+    assert members() == [mimo, deepseek]
+    shape = model_to_openrouter_shape(MODELS[PROMETHEUS_1_0_1M_MODEL_ID])
+    assert shape["trustedrouter"]["auto_candidates"] == [mimo, deepseek]
+    assert shape["context_length"] == 1_048_576
+
+    # Back at 1M, each member returns to its place.
+    serve(glm, 1_000_000)
+    assert members() == [mimo, glm, deepseek]
+    serve(minimax, 1_000_000)
+    assert members() == [minimax, mimo, glm, deepseek]
+
+
+@pytest.mark.provider_health
+@pytest.mark.catalog_as_built
+def test_prometheus_1m_keeps_all_four_members_today() -> None:
+    """Live provider state: a member leaves Prometheus 1.0 1M when its window
+    falls below 1M or the catalog no longer offers it. provider-catalog-health.yml
+    reports it hourly, and the price refresh does not wait on it."""
+    assert [candidate.id for candidate in meta_candidate_models(PROMETHEUS_1_0_1M_MODEL_ID)] == [
+        "minimax/minimax-m3",
+        "xiaomi/mimo-v2.5-pro",
+        "z-ai/glm-5.2",
+        DEEPSEEK_V4_PRO_0423_MODEL_ID,
+    ]
 
 
 def test_prometheus_versions_are_frozen_and_rolling_alias_uses_4_0() -> None:
@@ -1868,6 +1939,7 @@ def test_trustedrouter_meta_models_are_credits_only_not_byok() -> None:
         PROMETHEUS_3_0_MODEL_ID,
     ],
 )
+@pytest.mark.catalog_as_built
 def test_trustedrouter_meta_route_expansion_is_credits_only(model_id: str) -> None:
     endpoints = chat_route_endpoint_candidates(
         {"model": model_id},
@@ -1929,6 +2001,7 @@ def test_openpatcher_and_athena_force_us_provider_routes(
     )
 
 
+@pytest.mark.catalog_as_built
 def test_openpatcher_g2_explicitly_uses_global_moonshot_k3_route() -> None:
     shape = model_to_openrouter_shape(MODELS[OPEN_PATCHER_G2_MODEL_ID])
 
@@ -1973,7 +2046,12 @@ def test_openpatcher_g1_and_g2_stay_frozen_while_g3_uses_prometheus_3() -> None:
     ])
 
 
-def test_provider_jurisdiction_filter_keeps_only_us_based_endpoints() -> None:
+def test_provider_jurisdiction_filter_keeps_only_us_based_endpoints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # GLM 5.2 on a US host and a Singapore host, fixture routes both, whoever
+    # lists it today.
+    _serve_on_fixture_routes(monkeypatch, "z-ai/glm-5.2", ("deepinfra", "Credits"), ("zai", "Credits"))
     endpoints = chat_route_endpoint_candidates(
         {"model": "z-ai/glm-5.2", "provider": {"jurisdiction": "us"}},
         Settings(environment="test"),
@@ -2319,11 +2397,6 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
         )
         xiaomi_credits[model_id] = xiaomi
 
-    if "xiaomi/mimo-v2.5-pro" in xiaomi_credits:
-        # Xiaomi documents this as a 1M context window. Live catalogs use both
-        # the binary 1,048,576 value and a rounded 1,050,000 value, so guard
-        # the public capability rather than freezing one representation.
-        assert 1_000_000 <= MODELS["xiaomi/mimo-v2.5-pro"].context_length <= 1_050_000
     # UltraSpeed is the 1T-param speed-serving tier with its own ¥9/¥18
     # ($1.305/$2.61) cost: a regen must not collapse it onto V2.5 Pro's price.
     if {"xiaomi/mimo-v2.5-pro", "xiaomi/mimo-v2.5-pro-ultraspeed"} <= xiaomi_credits.keys():
@@ -2334,21 +2407,33 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
         )
 
 
+@pytest.mark.provider_health
+def test_xiaomi_mimo_v25_pro_advertises_a_1m_context() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    # Xiaomi documents this as a 1M context window. Live catalogs use both
+    # the binary 1,048,576 value and a rounded 1,050,000 value, so guard
+    # the public capability rather than freezing one representation.
+    assert 1_000_000 <= MODELS["xiaomi/mimo-v2.5-pro"].context_length <= 1_050_000
+
+
 def test_crusoe_provider_models_follow_authoritative_manifest() -> None:
     """Crusoe availability follows its generated, credential-aware manifest."""
+    from tests import catalog_vehicles
     from trusted_router.catalog_ingest import _authoritative_provider_model_ids
 
     assert "crusoe" in PROVIDERS
     assert "crusoe" in GATEWAY_PREPAID_PROVIDER_SLUGS
     expected = _authoritative_provider_model_ids("crusoe")
+    built = catalog_vehicles.registry_endpoints()
     credits = {
         endpoint.model_id
-        for endpoint in MODEL_ENDPOINTS.values()
+        for endpoint in built.values()
         if endpoint.provider == "crusoe" and endpoint.usage_type == "Credits"
     }
     byok = {
         endpoint.model_id
-        for endpoint in MODEL_ENDPOINTS.values()
+        for endpoint in built.values()
         if endpoint.provider == "crusoe" and endpoint.usage_type == "BYOK"
     }
     assert credits == expected
@@ -2357,6 +2442,7 @@ def test_crusoe_provider_models_follow_authoritative_manifest() -> None:
 
 def test_makora_provider_models_follow_live_manifest() -> None:
     """Makora routes track its generated catalog without freezing retirements."""
+    from tests import catalog_vehicles
     from trusted_router.catalog_ingest import (
         _PROVIDER_MODELS_DIR,
         _is_provider_deprecated_model,
@@ -2383,14 +2469,15 @@ def test_makora_provider_models_follow_live_manifest() -> None:
             continue
         expected[model_id] = upstream_id
 
+    built = catalog_vehicles.registry_endpoints()
     credits_model_ids = {
         endpoint.model_id
-        for endpoint in MODEL_ENDPOINTS.values()
+        for endpoint in built.values()
         if endpoint.provider == "makora" and str(endpoint.usage_type) == "Credits"
     }
     byok_model_ids = {
         endpoint.model_id
-        for endpoint in MODEL_ENDPOINTS.values()
+        for endpoint in built.values()
         if endpoint.provider == "makora" and str(endpoint.usage_type) == "BYOK"
     }
 
@@ -2398,18 +2485,19 @@ def test_makora_provider_models_follow_live_manifest() -> None:
     assert byok_model_ids == set(expected)
     assert "qwen/qwen3.6-27b" not in credits_model_ids
     assert "openai/gpt-oss-120b" not in credits_model_ids
+    models = catalog_vehicles.registry_models()
     for model_id, upstream in expected.items():
-        model = MODELS.get(model_id)
+        model = models.get(model_id)
         assert model is not None, f"{model_id} missing from catalog"
         credits = [
             e
             for e in endpoints_for_model(model_id)
-            if str(e.usage_type) == "Credits" and e.provider == "makora"
+            if str(e.usage_type) == "Credits" and e.provider == "makora" and e.id in built
         ]
         byok = [
             e
             for e in endpoints_for_model(model_id)
-            if str(e.usage_type) == "BYOK" and e.provider == "makora"
+            if str(e.usage_type) == "BYOK" and e.provider == "makora" and e.id in built
         ]
         assert credits, f"{model_id} has no makora prepaid endpoint"
         assert byok, f"{model_id} has no makora BYOK endpoint"
@@ -2424,12 +2512,14 @@ def test_makora_provider_prices_follow_published_lineup() -> None:
     to the checked-in provider-native manifest rather than freezing a stale
     homepage price table into source code.
     """
+    from tests import catalog_vehicles
     from trusted_router.catalog_ingest import (
         _PROVIDER_MODELS_DIR,
         _is_provider_deprecated_model,
     )
     from trusted_router.pricing import _customer_price
 
+    built = catalog_vehicles.registry_endpoints()
     raw = json.loads((_PROVIDER_MODELS_DIR / "makora.json").read_text(encoding="utf-8"))
     expected_prices = {
         row["id"]: (
@@ -2449,7 +2539,7 @@ def test_makora_provider_prices_follow_published_lineup() -> None:
         credits = [
             e
             for e in endpoints_for_model(model_id)
-            if str(e.usage_type) == "Credits" and e.provider == "makora"
+            if str(e.usage_type) == "Credits" and e.provider == "makora" and e.id in built
         ]
         assert credits, f"{model_id} has no makora prepaid endpoint"
         endpoint = credits[0]
@@ -2575,10 +2665,24 @@ def test_wafer_manifest_drives_zdr_routing_and_gateway_enforcement(
     }
 
 
-def test_glm_52_supplements_publish_current_model_across_providers() -> None:
-    model_id = "z-ai/glm-5.2"
-    model = MODELS[model_id]
+def _glm_52_as_built(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> tuple[Model, dict[str, ModelEndpoint]]:
+    """GLM 5.2 as the catalog builds it from pinned data, whatever the hosts
+    list today: the model from OpenRouter's snapshot entry, and each host's
+    routes from its manifest row."""
+    snapshot = tmp_path / "openrouter_snapshot.json"
+    snapshot.write_text(json.dumps({"models": [OPENROUTER_GLM_5_2]}), encoding="utf-8")
+    with monkeypatch.context() as patch:
+        patch.setattr(catalog_ingest, "_INGEST_PATH", snapshot)
+        models, _ = catalog_ingest._ingested_models_and_endpoints()
+    endpoints: dict[str, ModelEndpoint] = {}
+    for provider, row in GLM_5_2_ROUTES:
+        endpoints |= build_manifest_rows(monkeypatch, tmp_path / provider, provider, [row])[1]
+    return models["z-ai/glm-5.2"], endpoints
 
+
+def _assert_glm_52_contract(model: Model, endpoints: dict[str, ModelEndpoint]) -> None:
     assert model.provider == "zai"
     # The context window comes from Z.AI's own endpoint, independent of
     # whichever reseller OpenRouter ranks as top_provider at refresh time.
@@ -2586,51 +2690,85 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     assert model.supports_chat
     # Each host that lists the model serves a priced prepaid route on the exact
     # upstream id its own manifest names; Z.AI's BYOK route uses Z.AI's id.
-    for endpoint_id in (
-        f"{model_id}@zai/prepaid",
-        f"{model_id}@zai/byok",
-        *(
-            f"{model_id}@{provider}/prepaid"
-            for provider in (
-                "gmi", "deepinfra", "fireworks", "novita", "phala", "siliconflow",
-                "together", "venice", "parasail", "friendli", "baseten",
-            )
-        ),
-    ):
-        row = _listed_row(endpoint_id.partition("@")[2].split("/")[0], model_id)
-        if row is None:
-            continue
-        endpoint = MODEL_ENDPOINTS[endpoint_id]
-        assert endpoint.upstream_id == row["upstream_id"], endpoint_id
-        assert endpoint.prompt_price_microdollars_per_million_tokens > 0, endpoint_id
-        assert endpoint.completion_price_microdollars_per_million_tokens > 0, endpoint_id
-    fireworks = [
-        endpoint for endpoint in endpoints_for_model(model_id)
-        if endpoint.provider == "fireworks" and endpoint.usage_type == "Credits"
-    ]
-    if not catalog_predates(FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT):
-        assert fireworks == []
+    for provider, row in GLM_5_2_ROUTES:
+        for usage in ("prepaid", "byok") if provider == "zai" else ("prepaid",):
+            endpoint_id = f"{model.id}@{provider}/{usage}"
+            endpoint = endpoints[endpoint_id]
+            assert endpoint.upstream_id == row["upstream_id"], endpoint_id
+            assert endpoint.prompt_price_microdollars_per_million_tokens > 0, endpoint_id
+            assert endpoint.completion_price_microdollars_per_million_tokens > 0, endpoint_id
+
+
+def test_glm_52_supplements_publish_current_model_across_providers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    _assert_glm_52_contract(*_glm_52_as_built(monkeypatch, tmp_path))
 
 
 @pytest.mark.parametrize("context_length", [131_072, 262_144, 1_000_000])
 def test_glm_52_context_contract_rejects_smaller_windows(
-    monkeypatch: pytest.MonkeyPatch, context_length: int
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, context_length: int
 ) -> None:
-    monkeypatch.setitem(
-        MODELS, "z-ai/glm-5.2", replace(MODELS["z-ai/glm-5.2"], context_length=context_length)
-    )
+    model, endpoints = _glm_52_as_built(monkeypatch, tmp_path)
     with pytest.raises(AssertionError):
-        test_glm_52_supplements_publish_current_model_across_providers()
+        _assert_glm_52_contract(replace(model, context_length=context_length), endpoints)
 
 
-def _assert_parasail_route_follows_its_row(model_id: str) -> dict[str, Any] | None:
+def _model_built_from_snapshot_entry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, entry: dict[str, Any],
+) -> Model:
+    """The model the catalog builds from one pinned OpenRouter snapshot entry."""
+    snapshot = tmp_path / "openrouter_snapshot.json"
+    snapshot.write_text(json.dumps({"models": [entry]}), encoding="utf-8")
+    with monkeypatch.context() as patch:
+        patch.setattr(catalog_ingest, "_INGEST_PATH", snapshot)
+        models, _ = catalog_ingest._ingested_models_and_endpoints()
+    return models[entry["id"]]
+
+
+@pytest.mark.parametrize(
+    ("entry", "host"),
+    [(OPENROUTER_TENCENT_HY3, "novita"), (OPENROUTER_QWEN_3_5_397B, "parasail")],
+    ids=["tencent/hy3", "qwen/qwen3.5-397b-a17b"],
+)
+def test_a_model_whose_author_has_no_route_advertises_its_first_hosts_window(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, entry: dict[str, Any], host: str,
+) -> None:
+    """Neither tencent nor qwen has a route mapping of its own
+    (catalog_ingest._AUTHOR_TO_PROVIDER_SLUG), so the model's default route is
+    the first host OpenRouter lists, DeepInfra here, and the model advertises
+    that host's window (#966), not the window of another host that serves it,
+    such as Novita or Parasail, whose routes other tests here check."""
+
+    def built_with(slug: str, window: int) -> Model:
+        endpoints = [
+            {**endpoint, "context_length": window}
+            if endpoint["tr_provider_slug"] == slug
+            else endpoint
+            for endpoint in entry["endpoints"]
+        ]
+        return _model_built_from_snapshot_entry(
+            monkeypatch, tmp_path, {**entry, "endpoints": endpoints}
+        )
+
+    model = _model_built_from_snapshot_entry(monkeypatch, tmp_path, entry)
+    assert model.provider == "deepinfra"
+    assert model.context_length == 262_144
+    assert built_with(host, 131_072).context_length == 262_144
+    assert built_with("deepinfra", 131_072).context_length == 131_072
+
+
+def _assert_parasail_route_follows_its_row(model_id: str) -> None:
     """Parasail serves some models under its own deployment ids: each route it
     lists uses that exact id and its published price, marked up."""
+    from tests import catalog_vehicles
+
     row = _listed_row("parasail", model_id)
     if row is None:
-        return None
-    prepaid = MODEL_ENDPOINTS[f"{model_id}@parasail/prepaid"]
-    byok = MODEL_ENDPOINTS[f"{model_id}@parasail/byok"]
+        return
+    built = catalog_vehicles.registry_endpoints()
+    prepaid = built[f"{model_id}@parasail/prepaid"]
+    byok = built[f"{model_id}@parasail/byok"]
     assert prepaid.upstream_id == row["upstream_id"]
     assert byok.upstream_id == row["upstream_id"]
     assert prepaid.prompt_price_microdollars_per_million_tokens == _customer_price(
@@ -2639,13 +2777,24 @@ def _assert_parasail_route_follows_its_row(model_id: str) -> dict[str, Any] | No
     assert prepaid.completion_price_microdollars_per_million_tokens == _customer_price(
         row["output_token_price_per_m"]
     )
-    return row
 
 
-def test_parasail_qwen_397b_uses_working_native_upstream_id() -> None:
-    row = _assert_parasail_route_follows_its_row("qwen/qwen3.5-397b-a17b")
-    if row is not None:
-        assert MODELS["qwen/qwen3.5-397b-a17b"].context_length == row["context_length"]
+def test_parasail_qwen_397b_uses_working_native_upstream_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    # Parasail's routes built from its pinned manifest row, whatever Parasail
+    # lists today: its own deployment id, at its published $0.50/$3.60 per
+    # million plus the 5.5% markup. The model's window is its first host's (see
+    # test_a_model_whose_author_has_no_route_advertises_its_first_hosts_window).
+    _models, endpoints = build_manifest_rows(
+        monkeypatch, tmp_path, "parasail", [PARASAIL_QWEN_3_5_397B]
+    )
+    prepaid = endpoints["qwen/qwen3.5-397b-a17b@parasail/prepaid"]
+    byok = endpoints["qwen/qwen3.5-397b-a17b@parasail/byok"]
+    assert prepaid.upstream_id == "parasail-qwen35-397b-a17b"
+    assert byok.upstream_id == "parasail-qwen35-397b-a17b"
+    assert prepaid.prompt_price_microdollars_per_million_tokens == 527_500
+    assert prepaid.completion_price_microdollars_per_million_tokens == 3_798_000
 
 
 def test_parasail_glm_53_routes_publish_verified_prices() -> None:
@@ -2673,10 +2822,10 @@ def test_model_shape_publishes_cache_read_price_when_tiers_carry_one() -> None:
 
     shape = model_to_openrouter_shape(model)
 
-    cached = shape["pricing"]["input_cache_read"]
-    prompt = shape["pricing"]["prompt"]
-    assert float(cached) > 0
-    assert float(cached) < float(prompt)
+    # Dollars per token: the tier's microdollars per million tokens over 10**12.
+    assert Decimal(shape["pricing"]["input_cache_read"]) == (
+        Decimal(tiers[0].prompt_cached_price_microdollars_per_million_tokens) / Decimal(10**12)
+    )
 
 
 def test_model_shape_omits_cache_read_price_when_absent() -> None:
@@ -2788,6 +2937,37 @@ def test_the_combo_badges_still_follow_their_open_and_closed_components() -> Non
         assert model_open_weights(MODELS[model_id]), model_id
     for model_id in _CLOSED_WEIGHT_BADGE_IDS:
         assert not model_open_weights(MODELS[model_id]), model_id
+
+
+@pytest.mark.provider_health
+@pytest.mark.parametrize("model_id", _ORCHESTRATION_BACKUP_IDS)
+def test_current_orchestration_backups_have_zdr_routes(model_id: str) -> None:
+    candidates = chat_route_endpoint_candidates(
+        {
+            "model": model_id,
+            "messages": [{"role": "user", "content": "PONG"}],
+            "provider": {"min_privacy": "zdr"},
+        },
+        Settings(environment="test"),
+    )
+
+    assert candidates
+    assert all(
+        endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_ZERO_RETENTION
+        for _model, endpoint in candidates
+    )
+
+
+@pytest.mark.provider_health
+def test_inkling_windows_stay_within_their_hosts_verified_range() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it. Inkling's hosts advertise different
+    # verified windows (256K, 512K and 1M), and each canonical row follows its
+    # largest live routed endpoint: at least Liberty 1.0's 256K, and no more
+    # than the largest window a host is verified to serve.
+    for model_id in ("thinkingmachines/inkling", "thinkingmachines/inkling-small"):
+        if model_id in MODELS:
+            assert 262_144 <= MODELS[model_id].context_length <= 1_048_576, model_id
 
 
 @pytest.mark.provider_health

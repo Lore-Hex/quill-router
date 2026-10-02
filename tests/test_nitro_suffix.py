@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests.fixture_routes import drop_routes, serve_on_fixture_route
 from trusted_router.config import Settings
 from trusted_router.routing import (
     _routing_for_body,
@@ -68,8 +69,12 @@ def test_nitro_suffix_wins_over_body_provider_sort() -> None:
     assert prefs.sort == "throughput"
 
 
-def test_nitro_composes_with_provider_only_filter() -> None:
+def test_nitro_composes_with_provider_only_filter(monkeypatch: pytest.MonkeyPatch) -> None:
     """Suffix sets sort, but doesn't disable other provider filters."""
+    # GLM 4.6 on Z.AI and on a reseller, fixture routes both, whoever lists it today.
+    drop_routes(monkeypatch, "z-ai/glm-4.6")
+    for host in ("zai", "deepinfra"):
+        serve_on_fixture_route(monkeypatch, "z-ai/glm-4.6", host, author="zai")
     candidates = chat_route_endpoint_candidates(
         {
             "model": "z-ai/glm-4.6:nitro",
@@ -81,10 +86,13 @@ def test_nitro_composes_with_provider_only_filter() -> None:
     assert all(endpoint.provider == "zai" for _model, endpoint in candidates)
 
 
-def test_nitro_on_single_provider_model_does_not_error() -> None:
+def test_nitro_on_single_provider_model_does_not_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """Models with a single inference provider can't gain anything from
     :nitro, but the suffix shouldn't break the request — it should
     no-op gracefully."""
+    # GLM 4.6 on Z.AI alone, a fixture route, whoever lists it today.
+    drop_routes(monkeypatch, "z-ai/glm-4.6")
+    serve_on_fixture_route(monkeypatch, "z-ai/glm-4.6", "zai", author="zai")
     cands_plain = chat_route_endpoint_candidates(
         {"model": "z-ai/glm-4.6"}, Settings(environment="test")
     )
