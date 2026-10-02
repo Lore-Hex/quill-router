@@ -1,8 +1,9 @@
 # ClickHouse high availability (GCP analytics cluster)
 
-Status: **measured 2026-10-01, 18:47–19:10 UTC; plan proposed, nothing in
-production changed.** The only code on this branch is a client-side endpoint
-failover that does nothing until a second endpoint is configured (§4).
+Status: **measured 2026-10-01, 18:47–19:10 UTC. Decided 2026-10-02: stay
+self-managed and close the holes.** The only code on this branch is a
+client-side endpoint failover that does nothing until a second endpoint is
+configured (§4). The fixes land as separate pull requests; §4 lists them.
 
 Scope: the GCP cluster `tr-clickhouse-1/2/3`. The AWS-EU and Azure deployments
 run their own single ClickHouse nodes and were not measured here.
@@ -42,10 +43,9 @@ already replicated, it is cheaper at every modelled volume, and the holes are
 days of work. Revisit ClickHouse Cloud only if the capacity test after the G6
 fixes shows the single shard cannot carry 20× today's volume.
 
-**The decision you need to make:** stay self-managed and close the holes
-(recommended), or migrate analytics to ClickHouse Cloud (about $1.0–1.5k a month
-of new cash spend at today's volume, §3.3). Everything else here is engineering
-work that follows from that choice.
+**Decision (Joseph, 2026-10-02):** stay self-managed and close the holes.
+Migrating to ClickHouse Cloud would have added about $1.0–1.5k a month of new
+cash spend at today's volume (§3.3).
 
 ## 1. Measured topology
 
@@ -324,13 +324,22 @@ not: a rollup or snapshot job that replaces a whole partition can finish after
 a newer one and overwrite fresher results with older ones, so two hosts must
 never publish at once. That is why takeover below is fenced and manual.
 
-1. Now: install the same units on tr-clickhouse-2, **disabled**, with a
-   runbook step to `systemctl enable --now` them, and the node-local
-   `_staging` tables there. `clickhouse_live_ingestion.sh` already takes
-   `NAME`/`ZONE`; `clickhouse_operational_analytics.sh` needs a worker-index
-   parameter in place of `node_ssh 0` at `:102-183` and `:239-240`.
-   Recovery then takes minutes once someone is paged, well inside the 7-day
-   outbox TTL.
+1. Now: a standby worker host and a durable role fence.
+   - Install the same units on tr-clickhouse-2, **disabled**, and the
+     node-local `_staging` tables there. `clickhouse_live_ingestion.sh`
+     already takes `NAME`/`ZONE`; `clickhouse_operational_analytics.sh` needs
+     a worker-index parameter in place of `node_ssh 0` at `:102-183` and
+     `:239-240`.
+   - Give every worker unit on every node, drains and timer-driven jobs alike,
+     an `ExecCondition=` that reads the instance metadata key
+     `tr-clickhouse-role` from the metadata server and refuses to start
+     unless the value is exactly `publisher`; a failed read also refuses. Set
+     node 1 to `publisher` and nodes 2 and 3 to `standby`. A stopped unit is
+     not a fence: enabled timers start again after a reboot, and the
+     public-snapshot timer fires 30 s after boot (`OnBootSec=30s`; the
+     calendar timers are `Persistent=true` and catch up on boot). Instance
+     metadata survives reboots and can be changed while the VM is stopped, so
+     the role key fences a node before it boots.
 2. Not now: unattended takeover. A lease row cannot fence a publication that
    is already inside ClickHouse. An old holder can pass any lease or epoch
    check, submit `REPLACE PARTITION`, and stall in the server; killing the
@@ -344,14 +353,41 @@ never publish at once. That is why takeover below is fenced and manual.
    with the swap refusing stale epochs) and an authoritative lease clock.
    Design that before building it. Until then takeover stays manual (item 1)
    with an explicit fence, in order:
-   1. Stop the old publisher: stop node 1's worker units and timers, or stop
-      the VM if node 1 is unreachable.
-   2. Drain its writes from the server side: on every replica,
-      `KILL QUERY WHERE user = 'tr' SYNC` for queries from the worker user, then
-      confirm `system.processes` and `system.mutations` (`is_done = 0`) show
-      none from it, and that `system.replication_queue` has no pending
-      `REPLACE_RANGE` from node 1.
-   3. Only then enable the standby units on node 2 (`systemctl enable --now`).
+   1. Fence node 1 durably. Set its `tr-clickhouse-role` to `standby`
+      (`gcloud compute instances add-metadata`, which works whether the VM is
+      running or stopped). Then end what is already running. If node 1 is
+      reachable, `systemctl disable --now` its worker timers and services and
+      confirm none is active. If it is not reachable, stop the VM and confirm
+      its status is `TERMINATED`; a stopped VM cannot commit anything. The
+      fence stays until an explicit failback; a reboot does not lift it.
+   2. End server-side work from the worker user. If node 1 is running, run
+      `KILL QUERY WHERE user = 'tr' SYNC` on every replica, then confirm that
+      `system.processes` lists no query from `tr` and `system.mutations` has
+      no unfinished (`is_done = 0`) mutation from it. If node 1 is
+      `TERMINATED`, run these checks on nodes 2 and 3 only. Cancelling a query
+      does not withdraw what it already wrote to the replication log: a
+      `REPLACE_RANGE` that reached Keeper still executes on every replica
+      (reproduced in review). Step 3 waits for those entries.
+   3. Pull-and-drain barrier on node 2. For every replicated table in `tr`,
+      raw sources and publications alike, run
+      `SYSTEM SYNC REPLICA tr.<table> LIGHTWEIGHT` with a bounded
+      `receive_timeout`; every one must succeed. The statement pulls new
+      entries from the replication log in Keeper, then waits for the fetch,
+      attach, replace and drop entries among them. An empty
+      `system.replication_queue` is not evidence: entries not yet pulled from
+      Keeper do not appear in it (reproduced in review). If a sync cannot
+      finish because its entries need parts that only node 1 holds
+      (`last_exception` says no active replica has the part), stop there. A
+      rollup recomputed from incomplete raw tables replaces complete
+      aggregates with smaller ones (reproduced in review: 3 became 1).
+      Recover node 1, or its disk from a snapshot, first.
+   4. Enable node 2. Set its `tr-clickhouse-role` to `publisher`, then
+      `systemctl enable --now` its worker units, and confirm the drain lag on
+      `/status.json` recovers.
+
+   Rejoining node 1: leave its role at `standby` and start it. Its replicated
+   tables catch up from the replication log, and the role check refuses its
+   worker units. Failback is the same four steps with the two nodes swapped.
    Recovery takes minutes once someone is paged, well inside the 7-day outbox
    TTL.
 3. Drill: `clickhouse_failover_smoke.sh:16` defaults to node 3 and checks reads
@@ -381,8 +417,17 @@ reads hang and then fail.
    FROM system.replicas WHERE database = 'tr'` (17 = the replicated tables
    today; keep that number in the same change that adds or drops a replicated
    table). ClickHouse returns an error status for a thrown exception, so the
-   check marks the replica unhealthy. The freshest writable replicas still
-   pass, so lag alone cannot empty the backend set. The handler runs as a
+   check marks the replica unhealthy. `absolute_delay` is this replica's own
+   replication delay, not its distance from the freshest peer, and
+   `system.replicas` has no relative-delay column. So when every replica is
+   behind, for example after the writer is lost with parts only it held
+   still queued for fetching, every check fails. The load balancer then
+   treats all backends as eligible (GCP's documented behaviour for an
+   internal passthrough load balancer without a failover policy; see
+   [traffic distribution](https://docs.cloud.google.com/load-balancing/docs/internal/int-netlb-traffic-distribution)),
+   so reads continue, stale, exactly as they would without the check. Keep
+   it that way: a failover policy that drops traffic when every backend is
+   unhealthy would turn that case into failed reads. The handler runs as a
    dedicated read-only user granted `SELECT ON system.replicas` and
    `SHOW TABLES ON tr.*`: `system.replicas` filters rows by the user's table
    visibility, so without the second grant an unhealthy replica's rows are
@@ -392,7 +437,7 @@ reads hang and then fail.
    Terraform in §3.2 points the check at this path.
 2. Client failover: committed on this branch (§4); turn it on by setting the
    two URLs to the load balancer followed by the three replicas.
-3. `scripts/deploy/rollout.sh:341-347`: fail the rollout when the
+3. Done (#1467): `scripts/deploy/rollout.sh` fails the rollout when the
    load-balancer address cannot be resolved, instead of pinning every reader
    to node 1.
 
@@ -432,9 +477,9 @@ whether `text_log` keeps 30 or 7 days) and removes the fixed growth.
   half-hourly run is a full `FINAL` scan (5.4 GB now).
   Bound it by the source rows' `created_at` range or add a `bloom_filter` skip
   index on `generation_id` (`clickhouse/operational_fingerprint.py:101-106`).
-- Leaderboard evidence (§2.3): precompute the per-route ranks in the hourly
-  rollup, or raise the cap from 256 MiB to 1 GiB (node 1 has 9–12 GB
-  available).
+- Leaderboard evidence (§2.3): the cap is raised from 256 MiB to 1 GiB
+  (#1467; node 1 has 9–12 GB available). Precomputing the per-route ranks in
+  the hourly rollup remains the fix that does not grow with volume.
 
 **G7. Rebuilding a node can silently break replication (medium).**
 - `clickhouse_live_ingestion.sh:90-93` applies `001_…` and `002_…`, which create
@@ -443,8 +488,9 @@ whether `text_log` keeps 30 or 7 days) and removes the fixed growth.
   write to a table that never replicates. Apply the replicated DDL (003, 005)
   or `ON CLUSTER` instead, and refuse when the canonical engine is not
   `Replicated*`.
-- `clickhouse_startup.sh:35` installs whatever the `stable` channel has. A
-  replacement node today would not be 26.7.1.1315. Pin the version.
+- Done (#1467): `clickhouse_startup.sh` installed whatever the `stable`
+  channel had, so a replacement node would not have been 26.7.1.1315. It now
+  pins that version.
 - `tr_ops_ingest` exists only on node 1 (`clickhouse_operational_writer.sh:16`
   targets one node). Re-enabling the retired direct sink through the load
   balancer would fail authentication on two of three connections. Loop over
@@ -550,6 +596,10 @@ resource "google_compute_region_backend_service" "clickhouse_http" {
 }
 ```
 
+Neither resource sets a failover policy. With one that drops traffic when
+every backend is unhealthy, the all-replicas-behind case in G2 would fail
+reads instead of spreading them over all three nodes.
+
 The VMs, disks, snapshot policy, firewall rules and instance groups should be
 adopted the same way, one reviewed import at a time. Importing a VM with a
 wrong boot-disk or metadata attribute can plan a replacement, so each import's
@@ -597,10 +647,9 @@ a channel those credits cover (not checked).
    (sharding, rebalancing, distributed queries). ClickHouse Cloud's single
    logical table on object storage is then worth its compute premium.
 
-**Decision for the human:** stay self-managed and close the holes
-(recommended), or migrate to ClickHouse Cloud. If self-managed, the next work
-is G1 step 1, G2 and G5, which change only node configuration and the load
-balancer, not the application.
+**Decision (2026-10-02):** stay self-managed and close the holes. The first
+work is G1 item 1, G2 and G5, which change only node configuration and the
+load balancer, not the application.
 
 ## 4. Preparation committed on this branch
 
@@ -650,11 +699,11 @@ the firewall already admits the VPC ranges, so no node change is needed.
 
 | Hole | Change |
 |---|---|
-| G1 | Worker host as a parameter in `scripts/deploy/clickhouse_operational_analytics.sh:102-183,239-240`; standby units and `_staging` tables installed disabled on node 2; a runbook with the three fence steps (stop node 1's publishers, server-side `KILL QUERY` and verification of `system.processes` / `system.mutations` / `system.replication_queue`, then enable node 2). Node-1 mode in `scripts/deploy/clickhouse_failover_smoke.sh:16`. Unattended takeover waits for a publication-side fence design (item 2). |
-| G2 | `scripts/deploy/rollout.sh:339-347`: endpoint list, and fail instead of falling back to `10.128.15.214`. The Terraform in §3.2. |
+| G1 | Worker host as a parameter in `scripts/deploy/clickhouse_operational_analytics.sh:102-183,239-240`; standby units and `_staging` tables installed disabled on node 2; a role-check `ExecCondition=` on every worker unit, reading the `tr-clickhouse-role` instance metadata key; a runbook with the four takeover steps (durable fence, server-side `KILL QUERY` and checks, `SYSTEM SYNC REPLICA` barrier on every replicated table, enable node 2) and the rejoin rule. Node-1 mode in `scripts/deploy/clickhouse_failover_smoke.sh:16`. Unattended takeover waits for a publication-side fence design (item 2). |
+| G2 | `scripts/deploy/rollout.sh`: endpoint list. Failing the rollout instead of falling back to `10.128.15.214` is done (#1467). The `/tr_health` handler and its user; the Terraform in §3.2. |
 | G3 | `--insert_quorum=2 --async_insert=0` in `clickhouse/ingest_outbox.py:214-223` and `clickhouse/ingest_operational_outbox.py:541-556`. |
 | G4 | `<prometheus>` block added by `scripts/deploy/clickhouse_cluster.sh:189-230`; Ops Agent receiver installed at `:277-291`; alert policies in Terraform. |
 | G5 | New `config.d/tr-system-logs.xml` written by `scripts/deploy/clickhouse_cluster.sh:232-250`, restarted one node at a time. |
-| G6 | `clickhouse/operational_fingerprint.py:101-106` (time-bounded lookup); `clickhouse/build_public_snapshots.py:125-160` (rank in the rollup, or a 1 GiB cap). |
-| G7 | `scripts/deploy/clickhouse_live_ingestion.sh:90-93` (replicated DDL, refuse non-replicated engines); `scripts/deploy/clickhouse_startup.sh:35` (pin the version); `scripts/deploy/clickhouse_operational_writer.sh:16` (all nodes). |
+| G6 | `clickhouse/operational_fingerprint.py:101-106` (time-bounded lookup). The leaderboard query's 1 GiB cap is done (#1467); ranking in the rollup remains the volume-proof fix. |
+| G7 | `scripts/deploy/clickhouse_live_ingestion.sh:90-93` (replicated DDL, refuse non-replicated engines); `scripts/deploy/clickhouse_operational_writer.sh:16` (all nodes). Pinning the version in `scripts/deploy/clickhouse_startup.sh` is done (#1467). |
 | G8 | `clickhouse/archive_daily.py:90-164` (add the client telemetry datasets). |
