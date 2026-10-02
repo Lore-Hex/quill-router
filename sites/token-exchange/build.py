@@ -159,9 +159,7 @@ def build(output: Path) -> None:
     shutil.copyfile(HERE / "art" / "river-close.webp", assets / "river-close.webp")
     static = ROOT / "src/trusted_router/static"
     for source, target in {
-        "enterprise/token-exchange-hero.webp": "exchange.webp",
         "fonts/archivo-latin.woff2": "archivo.woff2",
-        "fonts/ibm-plex-mono-400-latin.woff2": "plex.woff2",
         "trustedrouter-mark-dark.svg": "mark.svg",
         "provider-logos/openai.png": "provider-openai.png",
         "provider-logos/anthropic.png": "provider-anthropic.png",

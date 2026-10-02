@@ -1,5 +1,6 @@
 import copy
 import json
+import re
 import tempfile
 import unittest
 from html.parser import HTMLParser
@@ -452,7 +453,14 @@ class ExchangeTests(unittest.TestCase):
                 self.assertIn(
                     market["domain"], (output / market["slug"] / "sitemap.xml").read_text()
                 )
-            self.assertTrue((output / "assets/exchange.webp").is_file())
+            # Every copied asset is referenced by the built pages, styles or scripts, and nothing
+            # referenced is missing.
+            assets = output / "assets"
+            referenced = set()
+            for path in [*output.glob("*/index.html"), *assets.glob("*.css"), *assets.glob("*.js")]:
+                referenced.update(re.findall(r"/assets/([A-Za-z0-9._-]+)", path.read_text()))
+            self.assertLessEqual({"exchange.css", "archivo.woff2", "river-close.webp", "mark.svg"}, referenced)
+            self.assertEqual({path.name for path in assets.iterdir()}, referenced)
 
 
 if __name__ == "__main__":
