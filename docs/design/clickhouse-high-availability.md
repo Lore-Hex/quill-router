@@ -502,7 +502,12 @@ This frees roughly 26–36 GB on node 1 (depending on whether `text_log` keeps
   generation stored under another `created_at` (both survive `FINAL`, because
   `created_at` is in the sort key), and a `bloom_filter` skip index passes
   almost every granule when tested against thousands of IDs. The verifier now
-  reports a generation stored under two sort keys as `duplicated`.
+  reports a generation stored under two sort keys as `duplicated`. Lightweight
+  deletes on this table now fail (code 344), on purpose: with
+  `lightweight_mutation_projection_mode = 'rebuild'` a read routed to the
+  projection still returned a deleted row until the next merge, and with
+  `'drop'` the touched part lost its projection (26.7.1.1315). Delete rows here
+  with `ALTER TABLE ... DELETE`, which rewrites the projection with the part.
 - Leaderboard evidence (§2.3): the cap is raised from 256 MiB to 1 GiB
   (#1467; node 1 has 9–12 GB available). Precomputing the per-route ranks in
   the hourly rollup remains the fix that does not grow with volume.

@@ -293,3 +293,16 @@ def test_the_projection_migration_matches_the_lookup() -> None:
     assert statements and all(
         line == "ALTER TABLE tr.activity_generations ON CLUSTER trustedrouter" for line in statements
     )
+
+
+def test_the_projection_migration_leaves_lightweight_deletes_refused() -> None:
+    # 'rebuild' let projection reads return a deleted row until the next merge,
+    # and 'drop' left the touched part without its projection (26.7.1.1315).
+    # Deletions on this table use ALTER TABLE ... DELETE instead.
+    migration = (
+        Path(__file__).resolve().parents[1]
+        / "clickhouse/023_activity_generation_id_projection_replicated.sql"
+    ).read_text()
+    sql = "\n".join(line for line in migration.splitlines() if not line.lstrip().startswith("--"))
+    assert "lightweight_mutation_projection_mode" not in sql
+    assert "ALTER TABLE ... DELETE" in migration
