@@ -1023,6 +1023,7 @@ def _supplemental_provider_models_and_endpoints(
     models: dict[str, Model] = {}
     endpoints: dict[str, ModelEndpoint] = {}
     for provider_slug in (
+        "abliterate",
         "system1models",
         "system1models-eu",
         "novita",

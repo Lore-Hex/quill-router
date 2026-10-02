@@ -151,6 +151,7 @@ PROVIDER_SLUGS = [
     "nextbit",
     "akashml",
     "mancer",
+    "abliterate",
     "aion_labs",
     "sambanova",
     "arcee",
