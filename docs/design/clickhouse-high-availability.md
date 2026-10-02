@@ -315,13 +315,14 @@ the load balancer exist (`clickhouse_cluster.sh` built them in July–August
 ### 3.1 The holes
 
 **G1. One host does all writing and all worker jobs (high).**
-Evidence: §1.2–1.3. Effect: §Summary. The workers are idempotent, so a second
-copy running during a takeover is safe: rows are deduplicated by
-`ReplacingMergeTree` and read with `FINAL`, outbox deletes are by key, archive
-objects are write-once by precondition, and rollups replace whole partitions
-with deterministic recomputation. The one exception is the diagnostic
-`operational_outbox_quarantine` table (plain `ReplicatedMergeTree`), which
-could record a poison row twice.
+Evidence: §1.2–1.3. Effect: §Summary. The outbox drains tolerate a second
+copy: rows are deduplicated by `ReplacingMergeTree` and read with `FINAL`,
+outbox deletes are by key, and archive objects are write-once by precondition
+(the diagnostic `operational_outbox_quarantine` table, plain
+`ReplicatedMergeTree`, could record a poison row twice). The publishers do
+not: a rollup or snapshot job that replaces a whole partition can finish after
+a newer one and overwrite fresher results with older ones, so two hosts must
+never publish at once. That is why takeover below is fenced and manual.
 
 1. Now: install the same units on tr-clickhouse-2, **disabled**, with a
    runbook step to `systemctl enable --now` them, and the node-local
@@ -330,27 +331,29 @@ could record a poison row twice.
    parameter in place of `node_ssh 0` at `:102-183` and `:239-240`.
    Recovery then takes minutes once someone is paged, well inside the 7-day
    outbox TTL.
-2. Next: an active/standby lease so the standby takes over unattended. Use a
-   `tr_entities` row (`kind='clickhouse_worker_lease'`) updated in a Spanner
-   read-write transaction: holder, expiry 60 s, renewed every 15 s. The drains
-   check it each loop; each timer gets `ExecCondition=` running
-   `python -m clickhouse.worker_lease --check`, so a non-holder skips cleanly.
-   Takeover time ≤ 60 s plus one cycle. Do not reuse the
-   `operational_outbox_heartbeat` row: both hosts would write it, and it
-   cannot tell a standby whether someone else is alive.
-
-   A lease alone does not fence a job that started before it expired. A
-   rollup can outlive the 60 s lease and run its `REPLACE PARTITION` after the
-   standby has published fresher results; each job's parity check uses its own
-   source snapshot, so both pass and the older publication replaces newer
-   aggregates. Idempotent recomputation does not make that overlap safe. So:
-   give every worker unit a `RuntimeMaxSec=` well under its timer period, have
-   a new holder wait out the longest `RuntimeMaxSec` after the previous lease
-   expires before it publishes, and have each publishing step re-read the
-   lease immediately before `REPLACE PARTITION` or its `INSERT`, aborting
-   unless it still holds the same lease epoch (the epoch increments on every
-   takeover). Either guard alone leaves a gap; together they bound the overlap
-   to zero.
+2. Not now: unattended takeover. A lease row cannot fence a publication that
+   is already inside ClickHouse. An old holder can pass any lease or epoch
+   check, submit `REPLACE PARTITION`, and stall in the server; killing the
+   worker process does not stop the server-side statement, cancellation is not
+   guaranteed for every query stage, and the statement can complete after a
+   standby has published fresher results, replacing them with older ones.
+   `RuntimeMaxSec=` cannot bound these jobs either: they are `Type=oneshot`,
+   for which systemd ignores it. Automatic takeover therefore needs a
+   publication-side fence (for example writing each publication into a
+   staging partition named by an epoch that a single atomic swap promotes,
+   with the swap refusing stale epochs) and an authoritative lease clock.
+   Design that before building it. Until then takeover stays manual (item 1)
+   with an explicit fence, in order:
+   1. Stop the old publisher: stop node 1's worker units and timers, or stop
+      the VM if node 1 is unreachable.
+   2. Drain its writes from the server side: on every replica,
+      `KILL QUERY WHERE user = 'tr' SYNC` for queries from the worker user, then
+      confirm `system.processes` and `system.mutations` (`is_done = 0`) show
+      none from it, and that `system.replication_queue` has no pending
+      `REPLACE_RANGE` from node 1.
+   3. Only then enable the standby units on node 2 (`systemctl enable --now`).
+   Recovery takes minutes once someone is paged, well inside the 7-day outbox
+   TTL.
 3. Drill: `clickhouse_failover_smoke.sh:16` defaults to node 3 and checks reads
    only. Add a node-1 mode that requires the standby to drain (drain lag on
    `/status.json` recovers) while node 1 is stopped.
@@ -372,13 +375,20 @@ reads hang and then fail.
    yet still answers 200, so it keeps receiving reads and successful responses
    never trigger client failover. Use a predefined HTTP handler instead
    (`http_handlers` with a `predefined_query_handler` at, for example,
-   `/tr_health`) whose query fails when this replica is read-only or too far
-   behind, e.g. `SELECT throwIf(count() > 0) FROM system.replicas WHERE
-   is_readonly OR absolute_delay > 300`; ClickHouse returns an error status for
-   a thrown exception, so the check marks the replica unhealthy. The freshest
-   writable replicas still pass, so lag alone cannot empty the backend set.
-   The firewall already allows the health-check ranges to 8123; the handler
-   runs as a dedicated read-only user with access to `system.replicas` only.
+   `/tr_health`) whose query fails when this replica is read-only, too far
+   behind, or cannot see the full replicated inventory:
+   `SELECT throwIf(countIf(is_readonly OR absolute_delay > 300) > 0 OR count() < 17)
+   FROM system.replicas WHERE database = 'tr'` (17 = the replicated tables
+   today; keep that number in the same change that adds or drops a replicated
+   table). ClickHouse returns an error status for a thrown exception, so the
+   check marks the replica unhealthy. The freshest writable replicas still
+   pass, so lag alone cannot empty the backend set. The handler runs as a
+   dedicated read-only user granted `SELECT ON system.replicas` and
+   `SHOW TABLES ON tr.*`: `system.replicas` filters rows by the user's table
+   visibility, so without the second grant an unhealthy replica's rows are
+   invisible and the check answers 200 (reproduced on ClickHouse 26.9 during
+   review). The `count() < 17` guard catches that and any other incomplete
+   inventory. The firewall already allows the health-check ranges to 8123.
    Terraform in §3.2 points the check at this path.
 2. Client failover: committed on this branch (§4); turn it on by setting the
    two URLs to the load balancer followed by the three replicas.
@@ -640,7 +650,7 @@ the firewall already admits the VPC ranges, so no node change is needed.
 
 | Hole | Change |
 |---|---|
-| G1 | `clickhouse/worker_lease.py` (new): acquire, renew and check a Spanner lease row. Lease checks in the drain loops: `clickhouse/ingest_outbox.py:359-391`, `clickhouse/ingest_operational_outbox.py:1007-1030`. `ExecCondition=` in every `clickhouse/tr-clickhouse-*.service`. Worker host as a parameter in `scripts/deploy/clickhouse_operational_analytics.sh:102-183,239-240`. Node-1 mode in `scripts/deploy/clickhouse_failover_smoke.sh:16`. |
+| G1 | Worker host as a parameter in `scripts/deploy/clickhouse_operational_analytics.sh:102-183,239-240`; standby units and `_staging` tables installed disabled on node 2; a runbook with the three fence steps (stop node 1's publishers, server-side `KILL QUERY` and verification of `system.processes` / `system.mutations` / `system.replication_queue`, then enable node 2). Node-1 mode in `scripts/deploy/clickhouse_failover_smoke.sh:16`. Unattended takeover waits for a publication-side fence design (item 2). |
 | G2 | `scripts/deploy/rollout.sh:339-347`: endpoint list, and fail instead of falling back to `10.128.15.214`. The Terraform in §3.2. |
 | G3 | `--insert_quorum=2 --async_insert=0` in `clickhouse/ingest_outbox.py:214-223` and `clickhouse/ingest_operational_outbox.py:541-556`. |
 | G4 | `<prometheus>` block added by `scripts/deploy/clickhouse_cluster.sh:189-230`; Ops Agent receiver installed at `:277-291`; alert policies in Terraform. |
