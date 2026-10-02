@@ -438,8 +438,15 @@ reads hang and then fail.
    visibility, so without the second grant an unhealthy replica's rows are
    invisible and the check answers 200 (reproduced on ClickHouse 26.9 during
    review). The `count() < 17` guard catches that and any other incomplete
-   inventory. The firewall already allows the health-check ranges to 8123.
-   Terraform in §3.2 points the check at this path.
+   inventory. GCP health checks cannot send credentials, so the request names
+   the user (`/tr_health?user=tr_health`) and the user has no password; it is
+   restricted to the health-check source ranges (35.191.0.0/16,
+   130.211.0.0/22) and loopback, and cannot read `tr` data. The firewall
+   already allows those ranges to 8123. Terraform in §3.2 points the check at
+   this path. Implemented in `scripts/deploy/clickhouse-node-config/`,
+   verified on ClickHouse 26.7.1.1315: 200 with 17 replicated tables, 500 with
+   16 or one detached, `/ping` and `/replicas_status` unchanged, and 403 for
+   the user from outside its networks.
 2. Client failover: committed on this branch (§4); turn it on by setting the
    two URLs to the load balancer followed by the three replicas. It must be
    live and verified before the health check switches (item 1, §3.2).
@@ -471,11 +478,18 @@ next to the health check.
 **G5. System logs have no TTL (medium).**
 33–54 GB per node today, growing 0.4–0.8 GB/day per node. Fix:
 `config.d/tr-system-logs.xml` with
-`<ttl>event_date + INTERVAL 30 DAY DELETE</ttl>` for the nine TTL-less logs,
-7 days and level `information` for `text_log`. Roll it one node at a time. On
-restart ClickHouse renames a log table whose definition changed to `<name>_0`;
-drop those after checking. This frees roughly 26–36 GB on node 1 (depending on
-whether `text_log` keeps 30 or 7 days) and removes the fixed growth.
+`<ttl>event_date + INTERVAL 30 DAY DELETE</ttl>` for every log the 26.7
+default config enables without a TTL (17; nine existed on 2026-10-01 because
+the others had never flushed), 7 days and level `information` for `text_log`.
+`opentelemetry_span_log` is left alone: its default section sets a custom
+`<engine>`, which cannot be combined with `<ttl>`. Roll it one node at a time.
+On restart ClickHouse renames each log table whose definition changed to
+`<name>_0` and creates a new one with the TTL. The renamed tables keep the old
+data, have no TTL and are permanently read-only (`ALTER ... MODIFY TTL` fails
+on 26.7), so the space comes back only by dropping them. Do not `ALTER` the
+live log tables instead: SystemLog renames an altered table at its next flush.
+This frees roughly 26–36 GB on node 1 (depending on whether `text_log` keeps
+30 or 7 days) and removes the fixed growth.
 
 **G6. Two node-1 queries grow with volume; one already fails (medium, capacity).**
 - `verify_spanner_delivery` looks rows up by `generation_id`, which is not a
@@ -582,7 +596,7 @@ resource "google_compute_region_health_check" "clickhouse_replica_health" {
 
   http_health_check {
     port         = 8123
-    request_path = "/tr_health"
+    request_path = "/tr_health?user=tr_health"
   }
 }
 
@@ -710,10 +724,10 @@ the firewall already admits the VPC ranges, so no node change is needed.
 | Hole | Change |
 |---|---|
 | G1 | Worker host as a parameter in `scripts/deploy/clickhouse_operational_analytics.sh:102-183,239-240`; standby units and `_staging` tables installed disabled on node 2; a role-check `ExecCondition=` on every worker unit, reading the `tr-clickhouse-role` instance metadata key; a runbook with the four takeover steps (durable fence, server-side `KILL QUERY` and checks, `SYSTEM SYNC REPLICA` barrier on every replicated table, enable node 2) and the rejoin rule. Node-1 mode in `scripts/deploy/clickhouse_failover_smoke.sh:16`. Unattended takeover waits for a publication-side fence design (item 2). |
-| G2 | `scripts/deploy/rollout.sh`: endpoint list. Failing the rollout instead of falling back to `10.128.15.214` is done (#1467). The `/tr_health` handler and its user; the Terraform in §3.2. |
+| G2 | `scripts/deploy/rollout.sh`: endpoint list. Failing the rollout instead of falling back to `10.128.15.214` is done (#1467). The `/tr_health` handler and its user: `scripts/deploy/clickhouse_node_config.sh`. The Terraform in §3.2. |
 | G3 | `--insert_quorum=2 --async_insert=0` in `clickhouse/ingest_outbox.py:214-223` and `clickhouse/ingest_operational_outbox.py:541-556`. |
 | G4 | `<prometheus>` block added by `scripts/deploy/clickhouse_cluster.sh:189-230`; Ops Agent receiver installed at `:277-291`; alert policies in Terraform. |
-| G5 | New `config.d/tr-system-logs.xml` written by `scripts/deploy/clickhouse_cluster.sh:232-250`, restarted one node at a time. |
+| G5 | `scripts/deploy/clickhouse_node_config.sh` installs `config.d/tr-system-logs.xml` one node at a time (3, 2, then 1), restarting only a healthy node and waiting for `/tr_health` and its Keeper voter; `--drop-renamed-logs` drops the renamed `<log>_N` tables. |
 | G6 | `clickhouse/operational_fingerprint.py:101-106` (time-bounded lookup). The leaderboard query's 1 GiB cap is done (#1467); ranking in the rollup remains the volume-proof fix. |
 | G7 | `scripts/deploy/clickhouse_live_ingestion.sh:90-93` (replicated DDL, refuse non-replicated engines); `scripts/deploy/clickhouse_operational_writer.sh:16` (all nodes). Pinning the version in `scripts/deploy/clickhouse_startup.sh` is done (#1467). |
 | G8 | `clickhouse/archive_daily.py:90-164` (add the client telemetry datasets). |

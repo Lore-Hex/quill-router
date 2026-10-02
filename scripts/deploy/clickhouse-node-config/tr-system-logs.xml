@@ -1,0 +1,37 @@
+<!--
+  System-log retention (G5 in docs/design/clickhouse-high-availability.md).
+
+  ClickHouse 26.7's default config enables these logs with no TTL; on
+  2026-10-01 they held 33-54 GB per node and grew 0.4-0.8 GB a day. Only
+  sections the default config already enables are listed: a section for a
+  disabled log would enable it. opentelemetry_span_log is left out because
+  its default section sets a custom <engine>, which cannot be combined with
+  <ttl>. text_log keeps 7 days and drops from trace to information.
+
+  On restart ClickHouse renames each existing log table whose definition
+  changed to <name>_0 and creates a new one with the TTL; apply_node_config.sh
+  then gives the renamed tables the same TTL. Do not ALTER the live tables:
+  SystemLog renames an altered table at its next flush.
+-->
+<clickhouse>
+  <query_log><ttl>event_date + INTERVAL 30 DAY DELETE</ttl></query_log>
+  <trace_log><ttl>event_date + INTERVAL 30 DAY DELETE</ttl></trace_log>
+  <query_thread_log><ttl>event_date + INTERVAL 30 DAY DELETE</ttl></query_thread_log>
+  <query_views_log><ttl>event_date + INTERVAL 30 DAY DELETE</ttl></query_views_log>
+  <part_log><ttl>event_date + INTERVAL 30 DAY DELETE</ttl></part_log>
+  <background_schedule_pool_log><ttl>event_date + INTERVAL 30 DAY DELETE</ttl></background_schedule_pool_log>
+  <metric_log><ttl>event_date + INTERVAL 30 DAY DELETE</ttl></metric_log>
+  <error_log><ttl>event_date + INTERVAL 30 DAY DELETE</ttl></error_log>
+  <instrumentation_trace_log><ttl>event_date + INTERVAL 30 DAY DELETE</ttl></instrumentation_trace_log>
+  <query_metric_log><ttl>event_date + INTERVAL 30 DAY DELETE</ttl></query_metric_log>
+  <asynchronous_metric_log><ttl>event_date + INTERVAL 30 DAY DELETE</ttl></asynchronous_metric_log>
+  <iceberg_metadata_log><ttl>event_date + INTERVAL 30 DAY DELETE</ttl></iceberg_metadata_log>
+  <delta_lake_metadata_log><ttl>event_date + INTERVAL 30 DAY DELETE</ttl></delta_lake_metadata_log>
+  <crash_log><ttl>event_date + INTERVAL 30 DAY DELETE</ttl></crash_log>
+  <backup_log><ttl>event_date + INTERVAL 30 DAY DELETE</ttl></backup_log>
+  <s3queue_log><ttl>event_date + INTERVAL 30 DAY DELETE</ttl></s3queue_log>
+  <text_log>
+    <level>information</level>
+    <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+  </text_log>
+</clickhouse>
