@@ -72,8 +72,10 @@ PROVIDERS = [
 ]
 
 
-def provider_ticker(copies: int = 4) -> str:
-    """One visible provider group plus hidden copies so the CSS marquee loops without a gap."""
+def provider_ticker(copies: int = 6) -> str:
+    """One visible provider group plus hidden copies so the CSS marquee loops without a gap.
+
+    The loop slides by one group; six groups keep the row full up to about 4000px wide."""
     groups = []
     for index in range(copies):
         hidden = index > 0

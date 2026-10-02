@@ -533,12 +533,13 @@ h3,.privacy-choice h3,.review-resources h3,.uptime-panel figcaption,.attestation
 .hero-provider-row{overflow:hidden;mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)}
 .hero-provider-track{display:flex;width:max-content;margin-inline:auto;animation:provider-marquee 48s linear infinite;animation-play-state:paused}
 .hero.is-animating .hero-provider-track{animation-play-state:running}
-.hero-provider-row:hover .hero-provider-track,.hero-provider-row:focus-within .hero-provider-track{animation-play-state:paused}
+.hero-provider-row:focus-within .hero-provider-track{animation-play-state:paused}
+@media(hover:hover){.hero-provider-row:hover .hero-provider-track{animation-play-state:paused}}
 .hero-provider-group{display:flex;align-items:center;gap:36px;padding-inline:18px}
 .hero-provider-group a{flex:0 0 auto;display:inline-flex;align-items:center;gap:10px;min-height:32px;font-size:15px;color:var(--text);text-decoration:none;white-space:nowrap}
 .hero-provider-group a:hover{color:var(--mint)}
 .hero-provider-group img{width:26px;height:26px;object-fit:contain}
-@keyframes provider-marquee{from{transform:translateX(0)}to{transform:translateX(-25%)}}
+@keyframes provider-marquee{from{transform:translateX(0)}to{transform:translateX(-16.6667%)}}
 @media(prefers-reduced-motion:reduce){
  .hero-provider-track{animation:none}
  .hero-provider-group+.hero-provider-group{display:none}

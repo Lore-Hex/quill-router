@@ -21,7 +21,8 @@ def prepare(output):
             headline = headline.replace('the United States.', 'the U.S.')
             accent = accent.replace('the United States.', 'the U.S.')
         headline = headline.replace(accent, f'<span class="headline-accent">{accent}</span>', 1)
-        headline = headline.replace(' frontier AI ', '<br>frontier AI ', 1)
+        # The card breaks its line before the italic accent on every market.
+        headline = headline.replace(' <span class="headline-accent">', '<br><span class="headline-accent">', 1)
         folder = output / f"social-{market['slug']}"
         folder.mkdir(parents=True, exist_ok=True)
         (folder / 'index.html').write_text(template.substitute(
