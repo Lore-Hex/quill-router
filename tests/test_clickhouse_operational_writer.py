@@ -150,3 +150,108 @@ def test_an_external_ip_on_any_node_refuses_before_any_change(tmp_path: Path) ->
     assert result.returncode != 0
     assert "tr-clickhouse-3 has external IP 34.0.0.9" in result.stderr
     assert _ssh_targets(calls) == []
+
+
+# The grant check runs on the node. Execute the exact remote command captured
+# above, with sudo, sleep and clickhouse-client stubbed, to pin its polling.
+
+CLICKHOUSE_STUB = r"""#!/usr/bin/env bash
+# users.d reloads on the fly but not instantly: INSERT is refused for the first
+# $INSERT_REFUSED attempts and SELECT still allowed for the first $SELECT_ALLOWED.
+state="$STUB_STATE"
+query="${@: -1}"
+case "$query" in
+  INSERT*)
+    cat > /dev/null
+    n=$(( $(cat "$state/inserts" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$state/inserts"
+    [ "$n" -gt "${INSERT_REFUSED:-0}" ]
+    ;;
+  SELECT*)
+    n=$(( $(cat "$state/selects" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$state/selects"
+    [ "$n" -le "${SELECT_ALLOWED:-0}" ]
+    ;;
+  *) exit 2 ;;
+esac
+"""
+
+
+def _grant_check(tmp_path: Path, **env: str) -> tuple[subprocess.CompletedProcess[str], int, int]:
+    result, calls = _run(tmp_path, NAME="tr-clickhouse-2", ZONE="us-central1-b")
+    assert result.returncode == 0, result.stderr
+    [check] = [
+        call
+        for call in calls
+        if call["argv"][:2] == ["compute", "ssh"]
+        and "users.d/tr-ops-ingest.xml" not in str(call["argv"])
+    ]
+    command = next(arg for arg in check["argv"] if arg.startswith("--command="))
+    command = command.removeprefix("--command=")
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    for name, body in {
+        "sudo": '#!/usr/bin/env bash\nexec "$@"\n',
+        "sleep": "#!/usr/bin/env bash\nexit 0\n",
+        "clickhouse-client": CLICKHOUSE_STUB,
+    }.items():
+        (remote / name).write_text(body)
+        (remote / name).chmod(0o755)
+    state = tmp_path / "state"
+    state.mkdir()
+    command = command.replace("/usr/bin/clickhouse-client", str(remote / "clickhouse-client"))
+    # The node-side path, redirected into this test's directory.
+    command = command.replace("/tmp/tr-ops-ingest.env", str(tmp_path / "ops-ingest.env"))  # noqa: S108
+    run = subprocess.run(  # noqa: S603 - the script's own remote command, stubbed
+        ["/bin/sh", "-c", command],
+        input=check["stdin"] + "\n",
+        env={"PATH": f"{remote}:{os.environ['PATH']}", "STUB_STATE": str(state), **env},
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    inserts = int((state / "inserts").read_text()) if (state / "inserts").exists() else 0
+    selects = int((state / "selects").read_text()) if (state / "selects").exists() else 0
+    # The credential file is removed once read.
+    assert not (tmp_path / "ops-ingest.env").exists()
+    return run, inserts, selects
+
+
+def test_grant_check_passes_at_once_when_grants_are_already_right(tmp_path: Path) -> None:
+    run, inserts, selects = _grant_check(tmp_path)
+
+    assert run.returncode == 0, run.stderr
+    assert (inserts, selects) == (1, 1)
+
+
+@pytest.mark.parametrize(
+    ("env", "attempts"),
+    [({"SELECT_ALLOWED": "3"}, 4), ({"INSERT_REFUSED": "2"}, 3)],
+    ids=["old-select-grant-still-loaded", "insert-grant-not-yet-loaded"],
+)
+def test_grant_check_waits_for_the_reload_instead_of_failing(
+    tmp_path: Path, env: dict[str, str], attempts: int
+) -> None:
+    # Review finding: authenticating proved only that the account existed, so a
+    # check right after install could see the old grants and abort the rollout.
+    run, inserts, selects = _grant_check(tmp_path, **env)
+
+    assert run.returncode == 0, run.stderr
+    assert inserts == selects == attempts
+
+
+@pytest.mark.parametrize(
+    ("env", "message"),
+    [
+        ({"SELECT_ALLOWED": "1000"}, "tr_ops_ingest can still SELECT after 60 s; grants too broad"),
+        ({"INSERT_REFUSED": "1000"}, "tr_ops_ingest cannot INSERT into tr.operational_outbox_quarantine after 60 s"),
+    ],
+    ids=["select-never-revoked", "insert-never-granted"],
+)
+def test_grant_check_fails_when_the_grants_never_converge(
+    tmp_path: Path, env: dict[str, str], message: str
+) -> None:
+    run, inserts, selects = _grant_check(tmp_path, **env)
+
+    assert run.returncode != 0
+    assert message in run.stderr
+    assert inserts == selects == 30

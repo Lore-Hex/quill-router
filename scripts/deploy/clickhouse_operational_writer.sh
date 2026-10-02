@@ -119,16 +119,17 @@ for node in "${NODES[@]}"; do
     --command="sudo sh -c 'set -eu; umask 077; temporary=\$(mktemp); cat > \"\$temporary\"; if ! cmp -s \"\$temporary\" /etc/clickhouse-server/users.d/tr-ops-ingest.xml; then install -o clickhouse -g clickhouse -m 0640 \"\$temporary\" /etc/clickhouse-server/users.d/tr-ops-ingest.xml; fi; rm -f \"\$temporary\"'" \
     <"$config"
 
-  # Wait up to 60 s for the reload, then prove the account can INSERT (into
-  # the quarantine table, with a marker row whose reason names this script)
-  # and CANNOT SELECT -- both halves matter.
+  # users.d reloads on the fly, but not instantly, and authenticating proves
+  # only that the account exists. Poll for up to 60 s until both halves hold:
+  # the account can INSERT (into the quarantine table, with a marker row
+  # whose reason names this script) and CANNOT SELECT.
   printf 'CH_OPS_INGEST_PASSWORD=%s\n' "$writer_password" |
     gcloud compute ssh "$name" \
       --project="$PROJECT" \
       --zone="$zone" \
       --tunnel-through-iap \
       --quiet \
-      --command="sudo sh -c 'umask 077; cat > /tmp/tr-ops-ingest.env; set -a; . /tmp/tr-ops-ingest.env; set +a; tries=0; until /usr/bin/clickhouse-client --user tr_ops_ingest --password \"\$CH_OPS_INGEST_PASSWORD\" --query \"SELECT 1\" >/dev/null 2>&1; do tries=\$((tries + 1)); if [ \"\$tries\" -ge 30 ]; then echo \"tr_ops_ingest did not load within 60 s; see clickhouse-server.err.log\" >&2; rm -f /tmp/tr-ops-ingest.env; exit 1; fi; sleep 2; done; status=0; echo \"{\\\"shard\\\":0,\\\"commit_ts\\\":\\\"2026-01-01T00:00:00\\\",\\\"event_kind\\\":\\\"provisioning\\\",\\\"event_id\\\":\\\"tr-ops-ingest-check\\\",\\\"payload\\\":\\\"{}\\\",\\\"reason\\\":\\\"clickhouse_operational_writer.sh grant check\\\",\\\"quarantined_at\\\":\\\"2026-01-01T00:00:00\\\"}\" | /usr/bin/clickhouse-client --user tr_ops_ingest --password \"\$CH_OPS_INGEST_PASSWORD\" --query \"INSERT INTO tr.operational_outbox_quarantine FORMAT JSONEachRow\" || status=1; if /usr/bin/clickhouse-client --user tr_ops_ingest --password \"\$CH_OPS_INGEST_PASSWORD\" --query \"SELECT 1 FROM tr.activity_generations LIMIT 1\" >/dev/null 2>&1; then echo \"tr_ops_ingest can SELECT; grants too broad\" >&2; status=1; fi; rm -f /tmp/tr-ops-ingest.env; exit \$status'"
+      --command="sudo sh -c 'umask 077; cat > /tmp/tr-ops-ingest.env; set -a; . /tmp/tr-ops-ingest.env; set +a; rm -f /tmp/tr-ops-ingest.env; tries=0; while :; do inserted=0; denied=1; echo \"{\\\"shard\\\":0,\\\"commit_ts\\\":\\\"2026-01-01T00:00:00\\\",\\\"event_kind\\\":\\\"provisioning\\\",\\\"event_id\\\":\\\"tr-ops-ingest-check\\\",\\\"payload\\\":\\\"{}\\\",\\\"reason\\\":\\\"clickhouse_operational_writer.sh grant check\\\",\\\"quarantined_at\\\":\\\"2026-01-01T00:00:00\\\"}\" | /usr/bin/clickhouse-client --user tr_ops_ingest --password \"\$CH_OPS_INGEST_PASSWORD\" --query \"INSERT INTO tr.operational_outbox_quarantine FORMAT JSONEachRow\" >/dev/null 2>&1 && inserted=1; /usr/bin/clickhouse-client --user tr_ops_ingest --password \"\$CH_OPS_INGEST_PASSWORD\" --query \"SELECT 1 FROM tr.activity_generations LIMIT 1\" >/dev/null 2>&1 && denied=0; if [ \$inserted = 1 ] && [ \$denied = 1 ]; then exit 0; fi; tries=\$((tries + 1)); if [ \$tries -ge 30 ]; then [ \$inserted = 1 ] || echo \"tr_ops_ingest cannot INSERT into tr.operational_outbox_quarantine after 60 s\" >&2; [ \$denied = 1 ] || echo \"tr_ops_ingest can still SELECT after 60 s; grants too broad\" >&2; exit 1; fi; sleep 2; done'"
 done
 unset writer_password
 
