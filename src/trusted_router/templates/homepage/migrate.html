@@ -1,0 +1,30 @@
+<section id="migrate"><div class="trm"><div class="box">
+ <div class="body">
+  <div class="l">
+   <h2>Move over with one <code class="bu">base_url</code> change.</h2>
+   <p class="lede">Keep your existing OpenAI-shaped calls. Add privacy and routing constraints only when you need them.</p>
+   <div class="field"><span class="k">Base URL</span><div class="val"><code>{{ api_base_url }}</code><button class="cp icon-button" type="button" data-copy="{{ api_base_url }}" aria-label="Copy base URL" title="Copy base URL"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3"/><rect x="9" y="2" width="6" height="6" rx="1"/></svg></button></div></div>
+   <div class="acts"><a class="button button-primary" data-homepage-cta data-action="open-signin" href="/console/api-keys">Get your API key</a><a class="button button-secondary" href="/docs/migrate-from-openrouter">Migration guide</a></div>
+  </div>
+  <details class="mobile-disclosure migration-disclosure" id="migration-example" data-mobile-disclosure open><summary><span>View code examples</span><span class="disclosure-indicator" aria-hidden="true">+</span></summary><div class="disclosure-body"><div class="r">
+   <div class="ph2"><div class="code-tabs" role="tablist" aria-label="Migration language">
+    <button class="tab" type="button" role="tab" id="code-tab-py" aria-controls="migration-code" tabindex="0" data-lang="py" aria-selected="true">Python</button><button class="tab" type="button" role="tab" id="code-tab-ts" aria-controls="migration-code" tabindex="-1" data-lang="ts" aria-selected="false">TypeScript</button><button class="tab" type="button" role="tab" id="code-tab-curl" aria-controls="migration-code" tabindex="-1" data-lang="curl" aria-selected="false">cURL</button><button class="tab ag" type="button" role="tab" id="code-tab-agent" aria-controls="migration-code" tabindex="-1" data-lang="agent" aria-selected="false">Agent prompt</button>
+    </div><span class="from" role="group" aria-label="Migrate from">from <button type="button" data-src="openai" aria-pressed="true">OpenAI</button><button type="button" data-src="openrouter" aria-pressed="false">OpenRouter</button></span>
+   </div>
+   <pre class="mcode" id="migration-code" role="tabpanel" aria-labelledby="code-tab-py" tabindex="0">  from openai import OpenAI
+  import os
+
+  client = OpenAI(
+<span class="del">-     base_url="https://api.openai.com/v1",</span><span class="del">-     api_key=os.environ["OPENAI_API_KEY"],</span><span class="add">+     base_url="{{ api_base_url }}",</span><span class="add">+     api_key=os.environ["TRUSTEDROUTER_API_KEY"],</span>  )
+
+  response = client.chat.completions.create(
+      model="z-ai/glm-5.3-flash",
+      messages=[{"role": "user", "content": "Hello"}],
+<span class="cm">      # optional: extra_body={"provider": {"min_privacy": "confidential"}}</span>
+  )
+</pre>
+   <div class="pf"><span class="hint" hidden></span><button class="cp icon-button" type="button" data-copycode="" aria-label="Copy code" title="Copy code"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3"/><rect x="9" y="2" width="6" height="6" rx="1"/></svg></button></div>
+  </div></div></details>
+ </div>
+</div>
+</div></section>
