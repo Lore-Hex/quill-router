@@ -1,9 +1,8 @@
 # Fast admission and batched settlement
 
-Status: **proposed, v2, 2026-10-02. Nothing built.** v1 was reviewed by Codex
-and by Fable; together they found 21 problems (§10), all folded into this
-version. Joseph's decisions are in §2. **One decision is still open: adding a
-TigerBeetle cluster per region as the per-request ledger (§4.2).**
+Status: **proposed, v3, 2026-10-02. Nothing built.** Codex and Fable reviewed
+v1 and v2 (§11). Joseph's decisions are in §2. **One decision is still open:
+the per-request store (§2).**
 
 This is the plan for reaching 100T tokens a month without spending the routing
 margin on the billing database, and for taking the control plane out of request
@@ -22,17 +21,20 @@ latency.
 | Spanner at the 2026-10-01 cost per generation ($0.00009) | about $7.8M a month |
 
 **The per-request path today.** The attested gateway (`quill-cloud-proxy`, Go)
-calls the Python control plane on Cloud Run synchronously. Each call is one or
-more multi-region Spanner transactions:
+calls the Python control plane synchronously. Every cloud's gateway bills
+through `https://trustedrouter.com` alone (`enclave-go/.../endpoints.go`). Each
+call is one or more multi-region Spanner transactions:
 
-- `POST /internal/gateway/authorize`: one atomic transaction (`authorize_atomic`
-  in `storage_gcp_authorize.py`). It claims the idempotency scope, holds credit
-  and the key limit, and writes the reservation and authorization rows.
+- `POST /internal/gateway/authorize`: one atomic transaction
+  (`authorize_atomic`). It claims the idempotency scope through a unique index,
+  holds credit and the key limit, and writes the reservation and authorization
+  rows.
 - Stage D heartbeats while a stream runs. In production every workspace is in
-  the Stage D cohort (`rollout.sh` renders an empty pilot list).
+  the cohort (`rollout.sh` renders an empty pilot list). The gateway sends one
+  before the first byte, then one every 10 s or every 256 output tokens.
 - `POST /internal/gateway/settle`: one commit on the success path since #1465.
-  It books the actual cost, releases the holds, and writes the generation record
-  and the analytics intent.
+  It books the actual cost, releases the holds, pays app owners, and writes the
+  generation record and analytics intent.
 
 | Measured | Value |
 |---|---|
@@ -42,10 +44,6 @@ more multi-region Spanner transactions:
 | Settle p90 | 3.1 s (four serial commits; #1465 made it one on the success path) |
 | Settles that overrun their estimate | 12.2%; $45.57 a day; 96% of overrun dollars in 0.7% of settles |
 
-Per-request work in the billing database is what costs. The fix is to stop
-doing it, without giving up any guarantee the per-request transactions give
-today.
-
 ## 2. Decisions
 
 **Made by Joseph, 2026-10-02:**
@@ -53,321 +51,340 @@ today.
 - Batched settlement and regional admission: approved, with a target of under
   about 10 ms of request overhead. This supersedes the earlier rule against
   regional leases for general users, for this design.
-- A compiled authorize and settle service, not Python. The gateway is Go
-  (`enclave-go`), so the service is Go and shares the gateway's contract types.
-- An L4 load balancer in front of the gateways (§4.11).
+- A compiled authorize and settle service, not Python, in Go like the gateway.
+- An L4 load balancer in front of the gateways (§4.12).
 - No Spanner committed-use discounts.
 - Shard ClickHouse later.
 
-**Open, for Joseph: the per-request ledger.** Recommended: one TigerBeetle
-cluster per region (§4.2). The alternative is a regional Spanner instance per
-region. It closes the same correctness gaps with tools we already run, but needs
-two single-region commits per request (p50 about 5-10 ms each, to be measured).
-So it misses the 10 ms target and keeps a commit per request.
+**Open, for Joseph: the per-request store.**
+
+| | TigerBeetle cluster per region (recommended) | Regional Spanner instance per region |
+|---|---|---|
+| What it is | A purpose-built ledger: pending, post, void, timeouts, idempotent IDs | Today's billing code (`authorize_atomic`, typed settle, Stage D, reaper) against a per-region database holding escrowed balances |
+| Authorize latency | about 3-6 ms p50 (§6) | about 10-20 ms p50: two single-region commits |
+| Cost at 100T | a few VMs per region, plus rollup commits | still a commit per request, at regional prices; to be measured |
+| New work | the state machine in §4.5 and the ledger's operations | moving balances into regional escrow; the code mostly exists |
+| Fit to the 10 ms target | yes | no |
 
 **A reversal to be explicit about.** `billing-typed-counters.md` §2 rejected
-leases and ledgers because they demote Spanner from system of record and add a
+leases and ledgers, because they demote Spanner from system of record and add a
 second store with asynchronous reconciliation. This design accepts that cost on
-purpose, for latency and unit cost. It limits the cost in four ways:
-
-- Spanner stays the system of record for balances, payments, debt and pauses.
-- The ledger holds only escrowed money.
-- Reconciliation is fenced and audited continuously (§5).
-- Losing a region's ledger has a stated, bounded cost (§4.2).
+purpose, for latency and unit cost. Spanner stays the system of record for
+balances, payments, debt and pauses. The per-request store holds escrowed money,
+overdraft charges not yet rolled up, and scope ownership. Reconciliation is
+fenced and audited (§5), and its loss is bounded and gated (§4.8).
 
 ## 3. Targets
 
-1. **Latency, measured at the gateway** from sending authorize to holding a
-   routing decision and a hold: p50 under 5 ms, p90 under 10 ms. Tail
-   excursions fall back to the synchronous path, which is slow but correct. They
-   include p99, ledger view changes and upgrades.
+1. **Latency at the gateway** from sending authorize to holding a routing
+   decision and a hold: p50 under 5 ms, p90 under 10 ms. Tail excursions are
+   p99, ledger view changes and upgrades. They fall back where §4.3 allows,
+   and are otherwise refused with 503 and `Retry-After`.
 2. **Billing-database commits grow with active workspaces, not requests.**
-3. **No charge lost and none booked twice,** the spine of
-   `durable-settle-outbox.md`. A request that ran is never released free, and a
-   request that never ran is never charged.
+3. **No charge lost and none booked twice** (`durable-settle-outbox.md`). A
+   request that ran is never released free, a request that never ran is never
+   charged, and a refunded request costs nothing.
 4. **Spending is bounded by money already reserved,** with the overrun and
-   home-settlement exceptions stated in §5.
-5. **Every step can be switched off** per workspace, region and cloud, with an
-   epoch-fenced drain (§4.7).
+   home-settlement exceptions in §5.
+5. **Every step can be switched off** per workspace, region and cloud.
 
 ## 4. Design
 
 ### 4.1 Shape
 
-Per region:
+Per GCP region:
 
-- **Admission service:** stateless Go, behind the gateway. Any node serves any
-  workspace. A consistent-hash ring by workspace is only a cache-locality hint,
-  never a correctness dependency.
-- **Regional ledger:** a TigerBeetle cluster holding only money (§4.2).
-- **Sweeper:** one leader-elected worker. It moves budget between Spanner and
-  the ledger and rolls charges back into Spanner (§4.5).
-- **Analytics publisher:** settles publish generation records after the ledger
-  commit (§4.9).
+- **Admission service:** stateless Go, behind the gateways. Gateways on AWS and
+  Azure use the nearest GCP region, and the cross-cloud hop counts against
+  their latency budget.
+- **Ledger:** a TigerBeetle cluster holding money and scope ownership (§4.2).
+- **Sweeper:** one leader-elected worker for grants, returns, rollups and gates
+  (§4.7).
+- **Settle log:** a Pub/Sub topic that receives every settle payload before the
+  gateway gets its acknowledgement (§4.9).
 
-Python remains the owner of routing policy and of everything off the hot path.
+Python keeps routing policy and everything off the hot path.
 
-### 4.2 The regional ledger (recommended: TigerBeetle)
+### 4.2 The ledger
 
-TigerBeetle is an open-source (Apache-2.0) financial ledger with a Go client.
-Its primitives match this problem:
+**Accounts, per workspace and region,** all created by one linked
+`create_accounts` at the first grant. A missing account is a transient error
+that would permanently burn a transfer ID.
 
-- accounts with posted and pending debits and credits;
-- pending transfers with a timeout;
-- `post_pending_transfer` for at most the pending amount, which releases the
-  rest;
-- `void_pending_transfer`;
-- atomic linked chains and idempotent transfer IDs;
-- `debits_must_not_exceed_credits`, which rejects a transfer when
-  `debits_pending + debits_posted + amount > credits_posted`.
-
-**Accounts, per region:**
-
-| Account | Flags | Role |
+| Account | Flags | Holds |
 |---|---|---|
-| Pool | none | Counterparty for budget grants and returns |
-| Workspace budget | `debits_must_not_exceed_credits`, `history` | Funded by grants; every admission is a pending debit on it |
-| Key budget, for lifetime-capped keys | `debits_must_not_exceed_credits` | A regional sub-budget of the key's remaining cap (§4.6) |
-| Workspace overdraft | none | Takes overruns and settles that arrive after a hold expired; rolled up as usage |
+| Budget | `debits_must_not_exceed_credits` | Granted money; every hold debits it |
+| Usage sink | none | Credit side of every charge; its credits minus its debits are the charges to roll up |
+| Overdraft | none | Debit side of charges that exceeded both the hold and the free budget |
+| Gate | none; closed while paused | One unit moved to the pool by every admission, so closing it stops admission without touching open holds |
+| Pool (one per region) | none | Counterparty for grants and returns |
 
-**Why it closes the v1 gaps:**
+Capped keys get the same pair of budget and overdraft accounts per key (§4.6).
+Rollups read balances with `lookup_accounts` (counter differences), not by
+walking transfers.
 
-- Every admission is a durable pending transfer, so the admission bound holds by
-  construction across node loss and ring changes.
-- An authorization's terminal transfer has one ID, shared by settle, Stage D
-  booking and refund, so exactly one of them wins.
-- Idempotent IDs give exactly-once posting without sequence numbers.
-- Hot workspace rows stop contending, because the ledger applies transfers
-  serially.
+**Operations:**
 
-**Operational shape and risks:**
-
-- **Topology:** six replicas across three zones of the region, on local SSD.
-  Ephemeral Local SSD on GCP is acceptable only because of six-way replication.
-  Cluster size cannot change after creation, so it is sized at creation.
-- **Durability:** there is no backup or export tool. Durability is replication,
-  and recovery needs a healthy cluster, so losing a majority of a region's
-  replicas loses that region's ledger.
-- **Loss bound:** at most one rollup interval of charges plus the in-flight holds
-  per workspace in that region, because everything older is already in Spanner
-  (§4.5). The rollup interval is chosen for that bound: seconds for large
-  spenders.
+- **Topology:** six replicas across three zones, on local SSD. Cluster size is
+  fixed at creation.
+- **Replacing a replica:** use `tigerbeetle recover`, never `format`, which can
+  lose committed operations. It needs a healthy quorum, and replacements are
+  serialized. A managed instance group must never auto-heal a replica by
+  formatting it.
 - **Upgrades** go one version at a time, and clients are never newer than
   replicas (the Go client is pinned to the cluster version in CI). Each upgrade
-  makes the cluster unavailable for seconds, during which admission falls back
-  to synchronous.
-- **Sessions:**
-  - The limit is 64 by default, with the oldest idle session evicted, and each
-    session has one request in flight.
-  - The client never times out and retries forever. The admission service sets
-    its own deadline and treats a timed-out call as an unknown outcome: the hold
-    may still land, and it will expire.
-  - Requests are batched per session. All clients (admission, sweeper, rollup,
-    reconciliation) stay well under the session limit.
-- **Unavailability:** when a region's cluster is down, admission fails over to
-  the synchronous path. Settles for holds in that cluster are retried until it
-  returns. The sweeper returns no budget from that region while it cannot read
-  the ledger.
+  makes the cluster unavailable for seconds.
+- **Sessions:** at most 64 by default, oldest idle evicted, one request in
+  flight each. The client never times out, so the service sets its own
+  deadline. Every client handles `session evicted` by re-registering. All
+  clients together stay well under the limit.
+- **Change data capture:** the cluster streams every transfer and every expiry
+  over AMQP, at least once. That feed drives the expiry handling in §4.5, the
+  reconciliation in §4.9 and an off-cluster archive.
 
-**Gate:** before any production traffic, benchmark the full path on the real VM
-and disk shape. That includes the linked hold, Stage D heartbeats and settle. A
+**Gate:** before any production traffic, benchmark the whole path on the real VM
+and disk shape. That means holds, heartbeats, settles and their key legs. A
 published cloud benchmark of an unoptimised deployment measured p50 32 ms and
 p99 over 500 ms, so the target is not assumed (§6).
 
-**Alternatives.**
-- **Regional Spanner instance per region:** the same closures with tools we run
-  already, at about 5-10 ms per commit and two commits per request.
-- **Raft log embedded in the Go service:** TigerBeetle's latency class, but we
-  would own the ledger semantics, snapshots, membership, repair and their
-  testing. For money code on this timeline, that is the wrong trade.
+### 4.3 Who owns a request
 
-### 4.3 Authorize
+Exactly-once execution today rests on a unique index on the idempotency scope
+(`tr_reservation.idempotency_scope`): concurrent first calls collide and the
+loser replays. The ledger has no unique index on user data, so ownership comes
+from the transfer ID itself.
 
-1. **Verify the boot.** Check the request's boot signature (the per-boot Ed25519
-   key in the boot registry, `gateway_boot.py`) and that the boot's image digest
-   is accepted. Boot, workspace and key state come from caches with a maximum
-   age (§4.7).
-2. **Route and estimate.** Evaluate the compiled routing snapshot (§4.8) and
-   compute the estimate as today. Without `max_tokens`, the estimate assumes 512
-   output tokens, which is why overruns are common.
-3. **Hold.** One linked `create_transfers`:
-   - a pending debit on the workspace budget;
+- **Deterministic hold IDs.** Attempt *k* of a scope uses the ID
+  `H(scope, k)`. The scope is workspace, key and idempotency key, as today.
+  Concurrent first calls with the same scope converge on `exists`, and the
+  loser replays the winner. Attempt *k* advances only on `id_already_failed`,
+  a permanent and deterministic result, so every caller walks the same
+  sequence. Hashed IDs cost the ledger some write locality; the benchmark
+  measures it.
+- **One home region per workspace for keyed requests.** A request carrying the
+  caller's `Idempotency-Key` is admitted only in its workspace's home region,
+  which is recorded in Spanner and cached. A retry that arrives through another
+  region's gateway reaches the same ledger. Requests without a caller key carry
+  a scope the gateway minted for that invocation alone, so they may use the
+  nearest region.
+- **No guessing on ambiguity.** If the ledger's answer for a keyed request is
+  unknown, or the ledger is unavailable, the service answers 503 with
+  `Retry-After`. It never falls back to the synchronous path, which could
+  execute the scope a second time. Unkeyed requests may fall back, behind the
+  breaker in §7.
+- **The route decides the owner.** Whether a request takes the fast or the
+  synchronous path is a pure function of the workspace's mode, its route class
+  and its key class (§4.11). Retries therefore reach the same owner.
+- **Mode switches are epoch-fenced.** Changing a workspace's mode stops new
+  holds, drains open ones, and keeps the old owner answering replays for the
+  idempotency retention window before the new owner accepts keyed scopes.
+
+### 4.4 Authorize
+
+1. Verify the boot signature (the per-boot Ed25519 key in the boot registry)
+   and that the image digest is accepted. Use cached state with a maximum age
+   (§4.8).
+2. Evaluate the compiled routing snapshot (§4.10) and compute the estimate.
+   Without `max_tokens` the estimate assumes 512 output tokens, which is why
+   overruns are common.
+3. Commit one linked `create_transfers`:
+   - a one-unit `Gate→Pool` transfer;
+   - a pending debit on the budget, with ID `H(scope, k)`: the first hold `h0`,
+     whose ID is the authorization ID `A`;
    - for a capped key, a pending debit on the key budget.
 
-   Both have a timeout of hours. That matches today's reservation TTL: 2 hours,
-   and 26 hours for native batch.
-4. **Answer with a signed envelope.** It carries the authorization ID, the
-   prospective generation ID, the frozen candidates, prices, fees and app terms,
-   the snapshot version, the hold amounts and the expiry. The gateway echoes it
-   on heartbeat, settle and refund. So no per-request envelope store exists, and
-   pricing at settle is a pure function of the envelope.
+   `h0` carries 64-bit hashes of the request fingerprint and of the invocation
+   nonce in `user_data_128`. Holds reopened by heartbeats carry `A` there
+   instead, so a heartbeat can find the latest one. `user_data_64` carries the
+   attempt or heartbeat sequence, and `user_data_32` the snapshot version.
+4. Answer with a **signed envelope** that the gateway echoes on heartbeat,
+   settle and refund. It carries:
+   - the authorization ID and the prospective generation ID;
+   - the frozen candidates, prices, fees and app terms;
+   - a hash of the invocation nonce and the boot binding;
+   - the hold amounts and the expiry.
 
-**IDs and idempotency:**
+   Pricing at settle is then a pure function of the envelope.
 
-- **Time-based transfer IDs, not hashes.** A rejected transfer (for example
-  `exceeds_credits`) makes its ID fail forever (`id_already_failed`), so an ID
-  derived from the idempotency scope could never be admitted after one refusal.
-- **Where the scope lives:** the scope hash goes in `user_data_128`, a
-  fingerprint hash in `user_data_64`, and the snapshot version in
-  `user_data_32`.
-- **Replay:** a retry with the same scope finds the hold by `query_transfers`
-  and replays it. A different fingerprint answers 409, as today. On
-  `id_already_failed`, the service mints a new attempt ID.
-- **The authorization ID is the workspace hold's transfer ID,** so replay does
-  not depend on which node answered first. The generation ID stays
-  `generation_id_for_authorization`, a deterministic function of the
-  authorization ID.
-- **Native batch stays synchronous,** because its scopes are claimed across
-  regions today.
+**A lost authorize response.** The gateway retries only on 502, 503 and 504,
+with the same bytes, nonce and key. A retry finds the hold by ID:
 
-### 4.4 Settle, refund and Stage D
+- If the nonce hash matches, this is the same invocation retrying, which never
+  received the first answer. The service re-evaluates, re-signs, and binds the
+  new envelope to the existing hold. That is safe because nothing acted on the
+  lost one.
+- If the nonce hash differs, another invocation owns the scope, and the gateway
+  answers 409 `idempotency_replay`, as today.
 
-**The terminal transfer.** Each authorization has one terminal transfer ID. It
-is a pure function of the authorization ID, shared by settle, Stage D snapshot
-booking and refund. The first to commit wins. A later one with the same ID gets
-`exists` or `exists_with_different_*` and reads the winner with
-`lookup_transfers`. That is the same "recorded winner" contract the gateway
-relies on today.
+Both checks read `h0`. A different fingerprint hash answers 409, as today,
+and the nonce hash decides between the two cases above.
 
-- **Settle:** verify the envelope and the boot signature, and price the usage
-  from the envelope. Then one linked chain posts `min(actual, hold)` on the hold
-  under the terminal ID. If the actual exceeds the hold, the chain also books
-  the excess as a single-phase debit on the workspace overdraft account, under a
-  deterministic ID. That is today's bounded-overdraft rule
-  (`billing-typed-counters.md`). Settle answers `finalized` only after this
-  commits.
-- **Settle after the hold expired:** the post fails, so the whole charge is
-  booked as a deterministic-ID debit on the overdraft account. Expiry never
-  turns into a free request.
-- **Refund:** void the hold with the terminal ID.
-- **Stage D, in the fast path from the start,** because every workspace is in
-  the cohort. A pending transfer cannot be partly posted and stay open. So each
-  heartbeat snapshot is a linked pair: post the delivered delta on the current
-  hold, and open a new hold for the remaining cap.
-  - Delivered usage is charged as it streams, and a dead gateway leaves only the
-    undelivered remainder to expire. That replaces today's `reaped_snapshot`
-    booking.
-  - The cap check (running cost at most the hold) needs no extra state.
-  - Each heartbeat costs two ledger transfers; the benchmark includes them.
+### 4.5 One authorization's state machine
 
-**Responses and lookups.** The settle response reports the ledger outcome,
-including the winner's cost when it loses. Disposition lookups read the ledger
-by authorization ID. `GET /generation` reads ClickHouse, which is eventually
-consistent within a stated delay T (§4.9). A receipt carrying `gen` is
-unaffected.
+Transfer IDs are pure functions of the authorization ID `A` and a step:
 
-### 4.5 Budget: grants, returns and rollup
+| Event | Transfers, linked | Effect |
+|---|---|---|
+| Authorize | gate debit; pending `Budget→Sink`, `H(scope,k)` | hold `h0` = estimate |
+| Heartbeat *n*, delivered so far `c_n` | post `h_(n-1)` for `c_n − c_(n-1)`, ID `H(A,post,n)`; pending `Budget→Sink` for `estimate − c_n`, ID `H(A,hold,n)` | charges as the stream runs, and keeps one open hold for the rest of the cap |
+| Settle, actual `a` | post the open hold for `min(a, estimate) − c_n`, ID `H(A,terminal)`; if `a` exceeds the estimate, a `balancing_debit` `Budget→Sink` for the excess against free budget, then `Overdraft→Sink` for whatever the free budget did not cover | one terminal claim |
+| Settle below what heartbeats posted (`a < c_n`) | void the open hold, ID `H(A,terminal)`; reversal `Sink→Budget` for `c_n − a`, ID `H(A,reverse)` | the customer pays `a`, not `c_n` |
+| Refund | void the open hold, ID `H(A,terminal)`; reversal `Sink→Budget` for `c_n`, ID `H(A,reverse)` | a refunded request costs nothing, as today |
+| Settle after the open hold expired | `Overdraft→Sink` (after the `balancing_debit` against free budget) for `a − c_n`, ID `H(A,terminal-late)` | charged, net of what heartbeats posted |
 
-The sweeper does all Spanner work, per workspace and region, off the request
-path.
+**Rules:**
 
-**Grant:**
-- One Spanner transaction moves headroom into `reserved` and writes a grant row.
-- Then a pool-to-workspace transfer, whose ID is the grant ID, makes the money
-  spendable. A crash replays to `exists`.
-- **Source:** grants come from one credit shard's headroom under the per-shard
-  predicate (`credit-row-sharding-handoff.md`), with consolidation for large
-  grants. Returns go back to the donor shard.
-- **Size:** about a minute of the workspace's recent spend in the region, capped
-  at a share of its available balance.
-- **No grant** while the workspace is paused, has unrecovered debt, or falls
-  below a minimum balance. Those workspaces stay synchronous.
+- **The terminal claim is `H(A,terminal)`.** Settle posts with it and refund
+  voids with it, so exactly one of them commits. The loser gets `exists` or
+  `exists_with_different_flags` and reads the winner. A heartbeat that arrives
+  after the claim fails with `pending_transfer_already_posted` or `_voided`,
+  and answers `already_terminal`.
+- **A retried linked chain** returns `exists` for its first event and
+  `linked_event_failed` for the rest. Chains are atomic, so the service treats
+  that as "already committed" and reads the result.
+- **Heartbeats keep today's checks:**
+  - the sequence only increases, and gaps are allowed;
+  - the endpoint is pinned by the first heartbeat;
+  - usage never regresses;
+  - tokens stay within the envelope's limits;
+  - the running cost stays at or under the hold.
 
-**Return:**
-- A `balancing_debit` from the workspace budget to the pool takes only free
-  funds: credits minus posted and pending debits.
-- The same Spanner transaction releases that amount from `reserved` and absorbs
-  recovery debt, as `release_credit` does today
-  (`absorb_unrecovered_recovery_tx`).
-
-**Rollup:**
-- The ledger assigns monotone timestamps. The sweeper stores the last
-  rolled-up timestamp per workspace and region in Spanner.
-- Each rollup applies `total_usage += Δposted` (workspace budget plus overdraft)
-  and moves the matching amount out of `reserved`, but only when the fence
-  advances. A replay is a no-op.
-
-**Interval:** adaptive. A large spender rolls up every few seconds, which sets
-the loss bound in §4.2; a small one, every few minutes. Spanner then sees about
-one commit per active spender per interval. At 100T that is still thousands of
-commits a second at peak, and the node count is sized in the benchmark (§6).
-
-**Pause, revoke, trust downgrade:**
-- The sweeper sweeps the workspace (or key) budget to zero with
-  `balancing_debit`.
-- New admissions then fail at once with `exceeds_credits`, while open holds can
-  still settle.
-- Accounts are never closed while holds are open. A closed account refuses
-  posts, and voids are its only exception.
-
-**Home settlement:**
-- Deferred usage from a peer plane is booked to Spanner unconditionally, as
-  today (`apply_federated_usage`, daily-capped). So `available` can fall below
-  the outstanding regional budgets.
-- When it does, the sweeper grants nothing more and sweeps budgets back until
-  `available` is non-negative.
-- The extra exposure is at most the outstanding budget, and it is alerted.
+  A heartbeat always references the latest open hold, found by
+  `query_transfers` on `user_data_128 = A`. It never references a hold it has
+  not read, because `pending_transfer_not_found` would burn its ID.
+- **Expiry.** A reopened hold keeps the authorization's remaining lifetime, or
+  the 300 s grace, whichever is longer, as today. So a dead stream strands the
+  undelivered remainder for minutes, not hours. Expiry is reported by the
+  change-data feed, which records the disposition (`expired` with `c_n`
+  posted, today's `reaped_snapshot`).
+- **A behavior change:** a settle that arrives after expiry is charged.
+  Today it is logged as lost.
 
 ### 4.6 Keys
 
-Lifetime-capped keys get a regional sub-budget account, funded from the key's
-remaining cap like today's key escrow shards (`key-usage-row-sharding.md`). The
-sub-budgets plus the synchronous path's holds never exceed the remaining cap.
-Two kinds of key stay synchronous: keys with window limits (UTC day, week and
-month floors), and `budget_strict` keys (exact windows inside the transaction).
+A lifetime-capped key gets a budget account funded from its remaining cap, like
+today's key escrow shards (`key-usage-row-sharding.md`). It also gets an
+overdraft account.
 
-### 4.7 Freshness, modes and switching
+- **Every transition in §4.5 has a key leg in the same linked chain:** the hold,
+  each heartbeat's post and reopen, the terminal post or void, the reversal,
+  and the overrun via `balancing_debit` then overdraft.
+- **Overruns consume the cap.** A key with a $10 cap whose $5 hold settles at $8
+  has $2 left, not $5.
+- **Bound:** all regional key budgets plus synchronous key holds never exceed a
+  key's remaining cap. Rollup applies `usage += Δcharged` to `tr_key_limit`.
+- **Window-limited and `budget_strict` keys stay synchronous.**
 
-- **Maximum age.** Cached boot, workspace and key state has a maximum age. Past
-  it, admission falls back to synchronous and never uses stale state, so a
-  missed change event cannot extend exposure beyond that age.
-- **One mode at a time.** Each workspace-region is in exactly one admission mode,
-  recorded in Spanner with an epoch.
-- **Switching from fast to synchronous:**
-  1. Stop grants and new holds.
-  2. Serve the existing holds' heartbeats, settles, refunds and replays from the
-     fast path until they are terminal or expired.
-  3. Return the budget and flip the epoch.
+### 4.7 Budget: grants, returns, rollups and gates
 
-  Python never reads the regional ledger.
+The sweeper does all Spanner work, off the request path.
 
-### 4.8 Routing
+- **Grant g:**
+  1. One Spanner transaction checks the donor shard's headroom, adds `g` to
+     `reserved`, and writes a grant row in state pending (ID G).
+  2. Then a `Pool→Budget` transfer with ID G.
+  3. A replay returns `exists`, and the row becomes applied.
 
-Python compiles routing into a versioned, signed snapshot on every catalog or
-health change: candidates per model, prices, health, fallback order and service
-tiers. The admission service evaluates it.
+  Grants come from one shard's headroom (`credit-row-sharding-handoff.md`),
+  sized by headroom rather than trailing spend, and the rows record the donor
+  shard.
+- **Return r:**
+  1. A Spanner intent row R records the maximum.
+  2. A `balancing_debit` `Budget→Pool`, ID R, moves only free funds. Its actual
+     amount `r'` is read back from the ledger.
+  3. A Spanner transaction claims R exactly once, releases `r'` from the donor
+     shard's `reserved`, and absorbs recovery debt from it. A crash at any
+     point resumes from R's state.
+- **Rollup,** from account counters:
+  - budget-leg charges `U` = the sink's credits minus the overdraft's debits;
+  - overdraft charges `O` = the overdraft's debits;
+  - reversals `X` = the sink's debits.
 
-- A snapshot that fails verification keeps the previous one.
-- A snapshot past its freshness limit sends requests to the synchronous path.
-- Inputs that need per-workspace reads today (the OAuth app owner, broadcast
-  destinations) are cached under the same maximum age, or the request stays
-  synchronous.
+  Returns go `Budget→Pool` and never pass through the sink, so they are not
+  usage; they leave `reserved` through their own protocol above. One Spanner
+  transaction moves the fences and applies `total_usage += ΔU + ΔO − ΔX` and
+  `reserved −= ΔU − ΔX`. **Overdraft never touches `reserved`.**
+- **Interval:** adaptive. Seconds for large spenders, minutes for small ones.
+  A workspace-region costs about three commits per interval: grant, return and
+  rollup.
+- **Pause, revoke, trust downgrade:** close the gate account, so new admissions
+  fail at once. Then sweep free funds back, and keep sweeping funds that
+  settling holds release until the pause lifts. Reopen by voiding the closing
+  transfer.
+- **An overdraft balance blocks new grants** until the rollup has booked it.
+- **Home settlement:** deferred usage from a peer plane is booked to Spanner
+  unconditionally, as today. When `available` falls below the outstanding
+  regional budgets, the sweeper grants nothing more and sweeps budgets back
+  until it is non-negative. The extra exposure is at most the open holds, and
+  it is alerted.
 
-### 4.9 Generation records and analytics
+### 4.8 Freshness, loss and fences
 
-- **Publish after commit.** Settle publishes the generation record to the
-  analytics topic after the ledger commit, carrying the ledger timestamp.
-- **Delivery** to ClickHouse is at-least-once and idempotent on the generation
-  ID, which ReplacingMergeTree already provides.
-- **Reconciliation.** A job compares the ledger's posted terminal transfers since
-  its watermark with ClickHouse and republishes gaps. So every settled generation
-  has exactly one record within T.
-- **No ordering keys.** Pub/Sub is not on the money path, so its 1 MB/s
-  per-ordering-key limit does not cap a large workspace.
-- **No per-request Spanner rows** for fast-path traffic. Disputes and refunds
-  read the ledger and ClickHouse.
+- **Maximum state age.** Cached boot, workspace and key state has one. Past it,
+  admission stops for that workspace. Pauses also close the gate (§4.7), so a
+  pause does not depend on cache age.
+- **Fence-age gate.** If a workspace-region's last successful rollup is older
+  than its bound, admission stops there: 503 for keyed requests, the
+  synchronous path for unkeyed ones. A stuck sweeper therefore cannot let
+  unbooked charges grow.
+- **Losing a region's ledger** loses at most the charges since the last
+  successful fence, plus open holds. The runbook:
+  1. Declare the loss and stop that region's admission.
+  2. Release the region's escrow in Spanner from the last fence.
+  3. Book late settles through the synchronous path, with the authorization ID
+     as the Spanner claim key.
+  4. Accept that keyed scopes admitted since the last fence can execute again.
 
-### 4.10 What stays synchronous at first
+  The lost charges are revenue; the escrow is the customer's.
 
-Credit-funded keys on standard catalog routes, streaming or not, go first.
-Everything else stays on today's Python path, and the admission service forwards
-it there:
+### 4.9 Settle durability and side effects
+
+- **Durable before the acknowledgement.** Settle commits the ledger chain, then
+  publishes the full settle payload with the envelope to the regional settle
+  log. Only then does it acknowledge the gateway. If the publish fails after
+  the commit, the gateway's retry gets `exists` and republishes. The gateway
+  keeps settles in memory only (about 15 s of retries, then dropped), and
+  settle runs after the stream ends, so the publish wait is off the client's
+  path.
+- **Consumers of the settle log,** each idempotent on the authorization ID:
+  - generation records and activity analytics to ClickHouse;
+  - auto-refill scheduling, budget alerts, metadata webhooks, routing feedback
+    and route-fallback reports;
+  - for heartbeat-only authorizations that expired, the change-data feed
+    triggers the record and disposition.
+- **Reconciliation** compares the ledger's terminal and expiry events with the
+  log and ClickHouse, and alerts on any gap. A gap it cannot fill from the log
+  becomes a stub record with the amount.
+- **Disposition and evidence lookups** read the ledger by authorization ID, and
+  ClickHouse within T for `gateway_request_id`. Synthetic-probe workspaces stay
+  synchronous, so the release gates keep reading Spanner.
+- **App-owner payouts** stay on the synchronous path at first (§4.11). Moving
+  them needs a durable payout obligation tied to each charge and reversal,
+  applied from the settle log.
+
+### 4.10 Routing
+
+- **A compiled snapshot.** Python compiles routing into a versioned, signed
+  snapshot on every catalog or health change: candidates, prices, health,
+  fallback order and service tiers. Snapshots stay immutable while any hold
+  references them.
+- **Failure handling.** A snapshot that fails verification keeps the previous
+  one. One past its freshness limit stops fast admission.
+- **Per-workspace inputs** that need a read today, such as broadcast
+  destinations, are cached under the maximum age.
+
+### 4.11 What stays synchronous at first
+
+Credit-funded keys on standard catalog routes go first, streaming or not.
+These stay on today's Python path:
 
 - BYOK routes, custom and user-provided models, Polyphemus selection, native
   batch, video and image jobs, and hosted tools with
   `additional_cost_reservation_microdollars`.
 - x402 and federated (deferred-settlement) keys.
 - Keys with window limits, and `budget_strict` keys.
+- OAuth-app keys with a markup (owner payouts, §4.9) and synthetic-probe
+  workspaces.
 - Workspaces that are paused, in debt, below the minimum balance, or below the
   trust tier that allows grants. The carding incident of 2026-08 is why new and
   low-trust workspaces stay synchronous.
@@ -376,150 +393,139 @@ Token volume is concentrated in a few large workspaces. As of 2026-07-19, one
 workspace accounted for 74% of all tokens to date, so a narrow fast path still
 carries most of the traffic.
 
-### 4.11 The gateway load balancer and receipt keys
+### 4.12 The gateway load balancer and receipt keys
 
 Each region's gateway instance group goes behind a regional external passthrough
 Network Load Balancer:
 
 - TLS still terminates inside the enclave, so attestation is unchanged.
 - Connection draining, at least as long as the longest stream, makes scale-in
-  safe. That lets the gateway autoscaler (quill-cloud-proxy #432) drop its
+  safe. The gateway autoscaler (quill-cloud-proxy #432) can then drop its
   scale-out-only mode.
 
-Receipt verification today discovers gateway instances from DNS A records
-(`services/receipt_key_collector.py`, `templates/public/receipts.html`). Behind
-one load-balancer address, that no longer reaches every instance. The boot
-registry already verifies that an instance's attestation commits to its receipt
-key, so registration becomes the publication path:
+Receipt verification today discovers instances from DNS A records, with an
+instance-termination gap. Registration in the boot registry becomes the
+publication path:
 
-- Registration includes the attestation history and is required before an
-  instance takes traffic.
-- The collector and the public instructions read the registry instead of DNS.
+- Registration includes the attestation history.
+- It is required before an instance takes traffic.
+- The collector and the public instructions read the registry, not DNS.
 
 ## 5. Invariants
 
-Each one has a production check.
+Each has a production check.
 
-1. **Admission bound.** Every fast-path admission is a pending transfer on the
-   workspace budget (and key budget). The ledger rejects any that would make
-   `debits_pending + debits_posted > credits_posted`. Check: ledger balances
-   versus grants, continuously.
-2. **Conservation.** Spanner `reserved` for a workspace and region equals the
-   ledger's granted minus rolled-up posted amounts, allowing for the in-flight
-   rollup delta. Check: an auditor diff that must be zero at every fence.
-3. **One terminal transfer per authorization,** shared by settle, snapshot
-   booking and refund. The loser returns the winner.
-4. **No charge lost.** Settle acknowledges only after the terminal or overdraft
-   transfer commits. An expired hold plus a settle becomes a deterministic-ID
-   overdraft debit. Overdraft balances are rolled up and alerted.
-5. **No charge invented.** Only a boot-signed settle or heartbeat posts. Expiry
-   voids, so a request that never ran is never charged.
-6. **Overruns never increase `reserved`.** Posted amounts never exceed the hold,
-   releases are never negative, and the overrun lands only in the overdraft
-   account.
-7. **Idempotency.** The same scope gives the same hold. A fingerprint mismatch
-   answers 409, and `id_already_failed` gets a new attempt ID. Replay works
-   across node loss and mode switches.
-8. **Key caps.** The regional sub-budgets plus synchronous holds never exceed a
-   key's remaining cap. Window-limited and strict keys stay synchronous.
-9. **Freshness.** No admission runs on state older than its maximum age. Pause
-   and revocation sweep budgets to zero within one sweeper interval (stated in
-   seconds when built). Accounts with open holds are never closed.
-10. **Returns take only free funds** (`balancing_debit`), and never while a
-    regional cluster is unreadable.
-11. **The rollup is monotone,** fenced by ledger timestamps, so replays are
-    no-ops. Recovery debt is absorbed in the same Spanner transaction and
-    blocks grants.
-12. **Mode exclusivity.** A workspace-region is in one mode at a time, switched
-    by an epoch-fenced drain.
-13. **Loss bound.** Losing a regional ledger loses at most one rollup interval
-    of charges plus in-flight holds per workspace. Both are stated and alerted.
-14. **Analytics completeness.** Every posted terminal transfer has exactly one
-    generation record within T, and the reconciliation job proves it.
-15. **Latency** is stated as percentiles, with the synchronous path for
-    excursions.
+1. **Admission bound.** Every fast admission is a pending debit on the budget
+   (and key budget), so the ledger rejects any that would exceed the grants.
+2. **Conservation.** `reserved` for a workspace-region equals the grants minus
+   rolled-up budget charges, plus rolled-up reversals, minus applied returns.
+   It allows for pending grant rows, landed-but-unreleased returns, and the
+   unrolled delta. An auditor diffs it at every fence.
+3. **One terminal claim per authorization** (`H(A,terminal)`). The loser reads
+   the winner.
+4. **No charge lost.** Settle acknowledges only after the ledger chain and the
+   settle-log publish. Late settles are charged net of heartbeat posts.
+5. **No charge invented.** Only boot-signed heartbeats and settles post.
+   Refunds and below-posted settles reverse.
+6. **Overdraft never moves `reserved`.** Excess first consumes free budget, so
+   an overrun reduces later admissions.
+7. **Ownership.** Hold IDs are deterministic in the scope. Keyed scopes have
+   one home region and one owner. Ambiguity answers 503, never a second owner.
+8. **Key caps.** Key budgets plus synchronous key holds never exceed the
+   remaining cap, and overruns consume it.
+9. **Pauses** close the gate at once. No admission runs on state older than the
+   maximum age.
+10. **Returns** take only free funds, and are applied to Spanner exactly once
+    through their intent row.
+11. **Rollups** are monotone, fenced per account, and replay as no-ops.
+    Recovery debt is absorbed and blocks grants.
+12. **Mode switches** are epoch-fenced, with replay ownership kept for the
+    retention window.
+13. **Loss bound.** Admission stops when the last successful fence is older
+    than its bound. Loss is at most that window plus open holds.
+14. **Records.** Every terminal or expiry event has one generation record within
+    T, from the settle log or as a reconciled stub.
+15. **Latency** is stated as percentiles. Excursions take the documented
+    fallback or a 503.
 
-## 6. Latency budget
+## 6. Latency and load
 
-| Step | Estimate | Note |
-|---|---|---|
-| Gateway to admission service | 0.5-1 ms | VPC, same region |
-| Boot signature, cache lookups, routing evaluation | 0.2-1 ms | to be benchmarked |
-| Linked hold in the ledger | 1.5-4 ms p50; 10-30 ms p99 under load | batching, one round trip, quorum fsync |
-| Sign the envelope, reply | under 0.3 ms | |
-| **Total** | **about 3-6 ms p50; over 10 ms at p99** | the p99 is why the synchronous fallback stays |
+| Step | Estimate |
+|---|---|
+| Gateway to admission service, same region | 0.5-1 ms (more from AWS and Azure) |
+| Boot signature, caches, routing evaluation | 0.2-1 ms |
+| Linked hold (gate, budget, key) | 1.5-4 ms p50; 10-30 ms p99 under load |
+| Sign the envelope, reply | under 0.3 ms |
+| **Total** | **about 3-6 ms p50; over 10 ms at p99** |
 
-The benchmark gate measures this whole path on the production VM and disk shape
-at the target concurrency. It includes heartbeats, a hot workspace and a replica
-failover.
+Ledger load at 100T is set mostly by heartbeats: about two transfers each (four
+with a key leg). That is at least one before the first byte, plus one per 10 s
+or per 256 output tokens. The benchmark gate measures the whole path at that
+rate, including a hot workspace and a replica failover.
 
 ## 7. Lessons from the retired regional-quota leases
 
 The September pilot (`git show 44924155^:docs/design/regional-quota-leases.md`;
-incident `docs/incidents/2026-09-26-regional-ledger-grant-storm.md`) had the
-same outline: Spanner grants, a fenced lease, local reservations and a
-reconciler. It was retired on 2026-09-27 for three failures, and each one shapes
-this design.
+`docs/incidents/2026-09-26-regional-ledger-grant-storm.md`) had the same outline
+and was retired on 2026-09-27.
 
-| Pilot failure | What this design does instead |
+| Pilot failure | This design |
 |---|---|
-| The lease ledger was Bigtable with app profiles pinned to us-central1, so europe-west4 settles read it across the Atlantic and timed out | Each region's ledger is in that region; no request reads another region's ledger |
-| A workspace went from about 6 to 430 authorizations a minute; grant and quarantine transactions aborted 94-96% of the time, and authorize p50 reached 3.7 s | Grants are never on the request path. One sweeper per region issues them serially with a per-workspace cooldown, and admission falls back to synchronous rather than waiting for a grant |
-| The ledger's p99 amplified into a fleet-wide Spanner abort storm | The request path never touches Spanner. The sweeper's commits are rate-limited and back off on aborts |
+| The lease ledger was Bigtable with app profiles pinned to us-central1, so europe-west4 settles read it across the Atlantic and timed out | Each region's ledger is local. Keyed requests go to the workspace's home region by design, and the latency is stated |
+| A workspace went from about 6 to 430 authorizations a minute; grant and quarantine transactions aborted 94-96%; authorize p50 reached 3.7 s | Grants are never on the request path. One sweeper per region issues them serially with a per-workspace cooldown, sized by headroom |
+| The ledger's p99 amplified into a fleet-wide Spanner abort storm | The request path never touches Spanner. Unkeyed fallback to the synchronous path goes through a per-workspace-region breaker (cooldown, as in the incident fix) and sheds with 503 when that path is saturated |
+| Ambiguous leases were quarantined, not guessed back into service | Ambiguous keyed requests get 503 (§4.3) |
 
 ## 8. Rollout
 
 1. **Measure** commits per generation after #1464 and #1465, and authorize's
-   timing fields (`routing_ms`, `store_ms`) per region.
-2. **Gateway load balancer and receipt-key publication** (§4.11), independent
+   timing fields per region.
+2. **Gateway load balancer and receipt-key publication** (§4.12), independent
    of the rest.
-3. **Ledger and admission service in shadow.** Gateways mirror authorize,
-   heartbeat and settle. The service computes decisions, routing and holds
-   against a shadow ledger. A comparator reports any difference from Python,
-   including boot checks and cohort membership. No effect on requests.
+3. **Ledger and admission service in shadow:** gateways mirror authorize,
+   heartbeat and settle. A comparator reports any difference from Python in
+   decisions, holds, charges per authorization and records. Requests are
+   unaffected.
 4. **Benchmark gate** (§6).
-5. **Pilot:** Joseph's own workspace first, then a few large workspaces, with kill
-   switches per workspace, region and cloud.
-6. **Widen the cohort,** and move generation records off Spanner for fast-path
-   traffic.
-7. **Port the remaining route types** (§4.10), then retire the Python hot path.
-
-AWS and Azure run their own stores (DSQL, Postgres). The sweeper talks to
-storage through the same store contract, so each cloud follows after GCP.
+5. **Pilot:** Joseph's own workspace, then a few large ones, with kill switches
+   per workspace, region and cloud.
+6. **Widen;** move app payouts and the remaining route types (§4.11) one at a
+   time; then retire the Python hot path.
 
 ## 9. Not decided here
 
-- The ledger choice (§2).
-- Grant size and share cap, minimum balance, rollup intervals, grant cooldown and
-  the maximum state age. Their values come from the benchmark and pilot data, and
-  the doc is updated when they are chosen.
-- Whether one TigerBeetle cluster per region, or a smaller number of
-  multi-region clusters, serves better once cross-region latency is measured.
+- **The per-request store** (§2).
+- **Tuning values:** grant sizing and cooldown, rollup intervals and fence-age
+  bounds, the maximum state age, and the idempotency retention window. They
+  come from the benchmark and the pilot.
+- **Home-region assignment** for workspaces whose traffic moves between
+  continents.
 
-## 10. Review history
+## 10. Not in this design
 
-v1 (2026-10-02) kept per-request state only in admission-node memory and used
-per-allowance sequence numbers over Pub/Sub. Codex found 14 problems; Fable
-confirmed them and found 7 more. The main ones:
+Sharding ClickHouse (decided later), and Spanner topology for the system of
+record.
 
-- closing an allowance could release money a running request would spend;
-- watermarks are not exactly-once;
-- authorize idempotency had no durable owner;
-- workspace allowances bypassed key caps;
-- Stage D needed one terminal state machine;
-- the allowance equations broke on overruns;
-- home-settlement debits could overdraw.
+## 11. Review history
 
-The rest covered:
-
-- recovery debt and pause propagation;
-- the pricing envelope and the settle response contract;
-- the ClickHouse delivery gap and the latency claim;
-- receipt keys and Pub/Sub's ordering-key limit;
-- split-brain ownership, boot authentication and kill-switch continuity;
-- commit counts, per-request Spanner rows and per-shard grants.
-
-v2 answers each in §§4-7. Fable checked every TigerBeetle semantic used here
-against its documentation. The critical ones were re-checked for this version:
-transient errors burn IDs, closed accounts refuse posts, the admission
-inequality, and session limits.
+- **v1 (2026-10-02)** kept per-request state in admission-node memory. Codex
+  found 14 problems; Fable confirmed them and found 7 more.
+- **v2** moved money into a per-region TigerBeetle ledger. Codex (7 P1, 5 P2)
+  and Fable (4 P1, 9 P2, 6 P3) then found these gaps:
+  - scope ownership without uniqueness;
+  - fallback that could execute a scope twice;
+  - a terminal ID that Stage D's incremental posts broke;
+  - late settles double-charging posted heartbeats;
+  - refunds unable to undo posted deltas;
+  - a rollup that released escrow for overdraft and counted returns as usage;
+  - overruns that did not reduce headroom;
+  - incomplete key legs;
+  - returns without a recovery protocol;
+  - unrecoverable lost authorize responses and settle payloads;
+  - app payouts and settle side effects without a home;
+  - a sweep that was not a lasting revocation;
+  - a loss bound with no gate;
+  - two operations errors: replicas are rebuilt with `recover`, and
+    change-data capture does exist.
+- **v3** answers each one in §§4-8. Both reviewers checked the TigerBeetle
+  semantics used here against its documentation and source.
