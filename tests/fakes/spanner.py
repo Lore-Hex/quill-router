@@ -483,6 +483,18 @@ class _FakeTransaction:
         param_types: Any = None,
     ) -> list[list[str]]:
         self.db.transaction_execute_sql_calls += 1
+        if sql.startswith("UPDATE tr_credit_balance SET reserved = reserved + @est"):
+            if not sql.endswith(" THEN RETURN billing_pause_causes, pause_epoch"):
+                raise ValueError("DML rows require the registered THEN RETURN columns")
+            self._in_returning = True
+            try:
+                count = self.execute_update(sql, params=params, param_types=param_types)
+            finally:
+                self._in_returning = False
+            if not count:
+                return []
+            rec = self._typed_current("tr_credit_balance", (params["ws"], params["shard"]))
+            return [[rec.get("billing_pause_causes"), rec.get("pause_epoch")]]
         if sql.startswith("UPDATE tr_settle_outbox SET status=@status"):
             if not sql.endswith(" THEN RETURN reservation_id"):
                 raise ValueError("DML rows require THEN RETURN")

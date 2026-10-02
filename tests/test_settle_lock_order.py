@@ -241,7 +241,8 @@ def test_armed_pause_precedes_capped_key_and_rolls_back(
     )
     statements = transaction_statements(calls)
     pause = next(i for i, sql in enumerate(statements)
-                 if sql.startswith("select billing_pause_causes, pause_epoch"))
+                 if ("then return billing_pause_causes, pause_epoch" in sql
+                     if has_credit_candidate else sql.startswith("select billing_pause_causes, pause_epoch")))
     if paused:
         assert result["outcome"] == "billing_paused"
         assert not any("tr_key_limit" in sql for sql in statements)
