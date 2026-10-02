@@ -1610,7 +1610,6 @@ def _reap_datetime(value: Any) -> datetime:
     return parsed.astimezone(UTC)
 
 
-@spanner_rpc_budget(TXN_BUDGET_SECONDS)
 def _dispose_open_transaction(opened: list[Any]) -> None:
     """Roll back the one transaction a failed one-commit attempt can leave open.
 
@@ -1631,6 +1630,7 @@ def _dispose_open_transaction(opened: list[Any]) -> None:
         _rollback_discarded_transaction(transaction)
 
 
+@spanner_rpc_budget(TXN_BUDGET_SECONDS)
 def typed_finalize_atomic(
     database: Any,
     param_types: Any,
