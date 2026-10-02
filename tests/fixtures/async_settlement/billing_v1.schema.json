@@ -1,0 +1,457 @@
+{
+  "$defs": {
+    "FixtureCase": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "snapshot": {
+          "additionalProperties": true,
+          "title": "Snapshot",
+          "type": "object"
+        },
+        "raw_usage": {
+          "additionalProperties": true,
+          "title": "Raw Usage",
+          "type": "object"
+        },
+        "expected_normalized_usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NormalizedUsage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "selected_endpoint": {
+          "title": "Selected Endpoint",
+          "type": "string"
+        },
+        "expected_charge_micro": {
+          "anyOf": [
+            {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Expected Charge Micro"
+        },
+        "expected_exclusion": {
+          "anyOf": [
+            {
+              "enum": [
+                "invalid_snapshot",
+                "invalid_context",
+                "invalid_usage",
+                "arithmetic_overflow",
+                "malformed_usage",
+                "unsupported_endpoint",
+                "untyped",
+                "non_credits",
+                "settlement_authority",
+                "unsupported_route",
+                "service_tier",
+                "app_markup",
+                "custom_markup",
+                "receipt_fee",
+                "request_fee",
+                "custom_model",
+                "user_model",
+                "tool_cost",
+                "search_cost",
+                "image_cost",
+                "video_cost",
+                "partner",
+                "liberty",
+                "native_batch",
+                "fusion",
+                "polyphemus",
+                "private_tier_basis"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Expected Exclusion"
+        },
+        "expected_terminal_envelope_hash": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Expected Terminal Envelope Hash"
+        },
+        "context": {
+          "additionalProperties": true,
+          "title": "Context",
+          "type": "object"
+        },
+        "phase": {
+          "enum": [
+            "requested",
+            "observed"
+          ],
+          "title": "Phase",
+          "type": "string"
+        },
+        "reservation_estimate_micro": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reservation Estimate Micro"
+        },
+        "catalog_action": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Catalog Action"
+        },
+        "freeze_cache_rate": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Freeze Cache Rate"
+        }
+      },
+      "required": [
+        "name",
+        "snapshot",
+        "raw_usage",
+        "expected_normalized_usage",
+        "selected_endpoint",
+        "expected_charge_micro",
+        "expected_exclusion",
+        "expected_terminal_envelope_hash",
+        "context",
+        "phase"
+      ],
+      "title": "FixtureCase",
+      "type": "object"
+    },
+    "NormalizedUsage": {
+      "additionalProperties": false,
+      "properties": {
+        "uncached_input_tokens": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "title": "Uncached Input Tokens",
+          "type": "integer"
+        },
+        "total_prompt_tokens": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "title": "Total Prompt Tokens",
+          "type": "integer"
+        },
+        "output_tokens": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "title": "Output Tokens",
+          "type": "integer"
+        },
+        "cache_read_tokens": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "title": "Cache Read Tokens",
+          "type": "integer"
+        },
+        "cache_creation_tokens": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "title": "Cache Creation Tokens",
+          "type": "integer"
+        },
+        "reasoning_tokens": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "title": "Reasoning Tokens",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "uncached_input_tokens",
+        "total_prompt_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_creation_tokens",
+        "reasoning_tokens"
+      ],
+      "title": "NormalizedUsage",
+      "type": "object"
+    },
+    "ValidationCase": {
+      "additionalProperties": false,
+      "description": "Literal inputs, including malformed wire values; never derive expectations.",
+      "oneOf": [
+        {
+          "not": {
+            "required": [
+              "raw_json_hex"
+            ]
+          },
+          "required": [
+            "input"
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "input"
+            ]
+          },
+          "properties": {
+            "raw_json_hex": {
+              "type": "string"
+            },
+            "operation": {
+              "enum": [
+                "snapshot_json",
+                "envelope_json",
+                "acceptance_json",
+                "eligibility_json",
+                "model_json"
+              ]
+            }
+          },
+          "required": [
+            "raw_json_hex"
+          ]
+        }
+      ],
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "operation": {
+          "enum": [
+            "snapshot_json",
+            "envelope_json",
+            "acceptance_json",
+            "eligibility_json",
+            "model_json",
+            "model",
+            "envelope",
+            "acceptance",
+            "type",
+            "field",
+            "checked",
+            "builder"
+          ],
+          "title": "Operation",
+          "type": "string"
+        },
+        "input": {
+          "default": null,
+          "title": "Input"
+        },
+        "raw_json_hex": {
+          "anyOf": [
+            {
+              "pattern": "^(?:[0-9a-f]{2})*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Raw Json Hex"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "enum": [
+                "Frozen",
+                "Eligibility",
+                "Rates",
+                "Tier",
+                "Candidate",
+                "BillingSnapshot",
+                "RawUsage",
+                "NormalizedUsage",
+                "Evaluation",
+                "TerminalEnvelope",
+                "AcceptanceOutcome",
+                "UInt",
+                "Identity",
+                "Digest",
+                "SettlementMode"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "field": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Field"
+        },
+        "snapshot": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Snapshot"
+        },
+        "expected_error": {
+          "anyOf": [
+            {
+              "enum": [
+                "invalid_snapshot",
+                "invalid_context",
+                "invalid_usage",
+                "invalid_envelope",
+                "invalid_acceptance",
+                "invalid_evaluation",
+                "invalid_type",
+                "invalid_builder",
+                "snapshot_hash_mismatch",
+                "charge_mismatch",
+                "unsupported_endpoint",
+                "arithmetic_overflow",
+                "string_type",
+                "invalid_encoding",
+                "invalid_string"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Expected Error"
+        },
+        "expected_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected Hash"
+        },
+        "expected_canonical_ascii": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected Canonical Ascii"
+        },
+        "evaluated_usage": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evaluated Usage"
+        }
+      },
+      "required": [
+        "name",
+        "operation",
+        "expected_error"
+      ],
+      "title": "ValidationCase",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "fixture_version": {
+      "const": 1,
+      "title": "Fixture Version",
+      "type": "integer"
+    },
+    "envelope_identity": {
+      "additionalProperties": true,
+      "title": "Envelope Identity",
+      "type": "object"
+    },
+    "cases": {
+      "items": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/FixtureCase"
+          },
+          {
+            "$ref": "#/$defs/ValidationCase"
+          }
+        ]
+      },
+      "title": "Cases",
+      "type": "array"
+    }
+  },
+  "required": [
+    "fixture_version",
+    "envelope_identity",
+    "cases"
+  ],
+  "title": "FixtureSchema",
+  "type": "object"
+}
