@@ -21,7 +21,7 @@ def lookups_finish_on_a_loaded_runner(monkeypatch: pytest.MonkeyPatch) -> None:
     A missed lookup returns the identity without affiliations, so the tests
     below that expect a claim would fail and those that expect none would pass
     for the wrong reason. They test what a finished lookup discloses, so they
-    allow it longer. The slow-directory test sets its own short limit.
+    allow it longer. The slow-directory test sets its own limit.
     """
     import trusted_router.verification as verification
 
@@ -113,12 +113,16 @@ def test_slow_directory_cannot_block_signin(client: TestClient, monkeypatch: pyt
 
     def slow_read(key: str):
         reads.append(key)
-        release.wait(5)
+        release.wait(60)
         finished.set()
         return None
 
     monkeypatch.setattr(STORE.target, "get_company_affiliation_document", slow_read)
-    monkeypatch.setattr(verification, "AFFILIATION_TIMEOUT_SECONDS", 0.02)
+    # The limit must outlast the worker thread's start. A thread that starts
+    # after the timeout finds retries already deferred and never reads, so
+    # `reads` stays empty. The read blocks far longer than the limit, so the
+    # sign-in still returns before it finishes.
+    monkeypatch.setattr(verification, "AFFILIATION_TIMEOUT_SECONDS", 5.0)
     headers = {"authorization": "Bearer " + key}
     try:
         for _ in range(2):
