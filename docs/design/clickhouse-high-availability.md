@@ -340,6 +340,14 @@ never publish at once. That is why takeover below is fenced and manual.
      calendar timers are `Persistent=true` and catch up on boot). Instance
      metadata survives reboots and can be changed while the VM is stopped, so
      the role key fences a node before it boots.
+   - Built: `scripts/deploy/clickhouse_worker_role.sh` (`status`, `fence`,
+     `standby --node`, `takeover --to [--from-unreachable]`; each prints its
+     plan unless `--apply`). The fence is a drop-in per worker unit running
+     `scripts/deploy/clickhouse-worker-role/role-check`, which exits 0 only
+     for `publisher`, 1 for any other value or an absent key, and 255 when the
+     metadata server cannot be read, so a drain retries rather than staying
+     skipped. Both installers now target the publisher read from metadata
+     (`scripts/deploy/_clickhouse_publisher.sh`) and refuse any other node.
 2. Not now: unattended takeover. A lease row cannot fence a publication that
    is already inside ClickHouse. An old holder can pass any lease or epoch
    check, submit `REPLACE PARTITION`, and stall in the server; killing the
@@ -734,7 +742,7 @@ the firewall already admits the VPC ranges, so no node change is needed.
 
 | Hole | Change |
 |---|---|
-| G1 | Worker host as a parameter in `scripts/deploy/clickhouse_operational_analytics.sh:102-183,239-240`; standby units and `_staging` tables installed disabled on node 2; a role-check `ExecCondition=` on every worker unit, reading the `tr-clickhouse-role` instance metadata key; a runbook with the four takeover steps (durable fence, server-side `KILL QUERY` and checks, `SYSTEM SYNC REPLICA` barrier on every replicated table, enable node 2) and the rejoin rule. Node-1 mode in `scripts/deploy/clickhouse_failover_smoke.sh:16`. Unattended takeover waits for a publication-side fence design (item 2). |
+| G1 | Done: the role fence, the standby install and the four-step takeover in `scripts/deploy/clickhouse_worker_role.sh`; both installers target the publisher; runbook in `docs/clickhouse-reliability.md` ("Move the workers to another node"). Remaining: a node-1 mode in `scripts/deploy/clickhouse_failover_smoke.sh:16`. Unattended takeover waits for a publication-side fence design (item 2). |
 | G2 | `scripts/deploy/rollout.sh`: endpoint list. Failing the rollout instead of falling back to `10.128.15.214` is done (#1467). The `/tr_health` handler and its user: `scripts/deploy/clickhouse_node_config.sh`. The Terraform in §3.2. |
 | G3 | `--insert_quorum=2 --async_insert=0` in `clickhouse/ingest_outbox.py:214-223` and `clickhouse/ingest_operational_outbox.py:541-556`. |
 | G4 | `<prometheus>` block added by `scripts/deploy/clickhouse_cluster.sh:189-230`; Ops Agent receiver installed at `:277-291`; alert policies in Terraform. |
