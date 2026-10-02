@@ -548,3 +548,15 @@ h3,.privacy-choice h3,.review-resources h3,.uptime-panel figcaption,.attestation
  .hero-copy{padding-block:40px 24px}
  .hero-provider-group{gap:24px;padding-inline:12px}
 }
+
+/* Hero and closing box share one photograph: the TrustedRouter river, cropped to water
+   so it reads as texture rather than a place. The gradient arcs are retired. */
+.hero::before{display:none}
+.hero-photo{position:absolute;inset:0;z-index:-2;pointer-events:none;background:url('/assets/river-close.webp') 50% 50%/cover no-repeat}
+.hero-photo::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(5,7,6,.8),rgba(5,7,6,.4) 40%,rgba(5,7,6,.25) 72%,rgba(5,7,6,.9))}
+.hero .lead{color:#edf8f5}
+.closing-color{display:none}
+.closing-art::before{content:"";position:absolute;inset:0;background:url('/assets/river-close.webp') 50% 50%/cover no-repeat}
+.closing-art::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(5,7,6,.94),rgba(5,7,6,.6) 55%,rgba(5,7,6,.35))}
+.closing-grain{opacity:.06}
+@media(max-width:600px){.closing-art::after{background:linear-gradient(180deg,rgba(5,7,6,.3),rgba(5,7,6,.62) 45%,rgba(5,7,6,.94) 78%)}}
