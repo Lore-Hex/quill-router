@@ -494,9 +494,20 @@ This frees roughly 26–36 GB on node 1 (depending on whether `text_log` keeps
 **G6. Two node-1 queries grow with volume; one already fails (medium, capacity).**
 - `verify_spanner_delivery` looks rows up by `generation_id`, which is not a
   prefix of the sort key `(tenant_id, created_at, generation_id)`, so each
-  half-hourly run is a full `FINAL` scan (5.4 GB now).
-  Bound it by the source rows' `created_at` range or add a `bloom_filter` skip
-  index on `generation_id` (`clickhouse/operational_fingerprint.py:101-106`).
+  half-hourly run is a full `FINAL` scan (5.4 GB now). Fix: a projection
+  ordered by `generation_id` (`clickhouse/023_*`) finds each sampled ID's sort
+  keys, and the rows are then read by key, so a run reads about one granule per
+  sampled key instead of the whole table. Two rejected options: bounding the
+  lookup by the sampled rows' `created_at` span hides a second copy of a
+  generation stored under another `created_at` (both survive `FINAL`, because
+  `created_at` is in the sort key), and a `bloom_filter` skip index passes
+  almost every granule when tested against thousands of IDs. The verifier now
+  reports a generation stored under two sort keys as `duplicated`. Lightweight
+  deletes on this table now fail (code 344), on purpose: with
+  `lightweight_mutation_projection_mode = 'rebuild'` a read routed to the
+  projection still returned a deleted row until the next merge, and with
+  `'drop'` the touched part lost its projection (26.7.1.1315). Delete rows here
+  with `ALTER TABLE ... DELETE`, which rewrites the projection with the part.
 - Leaderboard evidence (§2.3): the cap is raised from 256 MiB to 1 GiB
   (#1467; node 1 has 9–12 GB available). Precomputing the per-route ranks in
   the hourly rollup remains the fix that does not grow with volume.
@@ -728,6 +739,6 @@ the firewall already admits the VPC ranges, so no node change is needed.
 | G3 | `--insert_quorum=2 --async_insert=0` in `clickhouse/ingest_outbox.py:214-223` and `clickhouse/ingest_operational_outbox.py:541-556`. |
 | G4 | `<prometheus>` block added by `scripts/deploy/clickhouse_cluster.sh:189-230`; Ops Agent receiver installed at `:277-291`; alert policies in Terraform. |
 | G5 | `scripts/deploy/clickhouse_node_config.sh` installs `config.d/tr-system-logs.xml` one node at a time (3, 2, then 1), restarting only a healthy node and waiting for `/tr_health` and its Keeper voter; `--drop-renamed-logs` drops the renamed `<log>_N` tables. |
-| G6 | `clickhouse/operational_fingerprint.py:101-106` (time-bounded lookup). The leaderboard query's 1 GiB cap is done (#1467); ranking in the rollup remains the volume-proof fix. |
+| G6 | The `by_generation_id` projection (`clickhouse/023_activity_generation_id_projection_replicated.sql`, applied with `scripts/deploy/clickhouse_replicated_migrate.sh`) and the key-based lookup in `clickhouse/operational_fingerprint.py`. The leaderboard query's 1 GiB cap is done (#1467); ranking in the rollup remains the volume-proof fix. |
 | G7 | `scripts/deploy/clickhouse_live_ingestion.sh:90-93` (replicated DDL, refuse non-replicated engines); `scripts/deploy/clickhouse_operational_writer.sh:16` (all nodes). Pinning the version in `scripts/deploy/clickhouse_startup.sh` is done (#1467). |
 | G8 | `clickhouse/archive_daily.py:90-164` (add the client telemetry datasets). |

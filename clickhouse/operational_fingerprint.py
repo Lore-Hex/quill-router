@@ -114,6 +114,44 @@ def clickhouse_rows(
     return rows
 
 
+def activity_rows_by_generation(
+    clickhouse: ClickHouseQuery,
+    ids: list[str],
+) -> dict[str, list[dict[str, Any]]]:
+    """Every stored activity row for each generation ID, after FINAL.
+
+    ``generation_id`` is the last column of the sort key ``(tenant_id,
+    created_at, generation_id)``, so a lookup by it alone reads the whole table.
+    The inner query finds each ID's sort keys through the ``by_generation_id``
+    projection (clickhouse/023_*); the outer one reads only those keys' rows.
+    Without the projection the inner query reads three columns of every part,
+    which is slower but returns the same rows.
+
+    An ID stored under two sort keys (a different tenant or ``created_at``)
+    survives FINAL as two rows; both are returned so the caller can report it.
+    """
+    if not ids:
+        return {}
+    if any(SAFE_ID.fullmatch(item) is None for item in ids):
+        raise ValueError("source contains an invalid record ID")
+    payload = ("\n".join(ids) + "\n").encode()
+    result = clickhouse.query(
+        "SELECT * EXCEPT ingest_version FROM activity_generations FINAL "
+        "WHERE (tenant_id, created_at, generation_id) IN ("
+        "SELECT tenant_id, created_at, generation_id FROM activity_generations "
+        "WHERE generation_id IN (SELECT id FROM wanted)) "
+        "FORMAT JSONEachRow",
+        input_bytes=payload,
+        external_ids=True,
+    )
+    rows: dict[str, list[dict[str, Any]]] = {}
+    for line in result.splitlines():
+        row = json.loads(line)
+        if isinstance(row, dict):
+            rows.setdefault(str(row["generation_id"]), []).append(row)
+    return rows
+
+
 def _iso(value: Any) -> str:
     text = str(value).replace(" ", "T")
     try:
