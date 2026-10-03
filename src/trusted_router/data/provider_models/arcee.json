@@ -64,7 +64,8 @@
       "id": "deepseek/deepseek-v4-pro",
       "upstream_id": "deepseek/deepseek-v4-pro",
       "context_length": 512000,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "provider-access-unavailable",
       "input_token_price_per_m": 1740000,
       "output_token_price_per_m": 3480000,
       "cached_input_token_price_per_m": 200000
@@ -130,7 +131,8 @@
       "id": "thinkingmachines/inkling-small",
       "upstream_id": "thinkingmachines/inkling-small",
       "context_length": 262144,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "provider-access-unavailable",
       "input_token_price_per_m": 500000,
       "output_token_price_per_m": 1200000,
       "cached_input_token_price_per_m": 100000

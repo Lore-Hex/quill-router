@@ -7,6 +7,7 @@ import json
 import logging
 import socket
 import ssl
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -125,6 +126,19 @@ def _fetch_receipt_key(target: ReceiptKeyTarget, *, verify_tls: bool) -> dict[st
     if not isinstance(payload, dict):
         raise ValueError("receipt-key response is not an object")
     return payload
+
+
+def _fetch_receipt_key_with_retry(target: ReceiptKeyTarget, *, verify_tls: bool) -> dict[str, Any]:
+    # GET only: retry one transient read/connect failure on a fresh connection.
+    # Parsing, TLS verification, attestation and storage errors never retry.
+    for attempt in range(2):
+        try:
+            return _fetch_receipt_key(target, verify_tls=verify_tls)
+        except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.ReadError, httpx.RemoteProtocolError):
+            if attempt:
+                raise
+            time.sleep(0.25)
+    raise AssertionError("receipt-key retry exhausted without a result")
 
 
 def _record_from_payload(
@@ -287,7 +301,7 @@ def collect_receipt_keys(
     plane = urlsplit(settings.api_base_url).hostname or settings.trusted_domain
     for target in targets:
         try:
-            payload = _fetch_receipt_key(
+            payload = _fetch_receipt_key_with_retry(
                 target,
                 verify_tls=not settings.synthetic_canonical_attested,
             )

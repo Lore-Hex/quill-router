@@ -2482,7 +2482,15 @@ def test_makora_provider_models_follow_live_manifest() -> None:
     }
 
     assert credits_model_ids == set(expected)
-    assert byok_model_ids == set(expected)
+    # Our account's billing hold must not disable a customer's own Makora key.
+    # Snapshot-backed BYOK routes may survive a Credits-only manifest hold.
+    account_held = {
+        row["id"] for row in raw_models
+        if row.get("routable") is False
+        and row.get("routable_reason") == "provider-billing-unavailable"
+    }
+    assert set(expected) <= byok_model_ids
+    assert byok_model_ids - set(expected) <= account_held
     assert "qwen/qwen3.6-27b" not in credits_model_ids
     assert "openai/gpt-oss-120b" not in credits_model_ids
     models = catalog_vehicles.registry_models()
