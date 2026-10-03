@@ -151,7 +151,7 @@ const assert = require('node:assert/strict');
     return route.fulfill({status:200, headers:{...cors, 'Content-Type':'application/pdf'}, body:Buffer.from('%PDF-1.4\n%stand-in\n')});
   });
   await brochure.goto('http://127.0.0.1:8089/new-york/');
-  await brochure.getByRole('link', {name:'Explore the brochure', exact:true}).first().click();
+  await brochure.getByRole('link', {name:'Get the overview', exact:true}).first().click();
   await brochure.waitForFunction(() => location.hash === '#brochure');
   const form = brochure.locator('#brochure-form');
   await form.locator('input[name=email]').fill('nope@invalid');
