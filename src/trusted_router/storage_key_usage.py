@@ -38,6 +38,7 @@ def api_key_usage_snapshot(
             byok_usage_microdollars=api_key.byok_usage_microdollars,
             reserved_microdollars=api_key.reserved_microdollars,
             windows={"daily": 0, "weekly": 0, "monthly": 0},
+            typed_usage_available=False,
         )
 
     ordered_rows = sorted(rows, key=lambda row: int(row[0]))
