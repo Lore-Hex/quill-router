@@ -1,0 +1,15 @@
+<section id="two-hosts" class="routing-feature-section" style="margin-top:40px">
+  <h2>Two hosts: inference and account management</h2>
+  <p>Use the attested gateway for inference and the control plane for key management. Both accept <code>Authorization: Bearer &lt;API key&gt;</code>; key management requires a management key.</p>
+  <div class="model-table-wrap"><table>
+    <thead><tr><th>Host</th><th>What it serves</th></tr></thead>
+    <tbody>
+      <tr><td><code>{{ api_base_url }}</code></td><td>Inference: <code>POST /v1/chat/completions</code>, <code>/v1/responses</code>, <code>/v1/messages</code>, <code>/v1/embeddings</code>, images, and videos. Also <code>GET /v1/models</code> and <code>GET /v1/key</code> (inspect the current key).</td></tr>
+      <tr><td><code>{{ control_plane_api_base_url }}</code></td><td>Account management: <code>POST /v1/keys</code> and <code>GET /v1/keys</code>; <code>GET</code>, <code>PATCH</code>, and <code>DELETE /v1/keys/{hash}</code>; credits, activity, and workspaces. <code>GET /v1/key</code> also works here.</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>Management calls to the inference host return <code>404</code>.</strong> For example, list your keys on the control plane:</p>
+  <pre><code>curl {{ control_plane_api_base_url }}/keys \
+  -H "Authorization: Bearer $TR_MANAGEMENT_KEY"</code></pre>
+  <p>Keep management keys on your server. Use an inference key in your model client.</p>
+</section>
