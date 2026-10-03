@@ -4433,6 +4433,66 @@ def test_route_health_reports_sustained_unavailability_not_recovered_outages(
     ) == []
 
 
+@pytest.mark.parametrize("error_type", [
+    "provider_auth_config", "unsupported_route", "probe_config_error",
+])
+def test_excluded_configured_route_failures_still_alert_and_recover(error_type: str) -> None:
+    samples = [
+        _route_health_sample(
+            f"config-{i}", provider="lightning", model="m", status="unsupported",
+            age_hours=i, error_type=error_type, error_status=401,
+            error_message="PRIVATE upstream payload",
+        ) for i in range(6)
+    ]
+    flags = evaluate_route_health(  # type: ignore[arg-type]
+        _RouteHealthStore(samples), routes=[("lightning", "m")],
+    )
+    assert len(flags) == 1
+    assert flags[0].kind == "configuration"
+    assert flags[0].newest_error_type == error_type
+    assert flags[0].newest_error_message is None
+    samples.append(_route_health_sample(
+        "recovered", provider="lightning", model="m", status="success",
+    ))
+    assert evaluate_route_health(  # type: ignore[arg-type]
+        _RouteHealthStore(samples), routes=[("lightning", "m")],
+    ) == []
+
+
+@pytest.mark.parametrize("ages", [list(range(7, 13)), [0] * 6, list(range(5))])
+def test_configuration_alert_requires_fresh_sustained_evidence(ages: list[int]) -> None:
+    samples = [
+        _route_health_sample(
+            f"config-{i}", provider="lightning", model="m", status="unsupported",
+            age_hours=age, error_type="provider_auth_config", error_status=401,
+        ) for i, age in enumerate(ages)
+    ]
+    assert evaluate_route_health(  # type: ignore[arg-type]
+        _RouteHealthStore(samples), routes=[("lightning", "m")],
+    ) == []
+
+
+def test_configuration_alert_is_fingerprinted_and_excludes_upstream_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.synthetic import alerts
+
+    captured: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(
+        alerts, "ops_alert", lambda message, **kwargs: captured.append((message, kwargs)),
+    )
+    report_route_health([RouteHealthFlag(
+        "lightning", "m", 6, 6, 1.0, "provider_auth_config", "PRIVATE upstream payload",
+        kind="configuration",
+    )])
+    assert len(captured) == 1
+    message, kwargs = captured[0]
+    assert "provider_auth_config" in message
+    assert "PRIVATE" not in message
+    assert kwargs["fingerprint"] == ["route-configuration", "lightning", "m"]
+    assert kwargs["tags"] == {"route_provider": "lightning", "route_model": "m"}
+
+
 def test_evaluate_route_health_ignores_transient_failures() -> None:
     # A route that is 100% failing on transient/capacity errors (rate limit,
     # gateway/no-upstream, timeout) is NOT alert-worthy — it may recover and

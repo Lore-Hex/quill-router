@@ -9,6 +9,8 @@
   "models": [
     {
       "id": "deepseek/deepseek-v4-flash",
+      "routable": false,
+      "routable_reason": "provider-billing-unavailable",
       "upstream_id": "deepseek-ai/DeepSeek-V4-Flash",
       "display_name": "deepseek-ai/DeepSeek-V4-Flash",
       "context_length": 1048576,
@@ -131,7 +133,8 @@
         "json_mode"
       ],
       "cached_input_token_price_per_m": 32000,
-      "routable": true
+      "routable": false,
+      "routable_reason": "provider-billing-unavailable"
     },
     {
       "id": "z-ai/glm-5.2",
