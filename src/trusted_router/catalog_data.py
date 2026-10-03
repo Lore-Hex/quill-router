@@ -1872,10 +1872,11 @@ PROVIDERS: dict[str, Provider] = {
         supports_prepaid=False,
         supports_byok=False,
         provider_policy=(
-            "The BytePlus ModelArk key authenticates and discovers direct model IDs, "
-            "but this account has not activated the model service. Routes remain "
-            "dark until activation, a paid canary, and exact first-party pricing "
-            "all succeed."
+            "Direct BytePlus inference is activated and live-verified, including "
+            "Seedance 2.5, Seedance 2.0, Seedance 2.0 Fast, and Seed 2.1 Turbo. "
+            "Direct TrustedRouter routes remain disabled until the native video "
+            "adapter, actual video-token billing, and automatic pricing ingestion "
+            "are implemented and verified."
         ),
         provider_policy_url="https://docs.byteplus.com/en/docs/ModelArk",
     ),
