@@ -42,6 +42,10 @@ def fixed_time(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(storage_gcp_counter_dml, 'datetime', Clock)
     monkeypatch.setattr(main, 'datetime', Clock)
+    # The one-commit intent stamps auto_refill_next_attempt_at from this module's
+    # wall clock; unpinned, the reference and C1 runs disagree whenever they
+    # straddle a second boundary (CI, 2026-10-03).
+    monkeypatch.setattr(outbox, 'datetime', Clock)
     monkeypatch.setattr(storage_models, 'utcnow', lambda: NOW)
     monkeypatch.setattr(current, 'utcnow', lambda: NOW)
     monkeypatch.setattr(main, 'utcnow', lambda: NOW)
