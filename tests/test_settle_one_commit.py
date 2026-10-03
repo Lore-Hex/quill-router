@@ -606,7 +606,7 @@ def test_aborted_one_commit_falls_back_to_durable_enqueue_then_drain_finalizes_o
         assert refused, "the one-commit transaction never reached its commit"
         assert data["disposition"] == "intent_durable" and data["settled"] is False
         # Only the durable enqueue committed; the refused attempt wrote nothing.
-        assert log.take() == ["untagged"]
+        assert log.take() == ["auto:SpannerSettleOutbox.enqueue.insert_txn"]
     aid = authorized["authorization_id"]
     assert db.settle_outbox[(aid, "settle")]["status"] == "pending"
     assert _money(db, "ws-one-commit", key.hash)[0] == 0
@@ -641,8 +641,9 @@ def test_aborted_one_commit_falls_back_to_the_two_commit_settle(
 
     assert refused
     assert data["disposition"] == "finalized" and data["settled"] is True
-    # Today's flow, unchanged: enqueue, finalize (done-mark folded), benchmark.
-    assert log.take() == ["untagged", "tr_finalize", "untagged"]
+    # Today's flow, unchanged: enqueue, finalize (done-mark folded), benchmark
+    # (a mutation batch, which carries no transaction tag).
+    assert log.take() == ["auto:SpannerSettleOutbox.enqueue.insert_txn", "tr_finalize", "untagged"]
     cost = data["cost_microdollars"]
     assert _money(db, "ws-one-commit", key.hash) == (cost, 0, cost, 0)
     assert db.settle_outbox[(authorized["authorization_id"], "settle")]["status"] == "done"
@@ -854,7 +855,8 @@ def test_one_commit_attempt_is_budgeted_and_leaves_the_fallback_its_budget(
     def run(database: Any, fn: Any, **kwargs: Any) -> Any:
         deadline = storage_gcp_io._SPANNER_RPC_DEADLINE.get()
         assert deadline is not None
-        remaining.setdefault(kwargs.get("transaction_tag") or "enqueue", deadline - time.monotonic())
+        tag = kwargs.get("transaction_tag")
+        remaining.setdefault("enqueue" if tag == "auto:SpannerSettleOutbox.enqueue.insert_txn" else tag, deadline - time.monotonic())
         if kwargs.get("transaction_tag") == "tr_settle_one_commit":
             raise DeadlineExceeded("one-commit attempt used its budget")
         return original_run(database, fn, **kwargs)
