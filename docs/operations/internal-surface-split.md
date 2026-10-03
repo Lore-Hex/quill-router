@@ -142,6 +142,11 @@ or `cloudkms.cryptoKeyVersions.useToDecrypt`. The broad storage bindings are the
 only cloud data-plane roles; all remaining capabilities are the exact per-secret
 bindings or ordinary bounded outbound HTTPS named above.
 
+The live policy is now declared in `infra/cloud_armor.tf` (adopted on
+2026-10-03). It exists but is not attached to any backend yet. Change it
+there, with an owner applying the root. The commands below are the original
+bootstrap, kept for history.
+
 Create the edge policy as an owner. The deploy identity intentionally lacks
 `securityPolicies.create`:
 
