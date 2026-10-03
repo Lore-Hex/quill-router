@@ -13,7 +13,9 @@ DLQ/policies/alarms/topic, the existing GCP GitHub workload identity pool
 provider allowlist, and the control load balancer's Certificate Manager
 certificates with their DNS authorizations and `_acme-challenge` records
 (`control_lb_certificates.tf`), plus the deploy account's Certificate Manager
-role that lets this root manage them.
+role that lets this root manage them, and the Cloud Armor security policies of
+the global HTTPS load balancer and the Lightning funding site
+(`cloud_armor.tf`).
 
 The Token Exchange certificate domains are listed in
 `token_exchange_certificate_domains.json`; see "Control load balancer
@@ -105,6 +107,41 @@ configuration; do not change the cloud to fit it.
 The apply workflow itself needs GCP WIF before it can update the WIF allowlist.
 That chicken-and-egg bootstrap is resolved by an operator adding
 `infra-apply.yml` once by hand (the operator command is already scripted).
+
+## Cloud Armor policies
+
+`cloud_armor.tf` declares the four live Cloud Armor policies:
+`trusted-router-legacy-edge` (on `trusted-router-control-backend`, which serves
+`/v1/*` and the key routes), `trusted-router-public-edge` (on
+`trusted-router-public-backend`), `trusted-router-internal-edge` (created for
+the internal surface split, not attached yet), and `lightning-router-funding`
+(on `lightning-router-web`). They were adopted on 2026-10-03 with a plan of
+4 imports, 0 to add, 0 to change, 0 to destroy, run as the deploy identity.
+
+The deploy identity, `tr-deploy`, can read security policies and attach them to
+backends, but it cannot create or change them. That is deliberate: a
+compromised deploy pipeline must not be able to weaken the edge. The
+post-merge apply can therefore adopt and verify these policies, but not edit
+them. To change a rule:
+
+1. Change `cloud_armor.tf` in a pull request.
+2. Before merging, an owner runs `terraform -chdir=infra plan` and `apply`
+   from that branch with their own credentials. The plan must show only the
+   intended policy change.
+3. Merge. The post-merge plan then shows no changes for the policy.
+
+If a policy change merges before an owner applies it, the post-merge apply
+fails on the permission check. Apply it as an owner, then rerun the workflow.
+
+The backend services are not managed here; the deploy scripts in
+`scripts/deploy/` own them and their policy attachments. The `check` blocks at
+the end of `cloud_armor.tf` read each backend on every plan and print
+"Check block assertion failed" when a backend no longer uses its policy. Read
+plan warnings, not only the summary line.
+
+The public key-management docs (`/docs#key-management`) quote the limits of
+`trusted-router-legacy-edge` rules 1100 and 1200. Keep them in step with any
+change here.
 
 ## Control load balancer certificates
 
