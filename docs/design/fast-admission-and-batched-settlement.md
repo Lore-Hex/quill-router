@@ -1,9 +1,8 @@
 # Fast admission and batched settlement
 
-Status: **proposed, v23, 2026-10-03. Nothing built.** v8 changed direction
-to regional leases, Joseph's choice (§2). Codex and Fable reviewed v1-v22
-(§11). Codex accepted v22 and Fable accepted v20 and v21; v23 answers the one
-defect Fable found in v22.
+Status: **proposed, v24, 2026-10-03. Nothing built.** v8 changed direction
+to regional leases, Joseph's choice (§2). Codex and Fable reviewed v1-v23
+(§11), and both accepted v23 with no defect; v24 adds their closing notes.
 
 This is the plan for reaching 100T tokens a month without spending the routing
 margin on the billing database, and for taking the control plane out of request
@@ -191,11 +190,16 @@ owner. Its row records:
 | Value | Meaning |
 |---|---|
 | `held` | the sum of the estimates of open holds |
-| `consumed` | the sum of settled charges since the lease began |
+| `consumed` | the sum of charges booked since the lease began, by settles and reaps |
 | `remaining` | the allocation (L, less returns) `− consumed − held` |
 
 - Admission needs `remaining ≥ e`.
 - A settle moves an estimate e out of `held` and the actual a into `consumed`.
+  A refund moves e out of `held` and nothing into `consumed`. A reap moves e
+  out of `held` and the last accepted heartbeat's running charge into
+  `consumed` (§4.5), and a release moves e out of `held` and nothing into
+  `consumed`. So `consumed` is defined for every terminal the checkpoint audit
+  sums.
 - An overrun can make `remaining` negative. The owner then admits nothing more
   under the lease.
 
@@ -748,6 +752,13 @@ synchronous holds, through `settle_atomic`.
   they are audited the same way; their drain-log copies are recognized by
   record ID when the drain log is applied.
 - A difference is a fault. The auditor alerts and revokes the lease.
+- The audit proves the owner's accounting consistent, not its prices right: an
+  owner that priced every record wrongly, but consistently, would pass it.
+  Each charge is still capped at its hold. Two checks cover pricing: the
+  shadow comparator compares every per-authorization charge with Python's
+  before cutover (§8), and afterwards a sampled job reprices records from
+  their archived inputs (usage, frozen prices and fee terms) and alerts on any
+  difference.
 
 **Expiry.**
 
@@ -1838,3 +1849,12 @@ record.
     record's amount and never prices one itself.
   - A reap's full record carries the fee terms and names the heartbeat record
     it was built from.
+- **v24.** Codex and Fable both accepted v23 with no defect. Their closing
+  notes: the owner's terminal arithmetic named only settles and refunds
+  (Fable), and the checkpoint audit proves accounting, not pricing (Codex).
+
+  v24 answers them:
+  - A reap moves its estimate out of `held` and the last accepted running
+    charge into `consumed`; a release moves it out and books nothing.
+  - The pricing limitation is stated, with its two checks: the shadow
+    comparator before cutover, and a sampled repricing job after it.
