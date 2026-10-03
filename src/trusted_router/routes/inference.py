@@ -37,7 +37,16 @@ from trusted_router.auth import (
     Principal,
     SettingsDep,
 )
-from trusted_router.catalog import AUTO_MODEL_ID, MODELS, MONITOR_MODEL_ID, PROVIDERS, Model
+from trusted_router.catalog import (
+    AUTO_MODEL_ID,
+    MODELS,
+    MONITOR_MODEL_ID,
+    PROVIDERS,
+    Model,
+    ModelEndpoint,
+    endpoint_for_id,
+    endpoint_meets_privacy_requirement,
+)
 from trusted_router.config import Settings
 from trusted_router.custom_model_billing import (
     custom_model_cost_microdollars,
@@ -52,8 +61,10 @@ from trusted_router.provider_types import (
 )
 from trusted_router.routes.helpers import json_body
 from trusted_router.routing import (
+    _required_privacy_postures,
     chat_route_candidates,
     chat_route_endpoint_candidates,
+    normalize_routing_inputs,
     provider_route_preferences,
     resolve_model_alias,
 )
@@ -86,6 +97,53 @@ _OUTPUT_TOKEN_FIELDS = ("max_tokens", "max_completion_tokens", "max_output_token
 logger = logging.getLogger(__name__)
 
 
+def _local_dispatch_endpoint(model: Model, usage_type: UsageType | None) -> ModelEndpoint | None:
+    """The route the local provider client calls: the model's default provider,
+    on the credential path that reserved_quota resolves for the request."""
+    effective = usage_type or UsageType.for_model(model)
+    suffix = "byok" if effective.is_byok() else "prepaid"
+    return endpoint_for_id(f"{model.id}@{model.provider}/{suffix}")
+
+
+def _local_routes_meeting_privacy_floor(
+    candidates: list[Model],
+    requirements: frozenset[int],
+    usage_type: UsageType | None,
+) -> list[Model]:
+    """Keep the models whose local route meets every requested privacy posture.
+
+    Routing admits a model when any of its routes meets the floor, but local
+    inference calls the model's default provider. A Confidential request for
+    a model whose default route is its vendor's API must not reach it.
+    """
+    if not requirements:
+        return candidates
+    kept = [
+        model
+        for model in candidates
+        if (endpoint := _local_dispatch_endpoint(model, usage_type)) is not None
+        and all(endpoint_meets_privacy_requirement(endpoint, r) for r in requirements)
+    ]
+    if not kept:
+        raise api_error(
+            400,
+            "No route candidates match the requested provider filters",
+            ErrorType.MODEL_NOT_SUPPORTED,
+        )
+    return kept
+
+
+def _refuse_user_model_privacy_floor(body: dict[str, Any]) -> None:
+    # The owner's endpoint carries no tracked privacy posture, so a privacy
+    # floor fails closed, as it does in the gateway.
+    if _required_privacy_postures(provider_route_preferences(body)):
+        raise api_error(
+            400,
+            "User-provided models cannot meet a provider privacy floor",
+            ErrorType.MODEL_NOT_SUPPORTED,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Public registration entrypoint
 # ---------------------------------------------------------------------------
@@ -110,6 +168,7 @@ def register_inference_routes(router: APIRouter) -> None:
         _require_monitor_model_key(body, principal, settings)
         user_model = _local_user_model_or_none(body)
         if user_model is not None:
+            _refuse_user_model_privacy_floor(body)
             if body.get("stream") is True:
                 return StreamingResponse(
                     await _prime_stream(
@@ -146,6 +205,11 @@ def register_inference_routes(router: APIRouter) -> None:
             candidates = [
                 model for model, _ep in chat_route_endpoint_candidates(body, settings)
             ]
+        candidates = _local_routes_meeting_privacy_floor(
+            candidates,
+            _required_privacy_postures(normalize_routing_inputs(body, settings).preferences),
+            usage_type,
+        )
         requested_model = str(body.get("model") or (body.get("models") or [""])[0])
         is_meta_route = len(candidates) > 1 or requested_model == AUTO_MODEL_ID
         app_name = _app_name(request)
@@ -251,6 +315,9 @@ def register_inference_routes(router: APIRouter) -> None:
         body = await json_body(request)
         _validate_output_token_limit(body)
         model = _require_messages_model(body)
+        _local_routes_meeting_privacy_floor(
+            [model], _required_privacy_postures(provider_route_preferences(body)), None
+        )
         chat_body = messages_to_chat_body(body, model_id=model.id)
         app_name = _app_name(request)
         if body.get("stream") is True:
@@ -327,6 +394,9 @@ def register_inference_routes(router: APIRouter) -> None:
         chat_body = responses_to_chat_body(body)
         _require_monitor_model_key(chat_body, principal, settings)
         model = _require_chat_model(chat_body)
+        _local_routes_meeting_privacy_floor(
+            [model], _required_privacy_postures(provider_route_preferences(body)), None
+        )
         result, generation = await run_chat(
             chat_body,
             model,
