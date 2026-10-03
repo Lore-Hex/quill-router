@@ -63,7 +63,7 @@ PRIVACY_TIER_NO_STORE = 1  # does not store request/response content
 
 PRIVACY_TIER_ZERO_RETENTION = 2  # contractual / policy zero data retention
 
-PRIVACY_TIER_CONFIDENTIAL = 3  # verified compute + provider-side e2ee + explicit ZDR
+PRIVACY_TIER_CONFIDENTIAL = 3  # verified compute + provider-side e2ee + explicit ZDR, not the vendor
 
 PRIVACY_TIER_ALIASES: dict[str, int] = {
     "standard": PRIVACY_TIER_STANDARD,
@@ -133,6 +133,11 @@ PROVIDER_JURISDICTION_SG = "SG"
 # starts where this one stopped instead of repeating it. Keys must be provider
 # slugs whose provider_headquarters_country is None.
 PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
+    "abliterate": (
+        "Checked abliterate.ai/docs and abliterate.ai/terms. Neither identifies "
+        "a legal operating entity or headquarters country, and the terms refer "
+        "to an unnamed upstream inference provider. Excluded from jurisdiction filters."
+    ),
     "telluvian": (
         "Checked Telluvian's product and privacy pages for selector integration; "
         "the contracting operator's jurisdiction has not been verified. Excluded from US/EU filters."
@@ -1737,6 +1742,19 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://akashml.com/",
     ),
+    "abliterate": Provider(
+        slug="abliterate",
+        name="Abliterate",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "Abliterate says prompts and completions are discarded after each request, "
+            "but they transit an upstream inference provider whose retention is not "
+            "identified in its terms. End-to-end ZDR and confidential inference are "
+            "unverified. Paid routes are held pending upstream token-usage accounting."
+        ),
+        provider_policy_url="https://abliterate.ai/terms",
+    ),
     "mancer": Provider(
         slug="mancer",
         name="Mancer",
@@ -2017,6 +2035,29 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://docs.liquid.ai/",
     ),
+    **{
+        slug: Provider(
+            slug=slug,
+            name=f"System1 Models ({tier})",
+            supports_chat=False,
+            supports_prepaid=True,
+            supports_byok=False,
+            stores_content=False,
+            provider_policy=(
+                "Typed decision models, not chat completions. System1 states that prompts "
+                "and outputs are processed in memory, never stored or used for training. "
+                "Operational billing metadata is retained. No confidential-compute or "
+                "E2EE claim is made. "
+                + ("This route enforces the EU tier; inference stays within the EU (currently Finland)."
+                   if tier == "EU" else
+                   "Global uses spare EU capacity and may use worldwide capacity for opted-in keys; "
+                   "it is not an EU residency guarantee.")
+            ),
+            provider_policy_url="https://system1models.ai/legal/privacy",
+            provider_headquarters_country="DE",
+        )
+        for slug, tier in (("system1models", "Global"), ("system1models-eu", "EU"))
+    },
     "typesafe": Provider(
         slug="typesafe",
         name="TypeSafe AI",
@@ -2177,6 +2218,9 @@ PROVIDERS: dict[str, Provider] = {
 
 GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
     {
+        "abliterate",
+        "system1models",
+        "system1models-eu",
         "lyceum",
         "privatemode",
         "telluvian",
@@ -2779,6 +2823,7 @@ ORCHESTRATION_PRIMITIVE_MODEL_IDS = frozenset(
 )
 
 EU_FOCUSED_PROVIDER_ORDER: tuple[str, ...] = (
+    "system1models-eu",
     "mistral",
     "regolo",
     "google-vertex",
@@ -2893,11 +2938,10 @@ SYNTH_QUALITY_MODEL_ORDER = (
     DEEPSEEK_V4_PRO_0813_MODEL_ID,
 )
 
-# Every member must serve the 1M window this model advertises. minimax-m3 tops
-# out at 524288 and was only ever eligible here because upstream reseller
-# metadata over-reported its context; routing does not filter candidates by
-# capacity, so a large request could land on it and fail at the provider.
+# Every member must serve the 1M window this model advertises, by its catalog
+# window (#966). Routing does not filter a member's hosts by capacity.
 SYNTH_QUALITY_1M_MODEL_ORDER = (
+    "minimax/minimax-m3",
     "xiaomi/mimo-v2.5-pro",
     "z-ai/glm-5.2",
     DEEPSEEK_V4_PRO_0423_MODEL_ID,
@@ -4048,6 +4092,19 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
             "the cerebras PROVIDER jurisdiction, not as a model origin."
         ),
     ),
+    **{
+        slug: ModelOrigin(
+            country=None,
+            lab_name="System1 Models (serving namespace)",
+            source_url="https://system1models.ai/models",
+            note=(
+                "System1's regional profiles serve Plumb, Winnow and JevOmni "
+                "decision models. The serving company's German jurisdiction "
+                "does not establish the origin of the underlying weights."
+            ),
+        )
+        for slug in ("system1models", "system1models-eu")
+    },
 }
 
 # Vendor prefixes at or above this many catalog models must have a MODEL_ORIGINS
@@ -4065,3 +4122,130 @@ def model_origin_for_model_id(model_id: str) -> ModelOrigin | None:
     if not rest:
         return None
     return MODEL_ORIGINS.get(prefix)
+
+
+# A model's publisher is its maker, named by the author prefix of its id (`qwen`
+# in `qwen/qwen3.7-max`) and never by Model.provider: that is the default route,
+# which for an author without a routing mapping is whichever host lists the
+# model first. Routing reads catalog_ingest._AUTHOR_TO_PROVIDER_SLUG, which is a
+# different map: it sends meta-llama to Cerebras.
+#
+# An author is listed here only when a PROVIDERS entry is its maker's own API.
+# Hosts and resellers are not, including a multi-lab hosting catalog that a
+# maker's own company runs (NVIDIA NIM, Microsoft Azure AI Foundry) and "Meta via
+# OpenRouter", which is OpenRouter reselling Meta. A TrustedRouter orchestration
+# is published by TrustedRouter, not by its internal selector host.
+MAKER_PROVIDER_BY_AUTHOR: dict[str, str] = {
+    # The maker's API under the author's own name.
+    "aion-labs": "aion-labs",
+    "alibaba": "alibaba",
+    "anthropic": "anthropic",
+    "baidu": "baidu",
+    "cohere": "cohere",
+    "decart": "decart",
+    "deepseek": "deepseek",
+    "inception": "inception",
+    "kling": "kling",
+    "krea": "krea",
+    "minimax": "minimax",
+    "mistral": "mistral",
+    "morph": "morph",
+    "neurometric": "neurometric",
+    "openai": "openai",
+    "parasail": "parasail",
+    "perplexity": "perplexity",
+    "poolside": "poolside",
+    "recraft": "recraft",
+    "reka": "reka",
+    "runway": "runway",
+    "scaledown": "scaledown",
+    "stepfun": "stepfun",
+    "tencent": "tencent",
+    "thinkingmachines": "thinkingmachines",
+    "trustedrouter": "trustedrouter",
+    "upstage": "upstage",
+    "voyage": "voyage",
+    "xiaomi": "xiaomi",
+    "zero-g": "zero-g",
+    # The maker's API under another name.
+    "arcee-ai": "arcee",
+    "black-forest-labs": "bfl",
+    "bytedance": "byteplus",
+    "bytedance-seed": "byteplus",
+    "deepseek-ai": "deepseek",
+    # Alibaba's Tongyi labs (Fun-Audio, Z-Image, Wan) publish through Model Studio.
+    "funaudiollm": "alibaba",
+    "google": "google-ai-studio",
+    "jina-ai": "jina",
+    # Kuaishou's own platform for its Kwaipilot KAT models, under their native ids.
+    "kwaipilot": "streamlake",
+    "lightricks": "ltx",
+    "minimaxai": "minimax",
+    "mistralai": "mistral",
+    "moonshot": "kimi",
+    "moonshotai": "kimi",
+    # Mistral NeMo, built with NVIDIA, is on Mistral's own API.
+    "nv-mistralai": "mistral",
+    # Baidu's PaddlePaddle models (PaddleOCR-VL) are on Baidu's Qianfan API.
+    "paddlepaddle": "baidu",
+    "qwen": "alibaba",
+    "sakana-ai": "sakana",
+    "stepfun-ai": "stepfun",
+    # GLM's original Tsinghua organisation; Z.ai now publishes GLM.
+    "thudm": "zai",
+    "tongyi-mai": "alibaba",
+    "typesafe-ai": "typesafe",
+    "wan-ai": "alibaba",
+    "x-ai": "grok",
+    "xai": "grok",
+    "xiaomimimo": "xiaomi",
+    "z-ai": "zai",
+    "zai-org": "zai",
+    "zhipu": "zai",
+    "zhipuai": "zai",
+}
+
+# Author prefixes that name no maker: a host's namespace for other labs' weights
+# (cerebras/gpt-oss-120b is OpenAI's model, fal/flux-1-schnell Black Forest
+# Labs', lightning-ai/glm-5.3 Z.ai's; phala/* ids select Phala's hosted tier),
+# and stealth/*, whose maker is unannounced.
+AUTHORS_NAMING_NO_MAKER = frozenset({"cerebras", "fal", "lightning-ai", "phala", "stealth"})
+
+
+def maker_provider_slug(model_id: str) -> str | None:
+    """The PROVIDERS slug of the model maker's own API, when TrustedRouter has one."""
+    author = model_id.split("/", 1)[0].lower()
+    if author in AUTHORS_NAMING_NO_MAKER:
+        return None
+    slug = MAKER_PROVIDER_BY_AUTHOR.get(author)
+    return slug if slug in PROVIDERS else None
+
+
+# Hosts a model maker's company runs besides the API above. They deliver a
+# prompt to the vendor as surely as its own API does: Google runs Vertex AI,
+# Microsoft runs Azure AI Foundry, NVIDIA runs NIM, and Meta via OpenRouter is
+# Meta's Llama API.
+MAKER_OPERATED_HOSTS_BY_AUTHOR: dict[str, frozenset[str]] = {
+    "google": frozenset({"google-vertex"}),
+    "meta-llama": frozenset({"meta"}),
+    "microsoft": frozenset({"azure"}),
+    "nvidia": frozenset({"nvidia-nim"}),
+}
+
+
+def model_vendor_provider_slugs(model_id: str) -> frozenset[str]:
+    """Every PROVIDERS entry that delivers a prompt to the model's own vendor.
+
+    That is the maker's own API, the hosts its company runs, and a provider
+    named like the model's author.
+    """
+    author = model_id.split("/", 1)[0].lower()
+    if author in AUTHORS_NAMING_NO_MAKER:
+        return frozenset()
+    slugs = set(MAKER_OPERATED_HOSTS_BY_AUTHOR.get(author, ()))
+    maker = maker_provider_slug(model_id)
+    if maker is not None:
+        slugs.add(maker)
+    if author in PROVIDERS:
+        slugs.add(author)
+    return frozenset(slug for slug in slugs if slug in PROVIDERS)

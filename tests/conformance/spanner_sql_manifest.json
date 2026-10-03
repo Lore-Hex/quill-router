@@ -1,8 +1,9 @@
 {
   "builders": {
+    "storage_gcp_analytics_outbox:enqueue_statement": "79aefcba58e80b030f7d48ec211cb998f72478d7347e11905d7a36dbdf4c625e",
     "storage_gcp_counter_dml:reserve_key_statement": "9eb78b975825a2ab99e03b669c8d3dbdbbbae2c0b359ad1a57e9ff5b7d604227",
     "storage_gcp_counter_dml:reservation_insert_statement": "b1ef994b99af7ae79da8a3e3795169c2704edf4e789af3994c3eda292460927e",
-    "storage_gcp_counter_dml:claim_reservation_statement": "4e6dc6e8378e7cd6042474c08fdbf8d84aa705219e942d20bd4a11da21260ce4",
+    "storage_gcp_counter_dml:claim_reservation_statement": "6bd7277efedb9c990782e9fff0d9807f73315412bd43c61806a39e59c2f878f8",
     "storage_gcp_counter_dml:reservation_retention_clear_statement": "ea44390479712ba4e7d9b80b9e450797a780b107760164a313dbdf293d09e885",
     "storage_gcp_counter_dml:entity_insert_statement": "dd77ee0b463b7c33354554a82a8079efff08126fbe32b9810866da714e332f7b",
     "storage_gcp_generation_records:generation_insert_statement": "487437595bca87fd1a20593f66747ac09dea89d49c3465a189e73e0b21d7c0a5",
@@ -14,6 +15,8 @@
     "storage_gcp_request_records:gateway_authorization_settled_statement": "ae5e93de4af73f80e254209da33db4f523641496d30a61d994dce60f137f1952",
     "storage_gcp_request_records:gateway_authorization_retention_clear_statement": "e2b6e9ed483274375b390da089a0927566fcd480026e88c0f9b445ffe1e332d5",
     "storage_gcp_settle_outbox:done_retention_statements": "b1d3fa9f8a69938adbc56f212e2ab4ed09e3de2ff37a4d36af7a788f71271cab",
+    "storage_gcp_settle_outbox:intent_insert_statements": "c98f699b86c3c3867ecc03d6ece0c93444e5bc82b9d1f59dec87a197740c9406",
+    "storage_gcp_settle_outbox:resolved_intent_statements": "64f1ed43cb1ced684e9ce72e489c7152b538d1fe29863bf4165425884656c435",
     "storage_gcp_settle_outbox:speculative_done_statements": "e292de31c54e6ab2d1106ae773cd992b89f07f0e21a3e56b79316f55cd7aba26",
     "storage_gcp_counter_dml:release_credit_no_debt_statement": "bccbfddb26710596d06e73aa0b32ff02fd15c4f6f1ef9b3173ba6c7500362dbf",
     "storage_gcp_counter_dml:release_key_statement": "bdb9ab25b278d5d1e7495338d1ba796ec27143148149cdb8ef193edf28ab138d"
@@ -856,8 +859,8 @@
         }
       ]
     },
-    "storage_gcp_analytics_outbox:enqueue_tx:1": {
-      "fingerprint": "3c22c291513d477c9919b357013218ac503d6f06016e546babf865c9e280e5b6",
+    "storage_gcp_analytics_outbox:enqueue_statement:1": {
+      "fingerprint": "79aefcba58e80b030f7d48ec211cb998f72478d7347e11905d7a36dbdf4c625e",
       "scenarios": [
         {
           "bindings": {},
@@ -1221,6 +1224,92 @@
           "types": {
             "kh": "STRING",
             "shard": "INT64"
+          }
+        }
+      ]
+    },
+    "storage_gcp_counter_dml:release_credit_no_debt_statement:1": {
+      "fingerprint": "bccbfddb26710596d06e73aa0b32ff02fd15c4f6f1ef9b3173ba6c7500362dbf",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "hold": "INT64",
+            "actual": "INT64",
+            "ws": "STRING",
+            "shard": "INT64"
+          },
+          "values": {
+            "hold": 100,
+            "actual": 70
+          }
+        },
+        {
+          "bindings": {},
+          "types": {
+            "hold": "INT64",
+            "actual": "INT64",
+            "ws": "STRING",
+            "shard": "INT64"
+          },
+          "values": {
+            "hold": 100,
+            "actual": 100
+          }
+        },
+        {
+          "bindings": {},
+          "types": {
+            "hold": "INT64",
+            "actual": "INT64",
+            "ws": "STRING",
+            "shard": "INT64"
+          },
+          "values": {
+            "hold": 100,
+            "actual": 101
+          }
+        }
+      ]
+    },
+    "storage_gcp_counter_dml:release_key_statement:1": {
+      "fingerprint": "bdb9ab25b278d5d1e7495338d1ba796ec27143148149cdb8ef193edf28ab138d",
+      "scenarios": [
+        {
+          "bindings": {
+            "usage_col": "usage",
+            "current_window_sql": "=_CURRENT_WINDOW_BUMP_SQL.replace(\"@day_wamt\", \"@actual\").replace(\"@week_wamt\", \"@actual\").replace(\"@month_wamt\", \"@actual\")",
+            "rolled_window_sql": "=_WINDOW_BUMP_SQL.replace(\"@day_wamt\", \"@actual\").replace(\"@week_wamt\", \"@actual\").replace(\"@month_wamt\", \"@actual\")"
+          },
+          "types": {
+            "actual": "INT64",
+            "day_floor": "TIMESTAMP",
+            "hold": "INT64",
+            "kh": "STRING",
+            "month_floor": "TIMESTAMP",
+            "shard": "INT64",
+            "week_floor": "TIMESTAMP"
+          }
+        }
+      ]
+    },
+    "storage_gcp_counter_dml:release_key_statement:2": {
+      "fingerprint": "bdb9ab25b278d5d1e7495338d1ba796ec27143148149cdb8ef193edf28ab138d",
+      "scenarios": [
+        {
+          "bindings": {
+            "usage_col": "usage",
+            "current_window_sql": "=_CURRENT_WINDOW_BUMP_SQL.replace(\"@day_wamt\", \"@actual\").replace(\"@week_wamt\", \"@actual\").replace(\"@month_wamt\", \"@actual\")",
+            "rolled_window_sql": "=_WINDOW_BUMP_SQL.replace(\"@day_wamt\", \"@actual\").replace(\"@week_wamt\", \"@actual\").replace(\"@month_wamt\", \"@actual\")"
+          },
+          "types": {
+            "actual": "INT64",
+            "day_floor": "TIMESTAMP",
+            "hold": "INT64",
+            "kh": "STRING",
+            "month_floor": "TIMESTAMP",
+            "shard": "INT64",
+            "week_floor": "TIMESTAMP"
           }
         }
       ]
@@ -2205,8 +2294,8 @@
         }
       ]
     },
-    "storage_gcp_settle_outbox:insert_txn:1": {
-      "fingerprint": "d3f3b67327d3c86ac0535a8015513eb0825779ab772eca46ccfd5c34a91f91ae",
+    "storage_gcp_settle_outbox:intent_insert_statements:1": {
+      "fingerprint": "c98f699b86c3c3867ecc03d6ece0c93444e5bc82b9d1f59dec87a197740c9406",
       "scenarios": [
         {
           "bindings": {
@@ -2858,8 +2947,8 @@
         }
       ]
     },
-    "storage_gcp_trust:txn:1": {
-      "fingerprint": "2dd9d2c85a033d520378faf7c7356aea8e5105bc8d093bab57d3e1d9e1adb598",
+    "storage_gcp_trust:evaluate:1": {
+      "fingerprint": "25b6f611b9df6f0d3f60dc3ca11d89418e5028c146d978dceacda6b44f561ee2",
       "scenarios": [
         {
           "bindings": {},
@@ -2869,8 +2958,8 @@
         }
       ]
     },
-    "storage_gcp_trust:txn:2": {
-      "fingerprint": "2dd9d2c85a033d520378faf7c7356aea8e5105bc8d093bab57d3e1d9e1adb598",
+    "storage_gcp_trust:evaluate:2": {
+      "fingerprint": "25b6f611b9df6f0d3f60dc3ca11d89418e5028c146d978dceacda6b44f561ee2",
       "scenarios": [
         {
           "bindings": {},
@@ -2880,8 +2969,8 @@
         }
       ]
     },
-    "storage_gcp_trust:txn:3": {
-      "fingerprint": "2dd9d2c85a033d520378faf7c7356aea8e5105bc8d093bab57d3e1d9e1adb598",
+    "storage_gcp_trust:evaluate:3": {
+      "fingerprint": "25b6f611b9df6f0d3f60dc3ca11d89418e5028c146d978dceacda6b44f561ee2",
       "scenarios": [
         {
           "bindings": {},
@@ -2892,8 +2981,8 @@
         }
       ]
     },
-    "storage_gcp_trust:txn:4": {
-      "fingerprint": "2dd9d2c85a033d520378faf7c7356aea8e5105bc8d093bab57d3e1d9e1adb598",
+    "storage_gcp_trust:txn:1": {
+      "fingerprint": "e9f985606a5309c249b97980c8bf5afe00dcc2d608f01382fc97e6baedd11c51",
       "scenarios": [
         {
           "bindings": {},
@@ -3050,8 +3139,8 @@
         }
       ]
     },
-    "storage_trust_reconciliation:txn:3": {
-      "fingerprint": "0e17730dea2bd827b209758cce2c692b42518ddf0a74895dbd1d38ef004827a8",
+    "storage_trust_reconciliation:reconciled_through:1": {
+      "fingerprint": "79f8d601cacfe4ac6288296d94d4b17a33bfcfe84209be4c83902c0abe8b6f04",
       "scenarios": [
         {
           "bindings": {},
@@ -3061,8 +3150,8 @@
         }
       ]
     },
-    "storage_trust_reconciliation:txn:4": {
-      "fingerprint": "0e17730dea2bd827b209758cce2c692b42518ddf0a74895dbd1d38ef004827a8",
+    "storage_trust_reconciliation:reconciled_through:2": {
+      "fingerprint": "79f8d601cacfe4ac6288296d94d4b17a33bfcfe84209be4c83902c0abe8b6f04",
       "scenarios": [
         {
           "bindings": {},
@@ -3075,8 +3164,8 @@
         }
       ]
     },
-    "storage_trust_reconciliation:txn:5": {
-      "fingerprint": "0e17730dea2bd827b209758cce2c692b42518ddf0a74895dbd1d38ef004827a8",
+    "storage_trust_reconciliation:replicate_workspace_watermark:1": {
+      "fingerprint": "6136a2f8fc24e53e3ec48943e51552901ac88d8a97a8a02c10faf58f3f98cd5f",
       "scenarios": [
         {
           "bindings": {},
@@ -3086,8 +3175,19 @@
         }
       ]
     },
-    "storage_trust_reconciliation:txn:6": {
-      "fingerprint": "0e17730dea2bd827b209758cce2c692b42518ddf0a74895dbd1d38ef004827a8",
+    "storage_trust_reconciliation:txn:3": {
+      "fingerprint": "119d535974c450357f4882a066379f4e31df5490c83ce6f073d0c2f1e1cd6ddc",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "workspace_id": "STRING"
+          }
+        }
+      ]
+    },
+    "storage_trust_reconciliation:txn:4": {
+      "fingerprint": "119d535974c450357f4882a066379f4e31df5490c83ce6f073d0c2f1e1cd6ddc",
       "scenarios": [
         {
           "bindings": {},
@@ -3099,7 +3199,7 @@
       ]
     },
     "trust_eligibility:billing_paused_tx:1": {
-      "fingerprint": "5ce3a94f908455a5508ee285906563975e344a6f64f0edd4db9a9184e0d26a26",
+      "fingerprint": "9c3f7178302081fc0be4f4d0915fccbb86495c0a69c6991e09949b4dde80e6f8",
       "scenarios": [
         {
           "bindings": {
@@ -3520,88 +3620,165 @@
         }
       ]
     },
-    "storage_gcp_counter_dml:release_key_statement:1": {
-      "fingerprint": "bdb9ab25b278d5d1e7495338d1ba796ec27143148149cdb8ef193edf28ab138d",
+    "storage_gcp_authorize:credit_exhaustion_precheck:1": {
+      "fingerprint": "2d005ac4817ef9dff2e8481daedb53a1dafcf758ba22790222190d51fd1d3e50",
       "scenarios": [
         {
-          "bindings": {
-            "usage_col": "usage",
-            "current_window_sql": "=_CURRENT_WINDOW_BUMP_SQL.replace(\"@day_wamt\", \"@actual\").replace(\"@week_wamt\", \"@actual\").replace(\"@month_wamt\", \"@actual\")",
-            "rolled_window_sql": "=_WINDOW_BUMP_SQL.replace(\"@day_wamt\", \"@actual\").replace(\"@week_wamt\", \"@actual\").replace(\"@month_wamt\", \"@actual\")"
-          },
+          "bindings": {},
           "types": {
-            "actual": "INT64",
-            "day_floor": "TIMESTAMP",
-            "hold": "INT64",
-            "kh": "STRING",
-            "month_floor": "TIMESTAMP",
-            "shard": "INT64",
-            "week_floor": "TIMESTAMP"
+            "pk": "STRING"
           }
         }
       ]
     },
-    "storage_gcp_counter_dml:release_key_statement:2": {
-      "fingerprint": "bdb9ab25b278d5d1e7495338d1ba796ec27143148149cdb8ef193edf28ab138d",
+    "storage_gcp_counter_dml:reserve_credit_with_pause:1": {
+      "fingerprint": "8c628d24eaaf1050a131fbf04151700aed5a95a69befae5d36f343df88761120",
       "scenarios": [
         {
-          "bindings": {
-            "usage_col": "usage",
-            "current_window_sql": "=_CURRENT_WINDOW_BUMP_SQL.replace(\"@day_wamt\", \"@actual\").replace(\"@week_wamt\", \"@actual\").replace(\"@month_wamt\", \"@actual\")",
-            "rolled_window_sql": "=_WINDOW_BUMP_SQL.replace(\"@day_wamt\", \"@actual\").replace(\"@week_wamt\", \"@actual\").replace(\"@month_wamt\", \"@actual\")"
-          },
+          "bindings": {},
           "types": {
-            "actual": "INT64",
-            "day_floor": "TIMESTAMP",
-            "hold": "INT64",
-            "kh": "STRING",
-            "month_floor": "TIMESTAMP",
-            "shard": "INT64",
-            "week_floor": "TIMESTAMP"
+            "est": "INT64",
+            "ws": "STRING",
+            "shard": "INT64"
+          },
+          "values": {
+            "est": 100,
+            "ws": "c3-ws",
+            "shard": 1
+          },
+          "credit_rows": [
+            {
+              "ws": "c3-ws",
+              "shard": 1,
+              "total": 1000,
+              "causes": [],
+              "epoch": 17
+            },
+            {
+              "ws": "c3-ws",
+              "shard": 0,
+              "total": 1000,
+              "causes": [
+                "wrong-row"
+              ],
+              "epoch": 99
+            }
+          ],
+          "expected_rows": [
+            [
+              [],
+              17
+            ]
+          ]
+        },
+        {
+          "bindings": {},
+          "types": {
+            "est": "INT64",
+            "ws": "STRING",
+            "shard": "INT64"
+          },
+          "values": {
+            "est": 100,
+            "ws": "c3-ws",
+            "shard": 1
+          },
+          "credit_rows": [
+            {
+              "ws": "c3-ws",
+              "shard": 1,
+              "total": 1000,
+              "causes": [
+                "abuse"
+              ],
+              "epoch": 17
+            },
+            {
+              "ws": "c3-ws",
+              "shard": 0,
+              "total": 1000,
+              "causes": [
+                "wrong-row"
+              ],
+              "epoch": 99
+            }
+          ],
+          "expected_rows": [
+            [
+              [
+                "abuse"
+              ],
+              17
+            ]
+          ]
+        },
+        {
+          "bindings": {},
+          "types": {
+            "est": "INT64",
+            "ws": "STRING",
+            "shard": "INT64"
+          },
+          "values": {
+            "est": 100,
+            "ws": "c3-ws",
+            "shard": 1
+          },
+          "credit_rows": [
+            {
+              "ws": "c3-ws",
+              "shard": 1,
+              "total": 0,
+              "causes": [
+                "abuse"
+              ],
+              "epoch": 17
+            },
+            {
+              "ws": "c3-ws",
+              "shard": 0,
+              "total": 1000,
+              "causes": [
+                "wrong-row"
+              ],
+              "epoch": 99
+            }
+          ],
+          "expected_rows": []
+        }
+      ]
+    },
+    "storage_gcp_speculation_shadow:resolve:1": {
+      "fingerprint": "44e5026c99ada85fbe44dd62f53501c4509d2f8489e4231f87fe146e70496889",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "workspace_id": "STRING",
+            "shard_count": "INT64"
           }
         }
       ]
     },
-    "storage_gcp_counter_dml:release_credit_no_debt_statement:1": {
-      "fingerprint": "bccbfddb26710596d06e73aa0b32ff02fd15c4f6f1ef9b3173ba6c7500362dbf",
+    "storage_gcp_speculation_shadow:resolve:2": {
+      "fingerprint": "44e5026c99ada85fbe44dd62f53501c4509d2f8489e4231f87fe146e70496889",
       "scenarios": [
         {
           "bindings": {},
           "types": {
-            "hold": "INT64",
-            "actual": "INT64",
-            "ws": "STRING",
-            "shard": "INT64"
-          },
-          "values": {
-            "hold": 100,
-            "actual": 70
+            "shard_count": "INT64",
+            "key_id": "STRING"
           }
-        },
+        }
+      ]
+    },
+    "storage_gcp_speculation_shadow:resolve:3": {
+      "fingerprint": "44e5026c99ada85fbe44dd62f53501c4509d2f8489e4231f87fe146e70496889",
+      "scenarios": [
         {
           "bindings": {},
           "types": {
-            "hold": "INT64",
-            "actual": "INT64",
-            "ws": "STRING",
-            "shard": "INT64"
-          },
-          "values": {
-            "hold": 100,
-            "actual": 100
-          }
-        },
-        {
-          "bindings": {},
-          "types": {
-            "hold": "INT64",
-            "actual": "INT64",
-            "ws": "STRING",
-            "shard": "INT64"
-          },
-          "values": {
-            "hold": 100,
-            "actual": 101
+            "workspace_id": "STRING"
           }
         }
       ]
@@ -3651,17 +3828,17 @@
     "storage_gcp:SpannerStore._read_outbox_heartbeat_row": "b146d6a9f64d9504bf4948f7d6c40ec3fc279b3c25d09aa5a17c5153211deb03",
     "storage_gcp:SpannerStore.process_trust_demotion_remainders.txn": "17473222e40b3b33bf3cd55d8cabb1b5ef17305e28ddef1d57b3dae49bf4cf9a",
     "storage_gcp:SpannerStore.update_workspace.txn": "d0d1045d40b6dfbd25458bdace3723b596bba4387581942a1f5876f0b8116cde",
-    "storage_gcp_analytics_outbox:SpannerAnalyticsOutbox.enqueue_tx": "3c22c291513d477c9919b357013218ac503d6f06016e546babf865c9e280e5b6",
+    "storage_gcp_analytics_outbox:SpannerAnalyticsOutbox.enqueue_tx": "6a13bf3f98fc189b689c291137614aae25e03db076359d4f5846644d53b41920",
     "storage_gcp_authorize:_apply_user_model_payout_tx": "87282c76b37fb351b3ae5a7572ff8d6c835affc98e9d3a3b24f976fa471421f8",
     "storage_gcp_authorize:_apply_app_markup_payout_tx": "bf69f4d4f5445dbb97dcf22507d8651974f2430dc5d845fe68c2daab72dfc2c6",
     "storage_gcp_authorize:_apply_custom_model_markup_payout_tx": "a1a06d4c1dcc22a836e086dc1700440a90dad6d8c8966466902930955a34e3f0",
-    "storage_gcp_authorize:typed_finalize_atomic.speculative_batch": "08008f30008896664264a37fcec98c4946b05f4a0c0f0c88f88bc7d4a6612d6e",
+    "storage_gcp_authorize:typed_finalize_atomic.speculative_batch": "d767273c0850235a2fd4ed3f16ae1ece7d67831cf5cb39ac98ce23e381b1e03f",
     "storage_gcp_authorize:key_window_limit_decision": "5a317b9f2927443ca6d6686b5cb1d1b6ff036c6d744d511a3b5f24c63e3b2ad7",
-    "storage_gcp_authorize:authorize_atomic.txn": "436c84be91d07b0e183e1da7254118431c058dde512ef29ab5e9e53e451467ae",
+    "storage_gcp_authorize:authorize_atomic.txn": "a019d8c5c015583d75fd0de0e678ac710ab5c9957a06353ea42651e56302712a",
     "storage_gcp_authorize:reap_expired_reservations_result": "9d7f819fc199930d94eaa53e939fced804e61b2cbf9f54cbf676ced4c743976e",
     "storage_gcp_authorize:key_lifetime_cap_precheck": "4e9ee17c7e9363a1fc3a9d614f15148ad6fb20ff04d272785809beef92ab0b4c",
     "storage_gcp_authorize:_finalize_reaped_reservation_atomic.txn": "55ccd7b9ed868037a53ecb228e6efe40882d39fef33e9bd24bb0061340d95200",
-    "storage_gcp_authorize:typed_finalize_atomic.txn": "b53a9ade92c5fe66db2110aaed1e68abc28250a6b04bb16d0cd615e95e07277b",
+    "storage_gcp_authorize:typed_finalize_atomic.txn": "daf6b40a020286fff569e85055d887eacd9c5ddc2c0fcb4d087b119f51464abc",
     "storage_gcp_authorize:settle_atomic.txn": "0ec2b0d2303c8edbbcfff74724c3bee55a72195a523e21f21e04139aabeb3174",
     "storage_gcp_authorize:_outbox_table_available": "40f44f259524be5dc275f8a3400fc40fc5b8fe850c0482362de0382296e3f910",
     "storage_gcp_batch_dml:execute_batch_dml": "cf69cc8e1a62f4028bd2370e9d3d22e5f6f28856795ef05514f1f8dbc5130169",
@@ -3726,7 +3903,7 @@
     "storage_gcp_request_records:read_gateway_authorization_by_gateway_request_id": "35327f025b4c16f9c73c53adc04fb1f9d78da8dcb1cceb1edc16ada6a77baf90",
     "storage_gcp_settle_outbox:_resolve_done_retention_tx": "5f60121b3a9a6040d4c5db3d01b32da0b28bb49a716a5a2fb3386a43d5416de7",
     "storage_gcp_settle_outbox:_mark_done_tx": "d18c2a9ba8bf5498d523f66de836eb28463f3f4fc86d62509d69d0da31c31d4f",
-    "storage_gcp_settle_outbox:SpannerSettleOutbox.enqueue.insert_txn": "d3f3b67327d3c86ac0535a8015513eb0825779ab772eca46ccfd5c34a91f91ae",
+    "storage_gcp_settle_outbox:SpannerSettleOutbox.enqueue.insert_txn": "41fe4f962cfba96ab0bf427d3c0768d751718688df425588401620198defae55",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.enqueue.refresh_txn": "d14013762a31ede92e5bbd0ff49b1d99d6d2048acac6e8a3a95d8fd2803dc049",
     "storage_gcp_settle_outbox:SpannerSettleOutbox._claim_one.txn": "f0c353eaf71bd1e39f55d411a4bcca80d2532ae7b3125c915cab981d0a8e777b",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.mark.txn": "3ea0d355ba9fc666b7c0ce5b1af0e50db7b8a28edbcf4c33631a81d82509f885",
@@ -3752,7 +3929,8 @@
     "storage_gcp_trust:absorb_unrecovered_recovery_tx": "8bfcd33be0ebe5ef083ff1fe230ead9da2e581e77bf817860a29dc47a1ba4243",
     "storage_gcp_trust:_debit_available_principal_tx": "4b84f597af7aa5e4a320710c132f72f7f0f2591a4c9b4a766f7028282e5fa0de",
     "storage_gcp_trust:drain_matching_trust_inbox_tx": "19112b87dd2898f3f9f248e2e857bfea4576630557be9ef4a4cf40784929eb07",
-    "storage_gcp_trust:recompute_workspace_trust_tier_tx.txn": "2dd9d2c85a033d520378faf7c7356aea8e5105bc8d093bab57d3e1d9e1adb598",
+    "storage_gcp_trust:recompute_workspace_trust_tier_tx.txn": "e9f985606a5309c249b97980c8bf5afe00dcc2d608f01382fc97e6baedd11c51",
+    "storage_gcp_trust:recompute_workspace_trust_tier_tx.evaluate": "25b6f611b9df6f0d3f60dc3ca11d89418e5028c146d978dceacda6b44f561ee2",
     "storage_gcp_user_models:SpannerUserProvidedModels.list_for_user": "b05e21b82a1aa40a841c2b5ec02da602c81ce8080f0afdc9d567fab1f72d9b31",
     "storage_gcp_user_models:SpannerUserProvidedModels.get_many": "cd24bade1b102cd628091886eb67ae24c450e17fa89dc196299dafcbfeaa938a",
     "storage_gcp_user_models:SpannerUserProvidedModels.acquire_slot.txn": "cf1b48fdc7304875ce71e6980c8e51438bf4e91d178e24f91e0875ba42d45ffc",
@@ -3761,10 +3939,15 @@
     "storage_trust_inbox_resolution:record_refunded_uncredited.spanner_tx": "0c51458e02405d5a006241e6b201c2bea208f384e710a73331515156f0533153",
     "storage_trust_reconciliation:SpannerTrustReconciliationRepository.save_marker.txn": "e55af76e57c7b9b891181c45a816a724e64c70e016534f83738816d0414c5c4a",
     "storage_trust_reconciliation:SpannerTrustReconciliationRepository.list_provider_events": "822180ccfc4058df2f0d8bdc12413c361ac373ef78bf3808eb4934927264e3b5",
-    "storage_trust_reconciliation:SpannerTrustReconciliationRepository.replicate_workspace_watermark.txn": "0e17730dea2bd827b209758cce2c692b42518ddf0a74895dbd1d38ef004827a8",
+    "storage_trust_reconciliation:SpannerTrustReconciliationRepository.replicate_workspace_watermark.txn": "119d535974c450357f4882a066379f4e31df5490c83ce6f073d0c2f1e1cd6ddc",
     "storage_trust_reconciliation:SpannerTrustReconciliationRepository.get_marker": "ae66712374f936a93abe08af2e3b6c4b707d6315e830d12c327d10148fa431f2",
-    "trust_eligibility:billing_paused_tx": "5ce3a94f908455a5508ee285906563975e344a6f64f0edd4db9a9184e0d26a26",
-    "trust_owner_budget:recompute_owner_budget": "959e550c803a9b12ebf91949eab221a57f4991b513a300a74725c0395c6e51a4"
+    "storage_trust_reconciliation:SpannerTrustReconciliationRepository.replicate_workspace_watermark.reconciled_through": "79f8d601cacfe4ac6288296d94d4b17a33bfcfe84209be4c83902c0abe8b6f04",
+    "storage_trust_reconciliation:SpannerTrustReconciliationRepository.replicate_workspace_watermark": "6136a2f8fc24e53e3ec48943e51552901ac88d8a97a8a02c10faf58f3f98cd5f",
+    "trust_eligibility:billing_paused_tx": "9c3f7178302081fc0be4f4d0915fccbb86495c0a69c6991e09949b4dde80e6f8",
+    "trust_owner_budget:recompute_owner_budget": "959e550c803a9b12ebf91949eab221a57f4991b513a300a74725c0395c6e51a4",
+    "storage_gcp_authorize:credit_exhaustion_precheck": "2d005ac4817ef9dff2e8481daedb53a1dafcf758ba22790222190d51fd1d3e50",
+    "storage_gcp_counter_dml:reserve_credit_with_pause": "8c628d24eaaf1050a131fbf04151700aed5a95a69befae5d36f343df88761120",
+    "storage_gcp_speculation_shadow:SpannerSpeculationShadow.resolve": "44e5026c99ada85fbe44dd62f53501c4509d2f8489e4231f87fe146e70496889"
   },
   "non_google_sql": {
     "analytics_sink:_post_rows:1": {
@@ -3848,7 +4031,7 @@
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "provider_analytics:open_csv_export:1": {
-      "fingerprint": "6de32d712bae9898182e156b19dde34d09911e8d1d15169883d573a9d9a0eb1c",
+      "fingerprint": "dc4aa30c4abab83cadc0ef2a33ee5a6709ce4b46025289bb8ce13fe013b1c2b3",
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "provider_trust_postgres:drain_provider_inbox_tx:1": {
@@ -3936,19 +4119,19 @@
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
     },
     "storage_trust_reconciliation:write:4": {
-      "fingerprint": "4d5be5fb3f86d30514274f20693cc67984dd73859e5c679567a84ee04004e4f5",
+      "fingerprint": "c6becd7764dccd875ca78b8d33ec0323b66fc97e293cc7633124ea5d7ca7c122",
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
     },
     "storage_trust_reconciliation:write:5": {
-      "fingerprint": "4d5be5fb3f86d30514274f20693cc67984dd73859e5c679567a84ee04004e4f5",
+      "fingerprint": "c6becd7764dccd875ca78b8d33ec0323b66fc97e293cc7633124ea5d7ca7c122",
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
     },
     "storage_trust_reconciliation:write:6": {
-      "fingerprint": "4d5be5fb3f86d30514274f20693cc67984dd73859e5c679567a84ee04004e4f5",
+      "fingerprint": "c6becd7764dccd875ca78b8d33ec0323b66fc97e293cc7633124ea5d7ca7c122",
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
     },
     "storage_trust_reconciliation:write:7": {
-      "fingerprint": "4d5be5fb3f86d30514274f20693cc67984dd73859e5c679567a84ee04004e4f5",
+      "fingerprint": "c6becd7764dccd875ca78b8d33ec0323b66fc97e293cc7633124ea5d7ca7c122",
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
     }
   }

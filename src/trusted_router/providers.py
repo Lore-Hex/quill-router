@@ -40,6 +40,7 @@ from trusted_router.secrets import LocalKeyFile
 from trusted_router.wafer_policy import wafer_zdr_support
 
 OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
+    "abliterate": (("ABLITERATE_API_KEY",), "https://abliterate.ai/api/v1"),
     "meta": (("OPENROUTER_API_KEY",), "https://openrouter.ai/api/v1"),
     "openrouter": (("OPENROUTER_API_KEY",), "https://openrouter.ai/api/v1"),
     "openai": (("OPENAI_API_KEY",), "https://api.openai.com/v1"),

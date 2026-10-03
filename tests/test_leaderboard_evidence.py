@@ -82,7 +82,7 @@ def test_evidence_query_is_bounded_balanced_and_does_not_filter_failures(monkeyp
         "provider_rank <= 500",
         "LIMIT 10000",
         "max_execution_time = 15",
-        "max_memory_usage = 268435456",
+        "max_memory_usage = 1073741824",
         "max_threads = 2",
         "max_bytes_before_external_sort = 33554432",
         "max_block_size = 8192",

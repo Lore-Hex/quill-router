@@ -16,7 +16,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 AUTHORIZE = 'src/trusted_router/storage_gcp_authorize.py'
 COUNTERS = 'src/trusted_router/storage_gcp_counter_dml.py'
-DEBT_CARRIER = 'scripts/deploy/migrate_trust_event_debt_index.sh'
 PREFIX = 'tests/test_settle_c1.py::'
 MUTATIONS = [
     ('drop reserved guard; negative reserved reachable', COUNTERS,
@@ -63,9 +62,6 @@ MUTATIONS = [
      [('", week_usage = COALESCE(week_usage, 0) + @week_wamt"',
        '", week_usage = COALESCE(week_usage, 0) + @week_wamt * 2"')],
      'test_main_money_differential[True-True-ordinary]'),
-    ('remove debt index from migration carrier', DEBT_CARRIER,
-     [(ROOT.joinpath(DEBT_CARRIER).read_text().split('\n\n')[2], '')],
-     'tests/test_trust_event_debt_index_migration.py::test_debt_index_schema_source_matches_carrier'),
 ]
 
 

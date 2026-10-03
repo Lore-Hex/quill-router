@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import argparse
 import logging
+import threading
 import time
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
@@ -94,9 +96,22 @@ def run(
             log.exception("trust.inbox_reconciliation_failed")
         alert_stale_trust_inbox(store, now=computed_at)
     workspace_ids = store.list_trust_tier_workspace_ids()
+    concurrency = max(1, int(getattr(settings, "trust_tier_job_concurrency", 1)))
     failed: list[str] = []
-    log.info("trust.tier_job_started workspaces=%d environment=%s", len(workspace_ids), environment)
-    for completed, workspace_id in enumerate(workspace_ids, start=1):
+    log.info(
+        "trust.tier_job_started workspaces=%d environment=%s concurrency=%d",
+        len(workspace_ids), environment, concurrency,
+    )
+
+    # Set when the pass is stopping (a platform stop in any worker). A running
+    # worker cannot be interrupted, so it checks this between its database
+    # phases and writes nothing after it is set; each phase is a bounded
+    # Spanner call, so the threads Python joins at exit finish promptly.
+    stop = threading.Event()
+
+    def recompute(workspace_id: str) -> None:
+        if stop.is_set():
+            return
         try:
             replicated, reconciled_through = replicate_tier_job_watermark(
                 store,
@@ -110,6 +125,8 @@ def run(
                     workspace_id,
                     reconciled_through,
                 )
+            if stop.is_set():
+                return
             tier = store.recompute_workspace_trust_tier(
                 workspace_id,
                 qualifying_providers=settings.trust_qualifying_provider_set,
@@ -119,13 +136,55 @@ def run(
             )
             log.info("trust.tier_computed workspace_id=%s tier=%d", workspace_id, tier)
         except Exception:
-            failed.append(workspace_id)
+            with failed_lock:
+                failed.append(workspace_id)
             log.exception("trust.tier_job_workspace_failed workspace_id=%s", workspace_id)
+
+    completed = 0
+
+    def progress() -> None:
         if completed % 100 == 0 or completed == len(workspace_ids):
             log.info(
                 "trust.tier_job_progress completed=%d total=%d failed=%d elapsed_seconds=%.3f",
                 completed, len(workspace_ids), len(failed), time.monotonic() - started,
             )
+
+    failed_lock = threading.Lock()
+    if concurrency == 1:
+        for workspace_id in workspace_ids:
+            recompute(workspace_id)
+            completed += 1
+            progress()
+    else:
+        # Workspaces are independent: each recompute runs its own reads and
+        # transaction. A worker's ordinary failure is recorded by recompute();
+        # anything else (a platform stop) stops the pass and propagates.
+        executor = ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="trust-tier")
+        pending: set[Future[None]] = set()
+
+        def collect(done: set[Future[None]]) -> None:
+            nonlocal completed
+            for future in done:
+                future.result()  # re-raises a worker's BaseException
+                completed += 1
+                progress()
+
+        try:
+            for workspace_id in workspace_ids:
+                pending.add(executor.submit(recompute, workspace_id))
+                if len(pending) >= concurrency:
+                    done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                    collect(done)
+            # Drain in completion order, so a stop raised by any worker is
+            # seen at once, not after an unrelated slow one finishes.
+            while pending:
+                done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                collect(done)
+        except BaseException:
+            stop.set()
+            executor.shutdown(wait=False, cancel_futures=True)
+            raise
+        executor.shutdown(wait=True)
     return TrustTierJobResult(
         attempted=len(workspace_ids), failed=tuple(failed), owner_budget_failed=owner_budget_failed
     )

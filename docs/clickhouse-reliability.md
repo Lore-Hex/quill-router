@@ -56,7 +56,10 @@ tr-clickhouse-ilb (10.128.0.96:8123)
 The forwarding rule allows global VPC access so all control-plane regions can
 reach it. The read-only `tr_provider_read` account can select only the raw and
 rollup tables. Ingestion, reconciliation, archive, and rollup workers run on
-node 1. Their durable input remains in Spanner if node 1 is temporarily down.
+one node, the publisher: the instance whose `tr-clickhouse-role` metadata is
+`publisher` (node 1 unless a takeover moved them). Every worker unit on every
+node checks that key before it starts, so only the publisher runs them. Their
+durable input remains in Spanner if the publisher is temporarily down.
 
 The pre-migration local node-1 table is retained as
 `provider_benchmark_samples_local_backup`. Do not delete it until a later,
@@ -142,10 +145,36 @@ instance is destroyed through Terraform once that export is verified.
 two new voters together, migrates only after full-fingerprint parity, pauses
 the ingester for the final delta, and exposes the load balancer only after the
 canonical replicated table is healthy. Routine control-plane rollouts discover
-the internal load-balancer address dynamically.
+the internal load-balancer address and the replica addresses dynamically. The
+read clients get the load balancer first, then each replica in reverse name
+order, and move to the next only when a connection cannot be opened or the
+endpoint answers 502, 503 or 504. A failed or empty lookup fails the rollout.
 
 Never restart or deploy all three ClickHouse nodes together. Change one zone,
 wait for replica queue and load-balancer health to recover, then continue.
+
+### Node configuration: `/tr_health` and system-log retention
+
+`scripts/deploy/clickhouse_node_config.sh` installs the files in
+`scripts/deploy/clickhouse-node-config/` on tr-clickhouse-3, -2 and then -1:
+the `/tr_health` handler and its `tr_health` user (G2 in
+`docs/design/clickhouse-high-availability.md`) and the system-log TTLs (G5).
+It refuses to restart a node whose replicas or Keeper voter are unhealthy,
+waits after each restart until `/tr_health` answers 200 and the voter has
+rejoined, and stops at the first failure.
+
+```bash
+scripts/deploy/clickhouse_node_config.sh
+scripts/deploy/clickhouse_node_config.sh --apply
+scripts/deploy/clickhouse_node_config.sh --apply --drop-renamed-logs
+```
+
+The first run only reports. The restart renames each changed log table to
+`<log>_0`, which keeps the old data, cannot take a TTL and is read-only. The
+third command drops those copies on every node to free the disk; run it once
+the second has finished cleanly. Check a node by hand with
+`curl -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:8123/tr_health?user=tr_health'`
+on it, which must print 200.
 
 ## Health checks
 
@@ -200,6 +229,32 @@ node, waits for 3/3 health, and synchronizes the replica.
 5. Let ClickHouse fetch parts from a healthy replica.
 6. Require queue zero, fixed-cutoff fingerprint parity, and healthy load-balancer state.
 7. Re-enable the backend.
+
+### Move the workers to another node
+
+Two hosts must never publish at once: a rollup that replaces a partition can
+overwrite fresher results with older ones. The steps and their reasons are G1
+in `docs/design/clickhouse-high-availability.md`. Run each command without
+`--apply` first; it prints its plan.
+
+```bash
+# Once: set the roles (node 1 publisher) and install the fence on every node.
+scripts/deploy/clickhouse_worker_role.sh fence --apply
+# Once per standby, and after each worker change: install its units disabled.
+scripts/deploy/clickhouse_worker_role.sh standby --node tr-clickhouse-2 --apply
+# Takeover. Add --from-unreachable when the publisher cannot be reached; the
+# script then stops its VM and requires TERMINATED before continuing.
+scripts/deploy/clickhouse_worker_role.sh takeover --to tr-clickhouse-2 --apply
+```
+
+The takeover fences the old publisher (role `standby`, then its workers
+disabled, or its VM stopped), kills the worker user's queries on every
+reachable replica, waits until the new publisher has pulled and applied every
+replication log entry, and only then makes it the publisher and starts its
+workers. If the sync barrier fails because only the old publisher holds a part,
+stop: recover that node or its disk first. Then confirm the drain lag on
+`/status.json` recovers. A returning node stays `standby`; failback is the same
+takeover in the other direction.
 
 ### Restore from a disk snapshot
 

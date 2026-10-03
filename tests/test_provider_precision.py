@@ -61,7 +61,7 @@ def test_reviewed_precision_exactly_matches_catalog_and_has_pinned_sources(recor
         assert endpoint.upstream_id == record.upstream_id
         assert endpoint_precision(endpoint) == record
     assert endpoint_precision(_reviewed_endpoint(record.provider, record.model_id)) == record
-    assert record.reviewed_on == date(2026, 9, 27)
+    assert record.reviewed_on >= date(2026, 9, 27)
     assert record.runtime_verified is False
     assert record.evidence_type == "published_serving_config"
     assert record.quantization in record.weight_formats
@@ -100,7 +100,15 @@ def test_same_model_can_have_different_weights_and_cache_formats() -> None:
     near = endpoint_precision_metadata(_reviewed_endpoint("near-ai", "z-ai/glm-5.3-flash"))
     assert tinfoil["quantization"] == "nvfp4"
     assert tinfoil["weight_formats"] == ["nvfp4", "fp8"]
-    assert private["quantization"] == near["quantization"] == "fp8"
+    assert private["quantization"] == "fp8"
+    assert near["quantization"] == "int4"
+    assert near["weight_formats"] == ["int4", "fp8"]
+    assert near["label"] == "W4AFP8 (INT4 + FP8)"
+    assert near["model_repository"] == "graphistry/GLM-5.3-Flash-W4AFP8"
+    assert near["model_revision"] == "99f1fa70408c52b007d4fd69e02e5a522422e755"
+    assert near["reviewed_on"] == "2026-10-02"
+    assert "W4AFP8.yaml" in near["sources"][0]["url"]
+    assert near["sources"][0]["sha256"] == "5745db6b0d3e4a4f1ff6872acbf90da254ef83ca834c0bfd4cffb86f540ff781"
     assert near["kv_cache_dtype"] == "bfloat16"
     assert private["kv_cache_dtype"] == "fp8"
     assert len({r["model_revision"] for r in (tinfoil, private, near)}) == 3
@@ -183,15 +191,18 @@ def test_missing_snapshot_fails_closed(tmp_path, monkeypatch) -> None:
         provider_precision._precision_index.cache_clear()
 
 
-def test_catalog_and_endpoint_api_expose_same_reviewed_metadata(client, monkeypatch) -> None:
+@pytest.mark.parametrize(("provider", "quantization"), [("tinfoil", "nvfp4"), ("near-ai", "int4")])
+def test_catalog_and_endpoint_api_expose_same_reviewed_metadata(
+    client, monkeypatch, provider, quantization,
+) -> None:
     _serve_reviewed_routes(monkeypatch, "z-ai/glm-5.3-flash")
-    endpoint = _reviewed_endpoint("tinfoil", "z-ai/glm-5.3-flash")
+    endpoint = _reviewed_endpoint(provider, "z-ai/glm-5.3-flash")
     model = model_to_openrouter_shape(MODELS[endpoint.model_id])
     catalog_row = next(e for e in model["trustedrouter"]["endpoints"] if e["id"] == endpoint.id)
     response = client.get(f"/v1/models/{endpoint.model_id}/endpoints")
     assert response.status_code == 200
     row = next(e for e in response.json()["data"] if e["endpoint_id"] == endpoint.id)
-    assert row["quantization"] == catalog_row["quantization"] == "nvfp4"
+    assert row["quantization"] == catalog_row["quantization"] == quantization
     assert row["trustedrouter"]["precision"] == catalog_row["precision"]
     assert catalog_row["precision"]["runtime_verified"] is False
     unknown = next(e for e in model["trustedrouter"]["endpoints"] if e["provider"] == "zai")
@@ -206,7 +217,8 @@ def test_model_page_exposes_reviewed_sources_without_claiming_runtime_proof(
     html = public_model_detail_html(test_settings, "z-ai/glm-5.3-flash")
     assert html is not None
     for text in ("Weight format", "NVFP4 + FP8", "Unknown", "Pinned weight configuration",
-                 "Per-request precision is not verified", "KV cache: bfloat16", "2026-09-27"):
+                 "Per-request precision is not verified", "KV cache: bfloat16", "2026-09-27",
+                 "W4AFP8 (INT4 + FP8)", "2026-10-02"):
         assert text in html
     assert "240131d6a447c8d89acd428c5ddfc85598651744" in html
 

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Literal, NamedTuple
 from urllib.parse import urlsplit
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -354,6 +354,14 @@ def operational_analytics_sink_problems(settings: Any) -> list[str]:
             "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL and "
             "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_WRITE_PASSWORD"
         )
+    # The read clients accept an ordered comma-separated endpoint list for
+    # failover (clickhouse_endpoints.py); the direct sink posts to one URL.
+    if sink == "direct" and "," in (settings.operational_analytics_clickhouse_url or ""):
+        problems.append(
+            "TR_OPERATIONAL_ANALYTICS_SINK=direct writes to a single "
+            "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL; a comma-separated endpoint "
+            "list is only supported by the read clients"
+        )
     return problems
 
 
@@ -366,6 +374,7 @@ class Settings(BaseSettings):
     )
 
     environment: str = "local"
+    homepage_landscape_enabled: bool = False
     release: str = "local"
     service_name: str = "trusted-router"
     # One image serves several deliberately disjoint process roles. ``combined``
@@ -447,7 +456,9 @@ class Settings(BaseSettings):
     clickhouse_benchmark_table: str = "provider_benchmark_samples"
     # Private, read-only provider portal connection. This intentionally uses a
     # separate ClickHouse account from ingestion and is reachable only through
-    # the service's VPC egress path.
+    # the service's VPC egress path. This URL and the operational one below
+    # take one URL or an ordered comma-separated list (load balancer first,
+    # then replicas); see clickhouse_endpoints.py for when a read fails over.
     provider_analytics_clickhouse_url: str = ""
     provider_analytics_clickhouse_user: str = "tr_provider_read"
     provider_analytics_clickhouse_password: str = ""
@@ -856,6 +867,23 @@ class Settings(BaseSettings):
     notify_max_per_hour: int = 30
     notify_max_voice_per_hour: int = 4
 
+    # PR3 observes only; rollout pins this false. All cohort identities are explicit.
+    speculative_provider_shadow_enabled: bool = False
+    speculation_shadow_workspaces: list[str] = []
+    speculation_shadow_routes: list[str] = []
+    speculation_shadow_images: list[str] = []
+    speculation_shadow_producers: list[str] = []
+    speculation_shadow_producer: str = ""
+    speculation_shadow_slots: dict[str, dict[str, str]] = {}
+    speculation_shadow_image_policy_version: int = 0
+    speculation_shadow_policy_expires_at: int = 0
+    speculation_shadow_plane: str = "gcp"
+    speculation_shadow_issuer: str = ""
+    speculation_shadow_audience: str = ""
+    speculation_shadow_kid: str = ""
+    # Independently provisioned mounted file. Never a receipt/real issuer key.
+    speculation_shadow_private_key_file: str = ""
+
     # Audited break-glass addition to the signed Stage D runtime policy. This
     # is deliberately empty and rollout.sh never inherits it from a revision.
     spend_lease_accepted_gcp_image_digests: str = ""
@@ -868,6 +896,9 @@ class Settings(BaseSettings):
     trust_stripe_account_id: str = ""
     trust_tier3_min_days: int = 30
     trust_tier3_min_paid_microdollars: int = 50_000_000
+    # Workspaces the trust-tier job recomputes at once. Each worker holds one
+    # Spanner session, so the job's TR_SPANNER_POOL_SIZE must be at least this.
+    trust_tier_job_concurrency: int = Field(default=1, ge=1, le=32)
     max_workspaces_per_owner: int = 25
     operator_token: str = ""
     lightning_funding_token: str = ""

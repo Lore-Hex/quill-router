@@ -1,0 +1,1 @@
+Archivo (SIL Open Font License 1.1): /static/homepage/archivo.woff2, retained unchanged from the marketing handoff. Official family and license: https://github.com/google/fonts/tree/main/ofl/archivo

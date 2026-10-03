@@ -129,5 +129,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TR_CLOUD_BAKE_OVERRIDE: ${{ inputs.bake_override_reason }}
+          # The script logs in again after the mutex wait (azure_refresh_login),
+          # as the same identity azure/login used above.
+          AZURE_CLIENT_ID: ${{ vars.AZURE_DEPLOY_CLIENT_ID }}
+          AZURE_TENANT_ID: 2abe2fae-5c28-491d-af5a-6255b33e534e
+          AZURE_SUBSCRIPTION_ID: 2fc83893-ca6c-48e4-b090-8860fba33d33
         working-directory: src
         run: bash ../ops/scripts/deploy/azure_control_plane.sh

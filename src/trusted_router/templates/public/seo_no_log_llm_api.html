@@ -40,7 +40,7 @@ curl "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE"
   </div>
   <div>
     <p>Roleplay chats, character cards, journals, drafts: the text people send to an LLM API is personal. The standard advice for no-log inference is to run models locally, which caps you at whatever your hardware can hold. TrustedRouter's answer is a gateway you can inspect: open source, a published image digest, and attestation bound to the live TLS session so nothing can be replayed at you.</p>
-    <p>The catalog holds up its end. DeepSeek, Kimi, Qwen, GLM, and MiniMax routes are served by non-Chinese hosting providers on attested infrastructure with ZDR and TEE tiers, so you get frontier Chinese open-weights without sending your data to the model vendor. Pick a route with the <a href="/choose">model chooser</a>, compare latency measured from real routed requests at the <a href="/llm-provider-latency-benchmarks">latency benchmarks</a>, and see per-model rates at <a href="/pricing">pricing</a>.</p>
+    <p>The catalog holds up its end. Frontier Chinese open-weights come with ZDR and TEE tiers per route. {{ vendor_exclusion_claim }} Pick a route with the <a href="/choose">model chooser</a>, compare latency measured from real routed requests at the <a href="/llm-provider-latency-benchmarks">latency benchmarks</a>, and see per-model rates at <a href="/pricing">pricing</a>.</p>
   </div>
 </section>
 {% endblock %}

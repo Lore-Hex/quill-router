@@ -1,9 +1,13 @@
 """Best-effort enqueue side of the live analytics Spanner outbox.
 
-The outbox is deliberately separate from gateway settlement. Analytics must
-never make the money transaction slower or less reliable. A failed enqueue is
-logged and tolerated by ``SpannerGenerations``; the durable-delivery repair is
-the completeness backstop.
+Analytics must never make money less reliable. A standalone enqueue is its own
+transaction; a failure is logged and tolerated by ``SpannerGenerations`` and
+the durable-delivery repair is the completeness backstop. The one exception is
+the one-commit settle (``typed_finalize_atomic(settle_outbox_intent=...)``),
+where this append-only, read-free INSERT rides in the money commit. That
+transaction has a complete fallback (the durable two-commit settle, which
+records the benchmark after commit exactly as before), so an analytics failure
+there costs the fallback's extra commits, never the charge.
 
 The primary key starts with a deterministic shard. A commit timestamp alone is
 a monotonically increasing key and would concentrate all writes on one Spanner
@@ -17,6 +21,7 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+from trusted_router.storage_gcp_batch_dml import DmlStatement
 from trusted_router.storage_gcp_codec import json_body
 from trusted_router.storage_models import ProviderBenchmarkSample
 
@@ -61,17 +66,27 @@ class SpannerAnalyticsOutbox:
 
     def enqueue_tx(self, transaction: Any, sample: ProviderBenchmarkSample) -> None:
         """Enqueue a benchmark in an existing Spanner transaction."""
+        sql, params, types = self.enqueue_statement(sample)
+        transaction.execute_update(sql, params=params, param_types=types)
+
+    def enqueue_statement(self, sample: ProviderBenchmarkSample) -> DmlStatement:
+        """The benchmark INSERT, for one batch with other DML.
+
+        PENDING_COMMIT_TIMESTAMP() makes this the last touch of
+        tr_analytics_outbox in its transaction; nothing else there reads or
+        writes that table.
+        """
         shard = analytics_outbox_shard(sample.id, shard_count=self._shard_count)
-        transaction.execute_update(
+        return (
             "INSERT INTO tr_analytics_outbox "
             "(shard, commit_ts, event_id, payload) "
             "VALUES (@shard, PENDING_COMMIT_TIMESTAMP(), @event_id, @payload)",
-            params={
+            {
                 "shard": shard,
                 "event_id": sample.id,
                 "payload": json_body(sample),
             },
-            param_types={
+            {
                 "shard": self._pt.INT64,
                 "event_id": self._pt.STRING,
                 "payload": self._pt.STRING,

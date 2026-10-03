@@ -3829,6 +3829,7 @@ class _StoreProxy:
 
 
 from trusted_router.store_protocol import (  # noqa: E402 - forward dep on Store protocols.
+    ShadowStore,
     Store,
     TypedBillingStore,
 )
@@ -3981,3 +3982,13 @@ def _normalize_email(value: str) -> str:
     if "@" not in normalized:
         normalized = f"{normalized}@trustedrouter.local"
     return normalized
+
+
+def speculation_shadow_store(settings: Any) -> ShadowStore | None:
+    """Optional native adapter; no schema or issuer access when disabled."""
+    if not settings.speculative_provider_shadow_enabled or settings.speculation_shadow_plane != "gcp":
+        return None
+    from trusted_router.storage_gcp import SpannerStore
+    from trusted_router.storage_gcp_speculation_shadow import SpannerSpeculationShadow
+    target = _STORE_PROXY.target
+    return SpannerSpeculationShadow(target, settings) if isinstance(target, SpannerStore) else None

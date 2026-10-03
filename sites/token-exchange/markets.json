@@ -34,13 +34,13 @@
   },
   {
     "slug": "new-york",
-    "evidence_snapshot": "evidence.json", "headline_accent": "for New York",
+    "evidence_snapshot": "evidence.json", "headline_accent": "frontier AI",
     "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy.",
     "buyer_heading": "Buy capacity. Choose how it is served.", "name": "New York Token Exchange", "region": "New York", "domain": "nytokenexchange.com", "aliases": ["newyorktoken.exchange", "nytoken.exchange"],
     "scope": "city",
-    "headline": "Get secure, scalable frontier AI for New York.",
-    "lead": "Compare models, pricing and privacy for New York\u2019s financial, legal and enterprise teams.",
-    "focus": "Verifiably secure compute for New York\u2019s leading industries.",
+    "headline": "Get secure, scalable frontier AI.",
+    "lead": "Compare models, pricing and privacy for financial, legal and enterprise teams.",
+    "focus": "Verifiably secure compute for frontier industries.",
     "intro": "From investment research to client communications, choose models that fit the work and provider policies that fit your data. Start with one workload, then evaluate quality, cost and privacy together.",
     "sectors": [["Investment research", "Evaluate document analysis and research synthesis against your own acceptance criteria. Compare output quality, latency and total token cost."], ["Legal operations", "Review retention policies and provider eligibility before routing client material. Test document workflows with a controlled evaluation set."], ["Financial platforms", "Define approved routes, fallback choices and application spending limits before putting an AI feature into production."]],
     "seller": "Offer inference capacity for research, document and enterprise workloads. Share throughput, pricing and privacy evidence so buyers can evaluate your service."
@@ -54,9 +54,9 @@
       "chicagotoken.exchange"
     ],
     "scope": "city",
-    "headline": "Get secure, scalable frontier AI for Chicago.",
-    "lead": "Compare models, pricing and privacy for Chicago’s industrial, logistics and financial teams.",
-    "focus": "Verifiably secure compute for Chicago’s leading industries.",
+    "headline": "Get secure, scalable frontier AI.",
+    "lead": "Compare models, pricing and privacy for industrial, logistics and financial teams.",
+    "focus": "Verifiably secure compute for frontier industries.",
     "intro": "Evaluate industrial documents, logistics workflows and financial research against your own quality, cost and privacy requirements.",
     "sectors": [
       [
@@ -73,7 +73,7 @@
       ]
     ],
     "seller": "Offer inference capacity for industrial, logistics and research workloads. Share interactive and batch performance, pricing and privacy evidence so buyers can evaluate your service.",
-    "headline_accent": "for Chicago",
+    "headline_accent": "frontier AI",
     "buyer_heading": "Buy capacity. Choose how it is served.",
     "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy.",
     "evidence_snapshot": "evidence-shared-gcp.json"
@@ -87,9 +87,9 @@
       "sftoken.exchange"
     ],
     "scope": "city",
-    "headline": "Get secure, scalable frontier AI for San Francisco.",
-    "lead": "Compare models, pricing and privacy for San Francisco’s AI product, developer platform and software teams.",
-    "focus": "Verifiably secure compute for San Francisco’s product teams.",
+    "headline": "Get secure, scalable frontier AI.",
+    "lead": "Compare models, pricing and privacy for AI product, developer platform and software teams.",
+    "focus": "Verifiably secure compute for product teams.",
     "intro": "Evaluate the models your product needs today and at scale. Compare quality, latency and cost against real application tasks.",
     "sectors": [
       [
@@ -106,7 +106,7 @@
       ]
     ],
     "seller": "Offer inference capacity for agent products, developer platforms and production software. Share model capabilities, throughput, pricing and privacy evidence so buyers can evaluate your service.",
-    "headline_accent": "for San Francisco",
+    "headline_accent": "frontier AI",
     "buyer_heading": "Buy capacity. Choose how it is served.",
     "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy.",
     "evidence_snapshot": "evidence-shared-gcp.json"
@@ -122,9 +122,9 @@
       "txtoken.exchange"
     ],
     "scope": "region",
-    "headline": "Get secure, scalable frontier AI for Texas.",
-    "lead": "Compare models, pricing and privacy for Texas’s energy, engineering and enterprise software teams.",
-    "focus": "Verifiably secure compute for Texas’s leading industries.",
+    "headline": "Get secure, scalable frontier AI.",
+    "lead": "Compare models, pricing and privacy for energy, engineering and enterprise software teams.",
+    "focus": "Verifiably secure compute for frontier industries.",
     "intro": "Evaluate technical knowledge, software and enterprise workloads against your own quality, cost and privacy requirements.",
     "sectors": [
       [
@@ -141,7 +141,7 @@
       ]
     ],
     "seller": "Offer inference capacity for energy, engineering and software workloads. Share available models, service locations, throughput, pricing and privacy evidence so buyers can evaluate your service.",
-    "headline_accent": "for Texas",
+    "headline_accent": "frontier AI",
     "buyer_heading": "Buy capacity. Choose how it is served.",
     "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy.",
     "evidence_snapshot": "evidence-shared-gcp.json"
@@ -156,9 +156,9 @@
       "ustoken.exchange"
     ],
     "scope": "region",
-    "headline": "Get secure, scalable frontier AI for the United States.",
-    "lead": "Compare models, pricing and privacy for enterprise teams across the United States.",
-    "focus": "Verifiably secure compute for enterprise teams across the United States.",
+    "headline": "Get secure, scalable frontier AI.",
+    "lead": "Compare models, pricing and privacy for enterprise teams.",
+    "focus": "Verifiably secure compute for enterprise teams.",
     "intro": "Bring purchasing decisions together across business units while preserving the model choice each application needs. Evaluate quality, cost and provider requirements together.",
     "sectors": [
       [
@@ -175,7 +175,7 @@
       ]
     ],
     "seller": "Offer enterprise inference capacity with clear model support and service terms. Share throughput, pricing and privacy evidence so buyers can evaluate your service across teams.",
-    "headline_accent": "for the United States",
+    "headline_accent": "frontier AI",
     "buyer_heading": "Buy capacity. Choose how it is served.",
     "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy.",
     "evidence_snapshot": "evidence-shared-gcp.json"
@@ -190,9 +190,9 @@
       "eutoken.exchange"
     ],
     "scope": "region",
-    "headline": "Get secure, scalable frontier AI for Europe.",
-    "lead": "Compare models, pricing and privacy for Europe’s procurement, product and enterprise teams.",
-    "focus": "Verifiably secure compute for Europe’s leading industries.",
+    "headline": "Get secure, scalable frontier AI.",
+    "lead": "Compare models, pricing and privacy for procurement, product and enterprise teams.",
+    "focus": "Verifiably secure compute for frontier industries.",
     "intro": "Evaluate multilingual documents and enterprise applications alongside provider terms. Confirm residency and contractual requirements for each intended route.",
     "sectors": [
       [
@@ -209,7 +209,7 @@
       ]
     ],
     "seller": "Offer inference capacity for multilingual documents and enterprise workloads. Share processing locations, throughput, pricing and privacy evidence so buyers can evaluate your service.",
-    "headline_accent": "for Europe",
+    "headline_accent": "frontier AI",
     "buyer_heading": "Buy capacity. Choose how it is served.",
     "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy.",
     "evidence_snapshot": "evidence-europe.json"
@@ -217,26 +217,26 @@
   {
     "slug": "london", "name": "London Token Exchange", "region": "London", "domain": "londontoken.exchange", "aliases": ["ltokenexchange.com"],
     "scope": "city",
-    "headline": "Get secure, scalable frontier AI for London.",
-    "lead": "Compare models, pricing and privacy for London’s financial, insurance and professional services teams.",
-    "focus": "Verifiably secure compute for London’s leading industries.",
+    "headline": "Get secure, scalable frontier AI.",
+    "lead": "Compare models, pricing and privacy for financial, insurance and professional services teams.",
+    "focus": "Verifiably secure compute for frontier industries.",
     "intro": "Evaluate financial research, insurance documents and professional workflows against your own quality, cost and privacy requirements.",
     "sectors": [["Financial services", "Evaluate document analysis and research synthesis with an approved dataset. Compare output quality, latency and total token cost."], ["Insurance operations", "Test extraction and classification on forms, policies and supporting documents. Compare results against answers reviewed by your insurance team."], ["Professional services", "Review retention policies and provider eligibility before routing client material. Define expert review and confidentiality requirements for your document workflows."]],
     "seller": "Offer inference capacity for financial research, insurance documents and professional workloads. Share throughput, pricing, privacy evidence and support arrangements so buyers can evaluate your service.",
-    "headline_accent": "for London",
+    "headline_accent": "frontier AI",
     "evidence_snapshot": "evidence-london.json",
     "buyer_heading": "Buy capacity. Choose how it is served.",
     "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy."
   },
   {
     "slug": "dubai",
-    "evidence_snapshot": "evidence-dubai.json", "headline_accent": "for Dubai",
+    "evidence_snapshot": "evidence-dubai.json", "headline_accent": "frontier AI",
     "buyer_heading": "Buy capacity. Choose how it is served.",
     "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy.", "name": "Dubai Token Exchange", "region": "Dubai", "domain": "dubaitokenexchange.com", "aliases": ["dubaitoken.exchange"],
     "scope": "city",
-    "headline": "Get secure, scalable frontier AI for Dubai.",
-    "lead": "Compare models, pricing and privacy for Dubai’s financial, professional services and enterprise teams.",
-    "focus": "Verifiably secure compute for Dubai’s leading industries.",
+    "headline": "Get secure, scalable frontier AI.",
+    "lead": "Compare models, pricing and privacy for financial, professional services and enterprise teams.",
+    "focus": "Verifiably secure compute for frontier industries.",
     "intro": "From multilingual research to client communications, choose models that fit the work and provider policies that fit your data. Start with one workload, then evaluate quality, cost and privacy together.",
     "sectors": [["Multilingual services", "Evaluate Arabic and English document analysis against your own acceptance criteria. Compare output quality, latency and total token cost."], ["Financial and professional services", "Review retention policies and provider eligibility before routing client material. Test document workflows with a controlled evaluation set."], ["Enterprise platforms", "Define approved routes, fallback choices and application spending limits before putting an AI feature into production."]],
     "seller": "Offer inference capacity for Arabic and English research, document and enterprise workloads. Share throughput, pricing and privacy evidence so buyers can evaluate your service."
@@ -248,10 +248,10 @@
     "domain": "riyadhtokenexchange.com",
     "aliases": [],
     "scope": "city",
-    "headline": "Get secure, scalable frontier AI for Riyadh.",
-    "headline_accent": "for Riyadh",
-    "lead": "Compare models, pricing and privacy for Riyadh’s public-sector, energy and enterprise teams.",
-    "focus": "Verifiably secure compute for Riyadh’s leading industries.",
+    "headline": "Get secure, scalable frontier AI.",
+    "headline_accent": "frontier AI",
+    "lead": "Compare models, pricing and privacy for public-sector, energy and enterprise teams.",
+    "focus": "Verifiably secure compute for frontier industries.",
     "intro": "Evaluate Arabic and English public-service documents, technical reports and enterprise workloads against your own quality, cost and privacy requirements.",
     "sectors": [
       [
@@ -282,9 +282,9 @@
       "hongkongtoken.exchange"
     ],
     "scope": "city",
-    "headline": "Get secure, scalable frontier AI for Hong Kong.",
-    "lead": "Compare models, pricing and privacy for Hong Kong’s financial, trade and enterprise teams.",
-    "focus": "Verifiably secure compute for Hong Kong’s leading industries.",
+    "headline": "Get secure, scalable frontier AI.",
+    "lead": "Compare models, pricing and privacy for financial, trade and enterprise teams.",
+    "focus": "Verifiably secure compute for frontier industries.",
     "intro": "Evaluate multilingual financial research and trade documents against your own quality criteria. Confirm provider eligibility and processing terms across the jurisdictions your teams work in.",
     "sectors": [
       [
@@ -301,7 +301,7 @@
       ]
     ],
     "seller": "Offer inference capacity for multilingual research, trade documents and enterprise workloads. Share language evaluations, processing locations, pricing and capacity so buyers can assess your service.",
-    "headline_accent": "for Hong Kong",
+    "headline_accent": "frontier AI",
     "buyer_heading": "Buy capacity. Choose how it is served.",
     "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy.",
     "evidence_snapshot": "evidence-shared-gcp.json"
@@ -315,9 +315,9 @@
       "shanghaitoken.exchange"
     ],
     "scope": "city",
-    "headline": "Evaluate secure, scalable frontier AI for Shanghai.",
-    "lead": "Compare model quality, pricing and provider eligibility for teams with Shanghai operations.",
-    "focus": "Evaluate AI for Shanghai’s industrial and enterprise workflows.",
+    "headline": "Evaluate secure, scalable frontier AI.",
+    "lead": "Compare model quality, pricing and provider eligibility for industrial and enterprise teams.",
+    "focus": "Evaluate AI for industrial and enterprise workflows.",
     "intro": "Start with non-sensitive evaluations of Chinese business and technical documents. Confirm service availability, provider eligibility and data-transfer requirements before production use.",
     "sectors": [
       [
@@ -334,7 +334,7 @@
       ]
     ],
     "seller": "Submit model coverage, language evaluations, service locations and capacity for review. Provider eligibility and applicable requirements must be confirmed before onboarding.",
-    "headline_accent": "for Shanghai",
+    "headline_accent": "frontier AI",
     "buyer_heading": "Buy capacity. Choose how it is served.",
     "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy.",
     "evidence_snapshot": "evidence-shared-gcp.json"
@@ -342,13 +342,13 @@
   {
     "slug": "tokyo", "name": "Tokyo Token Exchange", "region": "Tokyo", "domain": "tokyotokenexchange.com", "aliases": [],
     "scope": "city",
-    "headline": "Get secure, scalable frontier AI for Tokyo.",
-    "lead": "Compare models, pricing and privacy for Tokyo’s enterprise, manufacturing and software teams.",
-    "focus": "Verifiably secure compute for Tokyo’s leading industries.",
+    "headline": "Get secure, scalable frontier AI.",
+    "lead": "Compare models, pricing and privacy for enterprise, manufacturing and software teams.",
+    "focus": "Verifiably secure compute for frontier industries.",
     "intro": "Evaluate Japanese business documents, technical reasoning and software workloads against your own quality, cost and privacy requirements.",
     "sectors": [["Enterprise documents", "Evaluate extraction and summarization on Japanese business documents. Compare results against answers reviewed by your domain experts."], ["Manufacturing", "Test technical reasoning on Japanese manuals and internal knowledge. Set accuracy criteria with your engineering team before routing production material."], ["Software platforms", "Compare output quality, latency and total token cost on your application’s tasks. Define approved routes, fallback choices and spending limits before production."]],
     "seller": "Offer inference capacity for Japanese document, manufacturing and software workloads. Share language evaluations, throughput, pricing and privacy evidence so buyers can evaluate your service.",
-    "headline_accent": "for Tokyo",
+    "headline_accent": "frontier AI",
     "evidence_snapshot": "evidence-tokyo.json",
     "buyer_heading": "Buy capacity. Choose how it is served.",
     "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy."

@@ -39,6 +39,7 @@ from scripts.pricing.model_ids import (
     canonicalize_unqualified_model_id,
 )
 from scripts.pricing.providers import (
+    abliterate,
     aion_labs,
     akashml,
     arcee,
@@ -70,6 +71,8 @@ from scripts.pricing.providers import (
     scaledown,
     scaleway,
     stepfun,
+    system1models,
+    system1models_eu,
     tencent,
     upstage,
     wandb,
@@ -491,12 +494,15 @@ _DISCOVERABLE_MANIFEST_PROVIDERS_BASE: tuple[
         nscale._canonical_id,
     ),
     ("lyceum", lyceum.URL, ("LYCEUM_API_KEY",), lyceum.canonical_model_id),
+    ("system1models", system1models.URL, (), system1models.canonical_model_id),
+    ("system1models-eu", system1models_eu.URL, (), system1models_eu.canonical_model_id),
 )
 
 # Providers on the direct OpenAI catalog adapter. Their credentials are
 # available to the hourly refresh workflow, so a missing workflow secret is a
 # deployment error, not an intentionally skipped discovery check.
 _CI_DIRECT_OPENAI_DISCOVERY_MODULES = (
+    abliterate,
     upstage,
     sail_research,
     reka,
@@ -530,6 +536,8 @@ _STALE_MANIFEST_PROVIDER_MODULES = (
     nvidia_nim,
     lyceum,
     recraft,
+    system1models,
+    system1models_eu,
     relace,
     stepfun,
     scaledown,

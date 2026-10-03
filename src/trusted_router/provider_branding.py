@@ -19,6 +19,11 @@ class ProviderBrand:
 
 
 PROVIDER_BRANDS: dict[str, ProviderBrand] = {
+    "abliterate": ProviderBrand(
+        "https://abliterate.ai/",
+        description="OpenAI-compatible abliterated chat and research models. Paid routing is pending verified upstream usage accounting.",
+        resources=(("API and pricing", "https://abliterate.ai/docs"), ("Service terms", "https://abliterate.ai/terms")),
+    ),
     "aion-labs": ProviderBrand("https://www.aionlabs.ai/"),
     "akashml": ProviderBrand("https://akashml.com/"),
     "arcee": ProviderBrand("https://www.arcee.ai/"),
@@ -76,6 +81,8 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "scaleway": ProviderBrand("https://www.scaleway.com/"),
     "regolo": ProviderBrand("https://regolo.ai/"),
     "lyceum": ProviderBrand("https://lyceum.technology/"),
+    "system1models": ProviderBrand("https://system1models.ai/"),
+    "system1models-eu": ProviderBrand("https://system1models.ai/eu"),
     "privatemode": ProviderBrand("https://www.privatemode.ai/"),
     "upstage": ProviderBrand("https://www.upstage.ai/"),
     "alibaba": ProviderBrand("https://www.alibabacloud.com/"),

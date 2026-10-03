@@ -51,7 +51,7 @@ const r = await client.chat.completions.create({
   "model": "your/model",
   "provider": {"min_privacy": "confidential"}
 }</code></pre>
-      <p>Confidential requires all three on the same route: verified provider-side confidential compute, end-to-end encryption and explicit zero data retention. Missing or false ZDR makes a route ineligible even when its compute and encryption are verified. <code>e2e</code> and <code>e2ee</code> are accepted value aliases. Unsupported model/provider combinations fail closed.</p>
+      <p>Confidential requires all three on the same route: verified provider-side confidential compute, end-to-end encryption and explicit zero data retention. Missing or false ZDR makes a route ineligible even when its compute and encryption are verified. The model's own vendor never qualifies, so a Confidential request never reaches it. <code>e2e</code> and <code>e2ee</code> are accepted value aliases. Unsupported model/provider combinations fail closed.</p>
       <p>Catalog fields <code>provider_confidential_compute</code> and <code>provider_e2ee</code> report individual technical properties. The Confidential label and endpoint <code>privacy_tier: 3</code> additionally require <code>provider_zero_data_retention: true</code> for that exact route.</p>
     </div>
   </div>

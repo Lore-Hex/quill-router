@@ -24,7 +24,7 @@ reply = client.chat.completions.create(
   </div>
 </section>
 <section class="marketing-grid three">
-  <div class="marketing-card"><span class="card-label">Routing</span><h3>Meta-routes do the picking</h3><p>Send trustedrouter/auto and the gateway picks the best fit per request. trustedrouter/cheap finds the cheapest capable route and still runs it in a TEE. trustedrouter/synth fuses a panel of open models and beats single frontier models on <a href="/synth">published evals</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Routing</span><h3>Meta-routes do the picking</h3><p>Send trustedrouter/auto and the gateway picks the best fit per request. trustedrouter/cheap finds the cheapest capable route, still through the attested gateway. trustedrouter/synth fuses a panel of open models and beats single frontier models on <a href="/synth">published evals</a>.</p></div>
   <div class="marketing-card"><span class="card-label">Reliability</span><h3>Failover, with numbers</h3><p>Automatic provider fallback keeps requests flowing when a provider goes down. Measured latency comes from real routed requests and is published at the <a href="/llm-provider-latency-benchmarks">latency benchmarks page</a>, so you can check the numbers before you commit.</p></div>
   <div class="marketing-card"><span class="card-label">Payments</span><h3>Credits, BYOK, or a wallet</h3><p>Prepaid credits through Stripe, bring-your-own provider keys, or x402 pay-per-request with Continue with MetaMask sign-in that works without a traditional account. <a href="/pricing">Per-model pricing</a> is transparent, with a thin markup over provider list prices.</p></div>
 </section>
@@ -33,7 +33,7 @@ reply = client.chat.completions.create(
   <div class="matrix-row"><span>OpenRouter</span><span>Very large public catalog, big community, quick start.</span><span>600+ model ids and an attested prompt path; switching is a base_url change (see the <a href="/openrouter-alternative">OpenRouter comparison</a>).</span></div>
   <div class="matrix-row"><span>LiteLLM</span><span>Open-source proxy you self-host and fully control.</span><span>Works well as LiteLLM's final upstream: keep direct providers first, then reach 600+ additional models through TrustedRouter.</span></div>
   <div class="matrix-row"><span>Portkey</span><span>Deep observability, logging, and guardrails tooling.</span><span>No prompt or output logs; real-time inference is content-stateless; Batch retention is explicit.</span></div>
-  <div class="matrix-row"><span>Requesty</span><span>Cost-aware routing and spend controls.</span><span>trustedrouter/cheap picks the cheapest capable route and executes it inside a TEE.</span></div>
+  <div class="matrix-row"><span>Requesty</span><span>Cost-aware routing and spend controls.</span><span>trustedrouter/cheap picks the cheapest capable route through the attested gateway.</span></div>
   <div class="matrix-row"><span>All of them</span><span>One API across many model providers.</span><span>The same, plus a privacy tier on every route: Open, Zero-Data-Retention, or TEE.</span></div>
 </section>
 <section class="quote-feature">

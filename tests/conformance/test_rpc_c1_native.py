@@ -1,8 +1,8 @@
 """Native C1 acceptance. PROFILE output counts are not physical scan counts.
 
 The emulator exposes rows_returned and DML row_count_exact, but no optimizer
-plan or rows_scanned. Indexed Read proves the positive range is empty; operator
-PLAN/PROFILE on Spanner must still prove both unhinted SQL statements choose it.
+plan or rows_scanned, so these tests check results: which rows each guarded
+statement changes, and what the finalize batch commits.
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from datetime import timedelta
 from uuid import uuid4
 
 import pytest
-from google.cloud.spanner_v1 import KeyRange, KeySet
+from google.cloud.spanner_v1 import KeySet
 from google.cloud.spanner_v1 import param_types as pt
 from google.cloud.spanner_v1.transaction import Transaction
 from google.cloud.spanner_v1.types import ExecuteSqlRequest
@@ -18,7 +18,6 @@ from google.cloud.spanner_v1.types import ExecuteSqlRequest
 from tests.conformance.spanner_ddl import DDL
 from tests.conformance.spanner_sql_builders import NOW, Capture
 from tests.conformance.test_spanner_sql_acceptance import execute_dml, rolled_back
-from tests.test_trust_event_debt_index_migration import INDEX, carrier_ddls
 from trusted_router import storage_gcp_authorize as finalize
 from trusted_router import storage_gcp_counter_dml as counters
 from trusted_router.spend_windows import window_floors
@@ -34,18 +33,11 @@ from trusted_router.types import UsageType
 
 pytestmark = pytest.mark.xdist_group("conformance-spanner-emulator")
 
-# A Read through a key-only index may name only the index columns plus the
-# base table key; the server rejects any other column (NOT_FOUND on
-# `provider` when this read named TRUST_EVENT_COLUMNS).
-DEBT_INDEX_COLUMNS = ("workspace_id", "event_id", "kind", "unrecovered_micro")
-
 
 @pytest.fixture(params=["spanner-emulator"], ids=lambda backend: f"backend={backend}")
-def c1_database(request, native_emulator_resources, tmp_path, monkeypatch):
+def c1_database(request, native_emulator_resources):
     assert request.param == "spanner-emulator"
-    # Start without the new index: its only source here is the executed shell
-    # carrier, whose gcloud dispatch is captured and submitted to the native SDK.
-    schema = tuple(sql for sql in DDL if not sql.startswith(f"CREATE INDEX {INDEX} ON"))
+    schema = tuple(DDL)
     # The SDK Database exposes its Instance only as `_instance` (no public accessor).
     database = native_emulator_resources[0]._instance.database(  # noqa: SLF001 - SDK has no public accessor
         "c1-" + uuid4().hex[:12], ddl_statements=schema[:20],
@@ -54,16 +46,6 @@ def c1_database(request, native_emulator_resources, tmp_path, monkeypatch):
     try:
         for offset in range(20, len(schema), 20):
             database.update_ddl(schema[offset:offset + 20]).result(timeout=120)
-        run, statements = carrier_ddls(tmp_path / "carrier", monkeypatch)
-        assert run.returncode == 0 and len(statements) == 1, run.stderr
-        for _ in range(2):  # Real server idempotency, not just a shell stub.
-            database.update_ddl(statements).result(timeout=120)
-        with database.snapshot() as snapshot:
-            assert list(snapshot.execute_sql(
-                "SELECT INDEX_STATE FROM INFORMATION_SCHEMA.INDEXES "
-                "WHERE TABLE_NAME='tr_trust_event' AND INDEX_NAME=@name",
-                params={"name": INDEX}, param_types={"name": pt.STRING},
-            )) == [["READ_WRITE"]]
         yield database
     finally:
         database.close()
@@ -91,7 +73,7 @@ def profile(transaction, statement):
     return rows, result.stats
 
 
-def test_payment_debt_positive_range_and_profile(c1_database):
+def test_payment_debt_guard_and_recovery_select(c1_database):
     database = c1_database
     workspace = "debt-" + uuid4().hex
     columns = ("workspace_id", "event_id", "kind", "provider", "occurred_at",
@@ -119,17 +101,6 @@ def test_payment_debt_positive_range_and_profile(c1_database):
                     (workspace, "positive", "payment", "stripe", NOW, NOW, debt, 0),
                 ])
         with rolled_back(database) as transaction:
-            # SDK Read selects this physical index range directly, with no SQL
-            # hint. Zero entries here is range evidence, not optimizer evidence.
-            entries = list(transaction.read(
-                "tr_trust_event", columns=DEBT_INDEX_COLUMNS, index=INDEX,
-                keyset=KeySet(ranges=[KeyRange(start_open=[workspace, "payment", 0],
-                                              end_closed=[workspace, "payment"])]),
-            ))
-            assert len(entries) == bool(debt)
-            if debt:
-                event = dict(zip(DEBT_INDEX_COLUMNS, entries[0], strict=True))
-                assert (event["event_id"], event["unrecovered_micro"]) == ("positive", 50)
             rows, _ = profile(transaction, select)
             assert len(rows) == bool(debt)
             if debt:

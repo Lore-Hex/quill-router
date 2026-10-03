@@ -56,7 +56,19 @@ def literal_cases():
                     "VALUES (@kind, @id, @body, CURRENT_TIMESTAMP())",
                     values, seed_types,
                 ))
-            yield SQLCase(f"{key}/{index}", [(sql, params, types)], seed=seed or None)
+            for credit in scenario.get("credit_rows", []):
+                _, seed_types = typed_parameters({
+                    "ws": "STRING", "shard": "INT64", "total": "INT64",
+                    "causes": "ARRAY<STRING>", "epoch": "INT64",
+                })
+                seed.append((
+                    "INSERT INTO tr_credit_balance "
+                    "(workspace_id, shard, total_credits, total_usage, reserved, billing_pause_causes, pause_epoch) "
+                    "VALUES (@ws, @shard, @total, 0, 0, @causes, @epoch)",
+                    credit, seed_types,
+                ))
+            yield SQLCase(f"{key}/{index}", [(sql, params, types)], seed=seed or None,
+                          expected_rows=scenario.get("expected_rows"))
 
 
 def all_cases():
@@ -231,7 +243,14 @@ def test_production_sql_acceptance(sql_database, case):
             with rolled_back(sql_database) as transaction:
                 if case.seed:
                     execute_dml(transaction, case.seed, batch=False)
-                counts = execute_dml(transaction, case.statements, batch=case.batch)
+                if case.expected_rows is not None:
+                    assert len(case.statements) == 1 and not case.batch
+                    sql, params, types = case.statements[0]
+                    rows = list(transaction.execute_sql(sql, params=params, param_types=types))
+                    assert rows == case.expected_rows
+                    counts = [len(rows)]
+                else:
+                    counts = execute_dml(transaction, case.statements, batch=case.batch)
                 if case.expected_counts is not None:
                     assert counts == case.expected_counts, "seeded statement did not exercise its target row"
     except Exception as exc:

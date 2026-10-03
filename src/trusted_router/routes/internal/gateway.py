@@ -59,6 +59,7 @@ from trusted_router.catalog import (
     default_endpoint_for_model,
     effective_endpoint,
     endpoint_for_id,
+    endpoint_meets_privacy_requirement,
     endpoint_zero_data_retention,
 )
 from trusted_router.client_context import parse_client_context, parse_gateway_request_id
@@ -93,6 +94,7 @@ from trusted_router.gateway_timing import (
     gateway_timing_phase,
     timed_gateway_async,
     timed_gateway_sync,
+    worker_continuation,
 )
 from trusted_router.money import money_pair
 from trusted_router.oauth_app_policy import oauth_app_is_effectively_suspended
@@ -143,6 +145,7 @@ from trusted_router.request_tags import InvalidTags, merge_tags, tags_match, val
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.routing import (
     _apply_endpoint_provider_filters,
+    _required_privacy_postures,
     canonical_model_id,
     chat_route_endpoint_candidates,
     decide_route_endpoint_candidates,
@@ -492,12 +495,14 @@ async def authorize_gateway(
             # Direct unit callers may construct a Request without an ASGI receive
             # channel. Real routed requests always provide the exact cached bytes.
             raw_body = b""
+        continuation = worker_continuation() if settings.speculative_provider_shadow_enabled else None
         return await run_in_threadpool(
-            _authorize_gateway_sync,
+            cast(Any, _authorize_gateway_sync),  # wrapper consumes the private handoff keyword
             request,
             body,
             settings,
             raw_body,
+            **({"_shadow_continuation": continuation} if continuation is not None else {}),
         )
     finally:
         _AUTHORIZE_ADMISSION.release(subject)
@@ -781,7 +786,14 @@ def _authorize_gateway_sync_impl(
     api_key, metadata, folded_byok, auth_context = _gateway_authorize_metadata(
         body, boot_kid=boot_auth.kid if boot_auth is not None else None,
     )
+    if settings.speculative_provider_shadow_enabled:
+        from trusted_router.services import speculation_shadow
+        with speculation_shadow.isolate("resolved"):
+            speculation_shadow.resolved(api_key, body.invocation_nonce)
     if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
+        if settings.speculative_provider_shadow_enabled and api_key is not None:
+            with speculation_shadow.isolate("reason"):
+                speculation_shadow.reason("key_disabled" if api_key.disabled else "key_expired")
         raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
     _assert_gateway_key_scope(api_key)
     if boot_auth is not None:
@@ -801,11 +813,17 @@ def _authorize_gateway_sync_impl(
             resolved_lookup_hash=api_key.lookup_hash,
             accepted_image_digests=accepted_image_digests,
         )
+    if settings.speculative_provider_shadow_enabled:
+        with speculation_shadow.isolate("boot_verified"):
+            speculation_shadow.boot_verified(boot_context["boot_verified"], boot_auth.kid if boot_auth is not None else "")
     workspace = metadata.workspace if metadata is not None else STORE.get_workspace(api_key.workspace_id)
     gateway_timing_phase("routing_ms")
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
     if workspace_billing_paused(workspace):
+        if settings.speculative_provider_shadow_enabled:
+            with speculation_shadow.isolate("reason"):
+                speculation_shadow.reason("billing_paused")
         # Keep tenant attribution in the rendered message because Cloud Run's
         # stderr collector does not preserve arbitrary LogRecord extras. This
         # is billing metadata only: never include the raw key, body, or content.
@@ -1057,6 +1075,14 @@ def _authorize_gateway_sync_impl(
             raise api_error(
                 400,
                 "User-provided models do not support image generation",
+                ErrorType.MODEL_NOT_SUPPORTED,
+            )
+        if _required_privacy_postures(route_preferences):
+            # The owner's endpoint carries no tracked privacy posture, so a
+            # privacy floor fails closed, as it does for any unknown route.
+            raise api_error(
+                400,
+                "User-provided models cannot meet a provider privacy floor",
                 ErrorType.MODEL_NOT_SUPPORTED,
             )
         endpoint_candidates = [_user_model_gateway_candidate(user_model)]
@@ -1318,7 +1344,9 @@ def _authorize_gateway_sync_impl(
         # routing), so a replay across catalog/pricing/BYOK drift advertises
         # the endpoint that was actually authorized (codex 3e route review #1).
         existing_candidates = _authorization_endpoint_candidates(
-            existing_authorization, endpoint_candidates
+            existing_authorization,
+            endpoint_candidates,
+            privacy_requirements=_required_privacy_postures(effective_route_preferences),
         )
         existing_model, existing_endpoint = existing_candidates[0]
         existing_usage_type = UsageType.for_endpoint(existing_endpoint)
@@ -1361,6 +1389,9 @@ def _authorize_gateway_sync_impl(
                 workspace.id, api_key.hash, request_idempotency_key
             )
         except BillingPausedError as exc:
+            if settings.speculative_provider_shadow_enabled:
+                with speculation_shadow.isolate("reason"):
+                    speculation_shadow.reason("billing_paused")
             raise api_error(403, "billing_paused", ErrorType.FORBIDDEN) from exc
 
         if existing_authorization is not None:
@@ -1596,6 +1627,9 @@ def _authorize_gateway_sync_impl(
         remember_spend_window_decision(request, window_decision)
         if outcome == "billing_paused":
             release_user_model_slot_after_error()
+            if settings.speculative_provider_shadow_enabled:
+                with speculation_shadow.isolate("reason"):
+                    speculation_shadow.reason("billing_paused")
             raise api_error(403, "billing_paused", ErrorType.FORBIDDEN)
         if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS:
             release_user_model_slot_after_error()
@@ -1700,6 +1734,9 @@ def _authorize_gateway_sync_impl(
                 credit_reservation_id = credit_reservation.id
             except BillingPausedError as exc:
                 release_user_model_slot_after_error()
+                if settings.speculative_provider_shadow_enabled:
+                    with speculation_shadow.isolate("reason"):
+                        speculation_shadow.reason("billing_paused")
                 raise api_error(403, "billing_paused", ErrorType.FORBIDDEN) from exc
             except ValueError as exc:
                 # The local balance refused. On a peer plane with deferred
@@ -1785,6 +1822,9 @@ def _authorize_gateway_sync_impl(
                 authorization = create_authorization()
         except BillingPausedError as exc:
             release_user_model_slot_after_error()
+            if settings.speculative_provider_shadow_enabled:
+                with speculation_shadow.isolate("reason"):
+                    speculation_shadow.reason("billing_paused")
             raise api_error(403, "billing_paused", ErrorType.FORBIDDEN) from exc
         except DeferredSettlementCapReached as cap_exc:
             release_user_model_slot_after_error()
@@ -2303,6 +2343,8 @@ def _new_gateway_authorization_id() -> str:
 def _authorization_endpoint_candidates(
     authorization: Any,
     fallback: list[tuple[Model, ModelEndpoint]],
+    *,
+    privacy_requirements: frozenset[int] = frozenset(),
 ) -> list[tuple[Model, ModelEndpoint]]:
     user_model_pair = _authorized_user_model_pair(authorization)
     if user_model_pair is not None:
@@ -2311,14 +2353,32 @@ def _authorization_endpoint_candidates(
     endpoint_ids = authorization.candidate_endpoint_ids or []
     if not endpoint_ids and authorization.endpoint_id:
         endpoint_ids = [authorization.endpoint_id]
+    privacy_excluded = False
     for endpoint_id in endpoint_ids:
         endpoint = _endpoint_for_id_compat(endpoint_id)
         if endpoint is None:
+            continue
+        # A replay never restores a route the request's privacy floor now
+        # excludes.
+        if not all(
+            endpoint_meets_privacy_requirement(endpoint, requirement)
+            for requirement in privacy_requirements
+        ):
+            privacy_excluded = True
             continue
         model = MODELS.get(endpoint.model_id)
         if model is None:
             continue
         candidates.append((model, endpoint))
+    if not candidates and privacy_excluded:
+        # Settlement and refund accept only routes this authorization holds,
+        # so it cannot hand out the freshly filtered ones.
+        raise api_error(
+            409,
+            "This authorization's routes no longer meet the requested privacy floor; "
+            "retry with a new idempotency key",
+            ErrorType.BAD_REQUEST,
+        )
     return candidates or fallback
 
 
@@ -2380,6 +2440,11 @@ def _gateway_authorize_response(
     authorize replay returns the same prospective ID. Consumers must check the
     terminal authorization disposition before expecting a generation.
     """
+    if settings.speculative_provider_shadow_enabled:
+        from trusted_router.services import speculation_shadow
+        with speculation_shadow.isolate("authorized"):
+            speculation_shadow.authorized(authorization, tuple(candidate.id for _, candidate in endpoint_candidates[:16]), idempotent_replay,
+                                          (endpoint.id, endpoint.provider, endpoint.upstream_id or model.id, region))
     stage_d = _gateway_stage_d_payload(
         authorization,
         reason_override=stage_d_reason_override,
@@ -2910,6 +2975,39 @@ def _report_route_fallbacks(body: GatewaySettleRequest) -> None:
         logger.warning("route fallback sentry report failed", exc_info=True)
 
 
+def _refund_benchmark_sample_safely(
+    body: GatewaySettleRequest,
+    authorization: GatewayAuthorization,
+    *,
+    model: Any,
+    selected_endpoint: ModelEndpoint,
+    input_tokens: int,
+    selected_usage_type: UsageType,
+) -> ProviderBenchmarkSample | None:
+    """The provider-error benchmark a refund records, or None if it cannot be built."""
+    try:
+        return ProviderBenchmarkSample.from_provider_error(
+            model=model,
+            provider_name=PROVIDERS[selected_endpoint.provider].name,
+            input_tokens=input_tokens,
+            elapsed_seconds=float(body.elapsed_seconds or 0.001),
+            streamed=body.streamed,
+            usage_type=selected_usage_type,
+            error_status=body.error_status or 502,
+            error_type=body.error_type or "provider_error",
+            region=authorization.region,
+            provider=selected_endpoint.provider,
+            workspace_id=authorization.workspace_id,
+        )
+    except Exception:
+        logger.warning(
+            "provider benchmark write failed after refund finalize authorization_id=%s",
+            authorization.id,
+            exc_info=True,
+        )
+        return None
+
+
 def _record_refund_benchmark_safely(
     sample: ProviderBenchmarkSample, authorization_id: str,
 ) -> None:
@@ -3404,8 +3502,22 @@ def _settle_gateway_authorization(
         and selected_usage_type == UsageType.CREDITS
     )
     refill_attached = not refill_required
+    # A refund's provider-error benchmark is pure computation; build it before
+    # finalize so the one-commit settle can record it in its money commit.
+    refund_benchmark = (
+        None
+        if success or _is_synthetic_settlement(body, authorization)
+        else _refund_benchmark_sample_safely(
+            body,
+            authorization,
+            model=model,
+            selected_endpoint=selected_endpoint,
+            input_tokens=input_tokens,
+            selected_usage_type=selected_usage_type,
+        )
+    )
+    settle_intent: SettleOutboxRow | None = None
     if settings.settle_outbox_enabled:
-        enqueue_start = perf_counter()
         try:
             frozen_settle_body = _settle_repair_metadata(settle_body)
             if operator_cost is not None:
@@ -3435,10 +3547,9 @@ def _settle_gateway_authorization(
                 frozen_settle_body[CUSTOM_MODEL_MARKUP_ID_SETTLE_FIELD] = (
                     custom_model_markup_payout.model_id
                 )
-            # §5.4 honest scope: durability starts only when this INSERT commits;
+            # §5.4 honest scope: durability starts only when this intent commits;
             # crashes before it still rely on enclave redelivery. MF4/MF5 freeze
             # the finalize path and exact resolved cost used by the inline attempt.
-            settle_outbox = spanner_settle_outbox()
             settle_intent = SettleOutboxRow(
                 authorization_id=authorization.id,
                 intent_kind=intent_kind,
@@ -3453,6 +3564,65 @@ def _settle_gateway_authorization(
                     authorization.workspace_id if refill_required else None
                 ),
             )
+        except Exception:
+            logger.error(
+                "settle outbox enqueue failed authorization_id=%s",
+                authorization.id,
+                exc_info=True,
+            )
+
+    # Happy path: the intent, the charge, the done-mark and the benchmark in
+    # ONE commit. Any failure (declined, aborted, deadline, unknown outcome)
+    # falls through to the durable two-commit settle below, unchanged; the
+    # store method documents why an unknown outcome is safe to follow with it.
+    one_commit_result: TypedFinalizeResult | None = None
+    one_commit_ms = 0.0
+    settle_one_commit = (
+        getattr(_typed_store, "typed_settle_one_commit_result", None) if is_typed else None
+    )
+    one_commit_attempted = settle_intent is not None and callable(settle_one_commit)
+    if settle_intent is not None and callable(settle_one_commit):
+        one_commit_start = perf_counter()
+        try:
+            with gateway_phase("store_ms", after="post_commit_ms"):
+                one_commit_result = cast(
+                    TypedFinalizeResult | None,
+                    settle_one_commit(
+                        authorization.id,
+                        settle_intent=settle_intent,
+                        success=success,
+                        actual_microdollars=actual_cost,
+                        selected_usage_type=selected_usage_type,
+                        generation=generation,
+                        user_model_payout=user_model_payout,
+                        app_markup_payout=app_markup_payout,
+                        custom_model_markup_payout=custom_model_markup_payout,
+                        authorization_snapshot=authorization_snapshot,
+                        refund_benchmark=refund_benchmark,
+                        # The same refill grace the enqueue below would use.
+                        intent_initial_delay_seconds=60,
+                    ),
+                )
+        except Exception:
+            logger.warning(
+                "one-commit settle failed; using the durable two-commit settle "
+                "authorization_id=%s",
+                authorization.id,
+                exc_info=True,
+            )
+        one_commit_ms = (perf_counter() - one_commit_start) * 1000
+    if one_commit_result is not None:
+        assert settle_intent is not None
+        # The intent committed, already resolved, with its refill attachment.
+        outbox_enqueued = True
+        refill_attached = (
+            not refill_required
+            or settle_intent.auto_refill_workspace_id == authorization.workspace_id
+        )
+    elif settle_intent is not None:
+        enqueue_start = perf_counter()
+        try:
+            settle_outbox = spanner_settle_outbox()
             enqueue_outcome = settle_outbox.enqueue(
                 settle_intent,
                 # Grace so inline finalize wins the benign race; the drain only
@@ -3520,7 +3690,10 @@ def _settle_gateway_authorization(
         finalized=False,
         activity_indexed=False,
     )
-    if is_typed:
+    if one_commit_result is not None:
+        finalize_result = one_commit_result
+        finalized = finalize_result.finalized
+    elif is_typed:
         assert _typed_store is not None
         # Typed finalize atomically commits billing, the bounded generation
         # record, and the ClickHouse delivery intent. Benchmark delivery
@@ -3632,7 +3805,11 @@ def _settle_gateway_authorization(
             finalized=finalized,
             activity_indexed=finalized,
         )
-    finalize_ms = (perf_counter() - finalize_start) * 1000
+    finalize_ms = (
+        one_commit_ms
+        if one_commit_result is not None
+        else (perf_counter() - finalize_start) * 1000
+    )
     _release_user_model_slot_safely(authorization)
     if not finalized:
         # §3/§6/§7: leave the row pending on purpose. Inline's False only says
@@ -3799,27 +3976,18 @@ def _settle_gateway_authorization(
             )
         elif broadcast_enqueued and should_drain_inline(settings):
             drain_broadcast_queue(settings=settings)
-    if not success and not _is_synthetic_settlement(body, authorization):
+    if refund_benchmark is not None and one_commit_result is None:
+        # A one-commit refund already recorded this sample in its money commit.
         try:
-            benchmark = ProviderBenchmarkSample.from_provider_error(
-                model=model,
-                provider_name=PROVIDERS[selected_endpoint.provider].name,
-                input_tokens=input_tokens,
-                elapsed_seconds=float(body.elapsed_seconds or 0.001),
-                streamed=body.streamed,
-                usage_type=selected_usage_type,
-                error_status=body.error_status or 502,
-                error_type=body.error_type or "provider_error",
-                region=authorization.region,
-                provider=selected_endpoint.provider,
-                workspace_id=authorization.workspace_id,
-            )
             if background_tasks is not None:
                 defer_post_commit(
-                    background_tasks, _record_refund_benchmark_safely, benchmark, authorization.id,
+                    background_tasks,
+                    _record_refund_benchmark_safely,
+                    refund_benchmark,
+                    authorization.id,
                 )
             else:
-                _record_refund_benchmark_safely(benchmark, authorization.id)
+                _record_refund_benchmark_safely(refund_benchmark, authorization.id)
         except Exception:
             logger.warning(
                 "provider benchmark write failed after refund finalize "
@@ -3833,7 +4001,8 @@ def _settle_gateway_authorization(
     # that subtraction is the point of this line (2026-07-05 latency investigation).
     logger.info(
         "settle timing authorization_id=%s success=%s origin=%s total_ms=%.1f "
-        "auth_ms=%.1f enqueue_ms=%.1f finalize_ms=%.1f mark_ms=%.1f",
+        "auth_ms=%.1f enqueue_ms=%.1f finalize_ms=%.1f mark_ms=%.1f "
+        "commit_path=%s one_commit_ms=%.1f",
         authorization.id,
         success,
         "typed" if is_typed else "legacy",
@@ -3842,6 +4011,15 @@ def _settle_gateway_authorization(
         enqueue_ms,
         finalize_ms,
         mark_ms,
+        # one_commit: enqueue+finalize+mark in one commit. fallback: that
+        # attempt was declined or failed (its time is one_commit_ms) and the
+        # durable two-commit settle ran. two_commit: never attempted.
+        (
+            "one_commit"
+            if one_commit_result is not None
+            else "fallback" if one_commit_attempted else "two_commit"
+        ),
+        one_commit_ms,
     )
     return {
         "data": {

@@ -64,6 +64,9 @@ REVIEWED_DDL_STATEMENTS = {
         "ALTER TABLE $1 ADD COLUMN $2 TIMESTAMP": "expanded ensure_column helper",
         "ALTER TABLE $table ADD ROW DELETION POLICY (OLDER_THAN(terminal_at, INTERVAL 30 DAY))": "expanded ensure_policy helper",
     },
+    "migrate_speculation_shadow.sh": {
+        "ALTER TABLE $table ADD ROW DELETION POLICY (OLDER_THAN(updated_at, INTERVAL 7 DAY))": "expanded ensure_policy helper",
+    },
     "migrate_trust_reconciliation.sh": {
         "DROP TABLE tr_trust_backfill": "recreate empty legacy marker; retain current CREATE",
     },
@@ -321,6 +324,10 @@ def ddl_dispatch_arguments(source: str, path: Path, physical_lines: list[int], r
                 fail(i, "unsupported dispatcher DDL parameter assignment")
         dispatchers.add(name.lower())
 
+    # A dispatcher definition is consumed only after its body has been proved
+    # to forward exactly one understood DDL parameter to a recognized sink.
+    # Calls still require separately consumed literal schema below.
+    dispatch_spans.extend(tokens[i].span() for i in definitions if words[i].lower() in dispatchers)
     for i, token in enumerate(tokens):
         if words[i].lower() not in dispatchers or i in definitions:
             continue
@@ -665,9 +672,6 @@ def migration_ddl(root: Path = ROOT) -> tuple[str, ...]:
                     assert creates[name] == ddl, f"conflicting fresh schemas for {name}"
                 creates[name] = ddl
             else:
-                # The fresh-install schema has no pre-existing indexes; retain
-                # the carrier's idempotency clause only in the operator script.
-                ddl = re.sub(r"\bINDEX IF NOT EXISTS ", "INDEX ", ddl, flags=re.I)
                 name = re.search(r"INDEX (\w+)", ddl, re.I)[1]
                 if name in indexes:
                     assert indexes[name] == ddl, f"conflicting index {name}"
