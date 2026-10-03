@@ -1,0 +1,18 @@
+TrustedRouter
+Privacy with proof.
+
+TrustedRouter gives developers and enterprises one OpenAI-compatible API for hundreds of AI models, with provider fallback and privacy controls backed by an attested gateway.
+
+TrustedRouter is operated by Lore Hex Corp, a Delaware corporation founded by Joseph Perla. Teams use one API to compare models, manage costs, and route across providers. The gateway runs in confidential compute and publishes hardware-attestation evidence that customers and their agents can verify. TrustedRouter keeps no prompt or output logs. Upstream provider retention and confidential-compute protections depend on the selected route.
+
+Website: https://trustedrouter.com
+Media kit: https://trustedrouter.com/media-kit
+Contact: help@trustedrouter.com
+Founder and CEO: Joseph Perla
+Company details: https://trustedrouter.com/about
+Provider privacy policies: https://trustedrouter.com/providers
+Live trust evidence: https://trustedrouter.com/trust
+The Token Exchange: https://thetokenexchange.com
+New York Token Exchange: https://nytokenexchange.com
+
+Use these assets to identify TrustedRouter in articles, integrations, videos, and partner materials. Keep the proportions and colors intact, leave clear space around the mark, and choose a contrasting background. Logos identify the brand; they are not certifications or endorsements. All trademark rights remain with Lore Hex Corp.
