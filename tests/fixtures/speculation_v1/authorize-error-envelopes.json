@@ -1,0 +1,49 @@
+{
+  "fixture_version": 1,
+  "purpose": "Exact gateway error envelopes as served by the router. The enclave pins the same bytes. data carries timing only: no workspace, key, lookup or rate scope.",
+  "timing_fields": [
+    "key_lookup_ms",
+    "post_commit_ms",
+    "routing_ms",
+    "spanner_rpcs",
+    "store_ms",
+    "total_ms"
+  ],
+  "cases": {
+    "invalid_api_key": {
+      "path": "/internal/gateway/authorize",
+      "status": 401,
+      "content_type": "application/json",
+      "retry_after": null,
+      "body_exact": "{\"error\":{\"code\":401,\"message\":\"Invalid API key\",\"type\":\"invalid_api_key\",\"source\":\"router\"},\"data\":{\"timing\":{\"total_ms\":0,\"spanner_rpcs\":0,\"key_lookup_ms\":0,\"routing_ms\":0,\"store_ms\":0,\"post_commit_ms\":0}}}"
+    },
+    "insufficient_credits": {
+      "path": "/internal/gateway/authorize",
+      "status": 402,
+      "content_type": "application/json",
+      "retry_after": null,
+      "body_exact": "{\"error\":{\"code\":402,\"message\":\"Insufficient credits\",\"type\":\"insufficient_credits\",\"source\":\"router\"},\"data\":{\"timing\":{\"total_ms\":0,\"spanner_rpcs\":0,\"key_lookup_ms\":0,\"routing_ms\":0,\"store_ms\":0,\"post_commit_ms\":0}}}"
+    },
+    "billing_paused": {
+      "path": "/internal/gateway/authorize",
+      "status": 403,
+      "content_type": "application/json",
+      "retry_after": null,
+      "body_exact": "{\"error\":{\"code\":403,\"message\":\"billing_paused\",\"type\":\"forbidden\",\"source\":\"router\"},\"data\":{\"timing\":{\"total_ms\":0,\"spanner_rpcs\":0,\"key_lookup_ms\":0,\"routing_ms\":0,\"store_ms\":0,\"post_commit_ms\":0}}}"
+    },
+    "storage_unavailable": {
+      "path": "/internal/gateway/settle",
+      "status": 503,
+      "content_type": "application/json",
+      "retry_after": "1",
+      "body_exact": "{\"error\":{\"code\":503,\"message\":\"Persistent storage is temporarily unavailable; retry.\",\"type\":\"service_unavailable\",\"source\":\"router\"},\"data\":{\"timing\":{\"total_ms\":0,\"spanner_rpcs\":0,\"key_lookup_ms\":0,\"routing_ms\":0,\"store_ms\":0,\"post_commit_ms\":0}}}"
+    },
+    "storage_conflict": {
+      "path": "/internal/gateway/settle",
+      "status": 503,
+      "content_type": "application/json",
+      "retry_after": "1",
+      "body_exact": "{\"error\":{\"code\":503,\"message\":\"The request was aborted due to transient database contention; retry.\",\"type\":\"service_unavailable\",\"source\":\"router\"},\"data\":{\"timing\":{\"total_ms\":0,\"spanner_rpcs\":0,\"key_lookup_ms\":0,\"routing_ms\":0,\"store_ms\":0,\"post_commit_ms\":0}}}"
+    }
+  }
+}

@@ -18,6 +18,11 @@ AUTHORIZE = 'src/trusted_router/storage_gcp_authorize.py'
 COUNTERS = 'src/trusted_router/storage_gcp_counter_dml.py'
 PREFIX = 'tests/test_settle_c1.py::'
 MUTATIONS = [
+    ('reference silently falls back after losing one-commit intent', 'tests/test_settle_c1.py',
+     [("            kwargs['now'] = NOW", "            kwargs['now'] = NOW\n"
+       "            if impl is main.typed_finalize_atomic:\n"
+       "                kwargs.pop('settle_outbox_intent', None)")],
+     'test_http_and_all_state_differential[True-True-ordinary]'),
     ('drop reserved guard; negative reserved reachable', COUNTERS,
      [('AND shard=@shard AND reserved >= @hold "', 'AND shard=@shard "')],
      'test_credit_guards_execute_without_fake_predicate_assertions[99-0-0]'),

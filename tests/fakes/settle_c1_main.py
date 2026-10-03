@@ -1,7 +1,8 @@
-"""Frozen C1 money-path oracle from origin/main 8ee7985ecfcee781d39c7964173ce65ebd62bfc2.
+"""Frozen C1 money-path oracle from the #1456 squash parent c5486e78.
 
-Finalize, credit release, key release and key classification copied verbatim;
-imports redirect releases to these frozen functions. Do not update with C1.
+Finalize, transaction disposal, credit release, key release and key classification
+are copied verbatim; only counter imports redirect to this module. SQL constants
+are frozen too. tests/test_settle_c1_oracle.py pins their parent AST digests.
 """
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ from trusted_router.spend_windows import (
     window_floors,
 )
 from trusted_router.storage_gcp_authorize import (
+    OneCommitSettleDeclined,
     SettleOutcome,
     _apply_app_markup_payout_tx,
     _apply_custom_model_markup_payout_tx,
@@ -31,12 +33,28 @@ from trusted_router.storage_gcp_counter_dml import (
     claim_reservation_statement,
     complete_reservation_retention,
 )
+from trusted_router.storage_gcp_counter_dml import (
+    claim_reservation as claim_reservation,
+)
+from trusted_router.storage_gcp_counter_dml import (
+    insert_entity_dml_at as insert_entity_dml_at,
+)
+from trusted_router.storage_gcp_counter_dml import (
+    key_limit_exists as key_limit_exists,
+)
+from trusted_router.storage_gcp_counter_dml import (
+    read_reservation as read_reservation,
+)
+from trusted_router.storage_gcp_counter_dml import (
+    update_entity_body_dml as update_entity_body_dml,
+)
 from trusted_router.storage_gcp_counters import UNSHARDED
 from trusted_router.storage_gcp_generation_records import (
     generation_insert_statement,
 )
 from trusted_router.storage_gcp_io import (
     TXN_BUDGET_SECONDS,
+    _rollback_discarded_transaction,
     remaining_rpc_budget,
     run_in_transaction_with_retry,
     spanner_rpc_budget,
@@ -46,7 +64,9 @@ from trusted_router.storage_gcp_request_records import (
     mark_gateway_authorization_settled,
 )
 from trusted_router.storage_gcp_settle_outbox import (
+    intent_insert_counts,
     mark_done_unleased_tx,
+    resolved_intent_statements,
     speculative_done_statements,
 )
 from trusted_router.storage_models import (
@@ -54,6 +74,7 @@ from trusted_router.storage_models import (
     CustomModelMarkupPayout,
     GatewayAuthorization,
     Generation,
+    SettleOutboxRow,
     UserModelPayout,
 )
 
@@ -261,7 +282,7 @@ def _release_key_or_skip_deleted(
     shrink reshard: recover on shard zero or raise with the amount preserved.
     Held/deleted keys and zero-usage refunds retain their historical behavior.
     """
-    from trusted_router.storage_gcp_counter_dml import key_limit_exists
+    from tests.fakes.settle_c1_main import key_limit_exists, release_key
 
     key_hash = str(res["key_hash"])
     key_hold = int(res["key_reserved_micro"])
@@ -303,6 +324,25 @@ def _release_key_or_skip_deleted(
         return count, None
     return 1, {"key_hash": key_hash, "hold_micro": key_hold}
 
+def _dispose_open_transaction(opened: list[Any]) -> None:
+    """Roll back the one transaction a failed one-commit attempt can leave open.
+
+    Within one runner call only the LAST attempt can still be open: earlier
+    attempts ended in ``Aborted`` (already dead server-side, though the client
+    leaves ``committed`` None and ``rolled_back`` False), and a callback error
+    is rolled back by the runner. Rolling back only the last keeps cleanup to
+    one bounded Rollback, so a burst of aborts before a commit timeout cannot
+    consume the durable fallback's budget.
+    """
+
+    if not opened:
+        return
+    transaction = opened[-1]
+    if getattr(transaction, "committed", None) is None and not getattr(
+        transaction, "rolled_back", False
+    ):
+        _rollback_discarded_transaction(transaction)
+
 @spanner_rpc_budget(TXN_BUDGET_SECONDS)
 def typed_finalize_atomic(
     database: Any,
@@ -325,6 +365,9 @@ def typed_finalize_atomic(
     app_markup_payout: AppMarkupPayout | None = None,
     custom_model_markup_payout: CustomModelMarkupPayout | None = None,
     settle_outbox_done: tuple[str, str] | None = None,
+    settle_outbox_intent: SettleOutboxRow | None = None,
+    intent_initial_delay_seconds: int = 0,
+    benchmark_statement: DmlStatement | None = None,
 ) -> dict:
     """Full DML-only finalize for the typed path (codex 3e, Option B).
 
@@ -333,6 +376,18 @@ def typed_finalize_atomic(
     activity row is durable in this commit and the outbox table exists. The
     result carries ``outbox_marked``: True (marked), False (row leased or
     already resolved -- the drain re-derives), or None (not attempted).
+
+    ``settle_outbox_intent`` is the ONE-COMMIT settle: this transaction also
+    INSERTs that intent already resolved (``intent_insert_statements(...,
+    resolved=True)``, with the enqueue's own retention clears) and arms
+    retention exactly as the done-mark would, so the enqueue, the charge and
+    the done-mark commit together. ``benchmark_statement`` (one-commit only)
+    adds the post-commit benchmark INSERT to the same batch. It is the happy
+    path only: any deviation (reservation missing or already claimed, typed
+    authorization absent or terminal, intent already recorded, a release
+    row-count failure) raises ``OneCommitSettleDeclined`` or the API error
+    after rolling back, and the caller runs the durable two-commit settle,
+    which owns those cases. It never runs the sequential fallback below.
 
     ONE transaction reproduces legacy finalize_gateway_authorization's whole
     behavior so a crash can't leave counters charged but the authorization
@@ -345,10 +400,11 @@ def typed_finalize_atomic(
     with an authorization created by the generic-table revision. Returns
     {outcome: settled|already_settled|not_found|error}.
     """
-    from trusted_router.storage_gcp_counter_dml import (
+    from tests.fakes.settle_c1_main import (
         claim_reservation,
         insert_entity_dml_at,
         read_reservation,
+        release_credit,
         update_entity_body_dml,
     )
     pt = param_types
@@ -370,6 +426,23 @@ def typed_finalize_atomic(
     mark_done = (
         settle_outbox_done is not None and resolved_outbox_available and activity_durable
     )
+    one_commit = settle_outbox_intent is not None
+    if benchmark_statement is not None and not one_commit:
+        raise ValueError("benchmark_statement rides only in the one-commit settle")
+    if settle_outbox_intent is not None:
+        # A resolved intent is only truthful when this commit itself makes the
+        # activity durable, uses the guarded (outbox-aware) claim, and takes the
+        # speculative shape whose every deviation can roll back to the caller.
+        if settle_outbox_done is not None:
+            raise ValueError("pass settle_outbox_done or settle_outbox_intent, not both")
+        if not (speculate and activity_durable and resolved_outbox_available):
+            raise ValueError("the one-commit settle needs speculation, durable activity and the outbox")
+        if (
+            settle_outbox_intent.authorization_id != authorization_id
+            or settle_outbox_intent.reservation_id != reservation_id
+            or settle_outbox_intent.intent_kind != ("settle" if success else "refund")
+        ):
+            raise ValueError("settle_outbox_intent does not describe this finalize")
     attempts = 0
     eligible_attempts = 0
     fallback_reason = "none"
@@ -392,7 +465,17 @@ def typed_finalize_atomic(
         statements.append(gateway_authorization_settled_statement(pt, authorization))
         reasons.append("typed_zero")
         counts: list[tuple[int, ...]] = [(1,)] * len(statements)
-        if mark_done:
+        if settle_outbox_intent is not None:
+            # The enqueue's whole statement set (INSERT + retention clears),
+            # with the row already in its done state, then the done-mark's
+            # retention resolution. A duplicate intent fails the INSERT
+            # (ALREADY_EXISTS), never a zero count; no prefix reason applies.
+            resolved = resolved_intent_statements(
+                pt, settle_outbox_intent, initial_delay_seconds=intent_initial_delay_seconds,
+            )
+            statements.extend(resolved)
+            counts.extend(intent_insert_counts(resolved))
+        elif mark_done:
             assert settle_outbox_done is not None
             done = speculative_done_statements(
                 pt, authorization_id=settle_outbox_done[0], intent_kind=settle_outbox_done[1],
@@ -409,6 +492,10 @@ def typed_finalize_atomic(
                 # PENDING_COMMIT_TIMESTAMP is the last analytics access.
                 statements.append(operational_analytics_outbox.activity_insert_statement(generation))
                 counts.append((1,))
+        if benchmark_statement is not None:
+            # One-commit only; the benchmark outbox is touched nowhere else here.
+            statements.append(benchmark_statement)
+            counts.append((1,))
 
         def check_prefix(row_counts: Sequence[int]) -> None:
             for count, reason in zip(row_counts, reasons, strict=False):
@@ -425,6 +512,9 @@ def typed_finalize_atomic(
         attempts += 1
         res = read_reservation(transaction, pt, reservation_id)
         if res is None:
+            if one_commit:
+                # Raise (not return) so this attempt commits nothing at all.
+                raise OneCommitSettleDeclined("not_found")
             return {"outcome": SettleOutcome.NOT_FOUND}
         if speculate:
             speculative_batch(transaction, include_claim=True)
@@ -482,7 +572,7 @@ def typed_finalize_atomic(
 
         if speculate:
             request_record_typed = True
-            outbox_marked: bool | None = True if mark_done else None
+            outbox_marked: bool | None = True if (mark_done or one_commit) else None
         else:
             marked = 0
             request_record_typed = False
@@ -594,10 +684,28 @@ def typed_finalize_atomic(
         }
 
     def run() -> dict:
-        return run_in_transaction_with_retry(
-            database, txn,
-            transaction_tag="tr_finalize" if success else "tr_refund_finalize",
-        )
+        tag = "tr_finalize" if success else "tr_refund_finalize"
+        if not one_commit:
+            return run_in_transaction_with_retry(database, txn, transaction_tag=tag)
+        tag = "tr_settle_one_commit" if success else "tr_refund_one_commit"
+        opened: list[Any] = []
+
+        def tracked(transaction: Any) -> dict:
+            opened.append(transaction)
+            return txn(transaction)
+
+        try:
+            return run_in_transaction_with_retry(database, tracked, transaction_tag=tag)
+        except BaseException:
+            # The runner rolls back failures inside the callback only. A commit
+            # that failed or timed out (including the attempt budget expiring at
+            # the commit boundary) leaves its transaction open, and its locks on
+            # the reservation, intent and counter rows would block the caller's
+            # durable two-commit fallback until Spanner reaps them. Dispose of it
+            # first. If that commit actually landed, the rollback fails harmlessly
+            # and the first-writer-wins claim turns the fallback into a replay.
+            _dispose_open_transaction(opened)
+            raise
 
     try:
         try:
@@ -608,6 +716,11 @@ def typed_finalize_atomic(
             # change ALREADY_SETTLED into NOT_FOUND on the fresh observation.
             rollback_ms = (time.monotonic() - exc.rollback_started) * 1000
             fallback_reason = exc.fallback_reason
+            if one_commit:
+                # The happy path did not hold and nothing committed. The
+                # caller's durable two-commit settle owns every such case.
+                fallback_outcome = "one_commit_declined"
+                raise OneCommitSettleDeclined(exc.fallback_reason) from None
             speculate = False
             fallback_outcome = "exception"
             result = run()
@@ -615,9 +728,11 @@ def typed_finalize_atomic(
         result["attempts"] = attempts
         _log_missing_key_releases(result)
         return result
-    except _SettleError:
+    except _SettleError as exc:
         if fallback_reason != "none":
             fallback_outcome = SettleOutcome.ERROR
+        if one_commit:
+            raise OneCommitSettleDeclined(f"release_row_count: {exc}") from None
         return {"outcome": SettleOutcome.ERROR}
     finally:
         if eligible_attempts:
@@ -633,4 +748,3 @@ def typed_finalize_atomic(
                 eligible_attempts, attempts, fallback_reason, rollback_ms,
                 remaining_ms, fallback_outcome,
             )
-

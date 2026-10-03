@@ -95,6 +95,24 @@ its review flag or rewrite financial rows manually. Fixed external-response
 fixtures cover the 0.10.5 expansion, future-permission rejection, and recovery of
 paid/unpaid reviewed rows without duplicate invoice creation or credit delivery.
 
+## Readiness HTTP failure (October 2)
+
+The receiving check failed once at 21:52:35 UTC with `RuntimeError`, then
+recovered on the next heartbeat at 21:53:36 UTC. Funding delivery stayed at
+zero uncredited and zero review-required payments. The surrounding five-minute
+Cloud Run request-log window contained no customer HTTP requests; no customer
+HTTP failure was observed. This was not the October 1 permission rejection or
+evidence of low BTC liquidity.
+
+The readiness code raises this error for a non-200 response from the attesting
+Lexe sidecar, but the old diagnostic discarded the operation and HTTP status.
+The underlying upstream cause cannot be determined from those retained logs.
+Failures now emit `lightning.lexe_http_failed` with an allowlisted operation
+and numeric `http_status`, without reading error bodies or logging paths,
+parameters, headers, wallet identifiers, or credentials. Unknown operations
+are labeled `unknown`. HTTP responses still fail closed without retries,
+and alert thresholds remain unchanged. Keep sidecar diagnostic logging off.
+
 ## Owner setup and recovery
 
 Use a dedicated private directory outside disposable Git worktrees. The setup

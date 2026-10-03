@@ -401,6 +401,9 @@ def test_http_and_all_state_differential(
 
     initial, options = prepare(scenario, capped, intent)
     aid = options['authorization_id']
+    if scenario == 'ordinary' and intent:
+        # Exercise the actual HTTP one-commit success path, with no preexisting intent.
+        initial.settle_outbox.clear()
     auth = read_gateway_authorization(initial.snapshot(), param_types, aid)
     assert auth is not None
     auth.model_id = auth.requested_model_id = MODEL_ID
@@ -435,7 +438,10 @@ def test_http_and_all_state_differential(
         store.generation_store._analytics_outbox = SpannerAnalyticsOutbox(db, param_types)
         configure_store(store)
 
-        def finalize(*args: Any, impl: Any = impl, **kwargs: Any) -> Any:
+        finalize_calls = []
+
+        def finalize(*args: Any, impl: Any = impl, finalize_calls: list = finalize_calls, **kwargs: Any) -> Any:
+            finalize_calls.append(kwargs.get('settle_outbox_intent') is not None)
             kwargs['now'] = NOW
             return impl(*args, **kwargs)
 
@@ -456,6 +462,11 @@ def test_http_and_all_state_differential(
                 json={**_settle_json(aid), 'selected_endpoint': endpoint_id},
                 headers={'x-request-id': 'c1-differential'},
             )
+        if scenario == 'ordinary' and intent:
+            assert finalize_calls == [True], 'the reference must not silently fall back'
+            assert db.transaction_tags.count('tr_settle_one_commit') == 1
+            assert 'tr_finalize' not in db.transaction_tags
+            assert db.rollback_calls == 0
         body = response.json() if response.headers.get('content-type', '').startswith('application/json') else response.text
         if scenario == 'durable_intent' and intent:
             assert response.status_code == 200 and body['data']['disposition'] == 'intent_durable'
