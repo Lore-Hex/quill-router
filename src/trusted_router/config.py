@@ -899,6 +899,10 @@ class Settings(BaseSettings):
     # Workspaces the trust-tier job recomputes at once. Each worker holds one
     # Spanner session, so the job's TR_SPANNER_POOL_SIZE must be at least this.
     trust_tier_job_concurrency: int = Field(default=1, ge=1, le=32)
+    # Shadow the per-workspace pass with one bulk snapshot (trust_tier_bulk.py)
+    # and log any workspace it acted on that the bulk selection missed. Reads
+    # only; never changes what the pass does.
+    trust_tier_shadow_enabled: bool = True
     max_workspaces_per_owner: int = 25
     operator_token: str = ""
     lightning_funding_token: str = ""

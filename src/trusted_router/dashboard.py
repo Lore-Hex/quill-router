@@ -239,6 +239,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/portkey-alternative",
     "/confidential-computing-llm",
     "/badge",
+    "/media-kit",
     "/tinfoil-alternative",
     "/sign-in-with-trustedrouter",
     *(f"/{slug}" for slug in COMPANY_SIGNIN_PAGES),
@@ -1862,6 +1863,14 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         description=(
             "Run LLM routing through confidential computing with GCP Confidential Space, "
             "open source gateway code, remote attestation, protected TLS keys, and no prompt logs."
+        ),
+    ),
+    "media-kit": PublicPage(
+        template="public/media_kit.html",
+        title="TrustedRouter Media Kit | Logos and Brand Assets",
+        description=(
+            "Download TrustedRouter logos, transparent PNGs, SVGs, social images, "
+            "and company information for press, partners, and creators."
         ),
     ),
     "badge": PublicPage(

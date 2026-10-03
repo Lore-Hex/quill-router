@@ -835,8 +835,10 @@ def test_spanner_shard_replication_uses_minimum_completed_provider_watermark() -
             if sql.startswith("SELECT closed_through"):
                 provider = kwargs["params"]["provider"]
                 return [(stripe_time if provider == "stripe" else x402_time,)]
-            if sql.startswith("SELECT shard"):
-                return [(0,), (1,), (2,)]
+            if sql.startswith("SELECT shard, trust_reconciled_through"):
+                # The transaction reads each shard's current value, so it can
+                # report whether its write changed one.
+                return [(0, None), (1, None), (2, None)]
             raise AssertionError(sql)
 
         def execute_update(self, sql: str, **kwargs: Any) -> int:

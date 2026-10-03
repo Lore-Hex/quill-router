@@ -5708,6 +5708,7 @@ class SpannerStore:
         tier3_min_days: int,
         tier3_min_paid_microdollars: int,
         now: dt.datetime,
+        observe: Callable[[str, str], None] | None = None,
     ) -> int:
         return recompute_workspace_trust_tier_tx(
             run_in_transaction=self._run_in_transaction,
@@ -5719,6 +5720,7 @@ class SpannerStore:
             tier3_min_paid_microdollars=tier3_min_paid_microdollars,
             now=now,
             snapshot=lambda: self._database.snapshot(multi_use=True),
+            observe=observe,
         )
 
     def read_typed_reservation(self, reservation_id: str) -> dict[str, Any] | None:

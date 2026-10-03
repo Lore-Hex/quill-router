@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import logging
 from collections.abc import Callable
@@ -765,6 +766,184 @@ def drain_matching_trust_inbox_tx(
     return tuple(results)
 
 
+# The evaluator's reads, as constants: the tier job's bulk pass
+# (trust_tier_bulk.py) answers exactly these queries from one snapshot, so the
+# two paths cannot drift apart without the bulk pass noticing.
+TRUST_OVERRIDE_SQL = "SELECT tier, identity_bypass FROM tr_trust_override WHERE workspace_id=@pk"
+TRUST_EVENTS_SQL = (
+    "SELECT event_id, kind, provider, amount_micro, original_payment_ref, "
+    "adverse_ref, occurred_at, recorded_at, payment_amount_micro, currency, "
+    "credited_micro, recovered_micro, provider_subtype, lifecycle_status, "
+    "cumulative_refunded, recovery_target, debit_status, unrecovered_micro, "
+    "provider_ordering_watermark FROM tr_trust_event "
+    "WHERE workspace_id=@pk"
+)
+TRUST_SHARDS_SQL = (
+    "SELECT shard, trust_tier, trust_latched_at, trust_override_tier, "
+    "trust_computed_at FROM tr_credit_balance WHERE workspace_id=@pk "
+    "AND shard>=0 AND shard<@shard_count ORDER BY shard"
+)
+
+
+def inputs_digest(*parts: Any) -> str:
+    """A stable digest of the rows a decision was made from.
+
+    The tier job's shadow compares the digest its bulk snapshot saw with the
+    one the per-workspace path saw, to tell a write that raced the snapshot
+    from a selection defect.
+    """
+
+    encoded = json.dumps(parts, default=_digest_value, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def _digest_value(value: Any) -> str:
+    """Timestamps at full precision, as ``same_instant`` compares them.
+
+    ``str`` of a ``DatetimeWithNanoseconds`` drops the digits below a
+    microsecond, so a marker that moved by a nanosecond would digest the same.
+    """
+
+    if isinstance(value, dt.datetime):
+        return f"{value.isoformat()}/{getattr(value, 'nanosecond', value.microsecond * 1000)}"
+    return str(value)
+
+
+class RecordingReader:
+    """Passes a reader's queries through and keeps the rows they returned.
+
+    When an evaluation refuses a workspace (raises on rows it read), the tier
+    job's shadow compares the digest of those rows with the snapshot's, to
+    tell a refusal the snapshot saw from one that raced it. An error raised by
+    a read itself says nothing about the inputs, and gives no digest.
+    """
+
+    def __init__(self, reader: Any) -> None:
+        self._reader = reader
+        self._reads: list[tuple[str, dict[str, Any], list[Any]]] = []
+        self._read_failed = False
+
+    def query(
+        self,
+        sql: str,
+        params: dict[str, Any] | None = None,
+        param_types: Any = None,
+        **options: Any,
+    ) -> list[Any]:
+        try:
+            rows = list(
+                self._reader.execute_sql(sql, params=params, param_types=param_types, **options)
+            )
+        except BaseException:
+            self._read_failed = True
+            raise
+        self._reads.append((sql, dict(params or {}), rows))
+        return rows
+
+    # Defined as ``query`` because the SQL conformance inventory treats a
+    # function named ``*_sql`` as a SQL builder; callers use ``execute_sql``.
+    execute_sql = query
+
+    def refusal_digest(self) -> str | None:
+        """The digest of every row read, unless a read itself failed."""
+
+        if self._read_failed:
+            return None
+
+        def canonical(row: Any) -> str:
+            return json.dumps(list(row), default=_digest_value)
+
+        return inputs_digest([
+            [sql, sorted(params.items()), sorted(canonical(row) for row in rows)]
+            for sql, params, rows in self._reads
+        ])
+
+
+def evaluate_workspace_trust_tier(
+    reader: Any,
+    *,
+    param_types: Any,
+    read_entity_tx: Callable[..., Any],
+    workspace_id: str,
+    qualifying_providers: frozenset[str],
+    tier3_min_days: int,
+    tier3_min_paid_microdollars: int,
+    now: dt.datetime,
+) -> tuple[int, list[Any], int, str]:
+    """Decide one workspace's tier from ``reader``'s rows.
+
+    Returns the effective tier, the active shard rows, the shard count and a
+    digest of the inputs. Raises on any broken invariant, which the caller
+    reports as that workspace's failure.
+    """
+
+    workspace = read_entity_tx(reader, "workspace", workspace_id, Workspace)
+    account = read_entity_tx(reader, "credit", workspace_id, CreditAccount)
+    if workspace is None or account is None:
+        raise ValueError("workspace_or_credit_account_not_found")
+    owner = read_entity_tx(reader, "user", workspace.owner_user_id, User)
+    owner_status = owner.identity_status if owner is not None else "none"
+    override_rows = list(
+        reader.execute_sql(
+            TRUST_OVERRIDE_SQL,
+            params={"pk": workspace_id},
+            param_types={"pk": param_types.STRING},
+        )
+    )
+    if len(override_rows) > 1:
+        raise RuntimeError("trust override primary key invariant violated")
+    override_tier = None if not override_rows else int(override_rows[0][0])
+    identity_bypass = bool(override_rows and override_rows[0][1])
+    event_rows = list(
+        reader.execute_sql(
+            TRUST_EVENTS_SQL,
+            params={"pk": workspace_id},
+            param_types={"pk": param_types.STRING},
+        )
+    )
+    events = [
+        TrustEvent(workspace_id, *row)
+        for row in event_rows
+    ]
+    shard_count = credit_shard_count(account)
+    shard_rows = list(
+        reader.execute_sql(
+            TRUST_SHARDS_SQL,
+            params={"pk": workspace_id, "shard_count": shard_count},
+            param_types={
+                "pk": param_types.STRING,
+                "shard_count": param_types.INT64,
+            },
+        )
+    )
+    if [int(row[0]) for row in shard_rows] != list(range(shard_count)):
+        raise RuntimeError("configured tr_credit_balance shard set is incomplete")
+    latch_values = {row[2] for row in shard_rows}
+    override_values = {row[3] for row in shard_rows}
+    if len(latch_values) != 1 or len(override_values) != 1:
+        raise RuntimeError("replicated trust columns diverged")
+    if next(iter(override_values)) != override_tier:
+        raise RuntimeError("trust override row and replicated shard value diverged")
+    decision = compute_trust_tier(
+        events,
+        owner_identity_status=owner_status,
+        trust_latched_at=shard_rows[0][2],
+        trust_override_tier=override_tier,
+        qualifying_providers=qualifying_providers,
+        tier3_min_days=tier3_min_days,
+        tier3_min_paid_microdollars=tier3_min_paid_microdollars,
+        now=now,
+        identity_bypass=identity_bypass,
+    )
+    digest = inputs_digest(
+        workspace.owner_user_id, owner_status, shard_count,
+        [list(row) for row in override_rows],
+        sorted([list(row) for row in event_rows], key=lambda row: str(row[0])),
+        [list(row) for row in shard_rows],
+    )
+    return decision.effective_tier, shard_rows, shard_count, digest
+
+
 def recompute_workspace_trust_tier_tx(
     *,
     run_in_transaction: Callable[[Callable[[Any], int]], int],
@@ -776,6 +955,7 @@ def recompute_workspace_trust_tier_tx(
     tier3_min_paid_microdollars: int,
     now: dt.datetime,
     snapshot: Callable[[], Any] | None = None,
+    observe: Callable[[str, str], None] | None = None,
 ) -> int:
     """Rewrite every active shard together; return the effective tier.
 
@@ -789,79 +969,39 @@ def recompute_workspace_trust_tier_tx(
     reads and writes as before, and it also skips the write when its reads
     show the tier already current. ``trust_computed_at`` therefore records
     when the current tier was last written, not the last time a job looked.
+
+    ``observe`` is told ``("tier_written", digest)`` after a committed write,
+    with the digest of the inputs that write was decided from. Every write
+    changes a stored value: it happens only when a tier differs or a
+    ``trust_computed_at`` is NULL. It is told ``("tier_refused", digest)``
+    when the evaluation raised on the rows it read, before the error goes on.
     """
 
-    def evaluate(transaction: Any) -> tuple[int, list[Any], int]:
-        workspace = read_entity_tx(transaction, "workspace", workspace_id, Workspace)
-        account = read_entity_tx(transaction, "credit", workspace_id, CreditAccount)
-        if workspace is None or account is None:
-            raise ValueError("workspace_or_credit_account_not_found")
-        owner = read_entity_tx(transaction, "user", workspace.owner_user_id, User)
-        owner_status = owner.identity_status if owner is not None else "none"
-        override_rows = list(
-            transaction.execute_sql(
-                "SELECT tier, identity_bypass FROM tr_trust_override "
-                "WHERE workspace_id=@pk",
-                params={"pk": workspace_id},
-                param_types={"pk": param_types.STRING},
-            )
-        )
-        if len(override_rows) > 1:
-            raise RuntimeError("trust override primary key invariant violated")
-        override_tier = None if not override_rows else int(override_rows[0][0])
-        identity_bypass = bool(override_rows and override_rows[0][1])
-        event_rows = list(
-            transaction.execute_sql(
-                "SELECT event_id, kind, provider, amount_micro, original_payment_ref, "
-                "adverse_ref, occurred_at, recorded_at, payment_amount_micro, currency, "
-                "credited_micro, recovered_micro, provider_subtype, lifecycle_status, "
-                "cumulative_refunded, recovery_target, debit_status, unrecovered_micro, "
-                "provider_ordering_watermark FROM tr_trust_event "
-                "WHERE workspace_id=@pk",
-                params={"pk": workspace_id},
-                param_types={"pk": param_types.STRING},
-            )
-        )
-        events = [
-            TrustEvent(workspace_id, *row)
-            for row in event_rows
-        ]
-        shard_count = credit_shard_count(account)
-        shard_rows = list(
-            transaction.execute_sql(
-                "SELECT shard, trust_tier, trust_latched_at, trust_override_tier, "
-                "trust_computed_at FROM tr_credit_balance WHERE workspace_id=@pk "
-                "AND shard>=0 AND shard<@shard_count ORDER BY shard",
-                params={"pk": workspace_id, "shard_count": shard_count},
-                param_types={
-                    "pk": param_types.STRING,
-                    "shard_count": param_types.INT64,
-                },
-            )
-        )
-        if [int(row[0]) for row in shard_rows] != list(range(shard_count)):
-            raise RuntimeError("configured tr_credit_balance shard set is incomplete")
-        latch_values = {row[2] for row in shard_rows}
-        override_values = {row[3] for row in shard_rows}
-        if len(latch_values) != 1 or len(override_values) != 1:
-            raise RuntimeError("replicated trust columns diverged")
-        if next(iter(override_values)) != override_tier:
-            raise RuntimeError("trust override row and replicated shard value diverged")
-        decision = compute_trust_tier(
-            events,
-            owner_identity_status=owner_status,
-            trust_latched_at=shard_rows[0][2],
-            trust_override_tier=override_tier,
+    def evaluate(reader: Any) -> tuple[int, list[Any], int, str]:
+        return evaluate_workspace_trust_tier(
+            reader,
+            param_types=param_types,
+            read_entity_tx=read_entity_tx,
+            workspace_id=workspace_id,
             qualifying_providers=qualifying_providers,
             tier3_min_days=tier3_min_days,
             tier3_min_paid_microdollars=tier3_min_paid_microdollars,
             now=now,
-            identity_bypass=identity_bypass,
         )
-        return decision.effective_tier, shard_rows, shard_count
+
+    written: list[str] = []
+    refused: list[str] = []
 
     def txn(transaction: Any) -> int:
-        effective_tier, shard_rows, shard_count = evaluate(transaction)
+        written.clear()
+        refused.clear()
+        reader = RecordingReader(transaction)
+        try:
+            effective_tier, shard_rows, shard_count, digest = evaluate(reader)
+        except Exception:
+            if (refusal := reader.refusal_digest()) is not None:
+                refused.append(refusal)
+            raise
         if _trust_tier_is_current(shard_rows, effective_tier):
             return effective_tier
         updated = transaction.execute_update(
@@ -883,12 +1023,13 @@ def recompute_workspace_trust_tier_tx(
         )
         if int(updated) != shard_count:
             raise RuntimeError("trust-tier update did not cover every active shard")
+        written.append(digest)
         return effective_tier
 
     if snapshot is not None:
         try:
             with snapshot() as reader:
-                effective_tier, shard_rows, _shard_count = evaluate(reader)
+                effective_tier, shard_rows, _shard_count, _digest = evaluate(reader)
         except Exception:
             # The transaction below re-reads and raises the authoritative error.
             log.info(
@@ -897,7 +1038,15 @@ def recompute_workspace_trust_tier_tx(
         else:
             if _trust_tier_is_current(shard_rows, effective_tier):
                 return effective_tier
-    return run_in_transaction(txn)
+    try:
+        tier = run_in_transaction(txn)
+    except Exception:
+        if refused and observe is not None:
+            observe("tier_refused", refused[-1])
+        raise
+    if written and observe is not None:
+        observe("tier_written", written[-1])
+    return tier
 
 
 def _trust_tier_is_current(shard_rows: list[Any], effective_tier: int) -> bool:

@@ -902,6 +902,21 @@ class _FakeTransaction:
                 self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))
                 updated += 1
             return updated
+        if sql.startswith(
+            "UPDATE tr_credit_balance SET trust_reconciled_through=@watermark "
+            "WHERE workspace_id=@workspace_id"
+        ):
+            # The tier job's watermark replication: every shard row of one
+            # workspace, active or not.
+            updated = 0
+            for pk, committed in self.db.typed.get("tr_credit_balance", {}).items():
+                if pk[0] != p["workspace_id"]:
+                    continue
+                rec = self._typed_current("tr_credit_balance", pk) or committed
+                new = dict(rec, trust_reconciled_through=p["watermark"])
+                self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))
+                updated += 1
+            return updated
         if sql.startswith("INSERT INTO tr_trust_event"):
             pk = (p["workspace_id"], p["event_id"])
             existing_rows = self.db.typed.get("tr_trust_event", {}).values()
@@ -3607,6 +3622,22 @@ def _execute_sql(
             return []
         cols = [c.strip() for c in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")]
         return [[rec.get(c) for c in cols]]
+    if sql.startswith(
+        "SELECT workspace_id, shard, trust_tier, trust_latched_at, trust_override_tier, "
+        "trust_computed_at, trust_reconciled_through FROM tr_credit_balance"
+    ):
+        columns = [
+            column.strip()
+            for column in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
+        ]
+        recs = sorted(
+            db.typed.get("tr_credit_balance", {}).values(),
+            key=lambda rec: (str(rec.get("workspace_id")), int(rec.get("shard", 0))),
+        )
+        if "ids" in params:
+            wanted = set(params["ids"])
+            recs = [rec for rec in recs if str(rec.get("workspace_id")) in wanted]
+        return [[rec.get(column) for column in columns] for rec in recs]
     if "SELECT DISTINCT workspace_id FROM tr_credit_balance" in sql:
         return [
             [workspace_id]
@@ -3652,10 +3683,13 @@ def _execute_sql(
         ]
         return [[row.get(column) for column in columns] for row in rows]
     if "FROM tr_trust_override" in sql:
+        # The tier job's bulk read (trust_tier_bulk.BULK_OVERRIDES_SQL) reads
+        # a list of workspaces, @ids, rather than one @pk.
         rows = [
             row
             for row in _typed_rows("tr_trust_override")
-            if row.get("workspace_id") == params["pk"]
+            if ("pk" not in params or row.get("workspace_id") == params["pk"])
+            and ("ids" not in params or row.get("workspace_id") in set(params["ids"]))
         ]
         columns = [
             column.strip()
@@ -3711,6 +3745,9 @@ def _execute_sql(
             rows = [
                 row for row in rows if row.get("workspace_id") == params["workspace_id"]
             ]
+        if "ids" in params:
+            wanted = set(params["ids"])
+            rows = [row for row in rows if row.get("workspace_id") in wanted]
         if "provider" in params:
             rows = [row for row in rows if row.get("provider") == params["provider"]]
         if "original_payment_ref" in params:
@@ -3733,6 +3770,11 @@ def _execute_sql(
             rows.sort(key=lambda row: (row.get("occurred_at"), row.get("event_id")))
         if cols == ["COALESCE(SUM(unrecovered_micro)", "0)"]:
             return [[sum(int(row.get("unrecovered_micro") or 0) for row in rows)]]
+        if cols and cols[0].startswith("DISTINCT "):
+            # SELECT DISTINCT <columns>: one row per distinct value tuple.
+            names = [cols[0][len("DISTINCT "):].strip(), *cols[1:]]
+            values = {tuple(row.get(column) for column in names) for row in rows}
+            return [list(value) for value in sorted(values, key=str)]
         return [[row.get(column) for column in cols] for row in rows]
     if "FROM tr_trust_inbox" in sql:
         keys = set(db.typed.get("tr_trust_inbox", {}))
@@ -3796,6 +3838,11 @@ def _execute_sql(
                 items = [(pk, rec) for pk, rec in items if rec.get(pk_col) == params["ws"]]
                 if "shard=@shard" in sql:
                     items = [(pk, rec) for pk, rec in items if rec.get("shard", 0) == params["shard"]]
+            if f"WHERE {pk_col}=@{pk_col}" in sql and pk_col in params:
+                # The watermark reads name the tenant by column, not @pk.
+                items = [(pk, rec) for pk, rec in items if rec.get(pk_col) == params[pk_col]]
+                if "ORDER BY shard" in sql:
+                    items.sort(key=lambda item: int(item[1].get("shard", 0)))
             if "@pk" in sql and "pk" in params:
                 items = [(pk, rec) for pk, rec in items if rec.get(pk_col) == params["pk"]]
                 if "shard=0" in sql.replace(" ", ""):
