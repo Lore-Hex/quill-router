@@ -945,14 +945,21 @@ def test_an_interrupted_run_finishes_its_write_and_keeps_the_lock(tmp_path: Path
     state["slow_add_metadata"] = "until_released"  # type: ignore[assignment]
     (fake / "instances.json").write_text(json.dumps(state))
     (fake / "gcloud.jsonl").write_text("")
-    process = subprocess.Popen(  # noqa: S603 - fixed script under test
-        [BASH, str(repo / "scripts/deploy/clickhouse_worker_role.sh"), "takeover", "--to", "tr-clickhouse-2", "--apply"],
-        env={"PATH": f"{fake}:{os.environ['PATH']}", "HOME": str(tmp_path), "TMPDIR": str(tmp_path), "FAKE_DIR": str(fake)},
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=True,  # its own process group, so cleanup reaches the children
-    )
+    # A runner that ignores the signal (nohup does, for SIGHUP) passes that on
+    # to the wrapper, and bash cannot trap a signal ignored when it started. So
+    # the wrapper starts with the default disposition, whatever the runner's.
+    previous = signal.signal(getattr(signal, signal_name), signal.SIG_DFL)
+    try:
+        process = subprocess.Popen(  # noqa: S603 - fixed script under test
+            [BASH, str(repo / "scripts/deploy/clickhouse_worker_role.sh"), "takeover", "--to", "tr-clickhouse-2", "--apply"],
+            env={"PATH": f"{fake}:{os.environ['PATH']}", "HOME": str(tmp_path), "TMPDIR": str(tmp_path), "FAKE_DIR": str(fake)},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,  # its own process group, so cleanup reaches the children
+        )
+    finally:
+        signal.signal(getattr(signal, signal_name), previous)
     release = fake / "add-metadata-release"
     try:
         started = fake / "add-metadata-started"
