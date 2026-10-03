@@ -1034,9 +1034,10 @@ stream, and streams the enclave heartbeats. These stay on today's Python path:
       runs, Stage D or spend-lease shadow (`main.go` at `a06050f` skips the
       Stage D path when a spend-lease flag is set), so a shadow boot declares
       nothing it does not do. Its periodic re-registration runs from that same
-      path, so a boot's declaration changes only with a new boot. Python stores it on the boot record, `GatewayBoot`, from the
-      registration route (§8). There are two declarations, heartbeats and the
-      heartbeat at stream open, and a missing one means undeclared.
+      path, so a boot's declaration changes only with a new boot. Python
+      stores it on the boot record, `GatewayBoot`, from the registration
+      route (§8). There are two declarations, heartbeats and the heartbeat at
+      stream open, and a missing one means undeclared.
     - A re-registration replaces the declarations with what it sends. Today's
       `observe_gateway_boot` keeps fields the new registration omits, so it is
       not reused for them.
