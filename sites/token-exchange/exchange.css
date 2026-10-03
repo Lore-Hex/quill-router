@@ -412,7 +412,7 @@ h1,h2,h3,.headline-accent,.privacy-choice h3,
 }
 h1{font-weight:650;letter-spacing:-.052em}
 h3,.privacy-choice h3,.uptime-panel figcaption,.attestation-panel h3,.trust-evidence .catalogue-label{font-weight:500;letter-spacing:-.01em}
-.headline-accent{font-style:italic;font-weight:inherit;letter-spacing:inherit}
+.headline-accent{font-style:italic;font-weight:inherit;letter-spacing:inherit;padding-right:.1em}
 .service-heading strong{font-family:Archivo,Arial,sans-serif;font-weight:400}
 
 /* Empty live-data slots leave the source links as the fallback. */
@@ -487,8 +487,8 @@ h3,.privacy-choice h3,.uptime-panel figcaption,.attestation-panel h3,.trust-evid
    posted there from this domain. Built like the closing box, but with the ridges from the
    same landscape behind a heavy left fade, so the river is not used a third time. */
 .brochure{position:relative;isolation:isolate;overflow:hidden;border-block:1px solid var(--line);scroll-margin-top:24px}
-.brochure-art{position:absolute;inset:0;z-index:-1;pointer-events:none;background:url('/assets/ridges-close.webp') 58% 50%/cover no-repeat}
-.brochure-art::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(5,7,6,.97) 0,rgba(5,7,6,.9) 36%,rgba(5,7,6,.58) 56%,rgba(5,7,6,.4) 76%,rgba(5,7,6,.46))}
+/* The peaks sit beside the copy, never behind it, faded in from the copy column's edge. */
+.brochure-art{position:absolute;inset:0 0 0 52%;z-index:-1;pointer-events:none;background:url('/assets/peaks-close.webp') 50% 0/cover no-repeat;-webkit-mask-image:linear-gradient(90deg,transparent,#000 35%);mask-image:linear-gradient(90deg,transparent,#000 35%)}
 .brochure-inner{position:relative}
 .brochure-inner h2{font-size:64px;max-width:720px;margin-bottom:28px}
 .brochure-lead{font-size:19px;line-height:1.7;color:var(--muted);max-width:660px;margin:0}
@@ -509,7 +509,9 @@ h3,.privacy-choice h3,.uptime-panel figcaption,.attestation-panel h3,.trust-evid
 .honeypot{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
 .brochure-contact{font-size:17px;margin:24px 0 0;color:var(--muted)}
 .brochure-contact a{color:var(--text);overflow-wrap:anywhere}
-@media(max-width:1100px){.brochure-inner h2{font-size:42px}.brochure-lead{font-size:17px}}
-@media(max-width:800px){.brochure-inner h2{font-size:38px}.brochure-contents li{font-size:16px}.brochure-art{background-position:55% 50%}.brochure-art::after{background:linear-gradient(180deg,rgba(5,7,6,.97),rgba(5,7,6,.9) 55%,rgba(5,7,6,.7))}.brochure-row{flex-direction:column}.brochure-row .button{width:100%}}
+@media(max-width:1100px){.brochure-inner h2{font-size:42px}.brochure-lead{font-size:17px}
+ /* Once the copy fills the width, the peaks move above it as a short banner. */
+ .brochure{padding-top:180px}.brochure-art{inset:0 0 auto 0;height:260px;background-position:30% 0;-webkit-mask-image:linear-gradient(180deg,#000 45%,transparent);mask-image:linear-gradient(180deg,#000 45%,transparent)}}
+@media(max-width:800px){.brochure-inner h2{font-size:38px}.brochure-contents li{font-size:16px}.brochure-row{flex-direction:column}.brochure-row .button{width:100%}}
 @media(max-width:600px){.brochure-inner h2{font-size:35px}}
 
