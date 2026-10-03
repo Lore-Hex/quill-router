@@ -1,8 +1,8 @@
 # Fast admission and batched settlement
 
-Status: **proposed, v18, 2026-10-03. Nothing built.** v8 changed direction
-to regional leases, Joseph's choice (§2). Codex and Fable reviewed v1-v17
-(§11), and v18 answers their reviews of v17.
+Status: **proposed, v19, 2026-10-03. Nothing built.** v8 changed direction
+to regional leases, Joseph's choice (§2). Codex and Fable reviewed v1-v18
+(§11), and v19 answers their reviews of v18.
 
 This is the plan for reaching 100T tokens a month without spending the routing
 margin on the billing database, and for taking the control plane out of request
@@ -376,7 +376,9 @@ and the request records all follow that rule.
     the same records, with the same sequence numbers, before anything new.
     Until a publish succeeds again it admits nothing new under the lease:
     every new stream's first heartbeat would fail, and each would hold its
-    estimate for 2 hours (below).
+    estimate for 2 hours (below). It keeps renewing and adopting meanwhile;
+    a terminal it cannot publish is answered with an error, and the gateway
+    retries it as today.
   - Its publishes are bounded by a deadline shorter than the reaper's grace
     minus twice the skew allowance. The deadline covers the request and the
     client library's queued retries, not only the caller's wait. A republish
@@ -420,11 +422,14 @@ and the request records all follow that rule.
     closed. A refused append is answered as today's
     `_already_settled_gateway_data` answers an authorization that is already
     terminal, field for field (cost, disposition, outcome):
-    - from the stored winner while it is kept;
-    - after that, from the authorization's written records, as disposition
-      lookups are (§4.9). Winners are deleted only once their records are
-      written (§4.8), so a charged winner is always in one or the other;
-    - as released uncharged only when neither has a winner.
+    - from A's stored winner. Winners are kept at least 7 days after the
+      lease closes, longer than the enclave's queue can hold a settle (§4.8).
+      A kept, closed lease with no winner for A released A's hold uncharged
+      at close, and the answer says so;
+    - after that, from the authorization's written records (§4.9);
+    - when neither has a winner, as today's helper answers an outcome it
+      cannot establish: `pending`, never released. A missing record is never
+      read as a refund.
 
     That is a 200, which ends the enclave's retries; `stageDDispositionLost`
     then counts a loss only for a reap or a release. A 409 would not end
@@ -478,11 +483,13 @@ and the request records all follow that rule.
     incident beyond it, would release live streams whose first heartbeat is
     then refused after a long, already-paid wait.
   - So the release waits for a heartbeat at stream open, before the provider
-    answers, a quill-cloud-proxy change (§9). An enclave that sends it says
-    so in its Stage D boot registration, and the release applies only to
-    holds admitted for such a boot. Then a streaming hold with no accepted
-    heartbeat by the first-heartbeat allowance plus the heartbeat grace is
-    released uncharged: by the owner, or at a tick by the auditor.
+    answers, a quill-cloud-proxy change (§9). An enclave that sends it
+    declares that in its Stage D boot registration too, and the release
+    applies only to holds admitted for such a boot. Then a streaming hold
+    with no accepted heartbeat by the first-heartbeat allowance plus the
+    heartbeat grace is released uncharged by its owner. A draining lease's heartbeats are
+    refused, and its holds end as §4.8 says, so the release does not apply
+    there, and a hand-off record need not carry the boot's declaration.
     The allowance is the authorize-to-heartbeat latency, with the provider's
     latency out of it. The fast path admits only streams the enclave
     heartbeats (§4.11), so this never releases a stream that runs without
@@ -677,8 +684,8 @@ synchronous holds, through `settle_atomic`.
   - each open hold the log has shown, with its estimate, its latest valid
     snapshot (sequence, hash and usage) and its deadline;
   - the winners decided since the last commit, keyed by authorization, each
-    with its pending work: its request records and amount-sensitive side
-    effects (§4.9);
+    with its pending work: its request records (for a refund or a release,
+    its disposition record) and amount-sensitive side effects (§4.9);
   - its progress: the highest owner sequence number applied, and the last
     tick applied;
   - a commit version, which every commit advances.
@@ -704,8 +711,14 @@ synchronous holds, through `settle_atomic`.
   alerts.
 - One transaction can carry many leases, each its own conditional statement.
 - Winners are stored packed, one row per lease per commit. A row-deletion
-  policy removes them once the lease is closed and their pending work is
-  done.
+  policy removes them once the lease is closed, their pending work is done,
+  and 7 days have passed.
+  - That pending work leaves every winner a written record: a charged winner
+    its generation and activity records, a refund or a release a compact
+    disposition record with its boot binding (§4.9).
+  - The 7 days outlast the enclave's queue, which holds a settle for at most
+    about 52 hours: 1,024 jobs on one worker, each with at most six attempts
+    of up to 28 seconds (§4.5).
 
 **It audits the owners.**
 
@@ -930,9 +943,19 @@ when Python is unreachable: the first durable point is Python's
     reports.
 - **Lookups.** Disposition and evidence lookups answer from the stored winner
   while it is kept, then from the records, with ClickHouse within the records
-  bound for `gateway_request_id`. That covers winners from the drain log and
-  from closed leases: the enclave looks a disposition up after a
-  `reaped_snapshot` answer (`main.go` at `a06050f`).
+  bound for `gateway_request_id`, and `pending` when neither has one, as
+  today's helper does. That covers winners from the drain log and from
+  closed leases: the enclave looks a disposition up after a `reaped_snapshot`
+  answer (`main.go` at `a06050f`).
+  - The owner mints A with its lease in it, so a lookup by A alone reads that
+    lease's packs, bounded by the commits in the lease's maximum life, and
+    the records, which are keyed by authorization.
+  - A refund or a release writes no generation record, as today, so the
+    auditor writes it a compact disposition record instead: the
+    authorization, its outcome and its boot binding, which a boot-signed
+    lookup checks. So after the packs are deleted, every winner still has a
+    record, and only an authorization the auditor never saw answers
+    `pending`.
 - **What stays synchronous for now.**
   - Synthetic-probe workspaces, so release gates keep reading Spanner.
   - OAuth-app keys with a markup, until payouts have a durable obligation tied
@@ -956,10 +979,13 @@ stream, and streams the enclave heartbeats. These stay on today's Python path:
   inputs:
   - the same kill switches and pilot set (`stage_d_eligibility_enabled`,
     `stage_d_heartbeat_enabled`, `stage_d_pilot_workspaces`);
-  - the request's verified Stage D boot signature. An enclave registers a
-    Stage D boot, and signs with it, only when it booted with heartbeats on
-    (`StartStageDBootRegistration` runs only under `usageHeartbeat` in
-    `main.go` at `a06050f`), so an accepted boot is one that heartbeats;
+  - the request's verified Stage D boot signature, from a boot whose
+    registration declared that it heartbeats. A verified boot alone does not
+    prove it: at `a06050f` a boot in the spend-lease shadow mode registers
+    without heartbeats on (`initializeSpendLeaseShadow`), and the Stage D
+    signer falls back to that key (`stageDBootDigestSigner` in
+    `spend_lease.go`). The declaration is an enclave change (§9), and until
+    it ships every stream stays on Python;
   - streaming `chat.completions` or `responses`, priced in credits on
     standard endpoints, outside the priority and auto service tiers. The
     enclave applies the same route test (`stageDStreamEligible` in
@@ -967,7 +993,11 @@ stream, and streams the enclave heartbeats. These stay on today's Python path:
 
   A stream the rule refuses goes to Python, so a streaming `/v1/messages`
   request stays: `serveMessages` relays it without heartbeats. Releasing a
-  hold before its first heartbeat (§4.5) assumes the stream heartbeats;
+  hold before its first heartbeat (§4.5) assumes the stream heartbeats.
+  The owner applies the switches as Python does: with heartbeats disabled it
+  answers heartbeats `retry`, which ends running streams as today's 503 does
+  (§4.5); with eligibility disabled it admits no new streams on the fast
+  path and keeps serving those it admitted;
 - requests with an `Idempotency-Key` (§4.3);
 - BYOK routes, custom and user-provided models, Polyphemus selection, native
   batch, video and image jobs, and hosted tools with
@@ -1175,6 +1205,9 @@ leases, and was retired on 2026-09-27.
     its first heartbeat waits for (§4.5);
   - heartbeats on the Messages path (`serveMessages`), which would bring
     streaming `/v1/messages` onto the fast path (§4.11);
+  - declaring heartbeats, and later the heartbeat at stream open, in the
+    Stage D boot registration, which fast streaming admission requires
+    (§4.11);
   - the retirement phase in §4.12, without which gateway scale-in stays
     scale-out only.
 - **Where request records live at 100T:** ClickHouse rather than Spanner
@@ -1635,4 +1668,27 @@ record.
   - Whoever stores S, the auditor or a rebuild, stores it in the commit that
     books every record up to it. So a record at or below S that arrives later
     is a duplicate, and one above S is ignored, live and in a rebuild alike.
+  - The P3s are answered in place.
+- **v19.** Codex (2 P2) and Fable (1 P2, 5 P3) found no money defect in v18.
+  Their findings:
+  - a verified boot does not prove the enclave heartbeats: a boot in the
+    spend-lease shadow mode registers without heartbeats on, and the Stage D
+    signer falls back to its key;
+  - once a lease's winners are deleted, a refund has no record to answer a
+    lookup from, and a miss in the records was answered "released";
+  - and, among the P3s, refunds after deletion, the lookup key, the kill
+    switches' effect on running streams, the auditor's share of the early
+    release, and what an owner whose publishes fail still does.
+
+  v19 answers them:
+  - Fast streaming admission requires a boot whose registration declares
+    that it heartbeats, an enclave change; until it ships, streams stay on
+    Python.
+  - Winners are kept at least 7 days after close, beyond the enclave's
+    queue. Before deletion every winner has a written record: generation
+    and activity records when charged, a compact disposition record with its
+    boot binding for a refund or a release. A miss answers `pending`, as
+    today's helper does, never released.
+  - A is minted with its lease in it, so a lookup by A finds the lease.
+  - The early release is the owner's alone.
   - The P3s are answered in place.
