@@ -45,6 +45,8 @@ def fixed_time(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(storage_models, 'utcnow', lambda: NOW)
     monkeypatch.setattr(current, 'utcnow', lambda: NOW)
     monkeypatch.setattr(main, 'utcnow', lambda: NOW)
+    # Delayed refill timestamps must use the same clock as immediate intents.
+    monkeypatch.setattr(outbox, 'datetime', Clock)
     monkeypatch.setattr(outbox, '_iso_now', lambda: NOW.isoformat())
 
 
