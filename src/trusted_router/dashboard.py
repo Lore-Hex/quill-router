@@ -2335,6 +2335,7 @@ def dashboard_html(
     site_url = site_url or canonical_site_url
     alternate_brand = brand_name != "TrustedRouter"
     page_title = f"{brand_name} | Every model. Privacy with proof." if alternate_brand else OG_TITLE
+    homepage_enabled = settings.homepage_landscape_enabled and not alternate_brand
     tr_config = {
         "environment": environment,
         "defaultDevUser": "" if environment not in {"local", "test"} else DEV_USER_FALLBACK,
@@ -2344,17 +2345,25 @@ def dashboard_html(
         "googleEnabled": settings.google_oauth_enabled,
         "githubEnabled": settings.github_oauth_enabled,
     }
+    from trusted_router.homepage import homepage_context
+
+    homepage = homepage_context(resolved_api_base_url) if homepage_enabled else {}
     return (
         _env()
-        .get_template("dashboard.html")
+        .get_template("homepage/index.html" if homepage_enabled else "dashboard.html")
         .render(
+            **homepage,
+            homepage_noindex=environment in {"local", "test"},
             organization_json_ld=_json_ld_graph(settings),
             api_base_url=resolved_api_base_url,
             site_url=site_url,
             canonical_site_url=canonical_site_url,
             brand_name=brand_name,
             alternate_brand=alternate_brand,
-            og_image=f"https://{domain}/og.png",
+            og_image=(
+                f"https://{domain}/static/homepage/social-card-v1.jpg"
+                if homepage_enabled else f"https://{domain}/og.png"
+            ),
             og_title=page_title,
             og_description=OG_DESCRIPTION,
             og_image_width=OG_IMAGE_WIDTH,

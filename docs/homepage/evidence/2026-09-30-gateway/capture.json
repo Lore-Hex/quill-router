@@ -1,0 +1,17 @@
+{
+  "captured_at": "2026-09-30T00:16:11.739865+00:00",
+  "host": "api.trustedrouter.com",
+  "release_url": "https://trust.trustedrouter.com/trust/gcp-release.json",
+  "inference_sent": false,
+  "verifier_sha256": "c099965aad524d5a16ece16b2f9926ddbd5f2ff3f50be59b12a3491adc476a35",
+  "verified": true,
+  "matched_image_digest": "sha256:980b5a97b392e07f31838ad8699f5e4d1675bbe5f1263e6753b279da957b7af0",
+  "release_state": "rolling",
+  "accepted_image_digests": [
+    "sha256:980b5a97b392e07f31838ad8699f5e4d1675bbe5f1263e6753b279da957b7af0",
+    "sha256:08137bda14e53401583785a37e619d64c5324a384eb3e2dd3b967c55e76eaaf8"
+  ],
+  "verifier_source": "https://github.com/Lore-Hex/quill-cloud-proxy/blob/a2e965915fe7c4841feb56299f23f3d6d9546d0c/tools/verify-attestation.py",
+  "image_digest_pin": "sha256:980b5a97b392e07f31838ad8699f5e4d1675bbe5f1263e6753b279da957b7af0,sha256:08137bda14e53401583785a37e619d64c5324a384eb3e2dd3b967c55e76eaaf8",
+  "release_target_source_commit": "7d2b9468"
+}

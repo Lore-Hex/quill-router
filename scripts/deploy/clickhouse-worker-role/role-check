@@ -1,0 +1,38 @@
+#!/bin/sh
+# ExecCondition= for every ClickHouse worker unit (G1 in
+# docs/design/clickhouse-high-availability.md). Only the instance whose
+# tr-clickhouse-role metadata is exactly "publisher" may run the drains and the
+# publishers; two hosts publishing at once can replace fresher partitions with
+# older ones.
+#
+# Exit codes follow ExecCondition= semantics:
+#   0    the role is "publisher": start the unit
+#   1    the role is anything else, or the key is absent: skip the unit quietly
+#        (not a failure, so Restart= does not loop on a standby node)
+#   255  the role could not be read: a failure, so Restart= retries a drain and
+#        the next timer tick retries a job, instead of skipping them for good
+url="${TR_ROLE_URL:-http://metadata.google.internal/computeMetadata/v1/instance/attributes/tr-clickhouse-role}"
+attempts="${TR_ROLE_ATTEMPTS:-5}"
+attempt=1
+while [ "$attempt" -le "$attempts" ]; do
+  body="$(curl -s -m 2 -H 'Metadata-Flavor: Google' -w '\n%{http_code}' "$url" 2>/dev/null)"
+  code="$(printf '%s' "$body" | tail -n 1)"
+  role="$(printf '%s' "$body" | sed '$d')"
+  case "$code" in
+    200)
+      if [ "$role" = "publisher" ]; then
+        exit 0
+      fi
+      echo "tr-clickhouse-role is '${role}', not publisher: skipping" >&2
+      exit 1
+      ;;
+    404)
+      echo "tr-clickhouse-role is not set on this instance: skipping" >&2
+      exit 1
+      ;;
+  esac
+  attempt=$((attempt + 1))
+  sleep 1
+done
+echo "could not read tr-clickhouse-role from the metadata server (last HTTP status ${code:-none})" >&2
+exit 255

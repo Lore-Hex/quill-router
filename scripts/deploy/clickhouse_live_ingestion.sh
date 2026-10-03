@@ -10,9 +10,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck source=scripts/deploy/_clickhouse_bundle.sh
 source "${SCRIPT_DIR}/_clickhouse_bundle.sh"
+# shellcheck source=scripts/deploy/_clickhouse_publisher.sh
+source "${SCRIPT_DIR}/_clickhouse_publisher.sh"
 PROJECT="${PROJECT:-quill-cloud-proxy}"
-ZONE="${ZONE:-us-central1-a}"
-NAME="${NAME:-tr-clickhouse-1}"
+# The workers run on the publisher only (G1 in
+# docs/design/clickhouse-high-availability.md): tr-clickhouse-1 until a takeover.
+# Hold the role lock while choosing the node and installing, so a takeover
+# cannot move the publisher underneath this run.
+clickhouse_role_lock_take clickhouse_live_ingestion || exit 1
+trap 'clickhouse_role_lock_release' EXIT
+NAME="${NAME:-$(clickhouse_publisher)}"
+ZONE="${ZONE:-$(clickhouse_zone_of "$NAME")}"
 SECRET="${SECRET:-trustedrouter-clickhouse-password}"
 
 ssh_node() {
@@ -32,9 +40,10 @@ if [ -n "$external_ip" ]; then
   echo "refusing deployment: $NAME has external IP $external_ip" >&2
   exit 1
 fi
+require_clickhouse_publisher "$NAME"
 
 archive=$(mktemp "${TMPDIR:-/tmp}/tr-clickhouse-live.XXXXXX.tar.gz")
-trap 'rm -f "$archive"' EXIT
+trap 'clickhouse_role_lock_release; rm -f "$archive"' EXIT
 build_clickhouse_bundle "$ROOT" "$archive"
 
 ssh_node --command="sudo mkdir -p /opt/tr-clickhouse"

@@ -9,6 +9,8 @@ ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 source "${SCRIPT_DIR}/_lib.sh"
 # shellcheck source=scripts/deploy/_clickhouse_bundle.sh
 source "${SCRIPT_DIR}/_clickhouse_bundle.sh"
+# shellcheck source=scripts/deploy/_clickhouse_publisher.sh
+source "${SCRIPT_DIR}/_clickhouse_publisher.sh"
 
 NAMES=(tr-clickhouse-1 tr-clickhouse-2 tr-clickhouse-3)
 ZONES=(us-central1-a us-central1-b us-central1-c)
@@ -33,6 +35,27 @@ if [ "$APPLY" -eq 0 ]; then
   log "dry-run: would install the ingester, rollup worker, and private reader"
   log "dry-run: would migrate benchmark workspace attribution"
   exit 0
+fi
+
+# Hold the role lock for the rest of the run: this installer starts workers
+# and runs a rollup directly, which the role fence does not cover, so a
+# takeover must not move the publisher while it runs.
+clickhouse_role_lock_take clickhouse_operational_analytics || exit 1
+trap 'clickhouse_role_lock_release' EXIT
+
+# The workers run on the publisher only (G1 in
+# docs/design/clickhouse-high-availability.md): tr-clickhouse-1 until a takeover.
+PROJECT="$PROJECT_ID"
+publisher="$(clickhouse_publisher)"
+WORKER=""
+for index in 0 1 2; do
+  if [ "${NAMES[$index]}" = "$publisher" ]; then
+    WORKER="$index"
+  fi
+done
+if [ -z "$WORKER" ]; then
+  echo "refusing: the publisher ${publisher} is not one of ${NAMES[*]}" >&2
+  exit 1
 fi
 
 node_ssh() {
@@ -93,17 +116,18 @@ cleanup() {
   rm -f "$archive"
   if [ "$ingester_stopped" -eq 1 ]; then
     log "deployment exited during parser/schema cutover; restarting live ingest"
-    node_ssh 0 --command="sudo systemctl start tr-clickhouse-operational-ingest.service" || true
+    node_ssh "$WORKER" --command="sudo systemctl start tr-clickhouse-operational-ingest.service" || true
   fi
+  clickhouse_role_lock_release
   return "$status"
 }
 trap cleanup EXIT
 build_clickhouse_bundle "$ROOT" "$archive"
-node_ssh 0 --command="sudo mkdir -p /opt/tr-clickhouse"
-node_ssh 0 --command="sudo tar -xzf - -C /opt/tr-clickhouse" <"$archive"
+node_ssh "$WORKER" --command="sudo mkdir -p /opt/tr-clickhouse"
+node_ssh "$WORKER" --command="sudo tar -xzf - -C /opt/tr-clickhouse" <"$archive"
 
-log "installing operational analytics workers on node 1"
-node_ssh 0 --command="sudo sh -c '
+log "installing operational analytics workers on ${NAMES[$WORKER]}"
+node_ssh "$WORKER" --command="sudo sh -c '
   set -eu
   if ! id tr-clickhouse-ingest >/dev/null 2>&1; then
     useradd --system --home /var/lib/tr-clickhouse-ingest --create-home \
@@ -156,8 +180,10 @@ node_ssh 0 --command="sudo sh -c '
 # Pause only for the additive schema cutover, then restart on the new parser
 # before any bounded replay, backfill, replica sync, or reader setup begins.
 log "pausing live operational ingest for parser/schema cutover"
-node_ssh 0 --command="sudo systemctl stop tr-clickhouse-operational-ingest.service"
+# Arm the restart before stopping: a signal during the stop must still leave
+# cleanup a reason to start ingest again.
 ingester_stopped=1
+node_ssh "$WORKER" --command="sudo systemctl stop tr-clickhouse-operational-ingest.service"
 
 log "adding workspace attribution to benchmark samples"
 benchmark_workspace_schema="$(cat "$BENCHMARK_WORKSPACE_SCHEMA")"
@@ -166,21 +192,17 @@ for index in 0 1 2; do
 done
 
 log "resuming live operational ingest after parser/schema cutover"
-node_ssh 0 --command="sudo systemctl start tr-clickhouse-operational-ingest.service"
+node_ssh "$WORKER" --command="sudo systemctl start tr-clickhouse-operational-ingest.service"
 ingester_stopped=0
 
 log "building initial synthetic status rollups"
-node_ssh 0 --command="sudo sh -c '
-  set -eu
-  set -a
-  . /etc/tr-clickhouse-ingest.env
-  set +a
-  cd /opt/tr-clickhouse
-  PYTHONPATH=/opt/tr-clickhouse/src \
-    /opt/tr-clickhouse/venv/bin/python -m clickhouse.rollup_synthetic
-'"
+# Through the worker's own oneshot unit, not a direct python run: the unit
+# keeps the role fence (ExecCondition), outlives a dropped SSH session as a
+# systemd job rather than an orphan, and is stopped by a takeover's
+# stop-workers like every other worker.
+node_ssh "$WORKER" --command="sudo systemctl start tr-clickhouse-synthetic-rollup.service"
 
-node_ssh 0 --command="sudo systemctl enable tr-clickhouse-operational-ingest.service tr-clickhouse-synthetic-rollup.timer tr-clickhouse-client-rollup.timer tr-clickhouse-public-snapshots.timer tr-clickhouse-archive-restore.timer tr-clickhouse-spanner-delivery.timer"
+node_ssh "$WORKER" --command="sudo systemctl enable tr-clickhouse-operational-ingest.service tr-clickhouse-synthetic-rollup.timer tr-clickhouse-client-rollup.timer tr-clickhouse-public-snapshots.timer tr-clickhouse-archive-restore.timer tr-clickhouse-spanner-delivery.timer"
 
 log "verifying exact replica identity after synchronization"
 PARITY_TABLES="activity_generations synthetic_probe_samples spend_lease_shadow synthetic_status_rollups public_analytics_snapshots client_request_events client_minute_counters client_availability_rollups operational_outbox_quarantine"
@@ -236,7 +258,7 @@ for index in 0 1 2; do
     "${SCRIPT_DIR}/clickhouse_control_reader.sh"
 done
 
-node_ssh 0 --command="sudo systemctl is-active --quiet tr-clickhouse-operational-ingest.service"
-node_ssh 0 --command="sudo systemctl start tr-clickhouse-client-rollup.timer tr-clickhouse-public-snapshots.timer tr-clickhouse-public-snapshots.service tr-clickhouse-archive-restore.timer tr-clickhouse-spanner-delivery.timer tr-clickhouse-spanner-delivery.service"
+node_ssh "$WORKER" --command="sudo systemctl is-active --quiet tr-clickhouse-operational-ingest.service"
+node_ssh "$WORKER" --command="sudo systemctl start tr-clickhouse-client-rollup.timer tr-clickhouse-public-snapshots.timer tr-clickhouse-public-snapshots.service tr-clickhouse-archive-restore.timer tr-clickhouse-spanner-delivery.timer tr-clickhouse-spanner-delivery.service"
 
 log "operational analytics infrastructure is ready; ClickHouse is authoritative and the Bigtable repair units are retired"

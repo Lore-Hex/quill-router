@@ -176,6 +176,13 @@ class ExchangeTests(unittest.TestCase):
             self.assertNotIn("<form", page)
             self.assertNotIn("google-analytics", page)
             self.assertNotIn("$headline", page)
+            # The hero photograph and the provider marquee: one visible group of six links,
+            # five hidden copies that stay out of the tab order, under the relationship label.
+            self.assertIn('class="hero-photo"', page)
+            self.assertIn("Providers on TrustedRouter", page)
+            self.assertEqual(page.count('<div class="hero-provider-group">'), 1)
+            self.assertEqual(page.count('<div class="hero-provider-group" aria-hidden="true">'), 5)
+            self.assertEqual(page.count('href="https://trustedrouter.com/providers" tabindex="-1"'), 30)
 
     def test_escape(self):
         market = copy.deepcopy(load_markets()[0])

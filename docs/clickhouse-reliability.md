@@ -56,7 +56,10 @@ tr-clickhouse-ilb (10.128.0.96:8123)
 The forwarding rule allows global VPC access so all control-plane regions can
 reach it. The read-only `tr_provider_read` account can select only the raw and
 rollup tables. Ingestion, reconciliation, archive, and rollup workers run on
-node 1. Their durable input remains in Spanner if node 1 is temporarily down.
+one node, the publisher: the instance whose `tr-clickhouse-role` metadata is
+`publisher` (node 1 unless a takeover moved them). Every worker unit on every
+node checks that key before it starts, so only the publisher runs them. Their
+durable input remains in Spanner if the publisher is temporarily down.
 
 The pre-migration local node-1 table is retained as
 `provider_benchmark_samples_local_backup`. Do not delete it until a later,
@@ -226,6 +229,32 @@ node, waits for 3/3 health, and synchronizes the replica.
 5. Let ClickHouse fetch parts from a healthy replica.
 6. Require queue zero, fixed-cutoff fingerprint parity, and healthy load-balancer state.
 7. Re-enable the backend.
+
+### Move the workers to another node
+
+Two hosts must never publish at once: a rollup that replaces a partition can
+overwrite fresher results with older ones. The steps and their reasons are G1
+in `docs/design/clickhouse-high-availability.md`. Run each command without
+`--apply` first; it prints its plan.
+
+```bash
+# Once: set the roles (node 1 publisher) and install the fence on every node.
+scripts/deploy/clickhouse_worker_role.sh fence --apply
+# Once per standby, and after each worker change: install its units disabled.
+scripts/deploy/clickhouse_worker_role.sh standby --node tr-clickhouse-2 --apply
+# Takeover. Add --from-unreachable when the publisher cannot be reached; the
+# script then stops its VM and requires TERMINATED before continuing.
+scripts/deploy/clickhouse_worker_role.sh takeover --to tr-clickhouse-2 --apply
+```
+
+The takeover fences the old publisher (role `standby`, then its workers
+disabled, or its VM stopped), kills the worker user's queries on every
+reachable replica, waits until the new publisher has pulled and applied every
+replication log entry, and only then makes it the publisher and starts its
+workers. If the sync barrier fails because only the old publisher holds a part,
+stop: recover that node or its disk first. Then confirm the drain lag on
+`/status.json` recovers. A returning node stays `standby`; failback is the same
+takeover in the other direction.
 
 ### Restore from a disk snapshot
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import threading
+from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -12,6 +13,21 @@ from tests.test_oauth_key_delegation import _create_code
 from trusted_router.company_affiliations import build_snapshot
 from trusted_router.scopes import SCOPE_INFERENCE, SCOPE_PROFILE
 from trusted_router.storage import STORE
+
+
+@pytest.fixture(autouse=True)
+def lookups_finish_on_a_loaded_runner(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sign-in gives the optional lookup one second, which a loaded CI runner can miss.
+
+    A missed lookup returns the identity without affiliations, so the tests
+    below that expect a claim would fail and those that expect none would pass
+    for the wrong reason. They test what a finished lookup discloses, so they
+    give it no limit; the suite's pytest timeout bounds a hang. The
+    slow-directory test controls its limit itself.
+    """
+    import trusted_router.verification as verification
+
+    monkeypatch.setattr(verification, "AFFILIATION_TIMEOUT_SECONDS", None)
 
 
 def _seed() -> None:
@@ -86,6 +102,15 @@ def test_registered_oauth_grants_disclose_only_with_profile_scope(client: TestCl
 
 
 def test_slow_directory_cannot_block_signin(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sign-in returns while the directory read is still blocked.
+
+    Nothing here depends on wall-clock time, so no thread start delay or
+    scheduling pause changes the outcome. If sign-in waited for the read, the
+    first request would block until the suite's pytest timeout fails the test.
+    """
+    import asyncio
+
+    import trusted_router.company_affiliations as company_affiliations
     import trusted_router.verification as verification
 
     _seed()
@@ -95,23 +120,60 @@ def test_slow_directory_cannot_block_signin(client: TestClient, monkeypatch: pyt
     key, _ = STORE.create_api_key(workspace_id=workspace.id, name="profile", creator_user_id=user.id, management=False, scopes=[SCOPE_PROFILE])
     reads = []
     release = threading.Event()
-    finished = threading.Event()
+    limits: list[tuple[asyncio.AbstractEventLoop, asyncio.Timeout]] = []
+    lookups: list[threading.Event] = []
+
+    class _ExpireOnRead:
+        """verification's asyncio, with a limit that expires once the read starts.
+
+        A wall-clock limit races the worker thread's start: a thread that
+        starts after the timeout finds retries already deferred and never
+        reads. This limit has no deadline until the read is underway, so the
+        real timeout and the real thread dispatch run in a fixed order.
+        """
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(asyncio, name)
+
+        def timeout(self, delay: float | None) -> asyncio.Timeout:
+            limit = asyncio.timeout(None)
+            limits.append((asyncio.get_running_loop(), limit))
+            return limit
+
+    original_lookup = company_affiliations.AffiliationDirectory.lookup
+
+    def tracked_lookup(self: company_affiliations.AffiliationDirectory, *args: Any, **kwargs: Any) -> Any:
+        done = threading.Event()
+        lookups.append(done)
+        try:
+            return original_lookup(self, *args, **kwargs)
+        finally:
+            done.set()
 
     def slow_read(key: str):
         reads.append(key)
-        release.wait(5)
-        finished.set()
+        loop, limit = limits[-1]
+        loop.call_soon_threadsafe(lambda: limit.reschedule(loop.time()))
+        release.wait()  # until cleanup
         return None
 
     monkeypatch.setattr(STORE.target, "get_company_affiliation_document", slow_read)
-    monkeypatch.setattr(verification, "AFFILIATION_TIMEOUT_SECONDS", 0.02)
+    monkeypatch.setattr(company_affiliations.AffiliationDirectory, "lookup", tracked_lookup)
+    # The timed-out first read defers retries. Make that last the whole test,
+    # so a pause between the requests cannot send the second one to the lock
+    # the blocked read holds.
+    monkeypatch.setattr(company_affiliations, "CACHE_SECONDS", 10**9)
+    monkeypatch.setattr(verification, "asyncio", _ExpireOnRead())
     headers = {"authorization": "Bearer " + key}
     try:
         for _ in range(2):
             response = client.get("/v1/auth/userinfo", headers=headers)
             assert response.status_code == 200
             assert "company_affiliations" not in response.json()["data"]
-        assert not finished.is_set(), "Sign-in waited for optional directory read"
+        assert not release.is_set()  # the read was still blocked when both returned
         assert len(reads) == 1
+        assert limits[0][1].expired()
     finally:
         release.set()
+        for done in lookups:
+            done.wait()  # the suite's pytest timeout bounds a lookup that never finishes

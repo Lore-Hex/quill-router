@@ -9,6 +9,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 REPO_ROOT="${TR_RELEASE_CHECKOUT:-$REPO_ROOT}"
 cd "$REPO_ROOT"
 source "${SCRIPT_DIR}/deploy_mutex.sh"
+source "${SCRIPT_DIR}/_aws_session.sh"
 source "${SCRIPT_DIR}/cloud_bake_gate.sh"
 source "${SCRIPT_DIR}/cloud_complete_gate.sh"
 
@@ -54,8 +55,11 @@ IMAGE_TAG="${RELEASE:0:7}"
 CI="$(gh run list --repo Lore-Hex/quill-router --workflow ci.yml --commit "$RELEASE" \
   --limit 1 --json conclusion --jq '.[0].conclusion')"
 [ "$CI" = success ] || die "CI must pass for this exact release"
-[ "$(aws sts get-caller-identity --query Account --output text)" = 330422590279 ] \
-  || die "wrong AWS account"
+# Check the command's status as well as its output: a call that prints the
+# account and then fails must not pass.
+CALLER_ACCOUNT="$(aws sts get-caller-identity --query Account --output text)" \
+  || die "cannot read the AWS account"
+[ "$CALLER_ACCOUNT" = 330422590279 ] || die "wrong AWS account"
 
 WORK="$(mktemp -d)"
 export DOCKER_CONFIG="${WORK}/docker"
@@ -89,6 +93,8 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 export TR_DEPLOY_MUTEX_CLOUD=aws
 deploy_mutex_acquire
+# The wait above can outlast the job's first AWS session.
+aws_refresh_session || exit 1
 bake_status=0
 cloud_bake_gate aws || bake_status=$?
 if [ "$bake_status" -eq 75 ]; then

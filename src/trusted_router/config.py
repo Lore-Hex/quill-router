@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Literal, NamedTuple
 from urllib.parse import urlsplit
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -374,6 +374,7 @@ class Settings(BaseSettings):
     )
 
     environment: str = "local"
+    homepage_landscape_enabled: bool = False
     release: str = "local"
     service_name: str = "trusted-router"
     # One image serves several deliberately disjoint process roles. ``combined``
@@ -895,6 +896,9 @@ class Settings(BaseSettings):
     trust_stripe_account_id: str = ""
     trust_tier3_min_days: int = 30
     trust_tier3_min_paid_microdollars: int = 50_000_000
+    # Workspaces the trust-tier job recomputes at once. Each worker holds one
+    # Spanner session, so the job's TR_SPANNER_POOL_SIZE must be at least this.
+    trust_tier_job_concurrency: int = Field(default=1, ge=1, le=32)
     max_workspaces_per_owner: int = 25
     operator_token: str = ""
     lightning_funding_token: str = ""
