@@ -36,7 +36,7 @@ def load_markets() -> list[dict]:
     return markets
 
 
-def tracked_url(url: str, market: dict, intent: str, fragment: str = "") -> str:
+def tracked_url(url: str, market: dict, intent: str) -> str:
     return (
         url
         + "?"
@@ -49,7 +49,6 @@ def tracked_url(url: str, market: dict, intent: str, fragment: str = "") -> str:
                 "exchange_market": market["slug"],
             }
         )
-        + fragment
     )
 
 

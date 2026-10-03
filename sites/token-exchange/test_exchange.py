@@ -257,11 +257,10 @@ class ExchangeTests(unittest.TestCase):
 
     def test_attribution(self):
         market = load_markets()[0]
-        url = tracked_url(
-            "https://trustedrouter.com/token-exchange", market, "brochure", "#enterprise-brochure"
-        )
-        self.assertEqual(urlparse(url).fragment, "enterprise-brochure")
-        self.assertEqual(parse_qs(urlparse(url).query)["utm_source"], ["thetokenexchange.com"])
+        query = parse_qs(urlparse(tracked_url("https://trustedrouter.com/providers/marketplace", market, "seller")).query)
+        self.assertEqual(query["utm_source"], ["thetokenexchange.com"])
+        self.assertEqual(query["utm_campaign"], ["token-exchange-launch"])
+        self.assertEqual(query["utm_content"], ["seller"])
 
     def test_map_preserves_and_is_idempotent(self):
         current = {

@@ -196,7 +196,7 @@ document.querySelectorAll('.geo-scroll').forEach(container => {
    disabled and the noscript line offers email instead. */
 (() => {
   const form = document.getElementById('brochure-form');
-  if (!form || !window.fetch) return;
+  if (!form || !window.fetch || !window.AbortController) return;
   const button = form.querySelector('button[type=submit]');
   const email = form.querySelector('input[name=email]');
   const status = document.getElementById('brochure-status');
@@ -204,12 +204,15 @@ document.querySelectorAll('.geo-scroll').forEach(container => {
   const contact = 'enterprise@trustedrouter.com';
   let busy = false;
   button.disabled = false;
+  email.addEventListener('input', () => email.removeAttribute('aria-invalid'));
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (busy || !form.reportValidity()) return;
     busy = true;
+    // Disabling the focused button drops focus to the page; it is restored afterwards.
+    const refocus = document.activeElement === button;
     button.disabled = true;
-    button.textContent = 'Preparing your brochure...';
+    button.textContent = 'Preparing your brochure…';
     form.setAttribute('aria-busy', 'true');
     status.textContent = '';
     status.dataset.state = 'loading';
@@ -261,6 +264,7 @@ document.querySelectorAll('.geo-scroll').forEach(container => {
       button.disabled = false;
       button.innerHTML = label;
       form.removeAttribute('aria-busy');
+      if (refocus) button.focus();
     }
   });
 })();

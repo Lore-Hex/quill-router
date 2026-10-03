@@ -632,13 +632,18 @@ def exchange_site_campaign(request: Request, campaign: object) -> dict[str, str]
 
 
 def exchange_site_touch(page_url: str, campaign: dict[str, str]) -> dict[str, str]:
-    """The funnel touch for a Token Exchange page, defaulted as a landing on that page would be."""
+    """The funnel touch for a Token Exchange page's brochure download.
+
+    Defaults match the tagged links these pages used before the form (build.py tracked_url),
+    and the page's own campaign fields override them one by one, as they did on those links."""
     host = (urlsplit(page_url).hostname or "")[:128]
-    touch = dict(campaign)
-    if "utm_source" in touch:
-        touch.setdefault("utm_medium", "none")
-    else:
-        touch["utm_source"], touch["utm_medium"] = host, "referral"
+    touch = {
+        "utm_source": host,
+        "utm_medium": "referral",
+        "utm_campaign": "token-exchange-launch",
+        "utm_content": "brief",
+        **campaign,
+    }
     # The exported log keeps landing_path but not referer_host, so the path names the site.
     touch["landing_path"] = f"{host}/"
     touch["referer_host"] = host

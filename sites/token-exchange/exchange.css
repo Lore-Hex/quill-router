@@ -271,7 +271,7 @@
  .trust-evidence{grid-template-columns:1fr;}.trust-evidence>.catalogue{grid-column:auto}.trust-evidence .privacy-comparison{display:block}
 .trust-evidence .evidence-footer{font-size:14px}.attestation-panel dl{font-size:15px}
 }
-@media(min-width:901px){.masthead.nav-ready .menu-toggle{display:none}.masthead.nav-ready #primary-navigation,.masthead.nav-ready.menu-open #primary-navigation{display:flex;position:static;flex-direction:row;width:auto;max-width:none;border:0;border-radius:0;padding:0;box-shadow:none;background:none;gap:24px}}
+@media(min-width:1101px){.masthead.nav-ready .menu-toggle{display:none}.masthead.nav-ready #primary-navigation,.masthead.nav-ready.menu-open #primary-navigation{display:flex;position:static;flex-direction:row;width:auto;max-width:none;border:0;border-radius:0;padding:0;box-shadow:none;background:none;gap:24px}}
 
 /* Quiet market selection and one clear idea in each section. */
 /* Compact market navigation. */
@@ -428,7 +428,7 @@ h3,.privacy-choice h3,.uptime-panel figcaption,.attestation-panel h3,.trust-evid
 .secondary{background:#0b1814b3;color:#d4ecff;border-color:#8cab99;box-shadow:none}
 .secondary:hover{background:#13261f;border-color:#a9c7b6;color:#fff}
 .hero{flex-direction:column;align-items:stretch}
-.hero-copy{flex:1 0 auto;min-height:0;justify-content:center;padding-block:clamp(40px,6svh,76px) 24px}
+.hero-copy{flex:1 0 auto;min-height:0;justify-content:center;padding-block:40px 24px;padding-block:clamp(40px,6svh,76px) 24px}
 .hero .lead{margin:24px auto 28px}
 .hero-copy .actions{margin-top:0}
 .hero-providers{position:relative;z-index:1;width:100%;padding:16px 0 20px}
@@ -479,7 +479,7 @@ h3,.privacy-choice h3,.uptime-panel figcaption,.attestation-panel h3,.trust-evid
 /* The brochure band: the same email-gated download as trustedrouter.com/token-exchange,
    posted there from this domain. Built like the closing box, but with the ridges from the
    same landscape behind a heavy left fade, so the river is not used a third time. */
-.brochure{position:relative;isolation:isolate;overflow:hidden;border-block:1px solid var(--line);scroll-margin-top:24px}
+.brochure{position:relative;isolation:isolate;overflow:hidden;border-block:1px solid var(--line)}
 /* The peaks sit beside the copy, never behind it, faded in from the copy column's edge. */
 .brochure-art{position:absolute;inset:0 0 0 52%;z-index:-1;pointer-events:none;background:url('/assets/peaks-close.webp') 50% 0/cover no-repeat;-webkit-mask-image:linear-gradient(90deg,transparent,#000 35%);mask-image:linear-gradient(90deg,transparent,#000 35%)}
 .brochure-inner{position:relative}
@@ -494,8 +494,10 @@ h3,.privacy-choice h3,.uptime-panel figcaption,.attestation-panel h3,.trust-evid
 .brochure-row input[type=email]{flex:1 1 auto;min-width:0;min-height:52px;padding:12px 16px;border:1px solid rgba(220,225,222,.24);border-radius:6px;background:#050706;color:var(--text);font:17px Archivo,Arial,sans-serif;box-sizing:border-box;transition:border-color 150ms}
 .brochure-row input[type=email]:focus{outline:none;border-color:var(--mint)}
 .brochure-row input[type=email]:focus-visible{outline:3px solid var(--mint);outline-offset:3px}
+.brochure-row input[aria-invalid=true]{border-color:#f0b5a4}
 .brochure-row input::placeholder{color:var(--muted);opacity:.55}
 .brochure-row .button{flex:0 0 auto;margin:0;white-space:nowrap}
+.brochure-row .button:disabled{opacity:.6;cursor:not-allowed}.brochure-row .button:disabled:hover{background:var(--mint)}
 .brochure .form-note{font-size:14px;line-height:1.7;color:var(--muted);max-width:600px;margin:14px 0 0}
 .form-note a{text-decoration:underline;text-underline-offset:3px}
 .brochure .form-status{margin:10px 0 0;font-size:15px;min-height:24px;color:var(--mint)}

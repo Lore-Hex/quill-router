@@ -276,14 +276,14 @@ def test_exchange_site_email_lists_only_campaign_fields_the_page_sent(
     assert [m.text_body.count("utm_") for m in sent_messages] == [0, 0]
 
 
-def test_exchange_site_touch_defaults_like_a_landing() -> None:
-    def touch(campaign: dict[str, str]) -> tuple[str, str]:
+def test_exchange_site_touch_keeps_the_launch_link_defaults() -> None:
+    def touch(campaign: dict[str, str]) -> tuple[str, ...]:
         result = acquisition.exchange_site_touch("https://nytokenexchange.com/", campaign)
-        return result["utm_source"], result["utm_medium"]
+        return tuple(result[name] for name in ("utm_source", "utm_medium", "utm_campaign", "utm_content"))
 
-    assert touch({}) == ("nytokenexchange.com", "referral")
-    assert touch({"utm_source": "linkedin"}) == ("linkedin", "none")
-    assert touch({"utm_source": "linkedin", "utm_medium": "paid_social"}) == ("linkedin", "paid_social")
+    assert touch({}) == ("nytokenexchange.com", "referral", "token-exchange-launch", "brief")
+    assert touch({"utm_source": "linkedin"}) == ("linkedin", "referral", "token-exchange-launch", "brief")
+    assert touch({"utm_source": "linkedin", "utm_campaign": "ny"}) == ("linkedin", "referral", "ny", "brief")
 
 
 def test_exchange_site_campaign_ignores_privacy_signals_and_bad_values() -> None:
