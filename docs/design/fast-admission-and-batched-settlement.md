@@ -1,8 +1,8 @@
 # Fast admission and batched settlement
 
-Status: **proposed, v19, 2026-10-03. Nothing built.** v8 changed direction
-to regional leases, Joseph's choice (§2). Codex and Fable reviewed v1-v18
-(§11), and v19 answers their reviews of v18.
+Status: **proposed, v20, 2026-10-03. Nothing built.** v8 changed direction
+to regional leases, Joseph's choice (§2). Codex and Fable reviewed v1-v19
+(§11), and v20 answers Fable's review of v19.
 
 This is the plan for reaching 100T tokens a month without spending the routing
 margin on the billing database, and for taking the control plane out of request
@@ -424,8 +424,10 @@ and the request records all follow that rule.
     terminal, field for field (cost, disposition, outcome):
     - from A's stored winner. Winners are kept at least 7 days after the
       lease closes, longer than the enclave's queue can hold a settle (§4.8).
-      A kept, closed lease with no winner for A released A's hold uncharged
-      at close, and the answer says so;
+      A kept lease that the auditor closed, with no winner for A, released
+      A's hold uncharged at close, and the answer says so, as `released`. A
+      lease an operator closed because its records were beyond recovery
+      (§4.8) answers `pending` instead, since the request may have run;
     - after that, from the authorization's written records (§4.9);
     - when neither has a winner, as today's helper answers an outcome it
       cannot establish: `pending`, never released. A missing record is never
@@ -713,7 +715,9 @@ synchronous holds, through `settle_atomic`.
 - One transaction can carry many leases, each its own conditional statement.
 - Winners are stored packed, one row per lease per commit. A row-deletion
   policy removes them once the lease is closed, their pending work is done,
-  and 7 days have passed.
+  and 7 days have passed. Spanner's policies delete on a timestamp column, so
+  each pack's is set when both have happened, and a pack whose work never
+  completes keeps it unset and stays.
   - That pending work leaves every winner a written record: a charged winner
     its generation and activity records, a refund or a release a compact
     disposition record with its boot binding (§4.9).
@@ -933,6 +937,12 @@ when Python is unreachable: the first durable point is Python's
   - The auditor writes each authorization's generation and activity record
     from its stored winner and the matching staged record, after the commit
     that stored the winner.
+  - It first publishes the winner's outcome to the record topic: the
+    authorization, the outcome, the cost and the boot binding. So once the
+    pack is deleted, every written record can still be rebuilt from the
+    topic's Cloud Storage export, as staged records are. A winner's pending
+    work is done only once that publish is acknowledged and its records are
+    written. While a lost record is rebuilt, lookups answer `pending`.
   - A staged record is removed only once its winner's records are written,
     or once its lease has closed with no winner that needs it, as for losing
     and refunded terminals. A staged record never expires while the auditor
@@ -946,15 +956,22 @@ when Python is unreachable: the first durable point is Python's
   while it is kept, then from the records, with ClickHouse within the records
   bound for `gateway_request_id`, and `pending` when neither has one, as
   today's helper does. That covers winners from the drain log and from
-  closed leases: the enclave looks a disposition up after a `reaped_snapshot`
-  answer (`main.go` at `a06050f`).
+  closed leases: the enclave looks a disposition up after a settle times
+  out, and counts a loss when it reads `reaped_snapshot` (`main.go` at
+  `a06050f`).
   - The owner mints A with its lease in it, so a lookup by A alone reads that
     lease's packs, bounded by the commits in the lease's maximum life, and
-    the records, which are keyed by authorization.
+    the records, which are keyed by authorization. A is `gwa-`, the lease
+    ID and a random suffix, at most 64 bytes. Today it is `gwa-` and a UUID
+    (`_new_gateway_authorization_id`), and no consumer parses it.
   - A refund or a release writes no generation record, as today, so the
     auditor writes it a compact disposition record instead: the
     authorization, its outcome and its boot binding, which a boot-signed
-    lookup checks. So after the packs are deleted, every winner still has a
+    lookup checks. A release's outcome is `released` in its winner, its
+    record and every answer. Today's values are `settled`, `reaped_snapshot`
+    and `refunded`. The enclave counts a loss from `already_settled` without
+    `settled`, and from a lookup only for `reaped_snapshot`, so a new value is
+    safe. So after the packs are deleted, every winner still has a
     record, and only an authorization the auditor never saw answers
     `pending`.
 - **What stays synchronous for now.**
@@ -985,8 +1002,15 @@ stream, and streams the enclave heartbeats. These stay on today's Python path:
     prove it: at `a06050f` a boot in the spend-lease shadow mode registers
     without heartbeats on (`initializeSpendLeaseShadow`), and the Stage D
     signer falls back to that key (`stageDBootDigestSigner` in
-    `spend_lease.go`). The declaration is an enclave change (§9), and until
-    it ships every stream stays on Python;
+    `spend_lease.go`).
+    - The enclave sends the declaration when it registers (§9). Python stores
+      it on the boot record, `GatewayBoot`, from the registration route
+      (§8). There are two declarations, heartbeats and the heartbeat at stream
+      open, and a missing one means undeclared.
+    - Until registrations carry it, every stream stays on Python. Python's
+      own rule reads the same field once every accepted image declares it,
+      which closes the same gap on today's path; reading it sooner would end
+      today's Stage D for every enclave;
   - streaming `chat.completions` or `responses`, priced in credits on
     standard endpoints, outside the priority and auto service tiers. The
     enclave applies the same route test (`stageDStreamEligible` in
@@ -1157,6 +1181,8 @@ leases, and was retired on 2026-09-27.
 2. **Gateway load balancer and receipt-key publication** (§4.12), independent
    of the rest.
 3. **Python changes that stand alone:**
+   - the heartbeat declarations on `GatewayBoot` and in the registration
+     route, stored as sent, a missing one meaning undeclared (§4.11);
    - the debt mark on every shard, and covering a negative shard at once
      (§4.7), which closes a gap on today's path, with a one-time pass over
      workspaces that already have a negative shard;
@@ -1180,7 +1206,9 @@ leases, and was retired on 2026-09-27.
    reaper outcomes and records.
 6. **Benchmark gate** (§6).
 7. **Pilot:** Joseph's own workspace, then a few large ones, with kill switches
-   per workspace, region and cloud.
+   per workspace, region and cloud. The first cohort is requests that do not
+   stream. Streams join once the enclave sends the heartbeat declaration and
+   registrations carry it (§4.11).
 8. **Widen;** move keyed requests, capped keys, payouts and the remaining route
    types (§4.11) one at a time; then retire the Python hot path.
 
@@ -1693,3 +1721,27 @@ record.
   - A is minted with its lease in it, so a lookup by A finds the lease.
   - The early release is the owner's alone.
   - The P3s are answered in place.
+- **v20.** Fable (1 P2, 5 P3) found no money defect in v19. Codex's round 19
+  stalled before its verdict; its notes pointed at the same place as the
+  last point below. The findings:
+  - the heartbeat declaration had nowhere to live: `GatewayBoot` and the
+    registration route carry no capability, so either every stream stayed on
+    Python with no way to tell when that ended, or an absent field was read
+    as declared;
+  - and, among the P3s, leases an operator closed, the outcome value for a
+    release, the column the row-deletion policy reads, A's shape, and the
+    pilot's first cohort.
+  - From Codex's notes: a disposition record written once to ClickHouse
+    could not be rebuilt after its pack was deleted.
+
+  v20 answers them:
+  - The declarations, heartbeats and the heartbeat at stream open, are
+    stored on `GatewayBoot` from the registration route, a standalone Python
+    change in §8; a missing one means undeclared. Python's own rule reads the
+    same field once every accepted image sends it.
+  - The auditor publishes every winner's outcome to the record topic before
+    its pending work is done, so the Cloud Storage export can rebuild any
+    lost record.
+  - The P3s are answered in place, and the enclave's lookup is described as
+    it is: after a settle times out, counting a loss only for
+    `reaped_snapshot`.
