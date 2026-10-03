@@ -1,0 +1,1285 @@
+{
+  "provider": "byteplus",
+  "models": [
+    {
+      "display_name": "deepseek-r1",
+      "title": "deepseek-r1-250120",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/deepseek-r1-250120",
+      "upstream_id": "deepseek-r1-250120",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "deepseek-r1",
+      "title": "deepseek-r1-250528",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/deepseek-r1-250528",
+      "upstream_id": "deepseek-r1-250528",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "deepseek-r1-distill-qwen-32b",
+      "title": "deepseek-r1-distill-qwen-32b-250120",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/deepseek-r1-distill-qwen-32b-250120",
+      "upstream_id": "deepseek-r1-distill-qwen-32b-250120",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "deepseek-v3",
+      "title": "deepseek-v3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/deepseek-v3",
+      "upstream_id": "deepseek-v3",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "deepseek-v3-1",
+      "title": "deepseek-v3-1-250821",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/deepseek-v3-1-250821",
+      "upstream_id": "deepseek-v3-1-250821",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "deepseek-v3-2",
+      "title": "deepseek-v3-2-251201",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/deepseek-v3-2-251201",
+      "upstream_id": "deepseek-v3-2-251201",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "deepseek-v3",
+      "title": "deepseek-v3-241226",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/deepseek-v3-241226",
+      "upstream_id": "deepseek-v3-241226",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "dola-seed-2-1-turbo",
+      "title": "dola-seed-2-1-turbo-260628",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/dola-seed-2-1-turbo-260628",
+      "upstream_id": "dola-seed-2-1-turbo-260628",
+      "context_length": 262144,
+      "max_output_tokens": 262144,
+      "supported_features": [
+        "streaming",
+        "tools"
+      ],
+      "routable": false,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 2500000,
+      "cached_input_token_price_per_m": 100000,
+      "routable_reason": "gateway-upgrade-required"
+    },
+    {
+      "display_name": "dola-seedream-5-0-flash",
+      "title": "dola-seedream-5-0-flash-260915",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/dola-seedream-5-0-flash-260915",
+      "upstream_id": "dola-seedream-5-0-flash-260915",
+      "routable": false,
+      "routable_reason": "unsupported-api"
+    },
+    {
+      "display_name": "dola-seedream-5-0-pro",
+      "title": "dola-seedream-5-0-pro-260628",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/dola-seedream-5-0-pro-260628",
+      "upstream_id": "dola-seedream-5-0-pro-260628",
+      "routable": false,
+      "routable_reason": "unsupported-api"
+    },
+    {
+      "display_name": "dreamina-seedance-2-0-mini",
+      "title": "dreamina-seedance-2-0-mini-260615",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/dreamina-seedance-2-0-mini-260615",
+      "upstream_id": "dreamina-seedance-2-0-mini-260615",
+      "routable": false,
+      "routable_reason": "unsupported-api"
+    },
+    {
+      "display_name": "glm-4-7",
+      "title": "glm-4-7-251222",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/glm-4-7-251222",
+      "upstream_id": "glm-4-7-251222",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "gpt-oss-120b",
+      "title": "gpt-oss-120b-250805",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/gpt-oss-120b-250805",
+      "upstream_id": "gpt-oss-120b-250805",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "hitem3d-2-0",
+      "title": "hitem3d-2-0-251223",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/hitem3d-2-0-251223",
+      "upstream_id": "hitem3d-2-0-251223",
+      "routable": false,
+      "routable_reason": "unsupported-api"
+    },
+    {
+      "display_name": "hyper3d-gen2",
+      "title": "hyper3d-gen2-260112",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/hyper3d-gen2-260112",
+      "upstream_id": "hyper3d-gen2-260112",
+      "routable": false,
+      "routable_reason": "unsupported-api"
+    },
+    {
+      "display_name": "kimi-k2",
+      "title": "kimi-k2-250711",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/kimi-k2-250711",
+      "upstream_id": "kimi-k2-250711",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "kimi-k2",
+      "title": "kimi-k2-250905",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/kimi-k2-250905",
+      "upstream_id": "kimi-k2-250905",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "kimi-k2",
+      "title": "kimi-k2-thinking-251104",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/kimi-k2-thinking-251104",
+      "upstream_id": "kimi-k2-thinking-251104",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "seed-1-6",
+      "title": "seed-1-6-250615",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/seed-1-6-250615",
+      "upstream_id": "seed-1-6-250615",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "seed-1-6",
+      "title": "seed-1-6-250915",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/seed-1-6-250915",
+      "upstream_id": "seed-1-6-250915",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "seed-1-6-flash",
+      "title": "seed-1-6-flash-250615",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/seed-1-6-flash-250615",
+      "upstream_id": "seed-1-6-flash-250615",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "seed-1-6-flash",
+      "title": "seed-1-6-flash-250715",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/seed-1-6-flash-250715",
+      "upstream_id": "seed-1-6-flash-250715",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "seed-1-8",
+      "title": "seed-1-8-251228",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/seed-1-8-251228",
+      "upstream_id": "seed-1-8-251228",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "seed-2-0-code",
+      "title": "seed-2-0-code-preview-260328",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/seed-2-0-code-preview-260328",
+      "upstream_id": "seed-2-0-code-preview-260328",
+      "context_length": 262144,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "streaming",
+        "tools"
+      ],
+      "routable": false,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 3000000,
+      "cached_input_token_price_per_m": 100000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 128000,
+          "input_token_price_per_m": 500000,
+          "output_token_price_per_m": 3000000,
+          "cached_input_token_price_per_m": 100000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 1000000,
+          "output_token_price_per_m": 6000000,
+          "cached_input_token_price_per_m": 200000
+        }
+      ],
+      "routable_reason": "gateway-upgrade-required"
+    },
+    {
+      "display_name": "seed-2-0-lite",
+      "title": "seed-2-0-lite-260228",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/seed-2-0-lite-260228",
+      "upstream_id": "seed-2-0-lite-260228",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "seed-2-0-lite",
+      "title": "seed-2-0-lite-260428",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/seed-2-0-lite-260428",
+      "upstream_id": "seed-2-0-lite-260428",
+      "context_length": 262144,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "streaming",
+        "tools"
+      ],
+      "routable": false,
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 2000000,
+      "cached_input_token_price_per_m": 50000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 128000,
+          "input_token_price_per_m": 250000,
+          "output_token_price_per_m": 2000000,
+          "cached_input_token_price_per_m": 50000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 500000,
+          "output_token_price_per_m": 4000000,
+          "cached_input_token_price_per_m": 100000
+        }
+      ],
+      "routable_reason": "gateway-upgrade-required"
+    },
+    {
+      "display_name": "seed-2-0-mini",
+      "title": "seed-2-0-mini-260215",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/seed-2-0-mini-260215",
+      "upstream_id": "seed-2-0-mini-260215",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "seed-2-0-mini",
+      "title": "seed-2-0-mini-260428",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/seed-2-0-mini-260428",
+      "upstream_id": "seed-2-0-mini-260428",
+      "context_length": 262144,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "streaming",
+        "tools"
+      ],
+      "routable": false,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 20000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 128000,
+          "input_token_price_per_m": 100000,
+          "output_token_price_per_m": 400000,
+          "cached_input_token_price_per_m": 20000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 200000,
+          "output_token_price_per_m": 800000,
+          "cached_input_token_price_per_m": 40000
+        }
+      ],
+      "routable_reason": "gateway-upgrade-required"
+    },
+    {
+      "display_name": "seed-2-0-pro",
+      "title": "seed-2-0-pro-260328",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/seed-2-0-pro-260328",
+      "upstream_id": "seed-2-0-pro-260328",
+      "context_length": 262144,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "streaming",
+        "tools"
+      ],
+      "routable": false,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 3000000,
+      "cached_input_token_price_per_m": 100000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 128000,
+          "input_token_price_per_m": 500000,
+          "output_token_price_per_m": 3000000,
+          "cached_input_token_price_per_m": 100000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 1000000,
+          "output_token_price_per_m": 6000000,
+          "cached_input_token_price_per_m": 200000
+        }
+      ],
+      "routable_reason": "gateway-upgrade-required"
+    },
+    {
+      "display_name": "seed-translation",
+      "title": "seed-translation-250915",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/seed-translation-250915",
+      "upstream_id": "seed-translation-250915",
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-10-03"
+    },
+    {
+      "display_name": "seedance-1-0-lite-i2v",
+      "title": "seedance-1-0-lite-i2v-250428",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/seedance-1-0-lite-i2v-250428",
+      "upstream_id": "seedance-1-0-lite-i2v-250428",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "seedance-1-0-lite-t2v",
+      "title": "seedance-1-0-lite-t2v-250428",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/seedance-1-0-lite-t2v-250428",
+      "upstream_id": "seedance-1-0-lite-t2v-250428",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "seedance-1-0-pro",
+      "title": "seedance-1-0-pro-250528",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/seedance-1-0-pro-250528",
+      "upstream_id": "seedance-1-0-pro-250528",
+      "routable": false,
+      "routable_reason": "unsupported-api"
+    },
+    {
+      "display_name": "seedance-1-0-pro-fast",
+      "title": "seedance-1-0-pro-fast-251015",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/seedance-1-0-pro-fast-251015",
+      "upstream_id": "seedance-1-0-pro-fast-251015",
+      "routable": false,
+      "routable_reason": "unsupported-api"
+    },
+    {
+      "display_name": "seedance-1-5-pro",
+      "title": "seedance-1-5-pro-251215",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/seedance-1-5-pro-251215",
+      "upstream_id": "seedance-1-5-pro-251215",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "dreamina-seedance-2-0",
+      "title": "dreamina-seedance-2-0-260128",
+      "model_type": "video",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "video"
+      ],
+      "endpoints": [
+        "videos"
+      ],
+      "status": 1,
+      "id": "bytedance/seedance-2.0",
+      "upstream_id": "dreamina-seedance-2-0-260128",
+      "billing_unit": "output_tokens",
+      "context_length": 0,
+      "routable": false,
+      "routable_reason": "gateway-upgrade-required",
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 7000000
+    },
+    {
+      "display_name": "dreamina-seedance-2-0-fast",
+      "title": "dreamina-seedance-2-0-fast-260128",
+      "model_type": "video",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "video"
+      ],
+      "endpoints": [
+        "videos"
+      ],
+      "status": 1,
+      "id": "bytedance/seedance-2.0-fast",
+      "upstream_id": "dreamina-seedance-2-0-fast-260128",
+      "billing_unit": "output_tokens",
+      "context_length": 0,
+      "routable": false,
+      "routable_reason": "gateway-upgrade-required",
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 5600000
+    },
+    {
+      "display_name": "dreamina-seedance-2-5",
+      "title": "dreamina-seedance-2-5-260628",
+      "model_type": "video",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "video"
+      ],
+      "endpoints": [
+        "videos"
+      ],
+      "status": 1,
+      "id": "bytedance/seedance-2.5",
+      "upstream_id": "dreamina-seedance-2-5-260628",
+      "billing_unit": "output_tokens",
+      "context_length": 0,
+      "routable": false,
+      "routable_reason": "gateway-upgrade-required",
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 10700000
+    },
+    {
+      "display_name": "seededit-3-0-i2i",
+      "title": "seededit-3-0-i2i-250628",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/seededit-3-0-i2i-250628",
+      "upstream_id": "seededit-3-0-i2i-250628",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "seedream-3-0-t2i",
+      "title": "seedream-3-0-t2i-250415",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/seedream-3-0-t2i-250415",
+      "upstream_id": "seedream-3-0-t2i-250415",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "seedream-4-0",
+      "title": "seedream-4-0-20260415",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/seedream-4-0-20260415",
+      "upstream_id": "seedream-4-0-20260415",
+      "routable": false,
+      "routable_reason": "unsupported-api"
+    },
+    {
+      "display_name": "seedream-4-0",
+      "title": "seedream-4-0-250828",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/seedream-4-0-250828",
+      "upstream_id": "seedream-4-0-250828",
+      "routable": false,
+      "routable_reason": "unsupported-api"
+    },
+    {
+      "display_name": "seedream-4-5",
+      "title": "seedream-4-5-251128",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/seedream-4-5-251128",
+      "upstream_id": "seedream-4-5-251128",
+      "routable": false,
+      "routable_reason": "unsupported-api"
+    },
+    {
+      "display_name": "seedream-5-0",
+      "title": "seedream-5-0-260128",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/seedream-5-0-260128",
+      "upstream_id": "seedream-5-0-260128",
+      "routable": false,
+      "routable_reason": "unsupported-api"
+    },
+    {
+      "display_name": "skylark-embedding-vision",
+      "title": "skylark-embedding-vision-250328",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/skylark-embedding-vision-250328",
+      "upstream_id": "skylark-embedding-vision-250328",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "skylark-embedding-vision",
+      "title": "skylark-embedding-vision-250615",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/skylark-embedding-vision-250615",
+      "upstream_id": "skylark-embedding-vision-250615",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "skylark-embedding-vision",
+      "title": "skylark-embedding-vision-251215",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/skylark-embedding-vision-251215",
+      "upstream_id": "skylark-embedding-vision-251215",
+      "routable": false,
+      "routable_reason": "unsupported-api"
+    },
+    {
+      "display_name": "skylark-lite",
+      "title": "skylark-lite-250215",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/skylark-lite-250215",
+      "upstream_id": "skylark-lite-250215",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "skylark-pro",
+      "title": "skylark-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/skylark-pro",
+      "upstream_id": "skylark-pro",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "skylark-pro",
+      "title": "skylark-pro-250215",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/skylark-pro-250215",
+      "upstream_id": "skylark-pro-250215",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "skylark-vision",
+      "title": "skylark-vision-250515",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/skylark-vision-250515",
+      "upstream_id": "skylark-vision-250515",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "deepseek-v4-flash",
+      "title": "deepseek-v4-flash-260425",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash",
+      "upstream_id": "deepseek-v4-flash-260425",
+      "context_length": 1048576,
+      "max_output_tokens": 393216,
+      "supported_features": [
+        "streaming",
+        "tools"
+      ],
+      "routable": false,
+      "routable_reason": "gateway-upgrade-required",
+      "input_token_price_per_m": 440000,
+      "output_token_price_per_m": 1320000,
+      "cached_input_token_price_per_m": 14000
+    },
+    {
+      "display_name": "deepseek-v4-flash-ga",
+      "title": "deepseek-v4-flash-ga-260731",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash-0731",
+      "upstream_id": "deepseek-v4-flash-ga-260731",
+      "context_length": 1048576,
+      "max_output_tokens": 393216,
+      "supported_features": [
+        "streaming",
+        "tools"
+      ],
+      "routable": false,
+      "input_token_price_per_m": 440000,
+      "output_token_price_per_m": 1320000,
+      "cached_input_token_price_per_m": 14000,
+      "routable_reason": "gateway-upgrade-required"
+    },
+    {
+      "display_name": "deepseek-v4-pro",
+      "title": "deepseek-v4-pro-260425",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-pro-0423",
+      "upstream_id": "deepseek-v4-pro-260425",
+      "context_length": 1048576,
+      "max_output_tokens": 393216,
+      "supported_features": [
+        "streaming",
+        "tools"
+      ],
+      "routable": false,
+      "input_token_price_per_m": 1320000,
+      "output_token_price_per_m": 3960000,
+      "cached_input_token_price_per_m": 44000,
+      "routable_reason": "gateway-upgrade-required"
+    },
+    {
+      "display_name": "deepseek-v4-pro-ga",
+      "title": "deepseek-v4-pro-ga-260813",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-pro-0813",
+      "upstream_id": "deepseek-v4-pro-ga-260813",
+      "context_length": 1048576,
+      "max_output_tokens": 393216,
+      "supported_features": [
+        "streaming",
+        "tools"
+      ],
+      "routable": false,
+      "input_token_price_per_m": 1320000,
+      "output_token_price_per_m": 3960000,
+      "cached_input_token_price_per_m": 44000,
+      "routable_reason": "gateway-upgrade-required"
+    },
+    {
+      "display_name": "deepseek-v4-1-flash",
+      "title": "deepseek-v4-1-flash-260910",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4.1-flash",
+      "upstream_id": "deepseek-v4-1-flash-260910",
+      "routable": false,
+      "routable_reason": "time-dependent-pricing-unsupported"
+    },
+    {
+      "display_name": "glm-5-2",
+      "title": "glm-5-2-260617",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "glm-5-2-260617",
+      "context_length": 1048576,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "streaming",
+        "tools",
+        "prompt_caching"
+      ],
+      "routable": false,
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 260000,
+      "routable_reason": "gateway-upgrade-required"
+    },
+    {
+      "display_name": "glm-5-3-flash",
+      "title": "glm-5-3-flash-260828",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3-flash",
+      "upstream_id": "glm-5-3-flash-260828",
+      "context_length": 1048576,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "streaming",
+        "tools",
+        "prompt_caching"
+      ],
+      "routable": false,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 500000,
+      "cached_input_token_price_per_m": 30000,
+      "routable_reason": "gateway-upgrade-required"
+    }
+  ],
+  "source": "https://ark.ap-southeast.bytepluses.com/api/v3/models",
+  "pricing_source": "https://docs.byteplus.com/en/docs/modelark/model-pricing",
+  "generated_at": "2026-10-03T15:51:55Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 58
+}

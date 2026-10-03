@@ -99,7 +99,6 @@ ROUTABLE_READY = READY | {"perplexity"}
 PENDING = {
     "perceptron",
     "modal",
-    "byteplus",
     "riverflow",
     "liquid",
 }

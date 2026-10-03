@@ -283,6 +283,7 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "scaleway",
         "regolo",
         "lyceum",
+        "byteplus",
         "privatemode",
         "featherless",
         "sakana",
@@ -1097,6 +1098,7 @@ def _supplemental_provider_models_and_endpoints(
         "scaleway",
         "regolo",
         "lyceum",
+        "byteplus",
         "privatemode",
         "featherless",
         "sakana",
@@ -1132,10 +1134,17 @@ def _supplemental_provider_models_and_endpoints(
                 upstream_id = model_id
             if _is_provider_deprecated_model(provider_slug, model_id, upstream_id, at=at):
                 continue
-            if raw_model.get("model_type") not in (None, "chat", "image", "embedding", "decision"):
+            if raw_model.get("model_type") not in (None, "chat", "image", "embedding", "decision", "video"):
                 continue
             endpoint_types = {str(item) for item in (raw_model.get("endpoints") or [])}
-            if not endpoint_types.intersection({"chat/completions", "images", "embeddings", "decide"}):
+            if not endpoint_types.intersection({"chat/completions", "images", "embeddings", "decide", "videos"}):
+                continue
+            token_video = raw_model.get("model_type") == "video"
+            if token_video and (
+                provider_slug != "byteplus" or endpoint_types != {"videos"}
+                or raw_model.get("billing_unit") != "output_tokens"
+                or model_id not in {"bytedance/seedance-2.5", "bytedance/seedance-2.0", "bytedance/seedance-2.0-fast"}
+            ):
                 continue
             embedding = raw_model.get("model_type") == "embedding"
             decision = raw_model.get("model_type") == "decision"
@@ -1166,6 +1175,8 @@ def _supplemental_provider_models_and_endpoints(
                 raw_model.get("output_token_price_per_m"),
                 price_scale=price_scale,
             )
+            if token_video and (prompt_cost != 0 or completion_cost <= 0 or "price_tiers" in raw_model):
+                continue
             if (embedding or decision) and (
                 prompt_cost <= 0 or completion_cost != 0
                 or "price_tiers" in raw_model or "cached_input_token_price_per_m" in raw_model
@@ -1231,6 +1242,9 @@ def _supplemental_provider_models_and_endpoints(
                     continue
                 completion_price = 0
                 tiers = _flat_tier(prompt_price, 0)
+            if token_video:
+                prompt_price, cached_price = 0, None
+                tiers = _flat_tier(0, completion_price)
             publisher = (
                 _author_provider(model_id, [{"tr_provider_slug": provider_slug}]) or provider_slug
             )
@@ -1255,6 +1269,7 @@ def _supplemental_provider_models_and_endpoints(
                 supports_embeddings=embedding,
                 supports_messages=publisher == "anthropic",
                 supports_decide=decision,
+                supports_video=token_video,
                 supported_parameters=supported_parameters,
                 input_modalities=_modalities(
                     raw_model.get("input_modalities"),
