@@ -232,7 +232,7 @@ document.querySelectorAll('.geo-scroll').forEach(container => {
           429: `You've reached the download limit. Please try later or email ${contact}.`,
         };
         if (response.status === 422) email.setAttribute('aria-invalid', 'true');
-        throw new Error(errors[response.status] || `We couldn't prepare your brochure. Please try again or email ${contact}.`);
+        throw new Error(errors[response.status] || `Something went wrong. Try again or email ${contact}.`);
       }
       if (!(response.headers.get('content-type') || '').includes('application/pdf')) {
         throw new Error(`Please refresh the page and try again, or email ${contact}.`);
@@ -253,7 +253,7 @@ document.querySelectorAll('.geo-scroll').forEach(container => {
       status.textContent = error.name === 'AbortError'
         ? `This is taking longer than expected. Please try again or email ${contact}.`
         : error instanceof TypeError
-          ? `We couldn't prepare your brochure. Please try again in a moment or email ${contact}.`
+          ? `Something went wrong. Try again or email ${contact}.`
           : error.message;
     } finally {
       clearTimeout(timeout);
