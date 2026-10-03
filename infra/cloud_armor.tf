@@ -7,7 +7,7 @@
 # policies exactly as read on 2026-10-03, so adopting them changes nothing.
 #
 # The deploy identity that applies this root (tr-deploy) can read and attach
-# security policies but cannot create or change them, on purpose: a
+# security policies but cannot add, edit or delete them, on purpose: a
 # compromised deploy pipeline must not be able to weaken the edge. A pull
 # request that changes a rule here therefore needs an owner to apply it with
 # their own credentials before it merges (see "Cloud Armor policies" in
