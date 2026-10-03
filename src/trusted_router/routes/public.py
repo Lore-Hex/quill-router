@@ -1520,6 +1520,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def confidential_ai_badge() -> str:
         return public_page_html(settings, "badge")
 
+    @public_html_route("/media-kit")
+    async def media_kit() -> str:
+        return public_page_html(settings, "media-kit")
+
     @public_html_route("/tinfoil-alternative")
     async def seo_tinfoil_alternative() -> str:
         return public_page_html(settings, "tinfoil-alternative")

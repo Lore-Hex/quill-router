@@ -1,0 +1,61 @@
+{% extends "public/_base.html" %}
+{% block head_extra %}
+<link rel="stylesheet" href="/static/media-kit.css?v={{ static_version|default('local') }}">
+{% endblock %}
+{% block hero %}
+<header class="media-intro">
+  <p class="eyebrow">Press and partners</p>
+  <h1>TrustedRouter media kit</h1>
+  <p class="lead">The logos, images, and words for your next story.</p>
+  <div class="hero-actions">
+    <a class="btn primary" href="/static/media-kit/trustedrouter-media-kit.zip" download>Download the kit <span aria-hidden="true">↓</span></a>
+    <a class="btn" href="mailto:help@trustedrouter.com?subject=Media%20inquiry">Contact us</a>
+  </div>
+  <p class="media-note">SVG logos, transparent 1024 px PNGs, social images, and company copy. Public downloads.</p>
+</header>
+{% endblock %}
+{% block body %}
+<article class="media-kit" data-substantive-content="media-kit">
+  <section class="media-section" aria-labelledby="media-logos">
+    <div class="media-heading"><h2 id="media-logos">The mark</h2><p>Choose a version for your background. SVGs scale to any size.</p></div>
+    <div class="media-grid">
+      {% for slug, label, surface in [('light', 'For light backgrounds', 'light'), ('dark', 'For dark backgrounds', 'dark'), ('mono', 'Monochrome', 'light')] %}
+      <article class="media-asset">
+        <div class="media-preview media-preview-{{ surface }}"><img src="/static/media-kit/trustedrouter-{{ slug }}.svg" width="160" height="160" alt="TrustedRouter logo: {{ label|lower }}"></div>
+        <div class="media-caption"><h3>{{ label }}</h3><div class="media-downloads">
+          <a href="/static/media-kit/trustedrouter-{{ slug }}.svg" download aria-label="Download {{ label|lower }} SVG">SVG <span aria-hidden="true">↓</span></a>
+          <a href="/static/media-kit/trustedrouter-{{ slug }}.png" download aria-label="Download {{ label|lower }} PNG">PNG <span aria-hidden="true">↓</span></a>
+        </div></div>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  <section class="media-section" aria-labelledby="media-copy">
+    <div class="media-heading"><h2 id="media-copy">In a few words</h2><a href="/static/media-kit/about-trustedrouter.txt" download>Download company copy <span aria-hidden="true">↓</span></a></div>
+    <div class="media-copy-grid">
+      <div><h3>One sentence</h3><p>TrustedRouter gives developers and enterprises one OpenAI-compatible API for hundreds of AI models, with provider fallback and privacy controls backed by an attested gateway.</p>
+      <h3>The short version</h3><p>TrustedRouter is operated by Lore Hex Corp, a Delaware corporation founded by Joseph Perla. Teams use one API to compare models, manage costs, and route across providers. The gateway runs in confidential compute and publishes hardware-attestation evidence that customers and their agents can verify. TrustedRouter keeps no prompt or output logs. Upstream provider retention and confidential-compute protections depend on the selected route.</p>
+      <p><a href="/about">Company details</a> · <a href="/providers">Provider privacy policies</a> · <a href="/trust">Verify live attestation</a></p></div>
+      <dl class="media-facts"><dt>Brand</dt><dd>TrustedRouter</dd><dt>Tagline</dt><dd>Privacy with proof.</dd><dt>Operator</dt><dd>Lore Hex Corp</dd><dt>Founder and CEO</dt><dd>Joseph Perla</dd><dt>Press and partnerships</dt><dd><a href="mailto:help@trustedrouter.com">help@trustedrouter.com</a></dd><dt>Website</dt><dd><a href="https://trustedrouter.com">trustedrouter.com</a></dd></dl>
+    </div>
+  </section>
+  <section class="media-section" aria-labelledby="media-social">
+    <div class="media-heading"><h2 id="media-social">Social and editorial images</h2><p>1200 × 630 PNGs. Ready for articles, newsletters, and social posts.</p></div>
+    <div class="media-grid">
+      {% for slug, label, url in [('trustedrouter-social', 'TrustedRouter', 'https://trustedrouter.com'), ('token-exchange-social', 'The Token Exchange', 'https://thetokenexchange.com'), ('ny-token-exchange-social', 'New York Token Exchange', 'https://nytokenexchange.com')] %}
+      <article class="media-asset">
+        <img class="media-social-image" src="/static/media-kit/{{ slug }}.png" width="1200" height="630" loading="lazy" alt="{{ label }} social image">
+        <div class="media-caption"><h3><a href="{{ url }}">{{ label }}</a></h3><div class="media-downloads"><a href="/static/media-kit/{{ slug }}.png" download aria-label="Download {{ label }} social image">PNG <span aria-hidden="true">↓</span></a></div></div>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  <section class="media-section" aria-labelledby="media-usage">
+    <div class="media-heading"><h2 id="media-usage">Using the assets</h2></div>
+    <div class="media-copy-grid">
+      <div><p>Use these assets to identify TrustedRouter in articles, integrations, videos, and partner materials. Keep the proportions and colors intact, leave clear space around the mark, and choose a contrasting background.</p><p>Write the name as <strong>TrustedRouter</strong>, one word with a capital T and R. Link to <a href="https://trustedrouter.com">trustedrouter.com</a> when introducing the product.</p></div>
+      <div><p>Logos identify the brand; they are not certifications or endorsements. For a badge describing your application's routing, use the <a href="/badge">Confidential AI badge</a> and its eligibility guidance.</p><p>For interviews, screenshots, or a custom format, email <a href="mailto:help@trustedrouter.com">help@trustedrouter.com</a>.</p></div>
+    </div>
+  </section>
+</article>
+{% endblock %}
