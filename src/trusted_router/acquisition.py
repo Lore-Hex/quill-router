@@ -616,6 +616,38 @@ def log_browser_funnel_event(
     )
 
 
+def exchange_site_touch(page_url: str, campaign: object) -> dict[str, str]:
+    """The touch for a form posted from a Token Exchange site, which has no attribution cookie.
+
+    Campaign fields come from the page's own URL; without them the site is the referral."""
+    touch: dict[str, str] = {}
+    if isinstance(campaign, dict):
+        for name in ("utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"):
+            value = campaign.get(name)
+            if isinstance(value, str) and (safe := _safe_text(value, 128)):
+                touch[name] = safe
+    host = (urlsplit(page_url).hostname or "")[:128]
+    touch.setdefault("utm_source", host)
+    touch.setdefault("utm_medium", "referral")
+    touch["landing_path"] = "/"
+    touch["referer_host"] = host
+    touch["captured_at"] = iso_now()
+    return touch
+
+
+def log_exchange_site_funnel_event(request: Request, event: str, touch: dict[str, str]) -> None:
+    if _privacy_signal_enabled(request) or acquisition_request_is_automated(request):
+        return
+    log.info(
+        f"acquisition.{event}",
+        extra={
+            "event": f"acquisition.{event}",
+            "anonymous_fingerprint": _fingerprint(uuid.uuid4().hex),
+            **_safe_touch_log_fields(touch),
+        },
+    )
+
+
 def onboarding_exposure(request: Request, *, user_id: str, workspace_id: str, record: bool = True) -> str:
     """Record only a rendered, actionable treatment, using already-loaded IDs."""
     context = request_attribution(request)

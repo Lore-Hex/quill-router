@@ -33,7 +33,11 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import Response
 from starlette.types import Scope
 
-from trusted_router.acquisition import log_browser_funnel_event
+from trusted_router.acquisition import (
+    exchange_site_touch,
+    log_browser_funnel_event,
+    log_exchange_site_funnel_event,
+)
 from trusted_router.ai_iq import ai_iq_catalog_payload
 from trusted_router.apps import aggregate_apps
 from trusted_router.benchmark_reports import monthly_benchmark_report
@@ -779,23 +783,12 @@ _SECURITY_PACK = _ENTERPRISE_BRIEF.with_name("TrustedRouter-Security-Pack.zip")
 _BRIEF_HEADERS = {"Cache-Control": "private, no-store", "X-Robots-Tag": "noindex, nofollow"}
 # The static Token Exchange sites (sites/token-exchange/markets.json) host the same brochure
 # form and post it here from their own domains. Only the canonical origins are allowed;
-# www and alias hosts redirect to these before a page is ever served.
+# www and alias hosts redirect to these before a page is ever served. The site tests fail
+# if a market is missing from this list, and the site publish refuses until it is deployed.
 _EXCHANGE_ORIGINS = frozenset(
     f"https://{domain}"
-    for domain in (
-        "thetokenexchange.com",
-        "nytokenexchange.com",
-        "chicagotokenexchange.com",
-        "sftokenexchange.com",
-        "texastokenexchange.com",
-        "usatokenexchange.com",
-        "eutokenexchange.com",
-        "londontoken.exchange",
-        "dubaitokenexchange.com",
-        "riyadhtokenexchange.com",
-        "hktokenexchange.com",
-        "shanghaitokenexchange.com",
-        "tokyotokenexchange.com",
+    for domain in json.loads(
+        (Path(__file__).parents[1] / "data" / "token_exchange_origins.json").read_text()
     )
 )
 _BRIEF_PREFLIGHT_HEADERS = {
@@ -898,6 +891,14 @@ async def _handle_enterprise_brief(settings: Settings, request: Request) -> Resp
         return error("delivery_unavailable", 503)
 
     page_url = f"{exchange_origin}/" if exchange_origin else f"https://trustedrouter.com{page}"
+    # Exchange sites post cross-site without TrustedRouter's attribution cookie, so they
+    # send the campaign fields from their own URL instead.
+    touch = exchange_site_touch(page_url, payload.get("campaign")) if exchange_origin else None
+    campaign_lines = "".join(
+        f"{name}: {touch[name]}\n"
+        for name in ("utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content")
+        if touch and name in touch
+    )
     message = EmailMessage(
         to=settings.partner_inquiry_email or "enterprise@trustedrouter.com",
         reply_to=email,
@@ -905,7 +906,8 @@ async def _handle_enterprise_brief(settings: Settings, request: Request) -> Resp
         text_body=(
             f"An enterprise visitor requested the Token Exchange {label}.\n\n"
             f"Email: {email}\n"
-            f"Page: {page_url}\n\n"
+            f"Page: {page_url}\n"
+            f"{campaign_lines}\n"
             "The form permits follow-up about enterprise AI. It does not subscribe "
             "the visitor to a newsletter. Reply directly to discuss their requirements.\n"
         ),
@@ -918,7 +920,10 @@ async def _handle_enterprise_brief(settings: Settings, request: Request) -> Resp
     if not sent:
         log.error("enterprise_brief.delivery_unavailable")
         return error("delivery_unavailable", 503)
-    log_browser_funnel_event(request, event)
+    if touch is not None:
+        log_exchange_site_funnel_event(request, event, touch)
+    else:
+        log_browser_funnel_event(request, event)
     return FileResponse(
         asset,
         media_type=media_type,

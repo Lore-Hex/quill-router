@@ -11,6 +11,7 @@ from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
+from trusted_router import acquisition
 from trusted_router.config import Settings
 from trusted_router.routes import public as public_routes
 from trusted_router.services.email import EmailMessage
@@ -240,6 +241,47 @@ def test_exchange_sites_may_request_the_brief_from_their_own_domains(client: Tes
     assert "Origin" in response.headers["vary"]
     assert len(sent_messages) == 1
     assert "Page: https://nytokenexchange.com/\n" in sent_messages[0].text_body
+
+
+def test_exchange_site_brochure_keeps_its_campaign(
+    client: TestClient, sent_messages: list[EmailMessage], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[tuple[str, dict[str, str]]] = []
+    monkeypatch.setattr(public_routes, "log_exchange_site_funnel_event", lambda _r, name, touch: events.append((name, touch)))
+    monkeypatch.setattr(public_routes, "log_browser_funnel_event", lambda *_: pytest.fail("cookie funnel used"))
+    campaign = {"utm_source": "linkedin", "utm_medium": "paid_social", "utm_campaign": "ny-launch", "gclid": "dropped"}
+    response = client.post(
+        "/token-exchange/brief", json={"email": "ada@example.com", "campaign": campaign}, headers=EXCHANGE_HEADERS
+    )
+    assert response.status_code == 200
+    body = sent_messages[0].text_body
+    assert "utm_source: linkedin\nutm_medium: paid_social\nutm_campaign: ny-launch\n" in body
+    assert "gclid" not in body
+    [(name, touch)] = events
+    assert name == "enterprise_brief_delivered"
+    assert touch["utm_campaign"] == "ny-launch"
+    assert touch["referer_host"] == "nytokenexchange.com"
+
+
+def test_exchange_site_brochure_without_a_campaign_counts_the_site_as_referral() -> None:
+    touch = acquisition.exchange_site_touch("https://nytokenexchange.com/", None)
+    assert (touch["utm_source"], touch["utm_medium"]) == ("nytokenexchange.com", "referral")
+    assert acquisition.exchange_site_touch("https://nytokenexchange.com/", {"utm_source": 7})["utm_source"] == "nytokenexchange.com"
+
+
+def test_exchange_site_funnel_event_respects_privacy_signals(caplog: pytest.LogCaptureFixture) -> None:
+    touch = acquisition.exchange_site_touch("https://nytokenexchange.com/", {"utm_source": "linkedin"})
+
+    def request(headers: dict[str, str]) -> Request:
+        raw = [(k.lower().encode(), v.encode()) for k, v in {"user-agent": "Mozilla/5.0", **headers}.items()]
+        return Request({"type": "http", "method": "POST", "path": "/token-exchange/brief", "headers": raw, "query_string": b""})
+
+    with caplog.at_level(logging.INFO):
+        acquisition.log_exchange_site_funnel_event(request({"Sec-GPC": "1"}), "enterprise_brief_delivered", touch)
+        assert not [r for r in caplog.records if r.message == "acquisition.enterprise_brief_delivered"]
+        acquisition.log_exchange_site_funnel_event(request({}), "enterprise_brief_delivered", touch)
+    [record] = [r for r in caplog.records if r.message == "acquisition.enterprise_brief_delivered"]
+    assert record.utm_source == "linkedin"
 
 
 def test_exchange_sites_can_read_the_error_they_caused(client: TestClient, sent_messages: list[EmailMessage]) -> None:

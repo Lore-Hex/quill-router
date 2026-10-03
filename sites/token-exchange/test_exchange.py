@@ -13,6 +13,7 @@ from build import build, load_markets, render, tracked_url
 from deploy import certificate_requests, domains, publish_certificates, url_map
 
 RIYADH = ["riyadhtokenexchange.com", "www.riyadhtokenexchange.com"]
+REAL_BROCHURE_GAPS = deploy.brochure_gaps
 
 
 class FakeCloud:
@@ -150,6 +151,12 @@ class MarketLinkParser(HTMLParser):
 
 
 class ExchangeTests(unittest.TestCase):
+    def setUp(self):
+        # Publish asks the live app whether it accepts every domain; tests stay offline.
+        patcher = mock.patch.object(deploy, "brochure_gaps", return_value=[])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_inventory(self):
         self.assertEqual(len(load_markets()), 13)
         self.assertEqual(len(domains()), 30)
@@ -163,6 +170,32 @@ class ExchangeTests(unittest.TestCase):
         )
         self.assertEqual(len(listed), len(set(listed)))
         self.assertEqual(sorted(set(domains()) - set(listed)), [])
+
+    def test_every_market_domain_may_request_the_brochure(self):
+        # Rule: the app allowlists exactly the canonical market domains for the brochure form.
+        listed = json.loads(
+            (Path(__file__).parents[2] / "src" / "trusted_router" / "data" / "token_exchange_origins.json").read_text()
+        )
+        self.assertEqual(sorted(listed), sorted(m["domain"] for m in load_markets()))
+
+    def test_publish_refuses_until_the_app_accepts_every_domain(self):
+        with mock.patch.object(deploy, "brochure_gaps", return_value=["newcitytokenexchange.com"]), \
+                tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(deploy, "gcloud", side_effect=AssertionError("published")):
+            with self.assertRaisesRegex(RuntimeError, "does not accept newcitytokenexchange.com[.] .*deploy the app first"):
+                deploy.publish(built_output(Path(directory) / "out"), Path(directory) / "state")
+
+    def test_brochure_gaps_lists_domains_the_live_preflight_rejects(self):
+        def answer(request, timeout):
+            origin = request.headers["Origin"]
+            if origin == "https://tokyotokenexchange.com":
+                raise deploy.urllib.error.HTTPError(request.full_url, 403, "Forbidden", {}, None)
+            response = mock.MagicMock()
+            response.__enter__.return_value.headers = {"Access-Control-Allow-Origin": origin}
+            return response
+
+        with mock.patch.object(deploy.urllib.request, "urlopen", answer):
+            self.assertEqual(REAL_BROCHURE_GAPS(), ["tokyotokenexchange.com"])
 
     def test_pages(self):
         markets = load_markets()

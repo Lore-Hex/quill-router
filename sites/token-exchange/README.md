@@ -96,8 +96,9 @@ the existing load balancer before DNS cutover. It deliberately does not claim
 new-domain TLS verification. Rerun without `--staged` after propagation to
 check actual public HTTPS on every canonical hostname and alias.
 
-For repeated content-only publishes, use `gcloud storage rsync` on the build
-directory. Objects have a five-minute browser cache. Update the versioned CSS/JS
+For repeated content-only publishes, first run `deploy.py check-brochure`; it
+refuses unless the live app accepts every market domain for the brochure form.
+Then use `gcloud storage rsync` on the build directory. Objects have a five-minute browser cache. Update the versioned CSS/JS
 references via the build step; invalidate the CDN only if an urgent correction
 requires it.
 

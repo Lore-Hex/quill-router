@@ -42,6 +42,13 @@ reviewed market and adapt these fields:
 | `buyer_heading`, `buyer_copy` | Preserve the approved shared buying message unless a verified requirement needs a change. |
 | `evidence_snapshot` | A reviewed local snapshot whose scope matches the displayed claims. |
 
+Add the canonical `domain` to
+`src/trusted_router/data/token_exchange_origins.json` so the TrustedRouter app
+accepts the market's brochure form; the site tests fail until it is listed. That
+list ships with the app, so deploy the app before publishing the market.
+`deploy.py publish` and `deploy.py check-brochure` refuse until the live app
+accepts the domain.
+
 Some records retain `intro`; the current template does not display it. Useful
 details belong in rendered fields, not only in unused JSON.
 

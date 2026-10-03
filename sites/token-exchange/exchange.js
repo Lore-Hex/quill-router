@@ -1,16 +1,18 @@
 /* Carry campaign attribution to existing TrustedRouter intake, without cookies or pixels. */
-(() => {
+const campaignFields = (() => {
   const incoming = new URLSearchParams(window.location.search);
-  const allowed = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
-  document.querySelectorAll('a[data-attribution]').forEach((link) => {
-    const destination = new URL(link.href);
-    allowed.forEach((key) => {
-      const value = incoming.get(key);
-      if (value && value.length <= 200) destination.searchParams.set(key, value);
-    });
-    link.href = destination.href;
+  const fields = {};
+  ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'].forEach((key) => {
+    const value = incoming.get(key);
+    if (value && value.length <= 200) fields[key] = value;
   });
+  return fields;
 })();
+document.querySelectorAll('a[data-attribution]').forEach((link) => {
+  const destination = new URL(link.href);
+  Object.entries(campaignFields).forEach(([key, value]) => destination.searchParams.set(key, value));
+  link.href = destination.href;
+});
 
 /* Progressive enhancement: navigation stays visible if JavaScript is unavailable. */
 (() => {
@@ -212,15 +214,16 @@ document.querySelectorAll('.geo-scroll').forEach(container => {
     status.textContent = '';
     status.dataset.state = 'loading';
     email.removeAttribute('aria-invalid');
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000);
+    let timeout;
     try {
+      const controller = new AbortController();
+      timeout = setTimeout(() => controller.abort(), 30000);
       const response = await fetch(form.action, {
         method: 'POST',
         mode: 'cors',
         credentials: 'omit',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({email: email.value.trim(), website: form.elements.website.value, resource: 'brochure'}),
+        body: JSON.stringify({email: email.value.trim(), website: form.elements.website.value, resource: 'brochure', campaign: campaignFields}),
         signal: controller.signal,
       });
       if (!response.ok) {
