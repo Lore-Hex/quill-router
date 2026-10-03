@@ -12,6 +12,7 @@ import argparse
 import logging
 import threading
 import time
+from collections.abc import Callable, Iterable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -21,7 +22,15 @@ from trusted_router.config import get_settings
 from trusted_router.sentry_config import init_sentry
 from trusted_router.services.trust_recovery import alert_stale_trust_inbox
 from trusted_router.storage import create_store
-from trusted_router.storage_trust_reconciliation import replicate_tier_job_watermark
+from trusted_router.storage_trust_reconciliation import (
+    replicate_tier_job_watermark,
+    tier_job_replicates_watermark,
+)
+from trusted_router.trust_tier_bulk import (
+    TrustTierSelection,
+    iter_trust_tier_bulk,
+    select_trust_tier_candidates,
+)
 
 log = logging.getLogger(__name__)
 
@@ -37,6 +46,7 @@ class _TrustTierStore(Protocol):
         tier3_min_days: int,
         tier3_min_paid_microdollars: int,
         now: datetime,
+        observe: Callable[[str, str], None] | None = None,
     ) -> int: ...
 
 
@@ -49,6 +59,109 @@ class TrustTierJobResult:
     @property
     def succeeded(self) -> int:
         return self.attempted - len(self.failed)
+
+
+# What the per-workspace pass reports, and the snapshot digest it is compared
+# with: a write with the inputs the snapshot judged, a refusal with the rows
+# the snapshot's own refusal read.
+_OBSERVED = {
+    "tier_written": "tier",
+    "tier_refused": "tier_refused",
+    "watermark_changed": "watermark",
+    "watermark_refused": "watermark_refused",
+}
+
+
+class _Shadow:
+    """The bulk selection, checked against what the per-workspace pass did.
+
+    A workspace the pass changed or refused, outside the selection, is a
+    defect when any write or refusal came from inputs the snapshot saw
+    unchanged, and a race otherwise (including a workspace not in the
+    snapshot). A failure outside the selection is logged on its
+    own: a transient error is not a selection defect.
+    """
+
+    def __init__(self, selection: TrustTierSelection) -> None:
+        self.selection = selection
+        self._lock = threading.Lock()
+        self._acted: dict[str, dict[str, str]] = {}
+
+    def observer(self, workspace_id: str) -> Callable[[str, str], None]:
+        def observe(kind: str, digest: str) -> None:
+            with self._lock:
+                self._acted.setdefault(workspace_id, {})[kind] = digest
+
+        return observe
+
+    def report(self, failed: Iterable[str]) -> int:
+        failed_set = set(failed)
+        selected = self.selection.candidates
+        defects = races = failed_outside = 0
+        for workspace_id in sorted(set(self._acted) | failed_set):
+            if workspace_id in selected:
+                continue
+            acted = self._acted.get(workspace_id, {})
+            if not acted:
+                failed_outside += 1
+                log.warning("trust.tier_shadow_failed_outside workspace_id=%s", workspace_id)
+                continue
+            # Each write is judged on its own inputs: a watermark that raced the
+            # snapshot does not excuse a tier write the snapshot saw unchanged.
+            seen = self.selection.digests.get(workspace_id, {})
+            missed = sorted(
+                kind for kind, digest in acted.items() if seen.get(_OBSERVED[kind]) == digest
+            )
+            if missed:
+                defects += 1
+                log.error(
+                    "trust.tier_shadow_defect workspace_id=%s missed=%s acted=%s",
+                    workspace_id, ",".join(missed), ",".join(sorted(acted)),
+                )
+            else:
+                races += 1
+                log.info(
+                    "trust.tier_shadow_race workspace_id=%s acted=%s",
+                    workspace_id, ",".join(sorted(acted)),
+                )
+        unacted = len(set(selected) - set(self._acted) - failed_set)
+        log.info(
+            "trust.tier_shadow_complete candidates=%d acted=%d defects=%d races=%d "
+            "failed_outside=%d unacted_candidates=%d",
+            len(selected), len(self._acted), defects, races, failed_outside, unacted,
+        )
+        return defects
+
+
+def _select(store: Any, settings: Any, *, environment: str, now: datetime) -> _Shadow | None:
+    """The bulk selection for the shadow, or None when it is off or unavailable."""
+
+    if not getattr(settings, "trust_tier_shadow_enabled", False):
+        return None
+    target = getattr(store, "_backend", store)
+    if not all(hasattr(target, name) for name in ("_database", "_param_types", "_read_entity_tx")):
+        return None
+    started = time.monotonic()
+    try:
+        selection = select_trust_tier_candidates(
+            iter_trust_tier_bulk(target._database, target._param_types, environment=environment),
+            param_types=target._param_types,
+            read_entity_tx=target._read_entity_tx,
+            qualifying_providers=settings.trust_qualifying_provider_set,
+            tier3_min_days=settings.trust_tier3_min_days,
+            tier3_min_paid_microdollars=settings.trust_tier3_min_paid_microdollars,
+            now=now,
+            watermark_replicated=tier_job_replicates_watermark(store),
+        )
+    except Exception:
+        # The shadow only observes: its failure never changes the pass.
+        log.exception("trust.tier_shadow_unavailable")
+        return None
+    log.info(
+        "trust.tier_shadow_selected workspaces=%d candidates=%d elapsed_seconds=%.3f",
+        len(selection.workspaces), len(selection.candidates), time.monotonic() - started,
+    )
+    return _Shadow(selection)
 
 
 def run(
@@ -95,6 +208,7 @@ def run(
         except Exception:
             log.exception("trust.inbox_reconciliation_failed")
         alert_stale_trust_inbox(store, now=computed_at)
+    shadow = _select(store, settings, environment=environment, now=computed_at)
     workspace_ids = store.list_trust_tier_workspace_ids()
     concurrency = max(1, int(getattr(settings, "trust_tier_job_concurrency", 1)))
     failed: list[str] = []
@@ -113,11 +227,13 @@ def run(
         if stop.is_set():
             return
         try:
+            observe = shadow.observer(workspace_id) if shadow is not None else None
             replicated, reconciled_through = replicate_tier_job_watermark(
                 store,
                 workspace_id,
                 settings.trust_qualifying_provider_set,
                 environment=environment,
+                observe=observe,
             )
             if replicated:
                 log.info(
@@ -127,13 +243,15 @@ def run(
                 )
             if stop.is_set():
                 return
-            tier = store.recompute_workspace_trust_tier(
-                workspace_id,
-                qualifying_providers=settings.trust_qualifying_provider_set,
-                tier3_min_days=settings.trust_tier3_min_days,
-                tier3_min_paid_microdollars=settings.trust_tier3_min_paid_microdollars,
-                now=computed_at,
-            )
+            policy: dict[str, Any] = {
+                "qualifying_providers": settings.trust_qualifying_provider_set,
+                "tier3_min_days": settings.trust_tier3_min_days,
+                "tier3_min_paid_microdollars": settings.trust_tier3_min_paid_microdollars,
+                "now": computed_at,
+            }
+            if observe is not None:
+                policy["observe"] = observe
+            tier = store.recompute_workspace_trust_tier(workspace_id, **policy)
             log.info("trust.tier_computed workspace_id=%s tier=%d", workspace_id, tier)
         except Exception:
             with failed_lock:
@@ -185,6 +303,11 @@ def run(
             executor.shutdown(wait=False, cancel_futures=True)
             raise
         executor.shutdown(wait=True)
+    if shadow is not None:
+        try:
+            shadow.report(failed)
+        except Exception:
+            log.exception("trust.tier_shadow_report_failed")
     return TrustTierJobResult(
         attempted=len(workspace_ids), failed=tuple(failed), owner_budget_failed=owner_budget_failed
     )

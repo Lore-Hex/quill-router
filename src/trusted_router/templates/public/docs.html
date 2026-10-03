@@ -34,6 +34,8 @@ const r = await client.chat.completions.create({
   </div>
 </section>
 
+{% include "public/_api_hosts.html" %}
+
 <section style="margin-top:48px" id="privacy-filters">
   <h2 class="section-center">Fail-closed privacy filters</h2>
   <div class="marketing-grid two">
@@ -188,6 +190,12 @@ HTTP 200
   <h3 id="key-usage-freshness">Usage freshness</h3>
   <p>Key usage counters advance when a request settles. <code>GET /v1/key</code> reads them from a snapshot up to five seconds old. <code>GET /v1/keys</code> reads them with a strong read.</p>
   <p>Activity comes from a separate analytics pipeline. It can show a request before <code>GET /v1/key</code> does, or after it, and it trails further when the pipeline has a backlog. <code>data.analytics.drain_lag_seconds</code> in <a href="/status.json">status.json</a> reports that backlog. A key's <code>updated_at</code> changes with its settings, not with usage.</p>
+</section>
+
+<section style="margin-top:48px" id="billing-usage">
+  <h2>Billing and usage</h2>
+  <p>Token counts and token list prices are the starting point for billing. Review the rounding rules below, then inspect credits and activity at <code>{{ control_plane_api_base_url }}</code> to reconcile charges.</p>
+  {% include "public/_minimum_charges.html" %}
 </section>
 
 <section style="margin-top:48px" id="rate-limit-headers">

@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tarfile
 from pathlib import Path
 
@@ -945,8 +946,20 @@ def test_an_interrupted_run_finishes_its_write_and_keeps_the_lock(tmp_path: Path
     state["slow_add_metadata"] = "until_released"  # type: ignore[assignment]
     (fake / "instances.json").write_text(json.dumps(state))
     (fake / "gcloud.jsonl").write_text("")
+    # A runner that ignores the signal (nohup does, for SIGHUP) passes that on
+    # to the wrapper, and bash cannot trap a signal ignored when it started.
+    # A small shim resets the signal to its default in the child and execs the
+    # wrapper under the same PID, leaving the runner's own disposition alone.
+    reset_then_exec = (
+        "import os, signal, sys; "
+        "signal.signal(getattr(signal, sys.argv[1]), signal.SIG_DFL); "
+        "os.execv(sys.argv[2], sys.argv[2:])"
+    )
     process = subprocess.Popen(  # noqa: S603 - fixed script under test
-        [BASH, str(repo / "scripts/deploy/clickhouse_worker_role.sh"), "takeover", "--to", "tr-clickhouse-2", "--apply"],
+        [
+            sys.executable, "-c", reset_then_exec, signal_name,
+            BASH, str(repo / "scripts/deploy/clickhouse_worker_role.sh"), "takeover", "--to", "tr-clickhouse-2", "--apply",
+        ],
         env={"PATH": f"{fake}:{os.environ['PATH']}", "HOME": str(tmp_path), "TMPDIR": str(tmp_path), "FAKE_DIR": str(fake)},
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
