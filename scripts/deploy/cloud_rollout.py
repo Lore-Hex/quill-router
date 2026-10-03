@@ -347,25 +347,65 @@ def admission_wait(environ: Any) -> int:
     return wait
 
 
+def _owner_check_refused(reason: str) -> bool:
+    # Recovery is an operator action; a bare refusal leaves them guessing whether to
+    # fix the gh credential or wait for the lease TTL, so every refusal names its cause.
+    print(f"cloud_rollout.owner_check: {reason}", file=sys.stderr)
+    return False
+
+
 def owner_stopped(lease: dict[str, Any], now: Callable[[], float] = time.time) -> bool:
     match = re.fullmatch(r"https://github.com/(Lore-Hex/(?:quill-router|quill-cloud-proxy))/actions/runs/([0-9]+)",
                          lease["owner"])
     if match:
         gh = shutil.which("gh")
         if not gh:
-            return False
-        result = subprocess.run(  # noqa: S603 - allowlisted repository/run ID; read only
-            [gh, "run", "view", match[2], "--repo", match[1], "--json", "status"],
-            capture_output=True, text=True, timeout=30, check=False,
-        )
-        if result.returncode == 0:
-            return json.loads(result.stdout).get("status") == "completed"
-        # A deleted run (HTTP 404) is not mutating anything, but an unauthenticated
-        # gh answers 404 for a private repository too. Neither signal alone frees a
-        # lease: the run must be gone AND the lease's own TTL must have elapsed.
-        deleted = "HTTP 404" in (result.stderr or "")
+            return _owner_check_refused("gh is not installed; the owner run cannot be inspected")
+        run_ref = f"repos/{match[1]}/actions/runs/{match[2]}"
+        try:
+            result = subprocess.run(  # noqa: S603 - allowlisted repository/run ID; read only
+                [gh, "api", run_ref],
+                capture_output=True, text=True, timeout=30, check=False,
+            )
+            body = json.loads(result.stdout)
+            if not isinstance(body, dict):
+                return _owner_check_refused(
+                    f"{run_ref}: non-object response (exit {result.returncode})")
+            if result.returncode == 0:
+                status = body.get("status")
+                if status == "completed":
+                    return True
+                return _owner_check_refused(
+                    f"{run_ref}: status={status!r}; the owner run has not completed")
+            # Require the exact run endpoint's structured 404; unauthorized reads
+            # look like deletion too, so this evidence alone is insufficient.
+            if body.get("status") != "404":
+                return _owner_check_refused(
+                    f"{run_ref}: exit {result.returncode}, status={body.get('status')!r};"
+                    " not a structured 404")
+            # Probe after the 404, with the same credentials, to prove Actions reads work.
+            probe = subprocess.run(  # noqa: S603 - allowlisted repository; read only
+                [gh, "api", f"repos/{match[1]}/actions/runs?per_page=1"],
+                capture_output=True, text=True, timeout=30, check=False,
+            )
+            if probe.returncode != 0:
+                return _owner_check_refused(
+                    f"{run_ref}: 404, but the actions-read probe of {match[1]} failed"
+                    f" (exit {probe.returncode}); an unauthorized read is indistinguishable"
+                    " from a deleted run — give gh a credential with actions:read and retry")
+            runs = json.loads(probe.stdout)
+            if not isinstance(runs, dict) or type(runs.get("total_count")) is not int:
+                return _owner_check_refused(
+                    f"{run_ref}: 404, but the actions-read probe returned no run listing")
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            return _owner_check_refused(f"{run_ref}: {type(exc).__name__}: {exc}")
+        # Expiry bounds the recovery window even for a verified deleted run.
         expires = lease.get("expires_at")
-        return deleted and type(expires) is int and expires < int(now())
+        if type(expires) is int and expires < int(now()):
+            return True
+        return _owner_check_refused(
+            f"{run_ref} is deleted, but lease expires_at={expires!r} has not elapsed"
+            f" (now={int(now())}); wait for the TTL")
     if (lease.get("host") != socket.gethostname() or type(lease.get("pid")) is not int
             or lease["pid"] <= 1):
         return False
