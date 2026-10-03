@@ -136,7 +136,7 @@
     entries.forEach(entry => visible.set(entry.target, entry.isIntersecting));
     sync();
   });
-  document.querySelectorAll('.hero, .route-flow, .supplier-art').forEach(element => observer.observe(element));
+  document.querySelectorAll('.hero, .supplier-art').forEach(element => observer.observe(element));
 })();
 
 /* Show directional controls only when more market links are out of view. */

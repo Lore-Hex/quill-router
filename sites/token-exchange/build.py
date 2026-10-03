@@ -72,10 +72,10 @@ PROVIDERS = [
 ]
 
 
-def provider_ticker(copies: int = 6) -> str:
-    """One visible provider group plus hidden copies so the CSS marquee loops without a gap.
+def provider_ticker(copies: int = 2) -> str:
+    """One visible provider group plus a hidden copy so the CSS marquee loops without a gap.
 
-    The loop slides by one group; six groups keep the row full up to about 4000px wide."""
+    The loop slides by one group; the row is at most 1024px wide and narrower than a group, so two groups cover it throughout."""
     groups = []
     for index in range(copies):
         link_attrs = ' tabindex="-1"' if index else ""
@@ -159,9 +159,7 @@ def build(output: Path) -> None:
     shutil.copyfile(HERE / "art" / "river-close.webp", assets / "river-close.webp")
     static = ROOT / "src/trusted_router/static"
     for source, target in {
-        "enterprise/token-exchange-hero.webp": "exchange.webp",
         "fonts/archivo-latin.woff2": "archivo.woff2",
-        "fonts/ibm-plex-mono-400-latin.woff2": "plex.woff2",
         "trustedrouter-mark-dark.svg": "mark.svg",
         "provider-logos/openai.png": "provider-openai.png",
         "provider-logos/anthropic.png": "provider-anthropic.png",
