@@ -30,6 +30,10 @@ resource "aws_config_configuration_recorder" "default" {
   recording_mode {
     recording_frequency = "CONTINUOUS"
   }
+
+  # The deploy role needs iam:PassRole on the service-linked role before this
+  # can change; see the PassConfigServiceLinkedRole statement.
+  depends_on = [aws_iam_role_policy.tr_eu_role_writes]
 }
 
 resource "aws_config_delivery_channel" "default" {

@@ -78,6 +78,19 @@ resource "aws_iam_role_policy" "tr_eu_role_writes" {
         Resource = "arn:aws:iam::${local.aws_account_id}:role/tr-router-github-deploy"
       },
       {
+        # aws_config.tf points the us-east-1 Config recorder at AWS's
+        # service-linked role. PutConfigurationRecorder requires iam:PassRole on
+        # it even though the role is service-linked: run 37126950294 failed
+        # without this (2026-10-03). Scoped to that one role and to Config.
+        Sid      = "PassConfigServiceLinkedRole"
+        Effect   = "Allow"
+        Action   = "iam:PassRole"
+        Resource = "arn:aws:iam::${local.aws_account_id}:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig"
+        Condition = {
+          StringEquals = { "iam:PassedToService" = "config.amazonaws.com" }
+        }
+      },
+      {
         # Read-only. The drain installer verifies the ClickHouse VM's
         # instance profile, and PowerUserAccess denies all iam:* reads:
         # run 33270881625 failed on exactly this. Instance-profile names
