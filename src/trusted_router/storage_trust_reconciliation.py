@@ -79,7 +79,7 @@ def read_expected_reconciled_through(
 ) -> tuple[datetime | None, str]:
     """``expected_reconciled_through`` from ``reader``'s rows, with a digest."""
 
-    from trusted_router.storage_gcp_trust import inputs_digest
+    from trusted_router.storage_gcp_trust import _digest_value, inputs_digest
 
     provider_rows = list(
         reader.execute_sql(
@@ -108,7 +108,9 @@ def read_expected_reconciled_through(
                 },
             )
         )
-        seen[provider] = sorted((row[0] for row in rows), key=str)
+        # Full precision: two markers that differ only below a microsecond must
+        # sort the same way whichever order the reader returned them in.
+        seen[provider] = sorted((row[0] for row in rows), key=_digest_value)
         return [row[0] for row in rows]
 
     providers = sorted({str(row[0]) for row in provider_rows})

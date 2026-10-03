@@ -548,3 +548,31 @@ def test_a_chunk_holds_only_its_own_workspaces_rows() -> None:
         assert set(chunk.overrides) <= workspaces
         assert set(chunk.events) <= workspaces
         assert {entity_id for kind, entity_id in chunk.entities if kind != "user"} <= workspaces
+
+
+def test_marker_order_does_not_change_a_digest(caplog: Any, monkeypatch: Any) -> None:
+    """Two markers that differ only below a microsecond digest the same in either
+    order, so a dropped candidate between them is still a defect."""
+
+    from trusted_router.storage_trust_reconciliation import MATCHING_MARKERS_SQL
+
+    store, database = _fleet()
+    _marker(database, "x402", "acct_2", DatetimeWithNanoseconds(
+        2026, 9, 3, 11, 0, 0, nanosecond=3, tzinfo=dt.UTC,
+    ))
+    answer = trust_tier_bulk.BulkWorkspaceReader.answer
+
+    def reversed_markers(self: Any, sql: str, params: Any = None, param_types: Any = None) -> Any:
+        rows = answer(self, sql, params, param_types)
+        return rows[::-1] if sql == MATCHING_MARKERS_SQL else rows
+
+    # The snapshot reads the markers in the opposite order to the pass.
+    monkeypatch.setattr(trust_tier_bulk.BulkWorkspaceReader, "answer", reversed_markers)
+    monkeypatch.setattr(trust_tier_bulk.BulkWorkspaceReader, "execute_sql", reversed_markers)
+    _after_selection(monkeypatch, drop="ws-two-markers")
+    with caplog.at_level(logging.INFO):
+        trust_tier_cli.run(store, SETTINGS, now=NOW)
+
+    assert _summary(caplog)["defects"] == 1
+    [line] = _defect_lines(caplog)
+    assert "workspace_id=ws-two-markers missed=watermark_changed" in line

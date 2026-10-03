@@ -3970,8 +3970,8 @@
     "storage_gcp_speculation_shadow:SpannerSpeculationShadow.resolve": "44e5026c99ada85fbe44dd62f53501c4509d2f8489e4231f87fe146e70496889",
     "storage_gcp_trust:evaluate_workspace_trust_tier": "6f4487f32a5d95e89b4f7618885db9e591d66ab0efba6bca68fba91c4eb7e510",
     "storage_gcp_trust:RecordingReader.query": "72a8ba66b4e528b3f6e39e11ff4ab20158a64a0cea4a78fb4b24a1eec8361b9e",
-    "storage_trust_reconciliation:read_expected_reconciled_through": "e10877da9cf6f5d7dbb6dc6ae7a8a730443218b8aba579709306c202e85e94f8",
-    "storage_trust_reconciliation:read_expected_reconciled_through.matching_markers": "29efaca337e534b753901c38e37bedaf8367cc768d356c508d00d0af717218fa",
+    "storage_trust_reconciliation:read_expected_reconciled_through": "78d58afe832261c24f98c696e5465717bde6bd8289a2a95adcb9ed916b9b5fd0",
+    "storage_trust_reconciliation:read_expected_reconciled_through.matching_markers": "4d22980847192e7ffc460f0306d6864025c7efe26f9c593dbed8c26debedb49d",
     "trust_tier_bulk:iter_trust_tier_bulk": "846b000f05dbc96b50d63bfe4627e9f72b6a21d9103315b740330286a5f9cfe5",
     "trust_tier_bulk:_read_entities": "7bd389ba33373db6b0e2aec54ee25bfaa56b40ed18e1ec38befa06df2d943f65",
     "trust_tier_bulk:select_trust_tier_candidates": "2047f3a799e1b13534cceb2c4e19dd904a12c244704184e7b9cc629fc5ff8bc2"
