@@ -1,8 +1,9 @@
 # Fast admission and batched settlement
 
-Status: **proposed, v24, 2026-10-03. Nothing built.** v8 changed direction
-to regional leases, Joseph's choice (§2). Codex and Fable reviewed v1-v23
-(§11), and both accepted v23 with no defect; v24 adds their closing notes.
+Status: **proposed, v25, 2026-10-03. Nothing built.** v8 changed direction
+to regional leases, Joseph's choice (§2). Codex and Fable reviewed v1-v24
+(§11). Both accepted v23 with no defect; v24 added their closing notes, and
+v25 corrects one sentence of v24.
 
 This is the plan for reaching 100T tokens a month without spending the routing
 margin on the billing database, and for taking the control plane out of request
@@ -754,7 +755,9 @@ synchronous holds, through `settle_atomic`.
 - A difference is a fault. The auditor alerts and revokes the lease.
 - The audit proves the owner's accounting consistent, not its prices right: an
   owner that priced every record wrongly, but consistently, would pass it.
-  Each charge is still capped at its hold. Two checks cover pricing: the
+  A heartbeat's running charge, and so a reap's, is capped at its hold; a
+  settle can overrun its hold and is booked in full, as today (§4.2). Two
+  checks cover pricing: the
   shadow comparator compares every per-authorization charge with Python's
   before cutover (§8), and afterwards a sampled job reprices records from
   their archived inputs (usage, frozen prices and fee terms) and alerts on any
@@ -1858,3 +1861,6 @@ record.
     charge into `consumed`; a release moves it out and books nothing.
   - The pricing limitation is stated, with its two checks: the shadow
     comparator before cutover, and a sampled repricing job after it.
+- **v25.** Codex (1 P2) found that v24's "each charge is still capped at its
+  hold" contradicted settle overruns, which are booked in full. v25 scopes the
+  cap to heartbeat running charges and the reaps that use them.
