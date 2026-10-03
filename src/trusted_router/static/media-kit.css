@@ -1,6 +1,7 @@
 .media-intro { padding: 64px 0 40px; max-width: 900px; }
 .media-intro h1 { font-size: 52px; line-height: 1.12; text-wrap: balance; letter-spacing: 0; }
 .media-intro .hero-actions { flex-wrap: wrap; }
+.media-intro .btn:not(.primary) { color: var(--text-display); }
 .media-note { font-size: 15px; color: var(--muted); margin-top: 20px; }
 .media-kit { letter-spacing: 0; }
 .media-section { padding: 40px 0; border-top: 1px solid var(--line); }
@@ -11,20 +12,20 @@
 .media-asset { min-width: 0; }
 .media-preview { aspect-ratio: 8 / 5; display: grid; place-items: center; border-radius: 4px; }
 .media-preview-light { background: #f6f6f3; }
-.media-preview-dark { background: #090f0b; outline: 1px solid rgba(255, 255, 255, 0.15); }
+.media-preview-dark { background: #090f0b; outline: 1px solid rgb(255 255 255 / 15%); }
 .media-preview img { width: 45%; height: auto; max-width: 160px; }
 .media-caption { padding: 16px 0; }
 .media-caption h3 { font: inherit; font-size: 17px; font-weight: 600; margin: 0 0 8px; overflow-wrap: anywhere; }
 .media-downloads { display: flex; flex-wrap: wrap; gap: 24px; }
 .media-downloads a { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; }
-.media-social-image { display: block; width: 100%; height: auto; aspect-ratio: 40 / 21; border-radius: 4px; outline: 1px solid rgba(255, 255, 255, 0.15); }
+.media-social-image { display: block; width: 100%; height: auto; aspect-ratio: 40 / 21; border-radius: 4px; outline: 1px solid rgb(255 255 255 / 15%); }
 .media-copy-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 56px; }
 .media-copy-grid h3 { font-size: 19px; margin: 0 0 12px; }
 .media-copy-grid p { font-size: 17px; line-height: 1.7; margin: 0 0 24px; }
 .media-facts { margin: 0; }
 .media-facts dt { color: var(--muted); font-size: 14px; }
 .media-facts dd { margin: 4px 0 20px; font-size: 17px; overflow-wrap: anywhere; }
-[data-theme="light"] .media-social-image { outline-color: rgba(0, 0, 0, 0.1); }
+[data-theme="light"] .media-social-image { outline-color: rgb(0 0 0 / 10%); }
 .media-kit a:focus-visible, .media-intro a:focus-visible { outline: 2px solid currentcolor; outline-offset: 4px; }
 
 @media (max-width: 760px) {
