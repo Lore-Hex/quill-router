@@ -253,7 +253,7 @@ document.querySelectorAll('.geo-scroll').forEach(container => {
       status.textContent = error.name === 'AbortError'
         ? `This is taking longer than expected. Please try again or email ${contact}.`
         : error instanceof TypeError
-          ? 'Please check your connection and try again.'
+          ? `We couldn't prepare your brochure. Please try again in a moment or email ${contact}.`
           : error.message;
     } finally {
       clearTimeout(timeout);
