@@ -14,6 +14,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import re
+from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
 
@@ -32,7 +33,7 @@ from trusted_router.storage_trust_reconciliation import (
 from trusted_router.trust_reconciliation import STRIPE_TRUST_SOURCE, STRIPE_TRUST_SOURCE_VERSION
 from trusted_router.trust_tier_bulk import (
     BulkWorkspaceReader,
-    load_trust_tier_bulk,
+    iter_trust_tier_bulk,
     select_trust_tier_candidates,
 )
 
@@ -165,15 +166,42 @@ def _fleet() -> tuple[Any, Any]:
     return store, database
 
 
-def _select(store: Any) -> Any:
-    bulk = load_trust_tier_bulk(store._database, store._param_types, environment="production")
+def _select(store: Any, *, chunk_size: int = 1_000) -> Any:
     return select_trust_tier_candidates(
-        bulk,
+        iter_trust_tier_bulk(
+            store._database, store._param_types, environment="production", chunk_size=chunk_size
+        ),
         param_types=store._param_types,
         read_entity_tx=store._read_entity_tx,
         now=NOW,
         **POLICY,
     )
+
+
+def _after_selection(
+    monkeypatch: Any, change: Callable[[], None] = lambda: None, *, drop: str | None = None
+) -> None:
+    """Run ``change`` once the shadow's selection is complete, and optionally
+    drop a candidate from it, as a selection bug would."""
+
+    select = trust_tier_cli.select_trust_tier_candidates
+
+    def select_then_change(*args: Any, **kwargs: Any) -> Any:
+        selection = select(*args, **kwargs)
+        if drop is not None:
+            selection.candidates.pop(drop)
+        change()
+        return selection
+
+    monkeypatch.setattr(trust_tier_cli, "select_trust_tier_candidates", select_then_change)
+
+
+def _defect_lines(caplog: Any) -> list[str]:
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno == logging.ERROR and "trust.tier_shadow_defect" in r.getMessage()
+    ]
 
 
 def _summary(caplog: Any) -> dict[str, int]:
@@ -208,14 +236,15 @@ def test_the_shadow_finds_no_defect_when_the_pass_matches(caplog: Any) -> None:
     assert summary["defects"] == 0
     assert summary["races"] == 0
     assert summary["failed_outside"] == 0
-    assert summary["acted"] == len(ACTED)
+    # Written or refused: a refusal is reported with the rows it read.
+    assert summary["acted"] == len(ACTED | FAILING)
     assert summary["unacted_candidates"] == 0
 
 
 @pytest.mark.parametrize("ws", sorted(ACTED | FAILING | {"ws-current", "ws-no-owner"}))
 def test_the_bulk_reader_gives_the_evaluator_the_same_rows(ws: str) -> None:
     store, database = _fleet()
-    bulk = load_trust_tier_bulk(store._database, store._param_types, environment="production")
+    [bulk] = iter_trust_tier_bulk(store._database, store._param_types, environment="production")
 
     def decide(reader: Any) -> Any:
         try:
@@ -251,7 +280,6 @@ def test_the_bulk_reader_gives_the_evaluator_the_same_rows(ws: str) -> None:
 
 def test_a_no_op_fallback_write_is_not_a_defect(caplog: Any, monkeypatch: Any) -> None:
     store, database = _fleet()
-    load = trust_tier_cli.load_trust_tier_bulk
     real_snapshot = database.snapshot
 
     def failing_snapshot(*args: Any, **kwargs: Any) -> Any:
@@ -261,14 +289,9 @@ def test_a_no_op_fallback_write_is_not_a_defect(caplog: Any, monkeypatch: Any) -
             raise RuntimeError("snapshot unavailable")
         return real_snapshot(*args, **kwargs)
 
-    def load_then_break_prechecks(*args: Any, **kwargs: Any) -> Any:
-        bulk = load(*args, **kwargs)
-        # Every per-workspace precheck now fails, so each falls through to its
-        # transaction, which rewrites a watermark that is already current.
-        monkeypatch.setattr(database, "snapshot", failing_snapshot)
-        return bulk
-
-    monkeypatch.setattr(trust_tier_cli, "load_trust_tier_bulk", load_then_break_prechecks)
+    # Every per-workspace precheck now fails, so each falls through to its
+    # transaction, which rewrites a watermark that is already current.
+    _after_selection(monkeypatch, lambda: monkeypatch.setattr(database, "snapshot", failing_snapshot))
     with caplog.at_level(logging.INFO):
         trust_tier_cli.run(store, SETTINGS, now=NOW)
     monkeypatch.setattr(database, "snapshot", real_snapshot)
@@ -285,15 +308,12 @@ def test_a_no_op_fallback_write_is_not_a_defect(caplog: Any, monkeypatch: Any) -
 
 def test_an_input_changed_after_the_snapshot_is_a_race(caplog: Any, monkeypatch: Any) -> None:
     store, database = _fleet()
-    load = trust_tier_cli.load_trust_tier_bulk
 
-    def load_then_change(*args: Any, **kwargs: Any) -> Any:
-        bulk = load(*args, **kwargs)
+    def change() -> None:
         for shard in range(2):
             database.typed[CREDIT_BALANCE_TABLE][("ws-current", shard)]["trust_tier"] = 1
-        return bulk
 
-    monkeypatch.setattr(trust_tier_cli, "load_trust_tier_bulk", load_then_change)
+    _after_selection(monkeypatch, change)
     with caplog.at_level(logging.INFO):
         trust_tier_cli.run(store, SETTINGS, now=NOW)
 
@@ -309,14 +329,7 @@ def test_a_selection_that_misses_a_change_is_a_defect(caplog: Any, monkeypatch: 
     """The shadow's positive control: a selection bug is reported, not hidden."""
 
     store, _ = _fleet()
-    select = trust_tier_cli.select_trust_tier_candidates
-
-    def select_but_drop(*args: Any, **kwargs: Any) -> Any:
-        selection = select(*args, **kwargs)
-        selection.candidates.pop("ws-stale-tier")
-        return selection
-
-    monkeypatch.setattr(trust_tier_cli, "select_trust_tier_candidates", select_but_drop)
+    _after_selection(monkeypatch, drop="ws-stale-tier")
     with caplog.at_level(logging.INFO):
         trust_tier_cli.run(store, SETTINGS, now=NOW)
 
@@ -348,7 +361,7 @@ def test_a_failing_shadow_never_changes_the_pass(caplog: Any, monkeypatch: Any) 
         raise RuntimeError("bulk read failed")
 
     store, database = _fleet()
-    monkeypatch.setattr(trust_tier_cli, "load_trust_tier_bulk", broken)
+    monkeypatch.setattr(trust_tier_cli, "iter_trust_tier_bulk", broken)
     with caplog.at_level(logging.INFO):
         shadowed = trust_tier_cli.run(store, SETTINGS, now=NOW)
     plain_store, plain_database = _fleet()
@@ -376,3 +389,162 @@ def test_the_bulk_event_read_has_the_evaluators_columns() -> None:
         return [c.strip() for c in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")]
 
     assert columns(trust_tier_bulk.BULK_EVENTS_SQL) == ["workspace_id", *columns(TRUST_EVENTS_SQL)]
+
+
+def test_a_watermark_race_does_not_hide_a_missed_tier_write(caplog: Any, monkeypatch: Any) -> None:
+    """Each write is judged on its own inputs, not the workspace as a whole."""
+
+    store, database = _fleet()
+    later = DatetimeWithNanoseconds(2026, 9, 3, 11, 30, 0, nanosecond=2, tzinfo=dt.UTC)
+    # The selection drops a real tier candidate, and a marker advance after the
+    # snapshot gives the same workspace a watermark write that did race.
+    _after_selection(
+        monkeypatch, lambda: _marker(database, "stripe", "acct_1", later), drop="ws-stale-tier"
+    )
+    with caplog.at_level(logging.INFO):
+        trust_tier_cli.run(store, SETTINGS, now=NOW)
+
+    assert _summary(caplog)["defects"] == 1
+    [line] = _defect_lines(caplog)
+    assert "workspace_id=ws-stale-tier missed=tier_written acted=tier_written,watermark_changed" in line
+
+
+def test_a_stored_watermark_changed_after_the_snapshot_is_a_race(caplog: Any, monkeypatch: Any) -> None:
+    store, database = _fleet()
+
+    def change() -> None:
+        database.typed[CREDIT_BALANCE_TABLE][("ws-current", 1)]["trust_reconciled_through"] = None
+
+    _after_selection(monkeypatch, change)
+    with caplog.at_level(logging.INFO):
+        trust_tier_cli.run(store, SETTINGS, now=NOW)
+
+    summary = _summary(caplog)
+    assert summary["defects"] == 0
+    assert summary["races"] == 1
+    assert any(
+        "trust.tier_shadow_race workspace_id=ws-current acted=watermark_changed" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_a_marker_moved_by_a_nanosecond_is_a_race(caplog: Any, monkeypatch: Any) -> None:
+    store, database = _fleet()
+    moved = DatetimeWithNanoseconds(2026, 9, 3, 11, 0, 0, nanosecond=3, tzinfo=dt.UTC)
+    _after_selection(monkeypatch, lambda: _marker(database, "stripe", "acct_1", moved))
+    with caplog.at_level(logging.INFO):
+        trust_tier_cli.run(store, SETTINGS, now=NOW)
+
+    summary = _summary(caplog)
+    assert summary["defects"] == 0
+    # Positive control: the move really made the pass rewrite a watermark.
+    assert any(
+        "trust.tier_shadow_race workspace_id=ws-current acted=watermark_changed" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_a_dropped_refusal_is_a_defect(caplog: Any, monkeypatch: Any) -> None:
+    """A workspace the evaluator refuses on unchanged rows must be selected."""
+
+    store, _ = _fleet()
+    _after_selection(monkeypatch, drop="ws-missing-shard")
+    with caplog.at_level(logging.INFO):
+        result = trust_tier_cli.run(store, SETTINGS, now=NOW)
+
+    assert "ws-missing-shard" in result.failed
+    summary = _summary(caplog)
+    assert summary["defects"] == 1
+    assert summary["failed_outside"] == 0
+    [line] = _defect_lines(caplog)
+    assert "workspace_id=ws-missing-shard missed=tier_refused" in line
+
+
+def test_a_refusal_that_raced_the_snapshot_is_not_a_defect(caplog: Any, monkeypatch: Any) -> None:
+    store, database = _fleet()
+    _after_selection(
+        monkeypatch, lambda: database.typed[CREDIT_BALANCE_TABLE].pop(("ws-current", 1))
+    )
+    with caplog.at_level(logging.INFO):
+        result = trust_tier_cli.run(store, SETTINGS, now=NOW)
+
+    assert "ws-current" in result.failed
+    summary = _summary(caplog)
+    assert summary["defects"] == 0
+    assert any(
+        "trust.tier_shadow_race workspace_id=ws-current acted=tier_refused" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_a_failed_read_is_not_a_refusal(caplog: Any, monkeypatch: Any) -> None:
+    """A read that fails says nothing about the inputs, so it is no evidence."""
+
+    from google.api_core.exceptions import ServiceUnavailable
+
+    from tests.fakes import spanner as fake_spanner
+    from trusted_router.storage_gcp_trust import TRUST_EVENTS_SQL
+
+    store, _ = _fleet()
+
+    def unavailable_for(cls: Any) -> Any:
+        execute = cls.execute_sql
+
+        def execute_sql(self: Any, sql: str, **kwargs: Any) -> Any:
+            if sql == TRUST_EVENTS_SQL and (kwargs.get("params") or {}).get("pk") == "ws-current":
+                raise ServiceUnavailable("spanner unavailable")
+            return execute(self, sql, **kwargs)
+
+        return execute_sql
+
+    def change() -> None:
+        for cls in (fake_spanner._FakeSnapshot, fake_spanner._FakeTransaction):
+            monkeypatch.setattr(cls, "execute_sql", unavailable_for(cls))
+
+    _after_selection(monkeypatch, change)
+    with caplog.at_level(logging.INFO):
+        result = trust_tier_cli.run(store, SETTINGS, now=NOW)
+
+    assert "ws-current" in result.failed
+    summary = _summary(caplog)
+    assert summary["defects"] == 0
+    assert summary["races"] == 0
+    assert summary["failed_outside"] == 1
+
+
+def test_chunks_read_one_snapshot_and_judge_every_workspace_once(monkeypatch: Any) -> None:
+    store, database = _fleet()
+    whole = _select(store)
+    seen_chunks: list[set[str]] = []
+    real = trust_tier_bulk.BulkWorkspaceReader
+
+    def recording_reader(bulk: Any, workspace_id: str) -> Any:
+        if not seen_chunks or seen_chunks[-1] != set(bulk.balances):
+            seen_chunks.append(set(bulk.balances))
+        return real(bulk, workspace_id)
+
+    monkeypatch.setattr(trust_tier_bulk, "BulkWorkspaceReader", recording_reader)
+    snapshots = len([call for call in database.snapshot_calls if call.get("multi_use")])
+    chunked = _select(store, chunk_size=2)
+
+    assert len([call for call in database.snapshot_calls if call.get("multi_use")]) == snapshots + 1
+    assert all(len(chunk) <= 2 for chunk in seen_chunks)
+    assert sorted(ws for chunk in seen_chunks for ws in chunk) == sorted(whole.workspaces)
+    assert chunked.workspaces == whole.workspaces
+    assert chunked.candidates == whole.candidates
+    assert chunked.digests == whole.digests
+
+
+def test_a_chunk_holds_only_its_own_workspaces_rows() -> None:
+    store, _ = _fleet()
+    chunks = list(
+        iter_trust_tier_bulk(store._database, store._param_types, environment="production", chunk_size=3)
+    )
+
+    assert len(chunks) > 1
+    for chunk in chunks:
+        workspaces = set(chunk.balances)
+        assert len(workspaces) <= 3
+        assert set(chunk.overrides) <= workspaces
+        assert set(chunk.events) <= workspaces
+        assert {entity_id for kind, entity_id in chunk.entities if kind != "user"} <= workspaces

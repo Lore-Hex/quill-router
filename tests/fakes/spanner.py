@@ -3653,6 +3653,9 @@ def _execute_sql(
             db.typed.get("tr_credit_balance", {}).values(),
             key=lambda rec: (str(rec.get("workspace_id")), int(rec.get("shard", 0))),
         )
+        if "ids" in params:
+            wanted = set(params["ids"])
+            recs = [rec for rec in recs if str(rec.get("workspace_id")) in wanted]
         return [[rec.get(column) for column in columns] for rec in recs]
     if "SELECT DISTINCT workspace_id FROM tr_credit_balance" in sql:
         return [
@@ -3699,12 +3702,13 @@ def _execute_sql(
         ]
         return [[row.get(column) for column in columns] for row in rows]
     if "FROM tr_trust_override" in sql:
-        # The tier job's bulk read (trust_tier_bulk.BULK_OVERRIDES_SQL) has no
-        # workspace parameter and reads every row.
+        # The tier job's bulk read (trust_tier_bulk.BULK_OVERRIDES_SQL) reads
+        # a list of workspaces, @ids, rather than one @pk.
         rows = [
             row
             for row in _typed_rows("tr_trust_override")
-            if "pk" not in params or row.get("workspace_id") == params["pk"]
+            if ("pk" not in params or row.get("workspace_id") == params["pk"])
+            and ("ids" not in params or row.get("workspace_id") in set(params["ids"]))
         ]
         columns = [
             column.strip()
@@ -3754,6 +3758,9 @@ def _execute_sql(
             rows = [
                 row for row in rows if row.get("workspace_id") == params["workspace_id"]
             ]
+        if "ids" in params:
+            wanted = set(params["ids"])
+            rows = [row for row in rows if row.get("workspace_id") in wanted]
         if "provider" in params:
             rows = [row for row in rows if row.get("provider") == params["provider"]]
         if "original_payment_ref" in params:

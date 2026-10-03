@@ -9,6 +9,12 @@ exactly the queries those functions issue; a query it does not recognise
 raises, and the workspace becomes a candidate. So a change to the evaluator
 can only widen the candidate set, never narrow it.
 
+Workspaces are read and judged a chunk at a time, all at the snapshot's
+timestamp, and only digests and candidates outlive a chunk. On a generated
+fleet 100 times today's (160,000 workspaces, 1.76 million balance rows, every
+one a candidate), the selection grew the process by about 140 MiB, against
+526 MiB when every row was held at once; the job has 512 MiB.
+
 A workspace is a candidate when today's per-workspace path would write to it
 or fail on it: its tier precheck or its watermark precheck would not skip, or
 its evaluation raised.
@@ -18,6 +24,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections import defaultdict
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -25,6 +32,7 @@ from trusted_router.storage_gcp_trust import (
     TRUST_EVENTS_SQL,
     TRUST_OVERRIDE_SQL,
     TRUST_SHARDS_SQL,
+    RecordingReader,
     _trust_tier_is_current,
     evaluate_workspace_trust_tier,
 )
@@ -34,6 +42,7 @@ from trusted_router.storage_trust_reconciliation import (
     WORKSPACE_PAYMENT_PROVIDERS_SQL,
     read_expected_reconciled_through,
     same_instant,
+    watermark_digest,
 )
 from trusted_router.trust_reconciliation import (
     STRIPE_TRUST_SOURCE,
@@ -41,27 +50,33 @@ from trusted_router.trust_reconciliation import (
 )
 
 ENTITY_SQL = "SELECT body FROM tr_entities WHERE kind=@kind AND id=@id"
+BULK_WORKSPACE_IDS_SQL = "SELECT DISTINCT workspace_id FROM tr_credit_balance"
 BULK_BALANCE_SQL = (
     "SELECT workspace_id, shard, trust_tier, trust_latched_at, trust_override_tier, "
-    "trust_computed_at, trust_reconciled_through FROM tr_credit_balance"
+    "trust_computed_at, trust_reconciled_through FROM tr_credit_balance "
+    "WHERE workspace_id IN UNNEST(@ids)"
 )
-BULK_OVERRIDES_SQL = "SELECT workspace_id, tier, identity_bypass FROM tr_trust_override"
-# TRUST_EVENTS_SQL's columns, for every workspace; a test pins the match.
+BULK_OVERRIDES_SQL = (
+    "SELECT workspace_id, tier, identity_bypass FROM tr_trust_override "
+    "WHERE workspace_id IN UNNEST(@ids)"
+)
+# TRUST_EVENTS_SQL's columns, for a list of workspaces; a test pins the match.
 BULK_EVENTS_SQL = (
     "SELECT workspace_id, event_id, kind, provider, amount_micro, original_payment_ref, "
     "adverse_ref, occurred_at, recorded_at, payment_amount_micro, currency, "
     "credited_micro, recovered_micro, provider_subtype, lifecycle_status, "
     "cumulative_refunded, recovery_target, debit_status, unrecovered_micro, "
-    "provider_ordering_watermark FROM tr_trust_event"
+    "provider_ordering_watermark FROM tr_trust_event WHERE workspace_id IN UNNEST(@ids)"
 )
 BULK_MARKERS_SQL = (
     "SELECT provider, closed_through FROM tr_trust_backfill "
     "WHERE completed_at IS NOT NULL AND unmatched_count=0 AND semantic_mismatch_count=0 "
     "AND environment=@environment AND source=@source AND source_version=@source_version"
 )
-BULK_ENTITIES_SQL = "SELECT id, body FROM tr_entities WHERE kind=@kind"
 BULK_ENTITIES_BY_ID_SQL = "SELECT id, body FROM tr_entities WHERE kind=@kind AND id IN UNNEST(@ids)"
-_USER_BATCH = 500
+# Workspaces whose rows are held at once. Each chunk's rows are dropped once
+# it is judged, so memory follows the chunk, not the fleet.
+_CHUNK = 1_000
 
 
 class UnsupportedBulkQuery(RuntimeError):
@@ -70,7 +85,7 @@ class UnsupportedBulkQuery(RuntimeError):
 
 @dataclass(slots=True)
 class TrustTierBulk:
-    """One snapshot's rows, grouped by workspace."""
+    """One chunk of workspaces' rows from the snapshot, grouped by workspace."""
 
     environment: str
     # workspace_id -> [(shard, tier, latch, override, computed_at, reconciled_through)]
@@ -85,21 +100,18 @@ class TrustTierBulk:
     entities: dict[tuple[str, str], str] = field(default_factory=dict)
 
 
-def load_trust_tier_bulk(database: Any, param_types: Any, *, environment: str) -> TrustTierBulk:
-    """Read every input on one strong, read-only snapshot."""
+def iter_trust_tier_bulk(
+    database: Any, param_types: Any, *, environment: str, chunk_size: int = _CHUNK
+) -> Iterator[TrustTierBulk]:
+    """Every workspace's inputs, from one strong read-only snapshot.
 
-    bulk = TrustTierBulk(environment=environment)
-    balances: defaultdict[str, list[tuple[Any, ...]]] = defaultdict(list)
-    overrides: defaultdict[str, list[tuple[Any, ...]]] = defaultdict(list)
-    events: defaultdict[str, list[tuple[Any, ...]]] = defaultdict(list)
-    markers: defaultdict[str, list[Any]] = defaultdict(list)
+    Every read is at the snapshot's timestamp, so the chunks together are one
+    consistent view, but only one chunk's rows are held at a time.
+    """
+
+    ids_type = param_types.Array(param_types.STRING)
     with database.snapshot(multi_use=True) as snapshot:
-        for row in snapshot.execute_sql(BULK_BALANCE_SQL):
-            balances[str(row[0])].append(tuple(row[1:]))
-        for row in snapshot.execute_sql(BULK_OVERRIDES_SQL):
-            overrides[str(row[0])].append(tuple(row[1:]))
-        for row in snapshot.execute_sql(BULK_EVENTS_SQL):
-            events[str(row[0])].append(tuple(row[1:]))
+        markers: defaultdict[str, list[Any]] = defaultdict(list)
         for row in snapshot.execute_sql(
             BULK_MARKERS_SQL,
             params={
@@ -114,29 +126,35 @@ def load_trust_tier_bulk(database: Any, param_types: Any, *, environment: str) -
             },
         ):
             markers[str(row[0])].append(row[1])
-        for kind in ("workspace", "credit"):
-            for row in snapshot.execute_sql(
-                BULK_ENTITIES_SQL,
-                params={"kind": kind},
-                param_types={"kind": param_types.STRING},
+        workspace_ids = sorted({str(row[0]) for row in snapshot.execute_sql(BULK_WORKSPACE_IDS_SQL)})
+        for start in range(0, len(workspace_ids), chunk_size):
+            ids = workspace_ids[start : start + chunk_size]
+            bulk = TrustTierBulk(environment=environment, markers=dict(markers))
+            by_ids = {"params": {"ids": ids}, "param_types": {"ids": ids_type}}
+            for sql, grouped in (
+                (BULK_BALANCE_SQL, bulk.balances),
+                (BULK_OVERRIDES_SQL, bulk.overrides),
+                (BULK_EVENTS_SQL, bulk.events),
             ):
-                bulk.entities[(kind, str(row[0]))] = row[1]
-        owners = sorted(_owner_ids(bulk))
-        for start in range(0, len(owners), _USER_BATCH):
-            for row in snapshot.execute_sql(
-                BULK_ENTITIES_BY_ID_SQL,
-                params={"kind": "user", "ids": owners[start : start + _USER_BATCH]},
-                param_types={
-                    "kind": param_types.STRING,
-                    "ids": param_types.Array(param_types.STRING),
-                },
-            ):
-                bulk.entities[("user", str(row[0]))] = row[1]
-    bulk.balances = dict(balances)
-    bulk.overrides = dict(overrides)
-    bulk.events = dict(events)
-    bulk.markers = dict(markers)
-    return bulk
+                for row in snapshot.execute_sql(sql, **by_ids):
+                    grouped.setdefault(str(row[0]), []).append(tuple(row[1:]))
+            for kind, entity_ids in (("workspace", ids), ("credit", ids)):
+                _read_entities(snapshot, param_types, bulk, kind, entity_ids)
+            _read_entities(snapshot, param_types, bulk, "user", sorted(_owner_ids(bulk)))
+            yield bulk
+
+
+def _read_entities(
+    snapshot: Any, param_types: Any, bulk: TrustTierBulk, kind: str, entity_ids: list[str]
+) -> None:
+    if not entity_ids:
+        return
+    for row in snapshot.execute_sql(
+        BULK_ENTITIES_BY_ID_SQL,
+        params={"kind": kind, "ids": entity_ids},
+        param_types={"kind": param_types.STRING, "ids": param_types.Array(param_types.STRING)},
+    ):
+        bulk.entities[(kind, str(row[0]))] = row[1]
 
 
 def _owner_ids(bulk: TrustTierBulk) -> set[str]:
@@ -222,12 +240,12 @@ class TrustTierSelection:
     workspaces: frozenset[str]
     # workspace_id -> reasons
     candidates: dict[str, tuple[str, ...]]
-    # workspace_id -> {"tier": digest, "watermark": digest}
+    # workspace_id -> {"tier" | "tier_refused" | "watermark" | "watermark_refused": digest}
     digests: dict[str, dict[str, str]]
 
 
 def select_trust_tier_candidates(
-    bulk: TrustTierBulk,
+    bulks: Iterable[TrustTierBulk],
     *,
     param_types: Any,
     read_entity_tx: Any,
@@ -237,50 +255,63 @@ def select_trust_tier_candidates(
     now: dt.datetime,
     watermark_replicated: bool = True,
 ) -> TrustTierSelection:
-    """Judge every workspace with today's prechecks, against the snapshot."""
+    """Judge every workspace with today's prechecks, against the snapshot.
 
+    A refusal (an evaluation that raised on rows it read, not on a read) is
+    recorded with the digest of those rows, so the shadow can match it with
+    the same refusal on the per-workspace path.
+    """
+
+    workspaces: set[str] = set()
     candidates: dict[str, tuple[str, ...]] = {}
     digests: dict[str, dict[str, str]] = {}
-    for workspace_id in sorted(bulk.balances):
-        reader = BulkWorkspaceReader(bulk, workspace_id)
-        reasons: list[str] = []
-        seen: dict[str, str] = {}
-        try:
-            tier, shard_rows, _count, digest = evaluate_workspace_trust_tier(
-                reader,
-                param_types=param_types,
-                read_entity_tx=read_entity_tx,
-                workspace_id=workspace_id,
-                qualifying_providers=qualifying_providers,
-                tier3_min_days=tier3_min_days,
-                tier3_min_paid_microdollars=tier3_min_paid_microdollars,
-                now=now,
-            )
-            seen["tier"] = digest
-            if not _trust_tier_is_current(shard_rows, tier):
-                reasons.append("tier")
-        except Exception as exc:  # noqa: BLE001 - any failure is the existing path's to report
-            reasons.append(f"tier_evaluation_failed:{type(exc).__name__}")
-        if watermark_replicated:
+    for bulk in bulks:
+        for workspace_id in sorted(bulk.balances):
+            workspaces.add(workspace_id)
+            reasons: list[str] = []
+            seen: dict[str, str] = {}
+            reader = RecordingReader(BulkWorkspaceReader(bulk, workspace_id))
             try:
-                expected, digest = read_expected_reconciled_through(
+                tier, shard_rows, _count, digest = evaluate_workspace_trust_tier(
                     reader,
-                    param_types,
-                    workspace_id,
-                    qualifying_providers,
-                    environment=bulk.environment,
+                    param_types=param_types,
+                    read_entity_tx=read_entity_tx,
+                    workspace_id=workspace_id,
+                    qualifying_providers=qualifying_providers,
+                    tier3_min_days=tier3_min_days,
+                    tier3_min_paid_microdollars=tier3_min_paid_microdollars,
+                    now=now,
                 )
-                seen["watermark"] = digest
-                current = reader.execute_sql(
-                    SHARD_WATERMARKS_SQL, params={"workspace_id": workspace_id}
-                )
-                if not (current and all(same_instant(row[1], expected) for row in current)):
-                    reasons.append("watermark")
-            except Exception as exc:  # noqa: BLE001
-                reasons.append(f"watermark_evaluation_failed:{type(exc).__name__}")
-        digests[workspace_id] = seen
-        if reasons:
-            candidates[workspace_id] = tuple(reasons)
+                seen["tier"] = digest
+                if not _trust_tier_is_current(shard_rows, tier):
+                    reasons.append("tier")
+            except Exception as exc:  # noqa: BLE001 - any failure is the existing path's to report
+                if (refused := reader.refusal_digest()) is not None:
+                    seen["tier_refused"] = refused
+                reasons.append(f"tier_evaluation_failed:{type(exc).__name__}")
+            if watermark_replicated:
+                reader = RecordingReader(BulkWorkspaceReader(bulk, workspace_id))
+                try:
+                    expected, digest = read_expected_reconciled_through(
+                        reader,
+                        param_types,
+                        workspace_id,
+                        qualifying_providers,
+                        environment=bulk.environment,
+                    )
+                    current = reader.execute_sql(
+                        SHARD_WATERMARKS_SQL, params={"workspace_id": workspace_id}
+                    )
+                    seen["watermark"] = watermark_digest(digest, current)
+                    if not (current and all(same_instant(row[1], expected) for row in current)):
+                        reasons.append("watermark")
+                except Exception as exc:  # noqa: BLE001
+                    if (refused := reader.refusal_digest()) is not None:
+                        seen["watermark_refused"] = refused
+                    reasons.append(f"watermark_evaluation_failed:{type(exc).__name__}")
+            digests[workspace_id] = seen
+            if reasons:
+                candidates[workspace_id] = tuple(reasons)
     return TrustTierSelection(
-        workspaces=frozenset(bulk.balances), candidates=candidates, digests=digests
+        workspaces=frozenset(workspaces), candidates=candidates, digests=digests
     )

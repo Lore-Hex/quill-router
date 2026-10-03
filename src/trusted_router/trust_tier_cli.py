@@ -28,7 +28,7 @@ from trusted_router.storage_trust_reconciliation import (
 )
 from trusted_router.trust_tier_bulk import (
     TrustTierSelection,
-    load_trust_tier_bulk,
+    iter_trust_tier_bulk,
     select_trust_tier_candidates,
 )
 
@@ -61,16 +61,24 @@ class TrustTierJobResult:
         return self.attempted - len(self.failed)
 
 
-# What the per-workspace pass reports, and the digest it is compared with.
-_OBSERVED = {"tier_written": "tier", "watermark_changed": "watermark"}
+# What the per-workspace pass reports, and the snapshot digest it is compared
+# with: a write with the inputs the snapshot judged, a refusal with the rows
+# the snapshot's own refusal read.
+_OBSERVED = {
+    "tier_written": "tier",
+    "tier_refused": "tier_refused",
+    "watermark_changed": "watermark",
+    "watermark_refused": "watermark_refused",
+}
 
 
 class _Shadow:
     """The bulk selection, checked against what the per-workspace pass did.
 
-    A workspace the pass changed, outside the selection, is a race when its
-    inputs differ from what the snapshot saw (or it was not in the snapshot),
-    and a defect otherwise. A failure outside the selection is logged on its
+    A workspace the pass changed or refused, outside the selection, is a
+    defect when any write or refusal came from inputs the snapshot saw
+    unchanged, and a race otherwise (including a workspace not in the
+    snapshot). A failure outside the selection is logged on its
     own: a transient error is not a selection defect.
     """
 
@@ -98,20 +106,22 @@ class _Shadow:
                 failed_outside += 1
                 log.warning("trust.tier_shadow_failed_outside workspace_id=%s", workspace_id)
                 continue
-            seen = self.selection.digests.get(workspace_id)
-            raced = seen is None or any(
-                seen.get(_OBSERVED[kind]) != digest for kind, digest in acted.items()
+            # Each write is judged on its own inputs: a watermark that raced the
+            # snapshot does not excuse a tier write the snapshot saw unchanged.
+            seen = self.selection.digests.get(workspace_id, {})
+            missed = sorted(
+                kind for kind, digest in acted.items() if seen.get(_OBSERVED[kind]) == digest
             )
-            if raced:
+            if missed:
+                defects += 1
+                log.error(
+                    "trust.tier_shadow_defect workspace_id=%s missed=%s acted=%s",
+                    workspace_id, ",".join(missed), ",".join(sorted(acted)),
+                )
+            else:
                 races += 1
                 log.info(
                     "trust.tier_shadow_race workspace_id=%s acted=%s",
-                    workspace_id, ",".join(sorted(acted)),
-                )
-            else:
-                defects += 1
-                log.error(
-                    "trust.tier_shadow_defect workspace_id=%s acted=%s",
                     workspace_id, ",".join(sorted(acted)),
                 )
         unacted = len(set(selected) - set(self._acted) - failed_set)
@@ -133,9 +143,8 @@ def _select(store: Any, settings: Any, *, environment: str, now: datetime) -> _S
         return None
     started = time.monotonic()
     try:
-        bulk = load_trust_tier_bulk(target._database, target._param_types, environment=environment)
         selection = select_trust_tier_candidates(
-            bulk,
+            iter_trust_tier_bulk(target._database, target._param_types, environment=environment),
             param_types=target._param_types,
             read_entity_tx=target._read_entity_tx,
             qualifying_providers=settings.trust_qualifying_provider_set,

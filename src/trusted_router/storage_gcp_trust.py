@@ -793,8 +793,70 @@ def inputs_digest(*parts: Any) -> str:
     from a selection defect.
     """
 
-    encoded = json.dumps(parts, default=str, separators=(",", ":"))
+    encoded = json.dumps(parts, default=_digest_value, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def _digest_value(value: Any) -> str:
+    """Timestamps at full precision, as ``same_instant`` compares them.
+
+    ``str`` of a ``DatetimeWithNanoseconds`` drops the digits below a
+    microsecond, so a marker that moved by a nanosecond would digest the same.
+    """
+
+    if isinstance(value, dt.datetime):
+        return f"{value.isoformat()}/{getattr(value, 'nanosecond', value.microsecond * 1000)}"
+    return str(value)
+
+
+class RecordingReader:
+    """Passes a reader's queries through and keeps the rows they returned.
+
+    When an evaluation refuses a workspace (raises on rows it read), the tier
+    job's shadow compares the digest of those rows with the snapshot's, to
+    tell a refusal the snapshot saw from one that raced it. An error raised by
+    a read itself says nothing about the inputs, and gives no digest.
+    """
+
+    def __init__(self, reader: Any) -> None:
+        self._reader = reader
+        self._reads: list[tuple[str, dict[str, Any], list[Any]]] = []
+        self._read_failed = False
+
+    def query(
+        self,
+        sql: str,
+        params: dict[str, Any] | None = None,
+        param_types: Any = None,
+        **options: Any,
+    ) -> list[Any]:
+        try:
+            rows = list(
+                self._reader.execute_sql(sql, params=params, param_types=param_types, **options)
+            )
+        except BaseException:
+            self._read_failed = True
+            raise
+        self._reads.append((sql, dict(params or {}), rows))
+        return rows
+
+    # Defined as ``query`` because the SQL conformance inventory treats a
+    # function named ``*_sql`` as a SQL builder; callers use ``execute_sql``.
+    execute_sql = query
+
+    def refusal_digest(self) -> str | None:
+        """The digest of every row read, unless a read itself failed."""
+
+        if self._read_failed:
+            return None
+
+        def canonical(row: Any) -> str:
+            return json.dumps(list(row), default=_digest_value)
+
+        return inputs_digest([
+            [sql, sorted(params.items()), sorted(canonical(row) for row in rows)]
+            for sql, params, rows in self._reads
+        ])
 
 
 def evaluate_workspace_trust_tier(
@@ -911,7 +973,8 @@ def recompute_workspace_trust_tier_tx(
     ``observe`` is told ``("tier_written", digest)`` after a committed write,
     with the digest of the inputs that write was decided from. Every write
     changes a stored value: it happens only when a tier differs or a
-    ``trust_computed_at`` is NULL.
+    ``trust_computed_at`` is NULL. It is told ``("tier_refused", digest)``
+    when the evaluation raised on the rows it read, before the error goes on.
     """
 
     def evaluate(reader: Any) -> tuple[int, list[Any], int, str]:
@@ -927,10 +990,18 @@ def recompute_workspace_trust_tier_tx(
         )
 
     written: list[str] = []
+    refused: list[str] = []
 
     def txn(transaction: Any) -> int:
         written.clear()
-        effective_tier, shard_rows, shard_count, digest = evaluate(transaction)
+        refused.clear()
+        reader = RecordingReader(transaction)
+        try:
+            effective_tier, shard_rows, shard_count, digest = evaluate(reader)
+        except Exception:
+            if (refusal := reader.refusal_digest()) is not None:
+                refused.append(refusal)
+            raise
         if _trust_tier_is_current(shard_rows, effective_tier):
             return effective_tier
         updated = transaction.execute_update(
@@ -967,7 +1038,12 @@ def recompute_workspace_trust_tier_tx(
         else:
             if _trust_tier_is_current(shard_rows, effective_tier):
                 return effective_tier
-    tier = run_in_transaction(txn)
+    try:
+        tier = run_in_transaction(txn)
+    except Exception:
+        if refused and observe is not None:
+            observe("tier_refused", refused[-1])
+        raise
     if written and observe is not None:
         observe("tier_written", written[-1])
     return tier

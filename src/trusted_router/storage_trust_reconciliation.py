@@ -12,6 +12,7 @@ from trusted_router.storage_codec import json_body
 from trusted_router.storage_gcp_counter_dml import insert_entity_dml_at
 from trusted_router.storage_gcp_trust import (
     TRUST_EVENT_COLUMNS,
+    RecordingReader,
     _read_payment_tx,
     drain_matching_trust_inbox_tx,
     insert_credit_trust_event,
@@ -113,6 +114,15 @@ def read_expected_reconciled_through(
     providers = sorted({str(row[0]) for row in provider_rows})
     expected = expected_reconciled_through(providers, qualifying_providers, matching_markers)
     return expected, inputs_digest(providers, sorted(seen.items()), expected)
+
+
+def watermark_digest(expected_digest: str, shard_rows: Any) -> str:
+    """The digest of a watermark decision: its expected value's inputs and the
+    shards' stored values, which decide whether anything is written."""
+
+    from trusted_router.storage_gcp_trust import inputs_digest
+
+    return inputs_digest(expected_digest, [list(row) for row in shard_rows])
 
 
 def same_instant(left: datetime | None, right: datetime | None) -> bool:
@@ -436,7 +446,9 @@ class SpannerTrustReconciliationRepository:
 
         ``observe`` is told ``("watermark_changed", digest)`` when the write
         changed a stored value. A write after a failed snapshot precheck that
-        stores the value already there is not reported.
+        stores the value already there is not reported. It is told
+        ``("watermark_refused", digest)`` when the derivation raised on the
+        rows it read, before the error goes on.
         """
 
         types = self.store._param_types
@@ -473,19 +485,27 @@ class SpannerTrustReconciliationRepository:
                     return expected
 
         changed: list[str] = []
+        refused: list[str] = []
 
         def txn(transaction: Any) -> datetime | None:
             changed.clear()
-            reconciled, digest = reconciled_through(transaction)
-            shard_rows = list(
-                transaction.execute_sql(
-                    SHARD_WATERMARKS_SQL,
-                    params={"workspace_id": workspace_id},
-                    param_types={"workspace_id": types.STRING},
+            refused.clear()
+            reader = RecordingReader(transaction)
+            try:
+                reconciled, digest = reconciled_through(reader)
+                shard_rows = list(
+                    reader.execute_sql(
+                        SHARD_WATERMARKS_SQL,
+                        params={"workspace_id": workspace_id},
+                        param_types={"workspace_id": types.STRING},
+                    )
                 )
-            )
+            except Exception:
+                if (refusal := reader.refusal_digest()) is not None:
+                    refused.append(refusal)
+                raise
             if not all(same_instant(row[1], reconciled) for row in shard_rows):
-                changed.append(digest)
+                changed.append(watermark_digest(digest, shard_rows))
             updated = transaction.execute_update(
                 "UPDATE tr_credit_balance SET trust_reconciled_through=@watermark "
                 "WHERE workspace_id=@workspace_id",
@@ -496,7 +516,12 @@ class SpannerTrustReconciliationRepository:
                 raise RuntimeError("trust watermark replication missed an active shard")
             return reconciled
 
-        reconciled = self.store._run_in_transaction(txn)
+        try:
+            reconciled = self.store._run_in_transaction(txn)
+        except Exception:
+            if refused and observe is not None:
+                observe("watermark_refused", refused[-1])
+            raise
         if changed and observe is not None:
             observe("watermark_changed", changed[-1])
         return reconciled
