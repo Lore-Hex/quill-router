@@ -31,6 +31,11 @@ READ_OPERATIONS = {
     "/v2/node/payment": "payment",
     "/v2/node/updated_payments": "updated_payments",
 }
+HTTP_OPERATIONS = {
+    **{("GET", path): operation for path, operation in READ_OPERATIONS.items()},
+    ("POST", "/v2/node/create_invoice"): "create_invoice",
+    ("POST", "/v2/node/cancel_payment"): "cancel_payment",
+}
 TRANSIENT_READ_ERRORS = (
     httpx.ConnectTimeout, httpx.ReadTimeout, httpx.ConnectError,
     httpx.ReadError, httpx.RemoteProtocolError,
@@ -100,9 +105,11 @@ class Lexe:
     def _request_once(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         with self.client.stream(method, path, follow_redirects=False, **kwargs) as response:
             # Do not propagate bodies, invoice secrets or diagnostic text to logs.
-            if response.status_code == 404 and path == "/v2/node/payment":
-                raise FundingReviewRequired("invoice_missing")
             if response.status_code != 200:
+                logger.error("lightning.lexe_http_failed operation=%s http_status=%d",
+                             HTTP_OPERATIONS.get((method, path), "unknown"), response.status_code)
+                if response.status_code == 404 and path == "/v2/node/payment":
+                    raise FundingReviewRequired("invoice_missing")
                 raise RuntimeError("Lexe request unavailable")
             body = bytearray()
             for chunk in response.iter_bytes():
