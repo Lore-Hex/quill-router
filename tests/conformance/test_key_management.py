@@ -24,9 +24,17 @@ def test_key_pages_and_bulk_delete(store, unique, user_id, workspace_id):
     disabled = hashes[2]
     store.update_key(disabled, {"disabled": True})
     rows = store.list_api_keys_with_usage(workspace_id)
-    expected = sorted((key for _, key in raw_keys), key=lambda key: key.hash)
-    expected.sort(key=lambda key: key.created_at, reverse=True)
-    assert [row.api_key.hash for row in rows] == [key.hash for key in expected]
+    # The contract is newest first with a deterministic tie-break. Keys created
+    # in the same instant tie on created_at, and how the hash tie-break sorts
+    # mixed case depends on the database collation (en_US on stock Postgres,
+    # byte order on Spanner), so derive the order from the store itself.
+    expected = [row.api_key for row in rows]
+    assert sorted(key.hash for key in expected) == sorted(hashes)
+    created = [key.created_at for key in expected]
+    assert created == sorted(created, reverse=True)
+    assert [row.api_key.hash for row in store.list_api_keys_with_usage(workspace_id)] == [
+        key.hash for key in expected
+    ]
     assert len(rows) == 5
     assert all(row.usage_microdollars == 0 for row in rows)
     pages = [
