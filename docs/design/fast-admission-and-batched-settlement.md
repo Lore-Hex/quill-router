@@ -1,9 +1,9 @@
 # Fast admission and batched settlement
 
-Status: **proposed, v22, 2026-10-03. Nothing built.** v8 changed direction
-to regional leases, Joseph's choice (§2). Codex and Fable reviewed v1-v21
-(§11); Fable accepted v20 and v21, and v22 answers Codex's review of v21 and
-Fable's wording notes.
+Status: **proposed, v23, 2026-10-03. Nothing built.** v8 changed direction
+to regional leases, Joseph's choice (§2). Codex and Fable reviewed v1-v22
+(§11). Codex accepted v22 and Fable accepted v20 and v21; v23 answers the one
+defect Fable found in v22.
 
 This is the plan for reaching 100T tokens a month without spending the routing
 margin on the billing database, and for taking the control plane out of request
@@ -539,6 +539,17 @@ lease. A heartbeat is answered after its publish is acknowledged.
 snapshot, as today's reaper does in production. (`scripts/deploy/rollout.sh`
 sets `TR_REAP_SNAPSHOT_BOOKING_ENABLED=true`; the code default is false.)
 
+- **In money, that is the last accepted heartbeat's running charge.** The
+  owner prices each heartbeat once, through the same frozen fee layers as a
+  settle: the receipt fee and the app markup on top of the usage
+  (`delivered_usage_charge_microdollars` in `storage_gcp_stage_d.py`). Every
+  accepted heartbeat record carries that running charge, as today's heartbeat
+  answer does (`running_micro`).
+- Every terminal record, reaps included, carries its money fields as a settle
+  does. The auditor books a record's amount and never prices a record itself,
+  so the owner's reap and the auditor's reap of one hold charge the same
+  amount, and the checkpoint audit compares like with like.
+
 - **While the lease is open,** the owner reaps a hold still open at its
   deadline plus a grace. It publishes a reap record naming that hold and its
   snapshot, before its cutoff. The record reaps only that hold.
@@ -689,7 +700,7 @@ synchronous holds, through `settle_atomic`.
   - the consumption booked since the last commit (§4.7), with per-key usage,
     and the remaining allocation;
   - each open hold the log has shown, with its estimate, its latest valid
-    snapshot (sequence, hash and usage) and its deadline;
+    snapshot (sequence, hash, usage and running charge) and its deadline;
   - the winners decided since the last commit, keyed by authorization, each
     with its pending work: its request records (for a refund or a release,
     its disposition record) and amount-sensitive side effects (§4.9);
@@ -928,9 +939,10 @@ when Python is unreachable: the first durable point is Python's
     and the heartbeat is answered after both are acknowledged, so the first
     byte waits for one round trip, not two.
   - The first heartbeat record itself carries what a reap's request record
-    needs: the model, endpoint, frozen prices, workspace and key. Later
-    heartbeats carry only their snapshot. So a reap never depends on the
-    authorization record having arrived, which only adds detail.
+    needs: the model, endpoint, frozen prices, fee and markup terms,
+    workspace and key. Later heartbeats carry only their snapshot and running
+    charge. So a reap never depends on the authorization record having
+    arrived, which only adds detail.
   - The record topic's subscription is acknowledged only after staging, so a
     ClickHouse outage shorter than the subscription's 31-day retention loses
     nothing. The record topic's Cloud Storage export is the backstop: a
@@ -944,10 +956,12 @@ when Python is unreachable: the first durable point is Python's
     authorization can have two staged records, an original and an enclave
     retry's compacted copy, so the join is never by authorization alone.
   - A reap has no full record from a gateway. The auditor builds one, from the
-    first heartbeat record (model, endpoint, frozen prices, workspace and key)
-    and the reaped snapshot's usage, and publishes it to the record topic
-    before the reap's outcome, which names its digest. So a reap is rebuilt
-    from the record topic's export alone, like a settle.
+    first heartbeat record (model, endpoint, frozen prices, fee and markup
+    terms, workspace and key) and the reaped snapshot's usage and running
+    charge, names the heartbeat record it came from (its owner sequence), and
+    publishes it to the record topic before the reap's outcome, which names
+    its digest. So a reap is rebuilt from the record topic's export alone,
+    like a settle.
   - It first publishes the winner's outcome to the record topic: the
     authorization, the outcome, the cost, the boot binding, and the digest of
     the winning terminal's full record. The digest picks the winner among the
@@ -1808,3 +1822,19 @@ record.
     digest, as the rebuild is.
   - A boot registers, and re-registers, through one path, so its declaration
     changes only with a new boot.
+- **v23.** Codex accepted v22 (no findings). Fable (1 P1, 1 P3) found that
+  reaps were priced without the fee layer today's reaper applies: a heartbeat
+  record carried usage and prices but not the receipt fee or the app markup,
+  so the auditor's reap undercharged by them, and an owner's reap, priced with
+  the envelope's fees, would disagree with the auditor's sum at the next
+  checkpoint and revoke a healthy lease.
+
+  v23 answers them:
+  - The owner prices each heartbeat once, through the same fee layers as a
+    settle, and every accepted heartbeat record carries that running charge,
+    as today's heartbeat answer carries `running_micro`. A reap charges the
+    last accepted heartbeat's running charge.
+  - Every terminal record carries its money fields; the auditor books a
+    record's amount and never prices one itself.
+  - A reap's full record carries the fee terms and names the heartbeat record
+    it was built from.
