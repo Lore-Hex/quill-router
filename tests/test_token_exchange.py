@@ -174,7 +174,7 @@ def test_configured_enterprise_inbox_receives_the_lead(client: TestClient, test_
 
 
 def test_bounded_body_and_json_only(client: TestClient, sent_messages: list[EmailMessage]) -> None:
-    assert client.post("/token-exchange/brief", json={"email": "a" * 4096}).status_code == 413
+    assert client.post("/token-exchange/brief", json={"email": "a" * 8192}).status_code == 413
     assert client.post("/token-exchange/brief", data={"email": "ada@example.com"}).status_code == 415
     assert not sent_messages
 
@@ -260,13 +260,41 @@ def test_exchange_site_brochure_keeps_its_campaign(
     [(name, touch)] = events
     assert name == "enterprise_brief_delivered"
     assert touch["utm_campaign"] == "ny-launch"
-    assert touch["referer_host"] == "nytokenexchange.com"
+    assert touch["landing_path"] == "nytokenexchange.com/"
 
 
-def test_exchange_site_brochure_without_a_campaign_counts_the_site_as_referral() -> None:
-    touch = acquisition.exchange_site_touch("https://nytokenexchange.com/", None)
-    assert (touch["utm_source"], touch["utm_medium"]) == ("nytokenexchange.com", "referral")
-    assert acquisition.exchange_site_touch("https://nytokenexchange.com/", {"utm_source": 7})["utm_source"] == "nytokenexchange.com"
+def test_exchange_site_email_lists_only_campaign_fields_the_page_sent(
+    client: TestClient, sent_messages: list[EmailMessage], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(public_routes, "log_exchange_site_funnel_event", lambda *_: None)
+    client.post("/token-exchange/brief", json={"email": "ada@example.com"}, headers=EXCHANGE_HEADERS)
+    client.post(
+        "/token-exchange/brief",
+        json={"email": "bo@example.com", "campaign": {"utm_campaign": "ny-launch"}},
+        headers={**EXCHANGE_HEADERS, "Sec-GPC": "1"},
+    )
+    assert [m.text_body.count("utm_") for m in sent_messages] == [0, 0]
+
+
+def test_exchange_site_touch_defaults_like_a_landing() -> None:
+    def touch(campaign: dict[str, str]) -> tuple[str, str]:
+        result = acquisition.exchange_site_touch("https://nytokenexchange.com/", campaign)
+        return result["utm_source"], result["utm_medium"]
+
+    assert touch({}) == ("nytokenexchange.com", "referral")
+    assert touch({"utm_source": "linkedin"}) == ("linkedin", "none")
+    assert touch({"utm_source": "linkedin", "utm_medium": "paid_social"}) == ("linkedin", "paid_social")
+
+
+def test_exchange_site_campaign_ignores_privacy_signals_and_bad_values() -> None:
+    def request(headers: dict[str, str]) -> Request:
+        raw = [(k.lower().encode(), v.encode()) for k, v in headers.items()]
+        return Request({"type": "http", "method": "POST", "path": "/token-exchange/brief", "headers": raw, "query_string": b""})
+
+    campaign = {"utm_source": "linkedin", "utm_medium": 7, "utm_term": "x" * 300}
+    assert acquisition.exchange_site_campaign(request({}), campaign) == {"utm_source": "linkedin", "utm_term": "x" * 128}
+    assert acquisition.exchange_site_campaign(request({"DNT": "1"}), campaign) == {}
+    assert acquisition.exchange_site_campaign(request({}), ["utm_source"]) == {}
 
 
 def test_exchange_site_funnel_event_respects_privacy_signals(caplog: pytest.LogCaptureFixture) -> None:

@@ -59,6 +59,7 @@ _AUTOMATED_USER_AGENT_TOKENS = (
     "slack-imgproxy",
 )
 _AUTOMATED_PURPOSE_TOKENS = ("prefetch", "prerender", "preview")
+UTM_FIELDS = ("utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content")
 _TOUCH_FIELDS = frozenset(
     {
         "utm_source",
@@ -616,20 +617,30 @@ def log_browser_funnel_event(
     )
 
 
-def exchange_site_touch(page_url: str, campaign: object) -> dict[str, str]:
-    """The touch for a form posted from a Token Exchange site, which has no attribution cookie.
+def exchange_site_campaign(request: Request, campaign: object) -> dict[str, str]:
+    """The UTM fields a Token Exchange page sent from its own URL; none under GPC or DNT.
 
-    Campaign fields come from the page's own URL; without them the site is the referral."""
-    touch: dict[str, str] = {}
-    if isinstance(campaign, dict):
-        for name in ("utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"):
-            value = campaign.get(name)
-            if isinstance(value, str) and (safe := _safe_text(value, 128)):
-                touch[name] = safe
+    Those pages post cross-site, without TrustedRouter's attribution cookie."""
+    if _privacy_signal_enabled(request) or not isinstance(campaign, dict):
+        return {}
+    fields: dict[str, str] = {}
+    for name in UTM_FIELDS:
+        value = campaign.get(name)
+        if isinstance(value, str) and (safe := _safe_text(value, 128)):
+            fields[name] = safe
+    return fields
+
+
+def exchange_site_touch(page_url: str, campaign: dict[str, str]) -> dict[str, str]:
+    """The funnel touch for a Token Exchange page, defaulted as a landing on that page would be."""
     host = (urlsplit(page_url).hostname or "")[:128]
-    touch.setdefault("utm_source", host)
-    touch.setdefault("utm_medium", "referral")
-    touch["landing_path"] = "/"
+    touch = dict(campaign)
+    if "utm_source" in touch:
+        touch.setdefault("utm_medium", "none")
+    else:
+        touch["utm_source"], touch["utm_medium"] = host, "referral"
+    # The exported log keeps landing_path but not referer_host, so the path names the site.
+    touch["landing_path"] = f"{host}/"
     touch["referer_host"] = host
     touch["captured_at"] = iso_now()
     return touch
@@ -732,7 +743,7 @@ def _safe_touch_log_fields(touch: dict[str, str]) -> dict[str, object]:
 
 def _touch_from_request(request: Request, settings: Settings) -> dict[str, str]:
     touch: dict[str, str] = {}
-    for name in ("utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"):
+    for name in UTM_FIELDS:
         value = _safe_text(request.query_params.get(name), 128)
         if value:
             touch[name] = value

@@ -34,6 +34,7 @@ from starlette.responses import Response
 from starlette.types import Scope
 
 from trusted_router.acquisition import (
+    exchange_site_campaign,
     exchange_site_touch,
     log_browser_funnel_event,
     log_exchange_site_funnel_event,
@@ -850,7 +851,7 @@ async def _handle_enterprise_brief(settings: Settings, request: Request) -> Resp
     # Bound this tiny form independently of the much larger API upload budget.
     body = bytearray()
     async for chunk in request.stream():
-        if len(body) + len(chunk) > 4096:
+        if len(body) + len(chunk) > 8192:
             return error("request_too_large", 413)
         body.extend(chunk)
     try:
@@ -891,14 +892,8 @@ async def _handle_enterprise_brief(settings: Settings, request: Request) -> Resp
         return error("delivery_unavailable", 503)
 
     page_url = f"{exchange_origin}/" if exchange_origin else f"https://trustedrouter.com{page}"
-    # Exchange sites post cross-site without TrustedRouter's attribution cookie, so they
-    # send the campaign fields from their own URL instead.
-    touch = exchange_site_touch(page_url, payload.get("campaign")) if exchange_origin else None
-    campaign_lines = "".join(
-        f"{name}: {touch[name]}\n"
-        for name in ("utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content")
-        if touch and name in touch
-    )
+    campaign = exchange_site_campaign(request, payload.get("campaign")) if exchange_origin else {}
+    campaign_lines = "".join(f"{name}: {value}\n" for name, value in campaign.items())
     message = EmailMessage(
         to=settings.partner_inquiry_email or "enterprise@trustedrouter.com",
         reply_to=email,
@@ -920,8 +915,8 @@ async def _handle_enterprise_brief(settings: Settings, request: Request) -> Resp
     if not sent:
         log.error("enterprise_brief.delivery_unavailable")
         return error("delivery_unavailable", 503)
-    if touch is not None:
-        log_exchange_site_funnel_event(request, event, touch)
+    if exchange_origin is not None:
+        log_exchange_site_funnel_event(request, event, exchange_site_touch(page_url, campaign))
     else:
         log_browser_funnel_event(request, event)
     return FileResponse(

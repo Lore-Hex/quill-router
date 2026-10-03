@@ -10,10 +10,10 @@ from __future__ import annotations
 import argparse
 import copy
 import hashlib
+import http.client
 import json
 import shutil
 import subprocess
-import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -61,7 +61,7 @@ def brochure_gaps() -> list[str]:
         try:
             with urllib.request.urlopen(request, timeout=15) as response:  # noqa: S310
                 allowed = response.headers.get("Access-Control-Allow-Origin") == origin
-        except urllib.error.URLError:
+        except (OSError, http.client.HTTPException):  # refusals, timeouts and dropped connections
             allowed = False
         if not allowed:
             gaps.append(market["domain"])

@@ -3,6 +3,7 @@ import json
 import re
 import tempfile
 import unittest
+import urllib.error
 from html.parser import HTMLParser
 from pathlib import Path
 from unittest import mock
@@ -189,13 +190,15 @@ class ExchangeTests(unittest.TestCase):
         def answer(request, timeout):
             origin = request.headers["Origin"]
             if origin == "https://tokyotokenexchange.com":
-                raise deploy.urllib.error.HTTPError(request.full_url, 403, "Forbidden", {}, None)
+                raise urllib.error.HTTPError(request.full_url, 403, "Forbidden", {}, None)
+            if origin == "https://dubaitokenexchange.com":
+                raise TimeoutError("read timed out")
             response = mock.MagicMock()
             response.__enter__.return_value.headers = {"Access-Control-Allow-Origin": origin}
             return response
 
         with mock.patch.object(deploy.urllib.request, "urlopen", answer):
-            self.assertEqual(REAL_BROCHURE_GAPS(), ["tokyotokenexchange.com"])
+            self.assertEqual(REAL_BROCHURE_GAPS(), ["dubaitokenexchange.com", "tokyotokenexchange.com"])
 
     def test_pages(self):
         markets = load_markets()

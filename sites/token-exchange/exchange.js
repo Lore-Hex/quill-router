@@ -4,7 +4,7 @@ const campaignFields = (() => {
   const fields = {};
   ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'].forEach((key) => {
     const value = incoming.get(key);
-    if (value && value.length <= 200) fields[key] = value;
+    if (value && value.length <= 128) fields[key] = value;
   });
   return fields;
 })();
