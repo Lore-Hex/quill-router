@@ -163,6 +163,10 @@ def _fleet() -> tuple[Any, Any]:
     }
     _workspace(store, database, "ws-malformed")
     database.rows[("workspace", "ws-malformed")].body = "{not json"
+    # The credit top-ups stamp these from the wall clock; pin them, so two
+    # fleets built in different seconds start from identical rows.
+    for row in balance.values():
+        row.update(updated_at=NOW, source_updated_at=NOW)
     return store, database
 
 
