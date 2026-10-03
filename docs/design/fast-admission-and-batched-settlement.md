@@ -2,8 +2,9 @@
 
 Status: **approved by Joseph on 2026-10-03 (v25). Nothing built.** v8 changed
 direction to regional leases, Joseph's choice (§2). Codex and Fable reviewed
-v1-v25 (§11) and both accepted v25. v26 adds §4.13, how this fits with the
-work in flight on the same path, and what that check changed.
+v1-v25 (§11) and both accepted v25. v26 and v27 add §4.13, how this fits with
+the work in flight on the same path, and §5.1, the TLA+ specs that are
+model-checked before the code is written.
 
 This is the plan for reaching 100T tokens a month without spending the routing
 margin on the billing database, and for taking the control plane out of request
@@ -370,9 +371,11 @@ Spanner commit today.
     `total_credits − total_usage − reserved`, and remembers an exhausted
     workspace per process, so a balance held in leases would look exhausted
     to it.
-  - A wrong 402 is also cached downstream: the enclave suppresses a
-    credential's requests for a window after an `insufficient_credits` 402
-    from authorize (`billing_backoff.go`). A 503 is not cached.
+  - A wrong 402 is also cached downstream. After an `insufficient_credits`
+    402 from authorize, the enclave answers a repeat of the same request from
+    the same credential from memory, for 5 seconds by default
+    (`billing_backoff.go`; requests with an idempotency key bypass it). A 503
+    is not cached.
 
 ### 4.5 One authorization
 
@@ -596,8 +599,15 @@ charges nothing more.
     revocations at once and reaches admission the same way.
   - Deleting a key removes its entities and keeps its `tr_key_limit` rows
     (`SpannerApiKeys.delete`), so the auditor can still book a deleted key's
-    usage. A key row that is missing is handled as
-    `_release_key_or_skip_deleted` handles it today.
+    usage.
+  - **A key with no row never fails the lease's commit,** which also carries
+    the credit bookings, the winners and the progress. The auditor books a
+    key's usage to its recorded shard, else to shard 0, creating that row if
+    the key has none, and logs it. Today's settle raises in that case
+    (`_release_key_or_skip_deleted`), which parks one settle in the outbox;
+    the same raise in the auditor would stall a whole lease.
+  - A cleanup of `tr_key_limit` rows waits until no open or draining lease
+    could hold the key's requests, the same fence as adding a cap.
 - **Adding a cap, a window limit or `budget_strict`** moves the key to the
   synchronous path.
   - The change bumps the workspace's key-status version.
@@ -1153,22 +1163,33 @@ lists.
   observer (#1457) and the enclave's coordinator (quill-cloud-proxy #439) are
   both merged with their modes off. It hides authorize's latency and leaves
   its Spanner commits; fast admission removes both. So:
-  - **A request takes one or the other.** A workspace on the fast path gets
-    no speculation grants. Its authorize already answers in milliseconds, and
-    its unsettled exposure then has one bound, the lease allowance, not two
-    to be added up. (A grant's own bound is
+  - **A workspace takes one or the other.** A workspace on the fast path
+    gets no speculation grants, for any of its requests, including those
+    that stay synchronous (§4.11). Its unsettled exposure then has one bound,
+    the lease allowance, not two to be added up. (A grant's own bound is
     `min(tier ceiling / 100, paid headroom / 10, $1)`, and the protocol
     leaves "all other issued rights" to its caller.)
-  - Speculation keeps its value for what stays synchronous (§4.11), and
-    until fast admission ships.
+  - For the issuer, a workspace is on the fast path when fast mode is on for
+    it or any of its leases is open or draining. The issuer reads that in the
+    strong snapshot it already takes, a standalone Python change (§8).
+  - Switching fast mode on waits out a grant's 30 seconds before the first
+    lease is granted. Switching it off leaves leases draining for up to
+    2 h 20 min, and grants resume only once they have closed. So the two
+    bounds never overlap.
+  - Speculation keeps its value for workspaces that are not on the fast
+    path, and until fast admission ships.
   - A grant's paid headroom never counts leased money: leases sit in
     `reserved`, and the issuer reads `total_credits`, `total_usage` and
     `reserved` (`storage_gcp_speculation_shadow.resolve`).
   - Both rest on Stage D heartbeats: a grant's route must be Stage D, and the
     fast path admits only heartbeated streams.
-  - The enclave decodes authorize and settle answers, errors included. Their
-    bytes are frozen in `tests/fixtures/speculation_v1/` (#1429, #1485), and
-    the compiled service must serve the same bytes (§8).
+  - The enclave decodes authorize and settle answers, errors included, and
+    the compiled service must serve the same bytes. Only the error envelopes
+    and the speculation wire are frozen (`tests/fixtures/speculation_v1/`,
+    #1429 and #1485). The success answers the enclave decodes (authorize's
+    `stage_d` payload; settle's `already_settled`, `settled` and
+    `disposition`) have no fixture, so in shadow Python's answer to the same
+    request is the reference (§8).
 - **The Python path's own diet.** Authorize folded its pause read into the
   credit reserve (5 round trips, `c74e79b9`), settle became one commit
   (#1465), and its counter releases joined that commit's batch (#1456, 6
@@ -1235,6 +1256,56 @@ Each has a production check.
 - a drain-log settle committed between the owner reaper's read and its
   publish: milliseconds, after which the reap, an owner record, comes first.
   Decision 70 covers it, as it covers today's reaper race.
+
+### 5.1 What is model-checked
+
+Joseph asked on 2026-10-03 for TLA+ in the plan. The protocols are specified
+in TLA+ and checked with TLC before the code that implements them is written
+(§8). The specs live in `proofs/`, beside the three there today, and CI's
+`proofs` job checks every one on every pull request (`proofs/check.sh`).
+
+| Spec | Protocol | Invariants above |
+|---|---|---|
+| `LeaseLifecycle` | Grant, renewal, the owner's cutoff, expiry, draining and close, with clocks that differ by up to the skew allowance; two owners and a hand-off | 1, 6, 7, 9 |
+| `TerminalOrder` | One lease's records: the owner's sequence, the drain log, adoption, the fence tick, the boundary S, reaps by the owner and by the auditor, late and redelivered records, close against appends, and a rebuild from the archive | 3, 4, 5 |
+| `AuditorCommit` | The per-lease conditional commit under member takeover, crashes and redelivery, and the checkpoint audit | 2, 10 |
+| `CreditDebt` | Bookings across credit shards: overruns, covering a negative shard, the debt mark, and inflows that repay debt first | 11, and the per-shard identity in 2 |
+| `KeyCapFence` | Adding a cap while leases hold the key's holds: the key-status version, the owners' caches and the enabling condition | 8 |
+
+The rules are the ones `proofs/` already follows:
+
+- **Each spec names its invariants one by one** in its `.cfg`, with no state
+  constraint. Its bounds are small and stated, with what each bound leaves
+  out.
+- **Every guard is shown to matter.** For each guard the design relies on, a
+  mutant spec with that guard removed must make TLC produce a
+  counterexample, and the spec records which invariant the mutant breaks. The
+  mutants run in CI with the specs. The guards include the owner's cutoff,
+  the boundary S, the commit version, the close's read of the drain log, the
+  debt mark and the key-status version. A guard whose removal breaks nothing
+  is either unnecessary or not modeled, and the spec says which.
+- **The windows Target 4 allows are stated assumptions** of the specs: the
+  bounded skew and the state cache's age. A mutant that widens the skew past
+  its allowance must break the admission bound, which shows the model can see
+  that failure.
+- **Liveness is checked where the design promises progress:** a draining
+  lease whose records can be read closes, and an acknowledged terminal is
+  booked.
+- **Each spec has an executable shadow.** The owner's and the auditor's state
+  machines are pure modules of the Go service. Property tests drive them
+  through the spec's actions and check the spec's invariants, as
+  `tests/test_regional_quota_leases.py` shadows `RegionalQuotaLease`. In the
+  spike and in shadow, traces recorded from real leases are checked against
+  the specs' transitions.
+- **A protocol change changes its spec first,** in the same pull request as
+  the code.
+
+What this proves: TLC visits every reachable state of a small instance, such
+as two owners, two leases and a few authorizations. That is exhaustive for
+the instance and is not a proof for every size. The hazards the reviews found
+(§11) were all interleavings of a few actors, which small instances contain.
+Latency, load and the arithmetic of real amounts are outside the specs; the
+benchmark and the property tests cover them.
 
 ## 6. Latency and load
 
@@ -1319,25 +1390,30 @@ leases, and was retired on 2026-09-27.
      (`DEFAULT_NEW_BILLING_SHARDS = 16` today);
    - 503 instead of 402 when a balance's headroom sits in leases, in the
      reserve and in the insufficient-credit precheck (§4.4);
+   - the fast-path fact in the speculation issuer's snapshot (§4.13);
    - the combined identity in the counter reconciler.
-4. **A spike** of the owner, renewals and the auditor on one region:
+4. **Model the protocols** in TLA+ (§5.1). A protocol's spec and its mutants
+   pass in CI before the spike's code for that protocol is written.
+5. **A spike** of the owner, renewals and the auditor on one region:
    - ownership hand-off, and an owner killed mid-stream;
    - the hottest workspace's rate on one owner;
    - Pub/Sub ordering across publishers in one region, the per-key limit,
      record sizes, and redelivery;
    - the auditor's conditional commits while its members change, and what it
      writes: open holds, pending work, bytes, and restoring a lease's state
-     on takeover and during draining.
-5. **Shadow.** Gateways mirror authorize, heartbeat and settle. A comparator
+     on takeover and during draining;
+   - traces recorded from the spike's leases, checked against the specs.
+6. **Shadow.** Gateways mirror authorize, heartbeat and settle. A comparator
    reports any difference from Python in decisions, per-authorization charges,
-   reaper outcomes and records, and in the answer bytes the enclave decodes,
-   which include the error envelopes frozen in `tests/fixtures/speculation_v1/`.
-6. **Benchmark gate** (§6).
-7. **Pilot:** Joseph's own workspace, then a few large ones, with kill switches
+   reaper outcomes and records, and in the answer bytes the enclave decodes.
+   Python's answer to the same request is the reference for those bytes; the
+   error envelopes are also frozen in `tests/fixtures/speculation_v1/`.
+7. **Benchmark gate** (§6).
+8. **Pilot:** Joseph's own workspace, then a few large ones, with kill switches
    per workspace, region and cloud. The first cohort is requests that do not
    stream. Streams join once the enclave sends the heartbeat declaration and
    registrations carry it (§4.11).
-8. **Widen;** move keyed requests, capped keys, payouts and the remaining route
+9. **Widen;** move keyed requests, capped keys, payouts and the remaining route
    types (§4.11) one at a time; then retire the Python hot path.
 
 ## 9. Not decided here
@@ -1939,3 +2015,20 @@ record.
     usage;
   - the shadow comparator also checks the answer bytes the enclave decodes;
   - §8's first measurement is recorded: 2.3 commits per generation.
+- **v27.** Joseph asked for TLA+ in the plan; §5.1 names the five specs, the
+  rules they follow and what model checking does and does not prove, and §8
+  puts them before the spike. Fable (1 P2, 5 P3) reviewed v26:
+  - "handled as `_release_key_or_skip_deleted` handles it today" was wrong
+    for the auditor: for an uncapped key with no row that helper raises,
+    which would stall a whole lease's commit;
+  - and, among the P3s, whether the speculation rule is per workspace, its
+    transitions, the fact the issuer must read, the backoff's real scope, and
+    which answer bytes are frozen.
+
+  v27 answers them:
+  - The auditor books a key's usage to its recorded shard, else shard 0,
+    creating the row if the key has none, so a missing row never fails the
+    lease's commit.
+  - The speculation rule is per workspace, with "on the fast path" defined
+    for the issuer and both switches ordered so the bounds never overlap.
+  - The P3s are answered in place.
