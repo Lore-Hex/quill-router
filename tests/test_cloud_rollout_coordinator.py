@@ -353,22 +353,49 @@ def test_automatic_journal_deletion_is_refused(monkeypatch, payload, allowed):
             rollout.GCSStore().verify_retention()
 
 
+GH_NOT_FOUND = (1, '{"status": "404", "message": "Not Found"}', "HTTP 404")
+GH_EMPTY_LIST = (0, '{"total_count": 0, "workflow_runs": []}', "")
+GH_IN_PROGRESS = (0, '{"status": "in_progress"}', "")
+
+
+def deletion_paths(repo="quill-router"):
+    other = "quill-cloud-proxy" if repo == "quill-router" else "quill-router"
+    # Lookup #1, probe #1 (identity, listing, other repo), lookup #2, probe #2.
+    return [
+        f"repos/Lore-Hex/{repo}/actions/runs/123",
+        f"repos/Lore-Hex/{repo}",
+        f"repos/Lore-Hex/{repo}/actions/runs?per_page=100",
+        f"repos/Lore-Hex/{other}/actions/runs/123",
+        f"repos/Lore-Hex/{repo}/actions/runs/123",
+        f"repos/Lore-Hex/{repo}",
+        f"repos/Lore-Hex/{repo}/actions/runs?per_page=100",
+        f"repos/Lore-Hex/{other}/actions/runs/123",
+    ]
+
+
 @pytest.fixture
 def gh_api(monkeypatch):
-    def install(run_response, probe_response=(0, '{"total_count": 0}', ""),
-                repo="quill-router"):
+    def install(run_response, probe_response=GH_EMPTY_LIST,
+                repo="quill-router", repo_response=None, other_response=GH_NOT_FOUND):
         run_endpoint = f"repos/Lore-Hex/{repo}/actions/runs/123"
-        probe_endpoint = f"repos/Lore-Hex/{repo}/actions/runs?per_page=1"
-        responses = {run_endpoint: run_response, probe_endpoint: probe_response}
+        probe_endpoint = f"repos/Lore-Hex/{repo}/actions/runs?per_page=100"
+        responses = {}
+        for full_repo, repository_id in rollout.GITHUB_REPOSITORY_IDS.items():
+            responses[f"repos/{full_repo}"] = (0, json.dumps({"id": repository_id}), "")
+            responses[f"repos/{full_repo}/actions/runs/123"] = other_response
+        responses.update({run_endpoint: run_response, probe_endpoint: probe_response})
+        if repo_response is not None:
+            responses[f"repos/Lore-Hex/{repo}"] = repo_response
         calls = []
 
         def fake(args, **kwargs):
-            assert args[:2] == ["/bin/gh", "api"]
-            assert len(args) == 3
+            path = args[-1]
+            assert args == ["/bin/gh", "api", "--hostname", "github.com", path]
             assert kwargs == {"capture_output": True, "text": True, "timeout": 30, "check": False}
-            calls.append(args[2])
-            assert calls == [run_endpoint, probe_endpoint][:len(calls)]
-            response = responses[args[2]]
+            calls.append(path)
+            response = responses[path]
+            if isinstance(response, list):
+                response = response.pop(0)
             if isinstance(response, Exception):
                 raise response
             return subprocess.CompletedProcess(args, *response)
@@ -382,9 +409,6 @@ def gh_api(monkeypatch):
     return install
 
 
-GH_NOT_FOUND = (1, '{"status": "404", "message": "Not Found"}', "HTTP 404")
-
-
 @pytest.mark.parametrize("repo", ["quill-router", "quill-cloud-proxy"])
 @pytest.mark.parametrize("status,stopped", [("completed", True), ("in_progress", False), ("queued", False)])
 def test_owner_stopped_reads_exact_run_endpoint(gh_api, repo, status, stopped):
@@ -394,11 +418,11 @@ def test_owner_stopped_reads_exact_run_endpoint(gh_api, repo, status, stopped):
 
 
 @pytest.mark.parametrize("now,stopped", [(1999, False), (2000, False), (2001, True)])
-def test_deleted_owner_requires_verified_actions_access_and_strict_expiry(gh_api, now, stopped):
-    lease, calls = gh_api(GH_NOT_FOUND)
+@pytest.mark.parametrize("repo", ["quill-router", "quill-cloud-proxy"])
+def test_deleted_owner_requires_verified_actions_access_and_strict_expiry(gh_api, now, stopped, repo):
+    lease, calls = gh_api(GH_NOT_FOUND, repo=repo)
     assert rollout.owner_stopped(lease, now=lambda: now) is stopped
-    assert calls == ["repos/Lore-Hex/quill-router/actions/runs/123",
-                     "repos/Lore-Hex/quill-router/actions/runs?per_page=1"]
+    assert calls == (deletion_paths(repo) if stopped else deletion_paths(repo)[:1])
 
 
 @pytest.mark.parametrize("probe_response", [
@@ -419,7 +443,73 @@ def test_deleted_owner_requires_verified_actions_access_and_strict_expiry(gh_api
 def test_deleted_owner_refuses_failed_or_malformed_actions_probe(gh_api, probe_response):
     lease, calls = gh_api(GH_NOT_FOUND, probe_response)
     assert not rollout.owner_stopped(lease, now=lambda: 2001)
-    assert len(calls) == 2
+    assert calls == deletion_paths()[:3]
+
+
+@pytest.mark.parametrize("repo", ["quill-router", "quill-cloud-proxy"])
+@pytest.mark.parametrize("repo_response", [
+    GH_NOT_FOUND,
+    (1, '{"status": "403"}', "HTTP 403"),
+    (0, "[]", ""),
+    (0, '{"id": 999}', ""),
+    (0, '{"id": "1227431177"}', ""),
+    (0, '{"id": true}', ""),
+])
+def test_deleted_owner_requires_original_repository_identity(gh_api, repo, repo_response):
+    lease, calls = gh_api(GH_NOT_FOUND, repo=repo, repo_response=repo_response)
+    assert not rollout.owner_stopped(lease, now=lambda: 2001)
+    assert calls == deletion_paths(repo)[:2]
+
+
+def test_deleted_owner_refuses_contradictory_listing(gh_api, capsys):
+    listing = {"total_count": 3, "workflow_runs": [None, {"id": 456},
+                                                {"id": 123, "status": "in_progress"}]}
+    lease, calls = gh_api(GH_NOT_FOUND, (0, json.dumps(listing), ""))
+    assert not rollout.owner_stopped(lease, now=lambda: 2001)
+    assert calls == deletion_paths()[:3]
+    assert "listing still shows run 123 (status 'in_progress'); not deleted" in capsys.readouterr().err
+
+
+def test_deleted_owner_refuses_reappearing_run(gh_api, capsys):
+    lease, calls = gh_api([GH_NOT_FOUND, GH_IN_PROGRESS])
+    assert not rollout.owner_stopped(lease, now=lambda: 2001)
+    assert calls == deletion_paths()[:5]
+    assert "run 123 reappeared with status 'in_progress'" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("response", [
+    (1, '{"status": "503"}', "HTTP 503"),
+    (1, '{"status": "403"}', "HTTP 403"),
+    (1, '{"status": 404}', "HTTP 404"),
+    (1, "not JSON", "HTTP 404"),
+    subprocess.TimeoutExpired("gh", 30),
+])
+def test_deleted_owner_requires_second_structured_404(gh_api, response):
+    lease, calls = gh_api([GH_NOT_FOUND, response])
+    assert not rollout.owner_stopped(lease, now=lambda: 2001)
+    assert calls == deletion_paths()[:5]
+
+
+@pytest.mark.parametrize("stage,call_count", [("identity", 6), ("listing", 7), ("other", 8)])
+def test_deleted_owner_requires_fresh_second_probe(gh_api, stage, call_count):
+    failed = (1, '{"status": "403"}', "HTTP 403")
+    kwargs = {
+        "identity": {"repo_response": [(0, '{"id": 1227431177}', ""), failed]},
+        "listing": {"probe_response": [GH_EMPTY_LIST, failed]},
+        "other": {"other_response": [GH_NOT_FOUND, failed]},
+    }[stage]
+    lease, calls = gh_api(GH_NOT_FOUND, **kwargs)
+    assert not rollout.owner_stopped(lease, now=lambda: 2001)
+    assert calls == deletion_paths()[:call_count]
+
+
+@pytest.mark.parametrize("repo", ["quill-router", "quill-cloud-proxy"])
+def test_deleted_owner_refuses_run_in_other_repository(gh_api, capsys, repo):
+    lease, calls = gh_api(GH_NOT_FOUND, repo=repo, other_response=GH_IN_PROGRESS)
+    assert not rollout.owner_stopped(lease, now=lambda: 2001)
+    assert calls == deletion_paths(repo)[:4]
+    other = "quill-cloud-proxy" if repo == "quill-router" else "quill-router"
+    assert f"run 123 exists in Lore-Hex/{other} with status 'in_progress'" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("run_response", [
@@ -449,7 +539,7 @@ def test_deleted_owner_requires_integer_lease_expiry(gh_api, expiry):
     del lease["expires_at"]
     lease.update(expiry)
     assert not rollout.owner_stopped(lease, now=lambda: 2001)
-    assert len(calls) == 2
+    assert len(calls) == 1
 
 
 def test_owner_stopped_refuses_missing_gh(gh_api, monkeypatch):
@@ -475,7 +565,37 @@ def test_recovery_authorization_404_after_expiry_preserves_live_owner_lease(syst
     assert system.store.record["leases"]["aws"] == lease
     with pytest.raises(rollout.Busy, match="already reserved"):
         acquire(system, "aws")
-    assert len(calls) == 2
+    assert calls == deletion_paths()[:3]
+
+
+@pytest.mark.parametrize("evidence,call_count", [
+    ("contradictory_listing", 3), ("reused_name", 2), ("wrong_repository", 4),
+])
+def test_recovery_contradictory_owner_evidence_preserves_lease(system, gh_api, evidence, call_count):
+    # P1-A: access becomes effective after the first 404. P1-B: the old name is
+    # reused after a rename, or the owner URL pairs a run with the wrong repo.
+    kwargs = {
+        "contradictory_listing": {"probe_response": (
+            0, '{"total_count": 1, "workflow_runs": [{"id": 123, "status": "in_progress"}]}', "")},
+        "reused_name": {"repo_response": (0, '{"id": 999}', "")},
+        "wrong_repository": {"other_response": GH_IN_PROGRESS},
+    }[evidence]
+    owner, calls = gh_api(GH_NOT_FOUND, **kwargs)
+    lease = system.coordinator.acquire("aws", owner["owner"], "control-plane", 60)
+    system.clock[0] = 1059
+    system.coordinator.check("aws", lease["operation_id"])
+    system.clock[0] = 1061
+    before = system.store.read()
+    with pytest.raises(rollout.Refused, match="still be mutating"):
+        system.coordinator.recover(
+            "aws", lease["operation_id"],
+            lambda lease: rollout.owner_stopped(lease, now=lambda: system.clock[0]),
+        )
+    assert system.store.read() == before
+    assert system.store.record["leases"]["aws"] == lease
+    with pytest.raises(rollout.Busy, match="already reserved"):
+        acquire(system, "aws")
+    assert calls == deletion_paths()[:call_count]
 
 
 def test_recovery_verified_deleted_owner_after_expiry_releases_lease(system, gh_api):
@@ -488,14 +608,22 @@ def test_recovery_verified_deleted_owner_after_expiry_releases_lease(system, gh_
     )
     assert system.store.record["leases"] == {}
     assert system.store.record["holdback"] is None
-    assert len(calls) == 2
+    assert calls == deletion_paths()
 
 
 def test_owner_check_refusals_name_the_failed_condition(gh_api, capsys):
     # The operator must learn whether to fix the gh credential or wait for the TTL.
-    lease, _ = gh_api(GH_NOT_FOUND, GH_NOT_FOUND)
+    lease, _ = gh_api(GH_NOT_FOUND, (1, '{"status": "403"}', "HTTP 403"))
     assert not rollout.owner_stopped(lease, now=lambda: 2001)
-    assert "actions-read probe of Lore-Hex/quill-router failed" in capsys.readouterr().err
+    assert "give gh a credential with actions:read and retry" in capsys.readouterr().err
+    for response in [(1, '{"status": "503"}', "HTTP 503"),
+                     subprocess.TimeoutExpired("gh", 30), (0, "not JSON", ""), OSError("offline")]:
+        lease, _ = gh_api(GH_NOT_FOUND, response)
+        assert not rollout.owner_stopped(lease, now=lambda: 2001)
+        diagnostic = capsys.readouterr().err
+        assert "GitHub API failure (" in diagnostic
+        assert "retry later" in diagnostic
+        assert "credential" not in diagnostic
     lease, _ = gh_api(GH_NOT_FOUND)
     assert not rollout.owner_stopped(lease, now=lambda: 1999)
     assert "expires_at=2000 has not elapsed (now=1999)" in capsys.readouterr().err
@@ -504,10 +632,16 @@ def test_owner_check_refusals_name_the_failed_condition(gh_api, capsys):
     assert "status='in_progress'; the owner run has not completed" in capsys.readouterr().err
     lease, _ = gh_api((1, '{"status": "500", "message": "Internal Server Error"}', "HTTP 500"))
     assert not rollout.owner_stopped(lease, now=lambda: 2001)
-    assert "status='500'; not a structured 404" in capsys.readouterr().err
-    lease, _ = gh_api(GH_NOT_FOUND)
-    assert rollout.owner_stopped(lease, now=lambda: 2001)
-    assert capsys.readouterr().err == ""
+    assert "GitHub API failure (" in capsys.readouterr().err
+    lease, _ = gh_api(GH_NOT_FOUND, repo_response=(0, '{"id": 999}', ""))
+    assert not rollout.owner_stopped(lease, now=lambda: 2001)
+    assert ("/Lore-Hex/quill-router now resolves to a different repository (id 999),"
+            " not the allowlisted one") in capsys.readouterr().err
+    for response in [GH_NOT_FOUND, (0, '{"status": "completed"}', "")]:
+        lease, _ = gh_api(response)
+        assert rollout.owner_stopped(lease, now=lambda: 2001)
+        output = capsys.readouterr()
+        assert output.err == output.out == ""
 
 
 def test_short_lived_acquire_is_not_assumed_to_be_manual_owner(system, monkeypatch):
