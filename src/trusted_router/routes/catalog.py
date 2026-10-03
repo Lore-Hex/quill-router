@@ -51,6 +51,7 @@ from trusted_router.openai_service_tiers import (
 from trusted_router.provider_lifecycle import provider_catalog_revision, provider_pricing_schedule
 from trusted_router.provider_locations import inference_location_metadata
 from trusted_router.provider_precision import endpoint_precision_metadata, endpoint_quantization
+from trusted_router.public_openapi import inference_servers
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.routing import catalog_endpoint_candidates, provider_route_preferences
 
@@ -472,7 +473,7 @@ def register_catalog_routes(router: APIRouter) -> None:
             "Returns the live public model catalog. No API key is required. "
             "The canonical production URL is https://api.trustedrouter.com/v1/models."
         ),
-        openapi_extra={"servers": [{"url": "https://api.trustedrouter.com"}]},
+        openapi_extra={"servers": inference_servers()},
     )
     async def models(request: Request) -> Response:
         catalog_payload = _current_catalog_payload()
