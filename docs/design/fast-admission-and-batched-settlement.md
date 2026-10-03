@@ -1,9 +1,9 @@
 # Fast admission and batched settlement
 
-Status: **proposed, v25, 2026-10-03. Nothing built.** v8 changed direction
-to regional leases, Joseph's choice (§2). Codex and Fable reviewed v1-v24
-(§11). Both accepted v23 with no defect; v24 added their closing notes, and
-v25 corrects one sentence of v24.
+Status: **approved by Joseph on 2026-10-03 (v25). Nothing built.** v8 changed
+direction to regional leases, Joseph's choice (§2). Codex and Fable reviewed
+v1-v25 (§11) and both accepted v25. v26 adds §4.13, how this fits with the
+work in flight on the same path, and what that check changed.
 
 This is the plan for reaching 100T tokens a month without spending the routing
 margin on the billing database, and for taking the control plane out of request
@@ -365,6 +365,14 @@ Spanner commit today.
   covers e but the headroom outside leases does not, Python answers 503 with
   `Retry-After`. This needs a Python change: today an insufficient-credit
   reservation is answered 402.
+  - The change covers the insufficient-credit precheck too
+    (`credit_exhaustion_precheck`, #1461). It reads the same headroom,
+    `total_credits − total_usage − reserved`, and remembers an exhausted
+    workspace per process, so a balance held in leases would look exhausted
+    to it.
+  - A wrong 402 is also cached downstream: the enclave suppresses a
+    credential's requests for a window after an `insufficient_credits` 402
+    from authorize (`billing_backoff.go`). A 503 is not cached.
 
 ### 4.5 One authorization
 
@@ -584,7 +592,12 @@ charges nothing more.
     bookings. It advances the key's window counters too, as `release_key`
     does.
   - Revocation reaches admission through the key-status cache, whose maximum
-    age is short and stated as the exposure.
+    age is short and stated as the exposure. A bulk deletion (#1496) is many
+    revocations at once and reaches admission the same way.
+  - Deleting a key removes its entities and keeps its `tr_key_limit` rows
+    (`SpannerApiKeys.delete`), so the auditor can still book a deleted key's
+    usage. A key row that is missing is handled as
+    `_release_key_or_skip_deleted` handles it today.
 - **Adding a cap, a window limit or `budget_strict`** moves the key to the
   synchronous path.
   - The change bumps the workspace's key-status version.
@@ -1059,13 +1072,15 @@ stream, and streams the enclave heartbeats. These stay on today's Python path:
     `spend_lease.go`).
     - The enclave sends the declaration when it registers (§9), computed from
       `stageDConfig.usageHeartbeat` on the one registration path its boot
-      runs, Stage D or spend-lease shadow (`main.go` at `a06050f` skips the
-      Stage D path when a spend-lease flag is set), so a shadow boot declares
-      nothing it does not do. Its periodic re-registration runs from that same
-      path, so a boot's declaration changes only with a new boot. Python
-      stores it on the boot record, `GatewayBoot`, from the registration
-      route (§8). There are two declarations, heartbeats and the heartbeat at
-      stream open, and a missing one means undeclared.
+      runs, so a boot declares nothing it does not do. At `a06050f` there are
+      two paths, Stage D and spend-lease shadow (`main.go` skips the Stage D
+      path when a spend-lease flag is set). At `29be0fdd` there is a third:
+      in speculation shadow mode (§4.13) a boot registers through the Stage D
+      path even with heartbeats off. Its periodic re-registration runs from
+      that same path, so a boot's declaration changes only with a new boot.
+      Python stores it on the boot record, `GatewayBoot`, from the
+      registration route (§8). There are two declarations, heartbeats and the
+      heartbeat at stream open, and a missing one means undeclared.
     - A re-registration replaces the declarations with what it sends. Today's
       `observe_gateway_boot` keeps fields the new registration omits, so it is
       not reused for them.
@@ -1122,6 +1137,50 @@ Load Balancer:
 - Receipt keys move off DNS discovery, which has an instance-termination gap.
   Boot-registry registration, with attestation history, becomes the publication
   path, required before an instance takes traffic.
+
+### 4.13 Work in flight on the same path
+
+Checked on 2026-10-03 against quill-router `26780a22` and quill-cloud-proxy
+`29be0fdd`. The enclave facts this design cites at `a06050f` still hold there
+(`stageDStreamEligible`, `serveMessages` without heartbeats, the settle queue
+and the heartbeat attempts), except the registration paths, which §4.11 now
+lists.
+
+- **Speculative invocation** (`docs/speculation-protocol-v1.md`). The enclave
+  starts the provider request before authorize answers, under a signed grant
+  that lasts at most 30 seconds and carries a bounded number of permits;
+  output waits for the ordinary authorize. It is in shadow only: the router's
+  observer (#1457) and the enclave's coordinator (quill-cloud-proxy #439) are
+  both merged with their modes off. It hides authorize's latency and leaves
+  its Spanner commits; fast admission removes both. So:
+  - **A request takes one or the other.** A workspace on the fast path gets
+    no speculation grants. Its authorize already answers in milliseconds, and
+    its unsettled exposure then has one bound, the lease allowance, not two
+    to be added up. (A grant's own bound is
+    `min(tier ceiling / 100, paid headroom / 10, $1)`, and the protocol
+    leaves "all other issued rights" to its caller.)
+  - Speculation keeps its value for what stays synchronous (§4.11), and
+    until fast admission ships.
+  - A grant's paid headroom never counts leased money: leases sit in
+    `reserved`, and the issuer reads `total_credits`, `total_usage` and
+    `reserved` (`storage_gcp_speculation_shadow.resolve`).
+  - Both rest on Stage D heartbeats: a grant's route must be Stage D, and the
+    fast path admits only heartbeated streams.
+  - The enclave decodes authorize and settle answers, errors included. Their
+    bytes are frozen in `tests/fixtures/speculation_v1/` (#1429, #1485), and
+    the compiled service must serve the same bytes (§8).
+- **The Python path's own diet.** Authorize folded its pause read into the
+  credit reserve (5 round trips, `c74e79b9`), settle became one commit
+  (#1465), and its counter releases joined that commit's batch (#1456, 6
+  operations). On 2026-10-03 the path cost about 2.3 commits per generation,
+  down from 4.3 two days earlier. This is the path the synchronous cohort
+  keeps (§4.11) and the reference the shadow comparator checks against, so
+  its statements are the ones the compiled service must match.
+- **The trust-tier job** (#1484, #1491) selects its candidates from one
+  snapshot, in shadow. The trust allowance (§4.7) reads the tier it
+  maintains, and nothing in that job depends on leases.
+- **Key management at scale** (#1496, open) pages the key list and deletes
+  keys in bulk. §4.6 says how deletions reach admission.
 
 ## 5. Invariants
 
@@ -1240,7 +1299,9 @@ leases, and was retired on 2026-09-27.
 ## 8. Rollout
 
 1. **Measure** commits per generation after #1464 and #1465, and authorize's
-   timing fields per region.
+   timing fields per region. Measured on 2026-10-03, hour ending 10:00 UTC:
+   about 81,500 commits for about 35,800 settles, 2.3 per generation, before
+   #1456 deployed.
 2. **Gateway load balancer and receipt-key publication** (§4.12), independent
    of the rest.
 3. **Python changes that stand alone:**
@@ -1256,7 +1317,8 @@ leases, and was retired on 2026-09-27.
      grow, with a one-time consolidation. Without it, covering runs on
      routine overruns of small, many-shard workspaces
      (`DEFAULT_NEW_BILLING_SHARDS = 16` today);
-   - 503 instead of 402 when a balance's headroom sits in leases;
+   - 503 instead of 402 when a balance's headroom sits in leases, in the
+     reserve and in the insufficient-credit precheck (§4.4);
    - the combined identity in the counter reconciler.
 4. **A spike** of the owner, renewals and the auditor on one region:
    - ownership hand-off, and an owner killed mid-stream;
@@ -1268,7 +1330,8 @@ leases, and was retired on 2026-09-27.
      on takeover and during draining.
 5. **Shadow.** Gateways mirror authorize, heartbeat and settle. A comparator
    reports any difference from Python in decisions, per-authorization charges,
-   reaper outcomes and records.
+   reaper outcomes and records, and in the answer bytes the enclave decodes,
+   which include the error envelopes frozen in `tests/fixtures/speculation_v1/`.
 6. **Benchmark gate** (§6).
 7. **Pilot:** Joseph's own workspace, then a few large ones, with kill switches
    per workspace, region and cloud. The first cohort is requests that do not
@@ -1864,3 +1927,15 @@ record.
 - **v25.** Codex (1 P2) found that v24's "each charge is still capped at its
   hold" contradicted settle overruns, which are booked in full. v25 scopes the
   cap to heartbeat running charges and the reaps that use them.
+- **v26.** Joseph approved v25 on 2026-10-03. v26 checks the design against
+  the work in flight on the same path and adds §4.13. What the check changed:
+  - a workspace on the fast path gets no speculation grants, so its unsettled
+    exposure has one bound;
+  - the 503-instead-of-402 change covers the insufficient-credit precheck
+    (#1461), whose answer the enclave caches;
+  - at quill-cloud-proxy `29be0fdd` a third registration path exists
+    (speculation shadow), which the declaration rule covers;
+  - deleted keys keep their `tr_key_limit` rows, so the auditor can book their
+    usage;
+  - the shadow comparator also checks the answer bytes the enclave decodes;
+  - §8's first measurement is recorded: 2.3 commits per generation.
