@@ -52,6 +52,7 @@ from trusted_router.pricing import (
     provider_manifest_price_profile_is_valid,
     provider_manifest_price_tiers_are_valid,
 )
+from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
 from trusted_router.provider_manifest_policy import (
     EXPIRING_PROVIDER_MANIFEST_SLUGS,
     PROVIDER_MANIFEST_MAX_AGE_DAYS,
@@ -139,7 +140,13 @@ def test_wave3_manifests_publish_only_canaried_priced_chat_routes() -> None:
     for module in (*MODULES, perplexity):
         rows = json.loads(module.MANIFEST_PATH.read_text(encoding="utf-8"))["models"]
         live_rows = [row for row in rows if row.get("routable") is not False]
-        assert module.SLUG in endpoint_providers or not live_rows, module.SLUG
+        if module.SLUG in PREPAID_PROVIDER_HOLD_REASONS:
+            assert not any(
+                endpoint.provider == module.SLUG and endpoint.usage_type == "Credits"
+                for endpoint in catalog_vehicles.registry_endpoints().values()
+            )
+        else:
+            assert module.SLUG in endpoint_providers or not live_rows, module.SLUG
     for module in MODULES:
         manifest = json.loads(module.MANIFEST_PATH.read_text(encoding="utf-8"))
         assert manifest["provider"] == module.SLUG
