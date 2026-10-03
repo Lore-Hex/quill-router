@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 from pathlib import Path
@@ -218,3 +219,52 @@ def test_no_ungated_http_download(client: TestClient) -> None:
     for name in ("TrustedRouter-Token-Exchange-Brochure.pdf", "TrustedRouter-Enterprise-Brief.pdf"):
         assert client.get(f"/static/enterprise/{name}").status_code == 404
         assert client.get(f"/data/enterprise/{name}").status_code == 404
+
+
+EXCHANGE_HEADERS = {"Origin": "https://nytokenexchange.com", "Sec-Fetch-Site": "cross-site"}
+
+
+def test_exchange_sites_may_request_the_brief_from_their_own_domains(client: TestClient, sent_messages: list[EmailMessage]) -> None:
+    preflight = client.options(
+        "/token-exchange/brief",
+        headers={**EXCHANGE_HEADERS, "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "content-type"},
+    )
+    assert preflight.status_code == 204
+    assert preflight.headers["Access-Control-Allow-Origin"] == "https://nytokenexchange.com"
+    assert preflight.headers["Access-Control-Allow-Methods"] == "POST, OPTIONS"
+    assert preflight.headers["Access-Control-Allow-Headers"] == "content-type"
+    response = client.post("/token-exchange/brief", json={"email": "ada@example.com"}, headers=EXCHANGE_HEADERS)
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.headers["Access-Control-Allow-Origin"] == "https://nytokenexchange.com"
+    assert "Origin" in response.headers["vary"]
+    assert len(sent_messages) == 1
+    assert "Page: https://nytokenexchange.com/\n" in sent_messages[0].text_body
+
+
+def test_exchange_sites_can_read_the_error_they_caused(client: TestClient, sent_messages: list[EmailMessage]) -> None:
+    response = client.post("/token-exchange/brief", json={"email": "not-an-address"}, headers=EXCHANGE_HEADERS)
+    assert response.status_code == 422
+    assert response.headers["Access-Control-Allow-Origin"] == "https://nytokenexchange.com"
+    assert not sent_messages
+
+
+@pytest.mark.parametrize(
+    "origin",
+    ["https://www.nytokenexchange.com", "http://nytokenexchange.com", "https://nytokenexchange.com.evil.example", "https://other.example"],
+)
+def test_other_origins_get_no_cors_answer(client: TestClient, sent_messages: list[EmailMessage], origin: str) -> None:
+    headers = {"Origin": origin, "Sec-Fetch-Site": "cross-site"}
+    preflight = client.options("/token-exchange/brief", headers={**headers, "Access-Control-Request-Method": "POST"})
+    assert preflight.status_code == 403
+    assert "Access-Control-Allow-Origin" not in preflight.headers
+    response = client.post("/token-exchange/brief", json={"email": "ada@example.com"}, headers=headers)
+    assert response.status_code == 403
+    assert "Access-Control-Allow-Origin" not in response.headers
+    assert not sent_messages
+
+
+def test_exchange_origins_are_exactly_the_canonical_static_site_domains() -> None:
+    markets = json.loads((Path(__file__).resolve().parents[1] / "sites" / "token-exchange" / "markets.json").read_text())
+    assert public_routes._EXCHANGE_ORIGINS == {f"https://{market['domain']}" for market in markets}
+
