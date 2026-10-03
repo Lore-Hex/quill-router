@@ -244,7 +244,7 @@ def test_one_commit_is_one_ordered_dml_transaction_credit_before_key(
     statements = transaction_statements(calls)
     credit_before_key(statements, key_last=True)
     assert statements[0].startswith("select reservation_id, workspace_id")
-    [only] = batches  # one RPC carries every non-counter write
+    [only] = batches  # one RPC carries every write, the counter releases last
     assert [(verb, table) for verb, table, _ in only] == [
         ("UPDATE", "tr_reservation"),  # first-writer-wins claim
         ("UPDATE", "tr_gateway_authorization"),  # settled=false -> true
@@ -256,6 +256,9 @@ def test_one_commit_is_one_ordered_dml_transaction_credit_before_key(
         ("INSERT", "tr_generation"),
         ("INSERT", "tr_operational_analytics_outbox"),
         ("INSERT", "tr_analytics_outbox"),  # PENDING_COMMIT_TIMESTAMP: its only touch
+        ("UPDATE", "tr_credit_balance"),  # the hold, with no payment debt to recover
+        ("UPDATE", "tr_key_limit"),  # current windows
+        ("UPDATE", "tr_key_limit"),  # a window to roll forward; exactly one matches
     ]
     inserted = only[2][2]
     assert (inserted["status"], inserted["attempts"], inserted["terminal_at"]) == ("done", 1, NOW_Z)
@@ -306,16 +309,20 @@ def test_one_commit_rolls_back_every_deviation_and_commits_nothing(deviation: st
     assert db.commits == commits
 
 
+@pytest.mark.parametrize(("actual", "reason"), [
+    (70, "credit_release_zero"),  # folded into the batch: its guard misses
+    (150, "release_row_count"),  # an overrun keeps the release after the batch
+])
 def test_one_commit_release_row_count_failure_declines_without_writes(
-    frozen_outbox_clock: None,
+    frozen_outbox_clock: None, actual: int, reason: str,
 ) -> None:
     db, options, intent, _sample = _one_commit_fixture(success=True, refill=False)
     # A zero-row credit release (the recorded hold no longer covered) must not
     # commit settled=true with nothing booked; it rolls the whole commit back.
     db.typed["tr_credit_balance"][("workspace", 0)]["reserved"] = 0
     before, commits = _full_state(db), db.commits
-    with pytest.raises(OneCommitSettleDeclined, match="release_row_count"):
-        invoke(db, dict(options, settle_outbox_intent=intent))
+    with pytest.raises(OneCommitSettleDeclined, match=reason):
+        invoke(db, dict(options, settle_outbox_intent=intent, actual_micro=actual))
     assert _full_state(db) == before and db.commits == commits
 
 

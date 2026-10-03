@@ -582,7 +582,9 @@ def _assert_timing(
     assert 'PRIVATE_PAYLOAD_SENTINEL' not in caplog.text
 
 
-@pytest.mark.parametrize('scenario', ['clean', 'claim_zero', 'fallback_aborted', 'fallback_zero_aborted'])
+@pytest.mark.parametrize(
+    'scenario', ['clean', 'stale_windows', 'claim_zero', 'fallback_aborted', 'fallback_zero_aborted'],
+)
 def test_real_sdk_finalize_retry_and_telemetry(
     configured_sdk: Any, monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture, scenario: str,
@@ -597,9 +599,13 @@ def test_real_sdk_finalize_retry_and_telemetry(
     options['generation'].model_id = 'PRIVATE_PAYLOAD_SENTINEL'
     sleep = Mock()
     monkeypatch.setattr(_helpers.time, 'sleep', sleep)
-    responses = [_batch_response([1, 1, 1, 1, 1, 1])]
-    if scenario != 'clean':
-        responses = [_batch_response([0, 1, 1, 1, 1, 1])]
+    # The last two counts are the key's two releases: current windows, then
+    # the rolling form. Exactly one matches.
+    responses = [_batch_response([1, 1, 1, 1, 1, 1, 0])]
+    if scenario == 'stale_windows':
+        responses = [_batch_response([1, 1, 1, 1, 1, 0, 1])]
+    elif scenario != 'clean':
+        responses = [_batch_response([0, 1, 1, 1, 1, 1, 0])]
         if 'aborted' in scenario:
             responses.append(_batch_response(
                 [0] if scenario == 'fallback_zero_aborted' else [], code_pb2.ABORTED,
@@ -613,15 +619,15 @@ def test_real_sdk_finalize_retry_and_telemetry(
     sdk.rpcs.rollback.side_effect = rollback
     with caplog.at_level(logging.INFO, logger=current.log.name):
         result = invoke(sdk.db, options)
-    attempts = 1 if scenario == 'clean' else 3 if 'aborted' in scenario else 2
+    attempts = 1 if scenario in {'clean', 'stale_windows'} else 3 if 'aborted' in scenario else 2
     assert result['outcome'] == 'settled' and result['attempts'] == attempts
     assert len(sdk.transactions) == sdk.rpcs.execute_streaming_sql.call_count == attempts
     sdk.rpcs.commit.assert_called_once()
     assert sdk.rpcs.commit.call_args.kwargs['request'].transaction_id == f'tx-{attempts}'.encode()
     assert all(tx.committed is None for tx in sdk.transactions[:-1])
-    assert sdk.rpcs.rollback.call_count == int(scenario != 'clean')
+    assert sdk.rpcs.rollback.call_count == int(attempts > 1)
     batches = [c.kwargs['request'] for c in sdk.rpcs.execute_batch_dml.call_args_list]
-    assert [len(b.statements) for b in batches] == [6] + [2] * (attempts - 1)
+    assert [len(b.statements) for b in batches] == [7] + [2] * (attempts - 1)
     if attempts > 1:
         assert sdk.rpcs.rollback.call_args.kwargs['transaction_id'] == b'tx-1'
         assert batches[0].statements[2:4] == batches[1].statements

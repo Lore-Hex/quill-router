@@ -491,9 +491,16 @@ def release_key_statement(
     book_to_byok: bool,
     window_floors: dict[str, Any],
     shard: int = UNSHARDED,
-    current_windows: bool = True,
+    windows: str = "current",
 ) -> DmlStatement:
-    """Exact key release SQL; current-window zero needs sequential classification."""
+    """Exact key release SQL for the key's spend windows.
+
+    ``"current"`` matches only a key whose three windows are all current, and
+    leaves their boundary columns out of the SET list; ``"stale"`` matches only
+    a key with at least one window to roll forward; ``"any"`` rolls whatever
+    needs it. The first two are complementary: on a key whose hold is covered,
+    exactly one of them matches.
+    """
     usage_col = "byok_usage" if book_to_byok else "usage"
     # BYOK settles count toward the caps (incl. windows) only when the key's own
     # include_byok says so — gated in SQL so it matches reserve semantics. On an
@@ -530,14 +537,20 @@ def release_key_statement(
         + " WHERE key_hash=@kh AND shard=@shard AND reserved >= @hold"
         + _CURRENT_WINDOW_PREDICATE_SQL
     )
-    if current_windows:
+    if windows == "current":
         return fast_sql, params, bound_param_types
+    if windows not in {"stale", "any"}:
+        raise ValueError(f"unknown key window mode: {windows!r}")
     sql = (
         "UPDATE tr_key_limit "  # noqa: S608
         f"SET reserved = reserved - @hold, {usage_col} = {usage_col} + @actual"
         + rolled_window_sql
         + " WHERE key_hash=@kh AND shard=@shard AND reserved >= @hold"
     )
+    if windows == "stale":
+        # The IS NOT NULL guards keep the predicate TRUE or FALSE, never NULL,
+        # so NOT is its exact complement.
+        sql += " AND NOT (" + _CURRENT_WINDOW_PREDICATE_SQL.removeprefix(" AND ") + ")"
     return sql, params, bound_param_types
 
 
@@ -563,10 +576,10 @@ def release_key(
     stale/double release a 0-row no-op rather than driving reserved negative.
     Returns the modified-row count (caller asserts == 1).
     """
-    for current_windows in (True, False):
+    for windows in ("current", "any"):
         sql, params, types = release_key_statement(
             param_types, key_hash, hold, actual, book_to_byok=book_to_byok,
-            window_floors=window_floors, shard=shard, current_windows=current_windows,
+            window_floors=window_floors, shard=shard, windows=windows,
         )
         count = transaction.execute_update(sql, params=params, param_types=types)
         if count == 1:

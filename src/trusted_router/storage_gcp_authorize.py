@@ -1806,13 +1806,17 @@ def typed_finalize_atomic(
                 pt, res["workspace_id"], res["credit_reserved_micro"], book_actual,
                 shard=res["credit_shard"],
             ))
-            statements.append(release_key_statement(
-                pt, str(res["key_hash"]), res["key_reserved_micro"], book_actual,
-                book_to_byok=book_to_byok, window_floors=sampled_floors,
-                shard=res["key_shard"],
-            ))
-            counts.extend([(1,), (1,)])
-            reasons.extend(["credit_release_zero", "key_release_zero"])
+            # The key's release in both window forms: the current one, which
+            # leaves the boundary columns unlocked (#1083), and the rolling one
+            # for a key with a window to roll forward. Exactly one matches.
+            for windows in ("current", "stale"):
+                statements.append(release_key_statement(
+                    pt, str(res["key_hash"]), res["key_reserved_micro"], book_actual,
+                    book_to_byok=book_to_byok, window_floors=sampled_floors,
+                    shard=res["key_shard"], windows=windows,
+                ))
+            counts.extend([(1,), (0, 1), (0, 1)])
+            reasons.extend(["credit_release_zero", None, None])
 
         def check_prefix(row_counts: Sequence[int]) -> None:
             for count, reason, allowed in zip(row_counts, reasons, counts, strict=False):
@@ -1820,7 +1824,11 @@ def typed_finalize_atomic(
                     raise _RetrySequentialFinalize(reason)
                 if count not in allowed:
                     # A malformed earlier count cannot authorize a later fallback.
-                    break
+                    return
+            if fold_tail and len(row_counts) == len(statements) and sum(row_counts[-2:]) != 1:
+                # Neither form matched: a deleted key or a hold the key no
+                # longer covers, which the sequential path classifies.
+                raise _RetrySequentialFinalize("key_release_zero")
 
         execute_batch_dml(transaction, statements, counts, check_prefix=check_prefix)
         if sampled_floors is not None:

@@ -293,8 +293,14 @@ def test_oracle_sql_is_independent_and_fake_executes_arithmetic(
     assert usages == [70, 140]
 
 
-@pytest.mark.parametrize('position', [7, 8])
-@pytest.mark.parametrize('bad_count', [0, 2, -1, 'truncated'])
+# Positions 7, 8 and 9 are the credit release and the key's two window forms.
+# A zero credit release, or anything but exactly one key form matching (a
+# forced zero beside the stale form's real zero; a forced one beside the current
+# form's real one), falls back; a count no statement can return rolls back.
+@pytest.mark.parametrize(('position', 'bad_count'), [
+    (7, 0), (8, 0), (9, 1),
+    *[(position, bad) for position in (7, 8, 9) for bad in (2, -1, 'truncated')],
+])
 def test_tail_counts_require_rollback(monkeypatch: pytest.MonkeyPatch, position: int, bad_count: Any) -> None:
     db, options = prepare('ordinary', True, True)
     before = state(db)
@@ -312,7 +318,7 @@ def test_tail_counts_require_rollback(monkeypatch: pytest.MonkeyPatch, position:
         return status, counts
 
     monkeypatch.setattr(_FakeTransaction, 'batch_update', batch)
-    if bad_count == 0:
+    if bad_count in (0, 1):
         result = invoke(db, options)
         assert result['outcome'] == 'settled' and result['attempts'] == 2
         assert db.typed['tr_credit_balance'][('workspace', 0)]['total_usage'] == 70
@@ -362,7 +368,7 @@ def test_earlier_bad_count_cannot_be_hidden_by_tail_zero(monkeypatch: pytest.Mon
     db, options = prepare('ordinary', True, True)
     before = state(db)
     monkeypatch.setattr(_FakeTransaction, 'batch_update',
-                        lambda *_a, **_k: (Status(), [1, 1, 1, 2, 1, 1, 1, 0, 1]))
+                        lambda *_a, **_k: (Status(), [1, 1, 1, 2, 1, 1, 1, 0, 0, 0]))
     with pytest.raises(FailedPrecondition):
         invoke(db, options)
     assert state(db) == before and db.rollback_calls == 1
@@ -530,3 +536,19 @@ def test_nullable_legacy_hold_preserves_classifier_precedence(column: str) -> No
         assert state(db) == state(initial)
         observations.append((result, state(db)))
     assert observations[0] == observations[1]
+
+
+@pytest.mark.parametrize('scenario', ['ordinary', 'rollover'])
+def test_a_busy_key_releases_once_without_a_fallback(scenario: str) -> None:
+    """A key with other requests' holds still covers this hold after it is
+    released, so only the window predicates keep the key's two forms apart.
+    Exactly one matches, in one attempt, and the hold is released once."""
+    db, options = prepare(scenario, True, True)
+    key = db.typed['tr_key_limit'][('key', 0)]
+    hold = db.reservations[options['reservation_id']]['key_reserved_micro']
+    key['reserved'] += 3 * hold  # three other requests in flight on this key
+    reserved, usage = key['reserved'], key['usage']
+    result = invoke(db, options)
+    assert result['outcome'] == 'settled' and result['attempts'] == 1
+    after = db.typed['tr_key_limit'][('key', 0)]
+    assert (after['reserved'], after['usage']) == (reserved - hold, usage + options['actual_micro'])

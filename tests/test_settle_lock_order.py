@@ -202,11 +202,15 @@ def test_finalize_enabled_outbox_retention_and_evidence_before_credit_and_key(
     assert result["outbox_marked"] is True
     statements = transaction_statements(calls)
     [batch_sql] = batches
-    assert len(batch_sql) == 9
-    claim, typed, done_sql, auth_retention, reservation_retention, generation, activity, credit, key = batch_sql
+    assert len(batch_sql) == 10
+    (claim, typed, done_sql, auth_retention, reservation_retention, generation, activity,
+     credit, key_current, key_stale) = batch_sql
     assert credit.startswith("update tr_credit_balance") and "not exists" in credit
-    assert key.startswith("update tr_key_limit")
-    assert statements[-2:] == [credit, key]
+    # The key's two releases: current windows (boundaries left out of the SET
+    # list), then the rolling form for a key with a window to roll forward.
+    assert key_current.startswith("update tr_key_limit") and "day_start =" not in key_current
+    assert key_stale.startswith("update tr_key_limit") and " and not (" in key_stale
+    assert statements[-3:] == [credit, key_current, key_stale]
     assert claim.startswith("update tr_reservation set settled=true")
     assert typed.startswith("update tr_gateway_authorization set settled=true")
     assert "and reservation_id=@rid" in done_sql

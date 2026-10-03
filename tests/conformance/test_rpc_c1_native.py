@@ -116,8 +116,9 @@ def test_payment_debt_guard_and_recovery_select(c1_database):
             )) == ([[100, 0]] if debt else [[0, 70]])
 
 
+@pytest.mark.parametrize("flow", ["two_commit", "one_commit"])
 @pytest.mark.parametrize("window", ["current", "rollover", "null-starts"])
-def test_finalize_nine_statement_native_readback(c1_database, monkeypatch, window):
+def test_finalize_ten_statement_native_readback(c1_database, monkeypatch, window, flow):
     database = c1_database
     monkeypatch.setattr(finalize, "utcnow", lambda: NOW)
     identity = uuid4().hex
@@ -149,9 +150,11 @@ def test_finalize_nine_statement_native_readback(c1_database, monkeypatch, windo
                 idempotency_fingerprint=identity, expires_at=NOW + timedelta(hours=1), created_at=NOW,
             )]
     database.run_in_transaction(lambda tx: execute_dml(tx, seed, batch=True))
-    SpannerSettleOutbox(database, pt).enqueue(SettleOutboxRow(
+    intent = SettleOutboxRow(
         authorization_id=aid, reservation_id=rid, intent_kind="settle", settle_origin="typed", actual_cost_micro=70,
-    ))
+    )
+    if flow == "two_commit":
+        SpannerSettleOutbox(database, pt).enqueue(intent)
     generation = Generation.from_settle_body(
         authorization=authorization, provider_name="provider", model_id="model", usage_type="Credits",
         provider="provider", body={}, input_tokens=5, output_tokens=7, actual_cost_microdollars=70,
@@ -172,16 +175,24 @@ def test_finalize_nine_statement_native_readback(c1_database, monkeypatch, windo
         settled_usage_type="Credits", now=NOW, outbox_available=True, authorization=authorization,
         auth_body_settled=json_body(authorization), generation=generation, persist_generation_record=True,
         operational_analytics_outbox=SpannerOperationalAnalyticsOutbox(database, pt),
-        settle_outbox_done=(aid, "settle"),
+        **({"settle_outbox_done": (aid, "settle")} if flow == "two_commit"
+           else {"settle_outbox_intent": intent, "intent_initial_delay_seconds": 60}),
     )
     assert result["outcome"] == "settled" and result["outbox_marked"] is True
-    assert result["attempts"] >= (1 if window == "current" else 2)
-    folded = [(statements, code, counts) for statements, code, counts in batches if len(statements) == 9]
-    assert folded, "production must execute the real nine-statement batch"
-    for statements, code, counts in folded:
-        assert code == 0 and counts == [1] * 8 + [int(window == "current")]
-        assert "UPDATE tr_credit_balance" in statements[7][0]
-        assert "UPDATE tr_key_limit" in statements[8][0]
+    # Every window state settles in the one batch: the key's two forms are
+    # complementary, so a stale or never-set window rolls forward in place.
+    assert result["attempts"] == 1
+    [(statements, code, counts)] = batches
+    # The two-commit finalize has ten statements; the one-commit settle adds
+    # the intent's INSERT and its two retention clears. Either way the counter
+    # releases are last: the credit, then the key's two window forms.
+    assert len(statements) == (10 if flow == "two_commit" else 12)
+    current = int(window == "current")
+    assert code == 0 and counts[-3:] == [1, current, 1 - current]
+    if flow == "two_commit":
+        assert counts == [1] * 8 + [current, 1 - current]
+    assert "UPDATE tr_credit_balance" in statements[-3][0]
+    assert "UPDATE tr_key_limit" in statements[-2][0] and "UPDATE tr_key_limit" in statements[-1][0]
     # A fresh snapshot after commit proves rejected batch writes were rolled
     # back: the fallback releases and charges exactly once even after rollover.
     with database.snapshot(multi_use=True) as snapshot:
