@@ -347,7 +347,7 @@ def admission_wait(environ: Any) -> int:
     return wait
 
 
-def owner_stopped(lease: dict[str, Any]) -> bool:
+def owner_stopped(lease: dict[str, Any], now: Callable[[], float] = time.time) -> bool:
     match = re.fullmatch(r"https://github.com/(Lore-Hex/(?:quill-router|quill-cloud-proxy))/actions/runs/([0-9]+)",
                          lease["owner"])
     if match:
@@ -358,7 +358,14 @@ def owner_stopped(lease: dict[str, Any]) -> bool:
             [gh, "run", "view", match[2], "--repo", match[1], "--json", "status"],
             capture_output=True, text=True, timeout=30, check=False,
         )
-        return result.returncode == 0 and json.loads(result.stdout).get("status") == "completed"
+        if result.returncode == 0:
+            return json.loads(result.stdout).get("status") == "completed"
+        # A deleted run (HTTP 404) is not mutating anything, but an unauthenticated
+        # gh answers 404 for a private repository too. Neither signal alone frees a
+        # lease: the run must be gone AND the lease's own TTL must have elapsed.
+        deleted = "HTTP 404" in (result.stderr or "")
+        expires = lease.get("expires_at")
+        return deleted and type(expires) is int and expires < int(now())
     if (lease.get("host") != socket.gethostname() or type(lease.get("pid")) is not int
             or lease["pid"] <= 1):
         return False

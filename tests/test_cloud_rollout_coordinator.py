@@ -367,6 +367,31 @@ def test_recovery_accepts_completed_workflow(monkeypatch):
     assert rollout.owner_stopped({"owner": "https://github.com/Lore-Hex/quill-cloud-proxy/actions/runs/123"})
 
 
+def _gh_run_not_found(args, **kwargs):
+    # What `gh run view` prints once a run has been deleted (2026-10-03, run 37005879097).
+    return subprocess.CompletedProcess(
+        args, 1, "", "failed to get run: HTTP 404: Not Found (https://api.github.com/repos/Lore-Hex/quill-router/actions/runs/37005879097)",
+    )
+
+
+def test_recovery_accepts_deleted_workflow_only_after_its_lease_expired(monkeypatch):
+    monkeypatch.setattr(rollout.shutil, "which", lambda _: "/bin/gh")
+    monkeypatch.setattr(rollout.subprocess, "run", _gh_run_not_found)
+    lease = {"owner": "https://github.com/Lore-Hex/quill-router/actions/runs/37005879097",
+             "created_at": 1000, "expires_at": 2000}
+    assert not rollout.owner_stopped(lease, now=lambda: 1999)
+    assert rollout.owner_stopped(lease, now=lambda: 2001)
+    assert not rollout.owner_stopped({**lease, "expires_at": "2000"}, now=lambda: 9000)
+
+
+def test_recovery_refuses_other_gh_failures_even_after_expiry(monkeypatch):
+    monkeypatch.setattr(rollout.shutil, "which", lambda _: "/bin/gh")
+    monkeypatch.setattr(rollout.subprocess, "run", lambda args, **kwargs:
+                        subprocess.CompletedProcess(args, 1, "", "error connecting to api.github.com"))
+    lease = {"owner": "https://github.com/Lore-Hex/quill-router/actions/runs/1", "created_at": 1000, "expires_at": 2000}
+    assert not rollout.owner_stopped(lease, now=lambda: 9000)
+
+
 def test_short_lived_acquire_is_not_assumed_to_be_manual_owner(system, monkeypatch):
     monkeypatch.delenv("TR_DEPLOY_OWNER_PID", raising=False)
     lease = acquire(system, "gcp")
