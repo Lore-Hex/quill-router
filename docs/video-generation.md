@@ -1,9 +1,10 @@
 # Video generation
 
 TrustedRouter exposes an asynchronous video API at `https://api.trustedrouter.com/v1`.
-The request enters the attested gateway, receives an exact provider quote, reserves
-the quoted amount in integer microdollars, and is then submitted directly to the
-provider. TrustedRouter does not send video requests through OpenRouter.
+The request enters the attested gateway, reserves credits in integer microdollars,
+and is submitted directly to the selected provider. Fixed-price routes use an
+exact provider quote; token-billed routes reserve an upper bound and settle the
+actual usage. TrustedRouter does not send video requests through OpenRouter.
 
 ## Launch models
 
@@ -21,7 +22,32 @@ provider. TrustedRouter does not send video requests through OpenRouter.
 `GET /v1/videos/models` is the source of truth for currently enabled models and
 their supported parameters.
 
-Seedance 2.5 is served through Venice with text, first/last-frame image, and
+## Direct BytePlus Seedance
+
+Seedance 2.5, 2.0 and 2.0 Fast are available directly through BytePlus ModelArk.
+Select `"provider": {"only": ["byteplus"]}` to require BytePlus without routing
+through Venice. These routes support text or a first-frame image, 4-15 seconds,
+and 480p or 720p. Video/audio references, last-frame input, reference-image sets,
+and higher resolutions are not supported on these direct routes.
+
+```json
+{
+  "model": "bytedance/seedance-2.5",
+  "provider": {"only": ["byteplus"]},
+  "prompt": "A slow camera pan across a sunlit mountain landscape",
+  "duration": 4,
+  "resolution": "480p",
+  "aspect_ratio": "16:9"
+}
+```
+
+BytePlus bills generated **video output tokens**, not prompt text tokens or a
+fixed fee per second. The route's per-million-token price is frozen when the job
+is authorized. A conservative credit reservation is released at settlement;
+only the completed task's actual output tokens are charged. Polling a completed
+job does not charge again. Its response includes the final token usage and cost.
+
+The separate Venice route for Seedance 2.5 supports text, first/last-frame image, and
 image/audio-reference input. It accepts 4-30 seconds, 480p/720p/1080p, and an
 optional `generate_audio` switch. Image-to-video inherits the source image's
 aspect ratio. Prompts may contain up to 15,000 characters. Video references
@@ -89,10 +115,13 @@ base64 data URLs. Local, private-network, and cloud-metadata URLs are rejected.
 
 ## Billing and privacy
 
-- The gateway asks the direct provider for a content-free quote before sending
-  the prompt or references upstream.
-- The exact quote plus TrustedRouter's 20% video fee is reserved and settled as integer
-  microdollars. Floating point values never touch the credit ledger.
+- For fixed-price routes, the gateway asks the provider for a content-free quote
+  before sending the prompt or references upstream. The exact quote plus
+  TrustedRouter's 20% video fee is reserved and settled as integer microdollars.
+- For token-billed BytePlus routes, the catalog price already includes the
+  applicable markup. Settlement uses the actual output tokens at the authorized
+  tariff, without adding a second fixed-price fee. Missing or out-of-bound usage
+  fails closed. Floating point values never touch the credit ledger.
 - Retries with the same `Idempotency-Key` reuse the original authorization and
   job instead of generating and billing twice.
 - The TrustedRouter control plane stores only job, provider, timing, and billing

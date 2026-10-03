@@ -156,11 +156,10 @@
         "streaming",
         "tools"
       ],
-      "routable": false,
       "input_token_price_per_m": 500000,
       "output_token_price_per_m": 2500000,
       "cached_input_token_price_per_m": 100000,
-      "routable_reason": "gateway-upgrade-required"
+      "routable": true
     },
     {
       "display_name": "dola-seedream-5-0-flash",
@@ -469,7 +468,6 @@
         "streaming",
         "tools"
       ],
-      "routable": false,
       "input_token_price_per_m": 500000,
       "output_token_price_per_m": 3000000,
       "cached_input_token_price_per_m": 100000,
@@ -487,7 +485,7 @@
           "cached_input_token_price_per_m": 200000
         }
       ],
-      "routable_reason": "gateway-upgrade-required"
+      "routable": true
     },
     {
       "display_name": "seed-2-0-lite",
@@ -530,7 +528,6 @@
         "streaming",
         "tools"
       ],
-      "routable": false,
       "input_token_price_per_m": 250000,
       "output_token_price_per_m": 2000000,
       "cached_input_token_price_per_m": 50000,
@@ -548,7 +545,7 @@
           "cached_input_token_price_per_m": 100000
         }
       ],
-      "routable_reason": "gateway-upgrade-required"
+      "routable": true
     },
     {
       "display_name": "seed-2-0-mini",
@@ -591,7 +588,6 @@
         "streaming",
         "tools"
       ],
-      "routable": false,
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 400000,
       "cached_input_token_price_per_m": 20000,
@@ -609,7 +605,7 @@
           "cached_input_token_price_per_m": 40000
         }
       ],
-      "routable_reason": "gateway-upgrade-required"
+      "routable": true
     },
     {
       "display_name": "seed-2-0-pro",
@@ -633,7 +629,6 @@
         "streaming",
         "tools"
       ],
-      "routable": false,
       "input_token_price_per_m": 500000,
       "output_token_price_per_m": 3000000,
       "cached_input_token_price_per_m": 100000,
@@ -651,7 +646,7 @@
           "cached_input_token_price_per_m": 200000
         }
       ],
-      "routable_reason": "gateway-upgrade-required"
+      "routable": true
     },
     {
       "display_name": "seed-translation",
@@ -787,10 +782,9 @@
       "upstream_id": "dreamina-seedance-2-0-260128",
       "billing_unit": "output_tokens",
       "context_length": 0,
-      "routable": false,
-      "routable_reason": "gateway-upgrade-required",
       "input_token_price_per_m": 0,
-      "output_token_price_per_m": 7000000
+      "output_token_price_per_m": 7000000,
+      "routable": true
     },
     {
       "display_name": "dreamina-seedance-2-0-fast",
@@ -811,10 +805,9 @@
       "upstream_id": "dreamina-seedance-2-0-fast-260128",
       "billing_unit": "output_tokens",
       "context_length": 0,
-      "routable": false,
-      "routable_reason": "gateway-upgrade-required",
       "input_token_price_per_m": 0,
-      "output_token_price_per_m": 5600000
+      "output_token_price_per_m": 5600000,
+      "routable": true
     },
     {
       "display_name": "dreamina-seedance-2-5",
@@ -835,10 +828,9 @@
       "upstream_id": "dreamina-seedance-2-5-260628",
       "billing_unit": "output_tokens",
       "context_length": 0,
-      "routable": false,
-      "routable_reason": "gateway-upgrade-required",
       "input_token_price_per_m": 0,
-      "output_token_price_per_m": 10700000
+      "output_token_price_per_m": 10700000,
+      "routable": true
     },
     {
       "display_name": "seededit-3-0-i2i",
@@ -1137,11 +1129,10 @@
         "streaming",
         "tools"
       ],
-      "routable": false,
       "input_token_price_per_m": 440000,
       "output_token_price_per_m": 1320000,
       "cached_input_token_price_per_m": 14000,
-      "routable_reason": "gateway-upgrade-required"
+      "routable": true
     },
     {
       "display_name": "deepseek-v4-pro",
@@ -1165,11 +1156,10 @@
         "streaming",
         "tools"
       ],
-      "routable": false,
       "input_token_price_per_m": 1320000,
       "output_token_price_per_m": 3960000,
       "cached_input_token_price_per_m": 44000,
-      "routable_reason": "gateway-upgrade-required"
+      "routable": true
     },
     {
       "display_name": "deepseek-v4-pro-ga",
@@ -1193,11 +1183,10 @@
         "streaming",
         "tools"
       ],
-      "routable": false,
       "input_token_price_per_m": 1320000,
       "output_token_price_per_m": 3960000,
       "cached_input_token_price_per_m": 44000,
-      "routable_reason": "gateway-upgrade-required"
+      "routable": true
     },
     {
       "display_name": "deepseek-v4-1-flash",
@@ -1241,11 +1230,10 @@
         "tools",
         "prompt_caching"
       ],
-      "routable": false,
       "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000,
       "cached_input_token_price_per_m": 260000,
-      "routable_reason": "gateway-upgrade-required"
+      "routable": true
     },
     {
       "display_name": "glm-5-3-flash",
@@ -1270,16 +1258,15 @@
         "tools",
         "prompt_caching"
       ],
-      "routable": false,
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 500000,
       "cached_input_token_price_per_m": 30000,
-      "routable_reason": "gateway-upgrade-required"
+      "routable": true
     }
   ],
   "source": "https://ark.ap-southeast.bytepluses.com/api/v3/models",
   "pricing_source": "https://docs.byteplus.com/en/docs/modelark/model-pricing",
-  "generated_at": "2026-10-03T15:51:55Z",
+  "generated_at": "2026-10-03T22:17:54Z",
   "price_scale": "microdollars_per_million",
   "model_count": 58
 }

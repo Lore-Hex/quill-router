@@ -70,7 +70,8 @@ def test_price_shape_change_is_not_silently_accepted(bad):
         byteplus.parse_prices(bad)
 
 
-def test_discovery_live_statuses_unknown_prices_and_rollout_gate():
+def test_discovery_live_statuses_unknown_prices_and_rollout_gate(monkeypatch):
+    monkeypatch.setattr(byteplus, "NATIVE_ROUTES_DEPLOYED", False)
     payload = catalog()
     payload["data"][1]["status"] = "Shutdown"
     prices, rows = byteplus.discover(payload, MD)
@@ -85,6 +86,7 @@ def test_discovery_live_statuses_unknown_prices_and_rollout_gate():
 
 
 def test_refresh_canaries_manifest_and_safety_holds(monkeypatch, tmp_path):
+    monkeypatch.setattr(byteplus, "NATIVE_ROUTES_DEPLOYED", False)
     path = tmp_path / "byteplus.json"
     monkeypatch.setattr(byteplus, "MANIFEST_PATH", path)
     monkeypatch.setenv("BYTEPLUS_API_KEY", "test-key")
@@ -126,6 +128,27 @@ def test_refresh_canaries_manifest_and_safety_holds(monkeypatch, tmp_path):
         byteplus.fetch()
     with pytest.raises(RuntimeError):
         byteplus.write_provider_manifest(result)
+
+
+def test_deployed_native_video_catalog_uses_exact_token_tariffs():
+    from trusted_router import catalog_ingest
+    from trusted_router.pricing import _customer_price
+
+    assert byteplus.NATIVE_ROUTES_DEPLOYED
+    models, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
+    rows = {row["id"]: row for row in json.loads(byteplus.MANIFEST_PATH.read_text())["models"]}
+    for native, model in byteplus.VIDEO_MODELS.items():
+        row = rows[model]
+        assert row.get("routable", True)
+        assert row["upstream_id"] == native
+        assert row["billing_unit"] == "output_tokens"
+        rate = row["output_token_price_per_m"]
+        assert type(rate) is int and rate > 0
+        endpoint = endpoints[model + "@byteplus/prepaid"]
+        assert models[model].supports_video
+        assert endpoint.provider == "byteplus"
+        assert endpoint.prompt_price_microdollars_per_million_tokens == 0
+        assert endpoint.completion_price_microdollars_per_million_tokens == _customer_price(rate)
 
 
 def test_registration_and_native_token_video_price(monkeypatch, tmp_path):
