@@ -487,9 +487,10 @@ and the request records all follow that rule.
     declares that in its Stage D boot registration too, and the release
     applies only to holds admitted for such a boot. Then a streaming hold
     with no accepted heartbeat by the first-heartbeat allowance plus the
-    heartbeat grace is released uncharged by its owner. A draining lease's heartbeats are
-    refused, and its holds end as §4.8 says, so the release does not apply
-    there, and a hand-off record need not carry the boot's declaration.
+    heartbeat grace is released uncharged by its owner. A draining lease's
+    heartbeats are refused, and its holds end as §4.8 says, so the release
+    does not apply there, and a hand-off record need not carry the boot's
+    declaration.
     The allowance is the authorize-to-heartbeat latency, with the provider's
     latency out of it. The fast path admits only streams the enclave
     heartbeats (§4.11), so this never releases a stream that runs without
