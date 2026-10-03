@@ -20,12 +20,14 @@ picker and footer share one ordered directory and highlight the current market.
   unrelated matchers through `scripts/deploy/service_surface_url_map.py`.
 - One canonical root per market; alternate names and `www` redirect permanently,
   retaining query parameters. Canonical URLs, sitemaps and OG images are generated.
-- Buyers book an enterprise pilot or visit the existing email-gated brochure flow.
+- Buyers request the brochure on the page. The form posts to TrustedRouter's existing
+  email-gated `/token-exchange/brief` action, which accepts the canonical exchange
+  origins; nothing is stored on these sites.
   Suppliers use the existing provider marketplace application. Credentials are
   handled separately by that onboarding flow.
 - Static pages fetch the public `/token-exchange/evidence/{profile}.json` feed
   from TrustedRouter on load and every minute. There is no direct Spanner
-  access, inference, cookie, or third-party pixel on these sites. Allowlisted UTM fields pass to intake. Initial site visits are
+  access, inference, cookie, or third-party pixel on these sites. The brochure form is the only form. Allowlisted UTM fields pass to intake. Initial site visits are
   not funnel events; central intake and signup use TrustedRouter's existing tracking.
 
 The HTTPS proxy also retains independent flagship certificates

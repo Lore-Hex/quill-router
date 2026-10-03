@@ -110,15 +110,6 @@ def render(market: dict, markets: list[dict], version: str) -> str:
             "buyer_copy": html.escape(market.get("buyer_copy", "Compare model rates and provider privacy policies. Prioritize end-to-end encrypted routes where available, or review zero-retention options. Confirm processing locations and commercial terms for your workload.")),
             "catalogue": "",
             "regional_health": health.replace('<figure class="uptime-panel', catalogue + '<figure class="uptime-panel', 1),
-            "buyer_url": html.escape(
-                tracked_url("https://calendly.com/joseph-perla/15min", market, "buyer"), quote=True
-            ),
-            "brief_url": html.escape(
-                tracked_url(
-                    "https://trustedrouter.com/token-exchange", market, "brief", "#enterprise-brief"
-                ),
-                quote=True,
-            ),
             "seller_url": html.escape(
                 tracked_url("https://trustedrouter.com/providers/marketplace", market, "seller"),
                 quote=True,
@@ -156,7 +147,8 @@ def build(output: Path) -> None:
     ).hexdigest()[:12]
     for name in ("exchange.css", "exchange.js", "live-evidence.js"):
         shutil.copyfile(HERE / name, assets / name)
-    shutil.copyfile(HERE / "art" / "river-close.webp", assets / "river-close.webp")
+    for art in sorted((HERE / "art").glob("*.webp")):
+        shutil.copyfile(art, assets / art.name)
     static = ROOT / "src/trusted_router/static"
     for source, target in {
         "fonts/archivo-latin.woff2": "archivo.woff2",

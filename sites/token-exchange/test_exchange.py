@@ -174,7 +174,13 @@ class ExchangeTests(unittest.TestCase):
             self.assertIn("regional name identifies", page)
             self.assertIn("provider retention", page)
             self.assertIn("not a securities", page)
-            self.assertNotIn("<form", page)
+            # The brochure form is the one form on the page. It posts to TrustedRouter's
+            # email-gated download with the honeypot, and every brochure button jumps to it.
+            self.assertEqual(page.count("<form"), 1)
+            self.assertIn('<form id="brochure-form" action="https://trustedrouter.com/token-exchange/brief" method="post">', page)
+            self.assertIn('name="website"', page)
+            self.assertEqual(page.count('href="#brochure"'), 3)
+            self.assertNotIn("calendly", page)
             self.assertNotIn("google-analytics", page)
             self.assertNotIn("$headline", page)
             # The hero photograph and the provider marquee: one visible group of six links,
@@ -216,9 +222,9 @@ class ExchangeTests(unittest.TestCase):
     def test_attribution(self):
         market = load_markets()[0]
         url = tracked_url(
-            "https://trustedrouter.com/token-exchange", market, "brief", "#enterprise-brief"
+            "https://trustedrouter.com/token-exchange", market, "brochure", "#enterprise-brochure"
         )
-        self.assertEqual(urlparse(url).fragment, "enterprise-brief")
+        self.assertEqual(urlparse(url).fragment, "enterprise-brochure")
         self.assertEqual(parse_qs(urlparse(url).query)["utm_source"], ["thetokenexchange.com"])
 
     def test_map_preserves_and_is_idempotent(self):

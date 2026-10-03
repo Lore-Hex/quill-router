@@ -325,7 +325,6 @@
 .masthead #primary-navigation .market-picker nav a:hover{background:none;color:#fff}
 .masthead #primary-navigation .market-picker nav a[aria-current="page"]:hover{background:#cce8d726;color:var(--mint)}
 #buyers .section-intro>p:not(.eyebrow){font-size:19px;max-width:660px;margin:28px 0 0;line-height:1.7;color:var(--muted)}
-.brief-action{margin-top:28px}
 .exchange-steps{max-width:660px}
 .exchange-steps li{align-items:baseline;gap:20px;padding:16px 0;font-size:17px;color:var(--muted)}
 .exchange-steps li::before{font:400 16px/1.5 Archivo,Arial,sans-serif;flex:0 0 20px;color:var(--muted)}
@@ -352,7 +351,6 @@
  .masthead #primary-navigation{gap:0}
  .masthead #primary-navigation .market-picker nav{grid-template-columns:1fr 1fr}
  #buyers .section-intro>p:not(.eyebrow){font-size:17px;margin-top:24px}
- .brief-action{margin-top:24px}
  .exchange-steps li{font-size:16px;gap:16px;padding:16px 0}
  .exchange-steps li::before{font-size:15px;flex-basis:16px}
  #sellers{padding-block:80px 72px}
@@ -484,3 +482,34 @@ h3,.privacy-choice h3,.uptime-panel figcaption,.attestation-panel h3,.trust-evid
 .closing-art::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(5,7,6,.94),rgba(5,7,6,.6) 55%,rgba(5,7,6,.35))}
 .closing-grain{opacity:.06}
 @media(max-width:600px){.closing-art::after{background:linear-gradient(180deg,rgba(5,7,6,.3),rgba(5,7,6,.62) 45%,rgba(5,7,6,.94) 78%)}}
+
+/* The brochure band: the same email-gated download as trustedrouter.com/token-exchange,
+   posted there from this domain. Built like the closing box, but with the ridges from the
+   same landscape behind a heavy left fade, so the river is not used a third time. */
+.brochure{position:relative;isolation:isolate;overflow:hidden;border-block:1px solid var(--line);scroll-margin-top:24px}
+.brochure-art{position:absolute;inset:0;z-index:-1;pointer-events:none;background:url('/assets/ridges-close.webp') 58% 50%/cover no-repeat}
+.brochure-art::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(5,7,6,.97) 0,rgba(5,7,6,.9) 36%,rgba(5,7,6,.58) 56%,rgba(5,7,6,.4) 76%,rgba(5,7,6,.46))}
+.brochure-inner{position:relative}
+.brochure-inner h2{font-size:64px;max-width:720px;margin-bottom:28px}
+.brochure-lead{font-size:19px;line-height:1.7;color:var(--muted);max-width:660px;margin:0}
+.brochure-contents{list-style:none;max-width:620px;margin:32px 0 0;padding:0}
+.brochure-contents li{padding:15px 0;border-top:1px solid var(--line);font-size:17px;line-height:1.5;color:var(--text)}
+.brochure-contents li:last-child{border-bottom:1px solid var(--line)}
+.brochure form{max-width:660px;margin-top:36px}
+.brochure label{display:block;font-size:15px;color:var(--muted);margin-bottom:10px}
+.brochure-row{display:flex;gap:12px;align-items:stretch}
+.brochure-row input[type=email]{flex:1 1 auto;min-width:0;min-height:52px;padding:12px 16px;border:1px solid rgba(220,225,222,.24);border-radius:6px;background:#050706;color:var(--text);font:17px Archivo,Arial,sans-serif;box-sizing:border-box;transition:border-color 150ms}
+.brochure-row input[type=email]:focus{outline:none;border-color:var(--mint)}
+.brochure-row input::placeholder{color:var(--muted);opacity:.55}
+.brochure-row .button{flex:0 0 auto;margin:0;white-space:nowrap}
+.brochure .form-note{font-size:14px;line-height:1.7;color:var(--muted);max-width:600px;margin:14px 0 0}
+.form-note a{text-decoration:underline;text-underline-offset:3px}
+.brochure .form-status{margin:10px 0 0;font-size:15px;min-height:24px;color:var(--mint)}
+.form-status[data-state=error]{color:#f0b5a4}
+.honeypot{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+.brochure-contact{font-size:17px;margin:24px 0 0;color:var(--muted)}
+.brochure-contact a{color:var(--text);overflow-wrap:anywhere}
+@media(max-width:1100px){.brochure-inner h2{font-size:42px}.brochure-lead{font-size:17px}}
+@media(max-width:800px){.brochure-inner h2{font-size:38px}.brochure-contents li{font-size:16px}.brochure-art{background-position:55% 50%}.brochure-art::after{background:linear-gradient(180deg,rgba(5,7,6,.97),rgba(5,7,6,.9) 55%,rgba(5,7,6,.7))}.brochure-row{flex-direction:column}.brochure-row .button{width:100%}}
+@media(max-width:600px){.brochure-inner h2{font-size:35px}}
+
