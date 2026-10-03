@@ -1,9 +1,9 @@
 # Fast admission and batched settlement
 
-Status: **proposed, v21, 2026-10-03. Nothing built.** v8 changed direction
-to regional leases, Joseph's choice (§2). Codex and Fable reviewed v1-v20
-(§11); Fable accepted v20, and v21 answers Codex's review of it and Fable's
-wording notes.
+Status: **proposed, v22, 2026-10-03. Nothing built.** v8 changed direction
+to regional leases, Joseph's choice (§2). Codex and Fable reviewed v1-v21
+(§11); Fable accepted v20 and v21, and v22 answers Codex's review of v21 and
+Fable's wording notes.
 
 This is the plan for reaching 100T tokens a month without spending the routing
 margin on the billing database, and for taking the control plane out of request
@@ -939,8 +939,15 @@ when Python is unreachable: the first durable point is Python's
   - A consumer stages the full records in ClickHouse, keyed by
     authorization.
   - The auditor writes each authorization's generation and activity record
-    from its stored winner and the matching staged record, after the commit
-    that stored the winner.
+    from its stored winner and the staged record with the winner's
+    authorization and digest, after the commit that stored the winner. An
+    authorization can have two staged records, an original and an enclave
+    retry's compacted copy, so the join is never by authorization alone.
+  - A reap has no full record from a gateway. The auditor builds one, from the
+    first heartbeat record (model, endpoint, frozen prices, workspace and key)
+    and the reaped snapshot's usage, and publishes it to the record topic
+    before the reap's outcome, which names its digest. So a reap is rebuilt
+    from the record topic's export alone, like a settle.
   - It first publishes the winner's outcome to the record topic: the
     authorization, the outcome, the cost, the boot binding, and the digest of
     the winning terminal's full record. The digest picks the winner among the
@@ -1023,9 +1030,11 @@ stream, and streams the enclave heartbeats. These stay on today's Python path:
     signer falls back to that key (`stageDBootDigestSigner` in
     `spend_lease.go`).
     - The enclave sends the declaration when it registers (§9), computed from
-      `stageDConfig.usageHeartbeat` on whichever registration path runs,
-      Stage D or spend-lease shadow, so a shadow boot declares nothing it does
-      not do. Python stores it on the boot record, `GatewayBoot`, from the
+      `stageDConfig.usageHeartbeat` on the one registration path its boot
+      runs, Stage D or spend-lease shadow (`main.go` at `a06050f` skips the
+      Stage D path when a spend-lease flag is set), so a shadow boot declares
+      nothing it does not do. Its periodic re-registration runs from that same
+      path, so a boot's declaration changes only with a new boot. Python stores it on the boot record, `GatewayBoot`, from the
       registration route (§8). There are two declarations, heartbeats and the
       heartbeat at stream open, and a missing one means undeclared.
     - A re-registration replaces the declarations with what it sends. Today's
@@ -1786,3 +1795,15 @@ record.
   - Fable's P3s: the record topic's `kind` attribute and duplicate outcomes,
     who rebuilds a lost record, the columns A must fit, and the lost-charge
     log a `pending` answer causes.
+- **v22.** Fable accepted v21 (no money defect, 3 P3). Codex (1 P2) found
+  that a reap had no full record in the record topic, so a reap's lost records
+  could not be rebuilt from the export after its pack was deleted.
+
+  v22 answers them:
+  - The auditor publishes a full record for each reap, built from the first
+    heartbeat record and the reaped snapshot, before the outcome that names
+    its digest.
+  - The live join from a winner to its staged record is by authorization and
+    digest, as the rebuild is.
+  - A boot registers, and re-registers, through one path, so its declaration
+    changes only with a new boot.
