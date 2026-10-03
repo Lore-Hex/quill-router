@@ -2421,6 +2421,7 @@ def test_crusoe_provider_models_follow_authoritative_manifest() -> None:
     """Crusoe availability follows its generated, credential-aware manifest."""
     from tests import catalog_vehicles
     from trusted_router.catalog_ingest import _authoritative_provider_model_ids
+    from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
 
     assert "crusoe" in PROVIDERS
     assert "crusoe" in GATEWAY_PREPAID_PROVIDER_SLUGS
@@ -2436,7 +2437,7 @@ def test_crusoe_provider_models_follow_authoritative_manifest() -> None:
         for endpoint in built.values()
         if endpoint.provider == "crusoe" and endpoint.usage_type == "BYOK"
     }
-    assert credits == expected
+    assert credits == (set() if "crusoe" in PREPAID_PROVIDER_HOLD_REASONS else expected)
     assert byok == expected
 
 

@@ -60,6 +60,7 @@ from trusted_router.provider_contract import (
 )
 from trusted_router.provider_contracts import (
     INPUT_ONLY_PROVIDER_MODELS,
+    PREPAID_PROVIDER_HOLD_REASONS,
     provider_model_operator_held,
     provider_model_uses_passthrough_retail_price,
 )
@@ -1654,6 +1655,8 @@ def _filter_unserved_provider_endpoints(
 
     def _keep(endpoint: ModelEndpoint) -> bool:
         if provider_model_operator_held(endpoint.provider, endpoint.model_id):
+            return False
+        if endpoint.usage_type == "Credits" and endpoint.provider in PREPAID_PROVIDER_HOLD_REASONS:
             return False
         # A route its own provider's manifest marks dark (delisted, held, or
         # without a price) is not served, explicit media routes included.
