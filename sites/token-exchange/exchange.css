@@ -445,12 +445,6 @@ h3,.privacy-choice h3,.uptime-panel figcaption,.attestation-panel h3,.trust-evid
 .hero-provider-group a:hover{color:var(--mint)}
 .hero-provider-group img{width:32px;height:32px;object-fit:contain}
 @keyframes provider-marquee{from{transform:translateX(0)}to{transform:translateX(-50%)}}
-@media(prefers-reduced-motion:reduce){
- .hero-provider-track{animation:none}
- .hero-provider-group+.hero-provider-group{display:none}
- .hero-provider-row{max-width:none;width:100%;overflow-x:auto;mask-image:none;scrollbar-width:thin}
- .hero-provider-group a{min-width:0}
-}
 @media(max-width:1000px){
  .hero-provider-group{gap:32px;padding-inline:16px}
  .hero-provider-group a{min-width:152px;gap:10px;font-size:16px}
@@ -463,6 +457,14 @@ h3,.privacy-choice h3,.uptime-panel figcaption,.attestation-panel h3,.trust-evid
  .hero-provider-group a{min-width:0;gap:10px;min-height:32px;font-size:15px}
  .hero-provider-group img{width:26px;height:26px}
 }
+/* After the breakpoints, so the static row keeps its compact slots at every width. */
+@media(prefers-reduced-motion:reduce){
+ .hero-provider-track{animation:none}
+ .hero-provider-group+.hero-provider-group{display:none}
+ .hero-provider-row{max-width:none;width:100%;overflow-x:auto;mask-image:none;scrollbar-width:thin}
+ .hero-provider-group a{min-width:0}
+}
+@media(prefers-reduced-motion:reduce) and (max-width:1000px){.hero-provider-group{gap:24px;padding-inline:12px}}
 
 /* Hero and closing box share one photograph: the TrustedRouter river, cropped to water
    so it reads as texture rather than a place. The gradient arcs are retired. */
@@ -491,6 +493,7 @@ h3,.privacy-choice h3,.uptime-panel figcaption,.attestation-panel h3,.trust-evid
 .brochure-row{display:flex;gap:12px;align-items:stretch}
 .brochure-row input[type=email]{flex:1 1 auto;min-width:0;min-height:52px;padding:12px 16px;border:1px solid rgba(220,225,222,.24);border-radius:6px;background:#050706;color:var(--text);font:17px Archivo,Arial,sans-serif;box-sizing:border-box;transition:border-color 150ms}
 .brochure-row input[type=email]:focus{outline:none;border-color:var(--mint)}
+.brochure-row input[type=email]:focus-visible{outline:3px solid var(--mint);outline-offset:3px}
 .brochure-row input::placeholder{color:var(--muted);opacity:.55}
 .brochure-row .button{flex:0 0 auto;margin:0;white-space:nowrap}
 .brochure .form-note{font-size:14px;line-height:1.7;color:var(--muted);max-width:600px;margin:14px 0 0}
