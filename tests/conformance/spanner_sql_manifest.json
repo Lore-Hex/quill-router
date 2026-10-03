@@ -2901,42 +2901,8 @@
         }
       ]
     },
-    "storage_gcp_trust:evaluate:1": {
-      "fingerprint": "25b6f611b9df6f0d3f60dc3ca11d89418e5028c146d978dceacda6b44f561ee2",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "pk": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_trust:evaluate:2": {
-      "fingerprint": "25b6f611b9df6f0d3f60dc3ca11d89418e5028c146d978dceacda6b44f561ee2",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "pk": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp_trust:evaluate:3": {
-      "fingerprint": "25b6f611b9df6f0d3f60dc3ca11d89418e5028c146d978dceacda6b44f561ee2",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "pk": "STRING",
-            "shard_count": "INT64"
-          }
-        }
-      ]
-    },
     "storage_gcp_trust:txn:1": {
-      "fingerprint": "e9f985606a5309c249b97980c8bf5afe00dcc2d608f01382fc97e6baedd11c51",
+      "fingerprint": "b8312c070ffa7b9509a0902cac2f304b9269ae5da628c63ff703f9ba6140c795",
       "scenarios": [
         {
           "bindings": {},
@@ -3093,55 +3059,8 @@
         }
       ]
     },
-    "storage_trust_reconciliation:reconciled_through:1": {
-      "fingerprint": "79f8d601cacfe4ac6288296d94d4b17a33bfcfe84209be4c83902c0abe8b6f04",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "workspace_id": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_trust_reconciliation:reconciled_through:2": {
-      "fingerprint": "79f8d601cacfe4ac6288296d94d4b17a33bfcfe84209be4c83902c0abe8b6f04",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "environment": "STRING",
-            "provider": "STRING",
-            "source": "STRING",
-            "source_version": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_trust_reconciliation:replicate_workspace_watermark:1": {
-      "fingerprint": "6136a2f8fc24e53e3ec48943e51552901ac88d8a97a8a02c10faf58f3f98cd5f",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "workspace_id": "STRING"
-          }
-        }
-      ]
-    },
     "storage_trust_reconciliation:txn:3": {
-      "fingerprint": "119d535974c450357f4882a066379f4e31df5490c83ce6f073d0c2f1e1cd6ddc",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "workspace_id": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_trust_reconciliation:txn:4": {
-      "fingerprint": "119d535974c450357f4882a066379f4e31df5490c83ce6f073d0c2f1e1cd6ddc",
+      "fingerprint": "edf7252e25e2d43cae5393ea11537086d543e3601f09765866a8b5751af571b8",
       "scenarios": [
         {
           "bindings": {},
@@ -3736,6 +3655,155 @@
           }
         }
       ]
+    },
+    "storage_gcp_trust:constants:1": {
+      "fingerprint": "24603f9493fa754c05e588596b93c6ba768c6cda416205a97f5d4ce7593f431e",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "pk": "STRING"
+          }
+        }
+      ]
+    },
+    "storage_gcp_trust:constants:2": {
+      "fingerprint": "e49475fe8c9204302708a2f3f263df002d0741eaf9cb360a917beae3b403e6ad",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "pk": "STRING"
+          }
+        }
+      ]
+    },
+    "storage_gcp_trust:constants:3": {
+      "fingerprint": "053e2dffb3ed33561fd54e113b30dfcba7f618f53e3cec4bf3b48cef3bdaf493",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "pk": "STRING",
+            "shard_count": "INT64"
+          }
+        }
+      ]
+    },
+    "storage_trust_reconciliation:constants:1": {
+      "fingerprint": "16b0d9bc7931826586ca9c1c75fef68eb271be0930136b18c916251d13984521",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "workspace_id": "STRING"
+          }
+        }
+      ]
+    },
+    "storage_trust_reconciliation:constants:2": {
+      "fingerprint": "9a1c2c7f0ddca10a1515bb21e84e5e66d39d601ccd533f4a48081b8e7896cc76",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "environment": "STRING",
+            "provider": "STRING",
+            "source": "STRING",
+            "source_version": "STRING"
+          }
+        }
+      ]
+    },
+    "storage_trust_reconciliation:constants:3": {
+      "fingerprint": "c359f75aa22354084e596fedd44cb322e553541af2508a253ee25cae80d52de2",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "workspace_id": "STRING"
+          }
+        }
+      ]
+    },
+    "trust_tier_bulk:constants:1": {
+      "fingerprint": "bf3921ccaa45106ec9bbe652c7954b68f065285d58daae2575672abe81aef4d6",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "id": "STRING",
+            "kind": "STRING"
+          }
+        }
+      ]
+    },
+    "trust_tier_bulk:constants:2": {
+      "fingerprint": "d011780e67a2f00615b0e6844b351959d657f5b22c8ac0732ff2b9722502d6d3",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {}
+        }
+      ]
+    },
+    "trust_tier_bulk:constants:3": {
+      "fingerprint": "2f1b8c9a5ccfb2ef1e47fbb0f35175c5dfa74a362569bb3373e6eacda36be383",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "ids": "ARRAY<STRING>"
+          }
+        }
+      ]
+    },
+    "trust_tier_bulk:constants:4": {
+      "fingerprint": "3492571bd97a333ff1d14088df857f626d8081b425ee7428c1a8f1cabafea893",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "ids": "ARRAY<STRING>"
+          }
+        }
+      ]
+    },
+    "trust_tier_bulk:constants:5": {
+      "fingerprint": "074415fdd48dd459b36fae251e8e3dbc4cd24bd325d5301cfc0864ec35ece2f5",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "ids": "ARRAY<STRING>"
+          }
+        }
+      ]
+    },
+    "trust_tier_bulk:constants:6": {
+      "fingerprint": "b26489d65175dfc50ca71d125cd9d35f253de877c2c5b8ed54dec157a6df6cef",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "environment": "STRING",
+            "source": "STRING",
+            "source_version": "STRING"
+          }
+        }
+      ]
+    },
+    "trust_tier_bulk:constants:7": {
+      "fingerprint": "b25c7389c6b623ea5c76aa2731a7d096836b95aee96dda60884071174af18d80",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "ids": "ARRAY<STRING>",
+            "kind": "STRING"
+          }
+        }
+      ]
     }
   },
   "sinks": {
@@ -3883,8 +3951,7 @@
     "storage_gcp_trust:absorb_unrecovered_recovery_tx": "8bfcd33be0ebe5ef083ff1fe230ead9da2e581e77bf817860a29dc47a1ba4243",
     "storage_gcp_trust:_debit_available_principal_tx": "4b84f597af7aa5e4a320710c132f72f7f0f2591a4c9b4a766f7028282e5fa0de",
     "storage_gcp_trust:drain_matching_trust_inbox_tx": "19112b87dd2898f3f9f248e2e857bfea4576630557be9ef4a4cf40784929eb07",
-    "storage_gcp_trust:recompute_workspace_trust_tier_tx.txn": "e9f985606a5309c249b97980c8bf5afe00dcc2d608f01382fc97e6baedd11c51",
-    "storage_gcp_trust:recompute_workspace_trust_tier_tx.evaluate": "25b6f611b9df6f0d3f60dc3ca11d89418e5028c146d978dceacda6b44f561ee2",
+    "storage_gcp_trust:recompute_workspace_trust_tier_tx.txn": "b8312c070ffa7b9509a0902cac2f304b9269ae5da628c63ff703f9ba6140c795",
     "storage_gcp_user_models:SpannerUserProvidedModels.list_for_user": "b05e21b82a1aa40a841c2b5ec02da602c81ce8080f0afdc9d567fab1f72d9b31",
     "storage_gcp_user_models:SpannerUserProvidedModels.get_many": "cd24bade1b102cd628091886eb67ae24c450e17fa89dc196299dafcbfeaa938a",
     "storage_gcp_user_models:SpannerUserProvidedModels.acquire_slot.txn": "cf1b48fdc7304875ce71e6980c8e51438bf4e91d178e24f91e0875ba42d45ffc",
@@ -3893,15 +3960,21 @@
     "storage_trust_inbox_resolution:record_refunded_uncredited.spanner_tx": "0c51458e02405d5a006241e6b201c2bea208f384e710a73331515156f0533153",
     "storage_trust_reconciliation:SpannerTrustReconciliationRepository.save_marker.txn": "e55af76e57c7b9b891181c45a816a724e64c70e016534f83738816d0414c5c4a",
     "storage_trust_reconciliation:SpannerTrustReconciliationRepository.list_provider_events": "822180ccfc4058df2f0d8bdc12413c361ac373ef78bf3808eb4934927264e3b5",
-    "storage_trust_reconciliation:SpannerTrustReconciliationRepository.replicate_workspace_watermark.txn": "119d535974c450357f4882a066379f4e31df5490c83ce6f073d0c2f1e1cd6ddc",
+    "storage_trust_reconciliation:SpannerTrustReconciliationRepository.replicate_workspace_watermark.txn": "edf7252e25e2d43cae5393ea11537086d543e3601f09765866a8b5751af571b8",
     "storage_trust_reconciliation:SpannerTrustReconciliationRepository.get_marker": "ae66712374f936a93abe08af2e3b6c4b707d6315e830d12c327d10148fa431f2",
-    "storage_trust_reconciliation:SpannerTrustReconciliationRepository.replicate_workspace_watermark.reconciled_through": "79f8d601cacfe4ac6288296d94d4b17a33bfcfe84209be4c83902c0abe8b6f04",
-    "storage_trust_reconciliation:SpannerTrustReconciliationRepository.replicate_workspace_watermark": "6136a2f8fc24e53e3ec48943e51552901ac88d8a97a8a02c10faf58f3f98cd5f",
+    "storage_trust_reconciliation:SpannerTrustReconciliationRepository.replicate_workspace_watermark": "fd39ac3433a2bc1ba1e4e725d52c24e18aa62608163675d06650b64943ce9098",
     "trust_eligibility:billing_paused_tx": "9c3f7178302081fc0be4f4d0915fccbb86495c0a69c6991e09949b4dde80e6f8",
     "trust_owner_budget:recompute_owner_budget": "959e550c803a9b12ebf91949eab221a57f4991b513a300a74725c0395c6e51a4",
     "storage_gcp_authorize:credit_exhaustion_precheck": "2d005ac4817ef9dff2e8481daedb53a1dafcf758ba22790222190d51fd1d3e50",
     "storage_gcp_counter_dml:reserve_credit_with_pause": "8c628d24eaaf1050a131fbf04151700aed5a95a69befae5d36f343df88761120",
-    "storage_gcp_speculation_shadow:SpannerSpeculationShadow.resolve": "44e5026c99ada85fbe44dd62f53501c4509d2f8489e4231f87fe146e70496889"
+    "storage_gcp_speculation_shadow:SpannerSpeculationShadow.resolve": "44e5026c99ada85fbe44dd62f53501c4509d2f8489e4231f87fe146e70496889",
+    "storage_gcp_trust:evaluate_workspace_trust_tier": "6f4487f32a5d95e89b4f7618885db9e591d66ab0efba6bca68fba91c4eb7e510",
+    "storage_gcp_trust:RecordingReader.query": "72a8ba66b4e528b3f6e39e11ff4ab20158a64a0cea4a78fb4b24a1eec8361b9e",
+    "storage_trust_reconciliation:read_expected_reconciled_through": "78d58afe832261c24f98c696e5465717bde6bd8289a2a95adcb9ed916b9b5fd0",
+    "storage_trust_reconciliation:read_expected_reconciled_through.matching_markers": "4d22980847192e7ffc460f0306d6864025c7efe26f9c593dbed8c26debedb49d",
+    "trust_tier_bulk:iter_trust_tier_bulk": "846b000f05dbc96b50d63bfe4627e9f72b6a21d9103315b740330286a5f9cfe5",
+    "trust_tier_bulk:_read_entities": "7bd389ba33373db6b0e2aec54ee25bfaa56b40ed18e1ec38befa06df2d943f65",
+    "trust_tier_bulk:select_trust_tier_candidates": "2047f3a799e1b13534cceb2c4e19dd904a12c244704184e7b9cc629fc5ff8bc2"
   },
   "non_google_sql": {
     "analytics_sink:_post_rows:1": {
