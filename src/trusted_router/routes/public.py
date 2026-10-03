@@ -33,7 +33,12 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import Response
 from starlette.types import Scope
 
-from trusted_router.acquisition import log_browser_funnel_event
+from trusted_router.acquisition import (
+    exchange_site_campaign,
+    exchange_site_touch,
+    log_browser_funnel_event,
+    log_exchange_site_funnel_event,
+)
 from trusted_router.ai_iq import ai_iq_catalog_payload
 from trusted_router.apps import aggregate_apps
 from trusted_router.benchmark_reports import monthly_benchmark_report
@@ -777,33 +782,76 @@ _ENTERPRISE_BRIEF = (
 )
 _SECURITY_PACK = _ENTERPRISE_BRIEF.with_name("TrustedRouter-Security-Pack.zip")
 _BRIEF_HEADERS = {"Cache-Control": "private, no-store", "X-Robots-Tag": "noindex, nofollow"}
+# The static Token Exchange sites (sites/token-exchange/markets.json) host the same brochure
+# form and post it here from their own domains. Only the canonical origins are allowed;
+# www and alias hosts redirect to these before a page is ever served. The site tests fail
+# if a market is missing from this list, and the site publish refuses until it is deployed.
+_EXCHANGE_ORIGINS = frozenset(
+    f"https://{domain}"
+    for domain in json.loads(
+        (Path(__file__).parents[1] / "data" / "token_exchange_origins.json").read_text()
+    )
+)
+_BRIEF_PREFLIGHT_HEADERS = {
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "content-type",
+    "Access-Control-Max-Age": "600",
+}
+
+
+def _exchange_origin(request: Request) -> str | None:
+    """The canonical Token Exchange site a browser request came from, or None."""
+    origin = request.headers.get("origin")
+    return origin if origin in _EXCHANGE_ORIGINS else None
+
+
+def _brief_headers(exchange_origin: str | None) -> dict[str, str]:
+    headers = dict(_BRIEF_HEADERS)
+    if exchange_origin is not None:
+        headers["Access-Control-Allow-Origin"] = exchange_origin
+        headers["Vary"] = "Origin"
+    return headers
+
+
+async def _handle_enterprise_brief_preflight(request: Request) -> Response:
+    """Answer the browser's CORS preflight for the exchange sites only."""
+    exchange_origin = _exchange_origin(request)
+    if exchange_origin is None:
+        return Response(status_code=403, headers=_BRIEF_HEADERS)
+    return Response(status_code=204, headers={**_brief_headers(exchange_origin), **_BRIEF_PREFLIGHT_HEADERS})
 
 
 async def _handle_enterprise_brief(settings: Settings, request: Request) -> Response:
-    """Deliver an allowlisted resource only after SES accepts the inquiry."""
-    def error(code: str, status: int) -> JSONResponse:
-        return JSONResponse({"ok": False, "error": code}, status_code=status, headers=_BRIEF_HEADERS)
+    """Deliver an allowlisted resource only after SES accepts the inquiry.
 
-    origin = request.headers.get("origin")
-    try:
-        parsed_origin = urlparse(origin) if origin is not None else None
-    except ValueError:
-        return error("invalid_origin", 403)
-    if request.headers.get("sec-fetch-site") == "cross-site" or (
-        parsed_origin is not None
-        and (
-            parsed_origin.scheme not in {"http", "https"}
-            or parsed_origin.netloc != request.url.netloc
-        )
-    ):
-        return error("invalid_origin", 403)
+    Pages on this origin and the canonical Token Exchange sites may call it."""
+    exchange_origin = _exchange_origin(request)
+    headers = _brief_headers(exchange_origin)
+
+    def error(code: str, status: int) -> JSONResponse:
+        return JSONResponse({"ok": False, "error": code}, status_code=status, headers=headers)
+
+    if exchange_origin is None:
+        origin = request.headers.get("origin")
+        try:
+            parsed_origin = urlparse(origin) if origin is not None else None
+        except ValueError:
+            return error("invalid_origin", 403)
+        if request.headers.get("sec-fetch-site") == "cross-site" or (
+            parsed_origin is not None
+            and (
+                parsed_origin.scheme not in {"http", "https"}
+                or parsed_origin.netloc != request.url.netloc
+            )
+        ):
+            return error("invalid_origin", 403)
     if request.headers.get("content-type", "").split(";", 1)[0] != "application/json":
         return error("invalid_request", 415)
 
     # Bound this tiny form independently of the much larger API upload budget.
     body = bytearray()
     async for chunk in request.stream():
-        if len(body) + len(chunk) > 4096:
+        if len(body) + len(chunk) > 8192:
             return error("request_too_large", 413)
         body.extend(chunk)
     try:
@@ -813,7 +861,7 @@ async def _handle_enterprise_brief(settings: Settings, request: Request) -> Resp
     if not isinstance(payload, dict):
         return error("invalid_request", 400)
     if payload.get("website"):
-        return JSONResponse({"ok": True}, headers=_BRIEF_HEADERS)
+        return JSONResponse({"ok": True}, headers=headers)
     resource = payload.get("resource", "brochure")
     if resource == "brochure":
         asset, media_type = _ENTERPRISE_BRIEF, "application/pdf"
@@ -843,6 +891,9 @@ async def _handle_enterprise_brief(settings: Settings, request: Request) -> Resp
         log.error("enterprise_brief.asset_unavailable")
         return error("delivery_unavailable", 503)
 
+    page_url = f"{exchange_origin}/" if exchange_origin else f"https://trustedrouter.com{page}"
+    campaign = exchange_site_campaign(request, payload.get("campaign")) if exchange_origin else {}
+    campaign_lines = "".join(f"{name}: {value}\n" for name, value in campaign.items())
     message = EmailMessage(
         to=settings.partner_inquiry_email or "enterprise@trustedrouter.com",
         reply_to=email,
@@ -850,7 +901,8 @@ async def _handle_enterprise_brief(settings: Settings, request: Request) -> Resp
         text_body=(
             f"An enterprise visitor requested the Token Exchange {label}.\n\n"
             f"Email: {email}\n"
-            f"Page: https://trustedrouter.com{page}\n\n"
+            f"Page: {page_url}\n"
+            f"{campaign_lines}\n"
             "The form permits follow-up about enterprise AI. It does not subscribe "
             "the visitor to a newsletter. Reply directly to discuss their requirements.\n"
         ),
@@ -863,12 +915,15 @@ async def _handle_enterprise_brief(settings: Settings, request: Request) -> Resp
     if not sent:
         log.error("enterprise_brief.delivery_unavailable")
         return error("delivery_unavailable", 503)
-    log_browser_funnel_event(request, event)
+    if exchange_origin is not None:
+        log_exchange_site_funnel_event(request, event, exchange_site_touch(page_url, campaign))
+    else:
+        log_browser_funnel_event(request, event)
     return FileResponse(
         asset,
         media_type=media_type,
         filename=asset.name,
-        headers=_BRIEF_HEADERS,
+        headers=headers,
     )
 
 
@@ -886,6 +941,10 @@ def register_public_action_routes(app: FastAPI, settings: Settings) -> None:
     @app.post("/token-exchange/brief", include_in_schema=False)
     async def enterprise_brief(request: Request) -> Response:
         return await _handle_enterprise_brief(settings, request)
+
+    @app.options("/token-exchange/brief", include_in_schema=False)
+    async def enterprise_brief_preflight(request: Request) -> Response:
+        return await _handle_enterprise_brief_preflight(request)
 
 
 def register_public_routes(app: FastAPI, settings: Settings) -> None:

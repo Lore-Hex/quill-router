@@ -4,6 +4,7 @@ on:
     paths:
       - 'sites/token-exchange/**'
       - 'src/trusted_router/token_exchange.py'
+      - 'src/trusted_router/data/token_exchange_origins.json'
       - 'tests/test_token_exchange_evidence.py'
       - 'infra/token_exchange_certificate_domains.json'
       - '.github/workflows/token-exchange-sites.yml'
@@ -12,6 +13,7 @@ on:
     paths:
       - 'sites/token-exchange/**'
       - 'src/trusted_router/token_exchange.py'
+      - 'src/trusted_router/data/token_exchange_origins.json'
       - 'tests/test_token_exchange_evidence.py'
       - 'infra/token_exchange_certificate_domains.json'
       - '.github/workflows/token-exchange-sites.yml'
@@ -43,6 +45,20 @@ jobs:
       - run: npm install --prefix /tmp/exchange-browser playwright@1.63.0
       - run: /tmp/exchange-browser/node_modules/.bin/playwright install --with-deps chromium
       - run: python sites/token-exchange/build.py --output /tmp/token-exchange-build
+      - name: Every page, viewport, menu and brochure form state
+        env:
+          NODE_PATH: /tmp/exchange-browser/node_modules
+        run: |
+          python -m http.server 8089 --bind 127.0.0.1 --directory /tmp/token-exchange-build &
+          static_pid=$!
+          trap 'kill "$static_pid"' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --silent --output /dev/null http://127.0.0.1:8089/new-york/; then
+              break
+            fi
+            sleep 1
+          done
+          node sites/token-exchange/verify.cjs /tmp/token-exchange-build
       - name: Stale data and every component-state combination
         env:
           NODE_PATH: /tmp/exchange-browser/node_modules
