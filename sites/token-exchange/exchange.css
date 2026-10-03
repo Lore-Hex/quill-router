@@ -325,7 +325,7 @@
 .masthead #primary-navigation .market-picker nav a:hover{background:none;color:#fff}
 .masthead #primary-navigation .market-picker nav a[aria-current="page"]:hover{background:#cce8d726;color:var(--mint)}
 #buyers .section-intro>p:not(.eyebrow){font-size:19px;max-width:660px;margin:28px 0 0;line-height:1.7;color:var(--muted)}
-.pilot-action{margin-top:28px}
+.brief-action{margin-top:28px}
 .exchange-steps{max-width:660px}
 .exchange-steps li{align-items:baseline;gap:20px;padding:16px 0;font-size:17px;color:var(--muted)}
 .exchange-steps li::before{font:400 16px/1.5 Archivo,Arial,sans-serif;flex:0 0 20px;color:var(--muted)}
@@ -352,7 +352,7 @@
  .masthead #primary-navigation{gap:0}
  .masthead #primary-navigation .market-picker nav{grid-template-columns:1fr 1fr}
  #buyers .section-intro>p:not(.eyebrow){font-size:17px;margin-top:24px}
- .pilot-action{margin-top:24px}
+ .brief-action{margin-top:24px}
  .exchange-steps li{font-size:16px;gap:16px;padding:16px 0}
  .exchange-steps li::before{font-size:15px;flex-basis:16px}
  #sellers{padding-block:80px 72px}
