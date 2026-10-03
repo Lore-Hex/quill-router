@@ -1,8 +1,9 @@
 # Fast admission and batched settlement
 
-Status: **proposed, v20, 2026-10-03. Nothing built.** v8 changed direction
-to regional leases, Joseph's choice (§2). Codex and Fable reviewed v1-v19
-(§11), and v20 answers Fable's review of v19.
+Status: **proposed, v21, 2026-10-03. Nothing built.** v8 changed direction
+to regional leases, Joseph's choice (§2). Codex and Fable reviewed v1-v20
+(§11); Fable accepted v20, and v21 answers Codex's review of it and Fable's
+wording notes.
 
 This is the plan for reaching 100T tokens a month without spending the routing
 margin on the billing database, and for taking the control plane out of request
@@ -431,7 +432,10 @@ and the request records all follow that rule.
     - after that, from the authorization's written records (§4.9);
     - when neither has a winner, as today's helper answers an outcome it
       cannot establish: `pending`, never released. A missing record is never
-      read as a refund.
+      read as a refund. A `pending` answer is `already_settled` without
+      `settled`, so it ends the enclave's retries, and the enclave logs a lost
+      charge even when the charge is booked and only its record awaits
+      rebuilding. That is intended; the loss metric is read with it in mind.
 
     That is a 200, which ends the enclave's retries; `stageDDispositionLost`
     then counts a loss only for a reap or a release. A 409 would not end
@@ -938,11 +942,24 @@ when Python is unreachable: the first durable point is Python's
     from its stored winner and the matching staged record, after the commit
     that stored the winner.
   - It first publishes the winner's outcome to the record topic: the
-    authorization, the outcome, the cost and the boot binding. So once the
+    authorization, the outcome, the cost, the boot binding, and the digest of
+    the winning terminal's full record. The digest picks the winner among the
+    archived full records: an enclave's retry can carry a compacted record
+    with a different digest than the original, since its queue keeps only the
+    billing identity and measured usage (`compactSettlementRetryJob` in
+    `settlement_retry.go` at `a06050f`), and both are archived. So once the
     pack is deleted, every written record can still be rebuilt from the
     topic's Cloud Storage export, as staged records are. A winner's pending
     work is done only once that publish is acknowledged and its records are
-    written. While a lost record is rebuilt, lookups answer `pending`.
+    written.
+  - The two message kinds on the record topic, full records and outcomes,
+    carry a `kind` attribute, which the staging consumer and the export
+    reader both read. An outcome republished after a crash is identical to
+    the first, so the export may hold duplicates, and readers keep one.
+  - A lookup that finds no winner and no record for an authorization whose
+    lease the auditor closed reports it, and a periodic check compares
+    outcomes with records. Either one rebuilds the missing record from the
+    export. Until then lookups answer `pending`.
   - A staged record is removed only once its winner's records are written,
     or once its lease has closed with no winner that needs it, as for losing
     and refunded terminals. A staged record never expires while the auditor
@@ -962,8 +979,10 @@ when Python is unreachable: the first durable point is Python's
   - The owner mints A with its lease in it, so a lookup by A alone reads that
     lease's packs, bounded by the commits in the lease's maximum life, and
     the records, which are keyed by authorization. A is `gwa-`, the lease
-    ID and a random suffix, at most 64 bytes. Today it is `gwa-` and a UUID
-    (`_new_gateway_authorization_id`), and no consumer parses it.
+    ID and a random suffix, at most 64 bytes, which `tr_reservation`'s and
+    `tr_gateway_authorization`'s authorization columns and the ClickHouse keys
+    hold; the lease ID's length sets the suffix's. Today A is `gwa-` and a
+    UUID (`_new_gateway_authorization_id`), and no consumer parses it.
   - A refund or a release writes no generation record, as today, so the
     auditor writes it a compact disposition record instead: the
     authorization, its outcome and its boot binding, which a boot-signed
@@ -1003,14 +1022,20 @@ stream, and streams the enclave heartbeats. These stay on today's Python path:
     without heartbeats on (`initializeSpendLeaseShadow`), and the Stage D
     signer falls back to that key (`stageDBootDigestSigner` in
     `spend_lease.go`).
-    - The enclave sends the declaration when it registers (§9). Python stores
-      it on the boot record, `GatewayBoot`, from the registration route
-      (§8). There are two declarations, heartbeats and the heartbeat at stream
-      open, and a missing one means undeclared.
-    - Until registrations carry it, every stream stays on Python. Python's
-      own rule reads the same field once every accepted image declares it,
-      which closes the same gap on today's path; reading it sooner would end
-      today's Stage D for every enclave;
+    - The enclave sends the declaration when it registers (§9), computed from
+      `stageDConfig.usageHeartbeat` on whichever registration path runs,
+      Stage D or spend-lease shadow, so a shadow boot declares nothing it does
+      not do. Python stores it on the boot record, `GatewayBoot`, from the
+      registration route (§8). There are two declarations, heartbeats and the
+      heartbeat at stream open, and a missing one means undeclared.
+    - A re-registration replaces the declarations with what it sends. Today's
+      `observe_gateway_boot` keeps fields the new registration omits, so it is
+      not reused for them.
+    - Until registrations carry it, every stream stays on Python. Python's own
+      rule reads the same field behind a setting, turned on only when every
+      digest in the accepted image list belongs to a build that declares. That
+      closes the same gap on today's path; reading it sooner would end today's
+      Stage D for every enclave;
   - streaming `chat.completions` or `responses`, priced in credits on
     standard endpoints, outside the priority and auto service tiers. The
     enclave applies the same route test (`stageDStreamEligible` in
@@ -1182,7 +1207,9 @@ leases, and was retired on 2026-09-27.
    of the rest.
 3. **Python changes that stand alone:**
    - the heartbeat declarations on `GatewayBoot` and in the registration
-     route, stored as sent, a missing one meaning undeclared (§4.11);
+     route, stored as sent and replaced on re-registration, a missing one
+     meaning undeclared, and the setting that has Python's own rule read them
+     (§4.11);
    - the debt mark on every shard, and covering a negative shard at once
      (§4.7), which closes a gap on today's path, with a one-time pass over
      workspaces that already have a negative shard;
@@ -1745,3 +1772,17 @@ record.
   - The P3s are answered in place, and the enclave's lookup is described as
     it is: after a settle times out, counting a loss only for
     `reaped_snapshot`.
+- **v21.** Fable accepted v20 (no money defect, 5 P3). Codex (1 P2) found
+  that the archived outcome could not say which of two archived full records
+  won: an enclave's retry carries a compacted record with a different digest,
+  and both are archived. It also noted that re-registration must replace the
+  declarations as sent, which today's `observe_gateway_boot` merge does not.
+
+  v21 answers them:
+  - The archived outcome carries the winning terminal's full-record digest.
+  - A re-registration replaces the declarations; Python's own rule reads them
+    behind a setting turned on once every accepted image declares, and the
+    enclave computes the declaration on both registration paths.
+  - Fable's P3s: the record topic's `kind` attribute and duplicate outcomes,
+    who rebuilds a lost record, the columns A must fit, and the lost-charge
+    log a `pending` answer causes.
