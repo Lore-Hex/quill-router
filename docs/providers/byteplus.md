@@ -21,33 +21,52 @@ nonempty choices, 49 prompt tokens and 33 completion tokens (31 reasoning).
 These are direct upstream checks, not production TrustedRouter route checks.
 Other discovered models and input modes have not been certified by these tests.
 
-## Remaining Integration Work
+## Implemented, Activation Gated
 
-The public `bytedance/seedance-*` models currently use Venice. BytePlus itself
-remains disabled for both credits and BYOK. Do not conflate the model's creator
-with its selected inference provider.
+The native task create/poll/download/delete adapter is implemented in
+quill-cloud-proxy PR #444. It calls BytePlus, not Venice, and isolates API
+credentials from content downloads. V1 supports four-to-fifteen-second text or
+first-frame image generations at 480p/720p. Video input, reference images and
+1080p remain unsupported because they require separate tariffs.
 
-The enclave's direct OpenAI-compatible chat registry has BytePlus transport and
-secret wiring, but its native video provider registry has no BytePlus adapter.
-There is also no BytePlus pricing-refresh implementation.
+Hourly refresh reads the authenticated ModelArk catalog and the first-party
+standard-inference pricing document. New chat models need a successful canary;
+unknown prices, unsupported APIs and time-dependent tariffs stay non-routable.
+Ten chat models passed live canaries. Published token tariffs include cache
+rates and context tiers; Flex/batch discounts are never used for online calls.
 
-ModelArk video charges depend on actual output-video tokens. The existing
-video settlement path uses the fixed quote saved on the job and does not carry
-native token usage from `PollResult`. Do not publish a per-second estimate as
-an exact upstream charge, borrow BytePlus LAS pricing (a different API), or
-enable routes merely because an upstream task was accepted.
+Video billing reserves a conservative token ceiling, freezes the authorized
+tariff, and settles the completed task's integer output-token count exactly
+once. It never bills the ceiling as usage. A separate content-free snapshot
+persists in all storage backends without enrolling video in Stage D. Missing,
+invalid or excessive usage fails closed; refunds release the hold without
+requiring usage. Existing fixed-price provider jobs remain compatible.
 
-Before enabling direct BytePlus routes:
+Native video list prices for these supported modes are $10.70/M output tokens
+for 2.5, $7/M for 2.0, and $5.60/M for 2.0 Fast, before the standard router
+markup. Account-dependent temporary promotions are not assumed.
 
-1. Add the native ModelArk task create/poll/download/delete adapter, with
-   bounded requests, credential isolation on downloads, and truthful errors.
-2. Ingest exact first-party tariffs and supported billing dimensions, including
-   image/video-input and resolution differences, through hourly pricing refresh.
-3. Reserve a validated cost bound, settle actual reported video-token usage,
-   and test idempotency, refund, malformed usage, overflow, and missing usage.
-   Preserve the fixed-price contract for existing video providers.
-4. Run end-to-end tests through TrustedRouter before publishing the direct
-   endpoints. Deploy gateway support before enabling the control-plane catalog.
+Before enabling `NATIVE_ROUTES_DEPLOYED` in the pricing parser:
+
+1. Deploy the control-plane billing change and the native gateway in GCP, AWS
+   and Azure through normal CI, attestation and release gates. Verify each
+   cloud has its own updated credential; preserve all existing Azure bundle
+   entries when sealing a new immutable bundle.
+2. Verify public health and regional attestation, then regenerate the manifest
+   with the activation flag enabled in a separate reviewed release. Explicitly
+   clear only the approved models' `gateway-upgrade-required` holds using
+   `set_manifest_model_canary_states`; discovery deliberately preserves
+   operator holds even after the activation flag changes. Never clear failed
+   canaries or unsupported-price holds.
+3. Complete one small production job per Seedance route using
+   `provider.only: ["byteplus"]`, check MP4 retrieval and compare usage/cost
+   against the authorization's frozen tariff. Repeated polls must not rebill.
+4. Email Joseph the actual production result. Upstream success and merged PRs
+   alone do not establish production readiness.
+
+Existing Venice endpoints remain for callers explicitly selecting Venice and
+for in-flight jobs. BytePlus has the preferred native-provider rank; callers
+requiring BytePlus exclusively should set `provider.only: ["byteplus"]`.
 
 First-party references:
 - [ModelArk pricing](https://docs.byteplus.com/en/docs/modelark/model-pricing)

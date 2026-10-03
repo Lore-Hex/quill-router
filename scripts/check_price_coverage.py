@@ -44,6 +44,7 @@ from scripts.pricing.providers import (
     akashml,
     arcee,
     bfl,
+    byteplus,
     confidential_ai,
     decart,
     fal,
@@ -494,6 +495,7 @@ _DISCOVERABLE_MANIFEST_PROVIDERS_BASE: tuple[
         nscale._canonical_id,
     ),
     ("lyceum", lyceum.URL, ("LYCEUM_API_KEY",), lyceum.canonical_model_id),
+    ("byteplus", byteplus.URL, ("BYTEPLUS_API_KEY",), byteplus.canonical_model_id),
     ("system1models", system1models.URL, (), system1models.canonical_model_id),
     ("system1models-eu", system1models_eu.URL, (), system1models_eu.canonical_model_id),
 )
@@ -535,6 +537,7 @@ _STALE_MANIFEST_PROVIDER_MODULES = (
     nscale,
     nvidia_nim,
     lyceum,
+    byteplus,
     recraft,
     system1models,
     system1models_eu,

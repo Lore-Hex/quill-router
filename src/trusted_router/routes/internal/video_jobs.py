@@ -20,10 +20,37 @@ from trusted_router.schemas import (
 from trusted_router.storage import STORE
 from trusted_router.storage_models import ProviderBenchmarkSample, VideoJob
 from trusted_router.types import ErrorType
+from trusted_router.video_billing import video_cost_microdollars, video_token_billed
 
 
 def _job_payload(job: VideoJob) -> dict[str, Any]:
-    return asdict(job)
+    payload = asdict(job)
+    if job.status == "completed" and job.output_token_limit:
+        # Read the authoritative billing outcome, not a quote or analytics row.
+        authorization = STORE.get_gateway_authorization(job.authorization_id)
+        if authorization is not None and authorization.settled:
+            payload["settled_microdollars"] = authorization.finalized_cost_microdollars
+            payload["output_tokens"] = authorization.finalized_output_tokens
+    return payload
+
+
+def _validate_video_quote(authorization: Any, endpoint: Any, quoted: int, token_limit: int) -> None:
+    try:
+        token_billed = video_token_billed(authorization.video_pricing_snapshot, endpoint)
+    except ValueError as exc:
+        raise api_error(400, str(exc), ErrorType.BAD_REQUEST) from exc
+    if token_billed:
+        if quoted != 0 or token_limit <= 0:
+            raise api_error(400, "Token-billed video requires a token reservation, not a fixed quote", ErrorType.BAD_REQUEST)
+        try:
+            video_cost_microdollars(
+                authorization.video_pricing_snapshot, endpoint.id,
+                output_tokens=token_limit, quoted_microdollars=quoted,
+            )
+        except ValueError as exc:
+            raise api_error(400, str(exc), ErrorType.BAD_REQUEST) from exc
+    elif quoted <= 0:
+        raise api_error(400, "Fixed-price video requires a positive quote", ErrorType.BAD_REQUEST)
 
 
 def _prepare(
@@ -58,6 +85,7 @@ def _prepare(
         raise api_error(
             400, "Video quote exceeds the authorized reservation", ErrorType.BAD_REQUEST
         )
+    _validate_video_quote(authorization, endpoint, body.quoted_microdollars, body.output_token_limit)
     job = VideoJob(
         id=body.job_id,
         workspace_id=authorization.workspace_id,
@@ -68,6 +96,7 @@ def _prepare(
         endpoint_id=body.endpoint_id,
         provider_model=body.provider_model,
         quoted_microdollars=body.quoted_microdollars,
+        output_token_limit=body.output_token_limit,
         input_mode=body.input_mode,
         duration_seconds=body.duration_seconds,
         resolution=body.resolution,
@@ -126,7 +155,7 @@ def register(router: APIRouter) -> None:
         provider = body.provider or existing.provider
         endpoint_id = body.endpoint_id or existing.endpoint_id
         provider_model = body.provider_model or existing.provider_model
-        quoted_microdollars = body.quoted_microdollars or existing.quoted_microdollars
+        quoted_microdollars = existing.quoted_microdollars if body.quoted_microdollars is None else body.quoted_microdollars
         endpoint = endpoint_for_id(endpoint_id)
         if (
             endpoint_id not in allowed_endpoint_ids
@@ -139,6 +168,7 @@ def register(router: APIRouter) -> None:
             raise api_error(
                 400, "Video quote exceeds the authorized reservation", ErrorType.BAD_REQUEST
             )
+        _validate_video_quote(authorization, endpoint, quoted_microdollars, existing.output_token_limit)
         job = await run_in_threadpool(
             STORE.mark_video_job_queued,
             job_id,
@@ -151,7 +181,7 @@ def register(router: APIRouter) -> None:
         )
         if job is None:
             raise api_error(404, "Video job not found", ErrorType.NOT_FOUND)
-        return {"data": _job_payload(job)}
+        return {"data": await run_in_threadpool(_job_payload, job)}
 
     @router.post("/internal/gateway/video/jobs/{job_id}/lookup")
     async def lookup_video_job(
@@ -175,7 +205,7 @@ def register(router: APIRouter) -> None:
             limit=body.limit,
             lease_seconds=body.lease_seconds,
         )
-        return {"data": [_job_payload(job) for job in jobs]}
+        return {"data": await run_in_threadpool(lambda: [_job_payload(job) for job in jobs])}
 
     @router.post("/internal/gateway/video/jobs/{job_id}/update")
     async def update_video_job(
@@ -206,7 +236,7 @@ def register(router: APIRouter) -> None:
                     provider_name=provider.name if provider is not None else job.provider,
                 ),
             )
-        return {"data": _job_payload(job)}
+        return {"data": await run_in_threadpool(_job_payload, job)}
 
     @router.post("/internal/gateway/video/jobs/{job_id}/cleaned")
     async def cleaned_video_job(
@@ -218,4 +248,4 @@ def register(router: APIRouter) -> None:
         job = await run_in_threadpool(STORE.mark_video_job_cleaned, job_id)
         if job is None:
             raise api_error(404, "Video job not found", ErrorType.NOT_FOUND)
-        return {"data": _job_payload(job)}
+        return {"data": await run_in_threadpool(_job_payload, job)}

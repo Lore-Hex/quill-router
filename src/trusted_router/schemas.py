@@ -404,7 +404,8 @@ class GatewayVideoJobPrepareRequest(_Strict):
     provider: str = Field(min_length=1, max_length=64)
     endpoint_id: str = Field(min_length=1, max_length=512)
     provider_model: str = Field(min_length=1, max_length=256)
-    quoted_microdollars: int = Field(ge=1, le=100_000_000)
+    quoted_microdollars: int = Field(ge=0, le=100_000_000)
+    output_token_limit: int = Field(default=0, ge=0, le=2_000_000)
     input_mode: str = Field(default="text", pattern="^(text|image|reference|video)$")
     duration_seconds: int = Field(default=0, ge=0, le=60)
     resolution: str = Field(default="", max_length=32)
@@ -420,7 +421,7 @@ class GatewayVideoJobQueuedRequest(_Strict):
     provider: str | None = Field(default=None, min_length=1, max_length=64)
     endpoint_id: str | None = Field(default=None, min_length=1, max_length=512)
     provider_model: str | None = Field(default=None, min_length=1, max_length=256)
-    quoted_microdollars: int | None = Field(default=None, ge=1, le=100_000_000)
+    quoted_microdollars: int | None = Field(default=None, ge=0, le=100_000_000)
     poll_after_seconds: int = Field(default=5, ge=1, le=300)
 
 

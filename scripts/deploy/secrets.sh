@@ -358,6 +358,7 @@ grant_tr_deploy_secret_access "trustedrouter-sakana-api-key"
 grant_tr_deploy_secret_access "trustedrouter-perplexity-api-key"
 grant_tr_deploy_secret_access "trustedrouter-krea-api-key"
 grant_tr_deploy_secret_access "trustedrouter-fal-api-key"
+grant_tr_deploy_secret_access "trustedrouter-byteplus-api-key"
 # Authenticated hourly discovery for the former runtime-only providers was
 # approved by the operator on 2026-09-27; the refresh workflow reads these the
 # same way it reads every other provider key above.

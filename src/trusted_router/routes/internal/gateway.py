@@ -251,6 +251,7 @@ from trusted_router.user_model_rules import (
     user_model_gateway_pair,
     user_model_is_on_the_clock,
 )
+from trusted_router.video_billing import video_cost_microdollars, video_pricing_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -1298,7 +1299,9 @@ def _authorize_gateway_sync_impl(
             model_estimate,
             custom_model_markup_basis_points,
         )
-    estimate = model_estimate + additional_cost_reservation
+    # Video candidates are either fixed-quote or output-token billed. Reserve
+    # the largest possible route charge, not the sum of mutually exclusive routes.
+    estimate = max(model_estimate, additional_cost_reservation) if is_video_request else model_estimate + additional_cost_reservation
     broadcast_destinations = [
         payload
         for destination in _broadcast_destinations_for_authorize(workspace.id)
@@ -1440,6 +1443,13 @@ def _authorize_gateway_sync_impl(
         ),
     )
     pricing_snapshot = None
+    video_snapshot = (
+        video_pricing_snapshot(
+            (effective_endpoint(e, at=pricing_effective_at) for _m, e in endpoint_candidates),
+            output_tokens,
+        )
+        if body.route_type == "videos" else None
+    )
     if stage_d_reason == "ok":
         pricing_snapshot = canonical_pricing_snapshot(
             endpoint_pricing_document(
@@ -1559,6 +1569,7 @@ def _authorize_gateway_sync_impl(
                     expires_at=expires_at,
                     window_limits=window_limits or None,
                     pricing_snapshot=pricing_snapshot,
+                    video_pricing_snapshot=video_snapshot,
                     stage_d_reason=stage_d_reason,
                     stage_d_prompt_tokens=input_tokens,
                     stage_d_max_output_tokens=output_tokens,
@@ -1802,6 +1813,7 @@ def _authorize_gateway_sync_impl(
             user_model_owner_user_id=user_model.owner_user_id if user_model else None,
             additional_cost_reservation_microdollars=additional_cost_reservation,
             native_batch_eligible=native_batch_eligible,
+            video_pricing_snapshot=video_snapshot,
             settlement=settlement,
             expires_at=authorization_expires_at,
             # The outstanding increment rides the SAME transaction that
@@ -2491,6 +2503,7 @@ def _gateway_authorize_response(
             "receipt_fee_basis_points": authorization.receipt_fee_basis_points,
             "request_metadata_version": REQUEST_METADATA_VERSION,
             "native_batch_eligible": authorization.native_batch_eligible,
+            **({"video_token_billing": True} if authorization.video_pricing_snapshot else {}),
             **stage_d,
             "tags": dict(authorization.tags),
             "custom_model": None
@@ -3237,8 +3250,20 @@ def _settle_gateway_authorization(
         selected_endpoint,
         body.price_tier_input_tokens,
     )
+    video_cost = None
+    if success and authorization.video_pricing_snapshot is not None:
+        if body.route_type != "videos" or total_input:
+            raise api_error(400, "Video settlement requires video output usage only", ErrorType.BAD_REQUEST)
+        try:
+            video_cost = video_cost_microdollars(
+                authorization.video_pricing_snapshot, selected_endpoint.id,
+                output_tokens=output_tokens,
+                quoted_microdollars=body.additional_cost_microdollars,
+            )
+        except ValueError as exc:
+            raise api_error(400, str(exc), ErrorType.BAD_REQUEST) from exc
     actual_cost = (
-        custom_model_cost_microdollars(
+        video_cost if video_cost is not None else custom_model_cost_microdollars(
             input_tokens=total_input,
             output_tokens=output_tokens,
             prompt_price=int(authorization.user_model_prompt_price_microdollars_per_m or 0),
@@ -3315,6 +3340,13 @@ def _settle_gateway_authorization(
         )
         actual_cost += custom_model_markup_micro
     additional_cost = body.additional_cost_microdollars
+    if (
+        body.route_type == "videos"
+        and authorization.video_pricing_snapshot is not None
+        and success
+    ):
+        if actual_cost > authorization.estimated_microdollars:
+            raise api_error(400, "Video token cost exceeds the authorized reservation", ErrorType.BAD_REQUEST)
     if user_model_pair is not None and additional_cost:
         raise api_error(
             400,
