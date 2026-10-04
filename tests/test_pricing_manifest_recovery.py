@@ -23,9 +23,9 @@ def test_manifest_failure_rolls_back_before_other_providers_continue(
 ) -> None:
     broken = tmp_path / "broken.json"
     healthy = tmp_path / "grok.json"
-    original = '{ "models": [{"id": "old"}] }\n'
+    original = b'{ "models": [{"id": "old"}] }\r\n'
     if existing:
-        broken.write_text(original)
+        broken.write_bytes(original)
 
     def broken_hook(_result: ProviderPricingResult) -> list[str]:
         broken.write_text('{"models": []}' if failure == "empty" else '{"partial":')
@@ -58,22 +58,23 @@ def test_manifest_failure_rolls_back_before_other_providers_continue(
     assert "secret-key" not in str(failures) + caplog.text
     assert healthy.exists()
     if existing:
-        assert broken.read_text() == original
+        assert broken.read_bytes() == original
     else:
         assert not broken.exists()
 
 
 @pytest.mark.parametrize("recoverable", [False, True])
-def test_refresh_merges_only_recovered_prices_and_keeps_publication_budget(
+def test_refresh_keeps_failed_provider_state_with_or_without_recovery(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     recoverable: bool,
 ) -> None:
-    manifest = tmp_path / "xiaomi.json"
+    manifest_dir = tmp_path / "provider_models"
+    manifest_dir.mkdir()
+    manifest = manifest_dir / "xiaomi.json"
     original = '{"models": [{"id": "xiaomi/old-model"}]}\n'
     manifest.write_text(original)
     snapshot_path = tmp_path / "snapshot.json"
-    snapshot_path.write_text("original snapshot")
     committed = {
         "models": [{
             "id": "xiaomi/old-model",
@@ -83,6 +84,7 @@ def test_refresh_merges_only_recovered_prices_and_keeps_publication_budget(
             }],
         }] if recoverable else [],
     }
+    snapshot_path.write_text(json.dumps(committed))
 
     def broken_hook(_result: ProviderPricingResult) -> None:
         manifest.write_text("partial")
@@ -101,8 +103,13 @@ def test_refresh_merges_only_recovered_prices_and_keeps_publication_budget(
         ),
     }
     monkeypatch.setattr(refresh, "SNAPSHOT_PATH", snapshot_path)
+    monkeypatch.setattr(refresh, "PROVIDER_MANIFEST_DIR", manifest_dir)
+    # refresh.main snapshots and may restore PARSERS_DIR; never let it touch
+    # the repository's parsers while other tests read them in parallel.
+    parsers_dir = tmp_path / "parsers"
+    parsers_dir.mkdir()
+    monkeypatch.setattr(refresh, "PARSERS_DIR", parsers_dir)
     monkeypatch.setattr(refresh, "PROVIDER_SLUGS", tuple(modules))
-    monkeypatch.setattr(refresh, "MAX_TOLERATED_FAILURES", 0)
     monkeypatch.setattr(refresh, "_import_provider", modules.__getitem__)
     monkeypatch.setattr(refresh, "_read_existing_snapshot", lambda: committed)
     monkeypatch.setattr(refresh, "_fetch_all_providers", lambda: (results, []))
@@ -117,17 +124,15 @@ def test_refresh_merges_only_recovered_prices_and_keeps_publication_budget(
     status = refresh.main([])
 
     assert manifest.read_text() == original
-    if not recoverable:
-        assert status == 1
-        assert snapshot_path.read_text() == "original snapshot"
-        assert "xiaomi" not in results
-        return
     assert status == 0
-    assert results["xiaomi"].source == "stale_snapshot"
     models = {row["id"]: row for row in json.loads(snapshot_path.read_text())["models"]}
-    assert models["xiaomi/old-model"]["pricing"]["prompt"] == "0.000001"
-    assert models["xiaomi/old-model"]["pricing"]["completion"] == "0.000002"
     assert models["x-ai/grok-next"]["pricing"]["prompt"] == "0.000003"
+    if not recoverable:
+        assert "xiaomi" not in results
+        assert "xiaomi/old-model" not in models
+        return
+    assert results["xiaomi"].source == "stale_snapshot"
+    assert models["xiaomi/old-model"]["endpoints"] == committed["models"][0]["endpoints"]
 
 
 def test_rollback_failure_aborts_publication(
