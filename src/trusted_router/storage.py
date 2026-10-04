@@ -411,6 +411,9 @@ class InMemoryStore:
                     approved=existing.approved or record.approved,
                     verified=existing.verified or record.verified,
                     image_digest=(record.image_digest or existing.image_digest),
+                    # Replaced, never merged: a declaration can be withdrawn.
+                    declares_usage_heartbeat=record.declares_usage_heartbeat,
+                    declares_stream_open_heartbeat=record.declares_stream_open_heartbeat,
                 )
             self.gateway_boots[record.kid] = record
             return record

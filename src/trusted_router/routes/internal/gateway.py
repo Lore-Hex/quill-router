@@ -446,6 +446,12 @@ def _register_gateway_boot_sync(
             image_digest=image_digest,
             attestation_kind=attestation_kind,
             registered_at=iso_now(),
+            declares_usage_heartbeat=bool(
+                body.capabilities is not None and body.capabilities.usage_heartbeat
+            ),
+            declares_stream_open_heartbeat=bool(
+                body.capabilities is not None and body.capabilities.stream_open_heartbeat
+            ),
         )
         stored = STORE.observe_gateway_boot(record)
     except ValueError as exc:
@@ -766,6 +772,7 @@ def _authorize_gateway_sync(
         "raw_body": raw_body,
         "boot_auth": boot_auth,
         "boot_verified": False,
+        "heartbeat_declared": False,
     }
     return _authorize_gateway_sync_impl(request, body, settings, boot_context)
 
@@ -813,6 +820,9 @@ def _authorize_gateway_sync_impl(
             signed_lookup_hash=body.api_key_lookup_hash,
             resolved_lookup_hash=api_key.lookup_hash,
             accepted_image_digests=accepted_image_digests,
+        )
+        boot_context["heartbeat_declared"] = bool(
+            boot is not None and boot.declares_usage_heartbeat
         )
     if settings.speculative_provider_shadow_enabled:
         with speculation_shadow.isolate("boot_verified"):
@@ -1438,6 +1448,8 @@ def _authorize_gateway_sync_impl(
         pilot_workspace_ids=settings.stage_d_pilot_workspaces,
         heartbeat_enabled=settings.stage_d_heartbeat_enabled,
         boot_accepted=bool(boot_context["boot_verified"]),
+        heartbeat_declared=bool(boot_context.get("heartbeat_declared", False)),
+        require_heartbeat_declaration=settings.stage_d_require_heartbeat_declaration,
         stream=body.stream,
         route_type=body.route_type,
         endpoint_candidates=endpoint_candidates,
@@ -2598,6 +2610,8 @@ def _stage_d_eligibility_reason(
     pilot_workspace_ids: frozenset[str] = frozenset(),
     heartbeat_enabled: bool = True,
     boot_accepted: bool = False,
+    heartbeat_declared: bool = False,
+    require_heartbeat_declaration: bool = False,
     stream: bool | None,
     route_type: str | None,
     endpoint_candidates: list[tuple[Model, ModelEndpoint]],
@@ -2616,6 +2630,10 @@ def _stage_d_eligibility_reason(
         return "heartbeats_disabled"
     if not boot_accepted:
         return "boot_not_accepted"
+    if require_heartbeat_declaration and not heartbeat_declared:
+        # A verified boot does not prove the enclave heartbeats: one that
+        # registered without heartbeats on would relay this stream with none.
+        return "heartbeat_undeclared"
     if stream is not True:
         return "not_streaming"
     if route_type not in {"chat.completions", "responses"}:
