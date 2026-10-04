@@ -85,6 +85,7 @@ def _authorize_video(
     idempotency_key: str = "video-test-1",
     request_fingerprint: str = "a" * 64,
     provider: str | None = None,
+    region: str | None = None,
 ) -> dict[str, object]:
     response = client.post(
         "/v1/internal/gateway/authorize",
@@ -98,6 +99,7 @@ def _authorize_video(
             "idempotency_key": idempotency_key,
             "request_fingerprint": request_fingerprint,
             **({"provider": {"only": [provider]}} if provider else {}),
+            **({"region": region} if region else {}),
         },
     )
     assert response.status_code == 200, response.text
