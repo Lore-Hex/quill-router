@@ -2066,11 +2066,12 @@ class PostgresStore:
 
     def list_members(self, workspace_id: str) -> list[Member]:
         def operation(conn: Any) -> list[Member]:
-            prefix = f"{workspace_id}#"
+            # A LIKE prefix, not an id range: under a locale collation '#' and
+            # '$' sort as ignorable punctuation, so a range can match nothing.
             rows = conn.execute(
-                "SELECT body FROM tr_entities WHERE kind = %s AND id >= %s AND id < %s"
+                "SELECT body FROM tr_entities WHERE kind = %s AND id LIKE %s ESCAPE '\\'"
                 " ORDER BY id",
-                ("member", prefix, f"{workspace_id}$"),
+                ("member", self._like_prefix(f"{workspace_id}#")),
             ).fetchall()
             return [Member(**(json.loads(row[0]) if isinstance(row[0], str) else row[0]))
                     for row in rows]

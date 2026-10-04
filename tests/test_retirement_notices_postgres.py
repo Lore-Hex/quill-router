@@ -62,6 +62,8 @@ def test_postgres_recipient_members_and_blocks_use_bounded_keys():
         assert restarted.is_email_blocked("unblocked@example.com") is False
         block = restarted.get_email_block("BLOCKED@example.com")
         assert (block.reason, block.mail_class) == ("bounce", "retirement_notice")
-        assert any("id >= %s AND id < %s" in sql for sql, _ in conn.statements)
+        # An escaped LIKE prefix: collation-independent, and "_" in ws_1 is literal
+        # (wsX1 and ws_10 above are excluded).
+        assert any("id LIKE %s ESCAPE" in sql for sql, _ in conn.statements)
     finally:
         conn._raw.close()
