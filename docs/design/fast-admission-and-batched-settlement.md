@@ -96,9 +96,11 @@ This design accepts that, bounded:
 1. **Latency at the gateway,** from sending authorize to holding a routing
    decision and a hold: p50 under 5 ms, p90 under 10 ms. Admission is in
    memory; what remains is the hop to the owner (§4.3) and the boot-signature
-   check. The enclave logs that interval for every request, summed over its
-   attempts, as `authorize_ms`, and a settle's as `settle_ms` (`request_end`,
-   quill-cloud-proxy #394).
+   check. This is read from the enclave's `request_end` log: `authorize_ms`
+   is the time a request spent in authorize, summed over its attempts
+   (quill-cloud-proxy #389). Every request that reaches authorize logs one.
+   Its `settle_ms` is not a settle's latency: it leaves out settle time that
+   overlaps the provider call, and a settle that ends after the request.
 2. **Billing-database commits grow with active leases, not with requests,**
    apart from the overruns a lease cannot absorb (§6).
 3. **No charge lost and none booked twice** (`durable-settle-outbox.md`):
@@ -2049,8 +2051,9 @@ leases, and was retired on 2026-09-27.
      - Splitting a workspace as it grows is still operator tooling.
      - The consolidation #1529 added covers only workspaces of a dollar or
        less created since that day (`scripts/consolidate_starter_credit.py`).
-       Older small workspaces keep their sixteen shards, and until they are
-       consolidated covering runs on their routine overruns;
+       Older small workspaces keep their sixteen shards. Covering is not
+       built (§4.7). Once it is, it would run on their routine overruns
+       until they are consolidated;
    - 503 instead of 402 when a balance's headroom sits in leases, in the
      reserve and in the insufficient-credit precheck (§4.4);
    - the fast-path fact in the speculation issuer's snapshot (§4.13);
@@ -3142,5 +3145,12 @@ record.
   - a parked design takes one round trip out of the synchronous settle
     (#1530), with answers and records that must stay byte for byte the
     same, so nothing the comparator reads changes (§4.13);
-  - the enclave logs `authorize_ms` and `settle_ms` for every request
-    (quill-cloud-proxy #394), which is where Target 1 is read (§3).
+  - Target 1 names where it is read: the enclave's `authorize_ms`, logged
+    since quill-cloud-proxy #389 (§3). The enclave facts §4.13 cites were
+    checked again at `c21dc893`, whose one change is that the request log
+    no longer counts a kept-alive connection's idle wait (#394).
+
+  Codex's review of the first draft (1 P2, 2 P3) corrected three of its
+  sentences: `settle_ms` is not a settle's latency and no field is logged
+  for every request; covering is proposed, not running; and the phase
+  fields are #389's, not #394's.
