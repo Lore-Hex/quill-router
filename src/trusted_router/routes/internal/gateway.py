@@ -1398,7 +1398,13 @@ def _authorize_gateway_sync_impl(
             raise api_error(403, "billing_paused", ErrorType.FORBIDDEN) from exc
 
         if existing_authorization is not None:
-            if existing_authorization.idempotency_fingerprint != request_fingerprint:
+            if (
+                existing_authorization.idempotency_fingerprint != request_fingerprint
+                and not _video_cross_region_replay_matches(
+                    existing_authorization, workspace.id, api_key.hash,
+                    fingerprint_body, request_idempotency_key,
+                )
+            ):
                 raise api_error(
                     409,
                     "Idempotency key was already used for a different gateway request",
@@ -1636,6 +1642,23 @@ def _authorize_gateway_sync_impl(
             raise
         window_decision = getattr(outcome, "rate_limit", None)
         remember_spend_window_decision(request, window_decision)
+        if (
+            outcome == AuthorizeOutcome.IDEMPOTENCY_MISMATCH
+            or outcome.startswith(AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED)
+        ) and is_video_request and body.request_fingerprint and request_idempotency_key:
+            # Only a rejected video retry pays this indexed read. A window
+            # precheck can reject before the atomic idempotency check when the
+            # original job consumed its budget. Recover only that exact hold;
+            # neither path admitted a new reservation or provider call.
+            existing_authorization = _typed_store.get_typed_authorization_by_idempotency(
+                workspace.id, api_key.hash, request_idempotency_key,
+            )
+            if _video_cross_region_replay_matches(
+                existing_authorization, workspace.id, api_key.hash,
+                fingerprint_body, request_idempotency_key,
+            ):
+                release_user_model_slot_after_error()
+                return _replay_response(existing_authorization)
         if outcome == "billing_paused":
             release_user_model_slot_after_error()
             if settings.speculative_provider_shadow_enabled:
@@ -2345,6 +2368,45 @@ def _gateway_authorize_fingerprint(
     material["key_hash"] = key_hash
     encoded = json.dumps(material, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _video_cross_region_replay_matches(
+    authorization: Any,
+    workspace_id: str,
+    key_hash: str,
+    body: dict[str, Any],
+    idempotency_key: str | None,
+) -> bool:
+    """Recover a video's original hold without changing persisted fingerprints.
+
+    Video content/options are HMAC-bound by the enclave. Its execution region
+    can change on retry; caller provider/region restrictions remain in the body.
+    No other field is relaxed, and ordinary text/image requests are unchanged.
+    """
+    if (
+        authorization is None
+        or body.get("route_type") != "videos"
+        or not body.get("request_fingerprint")
+        or not idempotency_key
+        or authorization.workspace_id != workspace_id
+        or authorization.key_hash != key_hash
+        or authorization.idempotency_key != idempotency_key
+    ):
+        return False
+    original = {**body, "region": authorization.region}
+    if authorization.idempotency_fingerprint == _gateway_authorize_fingerprint(
+        workspace_id=workspace_id, key_hash=key_hash,
+        body=original, idempotency_key=idempotency_key,
+    ):
+        return True
+    # Older/internal callers may have omitted the region and used the default.
+    original.pop("region")
+    return bool(authorization.idempotency_fingerprint) and (
+        authorization.idempotency_fingerprint == _gateway_authorize_fingerprint(
+            workspace_id=workspace_id, key_hash=key_hash,
+            body=original, idempotency_key=idempotency_key,
+        )
+    )
 
 
 def _new_gateway_authorization_id() -> str:

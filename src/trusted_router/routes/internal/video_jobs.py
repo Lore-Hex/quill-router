@@ -63,6 +63,16 @@ def _prepare(
     if authorization is None:
         raise api_error(404, "Authorization not found", ErrorType.NOT_FOUND)
     if authorization.settled:
+        # Finalization must forbid new work, not retrieval of an already paid
+        # (or refunded) job. Never call prepare here: it can insert on a miss.
+        existing = STORE.get_video_job_for_key(body.job_id, authorization.key_hash)
+        if (
+            existing is not None
+            and existing.authorization_id == authorization.id
+            and existing.workspace_id == authorization.workspace_id
+            and existing.model == authorization.model_id == body.model
+        ):
+            return {"data": {**_job_payload(existing), "created": False}}
         raise api_error(409, "Authorization is already finalized", ErrorType.CONFLICT)
     model = MODELS.get(body.model)
     if model is None or not model.supports_video:
