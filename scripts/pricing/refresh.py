@@ -357,65 +357,6 @@ def _held_endpoint_pricing(snapshot: Any, held: dict[str, list[str]]) -> dict[st
     return {route: sorted(blocks) for route, blocks in out.items()}
 
 
-def _index_only_published_models(
-    results: dict[str, ProviderPricingResult], published: Any, held: dict[str, list[str]]
-) -> None:
-    """Index each held provider's prices only for the models it had published routes for.
-
-    A manifest fallback re-prices every model in the provider's manifest, and
-    OpenRouter can newly list one of them. A held provider must not add a
-    model, or set a model's headline price, until the hold is reviewed.
-    """
-    published_models: dict[str, set[Any]] = {slug: set() for slug in held}
-    models = published.get("models") if isinstance(published, dict) else None
-    for model in models or []:
-        if not isinstance(model, dict):
-            continue
-        for endpoint in model.get("endpoints") or []:
-            if _held_route(model, endpoint, held) is not None:
-                owner = _result_slug_for_provider(endpoint["tr_provider_slug"])
-                published_models[owner].add(model.get("id"))
-    for slug, model_ids in published_models.items():
-        if (result := results.get(slug)) is not None:
-            allowed = result.price_index_model_ids
-            kept = model_ids if allowed is None else model_ids & allowed
-            result.price_index_model_ids = frozenset(kept)
-
-
-def _drop_unpublished_held_routes(
-    merged: dict[str, Any], published: Any, held: dict[str, list[str]]
-) -> list[str]:
-    """Keep each held provider to the routes it had published.
-
-    OpenRouter's endpoint feed can add a route for a held provider (a new
-    regional tag, say), and a held provider publishes nothing new until the
-    hold is reviewed. Where TR's providers priced the model, dropping such a
-    route changes no price: the headline comes from per-provider prices, and a
-    held provider prices only the models it had published. Returns the models
-    that must not be published: any left without a route, and any priced by
-    OpenRouter's fallback, whose headline may have been the dropped route's.
-    A published route that is gone is left for the exactness guard to refuse.
-    """
-    published_routes = set(_held_endpoint_pricing(published, held))
-    refused: list[str] = []
-    for model in merged.get("models") or []:
-        if not isinstance(model, dict) or not isinstance(model.get("endpoints"), list):
-            continue
-        kept = [
-            endpoint
-            for endpoint in model["endpoints"]
-            if (route := _held_route(model, endpoint, held)) is None or route in published_routes
-        ]
-        if len(kept) < len(model["endpoints"]):
-            if not kept:
-                refused.append(f"{model.get('id')} (no route left after the hold)")
-            elif model.get("pricing_source") == "openrouter_fallback":
-                reason = "OpenRouter's headline may be a dropped route's"
-                refused.append(f"{model.get('id')} ({reason})")
-        model["endpoints"] = kept
-    return refused
-
-
 def _published_disabled_held_routes(
     baseline: Path, snapshot: dict[str, Any], held: dict[str, list[str]]
 ) -> set[str]:
@@ -466,7 +407,7 @@ def _held_routes_changed(baseline: Path, held: dict[str, list[str]]) -> list[str
     completion, cached input and tiers), and byte-identical manifests. Only
     removal of an already disabled/retired route is safe: runtime had already
     excluded it, and stale recovery must not revive it to satisfy this guard.
-    Anything else is reported so the run can fall back to publishing nothing.
+    Anything else is reported so the affected models can keep their published rows.
     """
     snapshot = json.loads((baseline / SNAPSHOT_PATH.name).read_text(encoding="utf-8"))
     published = _held_endpoint_pricing(snapshot, held)
@@ -480,7 +421,7 @@ def _held_routes_changed(baseline: Path, held: dict[str, list[str]]) -> list[str
         manifest_path_value = getattr(_import_provider(slug), "MANIFEST_PATH", None)
         if manifest_path_value is None:
             continue
-        target = Path(manifest_path_value)
+        target = PROVIDER_MANIFEST_DIR / Path(manifest_path_value).name
         before = baseline / PROVIDER_MANIFEST_DIR.name / target.name
         before_bytes = before.read_bytes() if before.exists() else None
         after_bytes = target.read_bytes() if target.exists() else None
@@ -512,9 +453,10 @@ def _restore_published_files(baseline: Path, slug: str) -> None:
 
 
 def _keep_failed_snapshot_routes(
-    merged: dict[str, Any], published: dict[str, Any], failed: dict[str, list[str]]
+    merged: dict[str, Any], published: dict[str, Any], failed: dict[str, list[str]],
+    *, disabled_routes: set[str] | None = None,
 ) -> dict[str, str]:
-    """Copy failed providers' endpoints verbatim, even without a usable fallback.
+    """Copy failed or spike-held endpoints verbatim, without re-pricing them.
 
     Recovery into ModelPrice is lossy (two regional routes can have different
     cache prices). Failed providers contribute no fresh price or route: only
@@ -524,6 +466,7 @@ def _keep_failed_snapshot_routes(
     """
     if not failed:
         return {}
+    disabled_routes = disabled_routes or set()
     models = {row["id"]: row for row in merged["models"]}
     published_models = {row["id"]: row for row in published.get("models", [])}
     held_models: dict[str, str] = {}
@@ -539,7 +482,8 @@ def _keep_failed_snapshot_routes(
     for old in published.get("models", []):
         endpoints = [
             ep for ep in old.get("endpoints", [])
-            if _held_route(old, ep, failed) is not None
+            if (route := _held_route(old, ep, failed)) is not None
+            and route not in disabled_routes
             and not provider_model_retired(ep["tr_provider_slug"], old["id"], ep.get("model_id"))
         ]
         if not endpoints:
@@ -569,7 +513,7 @@ def _keep_failed_snapshot_routes(
             )
             model["pricing"] = _price_to_pricing_block(cheapest)
             model["pricing_source"] = endpoint.get("pricing_source", "stale_snapshot")
-        elif model["endpoints"]:
+        else:
             # Hold this row instead of blocking every other model's refresh.
             # Never retain a fresh headline that might price a removed route.
             reason = "no surviving endpoint can price the headline"
@@ -580,6 +524,42 @@ def _keep_failed_snapshot_routes(
                 del models[model_id]
                 held_models[model_id] = f"{reason}; kept unpublished (no committed row)"
     merged["models"] = [model for _, model in sorted(models.items()) if model["endpoints"]]
+    merged["model_count"] = len(merged["models"])
+    return held_models
+
+
+def _hold_inexact_snapshot_models(
+    merged: dict[str, Any], published: dict[str, Any], held: dict[str, list[str]],
+    disabled_routes: set[str],
+) -> dict[str, str]:
+    """Keep only affected model rows when endpoint preservation was not exact.
+
+    Compare whole route multisets, including duplicates and cached/tier prices.
+    A new model with an unexpected held route stays unpublished. Restoring a
+    shared model also restores its headline and other providers' endpoints;
+    unrelated models and healthy manifests can still refresh.
+    """
+    models = {row["id"]: row for row in merged["models"]}
+    old_models = {row["id"]: row for row in published.get("models", [])}
+    held_models: dict[str, str] = {}
+    for model_id in sorted(models.keys() | old_models.keys()):
+        before = _held_endpoint_pricing({"models": [old_models.get(model_id)]}, held)
+        after = _held_endpoint_pricing({"models": [models.get(model_id)]}, held)
+        changed = any(
+            before.get(route) != after.get(route)
+            and not (route in disabled_routes and route not in after)
+            for route in before.keys() | after.keys()
+        )
+        if not changed:
+            continue
+        reason = "held provider routes could not be kept exact"
+        if model_id in old_models:
+            models[model_id] = old_models[model_id]
+            held_models[model_id] = f"{reason}; kept committed row"
+        else:
+            del models[model_id]
+            held_models[model_id] = f"{reason}; kept unpublished (no committed row)"
+    merged["models"] = [model for _, model in sorted(models.items())]
     merged["model_count"] = len(merged["models"])
     return held_models
 
@@ -1508,10 +1488,14 @@ def _summary_lines(
     failures: list[tuple[str, str]],
     disagreements: list[str],
     id_mismatches: list[str],
+    held: dict[str, list[str]] | None = None,
 ) -> list[str]:
     lines: list[str] = []
     lines.append("Per-provider results:")
     for slug in PROVIDER_SLUGS:
+        if held and slug in held:
+            lines.append(f"  {slug}: HELD (kept committed state)")
+            continue
         result = results.get(slug)
         if result is None:
             err = next((e for s, e in failures if s == slug), "unknown")
@@ -1638,45 +1622,48 @@ def _refresh(*, summary_only: bool, baseline: Path) -> int:
         # A price spike holds only its own provider at the last published
         # prices, so the rest of the catalog still refreshes. The workflow's
         # spike gate still fails the run on any spike not held here.
-        refused: list[str] = []
         while hold := _spiking_results(baseline, results, held):
             held.update(hold)
             for slug in hold:
                 _restore_published_files(baseline, slug)
                 results.pop(slug, None)
-            # The stale fallback re-prices the provider's snapshot routes from
-            # the published snapshot; its manifest routes are restored above.
-            # A price hold is not a fetch or manifest failure.
-            _apply_stale_fallbacks(
-                results,
-                [(slug, "price spike held for review") for slug in hold],
-                committed_snapshot,
-            )
-            # A hold implies the comparison already read this published copy.
-            published = json.loads((baseline / SNAPSHOT_PATH.name).read_text(encoding="utf-8"))
-            _index_only_published_models(results, published, held)
+            # Held providers never enter the price index: recovery through a
+            # ModelPrice loses route identity, duplicate prices and precision.
+            # Keep their endpoints just like failed providers' endpoints.
             healed = [slug for slug in healed if slug not in held]
             provider_index = _index_provider_prices({slug: res for slug, res in results.items() if slug not in failed})
             disagreements = _cross_check(provider_index, or_snapshot)
             id_mismatches = _cross_check_ids(results, or_snapshot)
             merged = _merge_snapshot(or_snapshot, provider_index, set(healed))
-            held_models = _keep_failed_snapshot_routes(merged, committed_snapshot, failed)
-            refused = _drop_unpublished_held_routes(merged, published, held)
+            all_held = {**held, **failed}
+            disabled = _published_disabled_held_routes(baseline, committed_snapshot, all_held)
+            held_models = _keep_failed_snapshot_routes(
+                merged, committed_snapshot, all_held, disabled_routes=disabled,
+            )
             _write_snapshot(merged)
         held.update(failed)
-        if held and (changed := _held_routes_changed(baseline, held) + refused):
-            # Re-pricing could not reproduce a held provider exactly (e.g. an
-            # OpenRouter-fallback route or a rejected stale price). Publish
-            # nothing, as before holds existed; the spike gate explains why.
-            log.error("pricing.hold_not_exact providers=%s routes=%s", sorted(held), changed[:20])
-            print(f"Held providers could not be kept exactly as published: {', '.join(sorted(held))}")
-            for route in changed:
-                print(f"  {route}")
-            return 1
+        if held and (changed := _held_routes_changed(baseline, held)):
+            log.warning("pricing.hold_not_exact providers=%s routes=%s", sorted(held), changed[:20])
+            # Reload the immutable baseline: merged endpoints can share objects
+            # with committed_snapshot, so a damaged copy is not recovery data.
+            published = json.loads((baseline / SNAPSHOT_PATH.name).read_text(encoding="utf-8"))
+            held_models.update(_hold_inexact_snapshot_models(
+                merged, published, held,
+                _published_disabled_held_routes(baseline, published, held),
+            ))
+            _write_snapshot(merged)
+            # The endpoint guard repairs only affected model rows. A failed
+            # manifest rollback remains fatal: no snapshot row can make a
+            # changed held manifest safe to publish.
+            if changed := _held_routes_changed(baseline, held):
+                print(f"Held providers could not be kept exactly as published: {', '.join(sorted(held))}")
+                for route in changed:
+                    print(f"  {route}")
+                return 1
         log.info("pricing.refresh.wrote path=%s models=%d", SNAPSHOT_PATH, merged["model_count"])
 
     held.update(failed)
-    summary = _summary_lines(results, healed, failures, disagreements, id_mismatches)
+    summary = _summary_lines(results, healed, failures, disagreements, id_mismatches, held)
     print(f"Hourly price refresh — {merged['model_count']} models")
     print(
         f"Sources: {sum(1 for r in results.values() if r.source == 'deterministic')} "
