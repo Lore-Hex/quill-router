@@ -53,6 +53,7 @@ from trusted_router.provider_locations import inference_location_metadata
 from trusted_router.provider_precision import endpoint_precision_metadata, endpoint_quantization
 from trusted_router.public_openapi import inference_servers
 from trusted_router.regions import choose_region, region_payload
+from trusted_router.request_capabilities import endpoint_capabilities
 from trusted_router.routing import catalog_endpoint_candidates, provider_route_preferences
 
 _PUBLIC_CATALOG_CACHE_CONTROL = "public, max-age=300, s-maxage=300, stale-while-revalidate=60"
@@ -471,7 +472,21 @@ def register_catalog_routes(router: APIRouter) -> None:
         summary="List public models",
         description=(
             "Returns the live public model catalog. No API key is required. "
-            "The canonical production URL is https://api.trustedrouter.com/v1/models."
+            "The canonical production URL is https://api.trustedrouter.com/v1/models. "
+            "trustedrouter.capabilities agrees with model discovery declarations: "
+            "tools, seed, vision (image input), and confidential booleans, plus reasoning_effort. "
+            "tools and seed reflect the model's supported_parameters; vision reflects "
+            "architecture.input_modalities. Some routes declare less than the model supports. "
+            "reasoning_effort is the ordered union of verified values, [] when every route "
+            "is verified to reject effort, otherwise null. null means not verified; [] means "
+            "do not send reasoning_effort. Default routing does not filter by parameters. "
+            "With provider.require_parameters: true, routing keeps only routes whose own "
+            "supported_parameters include every parameter sent. Check the per-route values "
+            "first: trustedrouter.endpoints[].capabilities and the route's supported_parameters. "
+            "This filters parameter names, not effort values or image input; pin a suitable "
+            "provider when values differ. Confidential routing requires "
+            "provider.min_privacy: \"confidential\". Routing aliases omit the object. "
+            "See https://trustedrouter.com/docs#model-capabilities for scope and routing rules."
         ),
         openapi_extra={"servers": inference_servers()},
     )
@@ -546,6 +561,7 @@ def register_catalog_routes(router: APIRouter) -> None:
                         )
                     ),
                     "trustedrouter": {
+                        "capabilities": endpoint_capabilities(_model, endpoint),
                         "precision": endpoint_precision_metadata(endpoint),
                         "reasoning_modes": reasoning_modes(endpoint.provider, endpoint.model_id),
                         "attested_gateway": PROVIDERS[endpoint.provider].attested_gateway,

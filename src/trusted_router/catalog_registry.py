@@ -201,6 +201,7 @@ from trusted_router.pricing import (  # noqa: F401 - re-exported for back-compat
     select_price_tier,
 )
 from trusted_router.provider_lifecycle import provider_model_retired
+from trusted_router.request_capabilities import normalize_request_capabilities
 
 # Catalog seed — only TR's Auto meta-model is hand-coded. Every other
 # entry comes from `_INGESTED_MODELS` below, which is built from
@@ -1630,6 +1631,37 @@ MODEL_ENDPOINTS = _filter_unserved_provider_endpoints(
     at=CATALOG_RESOLVED_AT,
 )
 _settle_deepseek_v4_pro_0423_leaf(_DEEPSEEK_V4_PRO_0423_HOST_WINDOWS)
+
+# Normalize the completed route inventory before any routing or public reader
+# sees it. Reviewed contracts update the declarations those readers share.
+_endpoints_by_model: dict[str, list[ModelEndpoint]] = {}
+for _endpoint_row in MODEL_ENDPOINTS.values():
+    _endpoints_by_model.setdefault(_endpoint_row.model_id, []).append(_endpoint_row)
+_before_normalization = {model_id: MODELS[model_id] for model_id in _endpoints_by_model}
+for _model_id, _model_endpoints in _endpoints_by_model.items():
+    MODELS[_model_id], _corrected_endpoints = normalize_request_capabilities(
+        MODELS[_model_id], _model_endpoints,
+    )
+    MODEL_ENDPOINTS.update((endpoint.id, endpoint) for endpoint in _corrected_endpoints)
+for _proxy_id, _backing_id in PRIVATE_PROXY_MODEL_TARGETS.items():
+    if _proxy_id in MODELS and _backing_id in _before_normalization:
+        # These models were cloned before routes existed. Carry over exactly
+        # what normalization removed from the backing model, and nothing else:
+        # a proxy such as a named decision model keeps its own declarations.
+        _before, _after = _before_normalization[_backing_id], MODELS[_backing_id]
+        _dropped = (
+            set(_before.supported_parameters) - set(_after.supported_parameters)
+        ) | (set(_before.input_modalities) - set(_after.input_modalities))
+        _proxy = MODELS[_proxy_id]
+        MODELS[_proxy_id] = replace(
+            _proxy,
+            supported_parameters=tuple(
+                name for name in _proxy.supported_parameters if name not in _dropped
+            ),
+            input_modalities=tuple(
+                value for value in _proxy.input_modalities if value not in _dropped
+            ),
+        )
 
 
 def _named_decision_model_with_chain_prices(model_id: str) -> Model:
