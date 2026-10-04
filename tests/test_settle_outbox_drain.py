@@ -649,9 +649,12 @@ def test_fresh_settle_round_trip_order(
     data = _internal_settle(auth)
     assert data["disposition"] == "finalized", data
     assert db.gateway_authorizations[auth.id]["settled"] is True
-    assert len(settle_operations) == 9
+    # The authorization and intent reads, the reservation read, ONE batch that
+    # carries every write including the counter releases, the commit, and the
+    # post-commit broadcast read.
+    assert len(settle_operations) == 6
     batches = [params["statements"] for _, sql, params in settle_operations if sql == "BATCH"]
-    assert [len(group) for group in batches] == [9]
+    assert [len(group) for group in batches] == [12]
     assert all(set(params) == set(types) for _, params, types in batches[0])
     assert batches[0][2][0] == (
         f"INSERT INTO tr_settle_outbox ({', '.join(INSERT_COLUMNS)}) "  # noqa: S608
@@ -671,9 +674,9 @@ def test_fresh_settle_round_trip_order(
         ("t1", "UPDATE", "tr_reservation"),
         ("t1", "INSERT", "tr_generation"),
         ("t1", "INSERT", "tr_operational_analytics_outbox"),
-        ("t1", "UPDATE", "tr_credit_balance"),
-        ("t1", "SELECT", "tr_trust_event"),
-        ("t1", "UPDATE", "tr_key_limit"),
+        ("t1", "UPDATE", "tr_credit_balance"),  # the no-debt check is inside it
+        ("t1", "UPDATE", "tr_key_limit"),  # current windows
+        ("t1", "UPDATE", "tr_key_limit"),  # a window to roll forward
         ("t1", "COMMIT", ""),
         ("ro", "SELECT", "tr_entities"),
     ]
@@ -720,9 +723,10 @@ def test_fresh_settle_round_trip_order(
             "aid": auth.id, "kind": "settle", "record_id": record_id, "now": inserted["created_at"],
         }
     assert params[12] == {"hold": ESTIMATE, "actual": cost, "ws": ws, "shard": 0}
-    assert params[13] == {"pk": ws}
-    assert params[14]["kh"] == key.hash and params[14]["hold"] == ESTIMATE
-    assert params[14]["actual"] == cost
+    assert "NOT EXISTS" in statements[12]
+    assert params[13]["kh"] == key.hash and params[13]["hold"] == ESTIMATE
+    assert params[13]["actual"] == cost and params[14] == params[13]
+    assert "day_start =" not in statements[13] and " AND NOT (" in statements[14]
     assert params[16] == {"kind": "broadcast_destination_by_workspace", "prefix": ws + "#"}
     assert _typed_credit(db, ws)["total_usage"] == cost
     row = db.settle_outbox[(auth.id, "settle")]
@@ -754,7 +758,7 @@ def test_two_commit_settle_round_trip_order(
     data = _internal_settle(auth)
     assert data["disposition"] != "intent_durable", data
     assert db.gateway_authorizations[auth.id]["settled"] is True
-    assert len(settle_operations) == 11
+    assert len(settle_operations) == 8
     reader, label, batch_params = settle_operations[1]
     assert label == "BATCH"
     batch = batch_params["statements"]
@@ -786,7 +790,7 @@ def test_two_commit_settle_round_trip_order(
     # The done UPDATE returns the stored reservation; its dependent retention
     # and evidence writes share the next RPC. Expand batches to pin SQL order.
     final_batches = [params["statements"] for _, sql, params in settle_operations if sql == "BATCH"]
-    assert [len(group) for group in final_batches] == [3, 7]
+    assert [len(group) for group in final_batches] == [3, 10]
     settle_operations = [
         (reader, " ".join(statement.split()), values)
         for reader, sql, params in settle_operations
@@ -811,7 +815,7 @@ def test_two_commit_settle_round_trip_order(
         ("t3", "INSERT", "tr_generation"),
         ("t3", "INSERT", "tr_operational_analytics_outbox"),
         ("t3", "UPDATE", "tr_credit_balance"),
-        ("t3", "SELECT", "tr_trust_event"),
+        ("t3", "UPDATE", "tr_key_limit"),
         ("t3", "UPDATE", "tr_key_limit"),
         ("t3", "COMMIT", ""),
         ("ro", "SELECT", "tr_entities"),
@@ -857,10 +861,25 @@ def test_two_commit_settle_round_trip_order(
     assert params[9]["aid"] == auth.id and params[9]["kind"] == "settle"
     assert params[9]["lease_owner"] is None and params[9]["status"] == "done"
     assert "lease_owner IS NULL" in statements[9]
+    from trusted_router.spend_windows import window_floors
+    from trusted_router.storage_gcp_counter_dml import (
+        release_credit_no_debt_statement,
+        release_key_statement,
+    )
+
+    assert final_batches[-1][-3] == release_credit_no_debt_statement(
+        store._param_types, ws, ESTIMATE, cost, shard=0,
+    )
+    assert final_batches[-1][-2:] == [
+        release_key_statement(
+            store._param_types, key.hash, ESTIMATE, cost, shard=0,
+            book_to_byok=False, window_floors=window_floors(now), windows=windows,
+        )
+        for windows in ("current", "stale")
+    ]
     assert params[14] == {"hold": ESTIMATE, "actual": cost, "ws": ws, "shard": 0}
-    assert params[15] == {"pk": ws}
-    assert params[16]["kh"] == key.hash and params[16]["hold"] == ESTIMATE
-    assert params[16]["actual"] == cost
+    assert params[15]["kh"] == key.hash and params[15]["hold"] == ESTIMATE
+    assert params[15]["actual"] == cost and params[16] == params[15]
     assert params[18] == {"kind": "broadcast_destination_by_workspace", "prefix": ws + "#"}
     assert _typed_credit(db, ws)["total_usage"] == cost
 
@@ -3298,6 +3317,8 @@ def test_inline_settle_resolves_the_outbox_row_inside_the_finalize_commit(
         request.getfixturevalue("two_commit_settle")
     store, db = prod_shaped_store
     auth, calls, client = _settle_with_sql_spy(store, monkeypatch, ws="ws-fold-done")
+    now = dt.datetime.now(dt.UTC)
+    _typed_key(db, auth.key_hash).update(day_start=now, week_start=now, month_start=now)
 
     with caplog.at_level(logging.INFO, logger=GATEWAY_LOGGER):
         resp = client.post("/v1/internal/gateway/settle", json=_settle_json(auth.id))
@@ -3731,3 +3752,12 @@ def test_done_uses_stored_reservation_and_preserves_foreign_authorization_guard(
         assert db.settle_outbox[("auth", "settle")]["attempts"] == 8
         outcomes.append((db.gateway_authorizations, db.reservations, db.settle_outbox))
     assert outcomes[0] == outcomes[1]
+
+
+def test_outbox_delayed_stamps_read_the_same_clock_as_now(monkeypatch):
+    """One clock: pinning _iso_now pins every delayed timestamp too."""
+    from trusted_router import storage_gcp_settle_outbox as outbox_module
+
+    monkeypatch.setattr(outbox_module, "_iso_now", lambda: "2026-10-03T14:15:05Z")
+    assert outbox_module._iso_after_seconds(0) == "2026-10-03T14:15:05Z"
+    assert outbox_module._iso_after_seconds(60) == "2026-10-03T14:16:05Z"

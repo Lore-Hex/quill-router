@@ -954,6 +954,7 @@ class Store(Protocol):
         user_model_owner_user_id: str | None = ...,
         additional_cost_reservation_microdollars: int = ...,
         native_batch_eligible: bool = ...,
+        video_pricing_snapshot: str | None = ...,
         # Deferred settlement. `settlement="deferred_home"` records that this
         # spend is debt owed to the home plane's ledger rather than a debit
         # here; `expires_at` is what lets the reaper reclaim its admitted
@@ -1173,6 +1174,7 @@ class TypedBillingStore(Protocol):
         native_batch_eligible: bool = ...,
         expires_at: Any = ...,
         window_limits: dict[str, int] | None = ...,
+        video_pricing_snapshot: str | None = ...,
         pricing_snapshot: str | None = ...,
         stage_d_reason: str | None = ...,
         stage_d_prompt_tokens: int | None = ...,

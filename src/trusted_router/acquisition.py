@@ -59,6 +59,7 @@ _AUTOMATED_USER_AGENT_TOKENS = (
     "slack-imgproxy",
 )
 _AUTOMATED_PURPOSE_TOKENS = ("prefetch", "prerender", "preview")
+UTM_FIELDS = ("utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content")
 _TOUCH_FIELDS = frozenset(
     {
         "utm_source",
@@ -616,6 +617,53 @@ def log_browser_funnel_event(
     )
 
 
+def exchange_site_campaign(request: Request, campaign: object) -> dict[str, str]:
+    """The UTM fields a Token Exchange page sent from its own URL; none under GPC or DNT.
+
+    Those pages post cross-site, without TrustedRouter's attribution cookie."""
+    if _privacy_signal_enabled(request) or not isinstance(campaign, dict):
+        return {}
+    fields: dict[str, str] = {}
+    for name in UTM_FIELDS:
+        value = campaign.get(name)
+        if isinstance(value, str) and (safe := _safe_text(value, 128)):
+            fields[name] = safe
+    return fields
+
+
+def exchange_site_touch(page_url: str, campaign: dict[str, str]) -> dict[str, str]:
+    """The funnel touch for a Token Exchange page's brochure download.
+
+    Defaults match the tagged links these pages used before the form (build.py tracked_url),
+    and the page's own campaign fields override them one by one, as they did on those links."""
+    host = (urlsplit(page_url).hostname or "")[:128]
+    touch = {
+        "utm_source": host,
+        "utm_medium": "referral",
+        "utm_campaign": "token-exchange-launch",
+        "utm_content": "brief",
+        **campaign,
+    }
+    # The exported log keeps landing_path but not referer_host, so the path names the site.
+    touch["landing_path"] = f"{host}/"
+    touch["referer_host"] = host
+    touch["captured_at"] = iso_now()
+    return touch
+
+
+def log_exchange_site_funnel_event(request: Request, event: str, touch: dict[str, str]) -> None:
+    if _privacy_signal_enabled(request) or acquisition_request_is_automated(request):
+        return
+    log.info(
+        f"acquisition.{event}",
+        extra={
+            "event": f"acquisition.{event}",
+            "anonymous_fingerprint": _fingerprint(uuid.uuid4().hex),
+            **_safe_touch_log_fields(touch),
+        },
+    )
+
+
 def onboarding_exposure(request: Request, *, user_id: str, workspace_id: str, record: bool = True) -> str:
     """Record only a rendered, actionable treatment, using already-loaded IDs."""
     context = request_attribution(request)
@@ -700,7 +748,7 @@ def _safe_touch_log_fields(touch: dict[str, str]) -> dict[str, object]:
 
 def _touch_from_request(request: Request, settings: Settings) -> dict[str, str]:
     touch: dict[str, str] = {}
-    for name in ("utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"):
+    for name in UTM_FIELDS:
         value = _safe_text(request.query_params.get(name), 128)
         if value:
             touch[name] = value

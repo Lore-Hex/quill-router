@@ -95,6 +95,46 @@ its review flag or rewrite financial rows manually. Fixed external-response
 fixtures cover the 0.10.5 expansion, future-permission rejection, and recovery of
 paid/unpaid reviewed rows without duplicate invoice creation or credit delivery.
 
+## Readiness HTTP failure (October 2)
+
+The receiving check failed once at 21:52:35 UTC with `RuntimeError`, then
+recovered on the next heartbeat at 21:53:36 UTC. Funding delivery stayed at
+zero uncredited and zero review-required payments. The surrounding five-minute
+Cloud Run request-log window contained no customer HTTP requests; no customer
+HTTP failure was observed. This was not the October 1 permission rejection or
+evidence of low BTC liquidity.
+
+The readiness code raises this error for a non-200 response from the attesting
+Lexe sidecar, but the old diagnostic discarded the operation and HTTP status.
+The underlying upstream cause cannot be determined from those retained logs.
+Failures now emit `lightning.lexe_http_failed` with an allowlisted operation
+and numeric `http_status`, without reading error bodies or logging paths,
+parameters, headers, wallet identifiers, or credentials. Unknown operations
+are labeled `unknown`. HTTP responses still fail closed without retries,
+and alert thresholds remain unchanged. Keep sidecar diagnostic logging off.
+
+## Concurrent creation reconciliation (October 4)
+
+The October 3 23:50:37 UTC alert reported `reconcile_failed`, not a Lexe HTTP
+failure. A successful 624ms create request overlapped it, receiving checks stayed
+healthy, and delivery had no uncredited or review backlog. The retained log does
+not prove that invoice's exact interleaving. A deterministic two-instance test
+reproduces the same error: one caller holds the durable creation claim while a
+second scans the payment feed before the first creation has become visible.
+
+The adapter now distinguishes `InvoiceCreationPending` from genuine failures.
+Within the existing 60-second grace, callers return the current invoice state
+without marking failure, granting credit, or issuing another invoice. Pending
+events contain only the local invoice ID. The page hides the QR and payment
+actions until an invoice exists and shows `Preparing invoice`; polling retains
+the same invoice and key. A cancel during creation is not reported as canceled.
+
+The grace does not suppress HTTP errors, invalid authority, invoice validation,
+or credit-delivery errors. Unresolved creation after the grace still becomes
+`creation_ambiguous` and requires review. Alerts and thresholds are unchanged.
+Tests cover independent SQLite/PostgreSQL service instances, a lost create
+acknowledgement, concurrent API polling/cancel, and exactly-once credit recovery.
+
 ## Owner setup and recovery
 
 Use a dedicated private directory outside disposable Git worktrees. The setup

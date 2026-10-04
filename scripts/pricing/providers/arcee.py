@@ -22,6 +22,12 @@ CATALOG = DirectOpenAIProvider(
         api_key_env="ARCEE_API_KEY",
         explicit_model_map=EXPLICIT_MODEL_MAP,
         expected_models=("deepseek/deepseek-v4-pro-0813", "moonshotai/kimi-k3"),
+        # Advertised by /models, but production returns model.not_accessible.
+        # Keep the holds through refreshes until account access is verified.
+        operator_hold_reasons={
+            "deepseek/deepseek-v4-pro": "provider-access-unavailable",
+            "thinkingmachines/inkling-small": "provider-access-unavailable",
+        },
     ),
     manifest_path=MANIFEST_PATH,
 )

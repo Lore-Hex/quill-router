@@ -12,8 +12,11 @@ import bolt11
 import httpx
 import pytest
 from bolt11 import Bolt11, MilliSatoshi, TagChar, Tags
+from fastapi.testclient import TestClient
+from lightning_router.app import create_app
 from lightning_router.errors import FundingReviewRequired
 from lightning_router.lexe import PERMISSIONS, SCOPES, Lexe, satoshis
+from lightning_router.service import Funding
 from lightning_router.store import Store, deposits, invoices
 from sqlalchemy import select, update
 
@@ -112,6 +115,97 @@ def lexe(funding):
 def create(funding, key, request_id=None):
     result = funding.create(key, request_id or uuid.uuid4().hex, 100, new=True)
     return funding.store.invoice(result["id"], funding.credentials.fingerprint(key))
+
+
+@pytest.mark.parametrize("lost_ack", [False, True])
+def test_creation_race_is_pending_then_credits_once(lexe, raw_key, caplog, lost_ack):
+    funding, node = lexe
+    entered, release = threading.Event(), threading.Event()
+
+    def slow_create(request):
+        if request.url.path == "/v2/node/create_invoice":
+            entered.set()
+            assert release.wait(15)
+        return node.handle(request)
+
+    funding.lexe.client = httpx.Client(base_url="http://127.0.0.1:5393", transport=httpx.MockTransport(slow_create))
+    node.lose_create = lost_ack
+    # Independent adapter/store instances model a second Cloud Run replica.
+    worker = Funding(Store(funding.store.engine.url), funding.credentials, funding.lnd, funding.rates, funding.credits,
+                     lexe=Lexe(httpx.Client(base_url="http://127.0.0.1:5393", transport=httpx.MockTransport(node.handle)), WALLET),
+                     new_invoice_backend="lexe")
+    request_id = uuid.uuid4().hex
+    headers = {"Authorization": "Bearer " + raw_key, "Idempotency-Key": request_id}
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(create, funding, raw_key, request_id)
+            try:
+                assert entered.wait(5)
+                row = worker.store.pending()[0]
+                assert worker.reconcile() == {"checked": 1, "failed": 0}
+                with TestClient(create_app(worker, network="regtest", start_worker=False)) as client:
+                    for path, body in [("/api/invoices", {"new_account": True, "usd_cents": 100}),
+                                       (f"/api/invoices/{row['id']}/refresh", {}),
+                                       (f"/api/invoices/{row['id']}/cancel", {})]:
+                        response = client.post(path, json=body, headers=headers)
+                        assert response.status_code == 200
+                        pending = response.json()
+                        assert pending["id"] == row["id"] and pending["state"] == "OPEN"
+                        assert pending["qr"] is None and pending["bolt11"] == ""
+                        assert not pending["attention_required"] and not pending["account_created"] and not pending["credited"]
+                assert worker.store.invoice(row["id"], row["key_hash"])["failure_code"] == ""
+                assert "lightning.invoice_creation_pending" in caplog.text
+                assert "lightning.reconcile_failed" not in caplog.text
+                assert raw_key not in caplog.text
+                assert not funding.credits.balances and not funding.credits.payments
+            finally:
+                release.set()
+            if lost_ack:
+                with pytest.raises(httpx.ReadTimeout):
+                    future.result()
+            else:
+                future.result()
+        assert worker.reconcile()["failed"] == 0
+        saved = worker.store.invoice(row["id"], row["key_hash"])
+        assert saved["provider_index"] and saved["bolt11"] and saved["failure_code"] == ""
+        node.pay(saved["provider_index"])
+        for _ in range(3):
+            assert worker.reconcile()["failed"] == 0
+        assert node.creates == 1
+        assert len(funding.credits.payments) == 1
+        assert funding.account(raw_key)["balance_usd"] == "1.000000"
+    finally:
+        worker.lexe.client.close()
+        worker.store.engine.dispose()
+
+
+def test_creation_pending_is_bounded_and_real_failures_still_alert(lexe, raw_key, caplog, monkeypatch):
+    funding, node = lexe
+    now = int(time.time())
+    monkeypatch.setattr(time, "time", lambda: now)
+    node.reject_create = True
+    with pytest.raises(httpx.ReadTimeout):
+        create(funding, raw_key)
+    assert funding.reconcile() == {"checked": 1, "failed": 0}
+    assert "lightning.reconcile_failed" not in caplog.text
+    now += 60
+    assert funding.reconcile()["failed"] == 1
+    assert "failure_code=creation_ambiguous" in caplog.text
+    assert funding.store.delivery_health(now)["review_required"] == 1
+    assert node.creates == 1 and not funding.credits.payments
+
+
+def test_creation_recovery_http_rejection_is_not_treated_as_pending(lexe, raw_key, caplog):
+    funding, node = lexe
+    node.reject_create = True
+    with pytest.raises(httpx.ReadTimeout):
+        create(funding, raw_key)
+    node.broken = True
+    assert funding.reconcile()["failed"] == 1
+    assert "lightning.lexe_http_failed" in caplog.text
+    assert "lightning.reconcile_failed" in caplog.text
+    assert "lightning.invoice_creation_pending" not in caplog.text
+    assert node.creates == 1 and not funding.credits.payments
 
 
 @pytest.mark.parametrize("delay_ms", [17, 2017, 17017])
