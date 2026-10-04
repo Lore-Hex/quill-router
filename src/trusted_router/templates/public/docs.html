@@ -116,6 +116,23 @@ const r = await client.chat.completions.create({
   </div>
 </section>
 
+<section id="model-capabilities" style="margin-top:48px">
+  <h2 class="section-center">Model request capabilities</h2>
+  <p><code>GET /v1/models</code> includes <code>trustedrouter.capabilities</code> on concrete model rows. For example, GPT-5.5 reports:</p>
+  <pre><code>"capabilities": {
+  "reasoning_effort": ["none", "low", "medium", "high", "xhigh"],
+  "tools": true,
+  "seed": true,
+  "vision": true,
+  "confidential": false
+}</code></pre>
+  <p>Model-level <code>tools</code> and <code>seed</code> match membership in the model row's final <code>supported_parameters</code>; <code>vision</code> matches image input in <code>architecture.input_modalities</code>. These discovery fields include model declarations and current Credits and BYOK route declarations after known overclaims are removed. Some routes declare less than the model supports: GPT-5.5's OpenAI routes report <code>seed: false</code> even though its model-level discovery union includes seed. <code>tools</code> means function tools; <code>seed</code> means a supported seed control (not guaranteed deterministic output); <code>vision</code> means image input, not image generation. These flags describe each control independently, not every combination.</p>
+  <p>Per route, <code>reasoning_effort</code> has three states: a non-empty list gives verified accepted values; <code>[]</code> means do not send effort because the route is verified to accept none; <code>null</code> means not verified. At model level, it is the union of verified lists, or <code>[]</code> when every route is verified to reject effort, otherwise <code>null</code>. Mistral Large reports <code>[]</code>. Values appear in this order: <code>none</code>, <code>minimal</code>, <code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code>, <code>max</code>. The string <code>"none"</code> is an explicit accepted value, distinct from <code>null</code> and <code>[]</code>. Values describe the top-level chat <code>reasoning_effort</code> control after gateway translation, which can map to a token budget or thinking level. Do not combine it with a conflicting <code>reasoning.enabled</code> or budget setting.</p>
+  <p>Default routing does not filter by parameters. With <code>provider.require_parameters: true</code>, routing keeps only routes whose own <code>supported_parameters</code> include every parameter sent. Check the per-route values first: <code>trustedrouter.endpoints[].capabilities</code> and the route's <code>supported_parameters</code>, because some routes declare less than the model supports. This filters parameter names, not effort values or image input; pin a suitable provider when values differ. <code>GET /v1/models/{author}/{slug}/endpoints</code> also returns each endpoint's <code>trustedrouter.capabilities</code>.</p>
+  <p><code>confidential</code> is an availability flag: at least one current endpoint satisfies the same confidential privacy rule used in routing, including verified compute, end-to-end encryption, zero retention, and exclusion of the model's own vendor. On the confidential host, send <code>provider.min_privacy: "confidential"</code>; the host requires it and ordinary endpoints are excluded. The flag describes catalog eligibility, not live health, your credentials, or capacity. Zero retention alone does not qualify.</p>
+  <p>Routing aliases such as <code>trustedrouter/auto</code>, orchestration models, and hidden routes omit the object because their selected models and internal calls can vary. Absence is not a declaration of no support. The legacy <code>supported_parameters</code> union and <code>architecture.input_modalities</code> remain discovery fields; they need not describe every endpoint.</p>
+</section>
+
 <section style="margin-top:48px">
   <h2 class="section-center">API reference</h2>
   <div class="marketing-grid two">

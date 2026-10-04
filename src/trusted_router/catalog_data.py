@@ -419,6 +419,9 @@ class ModelEndpoint:
     usage_type: str
     upstream_id: str | None = None
     supported_parameters: tuple[str, ...] = ()
+    # Registry construction fills None from the model for legacy/static routes;
+    # ingested routes retain their own declarations instead of the model union.
+    input_modalities: tuple[str, ...] | None = None
     prompt_price_microdollars_per_million_tokens: int = 0
     completion_price_microdollars_per_million_tokens: int = 0
     published_prompt_price_microdollars_per_million_tokens: int = 0

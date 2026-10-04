@@ -36,8 +36,13 @@
     const ext = raw.trustedrouter || {};
     const inputPerM = pricing.prompt != null ? Number(pricing.prompt) * 1_000_000 : null;
     const outputPerM = pricing.completion != null ? Number(pricing.completion) * 1_000_000 : null;
-    const catalogCaps = ext.capabilities || [];
-    const inferredCaps = inferCapabilities(raw.id || "");
+    const declared = ext.capabilities;
+    const hasContract = declared && !Array.isArray(declared);
+    const catalogCaps = hasContract
+      ? ["tools", "seed", "vision", "confidential"].filter((key) => declared[key] === true)
+        .concat(declared.reasoning_effort && declared.reasoning_effort.length ? ["reasoning"] : [])
+      : (declared || []);
+    const inferredCaps = hasContract ? [] : inferCapabilities(raw.id || "");
     const allCaps = Array.from(new Set([...catalogCaps, ...inferredCaps]));
     return {
       id: raw.id,
