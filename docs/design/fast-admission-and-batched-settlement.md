@@ -1308,14 +1308,20 @@ in TLA+ and checked with TLC before the code that implements them is written
 | `CreditDebt` | Bookings across credit shards: overruns, covering a negative shard, the debt mark, and inflows that repay debt first | 11, and the per-shard identity in 2 |
 | `KeyCapFence` | Adding a cap while leases hold the key's holds: the key-status version, the owners' caches and the enabling condition | 8 |
 
-Two properties the table's short names hide:
+Three properties the table's short names hide:
 
 - `TerminalOrder` treats the release before a first heartbeat (§4.5) as a
   terminal with outcome `released`. It checks that a hold with a durable
   heartbeat is never released.
-- `AuditorCommit` checks Invariant 4 across a takeover: a hold the log showed
-  with an accepted snapshot is settled, or reaped at that snapshot, by the
-  time its lease closes, whichever members committed in between.
+- `AuditorCommit` checks Invariant 4 across a takeover, whichever members
+  committed in between: a hold's winning terminal is the one stored, a refund
+  included, and a hold the log showed with an accepted snapshot and no other
+  terminal is reaped at that snapshot by the time its lease closes.
+
+- `CreditDebt` checks that repayment clears the mark: once a workspace's
+  signed sum is no longer negative, no row of it stays marked (§4.7).
+  Invariant 11 and the identity alone would pass a workspace that paid and
+  stayed blocked, which is the v11 hazard.
 
 **Rules `proofs/` follows today, kept:**
 
@@ -1338,8 +1344,9 @@ Two properties the table's short names hide:
     commit version, the close's read of the drain log, the debt mark and the
     key-status version.
   - Also: releasing without checking for a durable heartbeat, releasing for a
-    boot that did not declare the stream-open heartbeat, and dropping open
-    holds from the auditor's stored state.
+    boot that did not declare the stream-open heartbeat, dropping open holds
+    from the auditor's stored state, and an inflow that repays the debt but
+    leaves the marks set.
   - A guard whose removal breaks nothing is either unnecessary or not
     modeled, and the spec says which.
 - **The assumptions are stated, each with a mutant that widens it.** There
@@ -1359,9 +1366,10 @@ Two properties the table's short names hide:
     and one pull request can change a spec, its shadow and the code.
   - `CreditDebt` and `KeyCapFence` are shadowed in Python: the credit
     primitives, and the check that enables a cap.
-  - A spec written before its code names its shadow as pending, with the
-    step that will write it. The job accepts that only while the code does
-    not exist.
+  - A spec is written before its code, so the manifest also names the paths
+    that will implement each spec. While none of them exists, the spec's
+    shadow may be pending. Once one exists, the job requires the shadow, and
+    fails if the shadow is later removed.
   - The precedent shows why. `RegionalQuotaLease` still cites
     `tests/test_regional_quota_leases.py` as its shadow, but that test and the
     module it shadowed were deleted with the pilot (#1418), and the spec has
@@ -2168,3 +2176,19 @@ record.
     are shadowed in Python; a spec written before its code names its shadow
     as pending.
   - The P3s are answered in place.
+- **v30.** Codex (3 P2) reviewed v28 and found the serialized switch closes
+  its round-26 P1. Its findings were in the TLA+ plan:
+  - `AuditorCommit`'s takeover property read "settled, or reaped at that
+    snapshot", which a winning refund would violate;
+  - nothing assigned to `CreditDebt` would detect a workspace that repaid its
+    debt and stayed marked;
+  - a spec could not both precede its code and require a shadow that drives
+    that code.
+
+  v30 answers them:
+  - The takeover property keeps the winning terminal, refunds included, and
+    requires the snapshot reap only when no other terminal won.
+  - `CreditDebt` checks that repayment clears the mark, with a mutant that
+    leaves it set.
+  - The manifest names each spec's implementing paths; the shadow may be
+    pending only while none of them exists.
