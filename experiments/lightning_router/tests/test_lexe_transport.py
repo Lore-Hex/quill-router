@@ -5,8 +5,8 @@ import pytest
 from lightning_router.lexe import PERMISSIONS, SCOPES, Lexe, LexeReadinessError
 
 
-@pytest.mark.parametrize("error", [httpx.ReadTimeout, httpx.ConnectTimeout,
-                                  httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError])
+@pytest.mark.parametrize("error", [httpx.ReadTimeout, httpx.ConnectTimeout, httpx.WriteTimeout, httpx.PoolTimeout,
+                                  httpx.ConnectError, httpx.ReadError, httpx.WriteError, httpx.RemoteProtocolError])
 @pytest.mark.parametrize("path", [
     "/v2/node/client_info", "/v2/node/node_info", "/v2/node/payment",
     "/v2/node/updated_payments",
@@ -46,7 +46,7 @@ def test_persistent_read_timeout_still_fails_closed(caplog):
                              transport=httpx.MockTransport(handle)), "a" * 64)
     with pytest.raises(httpx.ReadTimeout):
         lexe.ready()
-    assert len(attempts) == 2
+    assert len(attempts) == 3
     assert lexe._checked == 0
     assert "lightning.lexe_read_failed" in caplog.text
     assert "operation=client_info" in caplog.text
@@ -72,7 +72,7 @@ def test_mutations_and_unrecognized_reads_are_never_retried(method, path):
     assert len(attempts) == 1
 
 
-@pytest.mark.parametrize("status", [301, 401, 403, 500, 503])
+@pytest.mark.parametrize("status", [301, 400, 401, 403, 404, 429, 501])
 def test_provider_or_authority_rejections_are_never_retried(status):
     attempts = []
 
@@ -101,7 +101,7 @@ def test_exhausted_retry_preserves_receiving_alert_and_reconciliation(funding, c
     funding.check_capacity = True
     funding._last_health_log = -1000
     assert funding.reconcile() == {"checked": 0, "failed": 0}
-    assert len(calls) == 2
+    assert len(calls) == 3
     assert "lightning.liquidity_check_failed error_type=ReadTimeout" in caplog.text
     assert '"receive_authority_ready": true' not in caplog.text
     assert "secret diagnostics" not in caplog.text

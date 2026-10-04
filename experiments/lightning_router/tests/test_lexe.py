@@ -117,6 +117,29 @@ def create(funding, key, request_id=None):
     return funding.store.invoice(result["id"], funding.credentials.fingerprint(key))
 
 
+def test_transient_get_retries_never_duplicate_invoice_or_credit(lexe, raw_key, monkeypatch):
+    funding, node = lexe
+    calls, failed = [], set()
+    monkeypatch.setattr("lightning_router.lexe.time.sleep", lambda _: None)
+
+    def handle(request):
+        calls.append((request.method, request.url.path))
+        if request.method == "GET" and request.url.path not in failed:
+            failed.add(request.url.path)
+            return httpx.Response(503, json={"code": 123, "msg": "deployment restart"})
+        return node.handle(request)
+
+    funding.lexe.client = httpx.Client(base_url="http://127.0.0.1:5393", transport=httpx.MockTransport(handle))
+    row = create(funding, raw_key)
+    node.pay(row["provider_index"])
+    failed.clear()
+    for _ in range(3):
+        assert funding.reconcile()["failed"] == 0
+    assert calls.count(("POST", "/v2/node/create_invoice")) == 1
+    assert node.creates == 1 and len(funding.credits.payments) == 1
+    assert funding.account(raw_key)["balance_usd"] == "1.000000"
+
+
 @pytest.mark.parametrize("lost_ack", [False, True])
 def test_creation_race_is_pending_then_credits_once(lexe, raw_key, caplog, lost_ack):
     funding, node = lexe
