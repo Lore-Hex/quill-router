@@ -96,8 +96,8 @@ This design accepts that, bounded:
    decision and a hold: p50 under 5 ms, p90 under 10 ms. Admission is in
    memory; what remains is the hop to the owner (§4.3) and the boot-signature
    check.
-2. **Billing-database commits grow with active leases, not with requests**
-   (§6).
+2. **Billing-database commits grow with active leases, not with requests,**
+   apart from the overruns a lease cannot absorb (§6).
 3. **No charge lost and none booked twice** (`durable-settle-outbox.md`):
    - a request that ran is never released free;
    - a request that never ran is never charged;
@@ -202,13 +202,27 @@ owner. Its row records:
 |---|---|
 | `held` | the sum of the estimates of open holds |
 | `consumed` | the sum of charges booked since the lease began, by settles and reaps |
-| `remaining` | the allocation (L, less returns) `− consumed − held` |
+| `remaining` | the allocation `− consumed − held` |
 
-- Admission needs `remaining − e` to be at least the lease's overrun reserve:
-  what its holds in flight are expected to overrun by, from shadow's figures
-  of bill against hold by endpoint (§8, §9). Below that the owner uses its
-  next lease, or answers as §4.4 says for a short lease. A lease that fills
-  to its last hold would turn every overrun into a shortfall write (below).
+- The allocation is L, less what the owner has returned, plus the lease's
+  shortfall and the raises of the drain-log rows it has adopted (below).
+- **Room for overruns.** A lease that fills to its last hold turns every
+  overrun into a shortfall (below), and each of those into a Spanner write.
+  So the owner keeps a buffer under each lease: what its open holds are
+  expected to overrun by, from shadow's figures of bill against hold by
+  endpoint (§8, §9). A lease's `free` is `remaining` less that buffer, and
+  four rules read it:
+  - admission needs `free` to be at least e, with the new hold's own buffer
+    counted. Below that the owner uses its next lease, or answers as §4.4
+    says for a short lease;
+  - the low-water mark is measured on `free`;
+  - a top-up is sized to carry the buffer of the holds it expects;
+  - a return gives back `free` when it is positive, and nothing otherwise.
+
+  The buffer changes no hold: e, the cap and the stream's end are what they
+  were. It is there for load, not for safety. No invariant reads it. With no
+  buffer every rule below is as correct, and costs a write for each overrun
+  that finds its lease without room.
 - A settle moves an estimate e out of `held` and the actual a into `consumed`.
   A refund moves e out of `held` and nothing into `consumed`. A reap moves e
   out of `held` and the last accepted heartbeat's running charge into
@@ -218,55 +232,61 @@ owner. Its row records:
 - `remaining` is never negative. A lease absorbs an overrun it has room for:
   that is consumption like any other.
 
-**A shortfall is reserved when it is known.** A terminal that charges more
-than the lease has room for would leave the lease's other open holds with
-nothing reserved behind them, and Spanner with headroom that is already
-spent. So the charge beyond what is reserved is reserved at once, by
-whoever first knows it:
+**A shortfall is reserved with the record that books it, and sooner where
+its writer can.** A terminal that charges more than the lease has room for
+would leave the lease's other open holds with nothing reserved behind them,
+and Spanner with headroom that is already spent. The first never happens.
+The second is closed as fast as each writer can close it:
 
-- **The owner.** When a terminal would take `remaining` below zero, the owner
-  adds the difference to the lease's shortfall, a running total, and its
-  allocation rises by as much. It stores the new total in Spanner before it
-  publishes the terminal, and admits nothing under the lease until that
-  write has committed.
-  - If Spanner does not answer within a short deadline, the owner publishes
-    and answers the terminal anyway and keeps retrying the write, past its
-    cutoff if need be. A settle is never held for Spanner's sake.
-  - The lease row keeps the total. The write sets it to the larger of the
-    stored figure and the owner's, and adds what it rose by to the lease's
-    allocation and to `reserved` on its first donor shard, whatever that
-    shard's headroom, under §4.7's rules for a write that leaves a shard
-    negative. So a repeat, or a write that lands after a later one, changes
-    nothing, and a return the auditor applies in between is not undone.
-  - One such write is in flight for a lease at a time, carrying the latest
-    total. So these writes are bounded by leases, not by terminals.
-  - It is conditional on the owner's epoch and on the lease not being
-    closed. A draining lease takes it: its reservation is still held, and
-    close releases whatever the raise added.
-- **The auditor, behind it.** Every terminal record carries the shortfall
-  total as its owner had it after that terminal. In the commit that books a
-  record, the auditor first raises the stored total to the record's, in the
-  same way. So an owner that died between the publish and its own write
-  leaves nothing undone, and after any record is applied the lease's
-  remaining allocation is at least the holds its owner then had open.
+- **The auditor keeps the identity.** When a terminal would take `remaining`
+  below zero, the owner adds the difference to the lease's shortfall, a
+  running total, and its allocation rises by as much. Every terminal record
+  carries the total as its owner had it after that terminal. In the commit
+  that books a record, the auditor first raises the stored total to the
+  record's. It sets the lease row's total to the larger of the two, and adds
+  what it rose by to the lease's allocation and to `reserved` on its first
+  donor shard, whatever that shard's headroom, under §4.7's rules for a
+  write that leaves a shard negative.
+  - So the stored allocation less the consumption booked is never less than
+    the holds the owner has open, before a record is applied as well as
+    after. A terminal the auditor has not booked has its whole charge still
+    inside that difference, and its shortfall is no more than its charge.
   - Each checkpoint record carries the owner's open holds (above). When it
     applies one, the auditor checks that the stored allocation less the
     consumption booked is at least that sum. A difference means the owner
     under-reported its shortfall: a fault, as in §4.8's audit.
-- **A front door.** A terminal it takes for the drain log (§4.5) is not seen
-  by an owner. If the charge is above the hold's estimate, which the
-  terminal's envelope carries, the front door first reserves the difference:
-  one write, keyed by the record, that raises the lease's allocation and
-  `reserved`. Only then does it publish the full record and append the row
-  (§4.9), and the append finds its own reservation and adds nothing.
-  - That write comes first because the full record's publish can stall, and
-    until the reservation is in Spanner the overrun is not.
+- **The owner tells Spanner sooner.** The auditor's commit can be seconds
+  behind (§4.8), and until it lands Spanner's headroom counts the shortfall
+  as unspent. So the owner stores the new total itself as soon as it has
+  decided the terminal, in the same larger-of write.
+  - It does not wait for that write. The terminal is published and answered
+    like any other. A settle is never held for Spanner's sake, and the
+    lease's records keep their order (§4.5).
+  - One such write is in flight for a lease at a time, carrying the latest
+    total. The owner retries it until it lands, past its cutoff if need be.
+    A repeat, or a write that lands after the auditor's, changes nothing,
+    and a return the auditor applies in between is not undone.
+  - It is conditional on the owner's epoch and on the lease not being
+    closed. A draining lease takes it: its reservation is still held, and
+    close releases whatever the raise added.
+  - When it does not land, because the owner died or cannot reach Spanner,
+    the auditor's commit is what stores the total.
+- **A front door reserves in its append.** A terminal it takes for the drain
+  log (§4.5) is not seen by an owner. If the charge is above the hold's
+  estimate, which the terminal's envelope carries, the append raises the
+  lease's allocation and `reserved` by the difference, in the same
+  transaction as the row and under the same condition, that the lease is
+  not closed. So no raise exists without its row, and none lands on a
+  closed lease.
   - It takes the worst case, that the lease had no room. An owner that later
-    adopts the row counts the front door's raise as allocation: the row
-    carries the charge and the estimate. So it does not reserve for the row
-    again, and it returns what it does not use.
-  - A reservation whose row never follows, because the front door died and
-    the gateway gave up, is released when the lease closes.
+    adopts the row counts the raise as allocation: the row carries the
+    charge and the estimate. So it does not reserve for the row again, and
+    it returns what it does not use.
+  - The append follows the full record's publish (§4.9), which has the
+    deadline an owner's publish has (§4.5). If either fails, the answer is
+    an error and the gateway retries the settle, as it retries a failed
+    settle today. A terminal that is not yet recorded is not yet booked, on
+    either path, and one the gateway gives up on is §4.8's loss on either.
 - **Every writer changes these columns by arithmetic inside its own
   transaction.** The owner's and the front door's raises, and the auditor's
   bookings and returns, each read the row and write the difference. None
@@ -278,14 +298,17 @@ whoever first knows it:
 
 Two things follow, and §4.13 rests on both:
 
-- A lease's remaining allocation in Spanner is never less than its open
-  holds. An overrun the lease has no room for raises the allocation by the
-  difference before it is booked.
-- Spanner's headroom does not count money that an owner or a front door
-  knows is spent, for longer than that one write takes. Grants and Python's
-  own reservations read that headroom. There is one exception: an owner that
-  published a terminal while Spanner was unavailable, and died before its
-  write landed. That shortfall waits for the auditor to book the record.
+- **A lease's remaining allocation in Spanner is never less than its open
+  holds.** The auditor's raise and the front door's are each in the
+  transaction that books the charge or stores its row. The owner's own
+  write is not needed for it.
+- **Spanner's headroom counts an overrun that a lease had no room for:**
+  - an owner's, within one write of the owner deciding it;
+  - or when the auditor books its record, if that write did not land;
+  - a front door's, with the append that records it.
+
+  Grants and Python's own reservations read that headroom. Until one of
+  those writes lands they read it too high, by the overrun.
 
 **Renewals** are the only Spanner writes an owner makes on a schedule. The
 other is a shortfall write (above).
@@ -335,21 +358,24 @@ lease's expiry minus a skew allowance.
 
 **Top-ups and closing:**
 
-- When `remaining` falls below a low-water mark, the owner asks for another
+- When `free` falls below a low-water mark, the owner asks for another
   lease.
   - At most one request is outstanding per workspace-region-shard, with a
     cooldown.
-  - The amount is sized by the recent rate times a horizon, within the
-    allowance.
+  - The amount is the recent rate of charges times a horizon, plus the
+    estimates and the buffer of the holds expected in flight at that rate,
+    within the allowance. A lease sized by charges alone could not hold the
+    requests that produce them: a request that names no limit is held at a
+    fraction of what it is expected to bill (§4.13).
 - An owner stops admitting under a lease when the lease goes idle or reaches
   its maximum life, or when the workspace is paused.
-  - It returns the unused remainder in its next checkpoint record: its
-    allocation minus `consumed` and `held`, less the overrun reserve for the
-    holds it still has open. Returning that reserve too would make each of
-    those holds' ordinary overruns a shortfall write. When the auditor
-    applies that
-    record, it releases the remainder from the donors, last donor first, and
-    lowers the allocation by it there.
+  - It returns the lease's `free` in its next checkpoint record, when that
+    is positive: what the lease holds beyond its open holds and their
+    buffer. Returning the buffer too would make each of those holds'
+    ordinary overruns a shortfall write. A lease whose overruns have used
+    its buffer returns nothing. When the auditor applies that record, it
+    releases the amount from the donors, last donor first, and lowers the
+    allocation by it there.
   - It keeps serving the lease's holds. Once none is open, it publishes a
     final checkpoint record and marks the lease draining.
   - The auditor then finishes the lease (§4.8).
@@ -361,8 +387,9 @@ lease's expiry minus a skew allowance.
   - This is a hard requirement on the admission service's deploys, like the
     gateways' retirement in §4.12. Old and new owners overlap for up to
     2 h 20 min, so capacity doubles during a deploy.
-  - Meanwhile each shard carries the old lease's open holds and the new
-    lease's L against the allowance. Small tiers' allowances must admit two
+  - Meanwhile each shard carries the old lease's open holds and their
+    buffer, and the new lease's L, against the allowance. Small tiers'
+    allowances must admit two
     leases per shard, or successor grants answer 503 until the old lease's
     return is applied.
   - A deploy that stops processes sooner turns every deploy into forced exits,
@@ -434,7 +461,8 @@ lease's expiry minus a skew allowance.
    settle and refund:
    - the authorization ID `A` and the generation ID;
    - the owner node and the lease;
-   - the frozen candidates, prices, fees and app terms;
+   - the frozen candidates, prices, fees and app terms, which every charge
+     for the request is priced from (§4.13);
    - the snapshot version and the boot binding;
    - the hold, its deadline rule and its end of life;
    - the `stage_d` payload Python's answer carries today (eligibility, the
@@ -516,9 +544,9 @@ and the request records all follow that rule.
     their Spanner commit timestamp, then record ID. Appends are independent
     inserts with no counter row, so a crashed owner's streams all settling
     at once do not queue on one row. The exception is a terminal whose
-    charge is above its hold: before its append the front door raises the
-    lease's allocation and one credit row's `reserved` (§4.2), so those
-    writes, for about one settle in eight today, do meet on two rows.
+    charge is above its hold: its append also raises the lease's allocation
+    and one credit row's `reserved` (§4.2), so those appends, for about one
+    settle in eight today, do meet on two rows.
   - A lease's terminals have one order: the owner's records by their
     sequence numbers, then the drain log. The first terminal for an
     authorization in that order wins. Reaps of a draining lease are
@@ -1086,7 +1114,9 @@ when Python is unreachable: the first durable point is Python's
   lease's terminals to its drain log.
   - If the publish fails, the answer is an error, and the gateway retries as
     today.
-  - Nothing is applied to a lease without its record.
+  - Nothing is booked against a lease without its record. An owner's raise
+    can land before its record does (§4.2): it reserves, books nothing, and
+    is released at close.
 - **Request records.** Whoever records a settle, the owner or a front door,
   first publishes the full request record to the unordered record topic,
   keyed by authorization, and waits for its acknowledgement. Only then does it
@@ -1293,11 +1323,11 @@ Load Balancer:
 
 ### 4.13 Work in flight on the same path
 
-Checked on 2026-10-03 against quill-router `26780a22` and quill-cloud-proxy
-`29be0fdd`. The enclave facts this design cites at `a06050f` still hold there
-(`stageDStreamEligible`, `serveMessages` without heartbeats, the settle queue
-and the heartbeat attempts), except the registration paths, which §4.11 now
-lists.
+Checked on 2026-10-04 against quill-router `36d7187c` and quill-cloud-proxy
+`0e067f0c`. The enclave facts this design cites at `a06050f` and `29be0fdd`
+still hold there (`stageDStreamEligible`, `serveMessages` without heartbeats,
+the settle queue and the heartbeat attempts), except the registration paths,
+which §4.11 now lists.
 
 - **Speculative invocation** (`docs/speculation-protocol-v1.md`). The enclave
   starts the provider request before authorize answers, under a signed grant
@@ -1359,6 +1389,50 @@ lists.
   down from 4.3 two days earlier. This is the path the synchronous cohort
   keeps (§4.11) and the reference the shadow comparator checks against, so
   its statements are the ones the compiled service must match.
+  - On 2026-10-04 authorize's first credit reserve joined its key and insert
+    batch (#1516): three operations in the transaction, with the credit
+    shard's lock held across the commit alone. A re-observed receipt key no
+    longer commits an empty transaction (#1524), which was about 850 commits
+    an hour.
+  - What #1516 measured is the cost this design removes. On 2026-10-03, at
+    about 40,000 authorizes and settles an hour each, 4.5 to 6.1% of
+    authorizes and 3.1 to 4.5% of settles aborted, and 68 to 80% of the lock
+    wait was on one workspace's credit shards. That contention is per
+    request. A lease takes a workspace's requests off those rows.
+- **Prices are the authorization's** (#1521, merged 2026-10-04; the
+  enclave's half, quill-cloud-proxy #459, is open). Joseph decided on
+  2026-10-03 that a request is billed at the prices in effect when it was
+  authorized. Python does so wherever an authorization has a pricing
+  snapshot to bill from: a Stage D stream, on credits, with no fee, markup,
+  custom or video contract (`billing_pricing_snapshot` in `stage_d.py`).
+  Its other requests are still priced from the live catalog at settle.
+  - Authorize's answer says which, in `candidate_cost_reporting`. With
+    #459, where it is true the enclave computes the charge itself from the
+    served candidate's prices, reports it in the response's usage after a
+    bounded wait for the settle, and logs a mismatch if the settle's answer
+    disagrees.
+  - The fast path prices every charge from the envelope (§4.4), so it
+    follows the decision for every request it takes. That includes the
+    requests that do not stream and those with a receipt fee, which Python
+    still prices live. For those the two paths differ when a price changes
+    between authorize and settle, and the shadow comparator counts that
+    difference apart (§8). Keeping the live price for them instead would be
+    Joseph's call: the owner would price them from its current routing
+    snapshot (§4.10).
+  - The compiled service sends `candidate_cost_reporting` by Python's
+    predicate. Where it is true, its charge has to equal the enclave's own
+    figure to the microdollar. Python generates and checks golden vectors
+    for that (`tests/fixtures/usage_cost_vectors.json`), and #459 has the
+    enclave check the same file. They are the compiled service's pricing
+    test too.
+  - A settle's answer carries its cost whenever its record has one, a
+    `recorded` answer included, as Python's `intent_durable` answer does
+    since #1521. A cost it does not have is left out, never sent as zero:
+    the enclave reads a missing cost as unknown and a zero as free.
+  - #459 also stops a refund from following a settle attempt, which
+    today's enclave can send. On either path the first terminal in order
+    wins (§4.5), so such a refund loses to a settle that was recorded, and
+    wins over one that was not.
 - **How far a request can outrun its hold.** The hold is the estimate: the
   estimated input at the input rate, plus the caller's `max_tokens`, or 512
   tokens without one, at the output rate (`outputTokenEstimate` in the
@@ -1416,19 +1490,24 @@ lists.
   overrun that empties that shard refuses the next request against it. (The
   other shards go on spending until step 4's debt mark exists, §4.7.) On the
   fast path a lease absorbs an overrun it has room for. One it has no room
-  for is reserved in Spanner at once, by the owner or the front door that
-  sees it (§4.2). So:
-  - **Spanner sees it as soon as an owner does.** Grants, and Python's
-    reservations for the same workspace's synchronous requests, read
-    headroom that already counts it. Nothing waits for the auditor: while
-    the auditor is behind, unbooked spend sits in `reserved`.
+  for is reserved in Spanner by whoever records it (§4.2). So:
+  - **Spanner sees an owner's overrun one write after the owner does.** The
+    owner issues that write when it decides the terminal, and holds nothing
+    for it. Until it lands, grants, and Python's reservations for the same
+    workspace's synchronous requests, read headroom too high by the overrun.
+  - **If that write does not land,** because the owner died or cannot reach
+    Spanner, the overrun reaches Spanner when the auditor books its record.
+    That is the one place where the window is the auditor's lag (§4.8).
+  - **A front door's overrun** is in Spanner with the append that records
+    it. The full record's publish comes before that append, and a settle
+    that fails either one is retried by the gateway. Today a settle whose
+    commit fails waits in the same queue, its overrun as invisible.
   - **If it takes the workspace into debt,** the write that reserves it sets
     the mark (§4.7). Python refuses at once, as it will on today's path.
     Other owners stop within the state cache's maximum age.
-  - **So the fast path adds two windows:** that one write, and then the
-    cache's age for other owners. One case still waits for the auditor: an
-    owner that published an overrunning terminal while Spanner was
-    unavailable and died before its write landed (§4.2).
+  - **So the fast path adds two windows to an overrun:** the one write, or
+    the auditor's lag when that write is lost; and then the cache's age for
+    other owners.
   - **In that window** the workspace's other leases go on admitting. The
     holds open under its leases never exceed the trust allowance, since a
     lease's remaining allocation is never less than its open holds (§4.2).
@@ -1438,7 +1517,9 @@ lists.
     more than the leases reserve. The charges cannot.
   - **In total,** a lease's money is let again only after at least that much
     usage is booked, so a balance buys the same number of holds on either
-    path, and each can overrun by the same amount.
+    path, and each can overrun by the same amount. The windows add what is
+    admitted against headroom an overrun had already spent: no more than
+    the overruns then waiting for their write.
 
   The allowance bounds leases. The same workspace's synchronous holds are
   bounded by headroom, as today. A tier's exposure through leases is its
@@ -1450,7 +1531,8 @@ lists.
   Spanner only when the auditor booked it: until then grants and Python read
   headroom that was already spent, and a lease whose reservation an overrun
   had used up counted as no exposure while its other holds were open. The
-  shortfall rule is what removes both.
+  shortfall rule removes the second, and shortens the first to the windows
+  above.
 
   **What the trust tier does and does not do.** Leases are for workspaces at
   the tier §4.11 names. That keeps the added window away from a workspace
@@ -1462,18 +1544,22 @@ lists.
 - **The trust-tier job** (#1484, #1491) selects its candidates from one
   snapshot, in shadow. The trust allowance (§4.2) reads the tier it
   maintains, and nothing in that job depends on leases.
-- **Key management at scale** (#1496, open) pages the key list and deletes
-  keys in bulk. §4.6 says how deletions reach admission.
+- **Key management at scale** (#1496, merged 2026-10-04) pages the key list
+  and deletes keys in bulk. §4.6 says how deletions reach admission.
+- **Strict-budget keys** stay synchronous (§4.6). Their per-process admission
+  queue, not Spanner, refused two authorizes on 2026-10-03, and its wait was
+  lengthened (#1517).
 
 ## 5. Invariants
 
 Each has a production check.
 
 1. **Admission bound.** Every fast admission is a hold against a lease whose
-   amount Spanner has reserved. The sum of open holds and settled charges never
-   exceeds the lease's allocation: a charge the allocation has no room for
-   raises it first (§4.2). Returns lower the allocation, per donor, before
-   anything is released.
+   amount Spanner has reserved. In the owner's books, the sum of open holds
+   and charges never exceeds the lease's allocation: a charge the allocation
+   has no room for raises it first. In Spanner, the stored allocation less
+   the consumption booked is never less than the open holds (§4.2). Returns
+   lower the allocation, per donor, before anything is released.
 2. **Conservation.** The per-shard identity in §4.7 holds after every booking.
    Each checkpoint record equals the terminals its owner published with lower
    sequence numbers.
@@ -1497,10 +1583,12 @@ Each has a production check.
    only after every fast hold of the key is booked.
 9. **Pauses** stop admission within the state cache's maximum age. So do the
    debt mark, a trust downgrade and a switch out of fast mode. The holds
-   open under a workspace's leases stay within its trust allowance, and
-   Spanner's headroom counts every overrun an owner or a front door has
-   seen. In money, a workspace's exposure through leases is what they
-   reserve plus what their requests overrun their holds by.
+   open under a workspace's leases stay within its trust allowance.
+   Spanner's headroom counts an overrun a lease had no room for once the
+   write that reserves it has landed: its owner's, the auditor's booking
+   behind that, or a front door's append (§4.2). In money, a workspace's
+   exposure through leases is what they reserve plus what their requests
+   overrun their holds by.
 10. **Renewals and bookings are conditional:** renewals on lease state and
     epoch, bookings on the auditor's commit version. Replays change nothing.
 11. **Debt marks every shard.** No credit shard is negative unless every
@@ -1518,10 +1606,11 @@ Each has a production check.
   an owner admit or decide after its lease drains;
 - overruns: a settle above its hold, by whatever its provider bills (§4.13).
   It is booked in full, as debt when the balance cannot cover it (§4.7). The
-  amounts are today's. Spanner sees one within a write of an owner or a
-  front door seeing it; other owners stop, when it means debt, within the
-  state cache's maximum age. The one overrun that waits for the auditor is
-  an owner's that published it during a Spanner outage and then died;
+  amounts are today's. Spanner sees an owner's within one write of the
+  owner deciding it, or when the auditor books it, if that write was lost
+  with its owner or to an outage. It sees a front door's with the append
+  that records it. Other owners stop, when it means debt, within the state
+  cache's maximum age;
 - requests whose gateway could not reach the log within its retry budget
   (§4.8);
 - an owner record received after a tick that reaped its hold, which only
@@ -1573,13 +1662,16 @@ What the table's short names hide:
   Invariant 9 means nothing. Its grant reads the rows as they stand, and one
   of its owners stops without a final checkpoint. Its claims are §4.2's two:
   - a lease's remaining allocation is never less than its open holds;
-  - headroom does not count spent money, except while a shortfall write is
-    in flight or its owner died before issuing it. The model has to carry
-    both exceptions as state, so that the claim says exactly when it may
-    fail.
+  - headroom counts an overrun its lease had no room for, except while the
+    owner's write for it is in flight, or was lost with its owner or to an
+    owner cut off from Spanner, and the auditor has not yet booked the
+    record. The model has to carry those exceptions as state, so that the
+    claim says exactly when it may fail.
 
-  Its mutants include an owner, a front door and an auditor that each skip
-  the shortfall, a front door that reserves after its publish, and a raise
+  The first claim has to hold in every one of those states: it may not lean
+  on the owner's write. Its mutants include an auditor and a front door
+  that each skip the raise, which must break the first claim; an owner that
+  skips its write, which must break only the second; and an owner's raise
   that lands after the lease has closed, which must break §4.7's identity.
 - In `LeaseLifecycle` a pause stands for every stop that reaches owners
   through the state cache: the debt mark, a trust downgrade and a switch out
@@ -1720,15 +1812,21 @@ What the table's short names hide:
 
 - renewals and bookings are each about one transaction per active lease every
   few seconds, batched across leases;
-- shortfall writes (§4.2) are bounded by leases too: one is in flight for a
-  lease at a time. How often a lease needs one depends on its overrun
-  reserve. With the reserve sized to the holds in flight, they are for the
-  0.7% of settles that carry 96% of overrun dollars today (§1): about 170 a
-  second for the hottest workspace at 100T, before they are coalesced. The
-  benchmark measures the rate on that workspace's real mix (§8);
+- an owner's shortfall writes (§4.2) are one at a time for a lease. That
+  bounds how many are in flight, not how often they happen: a lease pays
+  one for each overrun that finds it without room, and its buffer is what
+  makes that rare. With the buffer sized to the holds in flight, they are
+  for the 0.7% of settles that carry 96% of overrun dollars today (§1):
+  about 170 a second for the hottest workspace at 100T. A large overrun
+  that uses a lease's buffer up leaves that lease's later overruns a write
+  each until its holds end. The benchmark measures the rate on that
+  workspace's real mix (§8);
+- a front door's raises add no commit: each is inside an append it makes
+  anyway;
 - a workspace hot enough for K shards adds K leases;
-- so commits grow with leases, and with overruns too large for a lease's
-  reserve, not with requests. Row writes do grow with requests. Winners are
+- so commits grow with leases, and with the overruns a lease's buffer does
+  not cover, not with requests otherwise. Row writes do grow with requests.
+  Winners are
   packed one row per lease per commit, so what grows is the request records:
   about two rows per generation, about 66,000 a second at 100T;
 - at about 2,000 row writes a second per node, a multi-region figure, that is
@@ -1822,10 +1920,12 @@ leases, and was retired on 2026-09-27.
    reaper outcomes and records, and in the answer bytes the enclave decodes.
    Python's answer to the same request is the reference for those bytes; the
    error envelopes are also frozen in `tests/fixtures/speculation_v1/`.
+   - A charge that differs only because Python priced the request live and
+     its price changed after authorize is counted apart (§4.13).
    - It also records each settle against its hold, by endpoint, and how
      often a lease would have had no room for one. Nothing is gated on it.
-     The first figure shows where pricing a hold differently would pay; the
-     second sizes the low-water mark (§9).
+     The first figure shows where pricing a hold differently would pay, and
+     sizes a lease's buffer; the second sizes the low-water mark (§9).
 7. **Benchmark gate** (§6), with the rate of shortfall writes on the hottest
    workspace's real mix among what it measures.
 8. **Pilot:** Joseph's own workspace, then a few large ones, with kill switches
@@ -1850,7 +1950,7 @@ leases, and was retired on 2026-09-27.
   - the floor of headroom a grant leaves outside leases, and the minimum
     balance for fast mode (§4.7, §4.11);
   - the low-water mark, the top-up horizon and the cooldown;
-  - the overrun reserve a lease keeps for its holds in flight (§4.2), from
+  - the buffer a lease keeps for its open holds' overruns (§4.2), from
     shadow's figures of bill against hold by endpoint;
   - the renewal, checkpoint and tick intervals;
   - the skew allowance, and the reaper's grace;
@@ -2741,3 +2841,41 @@ record.
   - The auditor checks the shortfall an owner reports against the open holds
     in its checkpoints.
   - Widening waits for the stale-reconciliation policy.
+- **v36.** Codex (2 P1, 1 P2, 1 P3) and Fable (3 P2, 4 P3) reviewed v35.
+  Every finding was about a mechanism v35 had added to make "one write"
+  true everywhere:
+  - the owner waited for its write before publishing, which either held the
+    lease's later records behind a Spanner commit, a cross-Atlantic one from
+    Europe, or let them pass the terminal and fail the checkpoint audit; the
+    deadline had no size;
+  - the front door's separate reservation had no condition on the lease's
+    state, so one that landed after close was never released, and nothing
+    owned its retry when it failed;
+  - the reserve made a return negative once overruns had used it, and the
+    low-water mark and the top-up's size ignored it;
+  - one write in flight bounds how many there are at once, not how often
+    they happen;
+  - §4.13 and §5 still said Spanner saw an overrun as soon as an owner did.
+
+  v36 removes the mechanisms and states what is left:
+  - The auditor's raise, in the commit that books a record, is what keeps a
+    lease's remaining allocation at or above its open holds. That holds
+    before the record is applied too, because an unbooked terminal's charge
+    is still inside the stored allocation. It never depended on the owner's
+    write.
+  - The owner's write only brings an overrun to Spanner's headroom sooner.
+    It is not awaited, so no record waits and the log's order is untouched.
+    When it is lost, the auditor's booking does it, and §4.13 and §5 say so.
+  - A front door raises inside its append again: one transaction, under the
+    append's own condition, retried by the gateway as a failed settle is
+    today. The record's publish before it is a stated wait, with a deadline.
+  - The reserve is a buffer, defined once, read by admission, the low-water
+    mark, a top-up's size and a return, and stated to be for load and not
+    for safety.
+  - §6 and Target 2 say commits grow with the overruns a buffer does not
+    cover.
+
+  v36 also checks the design against what merged on 2026-10-04 (§4.13): the
+  hold-time batch in authorize (#1516), billing at the authorization's
+  prices (#1521 and the enclave's #459), the receipt-key fix (#1524) and key
+  management (#1496).
