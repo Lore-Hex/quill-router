@@ -883,6 +883,21 @@ class _FakeTransaction:
             rec = self._typed_current("tr_credit_balance", pk)
             if rec is None:
                 return 0
+            if "ARRAY_LENGTH(billing_pause_causes)" in sql:
+                # Evaluate the emitted predicate, including its operator/literals,
+                # independently of billing_paused_row. Native acceptance also
+                # exercises this GoogleSQL against the emulator's ARRAY column.
+                predicate = sql.split(" >= @est AND ", 1)[1]
+                causes = rec.get("billing_pause_causes")
+                with sqlite3.connect(":memory:") as conn:
+                    conn.create_function("ARRAY_LENGTH", 1,
+                                         lambda value: None if value is None else len(json.loads(value)))
+                    allowed = conn.execute(
+                        "SELECT " + predicate.replace("billing_pause_causes", ":causes"),
+                        {"causes": None if causes is None else json.dumps(causes)},
+                    ).fetchone()[0]
+                if not allowed:
+                    return 0
             if (rec["total_credits"] - rec["total_usage"] - rec["reserved"]) >= p["est"]:
                 new = dict(rec, reserved=rec["reserved"] + p["est"])
                 self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))

@@ -76,6 +76,26 @@ class Capture:
 
 def builder_cases() -> list[SQLCase]:
     cases = []
+    # The DDL column is ARRAY<STRING(32)>, not serialized JSON. Edge strings
+    # below are individual causes, so even ['[]'] and [''] are paused.
+    from trusted_router.trust_eligibility import billing_paused_row
+
+    for index, causes in enumerate([None, [], [''], ['[]'], ['["x"]'], [' '], ['[ ]'], ['x'], ['x', 'y']]):
+        for armed in (False, True):
+            seed = (
+                "INSERT INTO tr_credit_balance "
+                "(workspace_id, shard, total_credits, total_usage, reserved, billing_pause_causes) "
+                "VALUES (@ws, 0, 1000, 0, 0, @causes)",
+                {"ws": "hold-time-ws", "causes": causes},
+                {"ws": pt.STRING, "causes": pt.Array(pt.STRING)},
+            )
+            statement = counters.reserve_credit_statement(
+                pt, "hold-time-ws", 100, check_pause=armed,
+            )
+            cases.append(SQLCase(
+                f"authorize_hold_time_pause/{index}/{armed}", [statement], batch=True,
+                seed=[seed], expected_counts=[int(not armed or not billing_paused_row([causes, None]))],
+            ))
     authorization = GatewayAuthorization(
         id="acceptance-auth", workspace_id="acceptance-ws", key_hash="acceptance-key",
         model_id="acceptance-model", provider="acceptance-provider", usage_type=UsageType.CREDITS,

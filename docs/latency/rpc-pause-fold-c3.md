@@ -1,5 +1,11 @@
 # C3: return pause evidence from the guarded credit reserve
 
+Current behavior: [authorize hold-time batch](../design/billing-typed-counters.md#authorize-hold-time-batch)
+folds the first credit reserve into the key/INSERT batch. Fresh warm Credits
+requests now use four operations overall (three inside T1); C3 returning DML
+remains the sequential fallback and strict/sequential implementation. The
+sequences and measurements below describe the historical C3 baseline.
+
 Baseline: `8ee7985e` (`origin/main` when this worktree was provided). No git
 writes or deployment. The production PLAN check is reserved for the reviewer.
 Production arms the gate at `scripts/deploy/rollout.sh:565`.

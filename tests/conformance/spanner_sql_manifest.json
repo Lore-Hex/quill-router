@@ -19,7 +19,8 @@
     "storage_gcp_settle_outbox:resolved_intent_statements": "64f1ed43cb1ced684e9ce72e489c7152b538d1fe29863bf4165425884656c435",
     "storage_gcp_settle_outbox:speculative_done_statements": "e292de31c54e6ab2d1106ae773cd992b89f07f0e21a3e56b79316f55cd7aba26",
     "storage_gcp_counter_dml:release_credit_no_debt_statement": "bccbfddb26710596d06e73aa0b32ff02fd15c4f6f1ef9b3173ba6c7500362dbf",
-    "storage_gcp_counter_dml:release_key_statement": "03e4c502b085d5bf6aa58ff4a8cab0a2ad54613a8459ab70661000ec92d60471"
+    "storage_gcp_counter_dml:release_key_statement": "03e4c502b085d5bf6aa58ff4a8cab0a2ad54613a8459ab70661000ec92d60471",
+    "storage_gcp_counter_dml:reserve_credit_statement": "f4b1b3b344f88898212f169cf9242c34f05e2b0b7e30f54584897eb8eb702760"
   },
   "expressions": {
     "byok_aad_backfill:scan:1": {
@@ -4122,6 +4123,31 @@
           }
         }
       ]
+    },
+    "storage_gcp_counter_dml:reserve_credit_statement:1": {
+      "fingerprint": "f4b1b3b344f88898212f169cf9242c34f05e2b0b7e30f54584897eb8eb702760",
+      "scenarios": [
+        {
+          "bindings": {
+            "pause_predicate": ""
+          },
+          "types": {
+            "ws": "STRING",
+            "shard": "INT64",
+            "est": "INT64"
+          }
+        },
+        {
+          "bindings": {
+            "pause_predicate": " AND COALESCE(ARRAY_LENGTH(billing_pause_causes), 0) = 0"
+          },
+          "types": {
+            "ws": "STRING",
+            "shard": "INT64",
+            "est": "INT64"
+          }
+        }
+      ]
     }
   },
   "sinks": {
@@ -4174,7 +4200,7 @@
     "storage_gcp_authorize:_apply_custom_model_markup_payout_tx": "a1a06d4c1dcc22a836e086dc1700440a90dad6d8c8966466902930955a34e3f0",
     "storage_gcp_authorize:typed_finalize_atomic.speculative_batch": "5e7585836953e755aaf557645a1a8163c9a22b6fba7784135a38d1c8e1b8d5d6",
     "storage_gcp_authorize:key_window_limit_decision": "5a317b9f2927443ca6d6686b5cb1d1b6ff036c6d744d511a3b5f24c63e3b2ad7",
-    "storage_gcp_authorize:authorize_atomic.txn": "a019d8c5c015583d75fd0de0e678ac710ab5c9957a06353ea42651e56302712a",
+    "storage_gcp_authorize:authorize_atomic.txn": "5913141222670dc1e3084ff60dd684202a0443f657b5cbb6fc7b169c20262956",
     "storage_gcp_authorize:reap_expired_reservations_result": "9d7f819fc199930d94eaa53e939fced804e61b2cbf9f54cbf676ced4c743976e",
     "storage_gcp_authorize:key_lifetime_cap_precheck": "4e9ee17c7e9363a1fc3a9d614f15148ad6fb20ff04d272785809beef92ab0b4c",
     "storage_gcp_authorize:_finalize_reaped_reservation_atomic.txn": "55ccd7b9ed868037a53ecb228e6efe40882d39fef33e9bd24bb0061340d95200",
