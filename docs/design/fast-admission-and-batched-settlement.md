@@ -1219,9 +1219,9 @@ lists.
   - **A workspace takes one or the other.** A workspace on the fast path
     gets no speculation grants, for any of its requests, including those
     that stay synchronous (§4.11). Its holds and grants in flight then have
-    one bound, the lease allowance, not two to be added up. (A grant's own bound is
-    `min(tier ceiling / 100, paid headroom / 10, $1)`, and the protocol
-    leaves "all other issued rights" to its caller.)
+    one bound, the lease allowance, not two to be added up. (A grant's own
+    bound is `min(tier ceiling / 100, paid headroom / 10, $1)`, and the
+    protocol leaves "all other issued rights" to its caller.)
   - For the issuer, a workspace is on the fast path when fast mode is on for
     it or any of its leases is open or draining. The issuer reads that in the
     strong snapshot it already takes, a standalone Python change (§8).
