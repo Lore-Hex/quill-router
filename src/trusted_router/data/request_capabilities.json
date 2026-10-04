@@ -1,0 +1,422 @@
+{
+  "gateway_revision": "2f3a86c1bfb6f105184d1bf3b4548fa6c9ad688c",
+  "reviewed_on": "2026-10-03",
+  "contracts": [
+    {
+      "providers": [
+        "openai"
+      ],
+      "models": [
+        "openai/gpt-5",
+        "openai/gpt-5-mini",
+        "openai/gpt-5-nano"
+      ],
+      "reasoning_effort": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ],
+      "source": "https://developers.openai.com/api/docs/models/gpt-5",
+      "tools": true,
+      "seed": false,
+      "vision": true
+    },
+    {
+      "providers": [
+        "openai"
+      ],
+      "models": [
+        "openai/gpt-5.1"
+      ],
+      "reasoning_effort": [
+        "none",
+        "low",
+        "medium",
+        "high"
+      ],
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.1",
+      "tools": true,
+      "seed": false,
+      "vision": true
+    },
+    {
+      "providers": [
+        "openai"
+      ],
+      "models": [
+        "openai/gpt-5.2",
+        "openai/gpt-5.4",
+        "openai/gpt-5.4-mini",
+        "openai/gpt-5.4-nano",
+        "openai/gpt-5.5"
+      ],
+      "reasoning_effort": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.2",
+      "tools": true,
+      "seed": false,
+      "vision": true
+    },
+    {
+      "providers": [
+        "openai"
+      ],
+      "models": [
+        "openai/gpt-5.6-luna",
+        "openai/gpt-5.6-sol",
+        "openai/gpt-5.6-terra",
+        "openai/gpt-6-luna",
+        "openai/gpt-6-sol"
+      ],
+      "reasoning_effort": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+      "tools": true,
+      "seed": false,
+      "vision": true
+    },
+    {
+      "providers": [
+        "openai"
+      ],
+      "models": [
+        "openai/gpt-6-astra",
+        "openai/gpt-6.1-sol"
+      ],
+      "reasoning_effort": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "source": "https://developers.openai.com/api/docs/models/gpt-6-astra",
+      "tools": true,
+      "seed": false,
+      "vision": true
+    },
+    {
+      "providers": [
+        "openai"
+      ],
+      "models": [
+        "openai/o1",
+        "openai/o3",
+        "openai/o4-mini"
+      ],
+      "reasoning_effort": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "source": "https://developers.openai.com/api/docs/guides/reasoning",
+      "tools": true,
+      "seed": false,
+      "vision": true
+    },
+    {
+      "providers": [
+        "anthropic"
+      ],
+      "models": [
+        "anthropic/claude-opus-4.5"
+      ],
+      "reasoning_effort": [
+        "none",
+        "low",
+        "medium",
+        "high"
+      ],
+      "source": "https://platform.claude.com/docs/en/build-with-claude/effort",
+      "tools": true,
+      "seed": false
+    },
+    {
+      "providers": [
+        "anthropic"
+      ],
+      "models": [
+        "anthropic/claude-opus-4.6",
+        "anthropic/claude-sonnet-4.6"
+      ],
+      "reasoning_effort": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "max"
+      ],
+      "source": "https://platform.claude.com/docs/en/build-with-claude/effort",
+      "tools": true,
+      "seed": false
+    },
+    {
+      "providers": [
+        "anthropic"
+      ],
+      "models": [
+        "anthropic/claude-opus-4.7",
+        "anthropic/claude-opus-4.8",
+        "anthropic/claude-opus-5.5",
+        "anthropic/claude-fable-5",
+        "anthropic/claude-sonnet-5.5"
+      ],
+      "reasoning_effort": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "source": "https://platform.claude.com/docs/en/build-with-claude/effort",
+      "tools": true,
+      "seed": false
+    },
+    {
+      "providers": [
+        "anthropic"
+      ],
+      "models": [
+        "anthropic/claude-opus-5",
+        "anthropic/claude-sonnet-5"
+      ],
+      "reasoning_effort": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "source": "https://platform.claude.com/docs/en/build-with-claude/effort",
+      "tools": true,
+      "seed": false
+    },
+    {
+      "providers": [
+        "anthropic"
+      ],
+      "models": [
+        "anthropic/claude-haiku-4.5",
+        "anthropic/claude-sonnet-4.5"
+      ],
+      "reasoning_effort": [
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "source": "gateway:internal/adapter/adapter.go#anthropicReasoningEffortBudget",
+      "tools": true,
+      "seed": false
+    },
+    {
+      "providers": [
+        "mistral"
+      ],
+      "models": [
+        "mistralai/mistral-large"
+      ],
+      "reasoning_effort": [],
+      "source": "Customer feedback item 5; gateway forwards effort raw. https://docs.mistral.ai/api/endpoint/chat",
+      "tools": true,
+      "seed": false
+    },
+    {
+      "providers": [
+        "privatemode"
+      ],
+      "models": [
+        "openai/gpt-oss-120b"
+      ],
+      "reasoning_effort": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "source": "gateway:internal/llm/privatemode.go#preparePrivatemodeWire",
+      "tools": true,
+      "vision": false
+    },
+    {
+      "providers": [
+        "privatemode"
+      ],
+      "models": [
+        "z-ai/glm-5.3",
+        "z-ai/glm-5.3-flash"
+      ],
+      "reasoning_effort": [
+        "low",
+        "high",
+        "max"
+      ],
+      "source": "gateway:internal/llm/privatemode.go#preparePrivatemodeWire",
+      "tools": true
+    },
+    {
+      "providers": [
+        "baseten"
+      ],
+      "models": [
+        "openai/gpt-oss-120b"
+      ],
+      "reasoning_effort": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "source": "https://developers.openai.com/api/docs/models/gpt-oss-120b",
+      "tools": true,
+      "vision": false
+    },
+    {
+      "providers": [
+        "google-vertex"
+      ],
+      "models": [
+        "google/gemini-2.5-pro"
+      ],
+      "reasoning_effort": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ],
+      "source": "https://ai.google.dev/gemini-api/docs/thinking",
+      "tools": true,
+      "seed": true,
+      "vision": true
+    },
+    {
+      "providers": [
+        "google-vertex"
+      ],
+      "models": [
+        "google/gemini-2.5-flash",
+        "google/gemini-2.5-flash-lite"
+      ],
+      "reasoning_effort": [
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ],
+      "source": "https://ai.google.dev/gemini-api/docs/thinking",
+      "tools": true,
+      "seed": true,
+      "vision": true
+    },
+    {
+      "providers": [
+        "google-vertex"
+      ],
+      "models": [
+        "google/gemini-3-pro-preview"
+      ],
+      "reasoning_effort": [
+        "none",
+        "minimal",
+        "low",
+        "high"
+      ],
+      "source": "https://ai.google.dev/gemini-api/docs/thinking",
+      "tools": true,
+      "seed": true,
+      "vision": true
+    },
+    {
+      "providers": [
+        "google-vertex"
+      ],
+      "models": [
+        "google/gemini-3.1-pro-preview",
+        "google/gemini-3-flash-preview",
+        "google/gemini-3.1-flash-lite-preview",
+        "google/gemini-3.5-flash",
+        "google/gemini-3.6-flash",
+        "google/gemini-3.7-flash",
+        "google/gemini-3.8-flash"
+      ],
+      "reasoning_effort": [
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ],
+      "source": "https://ai.google.dev/gemini-api/docs/thinking",
+      "tools": true,
+      "seed": true,
+      "vision": true
+    },
+    {
+      "providers": [
+        "google-ai-studio",
+        "gemini"
+      ],
+      "models": [
+        "google/gemini-3.7-flash",
+        "google/gemini-3.8-flash"
+      ],
+      "reasoning_effort": [
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ],
+      "source": "https://ai.google.dev/gemini-api/docs/thinking",
+      "tools": true,
+      "seed": true,
+      "vision": true
+    },
+    {
+      "providers": [
+        "deepseek"
+      ],
+      "models": [
+        "deepseek/deepseek-v4-flash",
+        "deepseek/deepseek-v4-pro",
+        "deepseek/deepseek-v4-pro-20260423"
+      ],
+      "reasoning_effort": [
+        "high",
+        "max"
+      ],
+      "source": "https://api-docs.deepseek.com/zh-cn/news/news260424/"
+    },
+    {
+      "providers": [
+        "openai"
+      ],
+      "models": [
+        "openai/o3-mini"
+      ],
+      "reasoning_effort": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "source": "https://developers.openai.com/api/docs/guides/reasoning",
+      "tools": true,
+      "seed": false,
+      "vision": false
+    }
+  ]
+}

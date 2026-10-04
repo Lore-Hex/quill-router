@@ -21,6 +21,7 @@ from trusted_router.catalog import (
     MODEL_ENDPOINTS,
     PROVIDERS,
 )
+from trusted_router.provider_lifecycle import provider_model_retired
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -170,6 +171,7 @@ def test_wave2_manifests_publish_only_live_eligible_routes() -> None:
         row["id"]
         for row in manifests["streamlake"]["models"]
         if row.get("routable") is not False
+        and not provider_model_retired("streamlake", row["id"], row["upstream_id"])
     }
     assert streamlake_route_models == streamlake_manifest_models
     assert all(

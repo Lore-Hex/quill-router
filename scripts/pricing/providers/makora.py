@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -18,10 +17,9 @@ from scripts.pricing.base import (
     ModelPrice,
     ProviderPricingResult,
     fetch_json,
-    guard_manifest_prune,
-    reconcile_manifest_tombstones,
     validate,
 )
+from scripts.pricing.manifest import write_discovered_chat_manifest
 from scripts.pricing.model_ids import canonicalize_native_model_id
 from scripts.pricing.openai_catalog import dollars_per_token_to_micro_per_m
 
@@ -185,69 +183,15 @@ def fetch() -> ProviderPricingResult:
 
 
 def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
-    """Update Makora's supplemental runtime manifest from parsed prices.
-
-    The shared hourly snapshot merger updates `openrouter_snapshot.json`.
-    Makora's actual runtime routes live in `provider_models/makora.json`, so
-    this hook keeps that manifest from becoming a manually maintained price
-    island.
-    """
-
-    raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-    rows = raw.get("models")
-    if not isinstance(rows, list):
-        raise RuntimeError("makora manifest has no models list")
-
-    if not _DISCOVERED_MANIFEST_ROWS:
-        raise RuntimeError("makora manifest refresh has no live discovery rows")
-    existing_by_id = {
-        row["id"]: row for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str)
-    }
-    present_rows: dict[str, dict[str, Any]] = {}
-    updated: list[str] = []
-    for model_id, discovered in sorted(_DISCOVERED_MANIFEST_ROWS.items()):
-        row = dict(existing_by_id.get(model_id) or {})
-        row.update(discovered)
-        price = result.prices.get(model_id)
-        if price is not None:
-            tier = price.tiers[0]
-            row["input_token_price_per_m"] = tier.prompt_micro_per_m
-            row["output_token_price_per_m"] = tier.completion_micro_per_m
-            if tier.prompt_cached_micro_per_m is not None:
-                row["cached_input_token_price_per_m"] = tier.prompt_cached_micro_per_m
-            else:
-                row.pop("cached_input_token_price_per_m", None)
-            updated.append(model_id)
-        present_rows[model_id] = row
-
-    if not updated:
-        raise RuntimeError("makora manifest update touched no rows")
-
-    rebuilt = reconcile_manifest_tombstones(
-        rows,
-        present_rows,
-        priced_ids=set(result.prices),
-        source=result.source,
+    """Use the shared writer so discovery cannot clear account-access holds."""
+    return write_discovered_chat_manifest(
+        result,
+        manifest_path=MANIFEST_PATH,
+        discovered_rows=_DISCOVERED_MANIFEST_ROWS,
+        source_url=MODELS_URL,
+        pricing_source_url=MODELS_URL,
+        operator_hold_reasons={
+            "deepseek/deepseek-v4-flash": "provider-billing-unavailable",
+            "google/gemma-4-26b-a4b-it": "provider-billing-unavailable",
+        },
     )
-    guarded = guard_manifest_prune(rows, rebuilt, provider_slug=SLUG)
-    if guarded is rows:
-        return ["makora: kept old manifest (mass-prune guard)"]
-
-    raw["_about"] = (
-        "Provider-native supplement for Makora Inference routes. Model IDs, "
-        "capabilities, context windows, and account-billable prices refresh "
-        "hourly from Makora's authenticated /v1/models feed."
-    )
-    raw["source"] = MODELS_URL
-    raw["pricing_source"] = MODELS_URL
-    raw["generated_at"] = (
-        datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    )
-    raw["model_count"] = len(guarded)
-    raw["models"] = guarded
-
-    MANIFEST_PATH.write_text(
-        json.dumps(raw, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-    return [f"makora: refreshed provider_models/makora.json ({len(updated)} priced rows)"]

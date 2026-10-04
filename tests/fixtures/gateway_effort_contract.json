@@ -1,0 +1,146 @@
+{
+  "gateway_revision": "2f3a86c1bfb6f105184d1bf3b4548fa6c9ad688c",
+  "cases": [
+    {
+      "provider": "openai",
+      "model": "openai/gpt-5",
+      "upstream_id": "gpt-5",
+      "adapter": "compatible",
+      "wire": {
+        "none": "none",
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "upstream_accepts": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "provider": "openai",
+      "model": "openai/gpt-5.2",
+      "upstream_id": "gpt-5.2",
+      "adapter": "compatible",
+      "wire": {
+        "none": "none",
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "upstream_accepts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "provider": "mistral",
+      "model": "mistralai/mistral-large",
+      "upstream_id": "mistral-large-latest",
+      "adapter": "compatible",
+      "wire": {
+        "none": "none",
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "upstream_accepts": []
+    },
+    {
+      "provider": "anthropic",
+      "model": "anthropic/claude-sonnet-4.6",
+      "upstream_id": "claude-sonnet-4-6",
+      "adapter": "anthropic",
+      "wire": {
+        "none": "disabled",
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "upstream_accepts": [
+        "disabled",
+        "low",
+        "medium",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "provider": "privatemode",
+      "model": "z-ai/glm-5.3",
+      "upstream_id": "glm-5.3",
+      "adapter": "privatemode",
+      "wire": {
+        "none": "rejected",
+        "minimal": "rejected",
+        "low": "low",
+        "medium": "rejected",
+        "high": "high",
+        "xhigh": "rejected",
+        "max": "max"
+      },
+      "upstream_accepts": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "provider": "privatemode",
+      "model": "openai/gpt-oss-120b",
+      "upstream_id": "gpt-oss-120b",
+      "adapter": "privatemode",
+      "wire": {
+        "none": "rejected",
+        "minimal": "rejected",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "rejected",
+        "max": "rejected"
+      },
+      "upstream_accepts": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "provider": "google-ai-studio",
+      "model": "google/gemini-3.7-flash",
+      "upstream_id": "gemini-3.7-flash",
+      "adapter": "compatible",
+      "wire": {
+        "none": "low",
+        "minimal": "low",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "upstream_accepts": [
+        "low",
+        "medium",
+        "high"
+      ]
+    }
+  ]
+}

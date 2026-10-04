@@ -35,6 +35,49 @@ from trusted_router.storage_models import ReceiptKey
 from trusted_router.storage_postgres import PostgresStore
 
 
+@pytest.mark.parametrize("error_class", [
+    collector.httpx.ReadTimeout, collector.httpx.ConnectTimeout,
+    collector.httpx.ReadError, collector.httpx.RemoteProtocolError,
+])
+def test_receipt_fetch_retries_one_transient_failure(monkeypatch, error_class) -> None:
+    calls = []
+    sleeps = []
+    target = collector.ReceiptKeyTarget("api.example", "192.0.2.10")
+
+    def fetch(got, *, verify_tls):
+        calls.append((got, verify_tls))
+        if len(calls) == 1:
+            raise error_class("transient")
+        return {"kid": "sample"}
+
+    monkeypatch.setattr(collector, "_fetch_receipt_key", fetch)
+    monkeypatch.setattr(collector.time, "sleep", sleeps.append)
+    assert collector._fetch_receipt_key_with_retry(target, verify_tls=True) == {"kid": "sample"}
+    assert calls == [(target, True), (target, True)]
+    assert sleeps == [0.25]
+
+
+@pytest.mark.parametrize("error,attempts", [
+    (collector.httpx.ReadTimeout("unavailable"), 2),
+    (ValueError("malformed receipt"), 1),
+    (collector.httpx.ConnectError("certificate failure"), 1),
+])
+def test_receipt_fetch_failure_stays_fail_closed(monkeypatch, error, attempts) -> None:
+    calls = []
+
+    def fetch(*args, **kwargs):
+        calls.append(1)
+        raise error
+
+    monkeypatch.setattr(collector, "_fetch_receipt_key", fetch)
+    monkeypatch.setattr(collector.time, "sleep", lambda _: None)
+    with pytest.raises(type(error)):
+        collector._fetch_receipt_key_with_retry(
+            collector.ReceiptKeyTarget("api.example", "192.0.2.10"), verify_tls=True,
+        )
+    assert len(calls) == attempts
+
+
 def _jwk(seed: bytes = b"receipt-key") -> dict[str, str]:
     return {
         "kty": "OKP",

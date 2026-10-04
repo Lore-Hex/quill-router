@@ -58,6 +58,9 @@ NOVITA_LING_30_TINY_RETIREMENT_AT = datetime(2026, 8, 13, 15, 0, tzinfo=UTC)
 ALIBABA_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 9, 16, 0, tzinfo=UTC)
 AZURE_COMMAND_A_PLUS_RETIREMENT_AT = datetime(2026, 10, 16, 0, 0, tzinfo=UTC)
 WANDB_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 5, 0, 0, tzinfo=UTC)
+# Enforcement starts at the confirmed observation, not an invented upstream
+# deprecation date: all three IDs returned UnavailableModel on October 3.
+STREAMLAKE_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 3, 20, 0, tzinfo=UTC)
 DEEPSEEK_V4_PRICING_EFFECTIVE_AT = datetime(2026, 8, 16, 16, 0, tzinfo=UTC)
 DEEPSEEK_V41_FLASH_EFFECTIVE_AT = datetime(2026, 9, 10, 4, 0, tzinfo=UTC)
 # The launch-day pricing page supersedes the earlier email: Pro remains
@@ -148,6 +151,18 @@ class _Retirement:
 
 
 _RETIREMENTS = (
+    _Retirement(
+        provider="streamlake",
+        model_ids=frozenset({
+            "kwaipilot/kat-coder-pro-v2",
+            "kwaipilot/kat-coder-air-v2.5",
+            "kwaipilot/kat-coder-pro-v2.5",
+        }),
+        upstream_ids=frozenset({
+            "kat-coder-pro-v2", "kat-coder-air-v2.5", "kat-coder-pro-v2.5",
+        }),
+        effective_at=STREAMLAKE_OCTOBER_2026_RETIREMENT_AT,
+    ),
     # W&B's September notice gives October 5 without a time zone. Stop at
     # 00:00 UTC conservatively, only for these exact Serverless Inference ids.
     # Dated DeepSeek releases and other providers are unaffected; never

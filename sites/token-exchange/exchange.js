@@ -1,16 +1,18 @@
 /* Carry campaign attribution to existing TrustedRouter intake, without cookies or pixels. */
-(() => {
+const campaignFields = (() => {
   const incoming = new URLSearchParams(window.location.search);
-  const allowed = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
-  document.querySelectorAll('a[data-attribution]').forEach((link) => {
-    const destination = new URL(link.href);
-    allowed.forEach((key) => {
-      const value = incoming.get(key);
-      if (value && value.length <= 200) destination.searchParams.set(key, value);
-    });
-    link.href = destination.href;
+  const fields = {};
+  ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'].forEach((key) => {
+    const value = incoming.get(key);
+    if (value && value.length <= 128) fields[key] = value;
   });
+  return fields;
 })();
+document.querySelectorAll('a[data-attribution]').forEach((link) => {
+  const destination = new URL(link.href);
+  Object.entries(campaignFields).forEach(([key, value]) => destination.searchParams.set(key, value));
+  link.href = destination.href;
+});
 
 /* Progressive enhancement: navigation stays visible if JavaScript is unavailable. */
 (() => {
@@ -136,7 +138,7 @@
     entries.forEach(entry => visible.set(entry.target, entry.isIntersecting));
     sync();
   });
-  document.querySelectorAll('.hero, .route-flow, .supplier-art').forEach(element => observer.observe(element));
+  document.querySelectorAll('.hero, .supplier-art').forEach(element => observer.observe(element));
 })();
 
 /* Show directional controls only when more market links are out of view. */
@@ -185,6 +187,84 @@ document.querySelectorAll('.geo-scroll').forEach(container => {
       event.stopPropagation();
       picker.open = false;
       picker.querySelector('summary').focus();
+    }
+  });
+})();
+
+/* The brochure form is TrustedRouter's email-gated download, posted there from this
+   domain; the server allows the exchange origins. Without JavaScript the button stays
+   disabled and the noscript line offers email instead. */
+(() => {
+  const form = document.getElementById('brochure-form');
+  if (!form || !window.fetch || !window.AbortController) return;
+  const button = form.querySelector('button[type=submit]');
+  const email = form.querySelector('input[name=email]');
+  const status = document.getElementById('brochure-status');
+  const label = button.innerHTML;
+  const contact = 'enterprise@trustedrouter.com';
+  let busy = false;
+  button.disabled = false;
+  email.addEventListener('input', () => email.removeAttribute('aria-invalid'));
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (busy || !form.reportValidity()) return;
+    busy = true;
+    // Disabling the focused button drops focus to the page; it is restored afterwards.
+    const refocus = document.activeElement === button;
+    button.disabled = true;
+    button.textContent = 'Preparing your brochure…';
+    form.setAttribute('aria-busy', 'true');
+    status.textContent = '';
+    status.dataset.state = 'loading';
+    email.removeAttribute('aria-invalid');
+    let timeout;
+    try {
+      const controller = new AbortController();
+      timeout = setTimeout(() => controller.abort(), 30000);
+      const response = await fetch(form.action, {
+        method: 'POST',
+        mode: 'cors',
+        credentials: 'omit',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({email: email.value.trim(), website: form.elements.website.value, resource: 'brochure', campaign: campaignFields}),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const errors = {
+          422: 'Please enter a valid email address.',
+          429: `You've reached the download limit. Please try later or email ${contact}.`,
+        };
+        if (response.status === 422) email.setAttribute('aria-invalid', 'true');
+        throw new Error(errors[response.status] || `Something went wrong. Try again or email ${contact}.`);
+      }
+      if (!(response.headers.get('content-type') || '').includes('application/pdf')) {
+        throw new Error(`Please refresh the page and try again, or email ${contact}.`);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const download = document.createElement('a');
+      download.href = url;
+      download.download = 'TrustedRouter-Token-Exchange-Brochure.pdf';
+      document.body.appendChild(download);
+      download.click();
+      download.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      status.dataset.state = 'success';
+      status.textContent = "Your download has started. Share the brochure with your team. We'd be happy to discuss your requirements.";
+    } catch (error) {
+      status.dataset.state = 'error';
+      status.textContent = error.name === 'AbortError'
+        ? `This is taking longer than expected. Please try again or email ${contact}.`
+        : error instanceof TypeError
+          ? `Something went wrong. Try again or email ${contact}.`
+          : error.message;
+    } finally {
+      clearTimeout(timeout);
+      busy = false;
+      button.disabled = false;
+      button.innerHTML = label;
+      form.removeAttribute('aria-busy');
+      if (refocus) button.focus();
     }
   });
 })();
