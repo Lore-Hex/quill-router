@@ -118,6 +118,17 @@ const r = await client.chat.completions.create({
   </div>
 </section>
 
+<section id="model-changes" style="margin-top:48px">
+  <h2 class="section-center">Model route changes</h2>
+  <p>Poll <a href="https://trustedrouter.com/v1/models/changes"><code>GET https://trustedrouter.com/v1/models/changes</code></a> or subscribe to the <a href="https://trustedrouter.com/v1/models/changes.atom">Atom feed</a>. Both are public and need no API key. They report model and provider-route additions and removals, route metadata changes, confidential route gains and losses, best privacy tier changes, and upcoming provider retirements.</p>
+  <pre><code>GET /v1/models/changes?model=deepseek/deepseek-v4-flash&amp;since=2026-09-01T00:00:00Z
+GET /v1/models/changes.atom?type=confidential_route_lost
+GET /v1/models/changes?upcoming=true</code></pre>
+  <p>Each entry has a stable <code>id</code>, <code>model</code>, <code>type</code>, <code>before</code>, <code>after</code>, <code>recorded_at</code> and <code>effective_at</code>. Results are complete and ordered by <code>(recorded_at, id)</code>, ascending. <code>since</code> is inclusive and filters when entries were recorded, so newly announced future changes are discoverable immediately. Save the greatest <code>recorded_at</code> you receive and deduplicate the next poll by <code>id</code>. Use timezone-qualified timestamps; <code>model</code> matches an exact public id. Repeat <code>type</code> to select several change types. <code>upcoming=true</code> selects future effective dates; <code>false</code> selects changes already effective; omit it for both.</p>
+  <p>Announcements use <code>retirement_scheduled</code>; projected route changes have <code>source: "scheduled"</code> and the announced effective date. They describe the current plan. If a forecast is withdrawn or replaced, it disappears from the current feed and a <code>schedule_cancelled</code> entry identifies its old id. Scheduled pricing policies use <code>pricing_schedule_changed</code>, excluded by default: select that type or add <code>include_prices=true</code>. Ordinary price refreshes and each recurring peak/off-peak switch are omitted to keep subscriptions readable; pricing policy entries contain the recurring schedule.</p>
+  <p><code>trustedrouter.last_route_change_at</code> in <code>/v1/models</code> gives the latest recorded route change that is already effective, or <code>null</code> if none is known. The history starts with a September 1, 2026 baseline and replays committed catalog revisions using their contemporary privacy rules. Backfilled observations use commit dates, not deployment timestamps. Later entries describe catalog observations and announced cutovers; they do not establish release completion, live provider health, capacity, or credential availability. Conditional discovery-expiry deadlines are recorded when observed, rather than forecast as provider retirements.</p>
+</section>
+
 <section id="model-capabilities" style="margin-top:48px">
   <h2 class="section-center">Model request capabilities</h2>
   <p><code>GET /v1/models</code> includes <code>trustedrouter.capabilities</code> on concrete model rows. For example, GPT-5.5 reports:</p>
