@@ -39,6 +39,11 @@ The initial generic legacy guard hit its 1,000-row bound and made no changes.
 Rather than scan the historical JSON ledger, the reviewed repair scope was
 narrowed to new typed-only accounts. Old accounts remain outside this tool.
 
+The affected workspace was repaired in production with a separate deployment
+identity. A read-only verification confirmed the ledger changed from 16 shards
+to one with unchanged totals: 300,000 credit, 31,525 usage, and zero reserved
+microdollars, leaving 268,475 available. No keys or budget settings changed.
+
 ## Validation
 
 All four starter regression cases fail with the old 16-shard default and pass

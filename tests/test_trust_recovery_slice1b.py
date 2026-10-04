@@ -136,7 +136,10 @@ def test_dispute_then_refund_reversal_keeps_full_claim_until_dispute_won() -> No
     assert _balance(database, workspace_id) == 1_000
 
 
-def test_multi_shard_debit_takes_maximum_safe_and_pauses_for_remainder() -> None:
+def test_multi_shard_debit_takes_maximum_safe_and_pauses_for_remainder(monkeypatch: Any) -> None:
+    from trusted_router import storage_gcp
+
+    monkeypatch.setattr(storage_gcp, "DEFAULT_NEW_BILLING_SHARDS", 16)
     store, database, workspace_id = _store_with_payment()
     shards = {
         shard: row

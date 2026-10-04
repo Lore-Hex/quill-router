@@ -222,7 +222,10 @@ def test_spanner_bulk_projection_matches_the_legacy_fanout_values() -> None:
     assert store.list_api_keys_with_usage(workspace.id) == expected
 
 
-def test_spanner_bulk_key_usage_fails_closed_on_incomplete_shards() -> None:
+def test_spanner_bulk_key_usage_fails_closed_on_incomplete_shards(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trusted_router import storage_gcp
+
+    monkeypatch.setattr(storage_gcp, "DEFAULT_NEW_BILLING_SHARDS", 3)
     store, database = make_fake_store()
     user, workspace = _workspace(store, "console-incomplete-shards@example.com")
     _raw, key = store.create_api_key(
