@@ -184,7 +184,8 @@ function showFxTerms(quote) {
 async function showInvoice(invoice) {
   state.invoice = invoice;
   remember();
-  const payable = invoice.state === "OPEN" && !invoice.expired && !amountDirty && !invoice.attention_required;
+  const preparing = invoice.state === "OPEN" && !invoice.bolt11;
+  const payable = invoice.state === "OPEN" && !preparing && Boolean(invoice.qr) && !invoice.expired && !amountDirty && !invoice.attention_required;
   $("qr").hidden = !payable;
   $("qr-empty").hidden = payable;
   $("invoice-actions").hidden = !payable;
@@ -199,7 +200,7 @@ async function showInvoice(invoice) {
     $("btc-amount").textContent = `$${invoice.usd_amount} USD credits · ${invoice.invoice_btc} BTC invoice`;
     showFxTerms(invoice);
   }
-  const labels = { OPEN: invoice.expired ? "Invoice expired. Update to create a new one." : "Waiting for payment", ACCEPTED: "Payment in flight. Waiting for settlement.", SETTLED: invoice.credited ? `Added $${invoice.credit_usd} in USD credits` : "Payment received. USD credit is pending.", CANCELED: "Invoice canceled" };
+  const labels = { OPEN: invoice.expired ? "Invoice expired. Update to create a new one." : preparing ? "Preparing invoice" : "Waiting for payment", ACCEPTED: "Payment in flight. Waiting for settlement.", SETTLED: invoice.credited ? `Added $${invoice.credit_usd} in USD credits` : "Payment received. USD credit is pending.", CANCELED: "Invoice canceled" };
   $("invoice-state").textContent = labels[invoice.state];
   $("qr-message").textContent = invoice.state === "SETTLED" ? "Payment received" : labels[invoice.state];
   if (invoice.attention_required) {

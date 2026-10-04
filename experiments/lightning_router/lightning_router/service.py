@@ -10,7 +10,7 @@ import segno
 
 from .credentials import Credentials
 from .credits import Credits
-from .errors import FundingReviewRequired
+from .errors import FundingReviewRequired, InvoiceCreationPending
 from .lexe import Lexe, LexeReadinessError
 from .lnd import Invoice, Lnd
 from .money import MAX_CREDIT_RECEIPT, btc, microdollars, usd
@@ -94,6 +94,12 @@ class Funding:
             return self.public(row)
         try:
             return self._refresh(row, cancel=cancel)
+        except InvoiceCreationPending:
+            # Do not write a failure over the creator's concurrent progress.
+            # Recovery still escalates unresolved creation after its 60s grace.
+            logger.warning(json.dumps({"severity": "INFO", "event": "lightning.invoice_creation_pending",
+                                       "invoice_id": row["id"]}))
+            return self.public(self.store.invoice(row["id"], row["key_hash"]))
         except FundingReviewRequired as exc:
             self.store.failed(row["id"], exc.code, int(time.time()), review=True)
             raise

@@ -12,7 +12,7 @@ from typing import Any
 import bolt11
 import httpx
 
-from .errors import FundingReviewRequired
+from .errors import FundingReviewRequired, InvoiceCreationPending
 from .lnd import Invoice
 from .money import msats
 
@@ -249,7 +249,7 @@ class Lexe:
                     matches[parsed.provider_index] = item
             if len(payments) < 100:
                 if not matches and time.time() - row["create_started_at"] < 60:
-                    raise RuntimeError("Invoice creation in progress")
+                    raise InvoiceCreationPending()
                 if not matches:
                     return None  # Only a completed authoritative scan proves absence.
                 if len(matches) != 1:
