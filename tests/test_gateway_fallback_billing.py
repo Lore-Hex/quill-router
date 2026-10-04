@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -8,6 +10,7 @@ from tests.fixture_routes import drop_routes, serve_on_fixture_route
 from trusted_router.catalog import (
     ARCHIMEDES_1_0_MODEL_ID,
     MISTRAL_LARGE_MODEL_ID,
+    MODEL_ENDPOINTS,
     MODELS,
     default_endpoint_for_model,
     endpoint_for_id,
@@ -609,6 +612,12 @@ def test_parasail_liberty_minimum_is_reserved_and_settled_exactly_once(
     assert authorize.status_code == 200, authorize.text
     auth_data = authorize.json()["data"]
     assert auth_data["estimated_cost_microdollars"] == 1_000
+    assert auth_data["candidate_cost_reporting"] is False
+    for candidate in auth_data["route_candidates"]:
+        endpoint = MODEL_ENDPOINTS[candidate["endpoint_id"]]
+        monkeypatch.setitem(MODEL_ENDPOINTS, endpoint.id, replace(
+            endpoint, prompt_price_microdollars_per_million_tokens=9_000_000,
+        ))
 
     settle_body = {
         "authorization_id": auth_data["authorization_id"],
@@ -1362,6 +1371,7 @@ def test_gateway_can_prefer_byok_endpoint_for_dual_mode_model(
     assert authorize.status_code == 200, authorize.text
     data = authorize.json()["data"]
     assert data["usage_type"] == "BYOK"
+    assert data["candidate_cost_reporting"] is False
     assert data["limit_usage_type"] == "BYOK"
     assert data["credit_reservation_id"] is None
     assert data["byok_secret_ref"] == "env://KIMI_API_KEY"  # noqa: S105
@@ -1384,6 +1394,11 @@ def test_gateway_can_prefer_byok_endpoint_for_dual_mode_model(
         }
     ]
 
+    endpoint = MODEL_ENDPOINTS[data["endpoint_id"]]
+    monkeypatch.setitem(MODEL_ENDPOINTS, endpoint.id, replace(
+        endpoint, prompt_price_microdollars_per_million_tokens=2_000_000,
+        completion_price_microdollars_per_million_tokens=5_000_000,
+    ))
     settle = client.post(
         "/v1/internal/gateway/settle",
         json={
@@ -1398,6 +1413,7 @@ def test_gateway_can_prefer_byok_endpoint_for_dual_mode_model(
     assert settle.status_code == 200, settle.text
     settled = settle.json()["data"]
     assert settled["usage_type"] == "BYOK"
+    assert settled["cost_microdollars"] == 9_000
     assert settled["provider"] == "kimi"
     generation = STORE.get_generation(settled["generation_id"])
     assert generation is not None

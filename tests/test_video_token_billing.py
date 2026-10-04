@@ -30,6 +30,7 @@ def authorize(client, key, quote=0):
         "provider": {"only": ["venice"]},
     })
     assert response.status_code == 200, response.text
+    assert response.json()["data"]["candidate_cost_reporting"] is False
     return response.json()["data"]["authorization_id"]
 
 

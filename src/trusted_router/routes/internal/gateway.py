@@ -197,6 +197,7 @@ from trusted_router.services.user_model_slots import (
     release_user_model_slot,
 )
 from trusted_router.stage_d import (
+    billing_pricing_snapshot,
     canonical_pricing_snapshot,
     endpoint_pricing_document,
     parse_pricing_snapshot,
@@ -2563,13 +2564,9 @@ def _gateway_authorize_response(
                 authorization.additional_cost_reservation_microdollars
             ),
             "receipt_fee_basis_points": authorization.receipt_fee_basis_points,
-            # Reporting only. Normal settle currently resolves the live catalog
-            # at authorization.created_at; it does NOT consume pricing_snapshot.
-            # Even a surcharge-free Stage D snapshot is therefore insufficient
-            # to promise the eventual charge across a catalog refresh. Leave the
-            # gateway's exact candidate fallback disabled until billing itself
-            # guarantees snapshot equality. Do not change billing to enable it.
-            "candidate_cost_reporting": False,
+            # Eligible requests bill the served endpoint's authorization-time
+            # snapshot, including on retries after a catalog refresh.
+            "candidate_cost_reporting": billing_pricing_snapshot(authorization) is not None,
             "request_metadata_version": REQUEST_METADATA_VERSION,
             "native_batch_eligible": authorization.native_batch_eligible,
             **({"video_token_billing": True} if authorization.video_pricing_snapshot else {}),
@@ -3331,6 +3328,7 @@ def _settle_gateway_authorization(
             )
         except ValueError as exc:
             raise api_error(400, str(exc), ErrorType.BAD_REQUEST) from exc
+    billing_snapshot = billing_pricing_snapshot(authorization)
     actual_cost = (
         video_cost if video_cost is not None else custom_model_cost_microdollars(
             input_tokens=total_input,
@@ -3345,6 +3343,16 @@ def _settle_gateway_authorization(
             output_tokens=output_tokens,
         )
         if partner_mode is not None
+        else _endpoint_cost_microdollars_from_document(
+            billing_snapshot,
+            selected_endpoint.id,
+            uncached_input,
+            output_tokens,
+            cache_read_tokens=cache_read,
+            cache_creation_tokens=cache_creation,
+            price_tier_input_tokens=price_tier_input_tokens,
+        )
+        if billing_snapshot is not None
         else _endpoint_cost_microdollars(
             selected_endpoint,
             uncached_input,

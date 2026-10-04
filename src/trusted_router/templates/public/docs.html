@@ -222,7 +222,8 @@ with httpx.Client() as client:
   <h2>Cost in response usage</h2>
   <p>Single-endpoint Chat Completions, Responses, and Anthropic Messages requests return <code>usage.cost_microdollars</code> and <code>usage.total_cost_microdollars</code> when the request's charge is known. Both are integer microdollars: 1,000,000 equals $1. A known free request reports 0; an unknown cost is omitted.</p>
   <p>For streaming chat, request <code>stream_options.include_usage: true</code> to receive the terminal usage chunk. Responses includes cost in <code>response.completed.response.usage</code>; Messages includes it in <code>message_delta.usage</code>. Answer deltas continue streaming while the terminal event waits briefly for settlement.</p>
-  <p>A durable settlement intent can supply the charge before finalization finishes. If the charge is still unknown when the terminal event is sent, the cost fields are omitted. An omitted field does not mean the request is free. Prices alone are not reported as a charge unless they are guaranteed to match settlement. No price-based fallback is used for BYOK, partner minimums, orchestration, hosted search, video, refunds, fees, or markups. Partner and orchestration response formats retain their existing cost reporting. Reporting does not change billing or rounding.</p>
+  <p>Eligible standard routes are billed at the prices in effect when the request was authorized. Their streamed usage carries <code>cost_microdollars</code> and <code>total_cost_microdollars</code>, even if settlement is delayed.</p>
+  <p>Other routes report a settled or durable charge when known; an unknown cost is omitted, not shown as zero. BYOK, partner minimums, orchestration, hosted search, video, refunds, receipt surcharges, and custom or app markups retain their existing billing and reporting contracts.</p>
 </section>
 
 {% endblock %}

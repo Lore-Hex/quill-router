@@ -180,9 +180,8 @@ def test_pricing_document_is_equivalent_to_every_catalog_endpoint() -> None:
             )
 
 
-def test_catalog_repricing_does_not_make_a_stage_d_snapshot_authoritative() -> None:
-    # This is why candidate_cost_reporting remains false. Changing settlement
-    # to consume this snapshot would change the charge and is outside reporting.
+def test_catalog_repricing_differs_from_frozen_authorization_price() -> None:
+    # Eligible settlement must use the frozen 49, never the refreshed 63.
     endpoint = ModelEndpoint(
         id="reporting-fixture", model_id="reporting-model", provider="anthropic",
         usage_type="Credits", prompt_price_microdollars_per_million_tokens=1_000_000,

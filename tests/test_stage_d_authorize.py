@@ -278,7 +278,7 @@ def test_app_markup_and_receipt_fee_remain_in_stage_d_cohort(
     stored = db.gateway_authorizations[response["authorization_id"]]
     assert json.loads(stored["payload"])["app_markup_basis_points"] == app_markup
     assert response["receipt_fee_basis_points"] == (1_200 if receipt else 0)
-    assert response["candidate_cost_reporting"] is False
+    assert response["candidate_cost_reporting"] is (app_markup == 0 and not receipt)
     assert response["stage_d"] == {"eligible": True, "reason": "ok"}
     assert response["candidate_prices"]
 
