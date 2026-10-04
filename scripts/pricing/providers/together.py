@@ -13,8 +13,8 @@ Prices still come from `/v1/models`.
 
 Both endpoints require an API key (Bearer auth). The workflow can provide one
 via the TOGETHER_API_KEY env var. Without it, the fetch returns 401 and
-Together is counted as a single failure under MAX_TOLERATED_FAILURES — every
-other provider still refreshes.
+Together keeps its committed state while other providers still refresh.
+Only a majority of provider refreshes failing aborts the whole run.
 """
 from __future__ import annotations
 
