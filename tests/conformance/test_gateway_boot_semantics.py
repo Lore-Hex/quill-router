@@ -64,3 +64,29 @@ def test_gateway_boot_registration_merges_verification_upward_only(
     assert store.observe_gateway_boot(unverified) == verified
     stored = store.get_gateway_boot(unverified.kid)
     assert stored is not None and stored.verified is True and stored.approved is True
+
+
+def test_gateway_boot_declarations_follow_the_latest_registration(
+    store: Store,
+    unique: str,
+) -> None:
+    # Unlike verification, a declaration is not merged upward: it is whatever
+    # the latest registration sent, so a boot can withdraw it, and it is read
+    # back exactly on every backend.
+    undeclared = _boot(unique)
+    assert undeclared.declares_usage_heartbeat is False
+    assert undeclared.declares_stream_open_heartbeat is False
+    assert store.observe_gateway_boot(undeclared) == undeclared
+
+    declared = replace(
+        undeclared, declares_usage_heartbeat=True, declares_stream_open_heartbeat=True
+    )
+    assert store.observe_gateway_boot(declared) == declared
+    assert store.get_gateway_boot(declared.kid) == declared
+
+    partly = replace(undeclared, declares_usage_heartbeat=True)
+    assert store.observe_gateway_boot(partly) == partly
+    assert store.get_gateway_boot(declared.kid) == partly
+
+    assert store.observe_gateway_boot(undeclared) == undeclared
+    assert store.get_gateway_boot(declared.kid) == undeclared

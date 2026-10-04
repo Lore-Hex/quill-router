@@ -6689,6 +6689,9 @@ class SpannerStore:
                     approved=existing.approved or record.approved,
                     verified=existing.verified or record.verified,
                     image_digest=record.image_digest or existing.image_digest,
+                    # Replaced, never merged: a declaration can be withdrawn.
+                    declares_usage_heartbeat=record.declares_usage_heartbeat,
+                    declares_stream_open_heartbeat=record.declares_stream_open_heartbeat,
                 )
             self._write_entity_tx(transaction, GATEWAY_BOOT_KIND, record.kid, merged)
             return merged
