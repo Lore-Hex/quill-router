@@ -2,7 +2,7 @@
 
 Status: **approved by Joseph on 2026-10-03 (v25). Nothing built.** v8 changed
 direction to regional leases, Joseph's choice (§2). Codex and Fable reviewed
-v1-v25 (§11) and both accepted v25. v26 and v27 add §4.13, how this fits with
+v1-v25 (§11) and both accepted v25. v26 to v28 add §4.13, how this fits with
 the work in flight on the same path, and §5.1, the TLA+ specs that are
 model-checked before the code is written.
 
@@ -1161,8 +1161,9 @@ lists.
   that lasts at most 30 seconds and carries a bounded number of permits;
   output waits for the ordinary authorize. It is in shadow only: the router's
   observer (#1457) and the enclave's coordinator (quill-cloud-proxy #439) are
-  both merged with their modes off. It hides authorize's latency and leaves
-  its Spanner commits; fast admission removes both. So:
+  both merged with their modes off, and shadow starts no provider request.
+  Once it dispatches, it will hide authorize's latency; it leaves authorize's
+  Spanner commits either way. Fast admission removes both. So:
   - **A workspace takes one or the other.** A workspace on the fast path
     gets no speculation grants, for any of its requests, including those
     that stay synchronous (§4.11). Its unsettled exposure then has one bound,
@@ -1172,10 +1173,22 @@ lists.
   - For the issuer, a workspace is on the fast path when fast mode is on for
     it or any of its leases is open or draining. The issuer reads that in the
     strong snapshot it already takes, a standalone Python change (§8).
-  - Switching fast mode on waits out a grant's 30 seconds before the first
-    lease is granted. Switching it off leaves leases draining for up to
-    2 h 20 min, and grants resume only once they have closed. So the two
-    bounds never overlap.
+  - **The switch is serialized with both issuers and counts what is
+    outstanding.** Stopping new grants cancels nothing already issued, and
+    the protocol keeps a grant's exposure across its expiry and cancellation.
+    - Turning fast mode on closes the workspace to new grants, in the
+      issuer's own row and transaction. The first lease is granted only
+      after every issued grant's start deadline has passed. Whatever the
+      issuer still records for the workspace, its outstanding executions and
+      retained losses, is subtracted from the lease allowance until it
+      settles.
+    - Turning it off stops lease admission and drains the leases (§4.7).
+      Grants resume only once every lease of the workspace has closed, which
+      the issuer reads in its snapshot.
+    - So the workspace's unsettled exposure never exceeds its trust
+      allowance, in either direction.
+    - This rule binds speculation's real permits, which are not built; today's
+      shadow can dispatch nothing.
   - Speculation keeps its value for workspaces that are not on the fast
     path, and until fast admission ships.
   - A grant's paid headroom never counts leased money: leases sit in
@@ -1197,6 +1210,11 @@ lists.
   down from 4.3 two days earlier. This is the path the synchronous cohort
   keeps (§4.11) and the reference the shadow comparator checks against, so
   its statements are the ones the compiled service must match.
+- **The enclave's default output cap.** quill-cloud-proxy #440 sends up to
+  32,000 output tokens to adaptive-thinking Anthropic models when the caller
+  names no limit, where authorize estimates 512 (§4.4). That widens the
+  overruns §4.7 books as debt, so the lease and allowance sizes in §9 are
+  measured against it.
 - **The trust-tier job** (#1484, #1491) selects its candidates from one
   snapshot, in shadow. The trust allowance (§4.7) reads the tier it
   maintains, and nothing in that job depends on leases.
@@ -1266,46 +1284,88 @@ in TLA+ and checked with TLC before the code that implements them is written
 
 | Spec | Protocol | Invariants above |
 |---|---|---|
-| `LeaseLifecycle` | Grant, renewal, the owner's cutoff, expiry, draining and close, with clocks that differ by up to the skew allowance; two owners and a hand-off | 1, 6, 7, 9 |
-| `TerminalOrder` | One lease's records: the owner's sequence, the drain log, adoption, the fence tick, the boundary S, reaps by the owner and by the auditor, late and redelivered records, close against appends, and a rebuild from the archive | 3, 4, 5 |
-| `AuditorCommit` | The per-lease conditional commit under member takeover, crashes and redelivery, and the checkpoint audit | 2, 10 |
+| `LeaseLifecycle` | Grant, renewal, the owner's cutoff, expiry, draining and close, with clocks that differ by up to the skew allowance; two owners and a hand-off; the reservation a draining lease keeps until its drain's end condition | 1, 6, 7, 9, the renewal half of 10, and the reservation half of 4 |
+| `TerminalOrder` | One lease's records: the owner's sequence, the drain log, adoption, the fence tick, the boundary S, reaps by the owner and by the auditor, the release of a stream's hold before its first heartbeat, late and redelivered records, close against appends, and a rebuild from the archive | 3, 5, and 4 for terminals |
+| `AuditorCommit` | The per-lease conditional commit under member takeover, crashes and redelivery; the open holds and snapshots it stores; the checkpoint audit | 2, the booking half of 10, and 4 across a takeover |
 | `CreditDebt` | Bookings across credit shards: overruns, covering a negative shard, the debt mark, and inflows that repay debt first | 11, and the per-shard identity in 2 |
 | `KeyCapFence` | Adding a cap while leases hold the key's holds: the key-status version, the owners' caches and the enabling condition | 8 |
 
-The rules are the ones `proofs/` already follows:
+Two properties the table's short names hide:
 
-- **Each spec names its invariants one by one** in its `.cfg`, with no state
+- `TerminalOrder` treats the release before a first heartbeat (§4.5) as a
+  terminal with outcome `released`. It checks that a hold with a durable
+  heartbeat is never released.
+- `AuditorCommit` checks Invariant 4 across a takeover: a hold the log showed
+  with an accepted snapshot is settled, or reaped at that snapshot, by the
+  time its lease closes, whichever members committed in between.
+
+**Rules `proofs/` follows today, kept:**
+
+- Each spec names its invariants one by one in its `.cfg`, with no state
   constraint. Its bounds are small and stated, with what each bound leaves
   out.
-- **Every guard is shown to matter.** For each guard the design relies on, a
-  mutant spec with that guard removed must make TLC produce a
-  counterexample, and the spec records which invariant the mutant breaks. The
-  mutants run in CI with the specs. The guards include the owner's cutoff,
-  the boundary S, the commit version, the close's read of the drain log, the
-  debt mark and the key-status version. A guard whose removal breaks nothing
-  is either unnecessary or not modeled, and the spec says which.
-- **The windows Target 4 allows are stated assumptions** of the specs: the
-  bounded skew and the state cache's age. A mutant that widens the skew past
-  its allowance must break the admission bound, which shows the model can see
-  that failure.
-- **Liveness is checked where the design promises progress:** a draining
-  lease whose records can be read closes, and an acknowledged terminal is
-  booked.
-- **Each spec has an executable shadow.** The owner's and the auditor's state
-  machines are pure modules of the Go service. Property tests drive them
-  through the spec's actions and check the spec's invariants, as
-  `tests/test_regional_quota_leases.py` shadows `RegionalQuotaLease`. In the
-  spike and in shadow, traces recorded from real leases are checked against
-  the specs' transitions.
+- Liveness is checked where the design promises progress: a draining lease
+  whose records can be read closes, and an acknowledged terminal is booked.
+
+**Rules that are new here:**
+
+- **Mutants are checked, not described.** Today a spec's header records its
+  guard deletions as prose, run by hand. Here each mutant is a named
+  replacement of one guard in the spec's text, with the one invariant it must
+  violate. A runner passes a mutant only when TLC reports exactly that
+  invariant violated. It fails on anything else: a parse error, a different
+  invariant, `TypeOK`, or no error. The runner has its own test: a mutant
+  known to break nothing must fail it. The mutants run in the `proofs` job.
+  - The guards with mutants include the owner's cutoff, the boundary S, the
+    commit version, the close's read of the drain log, the debt mark and the
+    key-status version.
+  - Also: releasing without checking for a durable heartbeat, releasing for a
+    boot that did not declare the stream-open heartbeat, and dropping open
+    holds from the auditor's stored state.
+  - A guard whose removal breaks nothing is either unnecessary or not
+    modeled, and the spec says which.
+- **The assumptions are stated, each with a mutant that widens it.** There
+  are three: the bounded skew, the state cache's age, and the margin within
+  which Pub/Sub's servers agree, on which a rebuild's completeness rests
+  (§4.8). Widening the skew must break Invariant 1. An archive reported
+  complete while a record received before the tick is missing must break
+  Invariant 4.
+- **Each spec names a shadow that exists.** The owner's and the auditor's
+  state machines are pure modules of the Go service, and property tests
+  drive them through the spec's actions and check its invariants. A manifest
+  in `proofs/` names each spec's shadow test, and the `proofs` job fails when
+  a named shadow is missing.
+  - The precedent shows why. `RegionalQuotaLease` still cites
+    `tests/test_regional_quota_leases.py` as its shadow, but that test and the
+    module it shadowed were deleted with the pilot (#1418), and the spec has
+    run in CI since, modeling code that is gone. It is retired when
+    `LeaseLifecycle` lands, and its header's lessons on vacuous guards move
+    to a README in `proofs/`.
+- **Recorded traces are replayed through the shadow.** In the spike and in
+  shadow, a trace recorded from a real lease is fed to the shadow's
+  transition function, which checks that each step is one of the spec's
+  actions and that the invariants hold after it. TLC is not fed traces.
 - **A protocol change changes its spec first,** in the same pull request as
   the code.
 
-What this proves: TLC visits every reachable state of a small instance, such
-as two owners, two leases and a few authorizations. That is exhaustive for
-the instance and is not a proof for every size. The hazards the reviews found
-(§11) were all interleavings of a few actors, which small instances contain.
-Latency, load and the arithmetic of real amounts are outside the specs; the
-benchmark and the property tests cover them.
+**What this proves, and what it does not:**
+
+- TLC visits every reachable state of a small instance, such as two owners,
+  two leases and a few authorizations. That is exhaustive for the instance
+  and is not a proof for every size.
+- It does not replace reading the code and the contracts. Several of the
+  reviews' findings (§11) were not interleavings: the reap's fee layer,
+  payments that never cleared the debt mark, the declaration with nowhere to
+  live, the 1 MBps limit per ordering key, the enclave's retry queue and
+  first-heartbeat exception, and the key row that raises. A spec catches a
+  missing writer only if that writer is an action in the model.
+- A Spanner transaction is one atomic action in the specs, so lock order and
+  wound-wait (v10, v11) are outside them. The emulator and the contention
+  tests cover those.
+- The switch between speculation and the fast path (§4.13) is not in the
+  five specs. It is specified with speculation's real permits.
+- Latency, load and the arithmetic of real amounts are outside the specs;
+  the benchmark and the property tests cover them.
 
 ## 6. Latency and load
 
@@ -2032,3 +2092,30 @@ record.
   - The speculation rule is per workspace, with "on the fast path" defined
     for the issuer and both switches ordered so the bounds never overlap.
   - The P3s are answered in place.
+- **v28.** Codex (1 P1, 1 P3) reviewed v26, and Fable (4 P2, 7 P3) reviewed
+  v27's TLA+ plan. Their findings:
+  - stopping new speculation grants cancels nothing already issued, so the
+    workspace could carry both bounds: the switch between modes was not
+    serialized and did not count outstanding rights (Codex P1; it binds only
+    once speculation dispatches);
+  - the release before a first heartbeat had no spec;
+  - the takeover hazard was modeled in `AuditorCommit` while its invariant
+    lived in `TerminalOrder`;
+  - "the mutants run in CI" had no mechanism, and `proofs/check.sh` fails on
+    any counterexample;
+  - the executable shadow the plan cited was deleted with the pilot, while
+    its spec kept running;
+  - and, among the P3s, what model checking does not replace, the third
+    assumption, which spec owns two half-invariants, lock order, the switch,
+    and how traces are checked.
+
+  v28 answers them:
+  - The switch is serialized with both issuers, and what the speculation
+    issuer still records is subtracted from the lease allowance.
+  - §5.1's table assigns the release and the takeover property; mutants get a
+    runner that requires the named invariant's violation; a manifest names
+    each shadow and CI fails if one is missing; `RegionalQuotaLease` is
+    retired when `LeaseLifecycle` lands.
+  - §5.1 states what the specs do not cover.
+  - The enclave's 32,000-token default output cap (#440) is recorded as
+    widening overruns.
