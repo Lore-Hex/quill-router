@@ -1,1 +1,1 @@
-{"data":{"authorization_id":"gwa-stage-d-fixture","settled":false,"already_settled":false,"disposition":"intent_durable","finalization_outcome":"pending"}}
+{"data":{"authorization_id":"gwa-stage-d-fixture","settled":false,"already_settled":false,"disposition":"intent_durable","finalization_outcome":"pending","cost_microdollars":0,"cost":0.0,"model":"model","usage_type":"Credits"}}

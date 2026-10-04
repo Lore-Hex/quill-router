@@ -224,7 +224,7 @@ from trusted_router.storage_errors import (
     transient_store_error_types,
 )
 from trusted_router.storage_gcp_io import spanner_rpc_budget
-from trusted_router.storage_gcp_settle_outbox import ENQ_INSERTED
+from trusted_router.storage_gcp_settle_outbox import ENQ_INSERTED, ENQ_REFRESHED
 from trusted_router.storage_models import (
     SYNTHETIC_APP_NAME,
     AmbiguousGatewayRequestId,
@@ -2489,6 +2489,13 @@ def _gateway_authorize_response(
                 authorization.additional_cost_reservation_microdollars
             ),
             "receipt_fee_basis_points": authorization.receipt_fee_basis_points,
+            # Reporting only. Normal settle currently resolves the live catalog
+            # at authorization.created_at; it does NOT consume pricing_snapshot.
+            # Even a surcharge-free Stage D snapshot is therefore insufficient
+            # to promise the eventual charge across a catalog refresh. Leave the
+            # gateway's exact candidate fallback disabled until billing itself
+            # guarantees snapshot equality. Do not change billing to enable it.
+            "candidate_cost_reporting": False,
             "request_metadata_version": REQUEST_METADATA_VERSION,
             "native_batch_eligible": authorization.native_batch_eligible,
             **stage_d,
@@ -3516,6 +3523,7 @@ def _settle_gateway_authorization(
             selected_usage_type=selected_usage_type,
         )
     )
+    durable_intent: SettleOutboxRow | None = None
     settle_intent: SettleOutboxRow | None = None
     if settings.settle_outbox_enabled:
         try:
@@ -3613,6 +3621,7 @@ def _settle_gateway_authorization(
         one_commit_ms = (perf_counter() - one_commit_start) * 1000
     if one_commit_result is not None:
         assert settle_intent is not None
+        durable_intent = settle_intent
         # The intent committed, already resolved, with its refill attachment.
         outbox_enqueued = True
         refill_attached = (
@@ -3634,6 +3643,22 @@ def _settle_gateway_authorization(
             # intent_durable rather than inviting the enclave to infer that no
             # settlement record exists.
             outbox_enqueued = True
+            # A leased/terminal row can differ from this attempt. Report only
+            # the frozen intent that actually became durable, never this retry's
+            # newly calculated price when enqueue preserved an older row.
+            if enqueue_outcome in {ENQ_INSERTED, ENQ_REFRESHED}:
+                durable_intent = settle_intent
+            else:
+                try:
+                    durable_intent = settle_outbox.get(authorization.id, intent_kind)
+                except Exception:
+                    # A reporting lookup must not skip refill attachment or
+                    # change whether the existing inline finalize is attempted.
+                    logger.warning(
+                        "durable settlement reporting lookup failed authorization_id=%s",
+                        authorization.id,
+                        exc_info=True,
+                    )
             if refill_required:
                 # A matching fresh INSERT already committed the attachment.
                 # Pre-cutover combined rows have no refill columns. Attaching is
@@ -3666,7 +3691,7 @@ def _settle_gateway_authorization(
                 "authorization_id=%s",
                 authorization.id,
             )
-            return {"data": _intent_durable_gateway_data(authorization)}
+            return {"data": _intent_durable_gateway_data(authorization, durable_intent)}
         raise api_error(
             503,
             "Settlement refill durability is temporarily unavailable",
@@ -3739,7 +3764,7 @@ def _settle_gateway_authorization(
                     "authorization_id=%s",
                     authorization.id,
                 )
-                return {"data": _intent_durable_gateway_data(authorization)}
+                return {"data": _intent_durable_gateway_data(authorization, durable_intent)}
         else:
             try:
                 with gateway_phase("store_ms", after="post_commit_ms"):
@@ -3761,7 +3786,7 @@ def _settle_gateway_authorization(
                     "authorization_id=%s",
                     authorization.id,
                 )
-                return {"data": _intent_durable_gateway_data(authorization)}
+                return {"data": _intent_durable_gateway_data(authorization, durable_intent)}
             finalize_result = TypedFinalizeResult(
                 finalized=finalized_legacy_contract,
                 activity_indexed=finalized_legacy_contract,
@@ -3784,7 +3809,7 @@ def _settle_gateway_authorization(
                 "settlement deferred after inline finalize failure authorization_id=%s",
                 authorization.id,
             )
-            return {"data": _intent_durable_gateway_data(authorization)}
+            return {"data": _intent_durable_gateway_data(authorization, durable_intent)}
         if finalized:
             _credit_user_model_payout_safely(
                 authorization,
@@ -3827,12 +3852,12 @@ def _settle_gateway_authorization(
                     "authorization_id=%s",
                     authorization.id,
                 )
-                return {"data": _intent_durable_gateway_data(authorization)}
+                return {"data": _intent_durable_gateway_data(authorization, durable_intent)}
             raise
         if refreshed.settled:
             return {"data": _already_settled_gateway_data(refreshed)}
         if outbox_enqueued:
-            return {"data": _intent_durable_gateway_data(refreshed)}
+            return {"data": _intent_durable_gateway_data(refreshed, durable_intent)}
         return {"data": _already_settled_gateway_data(refreshed)}
     _record_user_model_gateway_outcome_safely(
         authorization,
@@ -4242,14 +4267,26 @@ def _gateway_evidence_disposition(authorization: GatewayAuthorization) -> str | 
     return None
 
 
-def _intent_durable_gateway_data(authorization: Any) -> dict[str, Any]:
-    return {
+def _intent_durable_gateway_data(
+    authorization: Any, intent: SettleOutboxRow | None = None
+) -> dict[str, Any]:
+    data: dict[str, Any] = {
         "authorization_id": authorization.id,
         "settled": False,
         "already_settled": False,
         "disposition": "intent_durable",
         "finalization_outcome": "pending",
     }
+    if intent is not None:
+        data.update(money_pair("cost", intent.actual_cost_micro))
+        if intent.model_id:
+            data["model"] = intent.model_id
+        if intent.selected_usage_type:
+            data["usage_type"] = intent.selected_usage_type
+        endpoint = endpoint_for_id(intent.selected_endpoint_id)
+        if endpoint is not None:
+            data["provider"] = endpoint.provider
+    return data
 
 
 def _settle_body_with_safe_attribution(

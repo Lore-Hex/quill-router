@@ -1494,6 +1494,11 @@ def test_inline_finalize_false_leaves_outbox_pending(fake_store: tuple[Any, Any]
         "already_settled": False,
         "disposition": "intent_durable",
         "finalization_outcome": "pending",
+        "cost_microdollars": 697,
+        "cost": 0.000697,
+        "model": MODEL_ID,
+        "provider": "anthropic",
+        "usage_type": "Credits",
     }
     row = _outbox(store).get(auth.id, "settle")
     assert row is not None and row.status == "pending"

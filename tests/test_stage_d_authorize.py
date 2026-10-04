@@ -214,8 +214,9 @@ def test_stage_d_authorize_payload_uses_snapshot_and_estimate_cap() -> None:
     } == expected_ineligible
 
 
+@pytest.mark.parametrize("app_markup,receipt", [(0, False), (1_250, False), (0, True), (1_250, True)])
 def test_app_markup_and_receipt_fee_remain_in_stage_d_cohort(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, app_markup: int, receipt: bool,
 ) -> None:
     store, db = make_fake_store(request_record_write_mode="typed")
     workspace = Workspace(id="stage-d-fees", name="Stage D fees", owner_user_id="user-1")
@@ -241,7 +242,7 @@ def test_app_markup_and_receipt_fee_remain_in_stage_d_cohort(
     monkeypatch.setattr(
         gateway,
         "_oauth_app_terms_for_key",
-        lambda _key: (1_250, "app-owner"),
+        lambda _key: (app_markup, "app-owner"),
     )
     body = GatewayAuthorizeRequest(
         api_key_hash=key.hash,
@@ -251,7 +252,7 @@ def test_app_markup_and_receipt_fee_remain_in_stage_d_cohort(
         max_output_tokens=100,
         stream=True,
         route_type="chat.completions",
-        inference_receipt=True,
+        inference_receipt=receipt,
     )
 
     response = gateway._authorize_gateway_sync(
@@ -272,8 +273,9 @@ def test_app_markup_and_receipt_fee_remain_in_stage_d_cohort(
     )["data"]
 
     stored = db.gateway_authorizations[response["authorization_id"]]
-    assert json.loads(stored["payload"])["app_markup_basis_points"] == 1_250
-    assert response["receipt_fee_basis_points"] == 1_200
+    assert json.loads(stored["payload"])["app_markup_basis_points"] == app_markup
+    assert response["receipt_fee_basis_points"] == (1_200 if receipt else 0)
+    assert response["candidate_cost_reporting"] is False
     assert response["stage_d"] == {"eligible": True, "reason": "ok"}
     assert response["candidate_prices"]
 
