@@ -61,13 +61,19 @@ logging is intentionally disabled to avoid persisting payment secrets. The
 evidence establishes a transient read timeout, not its upstream cause or an
 exhausted liquidity balance.
 
-The adapter now retries only four allowlisted GET operations once after a
-transport timeout/disconnect. The retry has a five-second read timeout and
-one-second connection/pool timeouts; normal read deadlines are unchanged.
-Redacted retry/recovery/failure events identify the operation and exception
-class, never query parameters, payment indexes, response bodies or credentials.
-HTTP rejections, invalid data, wrong wallet/authority and expired credentials
-still fail closed. Invoice create/cancel POSTs are never replayed. Existing
+The initial repair retried the four allowlisted GET operations once after a
+transport timeout/disconnect. Following Lexe's October 4 guidance, these reads
+now share a three-attempt total budget for transport failures and HTTP 500,
+502, 503, and 504. Backoff uses equal jitter: 125-250ms before the first retry,
+then 250-500ms before the second. Retry read/write deadlines are five seconds
+and connection/pool deadlines one second; normal first-attempt deadlines are
+unchanged. These are per-I/O timeouts, not a total request-duration promise.
+
+Recovered attempts emit warning-level retry/recovery events. Exhaustion emits
+an error and leaves readiness closed; a short retry budget is not intended to
+hide an extended outage. HTTP 4xx, other statuses, invalid data, wrong
+wallet/authority and expired credentials still fail closed without replay.
+Invoice create/cancel POSTs and unknown endpoints are never replayed. Existing
 receiving and funding alert policies and thresholds are unchanged.
 
 ## Node 0.10.5 permission expansion (October 1)
@@ -106,12 +112,30 @@ evidence of low BTC liquidity.
 
 The readiness code raises this error for a non-200 response from the attesting
 Lexe sidecar, but the old diagnostic discarded the operation and HTTP status.
-The underlying upstream cause cannot be determined from those retained logs.
-Failures now emit `lightning.lexe_http_failed` with an allowlisted operation
-and numeric `http_status`, without reading error bodies or logging paths,
-parameters, headers, wallet identifiers, or credentials. Unknown operations
-are labeled `unknown`. HTTP responses still fail closed without retries,
-and alert thresholds remain unchanged. Keep sidecar diagnostic logging off.
+Lexe subsequently reported a deployment beginning at 21:51:45 UTC, with a
+backend restart at 21:51:57, overlapping our failure. The deployment completed
+normally. Their surviving journal had no system failure or attestation error;
+startup application logs were no longer retained. A rollout interruption is
+therefore the most likely cause, not a proven endpoint/status or an excluded
+attestation failure. This evidence is separate from the creation race below.
+
+The October 3 diagnostic repair added static operation and HTTP status. The
+October 4 extension also records allowlisted method/path, attempt count, an
+optional numeric Lexe error code, and a locally generated trace ID. It sends
+the same 16-character `lexe-trace-id` across attempts so Lexe can correlate
+the request. Caller-supplied trace IDs are replaced, never logged. Unknown
+operations/methods/paths are labeled `unknown`; query parameters are omitted.
+
+Lexe's reviewed [ErrorResponse schema](https://github.com/lexe-app/lexe-public/blob/aab30588d92549e5a92f3e8754426add8d6e8828/lexe-api-core/src/error.rs)
+defines `code` as u16 but permits sensitive `msg`/`data`. We retain only that
+integer from a bounded, uncompressed JSON body (at most 4KiB); absent, malformed,
+oversized, slow, or unreadable diagnostic bodies leave the code unknown and
+do not replace the original HTTP status. The [trace header contract](https://github.com/lexe-app/lexe-public/blob/aab30588d92549e5a92f3e8754426add8d6e8828/lexe-api/src/trace.rs)
+defines a client-originated 16-character alphanumeric ID. No raw error body,
+payment index, invoice, preimage, wallet identity, or credential is logged.
+Keep sidecar diagnostic logging off. For a recurrence, send Lexe the UTC time,
+allowlisted method/path, status, numeric error code and trace ID, not payment
+secrets. Retry only the transient GET cases described above.
 
 ## Concurrent creation reconciliation (October 4)
 

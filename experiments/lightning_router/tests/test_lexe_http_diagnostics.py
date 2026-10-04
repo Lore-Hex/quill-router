@@ -20,8 +20,9 @@ class UnreadErrorBody(httpx.SyncByteStream):
     ("GET", "/private-unrecognized-path", "unknown"),
     ("PRIVATE", "/v2/node/client_info", "unknown"),
 ])
-def test_http_failure_logs_only_static_operation_and_status(status, method, path, operation, caplog):
+def test_http_failure_logs_only_static_operation_and_status(status, method, path, operation, caplog, monkeypatch):
     calls = []
+    monkeypatch.setattr("lightning_router.lexe.time.sleep", lambda _: None)
 
     def handle(request):
         calls.append(request)
@@ -35,10 +36,15 @@ def test_http_failure_logs_only_static_operation_and_status(status, method, path
             lexe.request(method, path, params={"index": "private-payment-index"},
                          headers={"Authorization": "Bearer private-token"})
 
-    assert len(calls) == 1
+    expected_calls = 3 if method == "GET" and operation != "unknown" and status in {500, 502, 503, 504} else 1
+    assert len(calls) == expected_calls
     assert lexe._checked == 0
     messages = [record.getMessage() for record in caplog.records if record.name == "lightning_router"]
-    assert messages == [f"lightning.lexe_http_failed operation={operation} http_status={status}"]
+    assert len(messages) == expected_calls
+    assert messages[-1].startswith(f"lightning.lexe_http_failed operation={operation} ")
+    assert f"http_status={status}" in messages[-1]
+    assert f"attempts={expected_calls}" in messages[-1]
+    assert "lexe_code=unknown" in messages[-1]
     for secret in ("private-response-header", "private-payment-index", "private-token",
                    "private-unrecognized-path", "PRIVATE", "a" * 64):
         assert secret not in caplog.text

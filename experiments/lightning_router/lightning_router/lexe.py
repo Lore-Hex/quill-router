@@ -4,6 +4,8 @@ import hashlib
 import json
 import logging
 import re
+import secrets
+import string
 import threading
 import time
 from decimal import Decimal
@@ -37,9 +39,37 @@ HTTP_OPERATIONS = {
     ("POST", "/v2/node/cancel_payment"): "cancel_payment",
 }
 TRANSIENT_READ_ERRORS = (
-    httpx.ConnectTimeout, httpx.ReadTimeout, httpx.ConnectError,
-    httpx.ReadError, httpx.RemoteProtocolError,
+    httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError,
 )
+TRANSIENT_READ_STATUSES = {500, 502, 503, 504}
+READ_RETRY_DELAYS = (.25, .5)
+
+
+class LexeHTTPError(RuntimeError):
+    def __init__(self, status: int, code: int | None) -> None:
+        super().__init__("Lexe request unavailable")
+        self.status = status
+        self.code = code
+
+
+def error_code(response: httpx.Response) -> int | None:
+    # Lexe ErrorResponse has a u16 code; msg/data can contain payment secrets.
+    # Do not decompress diagnostic bodies or retain arbitrary provider text.
+    if (response.headers.get("content-type", "").split(";")[0].strip() != "application/json"
+            or response.headers.get("content-encoding", "identity") != "identity"):
+        return None
+    body = bytearray()
+    deadline = time.monotonic() + 1
+    try:
+        for chunk in response.iter_bytes():
+            if len(body) + len(chunk) > 4096 or time.monotonic() > deadline:
+                return None
+            body.extend(chunk)
+        data = json.loads(body)
+    except (httpx.HTTPError, ValueError, RecursionError):
+        return None
+    code = data.get("code") if isinstance(data, dict) else None
+    return code if type(code) is int and 0 <= code <= 65535 else None
 
 
 class LexeReadinessError(ValueError):
@@ -85,32 +115,47 @@ class Lexe:
     def request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         # Only replay authenticated reads. An ambiguous create/cancel must keep
         # its existing durable recovery path, never become a second mutation.
-        if method != "GET" or path not in READ_OPERATIONS:
-            return self._request_once(method, path, **kwargs)
-        try:
-            return self._request_once(method, path, **kwargs)
-        except TRANSIENT_READ_ERRORS as exc:
-            logger.warning("lightning.lexe_read_retry operation=%s error_type=%s attempt=1",
-                           READ_OPERATIONS[path], type(exc).__name__)
-        retry_kwargs = {**kwargs, "timeout": httpx.Timeout(5, connect=1, pool=1)}
-        try:
-            result = self._request_once(method, path, **retry_kwargs)
-        except TRANSIENT_READ_ERRORS as exc:
-            logger.error("lightning.lexe_read_failed operation=%s error_type=%s attempts=2",
-                         READ_OPERATIONS[path], type(exc).__name__)
-            raise
-        logger.warning("lightning.lexe_read_recovered operation=%s attempts=2", READ_OPERATIONS[path])
-        return result
+        safe_read = method == "GET" and path in READ_OPERATIONS
+        operation = HTTP_OPERATIONS.get((method, path), "unknown")
+        trace_id = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(16))
+        headers = httpx.Headers(kwargs.get("headers"))
+        headers["lexe-trace-id"] = trace_id
+        kwargs = {**kwargs, "headers": headers}
+        context = (f"operation={operation} method={method if operation != 'unknown' else 'unknown'} "
+                   f"path={path if operation != 'unknown' else 'unknown'} trace_id={trace_id}")
+        attempt = 1
+        while True:
+            try:
+                result = self._request_once(method, path, **kwargs)
+            except (LexeHTTPError, *TRANSIENT_READ_ERRORS) as exc:
+                is_http = isinstance(exc, LexeHTTPError)
+                status = exc.status if isinstance(exc, LexeHTTPError) else 0
+                code = exc.code if isinstance(exc, LexeHTTPError) and exc.code is not None else "unknown"
+                retryable = safe_read and (not is_http or status in TRANSIENT_READ_STATUSES)
+                detail = f"{context} error_type={type(exc).__name__} http_status={status} lexe_code={code}"
+                if retryable and attempt <= len(READ_RETRY_DELAYS):
+                    cap = READ_RETRY_DELAYS[attempt - 1]
+                    delay = secrets.SystemRandom().uniform(cap / 2, cap)
+                    logger.warning("lightning.lexe_read_retry %s attempt=%d delay_ms=%d", detail, attempt, int(delay * 1000))
+                    time.sleep(delay)
+                    kwargs = {**kwargs, "timeout": httpx.Timeout(5, connect=1, pool=1)}
+                    attempt += 1
+                    continue
+                if is_http:
+                    logger.error("lightning.lexe_http_failed %s attempts=%d", detail, attempt)
+                    if status == 404 and method == "GET" and path == "/v2/node/payment":
+                        raise FundingReviewRequired("invoice_missing") from exc
+                elif safe_read:
+                    logger.error("lightning.lexe_read_failed %s attempts=%d", detail, attempt)
+                raise
+            if attempt > 1:
+                logger.warning("lightning.lexe_read_recovered %s attempts=%d", context, attempt)
+            return result
 
     def _request_once(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         with self.client.stream(method, path, follow_redirects=False, **kwargs) as response:
-            # Do not propagate bodies, invoice secrets or diagnostic text to logs.
             if response.status_code != 200:
-                logger.error("lightning.lexe_http_failed operation=%s http_status=%d",
-                             HTTP_OPERATIONS.get((method, path), "unknown"), response.status_code)
-                if response.status_code == 404 and path == "/v2/node/payment":
-                    raise FundingReviewRequired("invoice_missing")
-                raise RuntimeError("Lexe request unavailable")
+                raise LexeHTTPError(response.status_code, error_code(response))
             body = bytearray()
             for chunk in response.iter_bytes():
                 body.extend(chunk)
