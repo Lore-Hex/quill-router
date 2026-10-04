@@ -42,16 +42,20 @@ def fixed_time(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(storage_gcp_counter_dml, 'datetime', Clock)
     monkeypatch.setattr(main, 'datetime', Clock)
-    # The one-commit intent stamps auto_refill_next_attempt_at from this module's
-    # wall clock; unpinned, the reference and C1 runs disagree whenever they
-    # straddle a second boundary (CI, 2026-10-03).
-    monkeypatch.setattr(outbox, 'datetime', Clock)
     monkeypatch.setattr(storage_models, 'utcnow', lambda: NOW)
     monkeypatch.setattr(current, 'utcnow', lambda: NOW)
     monkeypatch.setattr(main, 'utcnow', lambda: NOW)
-    # Delayed refill timestamps must use the same clock as immediate intents.
-    monkeypatch.setattr(outbox, 'datetime', Clock)
+    # The outbox reads one clock, _iso_now, for immediate and delayed stamps
+    # (auto_refill_next_attempt_at included). Unpinned, the reference and C1
+    # runs disagree whenever they straddle a second boundary (CI, 2026-10-03).
     monkeypatch.setattr(outbox, '_iso_now', lambda: NOW.isoformat())
+
+    class OutboxClock(datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> datetime:
+            raise AssertionError('the settle outbox must read its clock through _iso_now')
+
+    monkeypatch.setattr(outbox, 'datetime', OutboxClock)
 
 
 def debt_row(workspace: str = 'workspace', kind: str = 'payment') -> dict[str, Any]:
