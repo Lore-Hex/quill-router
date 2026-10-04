@@ -4,12 +4,24 @@ Status: **approved by Joseph on 2026-10-03 (v25). Nothing built.** v8 changed
 direction to regional leases, Joseph's choice (§2). Codex and Fable reviewed
 v1-v25 (§11) and both accepted v25. v26 to v41 add §4.13, how this fits with
 the work in flight on the same path, and §5.1, the TLA+ specs that are
-model-checked before the code is written. They also changed two things the
-approval covered: how a lease takes an overrun (§4.2, v33 to v38: the
-shortfall rule, the buffer, `pending` and the lease's one order) and which
-requests are the first cohort (§4.11). Those merged in #1503. The first two
-specs, `TerminalOrder` and `LeaseLifecycle`, and the runner that checks every
-spec's mutants are written (#1515 and the pull request stacked on it).
+model-checked before the code is written. They also changed rules the
+approval covered, all merged in #1503:
+
+- how a lease takes an overrun (§4.2, v33 to v38: the shortfall rule, the
+  buffer, `pending` and the lease's one order);
+- which requests are the first cohort (§4.11);
+- a stream's hold is released before its first heartbeat only if no
+  heartbeat was issued, not if none was accepted (§4.5, v32);
+- an owner that cannot publish for longer than the expiry window stops
+  renewing (§4.2, v33);
+- the auditor creates a key row that is missing instead of failing the
+  lease's commit (§4.6, v27);
+- every fast-path charge is priced from the envelope (§4.4), which §9 leaves
+  to Joseph.
+
+The first two specs, `TerminalOrder` and `LeaseLifecycle`, and the runner that
+checks every spec's mutants are written (#1515 and the pull request stacked
+on it).
 
 This is the plan for reaching 100T tokens a month without spending the routing
 margin on the billing database, and for taking the control plane out of request
@@ -912,9 +924,10 @@ headroom is unchanged.
 - Today an overrun stays on the hold's shard. On a workspace with more than
   one shard, that shard can go negative while another stays positive, and
   Python can then spend the positive shard though the workspace has nothing
-  left. A one-time pass covers or marks the workspaces already in that state
-  (§8). A workspace on one shard, as new ones are since #1529, cannot be in
-  it: its only row refuses the next reservation.
+  left. A workspace on one shard, as new ones are since #1529, cannot be in
+  that state: its only row refuses the next reservation. A one-time pass
+  covers or marks every workspace that already has a negative shard, a
+  one-shard workspace's only row included (§8).
 
 **Returns repay debt first.**
 
@@ -3168,8 +3181,7 @@ record.
     `idle_wait_ms`, and leaves it out of `accept_to_start_ms` and the new
     `request_ms` (#394);
   - a workspace on one shard cannot have a negative shard beside a positive
-    one, so three sentences about that state now say "with more than one
-    shard" (§4.7, §4.13, §9).
+    one, so three sentences about that state now say so (§4.7, §4.13, §9).
 
   Codex's review of the first draft (1 P2, 2 P3) corrected three of its
   sentences: `settle_ms` is not a settle's latency and no field is logged
@@ -3180,4 +3192,6 @@ record.
   waits, in whole milliseconds; sixteen shards was the default only from
   #703 to #1529; the two counts of a settle's operations count different
   things; and the status line said only what v26 to v41 added, not what
-  they changed.
+  they changed. Both then accepted, Fable with three P3s: the status line
+  now lists every rule that changed after the approval, and the one-time
+  pass is said to include a one-shard workspace's negative row.
