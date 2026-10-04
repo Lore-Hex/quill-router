@@ -2,9 +2,10 @@
 
 Status: **approved by Joseph on 2026-10-03 (v25). Nothing built.** v8 changed
 direction to regional leases, Joseph's choice (§2). Codex and Fable reviewed
-v1-v25 (§11) and both accepted v25. v26 to v29 add §4.13, how this fits with
+v1-v25 (§11) and both accepted v25. v26 to v31 add §4.13, how this fits with
 the work in flight on the same path, and §5.1, the TLA+ specs that are
-model-checked before the code is written.
+model-checked before the code is written. The first spec, `TerminalOrder`,
+and the runner that checks every spec's mutants are written (#1515).
 
 This is the plan for reaching 100T tokens a month without spending the routing
 margin on the billing database, and for taking the control plane out of request
@@ -330,7 +331,8 @@ lease's expiry minus a skew allowance.
 1. Verify the boot signature and the accepted image digest, against caches with
    a maximum age.
 2. Evaluate the compiled routing snapshot (§4.10) and compute the estimate e.
-   Without `max_tokens`, it assumes 512 output tokens.
+   Without `max_tokens`, it assumes 512 output tokens. The fast path takes
+   only requests whose e covers what the provider can bill (§4.11).
 3. At the owner, check the workspace's state from a cache with a short maximum
    age (pause, trust, revocation). Then hold e against the lease.
 4. Answer with a **signed envelope** that the gateway echoes on heartbeat,
@@ -1067,7 +1069,8 @@ when Python is unreachable: the first durable point is Python's
 ### 4.11 What stays synchronous at first
 
 Credit-funded keys on standard catalog routes go first: requests that do not
-stream, and streams the enclave heartbeats. These stay on today's Python path:
+stream, and streams the enclave heartbeats, when their hold covers what the
+provider can bill. These stay on today's Python path:
 
 - streams the enclave does not heartbeat. The owner decides that with
   today's rule (`_stage_d_eligibility_reason` in `gateway.py`) and its
@@ -1111,11 +1114,27 @@ stream, and streams the enclave heartbeats. These stay on today's Python path:
   answers heartbeats `retry`, which ends running streams as today's 503 does
   (§4.5); with eligibility disabled it admits no new streams on the fast
   path and keeps serving those it admitted;
-- requests that do not stream and whose caller names no output limit. Their
-  hold is priced at 512 output tokens while the provider may return up to its
-  ceiling (§4.13). They move once their hold is priced at the ceiling the
-  enclave sends the provider, which needs that ceiling in the routing
-  snapshot or in the authorize request (§9);
+- requests whose hold does not cover what the provider can bill (§4.13),
+  streaming or not. The allowance counts holds, so a request that settles
+  far above its hold takes settled spend past the allowance. The fast path
+  takes a request only when both hold, as authorize sees them:
+  - the caller named an output limit: the request's `max_tokens` is not
+    null. Without one the hold is priced at 512 output tokens, and the
+    provider may return up to its own ceiling;
+  - the request asks for no reasoning: `requested_parameters` has no
+    `reasoning`. A thinking budget is not an output limit. It raises the
+    ceiling the enclave sends above the caller's limit.
+
+  For those requests the enclave sends the provider the caller's limit (read
+  on its Anthropic and OpenAI-compatible paths at `29be0fdd`; shadow checks
+  every endpoint, §8). The owner also prices their input at the endpoint's
+  cache-write rate where that is above its input rate, so a cache write is
+  inside the hold. What is left is the input estimate's error, which shadow
+  measures before the pilot. The others move once the enclave states, in
+  authorize, the output ceiling it will send for each candidate, and the hold
+  is priced at it (§9);
+- requests that carry a speculation descriptor, which Python alone answers
+  (§4.13);
 - requests with an `Idempotency-Key` (§4.3);
 - BYOK routes, custom and user-provided models, Polyphemus selection, native
   batch, video and image jobs, and hosted tools with
@@ -1220,19 +1239,34 @@ lists.
   down from 4.3 two days earlier. This is the path the synchronous cohort
   keeps (§4.11) and the reference the shadow comparator checks against, so
   its statements are the ones the compiled service must match.
-- **The enclave's default output ceiling.** When a caller names no output
-  limit, authorize estimates 512 output tokens (`outputTokenEstimate` in the
-  enclave, `output_estimate` in Python), and that estimate prices the hold.
-  The provider can be allowed far more: quill-cloud-proxy #440 sends
-  adaptive-thinking Anthropic models a ceiling of 32,000 tokens.
-  - A heartbeated stream cannot outrun its hold. The enclave ends it at the
-    hold (`cap_reached`, with `QUILL_TERMINATE_AT_CAP` on in every region),
-    and a heartbeat whose usage or running charge is above it is rejected.
-  - A request that does not stream can: it may settle at about sixty times a
-    512-token hold. On today's path that is an overrun against the balance.
-    On the fast path it would take settled spend past the trust allowance by
-    the same multiple, since the allowance counts holds. So those requests
-    stay synchronous at first (§4.11).
+- **How far a request can outrun its hold.** The hold is the estimate: the
+  estimated input at the input rate, plus the caller's `max_tokens`, or 512
+  tokens without one, at the output rate (`outputTokenEstimate` in the
+  enclave, `output_estimate` in Python). A settle bills what the provider
+  reports. With the input estimate exact, it can still pass the hold in three
+  ways (quill-cloud-proxy `29be0fdd`):
+  - **The ceiling sent to the provider is above the estimate.** With no
+    caller limit, adaptive-thinking Anthropic models are sent 32,000 tokens
+    (#440), about sixty times a 512-token hold, and OpenAI-compatible
+    upstreams are sent no limit. With a caller limit and a thinking budget,
+    the enclave sends the budget plus the limit
+    (`anthropicMaxTokensForThinking`): a limit of 100 with high effort
+    becomes 8,292.
+  - **The stream cap counts relayed bytes, not billed tokens.** The enclave
+    ends a stream when its own meter reaches the hold (`cap_reached`, with
+    `QUILL_TERMINATE_AT_CAP` on in every GCP region; elsewhere the heartbeat
+    above the cap is rejected, which ends the stream too). That meter is the
+    bytes it relayed, divided by four (`stageDMeter`). The settle prefers the
+    provider's count (`terminalUsage`), which includes reasoning the provider
+    billed and did not relay. So the cap bounds what the client received, not
+    the charge.
+  - **A cache write bills above the input rate:** 1.25 times it
+    (`pricing.py`), while the estimate prices all input at the input rate.
+
+  On today's path each is an overrun against the balance: 12.2% of settles,
+  $45.57 a day (§1). On the fast path the trust allowance counts holds, so
+  settled spend would pass the allowance by the same ratio. So the fast path
+  takes only requests whose hold covers what the provider can bill (§4.11).
 - **The trust-tier job** (#1484, #1491) selects its candidates from one
   snapshot, in shadow. The trust allowance (§4.7) reads the tier it
   maintains, and nothing in that job depends on leases.
@@ -1284,7 +1318,10 @@ Each has a production check.
 - the state cache's maximum age, for pauses and revocation;
 - a clock wrong, or stepped, by more than the skew allowance, which could let
   an owner admit or decide after its lease drains;
-- overruns, which are booked as debt (§4.7);
+- overruns: a settle above its hold, booked in full, as debt when the balance
+  cannot cover it (§4.7). The fast path's cohort is chosen so that a hold
+  covers what the provider can bill (§4.11), which leaves the input
+  estimate's error;
 - requests whose gateway could not reach the log within its retry budget
   (§4.8);
 - an owner record received after a tick that reaped its hold, which only
@@ -1303,8 +1340,8 @@ in TLA+ and checked with TLC before the code that implements them is written
 | Spec | Protocol | Invariants above |
 |---|---|---|
 | `LeaseLifecycle` | Grant, renewal, the owner's cutoff, expiry, draining and close, with clocks that differ by up to the skew allowance; two owners and a hand-off; the reservation a draining lease keeps until its drain's end condition | 1, 6, 7, 9, the renewal half of 10, and the reservation half of 4 |
-| `TerminalOrder` | One lease's records: the owner's sequence, the drain log, adoption, the fence tick, the boundary S, reaps by the owner and by the auditor, the release of a stream's hold before its first heartbeat, late and redelivered records, close against appends, and a rebuild from the archive | 3, 5, and 4 for terminals |
-| `AuditorCommit` | The per-lease conditional commit under member takeover, crashes and redelivery; the open holds and snapshots it stores; the checkpoint audit | 2, the booking half of 10, and 4 across a takeover |
+| `TerminalOrder` | One lease's records, for a stream and for a request that does not stream: the owner's sequence, its cutoff and publish deadline, the drain log, adoption, the fence tick, the boundary S, reaps by the owner and by the auditor, the release of a stream's hold before its first heartbeat, records stored late, close against appends, and a rebuild from the archive | 3, and 4 for terminals and for streams that ran |
+| `AuditorCommit` | The per-lease conditional commit under member takeover, crashes and redelivery; the open holds and snapshots it stores; the checkpoint audit | 2, the reap half of 5, the booking half of 10, and 4 across a takeover |
 | `CreditDebt` | Bookings across credit shards: overruns, covering a negative shard, the debt mark, and inflows that repay debt first | 11, and the per-shard identity in 2 |
 | `KeyCapFence` | Adding a cap while leases hold the key's holds: the key-status version, the owners' caches and the enabling condition | 8 |
 
@@ -1312,7 +1349,8 @@ Three properties the table's short names hide:
 
 - `TerminalOrder` treats the release before a first heartbeat (§4.5) as a
   terminal with outcome `released`. It checks that a hold with a durable
-  heartbeat is never released.
+  heartbeat is never released, by a release record or by closing the lease
+  over it, and that the enclave of a released hold had given up.
 - `AuditorCommit` checks Invariant 4 across a takeover, whichever members
   committed in between: a hold's winning terminal is the one stored, a refund
   included, and a hold the log showed with an accepted snapshot and no other
@@ -1333,49 +1371,73 @@ Three properties the table's short names hide:
 
 **Rules that are new here:**
 
-- **Mutants are checked, not described.** Today a spec's header records its
-  guard deletions as prose, run by hand. Here each mutant is a named
-  replacement of one guard in the spec's text, with the one invariant it must
-  violate. A runner passes a mutant only when TLC reports exactly that
-  invariant violated. It fails on anything else: a parse error, a different
-  invariant, `TypeOK`, or no error. The runner has its own test: a mutant
-  known to break nothing must fail it. The mutants run in the `proofs` job.
+- **Mutants are checked, not described.** A spec's header used to record its
+  guard deletions as prose, run by hand. Now each mutant is one replacement
+  in the spec's text, listed in `proofs/manifest.toml` with the one invariant
+  or property it must break. `proofs/check_mutants.py` checks the mutated
+  spec against that claim alone, and passes the mutant only when TLC reports
+  it violated. A parse error, an evaluation error, a timeout or no error
+  fails it. `proofs/check.sh` runs it, so the `proofs` job does.
+  - Every invariant and property in a spec's `.cfg` needs a mutant that
+    breaks it. A claim nothing can break is not yet shown to say anything.
+  - The runner tests itself first, on a small spec: a mutant that breaks
+    nothing, one named for the wrong invariant, a syntax error and an
+    evaluation error must each fail.
+  - The hand-run notes of `AutoRefillHandoff` and `SurfaceCutover` are now
+    manifest entries, each with a liveness mutant it lacked.
   - The guards with mutants include the owner's cutoff, the boundary S, the
     commit version, the close's read of the drain log, the debt mark and the
     key-status version.
-  - Also: releasing without checking for a durable heartbeat, releasing for a
-    boot that did not declare the stream-open heartbeat, dropping open holds
-    from the auditor's stored state, and an inflow that repays the debt but
-    leaves the marks set.
+  - Also: releasing without checking for a durable heartbeat, releasing a
+    hold that is not a declared boot's stream, dropping open holds from the
+    auditor's stored state, and an inflow that repays the debt but leaves the
+    marks set.
   - A guard whose removal breaks nothing is either unnecessary or not
-    modeled, and the spec says which.
-- **The assumptions are stated, each with a mutant that widens it.** There
-  are three: the bounded skew, the state cache's age, and the margin within
-  which Pub/Sub's servers agree, on which a rebuild's completeness rests
-  (§4.8). Widening the skew must break Invariant 1. An owner admitting on a
-  cache older than its maximum age must break Invariant 9. An archive
-  reported complete while a record received before the tick is missing must
-  break Invariant 4.
-- **Each spec names a shadow that exists.** A shadow is a pure module with
-  property tests that drive it through the spec's actions and check its
-  invariants. A manifest in `proofs/` names each spec's shadow test, and the
-  `proofs` job fails when a named shadow is missing.
+    modeled, and the spec says which. The manifest lists it as a survivor,
+    and the runner checks that it still breaks nothing.
+- **The assumptions are stated, each with a mutant that widens it.** Each
+  spec's header lists its own. Across the specs they are:
+  - the bounded skew. Widening it must break Invariant 1;
+  - the state cache's age. An owner admitting on a cache older than its
+    maximum age must break Invariant 9;
+  - the margin within which Pub/Sub's servers agree, on which a rebuild's
+    completeness rests (§4.8). An archive reported complete while a record
+    received before the tick is missing must break Invariant 4;
+  - that a publish the owner issued before its cutoff is acknowledged only
+    within its deadline, and the fence tick is published only after it
+    (§4.5). A tick before the deadline, or an acknowledgement after it, must
+    break Invariant 4;
+  - that a boot which declared the stream-open heartbeat has reached the
+    owner with it, or given up, by the time the first-heartbeat allowance
+    elapses (§4.5). An allowance that elapses sooner must release a live
+    request.
+- **The manifest ties each spec to its code.** A spec's shadow is a pure
+  module with property tests that drive it through the spec's actions and
+  check its invariants. The manifest gives each spec a state, which the
+  runner checks against the files the entry names:
+  - **Planned:** the code is not written. The entry names where it will go,
+    and the job fails once that path exists. So the change that first
+    creates the code must also name the spec's code and its tests.
+  - **Implemented:** every code and test path the entry names must exist.
+    Deleting either while the spec runs on fails the job.
+  - **Orphaned:** the code was deleted. The entry names the spec that
+    replaces this one, and the job fails once that spec is there.
+    `RegionalQuotaLease` is in this state: its module and its test went with
+    the pilot (#1418), and the spec has run in CI since, modeling code that
+    is gone. It is deleted when `LeaseLifecycle` lands, and its header's
+    lessons on vacuous guards move to a README in `proofs/`.
+  - The check is of existence. Whether a test follows its spec is for
+    review.
   - `LeaseLifecycle`, `TerminalOrder` and `AuditorCommit` are shadowed by
-    the owner's and the auditor's state machines in the Go service. The Go
-    service lives in this repository, so the `proofs` job can see its tests
-    and one pull request can change a spec, its shadow and the code.
-  - `CreditDebt` and `KeyCapFence` are shadowed in Python: the credit
-    primitives, and the check that enables a cap.
-  - A spec is written before its code, so the manifest also names the paths
-    that will implement each spec. While none of them exists, the spec's
-    shadow may be pending. Once one exists, the job requires the shadow, and
-    fails if the shadow is later removed.
-  - The precedent shows why. `RegionalQuotaLease` still cites
-    `tests/test_regional_quota_leases.py` as its shadow, but that test and the
-    module it shadowed were deleted with the pilot (#1418), and the spec has
-    run in CI since, modeling code that is gone. It is retired when
-    `LeaseLifecycle` lands, and its header's lessons on vacuous guards move
-    to a README in `proofs/`.
+    the owner's and the auditor's state machines in the Go service, which
+    lives in this repository under `fastpath/`. So the `proofs` job can see
+    its tests, and one pull request can change a spec, its shadow and the
+    code. Their planned entries name that directory, so the spike cannot
+    land without them.
+  - `CreditDebt` and `KeyCapFence` are shadowed in Python. The code around
+    them exists today, so each names a new pure module that holds its rules:
+    the debt rules, and the check that enables a cap. The existing
+    primitives call it, and the planned rule applies to that module.
 - **Recorded traces are replayed through the shadow.** In the spike and in
   shadow, a trace recorded from a real lease is fed to the shadow's
   transition function, which checks that each step is one of the spec's
@@ -1397,6 +1459,8 @@ Three properties the table's short names hide:
 - A Spanner transaction is one atomic action in the specs, so lock order and
   wound-wait (v10, v11) are outside them. The emulator and the contention
   tests cover those.
+- That only boot-signed settles charge (Invariant 5) is a signature check,
+  which no spec models.
 - The switch between speculation and the fast path (§4.13) is not in the
   five specs. It is specified with speculation's real permits.
 - Latency, load and the arithmetic of real amounts are outside the specs;
@@ -1472,6 +1536,8 @@ leases, and was retired on 2026-09-27.
    of the rest.
 3. **Model the protocols** in TLA+ (§5.1). A protocol's spec and its mutants
    pass in CI before any code for that protocol is written, in Python or Go.
+   `TerminalOrder`, the runner and the manifest are written (#1515).
+   `LeaseLifecycle`, `AuditorCommit`, `CreditDebt` and `KeyCapFence` follow.
 4. **Python changes that stand alone:**
    - the heartbeat declarations on `GatewayBoot` and in the registration
      route, stored as sent and replaced on re-registration, a missing one
@@ -1507,11 +1573,17 @@ leases, and was retired on 2026-09-27.
    reaper outcomes and records, and in the answer bytes the enclave decodes.
    Python's answer to the same request is the reference for those bytes; the
    error envelopes are also frozen in `tests/fixtures/speculation_v1/`.
+   - It also records, for every request the fast path would have admitted,
+     its settle against the hold the owner priced. The pilot starts only
+     when that cohort's settles stay within their holds, but for the input
+     estimate's error, inside a tolerance set from the measurement. An
+     endpoint whose settles pass it is left out of the cohort by name.
 7. **Benchmark gate** (§6).
 8. **Pilot:** Joseph's own workspace, then a few large ones, with kill switches
    per workspace, region and cloud. The first cohort is requests that do not
-   stream and name an output limit. Streams join once the enclave sends the
-   heartbeat declaration and registrations carry it (§4.11).
+   stream, name an output limit and ask for no reasoning (§4.11). Streams
+   under the same two conditions join once the enclave sends the heartbeat
+   declaration and registrations carry it.
 9. **Widen;** move keyed requests, capped keys, payouts and the remaining route
    types (§4.11) one at a time; then retire the Python hot path.
 
@@ -1541,7 +1613,13 @@ leases, and was retired on 2026-09-27.
     Stage D boot registration, which fast streaming admission requires
     (§4.11);
   - the retirement phase in §4.12, without which gateway scale-in stays
-    scale-out only.
+    scale-out only;
+  - the output ceiling the enclave will send the provider, for each
+    candidate, in the authorize request. A hold priced at it brings requests
+    with no caller limit, and those that ask for reasoning, onto the fast
+    path (§4.11). The ceiling depends on the model that is finally chosen,
+    which authorize itself decides, so the request must carry one per
+    candidate or the largest.
 - **Where request records live at 100T:** ClickHouse rather than Spanner
   (§6).
 - **Home-region assignment** for workspaces whose traffic moves between
@@ -2192,3 +2270,46 @@ record.
     leaves it set.
   - The manifest names each spec's implementing paths; the shadow may be
     pending only while none of them exists.
+- **v31.** Codex (3 P1) and Fable (1 P2, 3 P3) reviewed v30, and the first
+  spec was written. Their findings:
+  - a caller's output limit can still become a larger limit at the provider:
+    with a thinking budget the enclave sends the budget plus the limit, so a
+    hold priced at 100 tokens can settle at 8,292 (Codex P1);
+  - the stream cap does not bound the charge: the enclave's meter counts the
+    bytes it relays, and the settle bills the provider's count, which
+    includes reasoning that was never relayed (Codex P1);
+  - a cache write bills 1.25 times the input rate, above a hold priced at
+    the input rate (Codex P1);
+  - "pending while none of the implementing paths exists" could not hold for
+    `CreditDebt` and `KeyCapFence`, whose surrounding code exists (Fable P2);
+  - and, among the P3s, which regions cut a stream at its cap, the test for
+    "names no output limit", and requests that carry a descriptor.
+
+  v31 answers them:
+  - v29's "a stream cannot outrun its hold" was wrong and is withdrawn.
+    §4.13 lists the three ways a settle passes its hold. The fast path takes
+    only requests whose hold covers what the provider can bill: a caller
+    limit, no reasoning, and input priced at the cache-write rate (§4.11).
+    Shadow measures the rest before the pilot (§8), and the enclave stating
+    its ceiling in authorize widens the cohort (§9).
+  - The manifest gives each spec a state. A planned spec names where its code
+    will go and fails once that exists; `CreditDebt` and `KeyCapFence` each
+    name a new pure module.
+
+  Writing `TerminalOrder` changed the plan in four places:
+  - Invariant 5 is not its to check. With no amounts in the model, "a settle
+    wins only for a stream that ran" restated a guard. The reap half moves to
+    `AuditorCommit`, and the signature half is no spec's.
+  - It gained a property with a counterexample behind it: a lease never
+    closes over a stream whose first heartbeat was answered. A tick published
+    before the publish deadline breaks it.
+  - The owner's cutoff is modeled as what makes the fence deadline cover its
+    publishes, so an owner that issues after its cutoff breaks Invariant 4.
+  - It models a request that does not stream beside a stream, since those go
+    first. What keeps a lease from closing over a running request the
+    auditor cannot see is the drain's end condition, which is
+    `LeaseLifecycle`'s.
+
+  Looking for a mutant that would break "a settle wins only for a stream
+  that ran" is what showed that it restated a guard. The rule that every
+  invariant and property needs such a mutant came from that.
