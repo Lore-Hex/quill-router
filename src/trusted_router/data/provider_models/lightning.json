@@ -1036,10 +1036,50 @@
       "context_length": 1050000,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000
+    },
+    {
+      "display_name": "glm-5.3-flash",
+      "title": "lightning-ai/glm-5.3-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "lightning-ai/glm-5.3-flash",
+      "upstream_id": "lightning-ai/glm-5.3-flash",
+      "context_length": 253952,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 500000
+    },
+    {
+      "display_name": "gpt-6.1-sol",
+      "title": "openai/gpt-6.1-sol",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-6.1-sol",
+      "upstream_id": "openai/gpt-6.1-sol",
+      "context_length": 1050000,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     }
   ],
   "source": "https://lightning.ai/api/v1/models",
-  "generated_at": "2026-09-30T12:23:53Z",
+  "generated_at": "2026-10-04T10:32:15Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 49
+  "model_count": 51
 }

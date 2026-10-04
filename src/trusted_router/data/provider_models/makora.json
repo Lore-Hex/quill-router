@@ -3,7 +3,7 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://inference.makora.com/v1/models",
-  "generated_at": "2026-09-30T12:23:53Z",
+  "generated_at": "2026-10-04T10:32:15Z",
   "price_scale": "microdollars_per_million",
   "model_count": 16,
   "models": [
@@ -46,7 +46,8 @@
         "reasoning",
         "json_mode",
         "structured_outputs"
-      ]
+      ],
+      "missing_since": "2026-10-04"
     },
     {
       "id": "deepseek/deepseek-v4-pro",
@@ -134,7 +135,8 @@
       ],
       "cached_input_token_price_per_m": 32000,
       "routable": false,
-      "routable_reason": "provider-billing-unavailable"
+      "routable_reason": "provider-billing-unavailable",
+      "missing_since": "2026-10-04"
     },
     {
       "id": "z-ai/glm-5.2",
@@ -559,7 +561,7 @@
         "max_tokens",
         "seed"
       ],
-      "input_token_price_per_m": 850000,
+      "input_token_price_per_m": 240000,
       "output_token_price_per_m": 3930000,
       "cached_input_token_price_per_m": 190000
     },
@@ -644,8 +646,8 @@
         "stop",
         "logit_bias"
       ],
-      "input_token_price_per_m": 300000,
-      "output_token_price_per_m": 1200000,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 990000,
       "cached_input_token_price_per_m": 6000
     }
   ]

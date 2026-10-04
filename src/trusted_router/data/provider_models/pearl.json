@@ -88,7 +88,8 @@
       "routable": true,
       "input_token_price_per_m": 60000,
       "output_token_price_per_m": 170000,
-      "cached_input_token_price_per_m": 16000
+      "cached_input_token_price_per_m": 16000,
+      "missing_since": "2026-10-04"
     },
     {
       "display_name": "DeepSeek: V4 Pro",
@@ -478,6 +479,6 @@
       "cached_input_token_price_per_m": 4000
     }
   ],
-  "generated_at": "2026-09-30T12:23:53Z",
+  "generated_at": "2026-10-04T10:32:15Z",
   "model_count": 11
 }

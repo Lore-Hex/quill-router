@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Together AI routes that are live ahead of the shared OpenRouter snapshot. Verified against https://api.together.xyz/v1/models on 2026-06-22.",
   "provider": "together",
   "source": "https://api.together.xyz/v1/endpoints?type=serverless",
-  "generated_at": "2026-09-30T12:23:53Z",
+  "generated_at": "2026-10-04T10:32:15Z",
   "model_count": 24,
   "models": [
     {
@@ -487,9 +487,9 @@
         "serverless"
       ],
       "context_length": 1048576,
-      "input_token_price_per_m": 3000000,
-      "output_token_price_per_m": 15000000,
-      "cached_input_token_price_per_m": 300000
+      "input_token_price_per_m": 2700000,
+      "output_token_price_per_m": 13500000,
+      "cached_input_token_price_per_m": 270000
     },
     {
       "display_name": "Deepseek V4 Flash 0731",

@@ -51,7 +51,7 @@
       "supported_features": [],
       "supported_sampling_parameters": [],
       "documentation": {
-        "description": "Larger open typed-decision profile for text decisions; noul/choice/score answers with probabilities.",
+        "description": "Larger open typed-decision profile for text decisions; noul/choice/score answers with probabilities. Served by Surogate Rune 26B-A4B v3 (EU); Winnow-12B serves as the Peer-to-Peer and EU fallback.",
         "input_format": "POST /v1/decide: state (at most 16 KiB serialized JSON) and exactly one boolean/noul, choice or score question. Vision accepts one images entry: PNG, JPEG or WebP data URL, at most 4 MiB decoded and 2 megapixels. No streaming.",
         "output_format": "Verified answers and probabilities, with inputTokens usage. Input-only billing; output tokens are free. The EU route cannot fall back to Global.",
         "example_input": "{\"model\": \"system1models-eu/s1-pro\", \"state\": \"Mia owns a red bicycle.\", \"questions\": {\"color\": {\"type\": \"choice\", \"instructions\": \"Which color is the bicycle?\", \"criteria\": {\"red\": null, \"blue\": null}}}}",
@@ -82,7 +82,7 @@
       "supported_features": [],
       "supported_sampling_parameters": [],
       "documentation": {
-        "description": "Image + text typed-decision profile: one image plus state, noul/choice/score answers with probabilities.",
+        "description": "Image + text typed-decision profile: one image plus state, noul/choice/score answers with probabilities. Requests that contain an image are billed at the image_requests rate. Served by Surogate Rune 26B-A4B v3 (EU); Jev-Omni (Gemma 4 12B) serves as the Peer-to-Peer and EU fallback.",
         "input_format": "POST /v1/decide: state (at most 16 KiB serialized JSON) and exactly one boolean/noul, choice or score question. Vision accepts one images entry: PNG, JPEG or WebP data URL, at most 4 MiB decoded and 2 megapixels. No streaming.",
         "output_format": "Verified answers and probabilities, with inputTokens usage. Input-only billing; output tokens are free. The EU route cannot fall back to Global.",
         "example_input": "{\"model\": \"system1models-eu/s1-vision\", \"state\": \"Mia owns a red bicycle.\", \"questions\": {\"color\": {\"type\": \"choice\", \"instructions\": \"Which color is the bicycle?\", \"criteria\": {\"red\": null, \"blue\": null}}}}",
@@ -91,11 +91,42 @@
       "routable": true,
       "input_token_price_per_m": 40000,
       "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "System1 s1-llm-auto-router (EU)",
+      "title": "s1-llm-auto-router",
+      "model_type": "decision",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "decision"
+      ],
+      "endpoints": [
+        "decide"
+      ],
+      "status": 1,
+      "id": "system1models-eu/s1-llm-auto-router",
+      "upstream_id": "s1-llm-auto-router",
+      "context_length": 0,
+      "supported_features": [],
+      "supported_sampling_parameters": [],
+      "documentation": {
+        "description": "Fixed-schema routing classifier for LLM auto-routers: answers category, difficulty, stakes and four routing flags for one request in a single CPU pass (~26 ms). Not a general typed-decision model.",
+        "input_format": "POST /v1/decide: state (at most 16 KiB serialized JSON) and exactly one boolean/noul, choice or score question. Vision accepts one images entry: PNG, JPEG or WebP data URL, at most 4 MiB decoded and 2 megapixels. No streaming.",
+        "output_format": "Verified answers and probabilities, with inputTokens usage. Input-only billing; output tokens are free. The EU route cannot fall back to Global.",
+        "example_input": "{\"model\": \"system1models-eu/s1-llm-auto-router\", \"state\": \"Mia owns a red bicycle.\", \"questions\": {\"color\": {\"type\": \"choice\", \"instructions\": \"Which color is the bicycle?\", \"criteria\": {\"red\": null, \"blue\": null}}}}",
+        "example_output": "{\"model\": \"system1models-eu/s1-llm-auto-router\", \"answers\": {\"color\": {\"type\": \"choice\", \"choice\": \"red\", \"probabilities\": {\"red\": 0.99, \"blue\": 0.01}}}}"
+      },
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 1000,
+      "output_token_price_per_m": 0
     }
   ],
   "source": "https://api.system1models.ai/v1/models",
   "pricing_source": "https://api.system1models.ai/v1/models",
-  "generated_at": "2026-10-01T15:07:21Z",
+  "generated_at": "2026-10-04T10:32:15Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 3
+  "model_count": 4
 }

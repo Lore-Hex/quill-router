@@ -1,9 +1,9 @@
 {
   "provider": "cloudflare-workers-ai",
   "source": "https://api.cloudflare.com/client/v4/accounts/2698c706fd4793c818af14adad4e1a39/ai/models/search?per_page=100",
-  "generated_at": "2026-09-30T12:23:53Z",
+  "generated_at": "2026-10-04T10:32:15Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 32,
+  "model_count": 36,
   "models": [
     {
       "display_name": "@cf/aisingapore/gemma-sea-lion-v4-27b-it",
@@ -86,7 +86,8 @@
       "routable": true,
       "context_length": 256000,
       "input_token_price_per_m": 100000,
-      "output_token_price_per_m": 300000
+      "output_token_price_per_m": 300000,
+      "cached_input_token_price_per_m": 50000
     },
     {
       "display_name": "@cf/google/gemma-7b-it-lora",
@@ -688,6 +689,90 @@
       "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000,
       "cached_input_token_price_per_m": 260000
+    },
+    {
+      "display_name": "@cf/cloudflare/clef",
+      "title": "@cf/cloudflare/clef",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "cloudflare/clef",
+      "upstream_id": "@cf/cloudflare/clef",
+      "context_length": 65536,
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-10-04"
+    },
+    {
+      "display_name": "@cf/cloudflare/clef-flash",
+      "title": "@cf/cloudflare/clef-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "cloudflare/clef-flash",
+      "upstream_id": "@cf/cloudflare/clef-flash",
+      "context_length": 65536,
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-10-04"
+    },
+    {
+      "display_name": "@cf/swiss-ai/apertus-v1.5-8b",
+      "title": "@cf/swiss-ai/apertus-v1.5-8b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "swiss-ai/apertus-v1.5-8b",
+      "upstream_id": "@cf/swiss-ai/apertus-v1.5-8b",
+      "context_length": 262144,
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-10-04"
+    },
+    {
+      "display_name": "@cf/utter-project/eurollm-9b-it",
+      "title": "@cf/utter-project/eurollm-9b-it",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "utter-project/eurollm-9b-it",
+      "upstream_id": "@cf/utter-project/eurollm-9b-it",
+      "context_length": 32000,
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-10-04"
     }
   ]
 }

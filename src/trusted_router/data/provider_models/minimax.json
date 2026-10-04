@@ -1,7 +1,7 @@
 {
   "provider": "minimax",
   "source": "https://api.minimax.io/v1/models",
-  "generated_at": "2026-09-30T12:23:53Z",
+  "generated_at": "2026-10-04T10:32:15Z",
   "model_count": 8,
   "models": [
     {
@@ -42,8 +42,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1,
-      "context_length_source": "api"
+      "status": 1
     },
     {
       "id": "minimax/minimax-m2.7",
@@ -70,8 +69,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1,
-      "context_length_source": "api"
+      "status": 1
     },
     {
       "id": "minimax/minimax-m2.7-highspeed",
@@ -98,8 +96,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1,
-      "context_length_source": "api"
+      "status": 1
     },
     {
       "id": "minimax/minimax-m2.5",
@@ -126,8 +123,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1,
-      "context_length_source": "api"
+      "status": 1
     },
     {
       "id": "minimax/minimax-m2.5-highspeed",
@@ -154,8 +150,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1,
-      "context_length_source": "api"
+      "status": 1
     },
     {
       "id": "minimax/minimax-m2.1",
@@ -182,8 +177,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1,
-      "context_length_source": "api"
+      "status": 1
     },
     {
       "id": "minimax/minimax-m2.1-highspeed",
@@ -210,8 +204,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1,
-      "context_length_source": "api"
+      "status": 1
     },
     {
       "id": "minimax/minimax-m2",
@@ -238,8 +231,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1,
-      "context_length_source": "api"
+      "status": 1
     }
   ],
   "pricing_source": "https://platform.minimax.io/docs/guides/pricing-paygo.md"

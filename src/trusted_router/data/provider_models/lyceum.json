@@ -163,7 +163,8 @@
       "upstream_id": "lyceum/simple",
       "routable": false,
       "routable_reason": "price-unavailable",
-      "unresolved_since": "2026-09-30"
+      "unresolved_since": "2026-09-30",
+      "missing_since": "2026-10-04"
     },
     {
       "display_name": "minimax/minimax-m2.5",
@@ -183,7 +184,8 @@
       "upstream_id": "minimax/minimax-m2.5",
       "routable": false,
       "routable_reason": "price-unavailable",
-      "unresolved_since": "2026-09-30"
+      "unresolved_since": "2026-09-30",
+      "missing_since": "2026-10-04"
     },
     {
       "display_name": "minimax m3",
@@ -241,7 +243,8 @@
       "routable": true,
       "input_token_price_per_m": 1000000,
       "output_token_price_per_m": 4000000,
-      "cached_input_token_price_per_m": 250000
+      "cached_input_token_price_per_m": 250000,
+      "missing_since": "2026-10-04"
     },
     {
       "display_name": "kimi k2.7 code",
@@ -319,7 +322,8 @@
       "upstream_id": "qwen/qwen3-235b-a22b-2507",
       "routable": false,
       "routable_reason": "price-unavailable",
-      "unresolved_since": "2026-09-30"
+      "unresolved_since": "2026-09-30",
+      "missing_since": "2026-10-04"
     },
     {
       "display_name": "qwen3 235b a22b instruct",
@@ -345,7 +349,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 200000,
-      "output_token_price_per_m": 600000
+      "output_token_price_per_m": 600000,
+      "missing_since": "2026-10-04"
     },
     {
       "display_name": "qwen3 embedding 8b",
@@ -397,7 +402,8 @@
       "routable": true,
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 200000,
-      "cached_input_token_price_per_m": 40000
+      "cached_input_token_price_per_m": 40000,
+      "missing_since": "2026-10-04"
     },
     {
       "display_name": "qwen3.8 2.4t a95b",
@@ -551,7 +557,8 @@
       "routable": true,
       "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000,
-      "cached_input_token_price_per_m": 350000
+      "cached_input_token_price_per_m": 350000,
+      "missing_since": "2026-10-04"
     },
     {
       "display_name": "glm-5.2",
@@ -625,9 +632,9 @@
         "prompt_caching"
       ],
       "routable": true,
-      "input_token_price_per_m": 1750000,
-      "output_token_price_per_m": 4500000,
-      "cached_input_token_price_per_m": 440000
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 260000
     },
     {
       "display_name": "glm-5.3 flash",
@@ -701,7 +708,7 @@
   ],
   "source": "https://api.lyceum.technology/openai/v1/models",
   "pricing_source": "https://lyceum.technology/products/inference/models/",
-  "generated_at": "2026-09-30T21:51:44Z",
+  "generated_at": "2026-10-04T10:32:15Z",
   "price_scale": "microdollars_per_million",
   "model_count": 28
 }

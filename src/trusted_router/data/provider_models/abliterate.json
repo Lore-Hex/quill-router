@@ -92,7 +92,7 @@
   ],
   "source": "https://abliterate.ai/api/v1/models",
   "pricing_source": "https://abliterate.ai/docs",
-  "generated_at": "2026-10-02T12:24:16Z",
+  "generated_at": "2026-10-04T10:32:15Z",
   "price_scale": "microdollars_per_million",
   "model_count": 4
 }

@@ -46,10 +46,10 @@
   },
   "arcee": {
     "card_version": 2,
-    "model_count": 9,
+    "model_count": 7,
     "name": "Arcee AI",
     "privacy": "Policy documented",
-    "route_count": 9,
+    "route_count": 7,
     "route_mode": "Prepaid",
     "slug": "arcee"
   },
@@ -100,11 +100,11 @@
   },
   "byteplus": {
     "card_version": 2,
-    "model_count": 0,
+    "model_count": 11,
     "name": "BytePlus ModelArk",
     "privacy": "Policy documented",
-    "route_count": 0,
-    "route_mode": "Catalog profile",
+    "route_count": 11,
+    "route_mode": "Prepaid",
     "slug": "byteplus"
   },
   "cerebras": {
@@ -154,11 +154,11 @@
   },
   "crusoe": {
     "card_version": 2,
-    "model_count": 10,
+    "model_count": 14,
     "name": "Crusoe",
     "privacy": "Policy documented",
-    "route_count": 20,
-    "route_mode": "Prepaid + BYOK",
+    "route_count": 14,
+    "route_mode": "BYOK",
     "slug": "crusoe"
   },
   "darkbloom": {
@@ -193,7 +193,7 @@
     "model_count": 98,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 189,
+    "route_count": 188,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -262,10 +262,10 @@
   },
   "gmi": {
     "card_version": 2,
-    "model_count": 72,
+    "model_count": 73,
     "name": "GMI Cloud",
     "privacy": "Policy documented",
-    "route_count": 78,
+    "route_count": 79,
     "route_mode": "Prepaid + BYOK",
     "slug": "gmi"
   },
@@ -370,10 +370,10 @@
   },
   "lightning": {
     "card_version": 2,
-    "model_count": 27,
+    "model_count": 22,
     "name": "Lightning AI",
     "privacy": "Policy documented",
-    "route_count": 53,
+    "route_count": 43,
     "route_mode": "Prepaid + BYOK",
     "slug": "lightning"
   },
@@ -406,10 +406,10 @@
   },
   "makora": {
     "card_version": 2,
-    "model_count": 5,
+    "model_count": 3,
     "name": "Makora",
     "privacy": "Policy documented",
-    "route_count": 10,
+    "route_count": 6,
     "route_mode": "Prepaid + BYOK",
     "slug": "makora"
   },
@@ -694,11 +694,11 @@
   },
   "sambanova": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 0,
     "name": "SambaNova",
     "privacy": "Policy documented",
-    "route_count": 7,
-    "route_mode": "Prepaid",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
     "slug": "sambanova"
   },
   "scaledown": {
@@ -739,11 +739,11 @@
   },
   "streamlake": {
     "card_version": 2,
-    "model_count": 3,
+    "model_count": 0,
     "name": "StreamLake",
     "privacy": "Policy documented",
-    "route_count": 3,
-    "route_mode": "Prepaid",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
     "slug": "streamlake"
   },
   "system1models": {
@@ -784,10 +784,10 @@
   },
   "tencent": {
     "card_version": 2,
-    "model_count": 20,
+    "model_count": 15,
     "name": "Tencent Cloud TokenHub",
     "privacy": "Policy documented",
-    "route_count": 35,
+    "route_count": 30,
     "route_mode": "Prepaid + BYOK",
     "slug": "tencent"
   },

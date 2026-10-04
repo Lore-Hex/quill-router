@@ -21,9 +21,9 @@
       "supports_tools": true,
       "supports_reasoning": true,
       "routable": true,
-      "input_token_price_per_m": 238455,
-      "output_token_price_per_m": 774979,
-      "cached_input_token_price_per_m": 47691
+      "input_token_price_per_m": 235725,
+      "output_token_price_per_m": 766107,
+      "cached_input_token_price_per_m": 47145
     },
     {
       "display_name": "GLM-5.3",
@@ -45,9 +45,9 @@
       "supports_tools": true,
       "supports_reasoning": true,
       "routable": true,
-      "input_token_price_per_m": 1848027,
-      "output_token_price_per_m": 6843659,
-      "cached_input_token_price_per_m": 178842
+      "input_token_price_per_m": 1826869,
+      "output_token_price_per_m": 6765308,
+      "cached_input_token_price_per_m": 176794
     },
     {
       "display_name": "GLM-5.3-Flash",
@@ -70,14 +70,14 @@
       "supports_tools": true,
       "supports_reasoning": true,
       "routable": true,
-      "input_token_price_per_m": 238455,
-      "output_token_price_per_m": 774979,
-      "cached_input_token_price_per_m": 59614
+      "input_token_price_per_m": 235725,
+      "output_token_price_per_m": 766107,
+      "cached_input_token_price_per_m": 58932
     }
   ],
   "source": "https://docs.privatemode.ai/models/overview/",
   "pricing_source": "https://docs.privatemode.ai/pricing/",
-  "generated_at": "2026-09-30T12:23:53Z",
+  "generated_at": "2026-10-04T10:32:15Z",
   "price_scale": "microdollars_per_million",
   "model_count": 3
 }

@@ -68,7 +68,8 @@
       "routable_reason": "provider-access-unavailable",
       "input_token_price_per_m": 1740000,
       "output_token_price_per_m": 3480000,
-      "cached_input_token_price_per_m": 200000
+      "cached_input_token_price_per_m": 200000,
+      "missing_since": "2026-10-04"
     },
     {
       "display_name": "DeepSeek V4 Pro 0813",
@@ -135,7 +136,8 @@
       "routable_reason": "provider-access-unavailable",
       "input_token_price_per_m": 500000,
       "output_token_price_per_m": 1200000,
-      "cached_input_token_price_per_m": 100000
+      "cached_input_token_price_per_m": 100000,
+      "missing_since": "2026-10-04"
     },
     {
       "display_name": "GLM 5.2",
@@ -250,7 +252,7 @@
   ],
   "source": "https://api.arcee.ai/api/v1/models",
   "pricing_source": "https://api.arcee.ai/api/v1/models",
-  "generated_at": "2026-09-30T12:23:53Z",
+  "generated_at": "2026-10-04T10:32:15Z",
   "price_scale": "microdollars_per_million",
   "model_count": 11
 }
