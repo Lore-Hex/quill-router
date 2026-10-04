@@ -39,7 +39,7 @@ _DISCOVERED_ROWS: dict[str, dict[str, Any]] = {}
 
 # Flip only after the native worker and current key are deployed in every cloud.
 # Discovery must not publish routes an older attested worker cannot fulfill.
-NATIVE_ROUTES_DEPLOYED = False
+NATIVE_ROUTES_DEPLOYED = True
 VIDEO_MODELS = {
     "dreamina-seedance-2-5-260628": "bytedance/seedance-2.5",
     "dreamina-seedance-2-0-260128": "bytedance/seedance-2.0",
