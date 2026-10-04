@@ -247,18 +247,24 @@ def test_exactly_half_failing_is_not_a_systemic_failure(
     )
 
 
-def test_failed_provider_preservation_is_still_checked_for_exactness(
+def test_inexact_failed_routes_hold_only_affected_models(
     refresh_run: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr(refresh, "_keep_failed_snapshot_routes", lambda *_args: None)
-    assert refresh.main([]) == 1
-    assert "Held providers could not be kept exactly as published" in capsys.readouterr().out
-    root = refresh_run["root"]
-    assert {
-        path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()
-    } == refresh_run["before"]
+    monkeypatch.setattr(refresh, "_keep_failed_snapshot_routes", lambda *_args, **_kwargs: {})
+    assert refresh.main([]) == 0
+    snapshot = json.loads(refresh.SNAPSHOT_PATH.read_text())
+    models = {row["id"]: row for row in snapshot["models"]}
+    assert snapshot["model_count"] == 5
+    assert models["acme/shared"] == refresh_run["published"]["models"][0]
+    assert models["acme/removed-from-feed"] == refresh_run["published"]["models"][1]
+    assert models["acme/good_b"]["pricing"]["prompt"] == "0.0000035"
+    assert json.loads((refresh.PROVIDER_MANIFEST_DIR / "good_a.json").read_text())["generated_at"] == "fresh"
+    out = capsys.readouterr().out
+    assert "Snapshot models held:" in out
+    assert "acme/shared: held provider routes could not be kept exact; kept committed row" in out
+    assert "acme/removed-from-feed: held provider routes could not be kept exact; kept committed row" in out
 
 
 def test_removing_new_failed_route_cannot_leave_its_openrouter_headline() -> None:
