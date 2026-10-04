@@ -2613,8 +2613,20 @@ class SpannerStore:
     def list_keys(self, workspace_id: str) -> list[ApiKey]:
         return self.api_keys.list_for_workspace(workspace_id)
 
-    def list_api_keys_with_usage(self, workspace_id: str) -> list[ApiKeyUsageSnapshot]:
-        return self.api_keys.list_with_usage_for_workspace(workspace_id)
+    def list_api_keys_with_usage(
+        self,
+        workspace_id: str,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        include_disabled: bool = True,
+    ) -> list[ApiKeyUsageSnapshot]:
+        return self.api_keys.list_with_usage_for_workspace(
+            workspace_id, limit=limit, offset=offset, include_disabled=include_disabled,
+        )
+
+    def delete_keys(self, workspace_id: str, key_hashes: list[str]) -> dict[str, bool]:
+        return self.api_keys.delete_many(workspace_id, key_hashes)
 
     def delete_key(self, key_hash: str) -> bool:
         return self.api_keys.delete(key_hash)
@@ -6458,6 +6470,21 @@ class SpannerStore:
     def record_sns_message_once(self, message_id: str) -> bool:
         return self.email_blocks.record_message_once(message_id)
 
+    def claim_retirement_notices(
+        self, workspace_id: str, retirement_ids: list[str], *, occurred_at: str,
+    ) -> list[str]:
+        def txn(transaction: Any) -> list[str]:
+            notices = self._read_entity_tx(
+                transaction, "retirement_notice", workspace_id, dict,
+            ) or {}
+            claimed = sorted(set(retirement_ids) - notices.keys())
+            if claimed:
+                notices.update(dict.fromkeys(claimed, occurred_at))
+                self._write_entity_tx(transaction, "retirement_notice", workspace_id, notices)
+            return claimed
+
+        return self._run_in_transaction(txn)
+
     def record_webhook_event_once(self, source: str, event_id: str) -> bool:
         entity_id = f"{source}#{event_id}"
 
@@ -6689,6 +6716,9 @@ class SpannerStore:
                     approved=existing.approved or record.approved,
                     verified=existing.verified or record.verified,
                     image_digest=record.image_digest or existing.image_digest,
+                    # Replaced, never merged: a declaration can be withdrawn.
+                    declares_usage_heartbeat=record.declares_usage_heartbeat,
+                    declares_stream_open_heartbeat=record.declares_stream_open_heartbeat,
                 )
             self._write_entity_tx(transaction, GATEWAY_BOOT_KIND, record.kid, merged)
             return merged

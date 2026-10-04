@@ -1,3 +1,4 @@
+from math import ceil
 from threading import BoundedSemaphore
 
 import pytest
@@ -101,6 +102,39 @@ def test_strict_admission_does_not_repeat_a_failed_transaction(monkeypatch):
     assert limiter.count("hot") == 0
 
 
+@pytest.mark.parametrize("release_after", [0.35, 0.7])
+def test_strict_admission_waits_for_normal_cross_region_transaction(monkeypatch, release_after):
+    from trusted_router import strict_budget
+
+    limiter = KeyedConcurrencyAdmission(max_subjects=2)
+    monkeypatch.setattr(strict_budget, "STRICT_ADMISSION", limiter)
+    assert limiter.try_acquire("hot", limit=1)
+
+    class Clock:
+        now = 0.0
+
+        def monotonic(self):
+            return self.now
+
+        def sleep(self, seconds):
+            assert limiter.count("hot") == 1
+            self.now += seconds
+            if self.now >= release_after:
+                limiter.release("hot")
+
+    clock = Clock()
+    monkeypatch.setattr(strict_budget, "time", clock)
+    transactions = 0
+    with strict_budget_slot("hot") as deadline:
+        transactions += 1
+        assert deadline == 5.0
+        assert release_after <= clock.now < 1.0
+        assert limiter.count("hot") == 1
+    assert transactions == 1
+    assert limiter.count("hot") == 0
+    assert_waiter_capacity_released(strict_budget)
+
+
 @pytest.mark.parametrize("budget_seconds", [0.01, 5.0])
 def test_strict_admission_deadline_cannot_be_extended_or_enter_after_expiry(monkeypatch, budget_seconds):
     from trusted_router import strict_budget
@@ -130,7 +164,7 @@ def test_strict_admission_deadline_cannot_be_extended_or_enter_after_expiry(monk
         with strict_budget_slot("hot"):
             pytest.fail("transaction started after the admission deadline")
     assert clock.now == wait_seconds
-    assert 1 <= clock.attempts <= 11
+    assert 1 <= clock.attempts <= ceil(wait_seconds / strict_budget.STRICT_ADMISSION_POLL_SECONDS) + 1
     assert strict_budget.STRICT_WAITERS.count("hot") == 0
     assert_waiter_capacity_released(strict_budget)
     with strict_budget_slot("hot"):

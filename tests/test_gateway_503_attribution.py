@@ -19,6 +19,7 @@ from fastapi import HTTPException, Request
 from google.api_core.exceptions import Aborted, DeadlineExceeded
 
 from trusted_router.config import Settings, get_settings
+from trusted_router.gateway_timing import gateway_error_timing_fields
 from trusted_router.main import create_app
 from trusted_router.routes.internal import gateway as gateway_routes
 from trusted_router.services.federation import FederationUnavailable
@@ -27,6 +28,25 @@ from trusted_router.storage_errors import StoreConflict
 
 AUTHORIZE = "/v1/internal/gateway/authorize"
 ROW_NAMING_BACKEND_MESSAGE = "row tr_key_limit(key_should_never_be_logged, 3)"
+
+
+@pytest.mark.parametrize("data", [None, [], {"timing": "private"}, {"timing": []}])
+def test_storage_failure_timing_ignores_malformed_metadata(data: Any) -> None:
+    exc = DeadlineExceeded(ROW_NAMING_BACKEND_MESSAGE)
+    exc.gateway_timing_data = data
+    assert gateway_error_timing_fields(exc) == {}
+
+
+def test_storage_failure_timing_never_logs_arbitrary_values_or_fields() -> None:
+    exc = DeadlineExceeded(ROW_NAMING_BACKEND_MESSAGE)
+    exc.gateway_timing_data = {"timing": {
+        "total_ms": 20001, "spanner_rpcs": 3, "key_lookup_ms": 19998,
+        "routing_ms": "a private prompt", "store_ms": True,
+        "post_commit_ms": -1, "prompt": "private", "token": "sk-private",
+    }}
+    assert gateway_error_timing_fields(exc) == {
+        "total_ms": 20001, "spanner_rpcs": 3, "key_lookup_ms": 19998,
+    }
 
 
 def _settings() -> Settings:
@@ -125,6 +145,9 @@ async def test_app_level_unavailable_503_logs_path_and_error_class(
     line = _single_warning(caplog, "storage.unavailable")
     assert "route=/internal/gateway/authorize" in line
     assert "error_class=DeadlineExceeded" in line
+    assert f"workspace_id={key.workspace_id}" in line
+    assert "key_lookup_ms=" in line
+    assert "spanner_rpcs=" in line
     _assert_attributable_and_safe(line, key, "req-app-unavailable")
 
 

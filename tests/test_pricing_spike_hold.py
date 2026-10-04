@@ -73,8 +73,13 @@ def published(
     )
     monkeypatch.setattr(refresh, "SNAPSHOT_PATH", snapshot_path)
     monkeypatch.setattr(refresh, "PROVIDER_MANIFEST_DIR", manifest_dir)
+    # refresh.main snapshots PARSERS_DIR and restores it on a rejected run.
+    # Point it at a temp directory so parallel tests never rewrite the
+    # repository's parsers.
+    parsers_dir = tmp_path / "parsers"
+    parsers_dir.mkdir()
+    monkeypatch.setattr(refresh, "PARSERS_DIR", parsers_dir)
     monkeypatch.setattr(refresh, "PROVIDER_SLUGS", (key, "grok"))
-    monkeypatch.setattr(refresh, "MAX_TOLERATED_FAILURES", 0)
     monkeypatch.setattr(refresh, "_import_provider", lambda _slug: SimpleNamespace())
     monkeypatch.setattr(refresh, "_read_existing_snapshot", lambda: json.loads(json.dumps(snapshot)))
     monkeypatch.setattr(refresh, "_new_parser_requirements", lambda *_args: {})
@@ -204,8 +209,7 @@ def test_a_held_manifest_only_provider_is_restored_exactly_and_is_not_a_failure(
         }
     )
     manifest.write_text(published_manifest)
-    parsers = tmp_path / "parsers"
-    parsers.mkdir()
+    parsers = tmp_path / "parsers"  # created by the published fixture
     parser = parsers / "beta.py"
     parser.write_text("# published parser\n")
     monkeypatch.setattr(refresh, "PARSERS_DIR", parsers)
@@ -232,7 +236,7 @@ def test_a_held_manifest_only_provider_is_restored_exactly_and_is_not_a_failure(
         assert refresh.main([]) == 1
         return
 
-    assert refresh.main([]) == 0  # MAX_TOLERATED_FAILURES is 0 in this fixture
+    assert refresh.main([]) == 0
 
     assert manifest.read_text() == published_manifest
     assert parser.read_text() == "# published parser\n"
@@ -628,8 +632,9 @@ def test_every_published_route_provider_maps_to_one_refresh_result() -> None:
         if isinstance(endpoint, dict) and isinstance(endpoint.get("tr_provider_slug"), str)
     }
     names |= {path.stem for path in refresh.PROVIDER_MANIFEST_DIR.glob("*.json")}
+    known = {*refresh.PROVIDER_SLUGS, *refresh.RETIRED_PROVIDER_SLUGS}
     unmapped = sorted(
-        name for name in names if refresh._result_slug_for_provider(name) not in refresh.PROVIDER_SLUGS
+        name for name in names if refresh._result_slug_for_provider(name) not in known
     )
     assert unmapped == []
     assert route_provider("z-ai/glm-5.3 [io-net:io-net:zai-org/GLM-5.3] cached-input") == "io-net"

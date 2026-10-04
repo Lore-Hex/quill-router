@@ -2025,14 +2025,203 @@
       ]
     },
     "storage_gcp_keys:constants:1": {
-      "fingerprint": "515c8b7eba3856e10a86da8dc6049162e6d0b22bb13731e92b230a0e3588e2db",
+      "fingerprint": "aefd33904868e5800d3c507a8b1ba74ac354d5b805fe5d51d0e6dc8b53b37f3d",
       "scenarios": [
         {
           "bindings": {},
           "types": {
             "prefix": "STRING",
-            "workspace_id": "STRING"
-          }
+            "workspace_id": "STRING",
+            "include_disabled": "BOOL",
+            "limit": "INT64",
+            "offset": "INT64"
+          },
+          "entities": [
+            {
+              "kind": "api_key",
+              "id": "key-a",
+              "body": {
+                "hash": "key-a",
+                "workspace_id": "ws-page",
+                "created_at": "2026-01-01T00:00:00Z",
+                "disabled": false
+              }
+            },
+            {
+              "kind": "api_key_by_workspace",
+              "id": "ws-page#key-a",
+              "body": {
+                "key_id": "key-a"
+              }
+            },
+            {
+              "kind": "api_key",
+              "id": "key-b",
+              "body": {
+                "hash": "key-b",
+                "workspace_id": "ws-page",
+                "created_at": "2026-01-01T00:00:00Z",
+                "disabled": true
+              }
+            },
+            {
+              "kind": "api_key_by_workspace",
+              "id": "ws-page#key-b",
+              "body": {
+                "key_id": "key-b"
+              }
+            },
+            {
+              "kind": "api_key",
+              "id": "key-c",
+              "body": {
+                "hash": "key-c",
+                "workspace_id": "ws-page",
+                "created_at": "2026-01-01T00:00:00Z",
+                "disabled": false
+              }
+            },
+            {
+              "kind": "api_key_by_workspace",
+              "id": "ws-page#key-c",
+              "body": {
+                "key_id": "key-c"
+              }
+            }
+          ],
+          "values": {
+            "workspace_id": "ws-page",
+            "prefix": "ws-page#",
+            "include_disabled": true,
+            "limit": 9223372036854775807,
+            "offset": 0
+          },
+          "expected_rows": [
+            [
+              "{\"hash\": \"key-a\", \"workspace_id\": \"ws-page\", \"created_at\": \"2026-01-01T00:00:00Z\", \"disabled\": false}",
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            [
+              "{\"hash\": \"key-b\", \"workspace_id\": \"ws-page\", \"created_at\": \"2026-01-01T00:00:00Z\", \"disabled\": true}",
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            [
+              "{\"hash\": \"key-c\", \"workspace_id\": \"ws-page\", \"created_at\": \"2026-01-01T00:00:00Z\", \"disabled\": false}",
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null
+            ]
+          ]
+        },
+        {
+          "bindings": {},
+          "types": {
+            "prefix": "STRING",
+            "workspace_id": "STRING",
+            "include_disabled": "BOOL",
+            "limit": "INT64",
+            "offset": "INT64"
+          },
+          "entities": [
+            {
+              "kind": "api_key",
+              "id": "key-a",
+              "body": {
+                "hash": "key-a",
+                "workspace_id": "ws-page",
+                "created_at": "2026-01-01T00:00:00Z",
+                "disabled": false
+              }
+            },
+            {
+              "kind": "api_key_by_workspace",
+              "id": "ws-page#key-a",
+              "body": {
+                "key_id": "key-a"
+              }
+            },
+            {
+              "kind": "api_key",
+              "id": "key-b",
+              "body": {
+                "hash": "key-b",
+                "workspace_id": "ws-page",
+                "created_at": "2026-01-01T00:00:00Z",
+                "disabled": true
+              }
+            },
+            {
+              "kind": "api_key_by_workspace",
+              "id": "ws-page#key-b",
+              "body": {
+                "key_id": "key-b"
+              }
+            },
+            {
+              "kind": "api_key",
+              "id": "key-c",
+              "body": {
+                "hash": "key-c",
+                "workspace_id": "ws-page",
+                "created_at": "2026-01-01T00:00:00Z",
+                "disabled": false
+              }
+            },
+            {
+              "kind": "api_key_by_workspace",
+              "id": "ws-page#key-c",
+              "body": {
+                "key_id": "key-c"
+              }
+            }
+          ],
+          "values": {
+            "workspace_id": "ws-page",
+            "prefix": "ws-page#",
+            "include_disabled": false,
+            "limit": 1,
+            "offset": 1
+          },
+          "expected_rows": [
+            [
+              "{\"hash\": \"key-c\", \"workspace_id\": \"ws-page\", \"created_at\": \"2026-01-01T00:00:00Z\", \"disabled\": false}",
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null
+            ]
+          ]
         }
       ]
     },
@@ -3702,6 +3891,89 @@
         }
       ]
     },
+    "storage_gcp_keys:delete_batch_txn:1": {
+      "fingerprint": "f186ed3fbbe47f2878dee911eebadd6eb29a70a908f63e8a8c35ebc8d068b8c2",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "kind": "STRING",
+            "ids": "ARRAY<STRING>"
+          },
+          "values": {
+            "kind": "api_key",
+            "ids": [
+              "key-b",
+              "key-a",
+              "missing"
+            ]
+          },
+          "entities": [
+            {
+              "kind": "api_key",
+              "id": "key-a",
+              "body": {
+                "hash": "key-a",
+                "workspace_id": "ws-page",
+                "created_at": "2026-01-01T00:00:00Z",
+                "disabled": false
+              }
+            },
+            {
+              "kind": "api_key_by_workspace",
+              "id": "ws-page#key-a",
+              "body": {
+                "key_id": "key-a"
+              }
+            },
+            {
+              "kind": "api_key",
+              "id": "key-b",
+              "body": {
+                "hash": "key-b",
+                "workspace_id": "ws-page",
+                "created_at": "2026-01-01T00:00:00Z",
+                "disabled": true
+              }
+            },
+            {
+              "kind": "api_key_by_workspace",
+              "id": "ws-page#key-b",
+              "body": {
+                "key_id": "key-b"
+              }
+            },
+            {
+              "kind": "api_key",
+              "id": "key-c",
+              "body": {
+                "hash": "key-c",
+                "workspace_id": "ws-page",
+                "created_at": "2026-01-01T00:00:00Z",
+                "disabled": false
+              }
+            },
+            {
+              "kind": "api_key_by_workspace",
+              "id": "ws-page#key-c",
+              "body": {
+                "key_id": "key-c"
+              }
+            }
+          ],
+          "expected_rows": [
+            [
+              "key-a",
+              "{\"hash\": \"key-a\", \"workspace_id\": \"ws-page\", \"created_at\": \"2026-01-01T00:00:00Z\", \"disabled\": false}"
+            ],
+            [
+              "key-b",
+              "{\"hash\": \"key-b\", \"workspace_id\": \"ws-page\", \"created_at\": \"2026-01-01T00:00:00Z\", \"disabled\": true}"
+            ]
+          ]
+        }
+      ]
+    },
     "storage_gcp_trust:constants:1": {
       "fingerprint": "24603f9493fa754c05e588596b93c6ba768c6cda416205a97f5d4ce7593f431e",
       "scenarios": [
@@ -3958,7 +4230,7 @@
     "storage_gcp_key_escrow:rebalance_key_limit_headroom.txn": "fcbc39b2991f619d26365b919a4bdc925b950453acd760c67ce638fb5d50d5f4",
     "storage_gcp_key_shard_admin:_typed_key_state": "73a4a569ff114b9a2347b324dccc1c4756c9e380b1cd87971af930e2677001f5",
     "storage_gcp_key_shard_admin:reshard_key_usage.txn": "8eaa4a729d9eeb516e0cc65370c34c1f6529bd298c0879974bd8c03a5b276717",
-    "storage_gcp_keys:SpannerApiKeys.list_with_usage_for_workspace": "d5ea4b3c7a4cf8a5fe1b3ea8741b246cfa9c5ad826ae1d8c8414fc9b7efd163a",
+    "storage_gcp_keys:SpannerApiKeys.list_with_usage_for_workspace": "614f2667ef559acac550195fd45a158a07dd663c5da435a74a463befbabedc96",
     "storage_gcp_keys:SpannerApiKeys.update.txn": "8b2b096b220bf2a685d9f9a730627e35da13babfb74af02b6476766e4ea0bb72",
     "storage_gcp_legacy_reservations:legacy_reservation_snapshot": "c5b3818e113170d5fda5422e9c83441ee7119014e4a74afd80330cf735b965d7",
     "storage_gcp_operational_analytics_outbox:SpannerOperationalAnalyticsOutbox._enqueue_tx": "99d2a2f669e53e54014e83d8f1ed598c6003b63d010c06adcaf2250e497dd92f",
@@ -4014,6 +4286,7 @@
     "storage_gcp_authorize:credit_exhaustion_precheck": "2d005ac4817ef9dff2e8481daedb53a1dafcf758ba22790222190d51fd1d3e50",
     "storage_gcp_counter_dml:reserve_credit_with_pause": "8c628d24eaaf1050a131fbf04151700aed5a95a69befae5d36f343df88761120",
     "storage_gcp_speculation_shadow:SpannerSpeculationShadow.resolve": "44e5026c99ada85fbe44dd62f53501c4509d2f8489e4231f87fe146e70496889",
+    "storage_gcp_keys:SpannerApiKeys._delete_batch.delete_batch_txn": "f186ed3fbbe47f2878dee911eebadd6eb29a70a908f63e8a8c35ebc8d068b8c2",
     "storage_gcp_trust:evaluate_workspace_trust_tier": "6f4487f32a5d95e89b4f7618885db9e591d66ab0efba6bca68fba91c4eb7e510",
     "storage_gcp_trust:RecordingReader.query": "72a8ba66b4e528b3f6e39e11ff4ab20158a64a0cea4a78fb4b24a1eec8361b9e",
     "storage_trust_reconciliation:read_expected_reconciled_through": "78d58afe832261c24f98c696e5465717bde6bd8289a2a95adcb9ed916b9b5fd0",
@@ -4206,6 +4479,10 @@
     "storage_trust_reconciliation:write:7": {
       "fingerprint": "c6becd7764dccd875ca78b8d33ec0323b66fc97e293cc7633124ea5d7ca7c122",
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
+    },
+    "operational_analytics:route_workspaces:1": {
+      "fingerprint": "8755cf00b1bd694bd8de72537255dbf48da72a80d07f4e524372be0a34cbbadf",
+      "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     }
   }
 }

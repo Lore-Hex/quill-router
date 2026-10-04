@@ -765,6 +765,9 @@ class Settings(BaseSettings):
     # pass per minute; an atomic milestone claim prevents duplicate sends when
     # several warm regional replicas inspect the same due task.
     activation_reminder_interval_seconds: int = 0
+    # Daily route-retirement notices. Preview never claims customer notices.
+    retirement_notices_mode: Literal["off", "preview", "send"] = "off"
+    retirement_notices_preview_email: str | None = None
 
     stablecoin_checkout_enabled: bool = True
     x402_enabled: bool = False
@@ -913,6 +916,10 @@ class Settings(BaseSettings):
     # runtime kill switch so heartbeat writes can be stopped independently of a
     # code rollout while authorize continues to expose cohort metadata.
     stage_d_heartbeat_enabled: bool = True
+    # Off until every accepted enclave image declares its heartbeats at boot
+    # registration. On, a stream joins the heartbeat cohort only when its boot
+    # declared them: a verified boot alone does not prove the enclave heartbeats.
+    stage_d_require_heartbeat_declaration: bool = False
     # Emergency kill added 2026-09-03: declares no request Stage D eligible.
     stage_d_eligibility_enabled: bool = False
     stage_d_pilot_workspace_ids: str = "45819281-0ce9-4811-a0cd-c660ab3a116d"

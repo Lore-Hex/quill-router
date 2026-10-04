@@ -198,6 +198,7 @@ class InMemoryStore:
         self._paused_authorizations: set[tuple[str, str, str]] = set()
         self.abuse_pause_clears: set[tuple[str, str]] = set()
         self.webhook_events: set[tuple[str, str]] = set()
+        self.retirement_notices: dict[str, dict[str, str]] = {}
         self.earnings_money: dict[str, tuple[int, int]] = {}
         self.user_transfer_daily: dict[tuple[str, str], int] = {}
         self.credit_movements: dict[tuple[str, str], CreditMovement] = {}
@@ -281,6 +282,7 @@ class InMemoryStore:
             self._paused_authorizations.clear()
             self.abuse_pause_clears.clear()
             self.webhook_events.clear()
+            self.retirement_notices.clear()
             self.earnings_money.clear()
             self.credit_movements.clear()
             self.user_transfer_daily.clear()
@@ -411,6 +413,9 @@ class InMemoryStore:
                     approved=existing.approved or record.approved,
                     verified=existing.verified or record.verified,
                     image_digest=(record.image_digest or existing.image_digest),
+                    # Replaced, never merged: a declaration can be withdrawn.
+                    declares_usage_heartbeat=record.declares_usage_heartbeat,
+                    declares_stream_open_heartbeat=record.declares_stream_open_heartbeat,
                 )
             self.gateway_boots[record.kid] = record
             return record
@@ -1513,8 +1518,20 @@ class InMemoryStore:
     def list_keys(self, workspace_id: str) -> list[ApiKey]:
         return self.api_keys.list_for_workspace(workspace_id)
 
-    def list_api_keys_with_usage(self, workspace_id: str) -> list[ApiKeyUsageSnapshot]:
-        return self.api_keys.list_with_usage_for_workspace(workspace_id)
+    def list_api_keys_with_usage(
+        self,
+        workspace_id: str,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        include_disabled: bool = True,
+    ) -> list[ApiKeyUsageSnapshot]:
+        return self.api_keys.list_with_usage_for_workspace(
+            workspace_id, limit=limit, offset=offset, include_disabled=include_disabled,
+        )
+
+    def delete_keys(self, workspace_id: str, key_hashes: list[str]) -> dict[str, bool]:
+        return self.api_keys.delete_many(workspace_id, key_hashes)
 
     def delete_key(self, key_hash: str) -> bool:
         return self.api_keys.delete(key_hash)
@@ -3755,6 +3772,15 @@ class InMemoryStore:
 
     def record_sns_message_once(self, message_id: str) -> bool:
         return self.email_blocks.record_message_once(message_id)
+
+    def claim_retirement_notices(
+        self, workspace_id: str, retirement_ids: list[str], *, occurred_at: str,
+    ) -> list[str]:
+        with self._lock:
+            notices = self.retirement_notices.setdefault(workspace_id, {})
+            claimed = sorted(set(retirement_ids) - notices.keys())
+            notices.update(dict.fromkeys(claimed, occurred_at))
+            return claimed
 
     def record_webhook_event_once(self, source: str, event_id: str) -> bool:
         with self._lock:

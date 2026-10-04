@@ -17,6 +17,7 @@ import json
 import logging
 import sys
 from typing import Any
+from uuid import UUID
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -30,6 +31,7 @@ from trusted_router.catalog_ingest import report_refused_manifest_rows
 from trusted_router.config import Settings, get_settings
 from trusted_router.dashboard import public_not_found_html, public_not_found_markdown
 from trusted_router.errors import error_response
+from trusted_router.gateway_timing import gateway_error_timing_fields
 from trusted_router.markdown_negotiation import (
     MARKDOWN_CONTENT_TYPE,
     is_public_page_path,
@@ -421,6 +423,27 @@ def create_app(
 
             _asyncio.create_task(loop())  # noqa: RUF006 - lifetime is the process
 
+    if surface in {"combined", "control"} and settings.retirement_notices_mode != "off":
+
+        @app.on_event("startup")
+        async def _start_retirement_notice_loop() -> None:  # pragma: no cover - thread wiring
+            import asyncio as _asyncio
+            import logging as _logging
+            import random as _random
+
+            from trusted_router.services.retirement_notices import run_retirement_notice_pass
+
+            async def loop() -> None:
+                await _asyncio.sleep(_random.uniform(5, 30))  # noqa: S311
+                while True:
+                    try:
+                        await _asyncio.to_thread(run_retirement_notice_pass, settings)
+                    except Exception:
+                        _logging.getLogger(__name__).exception("retirement notice pass failed")
+                    await _asyncio.sleep(24 * 60 * 60)
+
+            _asyncio.create_task(loop())  # noqa: RUF006 - lifetime is the process
+
     # In-process synthetic monitor. See the settings docstring for why the
     # trigger lives here rather than in each cloud's own scheduler. Deployments
     # that use this observer owner must pin the service to one replica; the AWS
@@ -581,13 +604,21 @@ def create_app(
         if template:
             # Routes under a mounted sub-app carry the mount in root_path.
             template = f"{request.scope.get('root_path') or ''}{template}"
+        workspace_id = getattr(request.state, "billing_workspace_id", None)
+        try:
+            workspace_id = str(UUID(workspace_id)) if isinstance(workspace_id, str) else "unknown"
+        except ValueError:
+            workspace_id = "unknown"
+        timing = " ".join(f"{name}={value}" for name, value in gateway_error_timing_fields(exc).items())
         _storage_error_logger.warning(
-            "%s method=%s route=%s request_id=%s error_class=%s",
+            "%s method=%s route=%s request_id=%s error_class=%s workspace_id=%s%s",
             event,
             request.method,
             template or "<unmatched>",
             getattr(request.state, "request_id", None),
             type(exc).__name__,
+            workspace_id,
+            f" {timing}" if timing else "",
         )
 
     async def aborted_exception_handler(request: Request, exc: Exception) -> Response:

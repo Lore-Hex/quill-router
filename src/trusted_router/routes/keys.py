@@ -3,18 +3,30 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
 from trusted_router.auth import InferencePrincipal, ManagementPrincipal, Principal
 from trusted_router.errors import api_error, assert_workspace_billing_active
 from trusted_router.money import dollars_to_microdollars
 from trusted_router.request_tags import InvalidTags, validate_tags
-from trusted_router.schemas import CreateKeyRequest, PatchKeyRequest, model_to_dict
+from trusted_router.schemas import (
+    BulkDeleteKeysRequest,
+    CreateKeyRequest,
+    PatchKeyRequest,
+    model_to_dict,
+)
 from trusted_router.scopes import SCOPE_PROFILE, validate_api_key_scopes
 from trusted_router.serialization import key_shape
 from trusted_router.storage import STORE, ApiKey
 from trusted_router.types import ErrorType
+
+# The application validation handler returns 400, not FastAPI's default 422.
+# A 4XX response also suppresses that automatic 422 OpenAPI declaration.
+_KEY_VALIDATION_RESPONSES: dict[int | str, dict[str, Any]] = {
+    400: {"description": "Invalid parameters; standard error envelope with type bad_request."},
+    "4XX": {"description": "Client error; authentication or request rejected."},
+}
 
 
 def _enriched_key_shape(key: ApiKey) -> dict[str, Any]:
@@ -79,10 +91,66 @@ def register_key_routes(router: APIRouter) -> None:
         assert principal.api_key is not None
         return {"data": self_key_shape(principal.api_key)}
 
-    @router.get("/keys")
-    async def keys(principal: ManagementPrincipal) -> dict[str, list[dict[str, Any]]]:
+    # These storage-heavy management operations run in FastAPI's worker pool,
+    # so a batch or a slow database round trip cannot block the ASGI event loop.
+    @router.get("/keys", responses=_KEY_VALIDATION_RESPONSES)
+    def keys(
+        principal: ManagementPrincipal,
+        limit: int | None = Query(default=None, ge=1, le=1000),
+        offset: int = Query(default=0, ge=0),
+        include_disabled: bool = Query(default=True),
+    ) -> dict[str, Any]:
+        """List keys newest first (hash breaks ties), with batched usage.
+
+        Omit limit to return all remaining keys, including disabled keys by
+        default for backward compatibility. With limit, next_offset is null
+        at the end; otherwise pass it as offset with the same filters. Pages
+        are stable while the key set is unchanged, not a cross-request snapshot.
+        """
+        snapshots = STORE.list_api_keys_with_usage(
+            principal.workspace.id,
+            limit=None if limit is None else limit + 1,
+            offset=offset,
+            include_disabled=include_disabled,
+        )
+        has_more = limit is not None and len(snapshots) > limit
+        if limit is not None:
+            snapshots = snapshots[:limit]
+        data = [
+            key_shape(
+                replace(
+                    snapshot.api_key,
+                    usage_microdollars=snapshot.usage_microdollars,
+                    byok_usage_microdollars=snapshot.byok_usage_microdollars,
+                    reserved_microdollars=snapshot.reserved_microdollars,
+                ),
+                window_usage=snapshot.windows if snapshot.typed_usage_available else None,
+            )
+            for snapshot in snapshots
+        ]
+        response: dict[str, Any] = {"data": data}
+        if limit is not None:
+            response["next_offset"] = offset + len(data) if has_more else None
+        return response
+
+    @router.post("/keys/bulk-delete", responses=_KEY_VALIDATION_RESPONSES)
+    def bulk_delete_keys(
+        body: BulkDeleteKeysRequest,
+        principal: ManagementPrincipal,
+    ) -> dict[str, Any]:
+        """Delete 1–1000 hashes in workspace-scoped transactions of at most 100.
+
+        Results follow input order; duplicate hashes repeat their first result.
+        Foreign and missing keys both report not_found. Batches commit
+        independently; after a transient failure retrying is safe, but keys
+        already deleted will report not_found.
+        """
+        results = STORE.delete_keys(principal.workspace.id, body.hashes)
         return {
-            "data": [_enriched_key_shape(k) for k in STORE.list_keys(principal.workspace.id)]
+            "data": [
+                {"hash": key_hash, "status": "deleted" if results[key_hash] else "not_found"}
+                for key_hash in body.hashes
+            ]
         }
 
     @router.post("/keys")
@@ -173,7 +241,7 @@ def register_key_routes(router: APIRouter) -> None:
         return {"data": key_shape(updated)}
 
     @router.delete("/keys/{hash}")
-    async def delete_key(hash: str, principal: ManagementPrincipal) -> dict[str, Any]:  # noqa: A002
+    def delete_key(hash: str, principal: ManagementPrincipal) -> dict[str, Any]:  # noqa: A002
         _require_key_in_workspace(hash, principal)
         if not STORE.delete_key(hash):
             raise api_error(404, "Resource not found", ErrorType.NOT_FOUND)

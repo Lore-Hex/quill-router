@@ -27,8 +27,8 @@ Runs every hour from `.github/workflows/refresh-prices.yml`:
 Exit codes:
    0 — success (snapshot may or may not have changed; the workflow
        checks `git diff --quiet` separately)
-   1 — too many providers failed and had no committed snapshot fallback;
-       no snapshot written
+   1 — a majority of providers failed, or a publication safety gate failed;
+       all published files kept unchanged
 """
 
 from __future__ import annotations
@@ -38,7 +38,6 @@ import atexit
 import importlib
 import json
 import logging
-import os
 import shutil
 import sys
 import tempfile
@@ -72,6 +71,10 @@ from trusted_router.provider_manifest_policy import (  # noqa: E402
 )
 
 HELD_FOR_REVIEW_HEADING = "Held for price review (last published prices kept):"
+
+# All configured StreamLake models were retired in the October 3 incident.
+# Keep its committed artifacts for history, but do not scrape or self-heal it.
+RETIRED_PROVIDER_SLUGS = frozenset({"streamlake"})
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SNAPSHOT_PATH = REPO_ROOT / "src" / "trusted_router" / "data" / "openrouter_snapshot.json"
@@ -134,7 +137,6 @@ PROVIDER_SLUGS = [
     "inceptron",
     "morph",
     "atlas_cloud",
-    "streamlake",
     "neurometric",
     "engy",
     "pearl",
@@ -226,7 +228,6 @@ _SELF_HEALING_PARSER_SLUGS = frozenset(
         "novita",
         "openai",
         "siliconflow",
-        "streamlake",
         "thinkingmachines",
         "telnyx",
         "voyage",
@@ -238,20 +239,6 @@ _SELF_HEALING_PARSER_SLUGS = frozenset(
 # Vertex-native manifests publish independently canaried routes. Do not invent
 # additional Vertex endpoints from the third-party snapshot's model metadata.
 _NO_SYNTHETIC_ENDPOINT_PROVIDER_SLUGS = frozenset({"google-vertex"})
-
-# >N providers failing entirely (network down, blocked, etc.) fails
-# the workflow and prevents committing a partial snapshot. ≤N failures
-# are tolerated: those providers keep last hour's snapshot value.
-#
-# Default 2 of 9 (~22%) is a guess. Tune via TR_PRICING_MAX_FAILURES
-# env var once we have a few weeks of empirical failure-rate data.
-# Numbers we'd expect from observation:
-#   - blockable scrapers (OpenAI 403 to bot UA): ~rare with real UA
-#   - DNS hiccups / TLS handshake failures: ~1-2% per provider per run
-#   - LLM self-heal that the AST gate or sandbox rejects: rare-but-real
-# Set higher (e.g. 4) if observed failure rate is steady at ~30%; set
-# lower (e.g. 0) if we want strict "all-or-nothing" hourly refreshes.
-MAX_TOLERATED_FAILURES = int(os.environ.get("TR_PRICING_MAX_FAILURES", "2"))
 
 # Threshold for cross-check disagreements between provider-direct and
 # OR. Above this, we log a note. Provider-direct still wins.
@@ -291,6 +278,17 @@ def _copy_published_prices() -> Path:
     shutil.copytree(PROVIDER_MANIFEST_DIR, baseline / PROVIDER_MANIFEST_DIR.name)
     shutil.copytree(PARSERS_DIR, baseline / PARSERS_DIR.name)
     return baseline
+
+
+def _restore_all_published_files(baseline: Path) -> None:
+    """Roll back generated data and self-healed parsers on a rejected run."""
+    shutil.copyfile(baseline / SNAPSHOT_PATH.name, SNAPSHOT_PATH)
+    for target in (PROVIDER_MANIFEST_DIR, PARSERS_DIR):
+        published = baseline / target.name
+        for path in target.iterdir():
+            if path.is_file() and not (published / path.name).exists():
+                path.unlink()
+        shutil.copytree(published, target, dirs_exist_ok=True)
 
 
 def _spiking_results(
@@ -493,18 +491,97 @@ def _held_routes_changed(baseline: Path, held: dict[str, list[str]]) -> list[str
 
 def _restore_published_files(baseline: Path, slug: str) -> None:
     """Put back the provider's manifest and parser exactly as last published."""
+    # Write through this module's directories. In production they are the same
+    # files as MANIFEST_PATH and parser_path(); in tests they point at a temp
+    # copy, so a restore can never overwrite the repository's real files.
     manifest_path_value = getattr(_import_provider(slug), "MANIFEST_PATH", None)
     if manifest_path_value is not None:
-        target = Path(manifest_path_value)
+        target = PROVIDER_MANIFEST_DIR / Path(manifest_path_value).name
         published = baseline / PROVIDER_MANIFEST_DIR.name / target.name
         if published.exists():
             shutil.copyfile(published, target)
         else:
             target.unlink(missing_ok=True)
     # A self-healed parser that produced the spike must not be committed.
-    published_parser = baseline / PARSERS_DIR.name / parser_path(slug).name
+    live_parser = PARSERS_DIR / parser_path(slug).name
+    published_parser = baseline / PARSERS_DIR.name / live_parser.name
     if published_parser.exists():
-        shutil.copyfile(published_parser, parser_path(slug))
+        shutil.copyfile(published_parser, live_parser)
+    else:
+        live_parser.unlink(missing_ok=True)
+
+
+def _keep_failed_snapshot_routes(
+    merged: dict[str, Any], published: dict[str, Any], failed: dict[str, list[str]]
+) -> dict[str, str]:
+    """Copy failed providers' endpoints verbatim, even without a usable fallback.
+
+    Recovery into ModelPrice is lossy (two regional routes can have different
+    cache prices). Failed providers contribute no fresh price or route: only
+    their committed endpoints, including models absent from today's OR feed.
+    If no surviving endpoint can price a model, hold its entire committed row
+    (or keep it absent) and return the reason for the refresh summary.
+    """
+    if not failed:
+        return {}
+    models = {row["id"]: row for row in merged["models"]}
+    published_models = {row["id"]: row for row in published.get("models", [])}
+    held_models: dict[str, str] = {}
+    reprice: set[str] = set()
+    # The all-zero OR fallback can also carry endpoints from failed providers.
+    for model in models.values():
+        kept = [
+            ep for ep in model.get("endpoints", []) if _held_route(model, ep, failed) is None
+        ]
+        if kept != model.get("endpoints", []):
+            reprice.add(model["id"])
+        model["endpoints"] = kept
+    for old in published.get("models", []):
+        endpoints = [
+            ep for ep in old.get("endpoints", [])
+            if _held_route(old, ep, failed) is not None
+            and not provider_model_retired(ep["tr_provider_slug"], old["id"], ep.get("model_id"))
+        ]
+        if not endpoints:
+            continue
+        model = models.get(old["id"])
+        if model is None or not model["endpoints"]:
+            models[old["id"]] = {**old, "endpoints": endpoints}
+            if endpoints == old.get("endpoints"):
+                reprice.discard(old["id"])
+            else:
+                reprice.add(old["id"])
+            continue
+        model["endpoints"].extend(endpoints)
+        reprice.add(old["id"])
+    for model_id in sorted(reprice):
+        model = models[model_id]
+        # A shared model's headline follows the cheapest surviving endpoint;
+        # each endpoint keeps its own exact published or freshly fetched price.
+        prices = [
+            (price, ep) for ep in model["endpoints"]
+            if (price := _or_pricing_to_micro_per_m(ep.get("pricing") or {})) is not None
+            and not _is_unpriced(price)
+        ]
+        if prices:
+            cheapest, endpoint = min(
+                prices, key=lambda item: (item[0].prompt_micro_per_m, item[0].completion_micro_per_m)
+            )
+            model["pricing"] = _price_to_pricing_block(cheapest)
+            model["pricing_source"] = endpoint.get("pricing_source", "stale_snapshot")
+        elif model["endpoints"]:
+            # Hold this row instead of blocking every other model's refresh.
+            # Never retain a fresh headline that might price a removed route.
+            reason = "no surviving endpoint can price the headline"
+            if model_id in published_models:
+                models[model_id] = dict(published_models[model_id])
+                held_models[model_id] = f"{reason}; kept committed row"
+            else:
+                del models[model_id]
+                held_models[model_id] = f"{reason}; kept unpublished (no committed row)"
+    merged["models"] = [model for _, model in sorted(models.items()) if model["endpoints"]]
+    merged["model_count"] = len(merged["models"])
+    return held_models
 
 
 def _result_slug_for_provider(provider_slug: str) -> str:
@@ -910,10 +987,9 @@ def _apply_stale_fallbacks(
 ) -> list[tuple[str, str]]:
     """Recover failed provider refreshes from committed endpoint prices.
 
-    A provider with stale prices is still reported as failed in the summary,
-    but it is no longer a fatal missing-provider failure. This keeps one
-    provider's live update, such as Together's JSON API result, from being
-    blocked by unrelated scraper/self-heal failures on other providers.
+    Recovery does not renew a manifest or clear a provider failure. The
+    caller preserves failed providers' committed files and snapshot endpoints
+    even when their prices cannot be represented as a fallback result.
     """
     if not failures:
         return []
@@ -974,7 +1050,7 @@ def _apply_stale_fallbacks(
         if slug in EXPIRING_PROVIDER_MANIFEST_SLUGS:
             # Catalog ingestion quarantines every endpoint for this provider
             # when its manifest is missing or invalid. Do not let an already
-            # contained provider failure consume the global publication budget.
+            # contained provider failure become a missing-price failure.
             log.error(
                 "pricing.provider_manifest_quarantined slug=%s reason=%s",
                 slug,
@@ -1382,12 +1458,12 @@ def _write_provider_manifests(
             # Without a rollback target, a writer cannot be isolated safely.
             raise RuntimeError(f"{slug}: manifest writer must declare MANIFEST_PATH")
         manifest_path = Path(manifest_path_value)
-        before_text: str | None = None
+        before_bytes: bytes | None = None
         before_rows: list[Any] | None = None
         if manifest_path.exists():
-            before_text = manifest_path.read_text(encoding="utf-8")
+            before_bytes = manifest_path.read_bytes()
             try:
-                before_raw = json.loads(before_text)
+                before_raw = json.loads(before_bytes)
             except (TypeError, ValueError):
                 before_raw = None
             if isinstance(before_raw, dict) and isinstance(before_raw.get("models"), list):
@@ -1416,8 +1492,8 @@ def _write_provider_manifests(
             # A hook may fail after a partial write. Roll back before using the
             # same last-known-good recovery path as a provider fetch failure.
             # A rollback error deliberately aborts the entire publication.
-            if before_text is not None:
-                manifest_path.write_text(before_text, encoding="utf-8")
+            if before_bytes is not None:
+                manifest_path.write_bytes(before_bytes)
             else:
                 manifest_path.unlink(missing_ok=True)
             detail = f"stage=manifest {safe_exception_summary(exc)}"
@@ -1486,8 +1562,17 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    baseline = None if args.summary_only else _copy_published_prices()
+    baseline = _copy_published_prices()
+    status = 1
+    try:
+        status = _refresh(summary_only=args.summary_only, baseline=baseline)
+        return status
+    finally:
+        if status != 0 or args.summary_only:
+            _restore_all_published_files(baseline)
 
+
+def _refresh(*, summary_only: bool, baseline: Path) -> int:
     log.info("pricing.refresh.openrouter_ingest")
     or_snapshot = build_openrouter_snapshot()
     committed_snapshot = _read_existing_snapshot()
@@ -1509,7 +1594,7 @@ def main(argv: list[str] | None = None) -> int:
         committed_snapshot,
     )
     manifest_notes: list[str] = []
-    if not args.summary_only:
+    if not summary_only:
         manifest_notes, manifest_failures = _write_provider_manifests(results)
         for slug, _error in manifest_failures:
             # Never merge fresh prices from a rejected manifest. Recovery must
@@ -1521,25 +1606,34 @@ def main(argv: list[str] | None = None) -> int:
         )
     healed = [slug for slug, res in results.items() if res.heal_diff is not None]
 
-    if len(unrecovered_failures) > MAX_TOLERATED_FAILURES:
+    # One systemic-failure rule: a strict majority of attempted providers
+    # failed to refresh, whether or not committed prices could be recovered.
+    # Local failures cannot consume an arbitrary global publication budget.
+    failed = {slug: [f"refresh failed: {error}"] for slug, error in failures}
+    for slug, error in unrecovered_failures:
+        failed[slug] = [f"refresh failed: {error}"]
+    if len(failed) * 2 > len(PROVIDER_SLUGS):
         log.error(
-            "pricing.refresh.too_many_unrecovered_failures count=%d limit=%d failures=%s",
-            len(unrecovered_failures),
-            MAX_TOLERATED_FAILURES,
-            unrecovered_failures,
+            "pricing.refresh.systemic_failure failed=%d providers=%d failures=%s",
+            len(failed), len(PROVIDER_SLUGS), failures,
         )
+        print(f"Systemic refresh failure: {len(failed)}/{len(PROVIDER_SLUGS)} providers failed; nothing published.")
         for line in _summary_lines(results, healed, failures, [], []):
             print(line)
         return 1
 
-    provider_index = _index_provider_prices(results)
+    for slug in failed:
+        _restore_published_files(baseline, slug)
+    healed = [slug for slug in healed if slug not in failed]
+    provider_index = _index_provider_prices({slug: res for slug, res in results.items() if slug not in failed})
     disagreements = _cross_check(provider_index, or_snapshot)
     id_mismatches = _cross_check_ids(results, or_snapshot)
 
     merged = _merge_snapshot(or_snapshot, provider_index, set(healed))
+    held_models = _keep_failed_snapshot_routes(merged, committed_snapshot, failed)
 
     held: dict[str, list[str]] = {}
-    if baseline is not None:
+    if not summary_only:
         _write_snapshot(merged)
         # A price spike holds only its own provider at the last published
         # prices, so the rest of the catalog still refreshes. The workflow's
@@ -1552,8 +1646,7 @@ def main(argv: list[str] | None = None) -> int:
                 results.pop(slug, None)
             # The stale fallback re-prices the provider's snapshot routes from
             # the published snapshot; its manifest routes are restored above.
-            # A hold is therefore never a missing provider, so it does not
-            # count toward MAX_TOLERATED_FAILURES.
+            # A price hold is not a fetch or manifest failure.
             _apply_stale_fallbacks(
                 results,
                 [(slug, "price spike held for review") for slug in hold],
@@ -1563,12 +1656,14 @@ def main(argv: list[str] | None = None) -> int:
             published = json.loads((baseline / SNAPSHOT_PATH.name).read_text(encoding="utf-8"))
             _index_only_published_models(results, published, held)
             healed = [slug for slug in healed if slug not in held]
-            provider_index = _index_provider_prices(results)
+            provider_index = _index_provider_prices({slug: res for slug, res in results.items() if slug not in failed})
             disagreements = _cross_check(provider_index, or_snapshot)
             id_mismatches = _cross_check_ids(results, or_snapshot)
             merged = _merge_snapshot(or_snapshot, provider_index, set(healed))
+            held_models = _keep_failed_snapshot_routes(merged, committed_snapshot, failed)
             refused = _drop_unpublished_held_routes(merged, published, held)
             _write_snapshot(merged)
+        held.update(failed)
         if held and (changed := _held_routes_changed(baseline, held) + refused):
             # Re-pricing could not reproduce a held provider exactly (e.g. an
             # OpenRouter-fallback route or a rejected stale price). Publish
@@ -1580,6 +1675,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         log.info("pricing.refresh.wrote path=%s models=%d", SNAPSHOT_PATH, merged["model_count"])
 
+    held.update(failed)
     summary = _summary_lines(results, healed, failures, disagreements, id_mismatches)
     print(f"Hourly price refresh — {merged['model_count']} models")
     print(
@@ -1587,7 +1683,7 @@ def main(argv: list[str] | None = None) -> int:
         f"deterministic, {len(healed)} self-healed, "
         f"{sum(1 for r in results.values() if r.source == 'api')} api, "
         f"{sum(1 for r in results.values() if r.source == 'stale_snapshot')} stale, "
-        f"{len(failures)} failed (kept last hour's value)"
+        f"{len(failures)} failed (kept committed state; absent providers remain absent)"
     )
     print()
     for line in summary:
@@ -1606,9 +1702,14 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"    {route}")
         print(
             "::warning title=Provider prices held for review::"
-            f"{', '.join(sorted(held))} kept their last published prices. A real "
-            "change is accepted in APPROVED_ENDPOINT_PRICE_TRANSITIONS."
+            f"{', '.join(sorted(held))} kept their committed state. Repair refresh "
+            "failures; verified price changes use APPROVED_ENDPOINT_PRICE_TRANSITIONS."
         )
+    if held_models:
+        print()
+        print("Snapshot models held:")
+        for model_id, reason in sorted(held_models.items()):
+            print(f"  {model_id}: {reason}")
     return 0
 
 

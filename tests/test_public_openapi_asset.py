@@ -245,3 +245,26 @@ def test_public_openapi_uses_static_representation_without_calling_app_openapi(
     assert head.content == b""
     assert not_modified.status_code == 304
     assert not_modified.content == b""
+
+
+def test_public_openapi_documents_key_paging_and_bulk_delete() -> None:
+    schema = json.loads(JSON_PATH.read_bytes())
+    listing = schema["paths"]["/v1/keys"]["get"]
+    params = {param["name"]: param["schema"] for param in listing["parameters"]}
+    limit = next(value for value in params["limit"]["anyOf"] if value["type"] == "integer")
+    assert limit["minimum"] == 1
+    assert limit["maximum"] == 1000
+    assert params["offset"]["minimum"] == 0
+    assert params["include_disabled"]["default"] is True
+    assert "next_offset" in listing["description"]
+    assert "400" in listing["responses"]
+    assert "422" not in listing["responses"]
+    bulk = schema["paths"]["/v1/keys/bulk-delete"]["post"]
+    assert "400" in bulk["responses"]
+    assert "422" not in bulk["responses"]
+    body = bulk["requestBody"]["content"]["application/json"]["schema"]
+    assert body["$ref"] == "#/components/schemas/BulkDeleteKeysRequest"
+    hashes = schema["components"]["schemas"]["BulkDeleteKeysRequest"]["properties"]["hashes"]
+    assert hashes["minItems"] == 1
+    assert hashes["maxItems"] == 1000
+    assert hashes["items"] == {"type": "string"}

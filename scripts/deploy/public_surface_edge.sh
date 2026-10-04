@@ -30,7 +30,9 @@ ROLLBACK_CAPTURE="${STATE_DIR}/${URL_MAP}.pre-public-cutover.capture.json"
 
 print_policy_bootstrap() {
   cat >&2 <<EOF
-Owner action required. The deploy identity must not receive security-policy mutation roles:
+Owner action required. The deploy identity must not receive security-policy mutation roles.
+The policy is declared in infra/cloud_armor.tf; prefer an owner \`terraform apply\` of that root.
+The original bootstrap commands follow:
   gcloud compute security-policies create ${PUBLIC_EDGE_POLICY} --project=${PROJECT_ID} --global --type=CLOUD_ARMOR --description="TrustedRouter T1 public edge policy"
   gcloud compute security-policies rules update 2147483647 --project=${PROJECT_ID} --security-policy=${PUBLIC_EDGE_POLICY} --action=allow --src-ip-ranges='*' --no-preview --description="Default allow; bounded public route classes are evaluated first"
   gcloud compute security-policies rules create 900 --project=${PROJECT_ID} --security-policy=${PUBLIC_EDGE_POLICY} --action=deny-403 --expression="!has(request.headers['host']) || !request.headers['host'].lower().matches('^(?:trustedrouter[.]com|www[.]trustedrouter[.]com|status[.]trustedrouter[.]com|trust[.]trustedrouter[.]com|eu[.]trustedrouter[.]com|status-us[.]trustedrouter[.]com|status-eu[.]trustedrouter[.]com|allyrouter[.]com|www[.]allyrouter[.]com|status[.]allyrouter[.]com|trust[.]allyrouter[.]com|uptimerouter[.]com|www[.]uptimerouter[.]com|status[.]uptimerouter[.]com|trust[.]uptimerouter[.]com)(?::[0-9]+)?$')" --no-preview --description="Reject hosts outside T1 first-party names"
