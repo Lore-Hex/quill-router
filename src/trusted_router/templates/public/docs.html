@@ -266,4 +266,12 @@ with httpx.Client() as client:
   </div>
 </section>
 
+<section class="marketing-section" id="usage-cost">
+  <h2>Cost in response usage</h2>
+  <p>Single-endpoint Chat Completions, Responses, and Anthropic Messages requests return <code>usage.cost_microdollars</code> and <code>usage.total_cost_microdollars</code> when the request's charge is known. Both are integer microdollars: 1,000,000 equals $1. A known free request reports 0; an unknown cost is omitted.</p>
+  <p>For streaming chat, request <code>stream_options.include_usage: true</code> to receive the terminal usage chunk. Responses includes cost in <code>response.completed.response.usage</code>; Messages includes it in <code>message_delta.usage</code>. Answer deltas continue streaming while the terminal event waits briefly for settlement.</p>
+  <p>Eligible standard routes are billed at the prices in effect when the request was authorized. Their streamed usage carries <code>cost_microdollars</code> and <code>total_cost_microdollars</code>, even if settlement is delayed.</p>
+  <p>Other routes report a settled or durable charge when known; an unknown cost is omitted, not shown as zero. BYOK, partner minimums, orchestration, hosted search, video, refunds, receipt surcharges, and custom or app markups retain their existing billing and reporting contracts.</p>
+</section>
+
 {% endblock %}

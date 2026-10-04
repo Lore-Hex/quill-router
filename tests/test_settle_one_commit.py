@@ -605,6 +605,11 @@ def test_aborted_one_commit_falls_back_to_durable_enqueue_then_drain_finalizes_o
 
         assert refused, "the one-commit transaction never reached its commit"
         assert data["disposition"] == "intent_durable" and data["settled"] is False
+        assert data["cost_microdollars"] == 49
+        assert data["cost"] == 0.000049
+        assert data["model"] == MODEL
+        assert data["provider"] == "anthropic"
+        assert data["usage_type"] == "Credits"
         # Only the durable enqueue committed; the refused attempt wrote nothing.
         assert log.take() == ["auto:SpannerSettleOutbox.enqueue.insert_txn"]
     aid = authorized["authorization_id"]
@@ -621,7 +626,7 @@ def test_aborted_one_commit_falls_back_to_durable_enqueue_then_drain_finalizes_o
     row = db.settle_outbox[(aid, "settle")]
     assert row["status"] == "done"
     cost = row["actual_cost_micro"]
-    assert cost > 0
+    assert cost == data["cost_microdollars"] == 49
     assert _money(db, "ws-one-commit", key.hash) == (cost, 0, cost, 0)
     assert len(db.generation_records) == 1
     assert len(db.operational_analytics_outbox) == 1
@@ -1007,3 +1012,68 @@ def test_one_commit_cleanup_skips_a_committed_or_rolled_back_last_attempt() -> N
     storage_gcp_authorize._dispose_open_transaction([rolled_back])
     storage_gcp_authorize._dispose_open_transaction([])
     assert committed.rollbacks == 0 and rolled_back.rollbacks == 0
+
+
+@pytest.mark.parametrize("state,expected", [("fresh", 49), ("refreshed", 49), ("leased", 123), ("terminal", 123), ("lookup-failed", None)])
+def test_durable_cost_comes_from_the_intent_that_enqueue_preserved(
+    prod_store: tuple[Any, FakeSpannerDatabase, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    state: str,
+    expected: int | None,
+) -> None:
+    store, db, key = prod_store
+    authorized = _authorize_route(key, "durable-cost-report")
+    aid = authorized["authorization_id"]
+    outbox = SpannerSettleOutbox(db, store._param_types)
+    if state != "fresh":
+        intent = SettleOutboxRow(
+            authorization_id=aid, intent_kind="settle", settle_origin="typed",
+            actual_cost_micro=123, selected_endpoint_id=authorized["endpoint_id"],
+            model_id=MODEL, selected_usage_type="Credits",
+            settle_body=_settle_body(authorized).model_dump_json(),
+        )
+        assert outbox.enqueue(intent) == ENQ_INSERTED
+        if state in {"leased", "lookup-failed"}:
+            assert len(outbox.claim(lease_seconds=300)) == 1
+        elif state == "terminal":
+            db.settle_outbox[(aid, "settle")]["status"] = "done"
+
+    if state == "lookup-failed":
+        original_get = SpannerSettleOutbox.get
+        reads = 0
+
+        def fail_lookup(self: Any, *args: Any) -> Any:
+            nonlocal reads
+            reads += 1
+            if reads == 2:  # enqueue's existing classifier succeeds first
+                raise RuntimeError("fixture reporting read failure")
+            return original_get(self, *args)
+
+        monkeypatch.setattr(SpannerSettleOutbox, "get", fail_lookup)
+    # Exercise only reporting; preserve the existing money/outbox decisions.
+    monkeypatch.setattr(type(store), "typed_settle_one_commit_result", lambda *_a, **_kw: None)
+    finalized: list[bool] = []
+
+    def fail_finalize(*_args: Any, **_kwargs: Any) -> None:
+        finalized.append(True)
+        raise RuntimeError("fixture finalization failure")
+
+    monkeypatch.setattr(type(store), "typed_finalize_gateway_authorization_result", fail_finalize)
+    data, _tasks = _settle_route(authorized)
+    assert data["disposition"] == "intent_durable"
+    assert data["finalization_outcome"] == "pending"
+    assert data["settled"] is False
+    assert data["already_settled"] is False
+    assert finalized == [True]
+    assert data.get("cost_microdollars") == expected
+    if expected is None:
+        assert "cost_microdollars" not in data
+        assert "cost" not in data
+    else:
+        assert data["model"] == MODEL
+        assert data["provider"] == "anthropic"
+        assert data["usage_type"] == "Credits"
+    row = db.settle_outbox[(aid, "settle")]
+    assert row["actual_cost_micro"] == (123 if expected is None else expected)
+    assert row["auto_refill_workspace_id"] == "ws-one-commit"
+    assert _money(db, "ws-one-commit", key.hash)[0] == 0

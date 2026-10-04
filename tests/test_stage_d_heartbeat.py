@@ -1127,9 +1127,23 @@ def test_disposition_mapping_covers_every_terminal_and_deferred_state() -> None:
 
 def test_literal_deferred_and_terminal_disposition_responses_match_router_helpers() -> None:
     _db, authorization = _seed()
-    deferred = {"data": gateway._intent_durable_gateway_data(authorization)}
+    from trusted_router.storage_models import SettleOutboxRow
+
+    intent = SettleOutboxRow(
+        authorization_id=authorization.id, intent_kind="settle", settle_origin="typed",
+        actual_cost_micro=120, model_id="model", selected_usage_type="Credits",
+    )
+    deferred = {"data": gateway._intent_durable_gateway_data(authorization, intent)}
     assert deferred == _json("settle_response_intent_durable.json")
-    assert deferred == _json("refund_response_intent_durable.json")
+    refund_intent = replace(intent, intent_kind="refund", actual_cost_micro=0)
+    assert {"data": gateway._intent_durable_gateway_data(authorization, refund_intent)} == _json(
+        "refund_response_intent_durable.json"
+    )
+    # A rolling/missing intent has no known cost, even though its disposition
+    # remains durable. It must not masquerade as a zero-cost request.
+    unknown = gateway._intent_durable_gateway_data(authorization)
+    assert "cost_microdollars" not in unknown
+    assert "cost" not in unknown
 
     authorization.settled = True
     authorization.finalization_outcome = "settled"

@@ -11,6 +11,7 @@ from trusted_router.app_markup_billing import app_markup_microdollars
 from trusted_router.catalog import endpoint_for_id
 from trusted_router.pricing import signed_receipt_price_microdollars
 from trusted_router.stage_d import (
+    billing_pricing_snapshot,
     endpoint_cost_microdollars_from_document,
     parse_pricing_snapshot,
 )
@@ -258,6 +259,15 @@ def delivered_usage_charge_microdollars(
 ) -> int:
     """Price a heartbeat through the same frozen downstream fee layers as settle."""
 
+    billing_snapshot = billing_pricing_snapshot(authorization)
+    if billing_snapshot is not None:
+        # Only Fugu's pinned contract admits a private prompt-tier basis, just
+        # as inline settlement and the gateway do. Preserve legacy cohorts.
+        endpoint = endpoint_for_id(endpoint_id)
+        model_id = endpoint.model_id if endpoint is not None else authorization.model_id
+        if provider != "sakana" or model_id != "sakana-ai/fugu-ultra-v1.1":
+            usage = {**usage, "price_tier_input_tokens": 0}
+        document = billing_snapshot
     charge = delivered_usage_cost_microdollars(
         document,
         provider,

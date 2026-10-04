@@ -9,14 +9,75 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from trusted_router.catalog import cache_token_prices_microdollars
 from trusted_router.money import token_cost_microdollars
 
+if TYPE_CHECKING:
+    from trusted_router.storage_models import GatewayAuthorization
+
 PRICING_DOCUMENT_VERSION = 1
 PRICE_HISTORY_VERSION = 1
 PRICING_ROUNDING = "half_up_per_million"
+
+
+def billing_pricing_snapshot(authorization: GatewayAuthorization) -> dict[str, Any] | None:
+    """The single eligibility predicate for snapshot billing and its wire promise.
+
+    Stage D's frozen cohort verdict excludes nonstandard routes (partner,
+    orchestration, search, video, Batch, BYOK and priority). Fee-bearing and
+    custom authorizations retain their existing billing contracts. Require a
+    supported price for every authorized endpoint, so fallback selection cannot
+    invalidate the promise. Never consult the mutable catalog for eligibility.
+    """
+    if (
+        authorization.stage_d_reason != "ok"
+        or authorization.pricing_snapshot is None
+        or authorization.usage_type != "Credits"
+        or authorization.custom_model_id is not None
+        or authorization.user_provided_model_id is not None
+        or authorization.native_batch_eligible
+        or authorization.video_pricing_snapshot is not None
+        or authorization.additional_cost_reservation_microdollars != 0
+        or authorization.receipt_fee_basis_points != 0
+        or authorization.app_markup_basis_points != 0
+        or authorization.custom_model_markup_basis_points != 0
+    ):
+        return None
+    try:
+        document = parse_pricing_snapshot(authorization.pricing_snapshot)
+        endpoints = set(authorization.candidate_endpoint_ids)
+        if authorization.endpoint_id:
+            endpoints.add(authorization.endpoint_id)
+        candidates = document["candidates"]
+        if not endpoints or {c["endpoint_id"] for c in candidates} != endpoints:
+            return None
+        if len(candidates) != len(endpoints):
+            return None
+        for candidate in candidates:
+            if (
+                candidate["price_history_version"] != PRICE_HISTORY_VERSION
+                or candidate["rounding"] != PRICING_ROUNDING
+            ):
+                return None
+            values = [candidate["request_fee_micro"]]
+            rates = [candidate["rates"]]
+            for tier in candidate["tiers"]:
+                maximum = tier["max_prompt_tokens"]
+                if maximum is not None:
+                    values.append(maximum)
+                rates.append(tier["rates"])
+            for rate in rates:
+                values.extend(rate[key] for key in (
+                    "input_micro_per_million", "output_micro_per_million",
+                    "cached_input_micro_per_million", "cache_creation_micro_per_million",
+                ))
+            if any(type(value) is not int or not 0 <= value <= 2**63 - 1 for value in values):
+                return None
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return None
+    return document
 
 
 def endpoint_pricing_candidate(endpoint: Any) -> dict[str, Any]:
