@@ -138,3 +138,36 @@ def test_finalized_video_replay_returns_existing_job_only(
         assert rejected.status_code == 409, rejected.text
     assert STORE.get_video_job("job-must-not-create") is None
     assert STORE.get_credit_account(authorization.workspace_id) == before
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_cross_region_video_replay_survives_consumed_daily_budget(strict: bool) -> None:
+    store, database, key = _seed_typed_gateway_store()
+    store.update_key(key.hash, {
+        "limit_daily_microdollars": 1_000_000, "budget_strict": strict,
+    })
+    settings = Settings(environment="test")
+    body = GatewayAuthorizeRequest(
+        api_key_hash=key.hash, model="minimax/hailuo-3", route_type="videos",
+        estimated_input_tokens=0, max_output_tokens=1,
+        additional_cost_reservation_microdollars=850_500,
+        idempotency_key="video-window-retry", request_fingerprint="a" * 64,
+        region="us-central1",
+    )
+    first = gateway._authorize_gateway_sync(_request(), body, settings)["data"]
+    assert store.typed_finalize_gateway_authorization(
+        first["authorization_id"], success=True,
+        actual_microdollars=850_500, selected_usage_type="Credits",
+    )
+    before = copy.deepcopy(database.typed)
+    retry = body.model_copy(update={"region": "europe-west4"})
+    replay = gateway._authorize_gateway_sync(_request(), retry, settings)["data"]
+    assert replay["authorization_id"] == first["authorization_id"]
+    assert replay["idempotent_replay"] is True
+    assert database.typed == before
+    with pytest.raises(HTTPException) as error:
+        gateway._authorize_gateway_sync(
+            _request(), retry.model_copy(update={"idempotency_key": "new-video"}), settings,
+        )
+    assert error.value.status_code == 429
+    assert database.typed == before

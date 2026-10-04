@@ -1642,6 +1642,23 @@ def _authorize_gateway_sync_impl(
             raise
         window_decision = getattr(outcome, "rate_limit", None)
         remember_spend_window_decision(request, window_decision)
+        if (
+            outcome == AuthorizeOutcome.IDEMPOTENCY_MISMATCH
+            or outcome.startswith(AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED)
+        ) and is_video_request and body.request_fingerprint and request_idempotency_key:
+            # Only a rejected video retry pays this indexed read. A window
+            # precheck can reject before the atomic idempotency check when the
+            # original job consumed its budget. Recover only that exact hold;
+            # neither path admitted a new reservation or provider call.
+            existing_authorization = _typed_store.get_typed_authorization_by_idempotency(
+                workspace.id, api_key.hash, request_idempotency_key,
+            )
+            if _video_cross_region_replay_matches(
+                existing_authorization, workspace.id, api_key.hash,
+                fingerprint_body, request_idempotency_key,
+            ):
+                release_user_model_slot_after_error()
+                return _replay_response(existing_authorization)
         if outcome == "billing_paused":
             release_user_model_slot_after_error()
             if settings.speculative_provider_shadow_enabled:
@@ -1667,18 +1684,6 @@ def _authorize_gateway_sync_impl(
             raise api_error(402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED)
         if outcome == AuthorizeOutcome.IDEMPOTENCY_MISMATCH:
             release_user_model_slot_after_error()
-            # Only a rejected video retry pays this indexed read. The atomic
-            # authorize already refused a new hold; recover the stored winner
-            # only when its complete fingerprint differs by gateway locality.
-            if is_video_request and body.request_fingerprint and request_idempotency_key:
-                existing_authorization = _typed_store.get_typed_authorization_by_idempotency(
-                    workspace.id, api_key.hash, request_idempotency_key,
-                )
-                if _video_cross_region_replay_matches(
-                    existing_authorization, workspace.id, api_key.hash,
-                    fingerprint_body, request_idempotency_key,
-                ):
-                    return _replay_response(existing_authorization)
             raise api_error(
                 409,
                 "Idempotency key was already used for a different gateway request",
