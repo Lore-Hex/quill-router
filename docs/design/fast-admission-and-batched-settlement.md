@@ -2,7 +2,7 @@
 
 Status: **approved by Joseph on 2026-10-03 (v25). Nothing built.** v8 changed
 direction to regional leases, Joseph's choice (§2). Codex and Fable reviewed
-v1-v25 (§11) and both accepted v25. v26 to v28 add §4.13, how this fits with
+v1-v25 (§11) and both accepted v25. v26 to v29 add §4.13, how this fits with
 the work in flight on the same path, and §5.1, the TLA+ specs that are
 model-checked before the code is written.
 
@@ -1111,6 +1111,11 @@ stream, and streams the enclave heartbeats. These stay on today's Python path:
   answers heartbeats `retry`, which ends running streams as today's 503 does
   (§4.5); with eligibility disabled it admits no new streams on the fast
   path and keeps serving those it admitted;
+- requests that do not stream and whose caller names no output limit. Their
+  hold is priced at 512 output tokens while the provider may return up to its
+  ceiling (§4.13). They move once their hold is priced at the ceiling the
+  enclave sends the provider, which needs that ceiling in the routing
+  snapshot or in the authorize request (§9);
 - requests with an `Idempotency-Key` (§4.3);
 - BYOK routes, custom and user-provided models, Polyphemus selection, native
   batch, video and image jobs, and hosted tools with
@@ -1178,10 +1183,15 @@ lists.
     the protocol keeps a grant's exposure across its expiry and cancellation.
     - Turning fast mode on closes the workspace to new grants, in the
       issuer's own row and transaction. The first lease is granted only
-      after every issued grant's start deadline has passed. Whatever the
-      issuer still records for the workspace, its outstanding executions and
-      retained losses, is subtracted from the lease allowance until it
-      settles.
+      after every issued grant's start deadline has passed. What the issuer
+      records as the workspace's exposure is subtracted from the lease
+      allowance. Today that figure only grows (`exposure.micro` in
+      `services/speculation_shadow.py`), as the protocol requires, so the
+      subtraction is permanent, at most one dollar, until speculation's real
+      permits name what lowers it.
+    - A request that carries a speculation descriptor is always answered by
+      Python, which alone issues the acceptance marker. So an execution
+      already started under a grant completes on the synchronous path.
     - Turning it off stops lease admission and drains the leases (§4.7).
       Grants resume only once every lease of the workspace has closed, which
       the issuer reads in its snapshot.
@@ -1210,11 +1220,19 @@ lists.
   down from 4.3 two days earlier. This is the path the synchronous cohort
   keeps (§4.11) and the reference the shadow comparator checks against, so
   its statements are the ones the compiled service must match.
-- **The enclave's default output cap.** quill-cloud-proxy #440 sends up to
-  32,000 output tokens to adaptive-thinking Anthropic models when the caller
-  names no limit, where authorize estimates 512 (§4.4). That widens the
-  overruns §4.7 books as debt, so the lease and allowance sizes in §9 are
-  measured against it.
+- **The enclave's default output ceiling.** When a caller names no output
+  limit, authorize estimates 512 output tokens (`outputTokenEstimate` in the
+  enclave, `output_estimate` in Python), and that estimate prices the hold.
+  The provider can be allowed far more: quill-cloud-proxy #440 sends
+  adaptive-thinking Anthropic models a ceiling of 32,000 tokens.
+  - A heartbeated stream cannot outrun its hold. The enclave ends it at the
+    hold (`cap_reached`, with `QUILL_TERMINATE_AT_CAP` on in every region),
+    and a heartbeat whose usage or running charge is above it is rejected.
+  - A request that does not stream can: it may settle at about sixty times a
+    512-token hold. On today's path that is an overrun against the balance.
+    On the fast path it would take settled spend past the trust allowance by
+    the same multiple, since the allowance counts holds. So those requests
+    stay synchronous at first (§4.11).
 - **The trust-tier job** (#1484, #1491) selects its candidates from one
   snapshot, in shadow. The trust allowance (§4.7) reads the tier it
   maintains, and nothing in that job depends on leases.
@@ -1327,14 +1345,23 @@ Two properties the table's short names hide:
 - **The assumptions are stated, each with a mutant that widens it.** There
   are three: the bounded skew, the state cache's age, and the margin within
   which Pub/Sub's servers agree, on which a rebuild's completeness rests
-  (§4.8). Widening the skew must break Invariant 1. An archive reported
-  complete while a record received before the tick is missing must break
-  Invariant 4.
-- **Each spec names a shadow that exists.** The owner's and the auditor's
-  state machines are pure modules of the Go service, and property tests
-  drive them through the spec's actions and check its invariants. A manifest
-  in `proofs/` names each spec's shadow test, and the `proofs` job fails when
-  a named shadow is missing.
+  (§4.8). Widening the skew must break Invariant 1. An owner admitting on a
+  cache older than its maximum age must break Invariant 9. An archive
+  reported complete while a record received before the tick is missing must
+  break Invariant 4.
+- **Each spec names a shadow that exists.** A shadow is a pure module with
+  property tests that drive it through the spec's actions and check its
+  invariants. A manifest in `proofs/` names each spec's shadow test, and the
+  `proofs` job fails when a named shadow is missing.
+  - `LeaseLifecycle`, `TerminalOrder` and `AuditorCommit` are shadowed by
+    the owner's and the auditor's state machines in the Go service. The Go
+    service lives in this repository, so the `proofs` job can see its tests
+    and one pull request can change a spec, its shadow and the code.
+  - `CreditDebt` and `KeyCapFence` are shadowed in Python: the credit
+    primitives, and the check that enables a cap.
+  - A spec written before its code names its shadow as pending, with the
+    step that will write it. The job accepts that only while the code does
+    not exist.
   - The precedent shows why. `RegionalQuotaLease` still cites
     `tests/test_regional_quota_leases.py` as its shadow, but that test and the
     module it shadowed were deleted with the pilot (#1418), and the spec has
@@ -1435,14 +1462,17 @@ leases, and was retired on 2026-09-27.
    #1456 deployed.
 2. **Gateway load balancer and receipt-key publication** (§4.12), independent
    of the rest.
-3. **Python changes that stand alone:**
+3. **Model the protocols** in TLA+ (§5.1). A protocol's spec and its mutants
+   pass in CI before any code for that protocol is written, in Python or Go.
+4. **Python changes that stand alone:**
    - the heartbeat declarations on `GatewayBoot` and in the registration
      route, stored as sent and replaced on re-registration, a missing one
      meaning undeclared, and the setting that has Python's own rule read them
      (§4.11);
    - the debt mark on every shard, and covering a negative shard at once
      (§4.7), which closes a gap on today's path, with a one-time pass over
-     workspaces that already have a negative shard;
+     workspaces that already have a negative shard. This rewrites the live
+     credit primitives, so it lands after `CreditDebt` passes;
    - **a shard count that follows the balance**, Joseph's decision, which the
      convoy incident deferred: new workspaces on one shard, splitting as they
      grow, with a one-time consolidation. Without it, covering runs on
@@ -1452,8 +1482,9 @@ leases, and was retired on 2026-09-27.
      reserve and in the insufficient-credit precheck (§4.4);
    - the fast-path fact in the speculation issuer's snapshot (§4.13);
    - the combined identity in the counter reconciler.
-4. **Model the protocols** in TLA+ (§5.1). A protocol's spec and its mutants
-   pass in CI before the spike's code for that protocol is written.
+
+   The declarations, the 503 and the issuer's fact are not protocols a spec
+   models, and do not wait for one.
 5. **A spike** of the owner, renewals and the auditor on one region:
    - ownership hand-off, and an owner killed mid-stream;
    - the hottest workspace's rate on one owner;
@@ -1471,8 +1502,8 @@ leases, and was retired on 2026-09-27.
 7. **Benchmark gate** (§6).
 8. **Pilot:** Joseph's own workspace, then a few large ones, with kill switches
    per workspace, region and cloud. The first cohort is requests that do not
-   stream. Streams join once the enclave sends the heartbeat declaration and
-   registrations carry it (§4.11).
+   stream and name an output limit. Streams join once the enclave sends the
+   heartbeat declaration and registrations carry it (§4.11).
 9. **Widen;** move keyed requests, capped keys, payouts and the remaining route
    types (§4.11) one at a time; then retire the Python hot path.
 
@@ -2119,3 +2150,21 @@ record.
   - §5.1 states what the specs do not cover.
   - The enclave's 32,000-token default output cap (#440) is recorded as
     widening overruns.
+- **v29.** Fable (2 P2, 4 P3) reviewed v28:
+  - the 32,000-token ceiling was recorded as something to size against, but
+    a request that does not stream can settle at about sixty times its
+    512-token hold, which would take settled spend past the trust allowance;
+  - §8 built the debt mark before modeling it;
+  - and, among the P3s, the cache-age mutant, where the shadows live, what
+    lowers the issuer's exposure, and a request that carries a descriptor.
+
+  v29 answers them:
+  - A stream is cut at its hold today, so it cannot outrun it. Requests that
+    do not stream and name no output limit stay synchronous until their hold
+    is priced at the ceiling the enclave sends.
+  - Modeling is step 3, before any code for a modeled protocol; the debt
+    mark waits for `CreditDebt`.
+  - The Go service lives in this repository; `CreditDebt` and `KeyCapFence`
+    are shadowed in Python; a spec written before its code names its shadow
+    as pending.
+  - The P3s are answered in place.
