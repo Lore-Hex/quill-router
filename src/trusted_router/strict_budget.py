@@ -15,7 +15,10 @@ from trusted_router.storage_errors import StoreUnavailable
 STRICT_ADMISSION = KeyedConcurrencyAdmission(max_subjects=16)
 STRICT_WAITERS = KeyedConcurrencyAdmission(max_subjects=16)
 STRICT_WAITER_CAPACITY = BoundedSemaphore(16)
-STRICT_ADMISSION_WAIT_SECONDS = 0.25
+# A 250 ms wait can expire before an overlapping cross-region authorization.
+# Absorb one brief collision before asking the gateway to retry; waiting consumes
+# the same five-second budget and never starts a second transaction.
+STRICT_ADMISSION_WAIT_SECONDS = 1.0
 STRICT_ADMISSION_POLL_SECONDS = 0.025
 STRICT_BUDGET_SECONDS = 5.0
 

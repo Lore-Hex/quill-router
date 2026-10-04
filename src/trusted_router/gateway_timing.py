@@ -24,6 +24,19 @@ P = ParamSpec("P")
 _PHASES = ("key_lookup_ms", "routing_ms", "store_ms", "post_commit_ms")
 
 
+def gateway_error_timing_fields(exc: Exception) -> dict[str, int]:
+    """Allow only bounded internal counters into durable failure diagnostics."""
+    data = getattr(exc, "gateway_timing_data", None)
+    timing = data.get("timing") if isinstance(data, dict) else None
+    if not isinstance(timing, dict):
+        return {}
+    return {
+        name: value
+        for name in ("total_ms", "spanner_rpcs", *_PHASES)
+        if type(value := timing.get(name)) is int and 0 <= value <= 2_147_483_647
+    }
+
+
 class GatewayTiming:
     def __init__(self, rpc_counter: SpannerRpcCounter) -> None:
         self.rpc_counter = rpc_counter
