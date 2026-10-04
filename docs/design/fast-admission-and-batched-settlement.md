@@ -2,11 +2,26 @@
 
 Status: **approved by Joseph on 2026-10-03 (v25). Nothing built.** v8 changed
 direction to regional leases, Joseph's choice (§2). Codex and Fable reviewed
-v1-v25 (§11) and both accepted v25. v26 to v35 add §4.13, how this fits with
+v1-v25 (§11) and both accepted v25. v26 to v41 add §4.13, how this fits with
 the work in flight on the same path, and §5.1, the TLA+ specs that are
-model-checked before the code is written. The first two specs,
-`TerminalOrder` and `LeaseLifecycle`, and the runner that checks every spec's
-mutants are written (#1515 and the pull request stacked on it).
+model-checked before the code is written. They also changed rules the
+approval covered, all merged in #1503:
+
+- how a lease takes an overrun (§4.2, v33 to v38: the shortfall rule, the
+  buffer, `pending` and the lease's one order);
+- which requests are the first cohort (§4.11);
+- a stream's hold is released before its first heartbeat only if no
+  heartbeat was issued, not if none was accepted (§4.5, v32);
+- an owner that cannot publish for longer than the expiry window stops
+  renewing (§4.2, v33);
+- the auditor creates a key row that is missing instead of failing the
+  lease's commit (§4.6, v27);
+- every fast-path charge is priced from the envelope (§4.4), which §9 leaves
+  to Joseph.
+
+The first two specs, `TerminalOrder` and `LeaseLifecycle`, and the runner that
+checks every spec's mutants are written (#1515 and the pull request stacked
+on it).
 
 This is the plan for reaching 100T tokens a month without spending the routing
 margin on the billing database, and for taking the control plane out of request
@@ -50,6 +65,7 @@ Spanner transactions:
 | Authorize p50, us-central1 | 0.155 s |
 | Authorize p50, europe-west4 | about 1.6 s (cross-Atlantic Spanner, structural) |
 | Settle p90 | 3.1 s (four serial commits; #1465 made it one on the success path) |
+| Settle p50 by control-plane region, 2026-10-04 | 111 ms in us-central1, 272 ms in us-east4, 697 ms in europe-west4 (`settle-one-read.md`) |
 | Settles that overrun their estimate | 12.2%; $45.57 a day; 96% of overrun dollars in 0.7% of settles |
 
 ## 2. Decisions
@@ -95,7 +111,16 @@ This design accepts that, bounded:
 1. **Latency at the gateway,** from sending authorize to holding a routing
    decision and a hold: p50 under 5 ms, p90 under 10 ms. Admission is in
    memory; what remains is the hop to the owner (§4.3) and the boot-signature
-   check.
+   check. This is read from the enclave's `request_end` log, on requests
+   that were authorized, and authorized once. `authorize_ms` is the time a
+   request spent in authorize: each call, with its retries and the waits
+   between them, added up over the calls the request makes, in whole
+   milliseconds (quill-cloud-proxy #389). It includes signing the request
+   and decoding the answer, so it reads a little high. `settle_ms` is not a
+   settle's latency: it leaves out settle time that overlaps the provider
+   call, and a settle that ends after the request. A stream's first
+   heartbeat, which holds its first byte, has no field: it comes after
+   `ttfb_ms` is taken and counts inside `upstream_ms`.
 2. **Billing-database commits grow with active leases, not with requests,**
    apart from the overruns a lease cannot absorb (§6).
 3. **No charge lost and none booked twice** (`durable-settle-outbox.md`):
@@ -896,10 +921,13 @@ headroom is unchanged.
     order.
 - So no shard is negative unless every shard is marked, and Python's
   per-shard check means the same as the signed sum.
-- Today an overrun stays on the hold's shard. That shard can go negative
-  while another stays positive, and Python can then spend the positive shard
-  though the workspace has nothing left. A one-time pass covers or marks the
-  workspaces already in that state (§8).
+- Today an overrun stays on the hold's shard. On a workspace with more than
+  one shard, that shard can go negative while another stays positive, and
+  Python can then spend the positive shard though the workspace has nothing
+  left. A workspace on one shard, as new ones are since #1529, cannot be in
+  that state: its only row refuses the next reservation. A one-time pass
+  covers or marks every workspace that already has a negative shard, a
+  one-shard workspace's only row included (§8).
 
 **Returns repay debt first.**
 
@@ -1411,8 +1439,8 @@ Load Balancer:
 
 ### 4.13 Work in flight on the same path
 
-Checked on 2026-10-04 against quill-router `36d7187c` and quill-cloud-proxy
-`0e067f0c`. The enclave facts this design cites at `a06050f` and `29be0fdd`
+Checked on 2026-10-05 against quill-router `b9935f92` and quill-cloud-proxy
+`c21dc893`. The enclave facts this design cites at `a06050f` and `29be0fdd`
 still hold there (`stageDStreamEligible`, `serveMessages` without heartbeats,
 the settle queue and the heartbeat attempts), except the registration paths,
 which §4.11 now lists.
@@ -1490,6 +1518,18 @@ which §4.11 now lists.
     authorizes and 3.1 to 4.5% of settles aborted, and 68 to 80% of the lock
     wait was on one workspace's credit shards. That contention is per
     request. A lease takes a workspace's requests off those rows.
+  - A design that folds settle's authorization read into the first statement
+    of its money transaction is written and parked (`settle-one-read.md`,
+    #1530). As it counts them, an ordinary settle goes from four client
+    operations to three; the six above include two reads it leaves out.
+    That is one round trip to `nam6` less, an estimated 9 to 16% of settle's
+    p50, depending on the region. Its acceptance test is answers and stored
+    records identical, byte for byte, to today's. So the synchronous cohort
+    and the comparator's reference are the same with it or without. On the
+    fast path a settle its owner takes waits for no Spanner write: it waits
+    for two publishes in its own region, its full record's and then its own
+    (§4.9, §4.5). One that goes to the drain log still waits for a Spanner
+    append.
 - **Prices are the authorization's** (#1521, merged 2026-10-04; the
   enclave's half, quill-cloud-proxy #459, is open). Joseph decided on
   2026-10-03 that a request is billed at the prices in effect when it was
@@ -1604,8 +1644,9 @@ which §4.11 now lists.
 
   **What differs is who sees an overrun, and when.** Today a settle and the
   next authorize meet on the credit shard the hold was taken from, so an
-  overrun that empties that shard refuses the next request against it. (The
-  other shards go on spending until step 4's debt mark exists, §4.7.) On the
+  overrun that empties that shard refuses the next request against it. (A
+  workspace's other shards, if it has any, go on spending until step 4's
+  debt mark exists, §4.7.) On the
   fast path a lease absorbs an overrun it has room for. One it has no room
   for is reserved in Spanner by whoever records it (§4.2). So:
   - **Spanner sees an owner's overrun one write after the owner does,** or
@@ -2029,9 +2070,18 @@ leases, and was retired on 2026-09-27.
      credit primitives, so it lands after `CreditDebt` passes;
    - **a shard count that follows the balance**, Joseph's decision, which the
      convoy incident deferred: new workspaces on one shard, splitting as they
-     grow, with a one-time consolidation. Without it, covering runs on
-     routine overruns of small, many-shard workspaces
-     (`DEFAULT_NEW_BILLING_SHARDS = 16` today);
+     grow, with a one-time consolidation.
+     - The first part is done. New workspaces start on one shard since #1529
+       (2026-10-04, `DEFAULT_NEW_BILLING_SHARDS = 1`), after a starter
+       balance split sixteen ways refused requests it could pay for
+       (`docs/incidents/2026-10-04-starter-credit-fragmentation.md`).
+     - Splitting a workspace as it grows is still operator tooling.
+     - The consolidation #1529 added covers only workspaces of a dollar or
+       less created since that day, one workspace a run
+       (`scripts/consolidate_starter_credit.py`). Small workspaces created
+       between #703 (2026-08-21), which made sixteen the default, and #1529
+       keep their sixteen shards. Covering is not built (§4.7). Once it is,
+       it would run on their routine overruns until they are consolidated;
    - 503 instead of 402 when a balance's headroom sits in leases, in the
      reserve and in the insufficient-credit precheck (§4.4);
    - the fast-path fact in the speculation issuer's snapshot (§4.13);
@@ -2117,8 +2167,9 @@ leases, and was retired on 2026-09-27.
   estimate, and a settle can pass it several ways (§4.13). That is true on
   both paths and is not changed by this design. The choices:
   - leave it: an overrun becomes debt. Once step 4's debt mark exists, the
-    workspace is stopped when the overrun is booked. Today it is not: the
-    debt stays on one shard and the others go on spending (§4.7);
+    workspace is stopped when the overrun is booked. Today, on a workspace
+    with more than one shard, it is not: the debt stays on one shard and the
+    others go on spending (§4.7);
   - price the hold at the provider's ceiling for workspaces below some trust
     tier. That bounds what a new workspace can overrun, at the cost of fewer
     concurrent requests for it. It needs the enclave to state, in authorize,
@@ -3117,3 +3168,30 @@ record.
   - the claim's "log" includes a draining lease's drain log;
   - the order's backstop is the live gap rule, so the sentence moved there
     from the rebuild's check.
+- **v41.** No mechanism changes. What landed after v40, and how it fits:
+  - new workspaces start on one credit shard (#1529), the first part of
+    step 4's shard-count item (§8);
+  - a parked design takes one round trip out of the synchronous settle
+    (#1530), with answers and records that must stay byte for byte the
+    same, so nothing the comparator reads changes (§4.13);
+  - Target 1 names where it is read: the enclave's `authorize_ms`, logged
+    since quill-cloud-proxy #389 (§3). The enclave facts §4.13 cites were
+    checked again at `c21dc893`, whose one change is that the request log
+    reports a kept-alive connection's idle wait on its own, as
+    `idle_wait_ms`, and leaves it out of `accept_to_start_ms` and the new
+    `request_ms` (#394);
+  - a workspace on one shard cannot have a negative shard beside a positive
+    one, so three sentences about that state now say so (§4.7, §4.13, §9).
+
+  Codex's review of the first draft (1 P2, 2 P3) corrected three of its
+  sentences: `settle_ms` is not a settle's latency and no field is logged
+  for every request; covering is proposed, not running; and the phase
+  fields are #389's, not #394's. Fable's (1 P2, 6 P3) corrected more: a
+  settle on the fast path waits for two publishes, or for a drain-log
+  append, not for one publish; `authorize_ms` adds up calls, retries and
+  waits, in whole milliseconds; sixteen shards was the default only from
+  #703 to #1529; the two counts of a settle's operations count different
+  things; and the status line said only what v26 to v41 added, not what
+  they changed. Both then accepted, Fable with three P3s: the status line
+  now lists every rule that changed after the approval, and the one-time
+  pass is said to include a one-shard workspace's negative row.
