@@ -414,11 +414,11 @@ def _iso_now() -> str:
 
 
 def _iso_after_seconds(seconds: int) -> str:
-    return (
-        (datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=seconds))
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    # Derive from _iso_now so this module reads one clock: a delayed timestamp
+    # and the "now" stamped beside it can never come from different seconds,
+    # and a test that pins _iso_now pins both.
+    base = datetime.fromisoformat(_iso_now().replace("Z", "+00:00"))
+    return (base + timedelta(seconds=seconds)).isoformat().replace("+00:00", "Z")
 
 
 def _backoff_seconds(attempts: int) -> int:
