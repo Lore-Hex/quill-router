@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from trusted_router.config import Settings
+from trusted_router.services.ses_suppression import SesSuppressionService
 from trusted_router.storage import STORE
 
 log = logging.getLogger(__name__)
@@ -47,6 +48,7 @@ class EmailService:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
+        self._suppression = SesSuppressionService(settings)
         self._client = None
         if settings.ses_enabled:
             try:
@@ -64,6 +66,10 @@ class EmailService:
     @property
     def enabled(self) -> bool:
         return self._client is not None
+
+    def can_receive_product_email(self, email: str) -> bool:
+        """Use local feedback plus SES's account-wide suppression list."""
+        return not STORE.is_email_blocked(email) and not self._suppression.is_suppressed(email)
 
     def send(self, message: EmailMessage) -> bool:
         """Returns True iff the message was handed off to SES. False means

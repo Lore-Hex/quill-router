@@ -220,6 +220,30 @@ FORMAT JSON
         )
         return [_benchmark_sample(row) for row in rows]
 
+    def route_workspaces(
+        self, *, provider: str, model: str, start_at: str, end_at: str,
+    ) -> list[str]:
+        """Workspaces with a generation on this exact route in [start, end).
+
+        Read the same activity table as /v1/activity, without its recent-row
+        limit: a busy workspace must not hide another workspace's one call.
+        Only workspace ids leave ClickHouse; no keys or content are selected.
+        """
+        rows = self._query(
+            """
+SELECT DISTINCT workspace_id
+FROM activity_generations FINAL
+WHERE provider = {provider:String} AND model = {model:String}
+  AND created_at >= parseDateTime64BestEffort({start_at:String}, 3)
+  AND created_at < parseDateTime64BestEffort({end_at:String}, 3)
+  AND workspace_id != ''
+ORDER BY workspace_id
+FORMAT JSON
+""",
+            params={"provider": provider, "model": model, "start_at": start_at, "end_at": end_at},
+        )
+        return [str(row["workspace_id"]) for row in rows]
+
     def activity_generations(
         self,
         *,

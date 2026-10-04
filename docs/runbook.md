@@ -22,6 +22,7 @@ Index:
 - [A provider serves a model but TR's `/v1/models` doesn't list it](#missing-model)
 - [Adding a brand-new provider to TR](#new-provider)
 - [Adding a model to an existing provider](#new-model)
+- [Preview and enable route retirement notices](#retirement-notices)
 - [Rotating a provider API key](#rotate-key)
 - [Spinning up Phala / RedPill again after a key issue](#phala-revive)
 - [Settle outbox: flip, verify, monitor, roll back](#settle-outbox)
@@ -33,6 +34,52 @@ Index:
 - [Authorize-time billing-pause gate](#billing-pause-gate)
 
 ---
+
+## <a id="retirement-notices"></a>Preview and enable route retirement notices
+
+`TR_RETIREMENT_NOTICES_MODE` defaults to `off`, including in
+`scripts/deploy/rollout.sh`. Change the checked-in rollout setting to `preview`
+first. The control/combined service runs the same in-process startup loop used
+by activation reminders: an initial pass after 5–30 seconds, then every 24
+hours. No additional cron or public route is needed.
+
+Preview sends one summary per UTC day to
+`TR_RETIREMENT_NOTICES_PREVIEW_EMAIL` (Joseph's operational-report address in
+the rollout), or logs it when the address is unset. It lists workspace IDs,
+eligible recipient counts, models, UTC cutovers and impact; it contains no
+customer addresses or workspace names. The daily report uses the existing
+durable event replay guard, so concurrent replicas do not each email a report.
+Customer notice claims are untouched. After Joseph reviews the preview,
+change the checked-in mode to `send` through the normal release workflow.
+
+The worker queries the existing operational ClickHouse activity table for
+each exact provider/model pair in `[run time - 30 days, run time)`. It considers
+cutovers between one hour and 45 days away, inclusive; past retirements never
+produce catch-up mail. It delivers one grouped message per eligible owner or
+admin per workspace. Deleted workspaces, foreign-plane shadows, unverified,
+disabled or suspended users, local email blocks and SES account suppression
+entries are excluded. The SES credential needs `ses:GetSuppressedDestination`
+in addition to its existing sending permissions. Lookup failures fail the pass
+before customer claims are written, rather than treating recipients as eligible.
+
+Impact applies all known retirements up to each cutover to today's available
+catalog routes and uses the router's own confidential/ZDR checks. Hourly
+manifest refresh deadlines are freshness checks, not retirement announcements.
+Other future catalog changes cannot be predicted. Remaining BYOK routes are
+identified as requiring a provider key, and provider restrictions are called
+out. Lifecycle entries can optionally name `replacement_model_ids`; a named
+replacement is advice, never an automatic model substitution. Notices link to
+`/models` and explain the workspace's recent route usage.
+
+The durable `retirement_notice` entity is keyed by workspace ID and records
+claimed provider/UTC-cutover IDs and claim times. A provider's same cutover is
+one retirement even if its model list or replacement advice is edited. The
+batch commits before SES, as activation reminders do. Claims never expire:
+retries and concurrent replicas cannot resend, including after a partial or
+failed send. Consequently, a crash after claiming can lose delivery; inspect
+`retirement_notice.send_failed` and `retirement_notice.pass_completed` rather
+than deleting claims to retry blindly. No billing-path changes or database
+migration are required. Each cloud uses its own existing store and analytics.
 
 ## <a id="router-core-page"></a>Router-core four-nines page fires
 
@@ -1590,4 +1637,3 @@ It works in pages of at most 1,000 rows, one transaction each, and logs a
 checkpoint after every page. Rerunning it is safe, and `--after <id>` resumes
 from a checkpoint. A row whose `created_at` does not parse, or names no instant
 representable in UTC, keeps a NULL `indexed_at` and is skipped.
-

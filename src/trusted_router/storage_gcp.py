@@ -6458,6 +6458,21 @@ class SpannerStore:
     def record_sns_message_once(self, message_id: str) -> bool:
         return self.email_blocks.record_message_once(message_id)
 
+    def claim_retirement_notices(
+        self, workspace_id: str, retirement_ids: list[str], *, occurred_at: str,
+    ) -> list[str]:
+        def txn(transaction: Any) -> list[str]:
+            notices = self._read_entity_tx(
+                transaction, "retirement_notice", workspace_id, dict,
+            ) or {}
+            claimed = sorted(set(retirement_ids) - notices.keys())
+            if claimed:
+                notices.update(dict.fromkeys(claimed, occurred_at))
+                self._write_entity_tx(transaction, "retirement_notice", workspace_id, notices)
+            return claimed
+
+        return self._run_in_transaction(txn)
+
     def record_webhook_event_once(self, source: str, event_id: str) -> bool:
         entity_id = f"{source}#{event_id}"
 

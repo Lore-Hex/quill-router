@@ -484,6 +484,10 @@ ENV_VARS=(
   # telemetry has a clean observation window. Login and verification email are
   # unaffected because they are sent synchronously by their auth routes.
   "TR_ACTIVATION_REMINDER_INTERVAL_SECONDS=0"
+  # Customer delivery starts in preview: one operator email per UTC day when
+  # an announced retirement affects workspaces. Switch to send after review.
+  "TR_RETIREMENT_NOTICES_MODE=preview"
+  "TR_RETIREMENT_NOTICES_PREVIEW_EMAIL=joseph@jperla.com"
   "TR_SUPPORT_EMAIL=help@trustedrouter.com"
   # Adyen ships dark. Activating checkout is an intentional one-line release
   # after the merchant, HMAC webhook, and test-payment canary are green.

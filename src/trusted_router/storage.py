@@ -198,6 +198,7 @@ class InMemoryStore:
         self._paused_authorizations: set[tuple[str, str, str]] = set()
         self.abuse_pause_clears: set[tuple[str, str]] = set()
         self.webhook_events: set[tuple[str, str]] = set()
+        self.retirement_notices: dict[str, dict[str, str]] = {}
         self.earnings_money: dict[str, tuple[int, int]] = {}
         self.user_transfer_daily: dict[tuple[str, str], int] = {}
         self.credit_movements: dict[tuple[str, str], CreditMovement] = {}
@@ -281,6 +282,7 @@ class InMemoryStore:
             self._paused_authorizations.clear()
             self.abuse_pause_clears.clear()
             self.webhook_events.clear()
+            self.retirement_notices.clear()
             self.earnings_money.clear()
             self.credit_movements.clear()
             self.user_transfer_daily.clear()
@@ -3755,6 +3757,15 @@ class InMemoryStore:
 
     def record_sns_message_once(self, message_id: str) -> bool:
         return self.email_blocks.record_message_once(message_id)
+
+    def claim_retirement_notices(
+        self, workspace_id: str, retirement_ids: list[str], *, occurred_at: str,
+    ) -> list[str]:
+        with self._lock:
+            notices = self.retirement_notices.setdefault(workspace_id, {})
+            claimed = sorted(set(retirement_ids) - notices.keys())
+            notices.update(dict.fromkeys(claimed, occurred_at))
+            return claimed
 
     def record_webhook_event_once(self, source: str, event_id: str) -> bool:
         with self._lock:

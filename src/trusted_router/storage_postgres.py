@@ -2065,7 +2065,17 @@ class PostgresStore:
         self._not_implemented("remove_members")
 
     def list_members(self, workspace_id: str) -> list[Member]:
-        self._not_implemented("list_members")
+        def operation(conn: Any) -> list[Member]:
+            prefix = f"{workspace_id}#"
+            rows = conn.execute(
+                "SELECT body FROM tr_entities WHERE kind = %s AND id >= %s AND id < %s"
+                " ORDER BY id",
+                ("member", prefix, f"{workspace_id}$"),
+            ).fetchall()
+            return [Member(**(json.loads(row[0]) if isinstance(row[0], str) else row[0]))
+                    for row in rows]
+
+        return self._run_transaction(operation)
 
     def user_can_manage(self, user_id: str, workspace_id: str) -> bool:
         self._not_implemented("user_can_manage")
@@ -2918,13 +2928,22 @@ class PostgresStore:
         acquisition_medium: str | None = None,
         acquisition_campaign: str | None = None,
     ) -> EmailSendBlock:
-        self._not_implemented("block_email_sending")
+        block = EmailSendBlock(
+            email=normalize_email(email), reason=reason, bounce_type=bounce_type,
+            feedback_id=feedback_id, mail_class=mail_class, sender_profile=sender_profile,
+            acquisition_source=acquisition_source, acquisition_medium=acquisition_medium,
+            acquisition_campaign=acquisition_campaign,
+        )
+        self._run_transaction(
+            lambda conn: self._write_entity_tx(conn, "email_block", block.email, block),
+        )
+        return block
 
     def is_email_blocked(self, email: str) -> bool:
-        self._not_implemented("is_email_blocked")
+        return self.get_email_block(email) is not None
 
     def get_email_block(self, email: str) -> EmailSendBlock | None:
-        self._not_implemented("get_email_block")
+        return self._read_entity("email_block", normalize_email(email), EmailSendBlock)
 
     def record_sns_message_once(self, message_id: str) -> bool:
         return self._run_transaction(
@@ -2935,6 +2954,23 @@ class PostgresStore:
                 {"created_at": iso_now()},
             )
         )
+
+    def claim_retirement_notices(
+        self, workspace_id: str, retirement_ids: list[str], *, occurred_at: str,
+    ) -> list[str]:
+        def txn(conn: Any) -> list[str]:
+            # Seed the row before locking it, including two first-time claimers.
+            self._insert_entity_once_tx(conn, "retirement_notice", workspace_id, {})
+            notices = self._read_entity_tx(
+                conn, "retirement_notice", workspace_id, dict, for_update=True,
+            ) or {}
+            claimed = sorted(set(retirement_ids) - notices.keys())
+            if claimed:
+                notices.update(dict.fromkeys(claimed, occurred_at))
+                self._write_entity_tx(conn, "retirement_notice", workspace_id, notices)
+            return claimed
+
+        return self._run_transaction(txn)
 
     def record_webhook_event_once(self, source: str, event_id: str) -> bool:
         return self._run_transaction(
