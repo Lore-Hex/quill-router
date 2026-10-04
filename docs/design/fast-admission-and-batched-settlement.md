@@ -2,10 +2,11 @@
 
 Status: **approved by Joseph on 2026-10-03 (v25). Nothing built.** v8 changed
 direction to regional leases, Joseph's choice (§2). Codex and Fable reviewed
-v1-v25 (§11) and both accepted v25. v26 to v32 add §4.13, how this fits with
+v1-v25 (§11) and both accepted v25. v26 to v33 add §4.13, how this fits with
 the work in flight on the same path, and §5.1, the TLA+ specs that are
-model-checked before the code is written. The first spec, `TerminalOrder`,
-and the runner that checks every spec's mutants are written (#1515).
+model-checked before the code is written. The first two specs,
+`TerminalOrder` and `LeaseLifecycle`, and the runner that checks every spec's
+mutants are written (#1515 and the pull request stacked on it).
 
 This is the plan for reaching 100T tokens a month without spending the routing
 margin on the billing database, and for taking the control plane out of request
@@ -176,10 +177,21 @@ owner. Its row records:
 - It reads the workspace's leases under the workspace's range lock, as the
   pilot did, so two regions' grants cannot both pass the check.
 - It refuses a grant that would take the workspace's exposure above the trust
-  tier's allowance. The exposure is the remaining allocation of its open
-  leases and of its draining ones. A draining lease counts only its open
-  holds' estimates once an applied final checkpoint or a complete hand-off
-  (§4.8) has listed them all.
+  tier's allowance. The exposure is summed lease by lease, over its open and
+  draining leases. A lease counts the larger of two amounts:
+  - its remaining allocation, which is never below zero;
+  - the estimates of its open holds, as its last applied checkpoint gave
+    them (§4.2, renewals).
+
+  The second is there because an overrun is booked against the allocation
+  first. It can use up the reservation behind the lease's other open holds,
+  and those holds are still exposure. One lease's deficit is never set
+  against another's capacity. A draining lease counts only its open holds'
+  estimates once an applied final checkpoint or a complete hand-off (§4.8)
+  has listed them all.
+- It is refused unless the workspace is at the trust tier that allows leases
+  and its trust reconciliation is fresh (§4.11).
+- It leaves a floor of headroom outside leases (§4.7).
 - The allowance is per workspace, across regions and shards. The carding
   incident of 2026-08 is why.
 - It checks the workspace's headroom as the signed sum over its credit
@@ -204,7 +216,9 @@ owner. Its row records:
   `consumed`. So `consumed` is defined for every terminal the checkpoint audit
   sums.
 - An overrun can make `remaining` negative. The owner then admits nothing more
-  under the lease.
+  under the lease. It publishes a checkpoint record with that terminal, so
+  the auditor has the lease's open holds as of the overrun, which is what a
+  grant then counts for the lease.
 
 **Renewals** are the only Spanner writes an owner makes.
 
@@ -238,6 +252,12 @@ lease's expiry minus a skew allowance.
   drain log before it admits or decides anything again.
 - A renewal that keeps failing lets the lease reach its cutoff. The owner then
   stops admitting under it (§4.4).
+- An owner whose publishes for a lease have failed for longer than the expiry
+  window stops renewing that lease. Otherwise a hold whose first heartbeat
+  was issued and never stored could neither be released (§4.5) nor reaped,
+  since the reap could not be published either, for as long as the owner
+  lived. The lease then expires and drains, and the hold ends at its close
+  (§4.8).
 - The expiry is Spanner's time and the cutoff the owner's, so clock steps
   must stay within the skew allowance (§5).
 
@@ -251,8 +271,9 @@ lease's expiry minus a skew allowance.
     allowance.
 - An owner stops admitting under a lease when the lease goes idle or reaches
   its maximum life, or when the workspace is paused.
-  - It returns the unused remainder, its allocation minus `consumed` and
-    `held`, in its next checkpoint record. When the auditor applies that
+  - It returns the unused remainder in its next checkpoint record: its
+    allocation minus `consumed` and `held`, or nothing when overruns have
+    made that negative. When the auditor applies that
     record, it releases the remainder from the donors, last donor first, and
     lowers the allocation by it there.
   - It keeps serving the lease's holds. Once none is open, it publishes a
@@ -716,9 +737,17 @@ headroom is unchanged.
 - A workspace marked in debt (above) is in that list: the state cache
   carries the mark, so every owner stops admitting for it within the cache's
   maximum age, as for a pause.
-- **Exposure:** at most the sum of `allocation − consumed` over the
-  workspace's open leases, within the trust allowance, plus what the requests
-  then in flight overrun their holds by (§4.13).
+  - The mark is set on headroom, which leaves leased money out. So a
+    workspace whose balance is mostly in leases can be marked by a small
+    overrun while it is solvent. It heals: owners stop, the leases return
+    what they hold, the returns clear the mark, and grants resume.
+  - To keep that rare, a grant leaves a floor of headroom outside leases, a
+    tuning value (§9).
+- **Exposure,** in holds: after any of these, the workspace can still admit
+  what its open leases can still hold, lease by lease as a grant counts it
+  (§4.2), which is within the trust allowance. In money it is that plus what
+  those requests, and the ones already in flight, overrun their holds by
+  (§4.13).
   - Not `remaining`: refunds free held capacity, which new admissions can use
     until the owner stops.
 
@@ -1132,7 +1161,17 @@ stream, and streams the enclave heartbeats. These stay on today's Python path:
 - keys with lifetime caps or window limits, and `budget_strict` keys (§4.6);
 - OAuth-app keys with a markup, and synthetic-probe workspaces;
 - workspaces that are paused, in debt, below the minimum balance, or below the
-  trust tier that allows leases.
+  trust tier that allows leases. That tier is 3 at first (`trust_tiers.py`):
+  an approved owner identity, a first payment at least 30 days old, at least
+  $50 paid, and no refund or dispute. Tier 1 is one succeeded payment, which
+  a stolen card that cleared also has, so it gets no allowance.
+  - The grant transaction reads the tier and refuses a workspace whose trust
+    reconciliation is stale (`trust_reconciliation_is_fresh`), as the
+    speculation issuer does. A workspace's open leases then run out and are
+    not replaced.
+  - Nothing acts on the tier today but the speculation shadow, which
+    dispatches nothing. Enforcing it in the grant is a condition of the
+    pilot (§8). Lowering the tier is Joseph's call (§9).
 
 Token volume is concentrated. As of 2026-07-19, one workspace accounted for 74%
 of all tokens to date, so a narrow fast path still carries most of the traffic.
@@ -1179,8 +1218,8 @@ lists.
   Spanner commits either way. Fast admission removes both. So:
   - **A workspace takes one or the other.** A workspace on the fast path
     gets no speculation grants, for any of its requests, including those
-    that stay synchronous (§4.11). Its unsettled exposure then has one bound,
-    the lease allowance, not two to be added up. (A grant's own bound is
+    that stay synchronous (§4.11). Its holds and grants in flight then have
+    one bound, the lease allowance, not two to be added up. (A grant's own bound is
     `min(tier ceiling / 100, paid headroom / 10, $1)`, and the protocol
     leaves "all other issued rights" to its caller.)
   - For the issuer, a workspace is on the fast path when fast mode is on for
@@ -1203,7 +1242,7 @@ lists.
     - Turning it off stops lease admission and drains the leases (§4.7).
       Grants resume only once every lease of the workspace has closed, which
       the issuer reads in its snapshot.
-    - So the workspace's unsettled exposure never exceeds its trust
+    - So the workspace's holds and grants in flight never exceed its trust
       allowance, in either direction.
     - This rule binds speculation's real permits, which are not built; today's
       shadow can dispatch nothing.
@@ -1245,6 +1284,8 @@ lists.
   - **Some output is billed outside the ceiling.** Sakana's Fugu bills its
     orchestration tokens beside the caller's limit
     (`openAIStreamUsage.outputTokens` adds `orchestration_output_tokens`).
+    A `prediction` is forwarded on the OpenAI-compatible path, and its
+    rejected tokens are billed as output.
   - **The stream cap counts relayed bytes, not billed tokens.** The enclave
     ends a stream when its own meter reaches the hold (`cap_reached`, with
     `QUILL_TERMINATE_AT_CAP` on in every GCP region; elsewhere the heartbeat
@@ -1259,13 +1300,14 @@ lists.
     a million). An estimate just under a price-tier boundary reprices
     everything when the real count is just over it.
 
-  **None of this is new with the fast path.** The hold is the same estimate
-  and the settle the same charge on both paths. Today an overrun is taken
-  from the balance: 12.2% of settles, $45.57 a day, 96% of it in 0.7% of
-  settles (§1). On the fast path it is booked beyond the lease's allocation
-  (§4.2) and taken from the balance in the same way.
+  **The amounts are today's.** The hold is the same estimate and the settle
+  the same charge on both paths. Today an overrun is taken from the balance:
+  12.2% of settles, $45.57 a day, 96% of it in 0.7% of settles (§1). On the
+  fast path it is booked beyond the lease's allocation (§4.2) and taken from
+  the balance in the same way. No ceiling bounds it on every endpoint, as the
+  list shows: a request overruns by whatever its provider bills.
 
-  v29 to v31 tried to make it impossible instead, by admitting only requests
+  v29 to v31 tried to make an overrun impossible, by admitting only requests
   whose hold covers what the provider can bill. That is withdrawn, for two
   reasons the reviews of v30 and v31 made plain:
   - It needs every endpoint's billing behaviour to be known. Each round
@@ -1277,30 +1319,42 @@ lists.
     with no limit would reserve about sixty times what it spends, so a
     workspace's balance would have to cover its concurrency at that price.
 
-  So the fast path keeps today's holds, and an overrun is bounded as it is
-  today:
-  - Admission is bounded by reserved money. Open holds never exceed their
-    lease's allocation, and leases never exceed the trust allowance or the
-    paid headroom (§4.2). That is today's rule with the lease in place of the
-    balance.
-  - An overrun stops admission. It makes its lease's `remaining` negative,
-    and the owner admits nothing more under it (§4.2). The auditor books it
-    within seconds. It lowers the signed headroom that grants read, and a
-    workspace it takes into debt stops fast admission everywhere within the
-    state cache's maximum age (§4.7).
-  - Leases are for workspaces at a trust tier that allows them (§4.11). A
-    workspace too new, or too little trusted, to be let run into debt is not
-    on the fast path.
-  - So settled spend can pass the allowance by what the requests in flight
-    overrun, each by at most its provider's ceiling less its estimate. Today
-    the same sentence holds with the balance in place of the allowance, for
-    every workspace.
+  **What differs is when an overrun is seen.** Today a settle and the next
+  authorize meet on one Spanner row, so an overrun that empties the balance
+  refuses the very next request. On the fast path it is seen by grants once
+  the auditor has booked it, and by owners once the debt mark it causes has
+  reached their state caches (§4.7). Until then the workspace's other leases
+  go on admitting. v32 called the window "today's, unchanged", and that was
+  wrong. What bounds it is the allowance, not the delay:
+  - **In flight at once.** The holds open under a workspace's leases never
+    exceed its trust allowance, because a grant counts each lease's open
+    holds (§4.2). Today the bound is the whole balance, which is larger.
+  - **Admitted after today would have stopped.** At most what the open
+    leases can still hold, again within the allowance, plus one more round
+    of leases for each auditor commit made while booked headroom is still
+    positive. A stalled auditor widens nothing: unbooked leases keep their
+    place in the allowance, so owners run out of allocation and stop.
+  - **In total.** A lease's money is let again only after at least that much
+    usage is booked, so a balance buys the same number of holds on either
+    path. Each can overrun by the same amount.
+  - So a workspace can spend, beyond what it has, up to the overruns of an
+    allowance's worth of holds at a time. A tier's exposure is its allowance
+    times the largest ratio of bill to hold it can route to, and §9 sizes
+    allowances that way, not from honest traffic.
 
-  Shadow records each settle against its hold, by endpoint, so the allowances
-  are sized against the measured overrun (§8). Whether holds should cover the
-  bill, for some tiers or for all, is a pricing decision for both paths (§9).
+  **What an overrun does to its own lease.** One the lease can absorb is
+  consumption like any other. One that takes `remaining` below zero stops
+  admission under that lease (§4.2), until the next grant.
+
+  **What the trust tier does and does not do.** Leases are for workspaces at
+  the tier §4.11 names. That keeps the added window away from a workspace
+  that paid once with a card that may be stolen. It does not stop that
+  workspace overrunning on today's path, where the balance is the only
+  bound. Only pricing its holds differently does (§9).
+
+  Shadow records each settle against its hold, by endpoint (§8).
 - **The trust-tier job** (#1484, #1491) selects its candidates from one
-  snapshot, in shadow. The trust allowance (§4.7) reads the tier it
+  snapshot, in shadow. The trust allowance (§4.2) reads the tier it
   maintains, and nothing in that job depends on leases.
 - **Key management at scale** (#1496, open) pages the key list and deletes
   keys in bulk. §4.6 says how deletions reach admission.
@@ -1334,26 +1388,30 @@ Each has a production check.
    reserved money.
 8. **Key caps.** Capped keys are served synchronously. A new cap takes effect
    only after every fast hold of the key is booked.
-9. **Pauses** stop admission within the state cache's maximum age. Exposure is
-   at most the sum of `allocation − consumed` over open leases, within the
-   workspace's trust allowance, plus the overruns of the requests then in
-   flight.
+9. **Pauses** stop admission within the state cache's maximum age. So do the
+   debt mark, a trust downgrade and a switch out of fast mode. The holds
+   open under a workspace's leases, and what its leases can still admit,
+   stay within its trust allowance. In money, exposure is that plus what
+   those requests overrun their holds by.
 10. **Renewals and bookings are conditional:** renewals on lease state and
     epoch, bookings on the auditor's commit version. Replays change nothing.
 11. **Debt marks every shard.** No credit shard is negative unless every
-    shard row of the workspace is marked in debt, and a marked row admits
-    nothing.
+    shard row of the workspace is marked in debt. A marked row refuses
+    reservations and grants at once, and open leases stop admitting within
+    the state cache's maximum age.
 12. **Latency** is stated as percentiles. Excursions take the documented
     fallback or a 503.
 
 **The windows Target 4 allows:**
 
-- the state cache's maximum age, for pauses and revocation;
+- the state cache's maximum age, for pauses, revocation, the debt mark, a
+  trust downgrade and a switch out of fast mode;
 - a clock wrong, or stepped, by more than the skew allowance, which could let
   an owner admit or decide after its lease drains;
-- overruns: a settle above its hold, by at most its provider's ceiling less
-  its estimate (§4.13). It is booked in full, as debt when the balance cannot
-  cover it (§4.7). This window is today's, unchanged;
+- overruns: a settle above its hold, by whatever its provider bills (§4.13).
+  It is booked in full, as debt when the balance cannot cover it (§4.7). The
+  amounts are today's. An overrun is seen later than today, and an
+  allowance's worth of holds can be admitted meanwhile;
 - requests whose gateway could not reach the log within its retry budget
   (§4.8);
 - an owner record received after a tick that reaped its hold, which only
@@ -1371,13 +1429,13 @@ in TLA+ and checked with TLC before the code that implements them is written
 
 | Spec | Protocol | Invariants above |
 |---|---|---|
-| `LeaseLifecycle` | Grant, renewal, the owner's cutoff, expiry, draining and close, with clocks that differ by up to the skew allowance; two owners and a hand-off; the reservation a draining lease keeps until its drain's end condition | 1, 6, 7, 9, the renewal half of 10, and the reservation half of 4 |
+| `LeaseLifecycle` | One lease over time: renewal, the owner's cutoff, revocation, expiry, draining and close, with clocks that differ by up to the skew allowance; a process that restarts; a hand-off; a stop that reaches owners through the state cache; the drain's end condition | The first sentence of 1, 6, 7, the stop half of 9, the renewal half of 10, and the reservation half of 4 |
 | `TerminalOrder` | One lease's records, for a stream and for a request that does not stream: the owner's sequence, its cutoff and publish deadline, the drain log, adoption, the fence tick, the boundary S, reaps by the owner and by the auditor, the release of a stream's hold before its first heartbeat, records stored late, close against appends, and a rebuild from the archive | 3, and 4 for terminals and for streams that ran |
 | `AuditorCommit` | The per-lease conditional commit under member takeover, crashes and redelivery; the open holds and snapshots it stores; the checkpoint audit | 2, the reap half of 5, the booking half of 10, and 4 across a takeover |
-| `CreditDebt` | Bookings across credit shards: overruns, covering a negative shard, the debt mark, and inflows that repay debt first | 11, and the per-shard identity in 2 |
+| `CreditDebt` | Money across leases and credit shards: grants under the range lock, the allowance with each lease's open holds counted, returns, a settle above its hold, covering a negative shard, the debt mark, and inflows that repay debt first | The second sentence of 1, the exposure half of 9, 11, and the per-shard identity in 2 |
 | `KeyCapFence` | Adding a cap while leases hold the key's holds: the key-status version, the owners' caches and the enabling condition | 8 |
 
-Three properties the table's short names hide:
+What the table's short names hide:
 
 - `TerminalOrder` treats the release before a first heartbeat (§4.5) as a
   terminal with outcome `released`. It checks that a hold with a durable
@@ -1397,6 +1455,21 @@ Three properties the table's short names hide:
   signed sum is no longer negative, no row of it stays marked (§4.7).
   Invariant 11 and the identity alone would pass a workspace that paid and
   stayed blocked, which is the v11 hazard.
+- `LeaseLifecycle` has no money in it. Leases interact only through money,
+  and a model with two leases, grants, returns and the allowance beside the
+  clocks passed thirty million states without finishing. So it models one
+  lease with every hold one unit, and the amounts are `CreditDebt`'s, which
+  has to model a settle above its hold for the exposure half of Invariant 9
+  to mean anything.
+- In `LeaseLifecycle` a pause stands for every stop that reaches owners
+  through the state cache: the debt mark, a trust downgrade and a switch out
+  of fast mode travel the same way. Its mutants are an owner that admits on
+  a view older than the cache's maximum age, and one that ignores what the
+  view says.
+- `TerminalOrder` does not need the lease to be marked draining after the
+  owner's cutoff, as its first draft assumed. It needs the fence tick to come
+  after the publish deadline. `LeaseLifecycle` shows the cutoff comes first
+  anyway, for admission's sake.
 
 **Rules `proofs/` follows today, kept:**
 
@@ -1576,8 +1649,9 @@ leases, and was retired on 2026-09-27.
    of the rest.
 3. **Model the protocols** in TLA+ (§5.1). A protocol's spec and its mutants
    pass in CI before any code for that protocol is written, in Python or Go.
-   `TerminalOrder`, the runner and the manifest are written (#1515).
-   `LeaseLifecycle`, `AuditorCommit`, `CreditDebt` and `KeyCapFence` follow.
+   `TerminalOrder`, the runner and the manifest are written (#1515), and
+   `LeaseLifecycle` on top of them. `AuditorCommit`, `CreditDebt` and
+   `KeyCapFence` follow.
 4. **Python changes that stand alone:**
    - the heartbeat declarations on `GatewayBoot` and in the registration
      route, stored as sent and replaced on re-registration, a missing one
@@ -1622,13 +1696,20 @@ leases, and was retired on 2026-09-27.
    per workspace, region and cloud. The first cohort is requests that do not
    stream. Streams join once the enclave sends the heartbeat declaration and
    registrations carry it (§4.11). Python stores the declaration since #1519.
+   The grant enforces the trust tier and its freshness before any workspace
+   but Joseph's own is on it (§4.11).
 9. **Widen;** move keyed requests, capped keys, payouts and the remaining route
    types (§4.11) one at a time; then retire the Python hot path.
 
 ## 9. Not decided here
 
 - **Tuning values:**
-  - lease sizes and allowances per trust tier;
+  - lease sizes and allowances per trust tier. An allowance is sized as the
+    exposure it permits: the allowance times the largest ratio of bill to
+    hold that the tier can route to (§4.13), not the ratio honest traffic
+    shows;
+  - the floor of headroom a grant leaves outside leases, and the minimum
+    balance for fast mode (§4.7, §4.11);
   - the low-water mark, the top-up horizon and the cooldown;
   - the renewal, checkpoint and tick intervals;
   - the skew allowance, and the reaper's grace;
@@ -1655,8 +1736,9 @@ leases, and was retired on 2026-09-27.
 - **Whether holds should cover the bill,** Joseph's call. A hold is an
   estimate, and a settle can pass it several ways (§4.13). That is true on
   both paths and is not changed by this design. The choices:
-  - leave it, as today: an overrun becomes debt, and the workspace is stopped
-    once it is booked;
+  - leave it: an overrun becomes debt. Once step 4's debt mark exists, the
+    workspace is stopped when the overrun is booked. Today it is not: the
+    debt stays on one shard and the others go on spending (§4.7);
   - price the hold at the provider's ceiling for workspaces below some trust
     tier. That bounds what a new workspace can overrun, at the cost of fewer
     concurrent requests for it. It needs the enclave to state, in authorize,
@@ -1666,6 +1748,8 @@ leases, and was retired on 2026-09-27.
     dollars are in 0.7% of settles (§1).
 - **Where request records live at 100T:** ClickHouse rather than Spanner
   (§6).
+- **The trust tier that allows leases.** It is 3 at first (§4.11). Lowering
+  it widens who is on the fast path and who can reach the window in §4.13.
 - **Home-region assignment** for workspaces whose traffic moves between
   continents.
 
@@ -2392,3 +2476,45 @@ record.
     hold whose heartbeat then lands. §4.5 now says so.
   - `TerminalOrder` gained the adoption property: adopting any drain row but
     the first passed every claim before.
+- **v33.** Codex (2 P1, 4 P2) and Fable (2 P2, 7 P3) reviewed v32. v32's
+  argument was that the hold and the settle are today's, so the fast path
+  adds no exposure. The amounts are today's. The conclusion was wrong:
+  - today an overrun that empties the balance refuses the next request,
+    because settle and authorize meet on one row. On the fast path other
+    leases, capacity that refunds free, and top-ups already in flight keep
+    admitting until the overrun is booked and the debt mark reaches every
+    owner. Codex's sequence spends $300 where today's path spends $120;
+  - the allowance did not bound the requests in flight. An overrun is booked
+    against the allocation first, so a lease whose allocation was used up
+    counted as no exposure while its other holds were still open, and new
+    leases were granted beside them (Fable: about 9,400 requests in flight
+    where the text implied 2,500);
+  - "the trust tier that allows leases" was not defined, nothing enforces a
+    tier today, and tier 1 is one payment that a stolen card also makes;
+  - an overrun stops its lease only when it exceeds the lease's spare
+    capacity; the exposure sum netted one lease's deficit against another's
+    capacity; a return could be negative; "its provider's ceiling less its
+    estimate" bounds nothing where a provider bills outside the ceiling;
+  - a hold whose first heartbeat was issued and never stored was stranded
+    for as long as its owner kept renewing.
+
+  v33 answers them:
+  - A grant counts, for each lease, the larger of its remaining allocation
+    and its open holds, never below zero and never netted. So the holds in
+    flight stay within the allowance, which is what bounds the window: an
+    allowance's worth of holds, each overrunning by what its provider bills.
+    §4.13 says what differs from today (when an overrun is seen) and what
+    does not (the amounts, and the total a balance buys).
+  - Leases are for tier 3 at first, with a fresh reconciliation, enforced in
+    the grant before the pilot widens. Allowances are sized as allowance
+    times the largest ratio the tier can route to.
+  - Returns are never negative. An owner that cannot publish for a lease
+    stops renewing it. The debt mark can be set on a solvent workspace whose
+    balance is mostly leased; it heals, and a floor of headroom outside
+    leases keeps that rare.
+
+  `LeaseLifecycle` was written between the two versions. It has one lease
+  and no money. Grants, the allowance, returns and a settle above its hold
+  moved to `CreditDebt`, and the reviews of `TerminalOrder` (#1515) showed
+  it needs the fence tick after the publish deadline, not the draining mark
+  after the cutoff.
