@@ -6524,6 +6524,10 @@ class SpannerStore:
         if validated is None or outcome != "appended":
             return outcome
         entity_id = receipt_key_entity_id(validated.kid, validated.att_sha256)
+        if not refresh_last_seen:
+            settled = self._stored_history_outcome(entity_id, validated)
+            if settled is not None:
+                return settled
 
         def txn(transaction: Any) -> ReceiptKeyWriteOutcome:
             legacy = self._read_entity_tx(
@@ -6547,6 +6551,37 @@ class SpannerStore:
             return outcome
 
         return cast(ReceiptKeyWriteOutcome, self._run_in_transaction(txn))
+
+    def _stored_history_outcome(
+        self, entity_id: str, observed: ReceiptKey
+    ) -> ReceiptKeyWriteOutcome | None:
+        """What re-observing a stored history document does, read from a snapshot.
+
+        The collector re-observes every history document on every run, and once
+        a document is stored that observation writes nothing. Finding that out
+        inside a read-write transaction committed several hundred empty
+        transactions an hour. What the decision reads never changes once the
+        row exists (its attestation, its kind and its key), so a snapshot gives
+        the answer the transaction would give.
+
+        None means the transaction is still needed: the document is not stored
+        yet, or a legacy row for its kid is waiting to be migrated.
+        """
+        with self._database.snapshot(multi_use=True) as snapshot:
+            legacy = self._read_entity_from(
+                snapshot, RECEIPT_KEY_KIND, observed.kid, ReceiptKey
+            )
+            if legacy is not None:
+                return None
+            stored = self._read_entity_from(
+                snapshot, RECEIPT_KEY_KIND, entity_id, ReceiptKey
+            )
+        if stored is None:
+            return None
+        _, outcome = merge_receipt_key_observation(
+            stored, observed, refresh_last_seen=False
+        )
+        return outcome
 
     def list_receipt_keys(
         self,
