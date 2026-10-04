@@ -203,15 +203,27 @@ owner. Its row records:
 | `held` | the sum of the estimates of open holds |
 | `consumed` | the sum of charges booked since the lease began, by settles and reaps |
 | `remaining` | the allocation `− consumed − held` |
+| `pending` | what decided terminals have freed whose publishes are not yet acknowledged |
 
 - The allocation is L, less what the owner has returned, plus the lease's
   shortfall and the raises of the drain-log rows it has adopted (below).
+- **Room a terminal frees is let again only once its publish is
+  acknowledged.** The owner takes a terminal's charge into its books when
+  it decides it, since the record has to carry the shortfall total (below).
+  What the terminal frees, its estimate less its charge, stays in `pending`
+  until the publish is acknowledged. An owner that died with a decided
+  terminal unpublished would otherwise have admitted against room the log
+  never gave it. The hold's settle then arrives through the drain log at its
+  full charge, and the lease books more than it was allocated.
 - **Room for overruns.** A lease that fills to its last hold turns every
   overrun into a shortfall (below), and each of those into a Spanner write.
   So the owner keeps a buffer under each lease: what its open holds are
-  expected to overrun by, from shadow's figures of bill against hold by
-  endpoint (§8, §9). A lease's `free` is `remaining` less that buffer, and
-  four rules read it:
+  expected to overrun by. Shadow's figures of bill against hold give it, by
+  endpoint and by the request's shape: whether it names a limit, and
+  whether it asks for reasoning (§4.13, §8, §9). A stream's hold counts
+  toward the buffer from its first heartbeat, since until then it may never
+  run (§4.5). A lease's `free` is `remaining` less `pending` and less that
+  buffer, and four rules read it:
   - admission needs `free` to be at least e, with the new hold's own buffer
     counted. Below that the owner uses its next lease, or answers as §4.4
     says for a short lease;
@@ -262,10 +274,13 @@ The second is closed as fast as each writer can close it:
   - It does not wait for that write. The terminal is published and answered
     like any other. A settle is never held for Spanner's sake, and the
     lease's records keep their order (§4.5).
-  - One such write is in flight for a lease at a time, carrying the latest
-    total. The owner retries it until it lands, past its cutoff if need be.
-    A repeat, or a write that lands after the auditor's, changes nothing,
-    and a return the auditor applies in between is not undone.
+  - One such write is in flight for a lease at a time. A shortfall that
+    arises meanwhile waits for it, and the next write carries the total as
+    it then stands. The owner retries a write until it lands, past its
+    cutoff if need be, or until Spanner refuses it: the lease has closed, or
+    the epoch is no longer its own. A repeat, or a write that lands after
+    the auditor's, changes nothing, and a return the auditor applies in
+    between is not undone.
   - It is conditional on the owner's epoch and on the lease not being
     closed. A draining lease takes it: its reservation is still held, and
     close releases whatever the raise added.
@@ -284,9 +299,14 @@ The second is closed as fast as each writer can close it:
     it returns what it does not use.
   - The append follows the full record's publish (§4.9), which has the
     deadline an owner's publish has (§4.5). If either fails, the answer is
-    an error and the gateway retries the settle, as it retries a failed
-    settle today. A terminal that is not yet recorded is not yet booked, on
-    either path, and one the gateway gives up on is §4.8's loss on either.
+    an error and the gateway retries the settle.
+  - Today a settle whose booking is declined leaves a durable intent in
+    Spanner and is answered, and its overrun reaches the balance when the
+    outbox finalizes it. The append is the fast path's durable intent. It
+    reserves the overrun in the transaction that records it, and it needs
+    the record topic as well as Spanner. A settle that leaves neither a
+    booking nor an intent is retried from the gateway's queue on both
+    paths, and one the gateway gives up on is §4.8's loss on both.
 - **Every writer changes these columns by arithmetic inside its own
   transaction.** The owner's and the front door's raises, and the auditor's
   bookings and returns, each read the row and write the difference. None
@@ -303,9 +323,12 @@ Two things follow, and §4.13 rests on both:
   transaction that books the charge or stores its row. The owner's own
   write is not needed for it.
 - **Spanner's headroom counts an overrun that a lease had no room for:**
-  - an owner's, within one write of the owner deciding it;
-  - or when the auditor books its record, if that write did not land;
-  - a front door's, with the append that records it.
+  - an owner's, within one write of the owner deciding it, or two when a
+    write for the lease was already in flight;
+  - or when the auditor books its record, if the owner's write did not
+    land;
+  - a front door's, with the append that records it, which follows its
+    record's publish.
 
   Grants and Python's own reservations read that headroom. Until one of
   those writes lands they read it too high, by the overrun.
@@ -536,6 +559,15 @@ and the request records all follow that rule.
   was acknowledged before the owner's cutoff.
   - Otherwise the answer is `recorded`, and the lease's order decides.
   - The gateway needs only to know that the record is durable.
+  - On the wire `recorded` is today's `intent_durable` answer, which the
+    enclave already knows (`DispositionIntentDurable` in `stage_d.go`): not
+    settled, not already settled, the outcome pending, and no generation to
+    broadcast. Python's answer of that shape is the reference for its bytes
+    (`tests/fixtures/stage_d/settle_response_intent_durable.json`).
+  - It carries its record's cost, model, provider and usage type, as
+    Python's does since #1521 (§4.13). That cost is this terminal's, not the
+    winner's. If an earlier reap wins, the request is charged the reap, as
+    it is today when a reap wins over a settle's durable intent.
 - **The drain log.** A terminal the owner does not take goes to the lease's
   drain log, a Spanner table. A front door appends it, with its money fields
   and its full record's digest, when the owner cannot be reached or once the
@@ -1262,6 +1294,10 @@ stream, and streams the enclave heartbeats. These stay on today's Python path:
   answers heartbeats `retry`, which ends running streams as today's 503 does
   (§4.5); with eligibility disabled it admits no new streams on the fast
   path and keeps serving those it admitted;
+- requests that name the priority or auto service tier, whether or not
+  they stream. Python holds them at the priority price and bills the tier
+  the provider reports at settle (`_actual_service_tier_or_error`), and the
+  envelope carries one price table;
 - requests that carry a speculation descriptor, which Python alone answers
   (§4.13);
 - requests with an `Idempotency-Key` (§4.3);
@@ -1390,8 +1426,11 @@ which §4.11 now lists.
   keeps (§4.11) and the reference the shadow comparator checks against, so
   its statements are the ones the compiled service must match.
   - On 2026-10-04 authorize's first credit reserve joined its key and insert
-    batch (#1516): three operations in the transaction, with the credit
-    shard's lock held across the commit alone. A re-observed receipt key no
+    batch (#1516). When the first credit shard it tries has room, that is
+    three operations in the transaction, with the credit shard's lock held
+    across the commit alone. A miss rolls the batch back and reruns the
+    sequential path, at more operations than before; production's statistics
+    put first-shard misses near zero (#1526). A re-observed receipt key no
     longer commits an empty transaction (#1524), which was about 850 commits
     an hour.
   - What #1516 measured is the cost this design removes. On 2026-10-03, at
@@ -1405,20 +1444,34 @@ which §4.11 now lists.
   authorized. Python does so wherever an authorization has a pricing
   snapshot to bill from: a Stage D stream, on credits, with no fee, markup,
   custom or video contract (`billing_pricing_snapshot` in `stage_d.py`).
-  Its other requests are still priced from the live catalog at settle.
-  - Authorize's answer says which, in `candidate_cost_reporting`. With
-    #459, where it is true the enclave computes the charge itself from the
-    served candidate's prices, reports it in the response's usage after a
-    bounded wait for the settle, and logs a mismatch if the settle's answer
-    disagrees.
-  - The fast path prices every charge from the envelope (§4.4), so it
-    follows the decision for every request it takes. That includes the
-    requests that do not stream and those with a receipt fee, which Python
-    still prices live. For those the two paths differ when a price changes
-    between authorize and settle, and the shadow comparator counts that
-    difference apart (§8). Keeping the live price for them instead would be
-    Joseph's call: the owner would price them from its current routing
-    snapshot (§4.10).
+  - Its other requests are priced at settle from the catalog as it then
+    stands, with the tariff schedule read as of the authorization's creation
+    (`effective_at=authorization.created_at`). So a scheduled price change
+    between authorize and settle changes nothing there either. Those
+    requests differ from the authorization's prices only when the catalog's
+    entry for the endpoint is itself replaced in between, by the hourly
+    refresh or a deploy.
+  - Authorize's answer says which rule applies, in
+    `candidate_cost_reporting`. With #459, where it is true the enclave
+    computes the charge itself from the served candidate's prices, reports
+    it in the response's usage after a bounded wait for the settle, and
+    logs a mismatch if the settle's answer disagrees.
+  - The fast path prices every charge from the envelope (§4.4). For a
+    request inside Python's predicate that is the decision. For the others
+    it takes, the requests that do not stream and those with a receipt fee,
+    it extends the decision: #1521 left them on the catalog. The extension
+    is proposed because a charge priced from the envelope is deterministic
+    and can be repriced from its archived inputs (§4.8). It is Joseph's call
+    (§9). The alternative is that the owner prices those requests from its
+    current routing snapshot (§4.10), with the schedule as of the
+    authorization.
+  - So the two paths can differ, for such a request, only when its
+    endpoint's catalog entry was replaced between authorize and settle. The
+    shadow comparator counts that case apart (§8): the same usage and
+    tariff time, another catalog version. Any other difference in a charge
+    is a mismatch.
+  - Requests that name the priority or auto service tier stay synchronous
+    (§4.11): their price depends on the tier the provider reports.
   - The compiled service sends `candidate_cost_reporting` by Python's
     predicate. Where it is true, its charge has to equal the enclave's own
     figure to the microdollar. Python generates and checks golden vectors
@@ -1426,9 +1479,9 @@ which §4.11 now lists.
     enclave check the same file. They are the compiled service's pricing
     test too.
   - A settle's answer carries its cost whenever its record has one, a
-    `recorded` answer included, as Python's `intent_durable` answer does
-    since #1521. A cost it does not have is left out, never sent as zero:
-    the enclave reads a missing cost as unknown and a zero as free.
+    `recorded` answer included (§4.5). A cost it does not have is left out,
+    never sent as zero. With #459 the enclave reads a missing cost as
+    unknown and a zero as free; before it, the field is a plain integer.
   - #459 also stops a refund from following a settle attempt, which
     today's enclave can send. On either path the first terminal in order
     wins (§4.5), so such a refund loses to a settle that was recorded, and
@@ -1491,17 +1544,19 @@ which §4.11 now lists.
   other shards go on spending until step 4's debt mark exists, §4.7.) On the
   fast path a lease absorbs an overrun it has room for. One it has no room
   for is reserved in Spanner by whoever records it (§4.2). So:
-  - **Spanner sees an owner's overrun one write after the owner does.** The
-    owner issues that write when it decides the terminal, and holds nothing
-    for it. Until it lands, grants, and Python's reservations for the same
-    workspace's synchronous requests, read headroom too high by the overrun.
+  - **Spanner sees an owner's overrun one write after the owner does,** or
+    two when a write for that lease was already in flight. The owner issues
+    the write when it decides the terminal, and holds nothing for it. Until
+    it lands, grants, and Python's reservations for the same workspace's
+    synchronous requests, read headroom too high by the overrun.
   - **If that write does not land,** because the owner died or cannot reach
     Spanner, the overrun reaches Spanner when the auditor books its record.
     That is the one place where the window is the auditor's lag (§4.8).
   - **A front door's overrun** is in Spanner with the append that records
     it. The full record's publish comes before that append, and a settle
     that fails either one is retried by the gateway. Today a settle whose
-    commit fails waits in the same queue, its overrun as invisible.
+    booking is declined is kept as a durable intent, and its overrun reaches
+    the balance only when the outbox finalizes it (§4.2).
   - **If it takes the workspace into debt,** the write that reserves it sets
     the mark (§4.7). Python refuses at once, as it will on today's path.
     Other owners stop within the state cache's maximum age.
@@ -1607,10 +1662,11 @@ Each has a production check.
 - overruns: a settle above its hold, by whatever its provider bills (§4.13).
   It is booked in full, as debt when the balance cannot cover it (§4.7). The
   amounts are today's. Spanner sees an owner's within one write of the
-  owner deciding it, or when the auditor books it, if that write was lost
-  with its owner or to an outage. It sees a front door's with the append
-  that records it. Other owners stop, when it means debt, within the state
-  cache's maximum age;
+  owner deciding it, or two behind a write already in flight, or when the
+  auditor books it, if the owner's write was lost with its owner or to an
+  outage. It sees a front door's with the append that records it, after
+  that record's publish. Other owners stop, when it means debt, within the
+  state cache's maximum age;
 - requests whose gateway could not reach the log within its retry budget
   (§4.8);
 - an owner record received after a tick that reaped its hold, which only
@@ -1663,16 +1719,21 @@ What the table's short names hide:
   of its owners stops without a final checkpoint. Its claims are §4.2's two:
   - a lease's remaining allocation is never less than its open holds;
   - headroom counts an overrun its lease had no room for, except while the
-    owner's write for it is in flight, or was lost with its owner or to an
-    owner cut off from Spanner, and the auditor has not yet booked the
-    record. The model has to carry those exceptions as state, so that the
-    claim says exactly when it may fail.
+    owner's write for it is in flight or waits behind one, or was lost with
+    its owner or to an owner cut off from Spanner, and the auditor has not
+    yet booked the record. The model has to carry those exceptions as
+    state, so that the claim says exactly when it may fail.
 
   The first claim has to hold in every one of those states: it may not lean
-  on the owner's write. Its mutants include an auditor and a front door
-  that each skip the raise, which must break the first claim; an owner that
-  skips its write, which must break only the second; and an owner's raise
-  that lands after the lease has closed, which must break §4.7's identity.
+  on the owner's write. So one configuration has an owner that never
+  writes. Its owner can also die between deciding a terminal and that
+  terminal's publish being stored, with the hold's settle then arriving
+  through the drain log. Its mutants include an auditor and a front door
+  that each skip the raise, and an owner that admits against room a
+  terminal freed before its publish was acknowledged, each of which must
+  break the first claim; an owner that skips its write, which must break
+  only the second; and an owner's raise that lands after the lease has
+  closed, which must break §4.7's identity.
 - In `LeaseLifecycle` a pause stands for every stop that reaches owners
   through the state cache: the debt mark, a trust downgrade and a switch out
   of fast mode travel the same way. Its mutants are an owner that admits on
@@ -1920,12 +1981,14 @@ leases, and was retired on 2026-09-27.
    reaper outcomes and records, and in the answer bytes the enclave decodes.
    Python's answer to the same request is the reference for those bytes; the
    error envelopes are also frozen in `tests/fixtures/speculation_v1/`.
-   - A charge that differs only because Python priced the request live and
-     its price changed after authorize is counted apart (§4.13).
+   - A charge that differs only because Python priced the request from a
+     catalog entry that was replaced after authorize is counted apart
+     (§4.13).
    - It also records each settle against its hold, by endpoint, and how
      often a lease would have had no room for one. Nothing is gated on it.
      The first figure shows where pricing a hold differently would pay, and
-     sizes a lease's buffer; the second sizes the low-water mark (§9).
+     sizes a lease's buffer; the second is the rate of shortfall writes that
+     buffer would leave (§6, §9).
 7. **Benchmark gate** (§6), with the rate of shortfall writes on the hottest
    workspace's real mix among what it measures.
 8. **Pilot:** Joseph's own workspace, then a few large ones, with kill switches
@@ -1946,12 +2009,13 @@ leases, and was retired on 2026-09-27.
   - lease sizes and allowances per trust tier. An allowance is sized as the
     exposure it permits: the allowance times the largest ratio of bill to
     hold that the tier can route to (§4.13), not the ratio honest traffic
-    shows;
+    shows, and with no buffer assumed. A buffer lets fewer holds fit under
+    an allowance, but no rule enforces it (§4.2);
   - the floor of headroom a grant leaves outside leases, and the minimum
     balance for fast mode (§4.7, §4.11);
   - the low-water mark, the top-up horizon and the cooldown;
   - the buffer a lease keeps for its open holds' overruns (§4.2), from
-    shadow's figures of bill against hold by endpoint;
+    shadow's figures of bill against hold, by endpoint and request shape;
   - the renewal, checkpoint and tick intervals;
   - the skew allowance, and the reaper's grace;
   - the expiry window, as a multiple of Spanner's observed commit-stall tail
@@ -1987,6 +2051,11 @@ leases, and was retired on 2026-09-27.
     the model that authorize itself chooses;
   - raise the estimate only where the measured overruns are: 96% of overrun
     dollars are in 0.7% of settles (§1).
+- **The price basis for fast-path requests that Python prices from the
+  catalog,** Joseph's call: requests that do not stream, and those with a
+  receipt fee (§4.13). This design proposes the envelope's prices for them
+  too, which extends the decision of 2026-10-03. The alternative keeps
+  them on the catalog as it stands at settle.
 - **Where request records live at 100T:** ClickHouse rather than Spanner
   (§6).
 - **The trust tier that allows leases.** It is 3 at first (§4.11). Lowering
@@ -2879,3 +2948,38 @@ record.
   hold-time batch in authorize (#1516), billing at the authorization's
   prices (#1521 and the enclave's #459), the receipt-key fix (#1524) and key
   management (#1496).
+- **v37.** Codex (2 P2, 2 P3) and Fable (1 P2, 6 P3) reviewed v36. Neither
+  broke the identity, conservation through close, or the buffer's rules.
+  What they found:
+  - one corner of the identity: an owner that reaps two silent streams,
+    admits against the room they freed and dies before the reap records
+    are stored leaves the streams' settles to arrive through the drain log
+    at full price, and the lease books more than its allocation;
+  - "within one write" is two when a write for the lease is already in
+    flight;
+  - the tier a provider reports at settle is a pricing input the envelope
+    does not carry, for requests that name the priority or auto tier;
+  - Python's requests outside #1521's predicate are not priced "live": the
+    tariff schedule is read as of the authorization, so only a replaced
+    catalog entry differs. Pricing those requests from the envelope extends
+    Joseph's decision and was presented as following it;
+  - today a declined booking leaves a durable intent, and does not wait in
+    the gateway's queue;
+  - `recorded` had no wire shape;
+  - #1516's three operations are the path where the first shard has room;
+  - the buffer was missing from §9's allowance sizing, was keyed by
+    endpoint where a request's shape predicts an overrun, and was kept by
+    holds that may never run.
+
+  v37:
+  - Room a terminal frees is let again only once its publish is
+    acknowledged (§4.2), and `CreditDebt` gets an owner that dies in
+    between and a mutant for the rule.
+  - The windows say one write or two, and the comparison with today is with
+    a durable intent.
+  - Requests that name the priority or auto tier stay synchronous.
+  - §4.13 states what Python's other requests are priced from, and §9 lists
+    the price basis of the fast path's as Joseph's call.
+  - `recorded` is today's `intent_durable` answer on the wire.
+  - The buffer is stated in §9's sizing, keyed by request shape too, and
+    counts a stream from its first heartbeat.
